@@ -71,50 +71,53 @@ int main(int argc, char** argv) {
 	if (!configTreeRoot.has_child("server_address")) {
 		return FAIL_CONFIG_MALFORMED;
 	}
-	const auto serverAddressNode = configTreeRoot["server_address"];
-	serverAddressNode >> serverAddress;
+	configTreeRoot["server_address"] >> serverAddress;
 
 	std::shared_ptr<grpc::Channel> channel;
 	if (configTreeRoot.has_child("credentials")) {
-		grpc::SslCredentialsOptions credentialsOptions;
-		const auto sslCredentials = configTree["credentials"];
-		if (!sslCredentials.is_map()) {
-			return FAIL_CONFIG_MALFORMED;
+		const auto credentialsTree = configTree["credentials"];
+		if (!credentialsTree.is_map()) {
+			std::string credentialsType;
+			credentialsTree >> credentialsType;
+			if (credentialsType == "ssl") {
+				channel = grpc::CreateChannel(credentialsType, grpc::SslCredentials({}));
+			} else if (credentialsType == "none") {
+				channel = grpc::CreateChannel(credentialsType, grpc::InsecureChannelCredentials());
+			} else {
+				return FAIL_CONFIG_MALFORMED;
+			}
+		} else {
+			grpc::SslCredentialsOptions credentialsOptions;
+			if (credentialsTree.has_child("pem_cert_chain")) {
+				credentialsTree["pem_cert_chain"] >> credentialsOptions.pem_cert_chain;
+				credentialsOptions.pem_cert_chain = READ_FILE_OR_FAIL(credentialsOptions.pem_cert_chain);
+			}
+			if (credentialsTree.has_child("pem_root_certs")) {
+				credentialsTree["pem_root_certs"] >> credentialsOptions.pem_root_certs;
+				credentialsOptions.pem_root_certs = READ_FILE_OR_FAIL(credentialsOptions.pem_root_certs);
+			}
+			if (credentialsTree.has_child("pem_private_key")) {
+				credentialsTree["pem_private_key"] >> credentialsOptions.pem_private_key;
+				credentialsOptions.pem_private_key = READ_FILE_OR_FAIL(credentialsOptions.pem_private_key);
+			}
+			channel = grpc::CreateChannel(serverAddress, grpc::SslCredentials(credentialsOptions));
 		}
-
-		if (!sslCredentials.has_child("pem_cert_chain")) {
-			return FAIL_CONFIG_MALFORMED;
-		}
-		sslCredentials["pem_cert_chain"] >> credentialsOptions.pem_cert_chain;
-		credentialsOptions.pem_cert_chain = READ_FILE_OR_FAIL(credentialsOptions.pem_cert_chain);
-
-		if (sslCredentials.has_child("pem_root_certs")) {
-			sslCredentials["pem_root_certs"] >> credentialsOptions.pem_root_certs;
-			credentialsOptions.pem_root_certs = READ_FILE_OR_FAIL(credentialsOptions.pem_root_certs);
-		}
-
-		if (!sslCredentials.has_child("pem_private_key")) {
-			return FAIL_CONFIG_MALFORMED;
-		}
-		sslCredentials["pem_private_key"] >> credentialsOptions.pem_private_key;
-		credentialsOptions.pem_private_key = READ_FILE_OR_FAIL(credentialsOptions.pem_private_key);
-
-		channel = grpc::CreateChannel(serverAddress, grpc::SslCredentials(credentialsOptions));
 	} else {
 		channel = grpc::CreateChannel(serverAddress, grpc::InsecureChannelCredentials());
 	}
 
 	std::vector<std::string> pvsToMonitor;
-	if (configTreeRoot.has_child("monitor_pvs")) {
-		if (const auto pvs = configTreeRoot["monitor_pvs"]; pvs.is_seq()) {
-			for (const auto monitoredPV : pvs) {
-				std::string pvName;
-				monitoredPV >> pvName;
-				pvsToMonitor.push_back(pvName);
-			}
-		} else {
-			return FAIL_CONFIG_MALFORMED;
+	if (!configTreeRoot.has_child("monitor_pvs")) {
+		return FAIL_CONFIG_MALFORMED;
+	}
+	if (const auto pvs = configTreeRoot["monitor_pvs"]; pvs.is_seq()) {
+		for (const auto monitoredPV : pvs) {
+			std::string pvName;
+			monitoredPV >> pvName;
+			pvsToMonitor.push_back(pvName);
 		}
+	} else {
+		return FAIL_CONFIG_MALFORMED;
 	}
 
 	std::string providerName;
