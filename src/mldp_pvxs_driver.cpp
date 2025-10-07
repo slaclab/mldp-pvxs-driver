@@ -62,92 +62,71 @@ PVXSDPIngestionDriver::operator bool() const {
 	return m_stub && !m_providerID.empty();
 }
 
-bool PVXSDPIngestionDriver::convertPVToProtoValue(const pvxs::Value& pvValue, DataValue* protoValue) {
-	try {
-		const auto typeArraySetter = [protoValue](const auto& pvArray, auto setter) {
-			auto* protoArray = protoValue->mutable_arrayvalue();
-			for (const auto& i : pvArray) {
-				auto* element = protoArray->add_datavalues();
-				(*element.*setter)(i);
-			}
-		};
-
-		switch (pvValue.type().code) {
-			case pvxs::TypeCode::Bool: protoValue->set_booleanvalue(pvValue.as<bool>()); break;
-			case pvxs::TypeCode::BoolA: typeArraySetter(pvValue.as<pvxs::shared_array<const bool>>(), &DataValue::set_booleanvalue); break;
-			case pvxs::TypeCode::Int8:
-			case pvxs::TypeCode::Int16:
-			case pvxs::TypeCode::Int32: protoValue->set_intvalue(pvValue.as<int32_t>()); break;
-			case pvxs::TypeCode::Int64: protoValue->set_longvalue(pvValue.as<int64_t>()); break;
-			case pvxs::TypeCode::UInt8:
-			case pvxs::TypeCode::UInt16:
-			case pvxs::TypeCode::UInt32: protoValue->set_uintvalue(pvValue.as<uint32_t>()); break;
-			case pvxs::TypeCode::UInt64: protoValue->set_ulongvalue(pvValue.as<uint64_t>()); break;
-			case pvxs::TypeCode::Int8A:
-			case pvxs::TypeCode::Int16A:
-			case pvxs::TypeCode::Int32A: typeArraySetter(pvValue.as<pvxs::shared_array<const int32_t>>(), &DataValue::set_intvalue); break;
-			case pvxs::TypeCode::Int64A: typeArraySetter(pvValue.as<pvxs::shared_array<const int64_t>>(), &DataValue::set_longvalue); break;
-			case pvxs::TypeCode::UInt8A:
-			case pvxs::TypeCode::UInt16A:
-			case pvxs::TypeCode::UInt32A: typeArraySetter(pvValue.as<pvxs::shared_array<const uint32_t>>(), &DataValue::set_uintvalue); break;
-			case pvxs::TypeCode::UInt64A: typeArraySetter(pvValue.as<pvxs::shared_array<const uint64_t>>(), &DataValue::set_ulongvalue); break;
-			case pvxs::TypeCode::Float32: protoValue->set_floatvalue(pvValue.as<float>()); break;
-			case pvxs::TypeCode::Float64: protoValue->set_doublevalue(pvValue.as<double>()); break;
-			case pvxs::TypeCode::Float32A: typeArraySetter(pvValue.as<pvxs::shared_array<const float>>(), &DataValue::set_floatvalue); break;
-			case pvxs::TypeCode::Float64A: typeArraySetter(pvValue.as<pvxs::shared_array<const double>>(), &DataValue::set_doublevalue); break;
-			case pvxs::TypeCode::String: protoValue->set_stringvalue(pvValue.as<std::string>()); break;
-			case pvxs::TypeCode::StringA: typeArraySetter(pvValue.as<pvxs::shared_array<const std::string>>(), static_cast<void(DataValue::*)(const std::string&)>(&DataValue::set_stringvalue)); break;
-			case pvxs::TypeCode::Struct:
-			case pvxs::TypeCode::Union: {
-				auto* structure = protoValue->mutable_structurevalue();
-				for (const auto& member : pvValue.ichildren()) {
-					if (!member.valid()) {
-						continue;
-					}
-					auto* field = structure->add_fields();
-					field->set_name(pvValue.nameOf(member));
-					if (!convertPVToProtoValue(member, field->mutable_value())) {
-						return false;
-					}
-				}
-				break;
-			}
-			case pvxs::TypeCode::Any:
-				// todo(dp): pvxs Any value
-				break;
-			case pvxs::TypeCode::StructA:
-			case pvxs::TypeCode::UnionA: {
-				auto* protoArray = protoValue->mutable_arrayvalue();
-				const auto pvArray = pvValue.as<pvxs::shared_array<const pvxs::Value>>();
-				for (const auto& i : pvArray) {
-					auto* element = protoArray->add_datavalues();
-					auto* structure = element->mutable_structurevalue();
-					for (const auto& member : i.ichildren()) {
-						if (!member.valid()) {
-							continue;
-						}
-						auto* field = structure->add_fields();
-						field->set_name(i.nameOf(member));
-						if (!convertPVToProtoValue(member, field->mutable_value())) {
-							return false;
-						}
-					}
-				}
-				break;
-			}
-			case pvxs::TypeCode::AnyA:
-				// todo(dp): pvxs array of Any
-				break;
-			case pvxs::TypeCode::Null:
-				// todo(dp): is there something else we can set? check proto
-				protoValue->set_stringvalue("null");
-				break;
+void PVXSDPIngestionDriver::convertPVToProtoValue(const pvxs::Value& pvValue, DataValue* protoValue) {
+	const auto typeArraySetter = [protoValue](const auto& pvArray, auto setter) {
+		auto* protoArray = protoValue->mutable_arrayvalue();
+		for (const auto& i : pvArray) {
+			auto* element = protoArray->add_datavalues();
+			(*element.*setter)(i);
 		}
+	};
+	const auto structSetter = [](const pvxs::Value& structValue, DataValue* protoStruct) {
+		auto* structure = protoStruct->mutable_structurevalue();
+		for (const auto& member : structValue.ichildren()) {
+			if (!member.valid()) {
+				continue;
+			}
+			auto* field = structure->add_fields();
+			field->set_name(structValue.nameOf(member));
+			convertPVToProtoValue(member, field->mutable_value());
+		}
+	};
 
-		return true;
-	} catch (const std::exception&) {
-		// This will be logged later
-		return false;
+	switch (pvValue.type().code) {
+		case pvxs::TypeCode::Bool: protoValue->set_booleanvalue(pvValue.as<bool>()); break;
+		case pvxs::TypeCode::BoolA: typeArraySetter(pvValue.as<pvxs::shared_array<const bool>>(), &DataValue::set_booleanvalue); break;
+		case pvxs::TypeCode::Int8:
+		case pvxs::TypeCode::Int16:
+		case pvxs::TypeCode::Int32: protoValue->set_intvalue(pvValue.as<int32_t>()); break;
+		case pvxs::TypeCode::Int64: protoValue->set_longvalue(pvValue.as<int64_t>()); break;
+		case pvxs::TypeCode::UInt8:
+		case pvxs::TypeCode::UInt16:
+		case pvxs::TypeCode::UInt32: protoValue->set_uintvalue(pvValue.as<uint32_t>()); break;
+		case pvxs::TypeCode::UInt64: protoValue->set_ulongvalue(pvValue.as<uint64_t>()); break;
+		case pvxs::TypeCode::Int8A:
+		case pvxs::TypeCode::Int16A:
+		case pvxs::TypeCode::Int32A: typeArraySetter(pvValue.as<pvxs::shared_array<const int32_t>>(), &DataValue::set_intvalue); break;
+		case pvxs::TypeCode::Int64A: typeArraySetter(pvValue.as<pvxs::shared_array<const int64_t>>(), &DataValue::set_longvalue); break;
+		case pvxs::TypeCode::UInt8A:
+		case pvxs::TypeCode::UInt16A:
+		case pvxs::TypeCode::UInt32A: typeArraySetter(pvValue.as<pvxs::shared_array<const uint32_t>>(), &DataValue::set_uintvalue); break;
+		case pvxs::TypeCode::UInt64A: typeArraySetter(pvValue.as<pvxs::shared_array<const uint64_t>>(), &DataValue::set_ulongvalue); break;
+		case pvxs::TypeCode::Float32: protoValue->set_floatvalue(pvValue.as<float>()); break;
+		case pvxs::TypeCode::Float64: protoValue->set_doublevalue(pvValue.as<double>()); break;
+		case pvxs::TypeCode::Float32A: typeArraySetter(pvValue.as<pvxs::shared_array<const float>>(), &DataValue::set_floatvalue); break;
+		case pvxs::TypeCode::Float64A: typeArraySetter(pvValue.as<pvxs::shared_array<const double>>(), &DataValue::set_doublevalue); break;
+		case pvxs::TypeCode::String: protoValue->set_stringvalue(pvValue.as<std::string>()); break;
+		case pvxs::TypeCode::StringA: typeArraySetter(pvValue.as<pvxs::shared_array<const std::string>>(), static_cast<void(DataValue::*)(const std::string&)>(&DataValue::set_stringvalue)); break;
+		case pvxs::TypeCode::Struct:
+		case pvxs::TypeCode::Union: structSetter(pvValue, protoValue); break;
+		case pvxs::TypeCode::Any:
+			// todo(dp): pvxs Any value
+			break;
+		case pvxs::TypeCode::StructA:
+		case pvxs::TypeCode::UnionA: {
+			const auto pvArray = pvValue.as<pvxs::shared_array<const pvxs::Value>>();
+			for (const auto& i : pvArray) {
+				structSetter(i, protoValue->mutable_arrayvalue()->add_datavalues());
+			}
+			break;
+		}
+		case pvxs::TypeCode::AnyA:
+			// todo(dp): pvxs array of Any
+			break;
+		case pvxs::TypeCode::Null:
+			// todo(dp): is there something else we can set? check proto
+			protoValue->set_stringvalue("null");
+			break;
 	}
 }
 
@@ -183,8 +162,11 @@ void PVXSDPIngestionDriver::ingestPVValue(const std::string& pvName, const pvxs:
 	auto* column = dataFrame->add_datacolumns();
 	column->set_name(pvName);
 
-	if (auto* dataValue = column->add_datavalues(); !convertPVToProtoValue(pvValue, dataValue)) {
-		logError("Could not convert PV with name " + pvName + " to a proto value!");
+	auto* dataValue = column->add_datavalues();
+	try {
+		convertPVToProtoValue(pvValue, dataValue);
+	} catch (const std::exception& e) {
+		logError("Could not convert PV with name " + pvName + " to a proto value: " + e.what());
 		return;
 	}
 

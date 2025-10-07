@@ -34,7 +34,7 @@ public:
 
 	[[nodiscard]] explicit operator bool() const;
 
-	[[nodiscard]] static bool convertPVToProtoValue(const pvxs::Value& pvValue, DataValue* protoValue);
+	static void convertPVToProtoValue(const pvxs::Value& pvValue, DataValue* protoValue);
 
 	void ingestPVValue(const std::string& pvName, const pvxs::Value& pvValue);
 
