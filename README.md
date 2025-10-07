@@ -1,23 +1,50 @@
 # MLDP PVXS Driver
 
+## Building
+
+`PROTO_PATH` and `PVXS_BASE` are required to either be set as environment variables or passed to the CMake configuration
+step. The former should be the path to the parent directory of MLDP's protobuf definitions. The latter should be the
+directory containing the pvxs library.
+
+## Configuration
+
+When using the driver program, a YAML config file is necessary to set required settings. It should be passed as the
+first argument to the program.
+
+It must be structured as follows:
+
+```yml
+provider_name: Provider Name
+server_address: address:port
+credentials:
+  pem_cert_chain: filepath
+  pem_root_certs: filepath
+  pem_private_key: filepath
+monitor_pvs:
+  - namespace:pv
+  - namespace:pv2
+```
+
+The `provider_name`, `server_address` and `monitor_pvs` fields are required. The `credentials` field is optional and is
+either a string storing `'none'` or `'ssl'`, or a map containing gRPC's SSL settings, all of which are optional
+overrides to the default gRPC SSL settings.
+
 ## Architecture
 
 ```mermaid
 graph
     subgraph "Driver Application"
-        Main[main]
-        Config[Parse Configuration]
-        Main --> Config
+        Config[Configuration]
+        Runner[PVXSDPIngestionDriver Instance]
+        Run[Await Changes]
     end
 
     subgraph "PVXSDPIngestionDriver"
         Driver[Constructor]
-        Run[Monitor PVs for changes]
         Convert[Convert PV to DP format]
         Thread1[Threaded gRPC Call]
         Ingest[Ingest PV value]
 
-        Driver --> Run
         Ingest --> Convert
     end
 
@@ -35,28 +62,22 @@ graph
         PVServer[PV Channels]
     end
 
-    Main -->|Creates| Driver
-    Config -->|Reads PV Names,<br/>Server Address,<br/>Credentials| Driver
+    Config -->|Sets Values| Runner
+    Runner --> Driver
+    Runner --> Run
 
     Driver -->|Registers Provider| Register
 
     Driver -->|Creates Context| Monitor
     Monitor -->|Subscribes to| PVServer
-    Monitor -->|Stores in| WorkQueue
 
-    PVServer -.->|PV Updates| WorkQueue
+    PVServer -.->|Pushes to| WorkQueue
 
-    WorkQueue -->|Calls| Ingest
+    WorkQueue -->|When popped from| Ingest
 
     Convert -->|Spawns| Thread1
 
     Thread1 -->|Calls| IngestData
 
-    Run -.->|Pushes to| WorkQueue
+    Run -.->|Pops from| WorkQueue
 ```
-
-## Building
-
-`PROTO_PATH` and `PVXS_BASE` are required to either be set as environment variables or passed to the CMake configuration
-step. The former should be the path to the parent directory of MLDP's protobuf definitions. The latter should be the
-directory containing the pvxs library.
