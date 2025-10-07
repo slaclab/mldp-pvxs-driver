@@ -10,17 +10,18 @@
 
 using namespace std::chrono_literals;
 
-PVXSDPIngestionDriver::PVXSDPIngestionDriver(const std::string& providerName, const std::shared_ptr<grpc::Channel>& channel, const std::vector<std::string>& pvNames, const grpc::StubOptions& options, const pvxs::client::Context& pvaContext) {
-	m_stub = dp::service::ingestion::DpIngestionService::NewStub(channel, options);
-	m_pvaContext = pvaContext;
-	m_providerName = providerName;
-	m_requestCount = 0;
-
+PVXSDPIngestionDriver::PVXSDPIngestionDriver(std::string providerName, const std::shared_ptr<grpc::Channel>& channel, const std::vector<std::string>& pvNames, const grpc::StubOptions& options, const pvxs::client::Context& pvaContext)
+	: m_logger{}
+	, m_stub{dp::service::ingestion::DpIngestionService::NewStub(channel, options)}
+	, m_providerName{std::move(providerName)}
+	, m_requestCount{0}
+	, m_pvaContext{pvaContext}
+	, m_interrupted{false}
+{
 	if (const auto registerProvider = [this] {
 		dp::service::ingestion::RegisterProviderRequest request;
 		request.set_providername(m_providerName);
 		request.set_description(providerDesc());
-		//request.add_tags(DRIVER_NAME);
 
 		grpc::ClientContext context;
 		dp::service::ingestion::RegisterProviderResponse response;
@@ -51,6 +52,10 @@ PVXSDPIngestionDriver::PVXSDPIngestionDriver(const std::string& providerName, co
 				.exec());
 		}
 	}
+}
+
+void PVXSDPIngestionDriver::setLogger(const PVXSDPIngestionDriverLogger& logger) {
+	m_logger = logger;
 }
 
 const std::string& PVXSDPIngestionDriver::providerID() const {
@@ -137,8 +142,8 @@ bool PVXSDPIngestionDriver::convertPVToProtoValue(const pvxs::Value& pvValue, Da
 		}
 
 		return true;
-	} catch (const std::exception& e) {
-		std::cout << "Error converting PVXS value: " << e.what() << std::endl;
+	} catch (const std::exception&) {
+		// This will be logged later
 		return false;
 	}
 }
@@ -176,15 +181,21 @@ bool PVXSDPIngestionDriver::ingestPVValue(const std::string& pvName, const pvxs:
 	column->set_name(pvName);
 
 	if (auto* dataValue = column->add_datavalues(); !convertPVToProtoValue(pvValue, dataValue)) {
+		logError("Could not convert PV with name " + pvName + " to a proto value!");
 		return false;
 	}
 
-	// todo(driver): thread pool
-	std::thread{[this, request = std::move(request)] {
+	// todo(driver): use async gRPC calls here
+	std::thread{[this, pvName, request = std::move(request)] {
 		grpc::ClientContext context;
 		dp::service::ingestion::IngestDataResponse response;
-		// todo(driver): retry logic
-		grpc::Status status = m_stub->ingestData(&context, request, &response);
+		static constexpr int RETRY_COUNT = 3;
+		int retry = 0;
+		grpc::Status status;
+		while (!(status = m_stub->ingestData(&context, request, &response)).ok() && ++retry < RETRY_COUNT) {}
+		if (!status.ok()) {
+			logError("Ingestion failed for " + pvName + ": " + status.error_message());
+		}
 	}}.detach();
 
 	return true;
@@ -203,7 +214,9 @@ void PVXSDPIngestionDriver::run() {
 				continue;
 			}
 			ingestPVValue(sub->name(), update);
-		} catch (const pvxs::client::RemoteError&) {}
+		} catch (const pvxs::client::RemoteError& e) {
+			logError("Server error when reading PV " + sub->name() + ':' + e.what());
+		}
 		m_pvaWorkqueue.push(sub);
 	}
 	m_interrupted = false;
@@ -211,4 +224,11 @@ void PVXSDPIngestionDriver::run() {
 
 void PVXSDPIngestionDriver::stop() {
 	m_interrupted = true;
+}
+
+void PVXSDPIngestionDriver::logError(const std::string& error) const {
+	if (m_logger.error) {
+		// If this is using std::cerr, it is already thread-safe
+		m_logger.error(error);
+	}
 }
