@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <memory>
 #include <string>
 #include <vector>
@@ -26,7 +27,9 @@ public:
 
 	bool ingestPVValue(const std::string& pvName, const pvxs::Value& pvValue);
 
-	[[noreturn]] void run();
+	void run();
+
+	void stop();
 
 	std::unique_ptr<dp::service::ingestion::DpIngestionService::Stub> m_stub;
 	std::string m_providerID;
@@ -35,4 +38,6 @@ public:
 	pvxs::MPMCFIFO<std::shared_ptr<pvxs::client::Subscription>> m_pvaSubscriptions;
 	pvxs::MPMCFIFO<std::shared_ptr<pvxs::client::Subscription>> m_pvaWorkqueue;
 	int m_requestCount;
+
+	std::atomic<bool> m_interrupted;
 };

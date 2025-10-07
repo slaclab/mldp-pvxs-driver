@@ -191,7 +191,7 @@ bool PVXSDPIngestionDriver::ingestPVValue(const std::string& pvName, const pvxs:
 }
 
 void PVXSDPIngestionDriver::run() {
-	while (true) {
+	while (!m_interrupted) {
 		if (m_pvaWorkqueue.size() == 0) {
 			std::this_thread::sleep_for(100ms);
 			continue;
@@ -206,4 +206,9 @@ void PVXSDPIngestionDriver::run() {
 		} catch (const pvxs::client::RemoteError&) {}
 		m_pvaWorkqueue.push(sub);
 	}
+	m_interrupted = false;
+}
+
+void PVXSDPIngestionDriver::stop() {
+	m_interrupted = true;
 }
