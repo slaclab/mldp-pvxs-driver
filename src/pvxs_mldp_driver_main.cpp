@@ -37,10 +37,12 @@ enum Failure {
 	return contents.str();
 }
 
+std::unique_ptr<PVXSDPIngestionDriver> g_driver = nullptr;
+
 } // namespace
 
 int main(int argc, char** argv) {
-	static constexpr auto exitHandler = [](int) { std::exit(FAIL_OK); };
+	const auto exitHandler = [](int) { if (g_driver) g_driver->stop(); };
 	std::signal(SIGINT, exitHandler);
 	std::signal(SIGTERM, exitHandler);
 
@@ -115,10 +117,17 @@ int main(int argc, char** argv) {
 		}
 	}
 
-	// ReSharper disable once CppTooWideScopeInitStatement
-	PVXSDPIngestionDriver driver{"BSAS", channel, pvsToMonitor};
-	if (!driver) {
+	std::string providerName;
+	if (!configTreeRoot.has_child("provider_name")) {
+		return FAIL_CONFIG_MALFORMED;
+	}
+	configTreeRoot["provider_name"] >> providerName;
+
+	g_driver = std::make_unique<PVXSDPIngestionDriver>(providerName, channel, pvsToMonitor);
+	if (!g_driver || !*g_driver) {
 		return FAIL_UNKNOWN;
 	}
-	driver.run();
+
+	g_driver->run();
+	return FAIL_OK;
 }
