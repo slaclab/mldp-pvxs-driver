@@ -46,7 +46,7 @@ PVXSDPIngestionDriver::PVXSDPIngestionDriver(std::string providerName, const std
 	} else {
 		for (const auto& pv : pvNames) {
 			m_pvaSubscriptions.push(m_pvaContext.monitor(pv)
-				.event([this](pvxs::client::Subscription& s) {
+				.event([this](const pvxs::client::Subscription& s) {
 					m_pvaWorkqueue.push(s.shared_from_this());
 				})
 				.exec());
@@ -148,7 +148,7 @@ bool PVXSDPIngestionDriver::convertPVToProtoValue(const pvxs::Value& pvValue, Da
 	}
 }
 
-bool PVXSDPIngestionDriver::ingestPVValue(const std::string& pvName, const pvxs::Value& pvValue) {
+void PVXSDPIngestionDriver::ingestPVValue(const std::string& pvName, const pvxs::Value& pvValue) {
 	dp::service::ingestion::IngestDataRequest request;
 	request.set_providerid(m_providerID);
 	request.set_clientrequestid("pv_" + pvName + "_" + std::to_string(m_requestCount++));
@@ -182,7 +182,7 @@ bool PVXSDPIngestionDriver::ingestPVValue(const std::string& pvName, const pvxs:
 
 	if (auto* dataValue = column->add_datavalues(); !convertPVToProtoValue(pvValue, dataValue)) {
 		logError("Could not convert PV with name " + pvName + " to a proto value!");
-		return false;
+		return;
 	}
 
 	// todo(driver): use async gRPC calls here
@@ -197,8 +197,6 @@ bool PVXSDPIngestionDriver::ingestPVValue(const std::string& pvName, const pvxs:
 			logError("Ingestion failed for " + pvName + ": " + status.error_message());
 		}
 	}}.detach();
-
-	return true;
 }
 
 void PVXSDPIngestionDriver::run() {

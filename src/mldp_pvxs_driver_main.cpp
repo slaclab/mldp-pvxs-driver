@@ -37,15 +37,15 @@ enum Failure {
 	return contents.str();
 }
 
-PVXSDPIngestionDriverLogger g_logger{
-	.error = [](const std::string& error) { std::cerr << error + '\n'; },
-};
+PVXSDPIngestionDriverLogger g_logger;
 
 std::unique_ptr<PVXSDPIngestionDriver> g_driver = nullptr;
 
 } // namespace
 
 int main(int argc, char** argv) {
+	g_logger.error = [](const std::string& error) { std::cerr << error + '\n'; };
+
 	const auto exitHandler = [](int) { if (g_driver) g_driver->stop(); };
 	std::signal(SIGINT, exitHandler);
 	std::signal(SIGTERM, exitHandler);
