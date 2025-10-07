@@ -37,6 +37,10 @@ enum Failure {
 	return contents.str();
 }
 
+PVXSDPIngestionDriverLogger g_logger{
+	.error = [](const std::string& error) { std::cerr << error + '\n'; },
+};
+
 std::unique_ptr<PVXSDPIngestionDriver> g_driver = nullptr;
 
 } // namespace
@@ -128,8 +132,10 @@ int main(int argc, char** argv) {
 
 	g_driver = std::make_unique<PVXSDPIngestionDriver>(providerName, channel, pvsToMonitor);
 	if (!g_driver || !*g_driver) {
+		g_logger.error("Failed to register provider " + providerName + '!');
 		return FAIL_UNKNOWN;
 	}
+	g_driver->setLogger(g_logger);
 
 	g_driver->run();
 	return FAIL_OK;
