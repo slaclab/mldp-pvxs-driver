@@ -29,9 +29,9 @@ public:
 
 	[[nodiscard]] explicit operator bool() const;
 
-	static bool convertPVToProtoValue(const pvxs::Value& pvValue, DataValue* protoValue);
+	[[nodiscard]] static bool convertPVToProtoValue(const pvxs::Value& pvValue, DataValue* protoValue);
 
-	bool ingestPVValue(const std::string& pvName, const pvxs::Value& pvValue);
+	void ingestPVValue(const std::string& pvName, const pvxs::Value& pvValue);
 
 	void run();
 
