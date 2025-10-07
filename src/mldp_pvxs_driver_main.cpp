@@ -57,7 +57,7 @@ int main(int argc, char** argv) {
 
 	std::string configLocation;
 	if (argc < 2) {
-		configLocation = std::filesystem::path{argv[0]}.replace_extension().string();
+		configLocation = std::filesystem::path{argv[0]}.replace_extension(".yml").string();
 	} else {
 		configLocation = argv[1];
 	}
@@ -65,15 +65,20 @@ int main(int argc, char** argv) {
 	Failure failure = FAIL_OK;
 	#define READ_FILE_OR_FAIL(name) \
 		::readFile(name, failure); \
-		if (failure != FAIL_OK) \
-			return failure
+		do { \
+			if (failure != FAIL_OK) { \
+				g_logger.error("Failed to read file at " + std::string{name}); \
+				return failure; \
+			} \
+		} while (false)
 
-	std::string configContentsBuf = READ_FILE_OR_FAIL(configLocation);
+	auto configContentsBuf = READ_FILE_OR_FAIL(configLocation);
 	const auto configTree = ryml::parse_in_place(c4::to_substr(configContentsBuf));
 	const auto configTreeRoot = configTree.rootref();
 
 	std::string serverAddress;
 	if (!configTreeRoot.has_child("server_address")) {
+		g_logger.error("No server address set in config.");
 		return FAIL_CONFIG_MALFORMED;
 	}
 	configTreeRoot["server_address"] >> serverAddress;
@@ -88,6 +93,7 @@ int main(int argc, char** argv) {
 			} else if (credentialsType == "none") {
 				channel = grpc::CreateChannel(credentialsType, grpc::InsecureChannelCredentials());
 			} else {
+				g_logger.error("Invalid value set for credentials in config.");
 				return FAIL_CONFIG_MALFORMED;
 			}
 		} else {
@@ -112,6 +118,7 @@ int main(int argc, char** argv) {
 
 	std::vector<std::string> pvsToMonitor;
 	if (!configTreeRoot.has_child("monitor_pvs")) {
+		g_logger.error("No PVs to monitor set in config.");
 		return FAIL_CONFIG_MALFORMED;
 	}
 	if (const auto pvs = configTreeRoot["monitor_pvs"]; pvs.is_seq()) {
@@ -121,11 +128,13 @@ int main(int argc, char** argv) {
 			pvsToMonitor.push_back(pvName);
 		}
 	} else {
+		g_logger.error("Monitor PVs field in config is not a list of values.");
 		return FAIL_CONFIG_MALFORMED;
 	}
 
 	std::string providerName;
 	if (!configTreeRoot.has_child("provider_name")) {
+		g_logger.error("No provider name set in config.");
 		return FAIL_CONFIG_MALFORMED;
 	}
 	configTreeRoot["provider_name"] >> providerName;
