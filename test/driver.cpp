@@ -15,7 +15,7 @@ TEST(pvxs_mldp_driver, counter) {
 
 	PVXSDPIngestionDriver driver{"test_provider", channel, {
 		"test:counter",
-	}};
+	}, {}};
 	ASSERT_TRUE(driver);
 	driver.run();
 }

@@ -12,14 +12,19 @@
 #include "ingestion.grpc.pb.h"
 
 struct PVXSDPIngestionDriverLogger {
-	void(*error)(const std::string& error);
+	void(*info)(const std::string& info) = nullptr;
+	void(*error)(const std::string& error) = nullptr;
 };
 
 class PVXSDPIngestionDriver {
 public:
-	PVXSDPIngestionDriver(std::string providerName, const std::shared_ptr<grpc::Channel>& channel, const std::vector<std::string>& pvNames, const grpc::StubOptions& options = {}, const pvxs::client::Context& pvaContext = pvxs::client::Context::fromEnv());
+	struct Options {
+		const PVXSDPIngestionDriverLogger& logger = {};
+		const grpc::StubOptions& grpcOptions = {};
+		const pvxs::client::Context& pvaContext = pvxs::client::Context::fromEnv();
+	};
 
-	void setLogger(const PVXSDPIngestionDriverLogger& logger);
+	PVXSDPIngestionDriver(std::string providerName, const std::shared_ptr<grpc::Channel>& channel, const std::vector<std::string>& pvNames, const Options& options);
 
 	[[nodiscard]] const std::string& providerID() const;
 
@@ -38,18 +43,20 @@ public:
 	void stop();
 
 protected:
+	void logInfo(const std::string& info) const;
+
 	void logError(const std::string& error) const;
 
-	PVXSDPIngestionDriverLogger m_logger;
+	PVXSDPIngestionDriverLogger m_logger{};
 
 	std::unique_ptr<dp::service::ingestion::DpIngestionService::Stub> m_stub;
 	std::string m_providerID;
 	std::string m_providerName;
-	int m_requestCount;
+	int m_requestCount = 0;
 
 	pvxs::client::Context m_pvaContext;
 	pvxs::MPMCFIFO<std::shared_ptr<pvxs::client::Subscription>> m_pvaSubscriptions;
 	pvxs::MPMCFIFO<std::shared_ptr<pvxs::client::Subscription>> m_pvaWorkqueue;
 
-	std::atomic<bool> m_interrupted;
+	std::atomic<bool> m_interrupted = false;
 };

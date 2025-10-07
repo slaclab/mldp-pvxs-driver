@@ -3,59 +3,47 @@
 #include "mldp_pvxs_driver.h"
 
 #include <chrono>
-#include <iostream>
 #include <thread>
 
 #include "common.grpc.pb.h"
 
 using namespace std::chrono_literals;
 
-PVXSDPIngestionDriver::PVXSDPIngestionDriver(std::string providerName, const std::shared_ptr<grpc::Channel>& channel, const std::vector<std::string>& pvNames, const grpc::StubOptions& options, const pvxs::client::Context& pvaContext)
-	: m_logger{}
-	, m_stub{dp::service::ingestion::DpIngestionService::NewStub(channel, options)}
+PVXSDPIngestionDriver::PVXSDPIngestionDriver(std::string providerName, const std::shared_ptr<grpc::Channel>& channel, const std::vector<std::string>& pvNames, const Options& options)
+	: m_logger{options.logger}
+	, m_stub{dp::service::ingestion::DpIngestionService::NewStub(channel, options.grpcOptions)}
 	, m_providerName{std::move(providerName)}
-	, m_requestCount{0}
-	, m_pvaContext{pvaContext}
-	, m_interrupted{false}
+	, m_pvaContext{options.pvaContext}
 {
-	if (const auto registerProvider = [this] {
-		dp::service::ingestion::RegisterProviderRequest request;
-		request.set_providername(m_providerName);
-		request.set_description(providerDesc());
+	dp::service::ingestion::RegisterProviderRequest request;
+	request.set_providername(m_providerName);
+	request.set_description(providerDesc());
 
-		grpc::ClientContext context;
-		dp::service::ingestion::RegisterProviderResponse response;
-		if (const auto status = m_stub->registerProvider(&context, request, &response); status.ok()) {
-			if (response.has_registrationresult()) {
-				m_providerID = response.registrationresult().providerid();
-				std::cout << "Registered ingestion provider " << m_providerName << " with ID " << m_providerID << std::endl;
-				return true;
-			}
-			if (response.has_exceptionalresult()) {
-				std::cerr << "Registration of " << m_providerName << " ingestion provider failed: " << response.exceptionalresult().message() << std::endl;
-				return false;
-			}
-		} else {
-			std::cerr << "gRPC call failed: " << status.error_message() << std::endl;
-			return false;
-		}
-		return false;
-	}; !registerProvider()) {
-		m_stub.reset();
-		m_providerID = "";
-	} else {
-		for (const auto& pv : pvNames) {
-			m_pvaSubscriptions.push(m_pvaContext.monitor(pv)
-				.event([this](const pvxs::client::Subscription& s) {
-					m_pvaWorkqueue.push(s.shared_from_this());
-				})
-				.exec());
-		}
+	grpc::ClientContext context;
+	dp::service::ingestion::RegisterProviderResponse response;
+	if (const auto status = m_stub->registerProvider(&context, request, &response); !status.ok()) {
+		logError("gRPC call failed: " + status.error_message());
+		return;
 	}
-}
+	if (response.has_registrationresult()) {
+		m_providerID = response.registrationresult().providerid();
+		logInfo("Registered ingestion provider " + m_providerName + " with ID " + m_providerID);
+	} else if (response.has_exceptionalresult()) {
+		logError("Registration of " + m_providerName + " ingestion provider failed: " + response.exceptionalresult().message());
+		return;
+	} else {
+		// Should never be here
+		logError("Registration of " + m_providerName + " ingestion provider failed: no response!");
+		return;
+	}
 
-void PVXSDPIngestionDriver::setLogger(const PVXSDPIngestionDriverLogger& logger) {
-	m_logger = logger;
+	for (const auto& pv : pvNames) {
+		m_pvaSubscriptions.push(m_pvaContext.monitor(pv)
+			.event([this](const pvxs::client::Subscription& s) {
+				m_pvaWorkqueue.push(s.shared_from_this());
+			})
+			.exec());
+	}
 }
 
 const std::string& PVXSDPIngestionDriver::providerID() const {
@@ -222,6 +210,13 @@ void PVXSDPIngestionDriver::run() {
 
 void PVXSDPIngestionDriver::stop() {
 	m_interrupted = true;
+}
+
+void PVXSDPIngestionDriver::logInfo(const std::string& info) const {
+	if (m_logger.info) {
+		// If this is using std::cout, it is already thread-safe
+		m_logger.info(info);
+	}
 }
 
 void PVXSDPIngestionDriver::logError(const std::string& error) const {
