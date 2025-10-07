@@ -1,13 +1,13 @@
 cmake_minimum_required(VERSION 3.15)
-project(bsas_mldp_driver LANGUAGES CXX)
+project(mldp_pvxs_driver LANGUAGES CXX)
 
 # C++ Standard
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Options
-option(PVXS_MLDP_DRIVER_MAIN  "Build PVXS MLDP driver executable"  ON)
-option(PVXS_MLDP_DRIVER_TESTS "Build PVXS MLDP driver tests"      OFF)
+option(MLDP_PVXS_DRIVER_MAIN  "Build MLDP PVXS driver executable"  ON)
+option(MLDP_PVXS_DRIVER_TESTS "Build MLDP PVXS driver tests"      OFF)
 
 # Default to Release build
 if(NOT CMAKE_BUILD_TYPE)
@@ -105,65 +105,65 @@ add_custom_command(
 )
 
 # Proto library
-add_library(pvxs_mldp_driver_proto STATIC
+add_library(lib${PROJECT_NAME}_proto STATIC
         ${PROTO_SRCS}
         ${GRPC_SRCS}
 )
 
-target_link_libraries(pvxs_mldp_driver_proto PUBLIC
+target_link_libraries(lib${PROJECT_NAME}_proto PUBLIC
         protobuf::libprotobuf
         gRPC::grpc++
 )
 
-target_include_directories(pvxs_mldp_driver_proto PUBLIC
+target_include_directories(lib${PROJECT_NAME}_proto PUBLIC
         ${CMAKE_CURRENT_BINARY_DIR}/proto
 )
 
 # Base library
-add_library(libpvxs_mldp_driver
-        "${CMAKE_CURRENT_SOURCE_DIR}/include/pvxs_mldp_driver.h"
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/pvxs_mldp_driver.cpp"
+add_library(lib${PROJECT_NAME}
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/mldp_pvxs_driver.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/mldp_pvxs_driver.cpp"
 )
-target_link_libraries(libpvxs_mldp_driver PUBLIC pvxs_mldp_driver_proto Threads::Threads pvxs)
-target_include_directories(libpvxs_mldp_driver PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
-set_target_properties(libpvxs_mldp_driver PROPERTIES PREFIX "")
+target_link_libraries(lib${PROJECT_NAME} PUBLIC lib${PROJECT_NAME}_proto Threads::Threads pvxs)
+target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
+set_target_properties(lib${PROJECT_NAME} PROPERTIES PREFIX "")
 
 # Test base library
-if(PVXS_MLDP_DRIVER_TESTS)
+if(MLDP_PVXS_DRIVER_TESTS)
     include(FetchContent)
     FetchContent_Declare(googletest
             GIT_REPOSITORY "https://github.com/google/googletest.git"
             GIT_TAG        "main")
     FetchContent_MakeAvailable(googletest)
     enable_testing()
-    add_executable(pvxs_mldp_driver_test
+    add_executable(${PROJECT_NAME}_test
             "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/dp.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/dp.h"
             "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/sioc.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/sioc.h"
             "${CMAKE_CURRENT_SOURCE_DIR}/test/driver.cpp"
     )
-    target_link_libraries(pvxs_mldp_driver_test PRIVATE gtest_main libpvxs_mldp_driver)
+    target_link_libraries(${PROJECT_NAME}_test PRIVATE gtest_main lib${PROJECT_NAME})
     include(GoogleTest)
-    gtest_discover_tests(pvxs_mldp_driver_test)
+    gtest_discover_tests(${PROJECT_NAME}_test)
 endif()
 
 # Driver executable
-if(PVXS_MLDP_DRIVER_MAIN)
-    add_executable(pvxs_mldp_driver
+if(MLDP_PVXS_DRIVER_MAIN)
+    add_executable(${PROJECT_NAME}
             "${CMAKE_CURRENT_SOURCE_DIR}/ext/rapidyaml/include/rapidyaml-0.10.0.hpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/src/pvxs_mldp_driver_main.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/mldp_pvxs_driver_main.cpp"
     )
-    target_link_libraries(pvxs_mldp_driver PRIVATE libpvxs_mldp_driver)
-    target_include_directories(pvxs_mldp_driver PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/ext/rapidyaml/include")
+    target_link_libraries(${PROJECT_NAME} PRIVATE lib${PROJECT_NAME})
+    target_include_directories(${PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/ext/rapidyaml/include")
 endif()
 
 # Installation
-install(TARGETS pvxs_mldp_driver_proto
+install(TARGETS lib${PROJECT_NAME}_proto
         ARCHIVE DESTINATION lib
 )
 
-install(TARGETS libpvxs_mldp_driver
+install(TARGETS lib${PROJECT_NAME}
         ARCHIVE DESTINATION lib
 )
 
@@ -172,9 +172,9 @@ install(DIRECTORY include/
         FILES_MATCHING PATTERN "*.hpp" PATTERN "*.h"
 )
 
-if(PVXS_MLDP_DRIVER_MAIN)
+if(MLDP_PVXS_DRIVER_MAIN)
     install(TARGETS
-            pvxs_mldp_driver
+            ${PROJECT_NAME}
             RUNTIME DESTINATION bin
     )
 endif()
