@@ -1,6 +1,6 @@
 #include "gtest/gtest.h"
 
-#include "pvxs_mldp_driver.h"
+#include "mldp_pvxs_driver.h"
 
 #include "mock/dp.h"
 #include "mock/sioc.h"
