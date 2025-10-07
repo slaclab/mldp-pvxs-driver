@@ -117,7 +117,22 @@ bool PVXSDPIngestionDriver::convertPVToProtoValue(const pvxs::Value& pvValue, Da
 				break;
 			case pvxs::TypeCode::StructA:
 			case pvxs::TypeCode::UnionA: {
-				// todo(dp): pvxs array of structs
+				auto* protoArray = protoValue->mutable_arrayvalue();
+				const auto pvArray = pvValue.as<pvxs::shared_array<const pvxs::Value>>();
+				for (const auto& i : pvArray) {
+					auto* element = protoArray->add_datavalues();
+					auto* structure = element->mutable_structurevalue();
+					for (const auto& member : i.ichildren()) {
+						if (!member.valid()) {
+							continue;
+						}
+						auto* field = structure->add_fields();
+						field->set_name(i.nameOf(member));
+						if (!convertPVToProtoValue(member, field->mutable_value())) {
+							return false;
+						}
+					}
+				}
 				break;
 			}
 			case pvxs::TypeCode::AnyA:
