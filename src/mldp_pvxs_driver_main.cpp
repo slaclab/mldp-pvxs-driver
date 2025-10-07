@@ -44,6 +44,7 @@ std::unique_ptr<PVXSDPIngestionDriver> g_driver = nullptr;
 } // namespace
 
 int main(int argc, char** argv) {
+	g_logger.info = [](const std::string& info) { std::cout << info + '\n'; };
 	g_logger.error = [](const std::string& error) { std::cerr << error + '\n'; };
 
 	const auto exitHandler = [](int) { if (g_driver) g_driver->stop(); };
@@ -79,8 +80,7 @@ int main(int argc, char** argv) {
 
 	std::shared_ptr<grpc::Channel> channel;
 	if (configTreeRoot.has_child("credentials")) {
-		const auto credentialsTree = configTree["credentials"];
-		if (!credentialsTree.is_map()) {
+		if (const auto credentialsTree = configTree["credentials"]; !credentialsTree.is_map()) {
 			std::string credentialsType;
 			credentialsTree >> credentialsType;
 			if (credentialsType == "ssl") {
@@ -130,12 +130,13 @@ int main(int argc, char** argv) {
 	}
 	configTreeRoot["provider_name"] >> providerName;
 
-	g_driver = std::make_unique<PVXSDPIngestionDriver>(providerName, channel, pvsToMonitor);
+	g_driver = std::make_unique<PVXSDPIngestionDriver>(providerName, channel, pvsToMonitor, PVXSDPIngestionDriver::Options{
+		.logger = g_logger,
+	});
 	if (!g_driver || !*g_driver) {
 		g_logger.error("Failed to register provider " + providerName + '!');
 		return FAIL_UNKNOWN;
 	}
-	g_driver->setLogger(g_logger);
 
 	g_driver->run();
 	return FAIL_OK;
