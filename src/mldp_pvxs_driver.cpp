@@ -5,6 +5,7 @@
 #include <chrono>
 #include <thread>
 
+#include "BS_thread_pool.hpp"
 #include "common.grpc.pb.h"
 
 using namespace std::chrono_literals;
@@ -170,8 +171,8 @@ void PVXSDPIngestionDriver::ingestPVValue(const std::string& pvName, const pvxs:
 		return;
 	}
 
-	// todo(driver): use async gRPC calls here
-	std::thread{[this, pvName, request = std::move(request)] {
+	static BS::light_thread_pool pool;
+	pool.detach_task([this, pvName, request = std::move(request)] {
 		grpc::ClientContext context;
 		dp::service::ingestion::IngestDataResponse response;
 		static constexpr int RETRY_COUNT = 3;
@@ -181,7 +182,7 @@ void PVXSDPIngestionDriver::ingestPVValue(const std::string& pvName, const pvxs:
 		if (!status.ok()) {
 			logError("Ingestion failed for " + pvName + ": " + status.error_message());
 		}
-	}}.detach();
+	});
 }
 
 void PVXSDPIngestionDriver::run() {
