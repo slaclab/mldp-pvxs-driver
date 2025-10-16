@@ -1,6 +1,7 @@
 #include "dp.h"
 
 #include <chrono>
+#include <cstdlib>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -8,6 +9,9 @@
 #include <grpcpp/server_builder.h>
 
 using namespace dp::service::ingestion;
+
+DpIngestionServiceImpl::DpIngestionServiceImpl(std::function<void(const std::string&)> ingestionCallback)
+	: m_ingestionCallback(std::move(ingestionCallback)) {}
 
 grpc::Status DpIngestionServiceImpl::registerProvider(grpc::ServerContext* context, const RegisterProviderRequest* request, RegisterProviderResponse* response) {
 	std::cout << "[DP] registerProvider for provider: " << request->providername() << std::endl;
@@ -23,11 +27,16 @@ grpc::Status DpIngestionServiceImpl::registerProvider(grpc::ServerContext* conte
 
 grpc::Status DpIngestionServiceImpl::ingestData(grpc::ServerContext* context, const IngestDataRequest* request, IngestDataResponse* response) {
 	std::cout << "[DP] ingestData - Provider ID: " << request->providerid() << ", Request ID: " << request->clientrequestid() << std::endl;
-	std::cout << request->ingestiondataframe().DebugString() << std::endl;
+
+	// Simulate failed requests
+	if (rand() % 5 == 0) {
+		return grpc::Status::CANCELLED;
+	}
 
 	response->set_providerid(request->providerid());
 	response->set_clientrequestid(request->clientrequestid());
 
+	m_ingestionCallback(request->ingestiondataframe().DebugString());
 	return grpc::Status::OK;
 }
 
@@ -80,9 +89,9 @@ grpc::Status DpIngestionServiceImpl::subscribeData(grpc::ServerContext* context,
 	return grpc::Status::OK;
 }
 
-DPIngestionServer::DPIngestionServer(const std::string& serverAddress) {
-	m_updateThread = std::thread([serverAddress] {
-		DpIngestionServiceImpl service;
+DPIngestionServer::DPIngestionServer(const std::string& serverAddress, std::function<void(const std::string&)> ingestionCallback) {
+	m_updateThread = std::thread([serverAddress, ingestionCallback_ = std::move(ingestionCallback)] {
+		DpIngestionServiceImpl service{std::move(ingestionCallback_)};
 
 		grpc::ServerBuilder builder;
 		builder.AddListeningPort(serverAddress, grpc::InsecureServerCredentials());
