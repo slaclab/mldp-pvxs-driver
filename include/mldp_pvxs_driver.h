@@ -52,7 +52,7 @@ protected:
 	std::unique_ptr<dp::service::ingestion::DpIngestionService::Stub> m_stub;
 	std::string m_providerID;
 	std::string m_providerName;
-	int m_requestCount = 0;
+	std::atomic<int> m_requestCount = 0;
 
 	pvxs::client::Context m_pvaContext;
 	pvxs::MPMCFIFO<std::shared_ptr<pvxs::client::Subscription>> m_pvaSubscriptions;
