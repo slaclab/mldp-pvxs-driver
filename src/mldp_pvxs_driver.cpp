@@ -109,25 +109,18 @@ void PVXSDPIngestionDriver::convertPVToProtoValue(const pvxs::Value& pvValue, Da
 		case pvxs::TypeCode::String: protoValue->set_stringvalue(pvValue.as<std::string>()); break;
 		case pvxs::TypeCode::StringA: typeArraySetter(pvValue.as<pvxs::shared_array<const std::string>>(), static_cast<void(DataValue::*)(const std::string&)>(&DataValue::set_stringvalue)); break;
 		case pvxs::TypeCode::Struct:
-		case pvxs::TypeCode::Union: structSetter(pvValue, protoValue); break;
-		case pvxs::TypeCode::Any:
-			// todo(dp): pvxs Any value
-			break;
+		case pvxs::TypeCode::Union:
+		case pvxs::TypeCode::Any: structSetter(pvValue, protoValue); break;
 		case pvxs::TypeCode::StructA:
-		case pvxs::TypeCode::UnionA: {
+		case pvxs::TypeCode::UnionA:
+		case pvxs::TypeCode::AnyA: {
 			const auto pvArray = pvValue.as<pvxs::shared_array<const pvxs::Value>>();
 			for (const auto& i : pvArray) {
 				structSetter(i, protoValue->mutable_arrayvalue()->add_datavalues());
 			}
 			break;
 		}
-		case pvxs::TypeCode::AnyA:
-			// todo(dp): pvxs array of Any
-			break;
-		case pvxs::TypeCode::Null:
-			// todo(dp): is there something else we can set? check proto
-			protoValue->set_stringvalue("null");
-			break;
+		case pvxs::TypeCode::Null: protoValue->set_stringvalue("null"); break;
 	}
 }
 
