@@ -36,7 +36,7 @@ public:
 
 	static void convertPVToProtoValue(const pvxs::Value& pvValue, DataValue* protoValue);
 
-	void ingestPVValue(const std::string& pvName, const pvxs::Value& pvValue);
+	void ingestPVValue(const std::string& pvName, const pvxs::Value& pvValue, int currentRetryCount = 0);
 
 	void run();
 

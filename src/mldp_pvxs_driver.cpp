@@ -131,7 +131,7 @@ void PVXSDPIngestionDriver::convertPVToProtoValue(const pvxs::Value& pvValue, Da
 	}
 }
 
-void PVXSDPIngestionDriver::ingestPVValue(const std::string& pvName, const pvxs::Value& pvValue) {
+void PVXSDPIngestionDriver::ingestPVValue(const std::string& pvName, const pvxs::Value& pvValue, int currentRetryCount) {
 	dp::service::ingestion::IngestDataRequest request;
 	request.set_providerid(m_providerID);
 	request.set_clientrequestid("pv_" + pvName + "_" + std::to_string(m_requestCount++));
@@ -171,18 +171,18 @@ void PVXSDPIngestionDriver::ingestPVValue(const std::string& pvName, const pvxs:
 		return;
 	}
 
-	static BS::light_thread_pool pool;
-	pool.detach_task([this, pvName, request = std::move(request)] {
-		grpc::ClientContext context;
-		dp::service::ingestion::IngestDataResponse response;
-		static constexpr int RETRY_COUNT = 3;
-		int retry = 0;
-		grpc::Status status;
-		while (!(status = m_stub->ingestData(&context, request, &response)).ok() && ++retry < RETRY_COUNT) {}
-		if (!status.ok()) {
+	grpc::ClientContext context;
+	dp::service::ingestion::IngestDataResponse response;
+	if (const auto status = m_stub->ingestData(&context, request, &response); !status.ok()) {
+		// We are on our own thread, and it's OK to do this.
+		// We have to recreate the data frame, so it's easier to call this function again.
+		static constexpr int MAX_RETRIES = 3;
+		if (currentRetryCount < MAX_RETRIES) {
+			ingestPVValue(pvName, pvValue, currentRetryCount + 1);
+		} else {
 			logError("Ingestion failed for " + pvName + ": " + status.error_message());
 		}
-	});
+	}
 }
 
 void PVXSDPIngestionDriver::run() {
@@ -197,7 +197,10 @@ void PVXSDPIngestionDriver::run() {
 			if (!update) {
 				continue;
 			}
-			ingestPVValue(sub->name(), update);
+			static BS::light_thread_pool pool;
+			pool.detach_task([this, name = std::string{sub->name()}, update_ = std::move(update)] {
+				ingestPVValue(name, update_);
+			});
 		} catch (const pvxs::client::RemoteError& e) {
 			logError("Server error when reading PV " + sub->name() + ':' + e.what());
 		}

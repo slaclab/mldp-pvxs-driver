@@ -8,7 +8,11 @@
 TEST(pvxs_mldp_driver, counter) {
 	const std::string dpServerAddress{"localhost:8080"};
 
-	DPIngestionServer dp{dpServerAddress};
+	DPIngestionServer dp{dpServerAddress, [](const std::string& pvData) {
+#if 1
+		std::cout << pvData << std::endl;
+#endif
+	}};
 	PVServer pv;
 
 	const auto channel = grpc::CreateChannel(dpServerAddress, grpc::InsecureChannelCredentials());;

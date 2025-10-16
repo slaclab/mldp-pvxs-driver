@@ -1,5 +1,6 @@
 #pragma once
 
+#include <functional>
 #include <thread>
 
 #include "common.grpc.pb.h"
@@ -9,6 +10,8 @@ namespace dp::service::ingestion {
 
 class DpIngestionServiceImpl final : public DpIngestionService::Service {
 public:
+	explicit DpIngestionServiceImpl(std::function<void(const std::string&)> ingestionCallback);
+
 	grpc::Status registerProvider(grpc::ServerContext* context, const RegisterProviderRequest* request, RegisterProviderResponse* response) override;
 
 	grpc::Status ingestData(grpc::ServerContext* context, const IngestDataRequest* request, IngestDataResponse* response) override;
@@ -23,13 +26,14 @@ public:
 
 private:
 	int m_providerCounter = 0;
+	std::function<void(const std::string&)> m_ingestionCallback;
 };
 
 } // namespace dp::service::ingestion
 
 class DPIngestionServer {
 public:
-	explicit DPIngestionServer(const std::string& serverAddress);
+	explicit DPIngestionServer(const std::string& serverAddress, std::function<void(const std::string&)> ingestionCallback = nullptr);
 
 private:
 	std::thread m_updateThread;
