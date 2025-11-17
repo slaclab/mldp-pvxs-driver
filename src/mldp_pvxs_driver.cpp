@@ -128,7 +128,7 @@ void PVXSDPIngestionDriver::ingestPVValue(const std::string& pvName, const pvxs:
 	dp::service::ingestion::IngestDataRequest request;
 	request.set_providerid(m_providerID);
 	request.set_clientrequestid("pv_" + pvName + "_" + std::to_string(m_requestCount++));
-	request.add_tags(pvName); // todo(dp): is this correct?
+	request.add_tags(pvName);
 
 	auto* dataFrame = request.mutable_ingestiondataframe();
 	auto* timestamps = dataFrame->mutable_datatimestamps();
@@ -180,10 +180,6 @@ void PVXSDPIngestionDriver::ingestPVValue(const std::string& pvName, const pvxs:
 
 void PVXSDPIngestionDriver::run() {
 	while (!m_interrupted) {
-		if (m_pvaWorkqueue.size() == 0) {
-			std::this_thread::sleep_for(100ms);
-			continue;
-		}
 		auto sub = m_pvaWorkqueue.pop();
 		try {
 			pvxs::Value update = sub->pop();
