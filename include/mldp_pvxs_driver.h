@@ -38,7 +38,7 @@ public:
 
 	void ingestPVValue(const std::string& pvName, const pvxs::Value& pvValue, int currentRetryCount = 0);
 
-	void run();
+	void run(int timeout);
 
 	void stop();
 
