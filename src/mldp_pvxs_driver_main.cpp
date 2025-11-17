@@ -59,16 +59,18 @@ int main(int argc, char** argv) {
 	}
 
 	auto failure = MLDP_PVXS_DRIVER_ERROR_OK;
-	#define READ_FILE_OR_FAIL(name) \
-		::readFile(name, failure); \
-		do { \
-			if (failure != MLDP_PVXS_DRIVER_ERROR_OK) { \
-				g_logger.error("Failed to read file at " + std::string{name}); \
-				return failure; \
-			} \
-		} while (false)
+	const auto readFileWrapper = [&failure](const std::string& name) {
+		auto data = ::readFile(name, failure);
+		if (failure != MLDP_PVXS_DRIVER_ERROR_OK) {
+			g_logger.error("Failed to read file at " + name);
+		}
+		return data;
+	};
 
-	auto configContentsBuf = READ_FILE_OR_FAIL(configLocation);
+	auto configContentsBuf = readFileWrapper(configLocation);
+	if (failure != MLDP_PVXS_DRIVER_ERROR_OK) {
+		return failure;
+	}
 	const auto configTree = ryml::parse_in_place(c4::to_substr(configContentsBuf));
 	const auto configTreeRoot = configTree.rootref();
 
@@ -96,15 +98,24 @@ int main(int argc, char** argv) {
 			grpc::SslCredentialsOptions credentialsOptions;
 			if (credentialsTree.has_child("pem_cert_chain")) {
 				credentialsTree["pem_cert_chain"] >> credentialsOptions.pem_cert_chain;
-				credentialsOptions.pem_cert_chain = READ_FILE_OR_FAIL(credentialsOptions.pem_cert_chain);
+				credentialsOptions.pem_cert_chain = readFileWrapper(credentialsOptions.pem_cert_chain);
+				if (failure != MLDP_PVXS_DRIVER_ERROR_OK) {
+					return failure;
+				}
 			}
 			if (credentialsTree.has_child("pem_root_certs")) {
 				credentialsTree["pem_root_certs"] >> credentialsOptions.pem_root_certs;
-				credentialsOptions.pem_root_certs = READ_FILE_OR_FAIL(credentialsOptions.pem_root_certs);
+				credentialsOptions.pem_root_certs = readFileWrapper(credentialsOptions.pem_root_certs);
+				if (failure != MLDP_PVXS_DRIVER_ERROR_OK) {
+					return failure;
+				}
 			}
 			if (credentialsTree.has_child("pem_private_key")) {
 				credentialsTree["pem_private_key"] >> credentialsOptions.pem_private_key;
-				credentialsOptions.pem_private_key = READ_FILE_OR_FAIL(credentialsOptions.pem_private_key);
+				credentialsOptions.pem_private_key = readFileWrapper(credentialsOptions.pem_private_key);
+				if (failure != MLDP_PVXS_DRIVER_ERROR_OK) {
+					return failure;
+				}
 			}
 			channel = grpc::CreateChannel(serverAddress, grpc::SslCredentials(credentialsOptions));
 		}
