@@ -178,7 +178,8 @@ void PVXSDPIngestionDriver::ingestPVValue(const std::string& pvName, const pvxs:
 	}
 }
 
-void PVXSDPIngestionDriver::run() {
+void PVXSDPIngestionDriver::run(int timeout) {
+	const auto start = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch());
 	while (!m_interrupted) {
 		auto sub = m_pvaWorkqueue.pop();
 		try {
@@ -194,6 +195,15 @@ void PVXSDPIngestionDriver::run() {
 			logError("Server error when reading PV " + sub->name() + ':' + e.what());
 		}
 		m_pvaWorkqueue.push(sub);
+
+		if (timeout > 0) {
+			if (
+				const auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch()) - start;
+				elapsed.count() > timeout
+			) {
+				m_interrupted = true;
+			}
+		}
 	}
 	m_interrupted = false;
 }

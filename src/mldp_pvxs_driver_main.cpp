@@ -47,7 +47,7 @@ int main(int argc, char** argv) {
 	g_logger.info = [](const std::string& info) { std::cout << info + '\n'; };
 	g_logger.error = [](const std::string& error) { std::cerr << error + '\n'; };
 
-	const auto exitHandler = [](int) { if (g_driver) g_driver->stop(); };
+	const auto exitHandler = [](int) { if (g_driver) { g_driver->stop(); g_driver.reset(nullptr); } };
 	std::signal(SIGINT, exitHandler);
 	std::signal(SIGTERM, exitHandler);
 
@@ -143,6 +143,6 @@ int main(int argc, char** argv) {
 		return MLDP_PVXS_DRIVER_ERROR_UNKNOWN;
 	}
 
-	g_driver->run();
+	g_driver->run(-1);
 	return MLDP_PVXS_DRIVER_ERROR_OK;
 }
