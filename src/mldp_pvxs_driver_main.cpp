@@ -11,29 +11,29 @@
 
 namespace {
 
-enum Failure {
-	FAIL_OK,
-	FAIL_UNKNOWN,
-	FAIL_FILE_NOT_FOUND,
-	FAIL_FILE_NOT_READABLE,
-	FAIL_CONFIG_MALFORMED,
+enum MLDPPVXSDriverError : int {
+	MLDP_PVXS_DRIVER_ERROR_OK,
+	MLDP_PVXS_DRIVER_ERROR_UNKNOWN,
+	MLDP_PVXS_DRIVER_ERROR_FILE_NOT_FOUND,
+	MLDP_PVXS_DRIVER_ERROR_FILE_NOT_READABLE,
+	MLDP_PVXS_DRIVER_ERROR_CONFIG_MALFORMED,
 };
 
-[[nodiscard]] std::string readFile(const std::string& location, Failure& failure) {
+[[nodiscard]] std::string readFile(const std::string& location, MLDPPVXSDriverError& failure) {
 	std::ostringstream contents;
 	{
 		std::ifstream file{location};
 		if (file.fail()) {
-			failure = FAIL_FILE_NOT_FOUND;
+			failure = MLDP_PVXS_DRIVER_ERROR_FILE_NOT_FOUND;
 			return "";
 		}
 		file >> contents.rdbuf();
 		if (file.fail() && !file.eof()) {
-			failure = FAIL_FILE_NOT_READABLE;
+			failure = MLDP_PVXS_DRIVER_ERROR_FILE_NOT_READABLE;
 			return "";
 		}
 	}
-	failure = FAIL_OK;
+	failure = MLDP_PVXS_DRIVER_ERROR_OK;
 	return contents.str();
 }
 
@@ -58,11 +58,11 @@ int main(int argc, char** argv) {
 		configLocation = argv[1];
 	}
 
-	Failure failure = FAIL_OK;
+	auto failure = MLDP_PVXS_DRIVER_ERROR_OK;
 	#define READ_FILE_OR_FAIL(name) \
 		::readFile(name, failure); \
 		do { \
-			if (failure != FAIL_OK) { \
+			if (failure != MLDP_PVXS_DRIVER_ERROR_OK) { \
 				g_logger.error("Failed to read file at " + std::string{name}); \
 				return failure; \
 			} \
@@ -75,7 +75,7 @@ int main(int argc, char** argv) {
 	std::string serverAddress;
 	if (!configTreeRoot.has_child("server_address")) {
 		g_logger.error("No server address set in config.");
-		return FAIL_CONFIG_MALFORMED;
+		return MLDP_PVXS_DRIVER_ERROR_CONFIG_MALFORMED;
 	}
 	configTreeRoot["server_address"] >> serverAddress;
 
@@ -90,7 +90,7 @@ int main(int argc, char** argv) {
 				channel = grpc::CreateChannel(credentialsType, grpc::InsecureChannelCredentials());
 			} else {
 				g_logger.error("Invalid value set for credentials in config.");
-				return FAIL_CONFIG_MALFORMED;
+				return MLDP_PVXS_DRIVER_ERROR_CONFIG_MALFORMED;
 			}
 		} else {
 			grpc::SslCredentialsOptions credentialsOptions;
@@ -115,7 +115,7 @@ int main(int argc, char** argv) {
 	std::vector<std::string> pvsToMonitor;
 	if (!configTreeRoot.has_child("monitor_pvs")) {
 		g_logger.error("No PVs to monitor set in config.");
-		return FAIL_CONFIG_MALFORMED;
+		return MLDP_PVXS_DRIVER_ERROR_CONFIG_MALFORMED;
 	}
 	if (const auto pvs = configTreeRoot["monitor_pvs"]; pvs.is_seq()) {
 		for (const auto monitoredPV : pvs) {
@@ -125,13 +125,13 @@ int main(int argc, char** argv) {
 		}
 	} else {
 		g_logger.error("Monitor PVs field in config is not a list of values.");
-		return FAIL_CONFIG_MALFORMED;
+		return MLDP_PVXS_DRIVER_ERROR_CONFIG_MALFORMED;
 	}
 
 	std::string providerName;
 	if (!configTreeRoot.has_child("provider_name")) {
 		g_logger.error("No provider name set in config.");
-		return FAIL_CONFIG_MALFORMED;
+		return MLDP_PVXS_DRIVER_ERROR_CONFIG_MALFORMED;
 	}
 	configTreeRoot["provider_name"] >> providerName;
 
@@ -140,9 +140,9 @@ int main(int argc, char** argv) {
 	});
 	if (!g_driver || !*g_driver) {
 		g_logger.error("Failed to register provider " + providerName + '!');
-		return FAIL_UNKNOWN;
+		return MLDP_PVXS_DRIVER_ERROR_UNKNOWN;
 	}
 
 	g_driver->run();
-	return FAIL_OK;
+	return MLDP_PVXS_DRIVER_ERROR_OK;
 }
