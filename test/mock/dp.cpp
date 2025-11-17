@@ -90,7 +90,7 @@ grpc::Status DpIngestionServiceImpl::subscribeData(grpc::ServerContext* context,
 }
 
 DPIngestionServer::DPIngestionServer(const std::string& serverAddress, std::function<void(const std::string&)> ingestionCallback) {
-	m_updateThread = std::thread([serverAddress, ingestionCallback_ = std::move(ingestionCallback)] {
+	m_updateThread = std::thread([serverAddress, ingestionCallback_ = std::move(ingestionCallback)]() mutable {
 		DpIngestionServiceImpl service{std::move(ingestionCallback_)};
 
 		grpc::ServerBuilder builder;
