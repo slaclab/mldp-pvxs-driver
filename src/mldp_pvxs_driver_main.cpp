@@ -129,7 +129,7 @@ int main(int argc, char** argv) {
 		return MLDP_PVXS_DRIVER_ERROR_CONFIG_MALFORMED;
 	}
 	if (const auto pvs = configTreeRoot["monitor_pvs"]; pvs.is_seq()) {
-		for (const auto monitoredPV : pvs) {
+		for (const auto& monitoredPV : pvs) {
 			std::string pvName;
 			monitoredPV >> pvName;
 			pvsToMonitor.push_back(pvName);
