@@ -51,10 +51,6 @@ int main(int argc, char** argv) {
 	std::signal(SIGINT, exitHandler);
 	std::signal(SIGTERM, exitHandler);
 
-	if (argc < 1) [[unlikely]] {
-		return FAIL_UNKNOWN;
-	}
-
 	std::string configLocation;
 	if (argc < 2) {
 		configLocation = std::filesystem::path{argv[0]}.replace_extension(".yml").string();
