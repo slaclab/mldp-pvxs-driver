@@ -23,33 +23,78 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 find_package(Protobuf REQUIRED)
 find_package(gRPC REQUIRED)
 find_package(Threads REQUIRED)
+find_package(PkgConfig QUIET)
 
 # epics-base (7.0+)
 if(NOT EPICS_BASE)
     set(EPICS_BASE "$ENV{EPICS_BASE}")
-    if(NOT EPICS_BASE)
-        message(FATAL_ERROR "Could not read EPICS_BASE environment variable!")
-    endif()
 endif()
 if(NOT EPICS_HOST_ARCH)
     set(EPICS_HOST_ARCH "$ENV{EPICS_HOST_ARCH}")
-    if(NOT EPICS_HOST_ARCH)
-        message(FATAL_ERROR "Could not read EPICS_HOST_ARCH environment variable!")
-    endif()
 endif()
+
+# Prefer user hints but fall back to common dev-container install locations
+set(EPICS_LIB_HINTS "")
+if(EPICS_BASE)
+    list(APPEND EPICS_LIB_HINTS
+            "${EPICS_BASE}/lib"
+            "${EPICS_BASE}/lib/${EPICS_HOST_ARCH}")
+endif()
+list(APPEND EPICS_LIB_HINTS
+        "/opt/local/lib/${EPICS_HOST_ARCH}"
+        "/opt/local/lib/linux-${CMAKE_SYSTEM_PROCESSOR}"
+        "/opt/local/lib"
+        "/usr/local/lib"
+        "/usr/lib"
+        "/usr/lib/${CMAKE_SYSTEM_PROCESSOR}"
+        "/usr/lib/${EPICS_HOST_ARCH}"
+        "/usr/lib/aarch64-linux-gnu"
+        "/usr/lib64")
+
+find_library(EPICS_COM_LIB
+        NAMES Com libCom
+        PATHS ${EPICS_LIB_HINTS})
+
+if(NOT EPICS_COM_LIB)
+    message(FATAL_ERROR "Could not locate libCom. Set EPICS_BASE/EPICS_HOST_ARCH or install EPICS Base in a searchable location.")
+endif()
+
+get_filename_component(EPICS_LIB_DIR "${EPICS_COM_LIB}" DIRECTORY)
+
+set(EPICS_INCLUDE_HINTS "")
+if(EPICS_BASE)
+    list(APPEND EPICS_INCLUDE_HINTS "${EPICS_BASE}/include")
+endif()
+list(APPEND EPICS_INCLUDE_HINTS
+        "/opt/local/include"
+        "/usr/local/include"
+        "/usr/include"
+        "${EPICS_LIB_DIR}/../include")
+
+find_path(EPICS_INCLUDE_DIR epicsVersion.h PATHS ${EPICS_INCLUDE_HINTS})
+
+if(NOT EPICS_INCLUDE_DIR)
+    message(FATAL_ERROR "Could not locate EPICS headers. Set EPICS_BASE or add include path manually.")
+endif()
+
+set(EPICS_OS_DIR "os/Linux")
+if(APPLE)
+    set(EPICS_OS_DIR "os/Darwin")
+endif()
+
 add_library(epics-com SHARED IMPORTED)
-set_target_properties(epics-com PROPERTIES IMPORTED_LOCATION "${EPICS_BASE}/lib/${EPICS_HOST_ARCH}/libCom.so")
+set_target_properties(epics-com PROPERTIES IMPORTED_LOCATION "${EPICS_COM_LIB}")
 target_include_directories(epics-com INTERFACE
-        "${EPICS_BASE}/include"
-        "${EPICS_BASE}/include/os/Linux"
+        "${EPICS_INCLUDE_DIR}"
+        "${EPICS_INCLUDE_DIR}/${EPICS_OS_DIR}"
 )
 if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
     target_include_directories(epics-com INTERFACE
-            "${EPICS_BASE}/include/compiler/clang"
+            "${EPICS_INCLUDE_DIR}/compiler/clang"
     )
 elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     target_include_directories(epics-com INTERFACE
-            "${EPICS_BASE}/include/compiler/gcc"
+            "${EPICS_INCLUDE_DIR}/compiler/gcc"
     )
 else()
     message(FATAL_ERROR "Unable to determine compiler ID!")
@@ -58,14 +103,74 @@ endif()
 # pvxs
 if(NOT PVXS_BASE)
     set(PVXS_BASE "$ENV{PVXS_BASE}")
-    if(NOT PVXS_BASE)
-        message(FATAL_ERROR "Could not find PVXS! Set the PVXS_BASE variable to continue.")
+endif()
+
+set(PVXS_FOUND FALSE)
+if(PKG_CONFIG_FOUND)
+    pkg_check_modules(PVXS_PC QUIET pvxs)
+    if(PVXS_PC_FOUND)
+        add_library(pvxs INTERFACE IMPORTED)
+        target_link_libraries(pvxs INTERFACE epics-com ${PVXS_PC_LINK_LIBRARIES})
+        target_include_directories(pvxs INTERFACE ${PVXS_PC_INCLUDE_DIRS})
+        set(PVXS_FOUND TRUE)
     endif()
 endif()
-add_library(pvxs SHARED IMPORTED)
-set_target_properties(pvxs PROPERTIES IMPORTED_LOCATION "${PVXS_BASE}/lib/${EPICS_HOST_ARCH}/libpvxs.so")
-target_link_libraries(pvxs INTERFACE epics-com)
-target_include_directories(pvxs INTERFACE "${PVXS_BASE}/include")
+
+if(NOT PVXS_FOUND)
+    set(PVXS_LIB_HINTS "")
+    if(PVXS_BASE)
+        list(APPEND PVXS_LIB_HINTS
+                "${PVXS_BASE}/lib"
+                "${PVXS_BASE}/lib/${EPICS_HOST_ARCH}")
+    endif()
+    list(APPEND PVXS_LIB_HINTS
+            "/opt/pvxs/lib/${EPICS_HOST_ARCH}"
+            "/opt/pvxs/lib/linux-${CMAKE_SYSTEM_PROCESSOR}"
+            "/opt/pvxs/lib"
+            "/opt/local/lib/${EPICS_HOST_ARCH}"
+            "/opt/local/lib/linux-${CMAKE_SYSTEM_PROCESSOR}"
+            "/opt/local/lib"
+            "/usr/local/lib"
+            "/usr/lib"
+            "/usr/lib/${CMAKE_SYSTEM_PROCESSOR}"
+            "/usr/lib/${EPICS_HOST_ARCH}"
+            "/usr/lib/aarch64-linux-gnu"
+            "/usr/lib64"
+            "${EPICS_LIB_DIR}")
+
+    find_library(PVXS_LIB
+            NAMES pvxs libpvxs
+            PATHS ${PVXS_LIB_HINTS})
+
+    if(NOT PVXS_LIB)
+        message(FATAL_ERROR "Could not find pvxs library. Set PVXS_BASE or install pvxs in a searchable location.")
+    endif()
+
+    get_filename_component(PVXS_LIB_DIR "${PVXS_LIB}" DIRECTORY)
+
+    set(PVXS_INCLUDE_HINTS "")
+    if(PVXS_BASE)
+        list(APPEND PVXS_INCLUDE_HINTS "${PVXS_BASE}/include")
+    endif()
+    list(APPEND PVXS_INCLUDE_HINTS
+            "/opt/pvxs/include"
+            "/opt/local/include"
+            "/usr/local/include"
+            "/usr/include"
+            "${EPICS_INCLUDE_DIR}"
+            "${PVXS_LIB_DIR}/../include")
+
+    find_path(PVXS_INCLUDE_DIR pvxs/version.h PATHS ${PVXS_INCLUDE_HINTS})
+
+    if(NOT PVXS_INCLUDE_DIR)
+        message(FATAL_ERROR "Could not find pvxs headers. Set PVXS_BASE or add the include path manually.")
+    endif()
+
+    add_library(pvxs SHARED IMPORTED)
+    set_target_properties(pvxs PROPERTIES IMPORTED_LOCATION "${PVXS_LIB}")
+    target_link_libraries(pvxs INTERFACE epics-com)
+    target_include_directories(pvxs INTERFACE "${PVXS_INCLUDE_DIR}")
+endif()
 
 # Proto file configuration
 set(PROTO_PATH $ENV{PROTO_PATH})
@@ -92,9 +197,13 @@ endforeach()
 # Find grpc_cpp_plugin
 find_program(GRPC_CPP_PLUGIN grpc_cpp_plugin REQUIRED)
 
+# Create proto output directory
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/proto)
+
 # Custom command for proto compilation
 add_custom_command(
         OUTPUT ${PROTO_SRCS} ${PROTO_HDRS} ${GRPC_SRCS} ${GRPC_HDRS}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/proto
         COMMAND ${Protobuf_PROTOC_EXECUTABLE}
         --proto_path=${PROTO_PATH}
         --cpp_out=${CMAKE_CURRENT_BINARY_DIR}/proto

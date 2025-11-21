@@ -6,6 +6,18 @@
 step. The former should be the path to the parent directory of MLDP's protobuf definitions. The latter should be the
 directory containing the pvxs library.
 
+EPICS Base and pvxs are expected to be available in the development container under `/opt/local/lib/linux-<arch>`, but
+can be overridden explicitly at configure time:
+
+```
+cmake -S . -B build \
+  -DPROTO_PATH=/workspace/protos \
+  -DEPICS_BASE=/opt/local \
+  -DEPICS_HOST_ARCH=linux-aarch64 \
+  -DPVXS_BASE=/opt/local   # or /opt/pvxs if you only built pvxs without installing
+cmake --build build
+```
+
 ## Configuration
 
 When using the driver program, a YAML config file is necessary to set required settings. It should be passed as the
