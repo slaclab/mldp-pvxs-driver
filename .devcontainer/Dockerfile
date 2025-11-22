@@ -62,13 +62,22 @@ ARG EPICS_HOST_ARCH_BUILD
 RUN EPICS_HOST_ARCH_BUILD=$(cat /etc/epics_host_arch) && echo "EPICS_HOST_ARCH=$EPICS_HOST_ARCH_BUILD"
 ENV EPICS_HOST_ARCH=linux-aarch64
 
-# Build PVXS directly in /opt/local
+# Build PVXS
 RUN git clone --branch ${PVXS_VERSION} --depth 1 https://github.com/epics-base/pvxs.git /opt/pvxs
 WORKDIR /opt/pvxs
 RUN echo "EPICS_BASE=/opt/local" > configure/RELEASE.local && \
     echo "INSTALL_LOCATION=/opt/local" >> configure/RELEASE.local && \
-    cat configure/RELEASE.local && \
-    make -j 4 install
+    make -j 4 && \
+    make install && \
+    arch=$(cat /etc/epics_host_arch) && \
+    if ! ls /opt/local/lib/${arch}/libpvxs* >/dev/null 2>&1; then \
+        mkdir -p /opt/local/lib/${arch} && \
+        cp -a /opt/pvxs/lib/${arch}/. /opt/local/lib/${arch}/; \
+    fi && \
+    if ! ls /opt/local/include/pvxs/version.h >/dev/null 2>&1; then \
+        mkdir -p /opt/local/include && \
+        cp -a /opt/pvxs/include/. /opt/local/include/; \
+    fi
 
 # Set PVXS environment variable
 ENV PVXS_BASE=/opt/local
