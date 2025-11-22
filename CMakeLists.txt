@@ -40,16 +40,6 @@ if(EPICS_BASE)
             "${EPICS_BASE}/lib"
             "${EPICS_BASE}/lib/${EPICS_HOST_ARCH}")
 endif()
-list(APPEND EPICS_LIB_HINTS
-        "/opt/local/lib/${EPICS_HOST_ARCH}"
-        "/opt/local/lib/linux-${CMAKE_SYSTEM_PROCESSOR}"
-        "/opt/local/lib"
-        "/usr/local/lib"
-        "/usr/lib"
-        "/usr/lib/${CMAKE_SYSTEM_PROCESSOR}"
-        "/usr/lib/${EPICS_HOST_ARCH}"
-        "/usr/lib/aarch64-linux-gnu"
-        "/usr/lib64")
 
 find_library(EPICS_COM_LIB
         NAMES Com libCom
@@ -65,11 +55,7 @@ set(EPICS_INCLUDE_HINTS "")
 if(EPICS_BASE)
     list(APPEND EPICS_INCLUDE_HINTS "${EPICS_BASE}/include")
 endif()
-list(APPEND EPICS_INCLUDE_HINTS
-        "/opt/local/include"
-        "/usr/local/include"
-        "/usr/include"
-        "${EPICS_LIB_DIR}/../include")
+list(APPEND EPICS_INCLUDE_HINTS "${EPICS_LIB_DIR}/../include")
 
 find_path(EPICS_INCLUDE_DIR epicsVersion.h PATHS ${EPICS_INCLUDE_HINTS})
 
@@ -123,20 +109,6 @@ if(NOT PVXS_FOUND)
                 "${PVXS_BASE}/lib"
                 "${PVXS_BASE}/lib/${EPICS_HOST_ARCH}")
     endif()
-    list(APPEND PVXS_LIB_HINTS
-            "/opt/pvxs/lib/${EPICS_HOST_ARCH}"
-            "/opt/pvxs/lib/linux-${CMAKE_SYSTEM_PROCESSOR}"
-            "/opt/pvxs/lib"
-            "/opt/local/lib/${EPICS_HOST_ARCH}"
-            "/opt/local/lib/linux-${CMAKE_SYSTEM_PROCESSOR}"
-            "/opt/local/lib"
-            "/usr/local/lib"
-            "/usr/lib"
-            "/usr/lib/${CMAKE_SYSTEM_PROCESSOR}"
-            "/usr/lib/${EPICS_HOST_ARCH}"
-            "/usr/lib/aarch64-linux-gnu"
-            "/usr/lib64"
-            "${EPICS_LIB_DIR}")
 
     find_library(PVXS_LIB
             NAMES pvxs libpvxs
@@ -153,10 +125,6 @@ if(NOT PVXS_FOUND)
         list(APPEND PVXS_INCLUDE_HINTS "${PVXS_BASE}/include")
     endif()
     list(APPEND PVXS_INCLUDE_HINTS
-            "/opt/pvxs/include"
-            "/opt/local/include"
-            "/usr/local/include"
-            "/usr/include"
             "${EPICS_INCLUDE_DIR}"
             "${PVXS_LIB_DIR}/../include")
 
