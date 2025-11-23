@@ -1,0 +1,50 @@
+buildType: 
+  default: debug 
+  description: Build Type  
+  choices:
+    debug:
+      short: Debug 
+      long: Build with debugging information 
+      buildType: Debug
+    release:
+      short: Release 
+      long: Optimize the resulting binaries
+      buildType: Release
+    relWithDebInfo:
+      short: RelWithDebInfo 
+      long: Release with debug information
+      buildType: RelWithDebInfo
+    minSizeRel:
+      short: MinSizeRel 
+      long: Release minimum size
+      buildType: MinSizeRel
+
+tests:
+  default: off
+  description: "Build Tests"
+  choices:
+    on:
+      short: Tests ON
+      long: Build with tests enabled
+      settings: 
+        MLDP_PVXS_DRIVER_TESTS: ON
+    off:
+      short: Tests OFF
+      long: Build without tests
+      settings: 
+        MLDP_PVXS_DRIVER_TESTS: OFF
+
+verboseMakefile:
+  default: off
+  description: "Verbose Makefile output"
+  choices:
+    on:
+      short: Verbose
+      long: Enable verbose makefile output
+      settings:
+        CMAKE_VERBOSE_MAKEFILE: ON
+    off:
+      short: Quiet
+      long: Disable verbose makefile output
+      settings:
+        CMAKE_VERBOSE_MAKEFILE: OFF
