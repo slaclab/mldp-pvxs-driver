@@ -1,0 +1,4 @@
+workflow: TrunkBased/preview1
+branches:
+  main:
+    increment: none
