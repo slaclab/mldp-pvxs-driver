@@ -1,0 +1,37 @@
+version: '3.8'
+
+#volumes:
+#  redis-data:
+#    null
+services:
+
+  mongodb:
+    image: mongo:8
+    restart: on-failure
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=admin
+      - MONGO_INITDB_ROOT_PASSWORD=admin
+    ports:
+      - "27017:27017"
+
+  dp-ingestion:
+    image: ghcr.io/eed-web-application/dp-service:v1.11.0
+    container_name: dp-ingestion
+    depends_on:
+      - mongodb
+    entrypoint:
+      - "java"
+    command:
+      - "-Ddp.MongoClient.dbHost=mongodb"
+      - "-Ddp.MongoClient.dbPort=27017"
+      - "-Ddp.MongoClient.dbUser=admin"
+      - "-Ddp.MongoClient.dbPassword=admin"
+      - "-cp"
+      - "/app/app.jar"
+      - "com.ospreydcs.dp.service.ingest.server.IngestionGrpcServer"
+    ports:
+      - "50051:50051"
+      
+volumes:
+  kafka-data:
+  consul_data:
