@@ -56,9 +56,8 @@ jobs:
           context: .
           file: .devcontainer/Dockerfile
           tags: mldp-pvxs-driver-ci:latest
+          outputs: type=cacheonly
           load: true
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
           build-args: |
             COMPILER=llvm
             PVXS_VERSION=1.4.1
