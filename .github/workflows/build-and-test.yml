@@ -22,13 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     container: docker.io/ubuntu:noble
     env:
-      BUILD_IMAGE: ubuntu:noble
-      ARTIFACT_NAME: artifact-gcc-ubuntu
       BUILD_TYPE: Debug
-      DEV_IMAGE_NAME: mldp-pvxs-driver-dev
-    outputs:
-      build_image: ${{ env.BUILD_IMAGE }}
-      artifact_name: ${{ env.ARTIFACT_NAME }}
     steps:
       - name: Setup build system
         run: |
@@ -70,13 +64,3 @@ jobs:
             cmake -S /workspace -B /workspace/build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DENABLE_ASAN=1 -DMLDP_PVXS_DRIVER_TESTS=ON -DCMAKE_INSTALL_PREFIX=/workspace/build/local && \
             cmake --build /workspace/build --config ${{env.BUILD_TYPE}} --target install && \
             ctest --test-dir /workspace/build --output-on-failure"
-      # Upload build logs even when the job fails. Use `always()` and allow the step to continue on error
-      # so the overall job doesn't abort due to artifact upload issues.
-      - name: Get log on failure
-        if: ${{ always() && steps.build.outcome == 'failure' }}
-        continue-on-error: true
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{env.ARTIFACT_NAME}}-log
-          path: build/**/*.log
-          retention-days: 1
