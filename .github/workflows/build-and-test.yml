@@ -60,7 +60,6 @@ jobs:
           build-args: |
             COMPILER=llvm
             PVXS_VERSION=1.4.1
-      - run: git config --global --add safe.directory '*'
       - name: Configure, build, test inside dev image
         id: build
         run: |
