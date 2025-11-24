@@ -41,7 +41,8 @@ RUN if [ "$COMPILER" = "llvm" ]; then \
         echo "CMPLR_CLASS = clang" >> configure/os/CONFIG_SITE.Common.linux-x86_64 && \
         mkdir -p include/compiler/clang; \
     fi
-RUN make -j 4 INSTALL_LOCATION=/opt/local
+RUN make -j 4 INSTALL_LOCATION=/opt/local && \
+    make install INSTALL_LOCATION=/opt/local
 
 # Set EPICS environment variables
 ENV EPICS_BASE=/opt/local

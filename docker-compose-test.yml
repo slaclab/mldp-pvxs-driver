@@ -8,5 +8,15 @@ services:
         PVXS_VERSION: 1.4.1
     volumes:
       - .:/workspace:cached
+    depends_on:
+      - mongodb
+      - dp-ingestion
     working_dir: /workspace
-    command: sleep infinity
+    entrypoint: []
+    command: >
+      bash -lc "
+        rm -rf build &&
+        cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DMLDP_PVXS_DRIVER_TESTS=ON &&
+        cmake --build build --config RelWithDebInfo &&
+        ctest --test-dir build --output-on-failure
+      "

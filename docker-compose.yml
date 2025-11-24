@@ -1,5 +1,4 @@
 services:
-
   mongodb:
     image: mongo:8
     restart: on-failure

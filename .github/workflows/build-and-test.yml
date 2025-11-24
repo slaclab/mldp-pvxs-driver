@@ -54,7 +54,4 @@ jobs:
       - name: Configure, build, test inside dev image
         id: build
         run: |
-          docker compose -f docker-compose-test.yml run --rm ci bash -lc "\
-            cmake -S /workspace -B /workspace/build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DENABLE_ASAN=1 -DMLDP_PVXS_DRIVER_TESTS=ON -DCMAKE_INSTALL_PREFIX=/workspace/build/local && \
-            cmake --build /workspace/build --config ${{env.BUILD_TYPE}} --target install && \
-            ctest --test-dir /workspace/build --output-on-failure"
+          docker compose -f docker-compose.yml -f docker-compose-test.yml up --abort-on-container-exit --exit-code-from ci ci
