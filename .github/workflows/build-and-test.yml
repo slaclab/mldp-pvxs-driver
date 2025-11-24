@@ -62,8 +62,8 @@ jobs:
           context: .
           file: .devcontainer/Dockerfile
           tags: mldp-pvxs-driver-ci:latest
-          cache-from: type=registry,scope=mldp-pvxs-driver-ci
-          cache-to: type=registry,mode=max,scope=mldp-pvxs-driver-ci
+          cache-from: type=registry,ref=user/app:buildcache
+          cache-to: type=registry,ref=user/app:buildcache,mode=max
           load: true
           build-args: |
             COMPILER=llvm
