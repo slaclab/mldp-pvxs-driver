@@ -1,25 +1,12 @@
-#include "gtest/gtest.h"
+#include <gtest/gtest.h>
 
-#include "mldp_pvxs_driver.h"
+#include <mldp_pvxs_driver.h>
 
-#include "mock/dp.h"
 #include "mock/sioc.h"
 
 TEST(pvxs_mldp_driver, counter) {
-	const std::string dpServerAddress{"localhost:8080"};
+	const std::string dpServerAddress{"dp-ingestion:50051"};
 
-	DPIngestionServer dp{dpServerAddress, [](const std::string& pvData) {
-		EXPECT_TRUE(
-			pvData.find("test:counter") != std::string::npos ||
-			pvData.find("test:voltage") != std::string::npos ||
-			pvData.find("test:status") != std::string::npos ||
-			pvData.find("test:waveform") != std::string::npos ||
-			pvData.find("test:table") != std::string::npos
-		);
-#ifdef DEBUG
-		std::cout << pvData << std::endl;
-#endif
-	}};
 	PVServer pv;
 
 	// ReSharper disable once CppTooWideScope

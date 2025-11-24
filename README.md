@@ -18,6 +18,34 @@ cmake -S . -B build \
 cmake --build build
 ```
 
+## Debugging
+
+When debugging inside the dev container, the LLVM `lldb-dap` adapter from the bundled extension needs an explicit path.
+Set **LLDB DAP › Executable: Path** in VS Code to `/usr/bin/lldb-dap-18` (Preferences → Settings → Extensions → LLDB DAP).
+Alternatively, add the following to `.vscode/settings.json` within this repository:
+
+```jsonc
+{
+  "lldb.executable": "/usr/bin/lldb-dap-18"
+}
+```
+
+To make this automatic for everyone using the dev container, you can bake the setting into `.devcontainer/devcontainer.json`:
+
+```jsonc
+{
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "lldb.executable": "/usr/bin/lldb-dap-18"
+      }
+    }
+  }
+}
+```
+
+Rebuild the dev container after changing the configuration so the setting is applied on startup.
+
 ## Configuration
 
 When using the driver program, a YAML config file is necessary to set required settings. It should be passed as the

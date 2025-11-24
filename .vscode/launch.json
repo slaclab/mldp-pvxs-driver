@@ -3,23 +3,22 @@
     "configurations": [
         {
             "name": "(lldb) Launch Tests",
-            "type": "cppdbg",
+            "type": "lldb-dap",
             "request": "launch",
             "program": "${workspaceFolder}/build/bin/mldp_pvxs_driver_test",
             "args": [],
-            "stopAtEntry": false,
+            // "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
-            "environment": [],
-            "externalConsole": false,
-            "MIMode": "lldb",
-            "setupCommands": [
-                {
-                    "description": "Enable pretty-printing for lldb",
-                    "text": "-enable-pretty-printing",
-                    "ignoreFailures": true
-                }
-            ],
-            "preLaunchTask": "Build Tests"
+            // "environment": [],
+            // "externalConsole": false,
+            // "MIMode": "lldb",
+            // "setupCommands": [
+            //     {
+            //         "description": "Enable pretty-printing for lldb",
+            //         "text": "-enable-pretty-printing",
+            //         "ignoreFailures": true
+            //     }
+            // ]
         },
         {
             "name": "(lldb) Launch Tests - Specific Test",
@@ -40,8 +39,7 @@
                     "text": "-enable-pretty-printing",
                     "ignoreFailures": true
                 }
-            ],
-            "preLaunchTask": "Build Tests"
+            ]
         },
         {
             "name": "(gdb) Launch Tests",
@@ -60,8 +58,7 @@
                     "text": "-enable-pretty-printing",
                     "ignoreFailures": true
                 }
-            ],
-            "preLaunchTask": "Build Tests"
+            ]
         },
         {
             "name": "(lldb) Launch Main",

@@ -2,14 +2,13 @@
 // README at: https://github.com/devcontainers/templates/tree/main/src/ubuntu
 {
 	"name": "MLDP PVXS Driver Dev Container",
-	// Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
-	"build": {
-		"dockerfile": "Dockerfile",
-		"args": {
-			// Set to "gcc" (default) or "llvm" to choose the default compiler
-			"COMPILER": "llvm"
-		}
-	},
+	// Use docker-compose to include additional services
+	"dockerComposeFile": [
+		"../docker-compose.yml",
+		"docker-compose.devcontainer.yml"
+	],
+	"service": "devcontainer",
+	"workspaceFolder": "/workspace",
 
 	// Features to add to the dev container. More info: https://containers.dev/features.
 	// "features": {},
@@ -26,13 +25,17 @@
 			"extensions": [
 				"ms-vscode.cmake-tools",
 				"llvm-vs-code-extensions.vscode-clangd",
+				"llvm-vs-code-extensions.lldb-dap",
 				"ms-vscode.cpptools-extension-pack",
 				"ms-vscode.cpptools",
 				"ms-vscode.cpptools-themes"
-			]
+			],
+			"settings": {
+				"lldb.executable": "/usr/bin/lldb-dap-18"
+			}
 		}
-	}
+	},
 
 	// Uncomment to connect as root instead. More info: https://aka.ms/dev-containers-non-root.
-	// "remoteUser": "root"
+	"remoteUser": "root"
 }
