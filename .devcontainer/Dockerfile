@@ -4,8 +4,6 @@ FROM ubuntu:noble
 ARG COMPILER=llvm
 # PVXS version to build
 ARG PVXS_VERSION=1.4.1
-# Build platform architecture
-ARG TARGETARCH
 
 # Install common dependencies and compiler-specific packages
 RUN apt update && \
@@ -47,30 +45,38 @@ RUN make -j 4 INSTALL_LOCATION=/opt/local && \
 # Set EPICS environment variables
 ENV EPICS_BASE=/opt/local
 
-# Automatically determine EPICS_HOST_ARCH based on the build architecture
-# We store it in a file and source it in bashrc for shell sessions
-RUN case "$(uname -m)" in \
-        x86_64) EPICS_ARCH="linux-x86_64" ;; \
-        aarch64|arm64) EPICS_ARCH="linux-aarch64" ;; \
-        *) EPICS_ARCH="linux-$(uname -m)" ;; \
-    esac && \
+# Determine EPICS host architecture and ensure toolchain paths exist
+RUN EPICS_ARCH=$(/opt/epics/startup/EpicsHostArch) && \
+    if [ -z "$EPICS_ARCH" ]; then \
+        arch=$(uname -m) && \
+        case "$arch" in \
+            x86_64) EPICS_ARCH="linux-x86_64" ;; \
+            aarch64|arm64) EPICS_ARCH="linux-aarch64" ;; \
+            *) EPICS_ARCH="linux-$arch" ;; \
+        esac; \
+    fi && \
     echo "$EPICS_ARCH" > /etc/epics_host_arch && \
-    echo "export EPICS_HOST_ARCH=$(cat /etc/epics_host_arch)" >> /etc/bash.bashrc
-
-# Set ENV variable - Docker ENV doesn't support command substitution, so we hardcode common values
-# The value in /etc/bash.bashrc will override this in shell sessions
-ARG EPICS_HOST_ARCH_BUILD
-RUN EPICS_HOST_ARCH_BUILD=$(cat /etc/epics_host_arch) && echo "EPICS_HOST_ARCH=$EPICS_HOST_ARCH_BUILD"
-ENV EPICS_HOST_ARCH=linux-aarch64
+    printf 'export EPICS_HOST_ARCH=%s\n' "$EPICS_ARCH" >> /etc/profile.d/epics.sh && \
+    printf 'export EPICS_HOST_ARCH=%s\n' "$EPICS_ARCH" >> /etc/bash.bashrc && \
+    printf 'EPICS_HOST_ARCH=%s\n' "$EPICS_ARCH" >> /etc/environment && \
+    if [ ! -d /opt/epics/bin/${EPICS_ARCH} ] && [ -d /opt/local/bin/${EPICS_ARCH} ]; then \
+        mkdir -p /opt/epics/bin && \
+        ln -s /opt/local/bin/${EPICS_ARCH} /opt/epics/bin/${EPICS_ARCH}; \
+    fi && \
+    if [ ! -d /opt/epics/lib/${EPICS_ARCH} ] && [ -d /opt/local/lib/${EPICS_ARCH} ]; then \
+        mkdir -p /opt/epics/lib && \
+        ln -s /opt/local/lib/${EPICS_ARCH} /opt/epics/lib/${EPICS_ARCH}; \
+    fi
 
 # Build PVXS
 RUN git clone --branch ${PVXS_VERSION} --depth 1 https://github.com/epics-base/pvxs.git /opt/pvxs
 WORKDIR /opt/pvxs
-RUN echo "EPICS_BASE=/opt/local" > configure/RELEASE.local && \
+RUN arch=$(cat /etc/epics_host_arch) && \
+    echo "EPICS_BASE=/opt/local" > configure/RELEASE.local && \
+    echo "EPICS_HOST_ARCH=$arch" >> configure/RELEASE.local && \
     echo "INSTALL_LOCATION=/opt/local" >> configure/RELEASE.local && \
-    make -j 4 && \
-    make install && \
-    arch=$(cat /etc/epics_host_arch) && \
+    EPICS_HOST_ARCH=$arch make -j 4 && \
+    EPICS_HOST_ARCH=$arch make install && \
     if ! ls /opt/local/lib/${arch}/libpvxs* >/dev/null 2>&1; then \
         mkdir -p /opt/local/lib/${arch} && \
         cp -a /opt/pvxs/lib/${arch}/. /opt/local/lib/${arch}/; \
