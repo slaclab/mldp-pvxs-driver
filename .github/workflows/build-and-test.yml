@@ -36,12 +36,13 @@ jobs:
       - name: Checkout source code
         uses: actions/checkout@v3
       - name: Install GitVersion
-        uses: gittools/actions/gitversion/setup@v4
+        uses: gittools/actions/gitversion/setup@v4.2.0
         with:
-          versionSpec: '6.4'
+          versionSpec: '6.4.x'
+          preferLatestVersion: true
       - name: Determine Version
         id: gitversion
-        uses: gittools/actions/gitversion/execute@v4
+        uses: gittools/actions/gitversion/execute@v4.2.0
         with:
           useConfigFile: true
       - name: Update version header
