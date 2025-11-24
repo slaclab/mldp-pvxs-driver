@@ -30,13 +30,6 @@ jobs:
       build_image: ${{ env.BUILD_IMAGE }}
       artifact_name: ${{ env.ARTIFACT_NAME }}
     steps:
-      - name: Install GitVersion
-        uses: GitTools/actions/gitversion/setup@v1
-        with:
-          versionSpec: '5.x'
-      - name: Determine version
-        id: gitversion
-        uses: GitTools/actions/gitversion/execute@v1
       - name: Setup build system
         run: |
           export DEBIAN_FRONTEND=noninteractive
@@ -48,6 +41,15 @@ jobs:
             python3 python3-venv python3-pip python-is-python3
       - name: Checkout source code
         uses: actions/checkout@v3
+      - name: Install GitVersion
+        uses: gittools/actions/gitversion/setup@v4
+        with:
+          versionSpec: '6.4'
+      - name: Determine Version
+        id: gitversion
+        uses: gittools/actions/gitversion/execute@v4
+        with:
+          useConfigFile: true
       - name: Update version header
         run: |
           cat > include/version.h <<EOF
