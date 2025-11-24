@@ -18,7 +18,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   build_test_ubuntu:
-    name: Build Ubuntu
+    name: Build and test
     runs-on: ubuntu-latest
     container: docker:23.0.0-cli
     env:
@@ -49,7 +49,7 @@ jobs:
       #     #define MLDP_PVXS_DRIVER_VERSION "${{ steps.gitversion.outputs.SemVer }}"
       #     EOF
       - name: Build dev image
-        run: docker compose -f docker-compose-test.yml build ci
+        run: docker compose -f docker-compose.yml -f docker-compose-test.yml build ci
       - run: git config --global --add safe.directory '*'
       - name: Configure, build, test inside dev image
         id: build
