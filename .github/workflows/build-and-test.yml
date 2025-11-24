@@ -20,7 +20,7 @@ jobs:
   build_test_ubuntu:
     name: Build Ubuntu
     runs-on: ubuntu-latest
-    container: docker.io/ubuntu:noble
+    container: docker:23.0.0-cli
     env:
       BUILD_TYPE: Debug
     steps:
@@ -38,16 +38,16 @@ jobs:
       #   uses: gittools/actions/gitversion/execute@v4.2.0
       #   with:
       #     useConfigFile: true
-      - name: Update version header
-        run: |
-          cat > include/version.h <<EOF
-          #pragma once
+      # - name: Update version header
+      #   run: |
+      #     cat > include/version.h <<EOF
+      #     #pragma once
 
-          #define MLDP_PVXS_DRIVER_VERSION_MAJOR ${{ steps.gitversion.outputs.Major }}
-          #define MLDP_PVXS_DRIVER_VERSION_MINOR ${{ steps.gitversion.outputs.Minor }}
-          #define MLDP_PVXS_DRIVER_VERSION_PATCH ${{ steps.gitversion.outputs.Patch }}
-          #define MLDP_PVXS_DRIVER_VERSION "${{ steps.gitversion.outputs.SemVer }}"
-          EOF
+      #     #define MLDP_PVXS_DRIVER_VERSION_MAJOR ${{ steps.gitversion.outputs.Major }}
+      #     #define MLDP_PVXS_DRIVER_VERSION_MINOR ${{ steps.gitversion.outputs.Minor }}
+      #     #define MLDP_PVXS_DRIVER_VERSION_PATCH ${{ steps.gitversion.outputs.Patch }}
+      #     #define MLDP_PVXS_DRIVER_VERSION "${{ steps.gitversion.outputs.SemVer }}"
+      #     EOF
       - name: Build dev image
         run: docker compose -f docker-compose-test.yml build ci
       - run: git config --global --add safe.directory '*'
