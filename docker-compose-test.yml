@@ -1,11 +1,6 @@
-services:
-  ci:
-    build:
-      context: .
-      dockerfile: .devcontainer/Dockerfile
-      args:
-        COMPILER: llvm
-        PVXS_VERSION: 1.4.1
+# Shared runtime configuration for CI jobs; overrides below only adjust build strategy.
+x-ci-common: &ci-common
+    image: mldp-pvxs-driver-ci:latest
     volumes:
       - .:/workspace:cached
     depends_on:
@@ -20,3 +15,18 @@ services:
         cmake --build build --config RelWithDebInfo &&
         ctest --test-dir build --output-on-failure
       "
+
+services:
+  ci:
+    <<: *ci-common
+    build:
+      context: .
+      dockerfile: .devcontainer/Dockerfile
+      args:
+        COMPILER: llvm
+        PVXS_VERSION: 1.4.1
+  ci-prebuilt:
+    # Enable the `prebuilt` profile to reuse an existing image instead of rebuilding.
+    <<: *ci-common
+    profiles:
+      - prebuilt
