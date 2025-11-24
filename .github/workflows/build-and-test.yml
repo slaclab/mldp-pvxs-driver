@@ -24,27 +24,20 @@ jobs:
     env:
       BUILD_TYPE: Debug
     steps:
-      - name: Setup build system
-        run: |
-          export DEBIAN_FRONTEND=noninteractive
-          apt update
-          apt install -y \
-            build-essential cmake git tclsh ninja-build gdb lcov \
-            libssl-dev libsasl2-dev curl libcurl4-openssl-dev \
-            valgrind libicu-dev jq file sudo pkg-config \
-            python3 python3-venv python3-pip python-is-python3
       - name: Checkout source code
         uses: actions/checkout@v3
-      - name: Install GitVersion
-        uses: gittools/actions/gitversion/setup@v4.2.0
         with:
-          versionSpec: '6.4.x'
-          preferLatestVersion: true
-      - name: Determine Version
-        id: gitversion
-        uses: gittools/actions/gitversion/execute@v4.2.0
-        with:
-          useConfigFile: true
+          fetch-depth: 0
+      # - name: Install GitVersion
+      #   uses: gittools/actions/gitversion/setup@v4.2.0
+      #   with:
+      #     versionSpec: '6.4.x'
+      #     preferLatestVersion: true
+      # - name: Determine Version
+      #   id: gitversion
+      #   uses: gittools/actions/gitversion/execute@v4.2.0
+      #   with:
+      #     useConfigFile: true
       - name: Update version header
         run: |
           cat > include/version.h <<EOF
