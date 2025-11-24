@@ -1,0 +1,12 @@
+services:
+  ci:
+    build:
+      context: .
+      dockerfile: .devcontainer/Dockerfile
+      args:
+        COMPILER: llvm
+        PVXS_VERSION: 1.4.1
+    volumes:
+      - .:/workspace:cached
+    working_dir: /workspace
+    command: sleep infinity
