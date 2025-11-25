@@ -20,7 +20,6 @@ jobs:
   build_test_ubuntu:
     name: Build and test
     runs-on: ubuntu-latest
-    container: docker:23.0.0-cli
     env:
       BUILD_TYPE: Debug
     steps:
@@ -68,6 +67,8 @@ jobs:
           build-args: |
             COMPILER=llvm
             PVXS_VERSION=1.4.1
+      - name: Set up Docker Compose
+        uses: docker/setup-compose-action@v1
       - name: Configure, build, test inside dev image
         id: build
         run: |
