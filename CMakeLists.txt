@@ -210,11 +210,18 @@ target_include_directories(lib${PROJECT_NAME}_proto PUBLIC
 # Base library
 add_library(lib${PROJECT_NAME}
         "${CMAKE_CURRENT_SOURCE_DIR}/ext/BS_thread_pool/include/BS_thread_pool.hpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/include/mldp_pvxs_driver.h"
+        # "${CMAKE_CURRENT_SOURCE_DIR}/include/bus/IEventBusPush.h"
+        # "${CMAKE_CURRENT_SOURCE_DIR}/include/reader/Reader.h"
+        # "${CMAKE_CURRENT_SOURCE_DIR}/include/reader/ReaderFactory.h"
+        # "${CMAKE_CURRENT_SOURCE_DIR}/include/mldp_pvxs_driver.h"
+        # "${CMAKE_CURRENT_SOURCE_DIR}/include/reader/impl/epics/EpicsReader.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/EpicsReader.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/config/Config.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/mldp_pvxs_driver.cpp"
 )
 target_link_libraries(lib${PROJECT_NAME} PUBLIC lib${PROJECT_NAME}_proto Threads::Threads pvxs)
 target_include_directories(lib${PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/ext/BS_thread_pool/include")
+target_include_directories(lib${PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/ext/rapidyaml/include")
 target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 # Ensure the build tree's generated headers (e.g. config.h) are visible to users of the library
 target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_BINARY_DIR}")

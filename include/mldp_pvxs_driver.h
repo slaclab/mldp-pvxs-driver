@@ -9,7 +9,7 @@
 #include <pvxs/client.h>
 #include <pvxs/nt.h>
 
-#include "ingestion.grpc.pb.h"
+#include <ingestion.grpc.pb.h>
 
 struct PVXSDPIngestionDriverLogger {
 	void(*info)(const std::string& info) = nullptr;

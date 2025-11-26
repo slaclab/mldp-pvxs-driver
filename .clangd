@@ -1,0 +1,8 @@
+CompileFlags:
+  CompilationDatabase: build
+  Add:
+    - -I/workspaces/ext/rapidyaml/include
+    - -I/workspaces/ext/BS_thread_pool/include
+    - -I/workspaces/mldp-pvxs-driver/include
+    - -I/workspaces/mldp-pvxs-driver/ext/BS_thread_pool/include
+    - -I/workspaces/mldp-pvxs-driver/ext/rapidyaml/include
