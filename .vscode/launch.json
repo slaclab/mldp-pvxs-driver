@@ -9,6 +9,11 @@
             "args": [],
             // "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
+            "disableASLR": false,
+            "initCommands": [
+                "settings set target.disable-aslr false"
+            ]
+            
             // "environment": [],
             // "externalConsole": false,
             // "MIMode": "lldb",
@@ -62,15 +67,26 @@
         },
         {
             "name": "(lldb) Launch Main",
-            "type": "cppdbg",
+            "type": "lldb-dap",
             "request": "launch",
             "program": "${workspaceFolder}/build/bin/mldp_pvxs_driver",
-            "args": [],
-            "stopAtEntry": false,
+            "args": [
+                "${workspaceFolder}/config.yml"
+            ],
+            // "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
-            "environment": [],
-            "externalConsole": false,
-            "MIMode": "lldb"
+            "disableASLR": false,
+            "initCommands": [
+                "settings set target.disable-aslr false"
+            ]
+            // "environment": [],
+            // "externalConsole": false,
+            // "setupCommands": [
+            //     {
+            //         "description": "Keep ASLR enabled (workaround for restricted personality())",
+            //         "text": "settings set target.disable-aslr false"
+            //     }
+            // ]
         }
     ],
     "inputs": [

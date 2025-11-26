@@ -7,6 +7,7 @@
 #define RYML_SINGLE_HDR_DEFINE_NOW
 #include <rapidyaml-0.10.0.hpp>
 
+#include <config/Config.h>
 #include <mldp_pvxs_driver_version.h>
 #include <mldp_pvxs_driver.h>
 
@@ -99,21 +100,23 @@ int main(int argc, char** argv)
     {
         return failure;
     }
-    const auto configTree = ryml::parse_in_place(c4::to_substr(configContentsBuf));
-    const auto configTreeRoot = configTree.rootref();
+    auto        configTree = ryml::parse_in_place(c4::to_substr(configContentsBuf));
+    const auto  config = mldp_pvxs_driver::config::Config(configTree.rootref());
+    // const auto configTreeRoot = config.raw();
 
     std::string serverAddress;
-    if (!configTreeRoot.has_child("server_address"))
+    if (!config.hasChild("server_address"))
     {
         g_logger.error("No server address set in config.");
         return MLDP_PVXS_DRIVER_ERROR_CONFIG_MALFORMED;
     }
-    configTreeRoot["server_address"] >> serverAddress;
+    config.subConfig("server_address") >> serverAddress;
 
     std::shared_ptr<grpc::Channel> channel;
-    if (configTreeRoot.has_child("credentials"))
+    if (config.hasChild("credentials"))
     {
-        if (const auto credentialsTree = configTree["credentials"]; !credentialsTree.is_map())
+        auto credentialConfig = config.subConfig("credentials");
+        if (const auto credentialsTree = credentialConfig.raw(); !credentialsTree.is_map())
         {
             std::string credentialsType;
             credentialsTree >> credentialsType;
@@ -170,12 +173,13 @@ int main(int argc, char** argv)
     }
 
     std::vector<std::string> pvsToMonitor;
-    if (!configTreeRoot.has_child("monitor_pvs"))
+    if (!config.hasChild("monitor_pvs"))
     {
         g_logger.error("No PVs to monitor set in config.");
         return MLDP_PVXS_DRIVER_ERROR_CONFIG_MALFORMED;
     }
-    if (const auto pvs = configTreeRoot["monitor_pvs"]; pvs.is_seq())
+    auto pvs_config = config.subConfig("monitor_pvs");
+    if (const auto pvs = pvs_config.raw(); pvs.is_seq())
     {
         for (const auto& monitoredPV : pvs)
         {
@@ -191,12 +195,12 @@ int main(int argc, char** argv)
     }
 
     std::string providerName;
-    if (!configTreeRoot.has_child("provider_name"))
+    if (!config.hasChild("provider_name"))
     {
         g_logger.error("No provider name set in config.");
         return MLDP_PVXS_DRIVER_ERROR_CONFIG_MALFORMED;
     }
-    configTreeRoot["provider_name"] >> providerName;
+    config.subConfig("provider_name") >> providerName;
 
     g_driver = std::make_unique<PVXSDPIngestionDriver>(providerName, channel, pvsToMonitor, PVXSDPIngestionDriver::Options{
                                                                                                 .logger = g_logger,
