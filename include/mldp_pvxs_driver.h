@@ -9,6 +9,7 @@
 #include <pvxs/client.h>
 #include <pvxs/nt.h>
 
+#include <config/Config.h>
 #include <ingestion.grpc.pb.h>
 
 struct PVXSDPIngestionDriverLogger {
@@ -19,6 +20,7 @@ struct PVXSDPIngestionDriverLogger {
 class PVXSDPIngestionDriver {
 public:
 	struct Options {
+		const mldp_pvxs_driver::config::Config config;
 		const PVXSDPIngestionDriverLogger& logger = {};
 		const grpc::StubOptions& grpcOptions = {};
 		const pvxs::client::Context& pvaContext = pvxs::client::Context::fromEnv();

@@ -1,6 +1,7 @@
-#include <config/Config.h>
-#include <cerrno>
+#include "rapidyaml-0.10.0.hpp"
 #include <cctype>
+#include <cerrno>
+#include <config/Config.h>
 #include <cstdlib>
 #include <string_view>
 #include <vector>
@@ -79,12 +80,17 @@ bool tryParseDouble(const std::string& input, double& value)
 }
 } // namespace
 
-Config::Config(ryml::ConstNodeRef node)
-    : node_(node) {}
+Config::Config(ConfigTreePtr tree)
+    : tree_(tree)
+    , node_(tree_->rootref()) {}
+
+Config::Config(ConfigTreePtr tree, ryml::ConstNodeRef node)
+    : tree_(tree)
+    , node_(node) {}
 
 bool Config::valid() const
 {
-    return !node_.invalid();
+    return tree_ && !node_.invalid();
 }
 
 c4::yml::ConstNodeRef Config::raw() const
@@ -94,13 +100,13 @@ c4::yml::ConstNodeRef Config::raw() const
 
 bool Config::hasChild(const std::string& key) const
 {
-    return !node_.invalid() && node_.has_child(key.c_str());
+    return valid() && node_.has_child(key.c_str());
 }
 
 std::string Config::get(const std::string& key,
                         const std::string& def) const
 {
-    if (node_.invalid() || !node_.has_child(key.c_str()))
+    if (!valid() || !node_.has_child(key.c_str()))
         return def;
 
     ryml::ConstNodeRef child = node_[key.c_str()];
@@ -114,17 +120,17 @@ std::string Config::get(const std::string& key,
 
 Config Config::subConfig(const std::string& key) const
 {
-    if (node_.invalid() || !node_.has_child(key.c_str()))
+    if (!valid() || !node_.has_child(key.c_str()))
     {
         return Config{};
     }
 
-    return Config{node_[key.c_str()]};
+    return Config{tree_, node_[key.c_str()]};
 }
 
 int Config::getInt(const std::string& key, int def) const
 {
-    if (node_.invalid() || !node_.has_child(key.c_str()))
+    if (!valid() || !node_.has_child(key.c_str()))
         return def;
 
     ryml::ConstNodeRef child = node_[key.c_str()];
@@ -138,7 +144,7 @@ int Config::getInt(const std::string& key, int def) const
 
 double Config::getDouble(const std::string& key, double def) const
 {
-    if (node_.invalid() || !node_.has_child(key.c_str()))
+    if (!valid() || !node_.has_child(key.c_str()))
         return def;
 
     ryml::ConstNodeRef child = node_[key.c_str()];
@@ -152,7 +158,7 @@ double Config::getDouble(const std::string& key, double def) const
 
 bool Config::getBool(const std::string& key, bool def) const
 {
-    if (node_.invalid() || !node_.has_child(key.c_str()))
+    if (!valid() || !node_.has_child(key.c_str()))
         return def;
 
     ryml::ConstNodeRef child = node_[key.c_str()];
@@ -166,7 +172,7 @@ bool Config::getBool(const std::string& key, bool def) const
 
 const Config& Config::operator>>(std::string& out) const
 {
-    if (node_.invalid() || !node_.has_val())
+    if (!valid() || !node_.has_val())
     {
         out.clear();
         return *this;
@@ -178,7 +184,7 @@ const Config& Config::operator>>(std::string& out) const
 
 const Config& Config::operator>>(int& out) const
 {
-    if (node_.invalid() || !node_.has_val())
+    if (!valid() || !node_.has_val())
     {
         out = {};
         return *this;
@@ -190,7 +196,7 @@ const Config& Config::operator>>(int& out) const
 
 const Config& Config::operator>>(double& out) const
 {
-    if (node_.invalid() || !node_.has_val())
+    if (!valid() || !node_.has_val())
     {
         out = {};
         return *this;
@@ -202,7 +208,7 @@ const Config& Config::operator>>(double& out) const
 
 const Config& Config::operator>>(bool& out) const
 {
-    if (node_.invalid() || !node_.has_val())
+    if (!valid() || !node_.has_val())
     {
         out = {};
         return *this;
@@ -216,7 +222,7 @@ const Config& Config::operator>>(std::map<std::string, std::string>& out) const
 {
     out.clear();
 
-    if (node_.invalid() || !node_.is_map())
+    if (!valid() || !node_.is_map())
     {
         return *this;
     }
@@ -228,7 +234,7 @@ const Config& Config::operator>>(std::map<std::string, std::string>& out) const
             continue;
         }
 
-        const auto keyView = child.key();
+        const auto  keyView = child.key();
         std::string key{keyView.str, keyView.len};
 
         std::string value;
@@ -244,7 +250,7 @@ const Config& Config::operator>>(std::map<std::string, std::any>& out) const
 {
     out.clear();
 
-    if (node_.invalid() || !node_.is_map())
+    if (!valid() || !node_.is_map())
     {
         return *this;
     }
@@ -256,13 +262,13 @@ const Config& Config::operator>>(std::map<std::string, std::any>& out) const
             continue;
         }
 
-        const auto keyView = child.key();
+        const auto  keyView = child.key();
         std::string key{keyView.str, keyView.len};
 
         if (child.is_map())
         {
             std::map<std::string, std::any> nested;
-            Config{child} >> nested;
+            Config{tree_, child} >> nested;
             out.emplace(std::move(key), std::move(nested));
             continue;
         }

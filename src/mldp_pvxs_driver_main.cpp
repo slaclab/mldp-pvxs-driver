@@ -1,15 +1,15 @@
 #include <csignal>
 #include <filesystem>
+#include <format>
 #include <fstream>
 #include <sstream>
-#include <format>
 
 #define RYML_SINGLE_HDR_DEFINE_NOW
 #include <rapidyaml-0.10.0.hpp>
 
 #include <config/Config.h>
-#include <mldp_pvxs_driver_version.h>
 #include <mldp_pvxs_driver.h>
+#include <mldp_pvxs_driver_version.h>
 
 namespace {
 
@@ -100,22 +100,23 @@ int main(int argc, char** argv)
     {
         return failure;
     }
-    auto        configTree = ryml::parse_in_place(c4::to_substr(configContentsBuf));
-    const auto  config = mldp_pvxs_driver::config::Config(configTree.rootref());
+
+    const auto mldp_pvxs_driver_config = mldp_pvxs_driver::config::Config(
+        std::make_shared<ryml::Tree>(ryml::parse_in_place(c4::to_substr(configContentsBuf))));
     // const auto configTreeRoot = config.raw();
 
     std::string serverAddress;
-    if (!config.hasChild("server_address"))
+    if (!mldp_pvxs_driver_config.hasChild("server_address"))
     {
         g_logger.error("No server address set in config.");
         return MLDP_PVXS_DRIVER_ERROR_CONFIG_MALFORMED;
     }
-    config.subConfig("server_address") >> serverAddress;
+    mldp_pvxs_driver_config.subConfig("server_address") >> serverAddress;
 
     std::shared_ptr<grpc::Channel> channel;
-    if (config.hasChild("credentials"))
+    if (mldp_pvxs_driver_config.hasChild("credentials"))
     {
-        auto credentialConfig = config.subConfig("credentials");
+        auto credentialConfig = mldp_pvxs_driver_config.subConfig("credentials");
         if (const auto credentialsTree = credentialConfig.raw(); !credentialsTree.is_map())
         {
             std::string credentialsType;
@@ -173,12 +174,12 @@ int main(int argc, char** argv)
     }
 
     std::vector<std::string> pvsToMonitor;
-    if (!config.hasChild("monitor_pvs"))
+    if (!mldp_pvxs_driver_config.hasChild("monitor_pvs"))
     {
         g_logger.error("No PVs to monitor set in config.");
         return MLDP_PVXS_DRIVER_ERROR_CONFIG_MALFORMED;
     }
-    auto pvs_config = config.subConfig("monitor_pvs");
+    auto pvs_config = mldp_pvxs_driver_config.subConfig("monitor_pvs");
     if (const auto pvs = pvs_config.raw(); pvs.is_seq())
     {
         for (const auto& monitoredPV : pvs)
@@ -195,16 +196,22 @@ int main(int argc, char** argv)
     }
 
     std::string providerName;
-    if (!config.hasChild("provider_name"))
+    if (!mldp_pvxs_driver_config.hasChild("provider_name"))
     {
         g_logger.error("No provider name set in config.");
         return MLDP_PVXS_DRIVER_ERROR_CONFIG_MALFORMED;
     }
-    config.subConfig("provider_name") >> providerName;
+    mldp_pvxs_driver_config.subConfig("provider_name") >> providerName;
 
-    g_driver = std::make_unique<PVXSDPIngestionDriver>(providerName, channel, pvsToMonitor, PVXSDPIngestionDriver::Options{
-                                                                                                .logger = g_logger,
-                                                                                            });
+    // allocate the driver
+    g_driver = std::make_unique<PVXSDPIngestionDriver>(
+        providerName, channel,
+        pvsToMonitor,
+        PVXSDPIngestionDriver::Options{
+            .config = mldp_pvxs_driver_config,
+            .logger = g_logger,
+        });
+
     if (!g_driver || !*g_driver)
     {
         g_logger.error("Failed to register provider " + providerName + '!');
