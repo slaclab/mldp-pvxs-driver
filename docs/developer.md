@@ -1,5 +1,4 @@
 # Developer Guide
-# Developer Guide
 
 This document explains the project architecture, how to build and test locally, how the reader abstraction works, and common troubleshooting steps for developers working on the `mldp-pvxs-driver` repository.
 
