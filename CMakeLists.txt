@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.15)
-project(mldp_pvxs_driver LANGUAGES CXX)
+project(mldp_pvxs_driver VERSION 0.1.0 LANGUAGES CXX)
 
 # C++ Standard
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Options
@@ -18,6 +18,17 @@ endif()
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
+
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/version.h.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/mldp_pvxs_driver_version.h"
+    @ONLY
+)
+
+message(STATUS "Building version: ${PROJECT_VERSION}")
+
+# print the c++ standard being used
+message(STATUS "C++ Standard: ${CMAKE_CXX_STANDARD}")
 
 # Find required packages
 find_package(Protobuf REQUIRED)
@@ -205,6 +216,8 @@ add_library(lib${PROJECT_NAME}
 target_link_libraries(lib${PROJECT_NAME} PUBLIC lib${PROJECT_NAME}_proto Threads::Threads pvxs)
 target_include_directories(lib${PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/ext/BS_thread_pool/include")
 target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
+# Ensure the build tree's generated headers (e.g. config.h) are visible to users of the library
+target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_BINARY_DIR}")
 set_target_properties(lib${PROJECT_NAME} PROPERTIES PREFIX "")
 
 # Test base library
@@ -248,6 +261,12 @@ install(DIRECTORY include/
         DESTINATION include/pvxs_mldp_driver
         FILES_MATCHING PATTERN "*.hpp" PATTERN "*.h"
 )
+
+
+# Install generated config header so downstream consumers can find it after `make install`.
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/config.h"
+    DESTINATION include/pvxs_mldp_driver
+    OPTIONAL)
 
 if(MLDP_PVXS_DRIVER_MAIN)
     install(TARGETS

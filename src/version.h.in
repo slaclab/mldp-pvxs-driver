@@ -1,0 +1,4 @@
+#pragma once
+#define MLDP_PVXS_DRIVER_VERSION_MAJOR @mldp_pvxs_driver_VERSION_MAJOR@
+#define MLDP_PVXS_DRIVER_VERSION_MINOR @mldp_pvxs_driver_VERSION_MINOR@
+#define MLDP_PVXS_DRIVER_VERSION_PATCH @mldp_pvxs_driver_VERSION_PATCH@

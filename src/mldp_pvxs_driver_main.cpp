@@ -2,11 +2,13 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
-
-#include "mldp_pvxs_driver.h"
+#include <format>
 
 #define RYML_SINGLE_HDR_DEFINE_NOW
-#include "rapidyaml-0.10.0.hpp"
+#include <rapidyaml-0.10.0.hpp>
+
+#include <mldp_pvxs_driver_version.h>
+#include <mldp_pvxs_driver.h>
 
 namespace {
 
@@ -48,6 +50,9 @@ std::unique_ptr<PVXSDPIngestionDriver> g_driver = nullptr;
 
 int main(int argc, char** argv)
 {
+    // Print version info
+    std::cout << std::format("MLDP PVXS Driver Version {}.{}.{}\n", MLDP_PVXS_DRIVER_VERSION_MAJOR, MLDP_PVXS_DRIVER_VERSION_MINOR, MLDP_PVXS_DRIVER_VERSION_PATCH);
+
     g_logger.info = [](const std::string& info)
     {
         std::cout << info + '\n';
