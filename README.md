@@ -1,50 +1,8 @@
+![logo](./logos/SLAC-lab-hires.png)
 # MLDP PVXS Driver
 
-## Building
+This driver integrates PVXS-exposed EPICS process variables with the SLAC MLDP ingestion API (see [MLDP](https://github.com/osprey-dcs/dp-service.git)), translating PV updates into MLDP payloads and forwarding them over gRPC so downstream analysis pipelines receive timely ML measurements while remaining compatible with other data sources.
 
-`PROTO_PATH` and `PVXS_BASE` are required to either be set as environment variables or passed to the CMake configuration
-step. The former should be the path to the parent directory of MLDP's protobuf definitions. The latter should be the
-directory containing the pvxs library.
-
-EPICS Base and pvxs are expected to be available in the development container under `/opt/local/lib/linux-<arch>`, but
-can be overridden explicitly at configure time:
-
-```
-cmake -S . -B build \
-  -DPROTO_PATH=/workspace/protos \
-  -DEPICS_BASE=/opt/local \
-  -DEPICS_HOST_ARCH=linux-aarch64 \
-  -DPVXS_BASE=/opt/local   # or /opt/pvxs if you only built pvxs without installing
-cmake --build build
-```
-
-## Debugging
-
-When debugging inside the dev container, the LLVM `lldb-dap` adapter from the bundled extension needs an explicit path.
-Set **LLDB DAP › Executable: Path** in VS Code to `/usr/bin/lldb-dap-18` (Preferences → Settings → Extensions → LLDB DAP).
-Alternatively, add the following to `.vscode/settings.json` within this repository:
-
-```jsonc
-{
-  "lldb.executable": "/usr/bin/lldb-dap-18"
-}
-```
-
-To make this automatic for everyone using the dev container, you can bake the setting into `.devcontainer/devcontainer.json`:
-
-```jsonc
-{
-  "customizations": {
-    "vscode": {
-      "settings": {
-        "lldb.executable": "/usr/bin/lldb-dap-18"
-      }
-    }
-  }
-}
-```
-
-Rebuild the dev container after changing the configuration so the setting is applied on startup.
 
 ## Configuration
 
