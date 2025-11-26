@@ -1,24 +1,26 @@
 //!
 //! \file
-//! \brief Utilities for reading configuration from rapidyaml nodes.
+//! \brief Lightweight helpers for reading configuration from rapidyaml nodes.
 //!
-//! This header provides a lightweight wrapper around a rapidyaml
-//! `ConstNodeRef` to simplify extracting typed configuration values
-//! with sensible defaults. It is intentionally small and header-only
-//! so it can be included wherever config access is needed. All
-//! `Config` instances (including those returned by `subConfig`) remain
-//! valid only while the original YAML buffer/tree used to create the
-//! root node stays alive.
-//!
+//! `Config` wraps a `ryml::ConstNodeRef` to simplify accessing
+//! strings, numbers, and booleans while providing sane defaults.
+//! Instances (including the ones returned by `subConfig`) stay valid
+//! only for the lifetime of the original `ryml::Tree` that owns the
+//! underlying YAML buffer. This header is intentionally small and
+//! header-only so it can be included wherever configuration access is
+//! required.
 #pragma once
 
-#include <rapidyaml-0.10.0.hpp>
 #include <any>
 #include <map>
+#include <memory>
+#include <rapidyaml-0.10.0.hpp>
 #include <string>
 
 namespace mldp_pvxs_driver::config {
 namespace ryml = c4::yml;
+
+using ConfigTreePtr = std::shared_ptr<ryml::Tree>;
 
 /**
  * @brief Small helper to read configuration values from a rapidyaml node.
@@ -41,12 +43,14 @@ public:
     Config() = default;
 
     /**
-     * @brief Construct a ReaderConfig from a rapidyaml node.
+     * @brief Construct a Config using a shared rapidyaml tree.
      *
-     * @param node A `ryml::ConstNodeRef` that represents the YAML
-     *             mapping or sequence containing configuration values.
+     * The provided tree must outlive this instance (and any sub-configs).
+     * The root node is resolved from the tree, so the tree cannot be empty.
+     *
+     * @param tree Shared pointer owning the rapidyaml tree that backs the node.
      */
-    explicit Config(ryml::ConstNodeRef node);
+    explicit Config(ConfigTreePtr tree);
 
     /**
      * @brief Check whether the wrapped node has a child with the given key.
@@ -82,8 +86,9 @@ public:
      * @brief Retrieve a nested configuration node.
      *
      * Returns a new Config wrapper around the requested child node. If the
-     * child is missing, the returned Config will be invalid (valid()==false).
-     * sub config are valid until the root one is still valid
+     * child is missing, the returned Config will be invalid (`valid() == false`).
+     * Sub-configurations remain valid as long as the `ConfigTreePtr` that backs
+     * the root instance is alive.
      */
     Config subConfig(const std::string& key) const;
 
@@ -148,6 +153,15 @@ public:
     const Config& operator>>(std::map<std::string, std::any>& out) const;
 
 private:
+    /**
+     * @brief Internal helper that reuses the shared tree for a specific node.
+     */
+    explicit Config(ConfigTreePtr tree, ryml::ConstNodeRef node);
+
+    // Shared pointer to the rapidyaml tree that backs this config.
+    ConfigTreePtr    tree_;
+
+    // The specific node within the rapidyaml tree that this Config wraps.
     ryml::ConstNodeRef node_;
 };
 } // namespace mldp_pvxs_driver::config
