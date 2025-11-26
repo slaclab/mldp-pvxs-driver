@@ -216,8 +216,6 @@ if(MLDP_PVXS_DRIVER_TESTS)
     FetchContent_MakeAvailable(googletest)
     enable_testing()
     add_executable(${PROJECT_NAME}_test
-            "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/dp.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/dp.h"
             "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/sioc.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/sioc.h"
             "${CMAKE_CURRENT_SOURCE_DIR}/test/driver.cpp"
