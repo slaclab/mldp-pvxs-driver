@@ -2,9 +2,10 @@
 #include <reader/impl/epics/EpicsReader.h>
 
 using namespace mldp_pvxs_driver::config;
+using namespace mldp_pvxs_driver::util::bus;
 using namespace mldp_pvxs_driver::reader::impl::epics;
 
-EpicsReader::EpicsReader(std::shared_ptr<mldp_pvxs_driver::bus::IEventBusPush> bus, const Config& cfg)
+EpicsReader::EpicsReader(std::shared_ptr<IEventBusPush> bus, const Config& cfg)
     : Reader(std::move(bus)), running_(false)
 {
 
@@ -30,4 +31,3 @@ std::string EpicsReader::name() const
 {
     return name_;
 }
-

@@ -4,7 +4,7 @@
 #include <memory>
 #include <string>
 
-namespace mldp_pvxs_driver::bus {
+namespace mldp_pvxs_driver::util::bus {
 class IEventBusPush;
 }
 
@@ -19,7 +19,7 @@ class Reader
 {
 public:
     /** @brief Construct the reader with the event bus connection that will receive updates. */
-    explicit Reader(std::shared_ptr<bus::IEventBusPush> bus)
+    explicit Reader(std::shared_ptr<util::bus::IEventBusPush> bus)
         : bus_(std::move(bus)) {}
 
     virtual ~Reader() = default;
@@ -32,7 +32,7 @@ protected:
      *
      * Ownership is shared so readers can outlive their producers.
      */
-    std::shared_ptr<bus::IEventBusPush> bus_;
+    std::shared_ptr<util::bus::IEventBusPush> bus_;
 };
 
 } // namespace mldp_pvxs_driver::reader

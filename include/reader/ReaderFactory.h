@@ -1,9 +1,9 @@
 // ReaderFactory.hpp
 #pragma once
 
-#include <bus/IEventBusPush.h>
 #include <config/Config.h>
 #include <reader/Reader.h>
+#include <util/bus/IEventBusPush.h>
 
 #include <functional>
 #include <memory>
@@ -20,7 +20,7 @@ class ReaderFactory
 public:
     /** @brief Type used to create reader instances for a configured event bus. */
     using CreatorFn =
-        std::function<std::unique_ptr<Reader>(std::shared_ptr<mldp_pvxs_driver::bus::IEventBusPush>, const mldp_pvxs_driver::config::Config&)>;
+        std::function<std::unique_ptr<Reader>(std::shared_ptr<mldp_pvxs_driver::util::bus::IEventBusPush>, const mldp_pvxs_driver::config::Config&)>;
 
     /**
      * @brief Register a builder for the reader type identified by \p type.
@@ -34,9 +34,9 @@ public:
      * @throws std::out_of_range if the requested type has not been registered.
      */
     static std::unique_ptr<Reader> create(
-        const std::string&                                      type,
-        std::shared_ptr<::mldp_pvxs_driver::bus::IEventBusPush> bus,
-        const mldp_pvxs_driver::config::Config&                 cfg);
+        const std::string&                                            type,
+        std::shared_ptr<::mldp_pvxs_driver::util::bus::IEventBusPush> bus,
+        const mldp_pvxs_driver::config::Config&                       cfg);
 
 private:
     /**
@@ -55,7 +55,7 @@ public:
     {
         ReaderFactory::registerType(
             typeName,
-            [](std::shared_ptr<mldp_pvxs_driver::bus::IEventBusPush> bus, const mldp_pvxs_driver::config::Config& cfg)
+            [](std::shared_ptr<mldp_pvxs_driver::util::bus::IEventBusPush> bus, const mldp_pvxs_driver::config::Config& cfg)
             {
                 return std::make_unique<ReaderT>(std::move(bus), cfg);
             });

@@ -1,7 +1,7 @@
 #pragma once
 
 #include <config/Config.h>
-#include <bus/IEventBusPush.h>
+#include <util/bus/IEventBusPush.h>
 #include <reader/Reader.h>
 #include <reader/ReaderFactory.h>
 
@@ -23,7 +23,7 @@ public:
      * @param bus Event bus that receives EPICS updates.
      * @param cfg Configuration listing the PVs to monitor along with polling intervals or filters.
      */
-    EpicsReader(std::shared_ptr<mldp_pvxs_driver::bus::IEventBusPush> bus, const mldp_pvxs_driver::config::Config& cfg);
+    EpicsReader(std::shared_ptr<mldp_pvxs_driver::util::bus::IEventBusPush> bus, const mldp_pvxs_driver::config::Config& cfg);
 
     /** @brief Stop the worker thread and release EPICS resources. */
     ~EpicsReader();

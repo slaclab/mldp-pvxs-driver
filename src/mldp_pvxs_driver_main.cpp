@@ -206,7 +206,8 @@ int main(int argc, char** argv)
 
     // allocate the driver
     g_driver = std::make_unique<PVXSDPIngestionDriver>(
-        providerName, channel,
+        providerName, 
+        channel,
         pvsToMonitor,
         PVXSDPIngestionDriver::Options{
             .config = mldp_pvxs_driver_config,

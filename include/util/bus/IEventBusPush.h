@@ -4,7 +4,7 @@
 
 #pragma once
 
-namespace mldp_pvxs_driver::bus {
+namespace mldp_pvxs_driver::util::bus {
 
 class IEventBusPush {
 public:
