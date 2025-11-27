@@ -7,7 +7,7 @@ ARG PVXS_VERSION=1.4.1
 
 # Install common dependencies and compiler-specific packages
 RUN apt update && \
-    apt install -y build-essential cmake git tclsh ninja-build protobuf-compiler protobuf-compiler-grpc libgrpc++-dev libgrpc-dev gdb lcov libssl-dev libsasl2-dev curl libcurl4-openssl-dev valgrind libicu-dev jq file sudo clang clangd lldb lld libc++-dev libc++abi-dev libevent-dev
+    apt install -y build-essential doxygen cmake git tclsh ninja-build protobuf-compiler protobuf-compiler-grpc libgrpc++-dev libgrpc-dev gdb lcov libssl-dev libsasl2-dev curl libcurl4-openssl-dev valgrind libicu-dev jq file sudo clang clangd lldb lld libc++-dev libc++abi-dev libevent-dev
 
 # Set default compiler based on the COMPILER argument BEFORE building EPICS
 RUN if [ "$COMPILER" = "llvm" ]; then \

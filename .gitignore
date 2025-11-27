@@ -4,4 +4,5 @@
 build/
 cmake-build-*/
 out/
+docs/html
 config.yml

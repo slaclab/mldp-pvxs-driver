@@ -263,6 +263,16 @@ if(MLDP_PVXS_DRIVER_MAIN)
     target_include_directories(${PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/ext/rapidyaml/include")
 endif()
 
+find_package(Doxygen REQUIRED)
+set(DOXYGEN_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/docs")
+doxygen_add_docs(
+    docs
+    ${PROJECT_SOURCE_DIR}/include
+    ${PROJECT_SOURCE_DIR}/src
+    HTML_OUTPUT html
+    COMMENT "Generating documentation"
+)
+
 # Installation
 install(TARGETS lib${PROJECT_NAME}_proto
         ARCHIVE DESTINATION lib
