@@ -14,6 +14,8 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
+include(FetchContent)
+
 # Output directories
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
@@ -29,6 +31,13 @@ message(STATUS "Building version: ${PROJECT_VERSION}")
 
 # print the c++ standard being used
 message(STATUS "C++ Standard: ${CMAKE_CXX_STANDARD}")
+
+# Acquire spdlog for structured logging and ensure it builds before the driver library.
+FetchContent_Declare(spdlog
+        GIT_REPOSITORY https://github.com/gabime/spdlog.git
+        GIT_TAG        v1.16.0
+)
+FetchContent_MakeAvailable(spdlog)
 
 # Find required packages
 find_package(Protobuf REQUIRED)
@@ -219,7 +228,7 @@ add_library(lib${PROJECT_NAME}
         "${CMAKE_CURRENT_SOURCE_DIR}/src/config/Config.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/mldp_pvxs_driver.cpp"
 )
-target_link_libraries(lib${PROJECT_NAME} PUBLIC lib${PROJECT_NAME}_proto Threads::Threads pvxs)
+target_link_libraries(lib${PROJECT_NAME} PUBLIC lib${PROJECT_NAME}_proto Threads::Threads pvxs spdlog::spdlog)
 target_include_directories(lib${PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/ext/BS_thread_pool/include")
 target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/ext/rapidyaml/include")
 target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
@@ -229,7 +238,6 @@ set_target_properties(lib${PROJECT_NAME} PROPERTIES PREFIX "")
 
 # Test base library
 if(MLDP_PVXS_DRIVER_TESTS)
-    include(FetchContent)
     FetchContent_Declare(googletest
             GIT_REPOSITORY "https://github.com/google/googletest.git"
             GIT_TAG        "main")

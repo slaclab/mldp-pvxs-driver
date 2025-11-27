@@ -6,6 +6,7 @@
 
 #define RYML_SINGLE_HDR_DEFINE_NOW
 #include <rapidyaml-0.10.0.hpp>
+#include <spdlog/spdlog.h>
 
 #include <config/Config.h>
 #include <mldp_pvxs_driver.h>
@@ -52,15 +53,15 @@ std::unique_ptr<PVXSDPIngestionDriver> g_driver = nullptr;
 int main(int argc, char** argv)
 {
     // Print version info
-    std::cout << std::format("MLDP PVXS Driver Version {}.{}.{}\n", MLDP_PVXS_DRIVER_VERSION_MAJOR, MLDP_PVXS_DRIVER_VERSION_MINOR, MLDP_PVXS_DRIVER_VERSION_PATCH);
+    spdlog::info("MLDP PVXS Driver Version {}.{}.{}", MLDP_PVXS_DRIVER_VERSION_MAJOR, MLDP_PVXS_DRIVER_VERSION_MINOR, MLDP_PVXS_DRIVER_VERSION_PATCH);
 
     g_logger.info = [](const std::string& info)
     {
-        std::cout << info + '\n';
+       spdlog::info("{}", info);
     };
     g_logger.error = [](const std::string& error)
     {
-        std::cerr << error + '\n';
+        spdlog::error("{}", error);
     };
 
     const auto exitHandler = [](int)
