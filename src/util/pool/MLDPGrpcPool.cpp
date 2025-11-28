@@ -53,6 +53,14 @@ MLDPGrpcPool::MLDPGrpcPool(std::size_t min_size,
     current_size_ = min_size_;
 }
 
+std::shared_ptr<MLDPGrpcPool> MLDPGrpcPool::create(std::size_t min_size,
+                                                  std::size_t max_size,
+                                                  Factory     factory)
+{
+    // Use new + shared_ptr constructor because the constructor is private.
+    return std::shared_ptr<MLDPGrpcPool>(new MLDPGrpcPool(min_size, max_size, std::move(factory)));
+}
+
 PooledHandle<MLDPGrpcObject> MLDPGrpcPool::acquire()
 {
     std::unique_lock<std::mutex> lock(mutex_);
@@ -65,7 +73,8 @@ PooledHandle<MLDPGrpcObject> MLDPGrpcPool::acquire()
             if (!item.in_use && item.obj)
             {
                 item.in_use = true;
-                return PooledHandle<MLDPGrpcObject>(this, item.obj);
+                auto pool_ptr = std::static_pointer_cast<IObjectPool<MLDPGrpcObject>>(shared_from_this());
+                return PooledHandle<MLDPGrpcObject>(pool_ptr, item.obj);
             }
         }
 
@@ -75,7 +84,8 @@ PooledHandle<MLDPGrpcObject> MLDPGrpcPool::acquire()
             auto obj = factory_();
             items_.push_back({obj, true});
             ++current_size_;
-            return PooledHandle<MLDPGrpcObject>(this, obj);
+            auto pool_ptr = std::static_pointer_cast<IObjectPool<MLDPGrpcObject>>(shared_from_this());
+            return PooledHandle<MLDPGrpcObject>(pool_ptr, obj);
         }
 
         // 3. Pool is at max and all busy → wait with timeout to remain

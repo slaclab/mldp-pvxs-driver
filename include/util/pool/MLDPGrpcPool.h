@@ -80,9 +80,22 @@ struct MLDPGrpcObject
  * @brief Concrete pool that manages `MLDPGrpcObject` instances.
  *
  * Each pooled object contains its own `grpc::Channel` (separate transport
- * connection) and at least one stub bound to the channel. Use this pool
- * when you require transport isolation between logical clients (each
- * pooled object maps to a separate TCP/HTTP2 connection).
+ * connection) and a convenience stub bound to that channel. Use this pool
+ * when you require transport isolation between logical clients — each
+ * pooled element represents a separate TCP/HTTP2 connection to the
+ * server.
+ *
+ * Ownership and construction notes:
+ * - This pool must be created and owned by a `std::shared_ptr` because
+ *   `acquire()` uses `shared_from_this()` to return handles that keep a
+ *   reference to the originating pool. To enforce that, construction is
+ *   performed via the static `create()` factory which returns a
+ *   `std::shared_ptr<MLDPGrpcPool>`.
+ * - Callers should prefer `MLDPGrpcPool::create(...)` and keep the
+ *   resulting `shared_ptr` for the pool's lifetime. Returned handles
+ *   (`PooledHandle<MLDPGrpcObject>`) will also hold a `shared_ptr` to
+ *   the pool, guaranteeing the pool remains alive while any handle is
+ *   outstanding.
  *
  * Factory
  * - The pool takes a `Factory` callable that returns `ObjectShrdPtr` (a
@@ -130,7 +143,7 @@ struct MLDPGrpcObject
  *   objects are in use, `acquire()` blocks until an object becomes
  *   available.
  */
-class MLDPGrpcPool : public IObjectPool<MLDPGrpcObject>
+class MLDPGrpcPool : public IObjectPool<MLDPGrpcObject>, public std::enable_shared_from_this<MLDPGrpcPool>
 {
 public:
     using ObjectShrdPtr = typename IObjectPool<MLDPGrpcObject>::ObjectShrdPtr;
@@ -145,17 +158,40 @@ public:
      * @param factory  Callable used to create new `MLDPGrpcObject`
      *                 instances when the pool grows.
      */
-    MLDPGrpcPool(std::size_t min_size,
-                 std::size_t max_size,
-                 Factory     factory);
+    /**
+     * @brief Create a new managed `MLDPGrpcPool` instance.
+     *
+     * Use this factory to construct the pool. It returns a `std::shared_ptr`
+     * so that `acquire()` can safely create handles that retain a reference
+     * to the pool via `shared_from_this()`.
+     *
+     * @param min_size Minimum number of objects to pre-create and keep
+     *                 available in the pool.
+     * @param max_size Maximum number of objects the pool may create.
+     * @param factory  Callable used to create new `MLDPGrpcObject`
+     *                 instances when the pool grows.
+     * @return std::shared_ptr<MLDPGrpcPool> Managed pool instance.
+     */
+    static std::shared_ptr<MLDPGrpcPool> create(std::size_t min_size,
+                                                std::size_t max_size,
+                                                Factory     factory);
 
     /**
      * @brief Acquire a pooled object wrapped in an RAII handle.
      *
-     * The returned `PooledHandle` holds the pooled object until it is
-     * destroyed; destruction returns the object to the pool automatically.
-     * This simplifies usage and prevents accidental leaks of pooled
-     * resources.
+     * The returned `PooledHandle` reserves the pooled object until the
+     * handle is destroyed; destruction returns the object to the pool
+     * automatically by calling `release()` on the originating pool.
+     * The handle stores a `std::shared_ptr<IObjectPool<MLDPGrpcObject>>`
+     * to keep the pool alive while the handle exists — callers therefore
+     * do not need to manage pool lifetime while objects are checked out.
+     *
+     * Blocking semantics:
+     * - If an idle object exists it is returned immediately.
+     * - If no idle object exists and the pool can grow (`current_size < max_size`),
+     *   a new object is created via the provided factory and returned.
+     * - If the pool is at `max_size` and all objects are in use, `acquire()`
+     *   blocks until an object becomes available.
      *
      * @return PooledHandle<MLDPGrpcObject> RAII wrapper for the pooled object.
      */
@@ -180,6 +216,12 @@ public:
     std::size_t available() const override;
 
 private:
+    // Make constructor private to force use of `create()` which returns a
+    // `std::shared_ptr` (required for `enable_shared_from_this`).
+    MLDPGrpcPool(std::size_t min_size,
+                 std::size_t max_size,
+                 Factory     factory);
+
     struct Item
     {
         ObjectShrdPtr obj;
@@ -194,6 +236,10 @@ private:
     std::condition_variable cv_;
     std::vector<Item>       items_;
     std::size_t             current_size_{0};
+    // Token used to detect pool lifetime. Pooled handles keep a weak_ptr to
+    // this token so they can safely avoid calling back into the pool after
+    // the pool has been destroyed.
+    std::shared_ptr<void>   lifetime_token_;
 };
 
 } // namespace mldp_pvxs_driver::util::pool

@@ -28,13 +28,13 @@ TEST(MLDPGrpcPoolTest, AcquireBlocksUntilReleased)
     // available; we only check acquisition/release semantics and pointer
     // identities.
 
-    MLDPGrpcPool pool(1, 1, []()
+    auto pool = MLDPGrpcPool::create(1, 1, []()
                       {
                           return make_insecure_obj();
                       });
 
     // Acquire first handle
-    auto h1 = pool.acquire();
+    auto h1 = pool->acquire();
     ASSERT_TRUE(h1);
 
     std::atomic<bool>  acquired{false};
@@ -42,7 +42,7 @@ TEST(MLDPGrpcPoolTest, AcquireBlocksUntilReleased)
 
     auto fut = std::async(std::launch::async, [&]()
                           {
-                              auto h2 = pool.acquire();
+                              auto h2 = pool->acquire();
                               acquired.store(true);
                               // hold h2 until signaled
                               releaseSignal.get_future().wait();
@@ -60,7 +60,7 @@ TEST(MLDPGrpcPoolTest, AcquireBlocksUntilReleased)
     // or the background thread has acquired it. Poll with timeout to avoid hangs.
     bool releasedSeen = false;
     for (int i = 0; i < 50; ++i) {
-        if (pool.available() > 0) {
+        if (pool->available() > 0) {
             releasedSeen = true;
             break;
         }
@@ -93,24 +93,24 @@ TEST(MLDPGrpcPoolTest, MultipleObjectsHaveSeparateChannels)
 
     // Note: we only compare channel pointer identities; the test does not
     // require a live gRPC server.
-    MLDPGrpcPool pool(1, 2, []()
+    auto pool = MLDPGrpcPool::create(1, 2, []()
                       {
                           return make_insecure_obj();
                       });
     {
-        auto h1 = pool.acquire();
+        auto h1 = pool->acquire();
         ASSERT_TRUE(h1);
 
-        auto h2 = pool.acquire();
+        auto h2 = pool->acquire();
         ASSERT_TRUE(h2);
 
         // Channels should be different objects (separate connections)
         EXPECT_NE(h1->channel.get(), h2->channel.get());
 
         // avalable must be 0 now
-        EXPECT_EQ(pool.available(), 0u);
+        EXPECT_EQ(pool->available(), 0u);
     }
     // cleanup: handles go out of scope and return to pool
     // available must be 2 now
-    EXPECT_EQ(pool.available(), 2u);
+    EXPECT_EQ(pool->available(), 2u);
 }

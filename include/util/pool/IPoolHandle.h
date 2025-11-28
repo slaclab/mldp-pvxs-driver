@@ -41,15 +41,12 @@ public:
      *             non-pooled ownership semantics).
      * @param obj  Smart pointer to the pooled object.
      */
-    PooledHandle(Pool* pool, PoolObjectPtr obj)
-        : pool_(pool), obj_(std::move(obj)) {}
+    PooledHandle(std::shared_ptr<Pool> pool, PoolObjectPtr obj)
+        : pool_(std::move(pool)), obj_(std::move(obj)) {}
 
     /** Move-only: transfer ownership from another handle. */
     PooledHandle(PooledHandle&& other) noexcept
-        : pool_(other.pool_), obj_(std::move(other.obj_))
-    {
-        other.pool_ = nullptr;
-    }
+        : pool_(std::move(other.pool_)), obj_(std::move(other.obj_)) {}
 
     /** Move-only assignment: release current object then take other's. */
     PooledHandle& operator=(PooledHandle&& other) noexcept
@@ -57,9 +54,8 @@ public:
         if (this != &other)
         {
             reset();
-            pool_ = other.pool_;
+            pool_ = std::move(other.pool_);
             obj_ = std::move(other.obj_);
-            other.pool_ = nullptr;
         }
         return *this;
     }
@@ -126,11 +122,13 @@ public:
         {
             pool_->release(obj_);
             obj_.reset();
+            pool_.reset();
         }
     }
 
 private:
-    Pool*         pool_{nullptr};
+    std::shared_ptr<Pool> pool_;
     PoolObjectPtr obj_;
+    
 };
 } // namespace mldp_pvxs_driver::util::pool
