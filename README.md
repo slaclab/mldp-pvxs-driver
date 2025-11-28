@@ -29,6 +29,8 @@ overrides to the default gRPC SSL settings.
 
 ## Architecture
 
+This project uses a pipeline-style architecture: PVXS clients feed PV updates into a bounded work queue; the core driver converts and enriches events and dispatches them to the MLDP ingestion service using a connection pool of gRPC channels; reader implementations consume and re-publish or transform events as needed. See the detailed diagram and design notes in [docs/architecture.md](docs/architecture.md).
+
 ```mermaid
 graph
     subgraph "Driver Application"
@@ -79,3 +81,5 @@ graph
 
     Run -.->|Pops from| WorkQueue
 ```
+
+For developer information and contribution guidelines see [CONTRIBUTING.md](CONTRIBUTING.md).

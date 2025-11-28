@@ -12,29 +12,9 @@ This document explains the project architecture, how to build and test locally, 
 
 `mldp-pvxs-driver` ingests PV updates (via PVXS) and forwards them to an MLDP ingestion service. The code is split into a small core ingestion driver and a reader abstraction that allows multiple input/output adapters to be plugged in. The reader abstraction isolates protocol-specific logic (EPICS, file replay, simulation) behind a tiny interface so the ingestion pipeline can remain unchanged.
 
-## Architecture (brief)
+## Architecture and reader details
 
-- MLDP connections (gRPC) → connection pool → MLDP ingestor (driver) → bounded queue → reader abstraction → reader implementations (EpicsReader, etc.)
-- The readers push canonical events back to the driver using the `mldp_pvxs_driver::bus::IEventBusPush` interface. This keeps responsibilities separated: readers produce events, the driver aggregates and forwards them.
-
-Refer to the diagram in the repository for a visual representation (developer-facing architecture image).
-
-## Reader Abstraction (details)
-
-- Event bus boundary: `include/bus/IEventBusPush.h` defines the narrow interface used by readers to push decoded events back into the driver. The interface is intentionally small so readers are easy to implement and test.
-- Base contract: `include/reader/Reader.h` defines the `Reader` abstract base class. It exposes `name()`, `start()`, and `stop()` methods and owns a `std::shared_ptr<IEventBusPush>` which readers use to emit events.
-- Factory & registration: `include/reader/ReaderFactory.h` exposes `ReaderFactory::registerType` and `ReaderFactory::create`. Implementations register using the `REGISTER_READER("type", ClassName)` macro which instantiates a `ReaderRegistrator` at load time.
-
-### Example: EpicsReader
-
-- Files: `include/reader/impl/epics/EpicsReader.h` and `src/reader/impl/epics/EpicsReader.cpp` show a minimal reader implementation. It demonstrates how to accept the bus pointer, spawn a worker thread, and cleanly stop/tear down.
-
-### Adding a new reader
-
-1. Add a header in `include/reader/impl/<name>/<Name>Reader.h` deriving from `Reader` and include `REGISTER_READER("<type>", <Name>Reader)`.
-2. Implement the behavior in `src/reader/impl/<name>/<Name>Reader.cpp`.
-3. Add the TU to the `libmldp_pvxs_driver` sources if needed (the project currently compiles `src/` and `include/` entries through `CMakeLists.txt`; adjusting the target may be necessary if the file is new).
-4. Instantiate via `ReaderFactory::create("<type>", bus, cfg)` from the orchestration layer.
+Detailed architecture and reader abstraction documentation has moved to [docs/architecture.md](docs/architecture.md). Please consult that file for diagrams, the connection-pool design, reader contract, registration macro, and examples (including `EpicsReader`).
 
 ## Build and run (local)
 
@@ -107,5 +87,3 @@ ctest --test-dir build --output-on-failure
 # format changed C++ files
 clang-format -i $(git diff --name-only --diff-filter=ACMRTUXB HEAD | grep -E '\.cpp$|\.h$|\.hpp$' || true)
 ```
-
-If you'd like, I can also produce a short `CONTRIBUTING.md` or split this guide into smaller focused files (e.g., `BUILD.md`, `ARCHITECTURE.md`).
