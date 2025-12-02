@@ -112,13 +112,25 @@ int main(int argc, char** argv)
         g_logger.error("No server address set in config.");
         return MLDP_PVXS_DRIVER_ERROR_CONFIG_MALFORMED;
     }
-    mldp_pvxs_driver_config.subConfig("server_address") >> serverAddress;
+    const auto serverNodes = mldp_pvxs_driver_config.subConfig("server_address");
+    if (serverNodes.empty())
+    {
+        g_logger.error("Unable to read server_address from config.");
+        return MLDP_PVXS_DRIVER_ERROR_CONFIG_MALFORMED;
+    }
+    serverNodes.front() >> serverAddress;
 
     std::shared_ptr<grpc::Channel> channel;
     if (mldp_pvxs_driver_config.hasChild("credentials"))
     {
-        auto credentialConfig = mldp_pvxs_driver_config.subConfig("credentials");
-        if (const auto credentialsTree = credentialConfig.raw(); !credentialsTree.is_map())
+        auto credentialNodes = mldp_pvxs_driver_config.subConfig("credentials");
+        if (credentialNodes.empty())
+        {
+            g_logger.error("Unable to read credentials from config.");
+            return MLDP_PVXS_DRIVER_ERROR_CONFIG_MALFORMED;
+        }
+
+        if (const auto credentialsTree = credentialNodes.front().raw(); !credentialsTree.is_map())
         {
             std::string credentialsType;
             credentialsTree >> credentialsType;
@@ -180,20 +192,18 @@ int main(int argc, char** argv)
         g_logger.error("No PVs to monitor set in config.");
         return MLDP_PVXS_DRIVER_ERROR_CONFIG_MALFORMED;
     }
-    auto pvs_config = mldp_pvxs_driver_config.subConfig("monitor_pvs");
-    if (const auto pvs = pvs_config.raw(); pvs.is_seq())
-    {
-        for (const auto& monitoredPV : pvs)
-        {
-            std::string pvName;
-            monitoredPV >> pvName;
-            pvsToMonitor.push_back(pvName);
-        }
-    }
-    else
+    auto monitorNodes = mldp_pvxs_driver_config.subConfig("monitor_pvs");
+    if (monitorNodes.empty())
     {
         g_logger.error("Monitor PVs field in config is not a list of values.");
         return MLDP_PVXS_DRIVER_ERROR_CONFIG_MALFORMED;
+    }
+
+    for (const auto& monitoredPV : monitorNodes)
+    {
+        std::string pvName;
+        monitoredPV >> pvName;
+        pvsToMonitor.push_back(pvName);
     }
 
     std::string providerName;
@@ -202,7 +212,13 @@ int main(int argc, char** argv)
         g_logger.error("No provider name set in config.");
         return MLDP_PVXS_DRIVER_ERROR_CONFIG_MALFORMED;
     }
-    mldp_pvxs_driver_config.subConfig("provider_name") >> providerName;
+    const auto providerNodes = mldp_pvxs_driver_config.subConfig("provider_name");
+    if (providerNodes.empty())
+    {
+        g_logger.error("Unable to read provider_name from config.");
+        return MLDP_PVXS_DRIVER_ERROR_CONFIG_MALFORMED;
+    }
+    providerNodes.front() >> providerName;
 
     // allocate the driver
     g_driver = std::make_unique<PVXSDPIngestionDriver>(

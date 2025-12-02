@@ -9,9 +9,9 @@
 namespace mldp_pvxs_driver::config {
 
 /**
- * @brief Strongly typed view over the `reader` section of the driver YAML.
+ * @brief Strongly typed view over an epics reader entry.
  */
-class ReaderConfig
+class EpicsReaderConfig
 {
 public:
     class Error : public std::runtime_error
@@ -20,19 +20,19 @@ public:
         using std::runtime_error::runtime_error;
     };
 
-    ReaderConfig() = default;
-    explicit ReaderConfig(const Config& root);
+    EpicsReaderConfig() = default;
+    explicit EpicsReaderConfig(const Config& readerEntry);
 
     bool valid() const { return valid_; }
-    const std::string& type() const { return type_; }
+    const std::string& name() const { return name_; }
     const std::vector<std::string>& pvNames() const { return pvNames_; }
 
 private:
-    void parseReaderNode(const Config& readerNode);
+    void parse(const Config& readerEntry);
     static std::vector<std::string> readStringSequence(const c4::yml::ConstNodeRef& node);
 
     bool                    valid_ = false;
-    std::string             type_;
+    std::string             name_;
     std::vector<std::string> pvNames_;
 };
 

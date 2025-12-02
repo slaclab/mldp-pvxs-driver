@@ -88,14 +88,19 @@ Config::Config(ConfigTreePtr tree, ryml::ConstNodeRef node)
     : tree_(tree)
     , node_(node) {}
 
+c4::yml::ConstNodeRef Config::raw() const
+{
+    return node_;
+}
+
 bool Config::valid() const
 {
     return tree_ && !node_.invalid();
 }
 
-c4::yml::ConstNodeRef Config::raw() const
+bool Config::isSequence(const std::string& key) const
 {
-    return node_;
+    return valid() && node_.has_child(key.c_str()) && node_[key.c_str()].is_seq();
 }
 
 bool Config::hasChild(const std::string& key) const
@@ -118,14 +123,29 @@ std::string Config::get(const std::string& key,
     return out;
 }
 
-Config Config::subConfig(const std::string& key) const
+std::vector<Config> Config::subConfig(const std::string& key) const
 {
+    std::vector<Config> children;
     if (!valid() || !node_.has_child(key.c_str()))
     {
-        return Config{};
+        return children;
     }
 
-    return Config{tree_, node_[key.c_str()]};
+    auto child = node_[key.c_str()];
+    if (child.is_seq())
+    {
+        children.reserve(child.num_children());
+        for (const auto element : child.children())
+        {
+            children.emplace_back(Config{tree_, element});
+        }
+    }
+    else
+    {
+        children.emplace_back(Config{tree_, child});
+    }
+
+    return children;
 }
 
 int Config::getInt(const std::string& key, int def) const

@@ -16,6 +16,7 @@
 #include <memory>
 #include <rapidyaml-0.10.0.hpp>
 #include <string>
+#include <vector>
 
 namespace mldp_pvxs_driver::config {
 namespace ryml = c4::yml;
@@ -53,6 +54,16 @@ public:
     explicit Config(ConfigTreePtr tree);
 
     /**
+     * @brief Access the underlying rapidyaml node directly.
+     *
+     * Use this when callers need to perform more advanced queries or
+     * iterate child nodes.
+     *
+     * @return The wrapped `ryml::ConstNodeRef`.
+     */
+    ryml::ConstNodeRef raw() const;
+    
+    /**
      * @brief Check whether the wrapped node has a child with the given key.
      *
      * @param key The YAML key (child name) to check for.
@@ -70,6 +81,14 @@ public:
     bool valid() const;
 
     /**
+     * @brief Check whether the wrapped node is a sequence.
+     *
+     * @return true if the underlying `ryml::ConstNodeRef` is a sequence;
+     *         false otherwise.
+     */
+    bool isSequence(const std::string& key) const;
+
+    /**
      * @brief Retrieve a string value for the given key.
      *
      * If the key is not present or cannot be converted to a string,
@@ -83,14 +102,15 @@ public:
                     const std::string& def = "") const;
 
     /**
-     * @brief Retrieve a nested configuration node.
+     * @brief Retrieve nested configuration nodes.
      *
-     * Returns a new Config wrapper around the requested child node. If the
-     * child is missing, the returned Config will be invalid (`valid() == false`).
-     * Sub-configurations remain valid as long as the `ConfigTreePtr` that backs
-     * the root instance is alive.
+     * When the requested child is a map or scalar the returned vector contains
+     * a single Config wrapper for that node. When the child is a sequence each
+     * element becomes its own Config within the returned vector. Missing
+     * children produce an empty vector. Sub-configurations remain valid as long
+     * as the `ConfigTreePtr` that backs the root instance is alive.
      */
-    Config subConfig(const std::string& key) const;
+    std::vector<Config> subConfig(const std::string& key) const;
 
     /**
      * @brief Retrieve an integer value for the given key.
@@ -128,16 +148,6 @@ public:
     bool getBool(const std::string& key, bool def = false) const;
 
     /**
-     * @brief Access the underlying rapidyaml node directly.
-     *
-     * Use this when callers need to perform more advanced queries or
-     * iterate child nodes.
-     *
-     * @return The wrapped `ryml::ConstNodeRef`.
-     */
-    ryml::ConstNodeRef raw() const;
-
-    /**
      * @brief Extract the current node value into `out`.
      *
      * Mirrors the rapidyaml `node >> value` helper so callers do not need to
@@ -159,7 +169,7 @@ private:
     explicit Config(ConfigTreePtr tree, ryml::ConstNodeRef node);
 
     // Shared pointer to the rapidyaml tree that backs this config.
-    ConfigTreePtr    tree_;
+    ConfigTreePtr tree_;
 
     // The specific node within the rapidyaml tree that this Config wraps.
     ryml::ConstNodeRef node_;
