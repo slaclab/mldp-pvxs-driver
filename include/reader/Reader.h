@@ -27,6 +27,15 @@ public:
     /** @brief Return the human-readable identifier for this reader instance. */
     virtual std::string name() const = 0;
 
+    /** @brief Start the reader's polling loop with an optional timeout.
+     *
+     * The reader implementation should periodically check for timeout and exit the loop
+     * when the specified duration has elapsed.
+     *
+     * @param timeout Timeout in milliseconds; if zero or negative, run indefinitely.
+     */
+    virtual void run(int timeout) = 0;
+
 protected:
     /** @brief Event bus that derived readers use to deliver events.
      *

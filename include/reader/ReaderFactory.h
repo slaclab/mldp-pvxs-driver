@@ -10,6 +10,11 @@
 #include <string>
 #include <unordered_map>
 
+// Forward declaration to resolve circular dependency
+namespace mldp_pvxs_driver::config {
+class Config;
+}
+
 namespace mldp_pvxs_driver::reader {
 
 /**
@@ -36,7 +41,7 @@ public:
     static std::unique_ptr<Reader> create(
         const std::string&                                            type,
         std::shared_ptr<::mldp_pvxs_driver::util::bus::IEventBusPush> bus,
-        const mldp_pvxs_driver::config::Config&                       cfg);
+        const ::mldp_pvxs_driver::config::Config&                     cfg);
 
 private:
     /**
@@ -65,4 +70,5 @@ public:
 /// Macro that binds \c CLASSNAME into the factory with the provided \c TYPE_STRING identifier.
 #define REGISTER_READER(TYPE_STRING, CLASSNAME) \
     static inline ReaderRegistrator<CLASSNAME> registrator_{TYPE_STRING};
+
 } // namespace mldp_pvxs_driver::reader

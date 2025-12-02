@@ -2,7 +2,7 @@
 #include <reader/ReaderFactory.h>
 
 using namespace mldp_pvxs_driver::reader;
-using namespace mldp_pvxs_driver::bus;
+using namespace mldp_pvxs_driver::util::bus;
 
 std::unordered_map<std::string, ReaderFactory::CreatorFn>&
 ReaderFactory::registry()
@@ -17,9 +17,9 @@ void ReaderFactory::registerType(const std::string& type, CreatorFn fn)
 }
 
 std::unique_ptr<Reader> ReaderFactory::create(
-    const std::string&             type,
-    std::shared_ptr<IEventBusPush> bus,
-    const ReaderConfig&            cfg)
+    const std::string&                                            type,
+    std::shared_ptr<::mldp_pvxs_driver::util::bus::IEventBusPush> bus,
+    const ::mldp_pvxs_driver::config::Config&                     cfg)
 {
     auto& reg = registry();
     auto  it = reg.find(type);
