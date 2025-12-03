@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-namespace mldp_pvxs_driver::config {
+namespace mldp_pvxs_driver::reader::impl::epics {
 
 /**
  * @brief Strongly typed view over a single EPICS reader configuration entry.
@@ -50,7 +50,7 @@ public:
      * @throws Error when any of the required fields (name or pvs) are missing
      *         or malformed.
      */
-    explicit EpicsReaderConfig(const Config& readerEntry);
+    explicit EpicsReaderConfig(const ::mldp_pvxs_driver::config::Config& readerEntry);
 
     /** @return Whether the wrapped YAML node passed validation. */
     bool valid() const;
@@ -71,7 +71,7 @@ public:
 
 private:
     /** @brief Populate the typed fields from the raw YAML node. */
-    void parse(const Config& readerEntry);
+    void parse(const ::mldp_pvxs_driver::config::Config& readerEntry);
 
     bool                     valid_ = false;
     std::string              name_;
@@ -79,4 +79,4 @@ private:
     std::vector<std::string> pvNames_;
 };
 
-} // namespace mldp_pvxs_driver::config
+} // namespace mldp_pvxs_driver::reader::impl::epics

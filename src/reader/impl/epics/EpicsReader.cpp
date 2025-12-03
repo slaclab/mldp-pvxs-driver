@@ -12,18 +12,14 @@ using namespace pvxs::client;
 using MldpDriverConfig = mldp_pvxs_driver::config::Config;
 
 EpicsReader::EpicsReader(std::shared_ptr<IEventBusPush> bus, const MldpDriverConfig& cfg)
-    : Reader(std::move(bus)), running_(false)
+    : Reader(std::move(bus)), config_(EpicsReaderConfig(cfg)), name_(config_.name()), running_(false)
 {
 
     running_ = true;
     pva_context_ = pvxs::client::Context::fromEnv();
     worker_ = std::thread([this]
                           {
-                              // Empty loop — just keep thread alive
-                              while (running_)
-                              {
-                                  std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                              }
+                              run(-1);
                           });
 }
 

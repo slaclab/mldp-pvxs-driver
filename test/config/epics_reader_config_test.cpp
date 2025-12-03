@@ -2,7 +2,9 @@
 
 #include "test_epics_reader_config_helpers.h"
 
-namespace mldp_pvxs_driver::config {
+namespace mldp_pvxs_driver::reader::impl::epics {
+
+using mldp_pvxs_driver::config::makeConfigFromYaml;
 
 TEST(EpicsReaderConfigTest, ParsesValidEntry)
 {
@@ -66,4 +68,4 @@ pvs:
     EXPECT_THROW(static_cast<void>(EpicsReaderConfig(cfg)), EpicsReaderConfig::Error);
 }
 
-} // namespace mldp_pvxs_driver::config
+} // namespace mldp_pvxs_driver::reader::impl::epics

@@ -3,9 +3,6 @@
 #include <sstream>
 #include <utility>
 
-using mldp_pvxs_driver::config::Config;
-using mldp_pvxs_driver::config::EpicsReaderConfig;
-
 namespace {
 std::string makeMissingFieldMessage(const std::string& field)
 {
@@ -15,9 +12,11 @@ std::string makeMissingFieldMessage(const std::string& field)
 }
 } // namespace
 
+namespace mldp_pvxs_driver::reader::impl::epics {
+
 EpicsReaderConfig::EpicsReaderConfig() = default;
 
-EpicsReaderConfig::EpicsReaderConfig(const Config& readerEntry)
+EpicsReaderConfig::EpicsReaderConfig(const ::mldp_pvxs_driver::config::Config& readerEntry)
 {
     if (!readerEntry.valid())
     {
@@ -47,7 +46,7 @@ const std::vector<std::string>& EpicsReaderConfig::pvNames() const
     return pvNames_;
 }
 
-void EpicsReaderConfig::parse(const Config& readerEntry)
+void EpicsReaderConfig::parse(const ::mldp_pvxs_driver::config::Config& readerEntry)
 {
     if (!readerEntry.hasChild("name"))
     {
@@ -150,6 +149,7 @@ void EpicsReaderConfig::parse(const Config& readerEntry)
     {
         throw Error("pvs must not be empty");
     }
-
     valid_ = true;
 }
+
+} // namespace mldp_pvxs_driver::reader::impl::epics

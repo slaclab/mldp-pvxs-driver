@@ -3,6 +3,7 @@
 #include <config/Config.h>
 #include <reader/Reader.h>
 #include <reader/ReaderFactory.h>
+#include <reader/impl/epics/EpicsReaderConfig.h>
 #include <util/bus/IEventBusPush.h>
 
 #include <pvxs/client.h>
@@ -40,11 +41,10 @@ public:
     /** @brief Main loop that processes EPICS updates and pushes them onto the event bus.
      * @param timeout Maximum time in milliseconds to run before returning. A negative value means run indefinitely.
      */
-    void run (int timeout) override;
-
-
+    void run(int timeout) override;
 
 private:
+    EpicsReaderConfig                                           config_;
     std::string                                                 name_;
     std::atomic<bool>                                           running_;
     std::thread                                                 worker_;
@@ -55,7 +55,7 @@ private:
     /**
      * @brief Add the provided PV names to the list of monitored EPICS records.
      * @param pvNames Set of PV names to monitor.
-     */    
+     */
     void addPV(const PVSet& pvNames);
 
     /** @brief Automatically registers this reader type in the factory. */
