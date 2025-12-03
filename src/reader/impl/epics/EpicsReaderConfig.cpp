@@ -1,6 +1,7 @@
 #include <reader/impl/epics/EpicsReaderConfig.h>
 
 #include <sstream>
+#include <utility>
 
 using mldp_pvxs_driver::config::Config;
 using mldp_pvxs_driver::config::EpicsReaderConfig;
@@ -14,6 +15,8 @@ std::string makeMissingFieldMessage(const std::string& field)
 }
 } // namespace
 
+EpicsReaderConfig::EpicsReaderConfig() = default;
+
 EpicsReaderConfig::EpicsReaderConfig(const Config& readerEntry)
 {
     if (!readerEntry.valid())
@@ -22,6 +25,26 @@ EpicsReaderConfig::EpicsReaderConfig(const Config& readerEntry)
     }
 
     parse(readerEntry);
+}
+
+bool EpicsReaderConfig::valid() const
+{
+    return valid_;
+}
+
+const std::string& EpicsReaderConfig::name() const
+{
+    return name_;
+}
+
+const std::vector<EpicsReaderConfig::PVConfig>& EpicsReaderConfig::pvs() const
+{
+    return pvs_;
+}
+
+const std::vector<std::string>& EpicsReaderConfig::pvNames() const
+{
+    return pvNames_;
 }
 
 void EpicsReaderConfig::parse(const Config& readerEntry)
@@ -49,43 +72,84 @@ void EpicsReaderConfig::parse(const Config& readerEntry)
         throw Error("name must not be empty");
     }
 
-    if (!readerEntry.hasChild("pv_names"))
+    if (!readerEntry.hasChild("pvs"))
     {
-        throw Error(makeMissingFieldMessage("pv_names"));
+        throw Error(makeMissingFieldMessage("pvs"));
     }
 
-    if (!readerEntry.isSequence("pv_names"))
+    if (!readerEntry.isSequence("pvs"))
     {
-        throw Error("pv_names must be a sequence");
+        throw Error("pvs must be a sequence");
     }
 
-    pvNames_ = readStringSequence(readerEntry.raw()["pv_names"]);
-    if (pvNames_.empty())
+    const auto pvNodes = readerEntry.subConfig("pvs");
+    if (pvNodes.empty())
     {
-        throw Error("pv_names must not be empty");
+        throw Error("pvs must not be empty");
+    }
+
+    pvs_.clear();
+    pvNames_.clear();
+    pvs_.reserve(pvNodes.size());
+    pvNames_.reserve(pvNodes.size());
+
+    for (const auto& pvNode : pvNodes)
+    {
+        if (!pvNode.raw().is_map())
+        {
+            throw Error("Each entry in pvs must be a map");
+        }
+
+        if (!pvNode.hasChild("name"))
+        {
+            throw Error(makeMissingFieldMessage("pvs[].name"));
+        }
+
+        const auto pvNameNodes = pvNode.subConfig("name");
+        if (pvNameNodes.empty())
+        {
+            throw Error(makeMissingFieldMessage("pvs[].name"));
+        }
+
+        const auto& pvNameNode = pvNameNodes.front();
+        if (!pvNameNode.raw().has_val())
+        {
+            throw Error("pvs[].name must be a scalar");
+        }
+
+        std::string pvName;
+        pvNameNode >> pvName;
+        if (pvName.empty())
+        {
+            throw Error("pvs[].name must not be empty");
+        }
+
+        std::string option;
+        if (pvNode.hasChild("option"))
+        {
+            const auto optionNodes = pvNode.subConfig("option");
+            if (optionNodes.empty())
+            {
+                throw Error(makeMissingFieldMessage("pvs[].option"));
+            }
+
+            const auto& optionNode = optionNodes.front();
+            if (!optionNode.raw().has_val())
+            {
+                throw Error("pvs[].option must be a scalar");
+            }
+
+            optionNode >> option;
+        }
+
+        pvs_.push_back({std::move(pvName), std::move(option)});
+        pvNames_.push_back(pvs_.back().name);
+    }
+
+    if (pvs_.empty())
+    {
+        throw Error("pvs must not be empty");
     }
 
     valid_ = true;
-}
-
-std::vector<std::string> EpicsReaderConfig::readStringSequence(const c4::yml::ConstNodeRef& node)
-{
-    std::vector<std::string> values;
-    if (!node.is_seq())
-    {
-        return values;
-    }
-
-    values.reserve(node.num_children());
-    for (const auto& child : node.children())
-    {
-        std::string value;
-        if (child.has_val())
-        {
-            child >> value;
-        }
-        values.emplace_back(std::move(value));
-    }
-
-    return values;
 }
