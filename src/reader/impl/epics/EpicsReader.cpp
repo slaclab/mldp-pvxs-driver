@@ -1,7 +1,7 @@
 
 #include <chrono>
+#include <reader/impl/epics/EpicsMLDPConversion.h>
 #include <reader/impl/epics/EpicsReader.h>
-
 #include <spdlog/spdlog.h>
 
 using namespace mldp_pvxs_driver::config;
@@ -21,11 +21,19 @@ EpicsReader::EpicsReader(std::shared_ptr<IEventBusPush> bus, const MldpDriverCon
                           {
                               run(-1);
                           });
+    // add all configured pvs
+    PVSet pvNames;
+    for (const auto& pvConfig : config_.pvs())
+    {
+        pvNames.insert(pvConfig.name);
+    }
+    addPV(pvNames);
 }
 
 EpicsReader::~EpicsReader()
 {
     running_ = false;
+    m_pva_workqueue.push(nullptr); // Push a null subscription to unblock the queue
     if (worker_.joinable())
         worker_.join();
 }
@@ -39,22 +47,27 @@ void EpicsReader::addPV(const PVSet& pvNames)
 {
     for (const auto& pv : pvNames)
     {
-        m_pva_subscriptions.push(pva_context_.monitor(pv)
-                                     .event([this](const pvxs::client::Subscription& s)
-                                            {
-                                                m_pva_workqueue.push(s.shared_from_this());
-                                            })
-                                     .exec());
+        auto pv_mon = pva_context_.monitor(pv)
+                          .event([this](const pvxs::client::Subscription& s)
+                                 {
+                                     m_pva_workqueue.push(s.shared_from_this());
+                                 })
+                          .exec();
+        m_pva_subscriptions.push(pv_mon);
+        spdlog::info("Started monitoring PV {}", pv);
     }
 }
 
 void EpicsReader::run(int timeout)
 {
-    bool expired = false;
+    spdlog::info("EpicsReader worker thread started.");
+    bool       expired = false;
     const auto start = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch());
     while (running_ && !expired)
     {
         auto sub = m_pva_workqueue.pop();
+        if (!sub)
+            continue; // Skip null subscription used to unblock queue on shutdown
         try
         {
             pvxs::Value update = sub->pop();
@@ -62,7 +75,13 @@ void EpicsReader::run(int timeout)
             {
                 continue;
             }
-            spdlog::info("Received update for PV {}", sub->name());
+
+            spdlog::trace("Received update for PV {}", sub->name());
+            {
+                std::shared_ptr<DataValue> data_value = std::make_shared<DataValue>();
+                EpicsMLDPConversion::convertPVToProtoValue(update, data_value.get());
+                bus_->push(data_value);
+            }
         }
         catch (const pvxs::client::RemoteError& e)
         {
@@ -79,4 +98,5 @@ void EpicsReader::run(int timeout)
             }
         }
     }
+    spdlog::info("EpicsReader worker thread exiting.");
 }

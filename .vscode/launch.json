@@ -10,6 +10,7 @@
             // "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
             "disableASLR": false,
+            "console": "integratedTerminal",
             "initCommands": [
                 "settings set target.disable-aslr false"
             ]
@@ -37,7 +38,8 @@
             "disableASLR": false,
             "initCommands": [
                 "settings set target.disable-aslr false"
-            ]
+            ],
+            "console": "integratedTerminal"
         },
         {
             "name": "(gdb) Launch Tests",
@@ -47,6 +49,7 @@
             "args": [],
             "cwd": "${workspaceFolder}",
             "disableASLR": false,
+            "console": "integratedTerminal",
             "initCommands": [
                 "settings set target.disable-aslr false"
             ]
@@ -62,6 +65,7 @@
             // "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
             "disableASLR": false,
+            "console": "integratedTerminal",
             "initCommands": [
                 "settings set target.disable-aslr false"
             ]

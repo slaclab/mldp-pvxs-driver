@@ -73,7 +73,7 @@ void EpicsReaderConfig::parse(const ::mldp_pvxs_driver::config::Config& readerEn
 
     if (!readerEntry.hasChild("pvs"))
     {
-        throw Error(makeMissingFieldMessage("pvs"));
+       return;
     }
 
     if (!readerEntry.isSequence("pvs"))
@@ -82,10 +82,6 @@ void EpicsReaderConfig::parse(const ::mldp_pvxs_driver::config::Config& readerEn
     }
 
     const auto pvNodes = readerEntry.subConfig("pvs");
-    if (pvNodes.empty())
-    {
-        throw Error("pvs must not be empty");
-    }
 
     pvs_.clear();
     pvNames_.clear();
@@ -145,10 +141,6 @@ void EpicsReaderConfig::parse(const ::mldp_pvxs_driver::config::Config& readerEn
         pvNames_.push_back(pvs_.back().name);
     }
 
-    if (pvs_.empty())
-    {
-        throw Error("pvs must not be empty");
-    }
     valid_ = true;
 }
 

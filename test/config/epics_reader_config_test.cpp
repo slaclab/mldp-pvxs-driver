@@ -45,6 +45,22 @@ pvs: invalid
     EXPECT_THROW(static_cast<void>(EpicsReaderConfig(cfg)), EpicsReaderConfig::Error);
 }
 
+TEST(EpicsReaderConfigTest, AllowsEmptyPvsSequence)
+{
+    const std::string yaml = R"(
+name: epics_empty
+pvs: []
+)";
+
+    const auto        cfg = makeConfigFromYaml(yaml);
+    EpicsReaderConfig epicsCfg(cfg);
+
+    EXPECT_TRUE(epicsCfg.valid());
+    EXPECT_EQ("epics_empty", epicsCfg.name());
+    EXPECT_TRUE(epicsCfg.pvs().empty());
+    EXPECT_TRUE(epicsCfg.pvNames().empty());
+}
+
 TEST(EpicsReaderConfigTest, ThrowsWhenNameMissing)
 {
     const std::string yaml = R"(
