@@ -1,7 +1,7 @@
-// Helper utilities shared by EpicsReaderConfig tests.
+// Helper utilities shared by configuration tests.
 #pragma once
 
-#include <reader/impl/epics/EpicsReaderConfig.h>
+#include <config/Config.h>
 
 namespace mldp_pvxs_driver::config {
 

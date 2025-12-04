@@ -225,11 +225,13 @@ add_library(lib${PROJECT_NAME}
         # "${CMAKE_CURRENT_SOURCE_DIR}/include/mldp_pvxs_driver.h"
         # "${CMAKE_CURRENT_SOURCE_DIR}/include/reader/impl/epics/EpicsReader.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/ReaderFactory.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/EpicsReader.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/config/Config.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/EpicsReader.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/EpicsReaderConfig.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/util/pool/MLDPGrpcPool.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/EpicsMLDPConversion.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/util/pool/MLDPGrpcPool.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controller/MLDPPVXSControllerConfig.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controller/MLDPPVXSController.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/mldp_pvxs_driver.cpp"
 )
 target_link_libraries(lib${PROJECT_NAME} PUBLIC lib${PROJECT_NAME}_proto Threads::Threads pvxs spdlog::spdlog)
@@ -252,6 +254,7 @@ if(MLDP_PVXS_DRIVER_TESTS)
             "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/sioc.h"
             "${CMAKE_CURRENT_SOURCE_DIR}/test/driver.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/test/config/epics_reader_config_test.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/test/config/mldppvxs_controller_config_test.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/test/ryml_single_header_translation_unit.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/test/util/pool/test_mldp_grpc_pool.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics/epics_reader_test.cpp"

@@ -5,7 +5,7 @@
 #include <vector>
 
 #include "../../../mock/sioc.h"
-#include "../../../config/test_epics_reader_config_helpers.h"
+#include "../../../config/test_config_helpers.h"
 
 #include <config/Config.h>
 #include <reader/ReaderFactory.h>

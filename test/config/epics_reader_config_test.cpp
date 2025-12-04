@@ -1,6 +1,8 @@
 #include <gtest/gtest.h>
 
-#include "test_epics_reader_config_helpers.h"
+#include <reader/impl/epics/EpicsReaderConfig.h>
+
+#include "test_config_helpers.h"
 
 namespace mldp_pvxs_driver::reader::impl::epics {
 
