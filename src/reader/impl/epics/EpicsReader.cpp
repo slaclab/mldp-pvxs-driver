@@ -54,13 +54,13 @@ void EpicsReader::addPV(const PVSet& pvNames)
                                  })
                           .exec();
         m_pva_subscriptions.push(pv_mon);
-        spdlog::info("Started monitoring PV {}", pv);
+        spdlog::info("Started monitoring PV {} on reader {}", pv, name_);
     }
 }
 
 void EpicsReader::run(int timeout)
 {
-    spdlog::info("EpicsReader worker thread started.");
+    spdlog::info("EpicsReader worker thread started on reader {}.", name_);
     bool       expired = false;
     const auto start = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch());
     while (running_ && !expired)
@@ -76,7 +76,7 @@ void EpicsReader::run(int timeout)
                 continue;
             }
 
-            spdlog::trace("Received update for PV {}", sub->name());
+            spdlog::trace("Received update for PV {} on reader {}.", sub->name(), name_);
             {
                 std::shared_ptr<DataValue> data_value = std::make_shared<DataValue>();
                 EpicsMLDPConversion::convertPVToProtoValue(update, data_value.get());
@@ -85,7 +85,7 @@ void EpicsReader::run(int timeout)
         }
         catch (const pvxs::client::RemoteError& e)
         {
-            spdlog::error("Server error when reading PV {}: {}", sub->name(), e.what());
+            spdlog::error("Server error when reading PV {} on reader {}: {}", sub->name(), name_, e.what());
         }
 
         if (timeout > 0)
@@ -98,5 +98,5 @@ void EpicsReader::run(int timeout)
             }
         }
     }
-    spdlog::info("EpicsReader worker thread exiting.");
+    spdlog::info("EpicsReader worker thread exiting on reader {}.", name_);
 }

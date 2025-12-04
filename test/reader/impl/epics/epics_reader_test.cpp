@@ -105,8 +105,8 @@ pvs:
 
     // Use ReaderFactory to create EpicsReader instance (as shown in test/driver.cpp)
     auto reader_ptr = mldp_pvxs_driver::reader::ReaderFactory::create("epics", mock_bus, cfg);
-    // reader = std::dynamic_pointer_cast<mldp_pvxs_driver::reader::impl::epics::EpicsReader>(std::shared_ptr<mldp_pvxs_driver::reader::Reader>(reader_ptr));
-
+ 
+    // check if is not null
     ASSERT_NE(reader_ptr, nullptr);
 
     // Verify name is set correctly (assuming default or configurable name)
@@ -121,25 +121,6 @@ pvs:
         waited_ms += 100;
     }   
     EXPECT_GT(mock_bus->event_count(), 0) << "No events received within timeout";
-}
-
-// Test run method with timeout
-TEST_F(EpicsReaderTest, RunWithTimeout)
-{
-    // This test would need to verify that the run method processes updates
-    // and respects timeout parameter
-
-    // Verify that run method returned within timeout and processed updates
-}
-
-// Test destructor ensures proper cleanup
-TEST_F(EpicsReaderTest, DestructorCleansUp)
-{
-    // Verify worker thread is properly joined
-    // This would require checking internal state or using mocks
-
-    // Verify cleanup occurred - this would need to verify that running_ is false
-    // and worker thread has been joined
 }
 
 } // namespace mldp_pvxs_driver::reader::impl::epics
