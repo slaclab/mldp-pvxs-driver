@@ -1,9 +1,11 @@
 
 #include "util/bus/IEventBusPush.h"
 #include <chrono>
+#include <cstdint>
 #include <reader/impl/epics/EpicsMLDPConversion.h>
 #include <reader/impl/epics/EpicsReader.h>
 #include <spdlog/spdlog.h>
+#include <utility>
 
 using namespace mldp_pvxs_driver::config;
 using namespace mldp_pvxs_driver::util::bus;
@@ -63,7 +65,7 @@ void EpicsReader::run(int timeout)
 {
     spdlog::info("EpicsReader worker thread started on reader {}.", name_);
     bool       expired = false;
-    const auto start = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch());
+    const auto acquisition_ts = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch());
     while (running_ && !expired)
     {
         auto sub = m_pva_workqueue.pop();
@@ -71,22 +73,46 @@ void EpicsReader::run(int timeout)
             continue; // Skip null subscription used to unblock queue on shutdown
         try
         {
-            pvxs::Value update = sub->pop();
-            if (!update)
+            pvxs::Value epics_value = sub->pop();
+            if (!epics_value)
             {
                 continue;
             }
 
             spdlog::trace("Received update for PV {} on reader {}.", sub->name(), name_);
             {
+                uint64_t epoch_seconds = 0;
+                uint64_t nanoseconds = 0;
+                if (epics_value.type().kind() == pvxs::Kind::Compound)
+                {
+                    bool setEpoch = false;
+                    if (const auto timestampField = epics_value["timeStamp"]; timestampField.valid())
+                    {
+                        if (const auto secondsField = timestampField["secondsPastEpoch"]; secondsField.valid())
+                        {
+                            epoch_seconds = secondsField.as<uint64_t>();
+                            setEpoch = true;
+                        }
+                        if (const auto nanosecondsField = timestampField["nanoseconds"]; nanosecondsField.valid())
+                        {
+                            nanoseconds = nanosecondsField.as<uint64_t>();
+                        }
+                    }
+                    if (!setEpoch)
+                    {
+                        // Fallback to make sure timestamp is always set
+                        epoch_seconds = std::chrono::duration_cast<std::chrono::seconds>(acquisition_ts).count();
+                    }
+                }
+
                 // allocate event value
-                auto data_value = IEventBusPush::MakeEventValue(sub->name());
+                auto event_value = IEventBusPush::MakeEventValue(sub->name(), epoch_seconds, nanoseconds);
 
                 // convert PVXS value to MLDP proto value
-                EpicsMLDPConversion::convertPVToProtoValue(update, data_value->data_value.get());
+                EpicsMLDPConversion::convertPVToProtoValue(epics_value, event_value->data_value.get());
 
-                // push to bus
-                bus_->push(data_value);
+                // push to bus movidn data loosing the ownership
+                bus_->push(std::move(event_value));
             }
         }
         catch (const pvxs::client::RemoteError& e)
@@ -97,7 +123,7 @@ void EpicsReader::run(int timeout)
         if (timeout > 0)
         {
             if (
-                const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()) - start;
+                const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()) - acquisition_ts;
                 elapsed.count() > timeout)
             {
                 expired = true;

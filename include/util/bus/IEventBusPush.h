@@ -3,6 +3,7 @@
  */
 
 #pragma once
+#include <cstdint>
 #include <ingestion.grpc.pb.h>
 #include <memory>
 #include <string>
@@ -12,6 +13,8 @@ namespace mldp_pvxs_driver::util::bus {
 struct EventValueStruct
 {
     const std::string          src_name;
+    const uint64_t             epoch_seconds;
+    const uint64_t             nanoseconds;
     std::shared_ptr<DataValue> data_value;
 };
 
@@ -32,13 +35,15 @@ public:
      * @brief Helper factory that returns an empty event payload.
      * @return Shared pointer users can populate before invoking @ref push.
      */
-    static EventValue MakeEventValue(const std::string& src_name)
+    static EventValue MakeEventValue(const std::string& src_name, uint64_t epoch_seconds = 0, uint64_t nanoseconds = 0)
     {
         // Construct a temporary aggregate explicitly to avoid overload
         // resolution issues with braced-init-lists and make_shared.
         return std::make_shared<EventValueStruct>(
             EventValueStruct{
                 src_name,
+                epoch_seconds,
+                nanoseconds,
                 std::make_shared<DataValue>()});
     }
 
