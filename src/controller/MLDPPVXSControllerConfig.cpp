@@ -51,11 +51,17 @@ MLDPPVXSControllerConfig::epicsReaders() const
     return epicsReaders_;
 }
 
+const std::optional<metrics::MetricsConfig>& MLDPPVXSControllerConfig::metricsConfig() const
+{
+    return metricsConfig_;
+}
+
 void MLDPPVXSControllerConfig::parse(const ::mldp_pvxs_driver::config::Config& root)
 {
     parseThreadPool(root);
     parsePool(root);
     parseReaders(root);
+    parseMetrics(root);
     valid_ = true;
 }
 
@@ -247,6 +253,23 @@ void MLDPPVXSControllerConfig::parseReaders(const ::mldp_pvxs_driver::config::Co
             throw Error("reader entry does not specify a supported type (expected 'epics')");
         }
     }
+}
+
+void MLDPPVXSControllerConfig::parseMetrics(const ::mldp_pvxs_driver::config::Config& root)
+{
+    metricsConfig_.reset();
+    if (!root.hasChild("metrics"))
+    {
+        return;
+    }
+
+    const auto metricsNodes = root.subConfig("metrics");
+    if (metricsNodes.empty())
+    {
+        throw Error("metrics block is present but empty");
+    }
+
+    metricsConfig_.emplace(metricsNodes.front());
 }
 
 } // namespace mldp_pvxs_driver::controller

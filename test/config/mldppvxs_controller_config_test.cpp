@@ -24,6 +24,8 @@ reader:
           - name: pv1
             option: chan://one
           - name: pv2
+metrics:
+  endpoint: 0.0.0.0:9464
 )";
 
     const auto               cfg = makeConfigFromYaml(yaml);
@@ -43,6 +45,8 @@ reader:
     EXPECT_EQ("pv1", epicsReader.pvs()[0].name);
     EXPECT_EQ("chan://one", epicsReader.pvs()[0].option);
     EXPECT_EQ("pv2", epicsReader.pvs()[1].name);
+    ASSERT_TRUE(controllerCfg.metricsConfig().has_value());
+    EXPECT_EQ("0.0.0.0:9464", controllerCfg.metricsConfig()->endpoint());
 }
 
 TEST(MLDPPVXSControllerConfigTest, ParsesMultipleEpicsReaders)

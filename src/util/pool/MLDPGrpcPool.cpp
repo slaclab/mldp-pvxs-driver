@@ -2,9 +2,12 @@
 #include <util/pool/IPoolHandle.h>
 #include <util/pool/MLDPGrpcPool.h>
 
+#include <metrics/Metrics.h>
+
+#include <algorithm>
+#include <chrono>
 #include <grpcpp/grpcpp.h>
 #include <stdexcept>
-#include <chrono>
 
 namespace mldp_pvxs_driver::util::pool {
 
@@ -30,10 +33,14 @@ std::unique_ptr<dp::service::ingestion::DpIngestionService::Stub> MLDPGrpcObject
 
 #pragma region - MLDPGrpcPool
 
-MLDPGrpcPool::MLDPGrpcPool(std::size_t min_size,
-                           std::size_t max_size,
-                           Factory     factory)
-    : min_size_(min_size), max_size_(max_size), factory_(std::move(factory))
+MLDPGrpcPool::MLDPGrpcPool(std::size_t                       min_size,
+                           std::size_t                       max_size,
+                           Factory                           factory,
+                           std::shared_ptr<metrics::Metrics> metrics)
+    : min_size_(min_size)
+    , max_size_(max_size)
+    , factory_(std::move(factory))
+    , metrics_(std::move(metrics))
 {
     if (!factory_)
     {
@@ -51,14 +58,16 @@ MLDPGrpcPool::MLDPGrpcPool(std::size_t min_size,
         items_.push_back({factory_(), false});
     }
     current_size_ = min_size_;
+    updateMetrics();
 }
 
-std::shared_ptr<MLDPGrpcPool> MLDPGrpcPool::create(std::size_t min_size,
-                                                  std::size_t max_size,
-                                                  Factory     factory)
+MLDPGrpcPool::MLDPGrpcPoolShrdPtr MLDPGrpcPool::create(std::size_t                       min_size,
+                                                       std::size_t                       max_size,
+                                                       Factory                           factory,
+                                                       std::shared_ptr<metrics::Metrics> metrics)
 {
     // Use new + shared_ptr constructor because the constructor is private.
-    return std::shared_ptr<MLDPGrpcPool>(new MLDPGrpcPool(min_size, max_size, std::move(factory)));
+    return std::shared_ptr<MLDPGrpcPool>(new MLDPGrpcPool(min_size, max_size, std::move(factory), std::move(metrics)));
 }
 
 PooledHandle<MLDPGrpcObject> MLDPGrpcPool::acquire()
@@ -73,6 +82,7 @@ PooledHandle<MLDPGrpcObject> MLDPGrpcPool::acquire()
             if (!item.in_use && item.obj)
             {
                 item.in_use = true;
+                updateMetricsLocked();
                 auto pool_ptr = std::static_pointer_cast<IObjectPool<MLDPGrpcObject>>(shared_from_this());
                 return PooledHandle<MLDPGrpcObject>(pool_ptr, item.obj);
             }
@@ -84,6 +94,7 @@ PooledHandle<MLDPGrpcObject> MLDPGrpcPool::acquire()
             auto obj = factory_();
             items_.push_back({obj, true});
             ++current_size_;
+            updateMetricsLocked();
             auto pool_ptr = std::static_pointer_cast<IObjectPool<MLDPGrpcObject>>(shared_from_this());
             return PooledHandle<MLDPGrpcObject>(pool_ptr, obj);
         }
@@ -108,6 +119,7 @@ void MLDPGrpcPool::release(const ObjectShrdPtr& obj)
         if (item.obj.get() == obj.get())
         {
             item.in_use = false;
+            updateMetricsLocked();
             cv_.notify_one();
             return;
         }
@@ -120,6 +132,17 @@ void MLDPGrpcPool::release(const ObjectShrdPtr& obj)
 std::size_t MLDPGrpcPool::available() const
 {
     std::unique_lock<std::mutex> lock(mutex_);
+    return availableCountLocked();
+}
+
+std::size_t MLDPGrpcPool::size() const
+{
+    std::unique_lock<std::mutex> lock(mutex_);
+    return current_size_;
+}
+
+std::size_t MLDPGrpcPool::availableCountLocked() const
+{
     std::size_t count = 0;
     for (const auto& item : items_)
     {
@@ -127,6 +150,25 @@ std::size_t MLDPGrpcPool::available() const
             ++count;
     }
     return count;
+}
+
+void MLDPGrpcPool::updateMetricsLocked() const
+{
+    if (!metrics_)
+    {
+        return;
+    }
+
+    const double total = static_cast<double>(current_size_);
+    const double available = static_cast<double>(availableCountLocked());
+    metrics_->setPoolConnectionsAvailable(available);
+    metrics_->setPoolConnectionsInUse(std::max(0.0, total - available));
+}
+
+void MLDPGrpcPool::updateMetrics() const
+{
+    std::unique_lock<std::mutex> lock(mutex_);
+    updateMetricsLocked();
 }
 
 #pragma endregion - MLDPGrpcPool

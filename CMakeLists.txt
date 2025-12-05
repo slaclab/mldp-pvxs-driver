@@ -16,6 +16,9 @@ endif()
 
 include(FetchContent)
 
+set(PROMETHEUS_CPP_VERSION "v1.3.0")
+set(SPDLOG_VERSION "v1.16.0")
+
 # Output directories
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
@@ -35,9 +38,31 @@ message(STATUS "C++ Standard: ${CMAKE_CXX_STANDARD}")
 # Acquire spdlog for structured logging and ensure it builds before the driver library.
 FetchContent_Declare(spdlog
         GIT_REPOSITORY https://github.com/gabime/spdlog.git
-        GIT_TAG        v1.16.0
+        GIT_TAG        ${SPDLOG_VERSION}
 )
 FetchContent_MakeAvailable(spdlog)
+
+# Prometheus-cpp pulls its own GoogleTest dependency when ENABLE_TESTING is set.
+# Temporarily override the cached ENABLE_TESTING option so the dependency does
+# not try to define conflicting gmock targets when added as a subproject.
+set(_PROMETHEUS_ENABLE_TESTING_DEFINED FALSE)
+if(DEFINED CACHE{ENABLE_TESTING})
+    set(_PROMETHEUS_ENABLE_TESTING_DEFINED TRUE)
+    set(_PROMETHEUS_ENABLE_TESTING_VALUE ${ENABLE_TESTING})
+endif()
+set(ENABLE_TESTING OFF CACHE BOOL "Disable tests when pulling prometheus-cpp" FORCE)
+
+FetchContent_Declare(prometheus-cpp
+        GIT_REPOSITORY https://github.com/jupp0r/prometheus-cpp.git
+        GIT_TAG        ${PROMETHEUS_CPP_VERSION}
+)
+FetchContent_MakeAvailable(prometheus-cpp)
+
+if(_PROMETHEUS_ENABLE_TESTING_DEFINED)
+    set(ENABLE_TESTING ${_PROMETHEUS_ENABLE_TESTING_VALUE} CACHE BOOL "Restore ENABLE_TESTING after prometheus-cpp" FORCE)
+else()
+    unset(ENABLE_TESTING CACHE)
+endif()
 
 # Find required packages
 find_package(Protobuf REQUIRED)
@@ -232,10 +257,12 @@ add_library(lib${PROJECT_NAME}
         "${CMAKE_CURRENT_SOURCE_DIR}/src/util/pool/MLDPGrpcPool.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/controller/MLDPPVXSControllerConfig.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/controller/MLDPPVXSController.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/metrics/Metrics.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/metrics/MetricsConfig.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/mldp_pvxs_driver.cpp"
 )
-target_link_libraries(lib${PROJECT_NAME} PUBLIC lib${PROJECT_NAME}_proto Threads::Threads pvxs spdlog::spdlog)
-target_include_directories(lib${PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/ext/BS_thread_pool/include")
+ target_link_libraries(lib${PROJECT_NAME} PUBLIC lib${PROJECT_NAME}_proto Threads::Threads pvxs spdlog::spdlog prometheus-cpp::core prometheus-cpp::pull)
+target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/ext/BS_thread_pool/include")
 target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/ext/rapidyaml/include")
 target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 # Ensure the build tree's generated headers (e.g. config.h) are visible to users of the library
@@ -255,6 +282,7 @@ if(MLDP_PVXS_DRIVER_TESTS)
             "${CMAKE_CURRENT_SOURCE_DIR}/test/driver.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/test/config/epics_reader_config_test.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/test/config/mldppvxs_controller_config_test.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/test/controller/mldppvxs_controller_test.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/test/ryml_single_header_translation_unit.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/test/util/pool/test_mldp_grpc_pool.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics/epics_reader_test.cpp"

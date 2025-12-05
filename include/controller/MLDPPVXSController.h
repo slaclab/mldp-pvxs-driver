@@ -2,6 +2,7 @@
 
 #include <config/Config.h>
 #include <controller/MLDPPVXSControllerConfig.h>
+#include <metrics/Metrics.h>
 #include <util/bus/IEventBusPush.h>
 #include <util/pool/MLDPGrpcPool.h>
 
@@ -19,10 +20,11 @@ public:
     bool push(EventValue data_value) override;
 
 private:
-    MLDPPVXSControllerConfig                         config_;
-    std::shared_ptr<BS::light_thread_pool>           thread_pool_;
-    std::shared_ptr<util::pool::MLDPGrpcPool>        mldp_pool_;
-    bool                                             running_;
+    MLDPPVXSControllerConfig                      config_;
+    std::shared_ptr<BS::light_thread_pool>        thread_pool_;
+    std::shared_ptr<metrics::Metrics>             metrics_;
+    util::pool::MLDPGrpcPool::MLDPGrpcPoolShrdPtr mldp_pool_;
+    bool                                          running_;
 };
 
 } // namespace mldp_pvxs_driver::controller

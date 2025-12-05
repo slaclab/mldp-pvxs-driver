@@ -1,8 +1,10 @@
 #pragma once
 
 #include <config/Config.h>
+#include <metrics/MetricsConfig.h>
 #include <reader/impl/epics/EpicsReaderConfig.h>
 
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -67,16 +69,21 @@ public:
      */
     const std::vector<reader::impl::epics::EpicsReaderConfig>& epicsReaders() const;
 
+    /** @return Optional metrics configuration when the YAML provides it. */
+    const std::optional<metrics::MetricsConfig>& metricsConfig() const;
+
 private:
     void parse(const ::mldp_pvxs_driver::config::Config& root);
     void parseThreadPool(const ::mldp_pvxs_driver::config::Config& root);
     void parsePool(const ::mldp_pvxs_driver::config::Config& root);
     void parseReaders(const ::mldp_pvxs_driver::config::Config& root);
+    void parseMetrics(const ::mldp_pvxs_driver::config::Config& root);
 
     bool                                                valid_ = false;
     PoolConfig                                          pool_;
     int                                                 controllerThreadPoolSize_ = 0;
     std::vector<reader::impl::epics::EpicsReaderConfig> epicsReaders_;
+    std::optional<metrics::MetricsConfig>               metricsConfig_;
 };
 
 } // namespace mldp_pvxs_driver::controller

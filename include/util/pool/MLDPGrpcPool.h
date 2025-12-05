@@ -7,8 +7,13 @@
 #include <functional>
 #include <grpcpp/grpcpp.h>
 #include <ingestion.grpc.pb.h>
+#include <memory>
 #include <mutex>
 #include <vector>
+
+namespace mldp_pvxs_driver::metrics {
+class Metrics;
+} // namespace mldp_pvxs_driver::metrics
 
 namespace mldp_pvxs_driver::util::pool {
 
@@ -146,6 +151,7 @@ struct MLDPGrpcObject
 class MLDPGrpcPool : public IObjectPool<MLDPGrpcObject>, public std::enable_shared_from_this<MLDPGrpcPool>
 {
 public:
+    using MLDPGrpcPoolShrdPtr = std::shared_ptr<MLDPGrpcPool>;
     using ObjectShrdPtr = typename IObjectPool<MLDPGrpcObject>::ObjectShrdPtr;
     using Factory = std::function<ObjectShrdPtr()>; // how to create a new Stub
 
@@ -172,9 +178,10 @@ public:
      *                 instances when the pool grows.
      * @return std::shared_ptr<MLDPGrpcPool> Managed pool instance.
      */
-    static std::shared_ptr<MLDPGrpcPool> create(std::size_t min_size,
-                                                std::size_t max_size,
-                                                Factory     factory);
+    static MLDPGrpcPoolShrdPtr create(std::size_t                       min_size,
+                                      std::size_t                       max_size,
+                                      Factory                           factory,
+                                      std::shared_ptr<metrics::Metrics> metrics = nullptr);
 
     /**
      * @brief Acquire a pooled object wrapped in an RAII handle.
@@ -215,12 +222,22 @@ public:
      */
     std::size_t available() const override;
 
+    /**
+     * @brief Return the number of connections currently tracked by the pool.
+     */
+    std::size_t size() const;
+
 private:
+    std::size_t availableCountLocked() const;
+    void        updateMetricsLocked() const;
+    void        updateMetrics() const;
+
     // Make constructor private to force use of `create()` which returns a
     // `std::shared_ptr` (required for `enable_shared_from_this`).
-    MLDPGrpcPool(std::size_t min_size,
-                 std::size_t max_size,
-                 Factory     factory);
+    MLDPGrpcPool(std::size_t                       min_size,
+                 std::size_t                       max_size,
+                 Factory                           factory,
+                 std::shared_ptr<metrics::Metrics> metrics);
 
     struct Item
     {
@@ -239,7 +256,8 @@ private:
     // Token used to detect pool lifetime. Pooled handles keep a weak_ptr to
     // this token so they can safely avoid calling back into the pool after
     // the pool has been destroyed.
-    std::shared_ptr<void>   lifetime_token_;
+    std::shared_ptr<void>             lifetime_token_;
+    std::shared_ptr<metrics::Metrics> metrics_;
 };
 
 } // namespace mldp_pvxs_driver::util::pool
