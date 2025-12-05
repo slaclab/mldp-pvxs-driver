@@ -38,8 +38,10 @@ public:
      */
     struct PoolConfig
     {
-        std::string url;          ///< Fully qualified MLDP service endpoint.
-        int         max_conn = 0; ///< Maximum number of connections to keep open.
+        std::string provider_name; ///< Logical provider identifier for MLDP.
+        std::string url;           ///< Fully qualified MLDP service endpoint.
+        int         min_conn = 0;  ///< Minimum number of warm connections to maintain.
+        int         max_conn = 0;  ///< Maximum number of connections to keep open.
     };
 
     MLDPPVXSControllerConfig();
@@ -51,6 +53,12 @@ public:
     /** @return Pool configuration managed by the controller. */
     const PoolConfig& pool() const;
 
+    /** @return Logical provider name to register with MLDP. */
+    const std::string& providerName() const;
+
+    /** @return Number of controller threads to spin up. */
+    int controllerThreadPoolSize() const;
+
     /**
      * @return List of configured EPICS readers.
      *
@@ -61,11 +69,13 @@ public:
 
 private:
     void parse(const ::mldp_pvxs_driver::config::Config& root);
+    void parseThreadPool(const ::mldp_pvxs_driver::config::Config& root);
     void parsePool(const ::mldp_pvxs_driver::config::Config& root);
     void parseReaders(const ::mldp_pvxs_driver::config::Config& root);
 
     bool                                                valid_ = false;
     PoolConfig                                          pool_;
+    int                                                 controllerThreadPoolSize_ = 0;
     std::vector<reader::impl::epics::EpicsReaderConfig> epicsReaders_;
 };
 

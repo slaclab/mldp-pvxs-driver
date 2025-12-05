@@ -35,6 +35,16 @@ const MLDPPVXSControllerConfig::PoolConfig& MLDPPVXSControllerConfig::pool() con
     return pool_;
 }
 
+const std::string& MLDPPVXSControllerConfig::providerName() const
+{
+    return pool_.provider_name;
+}
+
+int MLDPPVXSControllerConfig::controllerThreadPoolSize() const
+{
+    return controllerThreadPoolSize_;
+}
+
 const std::vector<reader::impl::epics::EpicsReaderConfig>&
 MLDPPVXSControllerConfig::epicsReaders() const
 {
@@ -43,9 +53,36 @@ MLDPPVXSControllerConfig::epicsReaders() const
 
 void MLDPPVXSControllerConfig::parse(const ::mldp_pvxs_driver::config::Config& root)
 {
+    parseThreadPool(root);
     parsePool(root);
     parseReaders(root);
     valid_ = true;
+}
+
+void MLDPPVXSControllerConfig::parseThreadPool(const ::mldp_pvxs_driver::config::Config& root)
+{
+    if (!root.hasChild("controller_thread_pool"))
+    {
+        throw Error(missingField("controller_thread_pool"));
+    }
+
+    const auto threadPoolNodes = root.subConfig("controller_thread_pool");
+    if (threadPoolNodes.empty())
+    {
+        throw Error(missingField("controller_thread_pool"));
+    }
+
+    const auto& threadPoolNode = threadPoolNodes.front();
+    if (!threadPoolNode.raw().has_val())
+    {
+        throw Error("controller_thread_pool must be a scalar");
+    }
+
+    threadPoolNode >> controllerThreadPoolSize_;
+    if (controllerThreadPoolSize_ <= 0)
+    {
+        throw Error("controller_thread_pool must be greater than zero");
+    }
 }
 
 void MLDPPVXSControllerConfig::parsePool(const ::mldp_pvxs_driver::config::Config& root)
@@ -65,6 +102,29 @@ void MLDPPVXSControllerConfig::parsePool(const ::mldp_pvxs_driver::config::Confi
     if (!poolNode.raw().is_map())
     {
         throw Error("mldp_pool must be a map");
+    }
+
+    if (!poolNode.hasChild("provider_name"))
+    {
+        throw Error(missingField("mldp_pool.provider_name"));
+    }
+
+    const auto providerNodes = poolNode.subConfig("provider_name");
+    if (providerNodes.empty())
+    {
+        throw Error(missingField("mldp_pool.provider_name"));
+    }
+
+    const auto& providerNode = providerNodes.front();
+    if (!providerNode.raw().has_val())
+    {
+        throw Error("mldp_pool.provider_name must be a scalar");
+    }
+
+    providerNode >> pool_.provider_name;
+    if (pool_.provider_name.empty())
+    {
+        throw Error("mldp_pool.provider_name must not be empty");
     }
 
     if (!poolNode.hasChild("url"))
@@ -90,6 +150,29 @@ void MLDPPVXSControllerConfig::parsePool(const ::mldp_pvxs_driver::config::Confi
         throw Error("mldp_pool.url must not be empty");
     }
 
+    if (!poolNode.hasChild("min_conn"))
+    {
+        throw Error(missingField("mldp_pool.min_conn"));
+    }
+
+    const auto minConnNodes = poolNode.subConfig("min_conn");
+    if (minConnNodes.empty())
+    {
+        throw Error(missingField("mldp_pool.min_conn"));
+    }
+
+    const auto& minConnNode = minConnNodes.front();
+    if (!minConnNode.raw().has_val())
+    {
+        throw Error("mldp_pool.min_conn must be a scalar");
+    }
+
+    minConnNode >> pool_.min_conn;
+    if (pool_.min_conn <= 0)
+    {
+        throw Error("mldp_pool.min_conn must be greater than zero");
+    }
+
     if (!poolNode.hasChild("max_conn"))
     {
         throw Error(missingField("mldp_pool.max_conn"));
@@ -111,6 +194,11 @@ void MLDPPVXSControllerConfig::parsePool(const ::mldp_pvxs_driver::config::Confi
     if (pool_.max_conn <= 0)
     {
         throw Error("mldp_pool.max_conn must be greater than zero");
+    }
+
+    if (pool_.max_conn < pool_.min_conn)
+    {
+        throw Error("mldp_pool.max_conn must be greater than or equal to min_conn");
     }
 }
 
@@ -162,4 +250,3 @@ void MLDPPVXSControllerConfig::parseReaders(const ::mldp_pvxs_driver::config::Co
 }
 
 } // namespace mldp_pvxs_driver::controller
-

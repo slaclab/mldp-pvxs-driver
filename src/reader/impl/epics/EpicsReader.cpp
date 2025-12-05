@@ -1,4 +1,5 @@
 
+#include "util/bus/IEventBusPush.h"
 #include <chrono>
 #include <reader/impl/epics/EpicsMLDPConversion.h>
 #include <reader/impl/epics/EpicsReader.h>
@@ -78,8 +79,13 @@ void EpicsReader::run(int timeout)
 
             spdlog::trace("Received update for PV {} on reader {}.", sub->name(), name_);
             {
-                std::shared_ptr<DataValue> data_value = std::make_shared<DataValue>();
-                EpicsMLDPConversion::convertPVToProtoValue(update, data_value.get());
+                // allocate event value
+                auto data_value = IEventBusPush::MakeEventValue(sub->name());
+
+                // convert PVXS value to MLDP proto value
+                EpicsMLDPConversion::convertPVToProtoValue(update, data_value->data_value.get());
+
+                // push to bus
                 bus_->push(data_value);
             }
         }

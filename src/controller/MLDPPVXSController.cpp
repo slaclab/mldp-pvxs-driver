@@ -1,9 +1,25 @@
 #include <controller/MLDPPVXSController.h>
 
-using namespace mldp_pvxs_driver::controller;
+#include <chrono>
+#include <grpcpp/grpcpp.h>
+#include <string>
 
-MLDPPVXSController::MLDPPVXSController(config::Config config)
-    : running_(false)
+using namespace mldp_pvxs_driver::controller;
+using mldp_pvxs_driver::util::pool::MLDPGrpcObject;
+using mldp_pvxs_driver::util::pool::MLDPGrpcPool;
+
+MLDPPVXSController::MLDPPVXSController(const config::Config& config)
+    : config_(config)
+    , thread_pool_(std::make_shared<BS::light_thread_pool>(config_.controllerThreadPoolSize()))
+    , mldp_pool_(MLDPGrpcPool::create(
+          static_cast<std::size_t>(config_.pool().min_conn),
+          static_cast<std::size_t>(config_.pool().max_conn),
+          [endpoint = config_.pool().url]()
+          {
+              auto channel = grpc::CreateChannel(endpoint, grpc::InsecureChannelCredentials());
+              return std::make_shared<MLDPGrpcObject>(std::move(channel));
+          }))
+    , running_(false)
 {
     // Constructor implementation
 }
@@ -23,4 +39,80 @@ void MLDPPVXSController::stop()
 {
     running_ = false;
     // Stop controller logic
+}
+
+bool MLDPPVXSController::push(EventValue data_value)
+{
+    // Stub implementation until controller wires into a real bus.
+    static_cast<void>(data_value);
+    thread_pool_->detach_task([this, data_value]()
+                              {
+                                  auto millisecond = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                      std::chrono::system_clock::now().time_since_epoch());
+                                  dp::service::ingestion::IngestDataRequest request;
+                                  request.set_providerid(config_.pool().provider_name);
+                                  request.set_clientrequestid(
+                                      "pv_" + data_value->src_name + "_" + std::to_string(millisecond.count()));
+                                  request.add_tags(data_value->src_name);
+
+                                  // auto* dataFrame = request.mutable_ingestiondataframe();
+                                  // auto* timestamps = dataFrame->mutable_datatimestamps();
+                                  // auto* timestampList = timestamps->mutable_timestamplist();
+                                  // auto* ts = timestampList->add_timestamps();
+
+                                  // if (pvValue.type().kind() == pvxs::Kind::Compound)
+                                  // {
+                                  //     bool setEpoch = false;
+                                  //     if (const auto timestampField = pvValue["timeStamp"]; timestampField.valid())
+                                  //     {
+                                  //         if (const auto secondsField = timestampField["secondsPastEpoch"]; secondsField.valid())
+                                  //         {
+                                  //             ts->set_epochseconds(secondsField.as<uint64_t>());
+                                  //             setEpoch = true;
+                                  //         }
+                                  //         if (const auto nanosecondsField = timestampField["nanoseconds"]; nanosecondsField.valid())
+                                  //         {
+                                  //             ts->set_nanoseconds(nanosecondsField.as<uint64_t>());
+                                  //         }
+                                  //     }
+                                  //     if (!setEpoch)
+                                  //     {
+                                  //         // Fallback to make sure timestamp is always set
+                                  //         const auto now = std::chrono::system_clock::now().time_since_epoch();
+                                  //         ts->set_epochseconds(std::chrono::duration_cast<std::chrono::seconds>(now).count());
+                                  //     }
+                                  // }
+
+                                  // auto* column = dataFrame->add_datacolumns();
+                                  // column->set_name(pvName);
+
+                                  // auto* dataValue = column->add_datavalues();
+                                  // try
+                                  // {
+                                  //     convertPVToProtoValue(pvValue, dataValue);
+                                  // }
+                                  // catch (const std::exception& e)
+                                  // {
+                                  //     logError("Could not convert PV with name " + pvName + " to a proto value: " + e.what());
+                                  //     return;
+                                  // }
+
+                                  // grpc::ClientContext                        context;
+                                  // dp::service::ingestion::IngestDataResponse response;
+                                  // if (const auto status = m_stub->ingestData(&context, request, &response); !status.ok())
+                                  // {
+                                  //     // We are on our own thread, and it's OK to do this.
+                                  //     // We have to recreate the data frame, so it's easier to call this function again.
+                                  //     static constexpr int MAX_RETRIES = 3;
+                                  //     if (currentRetryCount < MAX_RETRIES)
+                                  //     {
+                                  //         ingestPVValue(pvName, pvValue, currentRetryCount + 1);
+                                  //     }
+                                  //     else
+                                  //     {
+                                  //         logError("Ingestion failed for " + pvName + ": " + status.error_message());
+                                  //     }
+                                  // }
+                              });
+    return true;
 }
