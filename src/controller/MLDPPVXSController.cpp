@@ -1,5 +1,7 @@
 #include <controller/MLDPPVXSController.h>
 
+#include <spdlog/spdlog.h>
+
 #include <chrono>
 #include <format>
 #include <grpcpp/grpcpp.h>
@@ -45,7 +47,7 @@ void MLDPPVXSController::stop()
 bool MLDPPVXSController::push(EventValue data_value)
 {
     // Stub implementation until controller wires into a real bus.
-    thread_pool_->detach_task([this, data_value ]()
+    thread_pool_->detach_task([this, data_value]()
                               {
                                   auto millisecond = std::chrono::duration_cast<std::chrono::milliseconds>(
                                       std::chrono::system_clock::now().time_since_epoch());
@@ -81,22 +83,15 @@ bool MLDPPVXSController::push(EventValue data_value)
                                   auto* dataValue = column->add_datavalues();
                                   *dataValue = std::move(*data_value->data_value);
 
-                                  // grpc::ClientContext                        context;
-                                  // dp::service::ingestion::IngestDataResponse response;
-                                  // if (const auto status = m_stub->ingestData(&context, request, &response); !status.ok())
-                                  // {
-                                  //     // We are on our own thread, and it's OK to do this.
-                                  //     // We have to recreate the data frame, so it's easier to call this function again.
-                                  //     static constexpr int MAX_RETRIES = 3;
-                                  //     if (currentRetryCount < MAX_RETRIES)
-                                  //     {
-                                  //         ingestPVValue(pvName, pvValue, currentRetryCount + 1);
-                                  //     }
-                                  //     else
-                                  //     {
-                                  //         logError("Ingestion failed for " + pvName + ": " + status.error_message());
-                                  //     }
-                                  // }
+                                  {
+                                      grpc::ClientContext                        context;
+                                      dp::service::ingestion::IngestDataResponse response;
+                                      auto                                       pool_instance = mldp_pool_->acquire();
+                                      if (const auto status = pool_instance->stub->ingestData(&context, request, &response); !status.ok())
+                                      {
+                                          spdlog::error("Ingestion failed for {}: {}", data_value->src_name, status.error_message());
+                                      }
+                                  }
                               });
     return true;
 }
