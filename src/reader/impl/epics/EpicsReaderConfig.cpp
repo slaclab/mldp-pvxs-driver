@@ -12,7 +12,7 @@ std::string makeMissingFieldMessage(const std::string& field)
 }
 } // namespace
 
-namespace mldp_pvxs_driver::reader::impl::epics {
+using namespace mldp_pvxs_driver::reader::impl::epics;
 
 EpicsReaderConfig::EpicsReaderConfig() = default;
 
@@ -73,7 +73,7 @@ void EpicsReaderConfig::parse(const ::mldp_pvxs_driver::config::Config& readerEn
 
     if (!readerEntry.hasChild("pvs"))
     {
-       return;
+        return;
     }
 
     if (!readerEntry.isSequence("pvs"))
@@ -143,5 +143,3 @@ void EpicsReaderConfig::parse(const ::mldp_pvxs_driver::config::Config& readerEn
 
     valid_ = true;
 }
-
-} // namespace mldp_pvxs_driver::reader::impl::epics

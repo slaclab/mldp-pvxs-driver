@@ -10,37 +10,70 @@ namespace mldp_pvxs_driver::metrics {
 /**
  * @brief Strongly typed view over the metrics publication configuration.
  *
- * The configuration node passed to this class should wrap the YAML block
- * describing metrics settings:
+ * The driver configuration can optionally expose a `metrics` block describing
+ * the Prometheus HTTP endpoint that should publish internal statistics. This
+ * helper parses that block once, validates the required keys, and exposes the
+ * typed data so runtime components can spin up the Prometheus exposer without
+ * needing to reason about YAML trees.
  *
+ * Typical YAML snippet:
  * @code{.yaml}
  * metrics:
  *   endpoint: 0.0.0.0:9464
  * @endcode
- *
- * Callers can construct this class with the `metrics` sub-config and then pass
- * it along to the metrics collector to spin up the exposer.
  */
 class MetricsConfig
 {
 public:
+    /**
+     * @brief Exception thrown when the metrics configuration is malformed.
+     *
+     * All validation errors surface through this exception to keep the call
+     * sites concise (e.g., missing endpoint, wrong YAML type, empty strings).
+     */
     class Error : public std::runtime_error
     {
     public:
         using std::runtime_error::runtime_error;
     };
 
+    /**
+     * @brief Construct an empty (invalid) metrics config.
+     *
+     * Useful when consumers want to defer parsing until they detect that the
+     * YAML contains a metrics block.
+     */
     MetricsConfig();
+
+    /**
+     * @brief Parse the `metrics` YAML node into a typed structure.
+     *
+     * @param metricsNode Sub-config pointing to the metrics block. The node is
+     *        expected to be a map that contains at least the `endpoint` key.
+     * @throws Error when the node is invalid or mandatory fields are missing.
+     */
     explicit MetricsConfig(const config::Config& metricsNode);
 
+    /**
+     * @brief Whether the configuration passed validation.
+     *
+     * @return true when the object was constructed from a valid YAML node, or
+     *         false when default-constructed.
+     */
     bool               valid() const;
+
+    /**
+     * @brief Host:port pair where the Prometheus exposer should bind.
+     *
+     * Only populated when @ref valid() is true.
+     */
     const std::string& endpoint() const;
 
 private:
     void parse(const config::Config& node);
 
-    bool        valid_ = false;
-    std::string endpoint_;
+    bool        valid_ = false; ///< Tracks whether parsing succeeded.
+    std::string endpoint_;      ///< Cached endpoint string (host:port).
 };
 
 } // namespace mldp_pvxs_driver::metrics

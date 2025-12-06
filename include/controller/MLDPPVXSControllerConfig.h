@@ -3,6 +3,7 @@
 #include <config/Config.h>
 #include <metrics/MetricsConfig.h>
 #include <reader/impl/epics/EpicsReaderConfig.h>
+#include <util/pool/MLDPGrpcPoolConfig.h>
 
 #include <optional>
 #include <stdexcept>
@@ -35,17 +36,6 @@ public:
         using std::runtime_error::runtime_error;
     };
 
-    /**
-     * @brief Parsed MLDP pool description.
-     */
-    struct PoolConfig
-    {
-        std::string provider_name; ///< Logical provider identifier for MLDP.
-        std::string url;           ///< Fully qualified MLDP service endpoint.
-        int         min_conn = 0;  ///< Minimum number of warm connections to maintain.
-        int         max_conn = 0;  ///< Maximum number of connections to keep open.
-    };
-
     MLDPPVXSControllerConfig();
     explicit MLDPPVXSControllerConfig(const ::mldp_pvxs_driver::config::Config& root);
 
@@ -53,7 +43,7 @@ public:
     bool valid() const;
 
     /** @return Pool configuration managed by the controller. */
-    const PoolConfig& pool() const;
+    const util::pool::MLDPGrpcPoolConfig& pool() const;
 
     /** @return Logical provider name to register with MLDP. */
     const std::string& providerName() const;
@@ -80,7 +70,7 @@ private:
     void parseMetrics(const ::mldp_pvxs_driver::config::Config& root);
 
     bool                                                valid_ = false;
-    PoolConfig                                          pool_;
+    util::pool::MLDPGrpcPoolConfig                      pool_;
     int                                                 controllerThreadPoolSize_ = 0;
     std::vector<reader::impl::epics::EpicsReaderConfig> epicsReaders_;
     std::optional<metrics::MetricsConfig>               metricsConfig_;

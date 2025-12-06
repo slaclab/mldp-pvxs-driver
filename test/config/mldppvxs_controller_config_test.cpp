@@ -34,9 +34,9 @@ metrics:
     ASSERT_TRUE(controllerCfg.valid());
     EXPECT_EQ("pvxs_provider", controllerCfg.providerName());
     EXPECT_EQ(2, controllerCfg.controllerThreadPoolSize());
-    EXPECT_EQ(1, controllerCfg.pool().min_conn);
-    EXPECT_EQ("https://mldp.example:443", controllerCfg.pool().url);
-    EXPECT_EQ(4, controllerCfg.pool().max_conn);
+    EXPECT_EQ(1, controllerCfg.pool().minConnections());
+    EXPECT_EQ("https://mldp.example:443", controllerCfg.pool().url());
+    EXPECT_EQ(4, controllerCfg.pool().maxConnections());
 
     ASSERT_EQ(1u, controllerCfg.epicsReaders().size());
     const auto& epicsReader = controllerCfg.epicsReaders().front();
@@ -74,7 +74,7 @@ reader:
     ASSERT_TRUE(controllerCfg.valid());
     EXPECT_EQ("pvxs_provider", controllerCfg.providerName());
     EXPECT_EQ(3, controllerCfg.controllerThreadPoolSize());
-    EXPECT_EQ(2, controllerCfg.pool().min_conn);
+    EXPECT_EQ(2, controllerCfg.pool().minConnections());
     ASSERT_EQ(2u, controllerCfg.epicsReaders().size());
     EXPECT_EQ("epics_1", controllerCfg.epicsReaders()[0].name());
     ASSERT_EQ(1u, controllerCfg.epicsReaders()[0].pvs().size());

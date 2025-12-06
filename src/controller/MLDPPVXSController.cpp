@@ -5,8 +5,10 @@
 #include <chrono>
 #include <format>
 #include <grpcpp/grpcpp.h>
+#include <stdexcept>
 #include <string>
 
+using namespace mldp_pvxs_driver::metrics;
 using namespace mldp_pvxs_driver::controller;
 using mldp_pvxs_driver::util::pool::MLDPGrpcObject;
 using mldp_pvxs_driver::util::pool::MLDPGrpcPool;
@@ -14,15 +16,11 @@ using mldp_pvxs_driver::util::pool::MLDPGrpcPool;
 MLDPPVXSController::MLDPPVXSController(const config::Config& config)
     : config_(config)
     , thread_pool_(std::make_shared<BS::light_thread_pool>(config_.controllerThreadPoolSize()))
-    , metrics_(config_.metricsConfig() ? std::make_shared<metrics::Metrics>(*config_.metricsConfig()) : std::make_shared<metrics::Metrics>())
+    , metrics_(config_.metricsConfig()
+                   ? std::make_shared<metrics::Metrics>(*config_.metricsConfig())
+                   : nullptr)
     , mldp_pool_(MLDPGrpcPool::create(
-          static_cast<std::size_t>(config_.pool().min_conn),
-          static_cast<std::size_t>(config_.pool().max_conn),
-          [endpoint = config_.pool().url]()
-          {
-              auto channel = grpc::CreateChannel(endpoint, grpc::InsecureChannelCredentials());
-              return std::make_shared<MLDPGrpcObject>(std::move(channel));
-          },
+          config_.pool(),
           metrics_))
     , running_(false)
 {
@@ -48,8 +46,6 @@ void MLDPPVXSController::stop()
 
 bool MLDPPVXSController::push(EventValue data_value)
 {
-    MLDP_METRICS_CALL(metrics_, incrementReaderEvents());
-
     thread_pool_->detach_task([this, data_value]()
                               {
                                   try
@@ -57,7 +53,7 @@ bool MLDPPVXSController::push(EventValue data_value)
                                       auto millisecond = std::chrono::duration_cast<std::chrono::milliseconds>(
                                           std::chrono::system_clock::now().time_since_epoch());
                                       dp::service::ingestion::IngestDataRequest request;
-                                      request.set_providerid(config_.pool().provider_name);
+                                      request.set_providerid(config_.pool().providerName());
                                       request.set_clientrequestid(std::format("pv_{}_{}", data_value->src_name, millisecond.count()));
                                       request.add_tags(data_value->src_name);
 
@@ -111,4 +107,13 @@ bool MLDPPVXSController::push(EventValue data_value)
                                   }
                               });
     return true;
+}
+
+Metrics& MLDPPVXSController::metrics() const
+{
+    if (!metrics_)
+    {
+        throw std::runtime_error("Metrics not configured for controller");
+    }
+    return *metrics_;
 }

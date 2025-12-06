@@ -2,6 +2,7 @@
 
 #include <util/pool/IObjectPool.h>
 #include <util/pool/IPoolHandle.h>
+#include <util/pool/MLDPGrpcPoolConfig.h>
 
 #include <condition_variable>
 #include <functional>
@@ -153,7 +154,6 @@ class MLDPGrpcPool : public IObjectPool<MLDPGrpcObject>, public std::enable_shar
 public:
     using MLDPGrpcPoolShrdPtr = std::shared_ptr<MLDPGrpcPool>;
     using ObjectShrdPtr = typename IObjectPool<MLDPGrpcObject>::ObjectShrdPtr;
-    using Factory = std::function<ObjectShrdPtr()>; // how to create a new Stub
 
     /**
      * @brief Construct the pool.
@@ -174,13 +174,9 @@ public:
      * @param min_size Minimum number of objects to pre-create and keep
      *                 available in the pool.
      * @param max_size Maximum number of objects the pool may create.
-     * @param factory  Callable used to create new `MLDPGrpcObject`
-     *                 instances when the pool grows.
      * @return std::shared_ptr<MLDPGrpcPool> Managed pool instance.
      */
-    static MLDPGrpcPoolShrdPtr create(std::size_t                       min_size,
-                                      std::size_t                       max_size,
-                                      Factory                           factory,
+    static MLDPGrpcPoolShrdPtr create(const MLDPGrpcPoolConfig&         config,
                                       std::shared_ptr<metrics::Metrics> metrics = nullptr);
 
     /**
@@ -228,15 +224,14 @@ public:
     std::size_t size() const;
 
 private:
-    std::size_t availableCountLocked() const;
-    void        updateMetricsLocked() const;
-    void        updateMetrics() const;
-
+    const MLDPGrpcPoolConfig        config_;
+    std::size_t                     availableCountLocked() const;
+    void                            updateMetricsLocked() const;
+    void                            updateMetrics() const;
+    std::shared_ptr<MLDPGrpcObject> createChannel();
     // Make constructor private to force use of `create()` which returns a
     // `std::shared_ptr` (required for `enable_shared_from_this`).
-    MLDPGrpcPool(std::size_t                       min_size,
-                 std::size_t                       max_size,
-                 Factory                           factory,
+    MLDPGrpcPool(const MLDPGrpcPoolConfig&         config,
                  std::shared_ptr<metrics::Metrics> metrics);
 
     struct Item
@@ -244,10 +239,6 @@ private:
         ObjectShrdPtr obj;
         bool          in_use{false};
     };
-
-    std::size_t min_size_;
-    std::size_t max_size_;
-    Factory     factory_;
 
     mutable std::mutex      mutex_;
     std::condition_variable cv_;

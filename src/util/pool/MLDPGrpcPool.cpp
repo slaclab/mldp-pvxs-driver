@@ -33,41 +33,35 @@ std::unique_ptr<dp::service::ingestion::DpIngestionService::Stub> MLDPGrpcObject
 
 #pragma region - MLDPGrpcPool
 
-MLDPGrpcPool::MLDPGrpcPool(std::size_t                       min_size,
-                           std::size_t                       max_size,
-                           Factory                           factory,
+MLDPGrpcPool::MLDPGrpcPool(const MLDPGrpcPoolConfig&         config,
                            std::shared_ptr<metrics::Metrics> metrics)
-    : min_size_(min_size)
-    , max_size_(max_size)
-    , factory_(std::move(factory))
+    : config_(config)
     , metrics_(std::move(metrics))
 {
-    if (!factory_)
+    if (!config.valid())
     {
-        throw std::invalid_argument("MLDPGrpcPool: factory is null");
+        throw std::invalid_argument("MLDPGrpcPool: configuration is invalid");
     }
-    if (min_size_ == 0 || min_size_ > max_size_)
+    if (config_.minConnections() == 0 || config_.minConnections() > config_.maxConnections())
     {
         throw std::invalid_argument("MLDPGrpcPool: invalid min/max size");
     }
 
     // Pre-create min_size objects
-    items_.reserve(max_size_);
-    for (std::size_t i = 0; i < min_size_; ++i)
+    items_.reserve(config_.maxConnections());
+    for (std::size_t i = 0; i < config_.minConnections(); ++i)
     {
-        items_.push_back({factory_(), false});
+        items_.push_back({createChannel(), false});
     }
-    current_size_ = min_size_;
+    current_size_ = config_.minConnections();
     updateMetrics();
 }
 
-MLDPGrpcPool::MLDPGrpcPoolShrdPtr MLDPGrpcPool::create(std::size_t                       min_size,
-                                                       std::size_t                       max_size,
-                                                       Factory                           factory,
+MLDPGrpcPool::MLDPGrpcPoolShrdPtr MLDPGrpcPool::create(const MLDPGrpcPoolConfig&         config,
                                                        std::shared_ptr<metrics::Metrics> metrics)
 {
     // Use new + shared_ptr constructor because the constructor is private.
-    return std::shared_ptr<MLDPGrpcPool>(new MLDPGrpcPool(min_size, max_size, std::move(factory), std::move(metrics)));
+    return std::shared_ptr<MLDPGrpcPool>(new MLDPGrpcPool(config, std::move(metrics)));
 }
 
 PooledHandle<MLDPGrpcObject> MLDPGrpcPool::acquire()
@@ -89,9 +83,9 @@ PooledHandle<MLDPGrpcObject> MLDPGrpcPool::acquire()
         }
 
         // 2. No idle object; can we create a new one?
-        if (current_size_ < max_size_)
+        if (current_size_ < config_.maxConnections())
         {
-            auto obj = factory_();
+            auto obj = createChannel();
             items_.push_back({obj, true});
             ++current_size_;
             updateMetricsLocked();
@@ -105,6 +99,12 @@ PooledHandle<MLDPGrpcObject> MLDPGrpcPool::acquire()
         constexpr auto wait_duration = std::chrono::milliseconds(200);
         cv_.wait_for(lock, wait_duration);
     }
+}
+
+std::shared_ptr<MLDPGrpcObject> MLDPGrpcPool::createChannel()
+{
+    auto channel = grpc::CreateChannel(config_.url(), grpc::InsecureChannelCredentials());
+    return std::make_shared<MLDPGrpcObject>(channel);
 }
 
 void MLDPGrpcPool::release(const ObjectShrdPtr& obj)

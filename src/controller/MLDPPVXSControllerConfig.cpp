@@ -30,14 +30,14 @@ bool MLDPPVXSControllerConfig::valid() const
     return valid_;
 }
 
-const MLDPPVXSControllerConfig::PoolConfig& MLDPPVXSControllerConfig::pool() const
+const util::pool::MLDPGrpcPoolConfig& MLDPPVXSControllerConfig::pool() const
 {
     return pool_;
 }
 
 const std::string& MLDPPVXSControllerConfig::providerName() const
 {
-    return pool_.provider_name;
+    return pool_.providerName();
 }
 
 int MLDPPVXSControllerConfig::controllerThreadPoolSize() const
@@ -104,107 +104,13 @@ void MLDPPVXSControllerConfig::parsePool(const ::mldp_pvxs_driver::config::Confi
         throw Error(missingField("mldp_pool"));
     }
 
-    const auto& poolNode = poolNodes.front();
-    if (!poolNode.raw().is_map())
+    try
     {
-        throw Error("mldp_pool must be a map");
+        pool_ = util::pool::MLDPGrpcPoolConfig(poolNodes.front());
     }
-
-    if (!poolNode.hasChild("provider_name"))
+    catch (const util::pool::MLDPGrpcPoolConfig::Error& e)
     {
-        throw Error(missingField("mldp_pool.provider_name"));
-    }
-
-    const auto providerNodes = poolNode.subConfig("provider_name");
-    if (providerNodes.empty())
-    {
-        throw Error(missingField("mldp_pool.provider_name"));
-    }
-
-    const auto& providerNode = providerNodes.front();
-    if (!providerNode.raw().has_val())
-    {
-        throw Error("mldp_pool.provider_name must be a scalar");
-    }
-
-    providerNode >> pool_.provider_name;
-    if (pool_.provider_name.empty())
-    {
-        throw Error("mldp_pool.provider_name must not be empty");
-    }
-
-    if (!poolNode.hasChild("url"))
-    {
-        throw Error(missingField("mldp_pool.url"));
-    }
-
-    const auto urlNodes = poolNode.subConfig("url");
-    if (urlNodes.empty())
-    {
-        throw Error(missingField("mldp_pool.url"));
-    }
-
-    const auto& urlNode = urlNodes.front();
-    if (!urlNode.raw().has_val())
-    {
-        throw Error("mldp_pool.url must be a scalar");
-    }
-
-    urlNode >> pool_.url;
-    if (pool_.url.empty())
-    {
-        throw Error("mldp_pool.url must not be empty");
-    }
-
-    if (!poolNode.hasChild("min_conn"))
-    {
-        throw Error(missingField("mldp_pool.min_conn"));
-    }
-
-    const auto minConnNodes = poolNode.subConfig("min_conn");
-    if (minConnNodes.empty())
-    {
-        throw Error(missingField("mldp_pool.min_conn"));
-    }
-
-    const auto& minConnNode = minConnNodes.front();
-    if (!minConnNode.raw().has_val())
-    {
-        throw Error("mldp_pool.min_conn must be a scalar");
-    }
-
-    minConnNode >> pool_.min_conn;
-    if (pool_.min_conn <= 0)
-    {
-        throw Error("mldp_pool.min_conn must be greater than zero");
-    }
-
-    if (!poolNode.hasChild("max_conn"))
-    {
-        throw Error(missingField("mldp_pool.max_conn"));
-    }
-
-    const auto maxConnNodes = poolNode.subConfig("max_conn");
-    if (maxConnNodes.empty())
-    {
-        throw Error(missingField("mldp_pool.max_conn"));
-    }
-
-    const auto& maxConnNode = maxConnNodes.front();
-    if (!maxConnNode.raw().has_val())
-    {
-        throw Error("mldp_pool.max_conn must be a scalar");
-    }
-
-    maxConnNode >> pool_.max_conn;
-    if (pool_.max_conn <= 0)
-    {
-        throw Error("mldp_pool.max_conn must be greater than zero");
-    }
-
-    if (pool_.max_conn < pool_.min_conn)
-    {
-        throw Error("mldp_pool.max_conn must be greater than or equal to min_conn");
+        throw Error(e.what());
     }
 }
 

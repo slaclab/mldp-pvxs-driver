@@ -2,9 +2,11 @@
 #include "util/bus/IEventBusPush.h"
 #include <chrono>
 #include <cstdint>
+#include <metrics/Metrics.h>
 #include <reader/impl/epics/EpicsMLDPConversion.h>
 #include <reader/impl/epics/EpicsReader.h>
 #include <spdlog/spdlog.h>
+#include <string_view>
 #include <utility>
 
 using namespace mldp_pvxs_driver::config;
@@ -14,8 +16,13 @@ using namespace pvxs::client;
 
 using MldpDriverConfig = mldp_pvxs_driver::config::Config;
 
-EpicsReader::EpicsReader(std::shared_ptr<IEventBusPush> bus, const MldpDriverConfig& cfg)
-    : Reader(std::move(bus)), config_(EpicsReaderConfig(cfg)), name_(config_.name()), running_(false)
+EpicsReader::EpicsReader(std::shared_ptr<IEventBusPush> bus,
+                         std::shared_ptr<mldp_pvxs_driver::metrics::Metrics> metrics,
+                         const MldpDriverConfig&                             cfg)
+    : Reader(std::move(bus), std::move(metrics))
+    , config_(EpicsReaderConfig(cfg))
+    , name_(config_.name())
+    , running_(false)
 {
 
     running_ = true;
@@ -71,6 +78,7 @@ void EpicsReader::run(int timeout)
         auto sub = m_pva_workqueue.pop();
         if (!sub)
             continue; // Skip null subscription used to unblock queue on shutdown
+        const prometheus::Labels readerTags{{"reader", name_}};
         try
         {
             pvxs::Value epics_value = sub->pop();
@@ -113,11 +121,13 @@ void EpicsReader::run(int timeout)
 
                 // push to bus movidn data loosing the ownership
                 bus_->push(std::move(event_value));
+                MLDP_METRICS_CALL(metrics_, incrementReaderEvents(1.0, readerTags));
             }
         }
         catch (const pvxs::client::RemoteError& e)
         {
             spdlog::error("Server error when reading PV {} on reader {}: {}", sub->name(), name_, e.what());
+            MLDP_METRICS_CALL(metrics_, incrementReaderErrors(1.0, readerTags));
         }
 
         if (timeout > 0)

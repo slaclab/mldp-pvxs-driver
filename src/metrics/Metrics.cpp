@@ -1,57 +1,41 @@
 #include <metrics/Metrics.h>
 
 
-
-
-namespace mldp_pvxs_driver::metrics {
+#include <utility>
 
 namespace {
 
-prometheus::Counter* makeCounter(prometheus::Registry& registry,
-                                 std::string          name,
-                                 std::string          help)
+prometheus::Family<prometheus::Counter>&
+makeCounterFamily(prometheus::Registry& registry, std::string name, std::string help)
 {
-    auto& family = prometheus::BuildCounter()
-                       .Name(std::move(name))
-                       .Help(std::move(help))
-                       .Register(registry);
-    return &family.Add({});
+    return prometheus::BuildCounter()
+        .Name(std::move(name))
+        .Help(std::move(help))
+        .Register(registry);
 }
 
-prometheus::Gauge* makeGauge(prometheus::Registry& registry,
-                             std::string          name,
-                             std::string          help)
+prometheus::Family<prometheus::Gauge>&
+makeGaugeFamily(prometheus::Registry& registry, std::string name, std::string help)
 {
-    auto& family = prometheus::BuildGauge()
-                       .Name(std::move(name))
-                       .Help(std::move(help))
-                       .Register(registry);
-    return &family.Add({});
+    return prometheus::BuildGauge()
+        .Name(std::move(name))
+        .Help(std::move(help))
+        .Register(registry);
 }
 
 } // namespace
 
-Metrics::Metrics()
-    : config_()
-    , registry_(std::make_shared<prometheus::Registry>())
-    , reader_events_total_(makeCounter(*registry_, "mldp_pvxs_driver_reader_events_total", "Total EPICS events processed by readers."))
-    , reader_errors_total_(makeCounter(*registry_, "mldp_pvxs_driver_reader_errors_total", "Total reader failures observed when pulling EPICS data."))
-    , pool_connections_in_use_(makeGauge(*registry_, "mldp_pvxs_driver_pool_connections_in_use", "Number of MLDP gRPC connections currently in use."))
-    , pool_connections_available_(makeGauge(*registry_, "mldp_pvxs_driver_pool_connections_available", "Idle MLDP gRPC connections ready for use."))
-    , bus_push_total_(makeCounter(*registry_, "mldp_pvxs_driver_bus_push_total", "Number of events pushed onto the bus."))
-    , bus_failure_total_(makeCounter(*registry_, "mldp_pvxs_driver_bus_failure_total", "Number of bus push failures reported by the MLDP gRPC API."))
-{
-}
+namespace mldp_pvxs_driver::metrics {
 
 Metrics::Metrics(const MetricsConfig& config)
     : config_(config)
     , registry_(std::make_shared<prometheus::Registry>())
-    , reader_events_total_(makeCounter(*registry_, "mldp_pvxs_driver_reader_events_total", "Total EPICS events processed by readers."))
-    , reader_errors_total_(makeCounter(*registry_, "mldp_pvxs_driver_reader_errors_total", "Total reader failures observed when pulling EPICS data."))
-    , pool_connections_in_use_(makeGauge(*registry_, "mldp_pvxs_driver_pool_connections_in_use", "Number of MLDP gRPC connections currently in use."))
-    , pool_connections_available_(makeGauge(*registry_, "mldp_pvxs_driver_pool_connections_available", "Idle MLDP gRPC connections ready for use."))
-    , bus_push_total_(makeCounter(*registry_, "mldp_pvxs_driver_bus_push_total", "Number of events pushed onto the bus."))
-    , bus_failure_total_(makeCounter(*registry_, "mldp_pvxs_driver_bus_failure_total", "Number of bus push failures reported by the MLDP gRPC API."))
+    , reader_events_family_(makeCounterFamily(*registry_, "mldp_pvxs_driver_reader_events_total", "Total events processed by readers."))
+    , reader_errors_family_(makeCounterFamily(*registry_, "mldp_pvxs_driver_reader_errors_total", "Total reader failures observed when pulling data."))
+    , pool_connections_in_use_family_(makeGaugeFamily(*registry_, "mldp_pvxs_driver_pool_connections_in_use", "Number of MLDP gRPC connections currently in use."))
+    , pool_connections_available_family_(makeGaugeFamily(*registry_, "mldp_pvxs_driver_pool_connections_available", "Idle MLDP gRPC connections ready for use."))
+    , bus_push_family_(makeCounterFamily(*registry_, "mldp_pvxs_driver_bus_push_total", "Number of events pushed onto the bus."))
+    , bus_failure_family_(makeCounterFamily(*registry_, "mldp_pvxs_driver_bus_failure_total", "Number of bus push failures reported by the MLDP gRPC API."))
 {
     if (config_.valid() && !config_.endpoint().empty())
     {
@@ -65,64 +49,56 @@ std::shared_ptr<prometheus::Registry> Metrics::registry() const
     return registry_;
 }
 
-void Metrics::incrementReaderEvents(double value)
+void Metrics::incrementReaderEvents(double value, prometheus::Labels tags)
 {
-    reader_events_total_->Increment(value);
+
+    reader_events_family_.Add(std::move(tags)).Increment(value);
 }
 
-void Metrics::incrementReaderErrors(double value)
+void Metrics::incrementReaderErrors(double value, prometheus::Labels tags)
 {
-    reader_errors_total_->Increment(value);
+
+    reader_errors_family_.Add(std::move(tags)).Increment(value);
 }
 
-double Metrics::readerEventsTotal() const
+void Metrics::setPoolConnectionsInUse(double value, prometheus::Labels tags)
 {
-    return reader_events_total_->Value();
+    pool_connections_in_use_family_.Add(std::move(tags)).Set(value);
 }
 
-double Metrics::readerErrorsTotal() const
+void Metrics::setPoolConnectionsAvailable(double value, prometheus::Labels tags)
 {
-    return reader_errors_total_->Value();
+    pool_connections_available_family_.Add(std::move(tags)).Set(value);
 }
 
-void Metrics::setPoolConnectionsInUse(double value)
+double Metrics::poolConnectionsInUse(prometheus::Labels tags) const
 {
-    pool_connections_in_use_->Set(value);
+    return pool_connections_in_use_family_.Add(std::move(tags)).Value();
 }
 
-void Metrics::setPoolConnectionsAvailable(double value)
+double Metrics::poolConnectionsAvailable(prometheus::Labels tags) const
 {
-    pool_connections_available_->Set(value);
+    return pool_connections_available_family_.Add(std::move(tags)).Value();
 }
 
-double Metrics::poolConnectionsInUse() const
+void Metrics::incrementBusPushes(double value, prometheus::Labels tags)
 {
-    return pool_connections_in_use_->Value();
+    bus_push_family_.Add(std::move(tags)).Increment(value);
 }
 
-double Metrics::poolConnectionsAvailable() const
+void Metrics::incrementBusFailures(double value, prometheus::Labels tags)
 {
-    return pool_connections_available_->Value();
+    bus_failure_family_.Add(std::move(tags)).Increment(value);
 }
 
-void Metrics::incrementBusPushes(double value)
+double Metrics::busPushTotal(prometheus::Labels tags) const
 {
-    bus_push_total_->Increment(value);
+    return bus_push_family_.Add(std::move(tags)).Value();
 }
 
-void Metrics::incrementBusFailures(double value)
+double Metrics::busFailuresTotal(prometheus::Labels tags) const
 {
-    bus_failure_total_->Increment(value);
-}
-
-double Metrics::busPushTotal() const
-{
-    return bus_push_total_->Value();
-}
-
-double Metrics::busFailuresTotal() const
-{
-    return bus_failure_total_->Value();
+    return bus_failure_family_.Add(std::move(tags)).Value();
 }
 
 } // namespace mldp_pvxs_driver::metrics

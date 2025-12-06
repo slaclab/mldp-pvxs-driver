@@ -1,11 +1,14 @@
 #pragma once
 
 #include <memory>
+#include <string>
 
 #include <prometheus/counter.h>
-#include <prometheus/gauge.h>
-#include <prometheus/registry.h>
 #include <prometheus/exposer.h>
+#include <prometheus/family.h>
+#include <prometheus/gauge.h>
+#include <prometheus/labels.h>
+#include <prometheus/registry.h>
 
 #include <metrics/MetricsConfig.h>
 
@@ -22,42 +25,49 @@ namespace mldp_pvxs_driver::metrics {
 class Metrics
 {
 public:
-    Metrics();
+    /** @brief Construct a collector with an optional metrics configuration. */
+    Metrics() = delete;
     explicit Metrics(const MetricsConfig& config);
 
     /** @return Registry that can be scraped/exported by HTTP exposers. */
     std::shared_ptr<prometheus::Registry> registry() const;
 
     // Reader metrics ------------------------------------------------------
-    void   incrementReaderEvents(double value = 1.0);
-    void   incrementReaderErrors(double value = 1.0);
+    void   incrementReaderEvents(double value = 1.0, prometheus::Labels tags = {});
+    void   incrementReaderErrors(double value = 1.0, prometheus::Labels tags = {});
     double readerEventsTotal() const;
     double readerErrorsTotal() const;
 
     // Pool metrics --------------------------------------------------------
-    void   setPoolConnectionsInUse(double value);
-    void   setPoolConnectionsAvailable(double value);
-    double poolConnectionsInUse() const;
-    double poolConnectionsAvailable() const;
+    /**
+     * @brief Gauge for connections currently checked out of the pool.
+     */
+    void setPoolConnectionsInUse(double value, prometheus::Labels tags = {});
+    /**
+     * @brief Gauge for idle connections available in the pool.
+     */
+    void setPoolConnectionsAvailable(double value, prometheus::Labels tags = {});
+    double poolConnectionsInUse(prometheus::Labels tags = {}) const;
+    double poolConnectionsAvailable(prometheus::Labels tags = {}) const;
 
     // Bus metrics ---------------------------------------------------------
-    void   incrementBusPushes(double value = 1.0);
-    void   incrementBusFailures(double value = 1.0);
-    double busPushTotal() const;
-    double busFailuresTotal() const;
+    void   incrementBusPushes(double value = 1.0, prometheus::Labels tags = {});
+    void   incrementBusFailures(double value = 1.0, prometheus::Labels tags = {});
+    double busPushTotal(prometheus::Labels tags = {}) const;
+    double busFailuresTotal(prometheus::Labels tags = {}) const;
 
 private:
     MetricsConfig                         config_;
     std::shared_ptr<prometheus::Registry> registry_;
 
-    prometheus::Counter* reader_events_total_;
-    prometheus::Counter* reader_errors_total_;
+    prometheus::Family<prometheus::Counter>& reader_events_family_;
+    prometheus::Family<prometheus::Counter>& reader_errors_family_;
 
-    prometheus::Gauge* pool_connections_in_use_;
-    prometheus::Gauge* pool_connections_available_;
+    prometheus::Family<prometheus::Gauge>& pool_connections_in_use_family_;
+    prometheus::Family<prometheus::Gauge>& pool_connections_available_family_;
 
-    prometheus::Counter* bus_push_total_;
-    prometheus::Counter* bus_failure_total_;
+    prometheus::Family<prometheus::Counter>& bus_push_family_;
+    prometheus::Family<prometheus::Counter>& bus_failure_family_;
 
     std::unique_ptr<prometheus::Exposer> exposer_;
 };
