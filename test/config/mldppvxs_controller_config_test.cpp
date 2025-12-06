@@ -32,12 +32,16 @@ metrics:
     MLDPPVXSControllerConfig controllerCfg(cfg);
 
     ASSERT_TRUE(controllerCfg.valid());
-    EXPECT_EQ("pvxs_provider", controllerCfg.providerName());
+    // controller thread pool size
     EXPECT_EQ(2, controllerCfg.controllerThreadPoolSize());
+
+    // pool config
+    EXPECT_EQ("pvxs_provider", controllerCfg.pool().providerName());
     EXPECT_EQ(1, controllerCfg.pool().minConnections());
     EXPECT_EQ("https://mldp.example:443", controllerCfg.pool().url());
     EXPECT_EQ(4, controllerCfg.pool().maxConnections());
 
+    // epics reader config
     ASSERT_EQ(1u, controllerCfg.epicsReaders().size());
     const auto& epicsReader = controllerCfg.epicsReaders().front();
     EXPECT_EQ("epics_1", epicsReader.name());
@@ -72,7 +76,7 @@ reader:
     MLDPPVXSControllerConfig controllerCfg(cfg);
 
     ASSERT_TRUE(controllerCfg.valid());
-    EXPECT_EQ("pvxs_provider", controllerCfg.providerName());
+    EXPECT_EQ("pvxs_provider", controllerCfg.pool().providerName());
     EXPECT_EQ(3, controllerCfg.controllerThreadPoolSize());
     EXPECT_EQ(2, controllerCfg.pool().minConnections());
     ASSERT_EQ(2u, controllerCfg.epicsReaders().size());
