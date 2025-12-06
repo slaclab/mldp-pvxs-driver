@@ -1,19 +1,8 @@
 #include <metrics/MetricsConfig.h>
 
-#include <sstream>
+using namespace mldp_pvxs_driver::config;
 
-namespace {
-
-std::string missingField(const std::string& field)
-{
-    std::ostringstream oss;
-    oss << "Missing required field '" << field << "' in metrics configuration";
-    return oss.str();
-}
-
-} // namespace
-
-namespace mldp_pvxs_driver::metrics {
+using namespace mldp_pvxs_driver::metrics;
 
 MetricsConfig::MetricsConfig() = default;
 
@@ -46,7 +35,7 @@ void MetricsConfig::parse(const config::Config& node)
 
     if (!node.hasChild("endpoint"))
     {
-        throw Error(missingField("endpoint"));
+        throw Error(makeMissingFieldMessage("endpoint"));
     }
 
     endpoint_ = node.get("endpoint");
@@ -57,5 +46,3 @@ void MetricsConfig::parse(const config::Config& node)
 
     valid_ = true;
 }
-
-} // namespace mldp_pvxs_driver::metrics

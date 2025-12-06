@@ -6,13 +6,12 @@
 #include <reader/impl/epics/EpicsMLDPConversion.h>
 #include <reader/impl/epics/EpicsReader.h>
 #include <spdlog/spdlog.h>
-#include <string_view>
 #include <utility>
 
+using namespace pvxs::client;
 using namespace mldp_pvxs_driver::config;
 using namespace mldp_pvxs_driver::util::bus;
 using namespace mldp_pvxs_driver::reader::impl::epics;
-using namespace pvxs::client;
 
 using MldpDriverConfig = mldp_pvxs_driver::config::Config;
 

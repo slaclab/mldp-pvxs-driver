@@ -1,17 +1,11 @@
 #include <controller/MLDPPVXSControllerConfig.h>
 
-#include <sstream>
 
-namespace {
-std::string missingField(const std::string& field)
-{
-    std::ostringstream oss;
-    oss << "Missing required field '" << field << "' in controller config";
-    return oss.str();
-}
-} // namespace
-
-namespace mldp_pvxs_driver::controller {
+using namespace mldp_pvxs_driver::config;
+using namespace mldp_pvxs_driver::metrics;
+using namespace mldp_pvxs_driver::controller;
+using namespace mldp_pvxs_driver::util::pool;
+using namespace mldp_pvxs_driver::reader::impl::epics;
 
 MLDPPVXSControllerConfig::MLDPPVXSControllerConfig() = default;
 
@@ -30,7 +24,7 @@ bool MLDPPVXSControllerConfig::valid() const
     return valid_;
 }
 
-const util::pool::MLDPGrpcPoolConfig& MLDPPVXSControllerConfig::pool() const
+const MLDPGrpcPoolConfig& MLDPPVXSControllerConfig::pool() const
 {
     return pool_;
 }
@@ -45,13 +39,13 @@ int MLDPPVXSControllerConfig::controllerThreadPoolSize() const
     return controllerThreadPoolSize_;
 }
 
-const std::vector<reader::impl::epics::EpicsReaderConfig>&
+const std::vector<EpicsReaderConfig>&
 MLDPPVXSControllerConfig::epicsReaders() const
 {
     return epicsReaders_;
 }
 
-const std::optional<metrics::MetricsConfig>& MLDPPVXSControllerConfig::metricsConfig() const
+const std::optional<MetricsConfig>& MLDPPVXSControllerConfig::metricsConfig() const
 {
     return metricsConfig_;
 }
@@ -69,13 +63,13 @@ void MLDPPVXSControllerConfig::parseThreadPool(const ::mldp_pvxs_driver::config:
 {
     if (!root.hasChild("controller_thread_pool"))
     {
-        throw Error(missingField("controller_thread_pool"));
+        throw Error(makeMissingFieldMessage("controller_thread_pool"));
     }
 
     const auto threadPoolNodes = root.subConfig("controller_thread_pool");
     if (threadPoolNodes.empty())
     {
-        throw Error(missingField("controller_thread_pool"));
+        throw Error(makeMissingFieldMessage("controller_thread_pool"));
     }
 
     const auto& threadPoolNode = threadPoolNodes.front();
@@ -95,13 +89,13 @@ void MLDPPVXSControllerConfig::parsePool(const ::mldp_pvxs_driver::config::Confi
 {
     if (!root.hasChild("mldp_pool"))
     {
-        throw Error(missingField("mldp_pool"));
+        throw Error(makeMissingFieldMessage("mldp_pool"));
     }
 
     const auto poolNodes = root.subConfig("mldp_pool");
     if (poolNodes.empty())
     {
-        throw Error(missingField("mldp_pool"));
+        throw Error(makeMissingFieldMessage("mldp_pool"));
     }
 
     try
@@ -177,5 +171,3 @@ void MLDPPVXSControllerConfig::parseMetrics(const ::mldp_pvxs_driver::config::Co
 
     metricsConfig_.emplace(metricsNodes.front());
 }
-
-} // namespace mldp_pvxs_driver::controller

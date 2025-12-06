@@ -1,17 +1,8 @@
 #include <reader/impl/epics/EpicsReaderConfig.h>
 
-#include <sstream>
 #include <utility>
 
-namespace {
-std::string makeMissingFieldMessage(const std::string& field)
-{
-    std::ostringstream oss;
-    oss << "Missing required field '" << field << "' in epics reader config";
-    return oss.str();
-}
-} // namespace
-
+using namespace mldp_pvxs_driver::config;
 using namespace mldp_pvxs_driver::reader::impl::epics;
 
 EpicsReaderConfig::EpicsReaderConfig() = default;
@@ -46,7 +37,7 @@ const std::vector<std::string>& EpicsReaderConfig::pvNames() const
     return pvNames_;
 }
 
-void EpicsReaderConfig::parse(const ::mldp_pvxs_driver::config::Config& readerEntry)
+void EpicsReaderConfig::parse(const Config& readerEntry)
 {
     if (!readerEntry.hasChild("name"))
     {

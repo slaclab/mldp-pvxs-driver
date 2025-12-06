@@ -9,7 +9,7 @@
 #include <grpcpp/grpcpp.h>
 #include <stdexcept>
 
-namespace mldp_pvxs_driver::util::pool {
+using namespace mldp_pvxs_driver::util::pool;
 
 #pragma region - MLDPGrpcObject
 // Implement MLDPGrpcObject constructor and helper
@@ -172,5 +172,3 @@ void MLDPGrpcPool::updateMetrics() const
 }
 
 #pragma endregion - MLDPGrpcPool
-
-} // namespace mldp_pvxs_driver::util::pool
