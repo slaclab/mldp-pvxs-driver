@@ -16,6 +16,45 @@ The diagram above represents the data flow the CLI orchestrates. Use these check
 - **Threading model**: Readers push into the controller, which offloads gRPC writes to the shared pool to prevent reader threads from blocking on network latency. This keeps ingestion throughput stable even when MLDP backpressure occurs.
 - **Extending**: New controllers should mirror this pattern: encapsulate configuration parsing, own the primary thread pool, expose a narrow bus interface, and centralize metrics so downstream pieces remain stateless.
 
+## Configuration Architecture
+- **Single YAML document**: The driver consumes a flat YAML with `provider_name`, `server_address`, optional `credentials`, and `monitor_pvs`. The controller uses a richer map with `controller_thread_pool`, `mldp_pool`, `reader` (sequence), and optional `metrics`.
+- **Driver schema**:
+  ```yaml
+  provider_name: pvxs_provider
+  server_address: ingest.example:50051
+  credentials: none                # or "ssl", or map with pem_cert_chain/pem_private_key/pem_root_certs
+  monitor_pvs:
+    - example:pv1
+    - example:pv2
+  ```
+- **Controller schema**:
+  ```yaml
+  controller_thread_pool: 2
+  mldp_pool:
+    provider_name: pvxs_provider
+    url: https://ingest.example:443
+    min_conn: 1
+    max_conn: 4
+  reader:
+    - epics:
+        - name: epics_reader_a
+          pvs:
+            - name: pv1
+              option: chan://one    # optional
+            - name: pv2
+  metrics:                          # optional
+    endpoint: 0.0.0.0:9464
+  ```
+- **Class hierarchy**:
+  - `config::Config` (`include/config/Config.h`, `src/config/Config.cpp`): thin typed view over a `ryml` tree; provides `get`, `getInt`, `getBool`, `subConfig`, and presence helpers used by all downstream config classes.
+  - `controller::MLDPPVXSControllerConfig` (`include/controller/MLDPPVXSControllerConfig.h`): owns parsing of the controller document; composes `MLDPGrpcPoolConfig`, a vector of `EpicsReaderConfig`, and an optional `MetricsConfig`. Throws `Error` on missing/invalid fields.
+  - `util::pool::MLDPGrpcPoolConfig` (`include/util/pool/MLDPGrpcPoolConfig.h`): validates `provider_name`, `url`, `min_conn`, `max_conn` and enforces `max_conn >= min_conn`.
+  - `reader::impl::epics::EpicsReaderConfig` (`include/reader/impl/epics/EpicsReaderConfig.h`): validates each reader entry (name plus optional `pvs[].{name,option}`), collecting both structured PV objects and a flat PV name list.
+  - `metrics::MetricsConfig` (`include/metrics/MetricsConfig.h`): optional block containing the Prometheus `endpoint`.
+  - `mldp_pvxs_driver_main` (`src/mldp_pvxs_driver_main.cpp`): parses the driver-only YAML, performs TLS file reads, and instantiates `PVXSDPIngestionDriver`.
+- **Validation and failure modes**: `Config` helpers provide typed access with presence checks. Missing required fields throw `Error` from the relevant config class (e.g., `MLDPGrpcPoolConfig::Error`, `MLDPPVXSControllerConfig::Error`), stopping startup early rather than failing at runtime. TLS file paths are read eagerly; unreadable files return `MLDP_PVXS_DRIVER_ERROR_FILE_*` codes and log an error.
+- **Extending the schema**: Add parsing and validation in the dedicated config class, surface sensible defaults, and keep the YAML map-oriented rather than deeply nested. Update `README.md` and this section with any new keys to keep operator docs in sync.
+
 ## MLDP gRPC Pool
 - **Responsibility**: `util::pool::MLDPGrpcPool` owns connection reuse to the MLDP service. It maintains a configurable set of gRPC channels and exposes lightweight handles for the controller’s push operations.
 - **Config knobs**: Thread-pool size and pool size are parsed via `MLDPPVXSControllerConfig` (`pool()` accessor). Each MLDP target gets its own channel entry so failures remain isolated.
