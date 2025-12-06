@@ -50,6 +50,8 @@ metrics:
     EXPECT_EQ("chan://one", epicsReader.pvs()[0].option);
     EXPECT_EQ("pv2", epicsReader.pvs()[1].name);
     ASSERT_TRUE(controllerCfg.metricsConfig().has_value());
+
+    // metrics config
     EXPECT_EQ("0.0.0.0:9464", controllerCfg.metricsConfig()->endpoint());
 }
 
