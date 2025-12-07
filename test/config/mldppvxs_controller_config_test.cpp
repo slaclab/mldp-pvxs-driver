@@ -4,6 +4,10 @@
 
 #include "test_config_helpers.h"
 
+#include <filesystem>
+#include <fstream>
+#include <sstream>
+
 namespace mldp_pvxs_driver::controller {
 
 using mldp_pvxs_driver::config::makeConfigFromYaml;
@@ -53,6 +57,49 @@ metrics:
 
     // metrics config
     EXPECT_EQ("0.0.0.0:9464", controllerCfg.metricsConfig()->endpoint());
+}
+
+TEST(MLDPPVXSControllerConfigTest, ParsesTlsCredentialsBlock)
+{
+    using util::pool::MLDPGrpcPoolConfig;
+
+    const auto tempDir = std::filesystem::temp_directory_path() / "mldp_pool_credentials_test";
+    std::filesystem::create_directories(tempDir);
+
+    const auto certPath = tempDir / "client.crt";
+    const auto keyPath = tempDir / "client.key";
+    const auto caPath = tempDir / "ca.crt";
+
+    {
+        std::ofstream(certPath) << "CERTDATA";
+        std::ofstream(keyPath) << "KEYDATA";
+        std::ofstream(caPath) << "CADATA";
+    }
+
+    std::ostringstream yaml;
+    yaml << "controller_thread_pool: 1\n"
+         << "mldp_pool:\n"
+         << "  provider_name: pvxs_provider\n"
+         << "  url: https://mldp.example:443\n"
+         << "  min_conn: 1\n"
+         << "  max_conn: 1\n"
+         << "  credentials:\n"
+         << "    pem_cert_chain: " << certPath.string() << "\n"
+         << "    pem_private_key: " << keyPath.string() << "\n"
+         << "    pem_root_certs: " << caPath.string() << "\n"
+         << "reader: []\n";
+
+    const auto cfg = makeConfigFromYaml(yaml.str());
+    MLDPPVXSControllerConfig controllerCfg(cfg);
+
+    const auto& creds = controllerCfg.pool().credentials();
+    EXPECT_EQ(MLDPGrpcPoolConfig::Credentials::Type::Ssl, creds.type);
+    EXPECT_EQ("CERTDATA", creds.ssl_options.pem_cert_chain);
+    EXPECT_EQ("KEYDATA", creds.ssl_options.pem_private_key);
+    EXPECT_EQ("CADATA", creds.ssl_options.pem_root_certs);
+
+    std::error_code ec;
+    std::filesystem::remove_all(tempDir, ec);
 }
 
 TEST(MLDPPVXSControllerConfigTest, ParsesMultipleEpicsReaders)

@@ -6,24 +6,6 @@ This driver integrates PVXS-exposed EPICS process variables with the SLAC MLDP i
 
 ## Configuration
 
-Pass a YAML file as the first argument to the driver. The driver only reads the fields below.
-
-```yaml
-# Minimal insecure connection
-provider_name: pvxs_provider            # required
-server_address: ingest.example:50051    # required
-credentials: none                       # use "ssl" or a map below for TLS
-monitor_pvs:
-  - example:pv1
-  - example:pv2
-
-# TLS credentials (use this instead of "credentials: none")
-credentials:
-  pem_cert_chain: /etc/certs/client.crt   # optional; file contents are loaded
-  pem_private_key: /etc/certs/client.key  # optional
-  pem_root_certs: /etc/certs/ca.crt       # optional
-```
-
 When running the controller/CLI orchestrator, the full config is a single YAML document. Every block shown is required
 unless marked optional.
 
@@ -35,6 +17,10 @@ mldp_pool:
   url: https://ingest.example:443
   min_conn: 1
   max_conn: 4
+  credentials: # optional
+    pem_cert_chain: /etc/certs/client.crt
+    pem_private_key: /etc/certs/client.key
+    pem_root_certs: /etc/certs/ca.crt
 
 reader:
   - epics:

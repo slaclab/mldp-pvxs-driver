@@ -103,7 +103,17 @@ PooledHandle<MLDPGrpcObject> MLDPGrpcPool::acquire()
 
 std::shared_ptr<MLDPGrpcObject> MLDPGrpcPool::createChannel()
 {
-    auto channel = grpc::CreateChannel(config_.url(), grpc::InsecureChannelCredentials());
+    std::shared_ptr<grpc::ChannelCredentials> creds;
+    if (config_.credentials().type == MLDPGrpcPoolConfig::Credentials::Type::Ssl)
+    {
+        creds = grpc::SslCredentials(config_.credentials().ssl_options);
+    }
+    else
+    {
+        creds = grpc::InsecureChannelCredentials();
+    }
+
+    auto channel = grpc::CreateChannel(config_.url(), creds);
     return std::make_shared<MLDPGrpcObject>(channel);
 }
 

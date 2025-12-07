@@ -111,6 +111,7 @@ void EpicsReaderConfig::parse(const Config& readerEntry)
         }
 
         std::string option;
+        std::optional<Config> optionConfig;
         if (pvNode.hasChild("option"))
         {
             const auto optionNodes = pvNode.subConfig("option");
@@ -120,15 +121,23 @@ void EpicsReaderConfig::parse(const Config& readerEntry)
             }
 
             const auto& optionNode = optionNodes.front();
-            if (!optionNode.raw().has_val())
+            const auto  raw = optionNode.raw();
+            if (raw.is_map() || raw.is_seq())
             {
-                throw Error("pvs[].option must be a scalar");
+                optionConfig = optionNode;
+            }
+            else if (raw.has_val())
+            {
+                optionNode >> option;
+            }
+            else
+            {
+                throw Error("pvs[].option must be a scalar or map");
             }
 
-            optionNode >> option;
         }
 
-        pvs_.push_back({std::move(pvName), std::move(option)});
+        pvs_.push_back({std::move(pvName), std::move(option), optionConfig});
         pvNames_.push_back(pvs_.back().name);
     }
 

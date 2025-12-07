@@ -1,5 +1,8 @@
 #include <util/pool/MLDPGrpcPoolConfig.h>
 
+#include <fstream>
+#include <sstream>
+
 using namespace mldp_pvxs_driver::config;
 using namespace mldp_pvxs_driver::util::pool;
 
@@ -33,6 +36,11 @@ int MLDPGrpcPoolConfig::minConnections() const
 int MLDPGrpcPoolConfig::maxConnections() const
 {
     return max_conn_;
+}
+
+const MLDPGrpcPoolConfig::Credentials& MLDPGrpcPoolConfig::credentials() const
+{
+    return credentials_;
 }
 
 void MLDPGrpcPoolConfig::parse(const config::Config& root)
@@ -85,5 +93,81 @@ void MLDPGrpcPoolConfig::parse(const config::Config& root)
         throw Error("mldp_pool.max_conn must be greater than or equal to min_conn");
     }
 
+    credentials_ = Credentials{};
+    if (root.hasChild("credentials"))
+    {
+        const auto credentialNodes = root.subConfig("credentials");
+        if (credentialNodes.empty())
+        {
+            throw Error("mldp_pool.credentials is present but empty");
+        }
+
+        const auto& credentialsNode = credentialNodes.front();
+        const auto  credentialsTree = credentialsNode.raw();
+        if (!credentialsTree.is_map())
+        {
+            std::string credentialsType;
+            credentialsNode >> credentialsType;
+            if (credentialsType == "ssl")
+            {
+                credentials_.type = Credentials::Type::Ssl;
+            }
+            else if (credentialsType == "none" || credentialsType.empty())
+            {
+                credentials_.type = Credentials::Type::Insecure;
+            }
+            else
+            {
+                throw Error("mldp_pool.credentials must be 'none', 'ssl', or a map of TLS options");
+            }
+        }
+        else
+        {
+            credentials_.type = Credentials::Type::Ssl;
+
+            if (credentialsTree.has_child("pem_cert_chain"))
+            {
+                std::string path;
+                credentialsTree["pem_cert_chain"] >> path;
+                credentials_.ssl_options.pem_cert_chain = readFile(path);
+            }
+            if (credentialsTree.has_child("pem_private_key"))
+            {
+                std::string path;
+                credentialsTree["pem_private_key"] >> path;
+                credentials_.ssl_options.pem_private_key = readFile(path);
+            }
+            if (credentialsTree.has_child("pem_root_certs"))
+            {
+                std::string path;
+                credentialsTree["pem_root_certs"] >> path;
+                credentials_.ssl_options.pem_root_certs = readFile(path);
+            }
+        }
+    }
+
     valid_ = true;
+}
+
+std::string MLDPGrpcPoolConfig::readFile(const std::string& path)
+{
+    std::ifstream file(path);
+    if (!file.is_open())
+    {
+        std::ostringstream oss;
+        oss << "Failed to read credentials file at '" << path << "'";
+        throw Error(oss.str());
+    }
+
+    std::ostringstream buffer;
+    buffer << file.rdbuf();
+    
+    if (file.bad())
+    {
+        std::ostringstream oss;
+        oss << "Error reading credentials file at '" << path << "'";
+        throw Error(oss.str());
+    }
+    
+    return buffer.str();
 }
