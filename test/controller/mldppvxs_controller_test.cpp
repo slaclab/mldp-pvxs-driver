@@ -38,9 +38,9 @@ TEST(MLDPPVXSControllerTest, StartAndStopDoNotThrowWithValidConfig)
     ASSERT_TRUE(config.valid());
 
     ASSERT_NO_THROW({
-        MLDPPVXSController controller(config);
-        controller.start();
-        controller.stop();
+        auto controller = MLDPPVXSController::create(config);
+        controller->start();
+        controller->stop();
     });
 }
 

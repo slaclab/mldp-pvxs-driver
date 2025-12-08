@@ -5,7 +5,7 @@ using namespace mldp_pvxs_driver::config;
 using namespace mldp_pvxs_driver::metrics;
 using namespace mldp_pvxs_driver::controller;
 using namespace mldp_pvxs_driver::util::pool;
-using namespace mldp_pvxs_driver::reader::impl::epics;
+using namespace mldp_pvxs_driver::config;
 
 MLDPPVXSControllerConfig::MLDPPVXSControllerConfig() = default;
 
@@ -39,10 +39,10 @@ int MLDPPVXSControllerConfig::controllerThreadPoolSize() const
     return controllerThreadPoolSize_;
 }
 
-const std::vector<EpicsReaderConfig>&
-MLDPPVXSControllerConfig::epicsReaders() const
+const std::vector<Config>&
+MLDPPVXSControllerConfig::readerConfigs() const
 {
-    return epicsReaders_;
+    return readerConfigs_;
 }
 
 const std::optional<MetricsConfig>& MLDPPVXSControllerConfig::metricsConfig() const
@@ -110,7 +110,7 @@ void MLDPPVXSControllerConfig::parsePool(const ::mldp_pvxs_driver::config::Confi
 
 void MLDPPVXSControllerConfig::parseReaders(const ::mldp_pvxs_driver::config::Config& root)
 {
-    epicsReaders_.clear();
+    readerConfigs_.clear();
 
     if (!root.hasChild("reader"))
     {
@@ -144,7 +144,7 @@ void MLDPPVXSControllerConfig::parseReaders(const ::mldp_pvxs_driver::config::Co
             const auto epicsNodes = readerBlock.subConfig("epics");
             for (const auto& epicsNode : epicsNodes)
             {
-                epicsReaders_.emplace_back(epicsNode);
+                readerConfigs_.push_back(epicsNode);
             }
         }
 

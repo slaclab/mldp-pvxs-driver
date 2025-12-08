@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <controller/MLDPPVXSControllerConfig.h>
+#include <reader/impl/epics/EpicsReaderConfig.h>
 
 #include "test_config_helpers.h"
 
@@ -46,8 +47,8 @@ metrics:
     EXPECT_EQ(4, controllerCfg.pool().maxConnections());
 
     // epics reader config
-    ASSERT_EQ(1u, controllerCfg.epicsReaders().size());
-    const auto& epicsReader = controllerCfg.epicsReaders().front();
+    ASSERT_EQ(1u, controllerCfg.readerConfigs().size());
+    const reader::impl::epics::EpicsReaderConfig epicsReader(controllerCfg.readerConfigs().front());
     EXPECT_EQ("epics_1", epicsReader.name());
     ASSERT_EQ(2u, epicsReader.pvs().size());
     EXPECT_EQ("pv1", epicsReader.pvs()[0].name);
@@ -128,13 +129,15 @@ reader:
     EXPECT_EQ("pvxs_provider", controllerCfg.pool().providerName());
     EXPECT_EQ(3, controllerCfg.controllerThreadPoolSize());
     EXPECT_EQ(2, controllerCfg.pool().minConnections());
-    ASSERT_EQ(2u, controllerCfg.epicsReaders().size());
-    EXPECT_EQ("epics_1", controllerCfg.epicsReaders()[0].name());
-    ASSERT_EQ(1u, controllerCfg.epicsReaders()[0].pvs().size());
-    EXPECT_EQ("pv1", controllerCfg.epicsReaders()[0].pvs()[0].name);
-    EXPECT_EQ("epics_2", controllerCfg.epicsReaders()[1].name());
-    ASSERT_EQ(1u, controllerCfg.epicsReaders()[1].pvs().size());
-    EXPECT_EQ("pv2", controllerCfg.epicsReaders()[1].pvs()[0].name);
+    ASSERT_EQ(2u, controllerCfg.readerConfigs().size());
+    const reader::impl::epics::EpicsReaderConfig epicsReader0(controllerCfg.readerConfigs()[0]);
+    EXPECT_EQ("epics_1", epicsReader0.name());
+    ASSERT_EQ(1u, epicsReader0.pvs().size());
+    EXPECT_EQ("pv1", epicsReader0.pvs()[0].name);
+    const reader::impl::epics::EpicsReaderConfig epicsReader1(controllerCfg.readerConfigs()[1]);
+    EXPECT_EQ("epics_2", epicsReader1.name());
+    ASSERT_EQ(1u, epicsReader1.pvs().size());
+    EXPECT_EQ("pv2", epicsReader1.pvs()[0].name);
 }
 
 TEST(MLDPPVXSControllerConfigTest, ThrowsWhenProviderNameMissing)

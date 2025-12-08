@@ -1,17 +1,25 @@
 #include <controller/MLDPPVXSController.h>
-
+#include <memory>
+#include <reader/ReaderFactory.h>
 #include <spdlog/spdlog.h>
 
 #include <chrono>
 #include <format>
 #include <grpcpp/grpcpp.h>
 #include <stdexcept>
-#include <string>
 
 using namespace mldp_pvxs_driver::metrics;
 using namespace mldp_pvxs_driver::controller;
-using mldp_pvxs_driver::util::pool::MLDPGrpcObject;
+using namespace mldp_pvxs_driver::util::bus;
+using namespace mldp_pvxs_driver::config;
+using namespace mldp_pvxs_driver::reader;
+
 using mldp_pvxs_driver::util::pool::MLDPGrpcPool;
+
+std::shared_ptr<MLDPPVXSController> MLDPPVXSController::create(const config::Config& config)
+{
+    return std::shared_ptr<MLDPPVXSController>(new MLDPPVXSController(config));
+}
 
 MLDPPVXSController::MLDPPVXSController(const config::Config& config)
     : config_(config)
@@ -19,9 +27,6 @@ MLDPPVXSController::MLDPPVXSController(const config::Config& config)
     , metrics_(config_.metricsConfig()
                    ? std::make_shared<metrics::Metrics>(*config_.metricsConfig())
                    : nullptr)
-    , mldp_pool_(MLDPGrpcPool::create(
-          config_.pool(),
-          metrics_))
     , running_(false)
 {
     // Constructor implementation
@@ -30,22 +35,38 @@ MLDPPVXSController::MLDPPVXSController(const config::Config& config)
 MLDPPVXSController::~MLDPPVXSController()
 {
     // Destructor implementation
+    stop();
 }
 
 void MLDPPVXSController::start()
 {
     running_ = true;
-    // Start controller logic
+    // Start allocating mldp pool
+    mldp_pool_ = MLDPGrpcPool::create(config_.pool(), metrics_);
+    // Start readers
+    for (const auto& readerConfig : config_.readerConfigs())
+    {
+        auto reader = ReaderFactory::create("epics", shared_from_this(), readerConfig);
+        readers_.push_back(std::move(reader));
+    }
 }
 
 void MLDPPVXSController::stop()
 {
     running_ = false;
+    // clear readers
+    readers_.clear();
     // Stop controller logic
+    thread_pool_->wait();
 }
 
 bool MLDPPVXSController::push(EventValue data_value)
 {
+    if(running_==false)
+    {
+        // waiting for shutdown
+        return false;
+    }
     thread_pool_->detach_task([this, data_value]()
                               {
                                   try

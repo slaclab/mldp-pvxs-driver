@@ -14,6 +14,8 @@ class IEventBusPush;
 
 namespace mldp_pvxs_driver::reader {
 
+using ReaderUPtr = std::unique_ptr<class Reader>;
+    
 /**
  * @brief Contract for reader implementations that sample data and forward events to the bus.
  *

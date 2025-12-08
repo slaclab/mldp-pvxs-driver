@@ -3,7 +3,7 @@
 #include <grpcpp/grpcpp.h>
 #include <metrics/Metrics.h>
 #include <metrics/MetricsConfig.h>
-#include <util/pool/MLDPGrpcPool.h>
+#include <pool/MLDPGrpcPool.h>
 
 #include "../../config/test_config_helpers.h"
 

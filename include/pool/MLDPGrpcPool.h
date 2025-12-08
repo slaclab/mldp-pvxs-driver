@@ -2,7 +2,7 @@
 
 #include <util/pool/IObjectPool.h>
 #include <util/pool/IPoolHandle.h>
-#include <util/pool/MLDPGrpcPoolConfig.h>
+#include <pool/MLDPGrpcPoolConfig.h>
 
 #include <condition_variable>
 #include <functional>

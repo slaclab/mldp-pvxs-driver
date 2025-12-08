@@ -2,8 +2,7 @@
 
 #include <config/Config.h>
 #include <metrics/MetricsConfig.h>
-#include <reader/impl/epics/EpicsReaderConfig.h>
-#include <util/pool/MLDPGrpcPoolConfig.h>
+#include <pool/MLDPGrpcPoolConfig.h>
 
 #include <optional>
 #include <stdexcept>
@@ -52,12 +51,13 @@ public:
     int controllerThreadPoolSize() const;
 
     /**
-     * @return List of configured EPICS readers.
+     * @return Raw configuration blocks for registered reader instances.
      *
-     * Reader entries are parsed using @ref reader::impl::epics::EpicsReaderConfig
-     * so callers can reuse the existing reader lifecycle code.
+     * Each entry is a parsed Config node anchored to the root YAML tree. The
+     * controller layer stays unaware of reader specifics, delegating parsing to
+     * the reader implementations.
      */
-    const std::vector<reader::impl::epics::EpicsReaderConfig>& epicsReaders() const;
+    const std::vector<config::Config>& readerConfigs() const;
 
     /** @return Optional metrics configuration when the YAML provides it. */
     const std::optional<metrics::MetricsConfig>& metricsConfig() const;
@@ -69,11 +69,11 @@ private:
     void parseReaders(const ::mldp_pvxs_driver::config::Config& root);
     void parseMetrics(const ::mldp_pvxs_driver::config::Config& root);
 
-    bool                                                valid_ = false;
-    util::pool::MLDPGrpcPoolConfig                      pool_;
-    int                                                 controllerThreadPoolSize_ = 0;
-    std::vector<reader::impl::epics::EpicsReaderConfig> epicsReaders_;
-    std::optional<metrics::MetricsConfig>               metricsConfig_;
+    bool                                valid_ = false;
+    util::pool::MLDPGrpcPoolConfig      pool_;
+    int                                 controllerThreadPoolSize_ = 0;
+    std::vector<config::Config>         readerConfigs_;
+    std::optional<metrics::MetricsConfig> metricsConfig_;
 };
 
 } // namespace mldp_pvxs_driver::controller

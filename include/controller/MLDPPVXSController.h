@@ -1,12 +1,14 @@
 #pragma once
 
+#include <BS_thread_pool.hpp>
 #include <config/Config.h>
 #include <controller/MLDPPVXSControllerConfig.h>
 #include <metrics/Metrics.h>
+#include <reader/Reader.h>
 #include <util/bus/IEventBusPush.h>
-#include <util/pool/MLDPGrpcPool.h>
+#include <pool/MLDPGrpcPool.h>
 
-#include <BS_thread_pool.hpp>
+#include <memory>
 
 namespace mldp_pvxs_driver::controller {
 
@@ -24,9 +26,17 @@ namespace mldp_pvxs_driver::controller {
  * 3. Readers push events via @ref push; the controller forwards them to MLDP.
  * 4. Call @ref stop to halt the workers and tear down resources.
  */
-class MLDPPVXSController : public util::bus::IEventBusPush
+class MLDPPVXSController : public util::bus::IEventBusPush, public std::enable_shared_from_this<MLDPPVXSController>
 {
 public:
+    /**
+     * @brief Helper to build controllers owned by shared_ptr.
+     *
+     * The controller internally relies on @ref shared_from_this, so callers
+     * must always manage it through shared ownership.
+     */
+    static std::shared_ptr<MLDPPVXSController> create(const config::Config& config);
+
     /**
      * @brief Build a controller using the root driver configuration.
      *
@@ -36,8 +46,6 @@ public:
      *
      * @param config Root driver configuration tree.
      */
-    explicit MLDPPVXSController(const config::Config& config);
-
     /// Ensure worker threads and pools are cleaned up.
     ~MLDPPVXSController() override;
 
@@ -45,7 +53,7 @@ public:
     void start();
 
     /// Stop all workers and release owned resources.
-   void stop();
+    void stop();
 
     /**
      * @brief Forward an event produced by a reader to the MLDP ingestion API.
@@ -65,11 +73,14 @@ public:
     metrics::Metrics& metrics() const;
 
 private:
-    MLDPPVXSControllerConfig                      config_;     ///< Typed controller configuration.
-    std::shared_ptr<BS::light_thread_pool>        thread_pool_; ///< Shared worker pool executing bus pushes.
-    std::shared_ptr<metrics::Metrics>             metrics_;     ///< Shared metrics collector/exposer.
-    util::pool::MLDPGrpcPool::MLDPGrpcPoolShrdPtr mldp_pool_;   ///< MLDP gRPC connection pool.
+    explicit MLDPPVXSController(const config::Config& config);
+
+    MLDPPVXSControllerConfig                      config_;         ///< Typed controller configuration.
+    std::shared_ptr<BS::light_thread_pool>        thread_pool_;    ///< Shared worker pool executing bus pushes.
+    std::shared_ptr<metrics::Metrics>             metrics_;        ///< Shared metrics collector/exposer.
     bool                                          running_{false}; ///< Tracks controller lifecycle state.
+    util::pool::MLDPGrpcPool::MLDPGrpcPoolShrdPtr mldp_pool_;      ///< MLDP gRPC connection pool.
+    std::vector<reader::ReaderUPtr>               readers_;        ///< Ingestion readers instance.
 };
 
 } // namespace mldp_pvxs_driver::controller

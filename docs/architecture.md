@@ -45,7 +45,7 @@ The diagram above represents the data flow the CLI orchestrates. Use these check
 - **Class hierarchy**:
   - `config::Config` (`include/config/Config.h`, `src/config/Config.cpp`): thin typed view over a `ryml` tree; provides `get`, `getInt`, `getBool`, `subConfig`, and presence helpers used by all downstream config classes.
   - `controller::MLDPPVXSControllerConfig` (`include/controller/MLDPPVXSControllerConfig.h`): owns parsing of the controller document; composes `MLDPGrpcPoolConfig`, a vector of `EpicsReaderConfig`, and an optional `MetricsConfig`. Throws `Error` on missing/invalid fields.
-  - `util::pool::MLDPGrpcPoolConfig` (`include/util/pool/MLDPGrpcPoolConfig.h`): validates `provider_name`, `url`, `min_conn`, `max_conn`, optional TLS `credentials`, and enforces `max_conn >= min_conn`.
+  - `util::pool::MLDPGrpcPoolConfig` (`include/pool/MLDPGrpcPoolConfig.h`): validates `provider_name`, `url`, `min_conn`, `max_conn`, optional TLS `credentials`, and enforces `max_conn >= min_conn`.
   - `reader::impl::epics::EpicsReaderConfig` (`include/reader/impl/epics/EpicsReaderConfig.h`): validates each reader entry (name plus optional `pvs[].{name,option}`), collecting both structured PV objects and a flat PV name list.
   - `metrics::MetricsConfig` (`include/metrics/MetricsConfig.h`): optional block containing the Prometheus `endpoint`.
   - `mldp_pvxs_driver_main` (`src/mldp_pvxs_driver_main.cpp`): parses the driver-only YAML, performs TLS file reads, and instantiates `PVXSDPIngestionDriver`.
