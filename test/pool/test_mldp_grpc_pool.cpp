@@ -5,7 +5,7 @@
 #include <metrics/MetricsConfig.h>
 #include <pool/MLDPGrpcPool.h>
 
-#include "../../config/test_config_helpers.h"
+#include "../config/test_config_helpers.h"
 
 #include <atomic>
 #include <future>

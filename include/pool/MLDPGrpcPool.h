@@ -1,11 +1,10 @@
 #pragma once
 
-#include <util/pool/IObjectPool.h>
-#include <util/pool/IPoolHandle.h>
+#include <pool/IObjectPool.h>
+#include <pool/IPoolHandle.h>
 #include <pool/MLDPGrpcPoolConfig.h>
 
 #include <condition_variable>
-#include <functional>
 #include <grpcpp/grpcpp.h>
 #include <ingestion.grpc.pb.h>
 #include <memory>
