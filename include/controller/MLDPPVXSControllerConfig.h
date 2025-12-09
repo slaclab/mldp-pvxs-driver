@@ -59,6 +59,17 @@ public:
      */
     const std::vector<config::Config>& readerConfigs() const;
 
+    /**
+     * @return Reader entries as (type, sub-config) pairs.
+     *
+     * Each element represents a reader entry where the first string is the
+     * reader type (for example "epics") and the second is the Config that
+     * points to the reader-specific configuration block. This API is useful
+     * for callers that need to dispatch based on the reader type while still
+     * passing the specific sub-configuration to the reader factory.
+     */
+    const std::vector<std::pair<std::string, config::Config>>& readerEntries() const;
+
     /** @return Optional metrics configuration when the YAML provides it. */
     const std::optional<metrics::MetricsConfig>& metricsConfig() const;
 
@@ -73,6 +84,7 @@ private:
     util::pool::MLDPGrpcPoolConfig      pool_;
     int                                 controllerThreadPoolSize_ = 0;
     std::vector<config::Config>         readerConfigs_;
+    std::vector<std::pair<std::string, config::Config>> readerEntries_;
     std::optional<metrics::MetricsConfig> metricsConfig_;
 };
 

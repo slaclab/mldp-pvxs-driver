@@ -23,9 +23,14 @@ const std::string& MetricsConfig::endpoint() const
 
 void MetricsConfig::parse(const config::Config& node)
 {
+    // If the node is not valid it means there was no `metrics` block in
+    // the top-level configuration. Treat this as "metrics not configured"
+    // and leave this object in its default (invalid) state instead of
+    // throwing an exception.
     if (!node.valid())
     {
-        throw Error("Metrics configuration node is invalid");
+        valid_ = false;
+        return;
     }
 
     if (!node.raw().is_map())

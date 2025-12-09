@@ -24,9 +24,7 @@ std::shared_ptr<MLDPPVXSController> MLDPPVXSController::create(const config::Con
 MLDPPVXSController::MLDPPVXSController(const config::Config& config)
     : config_(config)
     , thread_pool_(std::make_shared<BS::light_thread_pool>(config_.controllerThreadPoolSize()))
-    , metrics_(config_.metricsConfig()
-                   ? std::make_shared<metrics::Metrics>(*config_.metricsConfig())
-                   : nullptr)
+    , metrics_(std::make_shared<metrics::Metrics>(*config_.metricsConfig()))
     , running_(false)
 {
     // Constructor implementation
@@ -43,16 +41,22 @@ void MLDPPVXSController::start()
     running_ = true;
     // Start allocating mldp pool
     mldp_pool_ = MLDPGrpcPool::create(config_.pool(), metrics_);
-    // Start readers
-    for (const auto& readerConfig : config_.readerConfigs())
+    // Start readers (dispatch based on declared reader type)
+    for (const auto& entry : config_.readerEntries())
     {
-        auto reader = ReaderFactory::create("epics", shared_from_this(), readerConfig);
+        const auto& type = entry.first;
+        const auto& readerConfig = entry.second;
+        auto reader = ReaderFactory::create(type, shared_from_this(), readerConfig);
         readers_.push_back(std::move(reader));
     }
 }
 
 void MLDPPVXSController::stop()
 {
+    if (running_ == false)
+    {
+        return;
+    }
     running_ = false;
     // clear readers
     readers_.clear();
@@ -62,7 +66,7 @@ void MLDPPVXSController::stop()
 
 bool MLDPPVXSController::push(EventValue data_value)
 {
-    if(running_==false)
+    if (running_ == false)
     {
         // waiting for shutdown
         return false;

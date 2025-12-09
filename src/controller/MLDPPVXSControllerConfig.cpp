@@ -1,3 +1,4 @@
+#include "config/Config.h"
 #include <controller/MLDPPVXSControllerConfig.h>
 
 
@@ -43,6 +44,12 @@ const std::vector<Config>&
 MLDPPVXSControllerConfig::readerConfigs() const
 {
     return readerConfigs_;
+}
+
+const std::vector<std::pair<std::string, Config>>&
+MLDPPVXSControllerConfig::readerEntries() const
+{
+    return readerEntries_;
 }
 
 const std::optional<MetricsConfig>& MLDPPVXSControllerConfig::metricsConfig() const
@@ -111,6 +118,7 @@ void MLDPPVXSControllerConfig::parsePool(const ::mldp_pvxs_driver::config::Confi
 void MLDPPVXSControllerConfig::parseReaders(const ::mldp_pvxs_driver::config::Config& root)
 {
     readerConfigs_.clear();
+    readerEntries_.clear();
 
     if (!root.hasChild("reader"))
     {
@@ -145,6 +153,7 @@ void MLDPPVXSControllerConfig::parseReaders(const ::mldp_pvxs_driver::config::Co
             for (const auto& epicsNode : epicsNodes)
             {
                 readerConfigs_.push_back(epicsNode);
+                readerEntries_.push_back({"epics", epicsNode});
             }
         }
 
@@ -160,6 +169,7 @@ void MLDPPVXSControllerConfig::parseMetrics(const ::mldp_pvxs_driver::config::Co
     metricsConfig_.reset();
     if (!root.hasChild("metrics"))
     {
+        metricsConfig_.emplace(Config()); // empty config
         return;
     }
 
