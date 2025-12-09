@@ -1,6 +1,8 @@
 #include <gtest/gtest.h>
 
-#include "test_epics_reader_config_helpers.h"
+#include <reader/impl/epics/EpicsReaderConfig.h>
+
+#include "test_config_helpers.h"
 
 namespace mldp_pvxs_driver::reader::impl::epics {
 
@@ -28,10 +30,13 @@ pvs:
     ASSERT_EQ(3u, epicsCfg.pvs().size());
     EXPECT_EQ("pv1", epicsCfg.pvs()[0].name);
     EXPECT_EQ("chan://one", epicsCfg.pvs()[0].option);
+    EXPECT_FALSE(epicsCfg.pvs()[0].optionConfig.has_value());
     EXPECT_EQ("pv2", epicsCfg.pvs()[1].name);
     EXPECT_EQ("", epicsCfg.pvs()[1].option);
+    EXPECT_FALSE(epicsCfg.pvs()[1].optionConfig.has_value());
     EXPECT_EQ("pv3", epicsCfg.pvs()[2].name);
     EXPECT_EQ("", epicsCfg.pvs()[2].option);
+    EXPECT_FALSE(epicsCfg.pvs()[2].optionConfig.has_value());
 }
 
 TEST(EpicsReaderConfigTest, ThrowsForInvalidPvsSequence)
@@ -43,6 +48,29 @@ pvs: invalid
 
     const auto cfg = makeConfigFromYaml(yaml);
     EXPECT_THROW(static_cast<void>(EpicsReaderConfig(cfg)), EpicsReaderConfig::Error);
+}
+
+TEST(EpicsReaderConfigTest, AllowsOptionSubtree)
+{
+    const std::string yaml = R"(
+name: epics_subtree
+pvs:
+  - name: pv1
+    option:
+      clamp: true
+      limit: 5
+)";
+
+    const auto        cfg = makeConfigFromYaml(yaml);
+    EpicsReaderConfig epicsCfg(cfg);
+
+    ASSERT_EQ(1u, epicsCfg.pvs().size());
+    const auto& pv = epicsCfg.pvs().front();
+    EXPECT_EQ("pv1", pv.name);
+    EXPECT_EQ("", pv.option);
+    ASSERT_TRUE(pv.optionConfig.has_value());
+    EXPECT_TRUE(pv.optionConfig->raw().has_child("clamp"));
+    EXPECT_TRUE(pv.optionConfig->raw().has_child("limit"));
 }
 
 TEST(EpicsReaderConfigTest, AllowsEmptyPvsSequence)

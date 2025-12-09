@@ -2,6 +2,7 @@
 
 #include <config/Config.h>
 
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -36,12 +37,14 @@ public:
      * @brief Definition of a single PV entry as parsed from the YAML config.
      *
      * @note The @ref option field is optional in the YAML; it remains empty when
-     *       not provided.
+     *       not provided. It can be a scalar string or an arbitrary subtree;
+     *       when a subtree is provided it is preserved in @ref optionConfig.
      */
     struct PVConfig
     {
-        std::string name;   ///< Fully qualified PV name to monitor.
-        std::string option; ///< Backend-specific connection option (may be empty).
+        std::string                     name;         ///< Fully qualified PV name to monitor.
+        std::string                     option;       ///< Backend-specific connection option (may be empty).
+        std::optional<config::Config>   optionConfig; ///< Optional raw subtree for future extensions.
     };
 
     EpicsReaderConfig();

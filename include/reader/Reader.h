@@ -4,12 +4,18 @@
 #include <memory>
 #include <string>
 
+namespace mldp_pvxs_driver::metrics {
+class Metrics;
+}
+
 namespace mldp_pvxs_driver::util::bus {
 class IEventBusPush;
 }
 
 namespace mldp_pvxs_driver::reader {
 
+using ReaderUPtr = std::unique_ptr<class Reader>;
+    
 /**
  * @brief Contract for reader implementations that sample data and forward events to the bus.
  *
@@ -19,8 +25,10 @@ class Reader
 {
 public:
     /** @brief Construct the reader with the event bus connection that will receive updates. */
-    explicit Reader(std::shared_ptr<util::bus::IEventBusPush> bus)
-        : bus_(std::move(bus)) {}
+    Reader(std::shared_ptr<util::bus::IEventBusPush> bus,
+           std::shared_ptr<metrics::Metrics>         metrics = nullptr)
+        : bus_(std::move(bus))
+        , metrics_(std::move(metrics)) {}
 
     virtual ~Reader() = default;
 
@@ -42,6 +50,8 @@ protected:
      * Ownership is shared so readers can outlive their producers.
      */
     std::shared_ptr<util::bus::IEventBusPush> bus_;
+    /** @brief Shared metrics collector (may be null when not configured). */
+    std::shared_ptr<metrics::Metrics>         metrics_;
 };
 
 } // namespace mldp_pvxs_driver::reader

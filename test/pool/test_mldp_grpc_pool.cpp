@@ -1,18 +1,29 @@
 #include <gtest/gtest.h>
 
 #include <grpcpp/grpcpp.h>
-#include <util/pool/MLDPGrpcPool.h>
+#include <metrics/Metrics.h>
+#include <metrics/MetricsConfig.h>
+#include <pool/MLDPGrpcPool.h>
+
+#include "../config/test_config_helpers.h"
 
 #include <atomic>
 #include <future>
+#include <sstream>
 #include <thread>
 
 using namespace mldp_pvxs_driver::util::pool;
+using mldp_pvxs_driver::config::makeConfigFromYaml;
 
-static std::shared_ptr<MLDPGrpcObject> make_insecure_obj()
+
+static MLDPGrpcPoolConfig make_pool_config(int min_conn, int max_conn)
 {
-    auto channel = grpc::CreateChannel("dp-ingestion:50051", grpc::InsecureChannelCredentials());
-    return std::make_shared<MLDPGrpcObject>(channel);
+    std::ostringstream yaml;
+    yaml << "provider_name: test_provider\n"
+         << "url: dp-ingestion:50051\n"
+         << "min_conn: " << min_conn << "\n"
+         << "max_conn: " << max_conn << "\n";
+    return MLDPGrpcPoolConfig(makeConfigFromYaml(yaml.str()));
 }
 
 TEST(MLDPGrpcPoolTest, AcquireBlocksUntilReleased)
@@ -28,10 +39,7 @@ TEST(MLDPGrpcPoolTest, AcquireBlocksUntilReleased)
     // available; we only check acquisition/release semantics and pointer
     // identities.
 
-    auto pool = MLDPGrpcPool::create(1, 1, []()
-                      {
-                          return make_insecure_obj();
-                      });
+    auto pool = MLDPGrpcPool::create(make_pool_config(1, 1));
 
     // Acquire first handle
     auto h1 = pool->acquire();
@@ -59,12 +67,15 @@ TEST(MLDPGrpcPoolTest, AcquireBlocksUntilReleased)
     // Wait until we observe the pool reports an available object (release observed),
     // or the background thread has acquired it. Poll with timeout to avoid hangs.
     bool releasedSeen = false;
-    for (int i = 0; i < 50; ++i) {
-        if (pool->available() > 0) {
+    for (int i = 0; i < 50; ++i)
+    {
+        if (pool->available() > 0)
+        {
             releasedSeen = true;
             break;
         }
-        if (acquired.load()) {
+        if (acquired.load())
+        {
             releasedSeen = true;
             break;
         }
@@ -93,10 +104,7 @@ TEST(MLDPGrpcPoolTest, MultipleObjectsHaveSeparateChannels)
 
     // Note: we only compare channel pointer identities; the test does not
     // require a live gRPC server.
-    auto pool = MLDPGrpcPool::create(1, 2, []()
-                      {
-                          return make_insecure_obj();
-                      });
+    auto pool = MLDPGrpcPool::create(make_pool_config(1, 2));
     {
         auto h1 = pool->acquire();
         ASSERT_TRUE(h1);
@@ -113,4 +121,41 @@ TEST(MLDPGrpcPoolTest, MultipleObjectsHaveSeparateChannels)
     // cleanup: handles go out of scope and return to pool
     // available must be 2 now
     EXPECT_EQ(pool->available(), 2u);
+}
+
+TEST(MLDPGrpcPoolTest, UpdatesMetricsWhenConnectionsMove)
+{
+    auto metrics = std::make_shared<mldp_pvxs_driver::metrics::Metrics>(mldp_pvxs_driver::metrics::MetricsConfig());
+    auto pool = MLDPGrpcPool::create(make_pool_config(1, 1), metrics);
+
+    EXPECT_DOUBLE_EQ(metrics->poolConnectionsAvailable(), 1.0);
+    EXPECT_DOUBLE_EQ(metrics->poolConnectionsInUse(), 0.0);
+
+    {
+        auto handle = pool->acquire();
+        ASSERT_TRUE(handle);
+        EXPECT_DOUBLE_EQ(metrics->poolConnectionsAvailable(), 0.0);
+        EXPECT_DOUBLE_EQ(metrics->poolConnectionsInUse(), 1.0);
+
+        // send fake data
+        dp::service::ingestion::IngestDataRequest request;
+        request.set_providerid("test-provider");
+        request.set_clientrequestid("req-123");
+        request.add_tags("pv1");
+        auto* frame = request.mutable_ingestiondataframe();
+        auto* column = frame->add_datacolumns();
+        column->set_name("pv1");
+        auto* value = column->add_datavalues();
+        value->set_intvalue(42);
+
+        {
+            grpc::ClientContext                        context;
+            dp::service::ingestion::IngestDataResponse response;
+            const auto                                 status = handle->stub->ingestData(&context, request, &response);
+            EXPECT_TRUE(status.ok());
+        }
+    }
+
+    EXPECT_DOUBLE_EQ(metrics->poolConnectionsAvailable(), 1.0);
+    EXPECT_DOUBLE_EQ(metrics->poolConnectionsInUse(), 0.0);
 }

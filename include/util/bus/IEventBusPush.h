@@ -3,27 +3,60 @@
  */
 
 #pragma once
+#include <cstdint>
 #include <ingestion.grpc.pb.h>
 #include <memory>
+#include <string>
 
 namespace mldp_pvxs_driver::util::bus {
 
-class IEventBusPush {
+struct EventValueStruct
+{
+    const std::string          src_name;
+    const uint64_t             epoch_seconds;
+    const uint64_t             nanoseconds;
+    std::shared_ptr<DataValue> data_value;
+};
+
+/**
+ * @brief Minimal API contract for pushing events on the driver bus.
+ *
+ * Implementations are expected to forward serialized ingestion events to the
+ * rest of the system (e.g. over gRPC or PVXS) while honoring the ownership
+ * semantics of the provided payloads.
+ */
+class IEventBusPush
+{
 public:
-    using EventValue = std::shared_ptr<DataValue>;
-    static EventValue MakeEventValue() {
-        return std::make_shared<DataValue>();
+    /// Shared ownership wrapper around the generated ingestion payload.
+    using EventValue = std::shared_ptr<EventValueStruct>;
+
+    /**
+     * @brief Helper factory that returns an empty event payload.
+     * @return Shared pointer users can populate before invoking @ref push.
+     */
+    static EventValue MakeEventValue(const std::string& src_name, uint64_t epoch_seconds = 0, uint64_t nanoseconds = 0)
+    {
+        // Construct a temporary aggregate explicitly to avoid overload
+        // resolution issues with braced-init-lists and make_shared.
+        return std::make_shared<EventValueStruct>(
+            EventValueStruct{
+                src_name,
+                epoch_seconds,
+                nanoseconds,
+                std::make_shared<DataValue>()});
     }
-    
+
     virtual ~IEventBusPush() = default;
 
     /**
-     * @brief Pushes an event into the bus for downstream consumers.
-     * @param evt Abstract payload describing the event; concrete implementations
-     *            document the expected type and ownership.
-     * @return true if the push succeeded and the event will be delivered.
+     * @brief Pushes a populated ingestion event into the bus.
+     * @param data_value Shared pointer describing the event contents; callers
+     *                   retain ownership and may reuse the pointer after this
+     *                   function returns.
+     * @return true if the event was accepted for delivery.
      */
     virtual bool push(EventValue data_value) = 0;
 };
 
-} // namespace mldp_pvxs_driver::bus
+} // namespace mldp_pvxs_driver::util::bus

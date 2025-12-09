@@ -58,7 +58,9 @@ public:
      * @param cfg Configuration object containing reader settings such as the
      *            reader name and the list of PVs to monitor.
      */
-    EpicsReader(std::shared_ptr<mldp_pvxs_driver::util::bus::IEventBusPush> bus, const mldp_pvxs_driver::config::Config& cfg);
+    EpicsReader(std::shared_ptr<mldp_pvxs_driver::util::bus::IEventBusPush> bus,
+                std::shared_ptr<mldp_pvxs_driver::metrics::Metrics>        metrics,
+                const mldp_pvxs_driver::config::Config&                    cfg);
 
     /**
      * @brief Destructor stops the reader and releases PVXS resources.

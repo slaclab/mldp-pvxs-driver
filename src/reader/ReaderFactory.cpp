@@ -19,7 +19,8 @@ void ReaderFactory::registerType(const std::string& type, CreatorFn fn)
 std::unique_ptr<Reader> ReaderFactory::create(
     const std::string&                                            type,
     std::shared_ptr<::mldp_pvxs_driver::util::bus::IEventBusPush> bus,
-    const ::mldp_pvxs_driver::config::Config&                     cfg)
+    const ::mldp_pvxs_driver::config::Config&                     cfg,
+    std::shared_ptr<mldp_pvxs_driver::metrics::Metrics>           metrics)
 {
     auto& reg = registry();
     auto  it = reg.find(type);
@@ -27,5 +28,5 @@ std::unique_ptr<Reader> ReaderFactory::create(
     {
         throw std::runtime_error("Unknown reader type: " + type);
     }
-    return it->second(std::move(bus), cfg);
+    return it->second(std::move(bus), std::move(metrics), cfg);
 }

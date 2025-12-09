@@ -3,9 +3,11 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <thread>
+#include <chrono>
 
 #include "../../../mock/sioc.h"
-#include "../../../config/test_epics_reader_config_helpers.h"
+#include "../../../config/test_config_helpers.h"
 
 #include <config/Config.h>
 #include <reader/ReaderFactory.h>
@@ -18,14 +20,14 @@ namespace mldp_pvxs_driver::reader::impl::epics {
 class MockEventBusPush : public mldp_pvxs_driver::util::bus::IEventBusPush
 {
 public:
-    // Store received events for verification
-    std::vector<MockEventBusPush::EventValue> received_events;
+    using EventValue = mldp_pvxs_driver::util::bus::IEventBusPush::EventValue;
 
-    bool push(MockEventBusPush::EventValue data_value) override
+    // Store received events for verification
+    std::vector<EventValue> received_events;
+
+    bool push(EventValue data_value) override
     {
-        // Since the actual event type is unspecified, we'll use a string representation
-        // In a real implementation, this would handle the actual event type
-        received_events.push_back(data_value);
+        received_events.push_back(std::move(data_value));
         return true;
     }
 
@@ -35,14 +37,14 @@ public:
         return received_events.size();
     }
 
-    // Method to get the last event received
+    // Method to get the last event's DataValue pointer
     std::shared_ptr<DataValue> last_event() const
     {
         if (received_events.empty())
         {
             return nullptr;
         }
-        return received_events.back();
+        return received_events.back()->data_value;
     }
 
     // Method to clear events

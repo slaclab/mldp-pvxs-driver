@@ -1,12 +1,15 @@
-#include <util/pool/IObjectPool.h>
-#include <util/pool/IPoolHandle.h>
-#include <util/pool/MLDPGrpcPool.h>
+#include <pool/IObjectPool.h>
+#include <pool/IPoolHandle.h>
+#include <pool/MLDPGrpcPool.h>
 
+#include <metrics/Metrics.h>
+
+#include <algorithm>
+#include <chrono>
 #include <grpcpp/grpcpp.h>
 #include <stdexcept>
-#include <chrono>
 
-namespace mldp_pvxs_driver::util::pool {
+using namespace mldp_pvxs_driver::util::pool;
 
 #pragma region - MLDPGrpcObject
 // Implement MLDPGrpcObject constructor and helper
@@ -30,35 +33,35 @@ std::unique_ptr<dp::service::ingestion::DpIngestionService::Stub> MLDPGrpcObject
 
 #pragma region - MLDPGrpcPool
 
-MLDPGrpcPool::MLDPGrpcPool(std::size_t min_size,
-                           std::size_t max_size,
-                           Factory     factory)
-    : min_size_(min_size), max_size_(max_size), factory_(std::move(factory))
+MLDPGrpcPool::MLDPGrpcPool(const MLDPGrpcPoolConfig&         config,
+                           std::shared_ptr<metrics::Metrics> metrics)
+    : config_(config)
+    , metrics_(std::move(metrics))
 {
-    if (!factory_)
+    if (!config.valid())
     {
-        throw std::invalid_argument("MLDPGrpcPool: factory is null");
+        throw std::invalid_argument("MLDPGrpcPool: configuration is invalid");
     }
-    if (min_size_ == 0 || min_size_ > max_size_)
+    if (config_.minConnections() == 0 || config_.minConnections() > config_.maxConnections())
     {
         throw std::invalid_argument("MLDPGrpcPool: invalid min/max size");
     }
 
     // Pre-create min_size objects
-    items_.reserve(max_size_);
-    for (std::size_t i = 0; i < min_size_; ++i)
+    items_.reserve(config_.maxConnections());
+    for (std::size_t i = 0; i < config_.minConnections(); ++i)
     {
-        items_.push_back({factory_(), false});
+        items_.push_back({createChannel(), false});
     }
-    current_size_ = min_size_;
+    current_size_ = config_.minConnections();
+    updateMetrics();
 }
 
-std::shared_ptr<MLDPGrpcPool> MLDPGrpcPool::create(std::size_t min_size,
-                                                  std::size_t max_size,
-                                                  Factory     factory)
+MLDPGrpcPool::MLDPGrpcPoolShrdPtr MLDPGrpcPool::create(const MLDPGrpcPoolConfig&         config,
+                                                       std::shared_ptr<metrics::Metrics> metrics)
 {
     // Use new + shared_ptr constructor because the constructor is private.
-    return std::shared_ptr<MLDPGrpcPool>(new MLDPGrpcPool(min_size, max_size, std::move(factory)));
+    return std::shared_ptr<MLDPGrpcPool>(new MLDPGrpcPool(config, std::move(metrics)));
 }
 
 PooledHandle<MLDPGrpcObject> MLDPGrpcPool::acquire()
@@ -73,17 +76,19 @@ PooledHandle<MLDPGrpcObject> MLDPGrpcPool::acquire()
             if (!item.in_use && item.obj)
             {
                 item.in_use = true;
+                updateMetricsLocked();
                 auto pool_ptr = std::static_pointer_cast<IObjectPool<MLDPGrpcObject>>(shared_from_this());
                 return PooledHandle<MLDPGrpcObject>(pool_ptr, item.obj);
             }
         }
 
         // 2. No idle object; can we create a new one?
-        if (current_size_ < max_size_)
+        if (current_size_ < config_.maxConnections())
         {
-            auto obj = factory_();
+            auto obj = createChannel();
             items_.push_back({obj, true});
             ++current_size_;
+            updateMetricsLocked();
             auto pool_ptr = std::static_pointer_cast<IObjectPool<MLDPGrpcObject>>(shared_from_this());
             return PooledHandle<MLDPGrpcObject>(pool_ptr, obj);
         }
@@ -94,6 +99,22 @@ PooledHandle<MLDPGrpcObject> MLDPGrpcPool::acquire()
         constexpr auto wait_duration = std::chrono::milliseconds(200);
         cv_.wait_for(lock, wait_duration);
     }
+}
+
+std::shared_ptr<MLDPGrpcObject> MLDPGrpcPool::createChannel()
+{
+    std::shared_ptr<grpc::ChannelCredentials> creds;
+    if (config_.credentials().type == MLDPGrpcPoolConfig::Credentials::Type::Ssl)
+    {
+        creds = grpc::SslCredentials(config_.credentials().ssl_options);
+    }
+    else
+    {
+        creds = grpc::InsecureChannelCredentials();
+    }
+
+    auto channel = grpc::CreateChannel(config_.url(), creds);
+    return std::make_shared<MLDPGrpcObject>(channel);
 }
 
 void MLDPGrpcPool::release(const ObjectShrdPtr& obj)
@@ -108,6 +129,7 @@ void MLDPGrpcPool::release(const ObjectShrdPtr& obj)
         if (item.obj.get() == obj.get())
         {
             item.in_use = false;
+            updateMetricsLocked();
             cv_.notify_one();
             return;
         }
@@ -120,6 +142,17 @@ void MLDPGrpcPool::release(const ObjectShrdPtr& obj)
 std::size_t MLDPGrpcPool::available() const
 {
     std::unique_lock<std::mutex> lock(mutex_);
+    return availableCountLocked();
+}
+
+std::size_t MLDPGrpcPool::size() const
+{
+    std::unique_lock<std::mutex> lock(mutex_);
+    return current_size_;
+}
+
+std::size_t MLDPGrpcPool::availableCountLocked() const
+{
     std::size_t count = 0;
     for (const auto& item : items_)
     {
@@ -129,6 +162,23 @@ std::size_t MLDPGrpcPool::available() const
     return count;
 }
 
-#pragma endregion - MLDPGrpcPool
+void MLDPGrpcPool::updateMetricsLocked() const
+{
+    if (!metrics_)
+    {
+        return;
+    }
 
-} // namespace mldp_pvxs_driver::util::pool
+    const double total = static_cast<double>(current_size_);
+    const double available = static_cast<double>(availableCountLocked());
+    metrics_->setPoolConnectionsAvailable(available);
+    metrics_->setPoolConnectionsInUse(std::max(0.0, total - available));
+}
+
+void MLDPGrpcPool::updateMetrics() const
+{
+    std::unique_lock<std::mutex> lock(mutex_);
+    updateMetricsLocked();
+}
+
+#pragma endregion - MLDPGrpcPool

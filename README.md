@@ -6,26 +6,40 @@ This driver integrates PVXS-exposed EPICS process variables with the SLAC MLDP i
 
 ## Configuration
 
-When using the driver program, a YAML config file is necessary to set required settings. It should be passed as the
-first argument to the program.
+When running the controller/CLI orchestrator, the full config is a single YAML document. Every block shown is required
+unless marked optional.
 
-It must be structured as follows:
+```yaml
+controller_thread_pool: 2
 
-```yml
-provider_name: Provider Name
-server_address: address:port
-credentials:
-  pem_cert_chain: filepath
-  pem_root_certs: filepath
-  pem_private_key: filepath
-monitor_pvs:
-  - namespace:pv
-  - namespace:pv2
+mldp_pool:
+  provider_name: pvxs_provider
+  url: https://ingest.example:443
+  min_conn: 1
+  max_conn: 4
+  credentials: # optional
+    pem_cert_chain: /etc/certs/client.crt
+    pem_private_key: /etc/certs/client.key
+    pem_root_certs: /etc/certs/ca.crt
+
+reader:
+  - epics:
+      - name: epics_reader_a
+        pvs:
+          - name: pv1
+            option: chan://one          # optional PVXS option string
+          - name: pv2
+      - name: epics_reader_b
+        pvs:
+          - name: pv3
+
+metrics:                                 # optional; omit to disable Prometheus endpoint
+  endpoint: 0.0.0.0:9464
 ```
 
-The `provider_name`, `server_address` and `monitor_pvs` fields are required. The `credentials` field is optional and is
-either a string storing `'none'` or `'ssl'`, or a map containing gRPC's SSL settings, all of which are optional
-overrides to the default gRPC SSL settings.
+`mldp_pool` values mirror the driver’s `provider_name` and target URL but add connection-pool sizing. Readers are defined
+as sequences under `reader[].epics`, each with a `name` and an optional `pvs` list; if `pvs` is omitted, the reader will
+start without predefined channels.
 
 ## Architecture
 

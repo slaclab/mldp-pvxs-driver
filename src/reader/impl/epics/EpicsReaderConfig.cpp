@@ -1,18 +1,9 @@
 #include <reader/impl/epics/EpicsReaderConfig.h>
 
-#include <sstream>
 #include <utility>
 
-namespace {
-std::string makeMissingFieldMessage(const std::string& field)
-{
-    std::ostringstream oss;
-    oss << "Missing required field '" << field << "' in epics reader config";
-    return oss.str();
-}
-} // namespace
-
-namespace mldp_pvxs_driver::reader::impl::epics {
+using namespace mldp_pvxs_driver::config;
+using namespace mldp_pvxs_driver::reader::impl::epics;
 
 EpicsReaderConfig::EpicsReaderConfig() = default;
 
@@ -46,7 +37,7 @@ const std::vector<std::string>& EpicsReaderConfig::pvNames() const
     return pvNames_;
 }
 
-void EpicsReaderConfig::parse(const ::mldp_pvxs_driver::config::Config& readerEntry)
+void EpicsReaderConfig::parse(const Config& readerEntry)
 {
     if (!readerEntry.hasChild("name"))
     {
@@ -73,7 +64,7 @@ void EpicsReaderConfig::parse(const ::mldp_pvxs_driver::config::Config& readerEn
 
     if (!readerEntry.hasChild("pvs"))
     {
-       return;
+        return;
     }
 
     if (!readerEntry.isSequence("pvs"))
@@ -120,6 +111,7 @@ void EpicsReaderConfig::parse(const ::mldp_pvxs_driver::config::Config& readerEn
         }
 
         std::string option;
+        std::optional<Config> optionConfig;
         if (pvNode.hasChild("option"))
         {
             const auto optionNodes = pvNode.subConfig("option");
@@ -129,19 +121,25 @@ void EpicsReaderConfig::parse(const ::mldp_pvxs_driver::config::Config& readerEn
             }
 
             const auto& optionNode = optionNodes.front();
-            if (!optionNode.raw().has_val())
+            const auto  raw = optionNode.raw();
+            if (raw.is_map() || raw.is_seq())
             {
-                throw Error("pvs[].option must be a scalar");
+                optionConfig = optionNode;
+            }
+            else if (raw.has_val())
+            {
+                optionNode >> option;
+            }
+            else
+            {
+                throw Error("pvs[].option must be a scalar or map");
             }
 
-            optionNode >> option;
         }
 
-        pvs_.push_back({std::move(pvName), std::move(option)});
+        pvs_.push_back({std::move(pvName), std::move(option), optionConfig});
         pvNames_.push_back(pvs_.back().name);
     }
 
     valid_ = true;
 }
-
-} // namespace mldp_pvxs_driver::reader::impl::epics

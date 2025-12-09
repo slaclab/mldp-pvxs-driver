@@ -15,6 +15,7 @@
 #include <map>
 #include <memory>
 #include <rapidyaml-0.10.0.hpp>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -22,6 +23,13 @@ namespace mldp_pvxs_driver::config {
 namespace ryml = c4::yml;
 
 using ConfigTreePtr = std::shared_ptr<ryml::Tree>;
+
+inline std::string makeMissingFieldMessage(const std::string& field)
+{
+    std::ostringstream oss;
+    oss << "Missing required field '" << field << "' in epics reader config";
+    return oss.str();
+}
 
 /**
  * @brief Small helper to read configuration values from a rapidyaml node.
@@ -62,7 +70,7 @@ public:
      * @return The wrapped `ryml::ConstNodeRef`.
      */
     ryml::ConstNodeRef raw() const;
-    
+
     /**
      * @brief Check whether the wrapped node has a child with the given key.
      *
