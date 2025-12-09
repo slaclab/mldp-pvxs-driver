@@ -6,6 +6,7 @@
 #include <chrono>
 #include <format>
 #include <grpcpp/grpcpp.h>
+#include <ranges>
 #include <stdexcept>
 
 using namespace mldp_pvxs_driver::metrics;
@@ -64,70 +65,124 @@ void MLDPPVXSController::stop()
     thread_pool_->wait();
 }
 
-bool MLDPPVXSController::push(EventValue data_value)
+bool MLDPPVXSController::push(EventBatch batch_values)
 {
-    if (running_ == false)
+    if (!running_)
     {
-        // waiting for shutdown
         return false;
     }
-    thread_pool_->detach_task([this, data_value]()
+
+    const bool hasEvents = std::ranges::any_of(batch_values.values,
+                                               [](const auto& entry)
+                                               {
+                                                   return !entry.second.empty();
+                                               });
+    if (!hasEvents)
+    {
+        spdlog::warn("Received empty batch for ingestion, skipping push.");
+        return false;
+    }
+
+    thread_pool_->detach_task([this, batch_values = std::move(batch_values)]() mutable
                               {
                                   try
                                   {
-                                      auto millisecond = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                      const auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                                           std::chrono::system_clock::now().time_since_epoch());
                                       dp::service::ingestion::IngestDataRequest request;
                                       request.set_providerid(config_.pool().providerName());
-                                      request.set_clientrequestid(std::format("pv_{}_{}", data_value->src_name, millisecond.count()));
-                                      request.add_tags(data_value->src_name);
+                                      request.set_clientrequestid(std::format("pv_batch_{}", now_ms.count()));
 
                                       auto* dataFrame = request.mutable_ingestiondataframe();
                                       auto* timestamps = dataFrame->mutable_datatimestamps();
                                       auto* timestampList = timestamps->mutable_timestamplist();
-                                      auto* ts = timestampList->add_timestamps();
-                                      if (data_value->epoch_seconds)
+                                    
+                                      // add tags if explicitly provided
+                                      if (!batch_values.tags.empty())
                                       {
-                                          // Use provided timestamp
-                                          ts->set_epochseconds(data_value->epoch_seconds);
-                                          // Use provided nanoseconds if any
-                                          if (data_value->nanoseconds)
+                                          for (const auto& tag : batch_values.tags)
                                           {
-                                              ts->set_nanoseconds(data_value->nanoseconds);
+                                              request.add_tags(tag);
                                           }
+                                      }
+
+                                      size_t accepted_events = 0;
+                                      for (auto& [src_name, events] : batch_values.values)
+                                      {
+                                          if (events.empty())
+                                          {
+                                              continue;
+                                          }
+
+                                          DataColumn* column = nullptr;
+
+                                          for (auto& event_value : events)
+                                          {
+                                              if (!event_value)
+                                              {
+                                                  spdlog::warn("Skipping null event for source {}", src_name);
+                                                  continue;
+                                              }
+
+                                              auto* ts = timestampList->add_timestamps();
+                                              if (event_value->epoch_seconds)
+                                              {
+                                                  ts->set_epochseconds(event_value->epoch_seconds);
+                                                  if (event_value->nanoseconds)
+                                                  {
+                                                      ts->set_nanoseconds(event_value->nanoseconds);
+                                                  }
+                                              }
+                                              else
+                                              {
+                                                  const auto now = std::chrono::system_clock::now().time_since_epoch();
+                                                  ts->set_epochseconds(std::chrono::duration_cast<std::chrono::seconds>(now).count());
+                                              }
+
+                                              if (!column)
+                                              {
+                                                  column = dataFrame->add_datacolumns();
+                                                  column->set_name(src_name);
+                                              }
+
+                                              if (event_value->data_value)
+                                              {
+                                                  auto* dataValue = column->add_datavalues();
+                                                  *dataValue = std::move(*event_value->data_value);
+                                                  ++accepted_events;
+                                              }
+                                              else
+                                              {
+                                                  spdlog::warn("Missing data_value content for source {}", src_name);
+                                              }
+                                          }
+                                      }
+
+                                      if (dataFrame->datacolumns_size() == 0)
+                                      {
+                                          spdlog::warn("No valid events in batch, skipping push.");
+                                          return;
+                                      }
+
+                                      grpc::ClientContext                        context;
+                                      dp::service::ingestion::IngestDataResponse response;
+                                      auto                                       pool_instance = mldp_pool_->acquire();
+
+                                      if (const auto status = pool_instance->stub->ingestData(&context, request, &response); status.ok())
+                                      {
+                                          MLDP_METRICS_CALL(metrics_, incrementBusPushes());
                                       }
                                       else
                                       {
-                                          // Fallback to make sure timestamp is always set
-                                          const auto now = std::chrono::system_clock::now().time_since_epoch();
-                                          ts->set_epochseconds(std::chrono::duration_cast<std::chrono::seconds>(now).count());
-                                      }
-
-                                      auto* column = dataFrame->add_datacolumns();
-                                      column->set_name(data_value->src_name);
-
-                                      auto* dataValue = column->add_datavalues();
-                                      *dataValue = std::move(*data_value->data_value);
-
-                                      {
-                                          grpc::ClientContext                        context;
-                                          dp::service::ingestion::IngestDataResponse response;
-                                          auto                                       pool_instance = mldp_pool_->acquire();
-
-                                          if (const auto status = pool_instance->stub->ingestData(&context, request, &response); status.ok())
-                                          {
-                                              MLDP_METRICS_CALL(metrics_, incrementBusPushes());
-                                          }
-                                          else
-                                          {
-                                              spdlog::error("Ingestion failed for {}: {}", data_value->src_name, status.error_message());
-                                              MLDP_METRICS_CALL(metrics_, incrementBusFailures());
-                                          }
+                                          spdlog::error("Ingestion failed for batch of {} events: {}",
+                                                        accepted_events,
+                                                        status.error_message());
+                                          MLDP_METRICS_CALL(metrics_, incrementBusFailures());
                                       }
                                   }
                                   catch (const std::exception& ex)
                                   {
-                                      spdlog::error("Failed to push event {}: {}", data_value->src_name, ex.what());
+                                      spdlog::error("Failed to push event batch: {}", ex.what());
                                       MLDP_METRICS_CALL(metrics_, incrementReaderErrors());
                                   }
                               });

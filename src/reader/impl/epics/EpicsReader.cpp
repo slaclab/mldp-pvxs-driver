@@ -113,13 +113,16 @@ void EpicsReader::run(int timeout)
                 }
 
                 // allocate event value
-                auto event_value = IEventBusPush::MakeEventValue(sub->name(), epoch_seconds, nanoseconds);
+                auto event_value = IEventBusPush::MakeEventValue(epoch_seconds, nanoseconds);
 
                 // convert PVXS value to MLDP proto value
                 EpicsMLDPConversion::convertPVToProtoValue(epics_value, event_value->data_value.get());
 
-                // push to bus movidn data loosing the ownership
-                bus_->push(std::move(event_value));
+                // push to bus moving data and batching per source
+                IEventBusPush::EventBatch batch;
+                batch.tags.push_back(sub->name());
+                batch.values[sub->name()].emplace_back(std::move(event_value));
+                bus_->push(std::move(batch));
                 MLDP_METRICS_CALL(metrics_, incrementReaderEvents(1.0, readerTags));
             }
         }

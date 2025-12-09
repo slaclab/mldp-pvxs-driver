@@ -56,14 +56,15 @@ public:
     void stop();
 
     /**
-     * @brief Forward an event produced by a reader to the MLDP ingestion API.
+     * @brief Forward a batch of events produced by readers to the MLDP ingestion API.
      *
-     * Readers invoke this method on the controller, which in turn schedules
-     * the actual gRPC call on the shared thread pool so readers are not
-     * blocked by network latency. The method always returns quickly; any
-     * network errors are logged and reported via metrics.
+     * Readers invoke this method with a collection of source/payload pairs and
+     * optional batch tags. The controller schedules the resulting gRPC call on
+     * the shared thread pool so readers are not blocked by network latency and
+     * so multiple updates can be forwarded together. Network errors
+     * are logged and reported via metrics.
      */
-    bool push(EventValue data_value) override;
+    bool push(EventBatch batch_values) override;
 
     /**
      * @brief Access the shared metrics collector.

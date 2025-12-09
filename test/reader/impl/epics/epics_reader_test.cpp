@@ -20,14 +20,14 @@ namespace mldp_pvxs_driver::reader::impl::epics {
 class MockEventBusPush : public mldp_pvxs_driver::util::bus::IEventBusPush
 {
 public:
-    using EventValue = mldp_pvxs_driver::util::bus::IEventBusPush::EventValue;
+    using EventBatch = mldp_pvxs_driver::util::bus::IEventBusPush::EventBatch;
 
     // Store received events for verification
-    std::vector<EventValue> received_events;
+    std::vector<EventBatch> received_events;
 
-    bool push(EventValue data_value) override
+    bool push(EventBatch batch) override
     {
-        received_events.push_back(std::move(data_value));
+        received_events.push_back(std::move(batch));
         return true;
     }
 
@@ -44,7 +44,17 @@ public:
         {
             return nullptr;
         }
-        return received_events.back()->data_value;
+        const auto& batch = received_events.back();
+        if (batch.values.empty())
+        {
+            return nullptr;
+        }
+        const auto& first_entry = *batch.values.begin();
+        if (first_entry.second.empty() || first_entry.second.front() == nullptr)
+        {
+            return nullptr;
+        }
+        return first_entry.second.front()->data_value;
     }
 
     // Method to clear events
