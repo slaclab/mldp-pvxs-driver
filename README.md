@@ -14,6 +14,7 @@ controller_thread_pool: 2
 
 mldp_pool:
   provider_name: pvxs_provider
+  provider_description: "PVXS aggregate provider"   # optional
   url: https://ingest.example:443
   min_conn: 1
   max_conn: 4

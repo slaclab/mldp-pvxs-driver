@@ -28,6 +28,11 @@ const std::string& MLDPGrpcPoolConfig::url() const
     return url_;
 }
 
+const std::string& MLDPGrpcPoolConfig::providerDescription() const
+{
+    return provider_description_;
+}
+
 int MLDPGrpcPoolConfig::minConnections() const
 {
     return min_conn_;
@@ -57,6 +62,14 @@ void MLDPGrpcPoolConfig::parse(const config::Config& root)
     if (provider_name_.empty())
     {
         throw Error("mldp_pool.provider_name must not be empty");
+    }
+    if (root.hasChild("provider_description"))
+    {
+        provider_description_ = root.get("provider_description");
+    }
+    else
+    {
+        provider_description_ = provider_name_;
     }
 
     if (!root.hasChild("url"))

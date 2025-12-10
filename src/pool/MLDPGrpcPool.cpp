@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <chrono>
 #include <grpcpp/grpcpp.h>
+#include <spdlog/spdlog.h>
 #include <stdexcept>
 
 using namespace mldp_pvxs_driver::util::pool;
@@ -114,7 +115,12 @@ std::shared_ptr<MLDPGrpcObject> MLDPGrpcPool::createChannel()
     }
 
     auto channel = grpc::CreateChannel(config_.url(), creds);
-    return std::make_shared<MLDPGrpcObject>(channel);
+    auto object = std::make_shared<MLDPGrpcObject>(channel);
+    if (!registerProvider(object->stub.get()))
+    {
+        throw std::runtime_error("MLDPGrpcPool: failed to register provider on new connection");
+    }
+    return object;
 }
 
 void MLDPGrpcPool::release(const ObjectShrdPtr& obj)
@@ -149,6 +155,61 @@ std::size_t MLDPGrpcPool::size() const
 {
     std::unique_lock<std::mutex> lock(mutex_);
     return current_size_;
+}
+
+bool MLDPGrpcPool::registerProvider(dp::service::ingestion::DpIngestionService::Stub* stub)
+{
+    if (!stub)
+    {
+        spdlog::error("MLDPGrpcPool: missing stub while registering provider {}", config_.providerName());
+        return false;
+    }
+
+    grpc::ClientContext                              context;
+    dp::service::ingestion::RegisterProviderRequest  request;
+    dp::service::ingestion::RegisterProviderResponse response;
+    request.set_providername(config_.providerName());
+    request.set_description(config_.providerDescription());
+
+    const auto status = stub->registerProvider(&context, request, &response);
+    if (!status.ok())
+    {
+        spdlog::error("registerProvider RPC failed for {}: {}", config_.providerName(), status.error_message());
+        return false;
+    }
+
+    if (response.has_registrationresult())
+    {
+        const auto& new_id = response.registrationresult().providerid();
+        if (provider_id_.empty())
+        {
+            provider_id_ = new_id;
+            spdlog::info("MLDP registered provider {} with id {}", config_.providerName(), provider_id_);
+            return true;
+        }
+        if (provider_id_ != new_id)
+        {
+            spdlog::error("registerProvider returned mismatched provider ID {} (expected {})",
+                          new_id,
+                          provider_id_);
+            return false;
+        }
+        return true;
+    }
+
+    if (response.has_exceptionalresult())
+    {
+        spdlog::error("registerProvider rejected {}: {}", config_.providerName(), response.exceptionalresult().message());
+        return false;
+    }
+
+    spdlog::error("registerProvider returned empty response for {}", config_.providerName());
+    return false;
+}
+
+const std::string& MLDPGrpcPool::providerId() const
+{
+    return provider_id_;
 }
 
 std::size_t MLDPGrpcPool::availableCountLocked() const

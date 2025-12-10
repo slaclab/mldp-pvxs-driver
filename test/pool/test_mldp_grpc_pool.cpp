@@ -10,16 +10,17 @@
 #include <atomic>
 #include <future>
 #include <sstream>
+#include <string_view>
 #include <thread>
 
 using namespace mldp_pvxs_driver::util::pool;
 using mldp_pvxs_driver::config::makeConfigFromYaml;
 
-
-static MLDPGrpcPoolConfig make_pool_config(int min_conn, int max_conn)
+static MLDPGrpcPoolConfig make_pool_config(int min_conn, int max_conn, std::string_view test_provider_id = "test_provider", std::string_view description = "test_provider_desc")
 {
     std::ostringstream yaml;
-    yaml << "provider_name: test_provider\n"
+    yaml << "provider_name: " << test_provider_id << "\n"
+         << "provider_description: " << description << "\n"
          << "url: dp-ingestion:50051\n"
          << "min_conn: " << min_conn << "\n"
          << "max_conn: " << max_conn << "\n";
@@ -125,9 +126,9 @@ TEST(MLDPGrpcPoolTest, MultipleObjectsHaveSeparateChannels)
 
 TEST(MLDPGrpcPoolTest, UpdatesMetricsWhenConnectionsMove)
 {
-    auto metrics = std::make_shared<mldp_pvxs_driver::metrics::Metrics>(mldp_pvxs_driver::metrics::MetricsConfig());
-    auto pool = MLDPGrpcPool::create(make_pool_config(1, 1), metrics);
-
+    auto        metrics = std::make_shared<mldp_pvxs_driver::metrics::Metrics>(mldp_pvxs_driver::metrics::MetricsConfig());
+    auto        pool = MLDPGrpcPool::create(make_pool_config(1, 1, "test_prv_1"), metrics);
+    const auto& providerId = pool->providerId();
     EXPECT_DOUBLE_EQ(metrics->poolConnectionsAvailable(), 1.0);
     EXPECT_DOUBLE_EQ(metrics->poolConnectionsInUse(), 0.0);
 
@@ -138,9 +139,10 @@ TEST(MLDPGrpcPoolTest, UpdatesMetricsWhenConnectionsMove)
         EXPECT_DOUBLE_EQ(metrics->poolConnectionsInUse(), 1.0);
 
         // send fake data
-        dp::service::ingestion::IngestDataRequest request;
-        request.set_providerid("test-provider");
-        request.set_clientrequestid("req-123");
+        dp::service::ingestion::IngestDataRequest  request;
+        dp::service::ingestion::IngestDataResponse response;
+        request.set_providerid(providerId);
+        request.set_clientrequestid("req_123");
         request.add_tags("pv1");
         auto* frame = request.mutable_ingestiondataframe();
         auto* column = frame->add_datacolumns();
@@ -148,11 +150,20 @@ TEST(MLDPGrpcPoolTest, UpdatesMetricsWhenConnectionsMove)
         auto* value = column->add_datavalues();
         value->set_intvalue(42);
 
+        auto*      timestamps = frame->mutable_datatimestamps();
+        auto*      timestampList = timestamps->mutable_timestamplist();
+        auto*      ts = timestampList->add_timestamps();
+        const auto now = std::chrono::system_clock::now().time_since_epoch();
+        ts->set_epochseconds(std::chrono::duration_cast<std::chrono::seconds>(now).count());
+
         {
-            grpc::ClientContext                        context;
-            dp::service::ingestion::IngestDataResponse response;
-            const auto                                 status = handle->stub->ingestData(&context, request, &response);
+            grpc::ClientContext context;
+            const auto          status = handle->stub->ingestData(&context, request, &response);
             EXPECT_TRUE(status.ok());
+            // chekc the response
+            EXPECT_TRUE(response.has_ackresult());
+            EXPECT_EQ(response.ackresult().numrows(), 1);
+            EXPECT_FALSE(response.has_exceptionalresult());
         }
     }
 

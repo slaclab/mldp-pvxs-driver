@@ -15,6 +15,7 @@ namespace mldp_pvxs_driver::util::pool {
  * @code{.yaml}
  * mldp_pool:
  *   provider_name: pvxs_provider
+ *   provider_description: "PVXS-based data provider"
  *   url: https://mldp.example:443
  *   min_conn: 1
  *   max_conn: 4
@@ -25,6 +26,7 @@ namespace mldp_pvxs_driver::util::pool {
  * @code{.yaml}
  * mldp_pool:
  *   provider_name: pvxs_provider
+ *   provider_description: "PVXS-based data provider"
  *   url: https://mldp.example:443
  *   min_conn: 1
  *   max_conn: 4
@@ -74,6 +76,7 @@ public:
 
     bool               valid() const;
     const std::string& providerName() const;
+    const std::string& providerDescription() const;
     const std::string& url() const;
     int                minConnections() const;
     int                maxConnections() const;
@@ -85,6 +88,7 @@ private:
 
     bool        valid_ = false; ///< Tracks whether parsing succeeded.
     std::string provider_name_;
+    std::string provider_description_;
     std::string url_;
     int         min_conn_ = 0;
     int         max_conn_ = 0;

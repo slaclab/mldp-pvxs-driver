@@ -19,6 +19,7 @@ namespace {
 controller_thread_pool: 1
 mldp_pool:
   provider_name: test_provider
+  provider_description: "Test Provider"
   url: dp-ingestion:50051
   min_conn: 1
   max_conn: 1
@@ -29,6 +30,7 @@ reader: []
 controller_thread_pool: 1
 mldp_pool:
   provider_name: test_provider
+  provider_description: "Test Provider"
   url: dp-ingestion:50051
   min_conn: 1
   max_conn: 1

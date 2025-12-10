@@ -9,6 +9,7 @@
 #include <ingestion.grpc.pb.h>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <vector>
 
 namespace mldp_pvxs_driver::metrics {
@@ -140,7 +141,8 @@ struct MLDPGrpcObject
  *   the connection to the pool when destroyed (RAII).
  * - If the pool has capacity (`current_size < max_conn`), `acquire()` creates
  *   new connections as needed; otherwise it blocks until an idle connection is
- *   available.
+ *   available. Each new connection automatically registers the configured
+ *   provider with MLDP and caches the provider ID for later reuse.
  */
 class MLDPGrpcPool : public IObjectPool<MLDPGrpcObject>, public std::enable_shared_from_this<MLDPGrpcPool>
 {
@@ -207,6 +209,13 @@ public:
      */
     std::size_t size() const;
 
+    /**
+     * @brief Retrieve the provider ID obtained during automatic registration.
+     *
+     * @return Assigned provider identifier or an empty string if registration failed.
+     */
+    const std::string& providerId() const;
+
 private:
     const MLDPGrpcPoolConfig        config_;
     std::size_t                     availableCountLocked() const;
@@ -228,11 +237,14 @@ private:
     std::condition_variable cv_;
     std::vector<Item>       items_;
     std::size_t             current_size_{0};
+    std::string             provider_id_; ///< Last provider ID returned by MLDP.
     // Token used to detect pool lifetime. Pooled handles keep a weak_ptr to
     // this token so they can safely avoid calling back into the pool after
     // the pool has been destroyed.
     std::shared_ptr<void>             lifetime_token_;
     std::shared_ptr<metrics::Metrics> metrics_;
+
+    bool registerProvider(dp::service::ingestion::DpIngestionService::Stub* stub);
 };
 
 } // namespace mldp_pvxs_driver::util::pool
