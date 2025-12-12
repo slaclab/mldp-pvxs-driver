@@ -5,17 +5,20 @@
 #include <string>
 #include <util/bus/IEventBusPush.h>
 
+#include <spdlog/spdlog.h>
+
 namespace mldp_pvxs_driver::reader::impl::epics {
 
 class BSASEpicsMLDPConversion : public EpicsMLDPConversion
 {
 public:
-    static bool tryBuildNtTableRowTsBatch(const std::string& tablePvName,
-                                         const pvxs::Value& epicsValue,
-                                         const std::string& tsSecondsField,
-                                         const std::string& tsNanosField,
-                                         mldp_pvxs_driver::util::bus::IEventBusPush::EventBatch* outBatch,
-                                         size_t* outEmitted);
+    static bool tryBuildNtTableRowTsBatch(spdlog::logger&                                         log,
+                                          const std::string&                                      tablePvName,
+                                          const pvxs::Value&                                      epicsValue,
+                                          const std::string&                                      tsSecondsField,
+                                          const std::string&                                      tsNanosField,
+                                          mldp_pvxs_driver::util::bus::IEventBusPush::EventBatch* outBatch,
+                                          size_t&                                                 outEmitted);
 };
 
 } // namespace mldp_pvxs_driver::reader::impl::epics

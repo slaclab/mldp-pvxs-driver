@@ -10,17 +10,38 @@
 #include <unordered_map>
 #include <utility>
 
+#include <spdlog/sinks/dup_filter_sink.h>
+#include <spdlog/sinks/stdout_color_sinks.h>
+
 using namespace pvxs::client;
+
 using namespace mldp_pvxs_driver::config;
 using namespace mldp_pvxs_driver::util::bus;
 using namespace mldp_pvxs_driver::reader::impl::epics;
 
 using MldpDriverConfig = mldp_pvxs_driver::config::Config;
 
+namespace {
+spdlog::logger makeEpicsReaderLogger(const std::string& readerName)
+{
+    auto dup_filter = std::make_shared<spdlog::sinks::dup_filter_sink_mt>(std::chrono::seconds(5));
+    dup_filter->add_sink(std::make_shared<spdlog::sinks::stdout_color_sink_mt>());
+
+    std::string loggerName = "epics_reader";
+    if (!readerName.empty())
+    {
+        loggerName += ":";
+        loggerName += readerName;
+    }
+    return spdlog::logger(loggerName, std::move(dup_filter));
+}
+} // namespace
+
 EpicsReader::EpicsReader(std::shared_ptr<IEventBusPush>                      bus,
                          std::shared_ptr<mldp_pvxs_driver::metrics::Metrics> metrics,
                          const MldpDriverConfig&                             cfg)
     : Reader(std::move(bus), std::move(metrics))
+    , logger_(makeEpicsReaderLogger(cfg.get("name")))
     , config_(EpicsReaderConfig(cfg))
     , name_(config_.name())
     , running_(false)
@@ -74,13 +95,13 @@ void EpicsReader::addPV(const PVSet& pvNames)
                                  })
                           .exec();
         m_pva_subscriptions.push(pv_mon);
-        spdlog::info("Started monitoring PV {} on reader {}", pv, name_);
+        logger_.info("Started monitoring PV {} on reader {}", pv, name_);
     }
 }
 
 void EpicsReader::run(int timeout)
 {
-    spdlog::info("EpicsReader worker thread started on reader {}.", name_);
+    logger_.info("EpicsReader worker thread started on reader {}.", name_);
     bool       expired = false;
     const auto acquisition_ts = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch());
     while (running_ && !expired)
@@ -106,18 +127,18 @@ void EpicsReader::run(int timeout)
             // prepare batch
             IEventBusPush::EventBatch batch;
             // keep track of how many events were emitted
-            size_t                    emitted = 0;
+            size_t emitted = 0;
 
             switch (mode)
             {
             case PVRuntimeConfig::Mode::NtTableRowTs:
                 {
-                    if (BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch(
-                            pvName, epics_value, it->second.tsSecondsField, it->second.tsNanosField, &batch, &emitted))
+                    if (!BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch(
+                            logger_, pvName, epics_value, it->second.tsSecondsField, it->second.tsNanosField, &batch, emitted))
                     {
                         // batch + emitted were filled
-                        spdlog::error("Converted PV {} to MLDP NtTableRowTs batch on reader {}.", pvName, name_);
-                        MLDP_METRICS_CALL(metrics_, incrementReaderEvents(static_cast<double>(emitted), readerTags));
+                        logger_.error("Error converting PV {} to MLDP NtTableRowTs batch on reader {}.", pvName, name_);
+                        MLDP_METRICS_CALL(metrics_, incrementReaderErrors(1.0, readerTags));
                     }
                 }
                 break;
@@ -171,7 +192,7 @@ void EpicsReader::run(int timeout)
         }
         catch (const pvxs::client::RemoteError& e)
         {
-            spdlog::error("Server error when reading PV {} on reader {}: {}", sub->name(), name_, e.what());
+            logger_.error("Server error when reading PV {} on reader {}: {}", sub->name(), name_, e.what());
             MLDP_METRICS_CALL(metrics_, incrementReaderErrors(1.0, readerTags));
         }
 
@@ -185,5 +206,5 @@ void EpicsReader::run(int timeout)
             }
         }
     }
-    spdlog::info("EpicsReader worker thread exiting on reader {}.", name_);
+    logger_.info("EpicsReader worker thread exiting on reader {}.", name_);
 }

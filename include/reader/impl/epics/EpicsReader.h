@@ -9,6 +9,8 @@
 #include <pvxs/client.h>
 #include <pvxs/nt.h>
 
+#include <spdlog/spdlog.h>
+
 #include <atomic>
 #include <set>
 #include <string>
@@ -108,6 +110,8 @@ private:
         std::string tsSecondsField;
         std::string tsNanosField;
     };
+
+    spdlog::logger logger_;
 
     /** @brief Reader-specific configuration (name, PV list, etc.). */
     EpicsReaderConfig                                           config_;
