@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <iostream>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -289,59 +290,55 @@ pvs:
         FAIL() << oss.str();
     }
 
-    // test:counter (NTScalar<Int32>) -> structure.value.intValue
+    // test:counter (NTScalar<Int32>) -> intValue (only EPICS 'value' is serialized)
     {
         const auto dv = findLatestDataValueForSource(*mock_bus, "test:counter");
         ASSERT_NE(dv, nullptr);
-        const auto* value = findStructureFieldValue(*dv, "value");
-        ASSERT_NE(value, nullptr);
-        ASSERT_EQ(value->value_case(), DataValue::kIntValue);
-        ASSERT_TRUE(value->has_intvalue());
-        ASSERT_FALSE(value->has_longvalue());
-        EXPECT_GT(value->intvalue(), 0);
+        ASSERT_EQ(dv->value_case(), DataValue::kIntValue);
+        ASSERT_TRUE(dv->has_intvalue());
+        ASSERT_FALSE(dv->has_longvalue());
+        EXPECT_GT(dv->intvalue(), 0);
+        EXPECT_EQ(findStructureFieldValue(*dv, "timeStamp"), nullptr);
     }
 
-    // test:voltage (NTScalar<Float64>) -> structure.value.doubleValue
+    // test:voltage (NTScalar<Float64>) -> doubleValue
     {
         const auto dv = findLatestDataValueForSource(*mock_bus, "test:voltage");
         ASSERT_NE(dv, nullptr);
-        const auto* value = findStructureFieldValue(*dv, "value");
-        ASSERT_NE(value, nullptr);
-        ASSERT_EQ(value->value_case(), DataValue::kDoubleValue);
-        ASSERT_TRUE(value->has_doublevalue());
-        ASSERT_FALSE(value->has_floatvalue());
+        ASSERT_EQ(dv->value_case(), DataValue::kDoubleValue);
+        ASSERT_TRUE(dv->has_doublevalue());
+        ASSERT_FALSE(dv->has_floatvalue());
+        EXPECT_EQ(findStructureFieldValue(*dv, "timeStamp"), nullptr);
     }
 
-    // test:status (NTScalar<String>) -> structure.value.stringValue
+    // test:status (NTScalar<String>) -> stringValue
     {
         const auto dv = findLatestDataValueForSource(*mock_bus, "test:status");
         ASSERT_NE(dv, nullptr);
-        const auto* value = findStructureFieldValue(*dv, "value");
-        ASSERT_NE(value, nullptr);
-        ASSERT_EQ(value->value_case(), DataValue::kStringValue);
-        ASSERT_TRUE(value->has_stringvalue());
-        const auto& s = value->stringvalue();
+        ASSERT_EQ(dv->value_case(), DataValue::kStringValue);
+        ASSERT_TRUE(dv->has_stringvalue());
+        const auto& s = dv->stringvalue();
         EXPECT_TRUE(s == "OK" || s == "WARNING" || s == "FAULT");
+        EXPECT_EQ(findStructureFieldValue(*dv, "timeStamp"), nullptr);
     }
 
-    // test:waveform (NTScalar<Float64A>) -> structure.value.arrayValue[doubleValue]
+    // test:waveform (NTScalar<Float64A>) -> arrayValue[doubleValue]
     {
         const auto dv = findLatestDataValueForSource(*mock_bus, "test:waveform");
         ASSERT_NE(dv, nullptr);
-        const auto* value = findStructureFieldValue(*dv, "value");
-        ASSERT_NE(value, nullptr);
-        ASSERT_EQ(value->value_case(), DataValue::kArrayValue);
-        ASSERT_TRUE(value->has_arrayvalue());
-        const auto& arr = value->arrayvalue();
+        ASSERT_EQ(dv->value_case(), DataValue::kArrayValue);
+        ASSERT_TRUE(dv->has_arrayvalue());
+        const auto& arr = dv->arrayvalue();
         ASSERT_EQ(arr.datavalues_size(), 256);
         for (int i = 0; i < arr.datavalues_size(); ++i)
         {
             ASSERT_EQ(arr.datavalues(i).value_case(), DataValue::kDoubleValue);
             ASSERT_TRUE(arr.datavalues(i).has_doublevalue());
         }
+        EXPECT_EQ(findStructureFieldValue(*dv, "timeStamp"), nullptr);
     }
 
-    // test:table (NTTable) -> structure fields contain deviceIDs and pressure arrays
+    // test:table (NTTable) -> structure contains deviceIDs and pressure arrays (table 'value' only)
     {
         const auto dv = findLatestDataValueForSource(*mock_bus, "test:table");
         ASSERT_NE(dv, nullptr);
@@ -351,6 +348,9 @@ pvs:
         const auto* pressure = findStructureFieldValue(*dv, "pressure");
         ASSERT_NE(deviceIDs, nullptr);
         ASSERT_NE(pressure, nullptr);
+
+        EXPECT_EQ(findStructureFieldValue(*dv, "labels"), nullptr);
+        EXPECT_EQ(findStructureFieldValue(*dv, "timeStamp"), nullptr);
 
         ASSERT_EQ(deviceIDs->value_case(), DataValue::kArrayValue);
         ASSERT_TRUE(deviceIDs->has_arrayvalue());

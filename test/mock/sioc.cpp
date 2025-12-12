@@ -28,19 +28,20 @@ PVServer::PVServer()
     m_server.addPV("test:waveform", m_pvWaveform);
 
     m_pvTable = server::SharedPV::buildReadonly();
-    auto tableType = nt::NTTable{}.build();
-    tableType += {
-        Member(TypeCode::StringA, "deviceIDs"),
-        Member(TypeCode::Float64A, "pressure"),
-    };
+    nt::NTTable tableBuilder;
+    tableBuilder.add_column(TypeCode::String, "deviceIDs");
+    tableBuilder.add_column(TypeCode::Float64, "pressure");
+    auto tableType = tableBuilder.build();
     m_pvTable.open(tableType.create());
     m_server.addPV("test:table", m_pvTable);
 
     m_pvBsasTable = server::SharedPV::buildReadonly();
-    auto bsasTableType = nt::NTTable{}.build();
+    nt::NTTable bsasTableBuilder;
+    bsasTableBuilder.add_column(TypeCode::Float64, "PV_NAME_A_DOUBLE_VALUE");
+    bsasTableBuilder.add_column(TypeCode::String, "PV_NAME_B_STRING_VALUE");
+    auto bsasTableType = bsasTableBuilder.build();
+    // BSAS adds per-row timestamps as additional top-level arrays.
     bsasTableType += {
-        Member(TypeCode::Float64A, "PV_NAME_A_DOUBLE_VALUE"),
-        Member(TypeCode::StringA, "PV_NAME_B_STRING_VALUE"),
         Member(TypeCode::UInt64A, "secondsPastEpoch"),
         Member(TypeCode::UInt64A, "nanoseconds"),
     };
@@ -95,8 +96,9 @@ PVServer::PVServer()
                                          }
                                          {
                                              auto pv = m_pvTable.fetch();
-                                             pv["deviceIDs"] = pvxs::shared_array<const std::string>{"Device A", "Device B", "Device C"};
-                                             pv["pressure"] = pvxs::shared_array<const double>{1.5 * std::cos(time), 1.5 * std::cos(time + 2.0), 1.5 * std::cos(time + 4.0)};
+                                             pv["labels"] = pvxs::shared_array<const std::string>{"deviceIDs", "pressure"};
+                                             pv["value.deviceIDs"] = pvxs::shared_array<const std::string>{"Device A", "Device B", "Device C"};
+                                             pv["value.pressure"] = pvxs::shared_array<const double>{1.5 * std::cos(time), 1.5 * std::cos(time + 2.0), 1.5 * std::cos(time + 4.0)};
                                              pv["timeStamp.secondsPastEpoch"] = seconds;
                                              pv["timeStamp.nanoseconds"] = nanos;
                                              m_pvTable.post(pv);
@@ -104,8 +106,9 @@ PVServer::PVServer()
                                          {
                                              // BSAS-style NTTable: per-row timestamp arrays + sampled PV columns.
                                              auto pv = m_pvBsasTable.fetch();
-                                             pv["PV_NAME_A_DOUBLE_VALUE"] = pvxs::shared_array<const double>{1.0, 2.0, 3.0};
-                                             pv["PV_NAME_B_STRING_VALUE"] = pvxs::shared_array<const std::string>{"OK", "WARNING", "FAULT"};
+                                             pv["labels"] = pvxs::shared_array<const std::string>{"PV_NAME_A_DOUBLE_VALUE", "PV_NAME_B_STRING_VALUE"};
+                                             pv["value.PV_NAME_A_DOUBLE_VALUE"] = pvxs::shared_array<const double>{1.0, 2.0, 3.0};
+                                             pv["value.PV_NAME_B_STRING_VALUE"] = pvxs::shared_array<const std::string>{"OK", "WARNING", "FAULT"};
                                              pvxs::shared_array<uint64_t> secArr(3);
                                              pvxs::shared_array<uint64_t> nanoArr(3);
                                              for (size_t i = 0; i < 3; ++i)

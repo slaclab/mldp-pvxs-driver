@@ -78,17 +78,18 @@ bool BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch(spdlog::logger&         
         return false;
     }
 
-    // BSAS NTTable row-ts layout: timestamp arrays and sampled columns are expected
-    // to exist at the top-level of the NTTable structure.
-    const auto columns = epicsValue;
+    // BSAS NTTable row-ts layout:
+    // - Sampled PV columns exist under the normative NTTable `value` sub-structure.
+    // - Per-row timestamps are carried as top-level array fields (defaults: secondsPastEpoch[] and nanoseconds[]).
+    const auto columns = epicsValue["value"];
     if (!columns || columns.type().kind() != pvxs::Kind::Compound)
     {
         log.warn("NTTable row-ts PV {} has no usable value struct", tablePvName);
         return false;
     }
 
-    pvxs::Value secondsValue = columns[tsSecondsField];
-    pvxs::Value nanosValue = columns[tsNanosField];
+    pvxs::Value secondsValue = epicsValue[tsSecondsField];
+    pvxs::Value nanosValue = epicsValue[tsNanosField];
 
     if (!secondsValue.valid() || !nanosValue.valid())
     {
@@ -264,7 +265,9 @@ bool BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch(spdlog::logger&         
                 for (size_t i = 0; i < n; ++i)
                 {
                     auto ev = mldp_pvxs_driver::util::bus::IEventBusPush::MakeEventValue(secondsArr->at(i), nanosArr->at(i));
-                    EpicsMLDPConversion::convertPVToProtoValue(arr[i], ev->data_value.get());
+                    const pvxs::Value cell = arr[i];
+                    const pvxs::Value cellValue = (cell.type().kind() == pvxs::Kind::Compound) ? cell["value"] : pvxs::Value{};
+                    EpicsMLDPConversion::convertPVToProtoValue(cellValue.valid() ? cellValue : cell, ev->data_value.get());
                     dest.emplace_back(std::move(ev));
                 }
                 outEmitted += n;

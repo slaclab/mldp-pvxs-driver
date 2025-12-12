@@ -118,7 +118,7 @@ void EpicsReader::run(int timeout)
                 // no data available
                 continue;
             }
-
+            
             // get the PV name and runtime configuration
             const auto                  pvName = sub->name();
             const auto                  it = pvRuntimeByName_.find(pvName);
@@ -173,8 +173,10 @@ void EpicsReader::run(int timeout)
                     // allocate event value
                     auto event_value = IEventBusPush::MakeEventValue(epoch_seconds, nanoseconds);
 
-                    // convert PVXS value to MLDP proto value
-                    EpicsMLDPConversion::convertPVToProtoValue(epics_value, event_value->data_value.get());
+                    // Convert only the nested EPICS 'value' field (NTScalar/NTScalarArray/NTTable/etc)
+                    // so we don't serialize metadata like alarm/timeStamp into MLDP.
+                    const pvxs::Value valueField = (epics_value.type().kind() == pvxs::Kind::Compound) ? epics_value["value"] : pvxs::Value{};
+                    EpicsMLDPConversion::convertPVToProtoValue(valueField.valid() ? valueField : epics_value, event_value->data_value.get());
 
                     // push to bus moving data and batching per source
                     batch.tags.push_back(pvName);
