@@ -37,6 +37,28 @@ public:
         return received_events.size();
     }
 
+    size_t total_value_count() const
+    {
+        size_t total = 0;
+        for (const auto& batch : received_events)
+        {
+            for (const auto& [_, values] : batch.values)
+            {
+                total += values.size();
+            }
+        }
+        return total;
+    }
+
+    const EventBatch* last_batch() const
+    {
+        if (received_events.empty())
+        {
+            return nullptr;
+        }
+        return &received_events.back();
+    }
+
     // Method to get the last event's DataValue pointer
     std::shared_ptr<DataValue> last_event() const
     {
@@ -133,6 +155,61 @@ pvs:
         waited_ms += 100;
     }   
     EXPECT_GT(mock_bus->event_count(), 0) << "No events received within timeout";
+}
+
+TEST_F(EpicsReaderTest, NTTableRowTimestampSplitsToPerColumnSources)
+{
+    const std::string yaml = R"(
+name: epics_1
+pvs:
+  - name: test:bsas_table
+    option:
+      type: nttable-rowts
+)";
+
+    const auto cfg = config::makeConfigFromYaml(yaml);
+    auto       reader_ptr = mldp_pvxs_driver::reader::ReaderFactory::create("epics", mock_bus, cfg);
+    ASSERT_NE(reader_ptr, nullptr);
+
+    const int max_wait_ms = 5000;
+    int       waited_ms = 0;
+    while (mock_bus->event_count() == 0 && waited_ms < max_wait_ms)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        waited_ms += 100;
+    }
+
+    const auto* batch = mock_bus->last_batch();
+    ASSERT_NE(batch, nullptr);
+    ASSERT_FALSE(batch->values.empty());
+
+    ASSERT_TRUE(batch->values.count("PV_NAME_A_DOUBLE_VALUE")) << "Expected AMPL column as a source";
+    ASSERT_TRUE(batch->values.count("PV_NAME_B_STRING_VALUE")) << "Expected STAT column as a source";
+    EXPECT_FALSE(batch->values.count("secondsPastEpoch"));
+    EXPECT_FALSE(batch->values.count("nanoseconds"));
+
+    const auto& ampl = batch->values.at("PV_NAME_A_DOUBLE_VALUE");
+    const auto& stat = batch->values.at("PV_NAME_B_STRING_VALUE");
+    ASSERT_EQ(ampl.size(), 3u);
+    ASSERT_EQ(stat.size(), 3u);
+
+    // Per-row timestamps are shared across columns.
+    for (size_t i = 0; i < 3; ++i)
+    {
+        ASSERT_NE(ampl[i], nullptr);
+        ASSERT_NE(stat[i], nullptr);
+        EXPECT_EQ(ampl[i]->epoch_seconds, stat[i]->epoch_seconds);
+        EXPECT_EQ(ampl[i]->nanoseconds, stat[i]->nanoseconds);
+        EXPECT_GT(ampl[i]->epoch_seconds, 0u);
+    }
+
+    ASSERT_NE(ampl[0]->data_value, nullptr);
+    ASSERT_TRUE(ampl[0]->data_value->has_doublevalue());
+    EXPECT_DOUBLE_EQ(ampl[0]->data_value->doublevalue(), 1.0);
+
+    ASSERT_NE(stat[0]->data_value, nullptr);
+    ASSERT_TRUE(stat[0]->data_value->has_stringvalue());
+    EXPECT_EQ(stat[0]->data_value->stringvalue(), "OK");
 }
 
 } // namespace mldp_pvxs_driver::reader::impl::epics

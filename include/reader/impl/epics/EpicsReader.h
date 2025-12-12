@@ -13,6 +13,7 @@
 #include <set>
 #include <string>
 #include <thread>
+#include <unordered_map>
 
 namespace mldp_pvxs_driver::reader::impl::epics {
 
@@ -95,6 +96,19 @@ public:
     void run(int timeout) override;
 
 private:
+    struct PVRuntimeConfig
+    {
+        enum class Mode
+        {
+            Default,
+            NtTableRowTs,
+        };
+
+        Mode        mode = Mode::Default;
+        std::string tsSecondsField;
+        std::string tsNanosField;
+    };
+
     /** @brief Reader-specific configuration (name, PV list, etc.). */
     EpicsReaderConfig                                           config_;
     
@@ -115,6 +129,9 @@ private:
     
     /** @brief Work queue of subscription events to be processed by run(). */
     pvxs::MPMCFIFO<std::shared_ptr<pvxs::client::Subscription>> m_pva_workqueue;
+
+    /** @brief Fast per-PV lookup for special handling. */
+    std::unordered_map<std::string, PVRuntimeConfig>            pvRuntimeByName_;
 
     /**
      * @brief Subscribe to a set of EPICS PVs.

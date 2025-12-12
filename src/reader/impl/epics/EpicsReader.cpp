@@ -3,9 +3,11 @@
 #include <chrono>
 #include <cstdint>
 #include <metrics/Metrics.h>
+#include <reader/impl/epics/BSASEpicsMLDPConversion.h>
 #include <reader/impl/epics/EpicsMLDPConversion.h>
 #include <reader/impl/epics/EpicsReader.h>
 #include <spdlog/spdlog.h>
+#include <unordered_map>
 #include <utility>
 
 using namespace pvxs::client;
@@ -15,7 +17,7 @@ using namespace mldp_pvxs_driver::reader::impl::epics;
 
 using MldpDriverConfig = mldp_pvxs_driver::config::Config;
 
-EpicsReader::EpicsReader(std::shared_ptr<IEventBusPush> bus,
+EpicsReader::EpicsReader(std::shared_ptr<IEventBusPush>                      bus,
                          std::shared_ptr<mldp_pvxs_driver::metrics::Metrics> metrics,
                          const MldpDriverConfig&                             cfg)
     : Reader(std::move(bus), std::move(metrics))
@@ -35,6 +37,15 @@ EpicsReader::EpicsReader(std::shared_ptr<IEventBusPush> bus,
     for (const auto& pvConfig : config_.pvs())
     {
         pvNames.insert(pvConfig.name);
+
+        PVRuntimeConfig runtime;
+        if (pvConfig.nttableRowTs.has_value())
+        {
+            runtime.mode = PVRuntimeConfig::Mode::NtTableRowTs;
+            runtime.tsSecondsField = pvConfig.nttableRowTs->tsSecondsField;
+            runtime.tsNanosField = pvConfig.nttableRowTs->tsNanosField;
+        }
+        pvRuntimeByName_.emplace(pvConfig.name, std::move(runtime));
     }
     addPV(pvNames);
 }
@@ -83,47 +94,79 @@ void EpicsReader::run(int timeout)
             pvxs::Value epics_value = sub->pop();
             if (!epics_value)
             {
+                // no data available
                 continue;
             }
 
-            spdlog::trace("Received update for PV {} on reader {}.", sub->name(), name_);
+            // get the PV name and runtime configuration
+            const auto                  pvName = sub->name();
+            const auto                  it = pvRuntimeByName_.find(pvName);
+            const PVRuntimeConfig::Mode mode = (it != pvRuntimeByName_.end()) ? it->second.mode : PVRuntimeConfig::Mode::Default;
+
+            // prepare batch
+            IEventBusPush::EventBatch batch;
+            // keep track of how many events were emitted
+            size_t                    emitted = 0;
+
+            switch (mode)
             {
-                uint64_t epoch_seconds = 0;
-                uint64_t nanoseconds = 0;
-                if (epics_value.type().kind() == pvxs::Kind::Compound)
+            case PVRuntimeConfig::Mode::NtTableRowTs:
                 {
-                    bool setEpoch = false;
-                    if (const auto timestampField = epics_value["timeStamp"]; timestampField.valid())
+                    if (BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch(
+                            pvName, epics_value, it->second.tsSecondsField, it->second.tsNanosField, &batch, &emitted))
                     {
-                        if (const auto secondsField = timestampField["secondsPastEpoch"]; secondsField.valid())
-                        {
-                            epoch_seconds = secondsField.as<uint64_t>();
-                            setEpoch = true;
-                        }
-                        if (const auto nanosecondsField = timestampField["nanoseconds"]; nanosecondsField.valid())
-                        {
-                            nanoseconds = nanosecondsField.as<uint64_t>();
-                        }
-                    }
-                    if (!setEpoch)
-                    {
-                        // Fallback to make sure timestamp is always set
-                        epoch_seconds = std::chrono::duration_cast<std::chrono::seconds>(acquisition_ts).count();
+                        // batch + emitted were filled
+                        spdlog::error("Converted PV {} to MLDP NtTableRowTs batch on reader {}.", pvName, name_);
+                        MLDP_METRICS_CALL(metrics_, incrementReaderEvents(static_cast<double>(emitted), readerTags));
                     }
                 }
+                break;
 
-                // allocate event value
-                auto event_value = IEventBusPush::MakeEventValue(epoch_seconds, nanoseconds);
+            case PVRuntimeConfig::Mode::Default:
+            default:
+                {
+                    uint64_t epoch_seconds = 0;
+                    uint64_t nanoseconds = 0;
+                    if (epics_value.type().kind() == pvxs::Kind::Compound)
+                    {
+                        bool setEpoch = false;
+                        if (const auto timestampField = epics_value["timeStamp"]; timestampField.valid())
+                        {
+                            if (const auto secondsField = timestampField["secondsPastEpoch"]; secondsField.valid())
+                            {
+                                epoch_seconds = secondsField.as<uint64_t>();
+                                setEpoch = true;
+                            }
+                            if (const auto nanosecondsField = timestampField["nanoseconds"]; nanosecondsField.valid())
+                            {
+                                nanoseconds = nanosecondsField.as<uint64_t>();
+                            }
+                        }
+                        if (!setEpoch)
+                        {
+                            // Fallback to make sure timestamp is always set
+                            epoch_seconds = std::chrono::duration_cast<std::chrono::seconds>(acquisition_ts).count();
+                        }
+                    }
 
-                // convert PVXS value to MLDP proto value
-                EpicsMLDPConversion::convertPVToProtoValue(epics_value, event_value->data_value.get());
+                    // allocate event value
+                    auto event_value = IEventBusPush::MakeEventValue(epoch_seconds, nanoseconds);
 
-                // push to bus moving data and batching per source
-                IEventBusPush::EventBatch batch;
-                batch.tags.push_back(sub->name());
-                batch.values[sub->name()].emplace_back(std::move(event_value));
+                    // convert PVXS value to MLDP proto value
+                    EpicsMLDPConversion::convertPVToProtoValue(epics_value, event_value->data_value.get());
+
+                    // push to bus moving data and batching per source
+                    batch.tags.push_back(pvName);
+                    batch.values[pvName].emplace_back(std::move(event_value));
+                    emitted = 1;
+                }
+                break;
+            }
+
+            if (emitted > 0 && !batch.values.empty())
+            {
                 bus_->push(std::move(batch));
-                MLDP_METRICS_CALL(metrics_, incrementReaderEvents(1.0, readerTags));
+                MLDP_METRICS_CALL(metrics_, incrementReaderEvents(static_cast<double>(emitted), readerTags));
             }
         }
         catch (const pvxs::client::RemoteError& e)
