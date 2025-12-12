@@ -1,9 +1,84 @@
 #include <reader/impl/epics/EpicsReaderConfig.h>
 
+#include <algorithm>
 #include <utility>
 
 using namespace mldp_pvxs_driver::config;
 using namespace mldp_pvxs_driver::reader::impl::epics;
+
+namespace {
+std::string toLower(std::string value)
+{
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char c)
+                   {
+                       return static_cast<char>(std::tolower(c));
+                   });
+    return value;
+}
+
+void requireScalarChild(const Config& cfg, const std::string& key, const std::string& context)
+{
+    const auto raw = cfg.raw();
+    if (!raw.has_child(key.c_str()))
+    {
+        return;
+    }
+
+    const auto child = raw[key.c_str()];
+    if (!child.has_val())
+    {
+        throw EpicsReaderConfig::Error(context + "." + key + " must be a scalar");
+    }
+}
+
+std::optional<EpicsReaderConfig::PVConfig::NTTableRowTimestampOptions> parseNtTableRowTsOption(
+    const std::string& pvName,
+    const Config& optionCfg)
+{
+    const std::string optionContext = "pvs[].option (pv '" + pvName + "')";
+
+    if (!optionCfg.valid())
+    {
+        return std::nullopt;
+    }
+
+    // Only interpret the subtree when it advertises a supported type.
+    if (!optionCfg.hasChild("type"))
+    {
+        return std::nullopt;
+    }
+
+    requireScalarChild(optionCfg, "type", optionContext);
+    const auto type = optionCfg.get("type");
+    if (toLower(type) != "nttable-rowts")
+    {
+        return std::nullopt;
+    }
+
+    EpicsReaderConfig::PVConfig::NTTableRowTimestampOptions opts;
+
+    requireScalarChild(optionCfg, "tsSeconds", optionContext);
+    requireScalarChild(optionCfg, "tsNanos", optionContext);
+    opts.tsSecondsField = optionCfg.get("tsSeconds", opts.tsSecondsField);
+    opts.tsNanosField = optionCfg.get("tsNanos", opts.tsNanosField);
+    if (opts.tsSecondsField.empty())
+    {
+        throw EpicsReaderConfig::Error(optionContext + ".tsSeconds must not be empty");
+    }
+    if (opts.tsNanosField.empty())
+    {
+        throw EpicsReaderConfig::Error(optionContext + ".tsNanos must not be empty");
+    }
+
+    if (optionCfg.hasChild("sourceName"))
+    {
+        throw EpicsReaderConfig::Error(optionContext + ".sourceName is not supported for type 'nttable-rowts'; source name always equals the column field name");
+    }
+
+    return opts;
+}
+} // namespace
 
 EpicsReaderConfig::EpicsReaderConfig() = default;
 
@@ -112,6 +187,7 @@ void EpicsReaderConfig::parse(const Config& readerEntry)
 
         std::string option;
         std::optional<Config> optionConfig;
+        std::optional<PVConfig::NTTableRowTimestampOptions> nttableRowTs;
         if (pvNode.hasChild("option"))
         {
             const auto optionNodes = pvNode.subConfig("option");
@@ -125,6 +201,7 @@ void EpicsReaderConfig::parse(const Config& readerEntry)
             if (raw.is_map() || raw.is_seq())
             {
                 optionConfig = optionNode;
+                nttableRowTs = parseNtTableRowTsOption(pvName, *optionConfig);
             }
             else if (raw.has_val())
             {
@@ -137,7 +214,7 @@ void EpicsReaderConfig::parse(const Config& readerEntry)
 
         }
 
-        pvs_.push_back({std::move(pvName), std::move(option), optionConfig});
+        pvs_.push_back({std::move(pvName), std::move(option), optionConfig, nttableRowTs});
         pvNames_.push_back(pvs_.back().name);
     }
 

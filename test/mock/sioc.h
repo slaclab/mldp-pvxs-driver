@@ -22,4 +22,5 @@ private:
 	pvxs::server::SharedPV m_pvStatus; // String
 	pvxs::server::SharedPV m_pvWaveform; // Float64A
 	pvxs::server::SharedPV m_pvTable; // Struct
+	pvxs::server::SharedPV m_pvBsasTable; // NTTable with per-row timestamps
 };

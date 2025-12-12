@@ -13,7 +13,8 @@ x-ci-common: &ci-common
         rm -rf build &&
         cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DMLDP_PVXS_DRIVER_TESTS=ON &&
         cmake --build build --config RelWithDebInfo &&
-        ctest --test-dir build --output-on-failure
+        mkdir -p build/test-results &&
+        ctest --test-dir build --output-on-failure --output-junit build/test-results/junit.xml
       "
 
 services:

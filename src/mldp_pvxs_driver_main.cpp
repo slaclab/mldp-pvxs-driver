@@ -1,3 +1,4 @@
+#include "spdlog/common.h"
 #include <csignal>
 #include <filesystem>
 #include <format>
@@ -53,6 +54,7 @@ std::unique_ptr<PVXSDPIngestionDriver> g_driver = nullptr;
 int main(int argc, char** argv)
 {
     // Print version info
+    spdlog::set_level(spdlog::level::err);
     spdlog::info("MLDP PVXS Driver Version {}.{}.{}", MLDP_PVXS_DRIVER_VERSION_MAJOR, MLDP_PVXS_DRIVER_VERSION_MINOR, MLDP_PVXS_DRIVER_VERSION_PATCH);
 
     g_logger.info = [](const std::string& info)

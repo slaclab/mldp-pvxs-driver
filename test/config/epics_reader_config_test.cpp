@@ -73,6 +73,52 @@ pvs:
     EXPECT_TRUE(pv.optionConfig->raw().has_child("limit"));
 }
 
+TEST(EpicsReaderConfigTest, ParsesNTTableRowTimestampOptionMap)
+{
+    const std::string yaml = R"(
+name: epics_nttable
+pvs:
+  - name: BSAS:TABLE
+    option:
+      type: nttable-rowts
+      tsSeconds: secondsPastEpoch
+      tsNanos: nanoseconds
+)";
+
+    const auto        cfg = makeConfigFromYaml(yaml);
+    EpicsReaderConfig epicsCfg(cfg);
+
+    ASSERT_TRUE(epicsCfg.valid());
+    ASSERT_EQ(1u, epicsCfg.pvs().size());
+
+    const auto& pv = epicsCfg.pvs().front();
+    EXPECT_EQ("BSAS:TABLE", pv.name);
+    EXPECT_EQ("", pv.option);
+    ASSERT_TRUE(pv.optionConfig.has_value());
+    EXPECT_EQ("nttable-rowts", pv.optionConfig->get("type"));
+
+    ASSERT_TRUE(pv.nttableRowTs.has_value());
+    EXPECT_EQ("secondsPastEpoch", pv.nttableRowTs->tsSecondsField);
+    EXPECT_EQ("nanoseconds", pv.nttableRowTs->tsNanosField);
+}
+
+TEST(EpicsReaderConfigTest, ThrowsWhenNTTableRowTimestampOptionContainsSourceName)
+{
+    const std::string yaml = R"(
+name: epics_nttable
+pvs:
+  - name: BSAS:TABLE
+    option:
+      type: nttable-rowts
+      sourceName:
+        mode: prefixed
+        prefix: "bsas:"
+)";
+
+    const auto cfg = makeConfigFromYaml(yaml);
+    EXPECT_THROW(static_cast<void>(EpicsReaderConfig(cfg)), EpicsReaderConfig::Error);
+}
+
 TEST(EpicsReaderConfigTest, AllowsEmptyPvsSequence)
 {
     const std::string yaml = R"(
