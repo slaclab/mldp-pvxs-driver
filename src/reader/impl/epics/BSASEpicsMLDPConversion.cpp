@@ -1,3 +1,4 @@
+#include <pvxs/data.h>
 #include <reader/impl/epics/BSASEpicsMLDPConversion.h>
 
 #include <algorithm>
@@ -124,135 +125,96 @@ bool BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch(spdlog::logger&         
             continue;
         }
 
+        // Get the column's type code.
         const auto colCode = col.type().code;
+
+        // Lambda helper to emit an array of values.
+        const auto emitArray = [&]<typename ArrT>(const pvxs::Value& v, auto&& setValue)
+        {
+            const auto arr = v.as<ArrT>();
+            const auto n = std::min(rowCount, static_cast<size_t>(arr.size()));
+            auto&      dest = outBatch->values[colName];
+            dest.reserve(dest.size() + n);
+            for (size_t i = 0; i < n; ++i)
+            {
+                auto ev = mldp_pvxs_driver::util::bus::IEventBusPush::MakeEventValue(secondsArr->at(i), nanosArr->at(i));
+                setValue(ev->data_value.get(), arr[i]);
+                dest.emplace_back(std::move(ev));
+            }
+            outEmitted += n;
+        };
 
         // Emit one source per column; each row is a timestamped event.
         // We switch once per column for efficiency.
         switch (colCode)
         {
         case pvxs::TypeCode::BoolA:
-            {
-                const auto arr = col.as<pvxs::shared_array<const bool>>();
-                const auto n = std::min(rowCount, static_cast<size_t>(arr.size()));
-                auto&      dest = outBatch->values[colName];
-                dest.reserve(dest.size() + n);
-                for (size_t i = 0; i < n; ++i)
+            emitArray.template operator()<pvxs::shared_array<const bool>>(
+                col,
+                [](auto* dv, bool v)
                 {
-                    auto ev = mldp_pvxs_driver::util::bus::IEventBusPush::MakeEventValue(secondsArr->at(i), nanosArr->at(i));
-                    ev->data_value->set_booleanvalue(arr[i]);
-                    dest.emplace_back(std::move(ev));
-                }
-                outEmitted += n;
-            }
+                    dv->set_booleanvalue(v);
+                });
             break;
         case pvxs::TypeCode::Int8A:
         case pvxs::TypeCode::Int16A:
         case pvxs::TypeCode::Int32A:
-            {
-                const auto arr = col.as<pvxs::shared_array<const int32_t>>();
-                const auto n = std::min(rowCount, static_cast<size_t>(arr.size()));
-                auto&      dest = outBatch->values[colName];
-                dest.reserve(dest.size() + n);
-                for (size_t i = 0; i < n; ++i)
+            emitArray.template operator()<pvxs::shared_array<const int32_t>>(
+                col,
+                [](auto* dv, int32_t v)
                 {
-                    auto ev = mldp_pvxs_driver::util::bus::IEventBusPush::MakeEventValue(secondsArr->at(i), nanosArr->at(i));
-                    ev->data_value->set_intvalue(arr[i]);
-                    dest.emplace_back(std::move(ev));
-                }
-                outEmitted += n;
-            }
+                    dv->set_intvalue(v);
+                });
             break;
         case pvxs::TypeCode::Int64A:
-            {
-                const auto arr = col.as<pvxs::shared_array<const int64_t>>();
-                const auto n = std::min(rowCount, static_cast<size_t>(arr.size()));
-                auto&      dest = outBatch->values[colName];
-                dest.reserve(dest.size() + n);
-                for (size_t i = 0; i < n; ++i)
+            emitArray.template operator()<pvxs::shared_array<const int64_t>>(
+                col,
+                [](auto* dv, int64_t v)
                 {
-                    auto ev = mldp_pvxs_driver::util::bus::IEventBusPush::MakeEventValue(secondsArr->at(i), nanosArr->at(i));
-                    ev->data_value->set_longvalue(arr[i]);
-                    dest.emplace_back(std::move(ev));
-                }
-                outEmitted += n;
-            }
+                    dv->set_longvalue(v);
+                });
             break;
         case pvxs::TypeCode::UInt8A:
         case pvxs::TypeCode::UInt16A:
         case pvxs::TypeCode::UInt32A:
-            {
-                const auto arr = col.as<pvxs::shared_array<const uint32_t>>();
-                const auto n = std::min(rowCount, static_cast<size_t>(arr.size()));
-                auto&      dest = outBatch->values[colName];
-                dest.reserve(dest.size() + n);
-                for (size_t i = 0; i < n; ++i)
+            emitArray.template operator()<pvxs::shared_array<const uint32_t>>(
+                col,
+                [](auto* dv, uint32_t v)
                 {
-                    auto ev = mldp_pvxs_driver::util::bus::IEventBusPush::MakeEventValue(secondsArr->at(i), nanosArr->at(i));
-                    ev->data_value->set_uintvalue(arr[i]);
-                    dest.emplace_back(std::move(ev));
-                }
-                outEmitted += n;
-            }
+                    dv->set_uintvalue(v);
+                });
             break;
         case pvxs::TypeCode::UInt64A:
-            {
-                const auto arr = col.as<pvxs::shared_array<const uint64_t>>();
-                const auto n = std::min(rowCount, static_cast<size_t>(arr.size()));
-                auto&      dest = outBatch->values[colName];
-                dest.reserve(dest.size() + n);
-                for (size_t i = 0; i < n; ++i)
+            emitArray.template operator()<pvxs::shared_array<const uint64_t>>(
+                col,
+                [](auto* dv, uint64_t v)
                 {
-                    auto ev = mldp_pvxs_driver::util::bus::IEventBusPush::MakeEventValue(secondsArr->at(i), nanosArr->at(i));
-                    ev->data_value->set_ulongvalue(arr[i]);
-                    dest.emplace_back(std::move(ev));
-                }
-                outEmitted += n;
-            }
+                    dv->set_ulongvalue(v);
+                });
             break;
         case pvxs::TypeCode::Float32A:
-            {
-                const auto arr = col.as<pvxs::shared_array<const float>>();
-                const auto n = std::min(rowCount, static_cast<size_t>(arr.size()));
-                auto&      dest = outBatch->values[colName];
-                dest.reserve(dest.size() + n);
-                for (size_t i = 0; i < n; ++i)
+            emitArray.template operator()<pvxs::shared_array<const float>>(
+                col,
+                [](auto* dv, float v)
                 {
-                    auto ev = mldp_pvxs_driver::util::bus::IEventBusPush::MakeEventValue(secondsArr->at(i), nanosArr->at(i));
-                    ev->data_value->set_floatvalue(arr[i]);
-                    dest.emplace_back(std::move(ev));
-                }
-                outEmitted += n;
-            }
+                    dv->set_floatvalue(v);
+                });
             break;
         case pvxs::TypeCode::Float64A:
-            {
-                const auto arr = col.as<pvxs::shared_array<const double>>();
-                const auto n = std::min(rowCount, static_cast<size_t>(arr.size()));
-                auto&      dest = outBatch->values[colName];
-                dest.reserve(dest.size() + n);
-                for (size_t i = 0; i < n; ++i)
+            emitArray.template operator()<pvxs::shared_array<const double>>(
+                col,
+                [](auto* dv, double v)
                 {
-                    auto ev = mldp_pvxs_driver::util::bus::IEventBusPush::MakeEventValue(secondsArr->at(i), nanosArr->at(i));
-                    ev->data_value->set_doublevalue(arr[i]);
-                    dest.emplace_back(std::move(ev));
-                }
-                outEmitted += n;
-            }
+                    dv->set_doublevalue(v);
+                });
             break;
         case pvxs::TypeCode::StringA:
-            {
-                const auto arr = col.as<pvxs::shared_array<const std::string>>();
-                const auto n = std::min(rowCount, static_cast<size_t>(arr.size()));
-                auto&      dest = outBatch->values[colName];
-                dest.reserve(dest.size() + n);
-                for (size_t i = 0; i < n; ++i)
+            emitArray.template operator()<pvxs::shared_array<const std::string>>(
+                col,
+                [](auto* dv, const std::string& v)
                 {
-                    auto ev = mldp_pvxs_driver::util::bus::IEventBusPush::MakeEventValue(secondsArr->at(i), nanosArr->at(i));
-                    ev->data_value->set_stringvalue(arr[i]);
-                    dest.emplace_back(std::move(ev));
-                }
-                outEmitted += n;
-            }
+                    dv->set_stringvalue(v);
+                });
             break;
         case pvxs::TypeCode::StructA:
         case pvxs::TypeCode::UnionA:
@@ -264,7 +226,7 @@ bool BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch(spdlog::logger&         
                 dest.reserve(dest.size() + n);
                 for (size_t i = 0; i < n; ++i)
                 {
-                    auto ev = mldp_pvxs_driver::util::bus::IEventBusPush::MakeEventValue(secondsArr->at(i), nanosArr->at(i));
+                    auto              ev = mldp_pvxs_driver::util::bus::IEventBusPush::MakeEventValue(secondsArr->at(i), nanosArr->at(i));
                     const pvxs::Value cell = arr[i];
                     const pvxs::Value cellValue = (cell.type().kind() == pvxs::Kind::Compound) ? cell["value"] : pvxs::Value{};
                     EpicsMLDPConversion::convertPVToProtoValue(cellValue.valid() ? cellValue : cell, ev->data_value.get());

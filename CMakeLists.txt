@@ -8,6 +8,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Options
 option(MLDP_PVXS_DRIVER_MAIN  "Build MLDP PVXS driver executable"  ON)
 option(MLDP_PVXS_DRIVER_TESTS "Build MLDP PVXS driver tests"      OFF)
+option(MLDP_PVXS_DRIVER_COVERAGE "Enable code coverage instrumentation" OFF)
 
 # Default to Release build
 if(NOT CMAKE_BUILD_TYPE)
@@ -271,8 +272,60 @@ target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR
 target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_BINARY_DIR}")
 set_target_properties(lib${PROJECT_NAME} PROPERTIES PREFIX "")
 
+if(MLDP_PVXS_DRIVER_COVERAGE)
+    message(STATUS "Coverage enabled!")
+    if(NOT (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang"))
+        message(WARNING "Coverage requested but compiler '${CMAKE_CXX_COMPILER_ID}' may not support gcov-style coverage")
+    endif()
+
+    # Apply coverage flags only to this project's targets (not dependencies).
+    target_compile_options(lib${PROJECT_NAME} PRIVATE -O0 -g --coverage)
+    target_compile_options(lib${PROJECT_NAME}_proto PRIVATE -O0 -g --coverage)
+endif()
+
 # Test base library
 if(MLDP_PVXS_DRIVER_TESTS)
+    # Needed for CTest dashboard modes (e.g. `ctest -T test` / `ctest -T coverage`).
+    # This generates DartConfiguration.tcl in the build tree.
+    if(MLDP_PVXS_DRIVER_COVERAGE)
+        if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+            find_program(LLVM_COV_EXECUTABLE NAMES llvm-cov llvm-cov-18 llvm-cov-17 llvm-cov-16)
+            if(LLVM_COV_EXECUTABLE)
+                set(MLDP_PVXS_DRIVER_GCOV_TOOL "${CMAKE_BINARY_DIR}/mldp-llvm-gcov.sh")
+                file(WRITE "${MLDP_PVXS_DRIVER_GCOV_TOOL}" "#!/usr/bin/env bash\n\n# Wrapper to make Clang's coverage data usable via gcov-compatible tooling.\n# Filters llvm-cov gcov output lines which CTest doesn't understand.\nset -euo pipefail\n\n\"${LLVM_COV_EXECUTABLE}\" gcov \"$@\" 2>&1 | { grep -v 'Lines executed:nan% of 0' || true; }\nexit \${PIPESTATUS[0]}\n")
+                execute_process(COMMAND chmod +x "${MLDP_PVXS_DRIVER_GCOV_TOOL}")
+                set(CTEST_COVERAGE_COMMAND "${MLDP_PVXS_DRIVER_GCOV_TOOL}" CACHE FILEPATH "Coverage tool" FORCE)
+                # For `ctest -T coverage`, DartConfiguration.tcl is generated from @COVERAGE_COMMAND@.
+                set(COVERAGE_COMMAND "${MLDP_PVXS_DRIVER_GCOV_TOOL}" CACHE FILEPATH "Coverage tool" FORCE)
+                # CTest defaults to `-l` for gcov, but llvm-cov's `-l` output naming isn't compatible
+                # with CTest's file collection (it can't find expected *.gcov files).
+                set(COVERAGE_EXTRA_FLAGS "" CACHE STRING "Extra flags for coverage tool" FORCE)
+            else()
+                message(WARNING "Coverage enabled with Clang but llvm-cov was not found; CTest/LCOV coverage may fail")
+            endif()
+        else()
+            find_program(GCOV_EXECUTABLE gcov)
+            if(GCOV_EXECUTABLE)
+                set(CTEST_COVERAGE_COMMAND "${GCOV_EXECUTABLE}" CACHE FILEPATH "Coverage tool" FORCE)
+                set(COVERAGE_COMMAND "${GCOV_EXECUTABLE}" CACHE FILEPATH "Coverage tool" FORCE)
+            endif()
+        endif()
+    endif()
+    include(CTest)
+
+    # Help `ctest -T coverage` resolve relative source paths produced by llvm-cov gcov
+    # (e.g. "Source:proto/common.pb.cc"), by providing symlinks inside CoverageInfo.
+    if(MLDP_PVXS_DRIVER_COVERAGE)
+        set(MLDP_PVXS_DRIVER_COVERAGEINFO_DIR "${CMAKE_BINARY_DIR}/Testing/CoverageInfo")
+        file(MAKE_DIRECTORY "${MLDP_PVXS_DRIVER_COVERAGEINFO_DIR}")
+        if(NOT EXISTS "${MLDP_PVXS_DRIVER_COVERAGEINFO_DIR}/proto")
+            file(CREATE_LINK "${CMAKE_BINARY_DIR}/proto" "${MLDP_PVXS_DRIVER_COVERAGEINFO_DIR}/proto" SYMBOLIC)
+        endif()
+        if(NOT EXISTS "${MLDP_PVXS_DRIVER_COVERAGEINFO_DIR}/_deps")
+            file(CREATE_LINK "${CMAKE_BINARY_DIR}/_deps" "${MLDP_PVXS_DRIVER_COVERAGEINFO_DIR}/_deps" SYMBOLIC)
+        endif()
+    endif()
+
     FetchContent_Declare(googletest
             GIT_REPOSITORY "https://github.com/google/googletest.git"
             GIT_TAG        "main")
@@ -290,6 +343,37 @@ if(MLDP_PVXS_DRIVER_TESTS)
             "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics/epics_reader_test.cpp"
     )
     target_link_libraries(${PROJECT_NAME}_test PRIVATE gtest_main lib${PROJECT_NAME})
+
+    if(MLDP_PVXS_DRIVER_COVERAGE)
+        target_compile_options(${PROJECT_NAME}_test PRIVATE -O0 -g --coverage)
+        target_link_options(${PROJECT_NAME}_test PRIVATE --coverage)
+
+        find_program(LCOV_EXECUTABLE lcov)
+        find_program(GENHTML_EXECUTABLE genhtml)
+        if(LCOV_EXECUTABLE AND GENHTML_EXECUTABLE)
+            add_custom_target(coverage
+                COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
+                COMMAND ${LCOV_EXECUTABLE} --ignore-errors inconsistent --gcov-tool ${CTEST_COVERAGE_COMMAND} --capture --directory . --output-file coverage.info
+                COMMAND ${LCOV_EXECUTABLE} --ignore-errors inconsistent --remove coverage.info '/usr/*' '${CMAKE_BINARY_DIR}/_deps/*' --output-file coverage.info
+                COMMAND ${GENHTML_EXECUTABLE} --ignore-errors inconsistent -o coverage-html coverage.info
+                WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+                DEPENDS ${PROJECT_NAME}_test
+                COMMENT "Run tests and generate coverage.info + coverage-html/")
+
+            # Convenience target for already-built instrumented binaries.
+            # This does NOT build any targets; it assumes the test executable exists.
+            add_custom_target(coverage-report
+                COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
+                COMMAND ${LCOV_EXECUTABLE} --ignore-errors inconsistent --gcov-tool ${CTEST_COVERAGE_COMMAND} --capture --directory . --output-file coverage.info
+                COMMAND ${LCOV_EXECUTABLE} --ignore-errors inconsistent --remove coverage.info '/usr/*' '${CMAKE_BINARY_DIR}/_deps/*' --output-file coverage.info
+                COMMAND ${GENHTML_EXECUTABLE} --ignore-errors inconsistent -o coverage-html coverage.info
+                WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+                COMMENT "Generate coverage from existing build (no rebuild)")
+        else()
+            message(STATUS "Coverage enabled, but 'lcov'/'genhtml' not found; build will still emit .gcno/.gcda when tests run")
+        endif()
+    endif()
+
     include(GoogleTest)
     gtest_discover_tests(${PROJECT_NAME}_test)
 endif()
@@ -302,6 +386,11 @@ if(MLDP_PVXS_DRIVER_MAIN)
     )
     target_link_libraries(${PROJECT_NAME} PRIVATE lib${PROJECT_NAME})
     target_include_directories(${PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/ext/rapidyaml/include")
+
+    if(MLDP_PVXS_DRIVER_COVERAGE)
+        target_compile_options(${PROJECT_NAME} PRIVATE -O0 -g --coverage)
+        target_link_options(${PROJECT_NAME} PRIVATE --coverage)
+    endif()
 endif()
 
 find_package(Doxygen REQUIRED)
