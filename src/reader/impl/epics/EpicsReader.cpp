@@ -25,7 +25,9 @@ namespace {
 spdlog::logger makeEpicsReaderLogger(const std::string& readerName)
 {
     auto dup_filter = std::make_shared<spdlog::sinks::dup_filter_sink_mt>(std::chrono::seconds(5));
-    dup_filter->add_sink(std::make_shared<spdlog::sinks::stdout_color_sink_mt>());
+    auto stdout_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
+    stdout_sink->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%n] [%^%l%$] %v");
+    dup_filter->add_sink(std::move(stdout_sink));
 
     std::string loggerName = "epics_reader";
     if (!readerName.empty())

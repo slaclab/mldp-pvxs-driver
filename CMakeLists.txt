@@ -19,7 +19,7 @@ include(FetchContent)
 
 set(PROMETHEUS_CPP_VERSION "v1.3.0")
 set(SPDLOG_VERSION "v1.16.0")
-
+set(ARGPARSE_VERSION "v3.2")
 # Output directories
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
@@ -37,11 +37,20 @@ message(STATUS "Building version: ${PROJECT_VERSION}")
 message(STATUS "C++ Standard: ${CMAKE_CXX_STANDARD}")
 
 # Acquire spdlog for structured logging and ensure it builds before the driver library.
+message(STATUS "Acquiring spdlog version ${SPDLOG_VERSION}...")
 FetchContent_Declare(spdlog
         GIT_REPOSITORY https://github.com/gabime/spdlog.git
         GIT_TAG        ${SPDLOG_VERSION}
 )
 FetchContent_MakeAvailable(spdlog)
+
+# Acquire argparse for command-line argument parsing
+message(STATUS "Acquire argparse version ${ARGPARSE_VERSION}...")
+FetchContent_Declare(argparse
+        GIT_REPOSITORY https://github.com/p-ranav/argparse.git
+        GIT_TAG        ${ARGPARSE_VERSION}
+)
+FetchContent_MakeAvailable(argparse)
 
 # Prometheus-cpp pulls its own GoogleTest dependency when ENABLE_TESTING is set.
 # Temporarily override the cached ENABLE_TESTING option so the dependency does
@@ -52,7 +61,7 @@ if(DEFINED CACHE{ENABLE_TESTING})
     set(_PROMETHEUS_ENABLE_TESTING_VALUE ${ENABLE_TESTING})
 endif()
 set(ENABLE_TESTING OFF CACHE BOOL "Disable tests when pulling prometheus-cpp" FORCE)
-
+message (STATUS "Acquiring prometheus-cpp version ${PROMETHEUS_CPP_VERSION}...")
 FetchContent_Declare(prometheus-cpp
         GIT_REPOSITORY https://github.com/jupp0r/prometheus-cpp.git
         GIT_TAG        ${PROMETHEUS_CPP_VERSION}
@@ -262,7 +271,6 @@ add_library(lib${PROJECT_NAME}
         "${CMAKE_CURRENT_SOURCE_DIR}/src/controller/MLDPPVXSController.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/metrics/Metrics.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/metrics/MetricsConfig.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/mldp_pvxs_driver.cpp"
 )
  target_link_libraries(lib${PROJECT_NAME} PUBLIC lib${PROJECT_NAME}_proto Threads::Threads pvxs spdlog::spdlog prometheus-cpp::core prometheus-cpp::pull)
 target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/ext/BS_thread_pool/include")
@@ -333,8 +341,6 @@ if(MLDP_PVXS_DRIVER_TESTS)
     enable_testing()
     add_executable(${PROJECT_NAME}_test
             "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/sioc.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/sioc.h"
-            "${CMAKE_CURRENT_SOURCE_DIR}/test/driver.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/test/config/epics_reader_config_test.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/test/config/mldppvxs_controller_config_test.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/test/controller/mldppvxs_controller_test.cpp"
@@ -384,7 +390,21 @@ if(MLDP_PVXS_DRIVER_MAIN)
             "${CMAKE_CURRENT_SOURCE_DIR}/ext/rapidyaml/include/rapidyaml-0.10.0.hpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/src/mldp_pvxs_driver_main.cpp"
     )
-    target_link_libraries(${PROJECT_NAME} PRIVATE lib${PROJECT_NAME})
+
+    # The reader implementations self-register via static initialization (REGISTER_READER).
+    # When linking a static library, the linker may drop object files that only contain such
+    # side-effect registrations. Ensure we keep the whole archive for the CLI.
+    if(APPLE)
+        target_link_libraries(${PROJECT_NAME} PRIVATE
+                -Wl,-force_load $<TARGET_FILE:lib${PROJECT_NAME}>
+                argparse::argparse
+        )
+    else()
+        target_link_libraries(${PROJECT_NAME} PRIVATE
+                -Wl,--whole-archive lib${PROJECT_NAME} -Wl,--no-whole-archive
+                argparse::argparse
+        )
+    endif()
     target_include_directories(${PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/ext/rapidyaml/include")
 
     if(MLDP_PVXS_DRIVER_COVERAGE)

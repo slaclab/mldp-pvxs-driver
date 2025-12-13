@@ -60,7 +60,10 @@
             "request": "launch",
             "program": "${workspaceFolder}/build/bin/mldp_pvxs_driver",
             "args": [
-                "${workspaceFolder}/config.yml"
+                "--config",
+                "${input:configPath}",
+                "--log-level",
+                "${input:logLevel}"
             ],
             // "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
@@ -85,6 +88,18 @@
             "type": "promptString",
             "description": "Enter GTest filter (e.g., pvxs_mldp_driver.counter)",
             "default": "*"
+        },
+        {
+            "id": "configPath",
+            "type": "promptString",
+            "description": "Config file path for --config",
+            "default": "${workspaceFolder}/config.yaml"
+        },
+        {
+            "id": "logLevel",
+            "type": "promptString",
+            "description": "Log level for --log-level (trace, debug, info, warn, error, critical, off)",
+            "default": "info"
         }
     ]
 }

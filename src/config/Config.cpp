@@ -5,6 +5,8 @@
 #include <cstdlib>
 #include <string_view>
 #include <vector>
+#include <fstream>
+#include <sstream>
 
 using namespace mldp_pvxs_driver::config;
 
@@ -79,6 +81,25 @@ bool tryParseDouble(const std::string& input, double& value)
     return true;
 }
 } // namespace
+
+Config Config::configFromFile(const std::string &filename)
+{
+    std::ostringstream contents;
+    {
+        std::ifstream file{filename};
+        if (file.fail())
+        {
+            throw std::runtime_error{"Could not open file"};
+        }
+        file >> contents.rdbuf();
+        if (file.fail() && !file.eof())
+        {
+            throw std::runtime_error{"Could not read file"};
+        }
+    }
+    const std::string& yaml = contents.str();
+    return Config{std::make_shared<ryml::Tree>(ryml::parse_in_arena(c4::to_csubstr(yaml)))};
+}
 
 Config::Config(ConfigTreePtr tree)
     : tree_(tree)
