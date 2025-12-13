@@ -1,4 +1,3 @@
-
 #include "util/bus/IEventBusPush.h"
 #include <chrono>
 #include <cstdint>
@@ -6,36 +5,28 @@
 #include <reader/impl/epics/BSASEpicsMLDPConversion.h>
 #include <reader/impl/epics/EpicsMLDPConversion.h>
 #include <reader/impl/epics/EpicsReader.h>
-#include <spdlog/spdlog.h>
 #include <unordered_map>
 #include <utility>
-
-#include <spdlog/sinks/dup_filter_sink.h>
-#include <spdlog/sinks/stdout_color_sinks.h>
 
 using namespace pvxs::client;
 
 using namespace mldp_pvxs_driver::config;
 using namespace mldp_pvxs_driver::util::bus;
 using namespace mldp_pvxs_driver::reader::impl::epics;
+using namespace mldp_pvxs_driver::util::log;
 
 using MldpDriverConfig = mldp_pvxs_driver::config::Config;
 
 namespace {
-spdlog::logger makeEpicsReaderLogger(const std::string& readerName)
+std::shared_ptr<mldp_pvxs_driver::util::log::ILogger> makeEpicsReaderLogger(const std::string& readerName)
 {
-    auto dup_filter = std::make_shared<spdlog::sinks::dup_filter_sink_mt>(std::chrono::seconds(5));
-    auto stdout_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
-    stdout_sink->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%n] [%^%l%$] %v");
-    dup_filter->add_sink(std::move(stdout_sink));
-
     std::string loggerName = "epics_reader";
     if (!readerName.empty())
     {
         loggerName += ":";
         loggerName += readerName;
     }
-    return spdlog::logger(loggerName, std::move(dup_filter));
+    return mldp_pvxs_driver::util::log::newLogger(loggerName);
 }
 } // namespace
 
@@ -97,13 +88,13 @@ void EpicsReader::addPV(const PVSet& pvNames)
                                  })
                           .exec();
         m_pva_subscriptions.push(pv_mon);
-        logger_.info("Started monitoring PV {} on reader {}", pv, name_);
+        infof(*logger_, "Started monitoring PV {} on reader {}", pv, name_);
     }
 }
 
 void EpicsReader::run(int timeout)
 {
-    logger_.info("EpicsReader worker thread started on reader {}.", name_);
+    infof(*logger_, "EpicsReader worker thread started on reader {}.", name_);
     bool       expired = false;
     const auto acquisition_ts = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch());
     while (running_ && !expired)
@@ -136,10 +127,10 @@ void EpicsReader::run(int timeout)
             case PVRuntimeConfig::Mode::NtTableRowTs:
                 {
                     if (!BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch(
-                            logger_, pvName, epics_value, it->second.tsSecondsField, it->second.tsNanosField, &batch, emitted))
+                            *logger_, pvName, epics_value, it->second.tsSecondsField, it->second.tsNanosField, &batch, emitted))
                     {
                         // batch + emitted were filled
-                        logger_.error("Error converting PV {} to MLDP NtTableRowTs batch on reader {}.", pvName, name_);
+                        errorf(*logger_, "Error converting PV {} to MLDP NtTableRowTs batch on reader {}.", pvName, name_);
                         MLDP_METRICS_CALL(metrics_, incrementReaderErrors(1.0, readerTags));
                     }
                 }
@@ -196,7 +187,7 @@ void EpicsReader::run(int timeout)
         }
         catch (const pvxs::client::RemoteError& e)
         {
-            logger_.error("Server error when reading PV {} on reader {}: {}", sub->name(), name_, e.what());
+            errorf(*logger_, "Server error when reading PV {} on reader {}: {}", sub->name(), name_, e.what());
             MLDP_METRICS_CALL(metrics_, incrementReaderErrors(1.0, readerTags));
         }
 
@@ -210,5 +201,5 @@ void EpicsReader::run(int timeout)
             }
         }
     }
-    logger_.info("EpicsReader worker thread exiting on reader {}.", name_);
+    infof(*logger_, "EpicsReader worker thread exiting on reader {}.", name_);
 }

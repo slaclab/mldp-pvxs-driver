@@ -7,10 +7,12 @@
 #include <algorithm>
 #include <chrono>
 #include <grpcpp/grpcpp.h>
-#include <spdlog/spdlog.h>
 #include <stdexcept>
 
+#include <util/log/Logger.h>
+
 using namespace mldp_pvxs_driver::util::pool;
+using namespace mldp_pvxs_driver::util::log;
 
 #pragma region - MLDPGrpcObject
 // Implement MLDPGrpcObject constructor and helper
@@ -161,7 +163,7 @@ bool MLDPGrpcPool::registerProvider(dp::service::ingestion::DpIngestionService::
 {
     if (!stub)
     {
-        spdlog::error("MLDPGrpcPool: missing stub while registering provider {}", config_.providerName());
+        errorf("MLDPGrpcPool: missing stub while registering provider {}", config_.providerName());
         return false;
     }
 
@@ -174,7 +176,7 @@ bool MLDPGrpcPool::registerProvider(dp::service::ingestion::DpIngestionService::
     const auto status = stub->registerProvider(&context, request, &response);
     if (!status.ok())
     {
-        spdlog::error("registerProvider RPC failed for {}: {}", config_.providerName(), status.error_message());
+        errorf("registerProvider RPC failed for {}: {}", config_.providerName(), status.error_message());
         return false;
     }
 
@@ -184,14 +186,12 @@ bool MLDPGrpcPool::registerProvider(dp::service::ingestion::DpIngestionService::
         if (provider_id_.empty())
         {
             provider_id_ = new_id;
-            spdlog::info("MLDP registered provider {} with id {}", config_.providerName(), provider_id_);
+            infof("MLDP registered provider {} with id {}", config_.providerName(), provider_id_);
             return true;
         }
         if (provider_id_ != new_id)
         {
-            spdlog::error("registerProvider returned mismatched provider ID {} (expected {})",
-                          new_id,
-                          provider_id_);
+            errorf("registerProvider returned mismatched provider ID {} (expected {})", new_id, provider_id_);
             return false;
         }
         return true;
@@ -199,11 +199,11 @@ bool MLDPGrpcPool::registerProvider(dp::service::ingestion::DpIngestionService::
 
     if (response.has_exceptionalresult())
     {
-        spdlog::error("registerProvider rejected {}: {}", config_.providerName(), response.exceptionalresult().message());
+        errorf("registerProvider rejected {}: {}", config_.providerName(), response.exceptionalresult().message());
         return false;
     }
 
-    spdlog::error("registerProvider returned empty response for {}", config_.providerName());
+    errorf("registerProvider returned empty response for {}", config_.providerName());
     return false;
 }
 

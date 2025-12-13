@@ -9,6 +9,7 @@
 #include <variant>
 
 using namespace mldp_pvxs_driver::reader::impl::epics;
+using namespace mldp_pvxs_driver::util::log;
 
 namespace {
 struct UIntArrayView
@@ -60,7 +61,7 @@ std::optional<UIntArrayView> asUIntArrayView(const pvxs::Value& value)
 }
 } // namespace
 
-bool BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch(spdlog::logger&                                         log,
+bool BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch(mldp_pvxs_driver::util::log::ILogger&                    log,
                                                         const std::string&                                      tablePvName,
                                                         const pvxs::Value&                                      epicsValue,
                                                         const std::string&                                      tsSecondsField,
@@ -75,7 +76,7 @@ bool BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch(spdlog::logger&         
 
     if (!epicsValue || epicsValue.type().kind() != pvxs::Kind::Compound)
     {
-        log.warn("NTTable row-ts PV {} update is not a compound value", tablePvName);
+        warnf(log, "NTTable row-ts PV {} update is not a compound value", tablePvName);
         return false;
     }
 
@@ -85,7 +86,7 @@ bool BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch(spdlog::logger&         
     const auto columns = epicsValue["value"];
     if (!columns || columns.type().kind() != pvxs::Kind::Compound)
     {
-        log.warn("NTTable row-ts PV {} has no usable value struct", tablePvName);
+        warnf(log, "NTTable row-ts PV {} has no usable value struct", tablePvName);
         return false;
     }
 
@@ -94,7 +95,7 @@ bool BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch(spdlog::logger&         
 
     if (!secondsValue.valid() || !nanosValue.valid())
     {
-        log.warn("NTTable row-ts PV {} missing timestamp arrays '{}'/'{}'", tablePvName, tsSecondsField, tsNanosField);
+        warnf(log, "NTTable row-ts PV {} missing timestamp arrays '{}'/'{}'", tablePvName, tsSecondsField, tsNanosField);
         return false;
     }
 
@@ -102,14 +103,14 @@ bool BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch(spdlog::logger&         
     const auto nanosArr = asUIntArrayView(nanosValue);
     if (!secondsArr.has_value() || !nanosArr.has_value())
     {
-        log.warn("NTTable row-ts PV {} timestamp arrays have unsupported types", tablePvName);
+        warnf(log, "NTTable row-ts PV {} timestamp arrays have unsupported types", tablePvName);
         return false;
     }
 
     const auto rowCount = std::min(secondsArr->size(), nanosArr->size());
     if (rowCount == 0)
     {
-        log.trace("NTTable row-ts PV {} has 0 timestamped rows", tablePvName);
+        tracef(log, "NTTable row-ts PV {} has 0 timestamped rows", tablePvName);
         return false;
     }
 
@@ -236,7 +237,11 @@ bool BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch(spdlog::logger&         
             }
             break;
         default:
-            log.trace("NTTable row-ts PV {} column '{}' has unsupported type code {}", tablePvName, colName, static_cast<int>(colCode));
+            tracef(log,
+                   "NTTable row-ts PV {} column '{}' has unsupported type code {}",
+                   tablePvName,
+                   colName,
+                   static_cast<int>(colCode));
             break;
         }
     }
