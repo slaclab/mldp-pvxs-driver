@@ -260,6 +260,7 @@ add_library(lib${PROJECT_NAME}
         # "${CMAKE_CURRENT_SOURCE_DIR}/include/mldp_pvxs_driver.h"
         # "${CMAKE_CURRENT_SOURCE_DIR}/include/reader/impl/epics/EpicsReader.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/ReaderFactory.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/util/log/CoutLogger.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/config/Config.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/EpicsReader.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/EpicsReaderConfig.cpp"
