@@ -165,6 +165,80 @@ jobs:
           id=$(docker create mldp-pvxs-driver-artifacts:latest)
           docker cp "$id:/workspace/build/bin/mldp_pvxs_driver" ./mldp_pvxs_driver-ubuntu-noble-epics-${{ env.EPICS_VERSION }}
           docker rm "$id"
+
+      - name: Build AppImage (x86_64)
+        if: runner.arch == 'X64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          docker run --rm \
+            -v "$PWD/out:/out" \
+            -e "EPICS_VERSION=${{ env.EPICS_VERSION }}" \
+            -e "PVXS_VERSION=${{ env.PVXS_VERSION }}" \
+            mldp-pvxs-driver-artifacts:latest \
+            bash -lc '
+              set -euo pipefail
+
+              arch=$(cat /etc/epics_host_arch || true)
+              if [[ -z "${arch}" ]]; then
+                arch="linux-x86_64"
+              fi
+
+              appdir=/tmp/AppDir
+              rm -rf "$appdir"
+              mkdir -p "$appdir/usr/bin" "$appdir/usr/lib" "$appdir/usr/share/applications" "$appdir/usr/share/icons/hicolor/256x256/apps"
+
+              cp /workspace/build/bin/mldp_pvxs_driver "$appdir/usr/bin/mldp_pvxs_driver"
+
+              # Bundle EPICS/PVXS runtime libs from /opt/local.
+              if [[ -d "/opt/local/lib/${arch}" ]]; then
+                cp -a "/opt/local/lib/${arch}"/*.so* "$appdir/usr/lib/" || true
+              fi
+
+              # Bundle all dynamic deps that ldd can resolve (best-effort).
+              while IFS= read -r lib; do
+                if [[ -n "$lib" && -f "$lib" ]]; then
+                  cp -L "$lib" "$appdir/usr/lib/" || true
+                fi
+              done < <(ldd /workspace/build/bin/mldp_pvxs_driver \
+                | awk "{for (i=1;i<=NF;i++) if (\$i ~ /^\//) print \$i}"
+                )
+
+              # Desktop entry + icon (required by AppImage conventions).
+              if [[ -f /workspace/logos/SLAC-lab-hires.png ]]; then
+                cp /workspace/logos/SLAC-lab-hires.png "$appdir/usr/share/icons/hicolor/256x256/apps/mldp_pvxs_driver.png"
+              fi
+
+              cat > "$appdir/usr/share/applications/mldp_pvxs_driver.desktop" <<EOF
+              [Desktop Entry]
+              Type=Application
+              Name=MLDP PVXS Driver
+              Exec=mldp_pvxs_driver
+              Icon=mldp_pvxs_driver
+              Categories=Science;
+              Terminal=true
+              EOF
+
+              cat > "$appdir/AppRun" <<"EOF"
+              #!/bin/sh
+              set -eu
+              HERE="$(dirname "$(readlink -f "$0")")"
+              export LD_LIBRARY_PATH="$HERE/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+              exec "$HERE/usr/bin/mldp_pvxs_driver" "$@"
+              EOF
+              chmod +x "$appdir/AppRun"
+
+              # Build the AppImage without requiring FUSE by extracting appimagetool.
+              curl -L -o /tmp/appimagetool.AppImage \
+                https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+              chmod +x /tmp/appimagetool.AppImage
+              /tmp/appimagetool.AppImage --appimage-extract >/dev/null
+
+              out="/out/mldp_pvxs_driver-ubuntu-noble-epics-${EPICS_VERSION}-pvxs-${PVXS_VERSION}-x86_64.AppImage"
+              /tmp/squashfs-root/AppRun "$appdir" "$out"
+              echo "Created $out"
+            '
           
       - name: Create release from tag
         uses: softprops/action-gh-release@v2
@@ -176,3 +250,4 @@ jobs:
           generate_release_notes: true
           files: |
             ./mldp_pvxs_driver-ubuntu-noble-epics-${{ env.EPICS_VERSION }}
+            ./out/mldp_pvxs_driver-ubuntu-noble-epics-${{ env.EPICS_VERSION }}-pvxs-${{ env.PVXS_VERSION }}-x86_64.AppImage

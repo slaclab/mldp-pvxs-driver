@@ -104,6 +104,7 @@ For developer information and contribution guidelines see [CONTRIBUTING.md](CONT
 Tagged releases (`vX.Y.Z`) publish:
 - A container image (recommended way to run).
 - A standalone executable artifact (currently named `mldp_pvxs_driver-ubuntu-noble-epics-R7.0.8.1`).
+- An AppImage for easier distribution (currently named `mldp_pvxs_driver-ubuntu-noble-epics-R7.0.8.1-pvxs-1.4.1-x86_64.AppImage`).
 
 ### Standalone executable runtime dependencies
 
@@ -124,3 +125,23 @@ either:
 - run via the published Docker image, which includes the correct runtime environment.
 
 You can inspect the dependencies on your target system with `ldd ./mldp_pvxs_driver-ubuntu-noble-epics-R7.0.8.1`.
+
+### AppImage notes
+
+The AppImage is intended to bundle the driver plus its runtime shared libraries (including EPICS/PVXS) to reduce
+host setup. It still requires a compatible Linux base system (kernel + glibc). Some distributions may also require
+FUSE depending on how AppImages are executed.
+
+#### Running the AppImage
+
+1. Download the AppImage from the GitHub Release assets (example name:
+  `mldp_pvxs_driver-ubuntu-noble-epics-R7.0.8.1-pvxs-1.4.1-x86_64.AppImage`).
+2. Make it executable:
+  `chmod +x ./mldp_pvxs_driver-ubuntu-noble-epics-R7.0.8.1-pvxs-1.4.1-x86_64.AppImage`
+3. Run it (point at your config file):
+  `./mldp_pvxs_driver-ubuntu-noble-epics-R7.0.8.1-pvxs-1.4.1-x86_64.AppImage --config config.yaml`
+
+If the AppImage fails to start due to FUSE restrictions, you can extract and run it without mounting:
+
+- `./mldp_pvxs_driver-ubuntu-noble-epics-R7.0.8.1-pvxs-1.4.1-x86_64.AppImage --appimage-extract`
+- `./squashfs-root/AppRun --config config.yaml`
