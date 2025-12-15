@@ -1,7 +1,7 @@
 #include <controller/MLDPPVXSController.h>
 #include <memory>
 #include <reader/ReaderFactory.h>
-#include <spdlog/spdlog.h>
+#include <util/log/Logger.h>
 
 #include <chrono>
 #include <format>
@@ -14,6 +14,7 @@ using namespace mldp_pvxs_driver::controller;
 using namespace mldp_pvxs_driver::util::bus;
 using namespace mldp_pvxs_driver::config;
 using namespace mldp_pvxs_driver::reader;
+using namespace mldp_pvxs_driver::util::log;
 
 using mldp_pvxs_driver::util::pool::MLDPGrpcPool;
 
@@ -85,7 +86,7 @@ bool MLDPPVXSController::push(EventBatch batch_values)
     }
     if (provider_id_.empty())
     {
-        spdlog::error("Provider not registered; dropping event batch");
+        error("Provider not registered; dropping event batch");
         MLDP_METRICS_CALL(metrics_, incrementBusFailures());
         return false;
     }
@@ -97,7 +98,7 @@ bool MLDPPVXSController::push(EventBatch batch_values)
                                                });
     if (!hasEvents)
     {
-        spdlog::warn("Received empty batch for ingestion, skipping push.");
+        warn("Received empty batch for ingestion, skipping push.");
         return false;
     }
 
@@ -123,7 +124,7 @@ void MLDPPVXSController::pushImpl(EventBatch batch_values)
 
         if (!writer)
         {
-            spdlog::error("Failed to open ingestion stream for incoming batch");
+            error("Failed to open ingestion stream for incoming batch");
             MLDP_METRICS_CALL(metrics_, incrementBusFailures());
             return;
         }
@@ -161,7 +162,7 @@ void MLDPPVXSController::pushImpl(EventBatch batch_values)
             {
                 if (!event_value)
                 {
-                    spdlog::warn("Skipping null event for source {}", src_name);
+                    warnf("Skipping null event for source {}", src_name);
                     continue;
                 }
 
@@ -188,7 +189,7 @@ void MLDPPVXSController::pushImpl(EventBatch batch_values)
                 }
                 else
                 {
-                    spdlog::warn("Missing data_value content for source {}", src_name);
+                    warnf("Missing data_value content for source {}", src_name);
                 }
             }
 
@@ -199,9 +200,7 @@ void MLDPPVXSController::pushImpl(EventBatch batch_values)
 
             if (!writer->Write(request))
             {
-                spdlog::error("Failed to write data column {} with {} events to ingestion stream",
-                              src_name,
-                              column->datavalues_size());
+                errorf("Failed to write data column {} with {} events to ingestion stream", src_name, column->datavalues_size());
                 writer->WritesDone();
                 writer->Finish();
                 MLDP_METRICS_CALL(metrics_, incrementBusFailures());
@@ -213,7 +212,7 @@ void MLDPPVXSController::pushImpl(EventBatch batch_values)
 
         if (!wrote_any)
         {
-            spdlog::warn("No valid events in batch, skipping push.");
+            warn("No valid events in batch, skipping push.");
             writer->WritesDone();
             writer->Finish();
             return;
@@ -227,15 +226,13 @@ void MLDPPVXSController::pushImpl(EventBatch batch_values)
         }
         else
         {
-            spdlog::error("Ingestion stream failed for batch of {} events: {}",
-                          accepted_events,
-                          status.error_message());
+            errorf("Ingestion stream failed for batch of {} events: {}", accepted_events, status.error_message());
             MLDP_METRICS_CALL(metrics_, incrementBusFailures());
         }
     }
     catch (const std::exception& ex)
     {
-        spdlog::error("Failed to push event batch: {}", ex.what());
+        errorf("Failed to push event batch: {}", ex.what());
         MLDP_METRICS_CALL(metrics_, incrementReaderErrors());
     }
 }

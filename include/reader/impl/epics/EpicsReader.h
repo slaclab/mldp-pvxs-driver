@@ -9,9 +9,10 @@
 #include <pvxs/client.h>
 #include <pvxs/nt.h>
 
-#include <spdlog/spdlog.h>
+#include <util/log/Logger.h>
 
 #include <atomic>
+#include <memory>
 #include <set>
 #include <string>
 #include <thread>
@@ -111,7 +112,7 @@ private:
         std::string tsNanosField;
     };
 
-    spdlog::logger logger_;
+    std::shared_ptr<mldp_pvxs_driver::util::log::ILogger> logger_;
 
     /** @brief Reader-specific configuration (name, PV list, etc.). */
     EpicsReaderConfig                                           config_;

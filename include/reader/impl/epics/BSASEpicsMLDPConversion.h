@@ -5,14 +5,14 @@
 #include <string>
 #include <util/bus/IEventBusPush.h>
 
-#include <spdlog/spdlog.h>
+#include <util/log/Logger.h>
 
 namespace mldp_pvxs_driver::reader::impl::epics {
 
 class BSASEpicsMLDPConversion : public EpicsMLDPConversion
 {
 public:
-    static bool tryBuildNtTableRowTsBatch(spdlog::logger&                                         log,
+    static bool tryBuildNtTableRowTsBatch(mldp_pvxs_driver::util::log::ILogger&                    log,
                                           const std::string&                                      tablePvName,
                                           const pvxs::Value&                                      epicsValue,
                                           const std::string&                                      tsSecondsField,

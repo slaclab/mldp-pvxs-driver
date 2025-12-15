@@ -260,6 +260,7 @@ add_library(lib${PROJECT_NAME}
         # "${CMAKE_CURRENT_SOURCE_DIR}/include/mldp_pvxs_driver.h"
         # "${CMAKE_CURRENT_SOURCE_DIR}/include/reader/impl/epics/EpicsReader.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/ReaderFactory.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/util/log/CoutLogger.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/config/Config.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/EpicsReader.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/EpicsReaderConfig.cpp"
@@ -272,7 +273,7 @@ add_library(lib${PROJECT_NAME}
         "${CMAKE_CURRENT_SOURCE_DIR}/src/metrics/Metrics.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/metrics/MetricsConfig.cpp"
 )
- target_link_libraries(lib${PROJECT_NAME} PUBLIC lib${PROJECT_NAME}_proto Threads::Threads pvxs spdlog::spdlog prometheus-cpp::core prometheus-cpp::pull)
+target_link_libraries(lib${PROJECT_NAME} PUBLIC lib${PROJECT_NAME}_proto Threads::Threads pvxs prometheus-cpp::core prometheus-cpp::pull)
 target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/ext/BS_thread_pool/include")
 target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/ext/rapidyaml/include")
 target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
@@ -403,6 +404,7 @@ if(MLDP_PVXS_DRIVER_MAIN)
         target_link_libraries(${PROJECT_NAME} PRIVATE
                 -Wl,--whole-archive lib${PROJECT_NAME} -Wl,--no-whole-archive
                 argparse::argparse
+                spdlog::spdlog
         )
     endif()
     target_include_directories(${PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/ext/rapidyaml/include")

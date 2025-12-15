@@ -4,6 +4,8 @@
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
 
+#include <util/log/Logger.h>
+
 #include <csignal>
 #include <format>
 
@@ -48,6 +50,56 @@ spdlog::level::level_enum parse_log_level(std::string value)
         "Invalid log level '{}' (expected: trace, debug, info, warn, error, critical, off)",
         value));
 }
+
+namespace {
+
+    class SpdlogLogger final : public mldp_pvxs_driver::util::log::ILogger
+    {
+    public:
+        explicit SpdlogLogger(std::shared_ptr<spdlog::logger> logger)
+            : logger_(std::move(logger))
+        {
+        }
+
+        bool shouldLog(mldp_pvxs_driver::util::log::Level level) const override
+        {
+            if (!logger_)
+            {
+                return false;
+            }
+            return logger_->should_log(toSpd(level));
+        }
+
+        void log(mldp_pvxs_driver::util::log::Level level, std::string_view message) override
+        {
+            if (!logger_)
+            {
+                return;
+            }
+            logger_->log(toSpd(level), "{}", message);
+        }
+
+    private:
+        static spdlog::level::level_enum toSpd(mldp_pvxs_driver::util::log::Level level)
+        {
+            using L = mldp_pvxs_driver::util::log::Level;
+            switch (level)
+            {
+            case L::Trace: return spdlog::level::trace;
+            case L::Debug: return spdlog::level::debug;
+            case L::Info: return spdlog::level::info;
+            case L::Warn: return spdlog::level::warn;
+            case L::Error: return spdlog::level::err;
+            case L::Critical: return spdlog::level::critical;
+            case L::Off: return spdlog::level::off;
+            }
+            return spdlog::level::info;
+        }
+
+        std::shared_ptr<spdlog::logger> logger_;
+    };
+
+} // namespace
 
 void disable_tty_echoctl()
 {
@@ -117,7 +169,6 @@ int main(int argc, char** argv)
         // Parse command line arguments
         program.parse_args(argc, argv);
 
-        // Print version info
         if (!spdlog::default_logger())
         {
             spdlog::set_default_logger(spdlog::stdout_color_mt("mldp_pvxs_driver"));
@@ -127,8 +178,45 @@ int main(int argc, char** argv)
             // Ensure pattern %n is meaningful for the process-wide default logger.
             spdlog::set_default_logger(spdlog::stdout_color_mt("mldp_pvxs_driver"));
         }
-        spdlog::set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%n] [%^%l%$] %v");
+        spdlog::set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%-32!n] [%^%-8l%$] %v");
         spdlog::set_level(program.get<spdlog::level::level_enum>("--log-level"));
+
+        // Install the executable's spdlog logger as the driver library logger.
+        // Also provide a factory for named loggers so library components can request
+        // per-component/per-instance loggers without depending on spdlog.
+        mldp_pvxs_driver::util::log::setLogger(std::make_shared<SpdlogLogger>(spdlog::default_logger()));
+        mldp_pvxs_driver::util::log::setLoggerFactory([](std::string_view name) -> std::shared_ptr<mldp_pvxs_driver::util::log::ILogger>
+                                                      {
+                                                          const std::string loggerName{name};
+
+                                                          if (loggerName.empty())
+                                                          {
+                                                              return mldp_pvxs_driver::util::log::getLoggerShared();
+                                                          }
+
+                                                          if (auto existing = spdlog::get(loggerName))
+                                                          {
+                                                              return std::static_pointer_cast<mldp_pvxs_driver::util::log::ILogger>(
+                                                                  std::make_shared<SpdlogLogger>(existing));
+                                                          }
+
+                                                          auto                            base = spdlog::default_logger();
+                                                          std::shared_ptr<spdlog::logger> created;
+                                                          if (base)
+                                                          {
+                                                              created = base->clone(loggerName);
+                                                          }
+                                                          else
+                                                          {
+                                                              created = spdlog::stdout_color_mt(loggerName);
+                                                          }
+
+                                                          // Keep behavior similar to previous code: reuse by name.
+                                                          spdlog::register_logger(created);
+                                                          return std::static_pointer_cast<mldp_pvxs_driver::util::log::ILogger>(
+                                                              std::make_shared<SpdlogLogger>(created));
+                                                      });
+        // Log version information
         spdlog::info(
             "MLDP PVXS Driver Version {}.{}.{}",
             MLDP_PVXS_DRIVER_VERSION_MAJOR,
@@ -168,5 +256,5 @@ int main(int argc, char** argv)
     {
         std::cerr << "Error: Unknown failure\n";
         return EXIT_FAILURE;
-    } 
+    }
 }
