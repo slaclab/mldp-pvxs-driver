@@ -62,6 +62,26 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Compute manual image tag
+        id: manual_tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          ref="${{ inputs.source_ref }}"
+          if [[ -z "$ref" ]]; then
+            ref="${GITHUB_REF_NAME}"
+          fi
+
+          # Docker tag charset is limited; keep it safe and predictable.
+          # - Replace '/' and ':' with '-'
+          # - Drop any remaining unsupported characters
+          safe_ref=$(printf '%s' "$ref" | tr '/:' '--' | tr -cd 'A-Za-z0-9_.-' )
+          if [[ -z "$safe_ref" ]]; then
+            safe_ref="ref"
+          fi
+
+          echo "value=${safe_ref}-${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
       - name: Docker meta
         id: meta
         uses: docker/metadata-action@v5
@@ -69,7 +89,7 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.variant }}
           tags: |
             type=semver,pattern={{version}},enable={{is_tag}}
-            type=raw,value=${{ replace(github.ref_name, '/', '-') }}-${{ github.sha }},enable=${{ github.event_name == 'workflow_dispatch' }}
+            type=raw,value=${{ steps.manual_tag.outputs.value }},enable=${{ github.event_name == 'workflow_dispatch' }}
           labels: |
             org.opencontainers.image.title=MLDP-PVXS Driver
             org.opencontainers.image.description=MLDP-PVXS Driver to ingest EPICS data into MLDP platform
