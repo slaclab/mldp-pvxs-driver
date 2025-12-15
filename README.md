@@ -98,3 +98,29 @@ graph
 ```
 
 For developer information and contribution guidelines see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Releases
+
+Tagged releases (`vX.Y.Z`) publish:
+- A container image (recommended way to run).
+- A standalone executable artifact (currently named `mldp_pvxs_driver-ubuntu-noble-epics-R7.0.8.1`).
+
+### Standalone executable runtime dependencies
+
+The standalone executable artifact is **dynamically linked** (not a fully static binary). This means it requires
+shared libraries to be present on the target host at runtime.
+
+At a minimum, the binary depends on:
+- gRPC + Protobuf runtime libraries (and their transitive deps like Abseil, c-ares, re2)
+- OpenSSL (`libssl`, `libcrypto`)
+- EPICS Base runtime (`libCom`)
+- PVXS runtime (`libpvxs`)
+
+In the release build environment, EPICS Base + PVXS are installed under `/opt/local`, and the binary is built with a
+runtime search path pointing there. If you download and run the standalone artifact on a different host, you must
+either:
+- install compatible EPICS Base + PVXS and ensure they are discoverable by the dynamic loader (e.g., via
+  `LD_LIBRARY_PATH` or a matching install prefix), and install the required gRPC/Protobuf/OpenSSL runtime packages, or
+- run via the published Docker image, which includes the correct runtime environment.
+
+You can inspect the dependencies on your target system with `ldd ./mldp_pvxs_driver-ubuntu-noble-epics-R7.0.8.1`.

@@ -2,6 +2,8 @@ FROM ubuntu:noble
 
 # Allow specifying the default compiler: gcc or llvm
 ARG COMPILER=llvm
+# EPICS Base release to build
+ARG EPICS_VERSION=R7.0.8.1
 # PVXS version to build
 ARG PVXS_VERSION=1.4.1
 
@@ -25,7 +27,7 @@ RUN if [ "$COMPILER" = "llvm" ]; then \
 # Verify the compiler selection
 RUN echo "Building with:" && cc --version
 
-RUN git clone --branch R7.0.8.1 --depth 1 --recursive https://github.com/epics-base/epics-base.git /opt/epics
+RUN git clone --branch ${EPICS_VERSION} --depth 1 --recursive https://github.com/epics-base/epics-base.git /opt/epics
 WORKDIR /opt/epics
 # Configure EPICS to use the selected compiler
 RUN if [ "$COMPILER" = "llvm" ]; then \
