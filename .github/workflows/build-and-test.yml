@@ -38,7 +38,7 @@ jobs:
         uses: B1NARY-GR0UP/nwa@main
         with:
           version: latest
-          cmd: check
+          cmd: add
           path: .nwa-config.yaml
 
       - name: Log in to the Container registry
