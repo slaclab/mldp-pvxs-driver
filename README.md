@@ -42,60 +42,48 @@ metrics:                                 # optional; omit to disable Prometheus 
 as sequences under `reader[].epics`, each with a `name` and an optional `pvs` list; if `pvs` is omitted, the reader will
 start without predefined channels.
 
+## Command-line interface
+
+The driver is configured via a YAML file (see above) and is started from the command line.
+
+### Usage
+
+```bash
+mldp_pvxs_driver [--help] [--version] [--config PATH] [--log-level LEVEL]
+```
+
+### Options
+
+- `-h, --help`
+  - Show the built-in help and exit.
+- `-v, --version`
+  - Print the version and exit.
+- `-c, --config PATH`
+  - Path to the YAML configuration file.
+  - Default: `config.yaml`
+- `-l, --log-level LEVEL`
+  - Logging verbosity.
+  - Accepted values: `trace`, `debug`, `info`, `warn`, `error`, `critical`, `off`
+  - Default: `info`
+  - Notes: value is case-insensitive; `warning` is accepted as `warn`, `err` as `error`, and `fatal` as `critical`.
+
+### Examples
+
+```bash
+# Run with an explicit config file
+./mldp_pvxs_driver --config ./config.yaml
+
+# Enable debug logging
+./mldp_pvxs_driver --config ./config.yaml --log-level debug
+
+# Show help/version
+./mldp_pvxs_driver --help
+./mldp_pvxs_driver --version
+```
+
 ## Architecture
 
 This project uses a pipeline-style architecture: PVXS clients feed PV updates into a bounded work queue; the core driver converts and enriches events and dispatches them to the MLDP ingestion service using a connection pool of gRPC channels; reader implementations consume and re-publish or transform events as needed. See the detailed diagram and design notes in [docs/architecture.md](docs/architecture.md).
-
-```mermaid
-graph
-    subgraph "Driver Application"
-        Config[Configuration]
-        Runner[PVXSDPIngestionDriver Instance]
-        Run[Await Changes]
-    end
-
-    subgraph "PVXSDPIngestionDriver"
-        Driver[Constructor]
-        Convert[Convert PV to DP format]
-        Thread1[Threaded gRPC Call]
-        Ingest[Ingest PV value]
-
-        Ingest --> Convert
-    end
-
-    subgraph "PVXS Client Context"
-        Monitor[Monitor Subscriptions]
-        WorkQueue[PV Queue]
-    end
-
-    subgraph "MLDP API"
-        Register[registerProvider]
-        IngestData[ingestData]
-    end
-
-    subgraph "EPICS IOCs"
-        PVServer[PV Channels]
-    end
-
-    Config -->|Sets Values| Runner
-    Runner --> Driver
-    Runner --> Run
-
-    Driver -->|Registers Provider| Register
-
-    Driver -->|Creates Context| Monitor
-    Monitor -->|Subscribes to| PVServer
-
-    PVServer -.->|Pushes to| WorkQueue
-
-    WorkQueue -->|When popped from| Ingest
-
-    Convert -->|Spawns| Thread1
-
-    Thread1 -->|Calls| IngestData
-
-    Run -.->|Pops from| WorkQueue
-```
 
 For developer information and contribution guidelines see [CONTRIBUTING.md](CONTRIBUTING.md).
 
