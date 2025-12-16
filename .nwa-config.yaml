@@ -1,0 +1,29 @@
+nwa:
+  # Paths to check (DoubleStar patterns)
+  path:
+    - "include/**/*.h"
+    - "src/**/*.h"
+    - "src/**/*.cpp"
+
+  # Skip files that NWA can't handle (or shouldn't touch)
+  skip:
+    - "src/version.h.in"
+
+  # Use a raw template so NWA does not generate comment wrappers.
+  tmpltype: raw
+
+  # Markers used to detect an existing header (for idempotent add/update).
+  keyword:
+    - "This file is part of 'mldp-pvxs-driver'."
+    - "LICENSE.txt"
+
+  tmpl: |
+    //////////////////////////////////////////////////////////////////////////////
+    // This file is part of 'mldp-pvxs-driver'.
+    // It is subject to the license terms in the LICENSE.txt file found in the
+    // top-level directory of this distribution and at:
+    //    https://confluence.slac.stanford.edu/display/ppareg/LICENSE.html.
+    // No part of 'mldp-pvxs-driver', including this file,
+    // may be copied, modified, propagated, or distributed except according to
+    // the terms contained in the LICENSE.txt file.
+    //////////////////////////////////////////////////////////////////////////////

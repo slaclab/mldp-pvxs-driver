@@ -34,6 +34,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: License Header Check
+        uses: B1NARY-GR0UP/nwa@main
+        with:
+          version: latest
+          cmd: check
+          path: .nwa-config.yaml
+
       - name: Log in to the Container registry
         uses: docker/login-action@v3
         with:
