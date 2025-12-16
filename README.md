@@ -112,8 +112,6 @@ either:
   `LD_LIBRARY_PATH` or a matching install prefix), and install the required gRPC/Protobuf/OpenSSL runtime packages, or
 - run via the published Docker image, which includes the correct runtime environment.
 
-You can inspect the dependencies on your target system with `ldd ./mldp_pvxs_driver-ubuntu-noble-epics-R7.0.8.1`.
-
 ### AppImage notes
 
 The AppImage is intended to bundle the driver plus its runtime shared libraries (including EPICS/PVXS) to reduce
