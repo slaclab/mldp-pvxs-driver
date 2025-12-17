@@ -219,6 +219,18 @@ jobs:
           fi
           echo "image=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ env.RELEASE_VARIANT }}:${safe}" >> "$GITHUB_OUTPUT"
 
+      - name: Compute artifact image
+        id: artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          raw="${{ steps.version.outputs.version }}"
+          safe=$(printf '%s' "$raw" | tr '/:' '--' | tr -cd 'A-Za-z0-9_.-')
+          if [[ -z "$safe" ]]; then
+            safe="ref"
+          fi
+          echo "image=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/artifacts-${{ env.RELEASE_VARIANT }}:${safe}" >> "$GITHUB_OUTPUT"
+
       - name: Build base image
         uses: docker/build-push-action@v6
         with:
@@ -240,12 +252,20 @@ jobs:
         run: |
           set -euo pipefail
           BASE_IMAGE="${{ steps.base_alias.outputs.tag }}"
+          ARTIFACT_IMAGE="${{ steps.artifact.outputs.image }}"
           docker build -f .devcontainer/Dockerfile.artifacts \
             --build-arg BASE_IMAGE="$BASE_IMAGE" \
             --build-arg BUILD_TYPE=Release \
             --build-arg RUNTIME_IMAGE="${{ env.BASE_OS_IMAGE }}" \
             -t mldp-pvxs-driver-artifacts:latest \
+            -t "$ARTIFACT_IMAGE" \
             .
+
+      - name: Push driver artifact image
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker push "${{ steps.artifact.outputs.image }}"
 
       - name: Save driver artifact image
         shell: bash
