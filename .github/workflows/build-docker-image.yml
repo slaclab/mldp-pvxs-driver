@@ -268,7 +268,6 @@ jobs:
           
       - name: Create release from tag
         id: check_release
-        name: Check whether release exists
         shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
