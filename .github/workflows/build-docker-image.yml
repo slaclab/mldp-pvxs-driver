@@ -259,7 +259,7 @@ jobs:
               Terminal=true
               EOF
 
-              cat > "$appdir/AppRun" <<"EOF"
+              cat > "$appdir/AppRun" <<'EOF'
               #!/bin/sh
               set -eu
               HERE="$(dirname "$(readlink -f "$0")")"
