@@ -41,6 +41,7 @@ RUN apt-get update && \
       ca-certificates \
       curl \
       file \
+      gnupg \
       libcurl4 \
       libgcc-s1 \
       libstdc++6 \
