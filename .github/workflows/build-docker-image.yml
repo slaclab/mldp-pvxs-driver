@@ -191,9 +191,10 @@ jobs:
     outputs:
       release_version: ${{ steps.version.outputs.version }}
     steps:
-
       - name: Check out repository code
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source_ref || github.ref }}
 
       - name: Log in to the Container registry
         uses: docker/login-action@v3
@@ -334,6 +335,8 @@ jobs:
     steps:
       - name: Check out repository code
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source_ref || github.ref }}
 
       - name: Download driver artifact image
         uses: actions/download-artifact@v6
@@ -384,6 +387,8 @@ jobs:
     steps:
       - name: Check out repository code
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source_ref || github.ref }}
 
       - name: Download driver binary artifact
         uses: actions/download-artifact@v6
