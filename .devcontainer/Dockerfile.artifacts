@@ -16,8 +16,12 @@ WORKDIR /workspace
 
 # Build the project (produces build/bin/mldp_pvxs_driver)
 COPY . /workspace
-RUN cmake -S . -B build -G Ninja \
+RUN arch=$(cat /etc/epics_host_arch 2>/dev/null || true) && \
+    if [ -z "$arch" ]; then arch=$(/opt/epics/startup/EpicsHostArch); fi && \
+    cmake -S . -B build -G Ninja \
       -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
       -DMLDP_PVXS_DRIVER_MAIN=ON \
-      -DMLDP_PVXS_DRIVER_TESTS=OFF
+      -DMLDP_PVXS_DRIVER_TESTS=OFF \
+      -DEPICS_BASE=/opt/local \
+      -DEPICS_HOST_ARCH=${arch}
 RUN cmake --build build -j "$(nproc)"

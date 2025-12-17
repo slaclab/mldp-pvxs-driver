@@ -33,6 +33,8 @@ env:
 jobs:
   build-docker-image:
     runs-on: ubuntu-latest
+    outputs:
+      manual_tag: ${{ steps.manual_tag.outputs.value }}
     strategy:
       fail-fast: false
       matrix:
@@ -126,7 +128,7 @@ jobs:
           cache-from: type=registry,ref=ghcr.io/slaclab/mldp-pvxs-driver:buildcache
 
   create-github-release:
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))
+    if: (github.event_name == 'workflow_dispatch' && inputs.push_image) || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))
     name: Create GitHub Release
     runs-on: ubuntu-latest
     needs: build-docker-image
@@ -153,7 +155,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            version="${{ needs.build-docker-image.outputs.manual_tag }}"
+          else
+            version="${GITHUB_REF_NAME#v}"
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
 
       - name: Compute base image
         id: base
@@ -167,21 +174,7 @@ jobs:
           fi
           echo "image=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/ubuntu:${safe}" >> "$GITHUB_OUTPUT"
 
-      - name: Try pull base image
-        id: pull
-        shell: bash
-        run: |
-          set -euo pipefail
-          BASE_IMAGE="${{ steps.base.outputs.image }}"
-          echo "Pulling $BASE_IMAGE"
-          if docker pull "$BASE_IMAGE"; then
-            echo "pulled=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "pulled=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Build base image (cached fallback)
-        if: steps.pull.outputs.pulled != 'true'
+      - name: Build base image
         uses: docker/build-push-action@v6
         with:
           context: .
