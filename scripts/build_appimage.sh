@@ -56,7 +56,13 @@ curl -L -o /tmp/appimagetool.AppImage \
   https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
 chmod +x /tmp/appimagetool.AppImage
 /tmp/appimagetool.AppImage --appimage-extract >/dev/null
+/tmp/squashfs-root/AppRun /tmp/appimagetool.AppImage /tmp/appimagetool
+
+if [[ ! -d /tmp/appimagetool || ! -x /tmp/appimagetool/AppRun ]]; then
+  echo "AppImage appimagetool extraction failed" >&2
+  exit 1
+fi
 
 out="/out/mldp_pvxs_driver-ubuntu-noble-epics-${EPICS_VERSION}-pvxs-${PVXS_VERSION}-x86_64.AppImage"
-/tmp/squashfs-root/AppRun "$appdir" "$out"
+/tmp/appimagetool/AppRun "$appdir" "$out"
 echo "Created $out"
