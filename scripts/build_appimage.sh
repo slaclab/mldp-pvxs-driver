@@ -29,8 +29,13 @@ while IFS= read -r lib; do
   fi
 done < <(ldd /workspace/build/bin/mldp_pvxs_driver | awk '{for (i=1;i<=NF;i++) if ($i ~ /^\//) print $i}')
 
+icon_src=""
 if [[ -f /workspace/logos/SLAC-lab-hires.png ]]; then
-  cp /workspace/logos/SLAC-lab-hires.png "$appdir/usr/share/icons/hicolor/256x256/apps/mldp_pvxs_driver.png"
+  icon_src=/workspace/logos/SLAC-lab-hires.png
+fi
+if [[ -n "$icon_src" ]]; then
+  cp "$icon_src" "$appdir/usr/share/icons/hicolor/256x256/apps/mldp_pvxs_driver.png"
+  cp "$icon_src" "$appdir/mldp_pvxs_driver.png"
 fi
 
 desktop_file="$appdir/mldp_pvxs_driver.desktop"
