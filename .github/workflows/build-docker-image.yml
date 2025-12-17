@@ -167,7 +167,7 @@ jobs:
     needs: build-docker-image
     permissions:
       contents: write
-      packages: read
+      packages: write
     env:
       EPICS_VERSION: ${{ needs.build-docker-image.outputs.epics_version }}
       PVXS_VERSION: ${{ needs.build-docker-image.outputs.pvxs_version }}
@@ -229,7 +229,7 @@ jobs:
           if [[ -z "$safe" ]]; then
             safe="ref"
           fi
-          echo "image=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/artifacts-${{ env.RELEASE_VARIANT }}:${safe}" >> "$GITHUB_OUTPUT"
+          echo "image=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ env.RELEASE_VARIANT }}:artifacts-${safe}" >> "$GITHUB_OUTPUT"
 
       - name: Build base image
         uses: docker/build-push-action@v6
