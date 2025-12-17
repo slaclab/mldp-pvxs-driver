@@ -247,25 +247,19 @@ jobs:
             EPICS_VERSION=${{ env.EPICS_VERSION }}
             PVXS_VERSION=${{ env.PVXS_VERSION }}
 
-      - name: Build driver artifact image
-        shell: bash
-        run: |
-          set -euo pipefail
-          BASE_IMAGE="${{ steps.base_alias.outputs.tag }}"
-          ARTIFACT_IMAGE="${{ steps.artifact.outputs.image }}"
-          docker build -f .devcontainer/Dockerfile.artifacts \
-            --build-arg BASE_IMAGE="$BASE_IMAGE" \
-            --build-arg BUILD_TYPE=Release \
-            --build-arg RUNTIME_IMAGE="${{ env.BASE_OS_IMAGE }}" \
-            -t mldp-pvxs-driver-artifacts:latest \
-            -t "$ARTIFACT_IMAGE" \
-            .
-
-      - name: Push driver artifact image
-        shell: bash
-        run: |
-          set -euo pipefail
-          docker push "${{ steps.artifact.outputs.image }}"
+      - name: Build and push driver artifact image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: .devcontainer/Dockerfile.artifacts
+          push: true
+          tags: |
+            ${{ steps.artifact.outputs.image }}
+            mldp-pvxs-driver-artifacts:latest
+          build-args: |
+            BASE_IMAGE=${{ steps.base_alias.outputs.tag }}
+            BUILD_TYPE=Release
+            RUNTIME_IMAGE=${{ env.BASE_OS_IMAGE }}
 
       - name: Save driver artifact image
         shell: bash
