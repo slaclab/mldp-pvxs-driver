@@ -36,10 +36,12 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       manual_tag: ${{ steps.manual_tag.outputs.value }}
+      manual_ref: ${{ steps.manual_tag.outputs.ref }}
       variant: ${{ steps.matrix_info.outputs.variant }}
       epics_version: ${{ steps.matrix_info.outputs.epics_version }}
       pvxs_version: ${{ steps.matrix_info.outputs.pvxs_version }}
       base_os_image: ${{ steps.matrix_info.outputs.base_os_image }}
+      need_last: ${{ steps.need_last.outputs.value }}
     env:
       EPICS_VERSION: ${{ matrix.epics_version }}
       PVXS_VERSION: ${{ matrix.pvxs_version }}
@@ -99,6 +101,7 @@ jobs:
           fi
 
           echo "value=${safe_ref}-${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          echo "ref=${safe_ref}" >> "$GITHUB_OUTPUT"
 
       - name: Capture matrix settings
         id: matrix_info
@@ -115,6 +118,17 @@ jobs:
           echo "pvxs_version=${{ matrix.pvxs_version }}" >> "$GITHUB_OUTPUT"
           echo "base_os_image=${{ matrix.base_os_image }}" >> "$GITHUB_OUTPUT"
 
+      - name: Determine latest tagging requirement
+        id: need_last
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF}" =~ ^refs/tags/ ]]; then
+            echo "value=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Docker meta
         id: meta
         uses: docker/metadata-action@v5
@@ -123,8 +137,7 @@ jobs:
           tags: |
             type=semver,pattern={{version}},enable=${{ startsWith(github.ref, 'refs/tags/') }}
             type=raw,value=${{ steps.manual_tag.outputs.value }},enable=${{ github.event_name == 'workflow_dispatch' }}
-            # set latest tag when building on the default branch
-            type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', 'main') }}
+            type=raw,value=latest,enable=${{ steps.need_last.outputs.value == 'true' }}
           labels: |
             org.opencontainers.image.title=MLDP-PVXS Driver
             org.opencontainers.image.description=MLDP-PVXS Driver to ingest EPICS data into MLDP platform
@@ -174,6 +187,7 @@ jobs:
       PVXS_VERSION: ${{ needs.build-docker-image.outputs.pvxs_version }}
       RELEASE_VARIANT: ${{ needs.build-docker-image.outputs.variant }}
       BASE_OS_IMAGE: ${{ needs.build-docker-image.outputs.base_os_image }}
+      NEED_LAST: ${{ needs.build-docker-image.outputs.need_last }}
     outputs:
       release_version: ${{ steps.version.outputs.version }}
     steps:
@@ -194,7 +208,7 @@ jobs:
         run: |
           set -euo pipefail
           if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
-            version="${{ needs.build-docker-image.outputs.manual_tag }}"
+            version="${{ needs.build-docker-image.outputs.manual_ref }}"
           else
             version="${GITHUB_REF_NAME#v}"
           fi
@@ -232,6 +246,20 @@ jobs:
           fi
           echo "image=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ env.RELEASE_VARIANT }}:artifacts-${safe}" >> "$GITHUB_OUTPUT"
 
+      - name: Prepare artifact tags
+        id: artifact_tags
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "tags<<EOF"
+            echo "${{ steps.artifact.outputs.image }}"
+            if [[ "${{ env.NEED_LAST }}" == "true" ]]; then
+              echo "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ env.RELEASE_VARIANT }}:artifacts-latest"
+            fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Build base image
         uses: docker/build-push-action@v6
         with:
@@ -254,8 +282,7 @@ jobs:
           context: .
           file: .devcontainer/Dockerfile.artifacts
           push: true
-          tags: |
-            ${{ steps.artifact.outputs.image }}
+          tags: ${{ steps.artifact_tags.outputs.tags }}
           build-args: |
             BASE_IMAGE=${{ steps.base_alias.outputs.tag }}
             BUILD_TYPE=Release
