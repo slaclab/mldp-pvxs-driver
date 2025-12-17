@@ -38,6 +38,7 @@ ENV PVXS_BASE=/opt/local
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
+      appstream \
       ca-certificates \
       curl \
       file \
