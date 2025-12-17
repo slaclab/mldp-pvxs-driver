@@ -90,6 +90,8 @@ jobs:
           tags: |
             type=semver,pattern={{version}},enable=${{ startsWith(github.ref, 'refs/tags/') }}
             type=raw,value=${{ steps.manual_tag.outputs.value }},enable=${{ github.event_name == 'workflow_dispatch' }}
+            # set latest tag when building on the default branch
+            type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', 'main') }}
           labels: |
             org.opencontainers.image.title=MLDP-PVXS Driver
             org.opencontainers.image.description=MLDP-PVXS Driver to ingest EPICS data into MLDP platform
