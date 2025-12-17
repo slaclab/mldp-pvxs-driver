@@ -26,6 +26,7 @@ jobs:
   build_test_ubuntu:
     name: Build and test
     runs-on: ubuntu-latest
+    if: github.actor != 'github-actions[bot]'
     env:
       BUILD_TYPE: Debug
     steps:
@@ -34,33 +35,29 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.head_ref || github.ref }}
+          persist-credentials: true
 
-      - name: License Header Check
-        id: license_check
-        uses: B1NARY-GR0UP/nwa@main
-        continue-on-error: true
-        with:
-          version: latest
-          cmd: check
-          path: .nwa-config.yaml
-
-      - name: License Header Auto-fix
-        if: steps.license_check.outcome == 'failure' && github.event_name == 'pull_request' && github.actor != 'github-actions[bot]' && github.event.pull_request.head.repo.full_name == github.repository
+      - name: License Header Add
+        id: license_add
         uses: B1NARY-GR0UP/nwa@main
         with:
           version: latest
           cmd: add
           path: .nwa-config.yaml
 
-      - name: Commit license header fixes
-        id: license_autocommit
-        if: steps.license_check.outcome == 'failure' && github.event_name == 'pull_request' && github.actor != 'github-actions[bot]' && github.event.pull_request.head.repo.full_name == github.repository
+      - name: Detect license header changes
+        id: license_dirty
         run: |
           if git diff --quiet; then
-            echo "pushed=false" >> "$GITHUB_OUTPUT"
-            exit 0
+            echo "dirty=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "dirty=true" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Commit license header fixes
+        id: license_autocommit
+        if: steps.license_dirty.outputs.dirty == 'true' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add -A
@@ -68,14 +65,21 @@ jobs:
           git push origin "HEAD:${{ github.head_ref }}"
           echo "pushed=true" >> "$GITHUB_OUTPUT"
 
-      - name: Fail if license headers invalid
-        if: steps.license_check.outcome == 'failure' && steps.license_autocommit.outputs.pushed != 'true'
+      - name: Fail if license headers need committing
+        if: steps.license_dirty.outputs.dirty == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)
         run: |
-          echo "License header check failed. Run ./scripts/add-licenses-include-h.sh and commit the changes."
+          echo "License headers were updated by CI but cannot be pushed (likely a fork PR or non-PR event)."
+          echo "Run ./scripts/add-licenses-include-h.sh locally and commit the changes."
           exit 1
 
+      - name: Sync workspace to pushed commit
+        if: steps.license_autocommit.outputs.pushed == 'true'
+        run: |
+          git fetch origin "${{ github.head_ref }}"
+          git checkout "${{ github.head_ref }}"
+          git reset --hard "origin/${{ github.head_ref }}"
+
       - name: Log in to the Container registry
-        if: steps.license_autocommit.outputs.pushed != 'true'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -83,11 +87,9 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Docker Buildx
-        if: steps.license_autocommit.outputs.pushed != 'true'
         uses: docker/setup-buildx-action@v3
 
       - name: Build dev image (cached)
-        if: steps.license_autocommit.outputs.pushed != 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -101,17 +103,15 @@ jobs:
             PVXS_VERSION=1.4.1
 
       - name: Set up Docker Compose
-        if: steps.license_autocommit.outputs.pushed != 'true'
         uses: docker/setup-compose-action@v1
 
       - name: Configure, build, test inside dev image
-        if: steps.license_autocommit.outputs.pushed != 'true'
         id: build
         run: |
           docker compose -f docker-compose.yml -f docker-compose-test.yml --profile prebuilt up --abort-on-container-exit --exit-code-from ci-prebuilt ci-prebuilt
 
       - name: Publish test report
-        if: always() && steps.license_autocommit.outputs.pushed != 'true'
+        if: always()
         uses: dorny/test-reporter@v2
         with:
           name: ctest
@@ -119,7 +119,7 @@ jobs:
           reporter: java-junit
 
       - name: Upload test artifacts
-        if: always() && steps.license_autocommit.outputs.pushed != 'true'
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: test-results
