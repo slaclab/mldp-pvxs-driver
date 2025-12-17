@@ -1,4 +1,5 @@
-FROM ubuntu:noble
+ARG BASE_OS_IMAGE=ubuntu:noble
+FROM ${BASE_OS_IMAGE}
 
 # Allow specifying the default compiler: gcc or llvm
 ARG COMPILER=llvm

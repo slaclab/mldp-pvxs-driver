@@ -8,20 +8,49 @@
 #     -t mldp-pvxs-driver-artifacts:latest .
 
 ARG BASE_IMAGE=mldp-pvxs-driver-ci:latest
-FROM ${BASE_IMAGE}
-
 ARG BUILD_TYPE=Debug
+ARG RUNTIME_IMAGE=ubuntu:noble
+
+FROM ${BASE_IMAGE} AS builder
 
 WORKDIR /workspace
 
-# Build the project (produces build/bin/mldp_pvxs_driver)
 COPY . /workspace
 RUN arch=$(cat /etc/epics_host_arch 2>/dev/null || true) && \
     if [ -z "$arch" ]; then arch=$(/opt/epics/startup/EpicsHostArch); fi && \
+    echo "$arch" > /tmp/epics_host_arch && \
     cmake -S . -B build -G Ninja \
       -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
       -DMLDP_PVXS_DRIVER_MAIN=ON \
       -DMLDP_PVXS_DRIVER_TESTS=OFF \
       -DEPICS_BASE=/opt/local \
-      -DEPICS_HOST_ARCH=${arch}
-RUN cmake --build build -j "$(nproc)"
+      -DEPICS_HOST_ARCH=${arch} && \
+    cmake --build build -j "$(nproc)"
+
+RUN install -Dm755 /workspace/build/bin/mldp_pvxs_driver /tmp/mldp/usr/bin/mldp_pvxs_driver
+
+FROM ${RUNTIME_IMAGE} AS runtime
+
+WORKDIR /workspace
+
+ENV EPICS_BASE=/opt/local
+ENV PVXS_BASE=/opt/local
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      ca-certificates \
+      libcurl4 \
+      libgcc-s1 \
+      libstdc++6 \
+      libreadline8 \
+      libtinfo6 && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p /workspace/build/bin
+
+COPY --from=builder /tmp/mldp/usr/bin/mldp_pvxs_driver /usr/local/bin/mldp_pvxs_driver
+COPY --from=builder /workspace/build/bin/mldp_pvxs_driver /workspace/build/bin/mldp_pvxs_driver
+COPY --from=builder /opt/local /opt/local
+COPY --from=builder /tmp/epics_host_arch /etc/epics_host_arch
+
+CMD ["/usr/local/bin/mldp_pvxs_driver"]

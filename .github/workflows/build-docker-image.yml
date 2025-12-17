@@ -35,12 +35,22 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       manual_tag: ${{ steps.manual_tag.outputs.value }}
+      variant: ${{ steps.matrix_info.outputs.variant }}
+      epics_version: ${{ steps.matrix_info.outputs.epics_version }}
+      pvxs_version: ${{ steps.matrix_info.outputs.pvxs_version }}
+      base_os_image: ${{ steps.matrix_info.outputs.base_os_image }}
+    env:
+      EPICS_VERSION: ${{ matrix.epics_version }}
+      PVXS_VERSION: ${{ matrix.pvxs_version }}
+      BASE_OS_IMAGE: ${{ matrix.base_os_image }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - dockerfile: .devcontainer/Dockerfile
-            variant: ubuntu
+            base_os_image: ubuntu:noble
+            epics_version: R7.0.8.1
+            pvxs_version: 1.4.1
 
     steps:
       - name: Check out repository code
@@ -89,11 +99,26 @@ jobs:
 
           echo "value=${safe_ref}-${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
 
+      - name: Capture matrix settings
+        id: matrix_info
+        shell: bash
+        run: |
+          set -euo pipefail
+          raw_variant="${{ matrix.base_os_image }}-${{ matrix.epics_version }}-${{ matrix.pvxs_version }}"
+          safe_variant=$(printf '%s' "$raw_variant" | tr '/:' '--' | tr -cd 'A-Za-z0-9_.-')
+          if [[ -z "$safe_variant" ]]; then
+            safe_variant="variant"
+          fi
+          echo "variant=$safe_variant" >> "$GITHUB_OUTPUT"
+          echo "epics_version=${{ matrix.epics_version }}" >> "$GITHUB_OUTPUT"
+          echo "pvxs_version=${{ matrix.pvxs_version }}" >> "$GITHUB_OUTPUT"
+          echo "base_os_image=${{ matrix.base_os_image }}" >> "$GITHUB_OUTPUT"
+
       - name: Docker meta
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.variant }}
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ steps.matrix_info.outputs.variant }}
           tags: |
             type=semver,pattern={{version}},enable=${{ startsWith(github.ref, 'refs/tags/') }}
             type=raw,value=${{ steps.manual_tag.outputs.value }},enable=${{ github.event_name == 'workflow_dispatch' }}
@@ -112,8 +137,12 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=registry,ref=ghcr.io/slaclab/mldp-pvxs-driver:buildcache
-          cache-to: type=registry,ref=ghcr.io/slaclab/mldp-pvxs-driver:buildcache,mode=max
+          cache-from: type=registry,ref=ghcr.io/slaclab/mldp-pvxs-driver:${{ steps.matrix_info.outputs.variant }}-buildcache
+          cache-to: type=registry,ref=ghcr.io/slaclab/mldp-pvxs-driver:${{ steps.matrix_info.outputs.variant }}-buildcache,mode=max
+          build-args: |
+            BASE_OS_IMAGE=${{ env.BASE_OS_IMAGE }}
+            EPICS_VERSION=${{ matrix.epics_version }}
+            PVXS_VERSION=${{ matrix.pvxs_version }}
 
       - name: Build Docker image locally
         if: github.event_name == 'workflow_dispatch' && !inputs.push_image
@@ -125,7 +154,11 @@ jobs:
           load: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=registry,ref=ghcr.io/slaclab/mldp-pvxs-driver:buildcache
+          cache-from: type=registry,ref=ghcr.io/slaclab/mldp-pvxs-driver:${{ steps.matrix_info.outputs.variant }}-buildcache
+          build-args: |
+            BASE_OS_IMAGE=${{ env.BASE_OS_IMAGE }}
+            EPICS_VERSION=${{ matrix.epics_version }}
+            PVXS_VERSION=${{ matrix.pvxs_version }}
 
   create-github-release:
     if: (github.event_name == 'workflow_dispatch' && inputs.push_image) || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))
@@ -136,8 +169,10 @@ jobs:
       contents: write
       packages: read
     env:
-      EPICS_VERSION: R7.0.8.1
-      PVXS_VERSION: 1.4.1
+      EPICS_VERSION: ${{ needs.build-docker-image.outputs.epics_version }}
+      PVXS_VERSION: ${{ needs.build-docker-image.outputs.pvxs_version }}
+      RELEASE_VARIANT: ${{ needs.build-docker-image.outputs.variant }}
+      BASE_OS_IMAGE: ${{ needs.build-docker-image.outputs.base_os_image }}
     steps:
 
       - name: Check out repository code
@@ -162,6 +197,14 @@ jobs:
           fi
           echo "version=${version}" >> "$GITHUB_OUTPUT"
 
+      - name: Compute local base image alias
+        id: base_alias
+        shell: bash
+        run: |
+          set -euo pipefail
+          alias="mldp-pvxs-driver-artifact-base:${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          echo "tag=$alias" >> "$GITHUB_OUTPUT"
+
       - name: Compute base image
         id: base
         shell: bash
@@ -172,30 +215,55 @@ jobs:
           if [[ -z "$safe" ]]; then
             safe="ref"
           fi
-          echo "image=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/ubuntu:${safe}" >> "$GITHUB_OUTPUT"
+          echo "image=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ env.RELEASE_VARIANT }}:${safe}" >> "$GITHUB_OUTPUT"
+
+      - name: Compute artifact image
+        id: artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          raw="${{ steps.version.outputs.version }}"
+          safe=$(printf '%s' "$raw" | tr '/:' '--' | tr -cd 'A-Za-z0-9_.-')
+          if [[ -z "$safe" ]]; then
+            safe="ref"
+          fi
+          echo "image=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/artifacts:${safe}" >> "$GITHUB_OUTPUT"
 
       - name: Build base image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: .devcontainer/Dockerfile
-          tags: ${{ steps.base.outputs.image }}
+          tags: |
+            ${{ steps.base.outputs.image }}
+            ${{ steps.base_alias.outputs.tag }}
           load: true
-          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ env.RELEASE_VARIANT }}:buildcache
           build-args: |
+            BASE_OS_IMAGE=${{ env.BASE_OS_IMAGE }}
             COMPILER=llvm
             EPICS_VERSION=${{ env.EPICS_VERSION }}
             PVXS_VERSION=${{ env.PVXS_VERSION }}
 
-      - name: Build driver binary (Release) in artifact image
+      - name: Build and tag driver artifact image
         shell: bash
         run: |
           set -euo pipefail
-          BASE_IMAGE="${{ steps.base.outputs.image }}"
+          BASE_IMAGE="${{ steps.base_alias.outputs.tag }}"
+          ARTIFACT_IMAGE="${{ steps.artifact.outputs.image }}"
           docker build -f .devcontainer/Dockerfile.artifacts \
             --build-arg BASE_IMAGE="$BASE_IMAGE" \
             --build-arg BUILD_TYPE=Release \
-            -t mldp-pvxs-driver-artifacts:latest .
+            --build-arg RUNTIME_IMAGE="${{ env.BASE_OS_IMAGE }}" \
+            -t mldp-pvxs-driver-artifacts:latest \
+            -t "$ARTIFACT_IMAGE" \
+            .
+
+      - name: Push driver artifact image
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker push "${{ steps.artifact.outputs.image }}"
 
       - name: Extract driver binary
         shell: bash
