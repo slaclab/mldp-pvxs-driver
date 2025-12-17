@@ -352,9 +352,9 @@ jobs:
               cat > "$appdir/AppRun" <<'EOF'
               #!/bin/sh
               set -eu
-              HERE="$(dirname "$(readlink -f "$0")")"
-              export LD_LIBRARY_PATH="$HERE/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-              exec "$HERE/usr/bin/mldp_pvxs_driver" "$@"
+              HERE_DIR="$(dirname "$(readlink -f "$0")")"
+              export LD_LIBRARY_PATH="$HERE_DIR/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+              exec "$HERE_DIR/usr/bin/mldp_pvxs_driver" "$@"
               EOF
               chmod +x "$appdir/AppRun"
 
