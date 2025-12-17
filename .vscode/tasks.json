@@ -1,0 +1,12 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "nwa: add license headers (include/**/*.h)",
+      "type": "shell",
+      "command": "${workspaceFolder}/scripts/add-licenses-include-h.sh",
+      "problemMatcher": [],
+      "group": "build"
+    }
+  ]
+}

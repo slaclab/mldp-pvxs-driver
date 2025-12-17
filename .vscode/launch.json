@@ -9,6 +9,12 @@
             "args": [],
             // "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
+            "disableASLR": false,
+            "console": "integratedTerminal",
+            "initCommands": [
+                "settings set target.disable-aslr false"
+            ]
+            
             // "environment": [],
             // "externalConsole": false,
             // "MIMode": "lldb",
@@ -22,55 +28,58 @@
         },
         {
             "name": "(lldb) Launch Tests - Specific Test",
-            "type": "cppdbg",
+            "type": "lldb-dap",
             "request": "launch",
             "program": "${workspaceFolder}/build/bin/mldp_pvxs_driver_test",
             "args": [
                 "--gtest_filter=${input:testFilter}"
             ],
-            "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
-            "environment": [],
-            "externalConsole": false,
-            "MIMode": "lldb",
-            "setupCommands": [
-                {
-                    "description": "Enable pretty-printing for lldb",
-                    "text": "-enable-pretty-printing",
-                    "ignoreFailures": true
-                }
-            ]
+            "disableASLR": false,
+            "initCommands": [
+                "settings set target.disable-aslr false"
+            ],
+            "console": "integratedTerminal"
         },
         {
             "name": "(gdb) Launch Tests",
-            "type": "cppdbg",
+            "type": "lldb-dap",
             "request": "launch",
             "program": "${workspaceFolder}/build/bin/mldp_pvxs_driver_test",
             "args": [],
-            "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
-            "environment": [],
-            "externalConsole": false,
-            "MIMode": "gdb",
-            "setupCommands": [
-                {
-                    "description": "Enable pretty-printing for gdb",
-                    "text": "-enable-pretty-printing",
-                    "ignoreFailures": true
-                }
+            "disableASLR": false,
+            "console": "integratedTerminal",
+            "initCommands": [
+                "settings set target.disable-aslr false"
             ]
         },
         {
             "name": "(lldb) Launch Main",
-            "type": "cppdbg",
+            "type": "lldb-dap",
             "request": "launch",
             "program": "${workspaceFolder}/build/bin/mldp_pvxs_driver",
-            "args": [],
-            "stopAtEntry": false,
+            "args": [
+                "--config",
+                "${input:configPath}",
+                "--log-level",
+                "${input:logLevel}"
+            ],
+            // "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
-            "environment": [],
-            "externalConsole": false,
-            "MIMode": "lldb"
+            "disableASLR": false,
+            "console": "integratedTerminal",
+            "initCommands": [
+                "settings set target.disable-aslr false"
+            ]
+            // "environment": [],
+            // "externalConsole": false,
+            // "setupCommands": [
+            //     {
+            //         "description": "Keep ASLR enabled (workaround for restricted personality())",
+            //         "text": "settings set target.disable-aslr false"
+            //     }
+            // ]
         }
     ],
     "inputs": [
@@ -79,6 +88,18 @@
             "type": "promptString",
             "description": "Enter GTest filter (e.g., pvxs_mldp_driver.counter)",
             "default": "*"
+        },
+        {
+            "id": "configPath",
+            "type": "promptString",
+            "description": "Config file path for --config",
+            "default": "${workspaceFolder}/config.yaml"
+        },
+        {
+            "id": "logLevel",
+            "type": "promptString",
+            "description": "Log level for --log-level (trace, debug, info, warn, error, critical, off)",
+            "default": "info"
         }
     ]
 }

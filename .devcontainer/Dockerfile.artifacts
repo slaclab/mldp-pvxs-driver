@@ -1,0 +1,23 @@
+# Builds the driver inside a container.
+# Intended to be used with a prebuilt dev image as the base (e.g. the image built in CI).
+#
+# Example:
+#   docker build -f .devcontainer/Dockerfile.artifacts \
+#     --build-arg BASE_IMAGE=mldp-pvxs-driver-ci:latest \
+#     --build-arg BUILD_TYPE=Debug \
+#     -t mldp-pvxs-driver-artifacts:latest .
+
+ARG BASE_IMAGE=mldp-pvxs-driver-ci:latest
+FROM ${BASE_IMAGE}
+
+ARG BUILD_TYPE=Debug
+
+WORKDIR /workspace
+
+# Build the project (produces build/bin/mldp_pvxs_driver)
+COPY . /workspace
+RUN cmake -S . -B build -G Ninja \
+      -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
+      -DMLDP_PVXS_DRIVER_MAIN=ON \
+      -DMLDP_PVXS_DRIVER_TESTS=OFF
+RUN cmake --build build -j "$(nproc)"

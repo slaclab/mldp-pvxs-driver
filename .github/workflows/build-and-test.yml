@@ -1,5 +1,11 @@
 name: BuildAndTest
 
+permissions:
+  contents: write
+  checks: write
+  pull-requests: write
+  packages: write
+
 on:
   push:
     branches:
@@ -20,41 +26,35 @@ jobs:
   build_test_ubuntu:
     name: Build and test
     runs-on: ubuntu-latest
+    if: github.actor != 'github-actions[bot]'
     env:
       BUILD_TYPE: Debug
     steps:
       - name: Checkout source code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      # - name: Install GitVersion
-      #   uses: gittools/actions/gitversion/setup@v4.2.0
-      #   with:
-      #     versionSpec: '6.4.x'
-      #     preferLatestVersion: true
-      # - name: Determine Version
-      #   id: gitversion
-      #   uses: gittools/actions/gitversion/execute@v4.2.0
-      #   with:
-      #     useConfigFile: true
-      # - name: Update version header
-      #   run: |
-      #     cat > include/version.h <<EOF
-      #     #pragma once
+          ref: ${{ github.head_ref || github.ref }}
+          persist-credentials: true
 
-      #     #define MLDP_PVXS_DRIVER_VERSION_MAJOR ${{ steps.gitversion.outputs.Major }}
-      #     #define MLDP_PVXS_DRIVER_VERSION_MINOR ${{ steps.gitversion.outputs.Minor }}
-      #     #define MLDP_PVXS_DRIVER_VERSION_PATCH ${{ steps.gitversion.outputs.Patch }}
-      #     #define MLDP_PVXS_DRIVER_VERSION "${{ steps.gitversion.outputs.SemVer }}"
-      #     EOF
+      - name: License Header Check
+        id: license_add
+        uses: B1NARY-GR0UP/nwa@main
+        with:
+          version: latest
+          cmd: check
+          path: .nwa-config.yaml
+
       - name: Log in to the Container registry
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+
       - name: Build dev image (cached)
         uses: docker/build-push-action@v6
         with:
@@ -67,9 +67,28 @@ jobs:
           build-args: |
             COMPILER=llvm
             PVXS_VERSION=1.4.1
+
       - name: Set up Docker Compose
         uses: docker/setup-compose-action@v1
+
       - name: Configure, build, test inside dev image
         id: build
         run: |
           docker compose -f docker-compose.yml -f docker-compose-test.yml --profile prebuilt up --abort-on-container-exit --exit-code-from ci-prebuilt ci-prebuilt
+
+      - name: Publish test report
+        if: always()
+        uses: dorny/test-reporter@v2
+        with:
+          name: ctest
+          path: build/test-results/junit.xml
+          reporter: java-junit
+
+      - name: Upload test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            build/test-results/
+            build/Testing/

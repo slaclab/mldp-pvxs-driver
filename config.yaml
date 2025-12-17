@@ -1,0 +1,22 @@
+controller_thread_pool: 2
+
+mldp_pool:
+  provider_name: pvxs_provider
+  provider_description: "PVXS aggregate provider"   # optional
+  url: dp-ingestion:50051
+  min_conn: 1
+  max_conn: 4
+  # credentials: # optional
+  #   pem_cert_chain: /etc/certs/client.crt
+  #   pem_private_key: /etc/certs/client.key
+  #   pem_root_certs: /etc/certs/ca.crt
+
+reader:
+  - epics:
+      - name: epics_reader_a
+        pvs:
+          - name: pv1
+          - name: pv2
+
+metrics:                                 # optional; omit to disable Prometheus endpoint
+  endpoint: 0.0.0.0:9464

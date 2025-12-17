@@ -34,6 +34,22 @@ tests:
       settings: 
         MLDP_PVXS_DRIVER_TESTS: OFF
 
+coverage:
+  default: off
+  description: "Coverage instrumentation"
+  choices:
+    on:
+      short: Coverage ON
+      long: Build with gcov-style coverage flags (forces tests ON)
+      settings:
+        MLDP_PVXS_DRIVER_COVERAGE: ON
+        MLDP_PVXS_DRIVER_TESTS: ON
+    off:
+      short: Coverage OFF
+      long: Build without coverage flags
+      settings:
+        MLDP_PVXS_DRIVER_COVERAGE: OFF
+
 verboseMakefile:
   default: off
   description: "Verbose Makefile output"

@@ -2,12 +2,17 @@ FROM ubuntu:noble
 
 # Allow specifying the default compiler: gcc or llvm
 ARG COMPILER=llvm
+# EPICS Base release to build
+ARG EPICS_VERSION=R7.0.8.1
 # PVXS version to build
 ARG PVXS_VERSION=1.4.1
 
 # Install common dependencies and compiler-specific packages
 RUN apt update && \
-    apt install -y build-essential cmake git tclsh ninja-build protobuf-compiler protobuf-compiler-grpc libgrpc++-dev libgrpc-dev gdb lcov libssl-dev libsasl2-dev curl libcurl4-openssl-dev valgrind libicu-dev jq file sudo clang clangd lldb lld libc++-dev libc++abi-dev libevent-dev
+    apt install -y build-essential doxygen cmake git tclsh ninja-build protobuf-compiler protobuf-compiler-grpc libgrpc++-dev libgrpc-dev gdb lcov libssl-dev libsasl2-dev curl libcurl4-openssl-dev valgrind libicu-dev jq file sudo clang clangd lldb lld libc++-dev libc++abi-dev libevent-dev ca-certificates golang-go
+
+# Install NWA (License Header Management)
+RUN GOBIN=/usr/local/bin go install github.com/B1NARY-GR0UP/nwa@latest
 
 # Set default compiler based on the COMPILER argument BEFORE building EPICS
 RUN if [ "$COMPILER" = "llvm" ]; then \
@@ -25,7 +30,7 @@ RUN if [ "$COMPILER" = "llvm" ]; then \
 # Verify the compiler selection
 RUN echo "Building with:" && cc --version
 
-RUN git clone --branch R7.0.8.1 --depth 1 --recursive https://github.com/epics-base/epics-base.git /opt/epics
+RUN git clone --branch ${EPICS_VERSION} --depth 1 --recursive https://github.com/epics-base/epics-base.git /opt/epics
 WORKDIR /opt/epics
 # Configure EPICS to use the selected compiler
 RUN if [ "$COMPILER" = "llvm" ]; then \
