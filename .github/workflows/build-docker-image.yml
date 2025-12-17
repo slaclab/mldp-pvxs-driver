@@ -256,11 +256,17 @@ jobs:
           push: true
           tags: |
             ${{ steps.artifact.outputs.image }}
-            mldp-pvxs-driver-artifacts:latest
           build-args: |
             BASE_IMAGE=${{ steps.base_alias.outputs.tag }}
             BUILD_TYPE=Release
             RUNTIME_IMAGE=${{ env.BASE_OS_IMAGE }}
+
+      - name: Pull artifact image for local use
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker pull "${{ steps.artifact.outputs.image }}"
+          docker tag "${{ steps.artifact.outputs.image }}" mldp-pvxs-driver-artifacts:latest
 
       - name: Save driver artifact image
         shell: bash
