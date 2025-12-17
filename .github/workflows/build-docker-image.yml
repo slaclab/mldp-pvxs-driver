@@ -110,6 +110,8 @@ jobs:
           load: ${{ github.event_name == 'workflow_dispatch' && !inputs.push_image }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=registry,ref=ghcr.io/slaclab/mldp-pvxs-driver:buildcache
+          cache-to: type=registry,ref=ghcr.io/slaclab/mldp-pvxs-driver:buildcache,mode=max
 
   create-github-release:
     name: Create GitHub Release
@@ -145,7 +147,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo "image=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/ubuntu:${{ steps.version.outputs.version }}" >> "$GITHUB_OUTPUT"
+          raw="${{ steps.version.outputs.version }}"
+          safe=$(printf '%s' "$raw" | tr '/:' '--' | tr -cd 'A-Za-z0-9_.-')
+          if [[ -z "$safe" ]]; then
+            safe="ref"
+          fi
+          echo "image=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/ubuntu:${safe}" >> "$GITHUB_OUTPUT"
 
       - name: Try pull base image
         id: pull
@@ -169,6 +176,7 @@ jobs:
           tags: ${{ steps.base.outputs.image }}
           load: true
           cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
           build-args: |
             COMPILER=llvm
             EPICS_VERSION=${{ env.EPICS_VERSION }}
