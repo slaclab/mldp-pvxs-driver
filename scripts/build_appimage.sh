@@ -33,7 +33,8 @@ if [[ -f /workspace/logos/SLAC-lab-hires.png ]]; then
   cp /workspace/logos/SLAC-lab-hires.png "$appdir/usr/share/icons/hicolor/256x256/apps/mldp_pvxs_driver.png"
 fi
 
-cat > "$appdir/usr/share/applications/mldp_pvxs_driver.desktop" <<EOF
+desktop_file="$appdir/mldp_pvxs_driver.desktop"
+cat > "$desktop_file" <<'EOF'
 [Desktop Entry]
 Type=Application
 Name=MLDP PVXS Driver
@@ -42,16 +43,7 @@ Icon=mldp_pvxs_driver
 Categories=Science;
 Terminal=true
 EOF
-
-ln -sf "$appdir/usr/share/applications/mldp_pvxs_driver.desktop" "$appdir/mldp_pvxs_driver.desktop"
-[Desktop Entry]
-Type=Application
-Name=MLDP PVXS Driver
-Exec=mldp_pvxs_driver
-Icon=mldp_pvxs_driver
-Categories=Science;
-Terminal=true
-EOF
+install -Dm644 "$desktop_file" "$appdir/usr/share/applications/mldp_pvxs_driver.desktop"
 
 cat > "$appdir/AppRun" <<'EOF'
 #!/bin/sh
