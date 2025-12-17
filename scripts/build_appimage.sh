@@ -43,6 +43,16 @@ Categories=Science;
 Terminal=true
 EOF
 
+ln -sf "$appdir/usr/share/applications/mldp_pvxs_driver.desktop" "$appdir/mldp_pvxs_driver.desktop"
+[Desktop Entry]
+Type=Application
+Name=MLDP PVXS Driver
+Exec=mldp_pvxs_driver
+Icon=mldp_pvxs_driver
+Categories=Science;
+Terminal=true
+EOF
+
 cat > "$appdir/AppRun" <<'EOF'
 #!/bin/sh
 set -eu
