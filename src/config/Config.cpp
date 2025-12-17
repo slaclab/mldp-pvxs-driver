@@ -11,88 +11,53 @@
 #include "rapidyaml-0.10.0.hpp"
 #include <cctype>
 #include <cerrno>
+#include <charconv>
 #include <config/Config.h>
 #include <cstdlib>
-#include <string_view>
-#include <vector>
 #include <fstream>
 #include <sstream>
+#include <string_view>
+#include <strings.h>
+#include <type_traits>
+#include <vector>
 
 using namespace mldp_pvxs_driver::config;
 
 namespace {
 bool equalsIgnoreCase(std::string_view lhs, std::string_view rhs)
 {
-    if (lhs.size() != rhs.size())
-    {
-        return false;
-    }
+    return strcasecmp(lhs.data(), rhs.data()) == 0;
+}
 
-    for (size_t i = 0; i < lhs.size(); ++i)
+template <typename T>
+bool parseToType(std::string_view input, T& value)
+{
+    if constexpr (std::is_same_v<T, bool>)
     {
-        if (std::tolower(static_cast<unsigned char>(lhs[i])) != std::tolower(static_cast<unsigned char>(rhs[i])))
+        if (equalsIgnoreCase(input, "true"))
         {
-            return false;
+            value = true;
+            return true;
         }
-    }
-    return true;
-}
-
-bool tryParseBool(const std::string& input, bool& value)
-{
-    if (equalsIgnoreCase(input, "true"))
-    {
-        value = true;
-        return true;
-    }
-    if (equalsIgnoreCase(input, "false"))
-    {
-        value = false;
-        return true;
-    }
-    return false;
-}
-
-bool tryParseInteger(const std::string& input, long long& value)
-{
-    if (input.empty())
-    {
+        if (equalsIgnoreCase(input, "false"))
+        {
+            value = false;
+            return true;
+        }
         return false;
     }
-
-    char* end = nullptr;
-    errno = 0;
-    const auto parsed = std::strtoll(input.c_str(), &end, 0);
-    if (errno != 0 || end != input.c_str() + input.size())
+    else
     {
-        return false;
+        // Use from_chars for numeric types
+        const char* first = input.data();
+        const char* last = input.data() + input.size();
+        auto res = std::from_chars(first, last, value);
+        return res.ec == std::errc() && res.ptr == last;
     }
-
-    value = parsed;
-    return true;
-}
-
-bool tryParseDouble(const std::string& input, double& value)
-{
-    if (input.empty())
-    {
-        return false;
-    }
-
-    char* end = nullptr;
-    errno = 0;
-    const auto parsed = std::strtod(input.c_str(), &end);
-    if (errno != 0 || end != input.c_str() + input.size())
-    {
-        return false;
-    }
-
-    value = parsed;
-    return true;
 }
 } // namespace
 
-Config Config::configFromFile(const std::string &filename)
+Config Config::configFromFile(const std::string& filename)
 {
     std::ostringstream contents;
     {
@@ -350,21 +315,21 @@ const Config& Config::operator>>(std::map<std::string, std::any>& out) const
         child >> scalar;
 
         bool boolValue = false;
-        if (tryParseBool(scalar, boolValue))
+        if (parseToType(scalar, boolValue))
         {
             out.emplace(std::move(key), boolValue);
             continue;
         }
 
         long long integerValue = 0;
-        if (tryParseInteger(scalar, integerValue))
+        if (parseToType(scalar, integerValue))
         {
             out.emplace(std::move(key), integerValue);
             continue;
         }
 
         double doubleValue = 0.0;
-        if (tryParseDouble(scalar, doubleValue))
+        if (parseToType(scalar, doubleValue))
         {
             out.emplace(std::move(key), doubleValue);
             continue;

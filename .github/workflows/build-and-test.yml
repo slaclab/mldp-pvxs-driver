@@ -37,47 +37,13 @@ jobs:
           ref: ${{ github.head_ref || github.ref }}
           persist-credentials: true
 
-      - name: License Header Add
+      - name: License Header Check
         id: license_add
         uses: B1NARY-GR0UP/nwa@main
         with:
           version: latest
-          cmd: add
+          cmd: check
           path: .nwa-config.yaml
-
-      - name: Detect license header changes
-        id: license_dirty
-        run: |
-          if git diff --quiet; then
-            echo "dirty=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "dirty=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Commit license header fixes
-        id: license_autocommit
-        if: steps.license_dirty.outputs.dirty == 'true' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "chore(licenses): auto-apply headers"
-          git push origin "HEAD:${{ github.head_ref }}"
-          echo "pushed=true" >> "$GITHUB_OUTPUT"
-
-      - name: Fail if license headers need committing
-        if: steps.license_dirty.outputs.dirty == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)
-        run: |
-          echo "License headers were updated by CI but cannot be pushed (likely a fork PR or non-PR event)."
-          echo "Run ./scripts/add-licenses-include-h.sh locally and commit the changes."
-          exit 1
-
-      - name: Sync workspace to pushed commit
-        if: steps.license_autocommit.outputs.pushed == 'true'
-        run: |
-          git fetch origin "${{ github.head_ref }}"
-          git checkout "${{ github.head_ref }}"
-          git reset --hard "origin/${{ github.head_ref }}"
 
       - name: Log in to the Container registry
         uses: docker/login-action@v3
