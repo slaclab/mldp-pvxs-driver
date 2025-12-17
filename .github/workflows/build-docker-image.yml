@@ -29,6 +29,7 @@ permissions:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  REGISTRY_PASSWORD: ${{ secrets.GHCR_TOKEN != '' && secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }}
 
 jobs:
   build-docker-image:
@@ -77,7 +78,7 @@ jobs:
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          password: ${{ env.REGISTRY_PASSWORD }}
 
       - name: Compute manual image tag
         id: manual_tag
@@ -185,7 +186,7 @@ jobs:
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          password: ${{ env.REGISTRY_PASSWORD }}
 
       - name: Determine release version
         id: version
