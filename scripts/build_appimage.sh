@@ -17,6 +17,43 @@ mkdir -p \
   "$appdir/usr/share/applications" \
   "$appdir/usr/share/icons/hicolor/256x256/apps"
 
+copy_lib() {
+  local src="$1"
+  local dst_dir="$2"
+
+  if [[ -z "$src" || ! -e "$src" ]]; then
+    return 0
+  fi
+
+  # If ldd yields a symlink, copy both the symlink and its resolved target.
+  if [[ -L "$src" ]]; then
+    local resolved
+    resolved=$(readlink -f "$src" 2>/dev/null || true)
+    cp -a "$src" "$dst_dir/" || true
+    if [[ -n "$resolved" && -f "$resolved" && "$resolved" != "$src" ]]; then
+      src="$resolved"
+    fi
+  fi
+
+  # Preserve symlinks when present (do not flatten with -L), and copy metadata.
+  cp -a "$src" "$dst_dir/" || true
+
+  # Ensure the SONAME path exists in the AppDir, even when we copied a fully
+  # versioned filename (e.g., libgrpc++.so.1.51.1) and the loader is looking for
+  # the SONAME (e.g., libgrpc++.so.1.51).
+  if [[ -f "$src" ]]; then
+    local soname
+    soname=$(readelf -d "$src" 2>/dev/null | awk '$2=="(SONAME)" {gsub(/\[|\]/, "", $5); print $5; exit}')
+    if [[ -n "$soname" ]]; then
+      local base_src
+      base_src=$(basename "$src")
+      if [[ "$soname" != "$base_src" && ! -e "$dst_dir/$soname" ]]; then
+        ln -s "$base_src" "$dst_dir/$soname" || true
+      fi
+    fi
+  fi
+}
+
 cp /workspace/build/bin/mldp_pvxs_driver "$appdir/usr/bin/mldp_pvxs_driver"
 
 if [[ -d "/opt/local/lib/${arch}" ]]; then
@@ -25,7 +62,7 @@ fi
 
 while IFS= read -r lib; do
   if [[ -n "$lib" && -f "$lib" ]]; then
-    cp -L "$lib" "$appdir/usr/lib/" || true
+    copy_lib "$lib" "$appdir/usr/lib"
   fi
 done < <(ldd /workspace/build/bin/mldp_pvxs_driver | awk '{for (i=1;i<=NF;i++) if ($i ~ /^\//) print $i}')
 
@@ -71,7 +108,13 @@ appimage_dir=$(mktemp -d /tmp/appimagetool-XXXXXX)
 trap 'rm -rf "$appimage_dir"' EXIT
 
 curl -L -o "$appimage_dir/appimagetool.AppImage" \
-  https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+  "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-$(
+    case "$(uname -m)" in
+      x86_64|amd64) echo x86_64 ;;
+      aarch64|arm64) echo aarch64 ;;
+      *) echo unsupported ;;
+    esac
+  ).AppImage"
 chmod +x "$appimage_dir/appimagetool.AppImage"
 (
   cd "$appimage_dir"
