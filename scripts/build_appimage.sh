@@ -52,17 +52,22 @@ exec "$HERE_DIR/usr/bin/mldp_pvxs_driver" "$@"
 EOF
 chmod +x "$appdir/AppRun"
 
-curl -L -o /tmp/appimagetool.AppImage \
-  https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
-chmod +x /tmp/appimagetool.AppImage
-/tmp/appimagetool.AppImage --appimage-extract >/dev/null
-/tmp/squashfs-root/AppRun /tmp/appimagetool.AppImage /tmp/appimagetool
+appimage_dir=$(mktemp -d /tmp/appimagetool-XXXXXX)
+trap 'rm -rf "$appimage_dir"' EXIT
 
-if [[ ! -d /tmp/appimagetool || ! -x /tmp/appimagetool/AppRun ]]; then
+curl -L -o "$appimage_dir/appimagetool.AppImage" \
+  https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+chmod +x "$appimage_dir/appimagetool.AppImage"
+(
+  cd "$appimage_dir"
+  ./appimagetool.AppImage --appimage-extract >/dev/null
+)
+
+if [[ ! -x "$appimage_dir/squashfs-root/AppRun" ]]; then
   echo "AppImage appimagetool extraction failed" >&2
   exit 1
 fi
 
 out="/out/mldp_pvxs_driver-ubuntu-noble-epics-${EPICS_VERSION}-pvxs-${PVXS_VERSION}-x86_64.AppImage"
-/tmp/appimagetool/AppRun "$appdir" "$out"
+"$appimage_dir/squashfs-root/AppRun" "$appdir" "$out"
 echo "Created $out"
