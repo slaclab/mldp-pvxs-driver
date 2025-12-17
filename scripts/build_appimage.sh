@@ -33,10 +33,18 @@ icon_src=""
 if [[ -f /workspace/logos/SLAC-lab-hires.png ]]; then
   icon_src=/workspace/logos/SLAC-lab-hires.png
 fi
+icon_path="$appdir/mldp_pvxs_driver.png"
 if [[ -n "$icon_src" ]]; then
-  cp "$icon_src" "$appdir/usr/share/icons/hicolor/256x256/apps/mldp_pvxs_driver.png"
-  cp "$icon_src" "$appdir/mldp_pvxs_driver.png"
+  cp "$icon_src" "$icon_path"
+else
+  if command -v convert >/dev/null 2>&1; then
+    convert -size 256x256 xc:'#d32f2f' -font DejaVu-Sans -pointsize 120 \
+      -fill white -gravity center -annotate 0 'PV' "$icon_path"
+  else
+    cp /usr/share/icons/hicolor/256x256/apps/debian-logo.png "$icon_path" || true
+  fi
 fi
+cp "$icon_path" "$appdir/usr/share/icons/hicolor/256x256/apps/mldp_pvxs_driver.png"
 
 desktop_file="$appdir/mldp_pvxs_driver.desktop"
 cat > "$desktop_file" <<'EOF'
@@ -78,12 +86,3 @@ fi
 out="/out/mldp_pvxs_driver-ubuntu-noble-epics-${EPICS_VERSION}-pvxs-${PVXS_VERSION}-x86_64.AppImage"
 "$appimage_dir/squashfs-root/AppRun" "$appdir" "$out"
 echo "Created $out"
-$icon="$appdir/mldp_pvxs_driver.png"
-if [[ ! -f "$icon" ]]; then
-  if command -v convert >/dev/null 2>&1; then
-    convert -size 256x256 xc:'#d32f2f' -font DejaVu-Sans -pointsize 120 \
-      -fill white -gravity center -annotate 0 'PV' "$icon"
-  else
-    cp /usr/share/icons/hicolor/256x256/apps/debian-logo.png "$icon"
-  fi
-fi
