@@ -40,6 +40,7 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends \
       ca-certificates \
       curl \
+      file \
       libcurl4 \
       libgcc-s1 \
       libstdc++6 \
