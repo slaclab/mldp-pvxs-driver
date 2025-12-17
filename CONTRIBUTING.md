@@ -66,6 +66,21 @@ ctest --test-dir build --output-on-failure
 - Commits: keep changes focused and atomic. Separate config changes from logic changes when feasible.
 - Code review: include rationale for design choices, and add unit tests for new logic where possible.
 
+**Adding License Headers**
+
+- **Purpose:** Add or update license headers in project headers under include/ and other files that require the project's license header.
+- **Script:** Run the provided script to apply license headers across the repository:
+
+```bash
+./scripts/add-licenses-include-h.sh
+```
+
+- **VS Code Task:** Alternatively run the workspace task `nwa: add license headers (include/**/*.h)` via the editor `Run Task...` command, which executes the same script.
+- **When to run:** Run the script when you add new header/source files or before opening a PR to ensure all files have the correct license header.
+- **Behavior:** The script is idempotent and safe to run multiple times. It invokes the `nwa` tool with the repository's `.nwa-config.yaml` to insert headers consistently.
+- **Tool used:** The script invokes the [`nwa`](https://github.com/B1NARY-GR0UP/nwa) tool. The repository script calls `/usr/local/bin/nwa config -c add .nwa-config.yaml` (see `scripts/add-licenses-include-h.sh`), so ensure `nwa` is installed or run the script inside the devcontainer where `nwa` is available.
+- **Behavior:** The script is idempotent and safe to run multiple times and uses the `.nwa-config.yaml` configuration to insert headers consistently.
+
 ## Where to look in code
 
 - Factory: `include/reader/ReaderFactory.h`, `src/reader/ReaderFactory.cpp`
