@@ -94,6 +94,46 @@ Tagged releases (`vX.Y.Z`) publish:
 - A standalone executable artifact (currently named `mldp_pvxs_driver-ubuntu-noble-epics-R7.0.8.1`).
 - An AppImage for easier distribution (currently named `mldp_pvxs_driver-ubuntu-noble-epics-R7.0.8.1-pvxs-1.4.1-x86_64.AppImage`).
 
+### Builder image + build cache (for developers)
+
+CI publishes a reusable **builder image** tagged by EPICS + PVXS versions:
+
+```bash
+docker pull ghcr.io/slaclab/mldp-pvxs-driver/build:epics-7.0.8.1-pvxs-1.4.1
+```
+
+You can also use it as a BuildKit cache source in local `docker buildx` builds (if the tag exists, it will be used; if it does not exist yet, the build still succeeds):
+
+```bash
+docker login ghcr.io
+
+docker buildx build \
+  -f .devcontainer/Dockerfile \
+  --build-arg BASE_OS_IMAGE=ubuntu:noble \
+  --build-arg EPICS_VERSION=R7.0.8.1 \
+  --build-arg PVXS_VERSION=1.4.1 \
+  --cache-from type=registry,ref=ghcr.io/slaclab/mldp-pvxs-driver/build:epics-7.0.8.1-pvxs-1.4.1 \
+  -t mldp-pvxs-driver-dev:latest \
+  --load \
+  .
+```
+
+#### EPICS/PVXS locations
+
+In the builder/dev container image:
+- EPICS Base source is cloned into `/opt/epics` and installed into `/opt/local`.
+- PVXS source is cloned into `/opt/pvxs` and installed into `/opt/local`.
+- The EPICS host architecture is recorded in `/etc/epics_host_arch` (e.g. `linux-x86_64`).
+
+In the runtime/release container image:
+- `/opt/local` is copied from the builder stage and contains EPICS Base + PVXS headers and libraries.
+- `EPICS_BASE=/opt/local` and `PVXS_BASE=/opt/local` are set in the runtime image.
+
+#### Where EPICS/PVXS versions are set
+
+- Default build args are defined in [.devcontainer/Dockerfile](.devcontainer/Dockerfile) (`EPICS_VERSION`, `PVXS_VERSION`).
+- CI/release versions are set by the workflow matrix in [.github/workflows/build-and-test.yml](.github/workflows/build-and-test.yml) and [.github/workflows/build-docker-image.yml](.github/workflows/build-docker-image.yml).
+
 ### Standalone executable runtime dependencies
 
 The standalone executable artifact is **dynamically linked** (not a fully static binary). This means it requires

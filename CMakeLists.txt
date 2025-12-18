@@ -9,6 +9,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 option(MLDP_PVXS_DRIVER_MAIN  "Build MLDP PVXS driver executable"  ON)
 option(MLDP_PVXS_DRIVER_TESTS "Build MLDP PVXS driver tests"      OFF)
 option(MLDP_PVXS_DRIVER_COVERAGE "Enable code coverage instrumentation" OFF)
+option(MLDP_PVXS_DRIVER_LINK_EPICS_PVXS_STATIC "Link EPICS and PVXS libraries statically (prefer .a over .so)" ON)
 
 # Default to Release build
 if(NOT CMAKE_BUILD_TYPE)
@@ -96,9 +97,19 @@ if(EPICS_BASE)
             "${EPICS_BASE}/lib/${EPICS_HOST_ARCH}")
 endif()
 
+if(MLDP_PVXS_DRIVER_LINK_EPICS_PVXS_STATIC)
+    set(_mldp_saved_suffixes "${CMAKE_FIND_LIBRARY_SUFFIXES}")
+    set(CMAKE_FIND_LIBRARY_SUFFIXES ".a")
+    unset(EPICS_COM_LIB CACHE)
+endif()
+
 find_library(EPICS_COM_LIB
         NAMES Com libCom
         PATHS ${EPICS_LIB_HINTS})
+
+if(MLDP_PVXS_DRIVER_LINK_EPICS_PVXS_STATIC)
+    set(CMAKE_FIND_LIBRARY_SUFFIXES "${_mldp_saved_suffixes}")
+endif()
 
 if(NOT EPICS_COM_LIB)
     message(FATAL_ERROR "Could not locate libCom. Set EPICS_BASE/EPICS_HOST_ARCH or install EPICS Base in a searchable location.")
@@ -123,7 +134,11 @@ if(APPLE)
     set(EPICS_OS_DIR "os/Darwin")
 endif()
 
-add_library(epics-com SHARED IMPORTED)
+if(MLDP_PVXS_DRIVER_LINK_EPICS_PVXS_STATIC)
+    add_library(epics-com STATIC IMPORTED)
+else()
+    add_library(epics-com SHARED IMPORTED)
+endif()
 set_target_properties(epics-com PROPERTIES IMPORTED_LOCATION "${EPICS_COM_LIB}")
 target_include_directories(epics-com INTERFACE
         "${EPICS_INCLUDE_DIR}"
@@ -147,7 +162,7 @@ if(NOT PVXS_BASE)
 endif()
 
 set(PVXS_FOUND FALSE)
-if(PKG_CONFIG_FOUND)
+if(PKG_CONFIG_FOUND AND NOT MLDP_PVXS_DRIVER_LINK_EPICS_PVXS_STATIC)
     pkg_check_modules(PVXS_PC QUIET pvxs)
     if(PVXS_PC_FOUND)
         add_library(pvxs INTERFACE IMPORTED)
@@ -165,9 +180,19 @@ if(NOT PVXS_FOUND)
                 "${PVXS_BASE}/lib/${EPICS_HOST_ARCH}")
     endif()
 
-    find_library(PVXS_LIB
-            NAMES pvxs libpvxs
-            PATHS ${PVXS_LIB_HINTS})
+    if(MLDP_PVXS_DRIVER_LINK_EPICS_PVXS_STATIC)
+        unset(PVXS_LIB CACHE)
+        set(_mldp_saved_suffixes "${CMAKE_FIND_LIBRARY_SUFFIXES}")
+        set(CMAKE_FIND_LIBRARY_SUFFIXES ".a")
+        find_library(PVXS_LIB
+                NAMES pvxs libpvxs
+                PATHS ${PVXS_LIB_HINTS})
+        set(CMAKE_FIND_LIBRARY_SUFFIXES "${_mldp_saved_suffixes}")
+    else()
+        find_library(PVXS_LIB
+                NAMES pvxs libpvxs
+                PATHS ${PVXS_LIB_HINTS})
+    endif()
 
     if(NOT PVXS_LIB)
         message(FATAL_ERROR "Could not find pvxs library. Set PVXS_BASE or install pvxs in a searchable location.")
@@ -189,9 +214,29 @@ if(NOT PVXS_FOUND)
         message(FATAL_ERROR "Could not find pvxs headers. Set PVXS_BASE or add the include path manually.")
     endif()
 
-    add_library(pvxs SHARED IMPORTED)
+    if(MLDP_PVXS_DRIVER_LINK_EPICS_PVXS_STATIC)
+        add_library(pvxs STATIC IMPORTED)
+    else()
+        add_library(pvxs SHARED IMPORTED)
+    endif()
     set_target_properties(pvxs PROPERTIES IMPORTED_LOCATION "${PVXS_LIB}")
     target_link_libraries(pvxs INTERFACE epics-com)
+
+        if(MLDP_PVXS_DRIVER_LINK_EPICS_PVXS_STATIC)
+            find_library(LIBEVENT_CORE_LIB NAMES event_core)
+            find_library(LIBEVENT_EXTRA_LIB NAMES event_extra)
+            find_library(LIBEVENT_PTHREADS_LIB NAMES event_pthreads)
+
+            if(NOT LIBEVENT_CORE_LIB OR NOT LIBEVENT_EXTRA_LIB OR NOT LIBEVENT_PTHREADS_LIB)
+                message(FATAL_ERROR "Static PVXS linking requested, but required libevent libraries were not found (event_core/event_extra/event_pthreads).")
+            endif()
+
+            target_link_libraries(pvxs INTERFACE
+                    "${LIBEVENT_CORE_LIB}"
+                    "${LIBEVENT_EXTRA_LIB}"
+                    "${LIBEVENT_PTHREADS_LIB}"
+            )
+        endif()
     target_include_directories(pvxs INTERFACE "${PVXS_INCLUDE_DIR}")
 endif()
 

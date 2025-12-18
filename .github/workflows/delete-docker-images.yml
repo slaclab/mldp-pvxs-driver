@@ -1,0 +1,77 @@
+name: Delete Docker Images (Manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      image:
+        description: "Full GHCR image name (no tag needed). Example: ghcr.io/slaclab/mldp-pvxs-driver/ubuntu-noble-r7.0.8.1-1.4.1"
+        required: true
+        default: "ghcr.io/slaclab/mldp-pvxs-driver/ubuntu-noble-r7.0.8.1-1.4.1"
+        type: string
+      tag:
+        description: "Optional tag to delete (e.g. v0.2.1, latest, buildcache). Leave empty to delete ALL versions of the image."
+        required: false
+        default: ""
+        type: string
+      scan:
+        description: "When not deleting (confirm != DELETE), also scan and print matching packages/versions/tags via GHCR API."
+        required: false
+        default: false
+        type: boolean
+      confirm:
+        description: "Type DELETE to confirm deletion"
+        required: true
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  delete-ghcr-images:
+    name: Delete GHCR tags
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Confirm / dry-run
+        id: confirm
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ inputs.confirm }}" == "DELETE" ]]; then
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "proceed=false" >> "$GITHUB_OUTPUT"
+          echo "Dry run (no deletion performed)."
+          if [[ -n "${{ inputs.tag }}" ]]; then
+            echo "Target: ${{ inputs.image }} (tag filter: ${{ inputs.tag }})"
+          else
+            echo "Target: ${{ inputs.image }} (ALL versions)"
+          fi
+
+      - name: Delete matching GHCR package versions
+        if: steps.confirm.outputs.proceed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+          REPO_NAME: ${{ github.event.repository.name }}
+          IMAGE: ${{ inputs.image }}
+          TAG: ${{ inputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          chmod +x scripts/ghcr-delete-image.sh || true
+          ./scripts/ghcr-delete-image.sh \
+            --image "$IMAGE" \
+            --tag "$TAG" \
+            --confirm "${{ inputs.confirm }}" \
+            ${{ inputs.scan && '--scan' || '' }} \
+            --expected-owner "$OWNER" \
+            --expected-repo "$REPO_NAME"
