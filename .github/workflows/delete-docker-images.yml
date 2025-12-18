@@ -13,6 +13,11 @@ on:
         required: false
         default: ""
         type: string
+      scan:
+        description: "When not deleting (confirm != DELETE), also scan and print matching packages/versions/tags via GHCR API."
+        required: false
+        default: false
+        type: boolean
       confirm:
         description: "Type DELETE to confirm deletion"
         required: true
@@ -29,6 +34,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Confirm / dry-run
         id: confirm
         shell: bash
@@ -64,5 +72,6 @@ jobs:
             --image "$IMAGE" \
             --tag "$TAG" \
             --confirm "${{ inputs.confirm }}" \
+            ${{ inputs.scan && '--scan' || '' }} \
             --expected-owner "$OWNER" \
             --expected-repo "$REPO_NAME"
