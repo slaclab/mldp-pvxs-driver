@@ -191,6 +191,9 @@ jobs:
           else
             version="${GITHUB_REF_NAME#v}"
           fi
+          # Normalize: our release tag is always prefixed with a single 'v'.
+          # If the selected ref already includes 'v' (e.g. 'v0.2.0'), drop it here.
+          version="${version#v}"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
 
       - name: Compute local base image alias
@@ -335,6 +338,9 @@ jobs:
           else
             version="${GITHUB_REF_NAME#v}"
           fi
+          # Normalize: our release tag is always prefixed with a single 'v'.
+          # If the selected ref already includes 'v' (e.g. 'v0.2.0'), drop it here.
+          version="${version#v}"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
 
       - name: Create release from tag
