@@ -34,6 +34,7 @@ jobs:
       manual_tag: ${{ steps.manual_tag.outputs.value }}
       manual_ref: ${{ steps.manual_tag.outputs.ref }}
       variant: ${{ steps.matrix_info.outputs.variant }}
+      runtime_variant: ${{ steps.matrix_info.outputs.runtime_variant }}
       epics_version: ${{ steps.matrix_info.outputs.epics_version }}
       pvxs_version: ${{ steps.matrix_info.outputs.pvxs_version }}
       base_os_image: ${{ steps.matrix_info.outputs.base_os_image }}
@@ -109,7 +110,15 @@ jobs:
           if [[ -z "$safe_variant" ]]; then
             safe_variant="variant"
           fi
+
+          raw_runtime_variant="${{ matrix.base_os_image }}-${{ matrix.epics_version }}-${{ matrix.pvxs_version }}"
+          safe_runtime_variant=$(printf '%s' "$raw_runtime_variant" | tr '/:' '--' | tr -cd 'A-Za-z0-9_.-' | tr 'A-Z' 'a-z')
+          if [[ -z "$safe_runtime_variant" ]]; then
+            safe_runtime_variant="runtime"
+          fi
+
           echo "variant=$safe_variant" >> "$GITHUB_OUTPUT"
+          echo "runtime_variant=$safe_runtime_variant" >> "$GITHUB_OUTPUT"
           echo "epics_version=${{ matrix.epics_version }}" >> "$GITHUB_OUTPUT"
           echo "pvxs_version=${{ matrix.pvxs_version }}" >> "$GITHUB_OUTPUT"
           echo "base_os_image=${{ matrix.base_os_image }}" >> "$GITHUB_OUTPUT"
@@ -151,10 +160,7 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ steps.matrix_info.outputs.variant }}
           tags: |
-            type=semver,pattern={{version}},enable=${{ startsWith(github.ref, 'refs/tags/') }}
-            type=raw,value=${{ steps.manual_tag.outputs.value }},enable=${{ github.event_name == 'workflow_dispatch' }}
             type=raw,value=buildcache
-            type=raw,value=latest,enable=${{ steps.need_last.outputs.value == 'true' }}
           labels: |
             org.opencontainers.image.title=MLDP-PVXS Driver
             org.opencontainers.image.description=MLDP-PVXS Driver to ingest EPICS data into MLDP platform
@@ -192,6 +198,7 @@ jobs:
       EPICS_VERSION: ${{ needs.build-docker-image.outputs.epics_version }}
       PVXS_VERSION: ${{ needs.build-docker-image.outputs.pvxs_version }}
       RELEASE_VARIANT: ${{ needs.build-docker-image.outputs.variant }}
+      RUNTIME_VARIANT: ${{ needs.build-docker-image.outputs.runtime_variant }}
       BASE_OS_IMAGE: ${{ needs.build-docker-image.outputs.base_os_image }}
       NEED_LAST: ${{ needs.build-docker-image.outputs.need_last }}
     outputs:
@@ -244,7 +251,7 @@ jobs:
           fi
           echo "image=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ env.RELEASE_VARIANT }}:${safe}" >> "$GITHUB_OUTPUT"
 
-      - name: Compute artifact image
+      - name: Compute release image
         id: artifact
         shell: bash
         run: |
@@ -254,9 +261,9 @@ jobs:
           if [[ -z "$safe" ]]; then
             safe="ref"
           fi
-          echo "image=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ env.RELEASE_VARIANT }}:artifacts-${safe}" >> "$GITHUB_OUTPUT"
+          echo "image=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ env.RUNTIME_VARIANT }}:v${safe}" >> "$GITHUB_OUTPUT"
 
-      - name: Prepare artifact tags
+      - name: Prepare release image tags
         id: artifact_tags
         shell: bash
         run: |
@@ -265,7 +272,7 @@ jobs:
             echo "tags<<EOF"
             echo "${{ steps.artifact.outputs.image }}"
             if [[ "${{ env.NEED_LAST }}" == "true" ]]; then
-              echo "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ env.RELEASE_VARIANT }}:artifacts-latest"
+              echo "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ env.RUNTIME_VARIANT }}:latest"
             fi
             echo "EOF"
           } >> "$GITHUB_OUTPUT"

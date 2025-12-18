@@ -139,3 +139,23 @@ jobs:
           path: |
             build/test-results/
             build/Testing/
+
+      - name: Push builder image (buildcache)
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ steps.matrix_info.outputs.variant }}:buildcache
+          cache-from: |
+            type=registry,ref=${{ steps.build_image_tag.outputs.image }}
+            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ steps.matrix_info.outputs.variant }}:${{ env.BUILDKIT_CACHE_TAG }}
+          cache-to: |
+            type=inline
+            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ steps.matrix_info.outputs.variant }}:${{ env.BUILDKIT_CACHE_TAG }},mode=max
+          build-args: |
+            BASE_OS_IMAGE=${{ env.BASE_OS_IMAGE }}
+            COMPILER=llvm
+            EPICS_VERSION=${{ env.EPICS_VERSION }}
+            PVXS_VERSION=${{ env.PVXS_VERSION }}
