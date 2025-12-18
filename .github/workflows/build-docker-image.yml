@@ -169,10 +169,12 @@ jobs:
             ${{ steps.meta.outputs.tags }}
             ${{ steps.build_image_tag.outputs.image }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ steps.matrix_info.outputs.variant }}:${{ env.BUILDKIT_CACHE_TAG }}
-          cache-from: type=registry,ref=${{ steps.build_image_tag.outputs.image }}
-          cache-to: type=inline
-          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ steps.matrix_info.outputs.variant }}:${{ env.BUILDKIT_CACHE_TAG }},mode=max
+          cache-from: |
+            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ steps.matrix_info.outputs.variant }}:${{ env.BUILDKIT_CACHE_TAG }}
+            type=registry,ref=${{ steps.build_image_tag.outputs.image }}
+          cache-to: |
+            type=inline
+            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ steps.matrix_info.outputs.variant }}:${{ env.BUILDKIT_CACHE_TAG }},mode=max
           build-args: |
             BASE_OS_IMAGE=${{ env.BASE_OS_IMAGE }}
             EPICS_VERSION=${{ matrix.epics_version }}
