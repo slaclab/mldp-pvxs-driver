@@ -394,7 +394,7 @@ jobs:
           fi
 
       - name: Fail if release exists and overwrite not allowed
-        if: steps.check_release.outputs.exists == 'true' && !(inputs.overwrite_release == 'true')
+        if: steps.check_release.outputs.exists == 'true' && !inputs.overwrite_release
         run: |
           echo "Release already exists and 'overwrite_release' is false; failing as requested."
           exit 1
