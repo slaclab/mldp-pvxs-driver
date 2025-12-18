@@ -103,7 +103,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          raw_variant="${{ matrix.base_os_image }}-${{ matrix.epics_version }}-${{ matrix.pvxs_version }}"
+          raw_variant="${{ matrix.base_os_image }}-builder-${{ matrix.epics_version }}-${{ matrix.pvxs_version }}"
           safe_variant=$(printf '%s' "$raw_variant" | tr '/:' '--' | tr -cd 'A-Za-z0-9_.-' | tr 'A-Z' 'a-z')
           if [[ -z "$safe_variant" ]]; then
             safe_variant="variant"
@@ -299,54 +299,6 @@ jobs:
         with:
           name: driver-binary
           path: ./mldp_pvxs_driver-ubuntu-noble-epics-${{ env.EPICS_VERSION }}
-  
-  build-appimage:
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))
-    name: Build AppImage
-    runs-on: ubuntu-latest
-    needs: 
-      - build-release-artifacts
-      - build-docker-image
-    env:
-      EPICS_VERSION: ${{ needs.build-docker-image.outputs.epics_version }}
-      PVXS_VERSION: ${{ needs.build-docker-image.outputs.pvxs_version }}
-    steps:
-      - name: Check out repository code
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ inputs.source_ref || github.ref }}
-
-      - name: Download driver artifact image
-        uses: actions/download-artifact@v6
-        with:
-          name: driver-artifact-image
-          path: artifacts
-
-      - name: Load driver artifact image
-        run: |
-          set -euo pipefail
-          docker load -i artifacts/driver-artifact-image.tar
-
-      - name: Build AppImage (x86_64)
-        if: runner.arch == 'X64'
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p out
-          docker run --rm \
-            -v "$PWD/out:/out" \
-            -v "$PWD/scripts/build_appimage.sh:/tmp/build_appimage.sh:ro" \
-            -e "EPICS_VERSION=${{ env.EPICS_VERSION }}" \
-            -e "PVXS_VERSION=${{ env.PVXS_VERSION }}" \
-            mldp-pvxs-driver-artifacts:latest \
-            bash /tmp/build_appimage.sh
-
-      - name: Upload AppImage artifact
-        if: runner.arch == 'X64'
-        uses: actions/upload-artifact@v4
-        with:
-          name: appimage
-          path: out/mldp_pvxs_driver-ubuntu-noble-epics-${{ env.EPICS_VERSION }}-pvxs-${{ env.PVXS_VERSION }}-x86_64.AppImage
 
   create-github-release:
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))
@@ -354,7 +306,6 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - build-release-artifacts
-      - build-appimage
       - build-docker-image
     permissions:
       contents: write
@@ -373,12 +324,6 @@ jobs:
         with:
           name: driver-binary
           path: release-artifacts
-
-      - name: Download AppImage artifact
-        uses: actions/download-artifact@v6
-        with:
-          name: appimage
-          path: release-artifacts/out
 
       - name: Determine release version
         id: version
@@ -424,4 +369,3 @@ jobs:
           overwrite_files: ${{ inputs.overwrite_release }}
           files: |
             release-artifacts/mldp_pvxs_driver-ubuntu-noble-epics-${{ env.EPICS_VERSION }}
-            release-artifacts/out/mldp_pvxs_driver-ubuntu-noble-epics-${{ env.EPICS_VERSION }}-pvxs-${{ env.PVXS_VERSION }}-x86_64.AppImage

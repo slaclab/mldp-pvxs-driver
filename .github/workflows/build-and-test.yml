@@ -1,5 +1,9 @@
 name: BuildAndTest
 
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
 permissions:
   contents: write
   checks: write
@@ -29,6 +33,17 @@ jobs:
     if: github.actor != 'github-actions[bot]'
     env:
       BUILD_TYPE: Debug
+      EPICS_VERSION: ${{ matrix.epics_version }}
+      PVXS_VERSION: ${{ matrix.pvxs_version }}
+      BASE_OS_IMAGE: ${{ matrix.base_os_image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - dockerfile: .devcontainer/Dockerfile
+            base_os_image: ubuntu:noble
+            epics_version: R7.0.8.1
+            pvxs_version: 1.4.1
     steps:
       - name: Checkout source code
         uses: actions/checkout@v4
@@ -55,18 +70,32 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Capture matrix settings
+        id: matrix_info
+        shell: bash
+        run: |
+          set -euo pipefail
+          raw_variant="${{ matrix.base_os_image }}-builder-${{ matrix.epics_version }}-${{ matrix.pvxs_version }}"
+          safe_variant=$(printf '%s' "$raw_variant" | tr '/:' '--' | tr -cd 'A-Za-z0-9_.-' | tr 'A-Z' 'a-z')
+          if [[ -z "$safe_variant" ]]; then
+            safe_variant="variant"
+          fi
+          echo "variant=$safe_variant" >> "$GITHUB_OUTPUT"
+
       - name: Build dev image (cached)
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: .devcontainer/Dockerfile
+          file: ${{ matrix.dockerfile }}
           tags: mldp-pvxs-driver-ci:latest
-          cache-from: type=registry,ref=ghcr.io/slaclab/mldp-pvxs-driver:buildcache
-          cache-to: type=registry,ref=ghcr.io/slaclab/mldp-pvxs-driver:buildcache,mode=max
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ steps.matrix_info.outputs.variant }}:buildcache
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ steps.matrix_info.outputs.variant }}:buildcache,mode=max
           load: true
           build-args: |
+            BASE_OS_IMAGE=${{ env.BASE_OS_IMAGE }}
             COMPILER=llvm
-            PVXS_VERSION=1.4.1
+            EPICS_VERSION=${{ env.EPICS_VERSION }}
+            PVXS_VERSION=${{ env.PVXS_VERSION }}
 
       - name: Set up Docker Compose
         uses: docker/setup-compose-action@v1
