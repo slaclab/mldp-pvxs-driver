@@ -25,6 +25,7 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
   REGISTRY_PASSWORD: ${{ secrets.GHCR_TOKEN != '' && secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }}
+  BUILDKIT_CACHE_TAG: buildkitcache
 
 jobs:
   build-docker-image:
@@ -132,6 +133,7 @@ jobs:
           tags: |
             type=semver,pattern={{version}},enable=${{ startsWith(github.ref, 'refs/tags/') }}
             type=raw,value=${{ steps.manual_tag.outputs.value }},enable=${{ github.event_name == 'workflow_dispatch' }}
+            type=raw,value=buildcache
             type=raw,value=latest,enable=${{ steps.need_last.outputs.value == 'true' }}
           labels: |
             org.opencontainers.image.title=MLDP-PVXS Driver
@@ -145,8 +147,8 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ steps.matrix_info.outputs.variant }}:buildcache
-          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ steps.matrix_info.outputs.variant }}:buildcache,mode=max
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ steps.matrix_info.outputs.variant }}:${{ env.BUILDKIT_CACHE_TAG }}
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ steps.matrix_info.outputs.variant }}:${{ env.BUILDKIT_CACHE_TAG }},mode=max
           build-args: |
             BASE_OS_IMAGE=${{ env.BASE_OS_IMAGE }}
             EPICS_VERSION=${{ matrix.epics_version }}
@@ -251,7 +253,7 @@ jobs:
             ${{ steps.base.outputs.image }}
             ${{ steps.base_alias.outputs.tag }}
           load: true
-          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ env.RELEASE_VARIANT }}:buildcache
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ env.RELEASE_VARIANT }}:${{ env.BUILDKIT_CACHE_TAG }}
           build-args: |
             BASE_OS_IMAGE=${{ env.BASE_OS_IMAGE }}
             COMPILER=llvm

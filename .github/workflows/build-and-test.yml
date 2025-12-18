@@ -3,6 +3,7 @@ name: BuildAndTest
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  BUILDKIT_CACHE_TAG: buildkitcache
 
 permissions:
   contents: write
@@ -88,8 +89,8 @@ jobs:
           context: .
           file: ${{ matrix.dockerfile }}
           tags: mldp-pvxs-driver-ci:latest
-          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ steps.matrix_info.outputs.variant }}:buildcache
-          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ steps.matrix_info.outputs.variant }}:buildcache,mode=max
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ steps.matrix_info.outputs.variant }}:${{ env.BUILDKIT_CACHE_TAG }}
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ steps.matrix_info.outputs.variant }}:${{ env.BUILDKIT_CACHE_TAG }},mode=max
           load: true
           build-args: |
             BASE_OS_IMAGE=${{ env.BASE_OS_IMAGE }}
