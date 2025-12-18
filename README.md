@@ -118,6 +118,22 @@ docker buildx build \
   .
 ```
 
+#### EPICS/PVXS locations
+
+In the builder/dev container image:
+- EPICS Base source is cloned into `/opt/epics` and installed into `/opt/local`.
+- PVXS source is cloned into `/opt/pvxs` and installed into `/opt/local`.
+- The EPICS host architecture is recorded in `/etc/epics_host_arch` (e.g. `linux-x86_64`).
+
+In the runtime/release container image:
+- `/opt/local` is copied from the builder stage and contains EPICS Base + PVXS headers and libraries.
+- `EPICS_BASE=/opt/local` and `PVXS_BASE=/opt/local` are set in the runtime image.
+
+#### Where EPICS/PVXS versions are set
+
+- Default build args are defined in [.devcontainer/Dockerfile](.devcontainer/Dockerfile) (`EPICS_VERSION`, `PVXS_VERSION`).
+- CI/release versions are set by the workflow matrix in [.github/workflows/build-and-test.yml](.github/workflows/build-and-test.yml) and [.github/workflows/build-docker-image.yml](.github/workflows/build-docker-image.yml).
+
 ### Standalone executable runtime dependencies
 
 The standalone executable artifact is **dynamically linked** (not a fully static binary). This means it requires
