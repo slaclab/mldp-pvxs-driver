@@ -114,6 +114,26 @@ jobs:
           echo "pvxs_version=${{ matrix.pvxs_version }}" >> "$GITHUB_OUTPUT"
           echo "base_os_image=${{ matrix.base_os_image }}" >> "$GITHUB_OUTPUT"
 
+      - name: Compute shared build image tag
+        id: build_image_tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Desired external tag format: epics-<epics>-pvxs-<pvxs> (drop leading 'R' from EPICS version)
+          epics="${{ matrix.epics_version }}"
+          epics="${epics#R}"
+          pvxs="${{ matrix.pvxs_version }}"
+          tag="epics-${epics}-pvxs-${pvxs}"
+
+          # Defensive: keep docker tag safe
+          safe=$(printf '%s' "$tag" | tr '/:' '--' | tr -cd 'A-Za-z0-9_.-')
+          if [[ -z "$safe" ]]; then
+            safe="build"
+          fi
+
+          echo "tag=${safe}" >> "$GITHUB_OUTPUT"
+          echo "image=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/build:${safe}" >> "$GITHUB_OUTPUT"
+
       - name: Determine latest tagging requirement
         id: need_last
         shell: bash
@@ -145,9 +165,13 @@ jobs:
           context: .
           file: ${{ matrix.dockerfile }}
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
+          tags: |
+            ${{ steps.meta.outputs.tags }}
+            ${{ steps.build_image_tag.outputs.image }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ steps.matrix_info.outputs.variant }}:${{ env.BUILDKIT_CACHE_TAG }}
+          cache-from: type=registry,ref=${{ steps.build_image_tag.outputs.image }}
+          cache-to: type=inline
           cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ steps.matrix_info.outputs.variant }}:${{ env.BUILDKIT_CACHE_TAG }},mode=max
           build-args: |
             BASE_OS_IMAGE=${{ env.BASE_OS_IMAGE }}

@@ -83,12 +83,28 @@ jobs:
           fi
           echo "variant=$safe_variant" >> "$GITHUB_OUTPUT"
 
+      - name: Compute shared build image tag
+        id: build_image_tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          epics="${{ matrix.epics_version }}"
+          epics="${epics#R}"
+          pvxs="${{ matrix.pvxs_version }}"
+          tag="epics-${epics}-pvxs-${pvxs}"
+          safe=$(printf '%s' "$tag" | tr '/:' '--' | tr -cd 'A-Za-z0-9_.-')
+          if [[ -z "$safe" ]]; then
+            safe="build"
+          fi
+          echo "image=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/build:${safe}" >> "$GITHUB_OUTPUT"
+
       - name: Build dev image (cached)
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ${{ matrix.dockerfile }}
           tags: mldp-pvxs-driver-ci:latest
+          cache-from: type=registry,ref=${{ steps.build_image_tag.outputs.image }}
           cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ steps.matrix_info.outputs.variant }}:${{ env.BUILDKIT_CACHE_TAG }}
           cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ steps.matrix_info.outputs.variant }}:${{ env.BUILDKIT_CACHE_TAG }},mode=max
           load: true
