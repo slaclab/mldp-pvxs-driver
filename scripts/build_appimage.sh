@@ -126,6 +126,25 @@ if [[ ! -x "$appimage_dir/squashfs-root/AppRun" ]]; then
   exit 1
 fi
 
-out="/out/mldp_pvxs_driver-ubuntu-noble-epics-${EPICS_VERSION}-pvxs-${PVXS_VERSION}-x86_64.AppImage"
+out_dir="${OUT_DIR:-/out}"
+if [[ ! -d "$out_dir" ]]; then
+  mkdir -p "$out_dir" 2>/dev/null || true
+fi
+
+if [[ ! -d "$out_dir" || ! -w "$out_dir" ]]; then
+  out_dir=/workspace/out
+  mkdir -p "$out_dir"
+fi
+
+machine_arch="$(uname -m)"
+case "$machine_arch" in
+  x86_64|amd64) machine_arch=x86_64 ;;
+  aarch64|arm64) machine_arch=aarch64 ;;
+esac
+
+epics_tag="${EPICS_VERSION:-unknown}"
+pvxs_tag="${PVXS_VERSION:-unknown}"
+
+out="$out_dir/mldp_pvxs_driver-ubuntu-noble-epics-${epics_tag}-pvxs-${pvxs_tag}-${machine_arch}.AppImage"
 "$appimage_dir/squashfs-root/AppRun" "$appdir" "$out"
 echo "Created $out"
