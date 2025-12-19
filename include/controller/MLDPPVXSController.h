@@ -14,9 +14,10 @@
 #include <config/Config.h>
 #include <controller/MLDPPVXSControllerConfig.h>
 #include <metrics/Metrics.h>
+#include <pool/MLDPGrpcPool.h>
 #include <reader/Reader.h>
 #include <util/bus/IEventBusPush.h>
-#include <pool/MLDPGrpcPool.h>
+#include <util/log/Logger.h>
 
 #include <memory>
 #include <string>
@@ -85,15 +86,17 @@ public:
     metrics::Metrics& metrics() const;
 
 private:
+    std::shared_ptr<mldp_pvxs_driver::util::log::ILogger> logger_;         ///< Logger instance for controller logging.
+    MLDPPVXSControllerConfig                              config_;         ///< Typed controller configuration.
+    std::shared_ptr<BS::light_thread_pool>                thread_pool_;    ///< Shared worker pool executing bus pushes.
+    std::shared_ptr<metrics::Metrics>                     metrics_;        ///< Shared metrics collector/exposer.
+    bool                                                  running_{false}; ///< Tracks controller lifecycle state.
+    util::pool::MLDPGrpcPool::MLDPGrpcPoolShrdPtr         mldp_pool_;      ///< MLDP gRPC connection pool.
+    std::vector<reader::ReaderUPtr>                       readers_;        ///< Ingestion readers instance.
+    std::string                                           provider_id_;    ///< Provider identifier assigned by MLDP.
+
     explicit MLDPPVXSController(const config::Config& config);
     void pushImpl(EventBatch batch_values);
-    MLDPPVXSControllerConfig                      config_;         ///< Typed controller configuration.
-    std::shared_ptr<BS::light_thread_pool>        thread_pool_;    ///< Shared worker pool executing bus pushes.
-    std::shared_ptr<metrics::Metrics>             metrics_;        ///< Shared metrics collector/exposer.
-    bool                                          running_{false}; ///< Tracks controller lifecycle state.
-    util::pool::MLDPGrpcPool::MLDPGrpcPoolShrdPtr mldp_pool_;      ///< MLDP gRPC connection pool.
-    std::vector<reader::ReaderUPtr>               readers_;        ///< Ingestion readers instance.
-    std::string                                   provider_id_;    ///< Provider identifier assigned by MLDP.
 };
 
 } // namespace mldp_pvxs_driver::controller

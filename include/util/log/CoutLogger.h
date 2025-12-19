@@ -39,9 +39,13 @@ public:
 
     void log(Level level, std::string_view message) override;
 
+    void setLevel(Level level) override;
+    bool shouldLog(Level level) const override;
+
 private:
     std::string name_;
-    std::mutex  mu_;
+    mutable std::mutex  mu_;
+    Level       min_level_{Level::Info};
 };
 
 } // namespace mldp_pvxs_driver::util::log

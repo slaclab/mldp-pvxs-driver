@@ -53,7 +53,7 @@
         },
         {
             "name": "(lldb) Launch Main",
-            "type": "lldb-dap",
+            "type": "lldb",
             "request": "launch",
             "program": "${workspaceFolder}/build/bin/mldp_pvxs_driver",
             "args": [
