@@ -25,6 +25,26 @@ services:
       - "com.ospreydcs.dp.service.ingest.server.IngestionGrpcServer"
     ports:
       - "50051:50051"
+  
+  dp-query:
+    image: ghcr.io/eed-web-application/dp-service:v1.11.0
+    container_name: dp-query
+    depends_on:
+      - mongodb
+    entrypoint:
+      - "java"
+    command:
+        - "-Ddp.MongoClient.dbHost=mongodb"
+        - "-Ddp.MongoClient.dbPort=27017"
+        - "-Ddp.MongoClient.dbUser=admin"
+        - "-Ddp.MongoClient.dbPassword=admin"
+        - "-Ddp.GrpcClient.hostname=dp-ingestion"
+        - "-Ddp.IngestionServer.port=50052"
+        - "-cp"
+        - "/app/app.jar"
+        - "com.ospreydcs.dp.service.query.server.QueryGrpcServer"
+    ports:
+      - "50052:50052"
       
 volumes:
   kafka-data:

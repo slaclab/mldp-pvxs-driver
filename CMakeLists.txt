@@ -241,10 +241,13 @@ if(NOT PVXS_FOUND)
 endif()
 
 # Proto file configuration
+
 set(PROTO_PATH $ENV{PROTO_PATH})
+message(STATUS "ProtoBuf mldp description file path: ${PROTO_PATH}")
 
 set(PROTO_FILES
         ${PROTO_PATH}/common.proto
+        ${PROTO_PATH}/query.proto
         ${PROTO_PATH}/ingestion.proto
 )
 

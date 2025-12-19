@@ -10,9 +10,11 @@
 
 #pragma once
 
+#include "util/log/ILog.h"
 #include <pool/IObjectPool.h>
 #include <pool/IPoolHandle.h>
 #include <pool/MLDPGrpcPoolConfig.h>
+#include <util/log/Logger.h>
 
 #include <condition_variable>
 #include <grpcpp/grpcpp.h>
@@ -162,7 +164,7 @@ public:
 
     /**
      * @brief Create a new managed `MLDPGrpcPool` instance.
-    *
+     *
      * Use this factory to construct the pool. It returns a `std::shared_ptr`
      * so that `acquire()` can safely create handles that retain a reference
      * to the pool via `shared_from_this()`.
@@ -171,7 +173,7 @@ public:
      *                  minimum/maximum connections, and other pool behavior.
      * @param metrics   Optional metrics collector that receives pool statistics.
      * @return std::shared_ptr<MLDPGrpcPool> Managed pool instance.
-    */
+     */
     static MLDPGrpcPoolShrdPtr create(const MLDPGrpcPoolConfig&         config,
                                       std::shared_ptr<metrics::Metrics> metrics = nullptr);
 
@@ -227,7 +229,8 @@ public:
     const std::string& providerId() const;
 
 private:
-    const MLDPGrpcPoolConfig        config_;
+    std::shared_ptr<mldp_pvxs_driver::util::log::ILogger> logger_;
+    const MLDPGrpcPoolConfig                              config_;
     std::size_t                     availableCountLocked() const;
     void                            updateMetricsLocked() const;
     void                            updateMetrics() const;

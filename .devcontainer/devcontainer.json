@@ -26,6 +26,7 @@
 				"ms-vscode.cmake-tools",
 				"llvm-vs-code-extensions.vscode-clangd",
 				"llvm-vs-code-extensions.lldb-dap",
+				"vadimcn.vscode-lldb",
 				"ms-vscode.cpptools-extension-pack",
 				"ms-vscode.cpptools",
 				"ms-vscode.cpptools-themes"
