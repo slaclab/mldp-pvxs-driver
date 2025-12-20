@@ -6,6 +6,7 @@ x-ci-common: &ci-common
     depends_on:
       - mongodb
       - dp-ingestion
+      - dp-query
     working_dir: /workspace
     entrypoint: []
     command: >
