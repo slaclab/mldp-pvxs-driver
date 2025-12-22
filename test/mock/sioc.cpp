@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 
 #include <pvxs/nt.h>
 
@@ -47,6 +48,158 @@ PVServer::PVServer()
     };
     m_pvBsasTable.open(bsasTableType.create());
     m_server.addPV("test:bsas_table", m_pvBsasTable);
+
+    const auto makeScalar = []<typename T>(auto valueFn)
+    {
+        return [valueFn](pvxs::Value& pv, int counter, double time)
+        {
+            pv["value"] = static_cast<T>(valueFn(counter, time));
+        };
+    };
+
+    const auto makeArray = []<typename T>(auto valueFn)
+    {
+        return [valueFn](pvxs::Value& pv, int counter, double time)
+        {
+            shared_array<T> arr(4);
+            for (size_t i = 0; i < arr.size(); ++i)
+            {
+                arr[i] = static_cast<T>(valueFn(counter, time, i));
+            }
+            pv["value"] = arr.freeze();
+        };
+    };
+
+    const auto addTypedPV = [this](const std::string& name, TypeCode type,
+                                   std::function<void(pvxs::Value&, int, double)> update)
+    {
+        m_typedPvs.push_back(TypedPV{name, type, server::SharedPV::buildReadonly(), update});
+        auto& entry = m_typedPvs.back();
+        entry.pv.open(nt::NTScalar{type}.create());
+        m_server.addPV(name, entry.pv);
+    };
+
+    addTypedPV("test:bool", TypeCode::Bool,
+               makeScalar.template operator()<bool>([](int counter, double)
+                                                    {
+                                                        return (counter % 2) == 0;
+                                                    }));
+    addTypedPV("test:int8", TypeCode::Int8,
+               makeScalar.template operator()<int8_t>([](int counter, double)
+                                                      {
+                                                          return counter % 100;
+                                                      }));
+    addTypedPV("test:int16", TypeCode::Int16,
+               makeScalar.template operator()<int16_t>([](int counter, double)
+                                                       {
+                                                           return counter % 32000;
+                                                       }));
+    addTypedPV("test:int32", TypeCode::Int32,
+               makeScalar.template operator()<int32_t>([](int counter, double)
+                                                       {
+                                                           return counter;
+                                                       }));
+    addTypedPV("test:int64", TypeCode::Int64,
+               makeScalar.template operator()<int64_t>([](int counter, double)
+                                                       {
+                                                           return static_cast<int64_t>(counter) * 1000;
+                                                       }));
+    addTypedPV("test:uint8", TypeCode::UInt8,
+               makeScalar.template operator()<uint8_t>([](int counter, double)
+                                                       {
+                                                           return counter % 200;
+                                                       }));
+    addTypedPV("test:uint16", TypeCode::UInt16,
+               makeScalar.template operator()<uint16_t>([](int counter, double)
+                                                        {
+                                                            return counter % 60000;
+                                                        }));
+    addTypedPV("test:uint32", TypeCode::UInt32,
+               makeScalar.template operator()<uint32_t>([](int counter, double)
+                                                        {
+                                                            return static_cast<uint32_t>(counter);
+                                                        }));
+    addTypedPV("test:uint64", TypeCode::UInt64,
+               makeScalar.template operator()<uint64_t>([](int counter, double)
+                                                        {
+                                                            return static_cast<uint64_t>(counter) * 1000u;
+                                                        }));
+    addTypedPV("test:float32", TypeCode::Float32,
+               makeScalar.template operator()<float>([](int, double time)
+                                                     {
+                                                         return 1.25f + static_cast<float>(std::sin(time));
+                                                     }));
+    addTypedPV("test:float64", TypeCode::Float64,
+               makeScalar.template operator()<double>([](int, double time)
+                                                      {
+                                                          return 1.5 + std::cos(time);
+                                                      }));
+    addTypedPV("test:string", TypeCode::String,
+               makeScalar.template operator()<std::string>([](int counter, double)
+                                                           {
+                                                               return (counter % 2 == 0) ? std::string("ON") : std::string("OFF");
+                                                           }));
+    addTypedPV("test:bool_array", TypeCode::BoolA,
+               makeArray.template operator()<bool>([](int counter, double, size_t i)
+                                                   {
+                                                       return ((counter + static_cast<int>(i)) % 2) == 0;
+                                                   }));
+    addTypedPV("test:int8_array", TypeCode::Int8A,
+               makeArray.template operator()<int8_t>([](int counter, double, size_t i)
+                                                     {
+                                                         return static_cast<int8_t>(counter + static_cast<int>(i));
+                                                     }));
+    addTypedPV("test:int16_array", TypeCode::Int16A,
+               makeArray.template operator()<int16_t>([](int counter, double, size_t i)
+                                                      {
+                                                          return static_cast<int16_t>(counter + static_cast<int>(i));
+                                                      }));
+    addTypedPV("test:int32_array", TypeCode::Int32A,
+               makeArray.template operator()<int32_t>([](int counter, double, size_t i)
+                                                      {
+                                                          return static_cast<int32_t>(counter + static_cast<int>(i));
+                                                      }));
+    addTypedPV("test:int64_array", TypeCode::Int64A,
+               makeArray.template operator()<int64_t>([](int counter, double, size_t i)
+                                                      {
+                                                          return static_cast<int64_t>(counter + static_cast<int>(i)) * 1000;
+                                                      }));
+    addTypedPV("test:uint8_array", TypeCode::UInt8A,
+               makeArray.template operator()<uint8_t>([](int counter, double, size_t i)
+                                                      {
+                                                          return static_cast<uint8_t>(counter + static_cast<int>(i));
+                                                      }));
+    addTypedPV("test:uint16_array", TypeCode::UInt16A,
+               makeArray.template operator()<uint16_t>([](int counter, double, size_t i)
+                                                       {
+                                                           return static_cast<uint16_t>(counter + static_cast<int>(i));
+                                                       }));
+    addTypedPV("test:uint32_array", TypeCode::UInt32A,
+               makeArray.template operator()<uint32_t>([](int counter, double, size_t i)
+                                                       {
+                                                           return static_cast<uint32_t>(counter + static_cast<int>(i));
+                                                       }));
+    addTypedPV("test:uint64_array", TypeCode::UInt64A,
+               makeArray.template operator()<uint64_t>([](int counter, double, size_t i)
+                                                       {
+                                                           return static_cast<uint64_t>(counter + static_cast<int>(i)) * 1000u;
+                                                       }));
+    addTypedPV("test:float32_array", TypeCode::Float32A,
+               makeArray.template operator()<float>([](int, double time, size_t i)
+                                                    {
+                                                        return static_cast<float>(1.0 + std::sin(time + static_cast<double>(i)));
+                                                    }));
+    addTypedPV("test:float64_array", TypeCode::Float64A,
+               makeArray.template operator()<double>([](int, double time, size_t i)
+                                                     {
+                                                         return 1.0 + std::cos(time + static_cast<double>(i));
+                                                     }));
+    addTypedPV("test:string_array", TypeCode::StringA,
+               makeArray.template operator()<std::string>([](int, double, size_t i)
+                                                          {
+                                                              static const char* kValues[] = {"alpha", "beta", "gamma", "delta"};
+                                                              return std::string(kValues[i % 4]);
+                                                          }));
 
     m_updateThreadActive = true;
     m_updateThread = std::thread([this]
@@ -120,6 +273,14 @@ PVServer::PVServer()
                                              pv["nanoseconds"] = nanoArr.freeze();
 
                                              m_pvBsasTable.post(pv);
+                                         }
+                                         for (auto& entry : m_typedPvs)
+                                         {
+                                             auto pv = entry.pv.fetch();
+                                             entry.update(pv, counter, time);
+                                             pv["timeStamp.secondsPastEpoch"] = seconds;
+                                             pv["timeStamp.nanoseconds"] = nanos;
+                                             entry.pv.post(pv);
                                          }
 
                                          time += 0.5;
