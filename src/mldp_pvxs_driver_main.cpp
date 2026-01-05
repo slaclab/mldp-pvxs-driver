@@ -9,6 +9,7 @@
 //////////////////////////////////////////////////////////////////////////////
 
 #include <argparse/argparse.hpp>
+#include <atomic>
 #include <cstdlib>
 #include <spdlog/common.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
@@ -195,9 +196,10 @@ struct TermCbreakGuard
 };
 } // namespace
 
-// Global flags for signal handling (must be async-signal-safe)
-volatile std::sig_atomic_t quit = 0;
-volatile std::sig_atomic_t metrics_requested = 0;
+// Global flags for signal handling
+volatile std::atomic<bool> quit = false;
+volatile std::atomic<bool> metrics_requested = false;
+
 // Global driver instance
 std::shared_ptr<MLDPPVXSController> driver = nullptr;
 
@@ -207,14 +209,14 @@ int main(int argc, char** argv)
     // process before we can restore terminal settings.
     const auto exitHandler = [](int)
     {
-        quit = 1;
+        quit = true;
     };
     std::signal(SIGINT, exitHandler);
     std::signal(SIGTERM, exitHandler);
 
     const auto metricsSignalHandler = [](int)
     {
-        metrics_requested = 1;
+        metrics_requested = true;
     };
     std::signal(SIGUSR1, metricsSignalHandler);
     std::signal(SIGQUIT, metricsSignalHandler);
@@ -333,7 +335,7 @@ int main(int argc, char** argv)
         {
             if (metrics_requested)
             {
-                metrics_requested = 0;
+                metrics_requested = false;
                 metricHandler();
             }
 
