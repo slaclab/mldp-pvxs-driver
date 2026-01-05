@@ -224,8 +224,15 @@ int main(int argc, char** argv)
         "MLDP PVXS Driver",
         std::format("{}.{}.{}", MLDP_PVXS_DRIVER_VERSION_MAJOR, MLDP_PVXS_DRIVER_VERSION_MINOR, MLDP_PVXS_DRIVER_VERSION_PATCH));
 
+    // add metrics help to epilog
     program.add_epilog(
-        "Metrics:\n" "  - Press Ctrl+P in the foreground terminal to dump metrics.\n" "  - Or send SIGUSR1 / SIGQUIT to request a dump:\n" "      kill -USR1 <pid>\n" "      kill -QUIT <pid>\n");
+        R"(Metrics:
+
+     - Press Ctrl+P in the foreground terminal to dump metrics.
+     - Or send SIGUSR1 / SIGQUIT to request a dump:
+        kill -USR1 <pid>
+        kill -QUIT <pid>
+    )");
 
     configure_parameter(program);
 
