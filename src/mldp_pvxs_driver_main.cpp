@@ -35,6 +35,11 @@
 #include <controller/MLDPPVXSController.h>
 #include <mldp_pvxs_driver_version.h>
 
+using namespace argparse;
+using namespace mldp_pvxs_driver::config;
+using namespace mldp_pvxs_driver::util::log;
+using namespace mldp_pvxs_driver::controller;
+
 namespace {
 
 class SpdlogLogger final : public mldp_pvxs_driver::util::log::ILogger
@@ -106,33 +111,7 @@ void disable_tty_echoctl()
     t.c_lflag &= ~ECHOCTL;
     (void)::tcsetattr(STDIN_FILENO, TCSANOW, &t);
 }
-} // namespace
 
-using namespace argparse;
-using namespace mldp_pvxs_driver::config;
-using namespace mldp_pvxs_driver::util::log;
-using namespace mldp_pvxs_driver::controller;
-
-void configure_parameter(ArgumentParser& program)
-{
-    program.add_argument("-c", "--config")
-        .help("Path to configuration YAML file")
-        .default_value(std::string("mldp_pvxs_driver.yaml"))
-        .metavar("FILE");
-
-    program.add_argument("-l", "--log-level")
-        .help("Logging level (trace, debug, info, warn, error, critical, off)")
-        .default_value(std::string("info"))
-        .metavar("LEVEL");
-}
-
-// Global flags for signal handling (must be async-signal-safe)
-volatile std::sig_atomic_t quit = 0;
-volatile std::sig_atomic_t metrics_requested = 0;
-// Global driver instance
-std::shared_ptr<MLDPPVXSController> driver = nullptr;
-
-namespace {
 struct TerminalRestoreState
 {
     termios old{};
@@ -151,7 +130,19 @@ void restore_terminal()
     (void)::tcsetattr(STDIN_FILENO, TCSANOW, &g_terminal_restore.old);
     g_terminal_restore.active = false;
 }
-} // namespace
+
+void configure_parameter(ArgumentParser& program)
+{
+    program.add_argument("-c", "--config")
+        .help("Path to configuration YAML file")
+        .default_value(std::string("mldp_pvxs_driver.yaml"))
+        .metavar("FILE");
+
+    program.add_argument("-l", "--log-level")
+        .help("Logging level (trace, debug, info, warn, error, critical, off)")
+        .default_value(std::string("info"))
+        .metavar("LEVEL");
+}
 
 struct TermCbreakGuard
 {
@@ -202,6 +193,13 @@ struct TermCbreakGuard
         restore_terminal();
     }
 };
+} // namespace
+
+// Global flags for signal handling (must be async-signal-safe)
+volatile std::sig_atomic_t quit = 0;
+volatile std::sig_atomic_t metrics_requested = 0;
+// Global driver instance
+std::shared_ptr<MLDPPVXSController> driver = nullptr;
 
 int main(int argc, char** argv)
 {
@@ -227,11 +225,7 @@ int main(int argc, char** argv)
         std::format("{}.{}.{}", MLDP_PVXS_DRIVER_VERSION_MAJOR, MLDP_PVXS_DRIVER_VERSION_MINOR, MLDP_PVXS_DRIVER_VERSION_PATCH));
 
     program.add_epilog(
-        "Metrics:\n"
-        "  - Press Ctrl+P in the foreground terminal to dump metrics.\n"
-        "  - Or send SIGUSR1 / SIGQUIT to request a dump:\n"
-        "      kill -USR1 <pid>\n"
-        "      kill -QUIT <pid>\n");
+        "Metrics:\n" "  - Press Ctrl+P in the foreground terminal to dump metrics.\n" "  - Or send SIGUSR1 / SIGQUIT to request a dump:\n" "      kill -USR1 <pid>\n" "      kill -QUIT <pid>\n");
 
     configure_parameter(program);
 
@@ -338,7 +332,7 @@ int main(int argc, char** argv)
 
             // Poll for keyboard input with timeout so signals can stop the loop quickly.
             constexpr int timeout_ms = 100;
-            const int rc = ::poll(&pfd, 1, timeout_ms);
+            const int     rc = ::poll(&pfd, 1, timeout_ms);
             if (rc <= 0)
             {
                 continue;
@@ -349,7 +343,7 @@ int main(int argc, char** argv)
             }
 
             unsigned char c = 0;
-            const auto n = ::read(STDIN_FILENO, &c, 1);
+            const auto    n = ::read(STDIN_FILENO, &c, 1);
             if (n != 1)
             {
                 continue;
