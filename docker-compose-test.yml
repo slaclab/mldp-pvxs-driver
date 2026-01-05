@@ -20,7 +20,7 @@ x-ci-common: &ci-common
 
 services:
   ci:
-    <<: *ci-common
+    <<: *ci-common 
     build:
       context: .
       dockerfile: .devcontainer/Dockerfile

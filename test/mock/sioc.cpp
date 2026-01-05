@@ -231,6 +231,9 @@ PVServer::PVServer()
                                              static constexpr const char* STATUSES[]{"OK", "WARNING", "FAULT"};
                                              auto                         pv = m_pvStatus.fetch();
                                              pv["value"] = STATUSES[counter % 3];
+                                             pv["alarm.severity"] = 2;
+                                             pv["alarm.status"] = 1;
+                                             pv["alarm.message"] = "TEST_ALARM";
                                              pv["timeStamp.secondsPastEpoch"] = seconds;
                                              pv["timeStamp.nanoseconds"] = nanos;
                                              m_pvStatus.post(pv);
