@@ -132,35 +132,106 @@ volatile std::sig_atomic_t metrics_requested = 0;
 // Global driver instance
 std::shared_ptr<MLDPPVXSController> driver = nullptr;
 
+namespace {
+struct TerminalRestoreState
+{
+    termios old{};
+    bool    active{false};
+    bool    registered{false};
+};
+
+TerminalRestoreState g_terminal_restore;
+
+void restore_terminal()
+{
+    if (!g_terminal_restore.active)
+    {
+        return;
+    }
+    (void)::tcsetattr(STDIN_FILENO, TCSANOW, &g_terminal_restore.old);
+    g_terminal_restore.active = false;
+}
+} // namespace
+
 struct TermCbreakGuard
 {
     termios old{};
+    bool    active{false};
 
     TermCbreakGuard()
     {
-        tcgetattr(STDIN_FILENO, &old);
-        termios t = old;
+        if (!::isatty(STDIN_FILENO))
+        {
+            return;
+        }
+
+        termios current{};
+        if (::tcgetattr(STDIN_FILENO, &current) != 0)
+        {
+            return;
+        }
+
+        old = current;
+        termios t = current;
         t.c_lflag &= ~(ICANON); // read byte-by-byte
         t.c_lflag &= ~(ECHO);   // optional: don't echo typed keys
         t.c_lflag |= ISIG;      // keep Ctrl+C => SIGINT
         t.c_lflag &= ~ECHOCTL;  // optional: don't show ^C when ECHO is on
-        tcsetattr(STDIN_FILENO, TCSANOW, &t);
+
+        if (::tcsetattr(STDIN_FILENO, TCSANOW, &t) == 0)
+        {
+            active = true;
+
+            // Ensure restoration also happens on std::exit() (e.g. argparse --help).
+            g_terminal_restore.old = old;
+            g_terminal_restore.active = true;
+            if (!g_terminal_restore.registered)
+            {
+                g_terminal_restore.registered = true;
+                std::atexit(restore_terminal);
+            }
+        }
     }
 
     ~TermCbreakGuard()
     {
-        tcsetattr(STDIN_FILENO, TCSANOW, &old);
+        if (!active)
+        {
+            return;
+        }
+        restore_terminal();
     }
 };
 
 int main(int argc, char** argv)
 {
-    // Set terminal to cbreak mode to handle signals properly
-    TermCbreakGuard termGuard;
+    // Register signal handlers early so SIGINT/SIGTERM won't terminate the
+    // process before we can restore terminal settings.
+    const auto exitHandler = [](int)
+    {
+        quit = 1;
+    };
+    std::signal(SIGINT, exitHandler);
+    std::signal(SIGTERM, exitHandler);
+
+    const auto metricsSignalHandler = [](int)
+    {
+        metrics_requested = 1;
+    };
+    std::signal(SIGUSR1, metricsSignalHandler);
+    std::signal(SIGQUIT, metricsSignalHandler);
+
     // Configure command line argument parser
     ArgumentParser program(
         "MLDP PVXS Driver",
         std::format("{}.{}.{}", MLDP_PVXS_DRIVER_VERSION_MAJOR, MLDP_PVXS_DRIVER_VERSION_MINOR, MLDP_PVXS_DRIVER_VERSION_PATCH));
+
+    program.add_epilog(
+        "Metrics:\n"
+        "  - Press Ctrl+P in the foreground terminal to dump metrics.\n"
+        "  - Or send SIGUSR1 / SIGQUIT to request a dump:\n"
+        "      kill -USR1 <pid>\n"
+        "      kill -QUIT <pid>\n");
 
     configure_parameter(program);
 
@@ -169,17 +240,10 @@ int main(int argc, char** argv)
         // Parse command line arguments
         program.parse_args(argc, argv);
 
-        // Register signal handlers
-        const auto exitHandler = [](int)
-        {
-            quit = 1;
-        };
-        std::signal(SIGINT, exitHandler);
-        std::signal(SIGTERM, exitHandler);
-        // Additional handler: print metrics when the process receives SIGUSR1.
-        // This can be triggered from a terminal with a control‑character such as
-        // Ctrl+\\ (SIGQUIT) or by sending the signal explicitly:
-        //   kill -USR1 <pid>
+        // Set terminal to cbreak mode (no-echo) only after successful arg parsing.
+        TermCbreakGuard termGuard;
+        // Metrics printing can be triggered either by Ctrl+P (foreground terminal)
+        // or by sending SIGUSR1/SIGQUIT to the process.
         const auto metricHandler = []()
         {
             if (driver)
@@ -192,13 +256,6 @@ int main(int argc, char** argv)
                 spdlog::info("====================");
             }
         };
-
-        const auto metricsSignalHandler = [](int)
-        {
-            metrics_requested = 1;
-        };
-        std::signal(SIGUSR1, metricsSignalHandler);
-        std::signal(SIGQUIT, metricsSignalHandler);
 
         if (!spdlog::default_logger())
         {

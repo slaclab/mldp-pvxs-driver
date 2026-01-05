@@ -9,6 +9,7 @@
 //////////////////////////////////////////////////////////////////////////////
 
 #include "util/bus/IEventBusPush.h"
+#include "util/log/Logger.h"
 #include <chrono>
 #include <cstdint>
 #include <metrics/Metrics.h>
@@ -98,7 +99,7 @@ void EpicsReader::addPV(const PVSet& pvNames)
                                  })
                           .exec();
         m_pva_subscriptions.push(pv_mon);
-        infof(*logger_, "Started monitoring PV {} on reader {}", pv, name_);
+        infof(*logger_, "[{}/{}] Started monitoring", name_, pv);
     }
 }
 
@@ -229,6 +230,7 @@ void EpicsReader::run(int timeout)
                     batch.tags.push_back(pvName);
                     batch.values[pvName].emplace_back(std::move(event_value));
                     emitted = 1;
+                    tracef(*logger_, "[{}/{}] event published", name_, pvName);
                 }
                 break;
             }
