@@ -64,9 +64,35 @@ CoutLogger::CoutLogger(std::string name)
 {
 }
 
+void CoutLogger::setLevel(Level level)
+{
+    std::lock_guard<std::mutex> lock(mu_);
+    min_level_ = level;
+}
+
+bool CoutLogger::shouldLog(Level level) const
+{
+    std::lock_guard<std::mutex> lock(mu_);
+
+    // Off disables all logging.
+    if (min_level_ == Level::Off)
+    {
+        return false;
+    }
+
+    // Treat enum order as increasing severity.
+    return static_cast<int>(level) >= static_cast<int>(min_level_);
+}
+
 void CoutLogger::log(Level level, std::string_view message)
 {
     std::lock_guard<std::mutex> lock(mu_);
+
+    // Apply filtering without re-entering shouldLog() (would deadlock).
+    if (min_level_ == Level::Off || static_cast<int>(level) < static_cast<int>(min_level_))
+    {
+        return;
+    }
 
     std::ostream& out = (level == Level::Error || level == Level::Critical) ? std::cerr : std::cout;
     out << "[" << toString(level) << "]";

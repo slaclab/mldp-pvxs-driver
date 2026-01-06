@@ -9,6 +9,7 @@
 //////////////////////////////////////////////////////////////////////////////
 
 #include "util/bus/IEventBusPush.h"
+#include "util/log/Logger.h"
 #include <chrono>
 #include <cstdint>
 #include <metrics/Metrics.h>
@@ -98,7 +99,7 @@ void EpicsReader::addPV(const PVSet& pvNames)
                                  })
                           .exec();
         m_pva_subscriptions.push(pv_mon);
-        infof(*logger_, "Started monitoring PV {} on reader {}", pv, name_);
+        infof(*logger_, "[{}/{}] Started monitoring", name_, pv);
     }
 }
 
@@ -181,10 +182,55 @@ void EpicsReader::run(int timeout)
                     const pvxs::Value valueField = (epics_value.type().kind() == pvxs::Kind::Compound) ? epics_value["value"] : pvxs::Value{};
                     EpicsMLDPConversion::convertPVToProtoValue(valueField.valid() ? valueField : epics_value, event_value->data_value.get());
 
+                    const pvxs::Value alarm = epics_value["alarm"];
+                    if (alarm.valid())
+                    {
+                        auto* valueStatus = event_value->data_value->mutable_valuestatus();
+
+                        if (const auto severityField = alarm["severity"]; severityField.valid())
+                        {
+                            const int sev = severityField.as<int>();
+                            switch (sev)
+                            {
+                            case 0:
+                                valueStatus->set_severity(DataValue_ValueStatus_Severity_NO_ALARM);
+                                break;
+                            case 1:
+                                valueStatus->set_severity(DataValue_ValueStatus_Severity_MINOR_ALARM);
+                                break;
+                            case 2:
+                                valueStatus->set_severity(DataValue_ValueStatus_Severity_MAJOR_ALARM);
+                                break;
+                            case 3:
+                                valueStatus->set_severity(DataValue_ValueStatus_Severity_INVALID_ALARM);
+                                break;
+                            default:
+                                valueStatus->set_severity(DataValue_ValueStatus_Severity_UNDEFINED_ALARM);
+                                break;
+                            }
+                        }
+
+                        if (const auto statusField = alarm["status"]; statusField.valid())
+                        {
+                            // EPICS alarm status is a numeric code that doesn't map 1:1 onto
+                            // DataValue.ValueStatus.StatusCode; use RECORD_STATUS to indicate
+                            // the record/PV reported a status condition.
+                            const int status = statusField.as<int>();
+                            valueStatus->set_statuscode(status == 0 ? DataValue_ValueStatus_StatusCode_NO_STATUS
+                                                                  : DataValue_ValueStatus_StatusCode_RECORD_STATUS);
+                        }
+
+                        if (const auto messageField = alarm["message"]; messageField.valid())
+                        {
+                            valueStatus->set_message(messageField.as<std::string>());
+                        }
+                    } 
+
                     // push to bus moving data and batching per source
                     batch.tags.push_back(pvName);
                     batch.values[pvName].emplace_back(std::move(event_value));
                     emitted = 1;
+                    tracef(*logger_, "[{}/{}] event published", name_, pvName);
                 }
                 break;
             }

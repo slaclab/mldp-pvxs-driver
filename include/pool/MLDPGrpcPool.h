@@ -10,9 +10,11 @@
 
 #pragma once
 
+#include "util/log/ILog.h"
 #include <pool/IObjectPool.h>
 #include <pool/IPoolHandle.h>
 #include <pool/MLDPGrpcPoolConfig.h>
+#include <util/log/Logger.h>
 
 #include <condition_variable>
 #include <grpcpp/grpcpp.h>
@@ -58,7 +60,9 @@ namespace mldp_pvxs_driver::util::pool {
  */
 struct MLDPGrpcObject
 {
-    std::shared_ptr<grpc::Channel>                                    channel;
+    /** @brief gRPC channel used for communication. */
+    std::shared_ptr<grpc::Channel> channel;
+    /** @brief Stub bound to the channel for RPC calls. */
     std::unique_ptr<dp::service::ingestion::DpIngestionService::Stub> stub;
 
     /** Default-construct an empty pooled object. */
@@ -162,7 +166,7 @@ public:
 
     /**
      * @brief Create a new managed `MLDPGrpcPool` instance.
-    *
+     *
      * Use this factory to construct the pool. It returns a `std::shared_ptr`
      * so that `acquire()` can safely create handles that retain a reference
      * to the pool via `shared_from_this()`.
@@ -171,7 +175,7 @@ public:
      *                  minimum/maximum connections, and other pool behavior.
      * @param metrics   Optional metrics collector that receives pool statistics.
      * @return std::shared_ptr<MLDPGrpcPool> Managed pool instance.
-    */
+     */
     static MLDPGrpcPoolShrdPtr create(const MLDPGrpcPoolConfig&         config,
                                       std::shared_ptr<metrics::Metrics> metrics = nullptr);
 
@@ -227,34 +231,43 @@ public:
     const std::string& providerId() const;
 
 private:
-    const MLDPGrpcPoolConfig        config_;
-    std::size_t                     availableCountLocked() const;
-    void                            updateMetricsLocked() const;
-    void                            updateMetrics() const;
-    std::shared_ptr<MLDPGrpcObject> createChannel();
-    // Make constructor private to force use of `create()` which returns a
-    // `std::shared_ptr` (required for `enable_shared_from_this`).
-    MLDPGrpcPool(const MLDPGrpcPoolConfig&         config,
-                 std::shared_ptr<metrics::Metrics> metrics);
-
+    // Define the item in the pool
     struct Item
     {
         ObjectShrdPtr obj;
         bool          in_use{false};
     };
 
-    mutable std::mutex      mutex_;
-    std::condition_variable cv_;
-    std::vector<Item>       items_;
-    std::size_t             current_size_{0};
-    std::string             provider_id_; ///< Last provider ID returned by MLDP.
+    /** @brief Logger instance for internal logging. */
+    std::shared_ptr<mldp_pvxs_driver::util::log::ILogger> logger_;
+    /** @brief Configuration governing pool behavior. */
+    const MLDPGrpcPoolConfig config_;
+    mutable std::mutex       mutex_;
+    std::condition_variable  cv_;
+    std::vector<Item>        items_;
+    std::size_t              current_size_{0};
+    std::string              provider_id_; ///< Last provider ID returned by MLDP.
     // Token used to detect pool lifetime. Pooled handles keep a weak_ptr to
     // this token so they can safely avoid calling back into the pool after
     // the pool has been destroyed.
-    std::shared_ptr<void>             lifetime_token_;
+    std::shared_ptr<void> lifetime_token_;
+    /** @brief Optional metrics collector for the pool. */
     std::shared_ptr<metrics::Metrics> metrics_;
 
-    bool registerProvider(dp::service::ingestion::DpIngestionService::Stub* stub);
+    // deleted constructors/assignments
+    MLDPGrpcPool() = delete;
+    MLDPGrpcPool(const MLDPGrpcPool&) = delete;
+    MLDPGrpcPool& operator=(const MLDPGrpcPool&) = delete;
+
+    // Make constructor private to force use of `create()` which returns a
+    // `std::shared_ptr` (required for `enable_shared_from_this`).
+    MLDPGrpcPool(const MLDPGrpcPoolConfig&         config,
+                 std::shared_ptr<metrics::Metrics> metrics);
+    std::size_t                     availableCountLocked() const;
+    void                            updateMetricsLocked() const;
+    void                            updateMetrics() const;
+    std::shared_ptr<MLDPGrpcObject> createChannel();
+    bool                            registerProvider(dp::service::ingestion::DpIngestionService::Stub* stub);
 };
 
 } // namespace mldp_pvxs_driver::util::pool

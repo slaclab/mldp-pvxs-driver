@@ -8,10 +8,10 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
+#include "util/log/Logger.h"
 #include <controller/MLDPPVXSController.h>
 #include <memory>
 #include <reader/ReaderFactory.h>
-#include <util/log/Logger.h>
 
 #include <chrono>
 #include <format>
@@ -28,13 +28,22 @@ using namespace mldp_pvxs_driver::util::log;
 
 using mldp_pvxs_driver::util::pool::MLDPGrpcPool;
 
+namespace {
+std::shared_ptr<mldp_pvxs_driver::util::log::ILogger> makeControllerLogger()
+{
+    std::string loggerName = "controlller";
+    return mldp_pvxs_driver::util::log::newLogger(loggerName);
+}
+} // namespace
+
 std::shared_ptr<MLDPPVXSController> MLDPPVXSController::create(const config::Config& config)
 {
     return std::shared_ptr<MLDPPVXSController>(new MLDPPVXSController(config));
 }
 
 MLDPPVXSController::MLDPPVXSController(const config::Config& config)
-    : config_(config)
+    : logger_(makeControllerLogger())
+    , config_(config)
     , thread_pool_(std::make_shared<BS::light_thread_pool>(config_.controllerThreadPoolSize()))
     , metrics_(std::make_shared<metrics::Metrics>(*config_.metricsConfig()))
     , running_(false)
@@ -45,17 +54,27 @@ MLDPPVXSController::MLDPPVXSController(const config::Config& config)
 MLDPPVXSController::~MLDPPVXSController()
 {
     // Destructor implementation
-    stop();
+    if (running_)
+    {
+        stop();
+    }
+    // clear pools
+    thread_pool_.reset();
+    mldp_pool_.reset();
+    // clear metrics
+    metrics_.reset();
 }
 
 void MLDPPVXSController::start()
 {
     if (running_)
     {
+        warnf(*logger_, "Controller is already started");
         return;
     }
 
     running_ = true;
+    infof(*logger_, "Controller is starting");
     // Start allocating mldp pool (constructor registers provider)
     mldp_pool_ = MLDPGrpcPool::create(config_.pool(), metrics_);
     provider_id_ = mldp_pool_->providerId();
@@ -66,6 +85,7 @@ void MLDPPVXSController::start()
     }
 
     // Start readers (dispatch based on declared reader type)
+    infof(*logger_, "Starting readers");
     for (const auto& entry : config_.readerEntries())
     {
         const auto& type = entry.first;
@@ -73,19 +93,23 @@ void MLDPPVXSController::start()
         auto        reader = ReaderFactory::create(type, shared_from_this(), readerConfig);
         readers_.push_back(std::move(reader));
     }
+    infof(*logger_, "Controller started");
 }
 
 void MLDPPVXSController::stop()
 {
     if (running_ == false)
     {
+        warnf(*logger_, "Controller already stopped");
         return;
     }
+    infof(*logger_, "Controller is stopping");
     running_ = false;
     // clear readers
     readers_.clear();
     // Stop controller logic
     thread_pool_->wait();
+    infof(*logger_, "Controller stopped");
 }
 
 bool MLDPPVXSController::push(EventBatch batch_values)
@@ -96,7 +120,7 @@ bool MLDPPVXSController::push(EventBatch batch_values)
     }
     if (provider_id_.empty())
     {
-        error("Provider not registered; dropping event batch");
+        errorf(*logger_, "Provider not registered; dropping event batch");
         MLDP_METRICS_CALL(metrics_, incrementBusFailures());
         return false;
     }
@@ -108,7 +132,7 @@ bool MLDPPVXSController::push(EventBatch batch_values)
                                                });
     if (!hasEvents)
     {
-        warn("Received empty batch for ingestion, skipping push.");
+        warnf(*logger_, "Received empty batch for ingestion, skipping push.");
         return false;
     }
 
@@ -134,7 +158,7 @@ void MLDPPVXSController::pushImpl(EventBatch batch_values)
 
         if (!writer)
         {
-            error("Failed to open ingestion stream for incoming batch");
+            errorf(*logger_, "Failed to open ingestion stream for incoming batch");
             MLDP_METRICS_CALL(metrics_, incrementBusFailures());
             return;
         }
@@ -172,7 +196,7 @@ void MLDPPVXSController::pushImpl(EventBatch batch_values)
             {
                 if (!event_value)
                 {
-                    warnf("Skipping null event for source {}", src_name);
+                    warnf(*logger_, "Skipping null event for source {}", src_name);
                     continue;
                 }
 
@@ -199,7 +223,7 @@ void MLDPPVXSController::pushImpl(EventBatch batch_values)
                 }
                 else
                 {
-                    warnf("Missing data_value content for source {}", src_name);
+                    warnf(*logger_, "Missing data_value content for source {}", src_name);
                 }
             }
 
@@ -210,7 +234,7 @@ void MLDPPVXSController::pushImpl(EventBatch batch_values)
 
             if (!writer->Write(request))
             {
-                errorf("Failed to write data column {} with {} events to ingestion stream", src_name, column->datavalues_size());
+                errorf(*logger_, "Failed to write data column {} with {} events to ingestion stream", src_name, column->datavalues_size());
                 writer->WritesDone();
                 writer->Finish();
                 MLDP_METRICS_CALL(metrics_, incrementBusFailures());
@@ -236,13 +260,13 @@ void MLDPPVXSController::pushImpl(EventBatch batch_values)
         }
         else
         {
-            errorf("Ingestion stream failed for batch of {} events: {}", accepted_events, status.error_message());
+            errorf(*logger_, "Ingestion stream failed for batch of {} events: {}", accepted_events, status.error_message());
             MLDP_METRICS_CALL(metrics_, incrementBusFailures());
         }
     }
     catch (const std::exception& ex)
     {
-        errorf("Failed to push event batch: {}", ex.what());
+        errorf(*logger_, "Failed to push event batch: {}", ex.what());
         MLDP_METRICS_CALL(metrics_, incrementReaderErrors());
     }
 }

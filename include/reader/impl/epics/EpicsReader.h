@@ -73,8 +73,8 @@ public:
      *            reader name and the list of PVs to monitor.
      */
     EpicsReader(std::shared_ptr<mldp_pvxs_driver::util::bus::IEventBusPush> bus,
-                std::shared_ptr<mldp_pvxs_driver::metrics::Metrics>        metrics,
-                const mldp_pvxs_driver::config::Config&                    cfg);
+                std::shared_ptr<mldp_pvxs_driver::metrics::Metrics>         metrics,
+                const mldp_pvxs_driver::config::Config&                     cfg);
 
     /**
      * @brief Destructor stops the reader and releases PVXS resources.
@@ -125,28 +125,28 @@ private:
     std::shared_ptr<mldp_pvxs_driver::util::log::ILogger> logger_;
 
     /** @brief Reader-specific configuration (name, PV list, etc.). */
-    EpicsReaderConfig                                           config_;
-    
+    EpicsReaderConfig config_;
+
     /** @brief Cached reader name from configuration. */
-    std::string                                                 name_;
-    
+    std::string name_;
+
     /** @brief Flag indicating whether the reader is actively running. */
-    std::atomic<bool>                                           running_;
-    
+    std::atomic<bool> running_;
+
     /** @brief Worker thread that processes subscription events. */
-    std::thread                                                 worker_;
-    
+    std::thread worker_;
+
     /** @brief PVXS client context for creating subscriptions. */
-    pvxs::client::Context                                       pva_context_;
-    
+    pvxs::client::Context pva_context_;
+
     /** @brief Queue holding active PVXS subscriptions. */
     pvxs::MPMCFIFO<std::shared_ptr<pvxs::client::Subscription>> m_pva_subscriptions;
-    
+
     /** @brief Work queue of subscription events to be processed by run(). */
     pvxs::MPMCFIFO<std::shared_ptr<pvxs::client::Subscription>> m_pva_workqueue;
 
     /** @brief Fast per-PV lookup for special handling. */
-    std::unordered_map<std::string, PVRuntimeConfig>            pvRuntimeByName_;
+    std::unordered_map<std::string, PVRuntimeConfig> pvRuntimeByName_;
 
     /**
      * @brief Subscribe to a set of EPICS PVs.

@@ -3,13 +3,12 @@
     "configurations": [
         {
             "name": "(lldb) Launch Tests",
-            "type": "lldb-dap",
+            "type": "lldb",
             "request": "launch",
             "program": "${workspaceFolder}/build/bin/mldp_pvxs_driver_test",
             "args": [],
             // "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
-            "disableASLR": false,
             "console": "integratedTerminal",
             "initCommands": [
                 "settings set target.disable-aslr false"
@@ -28,14 +27,13 @@
         },
         {
             "name": "(lldb) Launch Tests - Specific Test",
-            "type": "lldb-dap",
+            "type": "lldb",
             "request": "launch",
             "program": "${workspaceFolder}/build/bin/mldp_pvxs_driver_test",
             "args": [
                 "--gtest_filter=${input:testFilter}"
             ],
             "cwd": "${workspaceFolder}",
-            "disableASLR": false,
             "initCommands": [
                 "settings set target.disable-aslr false"
             ],
@@ -43,12 +41,11 @@
         },
         {
             "name": "(gdb) Launch Tests",
-            "type": "lldb-dap",
+            "type": "lldb",
             "request": "launch",
             "program": "${workspaceFolder}/build/bin/mldp_pvxs_driver_test",
             "args": [],
             "cwd": "${workspaceFolder}",
-            "disableASLR": false,
             "console": "integratedTerminal",
             "initCommands": [
                 "settings set target.disable-aslr false"
@@ -56,7 +53,7 @@
         },
         {
             "name": "(lldb) Launch Main",
-            "type": "lldb-dap",
+            "type": "lldb",
             "request": "launch",
             "program": "${workspaceFolder}/build/bin/mldp_pvxs_driver",
             "args": [

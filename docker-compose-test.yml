@@ -6,6 +6,7 @@ x-ci-common: &ci-common
     depends_on:
       - mongodb
       - dp-ingestion
+      - dp-query
     working_dir: /workspace
     entrypoint: []
     command: >
@@ -19,7 +20,7 @@ x-ci-common: &ci-common
 
 services:
   ci:
-    <<: *ci-common
+    <<: *ci-common 
     build:
       context: .
       dockerfile: .devcontainer/Dockerfile

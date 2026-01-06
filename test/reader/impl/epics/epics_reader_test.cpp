@@ -372,6 +372,41 @@ pvs:
     }
 }
 
+TEST_F(EpicsReaderTest, AlarmFieldsMapToValueStatus)
+{
+    const std::string yaml = R"(
+name: epics_1
+pvs:
+  - name: test:status
+)";
+
+    const auto cfg = makeConfigFromYaml(yaml);
+    auto       reader_ptr = mldp_pvxs_driver::reader::ReaderFactory::create("epics", mock_bus, cfg);
+    ASSERT_NE(reader_ptr, nullptr);
+
+    const int max_wait_ms = 5000;
+    int       waited_ms = 0;
+    std::shared_ptr<DataValue> dv;
+    while (waited_ms < max_wait_ms)
+    {
+        dv = findLatestDataValueForSource(*mock_bus, "test:status");
+        if (dv != nullptr && dv->has_valuestatus())
+        {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        waited_ms += 100;
+    }
+
+    ASSERT_NE(dv, nullptr) << "No DataValue received within timeout";
+    ASSERT_TRUE(dv->has_valuestatus()) << "No ValueStatus received within timeout";
+
+    const auto& status = dv->valuestatus();
+    EXPECT_EQ(status.severity(), DataValue_ValueStatus_Severity_MAJOR_ALARM);
+    EXPECT_EQ(status.statuscode(), DataValue_ValueStatus_StatusCode_RECORD_STATUS);
+    EXPECT_EQ(status.message(), "TEST_ALARM");
+}
+
 TEST_F(EpicsReaderTest, NTTableRowTimestampSplitsToPerColumnSources)
 {
     const std::string yaml = R"(

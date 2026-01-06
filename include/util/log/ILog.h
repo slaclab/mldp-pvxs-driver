@@ -10,8 +10,11 @@
 
 #pragma once
 
+#include <cctype>
 #include <functional>
 #include <memory>
+#include <stdexcept>
+#include <string>
 #include <string_view>
 
 namespace mldp_pvxs_driver::util::log {
@@ -58,6 +61,54 @@ enum class Level
 };
 
 /**
+ * @brief Parse a user-provided log level string.
+ *
+ * Accepted values (case-insensitive): trace, debug, info, warn|warning,
+ * error|err, critical|fatal, off.
+ *
+ * @throws std::invalid_argument if the value is not recognized.
+ */
+inline Level parseLevel(std::string_view value)
+{
+    const auto iequals = [](std::string_view a, std::string_view b) -> bool
+    {
+        if (a.size() != b.size())
+        {
+            return false;
+        }
+        for (std::size_t i = 0; i < a.size(); ++i)
+        {
+            const unsigned char ca = static_cast<unsigned char>(a[i]);
+            const unsigned char cb = static_cast<unsigned char>(b[i]);
+            if (std::tolower(ca) != std::tolower(cb))
+            {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    if (iequals(value, "trace"))
+        return Level::Trace;
+    if (iequals(value, "debug"))
+        return Level::Debug;
+    if (iequals(value, "info"))
+        return Level::Info;
+    if (iequals(value, "warn") || iequals(value, "warning"))
+        return Level::Warn;
+    if (iequals(value, "error") || iequals(value, "err"))
+        return Level::Error;
+    if (iequals(value, "critical") || iequals(value, "fatal"))
+        return Level::Critical;
+    if (iequals(value, "off"))
+        return Level::Off;
+
+    throw std::invalid_argument(
+        "Invalid log level '" + std::string(value)
+        + "' (expected: trace, debug, info, warn, error, critical, off)");
+}
+
+/**
  * @brief Abstract logger interface used by the driver library.
  *
  * Implementations are expected to be thread-safe.
@@ -73,6 +124,24 @@ public:
      * @param message Message payload.
      */
     virtual void log(Level level, std::string_view message) = 0;
+
+    /**
+     * @brief Set the minimum log level.
+     *
+     * Default implementation is a no-op.
+     */
+    virtual void setLevel(Level /*level*/) {}
+
+    /**
+     * @brief Convenience overload: set level from a user-provided string.
+     *
+     * Default implementation parses the string via @ref parseLevel and calls
+     * @ref setLevel(Level).
+     */
+    virtual void setLevel(std::string_view level)
+    {
+        setLevel(parseLevel(level));
+    }
 
     /**
      * @brief Optional fast-path to avoid formatting work.

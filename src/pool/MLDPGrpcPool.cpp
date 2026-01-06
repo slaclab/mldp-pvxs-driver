@@ -19,10 +19,18 @@
 #include <grpcpp/grpcpp.h>
 #include <stdexcept>
 
-#include <util/log/Logger.h>
+
 
 using namespace mldp_pvxs_driver::util::pool;
 using namespace mldp_pvxs_driver::util::log;
+
+namespace {
+std::shared_ptr<mldp_pvxs_driver::util::log::ILogger> makeMLDPGRPCLogger()
+{
+    std::string loggerName = "mldp_grpc_pool";
+    return mldp_pvxs_driver::util::log::newLogger(loggerName);
+}
+} // namespace
 
 #pragma region - MLDPGrpcObject
 // Implement MLDPGrpcObject constructor and helper
@@ -48,7 +56,8 @@ std::unique_ptr<dp::service::ingestion::DpIngestionService::Stub> MLDPGrpcObject
 
 MLDPGrpcPool::MLDPGrpcPool(const MLDPGrpcPoolConfig&         config,
                            std::shared_ptr<metrics::Metrics> metrics)
-    : config_(config)
+    : logger_(makeMLDPGRPCLogger())
+    , config_(config)
     , metrics_(std::move(metrics))
 {
     if (!config.valid())
@@ -66,6 +75,21 @@ MLDPGrpcPool::MLDPGrpcPool(const MLDPGrpcPoolConfig&         config,
     {
         items_.push_back({createChannel(), false});
     }
+
+    // register provider using a temporary stub, acquire cannot be used yet
+    {
+        infof(*logger_, "MLDPGrpcPool: registering provider {}", config_.providerName());
+        auto& item = items_.front();
+        if (!item.obj)
+        {
+            throw std::runtime_error("MLDPGrpcPool: no connection available for provider registration");
+        }
+        if (!registerProvider(item.obj->stub.get()))
+        {
+            throw std::runtime_error("MLDPGrpcPool: failed to register provider on new connection");
+        }
+    }
+
     current_size_ = config_.minConnections();
     updateMetrics();
 }
@@ -128,10 +152,6 @@ std::shared_ptr<MLDPGrpcObject> MLDPGrpcPool::createChannel()
 
     auto channel = grpc::CreateChannel(config_.url(), creds);
     auto object = std::make_shared<MLDPGrpcObject>(channel);
-    if (!registerProvider(object->stub.get()))
-    {
-        throw std::runtime_error("MLDPGrpcPool: failed to register provider on new connection");
-    }
     return object;
 }
 
@@ -186,7 +206,7 @@ bool MLDPGrpcPool::registerProvider(dp::service::ingestion::DpIngestionService::
     const auto status = stub->registerProvider(&context, request, &response);
     if (!status.ok())
     {
-        errorf("registerProvider RPC failed for {}: {}", config_.providerName(), status.error_message());
+        errorf(*logger_, "registerProvider RPC failed for {}: {}", config_.providerName(), status.error_message());
         return false;
     }
 
@@ -196,12 +216,12 @@ bool MLDPGrpcPool::registerProvider(dp::service::ingestion::DpIngestionService::
         if (provider_id_.empty())
         {
             provider_id_ = new_id;
-            infof("MLDP registered provider {} with id {}", config_.providerName(), provider_id_);
+            infof(*logger_, "MLDP registered provider {} with id {}", config_.providerName(), provider_id_);
             return true;
         }
         if (provider_id_ != new_id)
         {
-            errorf("registerProvider returned mismatched provider ID {} (expected {})", new_id, provider_id_);
+            errorf(*logger_, "registerProvider returned mismatched provider ID {} (expected {})", new_id, provider_id_);
             return false;
         }
         return true;
@@ -209,11 +229,11 @@ bool MLDPGrpcPool::registerProvider(dp::service::ingestion::DpIngestionService::
 
     if (response.has_exceptionalresult())
     {
-        errorf("registerProvider rejected {}: {}", config_.providerName(), response.exceptionalresult().message());
+        errorf(*logger_, "registerProvider rejected {}: {}", config_.providerName(), response.exceptionalresult().message());
         return false;
     }
 
-    errorf("registerProvider returned empty response for {}", config_.providerName());
+    errorf(*logger_, "registerProvider returned empty response for {}", config_.providerName());
     return false;
 }
 
