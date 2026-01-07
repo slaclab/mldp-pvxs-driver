@@ -11,7 +11,6 @@
 #pragma once
 
 #include <memory>
-#include <string>
 
 #include <prometheus/counter.h>
 #include <prometheus/exposer.h>
@@ -63,8 +62,12 @@ public:
     // Bus metrics ---------------------------------------------------------
     void   incrementBusPushes(double value = 1.0, prometheus::Labels tags = {});
     void   incrementBusFailures(double value = 1.0, prometheus::Labels tags = {});
+    void   incrementBusPayloadBytes(double value, prometheus::Labels tags = {});
+    void   setBusPayloadBytesPerSecond(double value, prometheus::Labels tags = {});
     double busPushTotal(prometheus::Labels tags = {}) const;
     double busFailuresTotal(prometheus::Labels tags = {}) const;
+    double busPayloadBytesTotal(prometheus::Labels tags = {}) const;
+    double busPayloadBytesPerSecond(prometheus::Labels tags = {}) const;
 
 private:
     MetricsConfig                         config_;
@@ -78,17 +81,20 @@ private:
 
     prometheus::Family<prometheus::Counter>& bus_push_family_;
     prometheus::Family<prometheus::Counter>& bus_failure_family_;
+    prometheus::Family<prometheus::Counter>& bus_payload_bytes_family_;
+    prometheus::Family<prometheus::Gauge>&   bus_payload_bytes_per_second_family_;
 
     std::unique_ptr<prometheus::Exposer> exposer_;
 };
 
-} // namespace mldp_pvxs_driver::metrics
+// Helper to safely call a metrics method when the pointer may be null.
+template <class MetricsPtr, class Fn>
+inline void metric_call(MetricsPtr&& metrics, Fn&& fn)
+{
+    if (metrics)
+    {
+        fn(*metrics);
+    }
+}
 
-#define MLDP_METRICS_CALL(METRICS_PTR, METHOD_CALL) \
-    do                                              \
-    {                                               \
-        if ((METRICS_PTR))                          \
-        {                                           \
-            (METRICS_PTR)->METHOD_CALL;             \
-        }                                           \
-    } while (false)
+} // namespace mldp_pvxs_driver::metrics

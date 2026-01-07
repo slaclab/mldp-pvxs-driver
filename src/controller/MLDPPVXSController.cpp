@@ -18,6 +18,7 @@
 #include <grpcpp/grpcpp.h>
 #include <ranges>
 #include <stdexcept>
+#include <unordered_map>
 
 using namespace mldp_pvxs_driver::metrics;
 using namespace mldp_pvxs_driver::controller;
@@ -121,7 +122,10 @@ bool MLDPPVXSController::push(EventBatch batch_values)
     if (provider_id_.empty())
     {
         errorf(*logger_, "Provider not registered; dropping event batch");
-        MLDP_METRICS_CALL(metrics_, incrementBusFailures());
+        metric_call(metrics_, [&](auto& m)
+                    {
+                        m.incrementBusFailures(1.0, {{"reader", "unknown"}});
+                    });
         return false;
     }
 
@@ -148,6 +152,7 @@ void MLDPPVXSController::pushImpl(EventBatch batch_values)
 {
     try
     {
+        const auto start_time = std::chrono::steady_clock::now();
         const auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::system_clock::now().time_since_epoch());
 
@@ -159,16 +164,21 @@ void MLDPPVXSController::pushImpl(EventBatch batch_values)
         if (!writer)
         {
             errorf(*logger_, "Failed to open ingestion stream for incoming batch");
-            MLDP_METRICS_CALL(metrics_, incrementBusFailures());
+            metric_call(metrics_, [&](auto& m)
+                        {
+                            m.incrementBusFailures(1.0, {{"reader", "unknown"}});
+                        });
             return;
         }
 
         const auto base_request_id = std::format("pv_batch_{}", now_ms.count());
         size_t     accepted_events = 0;
         bool       wrote_any = false;
+        uint64_t   total_payload_bytes = 0;
+        std::unordered_map<std::string, uint64_t> payload_bytes_by_reader;
 
         for (auto& [src_name, events] : batch_values.values)
-        {
+        {;
             if (events.empty())
             {
                 continue;
@@ -232,14 +242,27 @@ void MLDPPVXSController::pushImpl(EventBatch batch_values)
                 continue;
             }
 
+            const auto payload_bytes = request.ByteSizeLong();
+
             if (!writer->Write(request))
             {
                 errorf(*logger_, "Failed to write data column {} with {} events to ingestion stream", src_name, column->datavalues_size());
                 writer->WritesDone();
                 writer->Finish();
-                MLDP_METRICS_CALL(metrics_, incrementBusFailures());
+                metric_call(metrics_, [&](auto& m)
+                            {
+                                m.incrementBusFailures(1.0, {{"reader", src_name}});
+                            });
                 return;
             }
+
+            total_payload_bytes += payload_bytes;
+            payload_bytes_by_reader[src_name] += payload_bytes;
+            metric_call(metrics_, [&](auto& m)
+                        {
+                            m.incrementBusPayloadBytes(static_cast<double>(payload_bytes), {{"reader", src_name}});
+                            m.incrementBusPushes(static_cast<double>(column->datavalues_size()), {{"reader", src_name}});
+                        });
 
             wrote_any = true;
         }
@@ -256,18 +279,39 @@ void MLDPPVXSController::pushImpl(EventBatch batch_values)
         const auto status = writer->Finish();
         if (status.ok())
         {
-            MLDP_METRICS_CALL(metrics_, incrementBusPushes());
+            // Update bytes/second metric
+            const auto elapsed = std::chrono::steady_clock::now() - start_time;
+            const double elapsed_seconds = std::chrono::duration<double>(elapsed).count();
+            if (elapsed_seconds > 0.0)
+            {
+                for (const auto& [reader, bytes] : payload_bytes_by_reader)
+                {
+                    const double bytes_per_second = static_cast<double>(bytes) / elapsed_seconds;
+                    metric_call(metrics_, [&](auto& m)
+                                {
+                                    m.setBusPayloadBytesPerSecond(bytes_per_second, {{"reader", reader}});
+                                });
+                }
+            }
         }
         else
         {
+            // Update metrics for push failure
             errorf(*logger_, "Ingestion stream failed for batch of {} events: {}", accepted_events, status.error_message());
-            MLDP_METRICS_CALL(metrics_, incrementBusFailures());
+            metric_call(metrics_, [&](auto& m)
+                        {
+                            m.incrementBusFailures(1.0);
+                        });
         }
     }
     catch (const std::exception& ex)
     {
+        // Update metrics for readers errors
         errorf(*logger_, "Failed to push event batch: {}", ex.what());
-        MLDP_METRICS_CALL(metrics_, incrementReaderErrors());
+        metric_call(metrics_, [&](auto& m)
+                    {
+                        m.incrementReaderErrors(1.0);
+                    });
     }
 }
 

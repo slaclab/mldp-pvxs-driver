@@ -25,6 +25,7 @@ using namespace mldp_pvxs_driver::config;
 using namespace mldp_pvxs_driver::util::bus;
 using namespace mldp_pvxs_driver::reader::impl::epics;
 using namespace mldp_pvxs_driver::util::log;
+using namespace mldp_pvxs_driver::metrics;
 
 using MldpDriverConfig = mldp_pvxs_driver::config::Config;
 
@@ -41,9 +42,9 @@ std::shared_ptr<mldp_pvxs_driver::util::log::ILogger> makeEpicsReaderLogger(cons
 }
 } // namespace
 
-EpicsReader::EpicsReader(std::shared_ptr<IEventBusPush>                      bus,
-                         std::shared_ptr<mldp_pvxs_driver::metrics::Metrics> metrics,
-                         const MldpDriverConfig&                             cfg)
+EpicsReader::EpicsReader(std::shared_ptr<IEventBusPush> bus,
+                         std::shared_ptr<Metrics>       metrics,
+                         const MldpDriverConfig&        cfg)
     : Reader(std::move(bus), std::move(metrics))
     , logger_(makeEpicsReaderLogger(cfg.get("name")))
     , config_(EpicsReaderConfig(cfg))
@@ -122,7 +123,7 @@ void EpicsReader::run(int timeout)
                 // no data available
                 continue;
             }
-            
+
             // get the PV name and runtime configuration
             const auto                  pvName = sub->name();
             const auto                  it = pvRuntimeByName_.find(pvName);
@@ -142,7 +143,10 @@ void EpicsReader::run(int timeout)
                     {
                         // batch + emitted were filled
                         errorf(*logger_, "Error converting PV {} to MLDP NtTableRowTs batch on reader {}.", pvName, name_);
-                        MLDP_METRICS_CALL(metrics_, incrementReaderErrors(1.0, readerTags));
+                        metric_call(metrics_, [&](auto& m)
+                                    {
+                                        m.incrementReaderErrors(1.0, readerTags);
+                                    });
                     }
                 }
                 break;
@@ -217,14 +221,14 @@ void EpicsReader::run(int timeout)
                             // the record/PV reported a status condition.
                             const int status = statusField.as<int>();
                             valueStatus->set_statuscode(status == 0 ? DataValue_ValueStatus_StatusCode_NO_STATUS
-                                                                  : DataValue_ValueStatus_StatusCode_RECORD_STATUS);
+                                                                    : DataValue_ValueStatus_StatusCode_RECORD_STATUS);
                         }
 
                         if (const auto messageField = alarm["message"]; messageField.valid())
                         {
                             valueStatus->set_message(messageField.as<std::string>());
                         }
-                    } 
+                    }
 
                     // push to bus moving data and batching per source
                     batch.tags.push_back(pvName);
@@ -238,13 +242,19 @@ void EpicsReader::run(int timeout)
             if (emitted > 0 && !batch.values.empty())
             {
                 bus_->push(std::move(batch));
-                MLDP_METRICS_CALL(metrics_, incrementReaderEvents(static_cast<double>(emitted), readerTags));
+                metric_call(metrics_, [&](auto& m)
+                            {
+                                m.incrementReaderEvents(static_cast<double>(emitted), readerTags);
+                            });
             }
         }
         catch (const pvxs::client::RemoteError& e)
         {
             errorf(*logger_, "Server error when reading PV {} on reader {}: {}", sub->name(), name_, e.what());
-            MLDP_METRICS_CALL(metrics_, incrementReaderErrors(1.0, readerTags));
+            metric_call(metrics_, [&](auto& m)
+                        {
+                            m.incrementReaderErrors(1.0, readerTags);
+                        });
         }
 
         if (timeout > 0)

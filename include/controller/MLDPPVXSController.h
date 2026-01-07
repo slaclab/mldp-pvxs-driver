@@ -32,6 +32,32 @@ namespace mldp_pvxs_driver::controller {
  * so readers can submit events to MLDP. It also exposes a shared metrics
  * collector that downstream components can use to report internal statistics.
  *
+ * Metrics:
+ * The controller publishes Prometheus metrics via the shared
+ * @ref metrics::Metrics collector.
+ *
+ * Tagging:
+ * - Controller-emitted metrics use the label key <tt>reader</tt>.
+ * - When forwarding a batch, the controller sets <tt>reader</tt> to the
+ *   source name (the key in the event batch map).
+ * - If a failure happens before a specific source is known (e.g. provider
+ *   not registered, stream creation failure), the controller uses
+ *   <tt>reader="unknown"</tt>.
+ *
+ * Bus metrics:
+ * - <tt>mldp_pvxs_driver_bus_payload_bytes_total</tt>:
+ *   incremented for each successful gRPC <tt>Write()</tt> by the protobuf
+ *   payload size (<tt>request.ByteSizeLong()</tt>). This is payload-only and
+ *   does not include gRPC/HTTP2/TLS overhead.
+ * - <tt>mldp_pvxs_driver_bus_payload_bytes_per_second</tt>:
+ *   gauge set after a successful batch finishes, computed as
+ *   <tt>payload_bytes_in_batch / elapsed_seconds</tt> for each reader/source.
+ * - <tt>mldp_pvxs_driver_bus_push_total</tt>:
+ *   incremented by the number of accepted events written for each
+ *   reader/source.
+ * - <tt>mldp_pvxs_driver_bus_failure_total</tt>:
+ *   incremented when a streaming write/finish operation fails.
+ *
  * Typical lifecycle:
  * 1. Construct the controller with the parsed driver configuration YAML.
  * 2. Call @ref start to spin up the worker threads and reader instances.
