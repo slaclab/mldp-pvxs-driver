@@ -40,12 +40,11 @@ PVServer::PVServer()
     nt::NTTable bsasTableBuilder;
     bsasTableBuilder.add_column(TypeCode::Float64, "PV_NAME_A_DOUBLE_VALUE");
     bsasTableBuilder.add_column(TypeCode::String, "PV_NAME_B_STRING_VALUE");
+    // NTTable columns are always arrays-of-scalars; add_column() takes the scalar element type.
+    bsasTableBuilder.add_column(TypeCode::UInt32, "secondsPastEpoch");
+    bsasTableBuilder.add_column(TypeCode::UInt32, "nanoseconds");
     auto bsasTableType = bsasTableBuilder.build();
-    // BSAS adds per-row timestamps as additional top-level arrays.
-    bsasTableType += {
-        Member(TypeCode::UInt64A, "secondsPastEpoch"),
-        Member(TypeCode::UInt64A, "nanoseconds"),
-    };
+
     m_pvBsasTable.open(bsasTableType.create());
     m_server.addPV("test:bsas_table", m_pvBsasTable);
 
@@ -262,7 +261,8 @@ PVServer::PVServer()
                                          {
                                              // BSAS-style NTTable: per-row timestamp arrays + sampled PV columns.
                                              auto pv = m_pvBsasTable.fetch();
-                                             pv["labels"] = pvxs::shared_array<const std::string>{"PV_NAME_A_DOUBLE_VALUE", "PV_NAME_B_STRING_VALUE"};
+                                             pv["labels"] = pvxs::shared_array<const std::string>{"PV_NAME_A_DOUBLE_VALUE", "PV_NAME_B_STRING_VALUE",
+                                                                                                  "secondsPastEpoch", "nanoseconds"};
                                              pv["value.PV_NAME_A_DOUBLE_VALUE"] = pvxs::shared_array<const double>{1.0, 2.0, 3.0};
                                              pv["value.PV_NAME_B_STRING_VALUE"] = pvxs::shared_array<const std::string>{"OK", "WARNING", "FAULT"};
                                              pvxs::shared_array<uint64_t> secArr(3);
@@ -272,8 +272,12 @@ PVServer::PVServer()
                                                  secArr[i] = seconds;
                                                  nanoArr[i] = nanos + i;
                                              }
-                                             pv["secondsPastEpoch"] = secArr.freeze();
-                                             pv["nanoseconds"] = nanoArr.freeze();
+                                             // As regular NTTable columns.
+                                             pv["value.secondsPastEpoch"] = secArr.freeze();
+                                             pv["value.nanoseconds"] = nanoArr.freeze();
+                                             // As BSAS row-ts top-level arrays.
+                                             pv["timeStamp.secondsPastEpoch"] = seconds;
+                                             pv["timeStamp.nanoseconds"] = nanos;
 
                                              m_pvBsasTable.post(pv);
                                          }

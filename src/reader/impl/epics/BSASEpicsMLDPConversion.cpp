@@ -92,7 +92,8 @@ bool BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch(mldp_pvxs_driver::util::
 
     // BSAS NTTable row-ts layout:
     // - Sampled PV columns exist under the normative NTTable `value` sub-structure.
-    // - Per-row timestamps are carried as top-level array fields (defaults: secondsPastEpoch[] and nanoseconds[]).
+    // - Per-row timestamps may be carried either as top-level array fields (e.g. secondsPastEpoch[]/nanoseconds[])
+    //   or as regular NTTable columns under `value` (e.g. value.secondsPastEpoch[]/value.nanoseconds[]).
     const auto columns = epicsValue["value"];
     if (!columns || columns.type().kind() != pvxs::Kind::Compound)
     {
@@ -102,10 +103,20 @@ bool BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch(mldp_pvxs_driver::util::
 
     pvxs::Value secondsValue = epicsValue[tsSecondsField];
     pvxs::Value nanosValue = epicsValue[tsNanosField];
+    // If not present as top-level fields, accept timestamps as table columns.
+    if (!secondsValue.valid() || !nanosValue.valid())
+    {
+        secondsValue = columns[tsSecondsField];
+        nanosValue = columns[tsNanosField];
+    }
 
     if (!secondsValue.valid() || !nanosValue.valid())
     {
-        warnf(log, "NTTable row-ts PV {} missing timestamp arrays '{}'/'{}'", tablePvName, tsSecondsField, tsNanosField);
+        warnf(log,
+              "NTTable row-ts PV {} missing timestamp arrays '{}'/'{}' (expected either as top-level fields or under value.*)",
+              tablePvName,
+              tsSecondsField,
+              tsNanosField);
         return false;
     }
 
