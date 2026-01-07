@@ -234,7 +234,6 @@ void EpicsReader::run(int timeout)
                     batch.tags.push_back(pvName);
                     batch.values[pvName].emplace_back(std::move(event_value));
                     emitted = 1;
-                    tracef(*logger_, "[{}/{}] event published", name_, pvName);
                 }
                 break;
             }
@@ -246,6 +245,7 @@ void EpicsReader::run(int timeout)
                             {
                                 m.incrementReaderEvents(static_cast<double>(emitted), readerTags);
                             });
+                tracef(*logger_, "[{}/{}] event published", name_, pvName);
             }
         }
         catch (const pvxs::client::RemoteError& e)
