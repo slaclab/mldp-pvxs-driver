@@ -11,11 +11,11 @@
 #include <argparse/argparse.hpp>
 #include <atomic>
 #include <cstdlib>
+#include <memory>
 #include <spdlog/common.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
 
-#include "SpdlogLogger.h"
 #include <util/log/Logger.h>
 
 #include <csignal>
@@ -32,13 +32,15 @@
 #include <string_view>
 
 #define RYML_SINGLE_HDR_DEFINE_NOW
+#include <prometheus/text_serializer.h>
 #include <rapidyaml-0.10.0.hpp>
 
 #include <config/Config.h>
 #include <controller/MLDPPVXSController.h>
 #include <mldp_pvxs_driver_version.h>
 
-#include <prometheus/text_serializer.h>
+#include "PeriodicMetricsDumper.h"
+#include "SpdlogLogger.h"
 
 using namespace argparse;
 using namespace mldp_pvxs_driver::config;
@@ -97,6 +99,17 @@ void configure_parameter(ArgumentParser& program)
         .default_value(std::string("info"))
         .metavar("LEVEL");
 
+    program.add_argument("-m", "--metrics-output")
+        .help("Path to output file for periodic metrics dumps (JSON Lines format)")
+        .default_value(std::string("metrics.jsonl"))
+        .metavar("FILE");
+
+    program.add_argument("--metrics-interval")
+        .help("Interval in seconds for periodic metrics dumps (default: 60)")
+        .default_value(5)
+        .scan<'d', int>()
+        .metavar("SECONDS");
+
     // add metrics help to epilog
     program.add_epilog(
         R"(Metrics:
@@ -105,6 +118,8 @@ void configure_parameter(ArgumentParser& program)
      - Or send SIGUSR1 / SIGQUIT to request a dump:
         kill -USR1 <pid>
         kill -QUIT <pid>
+     - Use --metrics-output to specify a file path for periodic metric dumps
+       (stored in JSON Lines format with configurable interval).
     )");
 }
 
@@ -180,9 +195,9 @@ std::string stripPrometheusComments(std::string_view text)
 
     while (!remaining.empty())
     {
-        const auto newline = remaining.find('\n');
+        const auto             newline = remaining.find('\n');
         const std::string_view line = (newline == std::string_view::npos) ? remaining
-                                                                           : remaining.substr(0, newline);
+                                                                          : remaining.substr(0, newline);
 
         if (!line.empty() && line.front() != '#')
         {
@@ -215,7 +230,8 @@ volatile std::atomic<bool> quit = false;
 volatile std::atomic<bool> metrics_requested = false;
 
 // Global driver instance
-std::shared_ptr<MLDPPVXSController> driver = nullptr;
+std::shared_ptr<MLDPPVXSController>    driver = nullptr;
+std::shared_ptr<PeriodicMetricsDumper> metrics_dumper = nullptr;
 
 int main(int argc, char** argv)
 {
@@ -241,6 +257,35 @@ int main(int argc, char** argv)
         std::format("{}.{}.{}", MLDP_PVXS_DRIVER_VERSION_MAJOR, MLDP_PVXS_DRIVER_VERSION_MINOR, MLDP_PVXS_DRIVER_VERSION_PATCH));
 
     configure_parameter(program);
+
+    const auto start_dumper = [&program](std::shared_ptr<PeriodicMetricsDumper>& metrics_dumper)
+    {
+        if (metrics_dumper)
+        {
+            spdlog::warn("Periodic metrics dumper is already running.");
+            return;
+        }
+        // Ctrl+D
+        const auto interval_seconds = program.get<int>("--metrics-interval");
+        spdlog::info(
+            "Starting periodic metrics dumper to file '{}' every {} seconds...",
+            program.get<std::string>("--metrics-output"),
+            interval_seconds);
+        metrics_dumper = std::make_shared<PeriodicMetricsDumper>(
+            driver->metrics(),
+            program.get<std::string>("--metrics-output"),
+            std::chrono::milliseconds(interval_seconds * 1000));
+    };
+
+    const auto stop_dumper = [&program](std::shared_ptr<PeriodicMetricsDumper>& metrics_dumper)
+    {
+        // Stop periodic metrics dumper if it was started
+        if (metrics_dumper)
+        {
+            spdlog::info("Stopping periodic metrics dumper...");
+            metrics_dumper.reset();
+        }
+    };
 
     try
     {
@@ -361,11 +406,27 @@ int main(int argc, char** argv)
                 // Ctrl+P
                 metricHandler();
             }
+
+            // metric dumper activations
+            if (c == ('d' & 0x1F))
+            {
+                if (metrics_dumper)
+                {
+                    stop_dumper(metrics_dumper);
+                }
+                else
+                {
+                    start_dumper(metrics_dumper);
+                }
+            }
         }
 
         // Stop the driver
         spdlog::info("Stopping driver...");
         driver->stop();
+
+        // Stop periodic metrics dumper if it was started
+        stop_dumper(metrics_dumper);
 
         // Ensure all driver-owned components (and their loggers) are destroyed
         // before leaving main(), to avoid static-destruction-order issues.

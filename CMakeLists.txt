@@ -438,6 +438,7 @@ if(MLDP_PVXS_DRIVER_MAIN)
     add_executable(${PROJECT_NAME}
         "${CMAKE_CURRENT_SOURCE_DIR}/ext/rapidyaml/include/rapidyaml-0.10.0.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/mldp_pvxs_driver_main.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/PeriodicMetricsDumper.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/SpdlogLogger.cpp"
     )
 
