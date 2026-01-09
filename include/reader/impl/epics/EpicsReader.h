@@ -27,6 +27,7 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <utility>
 
 namespace mldp_pvxs_driver::reader::impl::epics {
 
@@ -122,6 +123,25 @@ private:
         std::string tsNanosField;
     };
 
+    //! Struct to hold a PV name and its associated value for processing.
+    struct ProcessingValue
+    {
+        std::string pvName;
+        pvxs::Value  value;
+
+        ProcessingValue() = default;
+        ProcessingValue(std::string pvNameIn, pvxs::Value valueIn)
+            : pvName(std::move(pvNameIn))
+            , value(std::move(valueIn))
+        {
+        }
+
+        ProcessingValue(const ProcessingValue&) = default;
+        ProcessingValue& operator=(const ProcessingValue&) = default;
+        ProcessingValue(ProcessingValue&&) noexcept = default;
+        ProcessingValue& operator=(ProcessingValue&&) noexcept = default;
+    };
+
     std::shared_ptr<mldp_pvxs_driver::util::log::ILogger> logger_;
 
     /** @brief Reader-specific configuration (name, PV list, etc.). */
@@ -143,7 +163,7 @@ private:
     pvxs::MPMCFIFO<std::shared_ptr<pvxs::client::Subscription>> m_pva_subscriptions;
 
     /** @brief Work queue of subscription events to be processed by run(). */
-    pvxs::MPMCFIFO<std::shared_ptr<pvxs::client::Subscription>> m_pva_workqueue;
+    pvxs::MPMCFIFO<ProcessingValue> m_pva_workqueue;
 
     /** @brief Fast per-PV lookup for special handling. */
     std::unordered_map<std::string, PVRuntimeConfig> pvRuntimeByName_;

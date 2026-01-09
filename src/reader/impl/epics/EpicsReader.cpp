@@ -8,18 +8,18 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
-#include <util/bus/IEventBusPush.h>
-#include <util/log/Logger.h>
 #include <metrics/Metrics.h>
 #include <reader/impl/epics/BSASEpicsMLDPConversion.h>
 #include <reader/impl/epics/EpicsMLDPConversion.h>
 #include <reader/impl/epics/EpicsReader.h>
+#include <string_view>
+#include <util/bus/IEventBusPush.h>
+#include <util/log/Logger.h>
 #include <utility>
 
-
-#include <unordered_map>
 #include <chrono>
 #include <cstdint>
+#include <unordered_map>
 
 using namespace pvxs::client;
 
@@ -81,7 +81,7 @@ EpicsReader::EpicsReader(std::shared_ptr<IEventBusPush> bus,
 EpicsReader::~EpicsReader()
 {
     running_ = false;
-    m_pva_workqueue.push(nullptr); // Push a null subscription to unblock the queue
+    m_pva_workqueue.push(ProcessingValue{}); // Push a null subscription to unblock the queue
     if (worker_.joinable())
         worker_.join();
 }
@@ -96,9 +96,13 @@ void EpicsReader::addPV(const PVSet& pvNames)
     for (const auto& pv : pvNames)
     {
         auto pv_mon = pva_context_.monitor(pv)
-                          .event([this](const pvxs::client::Subscription& s)
+                          .event([this](pvxs::client::Subscription& s)
                                  {
-                                     m_pva_workqueue.push(s.shared_from_this());
+                                     // drain all available values
+                                     for (pvxs::Value value = s.pop(); value; value = s.pop())
+                                     {
+                                         m_pva_workqueue.push(ProcessingValue{s.name(), std::move(value)});
+                                     }
                                  })
                           .exec();
         m_pva_subscriptions.push(pv_mon);
@@ -113,21 +117,14 @@ void EpicsReader::run(int timeout)
     const auto acquisition_ts = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch());
     while (running_ && !expired)
     {
-        auto sub = m_pva_workqueue.pop();
-        if (!sub)
-            continue; // Skip null subscription used to unblock queue on shutdown
+        auto                     processing_value = m_pva_workqueue.pop();
+        std::string              pvName = std::move(processing_value.pvName);
+        pvxs::Value              epics_value = std::move(processing_value.value);
         const prometheus::Labels readerTags{{"reader", name_}};
         try
         {
-            pvxs::Value epics_value = sub->pop();
-            if (!epics_value)
-            {
-                // no data available
-                continue;
-            }
 
             // get the PV name and runtime configuration
-            const auto                  pvName = sub->name();
             const auto                  it = pvRuntimeByName_.find(pvName);
             const PVRuntimeConfig::Mode mode = (it != pvRuntimeByName_.end()) ? it->second.mode : PVRuntimeConfig::Mode::Default;
 
@@ -252,7 +249,7 @@ void EpicsReader::run(int timeout)
         }
         catch (const pvxs::client::RemoteError& e)
         {
-            errorf(*logger_, "Server error when reading PV {} on reader {}: {}", sub->name(), name_, e.what());
+            errorf(*logger_, "Server error when reading PV {} on reader {}: {}", pvName, name_, e.what());
             metric_call(metrics_, [&](auto& m)
                         {
                             m.incrementReaderErrors(1.0, readerTags);
