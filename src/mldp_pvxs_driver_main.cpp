@@ -37,6 +37,7 @@
 
 #include <config/Config.h>
 #include <controller/MLDPPVXSController.h>
+#include <metrics/MetricsSnapshot.h>
 #include <mldp_pvxs_driver_version.h>
 
 #include "PeriodicMetricsDumper.h"
@@ -184,45 +185,6 @@ std::string serializeMetricsText(const mldp_pvxs_driver::metrics::Metrics& metri
     return out.str();
 }
 
-std::string stripPrometheusComments(std::string_view text)
-{
-    // Prometheus text exposition includes comment lines like:
-    //   # HELP ...
-    //   # TYPE ...
-    // For interactive CLI dumps we prefer only sample lines.
-    std::ostringstream out;
-    std::string_view   remaining = text;
-
-    while (!remaining.empty())
-    {
-        const auto             newline = remaining.find('\n');
-        const std::string_view line = (newline == std::string_view::npos) ? remaining
-                                                                          : remaining.substr(0, newline);
-
-        if (!line.empty() && line.front() != '#')
-        {
-            out << line << '\n';
-        }
-
-        if (newline == std::string_view::npos)
-        {
-            break;
-        }
-        remaining.remove_prefix(newline + 1);
-    }
-
-    return out.str();
-}
-
-// Print all metrics to stdout in Prometheus text exposition format.
-void printAllMetrics(const mldp_pvxs_driver::controller::MLDPPVXSController& controller)
-{
-    const auto text = serializeMetricsText(controller.metrics());
-    std::cout << "================================ METRICS DUMP ========================\n";
-    std::cout << stripPrometheusComments(text);
-    std::cout << "=====================================================================\n";
-    std::cout.flush();
-}
 } // namespace
 
 // Global flags for signal handling
@@ -296,11 +258,14 @@ int main(int argc, char** argv)
         TermCbreakGuard termGuard;
         // Metrics printing can be triggered either by Ctrl+P (foreground terminal)
         // or by sending SIGUSR1/SIGQUIT to the process.
-        const auto metricHandler = []()
+        mldp_pvxs_driver::metrics::MetricsSnapshot metrics_snapshot;
+        const auto metricHandler = [&metrics_snapshot]()
         {
             if (driver)
             {
-                printAllMetrics(*driver);
+                const auto snapshot = metrics_snapshot.getSnapshot(driver->metrics());
+                std::cout << mldp_pvxs_driver::metrics::MetricsSnapshot::toString(snapshot);
+                std::cout.flush();
             }
         };
 
