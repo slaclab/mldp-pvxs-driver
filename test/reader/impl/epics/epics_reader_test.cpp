@@ -15,6 +15,8 @@
 #include "../../../mock/sioc.h"
 
 #include <config/Config.h>
+#include <metrics/Metrics.h>
+#include <metrics/MetricsSnapshot.h>
 #include <reader/ReaderFactory.h>
 #include <reader/impl/epics/EpicsReader.h>
 #include <util/bus/IEventBusPush.h>
@@ -28,6 +30,11 @@ class MockEventBusPush : public mldp_pvxs_driver::util::bus::IEventBusPush
 public:
     using EventBatch = mldp_pvxs_driver::util::bus::IEventBusPush::EventBatch;
 
+    explicit MockEventBusPush(std::shared_ptr<mldp_pvxs_driver::metrics::Metrics> metrics = nullptr)
+        : metrics_(std::move(metrics))
+    {
+    }
+
     // Store received events for verification
     std::vector<EventBatch> received_events;
     mutable std::mutex      mutex;
@@ -35,6 +42,16 @@ public:
     bool push(EventBatch batch) override
     {
         std::lock_guard<std::mutex> lock(mutex);
+        if (metrics_)
+        {
+            for (const auto& [source, values] : batch.values)
+            {
+                const prometheus::Labels tags{{"reader", source}};
+                metrics_->incrementBusPushes(static_cast<double>(values.size()), tags);
+                metrics_->incrementBusPayloadBytes(0.0, tags);
+                metrics_->setBusPayloadBytesPerSecond(0.0, tags);
+            }
+        }
         received_events.push_back(std::move(batch));
         return true;
     }
@@ -107,6 +124,15 @@ public:
         std::lock_guard<std::mutex> lock(mutex);
         received_events.clear();
     }
+
+    void set_metrics(std::shared_ptr<mldp_pvxs_driver::metrics::Metrics> metrics)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        metrics_ = std::move(metrics);
+    }
+
+private:
+    std::shared_ptr<mldp_pvxs_driver::metrics::Metrics> metrics_;
 };
 
 namespace {
@@ -129,6 +155,34 @@ std::shared_ptr<DataValue> findLatestDataValueForSource(const MockEventBusPush& 
         return ev->data_value;
     }
     return nullptr;
+}
+
+size_t countEventsForSource(const MockEventBusPush& bus, const std::string& source)
+{
+    std::lock_guard<std::mutex> lock(bus.mutex);
+    size_t                      total = 0;
+    for (const auto& batch : bus.received_events)
+    {
+        const auto it = batch.values.find(source);
+        if (it == batch.values.end())
+        {
+            continue;
+        }
+        total += it->second.size();
+    }
+    return total;
+}
+
+std::optional<long long> findReaderPushesForPv(const mldp_pvxs_driver::metrics::MetricsData& snapshot, const std::string& pv)
+{
+    for (const auto& reader : snapshot.readers)
+    {
+        if (reader.pv_name == pv)
+        {
+            return reader.pushes;
+        }
+    }
+    return std::nullopt;
 }
 
 const DataValue* findStructureFieldValue(const DataValue& root, const std::string& fieldName)
@@ -222,6 +276,42 @@ pvs:
         waited_ms += 100;
     }
     EXPECT_GT(mock_bus->event_count(), 0) << "No events received within timeout";
+}
+
+TEST_F(EpicsReaderTest, CounterPVEmitsMultipleEvents)
+{
+    const std::string yaml = R"(
+name: epics_1
+pvs:
+  - name: test:counter
+)";
+    const auto        cfg = makeConfigFromYaml(yaml);
+    auto              metrics = std::make_shared<mldp_pvxs_driver::metrics::Metrics>(
+        mldp_pvxs_driver::metrics::MetricsConfig());
+    mock_bus->set_metrics(metrics);
+    auto reader_ptr = mldp_pvxs_driver::reader::ReaderFactory::create("epics", mock_bus, cfg, metrics);
+    ASSERT_NE(reader_ptr, nullptr);
+
+    const int max_wait_ms = 5000;
+    int       waited_ms = 0;
+    size_t    counter_events = 0;
+    bool      matched_metrics = false;
+    mldp_pvxs_driver::metrics::MetricsSnapshot snapshotter;
+    while (waited_ms < max_wait_ms)
+    {
+        counter_events = countEventsForSource(*mock_bus, "test:counter");
+        const auto snapshot = snapshotter.getSnapshot(*metrics);
+        const auto pushes = findReaderPushesForPv(snapshot, "test:counter");
+        matched_metrics = pushes.has_value() && counter_events >= 2 &&
+                          pushes.value() == static_cast<long long>(counter_events);
+        if (matched_metrics)
+            break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        waited_ms += 100;
+    }
+
+    EXPECT_GE(counter_events, 2u) << "Expected multiple events for test:counter";
+    EXPECT_TRUE(matched_metrics) << "Expected metrics snapshot pushes to match received events for test:counter";
 }
 
 TEST_F(EpicsReaderTest, SimulatedPVsProduceEventsAndExpectedTypes)
