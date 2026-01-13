@@ -54,7 +54,7 @@ The driver is configured via a YAML file (see above) and is started from the com
 ### Usage
 
 ```bash
-mldp_pvxs_driver [--help] [--version] [--config PATH] [--log-level LEVEL]
+mldp_pvxs_driver [--help] [--version] [--config PATH] [--log-level LEVEL] [--metrics-output FILE] [--metrics-interval SECONDS]
 ```
 
 ### Options
@@ -180,23 +180,3 @@ either:
 - install compatible EPICS Base + PVXS and ensure they are discoverable by the dynamic loader (e.g., via
   `LD_LIBRARY_PATH` or a matching install prefix), and install the required gRPC/Protobuf/OpenSSL runtime packages, or
 - run via the published Docker image, which includes the correct runtime environment.
-
-### AppImage notes
-
-The AppImage is intended to bundle the driver plus its runtime shared libraries (including EPICS/PVXS) to reduce
-host setup. It still requires a compatible Linux base system (kernel + glibc). Some distributions may also require
-FUSE depending on how AppImages are executed.
-
-#### Running the AppImage
-
-1. Download the AppImage from the GitHub Release assets (example name:
-  `mldp_pvxs_driver-ubuntu-noble-epics-R7.0.8.1-pvxs-1.4.1-x86_64.AppImage`).
-2. Make it executable:
-  `chmod +x ./mldp_pvxs_driver-ubuntu-noble-epics-R7.0.8.1-pvxs-1.4.1-x86_64.AppImage`
-3. Run it (point at your config file):
-  `./mldp_pvxs_driver-ubuntu-noble-epics-R7.0.8.1-pvxs-1.4.1-x86_64.AppImage --config config.yaml`
-
-If the AppImage fails to start due to FUSE restrictions, you can extract and run it without mounting:
-
-- `./mldp_pvxs_driver-ubuntu-noble-epics-R7.0.8.1-pvxs-1.4.1-x86_64.AppImage --appimage-extract`
-- `./squashfs-root/AppRun --config config.yaml`
