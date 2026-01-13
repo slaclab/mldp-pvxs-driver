@@ -40,7 +40,7 @@ The diagram above represents the data flow the CLI orchestrates. Use these check
     #   pem_private_key: /etc/certs/client.key
     #   pem_root_certs: /etc/certs/ca.crt
 
-  reader:
+  reader:                       # optional; omit to start with no readers
     - epics:
         - name: epics_reader_a
           pvs:
@@ -144,6 +144,16 @@ classDiagram
   1. Create `include/reader/impl/<name>/<Name>Reader.h` derived from `Reader`, include the macro, and define any extra configuration knobs.
   2. Implement the behavior in `src/reader/impl/<name>/<Name>Reader.cpp` and make sure the TU is part of `libmldp_pvxs_driver` in `CMakeLists.txt`.
   3. Invoke `ReaderFactory::create("<type>", bus, cfg)` from the orchestration layer to spin up the new reader; the factory throws if the type string is unknown, which protects against misconfigured YAML.
+
+### EPICS reader PV options
+- `pvs[].option` accepts a scalar PVXS option string or a map.
+- For NTTable row-timestamp handling, use:
+  ```yaml
+  option:
+    type: nttable-rowts
+    tsSeconds: secondsPastEpoch   # optional
+    tsNanos: nanoseconds          # optional
+  ```
 
 ## Logging Abstraction
 

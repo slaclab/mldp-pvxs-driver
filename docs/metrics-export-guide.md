@@ -1,7 +1,7 @@
 # Metrics Export Implementation
 
 ## Overview
-The `appendMetricsToFile` function has been enhanced to support periodic metrics collection with improved formatting. Metrics are now exported in **JSON Lines (JSONL)** format with timestamps, which is better suited for time-series data than CSV.
+The `appendMetricsToFile` function supports periodic metrics collection with improved formatting. Metrics are exported in **JSON Lines (JSONL)** format with timestamps, which is better suited for time-series data than CSV.
 
 ## Features
 
@@ -29,18 +29,18 @@ Each metrics dump includes:
 ```bash
 ./mldp_pvxs_driver \
   --metrics-output /path/to/metrics.jsonl \
-  --metrics-interval 60
+  --metrics-interval 5
 ```
 
 - `--metrics-output FILE`: Path where metrics will be appended (JSON Lines format)
-- `--metrics-interval SECONDS`: Dump interval in seconds (default: 60)
+- `--metrics-interval SECONDS`: Dump interval in seconds (default: 5)
 
 ### Manual Metrics Dump
 You can still trigger manual dumps without using the periodic feature:
 - Press **Ctrl+P** in the foreground terminal
 - Or send signals: `kill -USR1 <pid>` or `kill -QUIT <pid>`
 
-These manual dumps print to stdout in Prometheus text format.
+These manual dumps print to stdout using `MetricsSnapshot::toString()`.
 
 ## Example Output (JSON Lines)
 
@@ -91,17 +91,41 @@ jq -r '[.timestamp_iso, .metrics | to_entries[] | [.key, .value]] | @csv' metric
 
 ## Implementation Details
 
-### New Classes/Functions
+### Classes and functions
 
 - **`PeriodicMetricsDumper`**: Background thread manager for periodic metric exports
   - `start()`: Begins periodic dumping
   - `stop()`: Gracefully stops the background thread
   - Thread-safe with mutex protection
 
-### Modified Functions
-
-- **`appendMetricsToFile()`**: Now appends JSONL-formatted metrics with timestamps
+- **`appendMetricsToFile()`**: Appends JSONL-formatted metrics with timestamps
 - **`serializeMetricsJsonl()`**: Converts Prometheus metrics to structured JSON
+
+### MetricsSnapshot
+`MetricsSnapshot` (`include/metrics/MetricsSnapshot.h`, `src/metrics/MetricsSnapshot.cpp`) builds a structured snapshot from the Prometheus registry and formats it for stdout.
+
+- **Snapshot creation**: `getSnapshot(const Metrics& metrics)` parses the Prometheus text exposition to collect per-reader and pool metrics.
+- **Formatting**: `toString(const MetricsData& snapshot)` renders a human-readable report for interactive dumps.
+- **Usage path**: the CLI triggers `MetricsSnapshot` when Ctrl+P or SIGUSR1/SIGQUIT is received.
+
+Example stdout output:
+```text
+================================ METRICS DUMP ========================
+
+READER STATISTICS:
+─────────────────────────────────────────────────────────────────
+PV: pv_1
+  Pushes:     42
+  Total Data: 1.23 MB
+  Rate:       12.34 KB/s
+
+CONNECTION POOL:
+─────────────────────────────────────────────────────────────────
+  In Use:     1
+  Available:  3
+  Total:      4
+=====================================================================
+```
 
 ### Architecture
 
@@ -126,6 +150,10 @@ jq -r '[.timestamp_iso, .metrics | to_entries[] | [.key, .value]] | @csv' metric
 ```bash
 ./mldp_pvxs_driver  # No --metrics-output argument
 ```
+
+### Runtime controls
+- Press **Ctrl+P** to dump metrics to stdout (MetricsSnapshot formatted).
+- Press **Ctrl+D** to toggle the periodic metrics dumper on/off.
 
 ## Benefits
 

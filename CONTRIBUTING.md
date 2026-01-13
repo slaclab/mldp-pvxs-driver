@@ -79,7 +79,6 @@ ctest --test-dir build --output-on-failure
 - **When to run:** Run the script when you add new header/source files or before opening a PR to ensure all files have the correct license header.
 - **Behavior:** The script is idempotent and safe to run multiple times. It invokes the `nwa` tool with the repository's `.nwa-config.yaml` to insert headers consistently.
 - **Tool used:** The script invokes the [`nwa`](https://github.com/B1NARY-GR0UP/nwa) tool. The repository script calls `/usr/local/bin/nwa config -c add .nwa-config.yaml` (see `scripts/add-licenses-include-h.sh`), so ensure `nwa` is installed or run the script inside the devcontainer where `nwa` is available.
-- **Behavior:** The script is idempotent and safe to run multiple times and uses the `.nwa-config.yaml` configuration to insert headers consistently.
 
 ## Where to look in code
 

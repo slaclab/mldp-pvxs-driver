@@ -23,7 +23,7 @@ mldp_pool:
     pem_private_key: /etc/certs/client.key
     pem_root_certs: /etc/certs/ca.crt
 
-reader:
+reader:                                  # optional; omit to start with no readers
   - epics:
       - name: epics_reader_a
         pvs:
@@ -41,6 +41,11 @@ metrics:                                 # optional; omit to disable Prometheus 
 `mldp_pool` values mirror the driver’s `provider_name` and target URL but add connection-pool sizing. Readers are defined
 as sequences under `reader[].epics`, each with a `name` and an optional `pvs` list; if `pvs` is omitted, the reader will
 start without predefined channels.
+
+`mldp_pool.credentials` accepts:
+- `none` (insecure, no TLS)
+- `ssl` (TLS with system defaults)
+- a map with optional `pem_cert_chain`, `pem_private_key`, `pem_root_certs` paths (TLS with explicit PEM files)
 
 ## Command-line interface
 
@@ -66,6 +71,12 @@ mldp_pvxs_driver [--help] [--version] [--config PATH] [--log-level LEVEL]
   - Accepted values: `trace`, `debug`, `info`, `warn`, `error`, `critical`, `off`
   - Default: `info`
   - Notes: value is case-insensitive; `warning` is accepted as `warn`, `err` as `error`, and `fatal` as `critical`.
+- `-m, --metrics-output FILE`
+  - Path to output file for periodic metrics dumps (JSON Lines format).
+  - Default: `metrics.jsonl`
+- `--metrics-interval SECONDS`
+  - Interval in seconds for periodic metrics dumps.
+  - Default: `5`
 
 ### Examples
 
@@ -81,11 +92,29 @@ mldp_pvxs_driver [--help] [--version] [--config PATH] [--log-level LEVEL]
 ./mldp_pvxs_driver --version
 ```
 
+For periodic metrics dumps and manual triggers (Ctrl+P, Ctrl+D, SIGUSR1/SIGQUIT), see `docs/metrics-export-guide.md`.
+
 ## Architecture
 
 This project uses a pipeline-style architecture: PVXS clients feed PV updates into a bounded work queue; the core driver converts and enriches events and dispatches them to the MLDP ingestion service using a connection pool of gRPC channels; reader implementations consume and re-publish or transform events as needed. See the detailed diagram and design notes in [docs/architecture.md](docs/architecture.md).
 
 For developer information and contribution guidelines see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## External Software
+
+- EPICS Base (default: R7.0.8.1; source: https://github.com/epics-base/epics-base) provides the core EPICS runtime and `libCom`.
+- PVXS (default: 1.4.1; source: https://github.com/epics-base/pvxs) provides the PVAccess client used to subscribe to EPICS PVs.
+- gRPC (system package; version per toolchain) provides the RPC transport to the MLDP ingestion service.
+- Protocol Buffers (system package; version per toolchain) generates and serializes MLDP protobuf payloads.
+- dp-grpc proto definitions (source: https://github.com/osprey-dcs/dp-grpc) supply the MLDP ingestion API `.proto` files used at build time.
+- OpenSSL (system library; version per OS/toolchain) provides TLS for gRPC credentials.
+- spdlog v1.16.0 (source: https://github.com/gabime/spdlog) provides structured logging.
+- prometheus-cpp v1.3.0 (source: https://github.com/jupp0r/prometheus-cpp) provides the metrics registry and HTTP exporter.
+- argparse v3.2 (source: https://github.com/p-ranav/argparse) provides CLI argument parsing.
+- rapidyaml 0.10.0 (vendored in `ext/rapidyaml`; source: https://github.com/biojppm/rapidyaml) parses the YAML configuration.
+- BS::thread_pool 5.0.0 (vendored in `ext/BS_thread_pool`; source: https://github.com/bshoshany/thread-pool) provides the controller worker thread pool.
+- libevent (system library; required when statically linking PVXS) supplies PVXS' event loop dependencies in static builds.
+- CMake 3.15+ (source: https://cmake.org) configures and builds the project.
 
 ## Releases
 
