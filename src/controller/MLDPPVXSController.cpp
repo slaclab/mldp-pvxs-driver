@@ -176,6 +176,7 @@ void MLDPPVXSController::pushImpl(EventBatch batch_values)
         bool       wrote_any = false;
         uint64_t   total_payload_bytes = 0;
         std::unordered_map<std::string, uint64_t> payload_bytes_by_reader;
+        std::unordered_map<std::string, uint64_t> payload_bytes_by_tag;
 
         for (auto& [src_name, events] : batch_values.values)
         {;
@@ -263,6 +264,22 @@ void MLDPPVXSController::pushImpl(EventBatch batch_values)
                             m.incrementBusPayloadBytes(static_cast<double>(payload_bytes), {{"reader", src_name}});
                             m.incrementBusPushes(static_cast<double>(column->datavalues_size()), {{"reader", src_name}});
                         });
+            if (!batch_values.tags.empty())
+            {
+                for (const auto& tag : batch_values.tags)
+                {
+                    if (tag == src_name)
+                    {
+                        continue;
+                    }
+                    payload_bytes_by_tag[tag] += payload_bytes;
+                    metric_call(metrics_, [&](auto& m)
+                                {
+                                    m.incrementBusPayloadBytes(static_cast<double>(payload_bytes), {{"reader", tag}});
+                                    m.incrementBusPushes(static_cast<double>(column->datavalues_size()), {{"reader", tag}});
+                                });
+                }
+            }
 
             wrote_any = true;
         }
@@ -290,6 +307,14 @@ void MLDPPVXSController::pushImpl(EventBatch batch_values)
                     metric_call(metrics_, [&](auto& m)
                                 {
                                     m.setBusPayloadBytesPerSecond(bytes_per_second, {{"reader", reader}});
+                                });
+                }
+                for (const auto& [tag, bytes] : payload_bytes_by_tag)
+                {
+                    const double bytes_per_second = static_cast<double>(bytes) / elapsed_seconds;
+                    metric_call(metrics_, [&](auto& m)
+                                {
+                                    m.setBusPayloadBytesPerSecond(bytes_per_second, {{"reader", tag}});
                                 });
                 }
             }
