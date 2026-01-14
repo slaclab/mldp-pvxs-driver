@@ -246,6 +246,7 @@ int main(int argc, char** argv)
         {
             spdlog::info("Stopping periodic metrics dumper...");
             metrics_dumper.reset();
+            spdlog::info("Stopped periodic metrics dumper.");
         }
     };
 
