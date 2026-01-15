@@ -65,30 +65,6 @@ These manual dumps print to stdout using `MetricsSnapshot::toString()`.
 }
 ```
 
-## Processing Metrics Data
-
-### Using `jq` to analyze JSONL metrics:
-
-```bash
-# Get all timestamps
-jq .timestamp_iso metrics.jsonl
-
-# Get specific metric values over time
-jq '.metrics.mldp_pvxs_messages_processed_total' metrics.jsonl
-
-# Calculate metric deltas
-jq -s '.[1:] | map(.metrics.mldp_pvxs_bytes_received_total - .[0].metrics.mldp_pvxs_bytes_received_total)' metrics.jsonl
-
-# Filter metrics from a specific time range
-jq 'select(.timestamp_ms > 1704623500000 and .timestamp_ms < 1704623600000)' metrics.jsonl
-```
-
-### Convert to CSV (if needed):
-
-```bash
-jq -r '[.timestamp_iso, .metrics | to_entries[] | [.key, .value]] | @csv' metrics.jsonl
-```
-
 ## Implementation Details
 
 ### Classes and functions
