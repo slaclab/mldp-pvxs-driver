@@ -8,7 +8,7 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
-#include "SpdlogLogger.h"
+#include <SpdlogLogger.h>
 
 #include <spdlog/common.h>
 #include <spdlog/logger.h>

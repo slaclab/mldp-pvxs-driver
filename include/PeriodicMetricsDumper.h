@@ -57,14 +57,16 @@
 class PeriodicMetricsDumper
 {
 private:
-    std::thread                         dump_thread;      ///< Background thread for periodic dumps
+    friend class PeriodicMetricsDumperTest;
+
+    std::thread                         dump_thread;        ///< Background thread for periodic dumps
     volatile std::atomic<bool>          should_stop{false}; ///< Flag to signal thread shutdown
-    std::mutex                          state_mutex;      ///< Protects shared state and condition variable
-    std::condition_variable             stop_signal;      ///< Wakes thread immediately on stop request
-    std::mutex                          output_path_mutex; ///< Protects output_path access
-    std::string                         output_path;      ///< File path for metric exports
-    std::chrono::milliseconds           interval;         ///< Dump interval in milliseconds
-    mldp_pvxs_driver::metrics::Metrics& metrics;          ///< Reference to metrics registry
+    std::mutex                          state_mutex;        ///< Protects shared state and condition variable
+    std::condition_variable             stop_signal;        ///< Wakes thread immediately on stop request
+    std::mutex                          output_path_mutex;  ///< Protects output_path access
+    std::string                         output_path;        ///< File path for metric exports
+    std::chrono::milliseconds           interval;           ///< Dump interval in milliseconds
+    mldp_pvxs_driver::metrics::Metrics& metrics;            ///< Reference to metrics registry
 
     /**
      * @brief Internal thread function for periodic metric dumping.
@@ -83,28 +85,6 @@ private:
      * allowing graceful shutdown without waiting for the full sleep interval to elapse.
      */
     void stop();
-
-    /**
-     * @brief Serialize current metrics to JSON Lines format.
-     *
-     * Converts metrics from Prometheus text exposition format to a single-line
-     * JSON object with timestamp and metric values.
-     *
-     * @return std::string JSON Lines formatted metrics with ISO 8601 and millisecond timestamps
-     *
-     * @throws None (errors logged internally)
-     */
-    std::string serializeMetricsJsonl();
-
-    /**
-     * @brief Append serialized metrics to output file.
-     *
-     * Opens the file in append mode and writes the JSON Lines formatted metrics.
-     * File errors are caught and logged via spdlog without propagating exceptions.
-     *
-     * @throws None (all exceptions caught and logged)
-     */
-    void appendMetricsToFile();
 
 public:
     /// Explicitly deleted default constructor
@@ -134,8 +114,8 @@ public:
      * @endcode
      */
     explicit PeriodicMetricsDumper(mldp_pvxs_driver::metrics::Metrics& metrics,
-                                   const std::string& path,
-                                   std::chrono::milliseconds dump_interval);
+                                   const std::string&                  path,
+                                   std::chrono::milliseconds           dump_interval);
 
     /**
      * @brief Destructor.
@@ -144,5 +124,26 @@ public:
      * If stop() hasn't been called explicitly, it will be called in the destructor.
      */
     ~PeriodicMetricsDumper();
-};
 
+    /**
+     * @brief Serialize current metrics to JSON Lines format.
+     *
+     * Converts metrics from Prometheus text exposition format to a single-line
+     * JSON object with timestamp and metric values.
+     *
+     * @return std::string JSON Lines formatted metrics with ISO 8601 and millisecond timestamps
+     *
+     * @throws None (errors logged internally)
+     */
+    std::string serializeMetricsJsonl();
+
+    /**
+     * @brief Append serialized metrics to output file.
+     *
+     * Opens the file in append mode and writes the JSON Lines formatted metrics.
+     * File errors are caught and logged via spdlog without propagating exceptions.
+     *
+     * @throws None (all exceptions caught and logged)
+     */
+    void appendMetricsToFile();
+};

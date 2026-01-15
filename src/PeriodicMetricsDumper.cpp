@@ -8,15 +8,66 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
-#include "PeriodicMetricsDumper.h"
+#include <PeriodicMetricsDumper.h>
 
 #include <prometheus/text_serializer.h>
 #include <spdlog/spdlog.h>
 
 #include <chrono>
+#include <cstdio>
 #include <fstream>
 
 using namespace mldp_pvxs_driver::metrics;
+
+namespace {
+
+std::string escapeJsonString(std::string_view input)
+{
+    std::string out;
+    out.reserve(input.size());
+    for (const unsigned char ch : input)
+    {
+        switch (ch)
+        {
+        case '\\':
+            out += "\\\\";
+            break;
+        case '"':
+            out += "\\\"";
+            break;
+        case '\b':
+            out += "\\b";
+            break;
+        case '\f':
+            out += "\\f";
+            break;
+        case '\n':
+            out += "\\n";
+            break;
+        case '\r':
+            out += "\\r";
+            break;
+        case '\t':
+            out += "\\t";
+            break;
+        default:
+            if (ch < 0x20)
+            {
+                char buf[7];
+                std::snprintf(buf, sizeof(buf), "\\u%04X", ch);
+                out += buf;
+            }
+            else
+            {
+                out += static_cast<char>(ch);
+            }
+            break;
+        }
+    }
+    return out;
+}
+
+} // namespace
 
 // Background thread to periodically dump metrics to a file.
 PeriodicMetricsDumper::PeriodicMetricsDumper(mldp_pvxs_driver::metrics::Metrics& metrics, const std::string& path, std::chrono::milliseconds dump_interval)
@@ -128,7 +179,7 @@ std::string PeriodicMetricsDumper::serializeMetricsJsonl()
                                                    ? line.substr(space1 + 1, space2 - space1 - 1)
                                                    : line.substr(space1 + 1);
 
-                out << "    \"" << name_and_labels << "\": " << value;
+                out << "    \"" << escapeJsonString(name_and_labels) << "\": " << value;
                 first_metric = false;
             }
         }
