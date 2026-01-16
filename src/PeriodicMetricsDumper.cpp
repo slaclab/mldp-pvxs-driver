@@ -173,13 +173,116 @@ std::string PeriodicMetricsDumper::serializeMetricsJsonl()
             const auto space1 = line.find(' ');
             if (space1 != std::string_view::npos)
             {
-                const auto             space2 = line.find(' ', space1 + 1);
-                const std::string_view name_and_labels = line.substr(0, space1);
-                const std::string_view value = (space2 != std::string_view::npos)
-                                                   ? line.substr(space1 + 1, space2 - space1 - 1)
-                                                   : line.substr(space1 + 1);
+                const auto space2 = line.find(' ', space1 + 1);
+                const auto brace_open = line.find('{');
+                const auto brace_close = line.find('}');
 
-                out << "    \"" << escapeJsonString(name_and_labels) << "\": " << value;
+                std::string_view metric_name;
+                std::string_view labels_str;
+                std::string_view value;
+
+                // Extract metric name and labels
+                if (brace_open != std::string_view::npos && brace_close != std::string_view::npos)
+                {
+                    // Metric has labels: metric_name{label1="value1",label2="value2"} value
+                    metric_name = line.substr(0, brace_open);
+                    labels_str = line.substr(brace_open + 1, brace_close - brace_open - 1);
+                }
+                else
+                {
+                    // Metric has no labels: metric_name value
+                    metric_name = line.substr(0, space1);
+                    labels_str = "";
+                }
+
+                value = (space2 != std::string_view::npos)
+                            ? line.substr(space1 + 1, space2 - space1 - 1)
+                            : line.substr(space1 + 1);
+
+                // Output metric name
+                out << "    \"" << escapeJsonString(metric_name) << "\": ";
+
+                // Parse and output labels as structured JSON
+                if (!labels_str.empty())
+                {
+                    out << "{";
+                    bool first_label = true;
+
+                    // Parse labels in format: label1="value1",label2="value2"
+                    std::string_view remaining_labels = labels_str;
+                    while (!remaining_labels.empty())
+                    {
+                        // Find the next '=' to get label name
+                        const auto eq_pos = remaining_labels.find('=');
+                        if (eq_pos == std::string_view::npos)
+                            break;
+
+                        const std::string_view label_name = remaining_labels.substr(0, eq_pos);
+                        remaining_labels.remove_prefix(eq_pos + 1);
+
+                        // Find the quoted value
+                        if (remaining_labels.empty() || remaining_labels[0] != '"')
+                            break;
+
+                        remaining_labels.remove_prefix(1); // Skip opening quote
+                        std::string label_value;
+                        bool        escaped = false;
+
+                        // Extract quoted value, handling escapes
+                        for (size_t i = 0; i < remaining_labels.size(); ++i)
+                        {
+                            const char ch = remaining_labels[i];
+                            if (escaped)
+                            {
+                                label_value += ch;
+                                escaped = false;
+                            }
+                            else if (ch == '\\')
+                            {
+                                label_value += ch;
+                                escaped = true;
+                            }
+                            else if (ch == '"')
+                            {
+                                remaining_labels.remove_prefix(i + 1);
+                                break;
+                            }
+                            else
+                            {
+                                label_value += ch;
+                            }
+                        }
+
+                        // Output label (rename "reader" to "source")
+                        if (!first_label)
+                            out << ", ";
+
+                        std::string final_label_name(label_name);
+                        if (final_label_name == "reader")
+                        {
+                            final_label_name = "source";
+                        }
+
+                        out << "\"" << escapeJsonString(final_label_name) << "\": \"" << escapeJsonString(label_value)
+                            << "\"";
+
+                        first_label = false;
+
+                        // Skip comma if present
+                        if (!remaining_labels.empty() && remaining_labels[0] == ',')
+                        {
+                            remaining_labels.remove_prefix(1);
+                        }
+                    }
+
+                    out << ", \"value\": " << value << "}";
+                }
+                else
+                {
+                    // Metric with no labels - just output value object
+                    out << "{\"value\": " << value << "}";
+                }
+
                 first_metric = false;
             }
         }

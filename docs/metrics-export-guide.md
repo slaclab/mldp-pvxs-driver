@@ -20,7 +20,9 @@ A background thread (`PeriodicMetricsDumper`) periodically appends metrics to a 
 Each metrics dump includes:
 - `timestamp_ms`: Milliseconds since epoch (for machine processing)
 - `timestamp_iso`: ISO 8601 formatted timestamp (human-readable)
-- `metrics`: All collected Prometheus metrics as key-value pairs
+- `metrics`: All collected Prometheus metrics as structured objects, with each metric containing:
+  - Label fields (e.g., `"source"` for tagged metrics)
+  - A `"value"` field containing the numeric metric value
 
 ## Usage
 
@@ -44,26 +46,69 @@ These manual dumps print to stdout using `MetricsSnapshot::toString()`.
 
 ## Example Output (JSON Lines)
 
+Each metric is output as a structured object with tags and values:
+
 ```json
 {
   "timestamp_ms": 1704623456123,
   "timestamp_iso": "2024-01-07T15:30:56Z",
   "metrics": {
-    "mldp_pvxs_bytes_received_total": 1048576,
-    "mldp_pvxs_messages_processed_total": 42,
-    "mldp_pvxs_processing_time_seconds": 0.523
+    "mldp_pvxs_driver_bus_push_total": {
+      "source": "QUAD:IN20:361:BACT",
+      "value": 42
+    },
+    "mldp_pvxs_driver_bus_payload_bytes_total": {
+      "source": "QUAD:IN20:361:BACT",
+      "value": 1048576
+    },
+    "mldp_pvxs_driver_pool_connections_in_use": {
+      "value": 2
+    },
+    "mldp_pvxs_driver_pool_connections_available": {
+      "value": 3
+    }
   }
 }
 {
   "timestamp_ms": 1704623516123,
   "timestamp_iso": "2024-01-07T15:31:56Z",
   "metrics": {
-    "mldp_pvxs_bytes_received_total": 2097152,
-    "mldp_pvxs_messages_processed_total": 85,
-    "mldp_pvxs_processing_time_seconds": 1.047
+    "mldp_pvxs_driver_bus_push_total": {
+      "source": "QUAD:IN20:361:BACT",
+      "value": 85
+    },
+    "mldp_pvxs_driver_bus_payload_bytes_total": {
+      "source": "QUAD:IN20:361:BACT",
+      "value": 2097152
+    },
+    "mldp_pvxs_driver_pool_connections_in_use": {
+      "value": 1
+    },
+    "mldp_pvxs_driver_pool_connections_available": {
+      "value": 4
+    }
   }
 }
 ```
+
+### Metric Structure
+
+Each metric value is a JSON object containing:
+- **Tagged metrics** (e.g., with `source` field): Include label fields plus a `"value"` field
+  ```json
+  "metric_name": {
+    "source": "PV_NAME",
+    "value": 12345
+  }
+  ```
+- **Untagged metrics**: Include only the `"value"` field
+  ```json
+  "metric_name": {
+    "value": 42
+  }
+  ```
+
+The `source` label identifies which PV or data source the metric is associated with.
 
 ## Implementation Details
 
@@ -75,7 +120,10 @@ These manual dumps print to stdout using `MetricsSnapshot::toString()`.
   - Thread-safe with mutex protection
 
 - **`appendMetricsToFile()`**: Appends JSONL-formatted metrics with timestamps
-- **`serializeMetricsJsonl()`**: Converts Prometheus metrics to structured JSON
+- **`serializeMetricsJsonl()`**: Converts Prometheus metrics to structured JSON with:
+  - Metric names as keys
+  - Objects containing label fields and a `"value"` field
+  - Automatic renaming of `reader` labels to `source`
 
 ### MetricsSnapshot
 `MetricsSnapshot` (`include/metrics/MetricsSnapshot.h`, `src/metrics/MetricsSnapshot.cpp`) builds a structured snapshot from the Prometheus registry and formats it for stdout.
