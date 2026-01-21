@@ -46,7 +46,7 @@ public:
         {
             for (const auto& [source, values] : batch.values)
             {
-                const prometheus::Labels tags{{"reader", source}};
+                const prometheus::Labels tags{{"source", source}};
                 metrics_->incrementBusPushes(static_cast<double>(values.size()), tags);
                 metrics_->incrementBusPayloadBytes(0.0, tags);
                 metrics_->setBusPayloadBytesPerSecond(0.0, tags);
