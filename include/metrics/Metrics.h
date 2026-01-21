@@ -16,6 +16,7 @@
 #include <prometheus/exposer.h>
 #include <prometheus/family.h>
 #include <prometheus/gauge.h>
+#include <prometheus/histogram.h>
 #include <prometheus/labels.h>
 #include <prometheus/registry.h>
 
@@ -44,6 +45,7 @@ public:
     // Reader metrics ------------------------------------------------------
     void   incrementReaderEvents(double value = 1.0, prometheus::Labels tags = {});
     void   incrementReaderErrors(double value = 1.0, prometheus::Labels tags = {});
+    void   observeReaderProcessingTimeSeconds(double value, prometheus::Labels tags = {});
     double readerEventsTotal() const;
     double readerErrorsTotal() const;
 
@@ -73,8 +75,11 @@ private:
     MetricsConfig                         config_;
     std::shared_ptr<prometheus::Registry> registry_;
 
+    prometheus::Histogram::BucketBoundaries reader_processing_time_buckets_;
+
     prometheus::Family<prometheus::Counter>& reader_events_family_;
     prometheus::Family<prometheus::Counter>& reader_errors_family_;
+    prometheus::Family<prometheus::Histogram>& reader_processing_time_family_;
 
     prometheus::Family<prometheus::Gauge>& pool_connections_in_use_family_;
     prometheus::Family<prometheus::Gauge>& pool_connections_available_family_;

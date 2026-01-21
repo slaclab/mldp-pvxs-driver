@@ -33,6 +33,15 @@ makeGaugeFamily(prometheus::Registry& registry, std::string name, std::string he
         .Register(registry);
 }
 
+prometheus::Family<prometheus::Histogram>&
+makeHistogramFamily(prometheus::Registry& registry, std::string name, std::string help)
+{
+    return prometheus::BuildHistogram()
+        .Name(std::move(name))
+        .Help(std::move(help))
+        .Register(registry);
+}
+
 } // namespace
 
 namespace mldp_pvxs_driver::metrics {
@@ -42,6 +51,11 @@ Metrics::Metrics(const MetricsConfig& config)
     , registry_(std::make_shared<prometheus::Registry>())
     , reader_events_family_(makeCounterFamily(*registry_, "mldp_pvxs_driver_reader_events_total", "Total events processed by readers."))
     , reader_errors_family_(makeCounterFamily(*registry_, "mldp_pvxs_driver_reader_errors_total", "Total reader failures observed when pulling data."))
+        , reader_processing_time_buckets_({0.0001, 0.00025, 0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0})
+        , reader_processing_time_family_(makeHistogramFamily(
+            *registry_,
+            "mldp_pvxs_driver_reader_processing_time_seconds",
+            "Time spent converting EPICS PV updates to MLDP protobuf payloads (seconds)."))
     , pool_connections_in_use_family_(makeGaugeFamily(*registry_, "mldp_pvxs_driver_pool_connections_in_use", "Number of MLDP gRPC connections currently in use."))
     , pool_connections_available_family_(makeGaugeFamily(*registry_, "mldp_pvxs_driver_pool_connections_available", "Idle MLDP gRPC connections ready for use."))
     , bus_push_family_(makeCounterFamily(*registry_, "mldp_pvxs_driver_bus_push_total", "Number of events pushed onto the bus."))
@@ -71,6 +85,11 @@ void Metrics::incrementReaderErrors(double value, prometheus::Labels tags)
 {
 
     reader_errors_family_.Add(std::move(tags)).Increment(value);
+}
+
+void Metrics::observeReaderProcessingTimeSeconds(double value, prometheus::Labels tags)
+{
+    reader_processing_time_family_.Add(std::move(tags), reader_processing_time_buckets_).Observe(value);
 }
 
 void Metrics::setPoolConnectionsInUse(double value, prometheus::Labels tags)

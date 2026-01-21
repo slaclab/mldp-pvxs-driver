@@ -123,6 +123,7 @@ void EpicsReader::run(int timeout)
         const prometheus::Labels sourceTag{{"source", pvName}};
         try
         {
+            const auto processing_start = std::chrono::steady_clock::now();
 
             // get the PV name and runtime configuration
             const auto                  it = pvRuntimeByName_.find(pvName);
@@ -236,6 +237,13 @@ void EpicsReader::run(int timeout)
                 }
                 break;
             }
+
+            const auto processing_end = std::chrono::steady_clock::now();
+            const double processing_seconds = std::chrono::duration<double>(processing_end - processing_start).count();
+            metric_call(metrics_, [&](auto& m)
+                        {
+                            m.observeReaderProcessingTimeSeconds(processing_seconds, sourceTag);
+                        });
 
             if (!batch.values.empty())
             {
