@@ -16,6 +16,8 @@
 #include <chrono>
 #include <cstdio>
 #include <fstream>
+#include <map>
+#include <vector>
 
 using namespace mldp_pvxs_driver::metrics;
 
@@ -152,10 +154,11 @@ std::string PeriodicMetricsDumper::serializeMetricsJsonl()
     serializer.Serialize(metrics_out, metrics.registry()->Collect());
 
     // Extract metrics from prometheus format
-    out << "  \"metrics\": {\n";
     std::string      metrics_text = metrics_out.str();
     std::string_view remaining = metrics_text;
-    bool             first_metric = true;
+
+    // First pass: collect all metrics grouped by name
+    std::map<std::string, std::vector<std::string>> metrics_by_name;
 
     while (!remaining.empty())
     {
@@ -166,9 +169,6 @@ std::string PeriodicMetricsDumper::serializeMetricsJsonl()
         // Skip comment lines and empty lines
         if (!line.empty() && line.front() != '#' && line.back() != '\0')
         {
-            if (!first_metric)
-                out << ",\n";
-
             // Parse prometheus line format: metric_name{labels} value timestamp
             const auto space1 = line.find(' ');
             if (space1 != std::string_view::npos)
@@ -199,13 +199,13 @@ std::string PeriodicMetricsDumper::serializeMetricsJsonl()
                             ? line.substr(space1 + 1, space2 - space1 - 1)
                             : line.substr(space1 + 1);
 
-                // Output metric name
-                out << "    \"" << escapeJsonString(metric_name) << "\": ";
+                // Build metric entry JSON
+                std::ostringstream metric_entry;
+                metric_entry << "{";
 
                 // Parse and output labels as structured JSON
                 if (!labels_str.empty())
                 {
-                    out << "{";
                     bool first_label = true;
 
                     // Parse labels in format: label1="value1",label2="value2"
@@ -255,7 +255,7 @@ std::string PeriodicMetricsDumper::serializeMetricsJsonl()
 
                         // Output label (rename "reader" to "source")
                         if (!first_label)
-                            out << ", ";
+                            metric_entry << ", ";
 
                         std::string final_label_name(label_name);
                         if (final_label_name == "reader")
@@ -263,8 +263,8 @@ std::string PeriodicMetricsDumper::serializeMetricsJsonl()
                             final_label_name = "source";
                         }
 
-                        out << "\"" << escapeJsonString(final_label_name) << "\": \"" << escapeJsonString(label_value)
-                            << "\"";
+                        metric_entry << "\"" << escapeJsonString(final_label_name) << "\": \"" << escapeJsonString(label_value)
+                                     << "\"";
 
                         first_label = false;
 
@@ -275,21 +275,45 @@ std::string PeriodicMetricsDumper::serializeMetricsJsonl()
                         }
                     }
 
-                    out << ", \"value\": " << value << "}";
+                    metric_entry << ", \"value\": " << value << "}";
                 }
                 else
                 {
                     // Metric with no labels - just output value object
-                    out << "{\"value\": " << value << "}";
+                    metric_entry << "\"value\": " << value << "}";
                 }
 
-                first_metric = false;
+                // Add to grouped metrics
+                std::string metric_name_str(metric_name);
+                metrics_by_name[metric_name_str].push_back(metric_entry.str());
             }
         }
 
         if (newline == std::string_view::npos)
             break;
         remaining.remove_prefix(newline + 1);
+    }
+
+    // Second pass: output grouped metrics as arrays
+    out << "  \"metrics\": {\n";
+    bool first_metric = true;
+
+    for (const auto& [metric_name, entries] : metrics_by_name)
+    {
+        if (!first_metric)
+            out << ",\n";
+
+        out << "    \"" << escapeJsonString(metric_name) << "\": [";
+
+        for (size_t i = 0; i < entries.size(); ++i)
+        {
+            if (i > 0)
+                out << ", ";
+            out << entries[i];
+        }
+
+        out << "]";
+        first_metric = false;
     }
 
     out << "\n  }\n}\n";

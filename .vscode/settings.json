@@ -1,5 +1,9 @@
 {
     "cmake.buildDirectory": "${workspaceFolder}/build",
     "cmake.configureOnOpen": false,
-    "cmake.useCMakePresets": "never"
+    "cmake.useCMakePresets": "never",
+    "chat.tools.terminal.autoApprove": {
+        "ninja": true,
+        "./bin/mldp_pvxs_driver_test": true
+    }
 }
