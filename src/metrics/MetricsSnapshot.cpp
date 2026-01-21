@@ -107,7 +107,11 @@ MetricsData MetricsSnapshot::getSnapshot(const Metrics& metrics) const
         // Parse bus push metrics (per reader)
         if (line.find("mldp_pvxs_driver_bus_push_total") != std::string::npos)
         {
-            const auto reader = extractLabelValue(line, "reader=");
+            auto reader = extractLabelValue(line, "reader=");
+            if (reader.empty())
+            {
+                reader = extractLabelValue(line, "source=");
+            }
             if (!reader.empty())
             {
                 reader_metrics[reader]["pushes"] = extractMetricValue(line);
@@ -116,7 +120,11 @@ MetricsData MetricsSnapshot::getSnapshot(const Metrics& metrics) const
         // Parse payload bytes total (per reader)
         else if (line.find("mldp_pvxs_driver_bus_payload_bytes_total") != std::string::npos)
         {
-            const auto reader = extractLabelValue(line, "reader=");
+            auto reader = extractLabelValue(line, "reader=");
+            if (reader.empty())
+            {
+                reader = extractLabelValue(line, "source=");
+            }
             if (!reader.empty())
             {
                 reader_metrics[reader]["bytes_total"] = extractMetricValue(line);
@@ -125,7 +133,11 @@ MetricsData MetricsSnapshot::getSnapshot(const Metrics& metrics) const
         // Parse payload bytes per second (per reader)
         else if (line.find("mldp_pvxs_driver_bus_payload_bytes_per_second") != std::string::npos)
         {
-            const auto reader = extractLabelValue(line, "reader=");
+            auto reader = extractLabelValue(line, "reader=");
+            if (reader.empty())
+            {
+                reader = extractLabelValue(line, "source=");
+            }
             if (!reader.empty())
             {
                 reader_metrics[reader]["bytes_per_sec"] = extractMetricValue(line);
