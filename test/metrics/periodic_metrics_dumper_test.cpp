@@ -32,3 +32,21 @@ TEST_F(PeriodicMetricsDumperTest, EscapesQuotesInMetricLabels)
     // Ensure old format is not present
     EXPECT_EQ(jsonl.find("{reader="), std::string::npos);
 }
+
+TEST_F(PeriodicMetricsDumperTest, GroupsHistogramSamplesUnderBaseMetric)
+{
+    MetricsConfig config;
+    Metrics       metrics(config);
+
+    metrics.observeReaderProcessingTimeSeconds(0.002, {{"source", "pv:test"}});
+
+    PeriodicMetricsDumper dumper(metrics, "", std::chrono::milliseconds(1));
+    const auto            jsonl = dumper.serializeMetricsJsonl();
+
+    EXPECT_NE(jsonl.find("\"mldp_pvxs_driver_reader_processing_time_seconds\""), std::string::npos);
+    EXPECT_EQ(jsonl.find("mldp_pvxs_driver_reader_processing_time_seconds_bucket"), std::string::npos);
+    EXPECT_NE(jsonl.find("\"histogram\": \"bucket\""), std::string::npos);
+    EXPECT_NE(jsonl.find("\"histogram\": \"sum\""), std::string::npos);
+    EXPECT_NE(jsonl.find("\"histogram\": \"count\""), std::string::npos);
+    EXPECT_NE(jsonl.find("\"source\": \"pv:test\""), std::string::npos);
+}

@@ -23,6 +23,13 @@ using namespace mldp_pvxs_driver::metrics;
 
 namespace {
 
+bool endsWith(std::string_view value, std::string_view suffix)
+{
+    if (suffix.size() > value.size())
+        return false;
+    return value.substr(value.size() - suffix.size()) == suffix;
+}
+
 std::string escapeJsonString(std::string_view input)
 {
     std::string out;
@@ -203,6 +210,24 @@ std::string PeriodicMetricsDumper::serializeMetricsJsonl()
                 std::ostringstream metric_entry;
                 metric_entry << "{";
 
+                std::string metric_name_str(metric_name);
+                std::string histogram_kind;
+                if (endsWith(metric_name, "_bucket"))
+                {
+                    metric_name_str = std::string(metric_name.substr(0, metric_name.size() - 7));
+                    histogram_kind = "bucket";
+                }
+                else if (endsWith(metric_name, "_sum"))
+                {
+                    metric_name_str = std::string(metric_name.substr(0, metric_name.size() - 4));
+                    histogram_kind = "sum";
+                }
+                else if (endsWith(metric_name, "_count"))
+                {
+                    metric_name_str = std::string(metric_name.substr(0, metric_name.size() - 6));
+                    histogram_kind = "count";
+                }
+
                 // Parse and output labels as structured JSON
                 if (!labels_str.empty())
                 {
@@ -275,16 +300,23 @@ std::string PeriodicMetricsDumper::serializeMetricsJsonl()
                         }
                     }
 
+                    if (!histogram_kind.empty())
+                    {
+                        metric_entry << ", \"histogram\": \"" << histogram_kind << "\"";
+                    }
                     metric_entry << ", \"value\": " << value << "}";
                 }
                 else
                 {
                     // Metric with no labels - just output value object
+                    if (!histogram_kind.empty())
+                    {
+                        metric_entry << "\"histogram\": \"" << histogram_kind << "\", ";
+                    }
                     metric_entry << "\"value\": " << value << "}";
                 }
 
                 // Add to grouped metrics
-                std::string metric_name_str(metric_name);
                 metrics_by_name[metric_name_str].push_back(metric_entry.str());
             }
         }
