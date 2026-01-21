@@ -185,6 +185,8 @@ void MLDPPVXSController::pushImpl(EventBatch batch_values)
                 continue;
             }
 
+            const prometheus::Labels sourceTag{{"source", src_name}};
+
             dp::service::ingestion::IngestDataRequest request;
             request.set_providerid(provider_id_);
             request.set_clientrequestid(std::format("{}_{}", base_request_id, src_name));
@@ -245,40 +247,41 @@ void MLDPPVXSController::pushImpl(EventBatch batch_values)
 
             const auto payload_bytes = request.ByteSizeLong();
 
-            if (!writer->Write(request))
-            {
-                errorf(*logger_, "Failed to write data column {} with {} events to ingestion stream", src_name, column->datavalues_size());
-                writer->WritesDone();
-                writer->Finish();
-                metric_call(metrics_, [&](auto& m)
-                            {
-                                m.incrementBusFailures(1.0, {{"reader", src_name}});
-                            });
-                return;
-            }
+                if (!writer->Write(request))
+                {
+                    errorf(*logger_, "Failed to write data column {} with {} events to ingestion stream", src_name, column->datavalues_size());
+                    writer->WritesDone();
+                    writer->Finish();
+                    metric_call(metrics_, [&](auto& m)
+                                {
+                                    m.incrementBusFailures(1.0, sourceTag);
+                                });
+                    return;
+                }
 
             total_payload_bytes += payload_bytes;
             payload_bytes_by_reader[src_name] += payload_bytes;
             metric_call(metrics_, [&](auto& m)
                         {
-                            m.incrementBusPayloadBytes(static_cast<double>(payload_bytes), {{"reader", src_name}});
-                            m.incrementBusPushes(static_cast<double>(column->datavalues_size()), {{"reader", src_name}});
+                            m.incrementBusPayloadBytes(static_cast<double>(payload_bytes), sourceTag);
+                            m.incrementBusPushes(static_cast<double>(column->datavalues_size()), sourceTag);
                         });
             if (!batch_values.tags.empty())
             {
-                for (const auto& tag : batch_values.tags)
-                {
-                    if (tag == src_name)
+                    for (const auto& tag : batch_values.tags)
                     {
-                        continue;
+                        if (tag == src_name)
+                        {
+                            continue;
+                        }
+                        payload_bytes_by_tag[tag] += payload_bytes;
+                        const prometheus::Labels tagLabel{{"source", tag}};
+                        metric_call(metrics_, [&](auto& m)
+                                    {
+                                        m.incrementBusPayloadBytes(static_cast<double>(payload_bytes), tagLabel);
+                                        m.incrementBusPushes(static_cast<double>(column->datavalues_size()), tagLabel);
+                                    });
                     }
-                    payload_bytes_by_tag[tag] += payload_bytes;
-                    metric_call(metrics_, [&](auto& m)
-                                {
-                                    m.incrementBusPayloadBytes(static_cast<double>(payload_bytes), {{"reader", tag}});
-                                    m.incrementBusPushes(static_cast<double>(column->datavalues_size()), {{"reader", tag}});
-                                });
-                }
             }
 
             wrote_any = true;
@@ -301,12 +304,12 @@ void MLDPPVXSController::pushImpl(EventBatch batch_values)
             const double elapsed_seconds = std::chrono::duration<double>(elapsed).count();
             if (elapsed_seconds > 0.0)
             {
-                for (const auto& [reader, bytes] : payload_bytes_by_reader)
+                    for (const auto& [reader, bytes] : payload_bytes_by_reader)
                 {
                     const double bytes_per_second = static_cast<double>(bytes) / elapsed_seconds;
                     metric_call(metrics_, [&](auto& m)
                                 {
-                                    m.setBusPayloadBytesPerSecond(bytes_per_second, {{"reader", reader}});
+                                    m.setBusPayloadBytesPerSecond(bytes_per_second, {{"source", reader}});
                                 });
                 }
                 for (const auto& [tag, bytes] : payload_bytes_by_tag)
@@ -314,7 +317,7 @@ void MLDPPVXSController::pushImpl(EventBatch batch_values)
                     const double bytes_per_second = static_cast<double>(bytes) / elapsed_seconds;
                     metric_call(metrics_, [&](auto& m)
                                 {
-                                    m.setBusPayloadBytesPerSecond(bytes_per_second, {{"reader", tag}});
+                                    m.setBusPayloadBytesPerSecond(bytes_per_second, {{"source", tag}});
                                 });
                 }
             }
@@ -325,7 +328,7 @@ void MLDPPVXSController::pushImpl(EventBatch batch_values)
             errorf(*logger_, "Ingestion stream failed for batch of {} events: {}", accepted_events, status.error_message());
             metric_call(metrics_, [&](auto& m)
                         {
-                            m.incrementBusFailures(1.0);
+                            m.incrementBusFailures(1.0, {{"source", "unknown"}});
                         });
         }
     }
@@ -335,7 +338,7 @@ void MLDPPVXSController::pushImpl(EventBatch batch_values)
         errorf(*logger_, "Failed to push event batch: {}", ex.what());
         metric_call(metrics_, [&](auto& m)
                     {
-                        m.incrementReaderErrors(1.0);
+                        m.incrementReaderErrors(1.0, {{"source", "unknown"}});
                     });
     }
 }

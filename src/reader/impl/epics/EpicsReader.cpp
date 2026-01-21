@@ -120,7 +120,7 @@ void EpicsReader::run(int timeout)
         auto                     processing_value = m_pva_workqueue.pop();
         std::string              pvName = std::move(processing_value.pvName);
         pvxs::Value              epics_value = std::move(processing_value.value);
-        const prometheus::Labels readerTags{{"reader", name_}};
+        const prometheus::Labels pvtag{{"pv", pvName}};
         try
         {
 
@@ -144,7 +144,7 @@ void EpicsReader::run(int timeout)
                         errorf(*logger_, "Error converting PV {} to MLDP NtTableRowTs batch on reader {}.", pvName, name_);
                         metric_call(metrics_, [&](auto& m)
                                     {
-                                        m.incrementReaderErrors(1.0, readerTags);
+                                        m.incrementReaderErrors(1.0, pvtag);
                                     });
                     }
                 }
@@ -237,12 +237,12 @@ void EpicsReader::run(int timeout)
                 break;
             }
 
-            if (emitted > 0 && !batch.values.empty())
+            if (!batch.values.empty())
             {
                 bus_->push(std::move(batch));
                 metric_call(metrics_, [&](auto& m)
                             {
-                                m.incrementReaderEvents(static_cast<double>(emitted), readerTags);
+                                m.incrementReaderEvents(static_cast<double>(1.0), pvtag);
                             });
                 tracef(*logger_, "[{}/{}] event published", name_, pvName);
             }
@@ -252,7 +252,7 @@ void EpicsReader::run(int timeout)
             errorf(*logger_, "Server error when reading PV {} on reader {}: {}", pvName, name_, e.what());
             metric_call(metrics_, [&](auto& m)
                         {
-                            m.incrementReaderErrors(1.0, readerTags);
+                            m.incrementReaderErrors(1.0, pvtag);
                         });
         }
 
