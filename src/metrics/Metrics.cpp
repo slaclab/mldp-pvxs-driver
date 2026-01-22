@@ -10,7 +10,6 @@
 
 #include <metrics/Metrics.h>
 
-
 #include <utility>
 
 namespace {
@@ -51,13 +50,20 @@ Metrics::Metrics(const MetricsConfig& config)
     , registry_(std::make_shared<prometheus::Registry>())
     , reader_events_family_(makeCounterFamily(*registry_, "mldp_pvxs_driver_reader_events_total", "Total events processed by readers."))
     , reader_errors_family_(makeCounterFamily(*registry_, "mldp_pvxs_driver_reader_errors_total", "Total reader failures observed when pulling data."))
-        , reader_processing_time_buckets_({0.0001, 0.00025, 0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0})
-        , reader_processing_time_family_(makeHistogramFamily(
-            *registry_,
-            "mldp_pvxs_driver_reader_processing_time_seconds",
-            "Time spent converting EPICS PV updates to MLDP protobuf payloads (seconds)."))
+    , reader_processing_time_buckets_({0.0001, 0.00025, 0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0})
+    , reader_processing_time_family_(makeHistogramFamily(
+          *registry_,
+          "mldp_pvxs_driver_reader_processing_time_seconds",
+          "Time spent converting EPICS PV updates to MLDP protobuf payloads (seconds)."))
     , pool_connections_in_use_family_(makeGaugeFamily(*registry_, "mldp_pvxs_driver_pool_connections_in_use", "Number of MLDP gRPC connections currently in use."))
     , pool_connections_available_family_(makeGaugeFamily(*registry_, "mldp_pvxs_driver_pool_connections_available", "Idle MLDP gRPC connections ready for use."))
+    , controller_send_time_buckets_({0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0})
+    , controller_send_time_family_(makeHistogramFamily(*registry_,
+                                                       "mldp_pvxs_driver_controller_send_time_seconds",
+                                                       "Time spent sending event batches to MLDP (seconds)."))
+    , controller_queue_depth_family_(makeGaugeFamily(*registry_,
+                                                     "mldp_pvxs_driver_controller_queue_depth",
+                                                     "Number of queued controller tasks waiting to send batches."))
     , bus_push_family_(makeCounterFamily(*registry_, "mldp_pvxs_driver_bus_push_total", "Number of events pushed onto the bus."))
     , bus_failure_family_(makeCounterFamily(*registry_, "mldp_pvxs_driver_bus_failure_total", "Number of bus push failures reported by the MLDP gRPC API."))
     , bus_payload_bytes_family_(makeCounterFamily(*registry_, "mldp_pvxs_driver_bus_payload_bytes_total", "Total protobuf payload bytes written to the MLDP ingestion stream."))
@@ -110,6 +116,16 @@ double Metrics::poolConnectionsInUse(prometheus::Labels tags) const
 double Metrics::poolConnectionsAvailable(prometheus::Labels tags) const
 {
     return pool_connections_available_family_.Add(std::move(tags)).Value();
+}
+
+void Metrics::observeControllerSendTimeSeconds(double value, prometheus::Labels tags)
+{
+    controller_send_time_family_.Add(std::move(tags), controller_send_time_buckets_).Observe(value);
+}
+
+void Metrics::setControllerQueueDepth(double value, prometheus::Labels tags)
+{
+    controller_queue_depth_family_.Add(std::move(tags)).Set(value);
 }
 
 void Metrics::incrementBusPushes(double value, prometheus::Labels tags)

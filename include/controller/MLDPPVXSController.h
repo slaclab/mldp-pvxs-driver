@@ -58,6 +58,12 @@ namespace mldp_pvxs_driver::controller {
  * - <tt>mldp_pvxs_driver_bus_failure_total</tt>:
  *   incremented when a streaming write/finish operation fails.
  *
+ * Controller metrics:
+ * - <tt>mldp_pvxs_driver_controller_send_time_seconds</tt>:
+ *   histogram observing end-to-end time spent sending a batch to MLDP.
+ * - <tt>mldp_pvxs_driver_controller_queue_depth</tt>:
+ *   gauge showing the number of queued controller tasks waiting to send.
+ *
  * Typical lifecycle:
  * 1. Construct the controller with the parsed driver configuration YAML.
  * 2. Call @ref start to spin up the worker threads and reader instances.

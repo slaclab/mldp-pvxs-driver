@@ -61,6 +61,10 @@ public:
     double poolConnectionsInUse(prometheus::Labels tags = {}) const;
     double poolConnectionsAvailable(prometheus::Labels tags = {}) const;
 
+    // Controller metrics -------------------------------------------------
+    void   observeControllerSendTimeSeconds(double value, prometheus::Labels tags = {});
+    void   setControllerQueueDepth(double value, prometheus::Labels tags = {});
+
     // Bus metrics ---------------------------------------------------------
     void   incrementBusPushes(double value = 1.0, prometheus::Labels tags = {});
     void   incrementBusFailures(double value = 1.0, prometheus::Labels tags = {});
@@ -83,6 +87,10 @@ private:
 
     prometheus::Family<prometheus::Gauge>& pool_connections_in_use_family_;
     prometheus::Family<prometheus::Gauge>& pool_connections_available_family_;
+
+    prometheus::Histogram::BucketBoundaries controller_send_time_buckets_;
+    prometheus::Family<prometheus::Histogram>& controller_send_time_family_;
+    prometheus::Family<prometheus::Gauge>&     controller_queue_depth_family_;
 
     prometheus::Family<prometheus::Counter>& bus_push_family_;
     prometheus::Family<prometheus::Counter>& bus_failure_family_;
