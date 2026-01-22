@@ -157,14 +157,24 @@ MetricsData MetricsSnapshot::getSnapshot(const Metrics& metrics) const
     // Build snapshot
     MetricsData snapshot;
     
+    const auto getMetric = [](const std::map<std::string, double>& metrics_data, std::string_view key)
+    {
+        const auto it = metrics_data.find(std::string(key));
+        if (it == metrics_data.end())
+        {
+            return 0.0;
+        }
+        return it->second;
+    };
+
     // Convert reader metrics to structured format
     for (const auto& [reader, metrics_data] : reader_metrics)
     {
         ReaderMetrics rm;
         rm.pv_name = reader;
-        rm.pushes = static_cast<long long>(metrics_data.at("pushes"));
-        rm.bytes_total = metrics_data.at("bytes_total");
-        rm.bytes_per_sec = metrics_data.at("bytes_per_sec");
+        rm.pushes = static_cast<long long>(getMetric(metrics_data, "pushes"));
+        rm.bytes_total = getMetric(metrics_data, "bytes_total");
+        rm.bytes_per_sec = getMetric(metrics_data, "bytes_per_sec");
         snapshot.readers.push_back(rm);
     }
     

@@ -203,7 +203,6 @@ void MLDPPVXSController::pushImpl(EventBatch batch_values)
         size_t                                    accepted_events = 0;
         bool                                      wrote_any = false;
         uint64_t                                  total_payload_bytes = 0;
-        std::unordered_map<std::string, uint64_t> payload_bytes_by_reader;
         std::unordered_map<std::string, uint64_t> payload_bytes_by_tag;
 
         std::vector<std::string> global_tags;
@@ -215,10 +214,6 @@ void MLDPPVXSController::pushImpl(EventBatch batch_values)
                 global_tags.push_back(tag);
             }
         }
-        std::unordered_set<std::string> source_names;
-        source_names.reserve(batch_values.values.size());
-
-
         for (auto& [src_name, events] : batch_values.values)
         {
             ;
@@ -226,10 +221,6 @@ void MLDPPVXSController::pushImpl(EventBatch batch_values)
             {
                 continue;
             }
-
-            source_names.insert(src_name);
-
-            const prometheus::Labels sourceTag{{"source", src_name}};
 
             dp::service::ingestion::IngestDataRequest request;
             request.set_providerid(provider_id_);
@@ -296,30 +287,43 @@ void MLDPPVXSController::pushImpl(EventBatch batch_values)
                 errorf(*logger_, "Failed to write data column {} with {} events to ingestion stream", src_name, column->datavalues_size());
                 writer->WritesDone();
                 writer->Finish();
-                metric_call(metrics_, [&](auto& m)
-                            {
-                                m.incrementBusFailures(1.0, sourceTag);
-                            });
-                record_send_time({{"source", src_name}});
+                if (!global_tags.empty())
+                {
+                    for (const auto& tag : global_tags)
+                    {
+                        metric_call(metrics_, [&](auto& m)
+                                    {
+                                        m.incrementBusFailures(1.0, {{"source", tag}});
+                                    });
+                    }
+                }
+                else
+                {
+                    metric_call(metrics_, [&](auto& m)
+                                {
+                                    m.incrementBusFailures(1.0, {{"source", "unknown"}});
+                                });
+                }
+                if (!global_tags.empty())
+                {
+                    for (const auto& tag : global_tags)
+                    {
+                        record_send_time({{"source", tag}});
+                    }
+                }
+                else
+                {
+                    record_send_time({{"source", "unknown"}});
+                }
                 update_queue_depth();
                 return;
             }
 
             total_payload_bytes += payload_bytes;
-            payload_bytes_by_reader[src_name] += payload_bytes;
-            metric_call(metrics_, [&](auto& m)
-                        {
-                            m.incrementBusPayloadBytes(static_cast<double>(payload_bytes), sourceTag);
-                            m.incrementBusPushes(static_cast<double>(column->datavalues_size()), sourceTag);
-                        });
             if (!batch_values.tags.empty())
             {
                 for (const auto& tag : batch_values.tags)
                 {
-                    if (tag == src_name)
-                    {
-                        continue;
-                    }
                     payload_bytes_by_tag[tag] += payload_bytes;
                     const prometheus::Labels tagLabel{{"source", tag}};
                     metric_call(metrics_, [&](auto& m)
@@ -352,14 +356,6 @@ void MLDPPVXSController::pushImpl(EventBatch batch_values)
             const double elapsed_seconds = std::chrono::duration<double>(elapsed).count();
             if (elapsed_seconds > 0.0)
             {
-                for (const auto& [reader, bytes] : payload_bytes_by_reader)
-                {
-                    const double bytes_per_second = static_cast<double>(bytes) / elapsed_seconds;
-                    metric_call(metrics_, [&](auto& m)
-                                {
-                                    m.setBusPayloadBytesPerSecond(bytes_per_second, {{"source", reader}});
-                                });
-                }
                 for (const auto& [tag, bytes] : payload_bytes_by_tag)
                 {
                     const double bytes_per_second = static_cast<double>(bytes) / elapsed_seconds;
@@ -374,37 +370,37 @@ void MLDPPVXSController::pushImpl(EventBatch batch_values)
         {
             // Update metrics for push failure
             errorf(*logger_, "Ingestion stream failed for batch of {} events: {}", accepted_events, status.error_message());
-            metric_call(metrics_, [&](auto& m)
-                        {
-                            m.incrementBusFailures(1.0, {{"source", "unknown"}});
-                        });
-        }
-        if (!payload_bytes_by_reader.empty())
-        {
-            for (const auto& [reader, bytes] : payload_bytes_by_reader)
+            if (!global_tags.empty())
             {
-                (void)bytes;
-                record_send_time({{"source", reader}});
+                for (const auto& tag : global_tags)
+                {
+                    metric_call(metrics_, [&](auto& m)
+                                {
+                                    m.incrementBusFailures(1.0, {{"source", tag}});
+                                });
+                }
             }
-        }
-        else
-        {
-            record_send_time({{"source", "unknown"}});
+            else
+            {
+                metric_call(metrics_, [&](auto& m)
+                            {
+                                m.incrementBusFailures(1.0, {{"source", "unknown"}});
+                            });
+            }
         }
         if (!global_tags.empty())
         {
-            // record for global tags excluding source names that already have been sent and recorded
             std::vector<prometheus::Labels> filtered_global_tag_labels;
             filtered_global_tag_labels.reserve(global_tags.size());
             for (const auto& tag : global_tags)
             {
-                if (source_names.contains(tag))
-                {
-                    continue;
-                }
                 filtered_global_tag_labels.push_back({{"source", tag}});
             }
             record_send_time_multi(filtered_global_tag_labels);
+        }
+        else
+        {
+            record_send_time({{"source", "unknown"}});
         }
         update_queue_depth();
     }
