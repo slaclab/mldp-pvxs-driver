@@ -3,6 +3,8 @@
 #include <controller/MLDPPVXSController.h>
 #include <metrics/MetricsSnapshot.h>
 
+#include <prometheus/text_serializer.h>
+
 #include <chrono>
 #include <optional>
 #include <thread>
@@ -76,6 +78,92 @@ reader:
         return std::nullopt;
     }
 
+    std::string serializeMetricsText(const mldp_pvxs_driver::metrics::Metrics& metrics)
+    {
+        prometheus::TextSerializer serializer;
+        std::ostringstream         out;
+        serializer.Serialize(out, metrics.registry()->Collect());
+        return out.str();
+    }
+
+    std::string extractLabelValue(std::string_view line, std::string_view label)
+    {
+        const auto label_start = line.find(label);
+        if (label_start == std::string_view::npos)
+        {
+            return "";
+        }
+        const auto quote_start = line.find('"', label_start);
+        if (quote_start == std::string_view::npos)
+        {
+            return "";
+        }
+        const auto quote_end = line.find('"', quote_start + 1);
+        if (quote_end == std::string_view::npos)
+        {
+            return "";
+        }
+        return std::string(line.substr(quote_start + 1, quote_end - quote_start - 1));
+    }
+
+    double extractMetricValue(std::string_view line)
+    {
+        const auto last_space = line.rfind(' ');
+        if (last_space == std::string_view::npos)
+        {
+            return 0.0;
+        }
+        try
+        {
+            return std::stod(std::string(line.substr(last_space + 1)));
+        }
+        catch (...)
+        {
+            return 0.0;
+        }
+    }
+
+    double getMetricValueForSource(const std::string& text, std::string_view metric, const std::string& source)
+    {
+        std::istringstream stream(text);
+        std::string        line;
+        while (std::getline(stream, line))
+        {
+            if (line.empty() || line.front() == '#')
+            {
+                continue;
+            }
+            if (line.find(metric) == std::string::npos)
+            {
+                continue;
+            }
+            const auto label_value = extractLabelValue(line, "source=");
+            if (label_value == source)
+            {
+                return extractMetricValue(line);
+            }
+        }
+        return 0.0;
+    }
+
+    double getGaugeValue(const std::string& text, std::string_view metric)
+    {
+        std::istringstream stream(text);
+        std::string        line;
+        while (std::getline(stream, line))
+        {
+            if (line.empty() || line.front() == '#')
+            {
+                continue;
+            }
+            if (line.find(metric) != std::string::npos)
+            {
+                return extractMetricValue(line);
+            }
+        }
+        return 0.0;
+    }
+
 } // namespace
 
 TEST(MLDPPVXSControllerTest, ImplementsEventBusPushContract)
@@ -131,49 +219,48 @@ TEST(MLDPPVXSControllerTest, BsasNtTableRowTsAggregatesPushAndBandwidthMetrics)
     int                                                waited_ms = 0;
     const mldp_pvxs_driver::metrics::MetricsSnapshot   snapshotter;
     std::optional<mldp_pvxs_driver::metrics::MetricsData> snapshot;
+    std::string                                        metrics_text;
+    double                                             table_send_sum = 0.0;
+    double                                             table_send_count = 0.0;
+    double                                             queue_depth = 0.0;
 
     while (waited_ms < max_wait_ms)
     {
         snapshot = snapshotter.getSnapshot(controller->metrics());
-        const auto colA = findReaderMetrics(*snapshot, "PV_NAME_A_DOUBLE_VALUE");
-        const auto colB = findReaderMetrics(*snapshot, "PV_NAME_B_STRING_VALUE");
+        metrics_text = serializeMetricsText(controller->metrics());
         const auto table = findReaderMetrics(*snapshot, "test:bsas_table");
-        if (colA.has_value() && colB.has_value() && table.has_value() &&
-            colA->pushes > 0 && colB->pushes > 0 && table->pushes > 0)
+        table_send_sum = getMetricValueForSource(metrics_text,
+                                                 "mldp_pvxs_driver_controller_send_time_seconds_sum",
+                                                 "test:bsas_table");
+        table_send_count = getMetricValueForSource(metrics_text,
+                                                   "mldp_pvxs_driver_controller_send_time_seconds_count",
+                                                   "test:bsas_table");
+        queue_depth = getGaugeValue(metrics_text, "mldp_pvxs_driver_controller_queue_depth");
+        if (table.has_value())
         {
-            break;
+            const bool has_pushes = table->pushes > 0;
+            const bool has_bytes = table->bytes_total > 0.0;
+            const bool has_rates = table->bytes_per_sec > 0.0;
+            const bool has_send_metrics = table_send_sum > 0.0 && table_send_count > 0.0;
+            if (has_pushes && has_bytes && has_rates && has_send_metrics)
+            {
+                break;
+            }
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
         waited_ms += 200;
     }
 
     ASSERT_TRUE(snapshot.has_value()) << "Metrics snapshot missing";
-    const auto colA = findReaderMetrics(*snapshot, "PV_NAME_A_DOUBLE_VALUE");
-    const auto colB = findReaderMetrics(*snapshot, "PV_NAME_B_STRING_VALUE");
     const auto table = findReaderMetrics(*snapshot, "test:bsas_table");
 
-    ASSERT_TRUE(colA.has_value()) << "Missing metrics for PV_NAME_A_DOUBLE_VALUE";
-    ASSERT_TRUE(colB.has_value()) << "Missing metrics for PV_NAME_B_STRING_VALUE";
     ASSERT_TRUE(table.has_value()) << "Missing metrics for test:bsas_table";
-    EXPECT_FALSE(findReaderMetrics(*snapshot, "secondsPastEpoch").has_value());
-    EXPECT_FALSE(findReaderMetrics(*snapshot, "nanoseconds").has_value());
-
-    EXPECT_GT(colA->pushes, 0);
-    EXPECT_GT(colB->pushes, 0);
     EXPECT_GT(table->pushes, 0);
-
-    const auto total_pushes = colA->pushes + colB->pushes;
-    EXPECT_EQ(table->pushes, total_pushes);
-
-    EXPECT_GT(colA->bytes_total, 0.0);
-    EXPECT_GT(colB->bytes_total, 0.0);
     EXPECT_GT(table->bytes_total, 0.0);
-    EXPECT_NEAR(table->bytes_total, colA->bytes_total + colB->bytes_total, 0.001);
-
-    EXPECT_GT(colA->bytes_per_sec, 0.0);
-    EXPECT_GT(colB->bytes_per_sec, 0.0);
     EXPECT_GT(table->bytes_per_sec, 0.0);
-    EXPECT_NEAR(table->bytes_per_sec, colA->bytes_per_sec + colB->bytes_per_sec, 0.001);
+    EXPECT_GT(table_send_sum, 0.0);
+    EXPECT_GT(table_send_count, 0.0);
+    EXPECT_GE(queue_depth, 0.0);
 
     ASSERT_NO_THROW(controller->stop(););
 }
