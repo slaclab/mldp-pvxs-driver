@@ -18,7 +18,6 @@
 #include <grpcpp/grpcpp.h>
 #include <ranges>
 #include <stdexcept>
-#include <unordered_map>
 
 using namespace mldp_pvxs_driver::metrics;
 using namespace mldp_pvxs_driver::controller;
@@ -160,13 +159,6 @@ void MLDPPVXSController::pushImpl(EventBatch batch_values)
                         m.observeControllerSendTimeSeconds(elapsed_seconds, std::move(tags));
                     });
     };
-    const auto record_send_time_multi = [&record_send_time](const std::vector<prometheus::Labels>& tags_list)
-    {
-        for (const auto& tags : tags_list)
-        {
-            record_send_time(tags);
-        }
-    };
     const auto update_queue_depth = [this]()
     {
         metric_call(metrics_, [&](auto& m)
@@ -179,9 +171,6 @@ void MLDPPVXSController::pushImpl(EventBatch batch_values)
 
     try
     {
-        const auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::system_clock::now().time_since_epoch());
-
         grpc::ClientContext                              context;
         dp::service::ingestion::IngestDataStreamResponse response;
         auto                                             pool_instance = mldp_pool_->acquire();
@@ -192,28 +181,18 @@ void MLDPPVXSController::pushImpl(EventBatch batch_values)
             errorf(*logger_, "Failed to open ingestion stream for incoming batch");
             metric_call(metrics_, [&](auto& m)
                         {
-                            m.incrementBusFailures(1.0, {{"reader", "unknown"}});
+                            m.incrementBusFailures(1.0, {{"pool", "writer"}});
                         });
             record_send_time({{"source", "unknown"}});
             update_queue_depth();
             return;
         }
-
-        const auto                                base_request_id = std::format("pv_batch_{}", now_ms.count());
+        const prometheus::Labels                  sourceTag{{"source", batch_values.root_source}};
+        const auto                                base_request_id = std::format("pv_batch_{}", start_time.time_since_epoch().count());
         size_t                                    accepted_events = 0;
         bool                                      wrote_any = false;
         uint64_t                                  total_payload_bytes = 0;
-        std::unordered_map<std::string, uint64_t> payload_bytes_by_tag;
 
-        std::vector<std::string> global_tags;
-        global_tags.reserve(batch_values.tags.size());
-        for (const auto& tag : batch_values.tags)
-        {
-            if (!tag.empty())
-            {
-                global_tags.push_back(tag);
-            }
-        }
         for (auto& [src_name, events] : batch_values.values)
         {
             ;
@@ -280,58 +259,24 @@ void MLDPPVXSController::pushImpl(EventBatch batch_values)
                 continue;
             }
 
-            const auto payload_bytes = request.ByteSizeLong();
+            // Track payload bytes per root source tag
+            total_payload_bytes += column->ByteSizeLong();
 
             if (!writer->Write(request))
             {
                 errorf(*logger_, "Failed to write data column {} with {} events to ingestion stream", src_name, column->datavalues_size());
                 writer->WritesDone();
                 writer->Finish();
-                if (!global_tags.empty())
-                {
-                    for (const auto& tag : global_tags)
-                    {
-                        metric_call(metrics_, [&](auto& m)
-                                    {
-                                        m.incrementBusFailures(1.0, {{"source", tag}});
-                                    });
-                    }
-                }
-                else
-                {
-                    metric_call(metrics_, [&](auto& m)
-                                {
-                                    m.incrementBusFailures(1.0, {{"source", "unknown"}});
-                                });
-                }
-                if (!global_tags.empty())
-                {
-                    for (const auto& tag : global_tags)
-                    {
-                        record_send_time({{"source", tag}});
-                    }
-                }
-                else
-                {
-                    record_send_time({{"source", "unknown"}});
-                }
+
+                metric_call(metrics_, [&](auto& m)
+                            {
+                                m.incrementBusFailures(1.0, sourceTag);
+                            });
+
+                record_send_time(sourceTag);
+
                 update_queue_depth();
                 return;
-            }
-
-            total_payload_bytes += payload_bytes;
-            if (!batch_values.tags.empty())
-            {
-                for (const auto& tag : batch_values.tags)
-                {
-                    payload_bytes_by_tag[tag] += payload_bytes;
-                    const prometheus::Labels tagLabel{{"source", tag}};
-                    metric_call(metrics_, [&](auto& m)
-                                {
-                                    m.incrementBusPayloadBytes(static_cast<double>(payload_bytes), tagLabel);
-                                    m.incrementBusPushes(static_cast<double>(column->datavalues_size()), tagLabel);
-                                });
-                }
             }
 
             wrote_any = true;
@@ -351,57 +296,42 @@ void MLDPPVXSController::pushImpl(EventBatch batch_values)
         const auto status = writer->Finish();
         if (status.ok())
         {
+            if (accepted_events > 0)
+            {
+                metric_call(metrics_, [&](auto& m)
+                            {
+                                m.incrementBusPushes(static_cast<double>(accepted_events), sourceTag);
+                            });
+            }
+            if (total_payload_bytes > 0)
+            {
+                metric_call(metrics_, [&](auto& m)
+                            {
+                                m.incrementBusPayloadBytes(static_cast<double>(total_payload_bytes), sourceTag);
+                            });
+            }
             // Update bytes/second metric
             const auto   elapsed = std::chrono::steady_clock::now() - start_time;
-            const double elapsed_seconds = std::chrono::duration<double>(elapsed).count();
-            if (elapsed_seconds > 0.0)
+            const double elapsed_milliseconds = std::chrono::duration<double, std::milli>(elapsed).count();
+            if (elapsed_milliseconds > 0.0)
             {
-                for (const auto& [tag, bytes] : payload_bytes_by_tag)
-                {
-                    const double bytes_per_second = static_cast<double>(bytes) / elapsed_seconds;
-                    metric_call(metrics_, [&](auto& m)
-                                {
-                                    m.setBusPayloadBytesPerSecond(bytes_per_second, {{"source", tag}});
-                                });
-                }
+                const double bytes_per_second = (static_cast<double>(total_payload_bytes) * 1000.0) / elapsed_milliseconds;
+                metric_call(metrics_, [&](auto& m)
+                            {
+                                m.setBusPayloadBytesPerSecond(bytes_per_second, sourceTag);
+                            });
             }
         }
         else
         {
             // Update metrics for push failure
             errorf(*logger_, "Ingestion stream failed for batch of {} events: {}", accepted_events, status.error_message());
-            if (!global_tags.empty())
-            {
-                for (const auto& tag : global_tags)
-                {
-                    metric_call(metrics_, [&](auto& m)
-                                {
-                                    m.incrementBusFailures(1.0, {{"source", tag}});
-                                });
-                }
-            }
-            else
-            {
-                metric_call(metrics_, [&](auto& m)
-                            {
-                                m.incrementBusFailures(1.0, {{"source", "unknown"}});
-                            });
-            }
+            metric_call(metrics_, [&](auto& m)
+                        {
+                            m.incrementBusFailures(1.0, sourceTag);
+                        });
         }
-        if (!global_tags.empty())
-        {
-            std::vector<prometheus::Labels> filtered_global_tag_labels;
-            filtered_global_tag_labels.reserve(global_tags.size());
-            for (const auto& tag : global_tags)
-            {
-                filtered_global_tag_labels.push_back({{"source", tag}});
-            }
-            record_send_time_multi(filtered_global_tag_labels);
-        }
-        else
-        {
-            record_send_time({{"source", "unknown"}});
-        }
+        record_send_time(sourceTag);
         update_queue_depth();
     }
     catch (const std::exception& ex)

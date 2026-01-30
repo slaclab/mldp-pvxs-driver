@@ -132,6 +132,8 @@ void EpicsReader::run(int timeout)
 
             // prepare batch
             IEventBusPush::EventBatch batch;
+            batch.root_source = pvName;
+
             // keep track of how many events were emitted
             size_t emitted = 0;
 

@@ -44,13 +44,16 @@ public:
         std::lock_guard<std::mutex> lock(mutex);
         if (metrics_)
         {
-            for (const auto& [source, values] : batch.values)
+            size_t total_values = 0;
+            for (const auto& [_, values] : batch.values)
             {
-                const prometheus::Labels tags{{"source", source}};
-                metrics_->incrementBusPushes(static_cast<double>(values.size()), tags);
-                metrics_->incrementBusPayloadBytes(0.0, tags);
-                metrics_->setBusPayloadBytesPerSecond(0.0, tags);
+                total_values += values.size();
             }
+            const auto source = batch.root_source.empty() ? std::string("unknown") : batch.root_source;
+            const prometheus::Labels tags{{"source", source}};
+            metrics_->incrementBusPushes(static_cast<double>(total_values), tags);
+            metrics_->incrementBusPayloadBytes(0.0, tags);
+            metrics_->setBusPayloadBytesPerSecond(0.0, tags);
         }
         received_events.push_back(std::move(batch));
         return true;

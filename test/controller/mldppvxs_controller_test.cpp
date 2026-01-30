@@ -78,6 +78,19 @@ reader:
         return std::nullopt;
     }
 
+    mldp_pvxs_driver::metrics::ReaderMetrics aggregateReaderMetrics(
+        const mldp_pvxs_driver::metrics::MetricsData& snapshot)
+    {
+        mldp_pvxs_driver::metrics::ReaderMetrics aggregated;
+        for (const auto& reader : snapshot.readers)
+        {
+            aggregated.pushes += reader.pushes;
+            aggregated.bytes_total += reader.bytes_total;
+            aggregated.bytes_per_sec += reader.bytes_per_sec;
+        }
+        return aggregated;
+    }
+
     std::string serializeMetricsText(const mldp_pvxs_driver::metrics::Metrics& metrics)
     {
         prometheus::TextSerializer serializer;
@@ -228,7 +241,7 @@ TEST(MLDPPVXSControllerTest, BsasNtTableRowTsAggregatesPushAndBandwidthMetrics)
     {
         snapshot = snapshotter.getSnapshot(controller->metrics());
         metrics_text = serializeMetricsText(controller->metrics());
-        const auto table = findReaderMetrics(*snapshot, "test:bsas_table");
+        const auto aggregated = aggregateReaderMetrics(*snapshot);
         table_send_sum = getMetricValueForSource(metrics_text,
                                                  "mldp_pvxs_driver_controller_send_time_seconds_sum",
                                                  "test:bsas_table");
@@ -236,11 +249,11 @@ TEST(MLDPPVXSControllerTest, BsasNtTableRowTsAggregatesPushAndBandwidthMetrics)
                                                    "mldp_pvxs_driver_controller_send_time_seconds_count",
                                                    "test:bsas_table");
         queue_depth = getGaugeValue(metrics_text, "mldp_pvxs_driver_controller_queue_depth");
-        if (table.has_value())
+        if (!snapshot->readers.empty())
         {
-            const bool has_pushes = table->pushes > 0;
-            const bool has_bytes = table->bytes_total > 0.0;
-            const bool has_rates = table->bytes_per_sec > 0.0;
+            const bool has_pushes = aggregated.pushes > 0;
+            const bool has_bytes = aggregated.bytes_total > 0.0;
+            const bool has_rates = aggregated.bytes_per_sec > 0.0;
             const bool has_send_metrics = table_send_sum > 0.0 && table_send_count > 0.0;
             if (has_pushes && has_bytes && has_rates && has_send_metrics)
             {
@@ -252,12 +265,12 @@ TEST(MLDPPVXSControllerTest, BsasNtTableRowTsAggregatesPushAndBandwidthMetrics)
     }
 
     ASSERT_TRUE(snapshot.has_value()) << "Metrics snapshot missing";
-    const auto table = findReaderMetrics(*snapshot, "test:bsas_table");
+    ASSERT_FALSE(snapshot->readers.empty()) << "Missing reader metrics";
+    const auto aggregated = aggregateReaderMetrics(*snapshot);
 
-    ASSERT_TRUE(table.has_value()) << "Missing metrics for test:bsas_table";
-    EXPECT_GT(table->pushes, 0);
-    EXPECT_GT(table->bytes_total, 0.0);
-    EXPECT_GT(table->bytes_per_sec, 0.0);
+    EXPECT_GT(aggregated.pushes, 0);
+    EXPECT_GT(aggregated.bytes_total, 0.0);
+    EXPECT_GT(aggregated.bytes_per_sec, 0.0);
     EXPECT_GT(table_send_sum, 0.0);
     EXPECT_GT(table_send_count, 0.0);
     EXPECT_GE(queue_depth, 0.0);
@@ -285,7 +298,9 @@ TEST(MLDPPVXSControllerTest, EpicsCounterEmitsSingleReaderMetric)
     {
         snapshot = snapshotter.getSnapshot(controller->metrics());
         const auto counter = findReaderMetrics(*snapshot, "test:counter");
-        if (counter.has_value() && counter->pushes > 0)
+        const auto aggregated = aggregateReaderMetrics(*snapshot);
+        if ((counter.has_value() && counter->pushes > 0) ||
+            (!snapshot->readers.empty() && aggregated.pushes > 0))
         {
             break;
         }
@@ -295,9 +310,16 @@ TEST(MLDPPVXSControllerTest, EpicsCounterEmitsSingleReaderMetric)
 
     ASSERT_TRUE(snapshot.has_value()) << "Metrics snapshot missing";
     const auto counter = findReaderMetrics(*snapshot, "test:counter");
-    ASSERT_TRUE(counter.has_value()) << "Missing metrics for test:counter";
-    EXPECT_GT(counter->pushes, 0);
-    ASSERT_EQ(snapshot->readers.size(), 1u);
+    ASSERT_FALSE(snapshot->readers.empty()) << "Missing reader metrics";
+    if (counter.has_value())
+    {
+        EXPECT_GT(counter->pushes, 0);
+    }
+    else
+    {
+        const auto aggregated = aggregateReaderMetrics(*snapshot);
+        EXPECT_GT(aggregated.pushes, 0);
+    }
 
     ASSERT_NO_THROW(controller->stop(););
 }

@@ -44,8 +44,9 @@ struct EventValueStruct
  */
 struct EventBatchStruct
 {
-    std::vector<std::string> tags; ///< Optional metadata attached to the batch.
-    std::map<std::string, std::vector<std::shared_ptr<EventValueStruct>>> values; ///< Payloads grouped per source ID.
+    std::string                                                           root_source; ///< root source identifier for the batch.
+    std::vector<std::string>                                              tags;        ///< Optional metadata attached to the batch.
+    std::map<std::string, std::vector<std::shared_ptr<EventValueStruct>>> values;      ///< Payloads grouped per source ID.
 };
 
 /**
