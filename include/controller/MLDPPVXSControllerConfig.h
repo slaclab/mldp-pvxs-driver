@@ -15,6 +15,7 @@
 #include <pool/MLDPGrpcPoolConfig.h>
 
 #include <optional>
+#include <chrono>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -61,6 +62,23 @@ public:
     int controllerThreadPoolSize() const;
 
     /**
+     * @return Max protobuf payload bytes per stream before flushing.
+     *
+     * When a single writer thread accumulates more than this many payload bytes
+     * across queued requests, it closes the current gRPC stream and opens a new
+     * one to continue sending.
+     */
+    std::size_t controllerStreamMaxBytes() const;
+
+    /**
+     * @return Max stream age in milliseconds before flushing.
+     *
+     * Writer threads close and reopen a stream when it has been open longer
+     * than this duration, even if the byte threshold has not yet been reached.
+     */
+    std::chrono::milliseconds controllerStreamMaxAge() const;
+
+    /**
      * @return Raw configuration blocks for registered reader instances.
      *
      * Each entry is a parsed Config node anchored to the root YAML tree. The
@@ -89,10 +107,13 @@ private:
     void parsePool(const ::mldp_pvxs_driver::config::Config& root);
     void parseReaders(const ::mldp_pvxs_driver::config::Config& root);
     void parseMetrics(const ::mldp_pvxs_driver::config::Config& root);
+    void parseStreamLimits(const ::mldp_pvxs_driver::config::Config& root);
 
     bool                                valid_ = false;
     util::pool::MLDPGrpcPoolConfig      pool_;
     int                                 controllerThreadPoolSize_ = 0;
+    std::size_t                         controllerStreamMaxBytes_ = 2 * 1024 * 1024;
+    std::chrono::milliseconds           controllerStreamMaxAge_{200};
     std::vector<config::Config>         readerConfigs_;
     std::vector<std::pair<std::string, config::Config>> readerEntries_;
     std::optional<metrics::MetricsConfig> metricsConfig_;

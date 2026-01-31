@@ -1,4 +1,6 @@
 controller_thread_pool: 2
+# controller_stream_max_bytes: 2097152   # optional; flush stream after this payload size
+# controller_stream_max_age_ms: 200      # optional; flush stream after this age in milliseconds
 
 mldp_pool:
   provider_name: pvxs_provider
