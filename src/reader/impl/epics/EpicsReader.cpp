@@ -157,7 +157,8 @@ void EpicsReader::processEvent(std::string pvName, pvxs::Value epics_value)
                             colBatch.values[std::move(colName)] = std::move(events);
                             bus_->push(std::move(colBatch));
                         },
-                        emitted))
+                        emitted,
+                        reader_pool_.get()))
                 {
                     errorf(*logger_, "Error converting PV {} to MLDP NtTableRowTs batch on reader {}.", pvName, name_);
                     metric_call(metrics_, [&](auto& m)

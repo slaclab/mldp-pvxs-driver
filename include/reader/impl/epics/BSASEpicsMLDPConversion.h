@@ -10,6 +10,7 @@
 
 #pragma once
 
+#include <BS_thread_pool.hpp>
 #include <functional>
 #include <pvxs/client.h>
 #include <reader/impl/epics/EpicsMLDPConversion.h>
@@ -41,6 +42,15 @@ public:
                                           const std::string&                    tsNanosField,
                                           ColumnEmitFn                          emitColumn,
                                           size_t&                               outEmitted);
+
+    static bool tryBuildNtTableRowTsBatch(mldp_pvxs_driver::util::log::ILogger& log,
+                                          const std::string&                    tablePvName,
+                                          const pvxs::Value&                    epicsValue,
+                                          const std::string&                    tsSecondsField,
+                                          const std::string&                    tsNanosField,
+                                          ColumnEmitFn                          emitColumn,
+                                          size_t&                               outEmitted,
+                                          BS::light_thread_pool*                pool);
 };
 
 } // namespace mldp_pvxs_driver::reader::impl::epics

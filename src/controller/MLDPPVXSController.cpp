@@ -10,6 +10,7 @@
 
 #include "util/log/Logger.h"
 #include <controller/MLDPPVXSController.h>
+#include <google/protobuf/arena.h>
 #include <memory>
 #include <reader/ReaderFactory.h>
 
@@ -332,11 +333,12 @@ void MLDPPVXSController::workerLoop(std::size_t worker_index)
             }
         }
 
-        dp::service::ingestion::IngestDataRequest request;
+        google::protobuf::Arena arena;
+        auto* request = google::protobuf::Arena::CreateMessage<dp::service::ingestion::IngestDataRequest>(&arena);
         std::size_t accepted_events = 0;
         std::size_t payload_bytes = 0;
         const auto request_id = std::format("pv_stream_{}_{}", stream_start.time_since_epoch().count(), item.src_name);
-        if (!buildRequest(item, request_id, request, accepted_events, payload_bytes))
+        if (!buildRequest(item, request_id, *request, accepted_events, payload_bytes))
         {
             continue;
         }
@@ -351,7 +353,7 @@ void MLDPPVXSController::workerLoop(std::size_t worker_index)
             }
         }
 
-        if (!writer->Write(request))
+        if (!writer->Write(*request))
         {
             errorf(*logger_, "Failed to write data column {} with {} events to ingestion stream", item.src_name, accepted_events);
             metric_call(metrics_, [&](auto& m)
