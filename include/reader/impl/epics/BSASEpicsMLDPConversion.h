@@ -10,6 +10,7 @@
 
 #pragma once
 
+#include <functional>
 #include <pvxs/client.h>
 #include <reader/impl/epics/EpicsMLDPConversion.h>
 #include <string>
@@ -22,6 +23,9 @@ namespace mldp_pvxs_driver::reader::impl::epics {
 class BSASEpicsMLDPConversion : public EpicsMLDPConversion
 {
 public:
+    using ColumnEmitFn = std::function<void(std::string colName,
+                                             std::vector<mldp_pvxs_driver::util::bus::IEventBusPush::EventValue> events)>;
+
     static bool tryBuildNtTableRowTsBatch(mldp_pvxs_driver::util::log::ILogger&                    log,
                                           const std::string&                                      tablePvName,
                                           const pvxs::Value&                                      epicsValue,
@@ -29,6 +33,14 @@ public:
                                           const std::string&                                      tsNanosField,
                                           mldp_pvxs_driver::util::bus::IEventBusPush::EventBatch* outBatch,
                                           size_t&                                                 outEmitted);
+
+    static bool tryBuildNtTableRowTsBatch(mldp_pvxs_driver::util::log::ILogger& log,
+                                          const std::string&                    tablePvName,
+                                          const pvxs::Value&                    epicsValue,
+                                          const std::string&                    tsSecondsField,
+                                          const std::string&                    tsNanosField,
+                                          ColumnEmitFn                          emitColumn,
+                                          size_t&                               outEmitted);
 };
 
 } // namespace mldp_pvxs_driver::reader::impl::epics

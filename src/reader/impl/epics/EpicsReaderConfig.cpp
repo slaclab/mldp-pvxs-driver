@@ -112,6 +112,11 @@ const std::string& EpicsReaderConfig::name() const
     return name_;
 }
 
+unsigned int EpicsReaderConfig::threadPoolSize() const
+{
+    return thread_pool_size_;
+}
+
 const std::vector<EpicsReaderConfig::PVConfig>& EpicsReaderConfig::pvs() const
 {
     return pvs_;
@@ -146,6 +151,8 @@ void EpicsReaderConfig::parse(const Config& readerEntry)
     {
         throw Error("name must not be empty");
     }
+
+    thread_pool_size_ = static_cast<unsigned int>(readerEntry.getInt("thread_pool", 2));
 
     if (!readerEntry.hasChild("pvs"))
     {

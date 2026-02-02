@@ -65,6 +65,9 @@ namespace mldp_pvxs_driver::controller {
  * - <tt>mldp_pvxs_driver_reader_queue_depth</tt>:
  *   gauge showing the depth of the reader's internal work queue (PV updates
  *   waiting to be processed).
+ * - <tt>mldp_pvxs_driver_reader_pool_queue_depth</tt>:
+ *   gauge showing the number of conversion tasks queued in the reader thread
+ *   pool awaiting processing.
  *
  * Bus metrics:
  * - <tt>mldp_pvxs_driver_bus_payload_bytes_total</tt>:

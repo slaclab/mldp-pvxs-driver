@@ -79,10 +79,25 @@ bool BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch(mldp_pvxs_driver::util::
                                                         mldp_pvxs_driver::util::bus::IEventBusPush::EventBatch* outBatch,
                                                         size_t&                                                 outEmitted)
 {
-    outEmitted = 0;
     outBatch->tags.clear();
     outBatch->values.clear();
     outBatch->tags.push_back(tablePvName);
+    return tryBuildNtTableRowTsBatch(log, tablePvName, epicsValue,
+        tsSecondsField, tsNanosField,
+        [&](std::string colName, std::vector<mldp_pvxs_driver::util::bus::IEventBusPush::EventValue> events) {
+            outBatch->values[std::move(colName)] = std::move(events);
+        }, outEmitted);
+}
+
+bool BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch(mldp_pvxs_driver::util::log::ILogger& log,
+                                                        const std::string&                    tablePvName,
+                                                        const pvxs::Value&                    epicsValue,
+                                                        const std::string&                    tsSecondsField,
+                                                        const std::string&                    tsNanosField,
+                                                        ColumnEmitFn                          emitColumn,
+                                                        size_t&                               outEmitted)
+{
+    outEmitted = 0;
 
     if (!epicsValue || epicsValue.type().kind() != pvxs::Kind::Compound)
     {
@@ -90,10 +105,6 @@ bool BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch(mldp_pvxs_driver::util::
         return false;
     }
 
-    // BSAS NTTable row-ts layout:
-    // - Sampled PV columns exist under the normative NTTable `value` sub-structure.
-    // - Per-row timestamps may be carried either as top-level array fields (e.g. secondsPastEpoch[]/nanoseconds[])
-    //   or as regular NTTable columns under `value` (e.g. value.secondsPastEpoch[]/value.nanoseconds[]).
     const auto columns = epicsValue["value"];
     if (!columns || columns.type().kind() != pvxs::Kind::Compound)
     {
@@ -103,7 +114,6 @@ bool BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch(mldp_pvxs_driver::util::
 
     pvxs::Value secondsValue = epicsValue[tsSecondsField];
     pvxs::Value nanosValue = epicsValue[tsNanosField];
-    // If not present as top-level fields, accept timestamps as table columns.
     if (!secondsValue.valid() || !nanosValue.valid())
     {
         secondsValue = columns[tsSecondsField];
@@ -135,6 +145,13 @@ bool BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch(mldp_pvxs_driver::util::
         return false;
     }
 
+    std::vector<uint64_t> tsSeconds(rowCount), tsNanos(rowCount);
+    for (size_t i = 0; i < rowCount; ++i)
+    {
+        tsSeconds[i] = secondsArr->at(i);
+        tsNanos[i]   = nanosArr->at(i);
+    }
+
     for (const auto& col : columns.ichildren())
     {
         if (!col.valid())
@@ -147,27 +164,24 @@ bool BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch(mldp_pvxs_driver::util::
             continue;
         }
 
-        // Get the column's type code.
         const auto colCode = col.type().code;
 
-        // Lambda helper to emit an array of values.
         const auto emitArray = [&]<typename ArrT>(const pvxs::Value& v, auto&& setValue)
         {
             const auto arr = v.as<ArrT>();
             const auto n = std::min(rowCount, static_cast<size_t>(arr.size()));
-            auto&      dest = outBatch->values[colName];
-            dest.reserve(dest.size() + n);
+            std::vector<mldp_pvxs_driver::util::bus::IEventBusPush::EventValue> dest;
+            dest.reserve(n);
             for (size_t i = 0; i < n; ++i)
             {
-                auto ev = mldp_pvxs_driver::util::bus::IEventBusPush::MakeEventValue(secondsArr->at(i), nanosArr->at(i));
-                setValue(ev->data_value.get(), arr[i]);
+                auto ev = mldp_pvxs_driver::util::bus::IEventBusPush::MakeEventValue(tsSeconds[i], tsNanos[i]);
+                setValue(&ev->data_value, arr[i]);
                 dest.emplace_back(std::move(ev));
             }
             outEmitted += n;
+            emitColumn(colName, std::move(dest));
         };
 
-        // Emit one source per column; each row is a timestamped event.
-        // We switch once per column for efficiency.
         switch (colCode)
         {
         case pvxs::TypeCode::BoolA:
@@ -244,17 +258,18 @@ bool BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch(mldp_pvxs_driver::util::
             {
                 const auto arr = col.as<pvxs::shared_array<const pvxs::Value>>();
                 const auto n = std::min(rowCount, static_cast<size_t>(arr.size()));
-                auto&      dest = outBatch->values[colName];
-                dest.reserve(dest.size() + n);
+                std::vector<mldp_pvxs_driver::util::bus::IEventBusPush::EventValue> dest;
+                dest.reserve(n);
                 for (size_t i = 0; i < n; ++i)
                 {
-                    auto              ev = mldp_pvxs_driver::util::bus::IEventBusPush::MakeEventValue(secondsArr->at(i), nanosArr->at(i));
+                    auto              ev = mldp_pvxs_driver::util::bus::IEventBusPush::MakeEventValue(tsSeconds[i], tsNanos[i]);
                     const pvxs::Value cell = arr[i];
                     const pvxs::Value cellValue = (cell.type().kind() == pvxs::Kind::Compound) ? cell["value"] : pvxs::Value{};
-                    EpicsMLDPConversion::convertPVToProtoValue(cellValue.valid() ? cellValue : cell, ev->data_value.get());
+                    EpicsMLDPConversion::convertPVToProtoValue(cellValue.valid() ? cellValue : cell, &ev->data_value);
                     dest.emplace_back(std::move(ev));
                 }
                 outEmitted += n;
+                emitColumn(colName, std::move(dest));
             }
             break;
         default:

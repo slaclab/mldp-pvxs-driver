@@ -21,8 +21,10 @@ void EpicsMLDPConversion::convertPVToProtoValue(const pvxs::Value& pvValue, Data
 
     const auto typeArraySetter = [&pvValue, protoValue]<typename T>(void (DataValue::*setter)(T))
     {
+        auto arr = pvValue.as<pvxs::shared_array<const std::remove_cvref_t<T>>>();
         auto* protoArray = protoValue->mutable_arrayvalue();
-        for (const auto& i : pvValue.as<pvxs::shared_array<const std::remove_cvref_t<T>>>())
+        protoArray->mutable_datavalues()->Reserve(static_cast<int>(arr.size()));
+        for (const auto& i : arr)
         {
             auto* element = protoArray->add_datavalues();
             (*element.*setter)(i);
@@ -77,9 +79,12 @@ void EpicsMLDPConversion::convertPVToProtoValue(const pvxs::Value& pvValue, Data
     case pvxs::TypeCode::UnionA:
     case pvxs::TypeCode::AnyA:
         {
-            for (const auto& i : pvValue.as<pvxs::shared_array<const pvxs::Value>>())
+            auto arr = pvValue.as<pvxs::shared_array<const pvxs::Value>>();
+            auto* av = protoValue->mutable_arrayvalue();
+            av->mutable_datavalues()->Reserve(static_cast<int>(arr.size()));
+            for (const auto& i : arr)
             {
-                structSetter(i, protoValue->mutable_arrayvalue()->add_datavalues());
+                structSetter(i, av->add_datavalues());
             }
             return;
         }

@@ -423,6 +423,10 @@ bool MLDPPVXSController::buildRequest(const QueueItem& item,
     auto* column = dataFrame->add_datacolumns();
     column->set_name(item.src_name);
 
+    const int eventCount = static_cast<int>(item.events.size());
+    timestampList->mutable_timestamps()->Reserve(eventCount);
+    column->mutable_datavalues()->Reserve(eventCount);
+
     for (auto& event_value : item.events)
     {
         if (!event_value)
@@ -446,16 +450,9 @@ bool MLDPPVXSController::buildRequest(const QueueItem& item,
             ts->set_epochseconds(std::chrono::duration_cast<std::chrono::seconds>(now).count());
         }
 
-        if (event_value->data_value)
-        {
-            auto* dataValue = column->add_datavalues();
-            *dataValue = std::move(*event_value->data_value);
-            ++accepted_events;
-        }
-        else
-        {
-            warnf(*logger_, "Missing data_value content for source {}", item.src_name);
-        }
+        auto* dataValue = column->add_datavalues();
+        *dataValue = std::move(event_value->data_value);
+        ++accepted_events;
     }
 
     if (column->datavalues_size() == 0)

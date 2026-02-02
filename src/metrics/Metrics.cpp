@@ -57,6 +57,7 @@ Metrics::Metrics(const MetricsConfig& config)
           "mldp_pvxs_driver_reader_processing_time_ms",
           "Time spent converting EPICS PV updates to MLDP protobuf payloads (milliseconds)."))
     , reader_queue_depth_family_(makeGaugeFamily(*registry_, "mldp_pvxs_driver_reader_queue_depth", "Number of PV updates queued in the reader work queue awaiting processing."))
+    , reader_pool_queue_depth_family_(makeGaugeFamily(*registry_, "mldp_pvxs_driver_reader_pool_queue_depth", "Number of conversion tasks queued in the reader thread pool awaiting processing."))
     , pool_connections_in_use_family_(makeGaugeFamily(*registry_, "mldp_pvxs_driver_pool_connections_in_use", "Number of MLDP gRPC connections currently in use."))
     , pool_connections_available_family_(makeGaugeFamily(*registry_, "mldp_pvxs_driver_pool_connections_available", "Idle MLDP gRPC connections ready for use."))
     , controller_send_time_buckets_({0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0})
@@ -112,6 +113,11 @@ void Metrics::observeReaderProcessingTimeMs(double value, prometheus::Labels tag
 void Metrics::setReaderQueueDepth(double value, prometheus::Labels tags)
 {
     reader_queue_depth_family_.Add(std::move(tags)).Set(value);
+}
+
+void Metrics::setReaderPoolQueueDepth(double value, prometheus::Labels tags)
+{
+    reader_pool_queue_depth_family_.Add(std::move(tags)).Set(value);
 }
 
 double Metrics::readerEventsReceivedTotal() const

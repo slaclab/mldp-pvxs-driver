@@ -31,9 +31,9 @@ namespace mldp_pvxs_driver::util::bus {
  */
 struct EventValueStruct
 {
-    const uint64_t             epoch_seconds; ///< Unix epoch seconds for the sample.
-    const uint64_t             nanoseconds;   ///< Additional nanoseconds precision.
-    std::shared_ptr<DataValue> data_value;
+    uint64_t  epoch_seconds; ///< Unix epoch seconds for the sample.
+    uint64_t  nanoseconds;   ///< Additional nanoseconds precision.
+    DataValue data_value;    ///< Protobuf payload (by value to avoid heap allocation).
 };
 
 /**
@@ -76,7 +76,7 @@ public:
             EventValueStruct{
                 epoch_seconds,
                 nanoseconds,
-                std::make_shared<DataValue>()});
+                DataValue{}});
     }
 
     virtual ~IEventBusPush() = default;

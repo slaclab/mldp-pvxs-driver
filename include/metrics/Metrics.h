@@ -48,6 +48,7 @@ public:
     void   incrementReaderErrors(double value = 1.0, prometheus::Labels tags = {});
     void   observeReaderProcessingTimeMs(double value, prometheus::Labels tags = {});
     void   setReaderQueueDepth(double value, prometheus::Labels tags = {});
+    void   setReaderPoolQueueDepth(double value, prometheus::Labels tags = {});
     double readerEventsTotal() const;
     double readerEventsReceivedTotal() const;
     double readerErrorsTotal() const;
@@ -91,6 +92,7 @@ private:
     prometheus::Family<prometheus::Counter>& reader_errors_family_;
     prometheus::Family<prometheus::Histogram>& reader_processing_time_ms_family_;
     prometheus::Family<prometheus::Gauge>& reader_queue_depth_family_;
+    prometheus::Family<prometheus::Gauge>& reader_pool_queue_depth_family_;
 
     prometheus::Family<prometheus::Gauge>& pool_connections_in_use_family_;
     prometheus::Family<prometheus::Gauge>& pool_connections_available_family_;

@@ -410,7 +410,7 @@ TEST(MLDPPVXSControllerTest, IdleStreamRotationStartsNewStreamAfterMaxAge)
     batch.root_source = "test-root";
     batch.tags = {"test"};
     auto event = IEventBusPush::MakeEventValue();
-    event->data_value->set_intvalue(1);
+    event->data_value.set_intvalue(1);
     batch.values["test:signal"].push_back(event);
 
     ASSERT_TRUE(controller->push(std::move(batch)));
@@ -423,7 +423,7 @@ TEST(MLDPPVXSControllerTest, IdleStreamRotationStartsNewStreamAfterMaxAge)
     batch2.root_source = "test-root";
     batch2.tags = {"test"};
     auto event2 = IEventBusPush::MakeEventValue();
-    event2->data_value->set_intvalue(2);
+    event2->data_value.set_intvalue(2);
     batch2.values["test:signal"].push_back(event2);
 
     ASSERT_TRUE(controller->push(std::move(batch2)));

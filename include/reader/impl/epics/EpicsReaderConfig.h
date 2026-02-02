@@ -91,6 +91,9 @@ public:
     /** @return Configured reader name. */
     const std::string& name() const;
 
+    /** @return Number of threads in the reader processing pool. */
+    unsigned int threadPoolSize() const;
+
     /** @return Ordered list of PV entries as defined in the YAML. */
     const std::vector<PVConfig>& pvs() const;
 
@@ -108,6 +111,7 @@ private:
 
     bool                     valid_ = false;
     std::string              name_;
+    unsigned int             thread_pool_size_{2};
     std::vector<PVConfig>    pvs_;
     std::vector<std::string> pvNames_;
 };
