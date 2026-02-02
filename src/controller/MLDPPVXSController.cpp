@@ -86,14 +86,18 @@ void MLDPPVXSController::start()
 
     const std::size_t worker_count = static_cast<std::size_t>(config_.controllerThreadPoolSize());
     queued_items_.store(0);
-    workers_.clear();
-    workers_.reserve(worker_count);
+    channels_.clear();
+    channels_.reserve(worker_count);
     for (std::size_t i = 0; i < worker_count; ++i)
     {
-        workers_.emplace_back([this, i]()
-                              {
-                                  workerLoop(i);
-                              });
+        channels_.push_back(std::make_unique<WorkerChannel>());
+    }
+    for (std::size_t i = 0; i < worker_count; ++i)
+    {
+        thread_pool_->detach_task([this, i]()
+                                  {
+                                      workerLoop(i);
+                                  });
     }
 
     // Start readers (dispatch based on declared reader type)
@@ -119,22 +123,18 @@ void MLDPPVXSController::stop()
     running_.store(false);
     // clear readers
     readers_.clear();
-    QueueItem shutdown_item;
-    shutdown_item.shutdown = true;
-    for (std::size_t i = 0; i < workers_.size(); ++i)
+    // Signal all worker channels to shut down
+    for (auto& ch : channels_)
     {
-        queue_.enqueue(shutdown_item);
-    }
-    for (auto& worker : workers_)
-    {
-        if (worker.joinable())
         {
-            worker.join();
+            std::lock_guard lk(ch->mutex);
+            ch->shutdown = true;
         }
+        ch->cv.notify_one();
     }
-    workers_.clear();
-    // Stop controller logic
+    // Wait for all worker tasks to complete
     thread_pool_->wait();
+    channels_.clear();
     infof(*logger_, "Controller stopped");
 }
 
@@ -179,7 +179,12 @@ bool MLDPPVXSController::push(EventBatch batch_values)
             src_name,
             std::move(events)};
 
-        queue_.enqueue(std::move(item));
+        auto idx = std::hash<std::string>{}(src_name) % channels_.size();
+        {
+            std::lock_guard lk(channels_[idx]->mutex);
+            channels_[idx]->items.push_back(std::move(item));
+        }
+        channels_[idx]->cv.notify_one();
         queued_items_.fetch_add(1, std::memory_order_relaxed);
     }
 
@@ -193,7 +198,7 @@ void MLDPPVXSController::workerLoop(std::size_t worker_index)
     // requests, and write them into a gRPC client-streaming RPC. Each worker
     // keeps a single stream open at a time and flushes (closes/reopens) when
     // byte or age thresholds are reached or when a write fails.
-    (void)worker_index;
+    auto& ch = *channels_[worker_index];
     std::optional<util::pool::PooledHandle<util::pool::MLDPGrpcObject>> handle;
     std::unique_ptr<grpc::ClientWriter<dp::service::ingestion::IngestDataRequest>> writer;
     std::unique_ptr<grpc::ClientContext> context;
@@ -267,7 +272,22 @@ void MLDPPVXSController::workerLoop(std::size_t worker_index)
     while (true)
     {
         QueueItem item;
-        const bool has_item = queue_.wait_dequeue_timed(item, dequeue_timeout);
+        bool has_item = false;
+        {
+            std::unique_lock lk(ch.mutex);
+            ch.cv.wait_for(lk, dequeue_timeout, [&] { return !ch.items.empty() || ch.shutdown; });
+            if (ch.shutdown && ch.items.empty())
+            {
+                lk.unlock();
+                break;
+            }
+            if (!ch.items.empty())
+            {
+                item = std::move(ch.items.front());
+                ch.items.pop_front();
+                has_item = true;
+            }
+        }
         if (!has_item)
         {
             if (writer)
@@ -279,10 +299,6 @@ void MLDPPVXSController::workerLoop(std::size_t worker_index)
                 }
             }
             continue;
-        }
-        if (item.shutdown)
-        {
-            break;
         }
 
         queued_items_.fetch_sub(1, std::memory_order_relaxed);

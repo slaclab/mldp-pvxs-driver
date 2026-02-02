@@ -20,10 +20,11 @@
 #include <util/log/Logger.h>
 
 #include <atomic>
-#include <blockingconcurrentqueue.h>
+#include <condition_variable>
+#include <deque>
 #include <memory>
+#include <mutex>
 #include <string>
-#include <thread>
 #include <vector>
 
 namespace mldp_pvxs_driver::controller {
@@ -136,7 +137,15 @@ private:
         std::shared_ptr<const std::vector<std::string>>   tags;
         std::string                                       src_name;
         std::vector<util::bus::IEventBusPush::EventValue> events;
-        bool                                              shutdown{false};
+    };
+
+    /// Per-worker channel: each worker has its own queue for source-affinity.
+    struct WorkerChannel
+    {
+        std::mutex              mutex;
+        std::condition_variable cv;
+        std::deque<QueueItem>   items;
+        bool                    shutdown{false};
     };
 
     std::shared_ptr<mldp_pvxs_driver::util::log::ILogger> logger_;          ///< Logger instance for controller logging.
@@ -147,8 +156,7 @@ private:
     util::pool::MLDPGrpcPool::MLDPGrpcPoolShrdPtr         mldp_pool_;       ///< MLDP gRPC connection pool.
     std::vector<reader::ReaderUPtr>                       readers_;         ///< Ingestion readers instance.
     std::string                                           provider_id_;     ///< Provider identifier assigned by MLDP.
-    moodycamel::BlockingConcurrentQueue<QueueItem>        queue_;           ///< Queue of items to process.
-    std::vector<std::thread>                              workers_;         ///< Worker threads processing queued items.
+    std::vector<std::unique_ptr<WorkerChannel>>           channels_;        ///< Per-worker queues for hash-partitioned dispatch.
     std::atomic<std::size_t>                              queued_items_{0}; ///< Number of queued items.
 
     explicit MLDPPVXSController(const config::Config& config);
