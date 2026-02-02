@@ -42,12 +42,29 @@ namespace mldp_pvxs_driver::controller {
  * @ref metrics::Metrics collector.
  *
  * Tagging:
- * - Controller-emitted metrics use the label key <tt>reader</tt>.
- * - When forwarding a batch, the controller sets <tt>reader</tt> to the
- *   source name (the key in the event batch map).
+ * - Controller-emitted metrics use the label key <tt>source</tt>.
+ * - When forwarding a batch, the controller sets <tt>source</tt> to the
+ *   root source name from the event batch.
  * - If a failure happens before a specific source is known (e.g. provider
  *   not registered, stream creation failure), the controller uses
- *   <tt>reader="unknown"</tt>.
+ *   <tt>source="unknown"</tt>.
+ *
+ * Reader metrics (emitted by EpicsReader, tagged with <tt>source=PV_NAME</tt>):
+ * - <tt>mldp_pvxs_driver_reader_events_received_total</tt>:
+ *   incremented for every raw EPICS subscription update received from PVXS,
+ *   before any processing or conversion. Allows computing drop rate when
+ *   compared with <tt>reader_events_total</tt>.
+ * - <tt>mldp_pvxs_driver_reader_events_total</tt>:
+ *   incremented after an event is successfully converted and pushed to the
+ *   controller bus.
+ * - <tt>mldp_pvxs_driver_reader_errors_total</tt>:
+ *   incremented on conversion failures or PVXS remote errors.
+ * - <tt>mldp_pvxs_driver_reader_processing_time_ms</tt>:
+ *   histogram of time spent converting an EPICS PV update to a protobuf
+ *   payload (milliseconds).
+ * - <tt>mldp_pvxs_driver_reader_queue_depth</tt>:
+ *   gauge showing the depth of the reader's internal work queue (PV updates
+ *   waiting to be processed).
  *
  * Bus metrics:
  * - <tt>mldp_pvxs_driver_bus_payload_bytes_total</tt>:
@@ -56,18 +73,26 @@ namespace mldp_pvxs_driver::controller {
  *   does not include gRPC/HTTP2/TLS overhead.
  * - <tt>mldp_pvxs_driver_bus_payload_bytes_per_second</tt>:
  *   gauge set after a successful batch finishes, computed as
- *   <tt>payload_bytes_in_batch / elapsed_seconds</tt> for each reader/source.
+ *   <tt>payload_bytes_in_batch / elapsed_seconds</tt> for each source.
  * - <tt>mldp_pvxs_driver_bus_push_total</tt>:
- *   incremented by the number of accepted events written for each
- *   reader/source.
+ *   incremented by the number of accepted events written for each source.
  * - <tt>mldp_pvxs_driver_bus_failure_total</tt>:
  *   incremented when a streaming write/finish operation fails.
+ * - <tt>mldp_pvxs_driver_bus_stream_rotations_total</tt>:
+ *   incremented each time a gRPC ingestion stream is closed, labeled with
+ *   <tt>reason</tt> (idle, max_bytes, max_age, write_failed, shutdown,
+ *   threshold).
  *
  * Controller metrics:
  * - <tt>mldp_pvxs_driver_controller_send_time_seconds</tt>:
  *   histogram observing end-to-end time spent sending a batch to MLDP.
  * - <tt>mldp_pvxs_driver_controller_queue_depth</tt>:
- *   gauge showing the number of queued controller items waiting to send.
+ *   gauge showing the aggregate number of queued items across all worker
+ *   channels.
+ * - <tt>mldp_pvxs_driver_controller_channel_queue_depth</tt>:
+ *   gauge showing the number of items queued in each per-worker channel,
+ *   labeled with <tt>worker=INDEX</tt>. Useful for detecting hot-partition
+ *   imbalance under hash-based routing.
  *
  * Typical lifecycle:
  * 1. Construct the controller with the parsed driver configuration YAML.

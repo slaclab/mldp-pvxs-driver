@@ -101,6 +101,10 @@ void EpicsReader::addPV(const PVSet& pvNames)
                                      // drain all available values
                                      for (pvxs::Value value = s.pop(); value; value = s.pop())
                                      {
+                                         metric_call(metrics_, [&](auto& m)
+                                                     {
+                                                         m.incrementReaderEventsReceived(1.0, {{"source", s.name()}});
+                                                     });
                                          m_pva_workqueue.push(ProcessingValue{s.name(), std::move(value)});
                                      }
                                  })
@@ -242,10 +246,10 @@ void EpicsReader::run(int timeout)
             }
 
             const auto   processing_end = std::chrono::steady_clock::now();
-            const double processing_seconds = std::chrono::duration<double>(processing_end - processing_start).count();
+            const double processing_ms = std::chrono::duration<double, std::milli>(processing_end - processing_start).count();
             metric_call(metrics_, [&](auto& m)
                         {
-                            m.observeReaderProcessingTimeSeconds(processing_seconds, sourceTag);
+                            m.observeReaderProcessingTimeMs(processing_ms, sourceTag);
                         });
 
             if (!batch.values.empty())

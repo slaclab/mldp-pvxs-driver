@@ -44,9 +44,12 @@ public:
 
     // Reader metrics ------------------------------------------------------
     void   incrementReaderEvents(double value = 1.0, prometheus::Labels tags = {});
+    void   incrementReaderEventsReceived(double value = 1.0, prometheus::Labels tags = {});
     void   incrementReaderErrors(double value = 1.0, prometheus::Labels tags = {});
-    void   observeReaderProcessingTimeSeconds(double value, prometheus::Labels tags = {});
+    void   observeReaderProcessingTimeMs(double value, prometheus::Labels tags = {});
+    void   setReaderQueueDepth(double value, prometheus::Labels tags = {});
     double readerEventsTotal() const;
+    double readerEventsReceivedTotal() const;
     double readerErrorsTotal() const;
 
     // Pool metrics --------------------------------------------------------
@@ -64,12 +67,14 @@ public:
     // Controller metrics -------------------------------------------------
     void   observeControllerSendTimeSeconds(double value, prometheus::Labels tags = {});
     void   setControllerQueueDepth(double value, prometheus::Labels tags = {});
+    void   setControllerChannelQueueDepth(double value, prometheus::Labels tags = {});
 
     // Bus metrics ---------------------------------------------------------
     void   incrementBusPushes(double value = 1.0, prometheus::Labels tags = {});
     void   incrementBusFailures(double value = 1.0, prometheus::Labels tags = {});
     void   incrementBusPayloadBytes(double value, prometheus::Labels tags = {});
     void   setBusPayloadBytesPerSecond(double value, prometheus::Labels tags = {});
+    void   incrementBusStreamRotations(double value = 1.0, prometheus::Labels tags = {});
     double busPushTotal(prometheus::Labels tags = {}) const;
     double busFailuresTotal(prometheus::Labels tags = {}) const;
     double busPayloadBytesTotal(prometheus::Labels tags = {}) const;
@@ -79,11 +84,13 @@ private:
     MetricsConfig                         config_;
     std::shared_ptr<prometheus::Registry> registry_;
 
-    prometheus::Histogram::BucketBoundaries reader_processing_time_buckets_;
+    prometheus::Histogram::BucketBoundaries reader_processing_time_ms_buckets_;
 
     prometheus::Family<prometheus::Counter>& reader_events_family_;
+    prometheus::Family<prometheus::Counter>& reader_events_received_family_;
     prometheus::Family<prometheus::Counter>& reader_errors_family_;
-    prometheus::Family<prometheus::Histogram>& reader_processing_time_family_;
+    prometheus::Family<prometheus::Histogram>& reader_processing_time_ms_family_;
+    prometheus::Family<prometheus::Gauge>& reader_queue_depth_family_;
 
     prometheus::Family<prometheus::Gauge>& pool_connections_in_use_family_;
     prometheus::Family<prometheus::Gauge>& pool_connections_available_family_;
@@ -91,11 +98,13 @@ private:
     prometheus::Histogram::BucketBoundaries controller_send_time_buckets_;
     prometheus::Family<prometheus::Histogram>& controller_send_time_family_;
     prometheus::Family<prometheus::Gauge>&     controller_queue_depth_family_;
+    prometheus::Family<prometheus::Gauge>&     controller_channel_queue_depth_family_;
 
     prometheus::Family<prometheus::Counter>& bus_push_family_;
     prometheus::Family<prometheus::Counter>& bus_failure_family_;
     prometheus::Family<prometheus::Counter>& bus_payload_bytes_family_;
     prometheus::Family<prometheus::Gauge>&   bus_payload_bytes_per_second_family_;
+    prometheus::Family<prometheus::Counter>& bus_stream_rotations_family_;
 
     std::unique_ptr<prometheus::Exposer> exposer_;
 };

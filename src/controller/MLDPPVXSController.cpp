@@ -106,7 +106,7 @@ void MLDPPVXSController::start()
     {
         const auto& type = entry.first;
         const auto& readerConfig = entry.second;
-        auto        reader = ReaderFactory::create(type, shared_from_this(), readerConfig);
+        auto        reader = ReaderFactory::create(type, shared_from_this(), readerConfig, metrics_);
         readers_.push_back(std::move(reader));
     }
     infof(*logger_, "Controller started");

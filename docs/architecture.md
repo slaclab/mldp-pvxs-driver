@@ -12,7 +12,11 @@ The diagram above represents the data flow the CLI orchestrates. Use these check
 - **Role**: The controller (`include/controller/MLDPPVXSController.h`) is the orchestrator that wires configuration parsing, the shared thread pool, the MLDP gRPC pool, and metrics. It implements `util::bus::IEventBusPush` so readers can forward events without depending on gRPC details.
 - **Lifecycle**: Constructed with the root YAML config; `start()` brings up the MLDP pool, creates per-worker channels, submits long-lived worker tasks to the `BS::light_thread_pool`, and starts readers. `stop()` signals each channel to shut down, waits on the thread pool, and clears resources. The controller keeps a boolean guard to avoid double starts/stops.
 - **Configuration**: `include/controller/MLDPPVXSControllerConfig.h` (`src/controller/MLDPPVXSControllerConfig.cpp`) validates the controller-specific node: gRPC pool settings, provider name, thread-pool size, reader list, and optional metrics (`metricsConfig`). Parsing errors throw early to catch miswired configs.
-- **Metrics surface**: A shared `metrics::Metrics` instance is created in the controller and handed to readers and pool components; it is also exposed through `metrics()` for any new layers that need to emit counters.
+- **Metrics surface**: A shared `metrics::Metrics` instance is created in the controller and passed to readers (via `ReaderFactory::create`) and pool components; it is also exposed through `metrics()` for any new layers that need to emit counters. The full set of Prometheus metrics is organized into four groups:
+  - **Reader metrics** (`source=PV_NAME`): `reader_events_received_total` (raw EPICS updates from subscriptions), `reader_events_total` (successfully processed), `reader_errors_total`, `reader_processing_time_ms` (conversion histogram, milliseconds), `reader_queue_depth` (internal work queue depth).
+  - **Bus metrics** (`source=ROOT_SOURCE`): `bus_push_total`, `bus_failure_total`, `bus_payload_bytes_total`, `bus_payload_bytes_per_second`, `bus_stream_rotations_total` (labeled by `reason`: idle, max_bytes, max_age, write_failed, shutdown, threshold).
+  - **Controller metrics**: `controller_send_time_seconds` (histogram), `controller_queue_depth` (aggregate), `controller_channel_queue_depth` (per-worker, labeled by `worker=INDEX`).
+  - **Pool metrics**: `pool_connections_in_use`, `pool_connections_available`.
 - **Threading model**: The controller uses hash-based partitioning to route each source to a dedicated worker channel (`push()` computes `hash(src_name) % N`). Each worker is a long-lived task submitted to the `BS::light_thread_pool` and owns a private `WorkerChannel` (mutex + condition variable + deque). This gives source-level stream affinity — the same source always hits the same worker and gRPC stream — while eliminating contention on a single shared queue. Workers block on their channel's condition variable with a timeout equal to the configured stream max age, enabling idle stream rotation without sentinel items.
 - **Extending**: New controllers should mirror this pattern: encapsulate configuration parsing, own the primary thread pool, expose a narrow bus interface, and centralize metrics so downstream pieces remain stateless.
 
@@ -26,7 +30,8 @@ The diagram above represents the data flow the CLI orchestrates. Use these check
 - **Example (full controller config)**:
   ```yaml
   controller_thread_pool: 2
-
+  controller_stream_max_bytes: 2097152   # optional; flush stream after this payload size
+  controller_stream_max_age_ms: 200      # optional; flush stream after this age in milliseconds
   mldp_pool:
     provider_name: pvxs_provider
     provider_description: "PVXS aggregate provider"   # optional; defaults to provider_name
