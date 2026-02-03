@@ -91,6 +91,19 @@ public:
     /** @return Configured reader name. */
     const std::string& name() const;
 
+    /** @return Number of threads in the reader processing pool. */
+    unsigned int threadPoolSize() const;
+
+    /**
+     * @return Max columns per bus push for NTTable row-ts batches.
+     *
+     * When an NTTable update produces more columns than this value,
+     * the reader pushes multiple EventBatch messages, each carrying at
+     * most this many columns.  A value of 0 means push all columns at once.
+     * Default: 50.
+     */
+    std::size_t columnBatchSize() const;
+
     /** @return Ordered list of PV entries as defined in the YAML. */
     const std::vector<PVConfig>& pvs() const;
 
@@ -108,6 +121,8 @@ private:
 
     bool                     valid_ = false;
     std::string              name_;
+    unsigned int             thread_pool_size_{2};
+    std::size_t              column_batch_size_{50};
     std::vector<PVConfig>    pvs_;
     std::vector<std::string> pvNames_;
 };

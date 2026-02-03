@@ -34,6 +34,7 @@
 #include <reader/impl/epics/EpicsReaderConfig.h>
 #include <util/bus/IEventBusPush.h>
 
+#include <BS_thread_pool.hpp>
 #include <pvxs/client.h>
 #include <pvxs/nt.h>
 
@@ -43,7 +44,6 @@
 #include <memory>
 #include <set>
 #include <string>
-#include <thread>
 #include <unordered_map>
 #include <utility>
 
@@ -168,35 +168,6 @@ public:
      */
     std::string name() const override;
 
-    /**
-     * @brief Main event-processing loop for the EPICS reader.
-     *
-     * Drives the primary event loop of the reader, which continuously processes
-     * PVXS subscription events from the internal work queue and publishes decoded
-     * updates to the event bus. The loop can run for a fixed duration or indefinitely
-     * based on the `timeout` parameter. Each iteration dequeues pending PV updates,
-     * decodes their values, and forwards them to downstream components.
-     *
-     * The loop respects the `running_` atomic flag and can be interrupted by the
-     * destructor or by external signals that set this flag to false.
-     *
-     * @param timeout Maximum time in milliseconds to run the event loop:
-     *        - `timeout > 0`: Run for approximately the specified duration (in ms),
-     *          then return when timeout expires.
-     *        - `timeout == 0`: Run once through the queue and return immediately.
-     *        - `timeout < 0`: Run indefinitely until the `running_` flag is set
-     *          to false (e.g., by the destructor).
-     *
-     * @note This method is typically called from the main thread or a dedicated
-     *       reader execution context. It blocks until the timeout expires or
-     *       the reader is stopped.
-     *
-     * @see EpicsReader()
-     * @see ~EpicsReader()
-     * @see addPV()
-     */
-    void run(int timeout) override;
-
 private:
     /**
      * @struct PVRuntimeConfig
@@ -232,46 +203,8 @@ private:
         std::string tsNanosField;                ///< Field name for timestamp nanoseconds
     };
 
-    /**
-     * @struct ProcessingValue
-     * @brief Tuple of a process variable name and its decoded value.
-     *
-     * Represents a single PV update event queued for processing by the
-     * event loop. Contains the PV identifier and its associated PVXS value.
-     *
-     * @see m_pva_workqueue
-     */
-    struct ProcessingValue
-    {
-        std::string pvName;    ///< EPICS process variable name/identifier
-        pvxs::Value value;     ///< Decoded PVXS value with metadata
-
-        /**
-         * @brief Default constructor.
-         */
-        ProcessingValue() = default;
-
-        /**
-         * @brief Construct with a PV name and PVXS value.
-         *
-         * @param pvNameIn The EPICS process variable name or identifier.
-         * @param valueIn The decoded PVXS value from the subscription update.
-         */
-        ProcessingValue(std::string pvNameIn, pvxs::Value valueIn)
-            : pvName(std::move(pvNameIn))
-            , value(std::move(valueIn))
-        {
-        }
-
-        /// @brief Copy constructor.
-        ProcessingValue(const ProcessingValue&) = default;
-        /// @brief Copy assignment operator.
-        ProcessingValue& operator=(const ProcessingValue&) = default;
-        /// @brief Move constructor.
-        ProcessingValue(ProcessingValue&&) noexcept = default;
-        /// @brief Move assignment operator.
-        ProcessingValue& operator=(ProcessingValue&&) noexcept = default;
-    };
+    /// @brief Process a single PV update event (runs in the reader thread pool).
+    void processEvent(std::string pvName, pvxs::Value epics_value);
 
     /// @brief Logger instance for diagnostic and error messages.
     std::shared_ptr<mldp_pvxs_driver::util::log::ILogger> logger_;
@@ -297,18 +230,18 @@ private:
     /**
      * @brief Atomic flag indicating whether the reader is actively running.
      *
-     * When set to false, signals the worker thread to terminate. Used for safe
+     * When set to false, signals the pool tasks to stop. Used for safe
      * thread communication across the reader's lifecycle.
      */
     std::atomic<bool> running_;
 
     /**
-     * @brief Worker thread that processes subscription events.
+     * @brief Thread pool for processing PV update events.
      *
-     * Spawned during construction and runs continuously, processing events
-     * from the work queue. Terminated gracefully in the destructor.
+     * Replaces the single worker thread, allowing concurrent conversion
+     * of EPICS values to protobuf payloads.
      */
-    std::thread worker_;
+    std::shared_ptr<BS::light_thread_pool> reader_pool_;
 
     /**
      * @brief PVXS client context for creating subscriptions.
@@ -326,16 +259,6 @@ private:
      * continue generating events while in the queue.
      */
     pvxs::MPMCFIFO<std::shared_ptr<pvxs::client::Subscription>> m_pva_subscriptions;
-
-    /**
-     * @brief Work queue of subscription events to be processed by run().
-     *
-     * Contains PV update events (name + value pairs) that have been received
-     * from the PVXS subscription infrastructure and are awaiting processing
-     * and publication to the event bus. Events are enqueued by PVXS callbacks
-     * and dequeued by the `run()` loop.
-     */
-    pvxs::MPMCFIFO<ProcessingValue> m_pva_workqueue;
 
     /**
      * @brief Fast per-PV lookup for special handling and configuration.

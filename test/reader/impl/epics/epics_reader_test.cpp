@@ -101,7 +101,7 @@ public:
     }
 
     // Method to get the last event's DataValue pointer
-    std::shared_ptr<DataValue> last_event() const
+    const DataValue* last_event() const
     {
         std::lock_guard<std::mutex> lock(mutex);
         if (received_events.empty())
@@ -118,7 +118,7 @@ public:
         {
             return nullptr;
         }
-        return first_entry.second.front()->data_value;
+        return &first_entry.second.front()->data_value;
     }
 
     // Method to clear events
@@ -140,7 +140,7 @@ private:
 
 namespace {
 
-std::shared_ptr<DataValue> findLatestDataValueForSource(const MockEventBusPush& bus, const std::string& source)
+const DataValue* findLatestDataValueForSource(const MockEventBusPush& bus, const std::string& source)
 {
     std::lock_guard<std::mutex> lock(bus.mutex);
     for (auto it = bus.received_events.rbegin(); it != bus.received_events.rend(); ++it)
@@ -151,11 +151,11 @@ std::shared_ptr<DataValue> findLatestDataValueForSource(const MockEventBusPush& 
             continue;
         }
         const auto& ev = vit->second.back();
-        if (!ev || !ev->data_value)
+        if (!ev)
         {
             continue;
         }
-        return ev->data_value;
+        return &ev->data_value;
     }
     return nullptr;
 }
@@ -479,7 +479,7 @@ pvs:
 
     const int max_wait_ms = 5000;
     int       waited_ms = 0;
-    std::shared_ptr<DataValue> dv;
+    const DataValue* dv = nullptr;
     while (waited_ms < max_wait_ms)
     {
         dv = findLatestDataValueForSource(*mock_bus, "test:status");
@@ -514,28 +514,44 @@ pvs:
     auto       reader_ptr = mldp_pvxs_driver::reader::ReaderFactory::create("epics", mock_bus, cfg);
     ASSERT_NE(reader_ptr, nullptr);
 
+    // With streaming push, each column arrives as a separate push() call.
     const int max_wait_ms = 5000;
     int       waited_ms = 0;
-    while (mock_bus->event_count() == 0 && waited_ms < max_wait_ms)
+    while (waited_ms < max_wait_ms)
     {
+        if (countEventsForSource(*mock_bus, "PV_NAME_A_DOUBLE_VALUE") >= 3 &&
+            countEventsForSource(*mock_bus, "PV_NAME_B_STRING_VALUE") >= 3)
+            break;
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
         waited_ms += 100;
     }
 
-    const auto batchOpt = mock_bus->last_batch_copy();
-    ASSERT_TRUE(batchOpt.has_value());
-    const auto& batch = *batchOpt;
-    ASSERT_FALSE(batch.values.empty());
+    EXPECT_GE(countEventsForSource(*mock_bus, "PV_NAME_A_DOUBLE_VALUE"), 3u);
+    EXPECT_GE(countEventsForSource(*mock_bus, "PV_NAME_B_STRING_VALUE"), 3u);
 
-    ASSERT_TRUE(batch.values.count("PV_NAME_A_DOUBLE_VALUE")) << "Expected AMPL column as a source";
-    ASSERT_TRUE(batch.values.count("PV_NAME_B_STRING_VALUE")) << "Expected STAT column as a source";
-    EXPECT_FALSE(batch.values.count("secondsPastEpoch"));
-    EXPECT_FALSE(batch.values.count("nanoseconds"));
+    // Verify no timestamp columns leaked as sources
+    EXPECT_EQ(countEventsForSource(*mock_bus, "secondsPastEpoch"), 0u);
+    EXPECT_EQ(countEventsForSource(*mock_bus, "nanoseconds"), 0u);
 
-    const auto& ampl = batch.values.at("PV_NAME_A_DOUBLE_VALUE");
-    const auto& stat = batch.values.at("PV_NAME_B_STRING_VALUE");
-    ASSERT_EQ(ampl.size(), 3u);
-    ASSERT_EQ(stat.size(), 3u);
+    // Collect events for each column across all batches
+    std::vector<mldp_pvxs_driver::util::bus::IEventBusPush::EventValue> ampl, stat;
+    {
+        std::lock_guard<std::mutex> lock(mock_bus->mutex);
+        for (const auto& batch : mock_bus->received_events)
+        {
+            if (auto it = batch.values.find("PV_NAME_A_DOUBLE_VALUE"); it != batch.values.end())
+            {
+                ampl.insert(ampl.end(), it->second.begin(), it->second.end());
+            }
+            if (auto it = batch.values.find("PV_NAME_B_STRING_VALUE"); it != batch.values.end())
+            {
+                stat.insert(stat.end(), it->second.begin(), it->second.end());
+            }
+        }
+    }
+
+    ASSERT_GE(ampl.size(), 3u);
+    ASSERT_GE(stat.size(), 3u);
 
     // Per-row timestamps are shared across columns.
     for (size_t i = 0; i < 3; ++i)
@@ -547,11 +563,9 @@ pvs:
         EXPECT_GT(ampl[i]->epoch_seconds, 0u);
     }
 
-    ASSERT_NE(ampl[0]->data_value, nullptr);
-    ASSERT_TRUE(ampl[0]->data_value->has_doublevalue());
-    EXPECT_DOUBLE_EQ(ampl[0]->data_value->doublevalue(), 1.0);
+    ASSERT_TRUE(ampl[0]->data_value.has_doublevalue());
+    EXPECT_DOUBLE_EQ(ampl[0]->data_value.doublevalue(), 1.0);
 
-    ASSERT_NE(stat[0]->data_value, nullptr);
-    ASSERT_TRUE(stat[0]->data_value->has_stringvalue());
-    EXPECT_EQ(stat[0]->data_value->stringvalue(), "OK");
+    ASSERT_TRUE(stat[0]->data_value.has_stringvalue());
+    EXPECT_EQ(stat[0]->data_value.stringvalue(), "OK");
 }

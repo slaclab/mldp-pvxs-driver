@@ -53,6 +53,7 @@ FetchContent_Declare(argparse
 )
 FetchContent_MakeAvailable(argparse)
 
+
 # Prometheus-cpp pulls its own GoogleTest dependency when ENABLE_TESTING is set.
 # Temporarily override the cached ENABLE_TESTING option so the dependency does
 # not try to define conflicting gmock targets when added as a subproject.
