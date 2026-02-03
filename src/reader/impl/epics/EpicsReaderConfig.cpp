@@ -117,11 +117,6 @@ unsigned int EpicsReaderConfig::threadPoolSize() const
     return thread_pool_size_;
 }
 
-EpicsReaderConfig::Backend EpicsReaderConfig::backend() const
-{
-    return backend_;
-}
-
 unsigned int EpicsReaderConfig::monitorPollThreads() const
 {
     return monitor_poll_threads_;
@@ -177,18 +172,9 @@ void EpicsReaderConfig::parse(const Config& readerEntry)
     monitor_poll_threads_ = static_cast<unsigned int>(readerEntry.getInt("monitor_poll_threads", 2));
     monitor_poll_interval_ms_ = static_cast<unsigned int>(readerEntry.getInt("monitor_poll_interval_ms", 5));
 
-    const std::string backend = toLower(readerEntry.get("backend", "pvxs"));
-    if (backend == "pvxs")
+    if (readerEntry.hasChild("backend"))
     {
-        backend_ = Backend::Pvxs;
-    }
-    else if (backend == "epics-base")
-    {
-        backend_ = Backend::EpicsBase;
-    }
-    else
-    {
-        throw Error("backend must be one of: pvxs, epics-base");
+        throw Error("backend is not supported; choose epics-pvxs or epics-base reader type");
     }
 
     if (!readerEntry.hasChild("pvs"))

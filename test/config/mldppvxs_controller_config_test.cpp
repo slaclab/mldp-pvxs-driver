@@ -26,7 +26,7 @@ mldp_pool:
   min_conn: 1
   max_conn: 4
 reader:
-  - epics:
+  - epics-pvxs:
       - name: epics_1
         pvs:
           - name: pv1
@@ -118,7 +118,7 @@ mldp_pool:
   min_conn: 2
   max_conn: 2
 reader:
-  - epics:
+  - epics-pvxs:
       - name: epics_1
         pvs:
           - name: pv1

@@ -37,26 +37,19 @@ pvs:
     EXPECT_EQ("pv3", epicsCfg.pvs()[2].name);
     EXPECT_EQ("", epicsCfg.pvs()[2].option);
     EXPECT_FALSE(epicsCfg.pvs()[2].optionConfig.has_value());
-    EXPECT_EQ(EpicsReaderConfig::Backend::Pvxs, epicsCfg.backend());
     EXPECT_EQ(2u, epicsCfg.monitorPollThreads());
     EXPECT_EQ(5u, epicsCfg.monitorPollIntervalMs());
 }
 
-TEST(EpicsReaderConfigTest, ParsesBackendAndPollSettings)
+TEST(EpicsReaderConfigTest, RejectsBackendField)
 {
     const std::string yaml = R"(
 name: epics_backend
 backend: epics-base
-monitor_poll_threads: 3
-monitor_poll_interval_ms: 10
 )";
 
-    const auto        cfg = makeConfigFromYaml(yaml);
-    EpicsReaderConfig epicsCfg(cfg);
-
-    EXPECT_EQ(EpicsReaderConfig::Backend::EpicsBase, epicsCfg.backend());
-    EXPECT_EQ(3u, epicsCfg.monitorPollThreads());
-    EXPECT_EQ(10u, epicsCfg.monitorPollIntervalMs());
+    const auto cfg = makeConfigFromYaml(yaml);
+    EXPECT_THROW(static_cast<void>(EpicsReaderConfig(cfg)), EpicsReaderConfig::Error);
 }
 
 TEST(EpicsReaderConfigTest, ThrowsForInvalidPvsSequence)

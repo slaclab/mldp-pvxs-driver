@@ -18,7 +18,7 @@
 #include <metrics/Metrics.h>
 #include <metrics/MetricsSnapshot.h>
 #include <reader/ReaderFactory.h>
-#include <reader/impl/epics/EpicsReader.h>
+#include <reader/impl/epics/EpicsBaseReader.h>
 #include <util/bus/IEventBusPush.h>
 
 using mldp_pvxs_driver::config::makeConfigFromYaml;
@@ -209,7 +209,7 @@ const DataValue* findStructureFieldValue(const DataValue& root, const std::strin
 } // namespace
 
 // Test fixture
-class EpicsReaderTest : public ::testing::Test
+class EpicsBaseReaderTest : public ::testing::Test
 {
 protected:
     void SetUp() override
@@ -233,7 +233,7 @@ protected:
 };
 
 // Test constructor and name through factory
-TEST_F(EpicsReaderTest, ConstructorAndName)
+TEST_F(EpicsBaseReaderTest, ConstructorAndName)
 {
     const std::string yaml = R"(
 name: epics_1
@@ -242,7 +242,7 @@ name: epics_1
     const auto cfg = makeConfigFromYaml(yaml);
 
     // Use ReaderFactory to create EpicsReader instance (as shown in test/driver.cpp)
-    auto reader_ptr = mldp_pvxs_driver::reader::ReaderFactory::create("epics", mock_bus, cfg);
+    auto reader_ptr = mldp_pvxs_driver::reader::ReaderFactory::create("epics-base", mock_bus, cfg);
     // reader = std::dynamic_pointer_cast<mldp_pvxs_driver::reader::impl::epics::EpicsReader>(std::shared_ptr<mldp_pvxs_driver::reader::Reader>(reader_ptr));
 
     ASSERT_NE(reader_ptr, nullptr);
@@ -252,7 +252,7 @@ name: epics_1
 }
 
 // Test addPV method
-TEST_F(EpicsReaderTest, MonitorPVOnConfiguration)
+TEST_F(EpicsBaseReaderTest, MonitorPVOnConfiguration)
 {
     const std::string yaml = R"(
 name: epics_1
@@ -262,7 +262,7 @@ pvs:
     const auto        cfg = makeConfigFromYaml(yaml);
 
     // Use ReaderFactory to create EpicsReader instance (as shown in test/driver.cpp)
-    auto reader_ptr = mldp_pvxs_driver::reader::ReaderFactory::create("epics", mock_bus, cfg);
+    auto reader_ptr = mldp_pvxs_driver::reader::ReaderFactory::create("epics-base", mock_bus, cfg);
 
     // check if is not null
     ASSERT_NE(reader_ptr, nullptr);
@@ -281,7 +281,31 @@ pvs:
     EXPECT_GT(mock_bus->event_count(), 0) << "No events received within timeout";
 }
 
-TEST_F(EpicsReaderTest, CounterPVEmitsMultipleEvents)
+TEST_F(EpicsBaseReaderTest, MonitorPVOnConfigurationEpicsBase)
+{
+    const std::string yaml = R"(
+name: epics_base_1
+pvs:
+  - name: test:counter
+)";
+    const auto        cfg = makeConfigFromYaml(yaml);
+
+    auto reader_ptr = mldp_pvxs_driver::reader::ReaderFactory::create("epics-base", mock_bus, cfg);
+
+    ASSERT_NE(reader_ptr, nullptr);
+    EXPECT_EQ(reader_ptr->name(), "epics_base_1");
+
+    const int max_wait_ms = 5000;
+    int       waited_ms = 0;
+    while (mock_bus->event_count() == 0 && waited_ms < max_wait_ms)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        waited_ms += 100;
+    }
+    EXPECT_GT(mock_bus->event_count(), 0) << "No events received within timeout (epics-base)";
+}
+
+TEST_F(EpicsBaseReaderTest, CounterPVEmitsMultipleEvents)
 {
     const std::string yaml = R"(
 name: epics_1
@@ -292,7 +316,7 @@ pvs:
     auto              metrics = std::make_shared<mldp_pvxs_driver::metrics::Metrics>(
         mldp_pvxs_driver::metrics::MetricsConfig());
     mock_bus->set_metrics(metrics);
-    auto reader_ptr = mldp_pvxs_driver::reader::ReaderFactory::create("epics", mock_bus, cfg, metrics);
+    auto reader_ptr = mldp_pvxs_driver::reader::ReaderFactory::create("epics-base", mock_bus, cfg, metrics);
     ASSERT_NE(reader_ptr, nullptr);
 
     const int max_wait_ms = 5000;
@@ -317,7 +341,7 @@ pvs:
     EXPECT_TRUE(matched_metrics) << "Expected metrics snapshot pushes to match received events for test:counter";
 }
 
-TEST_F(EpicsReaderTest, SimulatedPVsProduceEventsAndExpectedTypes)
+TEST_F(EpicsBaseReaderTest, SimulatedPVsProduceEventsAndExpectedTypes)
 {
     const std::string yaml = R"(
 name: epics_1
@@ -330,7 +354,7 @@ pvs:
 )";
 
     const auto cfg = makeConfigFromYaml(yaml);
-    auto       reader_ptr = mldp_pvxs_driver::reader::ReaderFactory::create("epics", mock_bus, cfg);
+    auto       reader_ptr = mldp_pvxs_driver::reader::ReaderFactory::create("epics-base", mock_bus, cfg);
     ASSERT_NE(reader_ptr, nullptr);
 
     const std::set<std::string> expected{
@@ -465,7 +489,7 @@ pvs:
     }
 }
 
-TEST_F(EpicsReaderTest, AlarmFieldsMapToValueStatus)
+TEST_F(EpicsBaseReaderTest, AlarmFieldsMapToValueStatus)
 {
     const std::string yaml = R"(
 name: epics_1
@@ -474,7 +498,7 @@ pvs:
 )";
 
     const auto cfg = makeConfigFromYaml(yaml);
-    auto       reader_ptr = mldp_pvxs_driver::reader::ReaderFactory::create("epics", mock_bus, cfg);
+    auto       reader_ptr = mldp_pvxs_driver::reader::ReaderFactory::create("epics-base", mock_bus, cfg);
     ASSERT_NE(reader_ptr, nullptr);
 
     const int max_wait_ms = 5000;
@@ -500,7 +524,7 @@ pvs:
     EXPECT_EQ(status.message(), "TEST_ALARM");
 }
 
-TEST_F(EpicsReaderTest, NTTableRowTimestampSplitsToPerColumnSources)
+TEST_F(EpicsBaseReaderTest, NTTableRowTimestampSplitsToPerColumnSources)
 {
     const std::string yaml = R"(
 name: epics_1
@@ -511,7 +535,7 @@ pvs:
 )";
 
     const auto cfg = makeConfigFromYaml(yaml);
-    auto       reader_ptr = mldp_pvxs_driver::reader::ReaderFactory::create("epics", mock_bus, cfg);
+    auto       reader_ptr = mldp_pvxs_driver::reader::ReaderFactory::create("epics-base", mock_bus, cfg);
     ASSERT_NE(reader_ptr, nullptr);
 
     // With streaming push, each column arrives as a separate push() call.
