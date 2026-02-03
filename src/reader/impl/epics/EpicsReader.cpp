@@ -148,14 +148,25 @@ void EpicsReader::processEvent(std::string pvName, pvxs::Value epics_value)
         {
         case PVRuntimeConfig::Mode::NtTableRowTs:
             {
+                const std::size_t colBatchSize = config_.columnBatchSize();
+                IEventBusPush::EventBatch tableBatch;
+                tableBatch.root_source = pvName;
+                tableBatch.tags.push_back(pvName);
+                std::size_t colsInBatch = 0;
+
                 if (!BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch(
                         *logger_, pvName, epics_value, it->second.tsSecondsField, it->second.tsNanosField,
-                        [this, &pvName](std::string colName, std::vector<IEventBusPush::EventValue> events) {
-                            IEventBusPush::EventBatch colBatch;
-                            colBatch.root_source = pvName;
-                            colBatch.tags.push_back(pvName);
-                            colBatch.values[std::move(colName)] = std::move(events);
-                            bus_->push(std::move(colBatch));
+                        [&](std::string colName, std::vector<IEventBusPush::EventValue> events) {
+                            tableBatch.values[std::move(colName)] = std::move(events);
+                            ++colsInBatch;
+                            if (colBatchSize > 0 && colsInBatch >= colBatchSize)
+                            {
+                                bus_->push(std::move(tableBatch));
+                                tableBatch = IEventBusPush::EventBatch{};
+                                tableBatch.root_source = pvName;
+                                tableBatch.tags.push_back(pvName);
+                                colsInBatch = 0;
+                            }
                         },
                         emitted,
                         reader_pool_.get()))
@@ -165,6 +176,10 @@ void EpicsReader::processEvent(std::string pvName, pvxs::Value epics_value)
                                 {
                                     m.incrementReaderErrors(1.0, sourceTag);
                                 });
+                }
+                else if (!tableBatch.values.empty())
+                {
+                    bus_->push(std::move(tableBatch));
                 }
             }
             break;

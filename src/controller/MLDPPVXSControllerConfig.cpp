@@ -55,6 +55,7 @@ std::size_t MLDPPVXSControllerConfig::controllerStreamMaxBytes() const
     return controllerStreamMaxBytes_;
 }
 
+
 std::chrono::milliseconds MLDPPVXSControllerConfig::controllerStreamMaxAge() const
 {
     return controllerStreamMaxAge_;
@@ -236,4 +237,5 @@ void MLDPPVXSControllerConfig::parseStreamLimits(const ::mldp_pvxs_driver::confi
         }
         controllerStreamMaxAge_ = std::chrono::milliseconds(value);
     }
+
 }

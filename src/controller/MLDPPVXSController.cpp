@@ -167,20 +167,29 @@ bool MLDPPVXSController::push(EventBatch batch_values)
     }
 
     auto tags = std::make_shared<const std::vector<std::string>>(batch_values.tags);
+
+    // Group columns by target worker channel, then enqueue one QueueItem per channel.
+    std::vector<std::vector<std::pair<std::string, std::vector<IEventBusPush::EventValue>>>> per_channel(channels_.size());
     for (auto& [src_name, events] : batch_values.values)
     {
         if (events.empty())
         {
             continue;
         }
+        auto idx = std::hash<std::string>{}(src_name) % channels_.size();
+        per_channel[idx].emplace_back(src_name, std::move(events));
+    }
 
+    for (std::size_t idx = 0; idx < channels_.size(); ++idx)
+    {
+        if (per_channel[idx].empty())
+        {
+            continue;
+        }
         QueueItem item{
             batch_values.root_source,
             tags,
-            src_name,
-            std::move(events)};
-
-        auto idx = std::hash<std::string>{}(src_name) % channels_.size();
+            std::move(per_channel[idx])};
         {
             std::lock_guard lk(channels_[idx]->mutex);
             channels_[idx]->items.push_back(std::move(item));
@@ -337,7 +346,7 @@ void MLDPPVXSController::workerLoop(std::size_t worker_index)
         auto* request = google::protobuf::Arena::CreateMessage<dp::service::ingestion::IngestDataRequest>(&arena);
         std::size_t accepted_events = 0;
         std::size_t payload_bytes = 0;
-        const auto request_id = std::format("pv_stream_{}_{}", stream_start.time_since_epoch().count(), item.src_name);
+        const auto request_id = std::format("pv_stream_{}_{}", stream_start.time_since_epoch().count(), item.root_source);
         if (!buildRequest(item, request_id, *request, accepted_events, payload_bytes))
         {
             continue;
@@ -355,7 +364,7 @@ void MLDPPVXSController::workerLoop(std::size_t worker_index)
 
         if (!writer->Write(*request))
         {
-            errorf(*logger_, "Failed to write data column {} with {} events to ingestion stream", item.src_name, accepted_events);
+            errorf(*logger_, "Failed to write {} columns with {} events to ingestion stream", item.columns.size(), accepted_events);
             metric_call(metrics_, [&](auto& m)
                         {
                             m.incrementBusFailures(1.0, {{"source", item.root_source}});
@@ -422,44 +431,59 @@ bool MLDPPVXSController::buildRequest(const QueueItem& item,
     auto* dataFrame = request.mutable_ingestiondataframe();
     auto* timestamps = dataFrame->mutable_datatimestamps();
     auto* timestampList = timestamps->mutable_timestamplist();
-    auto* column = dataFrame->add_datacolumns();
-    column->set_name(item.src_name);
 
-    const int eventCount = static_cast<int>(item.events.size());
-    timestampList->mutable_timestamps()->Reserve(eventCount);
-    column->mutable_datavalues()->Reserve(eventCount);
+    // Timestamps are written from the first column (all columns share the same row timestamps).
+    bool timestamps_written = false;
 
-    for (auto& event_value : item.events)
+    for (auto& [col_name, events] : item.columns)
     {
-        if (!event_value)
+        auto* column = dataFrame->add_datacolumns();
+        column->set_name(col_name);
+
+        const int eventCount = static_cast<int>(events.size());
+        column->mutable_datavalues()->Reserve(eventCount);
+        if (!timestamps_written)
         {
-            warnf(*logger_, "Skipping null event for source {}", item.src_name);
-            continue;
+            timestampList->mutable_timestamps()->Reserve(eventCount);
         }
 
-        auto* ts = timestampList->add_timestamps();
-        if (event_value->epoch_seconds)
+        for (auto& event_value : events)
         {
-            ts->set_epochseconds(event_value->epoch_seconds);
-            if (event_value->nanoseconds)
+            if (!event_value)
             {
-                ts->set_nanoseconds(event_value->nanoseconds);
+                warnf(*logger_, "Skipping null event for source {}", col_name);
+                continue;
             }
-        }
-        else
-        {
-            const auto now = std::chrono::system_clock::now().time_since_epoch();
-            ts->set_epochseconds(std::chrono::duration_cast<std::chrono::seconds>(now).count());
+
+            if (!timestamps_written)
+            {
+                auto* ts = timestampList->add_timestamps();
+                if (event_value->epoch_seconds)
+                {
+                    ts->set_epochseconds(event_value->epoch_seconds);
+                    if (event_value->nanoseconds)
+                    {
+                        ts->set_nanoseconds(event_value->nanoseconds);
+                    }
+                }
+                else
+                {
+                    const auto now = std::chrono::system_clock::now().time_since_epoch();
+                    ts->set_epochseconds(std::chrono::duration_cast<std::chrono::seconds>(now).count());
+                }
+            }
+
+            auto* dataValue = column->add_datavalues();
+            *dataValue = std::move(event_value->data_value);
+            ++accepted_events;
         }
 
-        auto* dataValue = column->add_datavalues();
-        *dataValue = std::move(event_value->data_value);
-        ++accepted_events;
+        timestamps_written = true;
     }
 
-    if (column->datavalues_size() == 0)
+    if (dataFrame->datacolumns_size() == 0)
     {
-        warnf(*logger_, "No valid events for source {}, skipping request", item.src_name);
+        warnf(*logger_, "No valid columns for source {}, skipping request", item.root_source);
         return false;
     }
 

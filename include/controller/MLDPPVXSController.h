@@ -161,10 +161,10 @@ private:
      */
     struct QueueItem
     {
-        std::string                                       root_source;
-        std::shared_ptr<const std::vector<std::string>>   tags;
-        std::string                                       src_name;
-        std::vector<util::bus::IEventBusPush::EventValue> events;
+        std::string                                     root_source;
+        std::shared_ptr<const std::vector<std::string>> tags;
+        /// Multiple columns batched into a single queue item.
+        std::vector<std::pair<std::string, std::vector<util::bus::IEventBusPush::EventValue>>> columns;
     };
 
     /// Per-worker channel: each worker has its own queue for source-affinity.
