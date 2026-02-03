@@ -102,10 +102,30 @@ if(MLDP_PVXS_DRIVER_LINK_EPICS_PVXS_STATIC)
     set(_mldp_saved_suffixes "${CMAKE_FIND_LIBRARY_SUFFIXES}")
     set(CMAKE_FIND_LIBRARY_SUFFIXES ".a")
     unset(EPICS_COM_LIB CACHE)
+    unset(EPICS_PVDATA_LIB CACHE)
+    unset(EPICS_PVACCESS_LIB CACHE)
+    unset(EPICS_PVACLIENT_LIB CACHE)
+    unset(EPICS_PVACCESSCA_LIB CACHE)
+    unset(EPICS_CA_LIB CACHE)
 endif()
 
 find_library(EPICS_COM_LIB
     NAMES Com libCom
+    PATHS ${EPICS_LIB_HINTS})
+find_library(EPICS_PVDATA_LIB
+    NAMES pvData libpvData
+    PATHS ${EPICS_LIB_HINTS})
+find_library(EPICS_PVACCESS_LIB
+    NAMES pvAccess libpvAccess
+    PATHS ${EPICS_LIB_HINTS})
+find_library(EPICS_PVACLIENT_LIB
+    NAMES pvaClient libpvaClient
+    PATHS ${EPICS_LIB_HINTS})
+find_library(EPICS_PVACCESSCA_LIB
+    NAMES pvAccessCA libpvAccessCA
+    PATHS ${EPICS_LIB_HINTS})
+find_library(EPICS_CA_LIB
+    NAMES ca libca
     PATHS ${EPICS_LIB_HINTS})
 
 if(MLDP_PVXS_DRIVER_LINK_EPICS_PVXS_STATIC)
@@ -114,6 +134,21 @@ endif()
 
 if(NOT EPICS_COM_LIB)
     message(FATAL_ERROR "Could not locate libCom. Set EPICS_BASE/EPICS_HOST_ARCH or install EPICS Base in a searchable location.")
+endif()
+if(NOT EPICS_PVDATA_LIB)
+    message(FATAL_ERROR "Could not locate libpvData. Set EPICS_BASE/EPICS_HOST_ARCH or install EPICS Base in a searchable location.")
+endif()
+if(NOT EPICS_PVACCESS_LIB)
+    message(FATAL_ERROR "Could not locate libpvAccess. Set EPICS_BASE/EPICS_HOST_ARCH or install EPICS Base in a searchable location.")
+endif()
+if(NOT EPICS_PVACLIENT_LIB)
+    message(FATAL_ERROR "Could not locate libpvaClient. Set EPICS_BASE/EPICS_HOST_ARCH or install EPICS Base in a searchable location.")
+endif()
+if(NOT EPICS_PVACCESSCA_LIB)
+    message(FATAL_ERROR "Could not locate libpvAccessCA. Set EPICS_BASE/EPICS_HOST_ARCH or install EPICS Base in a searchable location.")
+endif()
+if(NOT EPICS_CA_LIB)
+    message(FATAL_ERROR "Could not locate libca. Set EPICS_BASE/EPICS_HOST_ARCH or install EPICS Base in a searchable location.")
 endif()
 
 get_filename_component(EPICS_LIB_DIR "${EPICS_COM_LIB}" DIRECTORY)
@@ -137,11 +172,46 @@ endif()
 
 if(MLDP_PVXS_DRIVER_LINK_EPICS_PVXS_STATIC)
     add_library(epics-com STATIC IMPORTED)
+    add_library(epics-pvdata STATIC IMPORTED)
+    add_library(epics-pvaccess STATIC IMPORTED)
+    add_library(epics-pvaclient STATIC IMPORTED)
+    add_library(epics-pvaccessca STATIC IMPORTED)
+    add_library(epics-ca STATIC IMPORTED)
 else()
     add_library(epics-com SHARED IMPORTED)
+    add_library(epics-pvdata SHARED IMPORTED)
+    add_library(epics-pvaccess SHARED IMPORTED)
+    add_library(epics-pvaclient SHARED IMPORTED)
+    add_library(epics-pvaccessca SHARED IMPORTED)
+    add_library(epics-ca SHARED IMPORTED)
 endif()
 set_target_properties(epics-com PROPERTIES IMPORTED_LOCATION "${EPICS_COM_LIB}")
+set_target_properties(epics-pvdata PROPERTIES IMPORTED_LOCATION "${EPICS_PVDATA_LIB}")
+set_target_properties(epics-pvaccess PROPERTIES IMPORTED_LOCATION "${EPICS_PVACCESS_LIB}")
+set_target_properties(epics-pvaclient PROPERTIES IMPORTED_LOCATION "${EPICS_PVACLIENT_LIB}")
+set_target_properties(epics-pvaccessca PROPERTIES IMPORTED_LOCATION "${EPICS_PVACCESSCA_LIB}")
+set_target_properties(epics-ca PROPERTIES IMPORTED_LOCATION "${EPICS_CA_LIB}")
 target_include_directories(epics-com INTERFACE
+    "${EPICS_INCLUDE_DIR}"
+    "${EPICS_INCLUDE_DIR}/${EPICS_OS_DIR}"
+)
+target_include_directories(epics-pvdata INTERFACE
+    "${EPICS_INCLUDE_DIR}"
+    "${EPICS_INCLUDE_DIR}/${EPICS_OS_DIR}"
+)
+target_include_directories(epics-pvaccess INTERFACE
+    "${EPICS_INCLUDE_DIR}"
+    "${EPICS_INCLUDE_DIR}/${EPICS_OS_DIR}"
+)
+target_include_directories(epics-pvaclient INTERFACE
+    "${EPICS_INCLUDE_DIR}"
+    "${EPICS_INCLUDE_DIR}/${EPICS_OS_DIR}"
+)
+target_include_directories(epics-pvaccessca INTERFACE
+    "${EPICS_INCLUDE_DIR}"
+    "${EPICS_INCLUDE_DIR}/${EPICS_OS_DIR}"
+)
+target_include_directories(epics-ca INTERFACE
     "${EPICS_INCLUDE_DIR}"
     "${EPICS_INCLUDE_DIR}/${EPICS_OS_DIR}"
 )
@@ -149,10 +219,20 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
     target_include_directories(epics-com INTERFACE
         "${EPICS_INCLUDE_DIR}/compiler/clang"
     )
+    target_include_directories(epics-pvdata INTERFACE "${EPICS_INCLUDE_DIR}/compiler/clang")
+    target_include_directories(epics-pvaccess INTERFACE "${EPICS_INCLUDE_DIR}/compiler/clang")
+    target_include_directories(epics-pvaclient INTERFACE "${EPICS_INCLUDE_DIR}/compiler/clang")
+    target_include_directories(epics-pvaccessca INTERFACE "${EPICS_INCLUDE_DIR}/compiler/clang")
+    target_include_directories(epics-ca INTERFACE "${EPICS_INCLUDE_DIR}/compiler/clang")
 elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     target_include_directories(epics-com INTERFACE
         "${EPICS_INCLUDE_DIR}/compiler/gcc"
     )
+    target_include_directories(epics-pvdata INTERFACE "${EPICS_INCLUDE_DIR}/compiler/gcc")
+    target_include_directories(epics-pvaccess INTERFACE "${EPICS_INCLUDE_DIR}/compiler/gcc")
+    target_include_directories(epics-pvaclient INTERFACE "${EPICS_INCLUDE_DIR}/compiler/gcc")
+    target_include_directories(epics-pvaccessca INTERFACE "${EPICS_INCLUDE_DIR}/compiler/gcc")
+    target_include_directories(epics-ca INTERFACE "${EPICS_INCLUDE_DIR}/compiler/gcc")
 else()
     message(FATAL_ERROR "Unable to determine compiler ID!")
 endif()
@@ -315,6 +395,8 @@ add_library(lib${PROJECT_NAME}
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/EpicsReaderConfig.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/EpicsMLDPConversion.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/BSASEpicsMLDPConversion.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/EpicsPVDataConversion.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/EpicsBaseMonitorPoller.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/pool/MLDPGrpcPoolConfig.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/pool/MLDPGrpcPool.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/controller/MLDPPVXSControllerConfig.cpp"
@@ -324,7 +406,20 @@ add_library(lib${PROJECT_NAME}
     "${CMAKE_CURRENT_SOURCE_DIR}/src/metrics/MetricsSnapshot.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/PeriodicMetricsDumper.cpp"
 )
-target_link_libraries(lib${PROJECT_NAME} PUBLIC lib${PROJECT_NAME}_proto Threads::Threads pvxs prometheus-cpp::core prometheus-cpp::pull spdlog::spdlog)
+target_link_libraries(lib${PROJECT_NAME} PUBLIC
+    lib${PROJECT_NAME}_proto
+    Threads::Threads
+    pvxs
+    epics-pvaclient
+    epics-pvaccess
+    epics-pvaccessca
+    epics-pvdata
+    epics-ca
+    epics-com
+    prometheus-cpp::core
+    prometheus-cpp::pull
+    spdlog::spdlog
+)
 target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/ext/BS_thread_pool/include")
 target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/ext/rapidyaml/include")
 target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")

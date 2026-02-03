@@ -117,6 +117,21 @@ unsigned int EpicsReaderConfig::threadPoolSize() const
     return thread_pool_size_;
 }
 
+EpicsReaderConfig::Backend EpicsReaderConfig::backend() const
+{
+    return backend_;
+}
+
+unsigned int EpicsReaderConfig::monitorPollThreads() const
+{
+    return monitor_poll_threads_;
+}
+
+unsigned int EpicsReaderConfig::monitorPollIntervalMs() const
+{
+    return monitor_poll_interval_ms_;
+}
+
 std::size_t EpicsReaderConfig::columnBatchSize() const
 {
     return column_batch_size_;
@@ -159,6 +174,22 @@ void EpicsReaderConfig::parse(const Config& readerEntry)
 
     thread_pool_size_ = static_cast<unsigned int>(readerEntry.getInt("thread_pool", 1));
     column_batch_size_ = static_cast<std::size_t>(readerEntry.getInt("column_batch_size", 50));
+    monitor_poll_threads_ = static_cast<unsigned int>(readerEntry.getInt("monitor_poll_threads", 2));
+    monitor_poll_interval_ms_ = static_cast<unsigned int>(readerEntry.getInt("monitor_poll_interval_ms", 5));
+
+    const std::string backend = toLower(readerEntry.get("backend", "pvxs"));
+    if (backend == "pvxs")
+    {
+        backend_ = Backend::Pvxs;
+    }
+    else if (backend == "epics-base")
+    {
+        backend_ = Backend::EpicsBase;
+    }
+    else
+    {
+        throw Error("backend must be one of: pvxs, epics-base");
+    }
 
     if (!readerEntry.hasChild("pvs"))
     {

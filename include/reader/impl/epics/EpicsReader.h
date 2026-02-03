@@ -42,10 +42,14 @@
 
 #include <atomic>
 #include <memory>
+#include <mutex>
 #include <set>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <utility>
+
+#include <reader/impl/epics/EpicsBaseMonitorPoller.h>
 
 namespace mldp_pvxs_driver::reader::impl::epics {
 
@@ -203,8 +207,19 @@ private:
         std::string tsNanosField;                ///< Field name for timestamp nanoseconds
     };
 
+    enum class Backend
+    {
+        Pvxs,
+        EpicsBase
+    };
+
     /// @brief Process a single PV update event (runs in the reader thread pool).
     void processEvent(std::string pvName, pvxs::Value epics_value);
+
+    /// @brief Process a single EPICS Base PV update event (runs in the reader thread pool).
+    void processEvent(std::string pvName, ::epics::pvData::PVStructurePtr epics_value);
+
+    void drainEpicsBaseQueue();
 
     /// @brief Logger instance for diagnostic and error messages.
     std::shared_ptr<mldp_pvxs_driver::util::log::ILogger> logger_;
@@ -259,6 +274,11 @@ private:
      * continue generating events while in the queue.
      */
     pvxs::MPMCFIFO<std::shared_ptr<pvxs::client::Subscription>> m_pva_subscriptions;
+
+    Backend backend_{Backend::Pvxs};
+
+    std::unique_ptr<EpicsBaseMonitorPoller> epics_base_poller_;
+    std::mutex                              epics_base_drain_mutex_;
 
     /**
      * @brief Fast per-PV lookup for special handling and configuration.

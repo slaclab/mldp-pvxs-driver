@@ -11,6 +11,7 @@
 #include <metrics/Metrics.h>
 #include <reader/impl/epics/BSASEpicsMLDPConversion.h>
 #include <reader/impl/epics/EpicsMLDPConversion.h>
+#include <reader/impl/epics/EpicsPVDataConversion.h>
 #include <reader/impl/epics/EpicsReader.h>
 #include <string_view>
 #include <util/bus/IEventBusPush.h>
@@ -42,6 +43,7 @@ std::shared_ptr<mldp_pvxs_driver::util::log::ILogger> makeEpicsReaderLogger(cons
     }
     return mldp_pvxs_driver::util::log::newLogger(loggerName);
 }
+
 } // namespace
 
 EpicsReader::EpicsReader(std::shared_ptr<IEventBusPush> bus,
@@ -54,7 +56,11 @@ EpicsReader::EpicsReader(std::shared_ptr<IEventBusPush> bus,
     , running_(true)
     , reader_pool_(std::make_shared<BS::light_thread_pool>(config_.threadPoolSize()))
 {
-    pva_context_ = pvxs::client::Context::fromEnv();
+    backend_ = (config_.backend() == EpicsReaderConfig::Backend::EpicsBase) ? Backend::EpicsBase : Backend::Pvxs;
+    if (backend_ == Backend::Pvxs)
+    {
+        pva_context_ = pvxs::client::Context::fromEnv();
+    }
     // add all configured pvs
     PVSet pvNames;
     for (const auto& pvConfig : config_.pvs())
@@ -76,6 +82,7 @@ EpicsReader::EpicsReader(std::shared_ptr<IEventBusPush> bus,
 EpicsReader::~EpicsReader()
 {
     running_ = false;
+    epics_base_poller_.reset();
     reader_pool_->wait();
 }
 
@@ -86,6 +93,21 @@ std::string EpicsReader::name() const
 
 void EpicsReader::addPV(const PVSet& pvNames)
 {
+    if (backend_ == Backend::EpicsBase)
+    {
+        const std::vector<std::string> pv_list(pvNames.begin(), pvNames.end());
+        epics_base_poller_ = std::make_unique<EpicsBaseMonitorPoller>(
+            pv_list,
+            config_.monitorPollThreads(),
+            config_.monitorPollIntervalMs(),
+            [this]()
+            {
+                drainEpicsBaseQueue();
+            },
+            logger_);
+        return;
+    }
+
     for (const auto& pv : pvNames)
     {
         auto pv_mon = pva_context_.monitor(pv)
@@ -116,6 +138,35 @@ void EpicsReader::addPV(const PVSet& pvNames)
         m_pva_subscriptions.push(pv_mon);
         infof(*logger_, "[{}/{}] Started monitoring", name_, pv);
     }
+}
+
+void EpicsReader::drainEpicsBaseQueue()
+{
+    if (!epics_base_poller_)
+    {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lk(epics_base_drain_mutex_);
+    epics_base_poller_->drain([this](const std::string& pvName, ::epics::pvData::PVStructurePtr value)
+                              {
+                                  metric_call(metrics_, [&](auto& m)
+                                              {
+                                                  m.incrementReaderEventsReceived(1.0, {{"source", pvName}});
+                                              });
+                                  std::string pv = pvName;
+                                  reader_pool_->detach_task(
+                                      [this, n = std::move(pv), v = std::move(value)]() mutable
+                                      {
+                                          processEvent(std::move(n), std::move(v));
+                                      });
+                                  metric_call(metrics_, [&](auto& m)
+                                              {
+                                                  m.setReaderPoolQueueDepth(
+                                                      static_cast<double>(reader_pool_->get_tasks_queued()),
+                                                      {{"reader", name_}});
+                                              });
+                              });
 }
 
 void EpicsReader::processEvent(std::string pvName, pvxs::Value epics_value)
@@ -290,6 +341,179 @@ void EpicsReader::processEvent(std::string pvName, pvxs::Value epics_value)
     catch (const pvxs::client::RemoteError& e)
     {
         errorf(*logger_, "Server error when reading PV {} on reader {}: {}", pvName, name_, e.what());
+        metric_call(metrics_, [&](auto& m)
+                    {
+                        m.incrementReaderErrors(1.0, sourceTag);
+                    });
+    }
+}
+
+void EpicsReader::processEvent(std::string pvName, ::epics::pvData::PVStructurePtr epics_value)
+{
+    if (!running_.load())
+    {
+        return;
+    }
+
+    metric_call(metrics_, [&](auto& m)
+                {
+                    m.setReaderPoolQueueDepth(
+                        static_cast<double>(reader_pool_->get_tasks_queued()),
+                        {{"reader", name_}});
+                });
+
+    const prometheus::Labels sourceTag{{"source", pvName}};
+    try
+    {
+        const auto processing_start = std::chrono::steady_clock::now();
+
+        const auto                  it = pvRuntimeByName_.find(pvName);
+        const PVRuntimeConfig::Mode mode = (it != pvRuntimeByName_.end()) ? it->second.mode : PVRuntimeConfig::Mode::Default;
+
+        size_t emitted = 0;
+
+        switch (mode)
+        {
+        case PVRuntimeConfig::Mode::NtTableRowTs:
+            {
+                const std::size_t colBatchSize = config_.columnBatchSize();
+                IEventBusPush::EventBatch tableBatch;
+                tableBatch.root_source = pvName;
+                tableBatch.tags.push_back(pvName);
+                std::size_t colsInBatch = 0;
+
+                if (!EpicsPVDataConversion::tryBuildNtTableRowTsBatch(
+                        *logger_, pvName, epics_value, it->second.tsSecondsField, it->second.tsNanosField,
+                        [&](std::string colName, std::vector<IEventBusPush::EventValue> events) {
+                            tableBatch.values[std::move(colName)] = std::move(events);
+                            ++colsInBatch;
+                            if (colBatchSize > 0 && colsInBatch >= colBatchSize)
+                            {
+                                bus_->push(std::move(tableBatch));
+                                tableBatch = IEventBusPush::EventBatch{};
+                                tableBatch.root_source = pvName;
+                                tableBatch.tags.push_back(pvName);
+                                colsInBatch = 0;
+                            }
+                        },
+                        emitted))
+                {
+                    errorf(*logger_, "Error converting PV {} to MLDP NtTableRowTs batch on reader {}.", pvName, name_);
+                    metric_call(metrics_, [&](auto& m)
+                                {
+                                    m.incrementReaderErrors(1.0, sourceTag);
+                                });
+                }
+                else if (!tableBatch.values.empty())
+                {
+                    bus_->push(std::move(tableBatch));
+                }
+            }
+            break;
+
+        case PVRuntimeConfig::Mode::Default:
+        default:
+            {
+                IEventBusPush::EventBatch batch;
+                batch.root_source = pvName;
+                uint64_t epoch_seconds = 0;
+                uint64_t nanoseconds = 0;
+                bool setEpoch = false;
+
+                if (epics_value)
+                {
+                    if (auto timeStamp = epics_value->getSubField<::epics::pvData::PVStructure>("timeStamp"))
+                    {
+                        if (auto secondsField = timeStamp->getSubField<::epics::pvData::PVScalar>("secondsPastEpoch"))
+                        {
+                            epoch_seconds = secondsField->getAs<uint64_t>();
+                            setEpoch = true;
+                        }
+                        if (auto nanosField = timeStamp->getSubField<::epics::pvData::PVScalar>("nanoseconds"))
+                        {
+                            nanoseconds = nanosField->getAs<uint64_t>();
+                        }
+                    }
+                }
+                if (!setEpoch)
+                {
+                    const auto now = std::chrono::system_clock::now().time_since_epoch();
+                    epoch_seconds = std::chrono::duration_cast<std::chrono::seconds>(now).count();
+                }
+
+                auto event_value = IEventBusPush::MakeEventValue(epoch_seconds, nanoseconds);
+
+                if (epics_value)
+                {
+                    auto valueField = epics_value->getSubField("value");
+                    EpicsPVDataConversion::convertPVToProtoValue(
+                        valueField ? *valueField : *epics_value, &event_value->data_value);
+
+                    if (auto alarm = epics_value->getSubField<::epics::pvData::PVStructure>("alarm"))
+                    {
+                        auto* valueStatus = event_value->data_value.mutable_valuestatus();
+                        if (auto severityField = alarm->getSubField<::epics::pvData::PVScalar>("severity"))
+                        {
+                            const int sev = severityField->getAs<int>();
+                            switch (sev)
+                            {
+                            case 0:
+                                valueStatus->set_severity(DataValue_ValueStatus_Severity_NO_ALARM);
+                                break;
+                            case 1:
+                                valueStatus->set_severity(DataValue_ValueStatus_Severity_MINOR_ALARM);
+                                break;
+                            case 2:
+                                valueStatus->set_severity(DataValue_ValueStatus_Severity_MAJOR_ALARM);
+                                break;
+                            case 3:
+                                valueStatus->set_severity(DataValue_ValueStatus_Severity_INVALID_ALARM);
+                                break;
+                            default:
+                                valueStatus->set_severity(DataValue_ValueStatus_Severity_UNDEFINED_ALARM);
+                                break;
+                            }
+                        }
+                        if (auto statusField = alarm->getSubField<::epics::pvData::PVScalar>("status"))
+                        {
+                            const int status = statusField->getAs<int>();
+                            valueStatus->set_statuscode(status == 0 ? DataValue_ValueStatus_StatusCode_NO_STATUS
+                                                                    : DataValue_ValueStatus_StatusCode_RECORD_STATUS);
+                        }
+                        if (auto messageField = alarm->getSubField<::epics::pvData::PVScalar>("message"))
+                        {
+                            valueStatus->set_message(messageField->getAs<std::string>());
+                        }
+                    }
+                }
+
+                batch.tags.push_back(pvName);
+                batch.values[pvName].emplace_back(std::move(event_value));
+                emitted = 1;
+                bus_->push(std::move(batch));
+            }
+            break;
+        }
+
+        const auto   processing_end = std::chrono::steady_clock::now();
+        const double processing_ms = std::chrono::duration<double, std::milli>(processing_end - processing_start).count();
+        metric_call(metrics_, [&](auto& m)
+                    {
+                        m.observeReaderProcessingTimeMs(processing_ms, sourceTag);
+                    });
+
+        if (emitted > 0)
+        {
+            metric_call(metrics_, [&](auto& m)
+                        {
+                            m.incrementReaderEvents(static_cast<double>(1.0), sourceTag);
+                        });
+            tracef(*logger_, "[{}/{}] event published", name_, pvName);
+        }
+    }
+    catch (const std::exception& e)
+    {
+        errorf(*logger_, "Error when reading PV {} on reader {}: {}", pvName, name_, e.what());
         metric_call(metrics_, [&](auto& m)
                     {
                         m.incrementReaderErrors(1.0, sourceTag);

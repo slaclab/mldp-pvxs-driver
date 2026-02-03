@@ -31,6 +31,12 @@ namespace mldp_pvxs_driver::reader::impl::epics {
 class EpicsReaderConfig
 {
 public:
+    enum class Backend
+    {
+        Pvxs,
+        EpicsBase
+    };
+
     /**
      * @brief Exception thrown when the reader configuration cannot be parsed.
      *
@@ -94,6 +100,15 @@ public:
     /** @return Number of threads in the reader processing pool. */
     unsigned int threadPoolSize() const;
 
+    /** @return Backend selection (PVXS or EPICS Base). */
+    Backend backend() const;
+
+    /** @return Number of threads polling EPICS Base monitor queues. */
+    unsigned int monitorPollThreads() const;
+
+    /** @return Poll interval (ms) for EPICS Base monitor queues when idle. */
+    unsigned int monitorPollIntervalMs() const;
+
     /**
      * @return Max columns per bus push for NTTable row-ts batches.
      *
@@ -123,6 +138,9 @@ private:
     std::string              name_;
     unsigned int             thread_pool_size_{2};
     std::size_t              column_batch_size_{50};
+    Backend                  backend_{Backend::Pvxs};
+    unsigned int             monitor_poll_threads_{2};
+    unsigned int             monitor_poll_interval_ms_{5};
     std::vector<PVConfig>    pvs_;
     std::vector<std::string> pvNames_;
 };
