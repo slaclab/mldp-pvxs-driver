@@ -53,14 +53,14 @@ public:
     struct PVConfig
     {
         /**
-         * @brief Options for the special row-timestamped NTTable handling.
+         * @brief Options for the SLAC BSAS row-timestamped NTTable handling.
          *
          * Activated when the YAML subtree under @ref optionConfig contains:
          *
          * option:
-         *   type: nttable-rowts
-         *   tsSeconds: secondsPastEpoch   # optional
-         *   tsNanos: nanoseconds          # optional
+         *   type: slac-bsas-table
+         *   tsSeconds: secondsPastEpoch
+         *   tsNanos: nanoseconds
          *
          * Source naming: each NTTable data column becomes a source whose name
          * equals the column field name.
@@ -74,7 +74,7 @@ public:
         std::string                               name;         ///< Fully qualified PV name to monitor.
         std::string                               option;       ///< Backend-specific connection option (may be empty).
         std::optional<config::Config>             optionConfig; ///< Optional raw subtree for future extensions.
-        std::optional<NTTableRowTimestampOptions> nttableRowTs; ///< Parsed options when `type: nttable-rowts` is selected.
+        std::optional<NTTableRowTimestampOptions> nttableRowTs; ///< Parsed options when `type: slac-bsas-table` is selected.
     };
 
     EpicsReaderConfig();
@@ -93,6 +93,12 @@ public:
 
     /** @return Number of threads in the reader processing pool. */
     unsigned int threadPoolSize() const;
+
+    /** @return Number of threads polling EPICS Base monitor queues. */
+    unsigned int monitorPollThreads() const;
+
+    /** @return Poll interval (ms) for EPICS Base monitor queues when idle. */
+    unsigned int monitorPollIntervalMs() const;
 
     /**
      * @return Max columns per bus push for NTTable row-ts batches.
@@ -123,6 +129,8 @@ private:
     std::string              name_;
     unsigned int             thread_pool_size_{2};
     std::size_t              column_batch_size_{50};
+    unsigned int             monitor_poll_threads_{2};
+    unsigned int             monitor_poll_interval_ms_{5};
     std::vector<PVConfig>    pvs_;
     std::vector<std::string> pvNames_;
 };

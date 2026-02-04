@@ -91,7 +91,7 @@ public:
      * @return Reader entries as (type, sub-config) pairs.
      *
      * Each element represents a reader entry where the first string is the
-     * reader type (for example "epics") and the second is the Config that
+     * reader type (for example "epics-pvxs" or "epics-base") and the second is the Config that
      * points to the reader-specific configuration block. This API is useful
      * for callers that need to dispatch based on the reader type while still
      * passing the specific sub-configuration to the reader factory.

@@ -47,7 +47,7 @@ mldp_pool:
   min_conn: 1
   max_conn: 1
 reader:
-  - epics:
+  - epics-pvxs:
       - name: epics_reader_1
         pvs:
           - name: test:counter
@@ -62,12 +62,12 @@ mldp_pool:
   min_conn: 1
   max_conn: 1
 reader:
-  - epics:
+  - epics-pvxs:
       - name: epics_reader_1
         pvs:
           - name: test:bsas_table
             option:
-              type: nttable-rowts
+              type: slac-bsas-table
 )";
 
     std::optional<mldp_pvxs_driver::metrics::ReaderMetrics> findReaderMetrics(

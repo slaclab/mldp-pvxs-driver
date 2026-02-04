@@ -37,6 +37,19 @@ pvs:
     EXPECT_EQ("pv3", epicsCfg.pvs()[2].name);
     EXPECT_EQ("", epicsCfg.pvs()[2].option);
     EXPECT_FALSE(epicsCfg.pvs()[2].optionConfig.has_value());
+    EXPECT_EQ(2u, epicsCfg.monitorPollThreads());
+    EXPECT_EQ(5u, epicsCfg.monitorPollIntervalMs());
+}
+
+TEST(EpicsReaderConfigTest, RejectsBackendField)
+{
+    const std::string yaml = R"(
+name: epics_backend
+backend: epics-base
+)";
+
+    const auto cfg = makeConfigFromYaml(yaml);
+    EXPECT_THROW(static_cast<void>(EpicsReaderConfig(cfg)), EpicsReaderConfig::Error);
 }
 
 TEST(EpicsReaderConfigTest, ThrowsForInvalidPvsSequence)
@@ -80,7 +93,7 @@ name: epics_nttable
 pvs:
   - name: BSAS:TABLE
     option:
-      type: nttable-rowts
+      type: slac-bsas-table
       tsSeconds: secondsPastEpoch
       tsNanos: nanoseconds
 )";
@@ -95,7 +108,7 @@ pvs:
     EXPECT_EQ("BSAS:TABLE", pv.name);
     EXPECT_EQ("", pv.option);
     ASSERT_TRUE(pv.optionConfig.has_value());
-    EXPECT_EQ("nttable-rowts", pv.optionConfig->get("type"));
+    EXPECT_EQ("slac-bsas-table", pv.optionConfig->get("type"));
 
     ASSERT_TRUE(pv.nttableRowTs.has_value());
     EXPECT_EQ("secondsPastEpoch", pv.nttableRowTs->tsSecondsField);
@@ -109,7 +122,7 @@ name: epics_nttable
 pvs:
   - name: BSAS:TABLE
     option:
-      type: nttable-rowts
+      type: slac-bsas-table
       sourceName:
         mode: prefixed
         prefix: "bsas:"

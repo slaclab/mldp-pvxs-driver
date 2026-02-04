@@ -8,33 +8,25 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
+#include <reader/impl/epics/EpicsPVXSReader.h>
+
+#include <config/Config.h>
 #include <metrics/Metrics.h>
 #include <reader/impl/epics/BSASEpicsMLDPConversion.h>
 #include <reader/impl/epics/EpicsMLDPConversion.h>
-#include <reader/impl/epics/EpicsReader.h>
-#include <string_view>
-#include <util/bus/IEventBusPush.h>
 #include <util/log/Logger.h>
-#include <utility>
 
 #include <chrono>
-#include <cstdint>
-#include <unordered_map>
 
-using namespace pvxs::client;
-
-using namespace mldp_pvxs_driver::config;
-using namespace mldp_pvxs_driver::util::bus;
 using namespace mldp_pvxs_driver::reader::impl::epics;
 using namespace mldp_pvxs_driver::util::log;
 using namespace mldp_pvxs_driver::metrics;
-
-using MldpDriverConfig = mldp_pvxs_driver::config::Config;
+using namespace mldp_pvxs_driver::util::bus;
 
 namespace {
-std::shared_ptr<mldp_pvxs_driver::util::log::ILogger> makeEpicsReaderLogger(const std::string& readerName)
+std::shared_ptr<ILogger> makeLogger(const std::string& readerName)
 {
-    std::string loggerName = "epics_reader";
+    std::string loggerName = "epics_reader_pvxs";
     if (!readerName.empty())
     {
         loggerName += ":";
@@ -44,54 +36,22 @@ std::shared_ptr<mldp_pvxs_driver::util::log::ILogger> makeEpicsReaderLogger(cons
 }
 } // namespace
 
-EpicsReader::EpicsReader(std::shared_ptr<IEventBusPush> bus,
-                         std::shared_ptr<Metrics>       metrics,
-                         const MldpDriverConfig&        cfg)
-    : Reader(std::move(bus), std::move(metrics))
-    , logger_(makeEpicsReaderLogger(cfg.get("name")))
-    , config_(EpicsReaderConfig(cfg))
-    , name_(config_.name())
-    , running_(true)
-    , reader_pool_(std::make_shared<BS::light_thread_pool>(config_.threadPoolSize()))
+EpicsPVXSReader::EpicsPVXSReader(std::shared_ptr<util::bus::IEventBusPush> bus,
+                                 std::shared_ptr<metrics::Metrics>         metrics,
+                                 const config::Config&                     cfg)
+    : EpicsReaderBase(std::move(bus), std::move(metrics), EpicsReaderConfig(cfg), makeLogger(cfg.get("name")))
 {
     pva_context_ = pvxs::client::Context::fromEnv();
-    // add all configured pvs
-    PVSet pvNames;
-    for (const auto& pvConfig : config_.pvs())
-    {
-        pvNames.insert(pvConfig.name);
-
-        PVRuntimeConfig runtime;
-        if (pvConfig.nttableRowTs.has_value())
-        {
-            runtime.mode = PVRuntimeConfig::Mode::NtTableRowTs;
-            runtime.tsSecondsField = pvConfig.nttableRowTs->tsSecondsField;
-            runtime.tsNanosField = pvConfig.nttableRowTs->tsNanosField;
-        }
-        pvRuntimeByName_.emplace(pvConfig.name, std::move(runtime));
-    }
-    addPV(pvNames);
+    addPV(pvNames());
 }
 
-EpicsReader::~EpicsReader()
-{
-    running_ = false;
-    reader_pool_->wait();
-}
-
-std::string EpicsReader::name() const
-{
-    return name_;
-}
-
-void EpicsReader::addPV(const PVSet& pvNames)
+void EpicsPVXSReader::addPV(const PVSet& pvNames)
 {
     for (const auto& pv : pvNames)
     {
         auto pv_mon = pva_context_.monitor(pv)
                           .event([this](pvxs::client::Subscription& s)
                                  {
-                                     // drain all available values
                                      for (pvxs::Value value = s.pop(); value; value = s.pop())
                                      {
                                          metric_call(metrics_, [&](auto& m)
@@ -118,7 +78,7 @@ void EpicsReader::addPV(const PVSet& pvNames)
     }
 }
 
-void EpicsReader::processEvent(std::string pvName, pvxs::Value epics_value)
+void EpicsPVXSReader::processEvent(std::string pvName, pvxs::Value epics_value)
 {
     if (!running_.load())
     {
@@ -137,11 +97,9 @@ void EpicsReader::processEvent(std::string pvName, pvxs::Value epics_value)
     {
         const auto processing_start = std::chrono::steady_clock::now();
 
-        // get the PV name and runtime configuration
-        const auto                  it = pvRuntimeByName_.find(pvName);
-        const PVRuntimeConfig::Mode mode = (it != pvRuntimeByName_.end()) ? it->second.mode : PVRuntimeConfig::Mode::Default;
+        const auto* runtimeCfg = runtimeConfigFor(pvName);
+        const auto  mode = runtimeCfg ? runtimeCfg->mode : PVRuntimeConfig::Mode::Default;
 
-        // keep track of how many events were emitted
         size_t emitted = 0;
 
         switch (mode)
@@ -155,7 +113,9 @@ void EpicsReader::processEvent(std::string pvName, pvxs::Value epics_value)
                 std::size_t colsInBatch = 0;
 
                 if (!BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch(
-                        *logger_, pvName, epics_value, it->second.tsSecondsField, it->second.tsNanosField,
+                        *logger_, pvName, epics_value,
+                        runtimeCfg ? runtimeCfg->tsSecondsField : "secondsPastEpoch",
+                        runtimeCfg ? runtimeCfg->tsNanosField : "nanoseconds",
                         [&](std::string colName, std::vector<IEventBusPush::EventValue> events) {
                             tableBatch.values[std::move(colName)] = std::move(events);
                             ++colsInBatch;
@@ -213,11 +173,8 @@ void EpicsReader::processEvent(std::string pvName, pvxs::Value epics_value)
                     }
                 }
 
-                // allocate event value
                 auto event_value = IEventBusPush::MakeEventValue(epoch_seconds, nanoseconds);
 
-                // Convert only the nested EPICS 'value' field (NTScalar/NTScalarArray/NTTable/etc)
-                // so we don't serialize metadata like alarm/timeStamp into MLDP.
                 const pvxs::Value valueField = (epics_value.type().kind() == pvxs::Kind::Compound) ? epics_value["value"] : pvxs::Value{};
                 EpicsMLDPConversion::convertPVToProtoValue(valueField.valid() ? valueField : epics_value, &event_value->data_value);
 
@@ -262,7 +219,6 @@ void EpicsReader::processEvent(std::string pvName, pvxs::Value epics_value)
                     }
                 }
 
-                // push to bus moving data and batching per source
                 batch.tags.push_back(pvName);
                 batch.values[pvName].emplace_back(std::move(event_value));
                 emitted = 1;
