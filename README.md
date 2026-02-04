@@ -100,9 +100,9 @@ This project uses a pipeline-style architecture: PVXS clients feed PV updates in
 
 ### Documentation
 
-- [Architecture Overview](doc/architecture.md) - System architecture, data flow, and design patterns
-- [Reader Types](doc/readers.md) - Available reader implementations (EPICS Base, PVXS)
-- [Implementing Custom Readers](doc/readers-implementation.md) - Guide to creating new reader types
+- [Architecture Overview](docs/architecture.md) - System architecture, data flow, and design patterns
+- [Reader Types](docs/readers.md) - Available reader implementations (EPICS Base, PVXS)
+- [Implementing Custom Readers](docs/readers-implementation.md) - Guide to creating new reader types
 
 For developer information and contribution guidelines see [CONTRIBUTING.md](CONTRIBUTING.md).
 
