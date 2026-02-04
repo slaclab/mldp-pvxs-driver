@@ -96,7 +96,13 @@ For periodic metrics dumps and manual triggers (Ctrl+P, Ctrl+D, SIGUSR1/SIGQUIT)
 
 ## Architecture
 
-This project uses a pipeline-style architecture: PVXS clients feed PV updates into a bounded work queue; the core driver converts and enriches events and dispatches them to the MLDP ingestion service using a connection pool of gRPC channels; reader implementations consume and re-publish or transform events as needed. See the detailed diagram and design notes in [docs/architecture.md](docs/architecture.md).
+This project uses a pipeline-style architecture: PVXS clients feed PV updates into a bounded work queue; the core driver converts and enriches events and dispatches them to the MLDP ingestion service using a connection pool of gRPC channels; reader implementations consume and re-publish or transform events as needed.
+
+### Documentation
+
+- [Architecture Overview](doc/architecture.md) - System architecture, data flow, and design patterns
+- [Reader Types](doc/readers.md) - Available reader implementations (EPICS Base, PVXS)
+- [Implementing Custom Readers](doc/readers-implementation.md) - Guide to creating new reader types
 
 For developer information and contribution guidelines see [CONTRIBUTING.md](CONTRIBUTING.md).
 
