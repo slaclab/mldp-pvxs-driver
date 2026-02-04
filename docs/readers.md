@@ -6,13 +6,13 @@ The MLDP PVXS Driver uses an **abstract Reader pattern** to support multiple dat
 
 ## Supported and Future Reader Types
 
-| Reader Type | Status | Data Source | Description |
-|-------------|--------|-------------|-------------|
-| `epics-base` | Implemented | EPICS Control System | Polling-based Channel Access |
-| `epics-pvxs` | Implemented | EPICS Control System | Event-driven PVAccess (PVXS) |
-| `epics-archiver` | Future | EPICS Archiver | Historical data retrieval |
-| `hdf5` | Future | HDF5 Files | Data replay from files |
-| Others | Future | Various | Extensible for new sources |
+| Reader Type      | Status      | Data Source          | Description                      |
+|------------------|-------------|----------------------|----------------------------------|
+| `epics-base`     | Implemented | EPICS Control System | Polling-based Channel Access     |
+| `epics-pvxs`     | Implemented | EPICS Control System | Event-driven PVAccess (PVXS)     |
+| `epics-archiver` | Future      | EPICS Archiver       | Historical data retrieval        |
+| `hdf5`           | Future      | HDF5 Files           | Data replay from files           |
+| Others           | Future      | Various              | Extensible for new sources       |
 
 ## Reader Class Hierarchy
 
@@ -66,10 +66,10 @@ The `EpicsBaseReader` provides EPICS Channel Access monitoring using a polling-b
 
 **Registration Type:** `"epics-base"`
 
-| File | Location |
-|------|----------|
-| Header | `include/reader/impl/epics/EpicsBaseReader.h` |
-| Implementation | `src/reader/impl/epics/EpicsBaseReader.cpp` |
+| File           | Location                                         |
+|----------------|--------------------------------------------------|
+| Header         | `include/reader/impl/epics/EpicsBaseReader.h`    |
+| Implementation | `src/reader/impl/epics/EpicsBaseReader.cpp`      |
 
 ### EpicsBaseReader Architecture
 
@@ -142,10 +142,10 @@ The `EpicsPVXSReader` provides modern EPICS PVAccess monitoring using an event-d
 
 **Registration Type:** `"epics-pvxs"`
 
-| File | Location |
-|------|----------|
-| Header | `include/reader/impl/epics/EpicsPVXSReader.h` |
-| Implementation | `src/reader/impl/epics/EpicsPVXSReader.cpp` |
+| File           | Location                                         |
+|----------------|--------------------------------------------------|
+| Header         | `include/reader/impl/epics/EpicsPVXSReader.h`    |
+| Implementation | `src/reader/impl/epics/EpicsPVXSReader.cpp`      |
 
 ### EpicsPVXSReader Architecture
 
@@ -245,15 +245,15 @@ pvs:
 
 ## Comparison
 
-| Feature | EpicsBaseReader | EpicsPVXSReader |
-|---------|-----------------|-----------------|
-| Protocol | Channel Access | PVAccess (PVXS) |
-| Event Model | Polling | Event-driven (subscriptions) |
-| Latency | Poll interval dependent | Immediate |
-| Thread Model | Poll threads + conversion pool | Callback + conditional pool |
-| NTTable Support | Basic | Advanced (row timestamps) |
-| Configuration Type | `epics-base` | `epics-pvxs` |
-| Best For | Legacy systems | Modern high-performance |
+| Feature            | EpicsBaseReader                  | EpicsPVXSReader                  |
+|--------------------|----------------------------------|----------------------------------|
+| Protocol           | Channel Access                   | PVAccess (PVXS)                  |
+| Event Model        | Polling                          | Event-driven (subscriptions)     |
+| Latency            | Poll interval dependent          | Immediate                        |
+| Thread Model       | Poll threads + conversion pool   | Callback + conditional pool      |
+| NTTable Support    | Basic                            | Advanced (row timestamps)        |
+| Configuration Type | `epics-base`                     | `epics-pvxs`                     |
+| Best For           | Legacy systems                   | Modern high-performance          |
 
 ## Common Base: EpicsReaderBase
 
@@ -279,10 +279,10 @@ Both readers inherit from `EpicsReaderBase`, which provides:
 
 ### EpicsReaderBase Source Files
 
-| File | Location |
-|------|----------|
-| Header | `include/reader/impl/epics/EpicsReaderBase.h` |
-| Implementation | `src/reader/impl/epics/EpicsReaderBase.cpp` |
+| File           | Location                                         |
+|----------------|--------------------------------------------------|
+| Header         | `include/reader/impl/epics/EpicsReaderBase.h`    |
+| Implementation | `src/reader/impl/epics/EpicsReaderBase.cpp`      |
 
 ---
 
@@ -310,14 +310,14 @@ auto reader = ReaderFactory::create("epics-pvxs", config, bus);
 
 Both readers expose Prometheus metrics:
 
-| Metric | Description |
-|--------|-------------|
-| `mldp_pvxs_driver_reader_events_received_total` | Raw PV updates received |
-| `mldp_pvxs_driver_reader_events_total` | Successfully processed events |
-| `mldp_pvxs_driver_reader_errors_total` | Conversion/remote errors |
-| `mldp_pvxs_driver_reader_processing_time_ms` | Event processing time histogram |
-| `mldp_pvxs_driver_reader_queue_depth` | Monitor queue size (EpicsBase) |
-| `mldp_pvxs_driver_reader_pool_queue_depth` | Thread pool queue depth |
+| Metric                                           | Description                       |
+|--------------------------------------------------|-----------------------------------|
+| `mldp_pvxs_driver_reader_events_received_total`  | Raw PV updates received           |
+| `mldp_pvxs_driver_reader_events_total`           | Successfully processed events     |
+| `mldp_pvxs_driver_reader_errors_total`           | Conversion/remote errors          |
+| `mldp_pvxs_driver_reader_processing_time_ms`     | Event processing time histogram   |
+| `mldp_pvxs_driver_reader_queue_depth`            | Monitor queue size (EpicsBase)    |
+| `mldp_pvxs_driver_reader_pool_queue_depth`       | Thread pool queue depth           |
 
 ---
 
@@ -336,9 +336,9 @@ See **[Implementing Custom Readers](readers-implementation.md)**.
 
 ### Future Reader Ideas
 
-| Reader | Data Source | Use Case |
-|--------|-------------|----------|
-| `epics-archiver` | EPICS Archiver Appliance | Historical data replay, backfill |
-| `hdf5` | HDF5 Files | Offline data analysis, simulation |
-| `csv` | CSV Files | Test data injection |
-| `kafka` | Kafka Topics | Stream processing integration |
+| Reader            | Data Source                 | Use Case                          |
+|-------------------|-----------------------------|-----------------------------------|
+| `epics-archiver`  | EPICS Archiver Appliance    | Historical data replay, backfill  |
+| `hdf5`            | HDF5 Files                  | Offline data analysis, simulation |
+| `csv`             | CSV Files                   | Test data injection               |
+| `kafka`           | Kafka Topics                | Stream processing integration     |

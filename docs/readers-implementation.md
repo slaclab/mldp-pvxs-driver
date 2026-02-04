@@ -398,17 +398,17 @@ reader:
 
 The `DataValue` protobuf message supports various data types:
 
-| Type | Setter Method | Use Case |
-|------|---------------|----------|
-| `double` | `set_double_value()` | Floating-point measurements |
-| `float` | `set_float_value()` | Single-precision floats |
-| `int32` | `set_int_value()` | Signed integers |
-| `int64` | `set_long_value()` | Large signed integers |
-| `uint32` | `set_uint_value()` | Unsigned integers |
-| `uint64` | `set_ulong_value()` | Large unsigned integers |
-| `string` | `set_string_value()` | Text data |
-| `bytes` | `set_bytes_value()` | Binary data |
-| `bool` | `set_bool_value()` | Boolean flags |
+| Type      | Setter Method          | Use Case                     |
+|-----------|------------------------|------------------------------|
+| `double`  | `set_double_value()`   | Floating-point measurements  |
+| `float`   | `set_float_value()`    | Single-precision floats      |
+| `int32`   | `set_int_value()`      | Signed integers              |
+| `int64`   | `set_long_value()`     | Large signed integers        |
+| `uint32`  | `set_uint_value()`     | Unsigned integers            |
+| `uint64`  | `set_ulong_value()`    | Large unsigned integers      |
+| `string`  | `set_string_value()`   | Text data                    |
+| `bytes`   | `set_bytes_value()`    | Binary data                  |
+| `bool`    | `set_bool_value()`     | Boolean flags                |
 
 For array types, use the corresponding `mutable_*_array()` methods.
 

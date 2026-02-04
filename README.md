@@ -53,10 +53,10 @@ metrics:                                 # optional; omit to disable Prometheus 
 
 ### Supported Reader Types
 
-| Reader Type | Description |
-|-------------|-------------|
-| `epics-pvxs` | Event-driven PVAccess reader using PVXS (recommended) |
-| `epics-base` | Polling-based Channel Access reader for legacy systems |
+| Reader Type  | Description                                              |
+|--------------|----------------------------------------------------------|
+| `epics-pvxs` | Event-driven PVAccess reader using PVXS (recommended)    |
+| `epics-base` | Polling-based Channel Access reader for legacy systems   |
 
 For detailed reader documentation, see [Reader Types](docs/readers.md).
 

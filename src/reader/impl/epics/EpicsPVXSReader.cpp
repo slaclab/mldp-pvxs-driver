@@ -34,6 +34,8 @@ std::shared_ptr<ILogger> makeLogger(const std::string& readerName)
     }
     return mldp_pvxs_driver::util::log::newLogger(loggerName);
 }
+
+constexpr const char* kPVXSDefaultMonitorRequest = "field(value,alarm,timeStamp)";
 } // namespace
 
 EpicsPVXSReader::EpicsPVXSReader(std::shared_ptr<util::bus::IEventBusPush> bus,
@@ -49,7 +51,12 @@ void EpicsPVXSReader::addPV(const PVSet& pvNames)
 {
     for (const auto& pv : pvNames)
     {
-        auto pv_mon = pva_context_.monitor(pv)
+        auto        monitor = pva_context_.monitor(pv);
+        const auto* runtimeCfg = runtimeConfigFor(pv);
+        const auto  mode = runtimeCfg ? runtimeCfg->mode : PVRuntimeConfig::Mode::Default;
+
+        auto pv_mon = monitor
+                          .pvRequest(kPVXSDefaultMonitorRequest)
                           .event([this](pvxs::client::Subscription& s)
                                  {
                                      for (pvxs::Value value = s.pop(); value; value = s.pop())
@@ -106,7 +113,7 @@ void EpicsPVXSReader::processEvent(std::string pvName, pvxs::Value epics_value)
         {
         case PVRuntimeConfig::Mode::NtTableRowTs:
             {
-                const std::size_t colBatchSize = config_.columnBatchSize();
+                const std::size_t         colBatchSize = config_.columnBatchSize();
                 IEventBusPush::EventBatch tableBatch;
                 tableBatch.root_source = pvName;
                 tableBatch.tags.push_back(pvName);
@@ -116,7 +123,8 @@ void EpicsPVXSReader::processEvent(std::string pvName, pvxs::Value epics_value)
                         *logger_, pvName, epics_value,
                         runtimeCfg ? runtimeCfg->tsSecondsField : "secondsPastEpoch",
                         runtimeCfg ? runtimeCfg->tsNanosField : "nanoseconds",
-                        [&](std::string colName, std::vector<IEventBusPush::EventValue> events) {
+                        [&](std::string colName, std::vector<IEventBusPush::EventValue> events)
+                        {
                             tableBatch.values[std::move(colName)] = std::move(events);
                             ++colsInBatch;
                             if (colBatchSize > 0 && colsInBatch >= colBatchSize)
@@ -147,76 +155,103 @@ void EpicsPVXSReader::processEvent(std::string pvName, pvxs::Value epics_value)
         case PVRuntimeConfig::Mode::Default:
         default:
             {
+                if (epics_value.type().kind() != pvxs::Kind::Compound)
+                {
+                    errorf(*logger_, "PV {} on reader {} returned non-compound payload; expected {}", pvName, name_, kPVXSDefaultMonitorRequest);
+                    metric_call(metrics_, [&](auto& m)
+                                {
+                                    m.incrementReaderErrors(1.0, sourceTag);
+                                });
+                    break;
+                }
+
+                const pvxs::Value valueField = epics_value["value"];
+                const pvxs::Value alarm = epics_value["alarm"];
+                const pvxs::Value timestampField = epics_value["timeStamp"];
+                if (!valueField.valid() || !alarm.valid() || !timestampField.valid())
+                {
+                    errorf(*logger_,
+                           "PV {} on reader {} missing required fields for {}",
+                           pvName,
+                           name_,
+                           kPVXSDefaultMonitorRequest);
+                    metric_call(metrics_, [&](auto& m)
+                                {
+                                    m.incrementReaderErrors(1.0, sourceTag);
+                                });
+                    break;
+                }
+
                 IEventBusPush::EventBatch batch;
                 batch.root_source = pvName;
                 uint64_t epoch_seconds = 0;
                 uint64_t nanoseconds = 0;
-                if (epics_value.type().kind() == pvxs::Kind::Compound)
+                if (const auto secondsField = timestampField["secondsPastEpoch"]; secondsField.valid())
                 {
-                    bool setEpoch = false;
-                    if (const auto timestampField = epics_value["timeStamp"]; timestampField.valid())
-                    {
-                        if (const auto secondsField = timestampField["secondsPastEpoch"]; secondsField.valid())
-                        {
-                            epoch_seconds = secondsField.as<uint64_t>();
-                            setEpoch = true;
-                        }
-                        if (const auto nanosecondsField = timestampField["nanoseconds"]; nanosecondsField.valid())
-                        {
-                            nanoseconds = nanosecondsField.as<uint64_t>();
-                        }
-                    }
-                    if (!setEpoch)
-                    {
-                        const auto now = std::chrono::system_clock::now().time_since_epoch();
-                        epoch_seconds = std::chrono::duration_cast<std::chrono::seconds>(now).count();
-                    }
+                    epoch_seconds = secondsField.as<uint64_t>();
+                }
+                else
+                {
+                    errorf(*logger_, "PV {} on reader {} missing required timeStamp.secondsPastEpoch", pvName, name_);
+                    metric_call(metrics_, [&](auto& m)
+                                {
+                                    m.incrementReaderErrors(1.0, sourceTag);
+                                });
+                    break;
+                }
+                if (const auto nanosecondsField = timestampField["nanoseconds"]; nanosecondsField.valid())
+                {
+                    nanoseconds = nanosecondsField.as<uint64_t>();
+                }
+                else
+                {
+                    errorf(*logger_, "PV {} on reader {} missing required timeStamp.nanoseconds", pvName, name_);
+                    metric_call(metrics_, [&](auto& m)
+                                {
+                                    m.incrementReaderErrors(1.0, sourceTag);
+                                });
+                    break;
                 }
 
                 auto event_value = IEventBusPush::MakeEventValue(epoch_seconds, nanoseconds);
 
-                const pvxs::Value valueField = (epics_value.type().kind() == pvxs::Kind::Compound) ? epics_value["value"] : pvxs::Value{};
-                EpicsMLDPConversion::convertPVToProtoValue(valueField.valid() ? valueField : epics_value, &event_value->data_value);
+                EpicsMLDPConversion::convertPVToProtoValue(valueField, &event_value->data_value);
 
-                const pvxs::Value alarm = epics_value["alarm"];
-                if (alarm.valid())
+                auto* valueStatus = event_value->data_value.mutable_valuestatus();
+
+                if (const auto severityField = alarm["severity"]; severityField.valid())
                 {
-                    auto* valueStatus = event_value->data_value.mutable_valuestatus();
-
-                    if (const auto severityField = alarm["severity"]; severityField.valid())
+                    const int sev = severityField.as<int>();
+                    switch (sev)
                     {
-                        const int sev = severityField.as<int>();
-                        switch (sev)
-                        {
-                        case 0:
-                            valueStatus->set_severity(DataValue_ValueStatus_Severity_NO_ALARM);
-                            break;
-                        case 1:
-                            valueStatus->set_severity(DataValue_ValueStatus_Severity_MINOR_ALARM);
-                            break;
-                        case 2:
-                            valueStatus->set_severity(DataValue_ValueStatus_Severity_MAJOR_ALARM);
-                            break;
-                        case 3:
-                            valueStatus->set_severity(DataValue_ValueStatus_Severity_INVALID_ALARM);
-                            break;
-                        default:
-                            valueStatus->set_severity(DataValue_ValueStatus_Severity_UNDEFINED_ALARM);
-                            break;
-                        }
+                    case 0:
+                        valueStatus->set_severity(DataValue_ValueStatus_Severity_NO_ALARM);
+                        break;
+                    case 1:
+                        valueStatus->set_severity(DataValue_ValueStatus_Severity_MINOR_ALARM);
+                        break;
+                    case 2:
+                        valueStatus->set_severity(DataValue_ValueStatus_Severity_MAJOR_ALARM);
+                        break;
+                    case 3:
+                        valueStatus->set_severity(DataValue_ValueStatus_Severity_INVALID_ALARM);
+                        break;
+                    default:
+                        valueStatus->set_severity(DataValue_ValueStatus_Severity_UNDEFINED_ALARM);
+                        break;
                     }
+                }
 
-                    if (const auto statusField = alarm["status"]; statusField.valid())
-                    {
-                        const int status = statusField.as<int>();
-                        valueStatus->set_statuscode(status == 0 ? DataValue_ValueStatus_StatusCode_NO_STATUS
-                                                                : DataValue_ValueStatus_StatusCode_RECORD_STATUS);
-                    }
+                if (const auto statusField = alarm["status"]; statusField.valid())
+                {
+                    const int status = statusField.as<int>();
+                    valueStatus->set_statuscode(status == 0 ? DataValue_ValueStatus_StatusCode_NO_STATUS
+                                                            : DataValue_ValueStatus_StatusCode_RECORD_STATUS);
+                }
 
-                    if (const auto messageField = alarm["message"]; messageField.valid())
-                    {
-                        valueStatus->set_message(messageField.as<std::string>());
-                    }
+                if (const auto messageField = alarm["message"]; messageField.valid())
+                {
+                    valueStatus->set_message(messageField.as<std::string>());
                 }
 
                 batch.tags.push_back(pvName);
