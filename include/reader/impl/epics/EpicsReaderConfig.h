@@ -8,6 +8,16 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
+/**
+ * @file EpicsReaderConfig.h
+ * @brief Configuration parser for EPICS reader instances.
+ *
+ * This header provides the EpicsReaderConfig class for parsing and validating
+ * EPICS reader configuration from YAML. It handles reader-level settings
+ * (name, thread pool size) as well as per-PV configuration including
+ * connection options and SLAC BSAS NTTable processing settings.
+ */
+
 #pragma once
 
 #include <config/Config.h>
