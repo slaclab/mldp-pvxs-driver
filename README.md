@@ -24,22 +24,42 @@ mldp_pool:
     pem_root_certs: /etc/certs/ca.crt
 
 reader:                                  # optional; omit to start with no readers
-  - epics:
-      - name: epics_reader_a
+  # PVXS reader (event-driven, recommended for modern EPICS)
+  - epics-pvxs:
+      - name: pvxs_reader
+        thread_pool_size: 2              # optional; conversion thread pool size
         pvs:
-          - name: pv1
-            option: chan://one          # optional PVXS option string
-          - name: pv2
-      - name: epics_reader_b
+          - name: MY:PV:NAME
+            option: chan://local         # optional PVXS option string
+          - name: TABLE:PV
+            ts_seconds_field: secondsPastEpoch    # optional; for NTTable row timestamps
+            ts_nanoseconds_field: nanoseconds
+
+  # Base reader (polling-based, for legacy Channel Access)
+  - epics-base:
+      - name: base_reader
+        thread_pool_size: 2              # optional; conversion thread pool size
+        monitor_poll_threads: 2          # optional; number of polling threads
+        monitor_poll_interval_ms: 5      # optional; polling interval in ms
         pvs:
-          - name: pv3
+          - name: LEGACY:PV:ONE
+          - name: LEGACY:PV:TWO
 
 metrics:                                 # optional; omit to disable Prometheus endpoint
   endpoint: 0.0.0.0:9464
 ```
 
-`mldp_pool` values mirror the driver’s `provider_name` and target URL but add connection-pool sizing. Readers are defined
-as sequences under `reader[].epics`, each with a `name` and an optional `pvs` list; if `pvs` is omitted, the reader will
+### Supported Reader Types
+
+| Reader Type | Description |
+|-------------|-------------|
+| `epics-pvxs` | Event-driven PVAccess reader using PVXS (recommended) |
+| `epics-base` | Polling-based Channel Access reader for legacy systems |
+
+For detailed reader documentation, see [Reader Types](docs/readers.md).
+
+`mldp_pool` values mirror the driver's `provider_name` and target URL but add connection-pool sizing. Readers are defined
+as sequences under `reader[]`, each with a `name` and an optional `pvs` list; if `pvs` is omitted, the reader will
 start without predefined channels.
 
 `mldp_pool.credentials` accepts:
