@@ -61,7 +61,7 @@ std::optional<EpicsReaderConfig::PVConfig::NTTableRowTimestampOptions> parseNtTa
 
     requireScalarChild(optionCfg, "type", optionContext);
     const auto type = optionCfg.get("type");
-    if (toLower(type) != "nttable-rowts")
+    if (toLower(type) != "slac-bsas-table")
     {
         return std::nullopt;
     }
@@ -83,7 +83,7 @@ std::optional<EpicsReaderConfig::PVConfig::NTTableRowTimestampOptions> parseNtTa
 
     if (optionCfg.hasChild("sourceName"))
     {
-        throw EpicsReaderConfig::Error(optionContext + ".sourceName is not supported for type 'nttable-rowts'; source name always equals the column field name");
+        throw EpicsReaderConfig::Error(optionContext + ".sourceName is not supported for type 'slac-bsas-table'; source name always equals the column field name");
     }
 
     return opts;

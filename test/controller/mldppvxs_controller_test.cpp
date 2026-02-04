@@ -67,7 +67,7 @@ reader:
         pvs:
           - name: test:bsas_table
             option:
-              type: nttable-rowts
+              type: slac-bsas-table
 )";
 
     std::optional<mldp_pvxs_driver::metrics::ReaderMetrics> findReaderMetrics(

@@ -93,7 +93,7 @@ name: epics_nttable
 pvs:
   - name: BSAS:TABLE
     option:
-      type: nttable-rowts
+      type: slac-bsas-table
       tsSeconds: secondsPastEpoch
       tsNanos: nanoseconds
 )";
@@ -108,7 +108,7 @@ pvs:
     EXPECT_EQ("BSAS:TABLE", pv.name);
     EXPECT_EQ("", pv.option);
     ASSERT_TRUE(pv.optionConfig.has_value());
-    EXPECT_EQ("nttable-rowts", pv.optionConfig->get("type"));
+    EXPECT_EQ("slac-bsas-table", pv.optionConfig->get("type"));
 
     ASSERT_TRUE(pv.nttableRowTs.has_value());
     EXPECT_EQ("secondsPastEpoch", pv.nttableRowTs->tsSecondsField);
@@ -122,7 +122,7 @@ name: epics_nttable
 pvs:
   - name: BSAS:TABLE
     option:
-      type: nttable-rowts
+      type: slac-bsas-table
       sourceName:
         mode: prefixed
         prefix: "bsas:"

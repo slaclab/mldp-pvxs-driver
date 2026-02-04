@@ -53,14 +53,14 @@ public:
     struct PVConfig
     {
         /**
-         * @brief Options for the special row-timestamped NTTable handling.
+         * @brief Options for the SLAC BSAS row-timestamped NTTable handling.
          *
          * Activated when the YAML subtree under @ref optionConfig contains:
          *
          * option:
-         *   type: nttable-rowts
-         *   tsSeconds: secondsPastEpoch   # optional
-         *   tsNanos: nanoseconds          # optional
+         *   type: slac-bsas-table
+         *   tsSeconds: secondsPastEpoch
+         *   tsNanos: nanoseconds
          *
          * Source naming: each NTTable data column becomes a source whose name
          * equals the column field name.
@@ -74,7 +74,7 @@ public:
         std::string                               name;         ///< Fully qualified PV name to monitor.
         std::string                               option;       ///< Backend-specific connection option (may be empty).
         std::optional<config::Config>             optionConfig; ///< Optional raw subtree for future extensions.
-        std::optional<NTTableRowTimestampOptions> nttableRowTs; ///< Parsed options when `type: nttable-rowts` is selected.
+        std::optional<NTTableRowTimestampOptions> nttableRowTs; ///< Parsed options when `type: slac-bsas-table` is selected.
     };
 
     EpicsReaderConfig();

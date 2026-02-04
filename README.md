@@ -28,12 +28,14 @@ reader:                                  # optional; omit to start with no reade
   - epics-pvxs:
       - name: pvxs_reader
         thread_pool_size: 2              # optional; conversion thread pool size
+        column_batch_size: 50            # optional; max columns per batch for NTTable
         pvs:
           - name: MY:PV:NAME
-            option: chan://local         # optional PVXS option string
-          - name: TABLE:PV
-            ts_seconds_field: secondsPastEpoch    # optional; for NTTable row timestamps
-            ts_nanoseconds_field: nanoseconds
+          - name: BSA:TABLE:PV
+            option:                      # optional; for SLAC BSAS NTTable with row timestamps
+              type: slac-bsas-table
+              tsSeconds: secondsPastEpoch
+              tsNanos: nanoseconds
 
   # Base reader (polling-based, for legacy Channel Access)
   - epics-base:
@@ -63,6 +65,7 @@ as sequences under `reader[]`, each with a `name` and an optional `pvs` list; if
 start without predefined channels.
 
 `mldp_pool.credentials` accepts:
+
 - `none` (insecure, no TLS)
 - `ssl` (TLS with system defaults)
 - a map with optional `pem_cert_chain`, `pem_private_key`, `pem_root_certs` paths (TLS with explicit PEM files)
@@ -128,23 +131,24 @@ For developer information and contribution guidelines see [CONTRIBUTING.md](CONT
 
 ## External Software
 
-- EPICS Base (default: R7.0.8.1; source: https://github.com/epics-base/epics-base) provides the core EPICS runtime and `libCom`.
-- PVXS (default: 1.4.1; source: https://github.com/epics-base/pvxs) provides the PVAccess client used to subscribe to EPICS PVs.
+- [EPICS Base](https://github.com/epics-base/epics-base) (default: R7.0.8.1) provides the core EPICS runtime and `libCom`.
+- [PVXS](https://github.com/epics-base/pvxs) (default: 1.4.1) provides the PVAccess client used to subscribe to EPICS PVs.
 - gRPC (system package; version per toolchain) provides the RPC transport to the MLDP ingestion service.
 - Protocol Buffers (system package; version per toolchain) generates and serializes MLDP protobuf payloads.
-- dp-grpc proto definitions (source: https://github.com/osprey-dcs/dp-grpc) supply the MLDP ingestion API `.proto` files used at build time.
+- [dp-grpc proto definitions](https://github.com/osprey-dcs/dp-grpc) supply the MLDP ingestion API `.proto` files used at build time.
 - OpenSSL (system library; version per OS/toolchain) provides TLS for gRPC credentials.
-- spdlog v1.16.0 (source: https://github.com/gabime/spdlog) provides structured logging.
-- prometheus-cpp v1.3.0 (source: https://github.com/jupp0r/prometheus-cpp) provides the metrics registry and HTTP exporter.
-- argparse v3.2 (source: https://github.com/p-ranav/argparse) provides CLI argument parsing.
-- rapidyaml 0.10.0 (vendored in `ext/rapidyaml`; source: https://github.com/biojppm/rapidyaml) parses the YAML configuration.
-- BS::thread_pool 5.0.0 (vendored in `ext/BS_thread_pool`; source: https://github.com/bshoshany/thread-pool) provides the controller worker thread pool.
+- [spdlog](https://github.com/gabime/spdlog) v1.16.0 provides structured logging.
+- [prometheus-cpp](https://github.com/jupp0r/prometheus-cpp) v1.3.0 provides the metrics registry and HTTP exporter.
+- [argparse](https://github.com/p-ranav/argparse) v3.2 provides CLI argument parsing.
+- [rapidyaml](https://github.com/biojppm/rapidyaml) 0.10.0 (vendored in `ext/rapidyaml`) parses the YAML configuration.
+- [BS::thread_pool](https://github.com/bshoshany/thread-pool) 5.0.0 (vendored in `ext/BS_thread_pool`) provides the controller worker thread pool.
 - libevent (system library; required when statically linking PVXS) supplies PVXS' event loop dependencies in static builds.
-- CMake 3.15+ (source: https://cmake.org) configures and builds the project.
+- [CMake](https://cmake.org) 3.15+ configures and builds the project.
 
 ## Releases
 
 Tagged releases (`vX.Y.Z`) publish:
+
 - A container image (recommended way to run).
 - A standalone executable artifact (currently named `mldp_pvxs_driver-ubuntu-noble-epics-R7.0.8.1`).
 - An AppImage for easier distribution (currently named `mldp_pvxs_driver-ubuntu-noble-epics-R7.0.8.1-pvxs-1.4.1-x86_64.AppImage`).
@@ -176,11 +180,13 @@ docker buildx build \
 #### EPICS/PVXS locations
 
 In the builder/dev container image:
+
 - EPICS Base source is cloned into `/opt/epics` and installed into `/opt/local`.
 - PVXS source is cloned into `/opt/pvxs` and installed into `/opt/local`.
 - The EPICS host architecture is recorded in `/etc/epics_host_arch` (e.g. `linux-x86_64`).
 
 In the runtime/release container image:
+
 - `/opt/local` is copied from the builder stage and contains EPICS Base + PVXS headers and libraries.
 - `EPICS_BASE=/opt/local` and `PVXS_BASE=/opt/local` are set in the runtime image.
 
@@ -189,12 +195,14 @@ In the runtime/release container image:
 - Default build args are defined in [.devcontainer/Dockerfile](.devcontainer/Dockerfile) (`EPICS_VERSION`, `PVXS_VERSION`).
 - CI/release versions are set by the workflow matrix in [.github/workflows/build-and-test.yml](.github/workflows/build-and-test.yml) and [.github/workflows/build-docker-image.yml](.github/workflows/build-docker-image.yml).
 
+
 ### Standalone executable runtime dependencies
 
 The standalone executable artifact is **dynamically linked** (not a fully static binary). This means it requires
 shared libraries to be present on the target host at runtime.
 
 At a minimum, the binary depends on:
+
 - gRPC + Protobuf runtime libraries (and their transitive deps like Abseil, c-ares, re2)
 - OpenSSL (`libssl`, `libcrypto`)
 - EPICS Base runtime (`libCom`)
@@ -203,6 +211,7 @@ At a minimum, the binary depends on:
 In the release build environment, EPICS Base + PVXS are installed under `/opt/local`, and the binary is built with a
 runtime search path pointing there. If you download and run the standalone artifact on a different host, you must
 either:
+
 - install compatible EPICS Base + PVXS and ensure they are discoverable by the dynamic loader (e.g., via
   `LD_LIBRARY_PATH` or a matching install prefix), and install the required gRPC/Protobuf/OpenSSL runtime packages, or
 - run via the published Docker image, which includes the correct runtime environment.

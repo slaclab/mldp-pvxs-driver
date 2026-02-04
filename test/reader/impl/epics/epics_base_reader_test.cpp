@@ -531,7 +531,7 @@ name: epics_1
 pvs:
   - name: test:bsas_table
     option:
-      type: nttable-rowts
+      type: slac-bsas-table
 )";
 
     const auto cfg = makeConfigFromYaml(yaml);

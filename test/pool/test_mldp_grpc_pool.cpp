@@ -57,7 +57,7 @@ reader:
           - name: test:table
           - name: test:bsas_table
             option:
-              type: nttable-rowts
+              type: slac-bsas-table
               tsSeconds: secondsPastEpoch
               tsNanos: nanoseconds
 )";

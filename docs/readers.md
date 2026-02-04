@@ -190,10 +190,11 @@ reader:
         column_batch_size: 50         # NTTable column batch size
         pvs:
           - name: MY:PV:NAME
-            option: chan://local      # Optional PVXS option
-          - name: TABLE:PV
-            ts_seconds_field: secondsPastEpoch    # Custom timestamp field
-            ts_nanoseconds_field: nanoseconds     # Custom nanoseconds field
+          - name: BSA:TABLE:PV
+            option:                   # For SLAC BSAS NTTable with row timestamps
+              type: slac-bsas-table
+              tsSeconds: secondsPastEpoch
+              tsNanos: nanoseconds
 ```
 
 ### EpicsPVXSReader Key Features
@@ -215,19 +216,22 @@ reader_pool_->get_thread_count() > 1 ? reader_pool_.get() : nullptr
 - **Single thread (= 1)**: Bypass thread pool, execute directly
 - **Multiple threads (> 1)**: Use thread pool for parallel conversion
 
-### NTTable Row Timestamp Handling
+### SLAC BSAS NTTable Handling
 
-For PVs that return NTTable structures with per-row timestamps:
+For PVs that return NTTable structures with per-row timestamps (SLAC BSAS format):
 
 ```yaml
 pvs:
   - name: BSA:TABLE:PV
-    ts_seconds_field: secondsPastEpoch    # Column with seconds
-    ts_nanoseconds_field: nanoseconds     # Column with nanoseconds
+    option:
+      type: slac-bsas-table
+      tsSeconds: secondsPastEpoch    # Column containing epoch seconds
+      tsNanos: nanoseconds           # Column containing nanoseconds
 ```
 
 - Each table column becomes a separate source in the event batch
-- Timestamps are extracted per-row from specified fields
+- Timestamps are extracted per-row from the specified fields
+- Source name equals the column field name
 - Conversion handled by `BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch()`
 
 ### EpicsPVXSReader Use Cases
