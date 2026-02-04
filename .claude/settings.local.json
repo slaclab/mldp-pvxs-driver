@@ -1,8 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(cmake --build:*)",
-      "Bash(wc:*)"
-    ]
-  }
-}
