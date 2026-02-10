@@ -10,7 +10,9 @@
 
 #pragma once
 
+#include <atomic>
 #include <memory>
+#include <thread>
 
 #include <prometheus/counter.h>
 #include <prometheus/exposer.h>
@@ -21,6 +23,11 @@
 #include <prometheus/registry.h>
 
 #include <metrics/MetricsConfig.h>
+
+// Forward declaration for metric-grabber
+namespace metricsgrabber {
+class MetricsCollector;
+}
 
 namespace mldp_pvxs_driver::metrics {
 
@@ -38,6 +45,7 @@ public:
     /** @brief Construct a collector with an optional metrics configuration. */
     Metrics() = delete;
     explicit Metrics(const MetricsConfig& config);
+    ~Metrics();
 
     /** @return Registry that can be scraped/exported by HTTP exposers. */
     std::shared_ptr<prometheus::Registry> registry() const;
@@ -109,6 +117,51 @@ private:
     prometheus::Family<prometheus::Counter>& bus_stream_rotations_family_;
 
     std::unique_ptr<prometheus::Exposer> exposer_;
+
+    // System metrics (via metric-grabber library) --------------------------------
+    void startSystemMetricsCollection();
+    void stopSystemMetricsCollection();
+    void collectSystemMetricsLoop();
+
+    std::atomic<bool> stop_system_metrics_{false};
+    std::thread       system_metrics_thread_;
+
+    // CPU metrics (counters - values accumulate over time)
+    prometheus::Family<prometheus::Counter>& process_cpu_user_ticks_family_;
+    prometheus::Family<prometheus::Counter>& process_cpu_system_ticks_family_;
+    prometheus::Family<prometheus::Counter>& process_cpu_children_user_ticks_family_;
+    prometheus::Family<prometheus::Counter>& process_cpu_children_system_ticks_family_;
+
+    // Memory metrics (gauges - current values)
+    prometheus::Family<prometheus::Gauge>& process_memory_virtual_bytes_family_;
+    prometheus::Family<prometheus::Gauge>& process_memory_rss_bytes_family_;
+    prometheus::Family<prometheus::Gauge>& process_memory_virtual_peak_bytes_family_;
+    prometheus::Family<prometheus::Gauge>& process_memory_rss_anon_bytes_family_;
+    prometheus::Family<prometheus::Gauge>& process_memory_rss_file_bytes_family_;
+    prometheus::Family<prometheus::Gauge>& process_memory_rss_shmem_bytes_family_;
+    prometheus::Family<prometheus::Gauge>& process_memory_rss_total_bytes_family_;
+
+    // I/O metrics (counters - bytes accumulate over time)
+    prometheus::Family<prometheus::Counter>& process_io_read_bytes_family_;
+    prometheus::Family<prometheus::Counter>& process_io_write_bytes_family_;
+    prometheus::Family<prometheus::Counter>& process_io_cancelled_write_bytes_family_;
+
+    // Context switches (counters)
+    prometheus::Family<prometheus::Counter>& process_context_switches_voluntary_family_;
+    prometheus::Family<prometheus::Counter>& process_context_switches_involuntary_family_;
+
+    // File descriptors (gauge)
+    prometheus::Family<prometheus::Gauge>& process_fds_open_family_;
+
+    // Thread count (gauge)
+    prometheus::Family<prometheus::Gauge>& process_threads_family_;
+
+    // Process info
+    prometheus::Family<prometheus::Gauge>& process_priority_family_;
+    prometheus::Family<prometheus::Gauge>& process_nice_family_;
+
+    // Metric grabber collector
+    std::unique_ptr<metricsgrabber::MetricsCollector> system_metrics_collector_;
 };
 
 // Helper to safely call a metrics method when the pointer may be null.
