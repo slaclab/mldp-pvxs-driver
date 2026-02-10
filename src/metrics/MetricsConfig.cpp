@@ -31,6 +31,11 @@ const std::string& MetricsConfig::endpoint() const
     return endpoint_;
 }
 
+uint32_t MetricsConfig::scanIntervalSeconds() const
+{
+    return scan_interval_seconds_;
+}
+
 void MetricsConfig::parse(const config::Config& node)
 {
     // If the node is not valid it means there was no `metrics` block in
@@ -57,6 +62,24 @@ void MetricsConfig::parse(const config::Config& node)
     if (endpoint_.empty())
     {
         throw Error("metrics.endpoint must not be empty");
+    }
+
+    // Parse optional scan_interval_seconds with default of 1
+    if (node.hasChild("scan_interval_seconds"))
+    {
+        try
+        {
+            scan_interval_seconds_ = std::stoul(node.get("scan_interval_seconds"));
+        }
+        catch (const std::exception&)
+        {
+            throw Error("metrics.scan_interval_seconds must be a positive integer");
+        }
+
+        if (scan_interval_seconds_ < 1)
+        {
+            throw Error("metrics.scan_interval_seconds must be at least 1");
+        }
     }
 
     valid_ = true;

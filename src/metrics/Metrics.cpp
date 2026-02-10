@@ -259,8 +259,8 @@ void Metrics::collectSystemMetricsLoop()
             }
         }
 
-        // Sleep for 1 second
-        std::this_thread::sleep_for(1s);
+        // Sleep for configured scan interval
+        std::this_thread::sleep_for(std::chrono::seconds(config_.scanIntervalSeconds()));
     }
 }
 

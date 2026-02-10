@@ -30,6 +30,7 @@ namespace mldp_pvxs_driver::metrics {
  * @code{.yaml}
  * metrics:
  *   endpoint: 0.0.0.0:9464
+ *   scan_interval_seconds: 1
  * @endcode
  */
 class MetricsConfig
@@ -79,11 +80,20 @@ public:
      */
     const std::string& endpoint() const;
 
+    /**
+     * @brief Interval in seconds between system metrics collection scans.
+     *
+     * Defaults to 1 second if not specified in configuration.
+     * Only meaningful when @ref valid() is true.
+     */
+    uint32_t scanIntervalSeconds() const;
+
 private:
     void parse(const config::Config& node);
 
-    bool        valid_ = false; ///< Tracks whether parsing succeeded.
-    std::string endpoint_;      ///< Cached endpoint string (host:port).
+    bool        valid_ = false;      ///< Tracks whether parsing succeeded.
+    std::string endpoint_;           ///< Cached endpoint string (host:port).
+    uint32_t    scan_interval_seconds_ = 1; ///< System metrics scan interval in seconds.
 };
 
 } // namespace mldp_pvxs_driver::metrics
