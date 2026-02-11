@@ -5,13 +5,13 @@ For system behavior and feature details, use the topic links below.
 
 ## Start Here: Documentation Map
 
-| If you need... | Read... |
-|---|---|
-| Product/runtime overview, configuration, CLI, release artifacts, external dependencies | [README.md](README.md) |
-| Architecture, data flow, threading model, reader abstraction internals | [docs/architecture.md](docs/architecture.md) |
-| How to configure and use built-in readers (`epics-base`, `epics-pvxs`) | [docs/readers.md](docs/readers.md) |
-| How to implement a new/custom reader type | [docs/readers-implementation.md](docs/readers-implementation.md) |
-| Metrics export format and runtime metrics dump behavior | [docs/metrics-export-guide.md](docs/metrics-export-guide.md) |
+| If you need...                                                                         | Read...                                                          |
+|----------------------------------------------------------------------------------------|------------------------------------------------------------------|
+| Product/runtime overview, configuration, CLI, release artifacts, external dependencies | [README.md](README.md)                                           |
+| Architecture, data flow, threading model, reader abstraction internals                 | [docs/architecture.md](docs/architecture.md)                     |
+| How to configure and use built-in readers (`epics-base`, `epics-pvxs`)                 | [docs/readers.md](docs/readers.md)                               |
+| How to implement a new/custom reader type                                              | [docs/readers-implementation.md](docs/readers-implementation.md) |
+| Metrics export format and runtime metrics dump behavior                                | [docs/metrics-export-guide.md](docs/metrics-export-guide.md)     |
 
 ## Local Development Workflow
 

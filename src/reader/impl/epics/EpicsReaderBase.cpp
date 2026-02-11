@@ -29,7 +29,7 @@ EpicsReaderBase::EpicsReaderBase(std::shared_ptr<util::bus::IEventBusPush> bus,
         PVRuntimeConfig runtime;
         if (pvConfig.nttableRowTs.has_value())
         {
-            runtime.mode = PVRuntimeConfig::Mode::NtTableRowTs;
+            runtime.mode = PVRuntimeConfig::Mode::SlacBsasTable;
             runtime.tsSecondsField = pvConfig.nttableRowTs->tsSecondsField;
             runtime.tsNanosField = pvConfig.nttableRowTs->tsNanosField;
         }

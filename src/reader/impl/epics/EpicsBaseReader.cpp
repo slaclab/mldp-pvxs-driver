@@ -118,7 +118,7 @@ void EpicsBaseReader::processEvent(std::string pvName, ::epics::pvData::PVStruct
 
         switch (mode)
         {
-        case PVRuntimeConfig::Mode::NtTableRowTs:
+        case PVRuntimeConfig::Mode::SlacBsasTable:
             {
                 const std::size_t colBatchSize = config_.columnBatchSize();
                 IEventBusPush::EventBatch tableBatch;
@@ -144,7 +144,7 @@ void EpicsBaseReader::processEvent(std::string pvName, ::epics::pvData::PVStruct
                         },
                         emitted))
                 {
-                    errorf(*logger_, "Error converting PV {} to MLDP NtTableRowTs batch on reader {}.", pvName, name_);
+                    errorf(*logger_, "Error converting PV {} to MLDP SLAC BSAS table batch on reader {}.", pvName, name_);
                     metric_call(metrics_, [&](auto& m)
                                 {
                                     m.incrementReaderErrors(1.0, sourceTag);

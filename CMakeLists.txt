@@ -21,6 +21,8 @@ include(FetchContent)
 set(PROMETHEUS_CPP_VERSION "v1.3.0")
 set(SPDLOG_VERSION "v1.16.0")
 set(ARGPARSE_VERSION "v3.2")
+set(METRIC_GRABBER_VERSION "v0.0.1")
+
 # Output directories
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
@@ -53,7 +55,6 @@ FetchContent_Declare(argparse
 )
 FetchContent_MakeAvailable(argparse)
 
-
 # Prometheus-cpp pulls its own GoogleTest dependency when ENABLE_TESTING is set.
 # Temporarily override the cached ENABLE_TESTING option so the dependency does
 # not try to define conflicting gmock targets when added as a subproject.
@@ -75,6 +76,15 @@ if(_PROMETHEUS_ENABLE_TESTING_DEFINED)
 else()
     unset(ENABLE_TESTING CACHE)
 endif()
+
+# acquiring metric-grabber to enanceh mldp driver with systme metrics
+message(STATUS "Acquiring metric-grabber version ${METRIC_GRABBER_VERSION}...")
+FetchContent_Declare(metric_grabber
+    GIT_REPOSITORY https://github.com/slaclab/metrics-grabber.git
+    GIT_TAG ${METRIC_GRABBER_VERSION}
+)
+FetchContent_MakeAvailable(metric_grabber)
+
 
 # Find required packages
 find_package(Protobuf REQUIRED)
@@ -421,6 +431,7 @@ target_link_libraries(lib${PROJECT_NAME} PUBLIC
     prometheus-cpp::core
     prometheus-cpp::pull
     spdlog::spdlog
+    metricsgrabber
 )
 target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/ext/BS_thread_pool/include")
 target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/ext/rapidyaml/include")
@@ -499,6 +510,7 @@ if(MLDP_PVXS_DRIVER_TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics/epics_base_reader_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/metrics/periodic_metrics_dumper_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/metrics/metrics_histogram_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/metrics/system_metrics_test.cpp"
     )
     target_link_libraries(${PROJECT_NAME}_test PRIVATE gtest_main lib${PROJECT_NAME})
 
