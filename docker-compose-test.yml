@@ -14,10 +14,15 @@ x-ci-common: &ci-common
       - GIT_TERMINAL_PROMPT=0
     command: >
       bash -lc "
+        set -e &&
         echo \"Debug: Token length is $${#GITHUB_TOKEN}\" &&
+        git config --global credential.helper store &&
+        echo \"https://$${GITHUB_TOKEN}:x-oauth-basic@github.com\" > ~/.git-credentials &&
+        chmod 600 ~/.git-credentials &&
+        git config --global --list &&
+        cat ~/.git-credentials | sed \"s/$${GITHUB_TOKEN}/****/g\" &&
         rm -rf build &&
-        mkdir -p build/_deps &&
-        git clone --depth 1 --branch v0.0.1 \"https://x-access-token:$${GITHUB_TOKEN}@github.com/slaclab/metrics-grabber.git\" build/_deps/metric_grabber-src &&
+        mkdir -p build &&
         cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DMLDP_PVXS_DRIVER_TESTS=ON &&
         cmake --build build --config RelWithDebInfo &&
         mkdir -p build/test-results &&
