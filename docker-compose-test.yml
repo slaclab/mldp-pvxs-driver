@@ -10,14 +10,14 @@ x-ci-common: &ci-common
     working_dir: /workspace
     entrypoint: []
     environment:
-      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - GITHUB_TOKEN
     command: >
       bash -lc "
-        echo \"Token is set: \${GITHUB_TOKEN:+YES} (length: \${#GITHUB_TOKEN})\" &&
+        echo \"Token is set: $${GITHUB_TOKEN:+YES} (length: $${#GITHUB_TOKEN})\" &&
         git config --global credential.helper 'store --file=/tmp/.git-credentials' &&
-        echo \"https://\${GITHUB_TOKEN}@github.com\" > /tmp/.git-credentials &&
+        echo \"https://$${GITHUB_TOKEN}@github.com\" > /tmp/.git-credentials &&
         chmod 600 /tmp/.git-credentials &&
-        git config --global url.\"https://\${GITHUB_TOKEN}@github.com/\".insteadOf \"https://github.com/\" &&
+        git config --global url.\"https://$${GITHUB_TOKEN}@github.com/\".insteadOf \"https://github.com/\" &&
         rm -rf build &&
         mkdir -p build &&
         cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DMLDP_PVXS_DRIVER_TESTS=ON &&
@@ -41,4 +41,3 @@ services:
     <<: *ci-common
     profiles:
       - prebuilt
-
