@@ -15,11 +15,9 @@ x-ci-common: &ci-common
     command: >
       bash -lc "
         echo \"Debug: Token length is $${#GITHUB_TOKEN}\" &&
-        git config --global credential.helper 'store --file=/tmp/.git-credentials' &&
-        printf 'url=https://github.com/slaclab/metrics-grabber.git\nusername=x-access-token\npassword=%s\n' \"$$GITHUB_TOKEN\" | git credential approve &&
-        printf 'url=https://github.com/\nusername=x-access-token\npassword=%s\n' \"$$GITHUB_TOKEN\" | git credential approve &&
         rm -rf build &&
-        mkdir -p build &&
+        mkdir -p build/_deps &&
+        git clone --depth 1 --branch v0.0.1 \"https://x-access-token:$${GITHUB_TOKEN}@github.com/slaclab/metrics-grabber.git\" build/_deps/metric_grabber-src &&
         cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DMLDP_PVXS_DRIVER_TESTS=ON &&
         cmake --build build --config RelWithDebInfo &&
         mkdir -p build/test-results &&
