@@ -8,8 +8,6 @@ x-ci-common: &ci-common
       - dp-ingestion
       - dp-query
     working_dir: /workspace
-    environment:
-      - GITHUB_TOKEN=${GITHUB_TOKEN}
     entrypoint: []
     command: >
       bash -lc "
@@ -32,8 +30,12 @@ services:
       args:
         COMPILER: llvm
         PVXS_VERSION: 1.4.1
-  ci-prebuilt:
+    ci-prebuilt:
     # Enable the `prebuilt` profile to reuse an existing image instead of rebuilding.
-    <<: *ci-common
-    profiles:
-      - prebuilt
+        <<: *ci-common
+        profiles:
+          - prebuilt
+
+        environment:
+          - GITHUB_TOKEN=${GITHUB_TOKEN}
+
