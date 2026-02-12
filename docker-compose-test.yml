@@ -15,7 +15,9 @@ x-ci-common: &ci-common
     command: >
       bash -lc "
         echo \"Debug: Token length is $${#GITHUB_TOKEN}\" &&
-        git config --global url.\"https://$${GITHUB_TOKEN}@github.com/\".insteadOf \"https://github.com/\" &&
+        git config --global credential.helper 'store --file=/tmp/.git-credentials' &&
+        printf 'url=https://github.com/slaclab/metrics-grabber.git\nusername=x-access-token\npassword=%s\n' \"$$GITHUB_TOKEN\" | git credential approve &&
+        printf 'url=https://github.com/\nusername=x-access-token\npassword=%s\n' \"$$GITHUB_TOKEN\" | git credential approve &&
         rm -rf build &&
         mkdir -p build &&
         cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DMLDP_PVXS_DRIVER_TESTS=ON &&
