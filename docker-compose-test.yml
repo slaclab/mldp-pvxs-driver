@@ -8,6 +8,8 @@ x-ci-common: &ci-common
       - dp-ingestion
       - dp-query
     working_dir: /workspace
+    environment:
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
     entrypoint: []
     command: >
       bash -lc "

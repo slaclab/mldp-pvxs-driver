@@ -46,10 +46,6 @@ jobs:
             epics_version: R7.0.8.1
             pvxs_version: 1.4.1
     steps:
-      - name: Configure Git for Private Dependencies
-        run: |
-          git config --global url."https://${{ secrets.GITHUB_TOKEN }}:x-oauth-basic@github.com/".insteadOf "https://github.com/"
-
       - name: Checkout source code
         uses: actions/checkout@v4
         with:
@@ -124,6 +120,8 @@ jobs:
 
       - name: Configure, build, test inside dev image
         id: build
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           docker compose -f docker-compose.yml -f docker-compose-test.yml --profile prebuilt up --abort-on-container-exit --exit-code-from ci-prebuilt ci-prebuilt
 
