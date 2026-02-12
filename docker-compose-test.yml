@@ -13,7 +13,7 @@ x-ci-common: &ci-common
       - GITHUB_TOKEN=${GITHUB_TOKEN}
     command: >
       bash -lc "
-        git config --global url.\"https://\${GITHUB_TOKEN}:x-oauth-basic@github.com/\".insteadOf \"https://github.com/\" &&
+        git config --global url.\"https://\${GITHUB_TOKEN}@github.com/\".insteadOf \"https://github.com/\" &&
         rm -rf build &&
         mkdir -p build &&
         cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DMLDP_PVXS_DRIVER_TESTS=ON &&
