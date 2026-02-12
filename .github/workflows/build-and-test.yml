@@ -46,6 +46,10 @@ jobs:
             epics_version: R7.0.8.1
             pvxs_version: 1.4.1
     steps:
+      - name: Configure Git for Private Dependencies
+        run: |
+          git config --global url."https://${{ secrets.GITHUB_TOKEN }}:x-oauth-basic@github.com/".insteadOf "https://github.com/"
+
       - name: Checkout source code
         uses: actions/checkout@v4
         with:
