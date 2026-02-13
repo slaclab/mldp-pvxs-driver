@@ -49,6 +49,7 @@ reader:                                  # optional; omit to start with no reade
 
 metrics:                                 # optional; omit to disable Prometheus endpoint
   endpoint: 0.0.0.0:9464
+  scan_interval_seconds: 1             # optional; interval for system metrics scan
 ```
 
 ### Supported Reader Types
