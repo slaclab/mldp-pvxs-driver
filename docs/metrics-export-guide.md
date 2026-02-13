@@ -1,32 +1,90 @@
-# Metrics Export Implementation
+# Metrics Export and System Monitoring
 
 ## Overview
-The `appendMetricsToFile` function supports periodic metrics collection with improved formatting. Metrics are exported in **JSON Lines (JSONL)** format with timestamps, which is better suited for time-series data than CSV.
+
+The MLDP PVXS driver provides comprehensive metrics collection and export capabilities, including:
+
+1. **Prometheus endpoint** for HTTP-based metrics scraping
+2. **JSON Lines (JSONL) file exports** for periodic logging
+3. **System-level metrics** (CPU, memory, file descriptors, I/O) using the metric-grabber library
+4. **Manual dump triggers** via keyboard shortcuts and signals
 
 ## Features
 
-### 1. JSON Lines Format (Recommended over CSV)
-- **Why JSONL instead of CSV?**
-  - Preserves metric structure and labels hierarchically
-  - Each line is a complete, self-contained JSON object
-  - Tools like `jq` can easily parse and filter lines
-  - Easier to handle numeric types and nested data
-  - Standard format for time-series logging
+### Prometheus Endpoint Configuration
 
-### 2. Automatic Periodic Dumping
-A background thread (`PeriodicMetricsDumper`) periodically appends metrics to a specified file at configurable intervals.
+The driver can expose metrics via a Prometheus-compatible HTTP endpoint using the `metrics` configuration block:
 
-### 3. Timestamped Entries
-Each metrics dump includes:
-- `timestamp_ms`: Milliseconds since epoch (for machine processing)
-- `timestamp_iso`: ISO 8601 formatted timestamp (human-readable)
-- `metrics`: All collected Prometheus metrics as structured objects, with each metric containing:
-  - Label fields (e.g., `"source"` for tagged metrics)
-  - A `"value"` field containing the numeric metric value
+```yaml
+metrics:
+  endpoint: 0.0.0.0:9464
+  scan_interval_seconds: 1
+```
 
-## Usage
+- **`endpoint`** (required): Host:port where the Prometheus exposer binds
+- **`scan_interval_seconds`** (optional, default: 1): Interval between system metrics collection scans
 
-### Command Line Arguments
+The endpoint serves metrics in Prometheus text exposition format at `http://<endpoint>/metrics`.
+
+### System Metrics Collected
+
+When the Prometheus endpoint is configured, the driver collects:
+
+**Reader metrics** (per PV/source):
+- `mldp_pvxs_driver_reader_events_total` - Total events processed
+- `mldp_pvxs_driver_reader_events_received_total` - Raw EPICS updates received
+- `mldp_pvxs_driver_reader_errors_total` - Reader failures
+- `mldp_pvxs_driver_reader_processing_time_ms` - Histogram of conversion time (ms)
+
+- `mldp_pvxs_driver_reader_queue_depth` - Queued PV updates awaiting processing
+- `mldp_pvxs_driver_reader_pool_queue_depth` - Queued conversion tasks awaiting processing
+
+**Connection pool metrics**:
+- `mldp_pvxs_driver_pool_connections_in_use` - Active connections
+- `mldp_pvxs_driver_pool_connections_available` - Idle connections
+
+**Controller metrics**:
+- `mldp_pvxs_driver_controller_send_time_seconds` - Histogram of send duration (seconds)
+- `mldp_pvxs_driver_controller_queue_depth` - Queued tasks
+- `mldp_pvxs_driver_controller_channel_queue_depth` - Per-worker channel queue depth
+
+**Bus metrics**:
+- `mldp_pvxs_driver_bus_push_total` - Events pushed to bus
+- `mldp_pvxs_driver_bus_failure_total` - Push failures
+- `mldp_pvxs_driver_bus_payload_bytes_total` - Total protobuf bytes sent
+- `mldp_pvxs_driver_bus_payload_bytes_per_second` - Current throughput
+- `mldp_pvxs_driver_bus_stream_rotations_total` - Stream open/close cycles
+
+**System-level metrics** (sampled at configured interval):
+  - **Process CPU time (counters):**
+    - `mldp_pvxs_driver_process_cpu_user_ticks_total` - Total user CPU time in clock ticks
+    - `mldp_pvxs_driver_process_cpu_system_ticks_total` - Total system CPU time in clock ticks
+    - `mldp_pvxs_driver_process_cpu_children_user_ticks_total` - Total children user CPU time in clock ticks
+    - `mldp_pvxs_driver_process_cpu_children_system_ticks_total` - Total children system CPU time in clock ticks
+  - **Memory metrics (gauges):**
+    - `mldp_pvxs_driver_process_memory_virtual_bytes` - Virtual memory size in bytes
+    - `mldp_pvxs_driver_process_memory_rss_bytes` - Resident set size (physical) in bytes
+    - `mldp_pvxs_driver_process_memory_virtual_peak_bytes` - Peak virtual memory size in bytes
+    - `mldp_pvxs_driver_process_memory_rss_anon_bytes` - Anonymous RSS in bytes
+    - `mldp_pvxs_driver_process_memory_rss_file_bytes` - File-backed RSS in bytes
+    - `mldp_pvxs_driver_process_memory_rss_shmem_bytes` - Shared memory RSS in bytes
+    - `mldp_pvxs_driver_process_memory_rss_total_bytes` - Total RSS (anon + file + shmem) in bytes
+  - **I/O metrics (counters):**
+    - `mldp_pvxs_driver_process_io_read_bytes` - Total bytes read
+    - `mldp_pvxs_driver_process_io_write_bytes` - Total bytes written
+    - `mldp_pvxs_driver_process_io_cancelled_write_bytes` - Total cancelled write bytes
+  - **Context switch metrics (counters):**
+    - `mldp_pvxs_driver_process_context_switches_voluntary` - Total voluntary context switches
+    - `mldp_pvxs_driver_process_context_switches_involuntary` - Total involuntary context switches
+  - **Resource metrics (gauges):**
+    - `mldp_pvxs_driver_process_fds_open` - Number of open file descriptors
+    - `mldp_pvxs_driver_process_threads` - Number of threads in process
+    - `mldp_pvxs_driver_process_priority` - Process priority (nice value)
+    - `mldp_pvxs_driver_process_nice` - Nice value (0-20, lower = higher priority)
+
+### JSON Lines File Exports
+
+For periodic file-based logging, use the `PeriodicMetricsDumper` background thread:
 
 ```bash
 ./mldp_pvxs_driver \
@@ -34,122 +92,94 @@ Each metrics dump includes:
   --metrics-interval 5
 ```
 
-- `--metrics-output FILE`: Path where metrics will be appended (JSON Lines format)
-- `--metrics-interval SECONDS`: Dump interval in seconds (default: 5)
+- **`--metrics-output FILE`**: Path for JSONL exports (default: `metrics.jsonl`)
+- **`--metrics-interval SECONDS`**: Dump interval (default: 60)
 
-### Manual Metrics Dump
-You can still trigger manual dumps without using the periodic feature:
-- Press **Ctrl+P** in the foreground terminal
+### Manual Metrics Dumps
+
+Trigger manual dumps without periodic features:
+- Press **Ctrl+P** in the foreground terminal (outputs `MetricsSnapshot` format to stdout)
 - Or send signals: `kill -USR1 <pid>` or `kill -QUIT <pid>`
 
-These manual dumps print to stdout using `MetricsSnapshot::toString()`.
+### Runtime Controls
 
-## Example Output (JSON Lines)
+- **Ctrl+D**: Toggle the periodic metrics dumper on/off (while the driver is running)
 
-Each metric is output as a structured object with tags and values:
+## Output Formats
+
+### Prometheus Text Exposition (Endpoint)
+
+When configured via YAML, metrics are available via HTTP:
+
+```bash
+curl http://localhost:9464/metrics
+```
+
+### JSON Lines Format (File)
+
+Each line is a complete JSON object:
 
 ```json
 {
   "timestamp_ms": 1704623456123,
   "timestamp_iso": "2024-01-07T15:30:56Z",
   "metrics": {
-    "mldp_pvxs_driver_bus_push_total": {
-      "source": "QUAD:IN20:361:BACT",
-      "value": 42
-    },
-    "mldp_pvxs_driver_bus_payload_bytes_total": {
-      "source": "QUAD:IN20:361:BACT",
-      "value": 1048576
-    },
-    "mldp_pvxs_driver_pool_connections_in_use": {
-      "value": 2
-    },
-    "mldp_pvxs_driver_pool_connections_available": {
-      "value": 3
-    }
-  }
-}
-{
-  "timestamp_ms": 1704623516123,
-  "timestamp_iso": "2024-01-07T15:31:56Z",
-  "metrics": {
-    "mldp_pvxs_driver_bus_push_total": {
-      "source": "QUAD:IN20:361:BACT",
-      "value": 85
-    },
-    "mldp_pvxs_driver_bus_payload_bytes_total": {
-      "source": "QUAD:IN20:361:BACT",
-      "value": 2097152
-    },
-    "mldp_pvxs_driver_pool_connections_in_use": {
-      "value": 1
-    },
-    "mldp_pvxs_driver_pool_connections_available": {
-      "value": 4
-    }
+    "mldp_pvxs_driver_bus_push_total": [
+      {
+        "source": "QUAD:IN20:361:BACT",
+        "value": 42
+      }
+    ],
+    "mldp_pvxs_driver_reader_processing_time_ms": [
+      {
+        "source": "QUAD:IN20:361:BACT",
+        "histogram": "bucket",
+        "le": "0.5",
+        "value": 10
+      },
+      {
+        "source": "QUAD:IN20:361:BACT",
+        "histogram": "sum",
+        "value": 125.5
+      },
+      {
+        "source": "QUAD:IN20:361:BACT",
+        "histogram": "count",
+        "value": 42
+      }
+    ]
   }
 }
 ```
 
-### Metric Structure
+**Metric structure**:
+- Tagged metrics include label fields (e.g., `"source"`, `"pv"`) plus `"value"`
+- Histograms include a `"histogram"` field (`"bucket"`, `"sum"`, or `"count"`)
+- Untagged metrics have only `"value"` field
 
-Each metric value is a JSON object containing:
-- **Tagged metrics** (e.g., with `source` field): Include label fields plus a `"value"` field
-  ```json
-  "metric_name": {
-    "source": "PV_NAME",
-    "value": 12345
-  }
-  ```
-- **Untagged metrics**: Include only the `"value"` field
-  ```json
-  "metric_name": {
-    "value": 42
-  }
-  ```
+## Example Output (JSON Lines)
 
-The `source` label identifies which PV or data source the metric is associated with.
+See the format specification above. Histogram samples are grouped under the base metric name with a `"histogram"` label indicating the sample type.
 
 ## Implementation Details
 
 ### Classes and functions
 
-- **`PeriodicMetricsDumper`**: Background thread manager for periodic metric exports
+- **`MetricsConfig`**: Parses YAML configuration for Prometheus endpoint and scan interval
+- **`Metrics`**: Prometheus registry and metric family accessors
+- **`PeriodicMetricsDumper`**: Background thread manager for periodic file exports
   - `start()`: Begins periodic dumping
   - `stop()`: Gracefully stops the background thread
   - Thread-safe with mutex protection
 
 - **`appendMetricsToFile()`**: Appends JSONL-formatted metrics with timestamps
 - **`serializeMetricsJsonl()`**: Converts Prometheus metrics to structured JSON with:
-  - Metric names as keys
-  - Objects containing label fields and a `"value"` field
-  - Automatic renaming of `reader` labels to `source`
-
-### MetricsSnapshot
-`MetricsSnapshot` (`include/metrics/MetricsSnapshot.h`, `src/metrics/MetricsSnapshot.cpp`) builds a structured snapshot from the Prometheus registry and formats it for stdout.
-
-- **Snapshot creation**: `getSnapshot(const Metrics& metrics)` parses the Prometheus text exposition to collect per-reader and pool metrics.
-- **Formatting**: `toString(const MetricsData& snapshot)` renders a human-readable report for interactive dumps.
-- **Usage path**: the CLI triggers `MetricsSnapshot` when Ctrl+P or SIGUSR1/SIGQUIT is received.
-
-Example stdout output:
-```text
-================================ METRICS DUMP ========================
-
-READER STATISTICS:
-─────────────────────────────────────────────────────────────────
-PV: pv_1
-  Pushes:     42
-  Total Data: 1.23 MB
-  Rate:       12.34 KB/s
-
-CONNECTION POOL:
-─────────────────────────────────────────────────────────────────
-  In Use:     1
-  Available:  3
-  Total:      4
-=====================================================================
-```
+  - Metrics grouped by name as arrays
+  - Histogram samples tagged with `"histogram"` (bucket/sum/count)
+- **`MetricsSnapshot`** (`include/metrics/MetricsSnapshot.h`, `src/metrics/MetricsSnapshot.cpp`): Builds snapshots from the Prometheus registry and formats for stdout
+  - **Snapshot creation**: `getSnapshot(const Metrics& metrics)` parses the Prometheus text exposition to collect per-reader and pool metrics.
+  - **Formatting**: `toString(const MetricsData& snapshot)` renders a human-readable report for interactive dumps.
+  - **Usage path**: the CLI triggers `MetricsSnapshot` when Ctrl+P or SIGUSR1/SIGQUIT is received.
 
 ### Architecture
 
@@ -160,29 +190,32 @@ CONNECTION POOL:
 
 ## Configuration Examples
 
-### High-frequency monitoring (every 10 seconds):
-```bash
-./mldp_pvxs_driver --metrics-output metrics.jsonl --metrics-interval 10
-```
+1. **Prometheus endpoint with 2-second system scan**:
+   ```yaml
+   metrics:
+     endpoint: 0.0.0.0:9464
+     scan_interval_seconds: 2
+   ```
 
-### Low-frequency baseline (every 5 minutes):
-```bash
-./mldp_pvxs_driver --metrics-output metrics.jsonl --metrics-interval 300
-```
+2. **JSONL exports every 5 seconds**:
+   ```bash
+   ./mldp_pvxs_driver --metrics-output metrics.jsonl --metrics-interval 5
+   ```
 
-### Disabled (manual dumps only):
-```bash
-./mldp_pvxs_driver  # No --metrics-output argument
-```
+3. **Manual dumps only**:
+   ```bash
+   ./mldp_pvxs_driver  # No metrics block or --metrics-output
+   ```
 
-### Runtime controls
-- Press **Ctrl+P** to dump metrics to stdout (MetricsSnapshot formatted).
-- Press **Ctrl+D** to toggle the periodic metrics dumper on/off.
+4. **Combined endpoint and file exports**:
+   Configure both the YAML `metrics` block and use `--metrics-output` together.
 
 ## Benefits
 
-1. **Time-series analysis**: Easily track metric trends over time
-2. **Parseable format**: Standard JSON tools work seamlessly
-3. **Low overhead**: Configurable intervals prevent I/O saturation
-4. **Non-blocking**: Periodic dumps happen in a background thread
-5. **Flexible**: Can be combined with manual dumps via Ctrl+P
+1. **Flexible export**: Prometheus HTTP endpoint or JSONL file logging
+2. **System visibility**: CPU, I/O, and resource metrics alongside application metrics
+3. **Time-series analysis**: Track trends over time with periodic JSONL dumps
+4. **Parseable format**: Standard JSON tools (jq, Python json module) for analysis
+5. **Low overhead**: Configurable scan intervals prevent I/O saturation
+6. **Non-blocking**: Background threads for file exports don't affect main processing
+7. **Operational controls**: Runtime toggle with Ctrl+D, manual dumps with Ctrl+P
