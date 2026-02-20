@@ -11,6 +11,7 @@
 #include <argparse/argparse.hpp>
 #include <atomic>
 #include <cstdlib>
+#include <memory>
 #include <spdlog/common.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
@@ -21,6 +22,7 @@
 #include <format>
 
 #include <iostream>
+#include <sstream>
 
 #include <termios.h>
 #include <unistd.h>
@@ -30,76 +32,26 @@
 #include <string_view>
 
 #define RYML_SINGLE_HDR_DEFINE_NOW
+#include <prometheus/text_serializer.h>
 #include <rapidyaml-0.10.0.hpp>
 
 #include <config/Config.h>
 #include <controller/MLDPPVXSController.h>
+#include <metrics/MetricsSnapshot.h>
 #include <mldp_pvxs_driver_version.h>
+
+#include "PeriodicMetricsDumper.h"
+#include "SpdlogLogger.h"
 
 using namespace argparse;
 using namespace mldp_pvxs_driver::config;
 using namespace mldp_pvxs_driver::util::log;
 using namespace mldp_pvxs_driver::controller;
+using mldp_pvxs_driver::cli::SpdlogLogger;
 
 namespace {
 
-class SpdlogLogger final : public mldp_pvxs_driver::util::log::ILogger
-{
-public:
-    using mldp_pvxs_driver::util::log::ILogger::setLevel;
-
-    explicit SpdlogLogger(std::shared_ptr<spdlog::logger> logger)
-        : logger_(std::move(logger))
-    {
-    }
-
-    void setLevel(mldp_pvxs_driver::util::log::Level level) override
-    {
-        if (!logger_)
-        {
-            return;
-        }
-        logger_->set_level(toSpd(level));
-    }
-
-    bool shouldLog(mldp_pvxs_driver::util::log::Level level) const override
-    {
-        if (!logger_)
-        {
-            return false;
-        }
-        return logger_->should_log(toSpd(level));
-    }
-
-    void log(mldp_pvxs_driver::util::log::Level level, std::string_view message) override
-    {
-        if (!logger_)
-        {
-            return;
-        }
-        logger_->log(toSpd(level), "{}", message);
-    }
-
-private:
-    static spdlog::level::level_enum toSpd(mldp_pvxs_driver::util::log::Level level)
-    {
-        using L = mldp_pvxs_driver::util::log::Level;
-        switch (level)
-        {
-        case L::Trace: return spdlog::level::trace;
-        case L::Debug: return spdlog::level::debug;
-        case L::Info: return spdlog::level::info;
-        case L::Warn: return spdlog::level::warn;
-        case L::Error: return spdlog::level::err;
-        case L::Critical: return spdlog::level::critical;
-        case L::Off: return spdlog::level::off;
-        }
-        return spdlog::level::info;
-    }
-
-    std::shared_ptr<spdlog::logger> logger_;
-};
-
+// Disable echoing of control characters like ^C in the terminal.
 void disable_tty_echoctl()
 {
     if (!::isatty(STDIN_FILENO))
@@ -113,6 +65,7 @@ void disable_tty_echoctl()
     (void)::tcsetattr(STDIN_FILENO, TCSANOW, &t);
 }
 
+// State for restoring terminal settings on exit.
 struct TerminalRestoreState
 {
     termios old{};
@@ -122,6 +75,7 @@ struct TerminalRestoreState
 
 TerminalRestoreState g_terminal_restore;
 
+// Restore terminal settings if previously modified.
 void restore_terminal()
 {
     if (!g_terminal_restore.active)
@@ -132,19 +86,46 @@ void restore_terminal()
     g_terminal_restore.active = false;
 }
 
+// Configure command line argument parser.
 void configure_parameter(ArgumentParser& program)
 {
+    program.add_description("MLDP PVXS Driver - Forwards reader updates (e.g., EPICS PVs) to the MLDP ingestion API. Supports multiple reader implementations.");
     program.add_argument("-c", "--config")
         .help("Path to configuration YAML file")
-        .default_value(std::string("mldp_pvxs_driver.yaml"))
+        .default_value(std::string("config.yaml"))
         .metavar("FILE");
 
     program.add_argument("-l", "--log-level")
         .help("Logging level (trace, debug, info, warn, error, critical, off)")
         .default_value(std::string("info"))
         .metavar("LEVEL");
+
+    program.add_argument("-m", "--metrics-output")
+        .help("Path to output file for periodic metrics dumps (JSON Lines format)")
+        .default_value(std::string("metrics.jsonl"))
+        .metavar("FILE");
+
+    program.add_argument("--metrics-interval")
+        .help("Interval in seconds for periodic metrics dumps (default: 60)")
+        .default_value(5)
+        .scan<'d', int>()
+        .metavar("SECONDS");
+
+    // add metrics help to epilog
+    program.add_epilog(
+        R"(Metrics:
+
+     - Press Ctrl+P in the foreground terminal to dump metrics.
+     - Or send SIGUSR1 / SIGQUIT to request a dump:
+        kill -USR1 <pid>
+        kill -QUIT <pid>
+     - Use --metrics-output to specify a file path for periodic metric dumps
+       (stored in JSON Lines format with configurable interval).
+    )");
 }
 
+// Guard used to set terminal to cbreak mode.
+// Restores terminal settings on destruction.
 struct TermCbreakGuard
 {
     termios old{};
@@ -194,6 +175,16 @@ struct TermCbreakGuard
         restore_terminal();
     }
 };
+
+// Serialize metrics to Prometheus text exposition format.
+std::string serializeMetricsText(const mldp_pvxs_driver::metrics::Metrics& metrics)
+{
+    prometheus::TextSerializer serializer;
+    std::ostringstream         out;
+    serializer.Serialize(out, metrics.registry()->Collect());
+    return out.str();
+}
+
 } // namespace
 
 // Global flags for signal handling
@@ -201,7 +192,8 @@ volatile std::atomic<bool> quit = false;
 volatile std::atomic<bool> metrics_requested = false;
 
 // Global driver instance
-std::shared_ptr<MLDPPVXSController> driver = nullptr;
+std::shared_ptr<MLDPPVXSController>    driver = nullptr;
+std::shared_ptr<PeriodicMetricsDumper> metrics_dumper = nullptr;
 
 int main(int argc, char** argv)
 {
@@ -226,17 +218,37 @@ int main(int argc, char** argv)
         "MLDP PVXS Driver",
         std::format("{}.{}.{}", MLDP_PVXS_DRIVER_VERSION_MAJOR, MLDP_PVXS_DRIVER_VERSION_MINOR, MLDP_PVXS_DRIVER_VERSION_PATCH));
 
-    // add metrics help to epilog
-    program.add_epilog(
-        R"(Metrics:
-
-     - Press Ctrl+P in the foreground terminal to dump metrics.
-     - Or send SIGUSR1 / SIGQUIT to request a dump:
-        kill -USR1 <pid>
-        kill -QUIT <pid>
-    )");
-
     configure_parameter(program);
+
+    const auto start_dumper = [&program](std::shared_ptr<PeriodicMetricsDumper>& metrics_dumper)
+    {
+        if (metrics_dumper)
+        {
+            spdlog::warn("Periodic metrics dumper is already running.");
+            return;
+        }
+        // Ctrl+D
+        const auto interval_seconds = program.get<int>("--metrics-interval");
+        spdlog::info(
+            "Starting periodic metrics dumper to file '{}' every {} seconds...",
+            program.get<std::string>("--metrics-output"),
+            interval_seconds);
+        metrics_dumper = std::make_shared<PeriodicMetricsDumper>(
+            driver->metrics(),
+            program.get<std::string>("--metrics-output"),
+            std::chrono::milliseconds(interval_seconds * 1000));
+    };
+
+    const auto stop_dumper = [&program](std::shared_ptr<PeriodicMetricsDumper>& metrics_dumper)
+    {
+        // Stop periodic metrics dumper if it was started
+        if (metrics_dumper)
+        {
+            spdlog::info("Stopping periodic metrics dumper...");
+            metrics_dumper.reset();
+            spdlog::info("Stopped periodic metrics dumper.");
+        }
+    };
 
     try
     {
@@ -247,16 +259,14 @@ int main(int argc, char** argv)
         TermCbreakGuard termGuard;
         // Metrics printing can be triggered either by Ctrl+P (foreground terminal)
         // or by sending SIGUSR1/SIGQUIT to the process.
-        const auto metricHandler = []()
+        mldp_pvxs_driver::metrics::MetricsSnapshot metrics_snapshot;
+        const auto metricHandler = [&metrics_snapshot]()
         {
             if (driver)
             {
-                // Placeholder: replace with real metric retrieval logic.
-                spdlog::info("=== Metrics Dump ===");
-                // Example of accessing a hypothetical metrics interface:
-                // driver->printMetrics();
-                spdlog::info("Metrics printing not yet implemented.");
-                spdlog::info("====================");
+                const auto snapshot = metrics_snapshot.getSnapshot(driver->metrics());
+                std::cout << mldp_pvxs_driver::metrics::MetricsSnapshot::toString(snapshot);
+                std::cout.flush();
             }
         };
 
@@ -362,11 +372,27 @@ int main(int argc, char** argv)
                 // Ctrl+P
                 metricHandler();
             }
+
+            // metric dumper activations
+            if (c == ('d' & 0x1F))
+            {
+                if (metrics_dumper)
+                {
+                    stop_dumper(metrics_dumper);
+                }
+                else
+                {
+                    start_dumper(metrics_dumper);
+                }
+            }
         }
 
         // Stop the driver
         spdlog::info("Stopping driver...");
         driver->stop();
+
+        // Stop periodic metrics dumper if it was started
+        stop_dumper(metrics_dumper);
 
         // Ensure all driver-owned components (and their loggers) are destroyed
         // before leaving main(), to avoid static-destruction-order issues.

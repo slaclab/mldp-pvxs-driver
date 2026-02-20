@@ -7,3 +7,5 @@ out/
 docs/html
 config*.yaml
 config-*.yml
+metrics.jsonl
+Testing/

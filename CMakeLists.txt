@@ -1,13 +1,13 @@
 cmake_minimum_required(VERSION 3.15)
-project(mldp_pvxs_driver VERSION 0.2.0 LANGUAGES CXX)
+project(mldp_pvxs_driver VERSION 0.2.2 LANGUAGES CXX)
 
 # C++ Standard
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Options
-option(MLDP_PVXS_DRIVER_MAIN  "Build MLDP PVXS driver executable"  ON)
-option(MLDP_PVXS_DRIVER_TESTS "Build MLDP PVXS driver tests"      OFF)
+option(MLDP_PVXS_DRIVER_MAIN "Build MLDP PVXS driver executable" ON)
+option(MLDP_PVXS_DRIVER_TESTS "Build MLDP PVXS driver tests" OFF)
 option(MLDP_PVXS_DRIVER_COVERAGE "Enable code coverage instrumentation" OFF)
 option(MLDP_PVXS_DRIVER_LINK_EPICS_PVXS_STATIC "Link EPICS and PVXS libraries statically (prefer .a over .so)" ON)
 
@@ -21,6 +21,8 @@ include(FetchContent)
 set(PROMETHEUS_CPP_VERSION "v1.3.0")
 set(SPDLOG_VERSION "v1.16.0")
 set(ARGPARSE_VERSION "v3.2")
+set(METRIC_GRABBER_VERSION "v0.0.1")
+
 # Output directories
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
@@ -40,16 +42,16 @@ message(STATUS "C++ Standard: ${CMAKE_CXX_STANDARD}")
 # Acquire spdlog for structured logging and ensure it builds before the driver library.
 message(STATUS "Acquiring spdlog version ${SPDLOG_VERSION}...")
 FetchContent_Declare(spdlog
-        GIT_REPOSITORY https://github.com/gabime/spdlog.git
-        GIT_TAG        ${SPDLOG_VERSION}
+    GIT_REPOSITORY https://github.com/gabime/spdlog.git
+    GIT_TAG ${SPDLOG_VERSION}
 )
 FetchContent_MakeAvailable(spdlog)
 
 # Acquire argparse for command-line argument parsing
 message(STATUS "Acquire argparse version ${ARGPARSE_VERSION}...")
 FetchContent_Declare(argparse
-        GIT_REPOSITORY https://github.com/p-ranav/argparse.git
-        GIT_TAG        ${ARGPARSE_VERSION}
+    GIT_REPOSITORY https://github.com/p-ranav/argparse.git
+    GIT_TAG ${ARGPARSE_VERSION}
 )
 FetchContent_MakeAvailable(argparse)
 
@@ -62,10 +64,10 @@ if(DEFINED CACHE{ENABLE_TESTING})
     set(_PROMETHEUS_ENABLE_TESTING_VALUE ${ENABLE_TESTING})
 endif()
 set(ENABLE_TESTING OFF CACHE BOOL "Disable tests when pulling prometheus-cpp" FORCE)
-message (STATUS "Acquiring prometheus-cpp version ${PROMETHEUS_CPP_VERSION}...")
+message(STATUS "Acquiring prometheus-cpp version ${PROMETHEUS_CPP_VERSION}...")
 FetchContent_Declare(prometheus-cpp
-        GIT_REPOSITORY https://github.com/jupp0r/prometheus-cpp.git
-        GIT_TAG        ${PROMETHEUS_CPP_VERSION}
+    GIT_REPOSITORY https://github.com/jupp0r/prometheus-cpp.git
+    GIT_TAG ${PROMETHEUS_CPP_VERSION}
 )
 FetchContent_MakeAvailable(prometheus-cpp)
 
@@ -74,6 +76,15 @@ if(_PROMETHEUS_ENABLE_TESTING_DEFINED)
 else()
     unset(ENABLE_TESTING CACHE)
 endif()
+
+# acquiring metric-grabber to enanceh mldp driver with systme metrics
+message(STATUS "Acquiring metric-grabber version ${METRIC_GRABBER_VERSION}...")
+FetchContent_Declare(metric_grabber
+    GIT_REPOSITORY https://github.com/slaclab/metrics-grabber.git
+    GIT_TAG ${METRIC_GRABBER_VERSION}
+)
+FetchContent_MakeAvailable(metric_grabber)
+
 
 # Find required packages
 find_package(Protobuf REQUIRED)
@@ -93,19 +104,39 @@ endif()
 set(EPICS_LIB_HINTS "")
 if(EPICS_BASE)
     list(APPEND EPICS_LIB_HINTS
-            "${EPICS_BASE}/lib"
-            "${EPICS_BASE}/lib/${EPICS_HOST_ARCH}")
+        "${EPICS_BASE}/lib"
+        "${EPICS_BASE}/lib/${EPICS_HOST_ARCH}")
 endif()
 
 if(MLDP_PVXS_DRIVER_LINK_EPICS_PVXS_STATIC)
     set(_mldp_saved_suffixes "${CMAKE_FIND_LIBRARY_SUFFIXES}")
     set(CMAKE_FIND_LIBRARY_SUFFIXES ".a")
     unset(EPICS_COM_LIB CACHE)
+    unset(EPICS_PVDATA_LIB CACHE)
+    unset(EPICS_PVACCESS_LIB CACHE)
+    unset(EPICS_PVACLIENT_LIB CACHE)
+    unset(EPICS_PVACCESSCA_LIB CACHE)
+    unset(EPICS_CA_LIB CACHE)
 endif()
 
 find_library(EPICS_COM_LIB
-        NAMES Com libCom
-        PATHS ${EPICS_LIB_HINTS})
+    NAMES Com libCom
+    PATHS ${EPICS_LIB_HINTS})
+find_library(EPICS_PVDATA_LIB
+    NAMES pvData libpvData
+    PATHS ${EPICS_LIB_HINTS})
+find_library(EPICS_PVACCESS_LIB
+    NAMES pvAccess libpvAccess
+    PATHS ${EPICS_LIB_HINTS})
+find_library(EPICS_PVACLIENT_LIB
+    NAMES pvaClient libpvaClient
+    PATHS ${EPICS_LIB_HINTS})
+find_library(EPICS_PVACCESSCA_LIB
+    NAMES pvAccessCA libpvAccessCA
+    PATHS ${EPICS_LIB_HINTS})
+find_library(EPICS_CA_LIB
+    NAMES ca libca
+    PATHS ${EPICS_LIB_HINTS})
 
 if(MLDP_PVXS_DRIVER_LINK_EPICS_PVXS_STATIC)
     set(CMAKE_FIND_LIBRARY_SUFFIXES "${_mldp_saved_suffixes}")
@@ -113,6 +144,21 @@ endif()
 
 if(NOT EPICS_COM_LIB)
     message(FATAL_ERROR "Could not locate libCom. Set EPICS_BASE/EPICS_HOST_ARCH or install EPICS Base in a searchable location.")
+endif()
+if(NOT EPICS_PVDATA_LIB)
+    message(FATAL_ERROR "Could not locate libpvData. Set EPICS_BASE/EPICS_HOST_ARCH or install EPICS Base in a searchable location.")
+endif()
+if(NOT EPICS_PVACCESS_LIB)
+    message(FATAL_ERROR "Could not locate libpvAccess. Set EPICS_BASE/EPICS_HOST_ARCH or install EPICS Base in a searchable location.")
+endif()
+if(NOT EPICS_PVACLIENT_LIB)
+    message(FATAL_ERROR "Could not locate libpvaClient. Set EPICS_BASE/EPICS_HOST_ARCH or install EPICS Base in a searchable location.")
+endif()
+if(NOT EPICS_PVACCESSCA_LIB)
+    message(FATAL_ERROR "Could not locate libpvAccessCA. Set EPICS_BASE/EPICS_HOST_ARCH or install EPICS Base in a searchable location.")
+endif()
+if(NOT EPICS_CA_LIB)
+    message(FATAL_ERROR "Could not locate libca. Set EPICS_BASE/EPICS_HOST_ARCH or install EPICS Base in a searchable location.")
 endif()
 
 get_filename_component(EPICS_LIB_DIR "${EPICS_COM_LIB}" DIRECTORY)
@@ -136,22 +182,67 @@ endif()
 
 if(MLDP_PVXS_DRIVER_LINK_EPICS_PVXS_STATIC)
     add_library(epics-com STATIC IMPORTED)
+    add_library(epics-pvdata STATIC IMPORTED)
+    add_library(epics-pvaccess STATIC IMPORTED)
+    add_library(epics-pvaclient STATIC IMPORTED)
+    add_library(epics-pvaccessca STATIC IMPORTED)
+    add_library(epics-ca STATIC IMPORTED)
 else()
     add_library(epics-com SHARED IMPORTED)
+    add_library(epics-pvdata SHARED IMPORTED)
+    add_library(epics-pvaccess SHARED IMPORTED)
+    add_library(epics-pvaclient SHARED IMPORTED)
+    add_library(epics-pvaccessca SHARED IMPORTED)
+    add_library(epics-ca SHARED IMPORTED)
 endif()
 set_target_properties(epics-com PROPERTIES IMPORTED_LOCATION "${EPICS_COM_LIB}")
+set_target_properties(epics-pvdata PROPERTIES IMPORTED_LOCATION "${EPICS_PVDATA_LIB}")
+set_target_properties(epics-pvaccess PROPERTIES IMPORTED_LOCATION "${EPICS_PVACCESS_LIB}")
+set_target_properties(epics-pvaclient PROPERTIES IMPORTED_LOCATION "${EPICS_PVACLIENT_LIB}")
+set_target_properties(epics-pvaccessca PROPERTIES IMPORTED_LOCATION "${EPICS_PVACCESSCA_LIB}")
+set_target_properties(epics-ca PROPERTIES IMPORTED_LOCATION "${EPICS_CA_LIB}")
 target_include_directories(epics-com INTERFACE
-        "${EPICS_INCLUDE_DIR}"
-        "${EPICS_INCLUDE_DIR}/${EPICS_OS_DIR}"
+    "${EPICS_INCLUDE_DIR}"
+    "${EPICS_INCLUDE_DIR}/${EPICS_OS_DIR}"
+)
+target_include_directories(epics-pvdata INTERFACE
+    "${EPICS_INCLUDE_DIR}"
+    "${EPICS_INCLUDE_DIR}/${EPICS_OS_DIR}"
+)
+target_include_directories(epics-pvaccess INTERFACE
+    "${EPICS_INCLUDE_DIR}"
+    "${EPICS_INCLUDE_DIR}/${EPICS_OS_DIR}"
+)
+target_include_directories(epics-pvaclient INTERFACE
+    "${EPICS_INCLUDE_DIR}"
+    "${EPICS_INCLUDE_DIR}/${EPICS_OS_DIR}"
+)
+target_include_directories(epics-pvaccessca INTERFACE
+    "${EPICS_INCLUDE_DIR}"
+    "${EPICS_INCLUDE_DIR}/${EPICS_OS_DIR}"
+)
+target_include_directories(epics-ca INTERFACE
+    "${EPICS_INCLUDE_DIR}"
+    "${EPICS_INCLUDE_DIR}/${EPICS_OS_DIR}"
 )
 if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
     target_include_directories(epics-com INTERFACE
-            "${EPICS_INCLUDE_DIR}/compiler/clang"
+        "${EPICS_INCLUDE_DIR}/compiler/clang"
     )
+    target_include_directories(epics-pvdata INTERFACE "${EPICS_INCLUDE_DIR}/compiler/clang")
+    target_include_directories(epics-pvaccess INTERFACE "${EPICS_INCLUDE_DIR}/compiler/clang")
+    target_include_directories(epics-pvaclient INTERFACE "${EPICS_INCLUDE_DIR}/compiler/clang")
+    target_include_directories(epics-pvaccessca INTERFACE "${EPICS_INCLUDE_DIR}/compiler/clang")
+    target_include_directories(epics-ca INTERFACE "${EPICS_INCLUDE_DIR}/compiler/clang")
 elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     target_include_directories(epics-com INTERFACE
-            "${EPICS_INCLUDE_DIR}/compiler/gcc"
+        "${EPICS_INCLUDE_DIR}/compiler/gcc"
     )
+    target_include_directories(epics-pvdata INTERFACE "${EPICS_INCLUDE_DIR}/compiler/gcc")
+    target_include_directories(epics-pvaccess INTERFACE "${EPICS_INCLUDE_DIR}/compiler/gcc")
+    target_include_directories(epics-pvaclient INTERFACE "${EPICS_INCLUDE_DIR}/compiler/gcc")
+    target_include_directories(epics-pvaccessca INTERFACE "${EPICS_INCLUDE_DIR}/compiler/gcc")
+    target_include_directories(epics-ca INTERFACE "${EPICS_INCLUDE_DIR}/compiler/gcc")
 else()
     message(FATAL_ERROR "Unable to determine compiler ID!")
 endif()
@@ -176,8 +267,8 @@ if(NOT PVXS_FOUND)
     set(PVXS_LIB_HINTS "")
     if(PVXS_BASE)
         list(APPEND PVXS_LIB_HINTS
-                "${PVXS_BASE}/lib"
-                "${PVXS_BASE}/lib/${EPICS_HOST_ARCH}")
+            "${PVXS_BASE}/lib"
+            "${PVXS_BASE}/lib/${EPICS_HOST_ARCH}")
     endif()
 
     if(MLDP_PVXS_DRIVER_LINK_EPICS_PVXS_STATIC)
@@ -185,13 +276,13 @@ if(NOT PVXS_FOUND)
         set(_mldp_saved_suffixes "${CMAKE_FIND_LIBRARY_SUFFIXES}")
         set(CMAKE_FIND_LIBRARY_SUFFIXES ".a")
         find_library(PVXS_LIB
-                NAMES pvxs libpvxs
-                PATHS ${PVXS_LIB_HINTS})
+            NAMES pvxs libpvxs
+            PATHS ${PVXS_LIB_HINTS})
         set(CMAKE_FIND_LIBRARY_SUFFIXES "${_mldp_saved_suffixes}")
     else()
         find_library(PVXS_LIB
-                NAMES pvxs libpvxs
-                PATHS ${PVXS_LIB_HINTS})
+            NAMES pvxs libpvxs
+            PATHS ${PVXS_LIB_HINTS})
     endif()
 
     if(NOT PVXS_LIB)
@@ -205,8 +296,8 @@ if(NOT PVXS_FOUND)
         list(APPEND PVXS_INCLUDE_HINTS "${PVXS_BASE}/include")
     endif()
     list(APPEND PVXS_INCLUDE_HINTS
-            "${EPICS_INCLUDE_DIR}"
-            "${PVXS_LIB_DIR}/../include")
+        "${EPICS_INCLUDE_DIR}"
+        "${PVXS_LIB_DIR}/../include")
 
     find_path(PVXS_INCLUDE_DIR pvxs/version.h PATHS ${PVXS_INCLUDE_HINTS})
 
@@ -222,21 +313,21 @@ if(NOT PVXS_FOUND)
     set_target_properties(pvxs PROPERTIES IMPORTED_LOCATION "${PVXS_LIB}")
     target_link_libraries(pvxs INTERFACE epics-com)
 
-        if(MLDP_PVXS_DRIVER_LINK_EPICS_PVXS_STATIC)
-            find_library(LIBEVENT_CORE_LIB NAMES event_core)
-            find_library(LIBEVENT_EXTRA_LIB NAMES event_extra)
-            find_library(LIBEVENT_PTHREADS_LIB NAMES event_pthreads)
+    if(MLDP_PVXS_DRIVER_LINK_EPICS_PVXS_STATIC)
+        find_library(LIBEVENT_CORE_LIB NAMES event_core)
+        find_library(LIBEVENT_EXTRA_LIB NAMES event_extra)
+        find_library(LIBEVENT_PTHREADS_LIB NAMES event_pthreads)
 
-            if(NOT LIBEVENT_CORE_LIB OR NOT LIBEVENT_EXTRA_LIB OR NOT LIBEVENT_PTHREADS_LIB)
-                message(FATAL_ERROR "Static PVXS linking requested, but required libevent libraries were not found (event_core/event_extra/event_pthreads).")
-            endif()
-
-            target_link_libraries(pvxs INTERFACE
-                    "${LIBEVENT_CORE_LIB}"
-                    "${LIBEVENT_EXTRA_LIB}"
-                    "${LIBEVENT_PTHREADS_LIB}"
-            )
+        if(NOT LIBEVENT_CORE_LIB OR NOT LIBEVENT_EXTRA_LIB OR NOT LIBEVENT_PTHREADS_LIB)
+            message(FATAL_ERROR "Static PVXS linking requested, but required libevent libraries were not found (event_core/event_extra/event_pthreads).")
         endif()
+
+        target_link_libraries(pvxs INTERFACE
+            "${LIBEVENT_CORE_LIB}"
+            "${LIBEVENT_EXTRA_LIB}"
+            "${LIBEVENT_PTHREADS_LIB}"
+        )
+    endif()
     target_include_directories(pvxs INTERFACE "${PVXS_INCLUDE_DIR}")
 endif()
 
@@ -246,9 +337,9 @@ set(PROTO_PATH $ENV{PROTO_PATH})
 message(STATUS "ProtoBuf mldp description file path: ${PROTO_PATH}")
 
 set(PROTO_FILES
-        ${PROTO_PATH}/common.proto
-        ${PROTO_PATH}/query.proto
-        ${PROTO_PATH}/ingestion.proto
+    ${PROTO_PATH}/common.proto
+    ${PROTO_PATH}/query.proto
+    ${PROTO_PATH}/ingestion.proto
 )
 
 # Generate proto sources
@@ -273,55 +364,75 @@ file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/proto)
 
 # Custom command for proto compilation
 add_custom_command(
-        OUTPUT ${PROTO_SRCS} ${PROTO_HDRS} ${GRPC_SRCS} ${GRPC_HDRS}
-        COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/proto
-        COMMAND ${Protobuf_PROTOC_EXECUTABLE}
-        --proto_path=${PROTO_PATH}
-        --cpp_out=${CMAKE_CURRENT_BINARY_DIR}/proto
-        --grpc_out=${CMAKE_CURRENT_BINARY_DIR}/proto
-        --plugin=protoc-gen-grpc=${GRPC_CPP_PLUGIN}
-        ${PROTO_FILES}
-        DEPENDS ${PROTO_FILES}
+    OUTPUT ${PROTO_SRCS} ${PROTO_HDRS} ${GRPC_SRCS} ${GRPC_HDRS}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/proto
+    COMMAND ${Protobuf_PROTOC_EXECUTABLE}
+    --proto_path=${PROTO_PATH}
+    --cpp_out=${CMAKE_CURRENT_BINARY_DIR}/proto
+    --grpc_out=${CMAKE_CURRENT_BINARY_DIR}/proto
+    --plugin=protoc-gen-grpc=${GRPC_CPP_PLUGIN}
+    ${PROTO_FILES}
+    DEPENDS ${PROTO_FILES}
 )
 
 # Proto library
 add_library(lib${PROJECT_NAME}_proto STATIC
-        ${PROTO_SRCS}
-        ${GRPC_SRCS}
+    ${PROTO_SRCS}
+    ${GRPC_SRCS}
 )
 
 target_link_libraries(lib${PROJECT_NAME}_proto PUBLIC
-        protobuf::libprotobuf
-        gRPC::grpc++
+    protobuf::libprotobuf
+    gRPC::grpc++
 )
 
 target_include_directories(lib${PROJECT_NAME}_proto PUBLIC
-        ${CMAKE_CURRENT_BINARY_DIR}/proto
+    ${CMAKE_CURRENT_BINARY_DIR}/proto
 )
 
 # Base library
 add_library(lib${PROJECT_NAME}
-        "${CMAKE_CURRENT_SOURCE_DIR}/ext/BS_thread_pool/include/BS_thread_pool.hpp"
-        # "${CMAKE_CURRENT_SOURCE_DIR}/include/bus/IEventBusPush.h"
-        # "${CMAKE_CURRENT_SOURCE_DIR}/include/reader/Reader.h"
-        # "${CMAKE_CURRENT_SOURCE_DIR}/include/reader/ReaderFactory.h"
-        # "${CMAKE_CURRENT_SOURCE_DIR}/include/mldp_pvxs_driver.h"
-        # "${CMAKE_CURRENT_SOURCE_DIR}/include/reader/impl/epics/EpicsReader.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/ext/BS_thread_pool/include/BS_thread_pool.hpp"
+    # "${CMAKE_CURRENT_SOURCE_DIR}/include/bus/IEventBusPush.h"
+    # "${CMAKE_CURRENT_SOURCE_DIR}/include/reader/Reader.h"
+    # "${CMAKE_CURRENT_SOURCE_DIR}/include/reader/ReaderFactory.h"
+    # "${CMAKE_CURRENT_SOURCE_DIR}/include/mldp_pvxs_driver.h"
+    # "${CMAKE_CURRENT_SOURCE_DIR}/include/reader/impl/epics/EpicsReader.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/ReaderFactory.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/util/log/CoutLogger.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/config/Config.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/EpicsReader.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/EpicsReaderConfig.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/EpicsMLDPConversion.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/BSASEpicsMLDPConversion.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/pool/MLDPGrpcPoolConfig.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/pool/MLDPGrpcPool.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/controller/MLDPPVXSControllerConfig.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/controller/MLDPPVXSController.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/metrics/Metrics.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/metrics/MetricsConfig.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/util/log/CoutLogger.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/config/Config.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/EpicsReaderBase.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/EpicsPVXSReader.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/EpicsBaseReader.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/EpicsReaderConfig.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/EpicsMLDPConversion.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/BSASEpicsMLDPConversion.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/EpicsPVDataConversion.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/EpicsBaseMonitorPoller.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/pool/MLDPGrpcPoolConfig.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/pool/MLDPGrpcPool.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/controller/MLDPPVXSControllerConfig.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/controller/MLDPPVXSController.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/metrics/Metrics.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/metrics/MetricsConfig.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/metrics/MetricsSnapshot.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/PeriodicMetricsDumper.cpp"
 )
-target_link_libraries(lib${PROJECT_NAME} PUBLIC lib${PROJECT_NAME}_proto Threads::Threads pvxs prometheus-cpp::core prometheus-cpp::pull)
+target_link_libraries(lib${PROJECT_NAME} PUBLIC
+    lib${PROJECT_NAME}_proto
+    Threads::Threads
+    pvxs
+    epics-pvaclient
+    epics-pvaccess
+    epics-pvaccessca
+    epics-pvdata
+    epics-ca
+    epics-com
+    prometheus-cpp::core
+    prometheus-cpp::pull
+    spdlog::spdlog
+    metricsgrabber
+)
 target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/ext/BS_thread_pool/include")
 target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/ext/rapidyaml/include")
 target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
@@ -384,18 +495,22 @@ if(MLDP_PVXS_DRIVER_TESTS)
     endif()
 
     FetchContent_Declare(googletest
-            GIT_REPOSITORY "https://github.com/google/googletest.git"
-            GIT_TAG        "main")
+        GIT_REPOSITORY "https://github.com/google/googletest.git"
+        GIT_TAG "main")
     FetchContent_MakeAvailable(googletest)
     enable_testing()
     add_executable(${PROJECT_NAME}_test
-            "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/sioc.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/test/config/epics_reader_config_test.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/test/config/mldppvxs_controller_config_test.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/test/controller/mldppvxs_controller_test.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/test/ryml_single_header_translation_unit.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/test/pool/test_mldp_grpc_pool.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics/epics_reader_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/sioc.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/config/epics_reader_config_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/config/mldppvxs_controller_config_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/controller/mldppvxs_controller_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/ryml_single_header_translation_unit.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/pool/test_mldp_grpc_pool.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics/epics_pvxs_reader_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics/epics_base_reader_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/metrics/periodic_metrics_dumper_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/metrics/metrics_histogram_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/metrics/system_metrics_test.cpp"
     )
     target_link_libraries(${PROJECT_NAME}_test PRIVATE gtest_main lib${PROJECT_NAME})
 
@@ -436,8 +551,9 @@ endif()
 # Driver executable
 if(MLDP_PVXS_DRIVER_MAIN)
     add_executable(${PROJECT_NAME}
-            "${CMAKE_CURRENT_SOURCE_DIR}/ext/rapidyaml/include/rapidyaml-0.10.0.hpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/src/mldp_pvxs_driver_main.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/ext/rapidyaml/include/rapidyaml-0.10.0.hpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/mldp_pvxs_driver_main.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/SpdlogLogger.cpp"
     )
 
     # The reader implementations self-register via static initialization (REGISTER_READER).
@@ -445,14 +561,14 @@ if(MLDP_PVXS_DRIVER_MAIN)
     # side-effect registrations. Ensure we keep the whole archive for the CLI.
     if(APPLE)
         target_link_libraries(${PROJECT_NAME} PRIVATE
-                -Wl,-force_load $<TARGET_FILE:lib${PROJECT_NAME}>
-                argparse::argparse
+            -Wl,-force_load $<TARGET_FILE:lib${PROJECT_NAME}>
+            argparse::argparse
         )
     else()
         target_link_libraries(${PROJECT_NAME} PRIVATE
-                -Wl,--whole-archive lib${PROJECT_NAME} -Wl,--no-whole-archive
-                argparse::argparse
-                spdlog::spdlog
+            -Wl,--whole-archive lib${PROJECT_NAME} -Wl,--no-whole-archive
+            argparse::argparse
+            spdlog::spdlog
         )
     endif()
     target_include_directories(${PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/ext/rapidyaml/include")
@@ -475,16 +591,16 @@ doxygen_add_docs(
 
 # Installation
 install(TARGETS lib${PROJECT_NAME}_proto
-        ARCHIVE DESTINATION lib
+    ARCHIVE DESTINATION lib
 )
 
 install(TARGETS lib${PROJECT_NAME}
-        ARCHIVE DESTINATION lib
+    ARCHIVE DESTINATION lib
 )
 
 install(DIRECTORY include/
-        DESTINATION include/pvxs_mldp_driver
-        FILES_MATCHING PATTERN "*.hpp" PATTERN "*.h"
+    DESTINATION include/pvxs_mldp_driver
+    FILES_MATCHING PATTERN "*.hpp" PATTERN "*.h"
 )
 
 
@@ -495,7 +611,7 @@ install(FILES "${CMAKE_CURRENT_BINARY_DIR}/config.h"
 
 if(MLDP_PVXS_DRIVER_MAIN)
     install(TARGETS
-            ${PROJECT_NAME}
-            RUNTIME DESTINATION bin
+        ${PROJECT_NAME}
+        RUNTIME DESTINATION bin
     )
 endif()

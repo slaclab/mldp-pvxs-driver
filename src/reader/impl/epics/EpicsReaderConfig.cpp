@@ -61,7 +61,7 @@ std::optional<EpicsReaderConfig::PVConfig::NTTableRowTimestampOptions> parseNtTa
 
     requireScalarChild(optionCfg, "type", optionContext);
     const auto type = optionCfg.get("type");
-    if (toLower(type) != "nttable-rowts")
+    if (toLower(type) != "slac-bsas-table")
     {
         return std::nullopt;
     }
@@ -83,7 +83,7 @@ std::optional<EpicsReaderConfig::PVConfig::NTTableRowTimestampOptions> parseNtTa
 
     if (optionCfg.hasChild("sourceName"))
     {
-        throw EpicsReaderConfig::Error(optionContext + ".sourceName is not supported for type 'nttable-rowts'; source name always equals the column field name");
+        throw EpicsReaderConfig::Error(optionContext + ".sourceName is not supported for type 'slac-bsas-table'; source name always equals the column field name");
     }
 
     return opts;
@@ -110,6 +110,26 @@ bool EpicsReaderConfig::valid() const
 const std::string& EpicsReaderConfig::name() const
 {
     return name_;
+}
+
+unsigned int EpicsReaderConfig::threadPoolSize() const
+{
+    return thread_pool_size_;
+}
+
+unsigned int EpicsReaderConfig::monitorPollThreads() const
+{
+    return monitor_poll_threads_;
+}
+
+unsigned int EpicsReaderConfig::monitorPollIntervalMs() const
+{
+    return monitor_poll_interval_ms_;
+}
+
+std::size_t EpicsReaderConfig::columnBatchSize() const
+{
+    return column_batch_size_;
 }
 
 const std::vector<EpicsReaderConfig::PVConfig>& EpicsReaderConfig::pvs() const
@@ -145,6 +165,16 @@ void EpicsReaderConfig::parse(const Config& readerEntry)
     if (name_.empty())
     {
         throw Error("name must not be empty");
+    }
+
+    thread_pool_size_ = static_cast<unsigned int>(readerEntry.getInt("thread_pool", 1));
+    column_batch_size_ = static_cast<std::size_t>(readerEntry.getInt("column_batch_size", 50));
+    monitor_poll_threads_ = static_cast<unsigned int>(readerEntry.getInt("monitor_poll_threads", 2));
+    monitor_poll_interval_ms_ = static_cast<unsigned int>(readerEntry.getInt("monitor_poll_interval_ms", 5));
+
+    if (readerEntry.hasChild("backend"))
+    {
+        throw Error("backend is not supported; choose epics-pvxs or epics-base reader type");
     }
 
     if (!readerEntry.hasChild("pvs"))

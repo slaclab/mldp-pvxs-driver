@@ -120,6 +120,9 @@ jobs:
 
       - name: Configure, build, test inside dev image
         id: build
+        env:
+          # Use PAT if available (for cross-repo access), otherwise fall back to GITHUB_TOKEN
+          GITHUB_TOKEN: ${{ secrets.METRICS_GRABBER_PAT != '' && secrets.METRICS_GRABBER_PAT || secrets.GITHUB_TOKEN }}
         run: |
           docker compose -f docker-compose.yml -f docker-compose-test.yml --profile prebuilt up --abort-on-container-exit --exit-code-from ci-prebuilt ci-prebuilt
 

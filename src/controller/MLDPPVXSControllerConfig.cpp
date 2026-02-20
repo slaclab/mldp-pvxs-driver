@@ -50,6 +50,17 @@ int MLDPPVXSControllerConfig::controllerThreadPoolSize() const
     return controllerThreadPoolSize_;
 }
 
+std::size_t MLDPPVXSControllerConfig::controllerStreamMaxBytes() const
+{
+    return controllerStreamMaxBytes_;
+}
+
+
+std::chrono::milliseconds MLDPPVXSControllerConfig::controllerStreamMaxAge() const
+{
+    return controllerStreamMaxAge_;
+}
+
 const std::vector<Config>&
 MLDPPVXSControllerConfig::readerConfigs() const
 {
@@ -71,6 +82,7 @@ void MLDPPVXSControllerConfig::parse(const ::mldp_pvxs_driver::config::Config& r
 {
     parseThreadPool(root);
     parsePool(root);
+    parseStreamLimits(root);
     parseReaders(root);
     parseMetrics(root);
     valid_ = true;
@@ -150,26 +162,32 @@ void MLDPPVXSControllerConfig::parseReaders(const ::mldp_pvxs_driver::config::Co
 
         bool handledType = false;
 
-        if (readerBlock.hasChild("epics"))
+        const std::pair<std::string, std::string> supportedTypes[] = {
+            {"epics-pvxs", "epics-pvxs"},
+            {"epics-base", "epics-base"},
+        };
+
+        for (const auto& [key, typeName] : supportedTypes)
         {
-            handledType = true;
-
-            if (!readerBlock.isSequence("epics"))
+            if (readerBlock.hasChild(key))
             {
-                throw Error("reader[].epics must be a sequence");
-            }
-
-            const auto epicsNodes = readerBlock.subConfig("epics");
-            for (const auto& epicsNode : epicsNodes)
-            {
-                readerConfigs_.push_back(epicsNode);
-                readerEntries_.push_back({"epics", epicsNode});
+                handledType = true;
+                if (!readerBlock.isSequence(key))
+                {
+                    throw Error("reader[]." + key + " must be a sequence");
+                }
+                const auto nodes = readerBlock.subConfig(key);
+                for (const auto& node : nodes)
+                {
+                    readerConfigs_.push_back(node);
+                    readerEntries_.push_back({typeName, node});
+                }
             }
         }
 
         if (!handledType)
         {
-            throw Error("reader entry does not specify a supported type (expected 'epics')");
+            throw Error("reader entry does not specify a supported type (expected 'epics-pvxs' or 'epics-base')");
         }
     }
 }
@@ -190,4 +208,40 @@ void MLDPPVXSControllerConfig::parseMetrics(const ::mldp_pvxs_driver::config::Co
     }
 
     metricsConfig_.emplace(metricsNodes.front());
+}
+
+void MLDPPVXSControllerConfig::parseStreamLimits(const ::mldp_pvxs_driver::config::Config& root)
+{
+    if (root.hasChild("controller_stream_max_bytes"))
+    {
+        const auto nodes = root.subConfig("controller_stream_max_bytes");
+        if (nodes.empty() || !nodes.front().raw().has_val())
+        {
+            throw Error("controller_stream_max_bytes must be a scalar");
+        }
+        int value = 0;
+        nodes.front() >> value;
+        if (value <= 0)
+        {
+            throw Error("controller_stream_max_bytes must be greater than zero");
+        }
+        controllerStreamMaxBytes_ = static_cast<std::size_t>(value);
+    }
+
+    if (root.hasChild("controller_stream_max_age_ms"))
+    {
+        const auto nodes = root.subConfig("controller_stream_max_age_ms");
+        if (nodes.empty() || !nodes.front().raw().has_val())
+        {
+            throw Error("controller_stream_max_age_ms must be a scalar");
+        }
+        int value = 0;
+        nodes.front() >> value;
+        if (value <= 0)
+        {
+            throw Error("controller_stream_max_age_ms must be greater than zero");
+        }
+        controllerStreamMaxAge_ = std::chrono::milliseconds(value);
+    }
+
 }

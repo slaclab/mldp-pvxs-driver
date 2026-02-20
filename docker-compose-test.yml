@@ -9,9 +9,20 @@ x-ci-common: &ci-common
       - dp-query
     working_dir: /workspace
     entrypoint: []
+    environment:
+      - GITHUB_TOKEN
+      - GIT_TERMINAL_PROMPT=0
     command: >
       bash -lc "
+        set -e &&
+        echo \"Debug: Token length is $${#GITHUB_TOKEN}\" &&
+        git config --global credential.helper store &&
+        echo \"https://$${GITHUB_TOKEN}:x-oauth-basic@github.com\" > ~/.git-credentials &&
+        chmod 600 ~/.git-credentials &&
+        git config --global --list &&
+        cat ~/.git-credentials | sed \"s/$${GITHUB_TOKEN}/****/g\" &&
         rm -rf build &&
+        mkdir -p build &&
         cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DMLDP_PVXS_DRIVER_TESTS=ON &&
         cmake --build build --config RelWithDebInfo &&
         mkdir -p build/test-results &&
@@ -20,13 +31,14 @@ x-ci-common: &ci-common
 
 services:
   ci:
-    <<: *ci-common 
+    <<: *ci-common
     build:
       context: .
       dockerfile: .devcontainer/Dockerfile
       args:
         COMPILER: llvm
         PVXS_VERSION: 1.4.1
+
   ci-prebuilt:
     # Enable the `prebuilt` profile to reuse an existing image instead of rebuilding.
     <<: *ci-common

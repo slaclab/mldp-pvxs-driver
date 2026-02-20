@@ -5,6 +5,7 @@
 
 #include "test_config_helpers.h"
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -17,13 +18,15 @@ TEST(MLDPPVXSControllerConfigTest, ParsesValidConfig)
 {
     const std::string yaml = R"(
 controller_thread_pool: 2
+controller_stream_max_bytes: 1048576
+controller_stream_max_age_ms: 250
 mldp_pool:
   provider_name: pvxs_provider
   url: https://mldp.example:443
   min_conn: 1
   max_conn: 4
 reader:
-  - epics:
+  - epics-pvxs:
       - name: epics_1
         pvs:
           - name: pv1
@@ -39,6 +42,8 @@ metrics:
     ASSERT_TRUE(controllerCfg.valid());
     // controller thread pool size
     EXPECT_EQ(2, controllerCfg.controllerThreadPoolSize());
+    EXPECT_EQ(1048576u, controllerCfg.controllerStreamMaxBytes());
+    EXPECT_EQ(std::chrono::milliseconds(250), controllerCfg.controllerStreamMaxAge());
 
     // pool config
     EXPECT_EQ("pvxs_provider", controllerCfg.pool().providerName());
@@ -113,7 +118,7 @@ mldp_pool:
   min_conn: 2
   max_conn: 2
 reader:
-  - epics:
+  - epics-pvxs:
       - name: epics_1
         pvs:
           - name: pv1
