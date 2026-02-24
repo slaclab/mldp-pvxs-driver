@@ -22,6 +22,7 @@ set(PROMETHEUS_CPP_VERSION "v1.3.0")
 set(SPDLOG_VERSION "v1.16.0")
 set(ARGPARSE_VERSION "v3.2")
 set(METRIC_GRABBER_VERSION "v0.0.1")
+set(EPICSARCHIVERAP_VERSION "2.2.1")
 
 # Output directories
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
@@ -84,6 +85,14 @@ FetchContent_Declare(metric_grabber
     GIT_TAG ${METRIC_GRABBER_VERSION}
 )
 FetchContent_MakeAvailable(metric_grabber)
+
+# Acquire epicsarchiverap for EPICSEvent proto
+message(STATUS "Acquiring epicsarchiverap for EPICSEvent.proto...")
+FetchContent_Declare(epicsarchiverap
+    GIT_REPOSITORY https://github.com/archiver-appliance/epicsarchiverap.git
+    GIT_TAG ${EPICSARCHIVERAP_VERSION}
+)
+FetchContent_MakeAvailable(epicsarchiverap)
 
 
 # Find required packages
@@ -336,10 +345,14 @@ endif()
 set(PROTO_PATH $ENV{PROTO_PATH})
 message(STATUS "ProtoBuf mldp description file path: ${PROTO_PATH}")
 
+# Set EPICSARCHIVERAP_PROTO_PATH from fetched content
+set(EPICSARCHIVERAP_PROTO_PATH "${epicsarchiverap_SOURCE_DIR}/src/proto")
+
 set(PROTO_FILES
     ${PROTO_PATH}/common.proto
     ${PROTO_PATH}/query.proto
     ${PROTO_PATH}/ingestion.proto
+    ${EPICSARCHIVERAP_PROTO_PATH}/EPICSEvent.proto
 )
 
 # Generate proto sources
@@ -368,6 +381,7 @@ add_custom_command(
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/proto
     COMMAND ${Protobuf_PROTOC_EXECUTABLE}
     --proto_path=${PROTO_PATH}
+    --proto_path=${EPICSARCHIVERAP_PROTO_PATH}
     --cpp_out=${CMAKE_CURRENT_BINARY_DIR}/proto
     --grpc_out=${CMAKE_CURRENT_BINARY_DIR}/proto
     --plugin=protoc-gen-grpc=${GRPC_CPP_PLUGIN}
