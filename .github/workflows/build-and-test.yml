@@ -19,8 +19,6 @@ on:
     types:
       - opened
       - synchronize
-    branches:
-      - main
   merge_group:
     branches:
       - main
