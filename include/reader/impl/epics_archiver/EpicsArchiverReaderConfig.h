@@ -148,6 +148,8 @@ public:
      * @brief Get the total timeout for HTTP requests to the archiver.
      *
      * @return Total operation timeout in seconds (default: 300).
+     *         Special value 0 means infinite timeout (useful for long streaming sessions).
+     *         Low-speed detection (1KB/sec for 60s) will still catch stalled connections.
      */
     long totalTimeoutSec() const;
 

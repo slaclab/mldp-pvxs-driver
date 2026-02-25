@@ -21,6 +21,8 @@
 #include <reader/ReaderFactory.h>
 #include <reader/impl/epics_archiver/EpicsArchiverReaderConfig.h>
 
+#include <curl/curl.h>
+
 #include <memory>
 #include <string>
 
@@ -59,8 +61,24 @@ public:
     std::string name() const override;
 
 private:
-    std::string                  name_;   ///< Reader name from configuration.
-    EpicsArchiverReaderConfig    config_; ///< Parsed archiver reader configuration.
+    CURL*                     curl_handle_; ///< CURL handle for HTTP requests to archiver service.
+    std::string               name_;        ///< Reader name from configuration.
+    EpicsArchiverReaderConfig config_;      ///< Parsed archiver reader configuration.
+
+    /**
+     * @brief Initialize CURL handle with appropriate options for archiver API.
+     * Sets up CURL for making requests to the archiver service, including
+     * authentication, timeouts, and response handling.
+     */
+    void initializeCurl();
+
+    /**
+     * @brief Clean up CURL resources.
+     *
+     * Ensures that the CURL handle is properly cleaned up when the reader is
+     * destroyed to prevent resource leaks.
+     */
+    void destroyCurl();
 
     REGISTER_READER("epics-archiver", EpicsArchiverReader)
 };

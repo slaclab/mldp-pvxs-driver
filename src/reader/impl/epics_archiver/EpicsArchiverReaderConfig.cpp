@@ -190,18 +190,19 @@ void EpicsArchiverReaderConfig::parse(const Config& readerEntry)
     connect_timeout_sec_ = readerEntry.getInt("connect_timeout_sec", 30L);
     if (connect_timeout_sec_ <= 0)
     {
-        throw Error("connect_timeout_sec must be positive");
+        throw Error("connect_timeout_sec must be positive (>0)");
     }
 
     // Parse optional total timeout (default: 300 seconds / 5 minutes)
+    // Special case: 0 means infinite timeout (useful for long streaming sessions)
     total_timeout_sec_ = readerEntry.getInt("total_timeout_sec", 300L);
-    if (total_timeout_sec_ <= 0)
+    if (total_timeout_sec_ < 0)
     {
-        throw Error("total_timeout_sec must be positive");
+        throw Error("total_timeout_sec must be >= 0 (0 = infinite for streaming)");
     }
-    if (total_timeout_sec_ < connect_timeout_sec_)
+    if (total_timeout_sec_ != 0 && total_timeout_sec_ < connect_timeout_sec_)
     {
-        throw Error("total_timeout_sec must be >= connect_timeout_sec");
+        throw Error("total_timeout_sec must be >= connect_timeout_sec (or 0 for infinite)");
     }
 
     // Parse PVs
