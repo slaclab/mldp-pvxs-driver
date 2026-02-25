@@ -292,7 +292,7 @@ jobs:
           cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ env.RELEASE_VARIANT }}:${{ env.BUILDKIT_CACHE_TAG }}
           build-args: |
             BASE_OS_IMAGE=${{ env.BASE_OS_IMAGE }}
-            COMPILER=llvm
+            COMPILER=gcc
             EPICS_VERSION=${{ env.EPICS_VERSION }}
             PVXS_VERSION=${{ env.PVXS_VERSION }}
 

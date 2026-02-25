@@ -114,7 +114,7 @@ jobs:
           load: true
           build-args: |
             BASE_OS_IMAGE=${{ env.BASE_OS_IMAGE }}
-            COMPILER=llvm
+            COMPILER=gcc
             EPICS_VERSION=${{ env.EPICS_VERSION }}
             PVXS_VERSION=${{ env.PVXS_VERSION }}
 
@@ -162,6 +162,6 @@ jobs:
             type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ steps.matrix_info.outputs.variant }}:${{ env.BUILDKIT_CACHE_TAG }},mode=max
           build-args: |
             BASE_OS_IMAGE=${{ env.BASE_OS_IMAGE }}
-            COMPILER=llvm
+            COMPILER=gcc
             EPICS_VERSION=${{ env.EPICS_VERSION }}
             PVXS_VERSION=${{ env.PVXS_VERSION }}

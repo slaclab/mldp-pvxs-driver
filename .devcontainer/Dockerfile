@@ -2,7 +2,7 @@ ARG BASE_OS_IMAGE=rockylinux/rockylinux:9.3
 FROM ${BASE_OS_IMAGE}
 
 # Allow specifying the default compiler: gcc or llvm
-ARG COMPILER=llvm
+ARG COMPILER=gcc
 # EPICS Base release to build
 ARG EPICS_VERSION=R7.0.8.1
 # PVXS version to build
