@@ -407,11 +407,6 @@ target_include_directories(lib${PROJECT_NAME}_proto PUBLIC
 # Base library
 add_library(lib${PROJECT_NAME}
     "${CMAKE_CURRENT_SOURCE_DIR}/ext/BS_thread_pool/include/BS_thread_pool.hpp"
-    # "${CMAKE_CURRENT_SOURCE_DIR}/include/bus/IEventBusPush.h"
-    # "${CMAKE_CURRENT_SOURCE_DIR}/include/reader/Reader.h"
-    # "${CMAKE_CURRENT_SOURCE_DIR}/include/reader/ReaderFactory.h"
-    # "${CMAKE_CURRENT_SOURCE_DIR}/include/mldp_pvxs_driver.h"
-    # "${CMAKE_CURRENT_SOURCE_DIR}/include/reader/impl/epics/EpicsReader.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/ReaderFactory.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/util/log/CoutLogger.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/config/Config.cpp"
@@ -423,6 +418,8 @@ add_library(lib${PROJECT_NAME}
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/BSASEpicsMLDPConversion.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/EpicsPVDataConversion.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/EpicsBaseMonitorPoller.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics_archiver/EpicsArchiverReader.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics_archiver/EpicsArchiverReaderConfig.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/pool/MLDPGrpcPoolConfig.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/pool/MLDPGrpcPool.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/controller/MLDPPVXSControllerConfig.cpp"
@@ -522,6 +519,7 @@ if(MLDP_PVXS_DRIVER_TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/test/pool/test_mldp_grpc_pool.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics/epics_pvxs_reader_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics/epics_base_reader_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_archiver/epics_archiver_reader_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/metrics/periodic_metrics_dumper_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/metrics/metrics_histogram_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/metrics/system_metrics_test.cpp"
