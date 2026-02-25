@@ -55,6 +55,8 @@ reader:
   #       hostname: "archiver.example.com:11200"
   #       start_date: "2026-01-01T00:00:00Z"
   #       end_date: "2026-01-31T23:59:59Z"     # optional; omit for open-ended reads
+  #       tls_verify_peer: true                 # optional; default: true (verify cert chain)
+  #       tls_verify_host: true                 # optional; default: true (verify hostname)
   #       connect_timeout_sec: 30               # optional; default: 30 seconds (connection establishment)
   #       total_timeout_sec: 300                # optional; default: 300 seconds (5 minutes)
   #       pvs:
@@ -64,6 +66,8 @@ reader:
   #     - name: archiver_reader_long_streaming
   #       hostname: "archiver.example.com:11200"
   #       start_date: "2026-01-01T00:00:00Z"
+  #       tls_verify_peer: false                # optional; disable only for internal/self-signed testing
+  #       tls_verify_host: false                # must also disable hostname check when peer verify is off
   #       connect_timeout_sec: 30               # connection timeout (must be > 0)
   #       total_timeout_sec: 0                  # 0 = infinite (for long streaming sessions)
   #       pvs:                                  # Low-speed detection (1KB/s for 60s) still catches stalls

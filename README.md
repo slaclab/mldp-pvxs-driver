@@ -127,6 +127,8 @@ This project uses a pipeline-style architecture: PVXS clients feed PV updates in
 - [Architecture Overview](docs/architecture.md) - System architecture, data flow, and design patterns
 - [Reader Types](docs/readers.md) - Available reader implementations (EPICS Base, PVXS)
 - [Implementing Custom Readers](docs/readers-implementation.md) - Guide to creating new reader types
+- [Logging Abstraction Guide](docs/logging.md) - How `util::log` works and how to implement custom logger classes
+- [HTTP Transport Provider](docs/http-provider.md) - Shared `util/http` abstraction and curl-backed implementation for HTTP-based readers
 
 For developer information and contribution guidelines see [CONTRIBUTING.md](CONTRIBUTING.md).
 

@@ -118,6 +118,16 @@ long EpicsArchiverReaderConfig::totalTimeoutSec() const
     return total_timeout_sec_;
 }
 
+bool EpicsArchiverReaderConfig::tlsVerifyPeer() const
+{
+    return tls_verify_peer_;
+}
+
+bool EpicsArchiverReaderConfig::tlsVerifyHost() const
+{
+    return tls_verify_host_;
+}
+
 void EpicsArchiverReaderConfig::parse(const Config& readerEntry)
 {
     // Parse reader name
@@ -203,6 +213,14 @@ void EpicsArchiverReaderConfig::parse(const Config& readerEntry)
     if (total_timeout_sec_ != 0 && total_timeout_sec_ < connect_timeout_sec_)
     {
         throw Error("total_timeout_sec must be >= connect_timeout_sec (or 0 for infinite)");
+    }
+
+    // Parse optional TLS verification controls (secure by default)
+    tls_verify_peer_ = readerEntry.getBool("tls_verify_peer", true);
+    tls_verify_host_ = readerEntry.getBool("tls_verify_host", true);
+    if (tls_verify_host_ && !tls_verify_peer_)
+    {
+        throw Error("tls_verify_host=true requires tls_verify_peer=true");
     }
 
     // Parse PVs

@@ -287,6 +287,23 @@ flowchart TB
 - `IEventBusPush` interface decouples readers from controller
 - Async event delivery via thread pools
 
+## Cross-Cutting Utilities
+
+### Logging Abstraction
+
+The driver uses a logging abstraction layer (`util::log`) so library code is not coupled to a specific backend. The executable can install a concrete logger implementation (for example the spdlog-backed adapter).
+
+- Detailed guide: [Logging Abstraction Guide](logging.md)
+- Logging interface and helpers: `include/util/log/ILog.h`, `include/util/log/Logger.h`
+- Default/simple logger implementation: `include/util/log/CoutLogger.h`, `src/util/log/CoutLogger.cpp`
+- spdlog adapter used by the executable: `include/SpdlogLogger.h`, `src/SpdlogLogger.cpp`
+
+### HTTP Transport Provider (`util/http`)
+
+HTTP-based readers can use the shared `util/http` transport abstraction instead of managing raw `libcurl` directly. This centralizes TLS defaults, timeouts, header handling, and streaming callback plumbing.
+
+- Detailed documentation: [HTTP Transport Provider](http-provider.md)
+
 ## Configuration
 
 ### Controller Settings

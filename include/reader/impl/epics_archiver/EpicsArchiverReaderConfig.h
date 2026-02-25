@@ -45,6 +45,8 @@ namespace mldp_pvxs_driver::reader::impl::epics_archiver {
  *     end_date: "2026-01-02T00:00:00Z" # optional
  *     connect_timeout_sec: 30 # optional, default: 30 seconds
  *     total_timeout_sec: 300  # optional, default: 300 seconds (5 minutes)
+ *     tls_verify_peer: true   # optional, default: true
+ *     tls_verify_host: true   # optional, default: true
  *     pvs:
  *       - name: "SLAC:GUNB:ELEC:LTU1:630:EPICS_PV"
  *       - name: "FACET:DL1:SBEN:1:BDES"
@@ -153,6 +155,20 @@ public:
      */
     long totalTimeoutSec() const;
 
+    /**
+     * @brief Whether to verify the server TLS certificate chain.
+     *
+     * @return true to enable TLS peer verification (default); false to disable.
+     */
+    bool tlsVerifyPeer() const;
+
+    /**
+     * @brief Whether to verify the server hostname against the TLS certificate.
+     *
+     * @return true to enable hostname verification (default); false to disable.
+     */
+    bool tlsVerifyHost() const;
+
 private:
     /**
      * @brief Populate the typed fields from the raw YAML node.
@@ -171,6 +187,8 @@ private:
     std::vector<std::string> pvNames_;
     long                     connect_timeout_sec_ = 30L;   ///< Connection timeout in seconds
     long                     total_timeout_sec_ = 300L;    ///< Total operation timeout in seconds
+    bool                     tls_verify_peer_ = true;      ///< Verify TLS certificate chain.
+    bool                     tls_verify_host_ = true;      ///< Verify TLS host name.
 };
 
 } // namespace mldp_pvxs_driver::reader::impl::epics_archiver

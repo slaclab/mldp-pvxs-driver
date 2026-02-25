@@ -20,11 +20,14 @@
 
 #include <reader/ReaderFactory.h>
 #include <reader/impl/epics_archiver/EpicsArchiverReaderConfig.h>
-
-#include <curl/curl.h>
+#include <util/log/ILog.h>
 
 #include <memory>
 #include <string>
+
+namespace mldp_pvxs_driver::util::http {
+class IHttpClient;
+}
 
 namespace mldp_pvxs_driver::reader::impl::epics_archiver {
 
@@ -61,24 +64,22 @@ public:
     std::string name() const override;
 
 private:
-    CURL*                     curl_handle_; ///< CURL handle for HTTP requests to archiver service.
-    std::string               name_;        ///< Reader name from configuration.
-    EpicsArchiverReaderConfig config_;      ///< Parsed archiver reader configuration.
+    std::shared_ptr<util::log::ILogger>                          logger_;      ///< Logger instance for this reader.
+    std::unique_ptr<::mldp_pvxs_driver::util::http::IHttpClient> http_client_; ///< Shared HTTP transport abstraction.
+    std::string                                                  name_;        ///< Reader name from configuration.
+    EpicsArchiverReaderConfig                                    config_;      ///< Parsed archiver reader configuration.
 
     /**
-     * @brief Initialize CURL handle with appropriate options for archiver API.
-     * Sets up CURL for making requests to the archiver service, including
-     * authentication, timeouts, and response handling.
+     * @brief Initialize reusable HTTP client for archiver API access.
      */
-    void initializeCurl();
+    void initializeHttpClient();
 
     /**
-     * @brief Clean up CURL resources.
+     * @brief Clean up HTTP transport resources.
      *
-     * Ensures that the CURL handle is properly cleaned up when the reader is
-     * destroyed to prevent resource leaks.
+     * Ensures that any transport state owned by this reader is released.
      */
-    void destroyCurl();
+    void destroyHttpClient();
 
     REGISTER_READER("epics-archiver", EpicsArchiverReader)
 };

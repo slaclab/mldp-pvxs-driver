@@ -93,6 +93,8 @@ TEST_F(EpicsArchiverReaderConfigTest, ValidConfigurationParsing)
     EXPECT_EQ(config.pvNames()[0], "PV1");
     EXPECT_EQ(config.pvNames()[1], "PV2");
     EXPECT_EQ(config.pvNames()[2], "PV3");
+    EXPECT_TRUE(config.tlsVerifyPeer());
+    EXPECT_TRUE(config.tlsVerifyHost());
 }
 
 TEST_F(EpicsArchiverReaderConfigTest, MissingNameThrows)
@@ -268,6 +270,58 @@ TEST_F(EpicsArchiverReaderConfigTest, AcceptsCamelCaseDateKeys)
     EXPECT_EQ(config.startDate(), "2026-01-01T00:00:00Z");
     ASSERT_TRUE(config.endDate().has_value());
     EXPECT_EQ(*config.endDate(), "2026-01-01T12:00:00Z");
+}
+
+TEST_F(EpicsArchiverReaderConfigTest, TlsVerificationDefaultsToEnabled)
+{
+    const std::string yaml = R"(
+        name: test-archiver
+        hostname: "archiver.slac.stanford.edu:11200"
+        start_date: "2026-01-01T00:00:00Z"
+        pvs:
+          - name: "PV1"
+    )";
+
+    auto cfg = makeConfigFromYaml(yaml);
+    EpicsArchiverReaderConfig config(cfg);
+
+    EXPECT_TRUE(config.tlsVerifyPeer());
+    EXPECT_TRUE(config.tlsVerifyHost());
+}
+
+TEST_F(EpicsArchiverReaderConfigTest, AllowsDisablingTlsVerificationExplicitly)
+{
+    const std::string yaml = R"(
+        name: test-archiver
+        hostname: "archiver.slac.stanford.edu:11200"
+        start_date: "2026-01-01T00:00:00Z"
+        tls_verify_peer: false
+        tls_verify_host: false
+        pvs:
+          - name: "PV1"
+    )";
+
+    auto cfg = makeConfigFromYaml(yaml);
+    EpicsArchiverReaderConfig config(cfg);
+
+    EXPECT_FALSE(config.tlsVerifyPeer());
+    EXPECT_FALSE(config.tlsVerifyHost());
+}
+
+TEST_F(EpicsArchiverReaderConfigTest, RejectsHostVerificationWithoutPeerVerification)
+{
+    const std::string yaml = R"(
+        name: test-archiver
+        hostname: "archiver.slac.stanford.edu:11200"
+        start_date: "2026-01-01T00:00:00Z"
+        tls_verify_peer: false
+        tls_verify_host: true
+        pvs:
+          - name: "PV1"
+    )";
+
+    auto cfg = makeConfigFromYaml(yaml);
+    EXPECT_THROW(EpicsArchiverReaderConfig config(cfg), EpicsArchiverReaderConfig::Error);
 }
 
 // ============================================================================

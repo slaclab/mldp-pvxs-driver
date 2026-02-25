@@ -100,6 +100,7 @@ FetchContent_MakeAvailable(epicsarchiverap)
 find_package(Protobuf REQUIRED)
 find_package(gRPC REQUIRED)
 find_package(Threads REQUIRED)
+find_package(CURL REQUIRED)
 find_package(PkgConfig QUIET)
 
 # epics-base (7.0+)
@@ -410,6 +411,7 @@ add_library(lib${PROJECT_NAME}
     "${CMAKE_CURRENT_SOURCE_DIR}/ext/BS_thread_pool/include/BS_thread_pool.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/ReaderFactory.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/util/log/CoutLogger.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/util/http/CurlHttpClient.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/config/Config.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/EpicsReaderBase.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/EpicsPVXSReader.cpp"
@@ -443,6 +445,7 @@ target_link_libraries(lib${PROJECT_NAME} PUBLIC
     prometheus-cpp::core
     prometheus-cpp::pull
     spdlog::spdlog
+    CURL::libcurl
     metricsgrabber
 )
 target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/ext/BS_thread_pool/include")
