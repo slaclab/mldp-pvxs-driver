@@ -1,4 +1,4 @@
-ARG BASE_OS_IMAGE=ubuntu:noble
+ARG BASE_OS_IMAGE=rockylinux/rockylinux:9.3
 FROM ${BASE_OS_IMAGE}
 
 # Allow specifying the default compiler: gcc or llvm
@@ -9,24 +9,51 @@ ARG EPICS_VERSION=R7.0.8.1
 ARG PVXS_VERSION=1.4.1
 
 # Install common dependencies and compiler-specific packages
-RUN apt update && \
-    apt install -y build-essential doxygen cmake git tclsh ninja-build protobuf-compiler protobuf-compiler-grpc libgrpc++-dev libgrpc-dev gdb lcov libssl-dev libsasl2-dev curl libcurl4-openssl-dev valgrind libicu-dev jq file sudo clang clangd lldb lld libc++-dev libc++abi-dev libevent-dev ca-certificates golang-go
+RUN dnf update -y && \
+    dnf groupinstall -y "Development Tools" && \
+    dnf install -y dnf-plugins-core epel-release && \
+    dnf config-manager --set-enabled crb && \
+    dnf install -y doxygen cmake git tcl ninja-build protobuf-compiler grpc-plugins grpc-devel gdb openssl-devel cyrus-sasl-devel libcurl-devel libicu-devel jq file sudo clang libevent-devel ca-certificates perl perl-Pod-Html perl-podlators && \
+    (dnf install -y go-toolset lcov valgrind clang-tools-extra lldb lld || echo "Warning: optional packages unavailable on this Rocky target; continuing" >&2) && \
+    if [ ! -x /usr/bin/go ]; then \
+      for p in /usr/lib/golang/bin/go /opt/rh/go-toolset/root/usr/bin/go /usr/local/go/bin/go; do \
+        if [ -x "$p" ]; then ln -s "$p" /usr/bin/go; break; fi; \
+      done; \
+    fi && \
+    dnf clean all && \
+    rm -rf /var/cache/dnf
 
 # Install NWA (License Header Management)
-RUN GOBIN=/usr/local/bin go install github.com/B1NARY-GR0UP/nwa@latest
+RUN GO_BIN="$(command -v go || true)" && \
+    if [ -z "$GO_BIN" ]; then \
+      for p in /usr/lib/golang/bin/go /opt/rh/go-toolset/root/usr/bin/go /usr/local/go/bin/go; do \
+        if [ -x "$p" ]; then GO_BIN="$p"; break; fi; \
+      done; \
+    fi && \
+    if [ -n "$GO_BIN" ]; then \
+      GOBIN=/usr/local/bin "$GO_BIN" install github.com/B1NARY-GR0UP/nwa@latest || \
+      echo "Warning: nwa install failed; continuing without nwa" >&2; \
+    else \
+      echo "Warning: go binary not found after installing golang; continuing without nwa" >&2; \
+      find /usr -path '*/bin/go' -type f 2>/dev/null | head -20 >&2 || true; \
+    fi
 
 # Set default compiler based on the COMPILER argument BEFORE building EPICS
-RUN if [ "$COMPILER" = "llvm" ]; then \
-        update-alternatives --install /usr/bin/cc cc /usr/bin/clang 100 && \
-        update-alternatives --install /usr/bin/c++ c++ /usr/bin/clang++ 100 && \
-        update-alternatives --set cc /usr/bin/clang && \
-        update-alternatives --set c++ /usr/bin/clang++; \
+RUN set -eux; \
+    if [ "$COMPILER" = "llvm" ]; then \
+        CC_BIN="$(command -v clang || true)"; \
+        CXX_BIN="$(command -v clang++ || true)"; \
     else \
-        update-alternatives --install /usr/bin/cc cc /usr/bin/gcc 100 && \
-        update-alternatives --install /usr/bin/c++ c++ /usr/bin/g++ 100 && \
-        update-alternatives --set cc /usr/bin/gcc && \
-        update-alternatives --set c++ /usr/bin/g++; \
-    fi
+        CC_BIN="$(command -v gcc || true)"; \
+        CXX_BIN="$(command -v g++ || true)"; \
+    fi; \
+    if [ -z "$CC_BIN" ] || [ -z "$CXX_BIN" ]; then \
+        echo "Compiler binaries not found for COMPILER=$COMPILER" >&2; \
+        command -v clang clang++ gcc g++ cc c++ || true; \
+        exit 127; \
+    fi; \
+    ln -sf "$CC_BIN" /usr/bin/cc; \
+    ln -sf "$CXX_BIN" /usr/bin/c++
 
 # Verify the compiler selection
 RUN echo "Building with:" && cc --version
@@ -46,7 +73,14 @@ RUN if [ "$COMPILER" = "llvm" ]; then \
         mkdir -p include/compiler/clang; \
     fi
 RUN make -j 4 INSTALL_LOCATION=/opt/local && \
-    make install INSTALL_LOCATION=/opt/local
+    make install INSTALL_LOCATION=/opt/local && \
+    mkdir -p /opt/local/include/compiler/gcc /opt/local/include/compiler/clang && \
+    if [ -f /opt/local/include/compiler/gcc/compilerSpecific.h ] && [ ! -e /opt/local/include/compiler/clang/compilerSpecific.h ]; then \
+        ln -s ../gcc/compilerSpecific.h /opt/local/include/compiler/clang/compilerSpecific.h; \
+    fi && \
+    if [ -f /opt/local/include/compiler/clang/compilerSpecific.h ] && [ ! -e /opt/local/include/compiler/gcc/compilerSpecific.h ]; then \
+        ln -s ../clang/compilerSpecific.h /opt/local/include/compiler/gcc/compilerSpecific.h; \
+    fi
 
 # Set EPICS environment variables
 ENV EPICS_BASE=/opt/local

@@ -320,7 +320,7 @@ TEST_F(MLDPGrpcPoolIntegrationTest, QueryCounterPV)
     const auto& column = result->at("test:counter");
     ASSERT_GT(column.datavalues_size(), 0);
     const auto& value = column.datavalues(0);
-    EXPECT_TRUE(value.has_intvalue());
+    EXPECT_EQ(value.value_case(), DataValue::kIntValue);
     EXPECT_GT(value.intvalue(), 0);
 }
 
@@ -332,7 +332,7 @@ TEST_F(MLDPGrpcPoolIntegrationTest, QueryVoltagePV)
     const auto& column = result->at("test:voltage");
     ASSERT_GT(column.datavalues_size(), 0);
     const auto& value = column.datavalues(0);
-    EXPECT_TRUE(value.has_doublevalue());
+    EXPECT_EQ(value.value_case(), DataValue::kDoubleValue);
     EXPECT_GE(value.doublevalue(), 0.4);
     EXPECT_LE(value.doublevalue(), 2.6);
 }
@@ -345,7 +345,7 @@ TEST_F(MLDPGrpcPoolIntegrationTest, QueryStatusPV)
     const auto& column = result->at("test:status");
     ASSERT_GT(column.datavalues_size(), 0);
     const auto& value = column.datavalues(0);
-    EXPECT_TRUE(value.has_stringvalue());
+    EXPECT_EQ(value.value_case(), DataValue::kStringValue);
     const auto& status = value.stringvalue();
     EXPECT_TRUE(status == "OK" || status == "WARNING" || status == "FAULT");
 }
@@ -364,7 +364,7 @@ TEST_F(MLDPGrpcPoolIntegrationTest, QueryWaveformPV)
     EXPECT_EQ(arrayValues.size(), 256);
     for (const auto& entry : arrayValues)
     {
-        EXPECT_TRUE(entry.has_doublevalue());
+        EXPECT_EQ(entry.value_case(), DataValue::kDoubleValue);
         EXPECT_GE(entry.doublevalue(), 0.4);
         EXPECT_LE(entry.doublevalue(), 2.6);
     }
@@ -406,16 +406,16 @@ TEST_F(MLDPGrpcPoolIntegrationTest, QueryTablePV)
     EXPECT_EQ(pressures.size(), 3);
     ASSERT_EQ(devices.size(), pressures.size());
 
-    EXPECT_TRUE(devices[0].has_stringvalue());
-    EXPECT_TRUE(devices[1].has_stringvalue());
-    EXPECT_TRUE(devices[2].has_stringvalue());
+    EXPECT_EQ(devices[0].value_case(), DataValue::kStringValue);
+    EXPECT_EQ(devices[1].value_case(), DataValue::kStringValue);
+    EXPECT_EQ(devices[2].value_case(), DataValue::kStringValue);
     EXPECT_EQ(devices[0].stringvalue(), "Device A");
     EXPECT_EQ(devices[1].stringvalue(), "Device B");
     EXPECT_EQ(devices[2].stringvalue(), "Device C");
 
     for (const auto& entry : pressures)
     {
-        EXPECT_TRUE(entry.has_doublevalue());
+        EXPECT_EQ(entry.value_case(), DataValue::kDoubleValue);
         EXPECT_GE(entry.doublevalue(), -1.6);
         EXPECT_LE(entry.doublevalue(), 1.6);
     }
@@ -430,17 +430,17 @@ TEST_F(MLDPGrpcPoolIntegrationTest, QueryBsasTablePV)
     const auto& stringColumn = result->at("PV_NAME_B_STRING_VALUE");
 
     ASSERT_EQ(doubleColumn.datavalues_size(), 3);
-    EXPECT_TRUE(doubleColumn.datavalues(0).has_doublevalue());
-    EXPECT_TRUE(doubleColumn.datavalues(1).has_doublevalue());
-    EXPECT_TRUE(doubleColumn.datavalues(2).has_doublevalue());
+    EXPECT_EQ(doubleColumn.datavalues(0).value_case(), DataValue::kDoubleValue);
+    EXPECT_EQ(doubleColumn.datavalues(1).value_case(), DataValue::kDoubleValue);
+    EXPECT_EQ(doubleColumn.datavalues(2).value_case(), DataValue::kDoubleValue);
     EXPECT_EQ(doubleColumn.datavalues(0).doublevalue(), 1.0);
     EXPECT_EQ(doubleColumn.datavalues(1).doublevalue(), 2.0);
     EXPECT_EQ(doubleColumn.datavalues(2).doublevalue(), 3.0);
 
     ASSERT_EQ(stringColumn.datavalues_size(), 3);
-    EXPECT_TRUE(stringColumn.datavalues(0).has_stringvalue());
-    EXPECT_TRUE(stringColumn.datavalues(1).has_stringvalue());
-    EXPECT_TRUE(stringColumn.datavalues(2).has_stringvalue());
+    EXPECT_EQ(stringColumn.datavalues(0).value_case(), DataValue::kStringValue);
+    EXPECT_EQ(stringColumn.datavalues(1).value_case(), DataValue::kStringValue);
+    EXPECT_EQ(stringColumn.datavalues(2).value_case(), DataValue::kStringValue);
     EXPECT_EQ(stringColumn.datavalues(0).stringvalue(), "OK");
     EXPECT_EQ(stringColumn.datavalues(1).stringvalue(), "WARNING");
     EXPECT_EQ(stringColumn.datavalues(2).stringvalue(), "FAULT");

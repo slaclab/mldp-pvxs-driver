@@ -151,8 +151,8 @@ For developer information and contribution guidelines see [CONTRIBUTING.md](CONT
 Tagged releases (`vX.Y.Z`) publish:
 
 - A container image (recommended way to run).
-- A standalone executable artifact (currently named `mldp_pvxs_driver-ubuntu-noble-epics-R7.0.8.1`).
-- An AppImage for easier distribution (currently named `mldp_pvxs_driver-ubuntu-noble-epics-R7.0.8.1-pvxs-1.4.1-x86_64.AppImage`).
+- A standalone executable artifact (currently named `mldp_pvxs_driver-rockylinux-9.3-epics-R7.0.8.1`).
+- An AppImage for easier distribution (currently named `mldp_pvxs_driver-rockylinux-9.3-epics-R7.0.8.1-pvxs-1.4.1-x86_64.AppImage`).
 
 ### Builder image + build cache (for developers)
 
@@ -169,7 +169,7 @@ docker login ghcr.io
 
 docker buildx build \
   -f .devcontainer/Dockerfile \
-  --build-arg BASE_OS_IMAGE=ubuntu:noble \
+  --build-arg BASE_OS_IMAGE=rockylinux/rockylinux:9.3 \
   --build-arg EPICS_VERSION=R7.0.8.1 \
   --build-arg PVXS_VERSION=1.4.1 \
   --cache-from type=registry,ref=ghcr.io/slaclab/mldp-pvxs-driver/build:epics-7.0.8.1-pvxs-1.4.1 \

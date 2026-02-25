@@ -9,7 +9,7 @@
 
 ARG BASE_IMAGE=mldp-pvxs-driver-ci:latest
 ARG BUILD_TYPE=Debug
-ARG RUNTIME_IMAGE=ubuntu:noble
+ARG RUNTIME_IMAGE=rockylinux/rockylinux:9.3
 
 FROM ${BASE_IMAGE} AS builder
 
@@ -36,20 +36,20 @@ WORKDIR /workspace
 ENV EPICS_BASE=/opt/local
 ENV PVXS_BASE=/opt/local
 
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-      appstream \
+RUN dnf update -y && \
+    dnf install -y --setopt=install_weak_deps=False \
       ca-certificates \
-      imagemagick \
+      ImageMagick \
       curl \
       file \
-      gnupg \
-      libcurl4 \
-      libgcc-s1 \
-      libstdc++6 \
-      libreadline8 \
-      libtinfo6 && \
-    rm -rf /var/lib/apt/lists/*
+      gnupg2 \
+      libcurl \
+      libgcc \
+      libstdc++ \
+      readline \
+      ncurses-libs && \
+    dnf clean all && \
+    rm -rf /var/cache/dnf
 
 RUN mkdir -p /workspace/build/bin
 

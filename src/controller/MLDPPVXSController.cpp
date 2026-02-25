@@ -13,9 +13,9 @@
 #include <google/protobuf/arena.h>
 #include <memory>
 #include <reader/ReaderFactory.h>
+#include <util/StringFormat.h>
 
 #include <chrono>
-#include <format>
 #include <grpcpp/grpcpp.h>
 #include <ranges>
 #include <stdexcept>
@@ -346,7 +346,7 @@ void MLDPPVXSController::workerLoop(std::size_t worker_index)
         auto* request = google::protobuf::Arena::CreateMessage<dp::service::ingestion::IngestDataRequest>(&arena);
         std::size_t accepted_events = 0;
         std::size_t payload_bytes = 0;
-        const auto request_id = std::format("pv_stream_{}_{}", stream_start.time_since_epoch().count(), item.root_source);
+        const auto request_id = util::format_string("pv_stream_{}_{}", stream_start.time_since_epoch().count(), item.root_source);
         if (!buildRequest(item, request_id, *request, accepted_events, payload_bytes))
         {
             continue;

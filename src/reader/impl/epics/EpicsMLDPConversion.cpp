@@ -46,6 +46,8 @@ void EpicsMLDPConversion::convertPVToProtoValue(const pvxs::Value& pvValue, Data
         }
     };
 
+    const auto stringSetter = static_cast<void (DataValue::*)(const std::string&)>(&DataValue::set_stringvalue);
+
     switch (pvValue.type().code)
     {
     case pvxs::TypeCode::Bool: return typeValueSetter(&DataValue::set_booleanvalue);
@@ -70,8 +72,8 @@ void EpicsMLDPConversion::convertPVToProtoValue(const pvxs::Value& pvValue, Data
     case pvxs::TypeCode::Float64: return typeValueSetter(&DataValue::set_doublevalue);
     case pvxs::TypeCode::Float32A: return typeArraySetter(&DataValue::set_floatvalue);
     case pvxs::TypeCode::Float64A: return typeArraySetter(&DataValue::set_doublevalue);
-    case pvxs::TypeCode::String: return typeValueSetter(&DataValue::set_stringvalue<const std::string&>);
-    case pvxs::TypeCode::StringA: return typeArraySetter(&DataValue::set_stringvalue<const std::string&>);
+    case pvxs::TypeCode::String: return typeValueSetter(stringSetter);
+    case pvxs::TypeCode::StringA: return typeArraySetter(stringSetter);
     case pvxs::TypeCode::Struct:
     case pvxs::TypeCode::Union:
     case pvxs::TypeCode::Any: return structSetter(pvValue, protoValue);

@@ -412,8 +412,7 @@ pvs:
         const auto dv = findLatestDataValueForSource(*mock_bus, "test:counter");
         ASSERT_NE(dv, nullptr);
         ASSERT_EQ(dv->value_case(), DataValue::kIntValue);
-        ASSERT_TRUE(dv->has_intvalue());
-        ASSERT_FALSE(dv->has_longvalue());
+        ASSERT_EQ(dv->value_case(), DataValue::kIntValue);
         EXPECT_GT(dv->intvalue(), 0);
         EXPECT_EQ(findStructureFieldValue(*dv, "timeStamp"), nullptr);
     }
@@ -423,8 +422,7 @@ pvs:
         const auto dv = findLatestDataValueForSource(*mock_bus, "test:voltage");
         ASSERT_NE(dv, nullptr);
         ASSERT_EQ(dv->value_case(), DataValue::kDoubleValue);
-        ASSERT_TRUE(dv->has_doublevalue());
-        ASSERT_FALSE(dv->has_floatvalue());
+        ASSERT_EQ(dv->value_case(), DataValue::kDoubleValue);
         EXPECT_EQ(findStructureFieldValue(*dv, "timeStamp"), nullptr);
     }
 
@@ -433,7 +431,7 @@ pvs:
         const auto dv = findLatestDataValueForSource(*mock_bus, "test:status");
         ASSERT_NE(dv, nullptr);
         ASSERT_EQ(dv->value_case(), DataValue::kStringValue);
-        ASSERT_TRUE(dv->has_stringvalue());
+        ASSERT_EQ(dv->value_case(), DataValue::kStringValue);
         const auto& s = dv->stringvalue();
         EXPECT_TRUE(s == "OK" || s == "WARNING" || s == "FAULT");
         EXPECT_EQ(findStructureFieldValue(*dv, "timeStamp"), nullptr);
@@ -450,7 +448,7 @@ pvs:
         for (int i = 0; i < arr.datavalues_size(); ++i)
         {
             ASSERT_EQ(arr.datavalues(i).value_case(), DataValue::kDoubleValue);
-            ASSERT_TRUE(arr.datavalues(i).has_doublevalue());
+            ASSERT_EQ(arr.datavalues(i).value_case(), DataValue::kDoubleValue);
         }
         EXPECT_EQ(findStructureFieldValue(*dv, "timeStamp"), nullptr);
     }
@@ -475,7 +473,7 @@ pvs:
         for (int i = 0; i < deviceIDs->arrayvalue().datavalues_size(); ++i)
         {
             ASSERT_EQ(deviceIDs->arrayvalue().datavalues(i).value_case(), DataValue::kStringValue);
-            ASSERT_TRUE(deviceIDs->arrayvalue().datavalues(i).has_stringvalue());
+            ASSERT_EQ(deviceIDs->arrayvalue().datavalues(i).value_case(), DataValue::kStringValue);
         }
 
         ASSERT_EQ(pressure->value_case(), DataValue::kArrayValue);
@@ -484,7 +482,7 @@ pvs:
         for (int i = 0; i < pressure->arrayvalue().datavalues_size(); ++i)
         {
             ASSERT_EQ(pressure->arrayvalue().datavalues(i).value_case(), DataValue::kDoubleValue);
-            ASSERT_TRUE(pressure->arrayvalue().datavalues(i).has_doublevalue());
+            ASSERT_EQ(pressure->arrayvalue().datavalues(i).value_case(), DataValue::kDoubleValue);
         }
     }
 }
@@ -587,9 +585,9 @@ pvs:
         EXPECT_GT(ampl[i]->epoch_seconds, 0u);
     }
 
-    ASSERT_TRUE(ampl[0]->data_value.has_doublevalue());
+    ASSERT_EQ(ampl[0]->data_value.value_case(), DataValue::kDoubleValue);
     EXPECT_DOUBLE_EQ(ampl[0]->data_value.doublevalue(), 1.0);
 
-    ASSERT_TRUE(stat[0]->data_value.has_stringvalue());
+    ASSERT_EQ(stat[0]->data_value.value_case(), DataValue::kStringValue);
     EXPECT_EQ(stat[0]->data_value.stringvalue(), "OK");
 }

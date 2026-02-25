@@ -24,7 +24,7 @@ permissions:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
-  REGISTRY_PASSWORD: ${{ secrets.GHCR_TOKEN != '' && secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }}
+  REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
   BUILDKIT_CACHE_TAG: buildkitcache
 
 jobs:
@@ -48,7 +48,7 @@ jobs:
       matrix:
         include:
           - dockerfile: .devcontainer/Dockerfile
-            base_os_image: ubuntu:noble
+            base_os_image: rockylinux/rockylinux:9.3
             epics_version: R7.0.8.1
             pvxs_version: 1.4.1
 
@@ -105,13 +105,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          raw_variant="${{ matrix.base_os_image }}-builder-${{ matrix.epics_version }}-${{ matrix.pvxs_version }}"
+          base_image_ref="${{ matrix.base_os_image }}"
+          base_image_leaf="${base_image_ref##*/}"  # rockylinux:9.3
+          base_image_label="${base_image_leaf//:/-}"  # rockylinux-9.3
+          raw_variant="${base_image_label}-builder-${{ matrix.epics_version }}-${{ matrix.pvxs_version }}"
           safe_variant=$(printf '%s' "$raw_variant" | tr '/:' '--' | tr -cd 'A-Za-z0-9_.-' | tr 'A-Z' 'a-z')
           if [[ -z "$safe_variant" ]]; then
             safe_variant="variant"
           fi
 
-          raw_runtime_variant="${{ matrix.base_os_image }}-${{ matrix.epics_version }}-${{ matrix.pvxs_version }}"
+          raw_runtime_variant="${base_image_label}-${{ matrix.epics_version }}-${{ matrix.pvxs_version }}"
           safe_runtime_variant=$(printf '%s' "$raw_runtime_variant" | tr '/:' '--' | tr -cd 'A-Za-z0-9_.-' | tr 'A-Z' 'a-z')
           if [[ -z "$safe_runtime_variant" ]]; then
             safe_runtime_variant="runtime"
@@ -329,14 +332,14 @@ jobs:
         run: |
           set -euo pipefail
           id=$(docker create mldp-pvxs-driver-artifacts:latest)
-          docker cp "$id:/workspace/build/bin/mldp_pvxs_driver" ./mldp_pvxs_driver-ubuntu-noble-epics-${{ env.EPICS_VERSION }}
+          docker cp "$id:/workspace/build/bin/mldp_pvxs_driver" ./mldp_pvxs_driver-rockylinux-9.3-epics-${{ env.EPICS_VERSION }}
           docker rm "$id"
 
       - name: Upload driver binary artifact
         uses: actions/upload-artifact@v6
         with:
           name: driver-binary
-          path: ./mldp_pvxs_driver-ubuntu-noble-epics-${{ env.EPICS_VERSION }}
+          path: ./mldp_pvxs_driver-rockylinux-9.3-epics-${{ env.EPICS_VERSION }}
 
   create-github-release:
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))
@@ -409,4 +412,4 @@ jobs:
           generate_release_notes: true
           overwrite_files: ${{ inputs.overwrite_release }}
           files: |
-            release-artifacts/mldp_pvxs_driver-ubuntu-noble-epics-${{ env.EPICS_VERSION }}
+            release-artifacts/mldp_pvxs_driver-rockylinux-9.3-epics-${{ env.EPICS_VERSION }}

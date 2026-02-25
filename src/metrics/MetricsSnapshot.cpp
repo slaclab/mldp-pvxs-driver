@@ -13,8 +13,9 @@
 
 #include <prometheus/text_serializer.h>
 
-#include <format>
 #include <iostream>
+#include <iomanip>
+#include <sstream>
 #include <map>
 #include <sstream>
 
@@ -29,17 +30,25 @@ std::string MetricsSnapshot::formatBytes(double bytes)
 
     if (bytes >= GB)
     {
-        return std::format("{:.2f} GB", bytes / GB);
+        std::ostringstream oss;
+        oss << std::fixed << std::setprecision(2) << (bytes / GB) << " GB";
+        return oss.str();
     }
     if (bytes >= MB)
     {
-        return std::format("{:.2f} MB", bytes / MB);
+        std::ostringstream oss;
+        oss << std::fixed << std::setprecision(2) << (bytes / MB) << " MB";
+        return oss.str();
     }
     if (bytes >= KB)
     {
-        return std::format("{:.2f} KB", bytes / KB);
+        std::ostringstream oss;
+        oss << std::fixed << std::setprecision(2) << (bytes / KB) << " KB";
+        return oss.str();
     }
-    return std::format("{:.0f} B", bytes);
+    std::ostringstream oss;
+    oss << std::fixed << std::setprecision(0) << bytes << " B";
+    return oss.str();
 }
 
 std::string MetricsSnapshot::extractLabelValue(std::string_view line, std::string_view label)

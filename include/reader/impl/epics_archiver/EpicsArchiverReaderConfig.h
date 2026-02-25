@@ -22,6 +22,7 @@
 
 #include <config/Config.h>
 
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -40,6 +41,8 @@ namespace mldp_pvxs_driver::reader::impl::epics_archiver {
  *   - type: epics-archiver
  *     name: my-archiver-reader
  *     hostname: "archiver.slac.stanford.edu:11200"
+ *     start_date: "2026-01-01T00:00:00Z"
+ *     end_date: "2026-01-02T00:00:00Z" # optional
  *     pvs:
  *       - name: "SLAC:GUNB:ELEC:LTU1:630:EPICS_PV"
  *       - name: "FACET:DL1:SBEN:1:BDES"
@@ -77,8 +80,8 @@ public:
      * @brief Build a typed view over the provided YAML node.
      *
      * @param readerEntry YAML configuration node for this reader.
-     * @throws Error when any of the required fields (name, hostname, or pvs)
-     *         are missing or malformed.
+     * @throws Error when any of the required fields (name, hostname,
+     *         start_date/startDate, or pvs) are missing or malformed.
      */
     explicit EpicsArchiverReaderConfig(const ::mldp_pvxs_driver::config::Config& readerEntry);
 
@@ -103,6 +106,20 @@ public:
      *         (e.g., "archiver.slac.stanford.edu:11200").
      */
     const std::string& hostname() const;
+
+    /**
+     * @brief Get the start of the requested archiver time window.
+     *
+     * @return Start date/time string as configured in YAML.
+     */
+    const std::string& startDate() const;
+
+    /**
+     * @brief Get the optional end of the requested archiver time window.
+     *
+     * @return End date/time string when configured; std::nullopt otherwise.
+     */
+    const std::optional<std::string>& endDate() const;
 
     /**
      * @brief Get the ordered list of PV entries to retrieve.
@@ -130,6 +147,8 @@ private:
     bool                     valid_ = false;
     std::string              name_;
     std::string              hostname_;
+    std::string              start_date_;
+    std::optional<std::string> end_date_;
     std::vector<PVConfig>    pvs_;
     std::vector<std::string> pvNames_;
 };

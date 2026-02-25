@@ -27,9 +27,15 @@ EpicsArchiverReader::EpicsArchiverReader(
         throw EpicsArchiverReaderConfig::Error("Failed to parse Archiver reader configuration");
     }
 
+    const auto& startDate = config_.startDate();
+    const auto& endDate = config_.endDate();
+    (void)startDate;
+    (void)endDate;
+
     // TODO: Implement initialization for Archiver Appliance reader
     // - Set up connection to archiver service at config_.hostname()
     // - Initialize data retrieval for PVs in config_.pvNames()
+    // - Query [startDate, endDate] time window (endDate may be omitted for open-ended reads)
     // - Start background polling/fetching threads
 }
 

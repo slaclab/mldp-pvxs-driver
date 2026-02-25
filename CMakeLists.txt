@@ -9,7 +9,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 option(MLDP_PVXS_DRIVER_MAIN "Build MLDP PVXS driver executable" ON)
 option(MLDP_PVXS_DRIVER_TESTS "Build MLDP PVXS driver tests" OFF)
 option(MLDP_PVXS_DRIVER_COVERAGE "Enable code coverage instrumentation" OFF)
-option(MLDP_PVXS_DRIVER_LINK_EPICS_PVXS_STATIC "Link EPICS and PVXS libraries statically (prefer .a over .so)" ON)
+option(MLDP_PVXS_DRIVER_LINK_EPICS_PVXS_STATIC "Link EPICS and PVXS libraries statically (prefer .a over .so)" OFF)
 
 # Default to Release build
 if(NOT CMAKE_BUILD_TYPE)
@@ -83,6 +83,7 @@ message(STATUS "Acquiring metric-grabber version ${METRIC_GRABBER_VERSION}...")
 FetchContent_Declare(metric_grabber
     GIT_REPOSITORY https://github.com/slaclab/metrics-grabber.git
     GIT_TAG ${METRIC_GRABBER_VERSION}
+    PATCH_COMMAND sed -i -e "/#include <memory>/a #include <vector>" include/metricsgrabber/MetricsCollector.hpp
 )
 FetchContent_MakeAvailable(metric_grabber)
 

@@ -17,9 +17,9 @@
 #include <spdlog/spdlog.h>
 
 #include <util/log/Logger.h>
+#include <util/StringFormat.h>
 
 #include <csignal>
-#include <format>
 
 #include <iostream>
 #include <sstream>
@@ -216,7 +216,11 @@ int main(int argc, char** argv)
     // Configure command line argument parser
     ArgumentParser program(
         "MLDP PVXS Driver",
-        std::format("{}.{}.{}", MLDP_PVXS_DRIVER_VERSION_MAJOR, MLDP_PVXS_DRIVER_VERSION_MINOR, MLDP_PVXS_DRIVER_VERSION_PATCH));
+        mldp_pvxs_driver::util::format_string(
+            "{}.{}.{}",
+            MLDP_PVXS_DRIVER_VERSION_MAJOR,
+            MLDP_PVXS_DRIVER_VERSION_MINOR,
+            MLDP_PVXS_DRIVER_VERSION_PATCH));
 
     configure_parameter(program);
 

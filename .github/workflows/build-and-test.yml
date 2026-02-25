@@ -28,7 +28,7 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 jobs:
-  build_test_ubuntu:
+  build_test_container:
     name: Build and test
     runs-on: ubuntu-latest
     if: github.actor != 'github-actions[bot]'
@@ -42,7 +42,7 @@ jobs:
       matrix:
         include:
           - dockerfile: .devcontainer/Dockerfile
-            base_os_image: ubuntu:noble
+            base_os_image: rockylinux/rockylinux:9.3
             epics_version: R7.0.8.1
             pvxs_version: 1.4.1
     steps:
@@ -76,7 +76,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          raw_variant="${{ matrix.base_os_image }}-builder-${{ matrix.epics_version }}-${{ matrix.pvxs_version }}"
+          base_image_ref="${{ matrix.base_os_image }}"
+          base_image_leaf="${base_image_ref##*/}"  # rockylinux:9.3
+          base_image_label="${base_image_leaf//:/-}"  # rockylinux-9.3
+          raw_variant="${base_image_label}-builder-${{ matrix.epics_version }}-${{ matrix.pvxs_version }}"
           safe_variant=$(printf '%s' "$raw_variant" | tr '/:' '--' | tr -cd 'A-Za-z0-9_.-' | tr 'A-Z' 'a-z')
           if [[ -z "$safe_variant" ]]; then
             safe_variant="variant"

@@ -16,6 +16,18 @@ using namespace mldp_pvxs_driver::config;
 using namespace mldp_pvxs_driver::reader::impl::epics_archiver;
 
 namespace {
+std::string getAliasedString(const Config& cfg,
+                             const std::string& primaryKey,
+                             const std::string& aliasKey,
+                             const std::string& def = "")
+{
+    if (cfg.hasChild(primaryKey))
+    {
+        return cfg.get(primaryKey, def);
+    }
+    return cfg.get(aliasKey, def);
+}
+
 void requireScalarChild(const Config& cfg, const std::string& key, const std::string& context)
 {
     const auto raw = cfg.raw();
@@ -28,6 +40,22 @@ void requireScalarChild(const Config& cfg, const std::string& key, const std::st
     if (!child.has_val())
     {
         throw EpicsArchiverReaderConfig::Error(context + "." + key + " must be a scalar");
+    }
+}
+
+void requireScalarChildAny(const Config& cfg,
+                          const std::string& primaryKey,
+                          const std::string& aliasKey,
+                          const std::string& context)
+{
+    if (cfg.hasChild(primaryKey))
+    {
+        requireScalarChild(cfg, primaryKey, context);
+        return;
+    }
+    if (cfg.hasChild(aliasKey))
+    {
+        requireScalarChild(cfg, aliasKey, context);
     }
 }
 } // namespace
@@ -58,6 +86,16 @@ const std::string& EpicsArchiverReaderConfig::name() const
 const std::string& EpicsArchiverReaderConfig::hostname() const
 {
     return hostname_;
+}
+
+const std::string& EpicsArchiverReaderConfig::startDate() const
+{
+    return start_date_;
+}
+
+const std::optional<std::string>& EpicsArchiverReaderConfig::endDate() const
+{
+    return end_date_;
 }
 
 const std::vector<EpicsArchiverReaderConfig::PVConfig>& EpicsArchiverReaderConfig::pvs() const
@@ -107,6 +145,35 @@ void EpicsArchiverReaderConfig::parse(const Config& readerEntry)
     if (hostname_.empty())
     {
         throw Error("hostname must not be empty");
+    }
+
+    // Parse required start date (accept snake_case and camelCase)
+    if (!readerEntry.hasChild("start_date") && !readerEntry.hasChild("startDate"))
+    {
+        throw Error(makeMissingFieldMessage("start_date"));
+    }
+
+    requireScalarChildAny(readerEntry, "start_date", "startDate", "archiver reader config");
+    start_date_ = getAliasedString(readerEntry, "start_date", "startDate");
+    if (start_date_.empty())
+    {
+        throw Error("start_date must not be empty");
+    }
+
+    // Parse optional end date (accept snake_case and camelCase)
+    requireScalarChildAny(readerEntry, "end_date", "endDate", "archiver reader config");
+    const auto endDate = getAliasedString(readerEntry, "end_date", "endDate");
+    if (readerEntry.hasChild("end_date") || readerEntry.hasChild("endDate"))
+    {
+        if (endDate.empty())
+        {
+            throw Error("end_date must not be empty when provided");
+        }
+        end_date_ = endDate;
+    }
+    else
+    {
+        end_date_.reset();
     }
 
     // Parse PVs

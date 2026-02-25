@@ -72,6 +72,8 @@ TEST_F(EpicsArchiverReaderConfigTest, ValidConfigurationParsing)
     const std::string yaml = R"(
         name: test-archiver
         hostname: "archiver.slac.stanford.edu:11200"
+        start_date: "2026-01-01T00:00:00Z"
+        end_date: "2026-01-02T00:00:00Z"
         pvs:
           - name: "PV1"
           - name: "PV2"
@@ -84,6 +86,9 @@ TEST_F(EpicsArchiverReaderConfigTest, ValidConfigurationParsing)
     EXPECT_TRUE(config.valid());
     EXPECT_EQ(config.name(), "test-archiver");
     EXPECT_EQ(config.hostname(), "archiver.slac.stanford.edu:11200");
+    EXPECT_EQ(config.startDate(), "2026-01-01T00:00:00Z");
+    ASSERT_TRUE(config.endDate().has_value());
+    EXPECT_EQ(*config.endDate(), "2026-01-02T00:00:00Z");
     EXPECT_EQ(config.pvNames().size(), 3);
     EXPECT_EQ(config.pvNames()[0], "PV1");
     EXPECT_EQ(config.pvNames()[1], "PV2");
@@ -94,6 +99,7 @@ TEST_F(EpicsArchiverReaderConfigTest, MissingNameThrows)
 {
     const std::string yaml = R"(
         hostname: "archiver.slac.stanford.edu:11200"
+        start_date: "2026-01-01T00:00:00Z"
         pvs:
           - name: "PV1"
     )";
@@ -106,6 +112,7 @@ TEST_F(EpicsArchiverReaderConfigTest, MissingHostnameThrows)
 {
     const std::string yaml = R"(
         name: test-archiver
+        start_date: "2026-01-01T00:00:00Z"
         pvs:
           - name: "PV1"
     )";
@@ -119,6 +126,7 @@ TEST_F(EpicsArchiverReaderConfigTest, MissingPvsThrows)
     const std::string yaml = R"(
         name: test-archiver
         hostname: "archiver.slac.stanford.edu:11200"
+        start_date: "2026-01-01T00:00:00Z"
     )";
 
     auto cfg = makeConfigFromYaml(yaml);
@@ -130,6 +138,7 @@ TEST_F(EpicsArchiverReaderConfigTest, EmptyPvsIsValid)
     const std::string yaml = R"(
         name: test-archiver
         hostname: "archiver.slac.stanford.edu:11200"
+        start_date: "2026-01-01T00:00:00Z"
         pvs: []
     )";
 
@@ -138,6 +147,8 @@ TEST_F(EpicsArchiverReaderConfigTest, EmptyPvsIsValid)
 
     // Empty PV list is valid (can be populated at runtime or in a later update)
     EXPECT_TRUE(config.valid());
+    EXPECT_EQ(config.startDate(), "2026-01-01T00:00:00Z");
+    EXPECT_FALSE(config.endDate().has_value());
     EXPECT_EQ(config.pvNames().size(), 0);
 }
 
@@ -146,6 +157,7 @@ TEST_F(EpicsArchiverReaderConfigTest, PvWithoutNameThrows)
     const std::string yaml = R"(
         name: test-archiver
         hostname: "archiver.slac.stanford.edu:11200"
+        start_date: "2026-01-01T00:00:00Z"
         pvs:
           - {}
     )";
@@ -159,6 +171,7 @@ TEST_F(EpicsArchiverReaderConfigTest, EmptyNameThrows)
     const std::string yaml = R"(
         name: ""
         hostname: "archiver.slac.stanford.edu:11200"
+        start_date: "2026-01-01T00:00:00Z"
         pvs:
           - name: "PV1"
     )";
@@ -172,6 +185,7 @@ TEST_F(EpicsArchiverReaderConfigTest, EmptyHostnameThrows)
     const std::string yaml = R"(
         name: test-archiver
         hostname: ""
+        start_date: "2026-01-01T00:00:00Z"
         pvs:
           - name: "PV1"
     )";
@@ -191,6 +205,7 @@ TEST_F(EpicsArchiverReaderConfigTest, SinglePvConfiguration)
     const std::string yaml = R"(
         name: single-pv-reader
         hostname: "localhost:11200"
+        start_date: "2026-01-01T00:00:00Z"
         pvs:
           - name: "SLAC:GUNB:ELEC:LTU1:630:EPICS_PV"
     )";
@@ -201,6 +216,58 @@ TEST_F(EpicsArchiverReaderConfigTest, SinglePvConfiguration)
     EXPECT_TRUE(config.valid());
     EXPECT_EQ(config.pvNames().size(), 1);
     EXPECT_EQ(config.pvNames()[0], "SLAC:GUNB:ELEC:LTU1:630:EPICS_PV");
+    EXPECT_FALSE(config.endDate().has_value());
+}
+
+TEST_F(EpicsArchiverReaderConfigTest, MissingStartDateThrows)
+{
+    const std::string yaml = R"(
+        name: test-archiver
+        hostname: "archiver.slac.stanford.edu:11200"
+        pvs:
+          - name: "PV1"
+    )";
+
+    auto cfg = makeConfigFromYaml(yaml);
+    EXPECT_THROW(EpicsArchiverReaderConfig config(cfg), EpicsArchiverReaderConfig::Error);
+}
+
+TEST_F(EpicsArchiverReaderConfigTest, EndDateIsOptional)
+{
+    const std::string yaml = R"(
+        name: test-archiver
+        hostname: "archiver.slac.stanford.edu:11200"
+        start_date: "2026-01-01T00:00:00Z"
+        pvs:
+          - name: "PV1"
+    )";
+
+    auto cfg = makeConfigFromYaml(yaml);
+    EpicsArchiverReaderConfig config(cfg);
+
+    EXPECT_TRUE(config.valid());
+    EXPECT_EQ(config.startDate(), "2026-01-01T00:00:00Z");
+    EXPECT_FALSE(config.endDate().has_value());
+}
+
+TEST_F(EpicsArchiverReaderConfigTest, AcceptsCamelCaseDateKeys)
+{
+    const std::string yaml = R"(
+        name: test-archiver
+        hostname: "archiver.slac.stanford.edu:11200"
+        startDate: "2026-01-01T00:00:00Z"
+        endDate: "2026-01-01T12:00:00Z"
+        pvs:
+          - name: "PV1"
+    )";
+
+    auto cfg = makeConfigFromYaml(yaml);
+    EpicsArchiverReaderConfig config(cfg);
+
+    EXPECT_TRUE(config.valid());
+    EXPECT_EQ(config.startDate(), "2026-01-01T00:00:00Z");
+    ASSERT_TRUE(config.endDate().has_value());
+    EXPECT_EQ(*config.endDate(), "2026-01-01T12:00:00Z");
 }
 
 // ============================================================================
@@ -223,6 +290,7 @@ TEST_F(EpicsArchiverReaderTest, ReaderInstantiation)
     const std::string yaml = R"(
         name: test-archiver
         hostname: "archiver.slac.stanford.edu:11200"
+        start_date: "2026-01-01T00:00:00Z"
         pvs:
           - name: "PV1"
           - name: "PV2"
@@ -240,6 +308,7 @@ TEST_F(EpicsArchiverReaderTest, InvalidConfigurationThrows)
 {
     const std::string yaml = R"(
         hostname: "archiver.slac.stanford.edu:11200"
+        start_date: "2026-01-01T00:00:00Z"
         pvs:
           - name: "PV1"
     )";
@@ -257,6 +326,7 @@ TEST_F(EpicsArchiverReaderTest, ReaderNameAccessor)
     const std::string yaml = R"(
         name: my-archiver-reader
         hostname: "archiver.example.com:11200"
+        start_date: "2026-01-01T00:00:00Z"
         pvs:
           - name: "PV1"
     )";
@@ -272,6 +342,7 @@ TEST_F(EpicsArchiverReaderTest, MultipleReaderInstances)
     const std::string yaml1 = R"(
         name: archiver1
         hostname: "archiver1.example.com:11200"
+        start_date: "2026-01-01T00:00:00Z"
         pvs:
           - name: "PV1"
     )";
@@ -279,6 +350,7 @@ TEST_F(EpicsArchiverReaderTest, MultipleReaderInstances)
     const std::string yaml2 = R"(
         name: archiver2
         hostname: "archiver2.example.com:11200"
+        start_date: "2026-01-02T00:00:00Z"
         pvs:
           - name: "PV2"
     )";
@@ -298,6 +370,7 @@ TEST_F(EpicsArchiverReaderTest, LargeNumberOfPVs)
     // Create a YAML config with many PVs
     std::string yaml = R"(name: multi-pv-reader
 hostname: "archiver.slac.stanford.edu:11200"
+start_date: "2026-01-01T00:00:00Z"
 pvs:
 )";
 
@@ -317,6 +390,7 @@ TEST_F(EpicsArchiverReaderTest, ReaderWithMetrics)
     const std::string yaml = R"(
         name: test-archiver-with-metrics
         hostname: "archiver.slac.stanford.edu:11200"
+        start_date: "2026-01-01T00:00:00Z"
         pvs:
           - name: "PV1"
     )";
