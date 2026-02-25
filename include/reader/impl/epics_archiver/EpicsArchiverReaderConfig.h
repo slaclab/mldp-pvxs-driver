@@ -43,6 +43,8 @@ namespace mldp_pvxs_driver::reader::impl::epics_archiver {
  *     hostname: "archiver.slac.stanford.edu:11200"
  *     start_date: "2026-01-01T00:00:00Z"
  *     end_date: "2026-01-02T00:00:00Z" # optional
+ *     connect_timeout_sec: 30 # optional, default: 30 seconds
+ *     total_timeout_sec: 300  # optional, default: 300 seconds (5 minutes)
  *     pvs:
  *       - name: "SLAC:GUNB:ELEC:LTU1:630:EPICS_PV"
  *       - name: "FACET:DL1:SBEN:1:BDES"
@@ -135,6 +137,20 @@ public:
      */
     const std::vector<std::string>& pvNames() const;
 
+    /**
+     * @brief Get the connection timeout for HTTP requests to the archiver.
+     *
+     * @return Connection timeout in seconds (default: 30).
+     */
+    long connectTimeoutSec() const;
+
+    /**
+     * @brief Get the total timeout for HTTP requests to the archiver.
+     *
+     * @return Total operation timeout in seconds (default: 300).
+     */
+    long totalTimeoutSec() const;
+
 private:
     /**
      * @brief Populate the typed fields from the raw YAML node.
@@ -151,6 +167,8 @@ private:
     std::optional<std::string> end_date_;
     std::vector<PVConfig>    pvs_;
     std::vector<std::string> pvNames_;
+    long                     connect_timeout_sec_ = 30L;   ///< Connection timeout in seconds
+    long                     total_timeout_sec_ = 300L;    ///< Total operation timeout in seconds
 };
 
 } // namespace mldp_pvxs_driver::reader::impl::epics_archiver

@@ -108,6 +108,16 @@ const std::vector<std::string>& EpicsArchiverReaderConfig::pvNames() const
     return pvNames_;
 }
 
+long EpicsArchiverReaderConfig::connectTimeoutSec() const
+{
+    return connect_timeout_sec_;
+}
+
+long EpicsArchiverReaderConfig::totalTimeoutSec() const
+{
+    return total_timeout_sec_;
+}
+
 void EpicsArchiverReaderConfig::parse(const Config& readerEntry)
 {
     // Parse reader name
@@ -174,6 +184,24 @@ void EpicsArchiverReaderConfig::parse(const Config& readerEntry)
     else
     {
         end_date_.reset();
+    }
+
+    // Parse optional connection timeout (default: 30 seconds)
+    connect_timeout_sec_ = readerEntry.getInt("connect_timeout_sec", 30L);
+    if (connect_timeout_sec_ <= 0)
+    {
+        throw Error("connect_timeout_sec must be positive");
+    }
+
+    // Parse optional total timeout (default: 300 seconds / 5 minutes)
+    total_timeout_sec_ = readerEntry.getInt("total_timeout_sec", 300L);
+    if (total_timeout_sec_ <= 0)
+    {
+        throw Error("total_timeout_sec must be positive");
+    }
+    if (total_timeout_sec_ < connect_timeout_sec_)
+    {
+        throw Error("total_timeout_sec must be >= connect_timeout_sec");
     }
 
     // Parse PVs
