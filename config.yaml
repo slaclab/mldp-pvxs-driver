@@ -1,6 +1,6 @@
 controller_thread_pool: 2
-# controller_stream_max_bytes: 2097152   # optional; flush stream after this payload size
-# controller_stream_max_age_ms: 200      # optional; flush stream after this age in milliseconds
+controller_stream_max_bytes: 2097152   # optional; flush stream after this payload size
+controller_stream_max_age_ms: 200      # optional; flush stream after this age in milliseconds
 
 mldp_pool:
   provider_name: pvxs_provider
@@ -8,79 +8,92 @@ mldp_pool:
   url: dp-ingestion:50051
   min_conn: 1
   max_conn: 4
-  # credentials: # optional
-  #   pem_cert_chain: /etc/certs/client.crt
-  #   pem_private_key: /etc/certs/client.key
-  #   pem_root_certs: /etc/certs/ca.crt
+  credentials: # optional
+    pem_cert_chain: /etc/certs/client.crt
+    pem_private_key: /etc/certs/client.key
+    pem_root_certs: /etc/certs/ca.crt
 
 reader:
   # ========== EPICS PVAccess Reader (Real-time Monitoring via PVXS) ==========
   # Type: epics-pvxs
   # Purpose: Real-time monitoring of EPICS PVs via PVXS (PVAccess)
-  # - epics-pvxs:
-  #     - name: pvxs_reader_a
-  #       thread_pool: 1                        # optional; default: 1 (thread pool size)
-  #       column_batch_size: 50                 # optional; default: 50 (max PVs per batch)
-  #       monitor_poll_threads: 2               # optional; default: 2 (polling threads)
-  #       monitor_poll_interval_ms: 5           # optional; default: 5 (poll interval in ms)
-  #       pvs:
-  #         - name: "PV:NAME:1"
-  #         - name: "PV:NAME:2"
-  #           option: "VALUE"                   # optional; scalar monitor option
-  #         - name: "TABLE:PV"
-  #           option:                           # optional; map-based option for NT Table
-  #             type: "slac-bsas-table"         # special handling for BSAS table rows
-  #             tsSeconds: "secondsFieldName"   # field containing seconds timestamp
-  #             tsNanos: "nanosFieldName"       # field containing nanos timestamp
+  - epics-pvxs:
+      - name: pvxs_reader_a
+        thread_pool: 1                        # optional; default: 1 (thread pool size)
+        column_batch_size: 50                 # optional; default: 50 (max PVs per batch)
+        monitor_poll_threads: 2               # optional; default: 2 (polling threads)
+        monitor_poll_interval_ms: 5           # optional; default: 5 (poll interval in ms)
+        pvs:
+          - name: "PV:NAME:1"
+          - name: "PV:NAME:2"
+            option: "VALUE"                   # optional; scalar monitor option
+          - name: "TABLE:PV"
+            option:                           # optional; map-based option for NT Table
+              type: "slac-bsas-table"         # special handling for BSAS table rows
+              tsSeconds: "secondsFieldName"   # field containing seconds timestamp
+              tsNanos: "nanosFieldName"       # field containing nanos timestamp
 
   # ========== EPICS Base Reader (Real-time Monitoring via Channel Access) ==========
   # Type: epics-base
   # Purpose: Real-time monitoring of EPICS PVs via Channel Access (CA)
-  # - epics-base:
-  #     - name: base_reader_a
-  #       thread_pool: 1                        # optional; default: 1 (thread pool size)
-  #       column_batch_size: 50                 # optional; default: 50 (max PVs per batch)
-  #       monitor_poll_threads: 2               # optional; default: 2 (polling threads)
-  #       monitor_poll_interval_ms: 5           # optional; default: 5 (poll interval in ms)
-  #       pvs:
-  #         - name: "PV:NAME:1"
-  #         - name: "PV:NAME:2"
-  #           option: "VALUE"                   # optional; scalar monitor option
+  - epics-base:
+      - name: base_reader_a
+        thread_pool: 1                        # optional; default: 1 (thread pool size)
+        column_batch_size: 50                 # optional; default: 50 (max PVs per batch)
+        monitor_poll_threads: 2               # optional; default: 2 (polling threads)
+        monitor_poll_interval_ms: 5           # optional; default: 5 (poll interval in ms)
+        pvs:
+          - name: "PV:NAME:1"
+          - name: "PV:NAME:2"
+            option: "VALUE"                   # optional; scalar monitor option
 
   # ========== EPICS Archiver Reader (Historical Data Retrieval) ==========
   # Type: epics-archiver
   # Purpose: Retrieve archived EPICS data from EPICS Archiver Appliance
-  # - epics-archiver:
-  #     - name: archiver_reader_a
-  #       hostname: "archiver.example.com:11200"
-  #       start_date: "2026-01-01T00:00:00Z"
-  #       end_date: "2026-01-31T23:59:59Z"     # optional; omit for open-ended reads
-  #       tls_verify_peer: true                 # optional; default: true (verify cert chain)
-  #       tls_verify_host: true                 # optional; default: true (verify hostname)
-  #       connect_timeout_sec: 30               # optional; default: 30 seconds (connection establishment)
-  #       total_timeout_sec: 300                # optional; default: 300 seconds (5 minutes)
-  #       pvs:
-  #         - name: "SYSTEM:SENSOR:TEMPERATURE:MAIN"
-  #         - name: "SYSTEM:ACTUATOR:PRESSURE:OUTLET"
-  #
-  #     - name: archiver_reader_long_streaming
-  #       hostname: "archiver.example.com:11200"
-  #       start_date: "2026-01-01T00:00:00Z"
-  #       tls_verify_peer: false                # optional; disable only for internal/self-signed testing
-  #       tls_verify_host: false                # must also disable hostname check when peer verify is off
-  #       connect_timeout_sec: 30               # connection timeout (must be > 0)
-  #       total_timeout_sec: 0                  # 0 = infinite (for long streaming sessions)
-  #       pvs:                                  # Low-speed detection (1KB/s for 60s) still catches stalls
-  #         - name: "REACTOR:CORE:FLOW:RATE"
-  #
-  #     - name: archiver_reader_b
-  #       hostname: "archiver2.example.com:11200"
-  #       start_date: "2026-02-01T00:00:00Z"
-  #       connect_timeout_sec: 60               # longer timeout for slower archiver
-  #       total_timeout_sec: 600                # longer operation timeout (10 minutes)
-  #       pvs:
-  #         - name: "FACILITY:POWER:VOLTAGE:PRIMARY"
-  #         - name: "FACILITY:COOLING:TEMPERATURE:SECONDARY"
+  # Modes:
+  #   - historical_once (default): one-shot fetch using start_date[/end_date]
+  #   - periodic_tail: wake up every poll_interval_sec and fetch explicit [now-lookback_sec, now]
+  - epics-archiver:
+      - name: archiver_reader_a
+        hostname: "archiver.example.com:11200"
+        mode: "historical_once"              # optional; default mode
+        start_date: "2026-01-01T00:00:00Z"
+        end_date: "2026-01-31T23:59:59Z"     # optional; omit for open-ended reads
+        tls_verify_peer: true                 # optional; default: true (verify cert chain)
+        tls_verify_host: true                 # optional; default: true (verify hostname)
+        connect_timeout_sec: 30               # optional; default: 30 seconds (connection establishment)
+        total_timeout_sec: 300                # optional; default: 300 seconds (5 minutes)
+        pvs:
+          - name: "SYSTEM:SENSOR:TEMPERATURE:MAIN"
+          - name: "SYSTEM:ACTUATOR:PRESSURE:OUTLET"
+  
+      - name: archiver_reader_long_streaming
+        hostname: "archiver.example.com:11200"
+        start_date: "2026-01-01T00:00:00Z"
+        tls_verify_peer: false                # optional; disable only for internal/self-signed testing
+        tls_verify_host: false                # must also disable hostname check when peer verify is off
+        connect_timeout_sec: 30               # connection timeout (must be > 0)
+        total_timeout_sec: 0                  # 0 = infinite (for long streaming sessions)
+        pvs:                                  # Low-speed detection (1KB/s for 60s) still catches stalls
+          - name: "REACTOR:CORE:FLOW:RATE"
+  
+      - name: archiver_reader_b
+        hostname: "archiver2.example.com:11200"
+        start_date: "2026-02-01T00:00:00Z"
+        connect_timeout_sec: 60               # longer timeout for slower archiver
+        total_timeout_sec: 600                # longer operation timeout (10 minutes)
+        pvs:
+          - name: "FACILITY:POWER:VOLTAGE:PRIMARY"
+          - name: "FACILITY:COOLING:TEMPERATURE:SECONDARY"
+  
+      - name: archiver_reader_tail_polling
+        hostname: "archiver.example.com:11200"
+        mode: "periodic_tail"
+        poll_interval_sec: 5                  # required; wakeup interval
+        lookback_sec: 5                       # optional; defaults to poll_interval_sec; must be <= poll_interval_sec
+        batch_duration_sec: 1                 # optional; split published batches by historical sample-time span
+        pvs:
+          - name: "SYSTEM:SENSOR:TEMPERATURE:MAIN"
 
 metrics:                                 # optional; omit to disable Prometheus endpoint
   endpoint: 0.0.0.0:9464

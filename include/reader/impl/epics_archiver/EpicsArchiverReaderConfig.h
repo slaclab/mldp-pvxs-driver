@@ -41,8 +41,9 @@ namespace mldp_pvxs_driver::reader::impl::epics_archiver {
  *   - type: epics-archiver
  *     name: my-archiver-reader
  *     hostname: "archiver.slac.stanford.edu:11200"
- *     start_date: "2026-01-01T00:00:00Z"
- *     end_date: "2026-01-02T00:00:00Z" # optional
+ *     mode: "historical_once" # optional, default
+ *     start_date: "2026-01-01T00:00:00Z" # required in historical_once mode
+ *     end_date: "2026-01-02T00:00:00Z"   # optional
  *     connect_timeout_sec: 30 # optional, default: 30 seconds
  *     total_timeout_sec: 300  # optional, default: 300 seconds (5 minutes)
  *     batch_duration_sec: 1   # optional, default: 1 second (historical sample-time window)
@@ -51,11 +52,26 @@ namespace mldp_pvxs_driver::reader::impl::epics_archiver {
  *     pvs:
  *       - name: "SLAC:GUNB:ELEC:LTU1:630:EPICS_PV"
  *       - name: "FACET:DL1:SBEN:1:BDES"
+ *
+ *   - type: epics-archiver
+ *     name: my-archiver-tail-reader
+ *     hostname: "archiver.slac.stanford.edu:11200"
+ *     mode: "periodic_tail"
+ *     poll_interval_sec: 5  # required in periodic_tail mode
+ *     lookback_sec: 5       # optional, defaults to poll_interval_sec, must be <= poll_interval_sec
+ *     pvs:
+ *       - name: "FACET:DL1:SBEN:1:BDES"
  * @endcode
  */
 class EpicsArchiverReaderConfig
 {
 public:
+    enum class FetchMode
+    {
+        HistoricalOnce,
+        PeriodicTail
+    };
+
     /**
      * @brief Exception thrown when the reader configuration cannot be parsed.
      *
@@ -85,8 +101,9 @@ public:
      * @brief Build a typed view over the provided YAML node.
      *
      * @param readerEntry YAML configuration node for this reader.
-     * @throws Error when any of the required fields (name, hostname,
-     *         start_date/startDate, or pvs) are missing or malformed.
+     * @throws Error when any required fields for the selected mode are missing
+     *         or malformed (e.g. historical start_date/startDate, periodic
+     *         poll_interval_sec, or pvs).
      */
     explicit EpicsArchiverReaderConfig(const ::mldp_pvxs_driver::config::Config& readerEntry);
 
@@ -125,6 +142,10 @@ public:
      * @return End date/time string when configured; std::nullopt otherwise.
      */
     const std::optional<std::string>& endDate() const;
+    /**
+     * @brief Get the configured fetch mode (one-shot historical or periodic tail polling).
+     */
+    FetchMode                         fetchMode() const;
 
     /**
      * @brief Get the ordered list of PV entries to retrieve.
@@ -164,6 +185,19 @@ public:
      * @return Batch duration threshold in seconds (default: 1).
      */
     long batchDurationSec() const;
+    /**
+     * @brief Get periodic tail poll interval in seconds.
+     *
+     * Valid only when mode is @ref FetchMode::PeriodicTail.
+     */
+    long pollIntervalSec() const;
+    /**
+     * @brief Get periodic tail lookback window in seconds.
+     *
+     * Valid only when mode is @ref FetchMode::PeriodicTail. Defaults to
+     * @ref pollIntervalSec() when not explicitly configured.
+     */
+    long lookbackSec() const;
 
     /**
      * @brief Whether to verify the server TLS certificate chain.
@@ -188,18 +222,21 @@ private:
      */
     void parse(const ::mldp_pvxs_driver::config::Config& readerEntry);
 
-    bool                     valid_ = false;
-    std::string              name_;
-    std::string              hostname_;
-    std::string              start_date_;
+    bool                       valid_ = false;
+    std::string                name_;
+    std::string                hostname_;
+    FetchMode                  fetch_mode_ = FetchMode::HistoricalOnce;
+    std::string                start_date_;
     std::optional<std::string> end_date_;
-    std::vector<PVConfig>    pvs_;
-    std::vector<std::string> pvNames_;
-    long                     connect_timeout_sec_ = 30L;   ///< Connection timeout in seconds
-    long                     total_timeout_sec_ = 300L;    ///< Total operation timeout in seconds
-    long                     batch_duration_sec_ = 1L;     ///< Max historical sample-time span per output batch.
-    bool                     tls_verify_peer_ = true;      ///< Verify TLS certificate chain.
-    bool                     tls_verify_host_ = true;      ///< Verify TLS host name.
+    std::vector<PVConfig>      pvs_;
+    std::vector<std::string>   pvNames_;
+    long                       connect_timeout_sec_ = 30L; ///< Connection timeout in seconds
+    long                       total_timeout_sec_ = 300L;  ///< Total operation timeout in seconds
+    long                       batch_duration_sec_ = 1L;   ///< Max historical sample-time span per output batch.
+    long                       poll_interval_sec_ = 0L;    ///< Periodic tail poll interval (seconds).
+    long                       lookback_sec_ = 0L;         ///< Periodic tail lookback window (seconds).
+    bool                       tls_verify_peer_ = true;    ///< Verify TLS certificate chain.
+    bool                       tls_verify_host_ = true;    ///< Verify TLS host name.
 };
 
 } // namespace mldp_pvxs_driver::reader::impl::epics_archiver

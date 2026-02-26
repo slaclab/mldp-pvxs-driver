@@ -26,6 +26,7 @@
 
 #include <cstdint>
 #include <atomic>
+#include <condition_variable>
 #include <exception>
 #include <memory>
 #include <mutex>
@@ -97,6 +98,7 @@ private:
     std::thread                                                  reader_thread_; ///< Background worker fetching archiver data.
     std::atomic<bool>                                            running_{false}; ///< Worker loop/lifecycle flag.
     mutable std::mutex                                           worker_mutex_;   ///< Protects worker status fields.
+    std::condition_variable                                      worker_cv_;      ///< Interruptible wakeup for periodic tail polling.
     std::exception_ptr                                           worker_error_;   ///< Captures worker exception for diagnostics.
     bool                                                         worker_done_ = false; ///< True after worker thread exits.
 
@@ -163,6 +165,7 @@ private:
      * @throws std::runtime_error on transport, protocol, or parse failures.
      */
     void fetchConfiguredPVs();
+    void fetchConfiguredPVs(const std::string& from, const std::optional<std::string>& to);
 
     REGISTER_READER("epics-archiver", EpicsArchiverReader)
 };

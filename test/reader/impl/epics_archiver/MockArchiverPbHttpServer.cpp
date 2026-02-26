@@ -378,11 +378,13 @@ MockArchiverPbHttpServer::MockArchiverPbHttpServer(const GenerationConfig& confi
                     {
                         std::lock_guard<std::mutex> lock(mu_);
                         last_request_ = log;
+                        request_history_.push_back(log);
                         last_response_success_.reset();
                         // Each handled request gets a monotonically increasing id so tests
                         // can wait for completion of "the latest" request deterministically.
                         markLastRequestStartedLocked();
                     }
+                    cv_.notify_all();
 
                     if (!log.pv.has_value() || log.pv->empty())
                     {
@@ -527,6 +529,23 @@ MockArchiverPbHttpServer::RequestLog MockArchiverPbHttpServer::lastRequest() con
 {
     std::lock_guard<std::mutex> lock(mu_);
     return last_request_;
+}
+
+std::vector<MockArchiverPbHttpServer::RequestLog> MockArchiverPbHttpServer::requestHistory() const
+{
+    std::lock_guard<std::mutex> lock(mu_);
+    return request_history_;
+}
+
+bool MockArchiverPbHttpServer::waitForRequestCount(size_t min_requests, std::chrono::milliseconds timeout) const
+{
+    std::unique_lock<std::mutex> lock(mu_);
+    return cv_.wait_for(lock,
+                        timeout,
+                        [&]()
+                        {
+                            return request_history_.size() >= min_requests;
+                        });
 }
 
 bool MockArchiverPbHttpServer::waitForLastResponseComplete(std::chrono::milliseconds timeout) const

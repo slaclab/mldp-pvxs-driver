@@ -98,6 +98,11 @@ const std::optional<std::string>& EpicsArchiverReaderConfig::endDate() const
     return end_date_;
 }
 
+EpicsArchiverReaderConfig::FetchMode EpicsArchiverReaderConfig::fetchMode() const
+{
+    return fetch_mode_;
+}
+
 const std::vector<EpicsArchiverReaderConfig::PVConfig>& EpicsArchiverReaderConfig::pvs() const
 {
     return pvs_;
@@ -121,6 +126,16 @@ long EpicsArchiverReaderConfig::totalTimeoutSec() const
 long EpicsArchiverReaderConfig::batchDurationSec() const
 {
     return batch_duration_sec_;
+}
+
+long EpicsArchiverReaderConfig::pollIntervalSec() const
+{
+    return poll_interval_sec_;
+}
+
+long EpicsArchiverReaderConfig::lookbackSec() const
+{
+    return lookback_sec_;
 }
 
 bool EpicsArchiverReaderConfig::tlsVerifyPeer() const
@@ -172,17 +187,34 @@ void EpicsArchiverReaderConfig::parse(const Config& readerEntry)
         throw Error("hostname must not be empty");
     }
 
-    // Parse required start date (accept snake_case and camelCase)
-    if (!readerEntry.hasChild("start_date") && !readerEntry.hasChild("startDate"))
+    // Parse optional fetch mode (default: historical one-shot for backward compatibility)
+    const std::string mode = readerEntry.get("mode", "historical_once");
+    if (mode == "historical_once")
     {
-        throw Error(makeMissingFieldMessage("start_date"));
+        fetch_mode_ = FetchMode::HistoricalOnce;
+    }
+    else if (mode == "periodic_tail")
+    {
+        fetch_mode_ = FetchMode::PeriodicTail;
+    }
+    else
+    {
+        throw Error("mode must be one of: historical_once, periodic_tail");
     }
 
+    // Parse start date (required in historical_once mode; ignored in periodic_tail)
     requireScalarChildAny(readerEntry, "start_date", "startDate", "archiver reader config");
     start_date_ = getAliasedString(readerEntry, "start_date", "startDate");
-    if (start_date_.empty())
+    if (fetch_mode_ == FetchMode::HistoricalOnce)
     {
-        throw Error("start_date must not be empty");
+        if (!readerEntry.hasChild("start_date") && !readerEntry.hasChild("startDate"))
+        {
+            throw Error(makeMissingFieldMessage("start_date"));
+        }
+        if (start_date_.empty())
+        {
+            throw Error("start_date must not be empty");
+        }
     }
 
     // Parse optional end date (accept snake_case and camelCase)
@@ -225,6 +257,26 @@ void EpicsArchiverReaderConfig::parse(const Config& readerEntry)
     if (batch_duration_sec_ <= 0)
     {
         throw Error("batch_duration_sec must be positive (>0)");
+    }
+
+    // Parse periodic tail polling controls
+    if (fetch_mode_ == FetchMode::PeriodicTail)
+    {
+        poll_interval_sec_ = readerEntry.getInt("poll_interval_sec", 0L);
+        if (poll_interval_sec_ <= 0)
+        {
+            throw Error("poll_interval_sec must be positive (>0) when mode=periodic_tail");
+        }
+
+        lookback_sec_ = readerEntry.getInt("lookback_sec", poll_interval_sec_);
+        if (lookback_sec_ <= 0)
+        {
+            throw Error("lookback_sec must be positive (>0) when mode=periodic_tail");
+        }
+        if (lookback_sec_ > poll_interval_sec_)
+        {
+            throw Error("lookback_sec must be <= poll_interval_sec when mode=periodic_tail");
+        }
     }
 
     // Parse optional TLS verification controls (secure by default)

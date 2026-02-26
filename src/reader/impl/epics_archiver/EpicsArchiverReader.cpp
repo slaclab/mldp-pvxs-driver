@@ -17,7 +17,9 @@
 #include <util/http/HttpClient.h>
 #include <util/http/HttpUrlUtils.h>
 #include <util/log/ILog.h>
+#include <util/time/DateTimeUtils.h>
 
+#include <chrono>
 #include <cstdint>
 #include <exception>
 #include <optional>
@@ -28,13 +30,17 @@
 using namespace mldp_pvxs_driver::config;
 using namespace mldp_pvxs_driver::util::log;
 using namespace mldp_pvxs_driver::util::http;
+using namespace mldp_pvxs_driver::util::time;
 using namespace mldp_pvxs_driver::reader::impl::epics_archiver;
 
 namespace {
 
 constexpr const char* kArchiverPbRawPath = "/retrieval/data/getData.raw";
 
-std::string buildArchiverUrl(const EpicsArchiverReaderConfig& cfg, const std::string& pv)
+std::string buildArchiverUrl(const EpicsArchiverReaderConfig&  cfg,
+                             const std::string&                pv,
+                             const std::string&                from,
+                             const std::optional<std::string>& to)
 {
     std::string base = cfg.hostname();
     if (!HttpUrlUtils::hasScheme(base))
@@ -43,10 +49,10 @@ std::string buildArchiverUrl(const EpicsArchiverReaderConfig& cfg, const std::st
     }
     base = HttpUrlUtils::trimTrailingSlash(std::move(base));
 
-    std::string url = base + kArchiverPbRawPath + "?pv=" + HttpUrlUtils::percentEncode(pv) + "&from=" + HttpUrlUtils::percentEncode(cfg.startDate());
-    if (cfg.endDate().has_value())
+    std::string url = base + kArchiverPbRawPath + "?pv=" + HttpUrlUtils::percentEncode(pv) + "&from=" + HttpUrlUtils::percentEncode(from);
+    if (to.has_value())
     {
-        url += "&to=" + HttpUrlUtils::percentEncode(*cfg.endDate());
+        url += "&to=" + HttpUrlUtils::percentEncode(*to);
     }
     return url;
 }
@@ -206,6 +212,7 @@ void EpicsArchiverReader::startWorker()
 void EpicsArchiverReader::stopWorker()
 {
     running_.store(false);
+    worker_cv_.notify_all();
     if (http_client_)
     {
         // Interrupt any blocking streamGet() so join() is not held until a long
@@ -223,12 +230,56 @@ void EpicsArchiverReader::runWorker()
 {
     try
     {
-        // Historical archiver reader performs a one-shot fetch over the
-        // configured time window, but it runs on a dedicated reader thread to
-        // match the lifecycle model used by other readers.
-        if (running_.load())
+        switch (config_.fetchMode())
         {
-            fetchConfiguredPVs();
+        case EpicsArchiverReaderConfig::FetchMode::HistoricalOnce:
+            {
+                // Historical archiver reader performs a one-shot fetch over the
+                // configured time window, but it runs on a dedicated reader thread to
+                // match the lifecycle model used by other readers.
+                if (running_.load())
+                {
+                    fetchConfiguredPVs();
+                }
+                break;
+            }
+        case EpicsArchiverReaderConfig::FetchMode::PeriodicTail: {
+            infof(*logger_,
+                  "Archiver reader '{}' running in periodic_tail mode (poll_interval={}s lookback={}s)",
+                  name_,
+                  config_.pollIntervalSec(),
+                  config_.lookbackSec());
+
+            std::optional<std::chrono::system_clock::time_point> previous_iteration_end;
+            const bool                                           contiguous_windows = (config_.lookbackSec() == config_.pollIntervalSec());
+
+            while (running_.load())
+            {
+                const auto iteration_end = DateTimeUtils::truncateToMilliseconds(std::chrono::system_clock::now());
+                auto       iteration_start = iteration_end - std::chrono::seconds(config_.lookbackSec());
+                if (contiguous_windows && previous_iteration_end.has_value())
+                {
+                    iteration_start = *previous_iteration_end;
+                }
+
+                const std::string from = DateTimeUtils::formatIso8601UtcMillis(iteration_start);
+                const std::string to = DateTimeUtils::formatIso8601UtcMillis(iteration_end);
+                debugf(*logger_, "Periodic tail fetch for '{}' window [{} -> {}]", name_, from, to);
+                fetchConfiguredPVs(from, to);
+                previous_iteration_end = iteration_end;
+
+                std::unique_lock<std::mutex> lock(worker_mutex_);
+                worker_cv_.wait_for(lock,
+                                    std::chrono::seconds(config_.pollIntervalSec()),
+                                    [this]()
+                                    {
+                                        return !running_.load();
+                                    });
+            }
+            break;
+        }
+        default:
+            throw std::runtime_error("Unsupported fetch mode in Archiver reader configuration");
         }
     }
     catch (const std::exception& e)
@@ -403,6 +454,11 @@ void EpicsArchiverReader::parsePbHttpLineIntoState(const std::string& line, PbCh
 
 void EpicsArchiverReader::fetchConfiguredPVs()
 {
+    fetchConfiguredPVs(config_.startDate(), config_.endDate());
+}
+
+void EpicsArchiverReader::fetchConfiguredPVs(const std::string& from, const std::optional<std::string>& to)
+{
     // High-level flow:
     // 1) Build Archiver Appliance PB/HTTP URL for each configured PV.
     // 2) Stream HTTP bytes incrementally.
@@ -426,7 +482,7 @@ void EpicsArchiverReader::fetchConfiguredPVs()
             break;
         }
 
-        const std::string url = buildArchiverUrl(config_, pv);
+        const std::string url = buildArchiverUrl(config_, pv, from, to);
         infof(*logger_, "Fetching archiver PB/HTTP stream for PV '{}' from {}", pv, url);
 
         PbChunkState     chunk_state;

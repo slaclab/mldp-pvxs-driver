@@ -7,6 +7,7 @@
 #include <pool/MLDPGrpcPool.h>
 #include <query.grpc.pb.h>
 
+#include "../common/MldpQueryTestUtils.h"
 #include "../config/test_config_helpers.h"
 #include "../mock/sioc.h"
 
@@ -22,6 +23,7 @@
 #include <vector>
 
 using namespace mldp_pvxs_driver::util::pool;
+using namespace mldp_pvxs_driver::testutil;
 using mldp_pvxs_driver::controller::MLDPPVXSController;
 using mldp_pvxs_driver::config::makeConfigFromYaml;
 
@@ -88,75 +90,6 @@ protected:
             controller_.reset();
         }
         pvServer_.reset();
-    }
-
-    static std::optional<std::unordered_map<std::string, DataColumn>> queryAndCollectColumns(
-        const std::vector<std::string>& pvNames,
-        std::chrono::milliseconds       timeout)
-    {
-        const auto deadline = std::chrono::steady_clock::now() + timeout;
-        const auto channel = grpc::CreateChannel("dp-query:50052", grpc::InsecureChannelCredentials());
-        auto       stub = dp::service::query::DpQueryService::NewStub(channel);
-
-        if (!stub)
-        {
-            return std::nullopt;
-        }
-
-        std::unordered_set<std::string> nameSet(pvNames.begin(), pvNames.end());
-
-        while (std::chrono::steady_clock::now() < deadline)
-        {
-            dp::service::query::QueryDataRequest request;
-            auto*                                spec = request.mutable_queryspec();
-            for (const auto& pvName : pvNames)
-            {
-                spec->add_pvnames(pvName);
-            }
-
-            const auto now = std::chrono::system_clock::now();
-            const auto begin = now - std::chrono::seconds(30);
-            const auto end = now + std::chrono::seconds(1);
-
-            auto* beginTs = spec->mutable_begintime();
-            beginTs->set_epochseconds(std::chrono::duration_cast<std::chrono::seconds>(begin.time_since_epoch()).count());
-
-            auto* endTs = spec->mutable_endtime();
-            endTs->set_epochseconds(std::chrono::duration_cast<std::chrono::seconds>(end.time_since_epoch()).count());
-
-            grpc::ClientContext context;
-            context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(5));
-
-            dp::service::query::QueryDataResponse response;
-            const auto status = stub->queryData(&context, request, &response);
-            if (status.ok() && response.has_querydata() && !response.has_exceptionalresult())
-            {
-                std::unordered_map<std::string, DataColumn> collected;
-                for (const auto& bucket : response.querydata().databuckets())
-                {
-                    if (!bucket.has_datacolumn())
-                    {
-                        continue;
-                    }
-
-                    const auto& column = bucket.datacolumn();
-                    if (!nameSet.contains(column.name()))
-                    {
-                        continue;
-                    }
-
-                    collected.emplace(column.name(), column);
-                    if (collected.size() == nameSet.size())
-                    {
-                        return collected;
-                    }
-                }
-            }
-
-            std::this_thread::sleep_for(std::chrono::milliseconds(200));
-        }
-
-        return std::nullopt;
     }
 
     static std::unique_ptr<PVServer>             pvServer_;
@@ -444,4 +377,70 @@ TEST_F(MLDPGrpcPoolIntegrationTest, QueryBsasTablePV)
     EXPECT_EQ(stringColumn.datavalues(0).stringvalue(), "OK");
     EXPECT_EQ(stringColumn.datavalues(1).stringvalue(), "WARNING");
     EXPECT_EQ(stringColumn.datavalues(2).stringvalue(), "FAULT");
+}
+
+TEST_F(MLDPGrpcPoolIntegrationTest, CharacterizesDuplicateIngestBehaviorForSameSample)
+{
+    auto pool = MLDPGrpcPool::create(make_pool_config(1, 1, "duplicate_probe_provider", "duplicate probe provider"));
+    ASSERT_TRUE(pool);
+
+    const auto providerId = pool->providerId();
+    const std::string pvName = "test:duplicate:probe";
+    const auto now = std::chrono::system_clock::now().time_since_epoch();
+    const auto ts_sec = std::chrono::duration_cast<std::chrono::seconds>(now).count();
+    const auto ts_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(now).count() % 1'000'000'000LL;
+
+    auto buildRequest = [&](std::string client_request_id)
+    {
+        dp::service::ingestion::IngestDataRequest request;
+        request.set_providerid(providerId);
+        request.set_clientrequestid(std::move(client_request_id));
+        request.add_tags(pvName);
+
+        auto* frame = request.mutable_ingestiondataframe();
+        auto* column = frame->add_datacolumns();
+        column->set_name(pvName);
+        auto* value = column->add_datavalues();
+        value->set_intvalue(42);
+
+        auto* timestamps = frame->mutable_datatimestamps();
+        auto* list = timestamps->mutable_timestamplist();
+        auto* ts = list->add_timestamps();
+        ts->set_epochseconds(ts_sec);
+        ts->set_nanoseconds(static_cast<uint32_t>(ts_ns));
+
+        return request;
+    };
+
+    {
+        auto handle = pool->acquire();
+        ASSERT_TRUE(handle);
+
+        for (int i = 0; i < 2; ++i)
+        {
+            auto request = buildRequest("dup_probe_req_" + std::to_string(i));
+            dp::service::ingestion::IngestDataResponse response;
+            grpc::ClientContext context;
+            const auto status = handle->stub->ingestData(&context, request, &response);
+            ASSERT_TRUE(status.ok());
+            ASSERT_TRUE(response.has_ackresult());
+            EXPECT_EQ(response.ackresult().numrows(), 1);
+            EXPECT_FALSE(response.has_exceptionalresult());
+        }
+    }
+
+    const auto result = queryAndCollectColumns({pvName}, std::chrono::seconds(10));
+    ASSERT_TRUE(result.has_value());
+    const auto& column = result->at(pvName);
+
+    // Characterization test: some MLDP deployments deduplicate identical samples,
+    // while others store both rows. This test records the current behavior while
+    // still ensuring the query path returns the inserted sample value.
+    ASSERT_GE(column.datavalues_size(), 1);
+    ASSERT_LE(column.datavalues_size(), 2);
+    for (const auto& v : column.datavalues())
+    {
+        EXPECT_EQ(v.value_case(), DataValue::kIntValue);
+        EXPECT_EQ(v.intvalue(), 42);
+    }
 }

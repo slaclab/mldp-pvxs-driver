@@ -96,6 +96,14 @@ public:
      */
     [[nodiscard]] RequestLog              lastRequest() const;
     /**
+     * @brief Return the recorded request history in arrival order.
+     */
+    [[nodiscard]] std::vector<RequestLog> requestHistory() const;
+    /**
+     * @brief Wait until at least @p min_requests have been observed.
+     */
+    bool                                  waitForRequestCount(size_t min_requests, std::chrono::milliseconds timeout) const;
+    /**
      * @brief Wait until the most recently recorded request has finished sending its response.
      *
      * Returns true when the response is fully sent (or otherwise completed),
@@ -132,6 +140,7 @@ private:
     mutable std::mutex mu_;
     mutable std::condition_variable cv_;
     RequestLog         last_request_;
+    std::vector<RequestLog> request_history_;
     std::optional<bool> last_response_success_;
     uint64_t           last_request_id_ = 0;
     uint64_t           last_completed_request_id_ = 0;

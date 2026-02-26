@@ -261,8 +261,47 @@ TEST_F(EpicsArchiverReaderConfigTest, TlsVerificationDefaultsToEnabled)
     EpicsArchiverReaderConfig config(cfg);
 
     EXPECT_EQ(config.batchDurationSec(), 1L);
+    EXPECT_EQ(config.fetchMode(), EpicsArchiverReaderConfig::FetchMode::HistoricalOnce);
     EXPECT_TRUE(config.tlsVerifyPeer());
     EXPECT_TRUE(config.tlsVerifyHost());
+}
+
+// Verifies periodic_tail mode parses required poll interval and defaults lookback to the same value.
+TEST_F(EpicsArchiverReaderConfigTest, PeriodicTailDefaultsLookbackToPollInterval)
+{
+    const std::string yaml = R"(
+        name: archiver-tail
+        hostname: "localhost:11200"
+        mode: "periodic_tail"
+        poll_interval_sec: 5
+        pvs:
+          - name: "PV1"
+    )";
+
+    auto                      cfg = makeConfigFromYaml(yaml);
+    EpicsArchiverReaderConfig config(cfg);
+
+    EXPECT_TRUE(config.valid());
+    EXPECT_EQ(config.fetchMode(), EpicsArchiverReaderConfig::FetchMode::PeriodicTail);
+    EXPECT_EQ(config.pollIntervalSec(), 5L);
+    EXPECT_EQ(config.lookbackSec(), 5L);
+}
+
+// Verifies periodic_tail mode rejects lookback windows larger than the poll interval.
+TEST_F(EpicsArchiverReaderConfigTest, PeriodicTailRejectsLookbackLargerThanPollInterval)
+{
+    const std::string yaml = R"(
+        name: archiver-tail
+        hostname: "localhost:11200"
+        mode: "periodic_tail"
+        poll_interval_sec: 2
+        lookback_sec: 3
+        pvs:
+          - name: "PV1"
+    )";
+
+    auto cfg = makeConfigFromYaml(yaml);
+    EXPECT_THROW(EpicsArchiverReaderConfig config(cfg), EpicsArchiverReaderConfig::Error);
 }
 
 // Verifies batch_duration_sec is parsed when explicitly configured.
