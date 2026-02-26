@@ -43,9 +43,7 @@ std::string buildArchiverUrl(const EpicsArchiverReaderConfig& cfg, const std::st
     }
     base = HttpUrlUtils::trimTrailingSlash(std::move(base));
 
-    std::string url = base + kArchiverPbRawPath
-                      + "?pv=" + HttpUrlUtils::percentEncode(pv)
-                      + "&from=" + HttpUrlUtils::percentEncode(cfg.startDate());
+    std::string url = base + kArchiverPbRawPath + "?pv=" + HttpUrlUtils::percentEncode(pv) + "&from=" + HttpUrlUtils::percentEncode(cfg.startDate());
     if (cfg.endDate().has_value())
     {
         url += "&to=" + HttpUrlUtils::percentEncode(*cfg.endDate());
@@ -145,19 +143,14 @@ EpicsArchiverReader::EpicsArchiverReader(
         throw EpicsArchiverReaderConfig::Error(std::string("Failed to initialize HTTP client: ") + e.what());
     }
 
-    try
-    {
-        fetchConfiguredPVs();
-    }
-    catch (const std::exception& e)
-    {
-        throw EpicsArchiverReaderConfig::Error(std::string("Failed to fetch archiver data: ") + e.what());
-    }
+    startWorker();
 }
 
 EpicsArchiverReader::~EpicsArchiverReader()
 {
-    // Clean up transport and archiver reader resources
+    // Stop worker before transport teardown so no background access races with
+    // HTTP client destruction.
+    stopWorker();
     destroyHttpClient();
 }
 
@@ -193,6 +186,66 @@ void EpicsArchiverReader::initializeHttpClient()
 void EpicsArchiverReader::destroyHttpClient()
 {
     http_client_.reset();
+}
+
+void EpicsArchiverReader::startWorker()
+{
+    running_.store(true);
+    {
+        std::lock_guard<std::mutex> lock(worker_mutex_);
+        worker_error_ = nullptr;
+        worker_done_ = false;
+    }
+
+    reader_thread_ = std::thread([this]()
+                                 {
+                                     runWorker();
+                                 });
+}
+
+void EpicsArchiverReader::stopWorker()
+{
+    running_.store(false);
+
+    if (reader_thread_.joinable())
+    {
+        reader_thread_.join();
+    }
+}
+
+void EpicsArchiverReader::runWorker()
+{
+    try
+    {
+        // Historical archiver reader performs a one-shot fetch over the
+        // configured time window, but it runs on a dedicated reader thread to
+        // match the lifecycle model used by other readers.
+        if (running_.load())
+        {
+            fetchConfiguredPVs();
+        }
+    }
+    catch (const std::exception& e)
+    {
+        {
+            std::lock_guard<std::mutex> lock(worker_mutex_);
+            worker_error_ = std::current_exception();
+        }
+        errorf(*logger_, "Archiver reader worker '{}' failed: {}", name_, e.what());
+    }
+    catch (...)
+    {
+        {
+            std::lock_guard<std::mutex> lock(worker_mutex_);
+            worker_error_ = std::current_exception();
+        }
+        errorf(*logger_, "Archiver reader worker '{}' failed with unknown exception", name_);
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(worker_mutex_);
+        worker_done_ = true;
+    }
 }
 
 void EpicsArchiverReader::flushChunk(PbChunkState& state)
@@ -348,8 +401,13 @@ void EpicsArchiverReader::fetchConfiguredPVs()
 
     for (const auto& pv : config_.pvNames())
     {
+        if (!running_.load())
+        {
+            break;
+        }
+
         const std::string url = buildArchiverUrl(config_, pv);
-        debugf(*logger_, "Fetching archiver PB/HTTP stream for PV '{}' from {}", pv, url);
+        infof(*logger_, "Fetching archiver PB/HTTP stream for PV '{}' from {}", pv, url);
 
         PbChunkState     chunk_state;
         std::string      line_buf;
@@ -398,5 +456,6 @@ void EpicsArchiverReader::fetchConfiguredPVs()
             throw std::runtime_error(
                 "archiver HTTP GET returned status " + std::to_string(response.http_status) + " for PV " + pv);
         }
+        infof(*logger_, "Completed fetch of archiver PB/HTTP stream for PV '{}'", pv);
     }
 }

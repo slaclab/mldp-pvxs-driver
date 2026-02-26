@@ -21,6 +21,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -52,6 +53,22 @@ private:
     std::vector<EventBatch> received;
 };
 
+bool waitForMockRequestStartAndCompletion(const MockArchiverPbHttpServer& server,
+                                          std::chrono::milliseconds       timeout)
+{
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (std::chrono::steady_clock::now() < deadline)
+    {
+        if (!server.lastRequest().path.empty())
+        {
+            return server.waitForLastResponseComplete(
+                std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now()));
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    return false;
+}
+
 // Verifies the reader fetches PB/HTTP data and publishes parsed samples to the event bus.
 TEST(EpicsArchiverReaderHttpIntegrationTest, FetchesPbHttpStreamAndPublishesBusEvents)
 {
@@ -80,7 +97,7 @@ TEST(EpicsArchiverReaderHttpIntegrationTest, FetchesPbHttpStreamAndPublishesBusE
 
     auto reader_cfg = makeConfigFromYaml(yaml);
     auto reader = std::make_unique<EpicsArchiverReader>(bus, nullptr, reader_cfg);
-    ASSERT_TRUE(server.waitForLastResponseComplete(std::chrono::seconds(2)));
+    ASSERT_TRUE(waitForMockRequestStartAndCompletion(server, std::chrono::seconds(2)));
 
     EXPECT_EQ(reader->name(), "archiver-http-test");
 
@@ -146,7 +163,7 @@ TEST(EpicsArchiverReaderHttpIntegrationTest, IncludesOptionalToQueryWhenConfigur
 
     auto reader_cfg = makeConfigFromYaml(yaml);
     auto reader = std::make_unique<EpicsArchiverReader>(bus, nullptr, reader_cfg);
-    ASSERT_TRUE(server.waitForLastResponseComplete(std::chrono::seconds(2)));
+    ASSERT_TRUE(waitForMockRequestStartAndCompletion(server, std::chrono::seconds(2)));
     EXPECT_EQ(reader->name(), "archiver-http-test-to");
 
     const auto req = server.lastRequest();
@@ -184,7 +201,7 @@ TEST(EpicsArchiverReaderHttpIntegrationTest, SplitsPublishedBatchesByHistoricalS
 
     auto reader_cfg = makeConfigFromYaml(yaml);
     auto reader = std::make_unique<EpicsArchiverReader>(bus, nullptr, reader_cfg);
-    ASSERT_TRUE(server.waitForLastResponseComplete(std::chrono::seconds(2)));
+    ASSERT_TRUE(waitForMockRequestStartAndCompletion(server, std::chrono::seconds(2)));
     EXPECT_EQ(reader->name(), "archiver-http-batch-split");
 
     const auto req = server.lastRequest();

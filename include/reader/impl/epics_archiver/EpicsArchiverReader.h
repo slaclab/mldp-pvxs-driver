@@ -25,8 +25,12 @@
 #include <util/log/ILog.h>
 
 #include <cstdint>
+#include <atomic>
+#include <exception>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace mldp_pvxs_driver::util::http {
@@ -90,6 +94,11 @@ private:
     std::unique_ptr<::mldp_pvxs_driver::util::http::IHttpClient> http_client_; ///< Shared HTTP transport abstraction.
     std::string                                                  name_;        ///< Reader name from configuration.
     EpicsArchiverReaderConfig                                    config_;      ///< Parsed archiver reader configuration.
+    std::thread                                                  reader_thread_; ///< Background worker fetching archiver data.
+    std::atomic<bool>                                            running_{false}; ///< Worker loop/lifecycle flag.
+    mutable std::mutex                                           worker_mutex_;   ///< Protects worker status fields.
+    std::exception_ptr                                           worker_error_;   ///< Captures worker exception for diagnostics.
+    bool                                                         worker_done_ = false; ///< True after worker thread exits.
 
     /**
      * @brief Initialize reusable HTTP client for archiver API access.
@@ -129,6 +138,21 @@ private:
      * @brief Parse one PB/HTTP line (header or sample) into the incremental chunk state.
      */
     void parsePbHttpLineIntoState(const std::string& line, PbChunkState& state);
+
+    /**
+     * @brief Start the dedicated background worker thread for archiver fetch.
+     */
+    void startWorker();
+
+    /**
+     * @brief Request worker stop and join the background thread.
+     */
+    void stopWorker();
+
+    /**
+     * @brief Worker entrypoint that consumes historical data from the archiver.
+     */
+    void runWorker();
 
     /**
      * @brief Fetch and publish archived samples for configured PVs.
