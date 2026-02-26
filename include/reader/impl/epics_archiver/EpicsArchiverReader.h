@@ -104,6 +104,33 @@ private:
     void destroyHttpClient();
 
     /**
+     * @brief Flush the current accumulated output batch for a PB/HTTP chunk.
+     *
+     * Publishes the current events vector (if non-empty) while preserving the
+     * parsed PB/HTTP chunk header so parsing can continue within the same chunk.
+     */
+    void flushChunk(PbChunkState& state);
+
+    /**
+     * @brief Finalize the current PB/HTTP chunk and reset chunk state.
+     *
+     * Used at PB/HTTP chunk boundaries (empty line) and end-of-stream.
+     */
+    void finalizeChunk(PbChunkState& state);
+
+    /**
+     * @brief Split the current output batch when historical sample time exceeds the configured window.
+     */
+    void splitBatchIfHistoricalWindowExceeded(PbChunkState& state,
+                                              uint64_t      sample_epoch_seconds,
+                                              uint32_t      sample_nanoseconds);
+
+    /**
+     * @brief Parse one PB/HTTP line (header or sample) into the incremental chunk state.
+     */
+    void parsePbHttpLineIntoState(const std::string& line, PbChunkState& state);
+
+    /**
      * @brief Fetch and publish archived samples for configured PVs.
      *
      * Performs HTTP PB/HTTP retrieval requests against the configured archiver

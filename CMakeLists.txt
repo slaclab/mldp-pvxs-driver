@@ -413,6 +413,7 @@ add_library(lib${PROJECT_NAME}
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/ReaderFactory.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/util/log/CoutLogger.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/util/http/CurlHttpClient.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/util/http/HttpUrlUtils.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/config/Config.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/EpicsReaderBase.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/EpicsPVXSReader.cpp"

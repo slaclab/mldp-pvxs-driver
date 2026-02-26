@@ -15,14 +15,12 @@
 #include <util/bus/IEventBusPush.h>
 #include <util/http/CurlHttpClient.h>
 #include <util/http/HttpClient.h>
+#include <util/http/HttpUrlUtils.h>
 #include <util/log/ILog.h>
 
-#include <cctype>
 #include <cstdint>
 #include <exception>
-#include <iomanip>
 #include <optional>
-#include <sstream>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -36,51 +34,21 @@ namespace {
 
 constexpr const char* kArchiverPbRawPath = "/retrieval/data/getData.raw";
 
-bool hasScheme(const std::string& s)
-{
-    return s.find("://") != std::string::npos;
-}
-
-std::string trimTrailingSlash(std::string s)
-{
-    while (!s.empty() && s.back() == '/')
-    {
-        s.pop_back();
-    }
-    return s;
-}
-
-std::string percentEncode(const std::string& in)
-{
-    std::ostringstream os;
-    os << std::uppercase << std::hex;
-    for (unsigned char c : in)
-    {
-        if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~')
-        {
-            os << static_cast<char>(c);
-        }
-        else
-        {
-            os << '%' << std::setw(2) << std::setfill('0') << static_cast<int>(c);
-        }
-    }
-    return os.str();
-}
-
 std::string buildArchiverUrl(const EpicsArchiverReaderConfig& cfg, const std::string& pv)
 {
     std::string base = cfg.hostname();
-    if (!hasScheme(base))
+    if (!HttpUrlUtils::hasScheme(base))
     {
         base = "http://" + base;
     }
-    base = trimTrailingSlash(std::move(base));
+    base = HttpUrlUtils::trimTrailingSlash(std::move(base));
 
-    std::string url = base + kArchiverPbRawPath + "?pv=" + percentEncode(pv) + "&from=" + percentEncode(cfg.startDate());
+    std::string url = base + kArchiverPbRawPath
+                      + "?pv=" + HttpUrlUtils::percentEncode(pv)
+                      + "&from=" + HttpUrlUtils::percentEncode(cfg.startDate());
     if (cfg.endDate().has_value())
     {
-        url += "&to=" + percentEncode(*cfg.endDate());
+        url += "&to=" + HttpUrlUtils::percentEncode(*cfg.endDate());
     }
     return url;
 }
@@ -133,43 +101,6 @@ uint64_t unixEpochSecondsFromYearAndSecondsIntoYear(int year, uint32_t seconds_i
     return days * 86400ULL + static_cast<uint64_t>(seconds_into_year);
 }
 
-void flushChunk(mldp_pvxs_driver::util::bus::IEventBusPush* bus,
-                const std::string&                          reader_name,
-                PbChunkState&                               state)
-{
-    if (!state.have_header)
-    {
-        return;
-    }
-
-    const std::string& pv = state.header.pvname();
-    if (!state.events.empty())
-    {
-        mldp_pvxs_driver::util::bus::IEventBusPush::EventBatch batch;
-        batch.root_source = pv.empty() ? reader_name : pv;
-        batch.tags.push_back(batch.root_source);
-        batch.values[pv.empty() ? reader_name : pv] = std::move(state.events);
-        bus->push(std::move(batch));
-    }
-
-    state.have_batch_start_time = false;
-    state.batch_start_epoch_seconds = 0;
-    state.batch_start_nanoseconds = 0;
-}
-
-void finalizeChunk(mldp_pvxs_driver::util::bus::IEventBusPush* bus,
-                   const std::string&                          reader_name,
-                   PbChunkState&                               state)
-{
-    if (!state.have_header)
-    {
-        return;
-    }
-
-    flushChunk(bus, reader_name, state);
-    state = PbChunkState{};
-}
-
 bool sampleTimeLessThan(uint64_t lhs_epoch, uint32_t lhs_nano, uint64_t rhs_epoch, uint32_t rhs_nano)
 {
     return (lhs_epoch < rhs_epoch) || (lhs_epoch == rhs_epoch && lhs_nano < rhs_nano);
@@ -184,97 +115,6 @@ uint64_t elapsedNanoseconds(uint64_t start_epoch, uint32_t start_nano, uint64_t 
     }
 
     return (sec_delta - 1ULL) * 1'000'000'000ULL + (1'000'000'000ULL + static_cast<uint64_t>(end_nano) - start_nano);
-}
-
-void splitBatchIfHistoricalWindowExceeded(mldp_pvxs_driver::util::bus::IEventBusPush* bus,
-                                          const std::string&                          reader_name,
-                                          PbChunkState&                               state,
-                                          long                                        batch_duration_sec,
-                                          uint64_t                                    sample_epoch_seconds,
-                                          uint32_t                                    sample_nanoseconds)
-{
-    if (state.events.empty())
-    {
-        state.have_batch_start_time = true;
-        state.batch_start_epoch_seconds = sample_epoch_seconds;
-        state.batch_start_nanoseconds = sample_nanoseconds;
-        return;
-    }
-
-    if (!state.have_batch_start_time)
-    {
-        state.have_batch_start_time = true;
-        state.batch_start_epoch_seconds = sample_epoch_seconds;
-        state.batch_start_nanoseconds = sample_nanoseconds;
-        return;
-    }
-
-    if (sampleTimeLessThan(sample_epoch_seconds,
-                           sample_nanoseconds,
-                           state.batch_start_epoch_seconds,
-                           state.batch_start_nanoseconds))
-    {
-        // Recover safely from unexpected out-of-order data by publishing current batch first.
-        flushChunk(bus, reader_name, state);
-        state.have_batch_start_time = true;
-        state.batch_start_epoch_seconds = sample_epoch_seconds;
-        state.batch_start_nanoseconds = sample_nanoseconds;
-        return;
-    }
-
-    const uint64_t threshold_ns = static_cast<uint64_t>(batch_duration_sec) * 1'000'000'000ULL;
-    const uint64_t elapsed_ns = elapsedNanoseconds(state.batch_start_epoch_seconds,
-                                                   state.batch_start_nanoseconds,
-                                                   sample_epoch_seconds,
-                                                   sample_nanoseconds);
-    if (elapsed_ns > threshold_ns)
-    {
-        flushChunk(bus, reader_name, state);
-        state.have_batch_start_time = true;
-        state.batch_start_epoch_seconds = sample_epoch_seconds;
-        state.batch_start_nanoseconds = sample_nanoseconds;
-    }
-}
-
-void parsePbHttpLineIntoState(const std::string&                          line,
-                              PbChunkState&                               state,
-                              mldp_pvxs_driver::util::bus::IEventBusPush* bus,
-                              const std::string&                          reader_name,
-                              long                                        batch_duration_sec)
-{
-    const std::string msg_bytes = unescapePbHttpLine(line);
-
-    if (!state.have_header)
-    {
-        EPICS::PayloadInfo header;
-        if (!header.ParseFromString(msg_bytes))
-        {
-            throw std::runtime_error("failed to parse PB/HTTP PayloadInfo");
-        }
-        state.header = std::move(header);
-        state.have_header = true;
-        return;
-    }
-
-    if (state.header.type() != EPICS::SCALAR_DOUBLE)
-    {
-        throw std::runtime_error("unsupported archiver PB/HTTP payload type (only SCALAR_DOUBLE is implemented)");
-    }
-
-    EPICS::ScalarDouble sample;
-    if (!sample.ParseFromString(msg_bytes))
-    {
-        throw std::runtime_error("failed to parse PB/HTTP ScalarDouble sample");
-    }
-
-    const auto epoch_seconds = unixEpochSecondsFromYearAndSecondsIntoYear(
-        state.header.year(),
-        sample.secondsintoyear());
-    splitBatchIfHistoricalWindowExceeded(
-        bus, reader_name, state, batch_duration_sec, epoch_seconds, sample.nano());
-    auto ev = mldp_pvxs_driver::util::bus::IEventBusPush::MakeEventValue(epoch_seconds, sample.nano());
-    ev->data_value.set_doublevalue(sample.val());
-    state.events.emplace_back(std::move(ev));
 }
 
 } // namespace
@@ -355,8 +195,148 @@ void EpicsArchiverReader::destroyHttpClient()
     http_client_.reset();
 }
 
+void EpicsArchiverReader::flushChunk(PbChunkState& state)
+{
+    // Flush only the currently accumulated output batch (events vector) while
+    // keeping the parsed PB/HTTP chunk header. This is used for time-based
+    // splitting inside a single PB/HTTP chunk.
+    if (!state.have_header)
+    {
+        return;
+    }
+
+    const std::string& pv = state.header.pvname();
+    if (!state.events.empty())
+    {
+        mldp_pvxs_driver::util::bus::IEventBusPush::EventBatch batch;
+        batch.root_source = pv.empty() ? name_ : pv;
+        batch.tags.push_back(batch.root_source);
+        batch.values[pv.empty() ? name_ : pv] = std::move(state.events);
+        bus_->push(std::move(batch));
+    }
+
+    state.have_batch_start_time = false;
+    state.batch_start_epoch_seconds = 0;
+    state.batch_start_nanoseconds = 0;
+}
+
+void EpicsArchiverReader::finalizeChunk(PbChunkState& state)
+{
+    // Called at PB/HTTP chunk boundary (blank line) or end-of-stream. This
+    // flushes any pending events, then resets the full chunk state so the next
+    // non-empty line is interpreted as a new PayloadInfo header.
+    if (!state.have_header)
+    {
+        return;
+    }
+
+    flushChunk(state);
+    state = PbChunkState{};
+}
+
+void EpicsArchiverReader::splitBatchIfHistoricalWindowExceeded(PbChunkState& state,
+                                                               uint64_t      sample_epoch_seconds,
+                                                               uint32_t      sample_nanoseconds)
+{
+    // Batch splitting is based on historical sample timestamps from the
+    // archiver payload, not wall-clock processing time. The first sample starts
+    // the batch window; later samples trigger a flush only when they exceed the
+    // configured threshold (strict overflow: elapsed > batch_duration_sec).
+    if (state.events.empty())
+    {
+        state.have_batch_start_time = true;
+        state.batch_start_epoch_seconds = sample_epoch_seconds;
+        state.batch_start_nanoseconds = sample_nanoseconds;
+        return;
+    }
+
+    if (!state.have_batch_start_time)
+    {
+        state.have_batch_start_time = true;
+        state.batch_start_epoch_seconds = sample_epoch_seconds;
+        state.batch_start_nanoseconds = sample_nanoseconds;
+        return;
+    }
+
+    if (sampleTimeLessThan(sample_epoch_seconds,
+                           sample_nanoseconds,
+                           state.batch_start_epoch_seconds,
+                           state.batch_start_nanoseconds))
+    {
+        // Recover safely from unexpected out-of-order data by publishing current batch first.
+        flushChunk(state);
+        state.have_batch_start_time = true;
+        state.batch_start_epoch_seconds = sample_epoch_seconds;
+        state.batch_start_nanoseconds = sample_nanoseconds;
+        return;
+    }
+
+    const uint64_t threshold_ns = static_cast<uint64_t>(config_.batchDurationSec()) * 1'000'000'000ULL;
+    const uint64_t elapsed_ns = elapsedNanoseconds(state.batch_start_epoch_seconds,
+                                                   state.batch_start_nanoseconds,
+                                                   sample_epoch_seconds,
+                                                   sample_nanoseconds);
+    if (elapsed_ns > threshold_ns)
+    {
+        flushChunk(state);
+        state.have_batch_start_time = true;
+        state.batch_start_epoch_seconds = sample_epoch_seconds;
+        state.batch_start_nanoseconds = sample_nanoseconds;
+    }
+}
+
+void EpicsArchiverReader::parsePbHttpLineIntoState(const std::string& line, PbChunkState& state)
+{
+    // PB/HTTP framing is line-based after transport streaming:
+    // - first line in a chunk: EPICS::PayloadInfo
+    // - following lines: sample payloads (ScalarDouble currently supported)
+    // - empty line: chunk terminator (handled by fetchConfiguredPVs)
+    const std::string msg_bytes = unescapePbHttpLine(line);
+
+    if (!state.have_header)
+    {
+        EPICS::PayloadInfo header;
+        if (!header.ParseFromString(msg_bytes))
+        {
+            throw std::runtime_error("failed to parse PB/HTTP PayloadInfo");
+        }
+        state.header = std::move(header);
+        state.have_header = true;
+        return;
+    }
+
+    if (state.header.type() != EPICS::SCALAR_DOUBLE)
+    {
+        throw std::runtime_error("unsupported archiver PB/HTTP payload type (only SCALAR_DOUBLE is implemented)");
+    }
+
+    EPICS::ScalarDouble sample;
+    if (!sample.ParseFromString(msg_bytes))
+    {
+        throw std::runtime_error("failed to parse PB/HTTP ScalarDouble sample");
+    }
+
+    const auto epoch_seconds = unixEpochSecondsFromYearAndSecondsIntoYear(
+        state.header.year(),
+        sample.secondsintoyear());
+    // Decide whether the current sample starts a new output batch before
+    // appending it, so the sample that crosses the threshold belongs to the
+    // new batch.
+    splitBatchIfHistoricalWindowExceeded(state, epoch_seconds, sample.nano());
+    auto ev = mldp_pvxs_driver::util::bus::IEventBusPush::MakeEventValue(epoch_seconds, sample.nano());
+    ev->data_value.set_doublevalue(sample.val());
+    state.events.emplace_back(std::move(ev));
+}
+
 void EpicsArchiverReader::fetchConfiguredPVs()
 {
+    // High-level flow:
+    // 1) Build Archiver Appliance PB/HTTP URL for each configured PV.
+    // 2) Stream HTTP bytes incrementally.
+    // 3) Reconstruct PB/HTTP lines from streamed bytes.
+    // 4) Parse header/sample lines into PbChunkState.
+    // 5) Flush batches either on historical time-window overflow or PB/HTTP
+    //    chunk/end-of-stream boundaries.
     if (!http_client_)
     {
         throw std::runtime_error("HTTP client not initialized");
@@ -377,6 +357,8 @@ void EpicsArchiverReader::fetchConfiguredPVs()
             HttpRequest{.url = url},
             [&](const char* data, std::size_t size)
             {
+                // The HTTP client may deliver arbitrary byte fragment sizes.
+                // Reassemble newline-delimited PB/HTTP records before parsing.
                 for (std::size_t i = 0; i < size; ++i)
                 {
                     const char ch = data[i];
@@ -384,12 +366,16 @@ void EpicsArchiverReader::fetchConfiguredPVs()
                     {
                         if (line_buf.empty())
                         {
-                            finalizeChunk(bus_.get(), name_, chunk_state);
+                            // Empty line marks PB/HTTP chunk end; publish any
+                            // remaining events and reset chunk/header state.
+                            finalizeChunk(chunk_state);
                         }
                         else
                         {
-                            parsePbHttpLineIntoState(
-                                line_buf, chunk_state, bus_.get(), name_, config_.batchDurationSec());
+                            // Non-empty line belongs to the current PB/HTTP
+                            // chunk: parse header or sample and apply
+                            // historical time-based batch splitting.
+                            parsePbHttpLineIntoState(line_buf, chunk_state);
                             line_buf.clear();
                         }
                         continue;
@@ -400,10 +386,12 @@ void EpicsArchiverReader::fetchConfiguredPVs()
 
         if (!line_buf.empty())
         {
-            parsePbHttpLineIntoState(line_buf, chunk_state, bus_.get(), name_, config_.batchDurationSec());
+            // Support responses that do not end with a trailing newline.
+            parsePbHttpLineIntoState(line_buf, chunk_state);
             line_buf.clear();
         }
-        finalizeChunk(bus_.get(), name_, chunk_state);
+        // Ensure the final partially accumulated chunk/batch is published.
+        finalizeChunk(chunk_state);
 
         if (response.http_status != 200)
         {

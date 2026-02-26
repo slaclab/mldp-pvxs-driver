@@ -16,6 +16,7 @@
 #include <reader/impl/epics_archiver/EpicsArchiverReader.h>
 #include <util/bus/IEventBusPush.h>
 
+#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -79,6 +80,7 @@ TEST(EpicsArchiverReaderHttpIntegrationTest, FetchesPbHttpStreamAndPublishesBusE
 
     auto reader_cfg = makeConfigFromYaml(yaml);
     auto reader = std::make_unique<EpicsArchiverReader>(bus, nullptr, reader_cfg);
+    ASSERT_TRUE(server.waitForLastResponseComplete(std::chrono::seconds(2)));
 
     EXPECT_EQ(reader->name(), "archiver-http-test");
 
@@ -144,6 +146,7 @@ TEST(EpicsArchiverReaderHttpIntegrationTest, IncludesOptionalToQueryWhenConfigur
 
     auto reader_cfg = makeConfigFromYaml(yaml);
     auto reader = std::make_unique<EpicsArchiverReader>(bus, nullptr, reader_cfg);
+    ASSERT_TRUE(server.waitForLastResponseComplete(std::chrono::seconds(2)));
     EXPECT_EQ(reader->name(), "archiver-http-test-to");
 
     const auto req = server.lastRequest();
@@ -181,6 +184,7 @@ TEST(EpicsArchiverReaderHttpIntegrationTest, SplitsPublishedBatchesByHistoricalS
 
     auto reader_cfg = makeConfigFromYaml(yaml);
     auto reader = std::make_unique<EpicsArchiverReader>(bus, nullptr, reader_cfg);
+    ASSERT_TRUE(server.waitForLastResponseComplete(std::chrono::seconds(2)));
     EXPECT_EQ(reader->name(), "archiver-http-batch-split");
 
     const auto req = server.lastRequest();

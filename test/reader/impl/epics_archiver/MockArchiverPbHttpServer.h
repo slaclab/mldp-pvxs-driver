@@ -65,11 +65,33 @@ public:
     explicit MockArchiverPbHttpServer(const GenerationConfig& config);
     ~MockArchiverPbHttpServer();
 
+    /**
+     * @brief Start the local HTTP server on 127.0.0.1 using an ephemeral port.
+     *
+     * Spawns the cpp-httplib listen loop on a background thread.
+     */
     void start();
+    /**
+     * @brief Stop the server and join the background thread.
+     *
+     * Safe to call multiple times.
+     */
     void stop();
 
+    /**
+     * @brief Return the bound local TCP port after @ref start().
+     */
     [[nodiscard]] int                     port() const;
+    /**
+     * @brief Return the base URL for tests (e.g. http://127.0.0.1:PORT).
+     */
     [[nodiscard]] std::string             baseUrl() const;
+    /**
+     * @brief Return the most recently recorded request snapshot.
+     *
+     * This is non-blocking and may return an empty/default log if no request
+     * has been handled yet.
+     */
     [[nodiscard]] RequestLog              lastRequest() const;
     /**
      * @brief Wait until the most recently recorded request has finished sending its response.
@@ -78,10 +100,23 @@ public:
      * false on timeout.
      */
     bool                                  waitForLastResponseComplete(std::chrono::milliseconds timeout) const;
+    /**
+     * @brief Return the sample generation settings used by this mock instance.
+     */
     [[nodiscard]] const GenerationConfig& generationConfig() const;
 
 private:
+    /**
+     * @brief Advance the request sequence while holding @ref mu_.
+     *
+     * Called when a request is accepted and recorded in @ref last_request_.
+     */
     void markLastRequestStartedLocked();
+    /**
+     * @brief Mark a request id as completed and notify waiters.
+     *
+     * Completion means the response finished sending (or errored before body streaming).
+     */
     void markRequestCompleted(uint64_t request_id);
 
     GenerationConfig   config_;

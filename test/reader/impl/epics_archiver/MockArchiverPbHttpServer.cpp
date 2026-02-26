@@ -357,6 +357,7 @@ MockArchiverPbHttpServer::MockArchiverPbHttpServer()
 MockArchiverPbHttpServer::MockArchiverPbHttpServer(const GenerationConfig& config)
     : config_(config)
 {
+    // Register the mock Archiver Appliance PB/HTTP endpoint used by integration tests.
     server_.Get(kMockArchiverPbHttpPath, [this](const httplib::Request& req, httplib::Response& res)
                 {
                     RequestLog log;
@@ -377,6 +378,8 @@ MockArchiverPbHttpServer::MockArchiverPbHttpServer(const GenerationConfig& confi
                     {
                         std::lock_guard<std::mutex> lock(mu_);
                         last_request_ = log;
+                        // Each handled request gets a monotonically increasing id so tests
+                        // can wait for completion of "the latest" request deterministically.
                         markLastRequestStartedLocked();
                     }
 
@@ -405,6 +408,7 @@ MockArchiverPbHttpServer::MockArchiverPbHttpServer(const GenerationConfig& confi
 
                     try
                     {
+                        // Generate a deterministic PB/HTTP payload for the requested time range.
                         auto body = std::make_shared<std::string>(
                             buildMockPbHttpBody(config_, *log.pv, *log.from, log.to));
                         uint64_t request_id = 0;
@@ -415,6 +419,8 @@ MockArchiverPbHttpServer::MockArchiverPbHttpServer(const GenerationConfig& confi
                         res.status = 200;
                         res.set_header("Content-Type", "application/octet-stream");
                         res.set_header("X-Mock-PV", log.pv->c_str());
+                        // Stream the response in small writes to exercise client-side streaming
+                        // parsing logic. The payload is pre-generated, but sent incrementally.
                         res.set_content_provider(
                             body->size(),
                             "application/octet-stream",
@@ -435,6 +441,8 @@ MockArchiverPbHttpServer::MockArchiverPbHttpServer(const GenerationConfig& confi
                             },
                             [this, request_id, body = std::move(body)](bool /*success*/) mutable
                             {
+                                // Release the buffered payload and notify tests waiting for the
+                                // most recent response to finish sending.
                                 body.reset();
                                 markRequestCompleted(request_id);
                             });
@@ -473,6 +481,7 @@ void MockArchiverPbHttpServer::start()
 
     thread_ = std::thread([this]()
                           {
+                              // Blocking server loop; runs until stop() calls server_.stop().
                               server_.listen_after_bind();
                           });
     std::this_thread::sleep_for(std::chrono::milliseconds(25));
@@ -511,6 +520,7 @@ bool MockArchiverPbHttpServer::waitForLastResponseComplete(std::chrono::millisec
 {
     std::unique_lock<std::mutex> lock(mu_);
     const uint64_t               target_request_id = last_request_id_;
+    // Wait until the latest observed request id is marked completed.
     return cv_.wait_for(lock,
                         timeout,
                         [&]()
@@ -526,6 +536,7 @@ const MockArchiverPbHttpServer::GenerationConfig& MockArchiverPbHttpServer::gene
 
 void MockArchiverPbHttpServer::markLastRequestStartedLocked()
 {
+    // Must be called while mu_ is held.
     ++last_request_id_;
 }
 

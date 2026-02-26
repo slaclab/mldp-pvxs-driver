@@ -16,6 +16,7 @@
 #include <util/http/CurlHttpClient.h>
 #include <util/http/HttpClient.h>
 
+#include <chrono>
 #include <stdexcept>
 #include <string>
 #include <tuple>
@@ -138,6 +139,7 @@ TEST_F(ArchiverPbHttpMockServerTest, SupportsFromOnlyQueryAndReturnsPbHttpBody)
 
     EXPECT_EQ(response.http_status, 200);
     EXPECT_FALSE(collected.empty());
+    ASSERT_TRUE(server_.waitForLastResponseComplete(std::chrono::seconds(2)));
 
     const auto req = server_.lastRequest();
     ASSERT_TRUE(req.pv.has_value());
@@ -189,6 +191,7 @@ TEST_F(ArchiverPbHttpMockServerTest, AcceptsOptionalToQuery)
 
     EXPECT_EQ(result.info.http_status, 200);
     EXPECT_FALSE(result.body.empty());
+    ASSERT_TRUE(server_.waitForLastResponseComplete(std::chrono::seconds(2)));
 
     const auto req = server_.lastRequest();
     ASSERT_TRUE(req.to.has_value());
@@ -202,6 +205,7 @@ TEST_F(ArchiverPbHttpMockServerTest, MissingPvReturns400)
         .url = server_.baseUrl() + kPath + "?from=2026-02-25T08%3A00%3A00.000Z"});
 
     EXPECT_EQ(result.info.http_status, 400);
+    ASSERT_TRUE(server_.waitForLastResponseComplete(std::chrono::seconds(2)));
     const std::string body(result.body.begin(), result.body.end());
     EXPECT_NE(body.find("pv"), std::string::npos);
 }
@@ -212,6 +216,7 @@ TEST_F(ArchiverPbHttpMockServerTest, MissingFromReturns400)
     const auto result = client_.get(HttpRequest{.url = server_.baseUrl() + kPath + "?pv=TEST%3APV%3ADOUBLE"});
 
     EXPECT_EQ(result.info.http_status, 400);
+    ASSERT_TRUE(server_.waitForLastResponseComplete(std::chrono::seconds(2)));
     const std::string body(result.body.begin(), result.body.end());
     EXPECT_NE(body.find("from"), std::string::npos);
 }
@@ -223,6 +228,7 @@ TEST_F(ArchiverPbHttpMockServerTest, WrongPathReturns404)
         .url = server_.baseUrl() + "/retrieval/data/notFound.raw?pv=TEST%3APV%3ADOUBLE&from=2026-02-25T08%3A00%3A00.000Z"});
 
     EXPECT_EQ(result.info.http_status, 404);
+    ASSERT_TRUE(server_.waitForLastResponseComplete(std::chrono::seconds(2)));
 }
 
 } // namespace
