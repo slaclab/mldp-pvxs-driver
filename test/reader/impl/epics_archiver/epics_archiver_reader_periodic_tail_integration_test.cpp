@@ -250,6 +250,113 @@ TEST(EpicsArchiverReaderPeriodicTailIntegrationTest, HonorsExplicitLookbackShort
     reader.reset();
 }
 
+// Verifies batch_duration_sec controls batch splitting in periodic_tail mode as well.
+TEST(EpicsArchiverReaderPeriodicTailIntegrationTest, UsesBatchDurationSecForPeriodicTailBatchSplitting)
+{
+    MockArchiverPbHttpServer::GenerationConfig gen_cfg;
+    gen_cfg.min_events_per_second = 4;
+    gen_cfg.max_events_per_second = 4;
+    MockArchiverPbHttpServer server(gen_cfg);
+    server.start();
+    ASSERT_GT(server.port(), 0);
+
+    auto bus = std::make_shared<MockEventBusPush>();
+
+    const std::string yaml = std::string(R"(
+        name: archiver-periodic-tail-batch-window
+        hostname: ")") + server.baseUrl() +
+                             R"("
+        mode: "periodic_tail"
+        poll_interval_sec: 2
+        lookback_sec: 2
+        batch_duration_sec: 1
+        pvs:
+          - name: "TEST:PV:DOUBLE"
+    )";
+
+    auto reader_cfg = makeConfigFromYaml(yaml);
+    auto reader = std::make_unique<EpicsArchiverReader>(bus, nullptr, reader_cfg);
+
+    ASSERT_TRUE(waitForMockRequestStartAndCompletion(server, std::chrono::seconds(3)));
+
+    const auto batches = bus->snapshot();
+    // A 2-second fetch window with 1-second batch_duration should split into
+    // multiple published batches based on historical sample timestamps.
+    ASSERT_GT(batches.size(), 1u);
+
+    reader.reset();
+}
+
+// Verifies periodic_tail batches respect batch_duration_sec, allowing the final
+// batch to be partial at iteration boundary.
+TEST(EpicsArchiverReaderPeriodicTailIntegrationTest, PeriodicTailBatchSpansMatchConfiguredWindowExceptFinalPartial)
+{
+    MockArchiverPbHttpServer::GenerationConfig gen_cfg;
+    gen_cfg.min_events_per_second = 4;
+    gen_cfg.max_events_per_second = 4;
+    MockArchiverPbHttpServer server(gen_cfg);
+    server.start();
+    ASSERT_GT(server.port(), 0);
+
+    auto bus = std::make_shared<MockEventBusPush>();
+
+    const std::string yaml = std::string(R"(
+        name: archiver-periodic-tail-batch-window-span-check
+        hostname: ")") + server.baseUrl() +
+                             R"("
+        mode: "periodic_tail"
+        poll_interval_sec: 10
+        lookback_sec: 2
+        batch_duration_sec: 1
+        pvs:
+          - name: "TEST:PV:DOUBLE"
+    )";
+
+    auto reader_cfg = makeConfigFromYaml(yaml);
+    auto reader = std::make_unique<EpicsArchiverReader>(bus, nullptr, reader_cfg);
+
+    // Only the immediate first fetch should run within this wait; poll interval
+    // is long enough to avoid a second iteration.
+    ASSERT_TRUE(waitForMockRequestStartAndCompletion(server, std::chrono::seconds(3)));
+
+    const auto batches = bus->snapshot();
+    ASSERT_GT(batches.size(), 1u);
+
+    size_t total_events = 0u;
+    for (size_t i = 0; i < batches.size(); ++i)
+    {
+        const auto it = batches[i].values.find("TEST:PV:DOUBLE");
+        ASSERT_NE(it, batches[i].values.end());
+        ASSERT_FALSE(it->second.empty());
+
+        total_events += it->second.size();
+        const auto& first_ev = it->second.front();
+        const auto& last_ev = it->second.back();
+        ASSERT_TRUE(first_ev);
+        ASSERT_TRUE(last_ev);
+
+        const uint64_t first_ns = first_ev->epoch_seconds * 1'000'000'000ULL + first_ev->nanoseconds;
+        const uint64_t last_ns = last_ev->epoch_seconds * 1'000'000'000ULL + last_ev->nanoseconds;
+        const uint64_t span_ns = last_ns - first_ns;
+
+        if (i + 1 < batches.size())
+        {
+            // Non-final batches must respect the configured 1-second window.
+            EXPECT_LE(span_ns, 1'000'000'000ULL);
+        }
+        else
+        {
+            // Final batch may be partial due to iteration/chunk boundary flush.
+            EXPECT_LE(span_ns, 1'000'000'000ULL);
+        }
+    }
+
+    // 2-second lookback with 4 events/sec deterministic mock -> 8 samples total.
+    EXPECT_EQ(total_events, 8u);
+
+    reader.reset();
+}
+
 // Verifies a 10s periodic tail poller covers 30s of data with three contiguous 10s fetch windows.
 TEST(EpicsArchiverReaderPeriodicTailIntegrationTest, TenSecondPollingCoversThirtySecondsWithContiguousWindows)
 {

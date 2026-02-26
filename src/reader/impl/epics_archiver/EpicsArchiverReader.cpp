@@ -12,6 +12,7 @@
 #include <reader/impl/epics_archiver/EpicsArchiverReader.h>
 
 #include <EPICSEvent.pb.h>
+#include <metrics/Metrics.h>
 #include <util/bus/IEventBusPush.h>
 #include <util/http/CurlHttpClient.h>
 #include <util/http/HttpClient.h>
@@ -332,11 +333,23 @@ void EpicsArchiverReader::flushChunk(PbChunkState& state)
     const std::string& pv = state.header.pvname();
     if (!state.events.empty())
     {
+        const prometheus::Labels source_tag{{"source", pv}};
+        const auto                flush_start = std::chrono::steady_clock::now();
+
         mldp_pvxs_driver::util::bus::IEventBusPush::EventBatch batch;
         batch.root_source = pv.empty() ? name_ : pv;
         batch.tags.push_back(batch.root_source);
         batch.values[pv.empty() ? name_ : pv] = std::move(state.events);
         bus_->push(std::move(batch));
+
+        const auto   flush_end = std::chrono::steady_clock::now();
+        const double flush_ms = std::chrono::duration<double, std::milli>(flush_end - flush_start).count();
+
+        metric_call(metrics_, [&](auto& m)
+                    {
+                        m.observeReaderProcessingTimeMs(flush_ms, source_tag);
+                        m.incrementReaderEvents(1.0, source_tag);
+                    });
     }
 
     state.have_batch_start_time = false;
@@ -440,6 +453,14 @@ void EpicsArchiverReader::parsePbHttpLineIntoState(const std::string& line, PbCh
         throw std::runtime_error("failed to parse PB/HTTP ScalarDouble sample");
     }
 
+    // Record that we received a sample from the archiver
+    const std::string pv = state.header.pvname();
+    const prometheus::Labels source_tag{{"source", pv}};
+    metric_call(metrics_, [&](auto& m)
+                {
+                    m.incrementReaderEventsReceived(1.0, source_tag);
+                });
+
     const auto epoch_seconds = unixEpochSecondsFromYearAndSecondsIntoYear(
         state.header.year(),
         sample.secondsintoyear());
@@ -509,7 +530,19 @@ void EpicsArchiverReader::fetchConfiguredPVs(const std::string& from, const std:
                             // Non-empty line belongs to the current PB/HTTP
                             // chunk: parse header or sample and apply
                             // historical time-based batch splitting.
-                            parsePbHttpLineIntoState(line_buf, chunk_state);
+                            try
+                            {
+                                parsePbHttpLineIntoState(line_buf, chunk_state);
+                            }
+                            catch (const std::exception& e)
+                            {
+                                const prometheus::Labels source_tag{{"source", pv}};
+                                metric_call(metrics_, [&](auto& m)
+                                            {
+                                                m.incrementReaderErrors(1.0, source_tag);
+                                            });
+                                throw;
+                            }
                             line_buf.clear();
                         }
                         continue;
@@ -521,7 +554,19 @@ void EpicsArchiverReader::fetchConfiguredPVs(const std::string& from, const std:
         if (!line_buf.empty())
         {
             // Support responses that do not end with a trailing newline.
-            parsePbHttpLineIntoState(line_buf, chunk_state);
+            try
+            {
+                parsePbHttpLineIntoState(line_buf, chunk_state);
+            }
+            catch (const std::exception& e)
+            {
+                const prometheus::Labels source_tag{{"source", pv}};
+                metric_call(metrics_, [&](auto& m)
+                            {
+                                m.incrementReaderErrors(1.0, source_tag);
+                            });
+                throw;
+            }
             line_buf.clear();
         }
         // Ensure the final partially accumulated chunk/batch is published.
@@ -529,6 +574,11 @@ void EpicsArchiverReader::fetchConfiguredPVs(const std::string& from, const std:
 
         if (response.http_status != 200)
         {
+            const prometheus::Labels source_tag{{"source", pv}};
+            metric_call(metrics_, [&](auto& m)
+                        {
+                            m.incrementReaderErrors(1.0, source_tag);
+                        });
             throw std::runtime_error(
                 "archiver HTTP GET returned status " + std::to_string(response.http_status) + " for PV " + pv);
         }

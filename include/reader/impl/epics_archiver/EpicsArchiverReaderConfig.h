@@ -46,7 +46,7 @@ namespace mldp_pvxs_driver::reader::impl::epics_archiver {
  *     end_date: "2026-01-02T00:00:00Z"   # optional
  *     connect_timeout_sec: 30 # optional, default: 30 seconds
  *     total_timeout_sec: 300  # optional, default: 300 seconds (5 minutes)
- *     batch_duration_sec: 1   # optional, default: 1 second (historical sample-time window)
+ *     batch_duration_sec: 1   # optional, default: 1 second (sample-time window for output batch splitting in both modes)
  *     tls_verify_peer: true   # optional, default: true
  *     tls_verify_host: true   # optional, default: true
  *     pvs:
@@ -181,6 +181,7 @@ public:
      * @brief Get the max historical sample-time span for one published batch.
      *
      * Batches are split using archiver sample timestamps (not wall-clock read time).
+     * This applies to both historical_once and periodic_tail modes.
      *
      * @return Batch duration threshold in seconds (default: 1).
      */
