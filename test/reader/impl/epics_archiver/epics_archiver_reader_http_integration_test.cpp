@@ -69,6 +69,20 @@ bool waitForMockRequestStartAndCompletion(const MockArchiverPbHttpServer& server
     return false;
 }
 
+bool waitForMockRequestStart(const MockArchiverPbHttpServer& server, std::chrono::milliseconds timeout)
+{
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (std::chrono::steady_clock::now() < deadline)
+    {
+        if (!server.lastRequest().path.empty())
+        {
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    return false;
+}
+
 // Verifies the reader fetches PB/HTTP data and publishes parsed samples to the event bus.
 TEST(EpicsArchiverReaderHttpIntegrationTest, FetchesPbHttpStreamAndPublishesBusEvents)
 {
@@ -248,6 +262,46 @@ TEST(EpicsArchiverReaderHttpIntegrationTest, SplitsPublishedBatchesByHistoricalS
     }
 
     EXPECT_EQ(total_events, 20u);
+}
+
+// Verifies destroying the reader during a long PB/HTTP download cancels the in-flight HTTP stream.
+TEST(EpicsArchiverReaderHttpIntegrationTest, DestructorAbortsOngoingLongDownload)
+{
+    MockArchiverPbHttpServer::GenerationConfig gen_cfg;
+    gen_cfg.min_events_per_second = 20;
+    gen_cfg.max_events_per_second = 20;
+    gen_cfg.open_ended_duration_sec = 30;
+    gen_cfg.stream_chunk_delay_ms = 10;
+    gen_cfg.random_seed = 456;
+
+    MockArchiverPbHttpServer server(gen_cfg);
+    server.start();
+    ASSERT_GT(server.port(), 0);
+
+    auto bus = std::make_shared<MockEventBusPush>();
+
+    const std::string yaml = std::string(R"(
+        name: archiver-http-cancel-on-destroy
+        hostname: ")") + server.baseUrl() +
+                             R"("
+        start_date: "2026-02-25T08:00:00.000Z"
+        pvs:
+          - name: "TEST:PV:DOUBLE"
+    )";
+
+    auto reader_cfg = makeConfigFromYaml(yaml);
+    auto reader = std::make_unique<EpicsArchiverReader>(bus, nullptr, reader_cfg);
+
+    ASSERT_TRUE(waitForMockRequestStart(server, std::chrono::seconds(2)));
+
+    const auto destroy_start = std::chrono::steady_clock::now();
+    reader.reset(); // destructor should cancel streamGet and join promptly
+    const auto destroy_elapsed = std::chrono::steady_clock::now() - destroy_start;
+
+    EXPECT_LT(std::chrono::duration_cast<std::chrono::milliseconds>(destroy_elapsed), std::chrono::seconds(2));
+    ASSERT_TRUE(server.waitForLastResponseComplete(std::chrono::seconds(2)));
+    ASSERT_TRUE(server.lastResponseSuccess().has_value());
+    EXPECT_FALSE(*server.lastResponseSuccess());
 }
 
 } // namespace

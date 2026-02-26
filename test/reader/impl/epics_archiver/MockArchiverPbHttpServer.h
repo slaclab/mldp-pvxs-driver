@@ -20,6 +20,7 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace mldp_pvxs_driver::reader::impl::epics_archiver {
 
@@ -51,6 +52,7 @@ public:
         uint64_t    random_seed = 0x5A17C0DEULL; ///< Base seed (combined with request fields).
         std::string egu = "kG";                  ///< Unit metadata emitted in PayloadInfo headers.
         uint32_t    precision = 3;               ///< PREC metadata emitted in PayloadInfo headers.
+        uint32_t    stream_chunk_delay_ms = 0;   ///< Optional delay between streamed body chunks (for cancellation tests).
     };
 
     struct RequestLog
@@ -101,6 +103,12 @@ public:
      */
     bool                                  waitForLastResponseComplete(std::chrono::milliseconds timeout) const;
     /**
+     * @brief Return whether the last response stream finished successfully.
+     *
+     * Returns std::nullopt if no response has completed yet.
+     */
+    [[nodiscard]] std::optional<bool>     lastResponseSuccess() const;
+    /**
      * @brief Return the sample generation settings used by this mock instance.
      */
     [[nodiscard]] const GenerationConfig& generationConfig() const;
@@ -124,6 +132,7 @@ private:
     mutable std::mutex mu_;
     mutable std::condition_variable cv_;
     RequestLog         last_request_;
+    std::optional<bool> last_response_success_;
     uint64_t           last_request_id_ = 0;
     uint64_t           last_completed_request_id_ = 0;
     std::thread        thread_;

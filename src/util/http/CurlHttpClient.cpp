@@ -17,12 +17,13 @@
 #include <exception>
 #include <memory>
 #include <mutex>
- 
+
 #include <string>
 #include <utility>
 #include <vector>
 
 using namespace mldp_pvxs_driver::util::http;
+using namespace mldp_pvxs_driver::util::log;
 
 namespace {
 
@@ -30,13 +31,14 @@ std::once_flag g_curl_global_init_once;
 
 void ensureCurlGlobalInit()
 {
-    std::call_once(g_curl_global_init_once, []() {
-        const CURLcode rc = curl_global_init(CURL_GLOBAL_DEFAULT);
-        if (rc != CURLE_OK)
-        {
-            throw HttpError(std::string("curl_global_init failed: ") + curl_easy_strerror(rc));
-        }
-    });
+    std::call_once(g_curl_global_init_once, []()
+                   {
+                       const CURLcode rc = curl_global_init(CURL_GLOBAL_DEFAULT);
+                       if (rc != CURLE_OK)
+                       {
+                           throw HttpError(std::string("curl_global_init failed: ") + curl_easy_strerror(rc));
+                       }
+                   });
 }
 
 class CurlHandleDeleter
@@ -78,7 +80,10 @@ public:
         list_ = next;
     }
 
-    curl_slist* get() const noexcept { return list_; }
+    curl_slist* get() const noexcept
+    {
+        return list_;
+    }
 
 private:
     curl_slist* list_ = nullptr;
@@ -99,6 +104,12 @@ struct WriteCallbackContext
     IHttpClient::DataCallback onData;
     std::exception_ptr        callback_error;
 };
+
+int onProgress(void* clientp, curl_off_t /*dltotal*/, curl_off_t /*dlnow*/, curl_off_t /*ultotal*/, curl_off_t /*ulnow*/)
+{
+    const auto* cancel_requested = static_cast<const std::atomic<bool>*>(clientp);
+    return (cancel_requested && cancel_requested->load(std::memory_order_relaxed)) ? 1 : 0;
+}
 
 size_t onWrite(char* ptr, size_t size, size_t nmemb, void* userdata)
 {
@@ -123,12 +134,12 @@ size_t onWrite(char* ptr, size_t size, size_t nmemb, void* userdata)
 
 } // namespace
 
-CurlHttpClient::CurlHttpClient(std::shared_ptr<mldp_pvxs_driver::util::log::ILogger> logger)
+CurlHttpClient::CurlHttpClient(std::shared_ptr<ILogger> logger)
     : logger_(std::move(logger))
 {
     if (!logger_)
     {
-        logger_ = mldp_pvxs_driver::util::log::newLogger("util:http:curl");
+        logger_ = newLogger("util:http:curl");
     }
 
     ensureCurlGlobalInit();
@@ -142,16 +153,13 @@ void CurlHttpClient::setDefaultOptions(const HttpClientOptions& options)
     }
 
     options_ = options;
-    if (logger_)
-    {
-        mldp_pvxs_driver::util::log::debugf(
-            *logger_,
-            "Configured CurlHttpClient defaults: connect_timeout={}s total_timeout={}s tls(peer={},host={})",
-            options_.connect_timeout_sec,
-            options_.total_timeout_sec,
-            options_.tls.verify_peer,
-            options_.tls.verify_host);
-    }
+    debugf(
+        *logger_,
+        "Configured CurlHttpClient defaults: connect_timeout={}s total_timeout={}s tls(peer={},host={})",
+        options_.connect_timeout_sec,
+        options_.total_timeout_sec,
+        options_.tls.verify_peer,
+        options_.tls.verify_host);
 }
 
 void CurlHttpClient::setDefaultHeaders(std::vector<std::string> headers)
@@ -172,6 +180,11 @@ HttpResponseInfo CurlHttpClient::streamGet(const HttpRequest& request, DataCallb
     if (options_.tls.verify_host && !options_.tls.verify_peer)
     {
         throw HttpError("TLS host verification requires peer verification");
+    }
+
+    if (cancel_requested_.load(std::memory_order_relaxed))
+    {
+        throw HttpError("HTTP request cancelled");
     }
 
     CurlHandlePtr curl(curl_easy_init());
@@ -197,6 +210,9 @@ HttpResponseInfo CurlHttpClient::streamGet(const HttpRequest& request, DataCallb
     setoptChecked(curl.get(), CURLOPT_URL, request.url.c_str());
     setoptChecked(curl.get(), CURLOPT_WRITEFUNCTION, &onWrite);
     setoptChecked(curl.get(), CURLOPT_WRITEDATA, &write_ctx);
+    setoptChecked(curl.get(), CURLOPT_NOPROGRESS, 0L);
+    setoptChecked(curl.get(), CURLOPT_XFERINFOFUNCTION, &onProgress);
+    setoptChecked(curl.get(), CURLOPT_XFERINFODATA, &cancel_requested_);
 
     setoptChecked(curl.get(), CURLOPT_CONNECTTIMEOUT, options_.connect_timeout_sec);
     setoptChecked(curl.get(), CURLOPT_TIMEOUT, options_.total_timeout_sec);
@@ -248,10 +264,7 @@ HttpResponseInfo CurlHttpClient::streamGet(const HttpRequest& request, DataCallb
         setoptChecked(curl.get(), CURLOPT_HTTPHEADER, headers.get());
     }
 
-    if (logger_)
-    {
-        mldp_pvxs_driver::util::log::debugf(*logger_, "HTTP GET stream start: {}", request.url);
-    }
+    debugf(*logger_, "HTTP GET stream start: {}", request.url);
 
     const CURLcode rc = curl_easy_perform(curl.get());
     if (rc != CURLE_OK)
@@ -260,33 +273,36 @@ HttpResponseInfo CurlHttpClient::streamGet(const HttpRequest& request, DataCallb
         {
             std::rethrow_exception(write_ctx.callback_error);
         }
-        if (logger_)
+        if (rc == CURLE_ABORTED_BY_CALLBACK && cancel_requested_.load(std::memory_order_relaxed))
         {
-            mldp_pvxs_driver::util::log::errorf(
-                *logger_, "HTTP GET stream failed for {}: {}", request.url, curl_easy_strerror(rc));
+            debugf(*logger_, "HTTP GET stream cancelled: {}", request.url);
+            throw HttpError("HTTP request cancelled");
         }
+        errorf(
+            *logger_, "HTTP GET stream failed for {}: {}", request.url, curl_easy_strerror(rc));
         throw HttpError(std::string("curl_easy_perform failed: ") + curl_easy_strerror(rc));
     }
 
     HttpResponseInfo info{};
     char*            effective_url = nullptr;
     curl_easy_getinfo(curl.get(), CURLINFO_RESPONSE_CODE, &info.http_status);
-    if (curl_easy_getinfo(curl.get(), CURLINFO_EFFECTIVE_URL, &effective_url) == CURLE_OK
-        && effective_url)
+    if (curl_easy_getinfo(curl.get(), CURLINFO_EFFECTIVE_URL, &effective_url) == CURLE_OK && effective_url)
     {
         info.effective_url = effective_url;
     }
 
-    if (logger_)
-    {
-        mldp_pvxs_driver::util::log::debugf(
-            *logger_,
-            "HTTP GET stream completed: status={} effective_url={}",
-            info.http_status,
-            info.effective_url.empty() ? request.url : info.effective_url);
-    }
+    debugf(
+        *logger_,
+        "HTTP GET stream completed: status={} effective_url={}",
+        info.http_status,
+        info.effective_url.empty() ? request.url : info.effective_url);
 
     return info;
+}
+
+void CurlHttpClient::cancelOngoingRequests()
+{
+    cancel_requested_.store(true, std::memory_order_relaxed);
 }
 
 HttpGetResult CurlHttpClient::get(const HttpRequest& request)
@@ -294,9 +310,10 @@ HttpGetResult CurlHttpClient::get(const HttpRequest& request)
     HttpGetResult result;
     result.body.reserve(static_cast<std::size_t>(options_.buffer_size > 0 ? options_.buffer_size : 0));
 
-    result.info = streamGet(request, [&](const char* data, std::size_t size) {
-        result.body.insert(result.body.end(), data, data + size);
-    });
+    result.info = streamGet(request, [&](const char* data, std::size_t size)
+                            {
+                                result.body.insert(result.body.end(), data, data + size);
+                            });
 
     return result;
 }

@@ -206,6 +206,12 @@ void EpicsArchiverReader::startWorker()
 void EpicsArchiverReader::stopWorker()
 {
     running_.store(false);
+    if (http_client_)
+    {
+        // Interrupt any blocking streamGet() so join() is not held until a long
+        // network timeout expires during destruction.
+        http_client_->cancelOngoingRequests();
+    }
 
     if (reader_thread_.joinable())
     {
@@ -227,19 +233,33 @@ void EpicsArchiverReader::runWorker()
     }
     catch (const std::exception& e)
     {
+        if (!running_.load())
         {
-            std::lock_guard<std::mutex> lock(worker_mutex_);
-            worker_error_ = std::current_exception();
+            debugf(*logger_, "Archiver reader worker '{}' stopped during shutdown: {}", name_, e.what());
         }
-        errorf(*logger_, "Archiver reader worker '{}' failed: {}", name_, e.what());
+        else
+        {
+            {
+                std::lock_guard<std::mutex> lock(worker_mutex_);
+                worker_error_ = std::current_exception();
+            }
+            errorf(*logger_, "Archiver reader worker '{}' failed: {}", name_, e.what());
+        }
     }
     catch (...)
     {
+        if (!running_.load())
         {
-            std::lock_guard<std::mutex> lock(worker_mutex_);
-            worker_error_ = std::current_exception();
+            debugf(*logger_, "Archiver reader worker '{}' stopped during shutdown", name_);
         }
-        errorf(*logger_, "Archiver reader worker '{}' failed with unknown exception", name_);
+        else
+        {
+            {
+                std::lock_guard<std::mutex> lock(worker_mutex_);
+                worker_error_ = std::current_exception();
+            }
+            errorf(*logger_, "Archiver reader worker '{}' failed with unknown exception", name_);
+        }
     }
 
     {

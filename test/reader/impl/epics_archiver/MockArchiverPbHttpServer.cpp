@@ -378,6 +378,7 @@ MockArchiverPbHttpServer::MockArchiverPbHttpServer(const GenerationConfig& confi
                     {
                         std::lock_guard<std::mutex> lock(mu_);
                         last_request_ = log;
+                        last_response_success_.reset();
                         // Each handled request gets a monotonically increasing id so tests
                         // can wait for completion of "the latest" request deterministically.
                         markLastRequestStartedLocked();
@@ -413,6 +414,7 @@ MockArchiverPbHttpServer::MockArchiverPbHttpServer(const GenerationConfig& confi
                             buildMockPbHttpBody(config_, *log.pv, *log.from, log.to));
                         auto body_for_stream = body;
                         auto body_for_releaser = body;
+                        const uint32_t stream_chunk_delay_ms = config_.stream_chunk_delay_ms;
                         uint64_t request_id = 0;
                         {
                             std::lock_guard<std::mutex> lock(mu_);
@@ -426,7 +428,7 @@ MockArchiverPbHttpServer::MockArchiverPbHttpServer(const GenerationConfig& confi
                         res.set_content_provider(
                             body->size(),
                             "application/octet-stream",
-                            [body_for_stream](size_t offset, size_t /*length*/, httplib::DataSink& sink)
+                            [body_for_stream, stream_chunk_delay_ms](size_t offset, size_t /*length*/, httplib::DataSink& sink)
                             {
                                 if (offset >= body_for_stream->size())
                                 {
@@ -439,13 +441,22 @@ MockArchiverPbHttpServer::MockArchiverPbHttpServer(const GenerationConfig& confi
                                 {
                                     return false;
                                 }
+                                if (stream_chunk_delay_ms > 0)
+                                {
+                                    // simulate delay from each chunk to allow testing cancellation or slowness of the transmission during an in-flight response stream
+                                    std::this_thread::sleep_for(std::chrono::milliseconds(stream_chunk_delay_ms));
+                                }
                                 return true;
                             },
-                            [this, request_id, body_for_releaser = std::move(body_for_releaser)](bool /*success*/) mutable
+                            [this, request_id, body_for_releaser = std::move(body_for_releaser)](bool success) mutable
                             {
                                 // Release the buffered payload and notify tests waiting for the
                                 // most recent response to finish sending.
                                 body_for_releaser.reset();
+                                {
+                                    std::lock_guard<std::mutex> lock(mu_);
+                                    last_response_success_ = success;
+                                }
                                 markRequestCompleted(request_id);
                             });
                     }
@@ -529,6 +540,12 @@ bool MockArchiverPbHttpServer::waitForLastResponseComplete(std::chrono::millisec
                         {
                             return last_completed_request_id_ >= target_request_id;
                         });
+}
+
+std::optional<bool> MockArchiverPbHttpServer::lastResponseSuccess() const
+{
+    std::lock_guard<std::mutex> lock(mu_);
+    return last_response_success_;
 }
 
 const MockArchiverPbHttpServer::GenerationConfig& MockArchiverPbHttpServer::generationConfig() const

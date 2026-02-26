@@ -146,6 +146,14 @@ public:
     virtual HttpResponseInfo streamGet(const HttpRequest& request, DataCallback onData) = 0;
 
     /**
+     * @brief Request cancellation of any ongoing transport operations.
+     *
+     * Implementations should make a best effort to interrupt blocking network
+     * calls promptly. Safe to call when no request is active.
+     */
+    virtual void cancelOngoingRequests() = 0;
+
+    /**
      * @brief Synchronous GET convenience helper that buffers the full response body.
      *
      * @param request GET request details.

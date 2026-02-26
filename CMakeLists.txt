@@ -533,6 +533,7 @@ if(MLDP_PVXS_DRIVER_TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_archiver/MockArchiverPbHttpServer.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_archiver/epics_archiver_pbhttp_integration_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_archiver/epics_archiver_reader_http_integration_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/util/http/curl_http_client_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/metrics/periodic_metrics_dumper_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/metrics/metrics_histogram_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/metrics/system_metrics_test.cpp"

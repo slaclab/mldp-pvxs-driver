@@ -13,6 +13,7 @@
 #include <util/http/HttpClient.h>
 #include <util/log/ILog.h>
 
+#include <atomic>
 #include <memory>
 
 namespace mldp_pvxs_driver::util::http {
@@ -48,13 +49,16 @@ public:
 
     /// @copydoc IHttpClient::streamGet
     HttpResponseInfo streamGet(const HttpRequest& request, DataCallback onData) override;
+    /// @copydoc IHttpClient::cancelOngoingRequests
+    void cancelOngoingRequests() override;
     /// @copydoc IHttpClient::get
     HttpGetResult get(const HttpRequest& request) override;
 
 private:
-    std::shared_ptr<mldp_pvxs_driver::util::log::ILogger> logger_; ///< Transport logger.
-    HttpClientOptions                                      options_; ///< Default request/transport options.
-    std::vector<std::string>                               default_headers_; ///< Default headers merged into requests.
+    std::shared_ptr<mldp_pvxs_driver::util::log::ILogger> logger_;                  ///< Transport logger.
+    HttpClientOptions                                     options_;                 ///< Default request/transport options.
+    std::vector<std::string>                              default_headers_;         ///< Default headers merged into requests.
+    std::atomic<bool>                                     cancel_requested_{false}; ///< Cooperative cancel flag checked by libcurl callbacks.
 };
 
 } // namespace mldp_pvxs_driver::util::http
