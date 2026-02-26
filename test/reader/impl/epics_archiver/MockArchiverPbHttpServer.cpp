@@ -411,6 +411,8 @@ MockArchiverPbHttpServer::MockArchiverPbHttpServer(const GenerationConfig& confi
                         // Generate a deterministic PB/HTTP payload for the requested time range.
                         auto body = std::make_shared<std::string>(
                             buildMockPbHttpBody(config_, *log.pv, *log.from, log.to));
+                        auto body_for_stream = body;
+                        auto body_for_releaser = body;
                         uint64_t request_id = 0;
                         {
                             std::lock_guard<std::mutex> lock(mu_);
@@ -424,26 +426,26 @@ MockArchiverPbHttpServer::MockArchiverPbHttpServer(const GenerationConfig& confi
                         res.set_content_provider(
                             body->size(),
                             "application/octet-stream",
-                            [body](size_t offset, size_t /*length*/, httplib::DataSink& sink)
+                            [body_for_stream](size_t offset, size_t /*length*/, httplib::DataSink& sink)
                             {
-                                if (offset >= body->size())
+                                if (offset >= body_for_stream->size())
                                 {
                                     return true;
                                 }
 
-                                const size_t remaining = body->size() - offset;
+                                const size_t remaining = body_for_stream->size() - offset;
                                 const size_t chunk_size = std::min(kMockStreamChunkBytes, remaining);
-                                if (!sink.write(body->data() + offset, chunk_size))
+                                if (!sink.write(body_for_stream->data() + offset, chunk_size))
                                 {
                                     return false;
                                 }
                                 return true;
                             },
-                            [this, request_id, body = std::move(body)](bool /*success*/) mutable
+                            [this, request_id, body_for_releaser = std::move(body_for_releaser)](bool /*success*/) mutable
                             {
                                 // Release the buffered payload and notify tests waiting for the
                                 // most recent response to finish sending.
-                                body.reset();
+                                body_for_releaser.reset();
                                 markRequestCompleted(request_id);
                             });
                     }
