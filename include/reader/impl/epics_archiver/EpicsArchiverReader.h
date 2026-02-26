@@ -18,18 +18,40 @@
 
 #pragma once
 
+#include <EPICSEvent.pb.h>
 #include <reader/ReaderFactory.h>
 #include <reader/impl/epics_archiver/EpicsArchiverReaderConfig.h>
+#include <util/bus/IEventBusPush.h>
 #include <util/log/ILog.h>
 
+#include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace mldp_pvxs_driver::util::http {
 class IHttpClient;
 }
 
 namespace mldp_pvxs_driver::reader::impl::epics_archiver {
+
+/**
+ * @brief Incremental state while decoding one PB/HTTP chunk.
+ *
+ * A PB/HTTP chunk begins with a @ref EPICS::PayloadInfo line and is followed by
+ * one or more sample lines of the type declared in that header, ending with an
+ * empty line. This structure accumulates the parsed header and converted event
+ * values until the chunk terminator is reached and the batch is published.
+ */
+struct PbChunkState
+{
+    bool                                              have_header = false;           ///< True after PayloadInfo has been parsed.
+    EPICS::PayloadInfo                                header;                        ///< Payload header for the current chunk.
+    std::vector<util::bus::IEventBusPush::EventValue> events;                        ///< Converted sample events for this chunk.
+    bool                                              have_batch_start_time = false; ///< True after first sample of current output batch.
+    uint64_t                                          batch_start_epoch_seconds = 0; ///< Historical batch start (seconds).
+    uint32_t                                          batch_start_nanoseconds = 0;   ///< Historical batch start (nanoseconds).
+};
 
 /**
  * @brief Reader implementation for SLAC Archiver Appliance API.
@@ -80,6 +102,16 @@ private:
      * Ensures that any transport state owned by this reader is released.
      */
     void destroyHttpClient();
+
+    /**
+     * @brief Fetch and publish archived samples for configured PVs.
+     *
+     * Performs HTTP PB/HTTP retrieval requests against the configured archiver
+     * endpoint and publishes converted samples to the event bus.
+     *
+     * @throws std::runtime_error on transport, protocol, or parse failures.
+     */
+    void fetchConfiguredPVs();
 
     REGISTER_READER("epics-archiver", EpicsArchiverReader)
 };

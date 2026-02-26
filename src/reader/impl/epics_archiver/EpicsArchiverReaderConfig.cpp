@@ -118,6 +118,11 @@ long EpicsArchiverReaderConfig::totalTimeoutSec() const
     return total_timeout_sec_;
 }
 
+long EpicsArchiverReaderConfig::batchDurationSec() const
+{
+    return batch_duration_sec_;
+}
+
 bool EpicsArchiverReaderConfig::tlsVerifyPeer() const
 {
     return tls_verify_peer_;
@@ -213,6 +218,13 @@ void EpicsArchiverReaderConfig::parse(const Config& readerEntry)
     if (total_timeout_sec_ != 0 && total_timeout_sec_ < connect_timeout_sec_)
     {
         throw Error("total_timeout_sec must be >= connect_timeout_sec (or 0 for infinite)");
+    }
+
+    // Parse optional historical batch duration threshold (default: 1 second)
+    batch_duration_sec_ = readerEntry.getInt("batch_duration_sec", 1L);
+    if (batch_duration_sec_ <= 0)
+    {
+        throw Error("batch_duration_sec must be positive (>0)");
     }
 
     // Parse optional TLS verification controls (secure by default)

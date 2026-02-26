@@ -23,6 +23,7 @@ set(SPDLOG_VERSION "v1.16.0")
 set(ARGPARSE_VERSION "v3.2")
 set(METRIC_GRABBER_VERSION "v0.0.1")
 set(EPICSARCHIVERAP_VERSION "2.2.1")
+set(CPP_HTTPLIB_VERSION "v0.16.3")
 
 # Output directories
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
@@ -513,6 +514,10 @@ if(MLDP_PVXS_DRIVER_TESTS)
         GIT_REPOSITORY "https://github.com/google/googletest.git"
         GIT_TAG "main")
     FetchContent_MakeAvailable(googletest)
+    FetchContent_Declare(cpp_httplib
+        GIT_REPOSITORY "https://github.com/yhirose/cpp-httplib.git"
+        GIT_TAG ${CPP_HTTPLIB_VERSION})
+    FetchContent_MakeAvailable(cpp_httplib)
     enable_testing()
     add_executable(${PROJECT_NAME}_test
         "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/sioc.cpp"
@@ -523,12 +528,20 @@ if(MLDP_PVXS_DRIVER_TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/test/pool/test_mldp_grpc_pool.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics/epics_pvxs_reader_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics/epics_base_reader_test.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_archiver/epics_archiver_reader_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_archiver/epics_archiver_reader_config_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_archiver/MockArchiverPbHttpServer.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_archiver/epics_archiver_pbhttp_integration_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_archiver/epics_archiver_reader_http_integration_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/metrics/periodic_metrics_dumper_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/metrics/metrics_histogram_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/metrics/system_metrics_test.cpp"
     )
     target_link_libraries(${PROJECT_NAME}_test PRIVATE gtest_main lib${PROJECT_NAME})
+    if(TARGET httplib::httplib)
+        target_link_libraries(${PROJECT_NAME}_test PRIVATE httplib::httplib)
+    elseif(TARGET httplib)
+        target_link_libraries(${PROJECT_NAME}_test PRIVATE httplib)
+    endif()
 
     if(MLDP_PVXS_DRIVER_COVERAGE)
         target_compile_options(${PROJECT_NAME}_test PRIVATE -O0 -g --coverage)
