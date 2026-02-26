@@ -56,7 +56,7 @@ public:
      * @param events Vector of EventValue objects, one per row in the table.
      */
     using ColumnEmitFn = std::function<void(std::string colName,
-                                            std::vector<mldp_pvxs_driver::util::bus::IEventBusPush::EventValue> events)>;
+                                            std::vector<util::bus::IEventBusPush::EventValue> events)>;
 
     /**
      * @brief Convert an EPICS pvData field to an MLDP protobuf DataValue.
@@ -97,7 +97,7 @@ public:
                                           const ::epics::pvData::PVStructurePtr&                   epicsValue,
                                           const std::string&                                       tsSecondsField,
                                           const std::string&                                       tsNanosField,
-                                          mldp_pvxs_driver::util::bus::IEventBusPush::EventBatch*  outBatch,
+                                          util::bus::IEventBusPush::EventBatch*                    outBatch,
                                           size_t&                                                  outEmitted);
 
     /**

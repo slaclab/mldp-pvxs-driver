@@ -74,7 +74,7 @@ public:
      * @param metrics Metrics collector for instrumentation (may be null).
      * @param cfg Reader configuration.
      */
-    EpicsArchiverReader(std::shared_ptr<::mldp_pvxs_driver::util::bus::IEventBusPush> bus,
+    EpicsArchiverReader(std::shared_ptr<util::bus::IEventBusPush> bus,
                         std::shared_ptr<::mldp_pvxs_driver::metrics::Metrics>         metrics,
                         const ::mldp_pvxs_driver::config::Config&                     cfg);
 

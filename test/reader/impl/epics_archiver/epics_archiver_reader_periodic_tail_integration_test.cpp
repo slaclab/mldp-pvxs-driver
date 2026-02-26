@@ -31,11 +31,12 @@ namespace {
 using mldp_pvxs_driver::config::makeConfigFromYaml;
 using mldp_pvxs_driver::reader::impl::epics_archiver::EpicsArchiverReader;
 using mldp_pvxs_driver::reader::impl::epics_archiver::MockArchiverPbHttpServer;
+using mldp_pvxs_driver::util::bus::IEventBusPush;
 
-class MockEventBusPush final : public mldp_pvxs_driver::util::bus::IEventBusPush
+class MockEventBusPush final : public IEventBusPush
 {
 public:
-    using EventBatch = mldp_pvxs_driver::util::bus::IEventBusPush::EventBatch;
+    using EventBatch = IEventBusPush::EventBatch;
 
     bool push(EventBatch batch) override
     {

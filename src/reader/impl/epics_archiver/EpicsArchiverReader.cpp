@@ -29,6 +29,8 @@
 #include <vector>
 
 using namespace mldp_pvxs_driver::config;
+using namespace mldp_pvxs_driver::metrics;
+using namespace mldp_pvxs_driver::util::bus;
 using namespace mldp_pvxs_driver::util::log;
 using namespace mldp_pvxs_driver::util::http;
 using namespace mldp_pvxs_driver::util::time;
@@ -125,8 +127,8 @@ uint64_t elapsedNanoseconds(uint64_t start_epoch, uint32_t start_nano, uint64_t 
 } // namespace
 
 EpicsArchiverReader::EpicsArchiverReader(
-    std::shared_ptr<::mldp_pvxs_driver::util::bus::IEventBusPush> bus,
-    std::shared_ptr<::mldp_pvxs_driver::metrics::Metrics>         metrics,
+    std::shared_ptr<IEventBusPush> bus,
+    std::shared_ptr<Metrics>         metrics,
     const ::mldp_pvxs_driver::config::Config&                     cfg)
     : ::mldp_pvxs_driver::reader::Reader(std::move(bus), std::move(metrics))
     , logger_(::mldp_pvxs_driver::util::log::newLogger("reader:epics-archiver:" + cfg.get("name")))
@@ -336,7 +338,7 @@ void EpicsArchiverReader::flushChunk(PbChunkState& state)
         const prometheus::Labels source_tag{{"source", pv}};
         const auto                flush_start = std::chrono::steady_clock::now();
 
-        mldp_pvxs_driver::util::bus::IEventBusPush::EventBatch batch;
+        IEventBusPush::EventBatch batch;
         batch.root_source = pv.empty() ? name_ : pv;
         batch.tags.push_back(batch.root_source);
         batch.values[pv.empty() ? name_ : pv] = std::move(state.events);
@@ -468,7 +470,7 @@ void EpicsArchiverReader::parsePbHttpLineIntoState(const std::string& line, PbCh
     // appending it, so the sample that crosses the threshold belongs to the
     // new batch.
     splitBatchIfHistoricalWindowExceeded(state, epoch_seconds, sample.nano());
-    auto ev = mldp_pvxs_driver::util::bus::IEventBusPush::MakeEventValue(epoch_seconds, sample.nano());
+    auto ev = IEventBusPush::MakeEventValue(epoch_seconds, sample.nano());
     ev->data_value.set_doublevalue(sample.val());
     state.events.emplace_back(std::move(ev));
 }
