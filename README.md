@@ -11,11 +11,13 @@ unless marked optional.
 
 ```yaml
 controller_thread_pool: 2
+controller_stream_max_bytes: 2097152   # optional; flush stream after this payload size
+controller_stream_max_age_ms: 200      # optional; flush stream after this age in milliseconds
 
 mldp_pool:
   provider_name: pvxs_provider
   provider_description: "PVXS aggregate provider"   # optional
-  url: https://ingest.example:443
+  url: dp-ingestion:50051
   min_conn: 1
   max_conn: 4
   credentials: # optional
@@ -24,40 +26,70 @@ mldp_pool:
     pem_root_certs: /etc/certs/ca.crt
 
 reader:                                  # optional; omit to start with no readers
-  # PVXS reader (event-driven, recommended for modern EPICS)
+  # ========== EPICS PVAccess Reader (Real-time Monitoring via PVXS) ==========
   - epics-pvxs:
-      - name: pvxs_reader
-        thread_pool_size: 2              # optional; conversion thread pool size
-        column_batch_size: 50            # optional; max columns per batch for NTTable
+      - name: pvxs_reader_a
+        thread_pool: 1                        # optional; default: 1 (thread pool size)
+        column_batch_size: 50                 # optional; default: 50 (max PVs per batch)
+        monitor_poll_threads: 2               # optional; default: 2 (polling threads)
+        monitor_poll_interval_ms: 5           # optional; default: 5 (poll interval in ms)
         pvs:
-          - name: MY:PV:NAME
-          - name: BSA:TABLE:PV
-            option:                      # optional; for SLAC BSAS NTTable with row timestamps
-              type: slac-bsas-table
-              tsSeconds: secondsPastEpoch
-              tsNanos: nanoseconds
+          - name: "PV:NAME:1"
+          - name: "PV:NAME:2"
+            option: "VALUE"                   # optional; scalar monitor option
+          - name: "TABLE:PV"
+            option:                           # optional; map-based option for NT Table
+              type: "slac-bsas-table"         # special handling for BSAS table rows
+              tsSeconds: "secondsFieldName"   # field containing seconds timestamp
+              tsNanos: "nanosFieldName"       # field containing nanos timestamp
 
-  # Base reader (polling-based, for legacy Channel Access)
+  # ========== EPICS Base Reader (Real-time Monitoring via Channel Access) ==========
   - epics-base:
-      - name: base_reader
-        thread_pool_size: 2              # optional; conversion thread pool size
-        monitor_poll_threads: 2          # optional; number of polling threads
-        monitor_poll_interval_ms: 5      # optional; polling interval in ms
+      - name: base_reader_a
+        thread_pool: 1                        # optional; default: 1 (thread pool size)
+        column_batch_size: 50                 # optional; default: 50 (max PVs per batch)
+        monitor_poll_threads: 2               # optional; default: 2 (polling threads)
+        monitor_poll_interval_ms: 5           # optional; default: 5 (poll interval in ms)
         pvs:
-          - name: LEGACY:PV:ONE
-          - name: LEGACY:PV:TWO
+          - name: "PV:NAME:1"
+          - name: "PV:NAME:2"
+            option: "VALUE"                   # optional; scalar monitor option
+
+  # ========== EPICS Archiver Reader (Historical Data Retrieval) ==========
+  - epics-archiver:
+      - name: archiver_reader_a
+        hostname: "archiver.example.com:11200"
+        mode: "historical_once"              # optional; default mode
+        start_date: "2026-01-01T00:00:00Z"
+        end_date: "2026-01-31T23:59:59Z"     # optional; omit for open-ended reads
+        tls_verify_peer: true                 # optional; default: true (verify cert chain)
+        tls_verify_host: true                 # optional; default: true (verify hostname)
+        connect_timeout_sec: 30               # optional; default: 30 seconds
+        total_timeout_sec: 300                # optional; default: 300 seconds (0 = infinite)
+        pvs:
+          - name: "SYSTEM:SENSOR:TEMPERATURE:MAIN"
+          - name: "SYSTEM:ACTUATOR:PRESSURE:OUTLET"
+
+      - name: archiver_reader_tail_polling
+        hostname: "archiver.example.com:11200"
+        mode: "periodic_tail"
+        poll_interval_sec: 5                  # required; wakeup interval
+        lookback_sec: 5                       # optional; defaults to poll_interval_sec
+        batch_duration_sec: 1                 # optional; split batches by historical sample-time span
+        pvs:
+          - name: "SYSTEM:SENSOR:TEMPERATURE:MAIN"
 
 metrics:                                 # optional; omit to disable Prometheus endpoint
   endpoint: 0.0.0.0:9464
-  scan_interval_seconds: 1             # optional; interval for system metrics scan
 ```
 
 ### Supported Reader Types
 
-| Reader Type  | Description                                              |
-|--------------|----------------------------------------------------------|
-| `epics-pvxs` | Event-driven PVAccess reader using PVXS (recommended)    |
-| `epics-base` | Polling-based Channel Access reader for legacy systems   |
+| Reader Type      | Description                                                       |
+|------------------|-------------------------------------------------------------------|
+| `epics-pvxs`     | Event-driven PVAccess reader using PVXS (recommended)             |
+| `epics-base`     | Polling-based Channel Access reader for legacy systems            |
+| `epics-archiver` | Historical and periodic-tail reader from EPICS Archiver Appliance |
 
 For detailed reader documentation, see [Reader Types](docs/readers.md).
 
