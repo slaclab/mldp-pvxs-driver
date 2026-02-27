@@ -9,6 +9,7 @@
 //////////////////////////////////////////////////////////////////////////////
 
 #include "util/log/Logger.h"
+#include <reader/impl/epics_archiver/ArchiverPbHttpConversion.h>
 #include <reader/impl/epics_archiver/EpicsArchiverReader.h>
 
 #include <EPICSEvent.pb.h>
@@ -86,26 +87,6 @@ std::string unescapePbHttpLine(const std::string& in)
         }
     }
     return out;
-}
-
-bool isLeapYear(int year)
-{
-    return (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
-}
-
-uint64_t unixEpochSecondsFromYearAndSecondsIntoYear(int year, uint32_t seconds_into_year)
-{
-    if (year < 1970)
-    {
-        throw std::runtime_error("PB/HTTP sample year before 1970 is unsupported");
-    }
-
-    uint64_t days = 0;
-    for (int y = 1970; y < year; ++y)
-    {
-        days += isLeapYear(y) ? 366u : 365u;
-    }
-    return days * 86400ULL + static_cast<uint64_t>(seconds_into_year);
 }
 
 bool sampleTimeLessThan(uint64_t lhs_epoch, uint32_t lhs_nano, uint64_t rhs_epoch, uint32_t rhs_nano)
@@ -444,16 +425,7 @@ void EpicsArchiverReader::parsePbHttpLineIntoState(const std::string& line, PbCh
         return;
     }
 
-    if (state.header.type() != EPICS::SCALAR_DOUBLE)
-    {
-        throw std::runtime_error("unsupported archiver PB/HTTP payload type (only SCALAR_DOUBLE is implemented)");
-    }
-
-    EPICS::ScalarDouble sample;
-    if (!sample.ParseFromString(msg_bytes))
-    {
-        throw std::runtime_error("failed to parse PB/HTTP ScalarDouble sample");
-    }
+    const auto parsed = ArchiverPbHttpConversion::parseSample(state.header, msg_bytes);
 
     // Record that we received a sample from the archiver
     const std::string pv = state.header.pvname();
@@ -463,16 +435,11 @@ void EpicsArchiverReader::parsePbHttpLineIntoState(const std::string& line, PbCh
                     m.incrementReaderEventsReceived(1.0, source_tag);
                 });
 
-    const auto epoch_seconds = unixEpochSecondsFromYearAndSecondsIntoYear(
-        state.header.year(),
-        sample.secondsintoyear());
     // Decide whether the current sample starts a new output batch before
     // appending it, so the sample that crosses the threshold belongs to the
     // new batch.
-    splitBatchIfHistoricalWindowExceeded(state, epoch_seconds, sample.nano());
-    auto ev = IEventBusPush::MakeEventValue(epoch_seconds, sample.nano());
-    ev->data_value.set_doublevalue(sample.val());
-    state.events.emplace_back(std::move(ev));
+    splitBatchIfHistoricalWindowExceeded(state, parsed.epoch_seconds, parsed.nanoseconds);
+    state.events.emplace_back(std::move(parsed.event));
 }
 
 void EpicsArchiverReader::fetchConfiguredPVs()

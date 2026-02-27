@@ -10,10 +10,17 @@
 
 #include <util/time/DateTimeUtils.h>
 
+#include <cstdint>
 #include <cstdio>
 #include <ctime>
+#include <stdexcept>
 
-namespace mldp_pvxs_driver::util::time {
+using namespace mldp_pvxs_driver::util::time;
+
+bool DateTimeUtils::isLeapYear(int year)
+{
+    return (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+}
 
 std::chrono::system_clock::time_point DateTimeUtils::truncateToMilliseconds(std::chrono::system_clock::time_point tp)
 {
@@ -49,4 +56,17 @@ std::string DateTimeUtils::formatIso8601UtcMillis(std::chrono::system_clock::tim
     return std::string(buf);
 }
 
-} // namespace mldp_pvxs_driver::util::time
+uint64_t DateTimeUtils::unixEpochSecondsFromYearAndSecondsIntoYear(int year, uint32_t seconds_into_year)
+{
+    if (year < 1970)
+    {
+        throw std::runtime_error("PB/HTTP sample year before 1970 is unsupported");
+    }
+
+    uint64_t days = 0;
+    for (int y = 1970; y < year; ++y)
+    {
+        days += isLeapYear(y) ? 366u : 365u;
+    }
+    return days * 86400ULL + static_cast<uint64_t>(seconds_into_year);
+}
