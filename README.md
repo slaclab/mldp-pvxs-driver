@@ -127,6 +127,8 @@ This project uses a pipeline-style architecture: PVXS clients feed PV updates in
 - [Architecture Overview](docs/architecture.md) - System architecture, data flow, and design patterns
 - [Reader Types](docs/readers.md) - Available reader implementations (EPICS Base, PVXS)
 - [Implementing Custom Readers](docs/readers-implementation.md) - Guide to creating new reader types
+- [Logging Abstraction Guide](docs/logging.md) - How `util::log` works and how to implement custom logger classes
+- [HTTP Transport Provider](docs/http-provider.md) - Shared `util/http` abstraction and curl-backed implementation for HTTP-based readers
 
 For developer information and contribution guidelines see [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -151,8 +153,8 @@ For developer information and contribution guidelines see [CONTRIBUTING.md](CONT
 Tagged releases (`vX.Y.Z`) publish:
 
 - A container image (recommended way to run).
-- A standalone executable artifact (currently named `mldp_pvxs_driver-ubuntu-noble-epics-R7.0.8.1`).
-- An AppImage for easier distribution (currently named `mldp_pvxs_driver-ubuntu-noble-epics-R7.0.8.1-pvxs-1.4.1-x86_64.AppImage`).
+- A standalone executable artifact (currently named `mldp_pvxs_driver-rockylinux-9.3-epics-R7.0.8.1`).
+- An AppImage for easier distribution (currently named `mldp_pvxs_driver-rockylinux-9.3-epics-R7.0.8.1-pvxs-1.4.1-x86_64.AppImage`).
 
 ### Builder image + build cache (for developers)
 
@@ -169,7 +171,7 @@ docker login ghcr.io
 
 docker buildx build \
   -f .devcontainer/Dockerfile \
-  --build-arg BASE_OS_IMAGE=ubuntu:noble \
+  --build-arg BASE_OS_IMAGE=rockylinux/rockylinux:9.3 \
   --build-arg EPICS_VERSION=R7.0.8.1 \
   --build-arg PVXS_VERSION=1.4.1 \
   --cache-from type=registry,ref=ghcr.io/slaclab/mldp-pvxs-driver/build:epics-7.0.8.1-pvxs-1.4.1 \

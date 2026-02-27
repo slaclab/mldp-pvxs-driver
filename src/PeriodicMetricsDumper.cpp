@@ -12,6 +12,7 @@
 
 #include <prometheus/text_serializer.h>
 #include <spdlog/spdlog.h>
+#include <util/StringFormat.h>
 
 #include <chrono>
 #include <cstdio>
@@ -360,7 +361,7 @@ void PeriodicMetricsDumper::appendMetricsToFile()
         std::ofstream ofs(output_path, std::ios::out | std::ios::app); // Append mode
         if (!ofs)
         {
-            throw std::runtime_error(std::format("Failed to open metrics output file '{}'", output_path));
+            throw std::runtime_error(mldp_pvxs_driver::util::format_string("Failed to open metrics output file '{}'", output_path));
         }
         ofs << jsonl;
         ofs.close();

@@ -28,7 +28,7 @@ void ReaderFactory::registerType(const std::string& type, CreatorFn fn)
 
 std::unique_ptr<Reader> ReaderFactory::create(
     const std::string&                                            type,
-    std::shared_ptr<::mldp_pvxs_driver::util::bus::IEventBusPush> bus,
+    std::shared_ptr<util::bus::IEventBusPush>                     bus,
     const ::mldp_pvxs_driver::config::Config&                     cfg,
     std::shared_ptr<mldp_pvxs_driver::metrics::Metrics>           metrics)
 {

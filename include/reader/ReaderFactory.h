@@ -39,7 +39,7 @@ class ReaderFactory
 public:
     /** @brief Type used to create reader instances for a configured event bus. */
     using CreatorFn = std::function<std::unique_ptr<Reader>(
-        std::shared_ptr<mldp_pvxs_driver::util::bus::IEventBusPush>,
+        std::shared_ptr<util::bus::IEventBusPush>,
         std::shared_ptr<mldp_pvxs_driver::metrics::Metrics>,
         const mldp_pvxs_driver::config::Config&)>;
 
@@ -56,7 +56,7 @@ public:
      */
     static std::unique_ptr<Reader> create(
         const std::string&                                            type,
-        std::shared_ptr<::mldp_pvxs_driver::util::bus::IEventBusPush> bus,
+        std::shared_ptr<util::bus::IEventBusPush>                     bus,
         const ::mldp_pvxs_driver::config::Config&                     cfg,
         std::shared_ptr<mldp_pvxs_driver::metrics::Metrics>           metrics = nullptr);
 
@@ -77,7 +77,7 @@ public:
     {
         ReaderFactory::registerType(
             typeName,
-            [](std::shared_ptr<mldp_pvxs_driver::util::bus::IEventBusPush> bus,
+            [](std::shared_ptr<util::bus::IEventBusPush> bus,
                std::shared_ptr<mldp_pvxs_driver::metrics::Metrics>        metrics,
                const mldp_pvxs_driver::config::Config&                    cfg)
             {

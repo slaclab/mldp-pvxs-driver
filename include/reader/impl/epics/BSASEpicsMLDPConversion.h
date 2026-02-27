@@ -65,7 +65,7 @@ public:
      *               each carrying the column's value and the row's timestamp.
      */
     using ColumnEmitFn = std::function<void(std::string colName,
-                                            std::vector<mldp_pvxs_driver::util::bus::IEventBusPush::EventValue> events)>;
+                                            std::vector<util::bus::IEventBusPush::EventValue> events)>;
 
     /**
      * @brief Convert an NTTable with row timestamps to an EventBatch.
@@ -93,7 +93,7 @@ public:
                                           const pvxs::Value&                                       epicsValue,
                                           const std::string&                                       tsSecondsField,
                                           const std::string&                                       tsNanosField,
-                                          mldp_pvxs_driver::util::bus::IEventBusPush::EventBatch*  outBatch,
+                                          util::bus::IEventBusPush::EventBatch*                    outBatch,
                                           size_t&                                                  outEmitted);
 
     /**

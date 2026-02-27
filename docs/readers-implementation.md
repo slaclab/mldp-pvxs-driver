@@ -471,7 +471,7 @@ Create unit tests for your reader in `test/reader/impl/<category>/<Name>ReaderTe
 #include <gmock/gmock.h>
 
 // Mock event bus for testing
-class MockEventBus : public mldp_pvxs_driver::util::bus::IEventBusPush {
+class MockEventBus : public IEventBusPush {
 public:
     MOCK_METHOD(bool, push, (EventBatch batch), (override));
 };

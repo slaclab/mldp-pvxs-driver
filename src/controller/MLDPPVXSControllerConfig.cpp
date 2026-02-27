@@ -165,6 +165,7 @@ void MLDPPVXSControllerConfig::parseReaders(const ::mldp_pvxs_driver::config::Co
         const std::pair<std::string, std::string> supportedTypes[] = {
             {"epics-pvxs", "epics-pvxs"},
             {"epics-base", "epics-base"},
+            {"epics-archiver", "epics-archiver"},
         };
 
         for (const auto& [key, typeName] : supportedTypes)
@@ -187,7 +188,7 @@ void MLDPPVXSControllerConfig::parseReaders(const ::mldp_pvxs_driver::config::Co
 
         if (!handledType)
         {
-            throw Error("reader entry does not specify a supported type (expected 'epics-pvxs' or 'epics-base')");
+            throw Error("reader entry does not specify a supported type (expected 'epics-pvxs', 'epics-base', or 'epics-archiver')");
         }
     }
 }

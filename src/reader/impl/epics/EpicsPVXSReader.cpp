@@ -15,9 +15,9 @@
 #include <reader/impl/epics/BSASEpicsMLDPConversion.h>
 #include <reader/impl/epics/EpicsMLDPConversion.h>
 #include <util/log/Logger.h>
+#include <util/StringFormat.h>
 
 #include <chrono>
-#include <format>
 
 using namespace mldp_pvxs_driver::reader::impl::epics;
 using namespace mldp_pvxs_driver::util::log;
@@ -93,8 +93,7 @@ void EpicsPVXSReader::processDefaultMode(const std::string& pvName, const pvxs::
     if (epicsValue.type().kind() != pvxs::Kind::Compound)
     {
         logAndRecordError(
-            std::format("PV {} on reader {} returned non-compound payload; expected {}",
-                        pvName, name_, kPVXSDefaultMonitorRequest),
+            util::format_string("PV {} on reader {} returned non-compound payload; expected {}", pvName, name_, kPVXSDefaultMonitorRequest),
             sourceTag);
         return;
     }
@@ -106,8 +105,7 @@ void EpicsPVXSReader::processDefaultMode(const std::string& pvName, const pvxs::
     if (!valueField.valid() || !alarm.valid() || !timestampField.valid())
     {
         logAndRecordError(
-            std::format("PV {} on reader {} missing required fields for {}",
-                        pvName, name_, kPVXSDefaultMonitorRequest),
+            util::format_string("PV {} on reader {} missing required fields for {}", pvName, name_, kPVXSDefaultMonitorRequest),
             sourceTag);
         return;
     }
@@ -116,7 +114,7 @@ void EpicsPVXSReader::processDefaultMode(const std::string& pvName, const pvxs::
     if (!secondsField.valid())
     {
         logAndRecordError(
-            std::format("PV {} on reader {} missing required timeStamp.secondsPastEpoch", pvName, name_),
+            util::format_string("PV {} on reader {} missing required timeStamp.secondsPastEpoch", pvName, name_),
             sourceTag);
         return;
     }
@@ -126,7 +124,7 @@ void EpicsPVXSReader::processDefaultMode(const std::string& pvName, const pvxs::
     if (!nanosecondsField.valid())
     {
         logAndRecordError(
-            std::format("PV {} on reader {} missing required timeStamp.nanoseconds", pvName, name_),
+            util::format_string("PV {} on reader {} missing required timeStamp.nanoseconds", pvName, name_),
             sourceTag);
         return;
     }
@@ -219,7 +217,7 @@ void EpicsPVXSReader::processSlacBsasTableMode(const std::string&     pvName,
             reader_pool_->get_thread_count() > 1 ? reader_pool_.get() : nullptr))
     {
         logAndRecordError(
-            std::format("Error converting PV {} to MLDP SLAC BSAS table batch on reader {}.", pvName, name_),
+            util::format_string("Error converting PV {} to MLDP SLAC BSAS table batch on reader {}.", pvName, name_),
             sourceTag);
     }
     else if (!tableBatch.values.empty())
@@ -284,13 +282,13 @@ void EpicsPVXSReader::processEvent(std::string pvName, pvxs::Value epics_value)
     catch (const pvxs::client::RemoteError& e)
     {
         logAndRecordError(
-            std::format("Server error when reading PV {} on reader {}: {}", pvName, name_, e.what()),
+            util::format_string("Server error when reading PV {} on reader {}: {}", pvName, name_, e.what()),
             sourceTag);
     }
     catch (const std::exception& e)
     {
         logAndRecordError(
-            std::format("Unexpected error processing PV {} on reader {}: {}", pvName, name_, e.what()),
+            util::format_string("Unexpected error processing PV {} on reader {}: {}", pvName, name_, e.what()),
             sourceTag);
     }
 }

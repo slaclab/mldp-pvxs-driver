@@ -145,6 +145,6 @@ esac
 epics_tag="${EPICS_VERSION:-unknown}"
 pvxs_tag="${PVXS_VERSION:-unknown}"
 
-out="$out_dir/mldp_pvxs_driver-ubuntu-noble-epics-${epics_tag}-pvxs-${pvxs_tag}-${machine_arch}.AppImage"
+out="$out_dir/mldp_pvxs_driver-rockylinux-9.3-epics-${epics_tag}-pvxs-${pvxs_tag}-${machine_arch}.AppImage"
 "$appimage_dir/squashfs-root/AppRun" "$appdir" "$out"
 echo "Created $out"
