@@ -11,6 +11,7 @@
 #include "MockArchiverPbHttpServer.h"
 
 #include <EPICSEvent.pb.h>
+#include <util/time/DateTimeUtils.h>
 
 #include <algorithm>
 #include <chrono>
@@ -112,17 +113,12 @@ namespace {
         return CivilDate{y, m, d};
     }
 
-    bool isLeapYear(int year)
-    {
-        return (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
-    }
-
     unsigned dayOfYear(int year, unsigned month, unsigned day)
     {
         static constexpr unsigned kDaysBeforeMonth[12] = {
             0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334};
         unsigned doy = kDaysBeforeMonth[month - 1] + (day - 1);
-        if (month > 2 && isLeapYear(year))
+        if (month > 2 && ::mldp_pvxs_driver::util::time::DateTimeUtils::isLeapYear(year))
         {
             ++doy;
         }
