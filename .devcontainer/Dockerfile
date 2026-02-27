@@ -139,4 +139,4 @@ ENV PROTO_PATH=/opt/dp-grpc/src/main/proto
 WORKDIR /workspace
 
 # Define a default command to run when the container starts (optional)
-# CMD ["bash"]
+CMD ["bash"]
