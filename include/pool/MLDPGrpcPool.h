@@ -21,6 +21,7 @@
 #include <ingestion.grpc.pb.h>
 #include <memory>
 #include <mutex>
+#include <query.grpc.pb.h>
 #include <string>
 #include <vector>
 
@@ -62,8 +63,10 @@ struct MLDPGrpcObject
 {
     /** @brief gRPC channel used for communication. */
     std::shared_ptr<grpc::Channel> channel;
-    /** @brief Stub bound to the channel for RPC calls. */
+    /** @brief Ingestion API stub bound to the channel for RPC calls. */
     std::unique_ptr<dp::service::ingestion::DpIngestionService::Stub> stub;
+    /** @brief Query API stub bound to the channel for RPC calls. */
+    std::unique_ptr<dp::service::query::DpQueryService::Stub> query_stub;
 
     /** Default-construct an empty pooled object. */
     MLDPGrpcObject();
@@ -93,7 +96,15 @@ struct MLDPGrpcObject
      * @return unique_ptr to a new `DpIngestionService::Stub` bound to
      *         this object's channel.
      */
-    std::unique_ptr<dp::service::ingestion::DpIngestionService::Stub> makeStub() const;
+    std::unique_ptr<dp::service::ingestion::DpIngestionService::Stub> makeIngestionStub() const;
+
+    /**
+     * @brief Create a new query stub that uses the same underlying channel.
+     *
+     * @return unique_ptr to a new `DpQueryService::Stub` bound to this
+     *         object's channel.
+     */
+    std::unique_ptr<dp::service::query::DpQueryService::Stub> makeQueryStub() const;
 };
 
 /**

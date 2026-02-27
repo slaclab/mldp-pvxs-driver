@@ -28,10 +28,12 @@
 #include <atomic>
 #include <condition_variable>
 #include <exception>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace mldp_pvxs_driver::util::http {
@@ -101,6 +103,11 @@ private:
     std::condition_variable                                      worker_cv_;      ///< Interruptible wakeup for periodic tail polling.
     std::exception_ptr                                           worker_error_;   ///< Captures worker exception for diagnostics.
     bool                                                         worker_done_ = false; ///< True after worker thread exits.
+
+    /// Per-PV high-water mark: the last sample timestamp published in a previous
+    /// periodic-tail iteration. Used to skip boundary / overlap duplicates.
+    /// Only populated and consulted in PeriodicTail fetch mode.
+    std::map<std::string, std::pair<uint64_t, uint32_t>> last_published_ns_per_pv_;
 
     /**
      * @brief Initialize reusable HTTP client for archiver API access.

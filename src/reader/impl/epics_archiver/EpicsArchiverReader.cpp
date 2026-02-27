@@ -435,6 +435,26 @@ void EpicsArchiverReader::parsePbHttpLineIntoState(const std::string& line, PbCh
                     m.incrementReaderEventsReceived(1.0, source_tag);
                 });
 
+    // --- Duplicate suppression (periodic_tail only) ---
+    if (config_.fetchMode() == EpicsArchiverReaderConfig::FetchMode::PeriodicTail)
+    {
+        auto it = last_published_ns_per_pv_.find(pv);
+        if (it != last_published_ns_per_pv_.end())
+        {
+            const auto [wm_epoch, wm_nano] = it->second;
+            // Skip the sample if its timestamp does not strictly exceed the watermark.
+            if (!sampleTimeLessThan(wm_epoch, wm_nano, parsed.epoch_seconds, parsed.nanoseconds))
+            {
+                debugf(*logger_,
+                       "Skipping duplicate sample for PV '{}' at ({}, {}): not newer than watermark ({}, {})",
+                       pv, parsed.epoch_seconds, parsed.nanoseconds, wm_epoch, wm_nano);
+                return;
+            }
+        }
+        // Update watermark as this sample is accepted.
+        last_published_ns_per_pv_[pv] = {parsed.epoch_seconds, parsed.nanoseconds};
+    }
+
     // Decide whether the current sample starts a new output batch before
     // appending it, so the sample that crosses the threshold belongs to the
     // new batch.

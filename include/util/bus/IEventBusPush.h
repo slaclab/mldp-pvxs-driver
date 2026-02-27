@@ -17,6 +17,7 @@
 #include <ingestion.grpc.pb.h>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -50,6 +51,36 @@ struct EventBatchStruct
 };
 
 /**
+ * @brief Normalized timestamp payload returned by source-metadata queries.
+ */
+struct SourceTimestamp
+{
+    uint64_t epoch_seconds{0}; ///< Unix epoch seconds.
+    uint64_t nanoseconds{0};   ///< Nanoseconds fraction.
+};
+
+/**
+ * @brief Metadata summary for one source/PV as returned by MLDP query services.
+ *
+ * Most fields are optional because upstream providers may not populate all
+ * metadata dimensions for every source.
+ */
+struct SourceInfoStruct
+{
+    std::string                    source_name;                      ///< Source/PV identifier.
+    std::optional<SourceTimestamp> first_timestamp;                 ///< Earliest known data timestamp.
+    std::optional<SourceTimestamp> last_timestamp;                  ///< Latest known data timestamp.
+    std::optional<std::string>     last_provider_id;                ///< Last provider ID that wrote the source.
+    std::optional<std::string>     last_provider_name;              ///< Last provider name that wrote the source.
+    std::optional<std::string>     last_bucket_id;                  ///< Backing storage bucket identifier.
+    std::optional<std::string>     last_bucket_data_type;           ///< Data type recorded in last bucket.
+    std::optional<std::string>     last_bucket_data_timestamps_type; ///< Timestamp encoding used in last bucket.
+    std::optional<uint64_t>        last_bucket_sample_period;       ///< Sampling period in nanoseconds (if known).
+    std::optional<uint32_t>        last_bucket_sample_count;        ///< Number of samples in last bucket.
+    std::optional<int32_t>         num_buckets;                     ///< Total bucket count for the source.
+};
+
+/**
  * @brief Minimal API contract for pushing events on the driver bus.
  *
  * Implementations are expected to forward serialized ingestion events to the
@@ -63,6 +94,8 @@ public:
     using EventValue = std::shared_ptr<EventValueStruct>;
     /// Batch of values grouped per source identifier with optional tags.
     using EventBatch = EventBatchStruct;
+    /// Metadata describing one source/PV from MLDP query APIs.
+    using SourceInfo = SourceInfoStruct;
 
     /**
      * @brief Helper factory that returns an empty event payload.
@@ -95,6 +128,22 @@ public:
      * @return true if the batch was accepted for delivery.
      */
     virtual bool push(EventBatch batch_values) = 0;
+
+    /**
+     * @brief Query MLDP metadata for a set of source identifiers.
+     *
+     * The default implementation returns an empty list; concrete backends may
+     * override it when they can query metadata services (for example
+     * `DpQueryService::queryPvMetadata`).
+     *
+     * @param source_names Source/PV identifiers to query.
+     * @return Metadata rows for the sources known to the backend.
+     */
+    virtual std::vector<SourceInfo> querySourcesInfo(const std::vector<std::string>& source_names)
+    {
+        (void)source_names;
+        return {};
+    }
 };
 
 } // namespace mldp_pvxs_driver::util::bus

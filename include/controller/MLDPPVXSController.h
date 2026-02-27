@@ -145,6 +145,11 @@ public:
     bool push(EventBatch batch_values) override;
 
     /**
+     * @brief Query source metadata from MLDP query API for a list of PV names.
+     */
+    std::vector<SourceInfo> querySourcesInfo(const std::vector<std::string>& source_names) override;
+
+    /**
      * @brief Access the shared metrics collector.
      *
      * Returned reference remains valid for the lifetime of the controller.

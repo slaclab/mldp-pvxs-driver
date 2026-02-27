@@ -39,15 +39,22 @@ MLDPGrpcObject::MLDPGrpcObject() = default;
 MLDPGrpcObject::MLDPGrpcObject(std::shared_ptr<grpc::Channel> ch)
     : channel(std::move(ch))
 {
-    // create a default stub for convenience
+    // Create default stubs for both ingestion and query APIs on the same channel.
     auto iface = std::static_pointer_cast<grpc::ChannelInterface>(channel);
     stub = dp::service::ingestion::DpIngestionService::NewStub(iface);
+    query_stub = dp::service::query::DpQueryService::NewStub(iface);
 }
 
-std::unique_ptr<dp::service::ingestion::DpIngestionService::Stub> MLDPGrpcObject::makeStub() const
+std::unique_ptr<dp::service::ingestion::DpIngestionService::Stub> MLDPGrpcObject::makeIngestionStub() const
 {
     auto iface = std::static_pointer_cast<grpc::ChannelInterface>(channel);
     return dp::service::ingestion::DpIngestionService::NewStub(iface);
+}
+
+std::unique_ptr<dp::service::query::DpQueryService::Stub> MLDPGrpcObject::makeQueryStub() const
+{
+    auto iface = std::static_pointer_cast<grpc::ChannelInterface>(channel);
+    return dp::service::query::DpQueryService::NewStub(iface);
 }
 
 #pragma endregion - MLDPGrpcObject

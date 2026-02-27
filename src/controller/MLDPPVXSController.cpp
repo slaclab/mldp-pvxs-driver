@@ -35,6 +35,13 @@ std::shared_ptr<mldp_pvxs_driver::util::log::ILogger> makeControllerLogger()
     std::string loggerName = "controlller";
     return mldp_pvxs_driver::util::log::newLogger(loggerName);
 }
+
+SourceTimestamp makeSourceTimestamp(const Timestamp& ts)
+{
+    return SourceTimestamp{
+        ts.epochseconds(),
+        ts.nanoseconds()};
+}
 } // namespace
 
 std::shared_ptr<MLDPPVXSController> MLDPPVXSController::create(const config::Config& config)
@@ -202,6 +209,124 @@ bool MLDPPVXSController::push(EventBatch batch_values)
     return true;
 }
 
+std::vector<IEventBusPush::SourceInfo> MLDPPVXSController::querySourcesInfo(const std::vector<std::string>& source_names)
+{
+    std::vector<IEventBusPush::SourceInfo> infos;
+    if (source_names.empty())
+    {
+        return infos;
+    }
+    if (!mldp_pool_)
+    {
+        warnf(*logger_, "querySourcesInfo called before MLDP pool initialization");
+        return infos;
+    }
+
+    try
+    {
+        util::pool::PooledHandle<util::pool::MLDPGrpcObject> handle = mldp_pool_->acquire();
+        auto*                                                 query_stub = handle->query_stub.get();
+        if (!query_stub)
+        {
+            handle->query_stub = handle->makeQueryStub();
+            query_stub = handle->query_stub.get();
+        }
+        if (!query_stub)
+        {
+            errorf(*logger_, "Failed to create query stub for source metadata request");
+            return infos;
+        }
+
+        dp::service::query::QueryPvMetadataRequest request;
+        auto*                                      pv_name_list = request.mutable_pvnamelist();
+        pv_name_list->mutable_pvnames()->Reserve(static_cast<int>(source_names.size()));
+        for (const auto& source : source_names)
+        {
+            if (!source.empty())
+            {
+                pv_name_list->add_pvnames(source);
+            }
+        }
+        if (pv_name_list->pvnames().empty())
+        {
+            return infos;
+        }
+
+        grpc::ClientContext                        context;
+        dp::service::query::QueryPvMetadataResponse response;
+        context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(5));
+        const auto status = query_stub->queryPvMetadata(&context, request, &response);
+        if (!status.ok())
+        {
+            errorf(*logger_, "queryPvMetadata RPC failed: {}", status.error_message());
+            return infos;
+        }
+        if (response.has_exceptionalresult())
+        {
+            errorf(*logger_, "queryPvMetadata returned exceptional result: {}", response.exceptionalresult().message());
+            return infos;
+        }
+        if (!response.has_metadataresult())
+        {
+            return infos;
+        }
+
+        const auto& pv_infos = response.metadataresult().pvinfos();
+        infos.reserve(static_cast<std::size_t>(pv_infos.size()));
+        for (const auto& pv_info : pv_infos)
+        {
+            IEventBusPush::SourceInfo info;
+            info.source_name = pv_info.pvname();
+
+            if (pv_info.has_firstdatatimestamp())
+            {
+                info.first_timestamp = makeSourceTimestamp(pv_info.firstdatatimestamp());
+            }
+            if (pv_info.has_lastdatatimestamp())
+            {
+                info.last_timestamp = makeSourceTimestamp(pv_info.lastdatatimestamp());
+            }
+            if (!pv_info.lastproviderid().empty())
+            {
+                info.last_provider_id = pv_info.lastproviderid();
+            }
+            if (!pv_info.lastprovidername().empty())
+            {
+                info.last_provider_name = pv_info.lastprovidername();
+            }
+            if (!pv_info.lastbucketid().empty())
+            {
+                info.last_bucket_id = pv_info.lastbucketid();
+            }
+            if (!pv_info.lastbucketdatatype().empty())
+            {
+                info.last_bucket_data_type = pv_info.lastbucketdatatype();
+            }
+            if (!pv_info.lastbucketdatatimestampstype().empty())
+            {
+                info.last_bucket_data_timestamps_type = pv_info.lastbucketdatatimestampstype();
+            }
+            if (pv_info.lastbucketsampleperiod() > 0)
+            {
+                info.last_bucket_sample_period = pv_info.lastbucketsampleperiod();
+            }
+            if (pv_info.lastbucketsamplecount() > 0)
+            {
+                info.last_bucket_sample_count = pv_info.lastbucketsamplecount();
+            }
+            info.num_buckets = pv_info.numbuckets();
+
+            infos.push_back(std::move(info));
+        }
+    }
+    catch (const std::exception& ex)
+    {
+        errorf(*logger_, "querySourcesInfo failed: {}", ex.what());
+    }
+
+    return infos;
+}
+
 void MLDPPVXSController::workerLoop(std::size_t worker_index)
 {
     // Worker threads block on the shared queue, build per-source ingestion
@@ -252,15 +377,15 @@ void MLDPPVXSController::workerLoop(std::size_t worker_index)
             writer = (*handle)->stub->ingestDataStream(context.get(), &response);
             if (!writer)
             {
-            errorf(*logger_, "Failed to open ingestion stream for queued events");
-            metric_call(metrics_, [&](auto& m)
-                        {
-                            m.incrementBusFailures(1.0, {{"source", "unknown"}});
-                        });
-            handle.reset();
-            context.reset();
-            return false;
-        }
+                errorf(*logger_, "Failed to open ingestion stream for queued events");
+                metric_call(metrics_, [&](auto& m)
+                            {
+                                m.incrementBusFailures(1.0, {{"source", "unknown"}});
+                            });
+                handle.reset();
+                context.reset();
+                return false;
+            }
             stream_start = std::chrono::steady_clock::now();
             stream_payload_bytes = 0;
             return true;
