@@ -99,9 +99,24 @@ FetchContent_MakeAvailable(epicsarchiverap)
 
 # Find required packages
 find_package(Protobuf REQUIRED)
+# OpenSSL must be found before gRPC so that gRPC's imported targets (gRPC::grpc)
+# can resolve the OpenSSL::SSL / OpenSSL::Crypto targets they reference.
+find_package(OpenSSL REQUIRED)
 find_package(gRPC REQUIRED)
 find_package(Threads REQUIRED)
 find_package(CURL REQUIRED)
+# The libcurl-devel RPM on Rocky Linux ships a cmake config that embeds the
+# Debian multiarch include path (/usr/include/x86_64-linux-gnu) which does not
+# exist on RPM-based systems.  Strip any such paths from the imported target so
+# CMake's generator step does not abort with a non-existent path error.
+if(TARGET CURL::libcurl)
+    get_target_property(_curl_inc_dirs CURL::libcurl INTERFACE_INCLUDE_DIRECTORIES)
+    if(_curl_inc_dirs)
+        list(FILTER _curl_inc_dirs EXCLUDE REGEX "/usr/include/[a-zA-Z0-9_]+-linux-[a-zA-Z0-9]+$")
+        set_target_properties(CURL::libcurl PROPERTIES INTERFACE_INCLUDE_DIRECTORIES "${_curl_inc_dirs}")
+    endif()
+    unset(_curl_inc_dirs)
+endif()
 find_package(PkgConfig QUIET)
 
 # epics-base (7.0+)
