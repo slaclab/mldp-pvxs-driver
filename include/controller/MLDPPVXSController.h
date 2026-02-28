@@ -16,15 +16,19 @@
 #include <metrics/Metrics.h>
 #include <pool/MLDPGrpcPool.h>
 #include <reader/Reader.h>
-#include <util/bus/IEventBusPush.h>
+#include <util/bus/IDataBus.h>
 #include <util/log/Logger.h>
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <deque>
 #include <memory>
 #include <mutex>
+#include <optional>
+#include <set>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace mldp_pvxs_driver::controller {
@@ -33,7 +37,7 @@ namespace mldp_pvxs_driver::controller {
  * @brief High-level orchestrator wiring EPICS readers, the event bus, and MLDP.
  *
  * The controller owns the global thread pool, maintains the MLDP gRPC
- * connection pool, and implements the @ref util::bus::IEventBusPush interface
+ * connection pool, and implements the @ref util::bus::IDataBus interface
  * so readers can submit events to MLDP. It also exposes a shared metrics
  * collector that downstream components can use to report internal statistics.
  *
@@ -104,7 +108,7 @@ namespace mldp_pvxs_driver::controller {
  *    items and worker threads batch them into gRPC streams.
  * 4. Call @ref stop to halt the workers and tear down resources.
  */
-class MLDPPVXSController : public util::bus::IEventBusPush, public std::enable_shared_from_this<MLDPPVXSController>
+class MLDPPVXSController : public util::bus::IDataBus, public std::enable_shared_from_this<MLDPPVXSController>
 {
 public:
     /**
@@ -147,7 +151,14 @@ public:
     /**
      * @brief Query source metadata from MLDP query API for a list of PV names.
      */
-    std::vector<SourceInfo> querySourcesInfo(const std::vector<std::string>& source_names) override;
+    std::vector<SourceInfo> querySourcesInfo(const std::set<std::string>& source_names) override;
+
+    /**
+     * @brief Query MLDP data columns for a set of PV/source names.
+     */
+    std::optional<std::unordered_map<std::string, DataColumn>> querySourcesData(
+        const std::set<std::string>&              source_names,
+        const util::bus::QuerySourcesDataOptions& options = util::bus::QuerySourcesDataOptions{}) override;
 
     /**
      * @brief Access the shared metrics collector.
@@ -169,7 +180,7 @@ private:
         std::string                                     root_source;
         std::shared_ptr<const std::vector<std::string>> tags;
         /// Multiple columns batched into a single queue item.
-        std::vector<std::pair<std::string, std::vector<util::bus::IEventBusPush::EventValue>>> columns;
+        std::vector<std::pair<std::string, std::vector<util::bus::IDataBus::EventValue>>> columns;
     };
 
     /// Per-worker channel: each worker has its own queue for source-affinity.

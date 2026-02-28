@@ -21,7 +21,7 @@
 
 #include <ingestion.grpc.pb.h>
 #include <pv/pvData.h>
-#include <util/bus/IEventBusPush.h>
+#include <util/bus/IDataBus.h>
 #include <util/log/Logger.h>
 
 #include <functional>
@@ -56,7 +56,7 @@ public:
      * @param events Vector of EventValue objects, one per row in the table.
      */
     using ColumnEmitFn = std::function<void(std::string colName,
-                                            std::vector<util::bus::IEventBusPush::EventValue> events)>;
+                                            std::vector<util::bus::IDataBus::EventValue> events)>;
 
     /**
      * @brief Convert an EPICS pvData field to an MLDP protobuf DataValue.
@@ -97,7 +97,7 @@ public:
                                           const ::epics::pvData::PVStructurePtr&                   epicsValue,
                                           const std::string&                                       tsSecondsField,
                                           const std::string&                                       tsNanosField,
-                                          util::bus::IEventBusPush::EventBatch*                    outBatch,
+                                          util::bus::IDataBus::EventBatch*                    outBatch,
                                           size_t&                                                  outEmitted);
 
     /**

@@ -13,12 +13,15 @@
  */
 
 #pragma once
+#include <chrono>
 #include <cstdint>
 #include <ingestion.grpc.pb.h>
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace mldp_pvxs_driver::util::bus {
@@ -81,13 +84,26 @@ struct SourceInfoStruct
 };
 
 /**
+ * @brief Tuning options for source data queries.
+ *
+ * Grouping these parameters avoids API churn when query knobs evolve.
+ */
+struct QuerySourcesDataOptions
+{
+    std::chrono::milliseconds timeout{std::chrono::seconds(5)};        ///< Total polling budget.
+    std::chrono::seconds      lookback_window{std::chrono::seconds(30)}; ///< beginTime offset from now.
+    std::chrono::seconds      forward_window{std::chrono::seconds(1)};   ///< endTime offset from now.
+    std::chrono::seconds      rpc_deadline{std::chrono::seconds(5)};     ///< Per-RPC deadline.
+};
+
+/**
  * @brief Minimal API contract for pushing events on the driver bus.
  *
  * Implementations are expected to forward serialized ingestion events to the
  * rest of the system (e.g. over gRPC or PVXS) while honoring the ownership
  * semantics of the provided payloads.
  */
-class IEventBusPush
+class IDataBus
 {
 public:
     /// Shared ownership wrapper around the generated ingestion payload.
@@ -112,7 +128,7 @@ public:
                 DataValue{}});
     }
 
-    virtual ~IEventBusPush() = default;
+    virtual ~IDataBus() = default;
 
     /**
      * @brief Pushes a batch of populated ingestion events into the bus.
@@ -139,10 +155,31 @@ public:
      * @param source_names Source/PV identifiers to query.
      * @return Metadata rows for the sources known to the backend.
      */
-    virtual std::vector<SourceInfo> querySourcesInfo(const std::vector<std::string>& source_names)
+    virtual std::vector<SourceInfo> querySourcesInfo(const std::set<std::string>& source_names)
     {
         (void)source_names;
         return {};
+    }
+
+    /**
+     * @brief Query MLDP data columns for sources over a relative time window.
+     *
+     * This mirrors the query shape used by integration tests: `queryData`
+     * with `pvNames`, `beginTime = now - lookback_window`, and
+     * `endTime = now + forward_window`.
+     *
+     * @param source_names Source/PV identifiers to query.
+     * @param options Query tuning options (timeouts and relative query window).
+     * @return Map keyed by source name containing returned DataColumn payloads.
+     *         Returns std::nullopt on transport/protocol failures.
+     */
+    virtual std::optional<std::unordered_map<std::string, DataColumn>> querySourcesData(
+        const std::set<std::string>&   source_names,
+        const QuerySourcesDataOptions& options = QuerySourcesDataOptions{})
+    {
+        (void)source_names;
+        (void)options;
+        return std::nullopt;
     }
 };
 

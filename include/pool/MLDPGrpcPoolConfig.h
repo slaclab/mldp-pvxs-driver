@@ -26,7 +26,8 @@ namespace mldp_pvxs_driver::util::pool {
  * mldp_pool:
  *   provider_name: pvxs_provider
  *   provider_description: "PVXS-based data provider"
- *   url: https://mldp.example:443
+ *   url: https://mldp-ingestion.example:443
+ *   query_url: https://mldp-query.example:443 # optional, defaults to url
  *   min_conn: 1
  *   max_conn: 4
  *   credentials: ssl  # or 'none' for insecure, or a map for custom TLS
@@ -37,7 +38,8 @@ namespace mldp_pvxs_driver::util::pool {
  * mldp_pool:
  *   provider_name: pvxs_provider
  *   provider_description: "PVXS-based data provider"
- *   url: https://mldp.example:443
+ *   url: https://mldp-ingestion.example:443
+ *   query_url: https://mldp-query.example:443 # optional
  *   min_conn: 1
  *   max_conn: 4
  *   credentials:
@@ -88,6 +90,7 @@ public:
     const std::string& providerName() const;
     const std::string& providerDescription() const;
     const std::string& url() const;
+    const std::string& queryUrl() const;
     int                minConnections() const;
     int                maxConnections() const;
     const Credentials& credentials() const;
@@ -100,6 +103,7 @@ private:
     std::string provider_name_;
     std::string provider_description_;
     std::string url_;
+    std::string query_url_;
     int         min_conn_ = 0;
     int         max_conn_ = 0;
     Credentials credentials_;

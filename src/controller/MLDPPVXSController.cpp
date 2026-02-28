@@ -19,6 +19,7 @@
 #include <grpcpp/grpcpp.h>
 #include <ranges>
 #include <stdexcept>
+#include <thread>
 
 using namespace mldp_pvxs_driver::metrics;
 using namespace mldp_pvxs_driver::controller;
@@ -41,6 +42,74 @@ SourceTimestamp makeSourceTimestamp(const Timestamp& ts)
     return SourceTimestamp{
         ts.epochseconds(),
         ts.nanoseconds()};
+}
+
+bool isBefore(const SourceTimestamp& lhs, const SourceTimestamp& rhs)
+{
+    if (lhs.epoch_seconds != rhs.epoch_seconds)
+    {
+        return lhs.epoch_seconds < rhs.epoch_seconds;
+    }
+    return lhs.nanoseconds < rhs.nanoseconds;
+}
+
+std::optional<std::pair<SourceTimestamp, SourceTimestamp>> extractTimestampRange(const DataTimestamps& data_timestamps)
+{
+    if (data_timestamps.has_timestamplist())
+    {
+        const auto& list = data_timestamps.timestamplist();
+        if (list.timestamps_size() <= 0)
+        {
+            return std::nullopt;
+        }
+
+        SourceTimestamp first = makeSourceTimestamp(list.timestamps(0));
+        SourceTimestamp last = first;
+        for (int i = 1; i < list.timestamps_size(); ++i)
+        {
+            const SourceTimestamp current = makeSourceTimestamp(list.timestamps(i));
+            if (isBefore(current, first))
+            {
+                first = current;
+            }
+            if (isBefore(last, current))
+            {
+                last = current;
+            }
+        }
+        return std::make_pair(first, last);
+    }
+
+    if (data_timestamps.has_samplingclock())
+    {
+        const auto& clock = data_timestamps.samplingclock();
+        if (!clock.has_starttime())
+        {
+            return std::nullopt;
+        }
+
+        const SourceTimestamp first = makeSourceTimestamp(clock.starttime());
+        SourceTimestamp       last = first;
+        const auto            count = static_cast<uint64_t>(clock.count());
+        const auto            period_nanos = clock.periodnanos();
+        if (count > 1 && period_nanos > 0)
+        {
+            const auto steps = count - 1;
+            const auto offset_nanos = static_cast<unsigned __int128>(steps) * static_cast<unsigned __int128>(period_nanos);
+            const auto add_secs = static_cast<uint64_t>(offset_nanos / 1'000'000'000ULL);
+            const auto add_nanos = static_cast<uint64_t>(offset_nanos % 1'000'000'000ULL);
+            last.epoch_seconds += add_secs;
+            last.nanoseconds += add_nanos;
+            if (last.nanoseconds >= 1'000'000'000ULL)
+            {
+                last.epoch_seconds += 1;
+                last.nanoseconds -= 1'000'000'000ULL;
+            }
+        }
+        return std::make_pair(first, last);
+    }
+
+    return std::nullopt;
 }
 } // namespace
 
@@ -176,7 +245,7 @@ bool MLDPPVXSController::push(EventBatch batch_values)
     auto tags = std::make_shared<const std::vector<std::string>>(batch_values.tags);
 
     // Group columns by target worker channel, then enqueue one QueueItem per channel.
-    std::vector<std::vector<std::pair<std::string, std::vector<IEventBusPush::EventValue>>>> per_channel(channels_.size());
+    std::vector<std::vector<std::pair<std::string, std::vector<IDataBus::EventValue>>>> per_channel(channels_.size());
     for (auto& [src_name, events] : batch_values.values)
     {
         if (events.empty())
@@ -209,9 +278,9 @@ bool MLDPPVXSController::push(EventBatch batch_values)
     return true;
 }
 
-std::vector<IEventBusPush::SourceInfo> MLDPPVXSController::querySourcesInfo(const std::vector<std::string>& source_names)
+std::vector<IDataBus::SourceInfo> MLDPPVXSController::querySourcesInfo(const std::set<std::string>& source_names)
 {
-    std::vector<IEventBusPush::SourceInfo> infos;
+    std::vector<IDataBus::SourceInfo> infos;
     if (source_names.empty())
     {
         return infos;
@@ -225,7 +294,7 @@ std::vector<IEventBusPush::SourceInfo> MLDPPVXSController::querySourcesInfo(cons
     try
     {
         util::pool::PooledHandle<util::pool::MLDPGrpcObject> handle = mldp_pool_->acquire();
-        auto*                                                 query_stub = handle->query_stub.get();
+        auto*                                                query_stub = handle->query_stub.get();
         if (!query_stub)
         {
             handle->query_stub = handle->makeQueryStub();
@@ -252,13 +321,125 @@ std::vector<IEventBusPush::SourceInfo> MLDPPVXSController::querySourcesInfo(cons
             return infos;
         }
 
-        grpc::ClientContext                        context;
+        grpc::ClientContext                         context;
         dp::service::query::QueryPvMetadataResponse response;
         context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(5));
         const auto status = query_stub->queryPvMetadata(&context, request, &response);
         if (!status.ok())
         {
-            errorf(*logger_, "queryPvMetadata RPC failed: {}", status.error_message());
+            const bool metadata_rpc_missing = status.error_code() == grpc::StatusCode::UNIMPLEMENTED ||
+                                              status.error_message().find("Method not found") != std::string::npos;
+            if (!metadata_rpc_missing)
+            {
+                errorf(*logger_, "queryPvMetadata RPC failed: {}", status.error_message());
+                return infos;
+            }
+
+            warnf(*logger_,
+                  "queryPvMetadata unavailable ({}). Falling back to queryData-derived timestamps.",
+                  status.error_message());
+
+            dp::service::query::QueryDataRequest data_request;
+            auto*                                spec = data_request.mutable_queryspec();
+            for (const auto& source : source_names)
+            {
+                if (!source.empty())
+                {
+                    spec->add_pvnames(source);
+                }
+            }
+            if (spec->pvnames().empty())
+            {
+                return infos;
+            }
+            auto* begin_ts = spec->mutable_begintime();
+            begin_ts->set_epochseconds(0);
+            auto* end_ts = spec->mutable_endtime();
+            end_ts->set_epochseconds(
+                static_cast<uint64_t>(
+                    std::chrono::duration_cast<std::chrono::seconds>(
+                        std::chrono::system_clock::now().time_since_epoch())
+                        .count()) +
+                1);
+
+            grpc::ClientContext                 data_context;
+            dp::service::query::QueryDataResponse data_response;
+            data_context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(5));
+            const auto data_status = query_stub->queryData(&data_context, data_request, &data_response);
+            if (!data_status.ok())
+            {
+                errorf(*logger_, "queryData fallback RPC failed: {}", data_status.error_message());
+                return infos;
+            }
+            if (!data_response.has_querydata() || data_response.has_exceptionalresult())
+            {
+                return infos;
+            }
+
+            std::unordered_map<std::string, IDataBus::SourceInfo> merged_infos;
+            for (const auto& bucket : data_response.querydata().databuckets())
+            {
+                if (!bucket.has_datacolumn())
+                {
+                    continue;
+                }
+                const auto& column = bucket.datacolumn();
+                if (!source_names.contains(column.name()))
+                {
+                    continue;
+                }
+
+                auto& info = merged_infos[column.name()];
+                if (info.source_name.empty())
+                {
+                    info.source_name = column.name();
+                    info.num_buckets = 0;
+                }
+                if (info.num_buckets.has_value())
+                {
+                    info.num_buckets = info.num_buckets.value() + 1;
+                }
+
+                if (!bucket.has_datatimestamps())
+                {
+                    continue;
+                }
+                const auto range = extractTimestampRange(bucket.datatimestamps());
+                if (!range.has_value())
+                {
+                    continue;
+                }
+
+                const auto& [bucket_first, bucket_last] = range.value();
+                if (!info.first_timestamp.has_value() || isBefore(bucket_first, info.first_timestamp.value()))
+                {
+                    info.first_timestamp = bucket_first;
+                }
+                if (!info.last_timestamp.has_value() || isBefore(info.last_timestamp.value(), bucket_last))
+                {
+                    info.last_timestamp = bucket_last;
+                }
+
+                const auto& data_timestamps = bucket.datatimestamps();
+                if (data_timestamps.has_samplingclock())
+                {
+                    const auto& clock = data_timestamps.samplingclock();
+                    info.last_bucket_sample_period = clock.periodnanos();
+                    info.last_bucket_sample_count = clock.count();
+                    info.last_bucket_data_timestamps_type = "SAMPLING_CLOCK";
+                }
+                else if (data_timestamps.has_timestamplist())
+                {
+                    info.last_bucket_sample_count = static_cast<uint32_t>(data_timestamps.timestamplist().timestamps_size());
+                    info.last_bucket_data_timestamps_type = "TIMESTAMP_LIST";
+                }
+            }
+
+            infos.reserve(merged_infos.size());
+            for (auto& [_, info] : merged_infos)
+            {
+                infos.push_back(std::move(info));
+            }
             return infos;
         }
         if (response.has_exceptionalresult())
@@ -275,7 +456,7 @@ std::vector<IEventBusPush::SourceInfo> MLDPPVXSController::querySourcesInfo(cons
         infos.reserve(static_cast<std::size_t>(pv_infos.size()));
         for (const auto& pv_info : pv_infos)
         {
-            IEventBusPush::SourceInfo info;
+            IDataBus::SourceInfo info;
             info.source_name = pv_info.pvname();
 
             if (pv_info.has_firstdatatimestamp())
@@ -327,19 +508,118 @@ std::vector<IEventBusPush::SourceInfo> MLDPPVXSController::querySourcesInfo(cons
     return infos;
 }
 
+std::optional<std::unordered_map<std::string, DataColumn>> MLDPPVXSController::querySourcesData(
+    const std::set<std::string>&              source_names,
+    const util::bus::QuerySourcesDataOptions& options)
+{
+    if (source_names.empty())
+    {
+        return std::unordered_map<std::string, DataColumn>{};
+    }
+    if (!mldp_pool_)
+    {
+        warnf(*logger_, "querySourcesData called before MLDP pool initialization");
+        return std::nullopt;
+    }
+    if (options.timeout <= std::chrono::milliseconds::zero())
+    {
+        warnf(*logger_, "querySourcesData timeout must be > 0");
+        return std::nullopt;
+    }
+
+    try
+    {
+        util::pool::PooledHandle<util::pool::MLDPGrpcObject> handle = mldp_pool_->acquire();
+        auto*                                                query_stub = handle->query_stub.get();
+        if (!query_stub)
+        {
+            handle->query_stub = handle->makeQueryStub();
+            query_stub = handle->query_stub.get();
+        }
+        if (!query_stub)
+        {
+            errorf(*logger_, "Failed to create query stub for source data request");
+            return std::nullopt;
+        }
+
+        const auto deadline = std::chrono::steady_clock::now() + options.timeout;
+        while (std::chrono::steady_clock::now() < deadline)
+        {
+            dp::service::query::QueryDataRequest request;
+            auto*                                spec = request.mutable_queryspec();
+            for (const auto& source : source_names)
+            {
+                if (!source.empty())
+                {
+                    spec->add_pvnames(source);
+                }
+            }
+            if (spec->pvnames().empty())
+            {
+                return std::unordered_map<std::string, DataColumn>{};
+            }
+
+            const auto now = std::chrono::system_clock::now();
+            const auto begin = now - options.lookback_window;
+            const auto end = now + options.forward_window;
+            auto*      begin_ts = spec->mutable_begintime();
+            begin_ts->set_epochseconds(std::chrono::duration_cast<std::chrono::seconds>(begin.time_since_epoch()).count());
+            auto* end_ts = spec->mutable_endtime();
+            end_ts->set_epochseconds(std::chrono::duration_cast<std::chrono::seconds>(end.time_since_epoch()).count());
+
+            grpc::ClientContext context;
+            context.set_deadline(std::chrono::system_clock::now() + options.rpc_deadline);
+
+            dp::service::query::QueryDataResponse response;
+            const auto                            status = query_stub->queryData(&context, request, &response);
+            if (status.ok() && response.has_querydata() && !response.has_exceptionalresult())
+            {
+                std::unordered_map<std::string, DataColumn> collected;
+                for (const auto& bucket : response.querydata().databuckets())
+                {
+                    if (!bucket.has_datacolumn())
+                    {
+                        continue;
+                    }
+
+                    const auto& column = bucket.datacolumn();
+                    if (!source_names.contains(column.name()))
+                    {
+                        continue;
+                    }
+                    collected.emplace(column.name(), column);
+                    if (collected.size() == source_names.size())
+                    {
+                        return collected;
+                    }
+                }
+            }
+
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        }
+    }
+    catch (const std::exception& ex)
+    {
+        errorf(*logger_, "querySourcesData failed: {}", ex.what());
+        return std::nullopt;
+    }
+
+    return std::nullopt;
+}
+
 void MLDPPVXSController::workerLoop(std::size_t worker_index)
 {
     // Worker threads block on the shared queue, build per-source ingestion
     // requests, and write them into a gRPC client-streaming RPC. Each worker
     // keeps a single stream open at a time and flushes (closes/reopens) when
     // byte or age thresholds are reached or when a write fails.
-    auto& ch = *channels_[worker_index];
-    std::optional<util::pool::PooledHandle<util::pool::MLDPGrpcObject>> handle;
+    auto&                                                                          ch = *channels_[worker_index];
+    std::optional<util::pool::PooledHandle<util::pool::MLDPGrpcObject>>            handle;
     std::unique_ptr<grpc::ClientWriter<dp::service::ingestion::IngestDataRequest>> writer;
-    std::unique_ptr<grpc::ClientContext> context;
-    dp::service::ingestion::IngestDataStreamResponse response;
-    std::chrono::steady_clock::time_point stream_start;
-    std::size_t stream_payload_bytes = 0;
+    std::unique_ptr<grpc::ClientContext>                                           context;
+    dp::service::ingestion::IngestDataStreamResponse                               response;
+    std::chrono::steady_clock::time_point                                          stream_start;
+    std::size_t                                                                    stream_payload_bytes = 0;
 
     const auto close_stream = [&](const char* reason)
     {
@@ -407,10 +687,13 @@ void MLDPPVXSController::workerLoop(std::size_t worker_index)
     while (true)
     {
         QueueItem item;
-        bool has_item = false;
+        bool      has_item = false;
         {
             std::unique_lock lk(ch.mutex);
-            ch.cv.wait_for(lk, dequeue_timeout, [&] { return !ch.items.empty() || ch.shutdown; });
+            ch.cv.wait_for(lk, dequeue_timeout, [&]
+                           {
+                               return !ch.items.empty() || ch.shutdown;
+                           });
             if (ch.shutdown && ch.items.empty())
             {
                 lk.unlock();
@@ -468,10 +751,10 @@ void MLDPPVXSController::workerLoop(std::size_t worker_index)
         }
 
         google::protobuf::Arena arena;
-        auto* request = google::protobuf::Arena::CreateMessage<dp::service::ingestion::IngestDataRequest>(&arena);
-        std::size_t accepted_events = 0;
-        std::size_t payload_bytes = 0;
-        const auto request_id = util::format_string("pv_stream_{}_{}", stream_start.time_since_epoch().count(), item.root_source);
+        auto*                   request = google::protobuf::Arena::CreateMessage<dp::service::ingestion::IngestDataRequest>(&arena);
+        std::size_t             accepted_events = 0;
+        std::size_t             payload_bytes = 0;
+        const auto              request_id = util::format_string("pv_stream_{}_{}", stream_start.time_since_epoch().count(), item.root_source);
         if (!buildRequest(item, request_id, *request, accepted_events, payload_bytes))
         {
             continue;
@@ -536,11 +819,11 @@ void MLDPPVXSController::workerLoop(std::size_t worker_index)
     close_stream("shutdown");
 }
 
-bool MLDPPVXSController::buildRequest(const QueueItem& item,
-                                      const std::string& request_id,
+bool MLDPPVXSController::buildRequest(const QueueItem&                           item,
+                                      const std::string&                         request_id,
                                       dp::service::ingestion::IngestDataRequest& request,
-                                      std::size_t& accepted_events,
-                                      std::size_t& payload_bytes)
+                                      std::size_t&                               accepted_events,
+                                      std::size_t&                               payload_bytes)
 {
     request.set_providerid(provider_id_);
     request.set_clientrequestid(request_id);

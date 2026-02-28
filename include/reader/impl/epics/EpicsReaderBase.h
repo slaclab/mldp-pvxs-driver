@@ -22,7 +22,7 @@
 
 #include <reader/Reader.h>
 #include <reader/impl/epics/EpicsReaderConfig.h>
-#include <util/bus/IEventBusPush.h>
+#include <util/bus/IDataBus.h>
 #include <util/log/Logger.h>
 
 #include <BS_thread_pool.hpp>
@@ -75,7 +75,7 @@ public:
      * @param cfg Parsed reader configuration.
      * @param logger Logger instance for diagnostic output.
      */
-    EpicsReaderBase(std::shared_ptr<util::bus::IEventBusPush> bus,
+    EpicsReaderBase(std::shared_ptr<util::bus::IDataBus> bus,
                     std::shared_ptr<metrics::Metrics>         metrics,
                     const EpicsReaderConfig&                  cfg,
                     std::shared_ptr<util::log::ILogger>       logger);

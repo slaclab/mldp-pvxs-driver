@@ -11,7 +11,7 @@
 #include <reader/impl/epics_archiver/ArchiverPbHttpConversion.h>
 
 #include <EPICSEvent.pb.h>
-#include <util/bus/IEventBusPush.h>
+#include <util/bus/IDataBus.h>
 #include <util/time/DateTimeUtils.h>
 
 #include <cstdint>
@@ -33,7 +33,7 @@ ParsedSample makeBaseSample(const EPICS::PayloadInfo& header,
     ParsedSample s;
     s.epoch_seconds = DateTimeUtils::unixEpochSecondsFromYearAndSecondsIntoYear(header.year(), secondsintoyear);
     s.nanoseconds   = nano;
-    s.event         = IEventBusPush::MakeEventValue(s.epoch_seconds, s.nanoseconds);
+    s.event         = IDataBus::MakeEventValue(s.epoch_seconds, s.nanoseconds);
     return s;
 }
 

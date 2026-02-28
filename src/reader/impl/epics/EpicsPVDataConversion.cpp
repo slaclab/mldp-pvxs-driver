@@ -22,7 +22,7 @@
 using namespace mldp_pvxs_driver::reader::impl::epics;
 using namespace mldp_pvxs_driver::util::log;
 using mldp_pvxs_driver::util::bus::EventValueStruct;
-using mldp_pvxs_driver::util::bus::IEventBusPush;
+using mldp_pvxs_driver::util::bus::IDataBus;
 
 namespace {
 
@@ -177,7 +177,7 @@ std::optional<UIntArrayView> asUIntArrayView(const ::epics::pvData::PVFieldPtr& 
 struct ColumnResult
 {
     std::string                                                          name;
-    std::vector<IEventBusPush::EventValue> events;
+    std::vector<IDataBus::EventValue> events;
     size_t                                                               emitted{0};
 };
 
@@ -465,7 +465,7 @@ bool EpicsPVDataConversion::tryBuildNtTableRowTsBatch(mldp_pvxs_driver::util::lo
     const ::epics::pvData::PVStructurePtr&                    epicsValue,
                                                       const std::string&                                      tsSecondsField,
                                                       const std::string&                                      tsNanosField,
-                                                      IEventBusPush::EventBatch* outBatch,
+                                                      IDataBus::EventBatch* outBatch,
                                                       size_t&                                                 outEmitted)
 {
     outBatch->tags.clear();
@@ -473,7 +473,7 @@ bool EpicsPVDataConversion::tryBuildNtTableRowTsBatch(mldp_pvxs_driver::util::lo
     outBatch->tags.push_back(tablePvName);
     return tryBuildNtTableRowTsBatch(log, tablePvName, epicsValue,
         tsSecondsField, tsNanosField,
-        [&](std::string colName, std::vector<IEventBusPush::EventValue> events) {
+        [&](std::string colName, std::vector<IDataBus::EventValue> events) {
             outBatch->values[std::move(colName)] = std::move(events);
         }, outEmitted);
 }

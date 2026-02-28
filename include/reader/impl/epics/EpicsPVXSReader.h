@@ -85,7 +85,7 @@ public:
      *
      * @throws EpicsReaderConfig::Error if configuration is invalid.
      */
-    EpicsPVXSReader(std::shared_ptr<util::bus::IEventBusPush> bus,
+    EpicsPVXSReader(std::shared_ptr<util::bus::IDataBus> bus,
                     std::shared_ptr<metrics::Metrics>         metrics,
                     const config::Config&                     cfg);
 

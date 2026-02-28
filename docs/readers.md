@@ -91,7 +91,7 @@ All readers follow the same pattern:
 1. **Initialization**: Register with `ReaderFactory` using a unique type name
 2. **Data Acquisition**: Connect to data source and capture updates
 3. **Data Processing**: Convert source data to MLDP protobuf format
-4. **Publishing**: Push events to `IEventBusPush` for downstream processing
+4. **Publishing**: Push events to `IDataBus` for downstream processing
 
 ### Reader Base Class
 
@@ -100,7 +100,7 @@ All readers inherit from `Reader` and must provide:
 ```cpp
 class MyReader : public Reader {
 public:
-    MyReader(std::shared_ptr<IEventBusPush> bus,
+    MyReader(std::shared_ptr<IDataBus> bus,
              std::shared_ptr<metrics::Metrics> metrics = nullptr);
 
     virtual ~MyReader();
@@ -109,7 +109,7 @@ public:
     virtual std::string name() const override;
 
 protected:
-    std::shared_ptr<IEventBusPush> bus_;       // Event bus
+    std::shared_ptr<IDataBus> bus_;       // Event bus
     std::shared_ptr<metrics::Metrics> metrics_; // Optional metrics
 };
 ```
@@ -216,7 +216,7 @@ See **[Implementing Custom Readers](readers-implementation.md)**.
 
 ### Reader Development Checklist
 
-1. ✅ Understand the `Reader` interface and `IEventBusPush` API
+1. ✅ Understand the `Reader` interface and `IDataBus` API
 2. ✅ Design your data source integration (polling, events, streaming, etc.)
 3. ✅ Implement data conversion to protobuf format
 4. ✅ Create configuration parser (YAML → reader config)

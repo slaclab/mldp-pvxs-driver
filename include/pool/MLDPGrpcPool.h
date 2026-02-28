@@ -63,6 +63,8 @@ struct MLDPGrpcObject
 {
     /** @brief gRPC channel used for communication. */
     std::shared_ptr<grpc::Channel> channel;
+    /** @brief gRPC channel used for query communication. */
+    std::shared_ptr<grpc::Channel> query_channel;
     /** @brief Ingestion API stub bound to the channel for RPC calls. */
     std::unique_ptr<dp::service::ingestion::DpIngestionService::Stub> stub;
     /** @brief Query API stub bound to the channel for RPC calls. */
@@ -78,7 +80,8 @@ struct MLDPGrpcObject
      * @param channel Shared pointer to the gRPC channel (transport) for
      *                this pooled object.
      */
-    MLDPGrpcObject(std::shared_ptr<grpc::Channel> channel);
+    MLDPGrpcObject(std::shared_ptr<grpc::Channel> channel,
+                   std::shared_ptr<grpc::Channel> query_channel = nullptr);
 
     /**
      * @brief Create a new stub that uses the same underlying channel.

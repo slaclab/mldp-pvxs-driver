@@ -14,7 +14,7 @@
 
 #include <EPICSEvent.pb.h>
 #include <metrics/Metrics.h>
-#include <util/bus/IEventBusPush.h>
+#include <util/bus/IDataBus.h>
 #include <util/http/CurlHttpClient.h>
 #include <util/http/HttpClient.h>
 #include <util/http/HttpUrlUtils.h>
@@ -108,7 +108,7 @@ uint64_t elapsedNanoseconds(uint64_t start_epoch, uint32_t start_nano, uint64_t 
 } // namespace
 
 EpicsArchiverReader::EpicsArchiverReader(
-    std::shared_ptr<IEventBusPush> bus,
+    std::shared_ptr<IDataBus> bus,
     std::shared_ptr<Metrics>         metrics,
     const ::mldp_pvxs_driver::config::Config&                     cfg)
     : ::mldp_pvxs_driver::reader::Reader(std::move(bus), std::move(metrics))
@@ -319,7 +319,7 @@ void EpicsArchiverReader::flushChunk(PbChunkState& state)
         const prometheus::Labels source_tag{{"source", pv}};
         const auto                flush_start = std::chrono::steady_clock::now();
 
-        IEventBusPush::EventBatch batch;
+        IDataBus::EventBatch batch;
         batch.root_source = pv.empty() ? name_ : pv;
         batch.tags.push_back(batch.root_source);
         batch.values[pv.empty() ? name_ : pv] = std::move(state.events);

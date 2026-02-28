@@ -30,7 +30,7 @@ flowchart TB
         end
 
         ReaderPool --> Push[\"Push to Event Bus\"]
-        Push --> Bus[\"IEventBusPush\"]
+        Push --> Bus[\"IDataBus\"]
     end
 
     subgraph Modes[\"Fetch Modes\"]

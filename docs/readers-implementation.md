@@ -16,7 +16,7 @@ flowchart LR
 
     DataSource --> Processing
     Processing --> Push
-    Push --> Bus["IEventBusPush"]
+    Push --> Bus["IDataBus"]
     Bus --> Controller["MLDPPVXSController"]
     Controller --> MLDP["MLDP Service"]
 ```
@@ -31,7 +31,7 @@ All readers must inherit from the `Reader` base class and implement the required
 // include/reader/Reader.h
 class Reader {
 public:
-    Reader(std::shared_ptr<util::bus::IEventBusPush> bus,
+    Reader(std::shared_ptr<util::bus::IDataBus> bus,
            std::shared_ptr<metrics::Metrics> metrics = nullptr);
 
     virtual ~Reader() = default;
@@ -40,24 +40,24 @@ public:
     virtual std::string name() const = 0;
 
 protected:
-    std::shared_ptr<util::bus::IEventBusPush> bus_;     // Event bus for pushing data
+    std::shared_ptr<util::bus::IDataBus> bus_;     // Event bus for pushing data
     std::shared_ptr<metrics::Metrics> metrics_;          // Optional metrics collector
 };
 ```
 
 ### Event Bus API
 
-Readers push data using the `IEventBusPush` interface:
+Readers push data using the `IDataBus` interface:
 
 ```cpp
 // Create an event value with timestamp
-auto event = IEventBusPush::MakeEventValue(epoch_seconds, nanoseconds);
+auto event = IDataBus::MakeEventValue(epoch_seconds, nanoseconds);
 
 // Set the data value (protobuf)
 event->data_value.set_double_value(42.0);  // or other types
 
 // Create a batch and push
-IEventBusPush::EventBatch batch;
+IDataBus::EventBatch batch;
 batch.root_source = "my_source";
 batch.values["signal_name"].push_back(event);
 
@@ -87,7 +87,7 @@ namespace mldp_pvxs_driver::reader::impl::<category> {
 class <Name>Reader : public Reader {
 public:
     <Name>Reader(
-        std::shared_ptr<util::bus::IEventBusPush> bus,
+        std::shared_ptr<util::bus::IDataBus> bus,
         std::shared_ptr<metrics::Metrics> metrics,
         const config::Config& cfg);
 
@@ -130,7 +130,7 @@ Create `src/reader/impl/<category>/<Name>Reader.cpp`:
 namespace mldp_pvxs_driver::reader::impl::<category> {
 
 <Name>Reader::<Name>Reader(
-    std::shared_ptr<util::bus::IEventBusPush> bus,
+    std::shared_ptr<util::bus::IDataBus> bus,
     std::shared_ptr<metrics::Metrics> metrics,
     const config::Config& cfg)
     : Reader(std::move(bus), std::move(metrics))
@@ -182,10 +182,10 @@ void <Name>Reader::workerLoop() {
 
 void <Name>Reader::processData(/* your data */) {
     // Convert to EventBatch and push
-    IEventBusPush::EventBatch batch;
+    IDataBus::EventBatch batch;
     batch.root_source = name_;
 
-    auto event = IEventBusPush::MakeEventValue(
+    auto event = IDataBus::MakeEventValue(
         /* epoch_seconds */,
         /* nanoseconds */
     );
@@ -253,7 +253,7 @@ namespace mldp_pvxs_driver::reader::impl::test {
 class CounterReader : public Reader {
 public:
     CounterReader(
-        std::shared_ptr<util::bus::IEventBusPush> bus,
+        std::shared_ptr<util::bus::IDataBus> bus,
         std::shared_ptr<metrics::Metrics> metrics,
         const config::Config& cfg);
 
@@ -291,7 +291,7 @@ REGISTER_READER("counter", CounterReader)
 namespace mldp_pvxs_driver::reader::impl::test {
 
 CounterReader::CounterReader(
-    std::shared_ptr<util::bus::IEventBusPush> bus,
+    std::shared_ptr<util::bus::IDataBus> bus,
     std::shared_ptr<metrics::Metrics> metrics,
     const config::Config& cfg)
     : Reader(std::move(bus), std::move(metrics))
@@ -360,7 +360,7 @@ void CounterReader::pushCounterValue(uint64_t value) {
     auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(epoch - seconds);
 
     // Create event with timestamp
-    auto event = util::bus::IEventBusPush::MakeEventValue(
+    auto event = util::bus::IDataBus::MakeEventValue(
         static_cast<uint64_t>(seconds.count()),
         static_cast<uint64_t>(nanos.count())
     );
@@ -369,7 +369,7 @@ void CounterReader::pushCounterValue(uint64_t value) {
     event->data_value.set_ulong_value(value);
 
     // Create batch and push
-    util::bus::IEventBusPush::EventBatch batch;
+    util::bus::IDataBus::EventBatch batch;
     batch.root_source = name_;
     batch.values[source_name_].push_back(event);
 
@@ -471,7 +471,7 @@ Create unit tests for your reader in `test/reader/impl/<category>/<Name>ReaderTe
 #include <gmock/gmock.h>
 
 // Mock event bus for testing
-class MockEventBus : public IEventBusPush {
+class MockEventBus : public IDataBus {
 public:
     MOCK_METHOD(bool, push, (EventBatch batch), (override));
 };

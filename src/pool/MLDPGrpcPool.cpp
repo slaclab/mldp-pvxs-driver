@@ -36,13 +36,16 @@ std::shared_ptr<mldp_pvxs_driver::util::log::ILogger> makeMLDPGRPCLogger()
 // Implement MLDPGrpcObject constructor and helper
 MLDPGrpcObject::MLDPGrpcObject() = default;
 
-MLDPGrpcObject::MLDPGrpcObject(std::shared_ptr<grpc::Channel> ch)
+MLDPGrpcObject::MLDPGrpcObject(std::shared_ptr<grpc::Channel> ch,
+                               std::shared_ptr<grpc::Channel> query_ch)
     : channel(std::move(ch))
+    , query_channel(query_ch ? std::move(query_ch) : channel)
 {
-    // Create default stubs for both ingestion and query APIs on the same channel.
-    auto iface = std::static_pointer_cast<grpc::ChannelInterface>(channel);
-    stub = dp::service::ingestion::DpIngestionService::NewStub(iface);
-    query_stub = dp::service::query::DpQueryService::NewStub(iface);
+    // Create default stubs for ingestion and query APIs.
+    auto ingestion_iface = std::static_pointer_cast<grpc::ChannelInterface>(channel);
+    auto query_iface = std::static_pointer_cast<grpc::ChannelInterface>(query_channel);
+    stub = dp::service::ingestion::DpIngestionService::NewStub(ingestion_iface);
+    query_stub = dp::service::query::DpQueryService::NewStub(query_iface);
 }
 
 std::unique_ptr<dp::service::ingestion::DpIngestionService::Stub> MLDPGrpcObject::makeIngestionStub() const
@@ -53,7 +56,7 @@ std::unique_ptr<dp::service::ingestion::DpIngestionService::Stub> MLDPGrpcObject
 
 std::unique_ptr<dp::service::query::DpQueryService::Stub> MLDPGrpcObject::makeQueryStub() const
 {
-    auto iface = std::static_pointer_cast<grpc::ChannelInterface>(channel);
+    auto iface = std::static_pointer_cast<grpc::ChannelInterface>(query_channel ? query_channel : channel);
     return dp::service::query::DpQueryService::NewStub(iface);
 }
 
@@ -157,8 +160,9 @@ std::shared_ptr<MLDPGrpcObject> MLDPGrpcPool::createChannel()
         creds = grpc::InsecureChannelCredentials();
     }
 
-    auto channel = grpc::CreateChannel(config_.url(), creds);
-    auto object = std::make_shared<MLDPGrpcObject>(channel);
+    auto ingestion_channel = grpc::CreateChannel(config_.url(), creds);
+    auto query_channel = grpc::CreateChannel(config_.queryUrl(), creds);
+    auto object = std::make_shared<MLDPGrpcObject>(ingestion_channel, query_channel);
     return object;
 }
 

@@ -49,6 +49,7 @@ metrics:
     EXPECT_EQ("pvxs_provider", controllerCfg.pool().providerName());
     EXPECT_EQ(1, controllerCfg.pool().minConnections());
     EXPECT_EQ("https://mldp.example:443", controllerCfg.pool().url());
+    EXPECT_EQ("https://mldp.example:443", controllerCfg.pool().queryUrl());
     EXPECT_EQ(4, controllerCfg.pool().maxConnections());
 
     // epics reader config
@@ -143,6 +144,28 @@ reader:
     EXPECT_EQ("epics_2", epicsReader1.name());
     ASSERT_EQ(1u, epicsReader1.pvs().size());
     EXPECT_EQ("pv2", epicsReader1.pvs()[0].name);
+}
+
+TEST(MLDPPVXSControllerConfigTest, ParsesOptionalQueryUrl)
+{
+    const std::string yaml = R"(
+controller_thread_pool: 1
+mldp_pool:
+  provider_name: pvxs_provider
+  provider_description: "PVXS-based data provider"
+  url: https://mldp-ingestion.example:50051
+  query_url: https://mldp-query.example:50052
+  min_conn: 1
+  max_conn: 2
+reader: []
+)";
+
+    const auto               cfg = makeConfigFromYaml(yaml);
+    MLDPPVXSControllerConfig controllerCfg(cfg);
+
+    ASSERT_TRUE(controllerCfg.valid());
+    EXPECT_EQ("https://mldp-ingestion.example:50051", controllerCfg.pool().url());
+    EXPECT_EQ("https://mldp-query.example:50052", controllerCfg.pool().queryUrl());
 }
 
 TEST(MLDPPVXSControllerConfigTest, ThrowsWhenProviderNameMissing)
