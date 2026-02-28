@@ -25,7 +25,7 @@
 #include <pvxs/client.h>
 #include <reader/impl/epics/EpicsMLDPConversion.h>
 #include <string>
-#include <util/bus/IEventBusPush.h>
+#include <util/bus/IDataBus.h>
 
 #include <util/log/Logger.h>
 
@@ -65,7 +65,7 @@ public:
      *               each carrying the column's value and the row's timestamp.
      */
     using ColumnEmitFn = std::function<void(std::string colName,
-                                            std::vector<util::bus::IEventBusPush::EventValue> events)>;
+                                            std::vector<util::bus::IDataBus::EventValue> events)>;
 
     /**
      * @brief Convert an NTTable with row timestamps to an EventBatch.
@@ -93,7 +93,7 @@ public:
                                           const pvxs::Value&                                       epicsValue,
                                           const std::string&                                       tsSecondsField,
                                           const std::string&                                       tsNanosField,
-                                          util::bus::IEventBusPush::EventBatch*                    outBatch,
+                                          util::bus::IDataBus::EventBatch*                    outBatch,
                                           size_t&                                                  outEmitted);
 
     /**

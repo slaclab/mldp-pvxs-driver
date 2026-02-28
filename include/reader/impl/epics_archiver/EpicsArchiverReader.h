@@ -21,17 +21,19 @@
 #include <EPICSEvent.pb.h>
 #include <reader/ReaderFactory.h>
 #include <reader/impl/epics_archiver/EpicsArchiverReaderConfig.h>
-#include <util/bus/IEventBusPush.h>
+#include <util/bus/IDataBus.h>
 #include <util/log/ILog.h>
 
 #include <cstdint>
 #include <atomic>
 #include <condition_variable>
 #include <exception>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace mldp_pvxs_driver::util::http {
@@ -52,7 +54,7 @@ struct PbChunkState
 {
     bool                                              have_header = false;           ///< True after PayloadInfo has been parsed.
     EPICS::PayloadInfo                                header;                        ///< Payload header for the current chunk.
-    std::vector<util::bus::IEventBusPush::EventValue> events;                        ///< Converted sample events for this chunk.
+    std::vector<util::bus::IDataBus::EventValue> events;                        ///< Converted sample events for this chunk.
     bool                                              have_batch_start_time = false; ///< True after first sample of current output batch.
     uint64_t                                          batch_start_epoch_seconds = 0; ///< Historical batch start (seconds).
     uint32_t                                          batch_start_nanoseconds = 0;   ///< Historical batch start (nanoseconds).
@@ -74,7 +76,7 @@ public:
      * @param metrics Metrics collector for instrumentation (may be null).
      * @param cfg Reader configuration.
      */
-    EpicsArchiverReader(std::shared_ptr<util::bus::IEventBusPush> bus,
+    EpicsArchiverReader(std::shared_ptr<util::bus::IDataBus> bus,
                         std::shared_ptr<::mldp_pvxs_driver::metrics::Metrics>         metrics,
                         const ::mldp_pvxs_driver::config::Config&                     cfg);
 
@@ -101,6 +103,11 @@ private:
     std::condition_variable                                      worker_cv_;      ///< Interruptible wakeup for periodic tail polling.
     std::exception_ptr                                           worker_error_;   ///< Captures worker exception for diagnostics.
     bool                                                         worker_done_ = false; ///< True after worker thread exits.
+
+    /// Per-PV high-water mark: the last sample timestamp published in a previous
+    /// periodic-tail iteration. Used to skip boundary / overlap duplicates.
+    /// Only populated and consulted in PeriodicTail fetch mode.
+    std::map<std::string, std::pair<uint64_t, uint32_t>> last_published_ns_per_pv_;
 
     /**
      * @brief Initialize reusable HTTP client for archiver API access.

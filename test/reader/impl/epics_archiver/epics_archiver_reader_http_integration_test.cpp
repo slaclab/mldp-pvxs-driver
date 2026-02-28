@@ -14,7 +14,7 @@
 #include "MockArchiverPbHttpServer.h"
 
 #include <reader/impl/epics_archiver/EpicsArchiverReader.h>
-#include <util/bus/IEventBusPush.h>
+#include <util/bus/IDataBus.h>
 
 #include <chrono>
 #include <cstdint>
@@ -29,12 +29,12 @@ namespace {
 using mldp_pvxs_driver::config::makeConfigFromYaml;
 using mldp_pvxs_driver::reader::impl::epics_archiver::EpicsArchiverReader;
 using mldp_pvxs_driver::reader::impl::epics_archiver::MockArchiverPbHttpServer;
-using mldp_pvxs_driver::util::bus::IEventBusPush;
+using mldp_pvxs_driver::util::bus::IDataBus;
 
-class MockEventBusPush final : public IEventBusPush
+class MockEventBusPush final : public IDataBus
 {
 public:
-    using EventBatch = IEventBusPush::EventBatch;
+    using EventBatch = IDataBus::EventBatch;
 
     bool push(EventBatch batch) override
     {

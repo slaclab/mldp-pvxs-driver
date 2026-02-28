@@ -26,7 +26,7 @@ flowchart TB
         end
     end
 
-    IEventBusPush["IEventBusPush<br/>(Push Interface)"]
+    IDataBus["IDataBus<br/>(Push Interface)"]
 
     subgraph Controller["MLDPPVXSController"]
         HashPart["Hash-Based Partitioning<br/>(Source Affinity)"]
@@ -46,12 +46,12 @@ flowchart TB
     DS4 --> R4
     DS1 --> R2
 
-    R1 --> IEventBusPush
-    R2 --> IEventBusPush
-    R3 --> IEventBusPush
-    R4 --> IEventBusPush
+    R1 --> IDataBus
+    R2 --> IDataBus
+    R3 --> IDataBus
+    R4 --> IDataBus
 
-    IEventBusPush --> HashPart
+    IDataBus --> HashPart
     HashPart --> W0
     HashPart --> W1
     HashPart --> WN
@@ -79,7 +79,7 @@ All readers:
 
 - Inherit from the abstract `Reader` base class
 - Register via `REGISTER_READER` macro
-- Push events through `IEventBusPush` interface
+- Push events through `IDataBus` interface
 - Are decoupled from gRPC/controller implementation
 
 For details on existing readers, see [Reader Types](readers.md). To implement a custom reader, see [Implementing Custom Readers](readers-implementation.md).
@@ -241,7 +241,7 @@ flowchart TB
         AlarmMap["Alarm/Status mapping"]
     end
 
-    ProcessEvent --> EventBusPush["IEventBusPush::push(EventBatch)"]
+    ProcessEvent --> EventBusPush["IDataBus::push(EventBatch)"]
 
     EventBusPush --> HashPart
 
@@ -284,7 +284,7 @@ flowchart TB
 
 ### Producer-Consumer (Event Bus)
 
-- `IEventBusPush` interface decouples readers from controller
+- `IDataBus` interface decouples readers from controller
 - Async event delivery via thread pools
 
 ## Cross-Cutting Utilities
@@ -319,7 +319,7 @@ controller_stream_max_age_ms: 200      # 200ms stream rotation
 ```yaml
 mldp_pool:
   provider_name: pvxs_provider
-  url: dp-ingestion:50051
+  ingestion_url: dp-ingestion:50051
   min_conn: 1
   max_conn: 4
 ```

@@ -21,6 +21,7 @@
 #include <ingestion.grpc.pb.h>
 #include <memory>
 #include <mutex>
+#include <query.grpc.pb.h>
 #include <string>
 #include <vector>
 
@@ -62,8 +63,12 @@ struct MLDPGrpcObject
 {
     /** @brief gRPC channel used for communication. */
     std::shared_ptr<grpc::Channel> channel;
-    /** @brief Stub bound to the channel for RPC calls. */
+    /** @brief gRPC channel used for query communication. */
+    std::shared_ptr<grpc::Channel> query_channel;
+    /** @brief Ingestion API stub bound to the channel for RPC calls. */
     std::unique_ptr<dp::service::ingestion::DpIngestionService::Stub> stub;
+    /** @brief Query API stub bound to the channel for RPC calls. */
+    std::unique_ptr<dp::service::query::DpQueryService::Stub> query_stub;
 
     /** Default-construct an empty pooled object. */
     MLDPGrpcObject();
@@ -75,7 +80,8 @@ struct MLDPGrpcObject
      * @param channel Shared pointer to the gRPC channel (transport) for
      *                this pooled object.
      */
-    MLDPGrpcObject(std::shared_ptr<grpc::Channel> channel);
+    MLDPGrpcObject(std::shared_ptr<grpc::Channel> channel,
+                   std::shared_ptr<grpc::Channel> query_channel = nullptr);
 
     /**
      * @brief Create a new stub that uses the same underlying channel.
@@ -93,7 +99,15 @@ struct MLDPGrpcObject
      * @return unique_ptr to a new `DpIngestionService::Stub` bound to
      *         this object's channel.
      */
-    std::unique_ptr<dp::service::ingestion::DpIngestionService::Stub> makeStub() const;
+    std::unique_ptr<dp::service::ingestion::DpIngestionService::Stub> makeIngestionStub() const;
+
+    /**
+     * @brief Create a new query stub that uses the same underlying channel.
+     *
+     * @return unique_ptr to a new `DpQueryService::Stub` bound to this
+     *         object's channel.
+     */
+    std::unique_ptr<dp::service::query::DpQueryService::Stub> makeQueryStub() const;
 };
 
 /**
@@ -110,8 +124,8 @@ struct MLDPGrpcObject
  *   `acquire()` uses `shared_from_this()` to return handles that keep a
  *   reference to the originating pool. To enforce that, construction is
  *   performed via the static `create()` factory which returns a
- *   `std::shared_ptr<MLDPGrpcPool>`.
- * - Callers should prefer `MLDPGrpcPool::create(...)` and keep the
+ *   `std::shared_ptr<MLDPGrpcIngestionePool>`.
+ * - Callers should prefer `MLDPGrpcIngestionePool::create(...)` and keep the
  *   resulting `shared_ptr` for the pool's lifetime. Returned handles
  *   (`PooledHandle<MLDPGrpcObject>`) will also hold a `shared_ptr` to
  *   the pool, guaranteeing the pool remains alive while any handle is
@@ -158,14 +172,14 @@ struct MLDPGrpcObject
  *   available. Each new connection automatically registers the configured
  *   provider with MLDP and caches the provider ID for later reuse.
  */
-class MLDPGrpcPool : public IObjectPool<MLDPGrpcObject>, public std::enable_shared_from_this<MLDPGrpcPool>
+class MLDPGrpcIngestionePool : public IObjectPool<MLDPGrpcObject>, public std::enable_shared_from_this<MLDPGrpcIngestionePool>
 {
 public:
-    using MLDPGrpcPoolShrdPtr = std::shared_ptr<MLDPGrpcPool>;
+    using MLDPGrpcIngestionePoolShrdPtr = std::shared_ptr<MLDPGrpcIngestionePool>;
     using ObjectShrdPtr = typename IObjectPool<MLDPGrpcObject>::ObjectShrdPtr;
 
     /**
-     * @brief Create a new managed `MLDPGrpcPool` instance.
+     * @brief Create a new managed `MLDPGrpcIngestionePool` instance.
      *
      * Use this factory to construct the pool. It returns a `std::shared_ptr`
      * so that `acquire()` can safely create handles that retain a reference
@@ -174,10 +188,10 @@ public:
      * @param config    Configuration that determines the endpoint URL,
      *                  minimum/maximum connections, and other pool behavior.
      * @param metrics   Optional metrics collector that receives pool statistics.
-     * @return std::shared_ptr<MLDPGrpcPool> Managed pool instance.
+     * @return std::shared_ptr<MLDPGrpcIngestionePool> Managed pool instance.
      */
-    static MLDPGrpcPoolShrdPtr create(const MLDPGrpcPoolConfig&         config,
-                                      std::shared_ptr<metrics::Metrics> metrics = nullptr);
+    static MLDPGrpcIngestionePoolShrdPtr create(const MLDPGrpcPoolConfig&         config,
+                                                std::shared_ptr<metrics::Metrics> metrics = nullptr);
 
     /**
      * @brief Acquire a pooled object wrapped in an RAII handle.
@@ -255,19 +269,21 @@ private:
     std::shared_ptr<metrics::Metrics> metrics_;
 
     // deleted constructors/assignments
-    MLDPGrpcPool() = delete;
-    MLDPGrpcPool(const MLDPGrpcPool&) = delete;
-    MLDPGrpcPool& operator=(const MLDPGrpcPool&) = delete;
+    MLDPGrpcIngestionePool() = delete;
+    MLDPGrpcIngestionePool(const MLDPGrpcIngestionePool&) = delete;
+    MLDPGrpcIngestionePool& operator=(const MLDPGrpcIngestionePool&) = delete;
 
     // Make constructor private to force use of `create()` which returns a
     // `std::shared_ptr` (required for `enable_shared_from_this`).
-    MLDPGrpcPool(const MLDPGrpcPoolConfig&         config,
-                 std::shared_ptr<metrics::Metrics> metrics);
+    MLDPGrpcIngestionePool(const MLDPGrpcPoolConfig&         config,
+                           std::shared_ptr<metrics::Metrics> metrics);
     std::size_t                     availableCountLocked() const;
     void                            updateMetricsLocked() const;
     void                            updateMetrics() const;
     std::shared_ptr<MLDPGrpcObject> createChannel();
     bool                            registerProvider(dp::service::ingestion::DpIngestionService::Stub* stub);
 };
+
+using MLDPGrpcPool = MLDPGrpcIngestionePool;
 
 } // namespace mldp_pvxs_driver::util::pool

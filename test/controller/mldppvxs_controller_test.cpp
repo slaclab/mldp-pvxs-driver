@@ -23,7 +23,7 @@ using namespace mldp_pvxs_driver::controller;
 using namespace mldp_pvxs_driver::testutil;
 
 using mldp_pvxs_driver::config::makeConfigFromYaml;
-using mldp_pvxs_driver::util::bus::IEventBusPush;
+using mldp_pvxs_driver::util::bus::IDataBus;
 
 namespace {
 
@@ -32,7 +32,7 @@ controller_thread_pool: 1
 mldp_pool:
   provider_name: test_provider
   provider_description: "Test Provider"
-  url: dp-ingestion:50051
+  ingestion_url: dp-ingestion:50051
   min_conn: 1
   max_conn: 1
 reader: []
@@ -43,7 +43,7 @@ controller_thread_pool: 1
 mldp_pool:
   provider_name: test_provider
   provider_description: "Test Provider"
-  url: dp-ingestion:50051
+  ingestion_url: dp-ingestion:50051
   min_conn: 1
   max_conn: 1
 reader:
@@ -58,7 +58,7 @@ controller_thread_pool: 1
 mldp_pool:
   provider_name: test_provider
   provider_description: "Test Provider"
-  url: dp-ingestion:50051
+  ingestion_url: dp-ingestion:50051
   min_conn: 1
   max_conn: 1
 reader:
@@ -121,7 +121,7 @@ reader:
 
 TEST(MLDPPVXSControllerTest, ImplementsEventBusPushContract)
 {
-    static_assert(std::is_base_of_v<IEventBusPush, MLDPPVXSController>);
+    static_assert(std::is_base_of_v<IDataBus, MLDPPVXSController>);
     SUCCEED();
 }
 
@@ -281,7 +281,7 @@ TEST(MLDPPVXSControllerTest, IdleStreamRotationStartsNewStreamAfterMaxAge)
          << "mldp_pool:\n"
          << "  provider_name: test_provider\n"
          << "  provider_description: \"Test Provider\"\n"
-         << "  url: 127.0.0.1:" << port << "\n"
+         << "  ingestion_url: 127.0.0.1:" << port << "\n"
          << "  min_conn: 1\n"
          << "  max_conn: 1\n"
          << "reader: []\n";
@@ -293,10 +293,10 @@ TEST(MLDPPVXSControllerTest, IdleStreamRotationStartsNewStreamAfterMaxAge)
     ASSERT_TRUE(controller);
     controller->start();
 
-    IEventBusPush::EventBatch batch;
+    IDataBus::EventBatch batch;
     batch.root_source = "test-root";
     batch.tags = {"test"};
-    auto event = IEventBusPush::MakeEventValue();
+    auto event = IDataBus::MakeEventValue();
     event->data_value.set_intvalue(1);
     batch.values["test:signal"].push_back(event);
 
@@ -306,10 +306,10 @@ TEST(MLDPPVXSControllerTest, IdleStreamRotationStartsNewStreamAfterMaxAge)
 
     ASSERT_TRUE(waitForCount(service.stream_close_count, 1, std::chrono::milliseconds(1000)));
 
-    IEventBusPush::EventBatch batch2;
+    IDataBus::EventBatch batch2;
     batch2.root_source = "test-root";
     batch2.tags = {"test"};
-    auto event2 = IEventBusPush::MakeEventValue();
+    auto event2 = IDataBus::MakeEventValue();
     event2->data_value.set_intvalue(2);
     batch2.values["test:signal"].push_back(event2);
 

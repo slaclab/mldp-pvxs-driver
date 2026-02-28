@@ -73,7 +73,7 @@ public:
      *
      * @throws EpicsReaderConfig::Error if configuration is invalid.
      */
-    EpicsBaseReader(std::shared_ptr<util::bus::IEventBusPush> bus,
+    EpicsBaseReader(std::shared_ptr<util::bus::IDataBus> bus,
                     std::shared_ptr<metrics::Metrics>         metrics,
                     const config::Config&                     cfg);
 

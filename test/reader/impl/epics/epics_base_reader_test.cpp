@@ -1,7 +1,6 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
-#include <iostream>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -19,17 +18,17 @@
 #include <metrics/MetricsSnapshot.h>
 #include <reader/ReaderFactory.h>
 #include <reader/impl/epics/EpicsBaseReader.h>
-#include <util/bus/IEventBusPush.h>
+#include <util/bus/IDataBus.h>
 
 using mldp_pvxs_driver::config::makeConfigFromYaml;
-using mldp_pvxs_driver::util::bus::IEventBusPush;
+using mldp_pvxs_driver::util::bus::IDataBus;
 using namespace mldp_pvxs_driver::reader::impl::epics;
 
-// Concrete mock implementation of IEventBusPush for testing
-class MockEventBusPush : public IEventBusPush
+// Concrete mock implementation of IDataBus for testing
+class MockEventBusPush : public IDataBus
 {
 public:
-    using EventBatch = IEventBusPush::EventBatch;
+    using EventBatch = IDataBus::EventBatch;
 
     explicit MockEventBusPush(std::shared_ptr<mldp_pvxs_driver::metrics::Metrics> metrics = nullptr)
         : metrics_(std::move(metrics))
@@ -555,7 +554,7 @@ pvs:
     // EPICS Base path may surface timestamp columns as sources; don't assert on them here.
 
     // Collect events for each column across all batches
-    std::vector<IEventBusPush::EventValue> ampl, stat;
+    std::vector<IDataBus::EventValue> ampl, stat;
     {
         std::lock_guard<std::mutex> lock(mock_bus->mutex);
         for (const auto& batch : mock_bus->received_events)

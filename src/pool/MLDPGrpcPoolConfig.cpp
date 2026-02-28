@@ -33,9 +33,14 @@ const std::string& MLDPGrpcPoolConfig::providerName() const
     return provider_name_;
 }
 
-const std::string& MLDPGrpcPoolConfig::url() const
+const std::string& MLDPGrpcPoolConfig::ingestionUrl() const
 {
-    return url_;
+    return ingestion_url_;
+}
+
+const std::string& MLDPGrpcPoolConfig::queryUrl() const
+{
+    return query_url_;
 }
 
 const std::string& MLDPGrpcPoolConfig::providerDescription() const
@@ -82,14 +87,23 @@ void MLDPGrpcPoolConfig::parse(const config::Config& root)
         provider_description_ = provider_name_;
     }
 
-    if (!root.hasChild("url"))
+    if (!root.hasChild("ingestion_url"))
     {
-        throw Error(makeMissingFieldMessage("url"));
+        throw Error(makeMissingFieldMessage("ingestion_url"));
     }
-    url_ = root.get("url");
-    if (url_.empty())
+    ingestion_url_ = root.get("ingestion_url");
+    if (ingestion_url_.empty())
     {
-        throw Error("mldp_pool.url must not be empty");
+        throw Error("mldp_pool.ingestion_url must not be empty");
+    }
+    query_url_ = ingestion_url_;
+    if (root.hasChild("query_url"))
+    {
+        query_url_ = root.get("query_url");
+        if (query_url_.empty())
+        {
+            throw Error("mldp_pool.query_url must not be empty when provided");
+        }
     }
 
     if (!root.hasChild("min_conn"))

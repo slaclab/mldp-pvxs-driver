@@ -14,7 +14,7 @@
 
 #include <EPICSEvent.pb.h>
 #include <metrics/Metrics.h>
-#include <util/bus/IEventBusPush.h>
+#include <util/bus/IDataBus.h>
 #include <util/http/CurlHttpClient.h>
 #include <util/http/HttpClient.h>
 #include <util/http/HttpUrlUtils.h>
@@ -108,7 +108,7 @@ uint64_t elapsedNanoseconds(uint64_t start_epoch, uint32_t start_nano, uint64_t 
 } // namespace
 
 EpicsArchiverReader::EpicsArchiverReader(
-    std::shared_ptr<IEventBusPush> bus,
+    std::shared_ptr<IDataBus> bus,
     std::shared_ptr<Metrics>         metrics,
     const ::mldp_pvxs_driver::config::Config&                     cfg)
     : ::mldp_pvxs_driver::reader::Reader(std::move(bus), std::move(metrics))
@@ -319,7 +319,7 @@ void EpicsArchiverReader::flushChunk(PbChunkState& state)
         const prometheus::Labels source_tag{{"source", pv}};
         const auto                flush_start = std::chrono::steady_clock::now();
 
-        IEventBusPush::EventBatch batch;
+        IDataBus::EventBatch batch;
         batch.root_source = pv.empty() ? name_ : pv;
         batch.tags.push_back(batch.root_source);
         batch.values[pv.empty() ? name_ : pv] = std::move(state.events);
@@ -434,6 +434,26 @@ void EpicsArchiverReader::parsePbHttpLineIntoState(const std::string& line, PbCh
                 {
                     m.incrementReaderEventsReceived(1.0, source_tag);
                 });
+
+    // --- Duplicate suppression (periodic_tail only) ---
+    if (config_.fetchMode() == EpicsArchiverReaderConfig::FetchMode::PeriodicTail)
+    {
+        auto it = last_published_ns_per_pv_.find(pv);
+        if (it != last_published_ns_per_pv_.end())
+        {
+            const auto [wm_epoch, wm_nano] = it->second;
+            // Skip the sample if its timestamp does not strictly exceed the watermark.
+            if (!sampleTimeLessThan(wm_epoch, wm_nano, parsed.epoch_seconds, parsed.nanoseconds))
+            {
+                debugf(*logger_,
+                       "Skipping duplicate sample for PV '{}' at ({}, {}): not newer than watermark ({}, {})",
+                       pv, parsed.epoch_seconds, parsed.nanoseconds, wm_epoch, wm_nano);
+                return;
+            }
+        }
+        // Update watermark as this sample is accepted.
+        last_published_ns_per_pv_[pv] = {parsed.epoch_seconds, parsed.nanoseconds};
+    }
 
     // Decide whether the current sample starts a new output batch before
     // appending it, so the sample that crosses the threshold belongs to the

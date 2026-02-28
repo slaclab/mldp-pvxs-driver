@@ -19,7 +19,7 @@ class Metrics;
 }
 
 namespace mldp_pvxs_driver::util::bus {
-class IEventBusPush;
+class IDataBus;
 }
 
 namespace mldp_pvxs_driver::reader {
@@ -35,7 +35,7 @@ class Reader
 {
 public:
     /** @brief Construct the reader with the event bus connection that will receive updates. */
-    Reader(std::shared_ptr<util::bus::IEventBusPush> bus,
+    Reader(std::shared_ptr<util::bus::IDataBus> bus,
            std::shared_ptr<metrics::Metrics>         metrics = nullptr)
         : bus_(std::move(bus))
         , metrics_(std::move(metrics)) {}
@@ -50,7 +50,7 @@ protected:
      *
      * Ownership is shared so readers can outlive their producers.
      */
-    std::shared_ptr<util::bus::IEventBusPush> bus_;
+    std::shared_ptr<util::bus::IDataBus> bus_;
     /** @brief Shared metrics collector (may be null when not configured). */
     std::shared_ptr<metrics::Metrics>         metrics_;
 };

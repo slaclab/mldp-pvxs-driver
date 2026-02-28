@@ -21,7 +21,7 @@
 #pragma once
 
 #include <EPICSEvent.pb.h>
-#include <util/bus/IEventBusPush.h>
+#include <util/bus/IDataBus.h>
 
 #include <cstdint>
 #include <string>
@@ -35,7 +35,7 @@ struct ParsedSample
 {
     uint64_t                              epoch_seconds; ///< UNIX epoch seconds of the sample.
     uint32_t                              nanoseconds;   ///< Sub-second nanoseconds of the sample.
-    util::bus::IEventBusPush::EventValue  event;         ///< Converted event value (timestamp + DataValue).
+    util::bus::IDataBus::EventValue  event;         ///< Converted event value (timestamp + DataValue).
 };
 
 /**

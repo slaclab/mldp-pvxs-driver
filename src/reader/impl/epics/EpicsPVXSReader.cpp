@@ -37,7 +37,7 @@ std::shared_ptr<ILogger> makeLogger(const std::string& readerName)
 }
 } // namespace
 
-EpicsPVXSReader::EpicsPVXSReader(std::shared_ptr<util::bus::IEventBusPush> bus,
+EpicsPVXSReader::EpicsPVXSReader(std::shared_ptr<util::bus::IDataBus> bus,
                                  std::shared_ptr<metrics::Metrics>         metrics,
                                  const config::Config&                     cfg)
     : EpicsReaderBase(std::move(bus), std::move(metrics), EpicsReaderConfig(cfg), makeLogger(cfg.get("name")))
@@ -130,7 +130,7 @@ void EpicsPVXSReader::processDefaultMode(const std::string& pvName, const pvxs::
     }
     const uint64_t nanoseconds = nanosecondsField.as<uint64_t>();
 
-    auto  event_value = IEventBusPush::MakeEventValue(epoch_seconds, nanoseconds);
+    auto  event_value = IDataBus::MakeEventValue(epoch_seconds, nanoseconds);
     auto* valueStatus = event_value->data_value.mutable_valuestatus();
 
     EpicsMLDPConversion::convertPVToProtoValue(valueField, &event_value->data_value);
@@ -170,7 +170,7 @@ void EpicsPVXSReader::processDefaultMode(const std::string& pvName, const pvxs::
         valueStatus->set_message(messageField.as<std::string>());
     }
 
-    IEventBusPush::EventBatch batch;
+    IDataBus::EventBatch batch;
     batch.root_source = pvName;
     batch.tags.push_back(pvName);
     batch.values[pvName].emplace_back(std::move(event_value));
@@ -186,14 +186,14 @@ void EpicsPVXSReader::processSlacBsasTableMode(const std::string&     pvName,
     const prometheus::Labels sourceTag{{"source", pvName}};
     const std::size_t        colBatchSize = config_.columnBatchSize();
 
-    IEventBusPush::EventBatch tableBatch;
+    IDataBus::EventBatch tableBatch;
     tableBatch.root_source = pvName;
     tableBatch.tags.push_back(pvName);
     std::size_t colsInBatch = 0;
 
     auto resetBatch = [&tableBatch, &pvName, &colsInBatch]()
     {
-        tableBatch = IEventBusPush::EventBatch{};
+        tableBatch = IDataBus::EventBatch{};
         tableBatch.root_source = pvName;
         tableBatch.tags.push_back(pvName);
         colsInBatch = 0;
@@ -203,7 +203,7 @@ void EpicsPVXSReader::processSlacBsasTableMode(const std::string&     pvName,
             *logger_, pvName, epicsValue,
             runtimeCfg ? runtimeCfg->tsSecondsField : "secondsPastEpoch",
             runtimeCfg ? runtimeCfg->tsNanosField : "nanoseconds",
-            [&](std::string colName, std::vector<IEventBusPush::EventValue> events)
+            [&](std::string colName, std::vector<IDataBus::EventValue> events)
             {
                 tableBatch.values[std::move(colName)] = std::move(events);
                 ++colsInBatch;
