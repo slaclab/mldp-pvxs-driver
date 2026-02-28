@@ -19,8 +19,6 @@
 #include <grpcpp/grpcpp.h>
 #include <stdexcept>
 
-
-
 using namespace mldp_pvxs_driver::util::pool;
 using namespace mldp_pvxs_driver::util::log;
 
@@ -30,6 +28,8 @@ std::shared_ptr<mldp_pvxs_driver::util::log::ILogger> makeMLDPGRPCLogger()
     std::string loggerName = "mldp_grpc_pool";
     return mldp_pvxs_driver::util::log::newLogger(loggerName);
 }
+
+const prometheus::Labels kIngestionPoolMetricLabels{{"pool", "ingestion"}};
 } // namespace
 
 #pragma region - MLDPGrpcObject
@@ -62,10 +62,10 @@ std::unique_ptr<dp::service::query::DpQueryService::Stub> MLDPGrpcObject::makeQu
 
 #pragma endregion - MLDPGrpcObject
 
-#pragma region - MLDPGrpcPool
+#pragma region - MLDPGrpcIngestionePool
 
-MLDPGrpcPool::MLDPGrpcPool(const MLDPGrpcPoolConfig&         config,
-                           std::shared_ptr<metrics::Metrics> metrics)
+MLDPGrpcIngestionePool::MLDPGrpcIngestionePool(const MLDPGrpcPoolConfig&         config,
+                                               std::shared_ptr<metrics::Metrics> metrics)
     : logger_(makeMLDPGRPCLogger())
     , config_(config)
     , metrics_(std::move(metrics))
@@ -104,14 +104,15 @@ MLDPGrpcPool::MLDPGrpcPool(const MLDPGrpcPoolConfig&         config,
     updateMetrics();
 }
 
-MLDPGrpcPool::MLDPGrpcPoolShrdPtr MLDPGrpcPool::create(const MLDPGrpcPoolConfig&         config,
-                                                       std::shared_ptr<metrics::Metrics> metrics)
+MLDPGrpcIngestionePool::MLDPGrpcIngestionePoolShrdPtr MLDPGrpcIngestionePool::create(
+    const MLDPGrpcPoolConfig&         config,
+    std::shared_ptr<metrics::Metrics> metrics)
 {
     // Use new + shared_ptr constructor because the constructor is private.
-    return std::shared_ptr<MLDPGrpcPool>(new MLDPGrpcPool(config, std::move(metrics)));
+    return std::shared_ptr<MLDPGrpcIngestionePool>(new MLDPGrpcIngestionePool(config, std::move(metrics)));
 }
 
-PooledHandle<MLDPGrpcObject> MLDPGrpcPool::acquire()
+PooledHandle<MLDPGrpcObject> MLDPGrpcIngestionePool::acquire()
 {
     std::unique_lock<std::mutex> lock(mutex_);
 
@@ -148,7 +149,7 @@ PooledHandle<MLDPGrpcObject> MLDPGrpcPool::acquire()
     }
 }
 
-std::shared_ptr<MLDPGrpcObject> MLDPGrpcPool::createChannel()
+std::shared_ptr<MLDPGrpcObject> MLDPGrpcIngestionePool::createChannel()
 {
     std::shared_ptr<grpc::ChannelCredentials> creds;
     if (config_.credentials().type == MLDPGrpcPoolConfig::Credentials::Type::Ssl)
@@ -166,7 +167,7 @@ std::shared_ptr<MLDPGrpcObject> MLDPGrpcPool::createChannel()
     return object;
 }
 
-void MLDPGrpcPool::release(const ObjectShrdPtr& obj)
+void MLDPGrpcIngestionePool::release(const ObjectShrdPtr& obj)
 {
     if (!obj)
         return;
@@ -188,19 +189,19 @@ void MLDPGrpcPool::release(const ObjectShrdPtr& obj)
     // assert(false && "MLDPGrpcPool::release: object not from this pool");
 }
 
-std::size_t MLDPGrpcPool::available() const
+std::size_t MLDPGrpcIngestionePool::available() const
 {
     std::unique_lock<std::mutex> lock(mutex_);
     return availableCountLocked();
 }
 
-std::size_t MLDPGrpcPool::size() const
+std::size_t MLDPGrpcIngestionePool::size() const
 {
     std::unique_lock<std::mutex> lock(mutex_);
     return current_size_;
 }
 
-bool MLDPGrpcPool::registerProvider(dp::service::ingestion::DpIngestionService::Stub* stub)
+bool MLDPGrpcIngestionePool::registerProvider(dp::service::ingestion::DpIngestionService::Stub* stub)
 {
     if (!stub)
     {
@@ -248,12 +249,12 @@ bool MLDPGrpcPool::registerProvider(dp::service::ingestion::DpIngestionService::
     return false;
 }
 
-const std::string& MLDPGrpcPool::providerId() const
+const std::string& MLDPGrpcIngestionePool::providerId() const
 {
     return provider_id_;
 }
 
-std::size_t MLDPGrpcPool::availableCountLocked() const
+std::size_t MLDPGrpcIngestionePool::availableCountLocked() const
 {
     std::size_t count = 0;
     for (const auto& item : items_)
@@ -264,7 +265,7 @@ std::size_t MLDPGrpcPool::availableCountLocked() const
     return count;
 }
 
-void MLDPGrpcPool::updateMetricsLocked() const
+void MLDPGrpcIngestionePool::updateMetricsLocked() const
 {
     if (!metrics_)
     {
@@ -273,14 +274,14 @@ void MLDPGrpcPool::updateMetricsLocked() const
 
     const double total = static_cast<double>(current_size_);
     const double available = static_cast<double>(availableCountLocked());
-    metrics_->setPoolConnectionsAvailable(available);
-    metrics_->setPoolConnectionsInUse(std::max(0.0, total - available));
+    metrics_->setPoolConnectionsAvailable(available, kIngestionPoolMetricLabels);
+    metrics_->setPoolConnectionsInUse(std::max(0.0, total - available), kIngestionPoolMetricLabels);
 }
 
-void MLDPGrpcPool::updateMetrics() const
+void MLDPGrpcIngestionePool::updateMetrics() const
 {
     std::unique_lock<std::mutex> lock(mutex_);
     updateMetricsLocked();
 }
 
-#pragma endregion - MLDPGrpcPool
+#pragma endregion - MLDPGrpcIngestionePool

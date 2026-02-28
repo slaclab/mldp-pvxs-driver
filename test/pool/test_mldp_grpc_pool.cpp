@@ -237,17 +237,18 @@ TEST(MLDPGrpcPoolTest, MultipleObjectsHaveSeparateChannels)
 
 TEST(MLDPGrpcPoolTest, UpdatesMetricsWhenConnectionsMove)
 {
+    const prometheus::Labels ingestionPoolLabel{{"pool", "ingestion"}};
     auto        metrics = std::make_shared<mldp_pvxs_driver::metrics::Metrics>(mldp_pvxs_driver::metrics::MetricsConfig());
     auto        pool = MLDPGrpcPool::create(make_pool_config(1, 1, "test_prv_1"), metrics);
     const auto& providerId = pool->providerId();
-    EXPECT_DOUBLE_EQ(metrics->poolConnectionsAvailable(), 1.0);
-    EXPECT_DOUBLE_EQ(metrics->poolConnectionsInUse(), 0.0);
+    EXPECT_DOUBLE_EQ(metrics->poolConnectionsAvailable(ingestionPoolLabel), 1.0);
+    EXPECT_DOUBLE_EQ(metrics->poolConnectionsInUse(ingestionPoolLabel), 0.0);
 
     {
         auto handle = pool->acquire();
         ASSERT_TRUE(handle);
-        EXPECT_DOUBLE_EQ(metrics->poolConnectionsAvailable(), 0.0);
-        EXPECT_DOUBLE_EQ(metrics->poolConnectionsInUse(), 1.0);
+        EXPECT_DOUBLE_EQ(metrics->poolConnectionsAvailable(ingestionPoolLabel), 0.0);
+        EXPECT_DOUBLE_EQ(metrics->poolConnectionsInUse(ingestionPoolLabel), 1.0);
 
         // send fake data
         dp::service::ingestion::IngestDataRequest  request;
@@ -278,8 +279,8 @@ TEST(MLDPGrpcPoolTest, UpdatesMetricsWhenConnectionsMove)
         }
     }
 
-    EXPECT_DOUBLE_EQ(metrics->poolConnectionsAvailable(), 1.0);
-    EXPECT_DOUBLE_EQ(metrics->poolConnectionsInUse(), 0.0);
+    EXPECT_DOUBLE_EQ(metrics->poolConnectionsAvailable(ingestionPoolLabel), 1.0);
+    EXPECT_DOUBLE_EQ(metrics->poolConnectionsInUse(ingestionPoolLabel), 0.0);
 }
 
 TEST_F(MLDPGrpcPoolIntegrationTest, QueryCounterPV)

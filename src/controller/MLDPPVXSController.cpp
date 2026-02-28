@@ -28,7 +28,8 @@ using namespace mldp_pvxs_driver::config;
 using namespace mldp_pvxs_driver::reader;
 using namespace mldp_pvxs_driver::util::log;
 
-using mldp_pvxs_driver::util::pool::MLDPGrpcPool;
+using mldp_pvxs_driver::util::pool::MLDPGrpcIngestionePool;
+using mldp_pvxs_driver::util::pool::MLDPGrpcQueryPool;
 
 namespace {
 std::shared_ptr<mldp_pvxs_driver::util::log::ILogger> makeControllerLogger()
@@ -137,7 +138,8 @@ MLDPPVXSController::~MLDPPVXSController()
     }
     // clear pools
     thread_pool_.reset();
-    mldp_pool_.reset();
+    mldp_ingestion_pool_.reset();
+    mldp_query_pool_.reset();
     // clear metrics
     metrics_.reset();
 }
@@ -153,8 +155,9 @@ void MLDPPVXSController::start()
     running_.store(true);
     infof(*logger_, "Controller is starting");
     // Start allocating mldp pool (constructor registers provider)
-    mldp_pool_ = MLDPGrpcPool::create(config_.pool(), metrics_);
-    provider_id_ = mldp_pool_->providerId();
+    mldp_ingestion_pool_ = MLDPGrpcIngestionePool::create(config_.pool(), metrics_);
+    mldp_query_pool_ = MLDPGrpcQueryPool::create(config_.pool(), metrics_);
+    provider_id_ = mldp_ingestion_pool_->providerId();
     if (provider_id_.empty())
     {
         running_ = false;
@@ -285,15 +288,15 @@ std::vector<IDataBus::SourceInfo> MLDPPVXSController::querySourcesInfo(const std
     {
         return infos;
     }
-    if (!mldp_pool_)
+    if (!mldp_query_pool_)
     {
-        warnf(*logger_, "querySourcesInfo called before MLDP pool initialization");
+        warnf(*logger_, "querySourcesInfo called before MLDP query pool initialization");
         return infos;
     }
 
     try
     {
-        util::pool::PooledHandle<util::pool::MLDPGrpcObject> handle = mldp_pool_->acquire();
+        util::pool::PooledHandle<util::pool::MLDPGrpcObject> handle = mldp_query_pool_->acquire();
         auto*                                                query_stub = handle->query_stub.get();
         if (!query_stub)
         {
@@ -516,9 +519,9 @@ std::optional<std::unordered_map<std::string, DataColumn>> MLDPPVXSController::q
     {
         return std::unordered_map<std::string, DataColumn>{};
     }
-    if (!mldp_pool_)
+    if (!mldp_query_pool_)
     {
-        warnf(*logger_, "querySourcesData called before MLDP pool initialization");
+        warnf(*logger_, "querySourcesData called before MLDP query pool initialization");
         return std::nullopt;
     }
     if (options.timeout <= std::chrono::milliseconds::zero())
@@ -529,7 +532,7 @@ std::optional<std::unordered_map<std::string, DataColumn>> MLDPPVXSController::q
 
     try
     {
-        util::pool::PooledHandle<util::pool::MLDPGrpcObject> handle = mldp_pool_->acquire();
+        util::pool::PooledHandle<util::pool::MLDPGrpcObject> handle = mldp_query_pool_->acquire();
         auto*                                                query_stub = handle->query_stub.get();
         if (!query_stub)
         {
@@ -653,7 +656,7 @@ void MLDPPVXSController::workerLoop(std::size_t worker_index)
         {
             context = std::make_unique<grpc::ClientContext>();
             response = dp::service::ingestion::IngestDataStreamResponse();
-            handle.emplace(mldp_pool_->acquire());
+            handle.emplace(mldp_ingestion_pool_->acquire());
             writer = (*handle)->stub->ingestDataStream(context.get(), &response);
             if (!writer)
             {

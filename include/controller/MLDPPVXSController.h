@@ -15,6 +15,7 @@
 #include <controller/MLDPPVXSControllerConfig.h>
 #include <metrics/Metrics.h>
 #include <pool/MLDPGrpcPool.h>
+#include <pool/MLDPGrpcQueryPool.h>
 #include <reader/Reader.h>
 #include <util/bus/IDataBus.h>
 #include <util/log/Logger.h>
@@ -196,7 +197,8 @@ private:
     std::shared_ptr<BS::light_thread_pool>                thread_pool_;     ///< Shared worker pool executing bus pushes.
     std::shared_ptr<metrics::Metrics>                     metrics_;         ///< Shared metrics collector/exposer.
     std::atomic<bool>                                     running_{false};  ///< Tracks controller lifecycle state.
-    util::pool::MLDPGrpcPool::MLDPGrpcPoolShrdPtr         mldp_pool_;       ///< MLDP gRPC connection pool.
+    util::pool::MLDPGrpcIngestionePool::MLDPGrpcIngestionePoolShrdPtr mldp_ingestion_pool_; ///< MLDP ingestion gRPC connection pool.
+    util::pool::MLDPGrpcQueryPool::MLDPGrpcQueryPoolShrdPtr           mldp_query_pool_;     ///< MLDP query gRPC connection pool.
     std::vector<reader::ReaderUPtr>                       readers_;         ///< Ingestion readers instance.
     std::string                                           provider_id_;     ///< Provider identifier assigned by MLDP.
     std::vector<std::unique_ptr<WorkerChannel>>           channels_;        ///< Per-worker queues for hash-partitioned dispatch.
