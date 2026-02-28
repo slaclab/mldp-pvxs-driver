@@ -37,7 +37,7 @@ controller_thread_pool: 1
 mldp_pool:
   provider_name: test_provider_archiver_tail
   provider_description: "Archiver Tail Integration Test Provider"
-  url: dp-ingestion:50051
+  ingestion_url: dp-ingestion:50051
   min_conn: 1
   max_conn: 1
 reader:

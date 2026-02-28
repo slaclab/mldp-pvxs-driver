@@ -319,7 +319,7 @@ controller_stream_max_age_ms: 200      # 200ms stream rotation
 ```yaml
 mldp_pool:
   provider_name: pvxs_provider
-  url: dp-ingestion:50051
+  ingestion_url: dp-ingestion:50051
   min_conn: 1
   max_conn: 4
 ```

@@ -17,7 +17,8 @@ controller_stream_max_age_ms: 200      # optional; flush stream after this age i
 mldp_pool:
   provider_name: pvxs_provider
   provider_description: "PVXS aggregate provider"   # optional
-  url: dp-ingestion:50051
+  ingestion_url: dp-ingestion:50051
+  query_url: dp-query:50052                         # optional; defaults to `ingestion_url` when omitted
   min_conn: 1
   max_conn: 4
   credentials: # optional
@@ -93,7 +94,12 @@ metrics:                                 # optional; omit to disable Prometheus 
 
 For detailed reader documentation, see [Reader Types](docs/readers.md).
 
-`mldp_pool` values mirror the driver's `provider_name` and target URL but add connection-pool sizing. Readers are defined
+`mldp_pool` values mirror the driver's `provider_name` and target URLs but add connection-pool sizing.
+
+- `ingestion_url`: ingestion service address (DpIngestionService)
+- `query_url`: query service address (DpQueryService); if omitted, the driver uses `ingestion_url` for query RPCs too
+
+Readers are defined
 as sequences under `reader[]`, each with a `name` and an optional `pvs` list; if `pvs` is omitted, the reader will
 start without predefined channels.
 

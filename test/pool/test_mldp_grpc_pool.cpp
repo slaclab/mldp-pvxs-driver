@@ -22,7 +22,6 @@
 #include <string_view>
 #include <thread>
 #include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 using namespace mldp_pvxs_driver::util::pool;
@@ -35,7 +34,7 @@ static MLDPGrpcPoolConfig make_pool_config(int min_conn, int max_conn, std::stri
     std::ostringstream yaml;
     yaml << "provider_name: " << test_provider_id << "\n"
          << "provider_description: " << description << "\n"
-         << "url: dp-ingestion:50051\n"
+         << "ingestion_url: dp-ingestion:50051\n"
          << "query_url: dp-query:50052\n"
          << "min_conn: " << min_conn << "\n"
          << "max_conn: " << max_conn << "\n";
@@ -107,7 +106,7 @@ protected:
              << "mldp_pool:\n"
              << "  provider_name: test_provider\n"
              << "  provider_description: \"Test Provider\"\n"
-             << "  url: dp-ingestion:50051\n"
+             << "  ingestion_url: dp-ingestion:50051\n"
              << "  query_url: dp-query:50052\n"
              << "  min_conn: 1\n"
              << "  max_conn: 1\n"

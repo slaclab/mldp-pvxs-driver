@@ -20,7 +20,6 @@
 #include <util/log/Logger.h>
 
 #include <atomic>
-#include <chrono>
 #include <condition_variable>
 #include <deque>
 #include <memory>

@@ -160,7 +160,7 @@ std::shared_ptr<MLDPGrpcObject> MLDPGrpcPool::createChannel()
         creds = grpc::InsecureChannelCredentials();
     }
 
-    auto ingestion_channel = grpc::CreateChannel(config_.url(), creds);
+    auto ingestion_channel = grpc::CreateChannel(config_.ingestionUrl(), creds);
     auto query_channel = grpc::CreateChannel(config_.queryUrl(), creds);
     auto object = std::make_shared<MLDPGrpcObject>(ingestion_channel, query_channel);
     return object;
