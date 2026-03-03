@@ -222,7 +222,7 @@ std::optional<long long> findReaderPushesForPv(const mldp_pvxs_driver::metrics::
 } // namespace
 
 // Test fixture
-class EpicsReaderTest : public ::testing::Test
+class EpicsPVXSReaderTest : public ::testing::Test
 {
 protected:
     void SetUp() override
@@ -246,7 +246,7 @@ protected:
 };
 
 // Test constructor and name through factory
-TEST_F(EpicsReaderTest, ConstructorAndName)
+TEST_F(EpicsPVXSReaderTest, ConstructorAndName)
 {
     const std::string yaml = R"(
 name: epics_1
@@ -265,7 +265,7 @@ name: epics_1
 }
 
 // Test addPV method
-TEST_F(EpicsReaderTest, MonitorPVOnConfiguration)
+TEST_F(EpicsPVXSReaderTest, MonitorPVOnConfiguration)
 {
     const std::string yaml = R"(
 name: epics_1
@@ -294,7 +294,7 @@ pvs:
     EXPECT_GT(mock_bus->event_count(), 0) << "No events received within timeout";
 }
 
-TEST_F(EpicsReaderTest, MonitorPVOnConfigurationEpicsBase)
+TEST_F(EpicsPVXSReaderTest, MonitorPVOnConfigurationEpicsBase)
 {
     const std::string yaml = R"(
 name: epics_base_1
@@ -318,7 +318,7 @@ pvs:
     EXPECT_GT(mock_bus->event_count(), 0) << "No events received within timeout (epics-base)";
 }
 
-TEST_F(EpicsReaderTest, CounterPVEmitsMultipleEvents)
+TEST_F(EpicsPVXSReaderTest, CounterPVEmitsMultipleEvents)
 {
     const std::string yaml = R"(
 name: epics_1
@@ -354,7 +354,7 @@ pvs:
     EXPECT_TRUE(matched_metrics) << "Expected metrics snapshot pushes to match received events for test:counter";
 }
 
-TEST_F(EpicsReaderTest, SimulatedPVsProduceEventsAndExpectedTypes)
+TEST_F(EpicsPVXSReaderTest, SimulatedPVsProduceEventsAndExpectedTypes)
 {
     const std::string yaml = R"(
 name: epics_1
@@ -451,13 +451,15 @@ pvs:
         EXPECT_FALSE(hasColumnWithName(*df, "value.timeStamp"));
     }
 
-    // test:waveform (NTScalar<Float64A>) -> double column named by source PV
+    // test:waveform (NTScalar<Float64A>) -> double array column named by source PV
+    // The waveform is a single sample (array of doubles) at one timestamp,
+    // so it maps to a DoubleArrayColumn rather than individual scalar rows.
     {
         const auto df = findLatestDataFrameForSource(*mock_bus, "test:waveform");
         ASSERT_NE(df, nullptr);
-        ASSERT_GT(df->doublecolumns_size(), 0);
-        EXPECT_EQ(df->doublecolumns(0).name(), "test:waveform");
-        EXPECT_EQ(df->doublecolumns(0).values_size(), 256);
+        ASSERT_GT(df->doublearraycolumns_size(), 0);
+        EXPECT_EQ(df->doublearraycolumns(0).name(), "test:waveform");
+        EXPECT_EQ(df->doublearraycolumns(0).values_size(), 256);
         EXPECT_FALSE(hasColumnWithName(*df, "value.timeStamp"));
     }
 
@@ -482,7 +484,7 @@ pvs:
     }
 }
 
-TEST_F(EpicsReaderTest, NTTableRowTimestampSplitsToPerColumnSources)
+TEST_F(EpicsPVXSReaderTest, NTTableRowTimestampSplitsToPerColumnSources)
 {
     const std::string yaml = R"(
 name: epics_1

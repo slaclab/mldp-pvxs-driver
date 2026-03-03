@@ -27,7 +27,7 @@ using namespace mldp_pvxs_driver::util::bus;
 namespace {
 std::shared_ptr<ILogger> makeLogger(const std::string& readerName)
 {
-    std::string loggerName = "epics_reader_pvxs";
+    std::string loggerName = "epics_pvxs_reader";
     if (!readerName.empty())
     {
         loggerName += ":";
