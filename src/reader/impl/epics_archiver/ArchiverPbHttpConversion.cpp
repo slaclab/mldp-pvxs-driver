@@ -97,35 +97,51 @@ ParsedSample parseBlob(const EPICS::PayloadInfo& header,
 ParsedSample ArchiverPbHttpConversion::parseSample(const EPICS::PayloadInfo& header,
                                                    const std::string&        msg_bytes)
 {
+    const auto namedColumn = [&header](auto* column) {
+        column->set_name(header.pvname());
+        return column;
+    };
+
+    const auto addRepeatedValues = [](auto* column, const auto& vals) {
+        for (const auto& v : vals)
+        {
+            column->add_values(v);
+        }
+    };
+
     switch (header.type())
     {
     // ---- Scalars -----------------------------------------------------------
     case EPICS::SCALAR_STRING:
         return parseScalar<EPICS::ScalarString>(
             header, msg_bytes,
-            [](DataFrame* df, const std::string& v) {
-                auto* c = df->add_stringcolumns(); c->set_name("value"); c->add_values(v);
+            [&](DataFrame* df, const std::string& v) {
+                auto* c = namedColumn(df->add_stringcolumns());
+                c->add_values(v);
             });
 
     case EPICS::SCALAR_SHORT:
         return parseScalar<EPICS::ScalarShort>(
             header, msg_bytes,
-            [](DataFrame* df, int32_t v) {
-                auto* c = df->add_int32columns(); c->set_name("value"); c->add_values(v);
+            [&](DataFrame* df, int32_t v) {
+                auto* c = namedColumn(df->add_int32columns());
+                c->add_values(v);
             });
 
     case EPICS::SCALAR_FLOAT:
         return parseScalar<EPICS::ScalarFloat>(
             header, msg_bytes,
-            [](DataFrame* df, float v) {
-                auto* c = df->add_floatcolumns(); c->set_name("value"); c->add_values(v);
+            [&](DataFrame* df, float v) {
+                auto* c = namedColumn(df->add_floatcolumns());
+                c->add_values(v);
             });
 
     case EPICS::SCALAR_ENUM:
         return parseScalar<EPICS::ScalarEnum>(
             header, msg_bytes,
-            [](DataFrame* df, int32_t v) {
-                auto* c = df->add_int32columns(); c->set_name("value"); c->add_values(v);
+            [&](DataFrame* df, int32_t v) {
+                auto* c = namedColumn(df->add_int32columns());
+                c->add_values(v);
             });
 
     case EPICS::SCALAR_BYTE:
@@ -134,48 +150,50 @@ ParsedSample ArchiverPbHttpConversion::parseSample(const EPICS::PayloadInfo& hea
     case EPICS::SCALAR_INT:
         return parseScalar<EPICS::ScalarInt>(
             header, msg_bytes,
-            [](DataFrame* df, int32_t v) {
-                auto* c = df->add_int32columns(); c->set_name("value"); c->add_values(v);
+            [&](DataFrame* df, int32_t v) {
+                auto* c = namedColumn(df->add_int32columns());
+                c->add_values(v);
             });
 
     case EPICS::SCALAR_DOUBLE:
         return parseScalar<EPICS::ScalarDouble>(
             header, msg_bytes,
-            [](DataFrame* df, double v) {
-                auto* c = df->add_doublecolumns(); c->set_name("value"); c->add_values(v);
+            [&](DataFrame* df, double v) {
+                auto* c = namedColumn(df->add_doublecolumns());
+                c->add_values(v);
             });
 
     // ---- Waveforms ---------------------------------------------------------
     case EPICS::WAVEFORM_STRING:
         return parseWaveform<EPICS::VectorString>(
             header, msg_bytes,
-            [](DataFrame* df, const auto& vals) {
-                auto* c = df->add_stringcolumns(); c->set_name("value");
-                for (const auto& v : vals) c->add_values(v);
+            [&](DataFrame* df, const auto& vals) {
+                auto* c = namedColumn(df->add_stringcolumns());
+                addRepeatedValues(c, vals);
             });
 
     case EPICS::WAVEFORM_SHORT:
         return parseWaveform<EPICS::VectorShort>(
             header, msg_bytes,
-            [](DataFrame* df, const auto& vals) {
-                auto* c = df->add_int32columns(); c->set_name("value");
-                for (const auto v : vals) c->add_values(v);
+            [&](DataFrame* df, const auto& vals) {
+                auto* c = namedColumn(df->add_int32columns());
+                addRepeatedValues(c, vals);
             });
 
     case EPICS::WAVEFORM_FLOAT:
         return parseWaveform<EPICS::VectorFloat>(
             header, msg_bytes,
-            [](DataFrame* df, const auto& vals) {
-                auto* c = df->add_floatcolumns(); c->set_name("value");
-                for (const auto v : vals) c->add_values(v);
+            [&](DataFrame* df, const auto& vals) {
+                auto* c = namedColumn(df->add_floatcolumns());
+                addRepeatedValues(c, vals);
             });
 
     case EPICS::WAVEFORM_ENUM:
         return parseWaveform<EPICS::VectorEnum>(
             header, msg_bytes,
-            [](DataFrame* df, const auto& vals) {
-                auto* c = df->add_int32columns(); c->set_name("value");
-                for (const auto v : vals) c->add_values(v);
+            [&](DataFrame* df, const auto& vals) {
+                auto* c = namedColumn(df->add_int32columns());
+                addRepeatedValues(c, vals);
             });
 
     case EPICS::WAVEFORM_BYTE:
@@ -184,17 +202,17 @@ ParsedSample ArchiverPbHttpConversion::parseSample(const EPICS::PayloadInfo& hea
     case EPICS::WAVEFORM_INT:
         return parseWaveform<EPICS::VectorInt>(
             header, msg_bytes,
-            [](DataFrame* df, const auto& vals) {
-                auto* c = df->add_int32columns(); c->set_name("value");
-                for (const auto v : vals) c->add_values(v);
+            [&](DataFrame* df, const auto& vals) {
+                auto* c = namedColumn(df->add_int32columns());
+                addRepeatedValues(c, vals);
             });
 
     case EPICS::WAVEFORM_DOUBLE:
         return parseWaveform<EPICS::VectorDouble>(
             header, msg_bytes,
-            [](DataFrame* df, const auto& vals) {
-                auto* c = df->add_doublecolumns(); c->set_name("value");
-                for (const auto v : vals) c->add_values(v);
+            [&](DataFrame* df, const auto& vals) {
+                auto* c = namedColumn(df->add_doublecolumns());
+                addRepeatedValues(c, vals);
             });
 
     // ---- Generic bytes -----------------------------------------------------

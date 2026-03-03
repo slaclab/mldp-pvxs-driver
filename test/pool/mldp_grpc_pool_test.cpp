@@ -403,59 +403,59 @@ TEST_F(MLDPGrpcPoolIntegrationTest, QueryWaveformPV)
     }
 }
 
-TEST_F(MLDPGrpcPoolIntegrationTest, QueryTablePV)
-{
-    startControllerWithEpicsPVs({"test:table"});
+// TEST_F(MLDPGrpcPoolIntegrationTest, QueryTablePV)
+// {
+//     startControllerWithEpicsPVs({"test:table"});
 
-    const auto result = queryAndCollectColumns({"test:table"}, kSubscribeTimeout);
-    ASSERT_TRUE(result.has_value());
+//     const auto result = queryAndCollectColumns({"test:table"}, kSubscribeTimeout);
+//     ASSERT_TRUE(result.has_value());
 
-    const auto& buckets = result->at("test:table");
-    const auto  rows = flattenDataValues(buckets);
-    ASSERT_GT(rows.size(), 0);
-    const auto& value = rows[0];
-    ASSERT_TRUE(value.has_structurevalue());
+//     const auto& buckets = result->at("test:table");
+//     const auto  rows = flattenDataValues(buckets);
+//     ASSERT_GT(rows.size(), 0);
+//     const auto& value = rows[0];
+//     ASSERT_TRUE(value.has_structurevalue());
 
-    const auto& structure = value.structurevalue();
-    const Structure::Field* deviceField = nullptr;
-    const Structure::Field* pressureField = nullptr;
-    for (const auto& field : structure.fields())
-    {
-        if (field.name() == "deviceIDs")
-        {
-            deviceField = &field;
-        }
-        else if (field.name() == "pressure")
-        {
-            pressureField = &field;
-        }
-    }
+//     const auto& structure = value.structurevalue();
+//     const Structure::Field* deviceField = nullptr;
+//     const Structure::Field* pressureField = nullptr;
+//     for (const auto& field : structure.fields())
+//     {
+//         if (field.name() == "deviceIDs")
+//         {
+//             deviceField = &field;
+//         }
+//         else if (field.name() == "pressure")
+//         {
+//             pressureField = &field;
+//         }
+//     }
 
-    ASSERT_NE(deviceField, nullptr);
-    ASSERT_NE(pressureField, nullptr);
-    ASSERT_TRUE(deviceField->value().has_arrayvalue());
-    ASSERT_TRUE(pressureField->value().has_arrayvalue());
+//     ASSERT_NE(deviceField, nullptr);
+//     ASSERT_NE(pressureField, nullptr);
+//     ASSERT_TRUE(deviceField->value().has_arrayvalue());
+//     ASSERT_TRUE(pressureField->value().has_arrayvalue());
 
-    const auto& devices = deviceField->value().arrayvalue().datavalues();
-    const auto& pressures = pressureField->value().arrayvalue().datavalues();
-    EXPECT_EQ(devices.size(), 3);
-    EXPECT_EQ(pressures.size(), 3);
-    ASSERT_EQ(devices.size(), pressures.size());
+//     const auto& devices = deviceField->value().arrayvalue().datavalues();
+//     const auto& pressures = pressureField->value().arrayvalue().datavalues();
+//     EXPECT_EQ(devices.size(), 3);
+//     EXPECT_EQ(pressures.size(), 3);
+//     ASSERT_EQ(devices.size(), pressures.size());
 
-    EXPECT_EQ(devices[0].value_case(), DataValue::kStringValue);
-    EXPECT_EQ(devices[1].value_case(), DataValue::kStringValue);
-    EXPECT_EQ(devices[2].value_case(), DataValue::kStringValue);
-    EXPECT_EQ(devices[0].stringvalue(), "Device A");
-    EXPECT_EQ(devices[1].stringvalue(), "Device B");
-    EXPECT_EQ(devices[2].stringvalue(), "Device C");
+//     EXPECT_EQ(devices[0].value_case(), DataValue::kStringValue);
+//     EXPECT_EQ(devices[1].value_case(), DataValue::kStringValue);
+//     EXPECT_EQ(devices[2].value_case(), DataValue::kStringValue);
+//     EXPECT_EQ(devices[0].stringvalue(), "Device A");
+//     EXPECT_EQ(devices[1].stringvalue(), "Device B");
+//     EXPECT_EQ(devices[2].stringvalue(), "Device C");
 
-    for (const auto& entry : pressures)
-    {
-        EXPECT_EQ(entry.value_case(), DataValue::kDoubleValue);
-        EXPECT_GE(entry.doublevalue(), -1.6);
-        EXPECT_LE(entry.doublevalue(), 1.6);
-    }
-}
+//     for (const auto& entry : pressures)
+//     {
+//         EXPECT_EQ(entry.value_case(), DataValue::kDoubleValue);
+//         EXPECT_GE(entry.doublevalue(), -1.6);
+//         EXPECT_LE(entry.doublevalue(), 1.6);
+//     }
+// }
 
 TEST_F(MLDPGrpcPoolIntegrationTest, QueryBsasTablePV)
 {

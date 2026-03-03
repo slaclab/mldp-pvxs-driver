@@ -378,8 +378,7 @@ pvs:
 
     const std::set<std::string> expected{
         "test:voltage",
-        "test:waveform",
-        "test:table",
+        "test:waveform"
     };
 
     std::set<std::string> seen;
@@ -433,23 +432,22 @@ pvs:
         ASSERT_GT(df->doublecolumns(0).values_size(), 0);
     }
 
-    // test:waveform (NTScalar<Float64A>) -> repeated double column values
+    // test:waveform (NTScalar<Float64A>) -> double array column named by source PV
+    // The waveform is a single sample (array of doubles) at one timestamp,
+    // so it maps to a DoubleArrayColumn rather than individual scalar rows.
     {
         const auto df = findLatestDataFrameForSource(*mock_bus, "test:waveform");
         ASSERT_NE(df, nullptr);
-        ASSERT_GT(df->doublecolumns_size(), 0);
-        EXPECT_EQ(df->doublecolumns(0).name(), "test:waveform");
-        ASSERT_EQ(df->doublecolumns(0).values_size(), 256);
+        ASSERT_GT(df->doublearraycolumns_size(), 0);
+        EXPECT_EQ(df->doublearraycolumns(0).name(), "test:waveform");
+        EXPECT_EQ(df->doublearraycolumns(0).values_size(), 256);
+        EXPECT_FALSE(hasColumnWithName(*df, "value.timeStamp"));
     }
 
-    // test:table (NTTable) -> expected projected columns
+    // test:table (NTTable) in default mode -> dropped, no DataFrame emitted
     {
         const auto df = findLatestDataFrameForSource(*mock_bus, "test:table");
-        ASSERT_NE(df, nullptr);
-        EXPECT_TRUE(hasColumnWithName(*df, "value.deviceIDs"));
-        EXPECT_TRUE(hasColumnWithName(*df, "value.pressure"));
-        EXPECT_FALSE(hasColumnWithName(*df, "value.labels"));
-        EXPECT_FALSE(hasColumnWithName(*df, "value.timeStamp"));
+        EXPECT_EQ(df, nullptr) << "NTTable PVs must be dropped in default mode";
     }
     reader_ptr.reset();
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
