@@ -375,7 +375,6 @@ pvs:
         "test:voltage",
         "test:status",
         "test:waveform",
-        "test:table",
     };
 
     std::set<std::string> seen;
@@ -463,24 +462,10 @@ pvs:
         EXPECT_FALSE(hasColumnWithName(*df, "value.timeStamp"));
     }
 
-    // test:table (NTTable) -> sub-columns "value.deviceIDs" and "value.pressure"
+    // test:table (NTTable) in default mode -> dropped, no DataFrame emitted
     {
         const auto df = findLatestDataFrameForSource(*mock_bus, "test:table");
-        ASSERT_NE(df, nullptr);
-        EXPECT_FALSE(hasColumnWithName(*df, "value.labels"));
-        EXPECT_FALSE(hasColumnWithName(*df, "value.timeStamp"));
-
-        const dp::service::common::StringColumn* deviceIDsCol = nullptr;
-        const dp::service::common::DoubleColumn* pressureCol = nullptr;
-        for (int i = 0; i < df->stringcolumns_size(); ++i)
-            if (df->stringcolumns(i).name() == "value.deviceIDs") deviceIDsCol = &df->stringcolumns(i);
-        for (int i = 0; i < df->doublecolumns_size(); ++i)
-            if (df->doublecolumns(i).name() == "value.pressure") pressureCol = &df->doublecolumns(i);
-
-        ASSERT_NE(deviceIDsCol, nullptr);
-        ASSERT_NE(pressureCol, nullptr);
-        EXPECT_EQ(deviceIDsCol->values_size(), 3);
-        EXPECT_EQ(pressureCol->values_size(), 3);
+        EXPECT_EQ(df, nullptr) << "NTTable PVs must be dropped in default mode";
     }
 }
 

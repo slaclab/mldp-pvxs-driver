@@ -36,8 +36,8 @@ std::shared_ptr<ILogger> makeLogger(const std::string& readerName)
 } // namespace
 
 EpicsBaseReader::EpicsBaseReader(std::shared_ptr<util::bus::IDataBus> bus,
-                                 std::shared_ptr<metrics::Metrics>         metrics,
-                                 const config::Config&                     cfg)
+                                 std::shared_ptr<metrics::Metrics>    metrics,
+                                 const config::Config&                cfg)
     : EpicsReaderBase(std::move(bus), std::move(metrics), EpicsReaderConfig(cfg), makeLogger(cfg.get("name")))
 {
     addPV(pvNames());
@@ -120,7 +120,7 @@ void EpicsBaseReader::processEvent(std::string pvName, ::epics::pvData::PVStruct
         {
         case PVRuntimeConfig::Mode::SlacBsasTable:
             {
-                const std::size_t colBatchSize = config_.columnBatchSize();
+                const std::size_t    colBatchSize = config_.columnBatchSize();
                 IDataBus::EventBatch tableBatch;
                 tableBatch.root_source = pvName;
                 tableBatch.tags.push_back(pvName);
@@ -130,7 +130,8 @@ void EpicsBaseReader::processEvent(std::string pvName, ::epics::pvData::PVStruct
                         *logger_, pvName, epics_value,
                         runtimeCfg ? runtimeCfg->tsSecondsField : "secondsPastEpoch",
                         runtimeCfg ? runtimeCfg->tsNanosField : "nanoseconds",
-                        [&](std::string colName, std::vector<IDataBus::EventValue> events) {
+                        [&](std::string colName, std::vector<IDataBus::EventValue> events)
+                        {
                             tableBatch.values[std::move(colName)] = std::move(events);
                             ++colsInBatch;
                             if (colBatchSize > 0 && colsInBatch >= colBatchSize)
@@ -164,7 +165,7 @@ void EpicsBaseReader::processEvent(std::string pvName, ::epics::pvData::PVStruct
                 batch.root_source = pvName;
                 uint64_t epoch_seconds = 0;
                 uint64_t nanoseconds = 0;
-                bool setEpoch = false;
+                bool     setEpoch = false;
 
                 if (epics_value)
                 {
@@ -196,14 +197,24 @@ void EpicsBaseReader::processEvent(std::string pvName, ::epics::pvData::PVStruct
                     {
                         const bool isStructPayload =
                             (std::dynamic_pointer_cast<::epics::pvData::PVStructure>(valueField) != nullptr);
-                        const std::string columnName = isStructPayload ? "value" : pvName;
+                        if (isStructPayload)
+                        {
+                            warnf(*logger_,
+                                  "[{}/{}] PV has compound (non-scalar) value field in default mode — skipping",
+                                  name_, pvName);
+                            return; // Do not push event to bus
+                        }
                         EpicsPVDataConversion::convertPVToProtoValue(
-                            *valueField, &event_value->data_value, columnName);
+                            *valueField,
+                            &event_value->data_value,
+                            pvName);
                     }
                     else
                     {
-                        EpicsPVDataConversion::convertPVToProtoValue(
-                            *epics_value, &event_value->data_value, pvName);
+                        warnf(*logger_,
+                              "[{}/{}] PV has no 'value' field in default mode — skipping",
+                              name_, pvName);
+                        return;  // Do not push event to bus
                     }
                 }
 

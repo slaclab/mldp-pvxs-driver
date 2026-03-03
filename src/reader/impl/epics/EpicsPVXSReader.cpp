@@ -132,10 +132,14 @@ void EpicsPVXSReader::processDefaultMode(const std::string& pvName, const pvxs::
 
     auto event_value = IDataBus::MakeEventValue(epoch_seconds, nanoseconds);
 
-    // Keep existing structured/table naming ("value.*"), but map scalar/array
-    // payloads to the PV name instead of the generic "value".
-    const std::string columnName = (valueField.type().kind() == pvxs::Kind::Compound) ? "value" : pvName;
-    EpicsMLDPConversion::convertPVToDataFrame(valueField, &event_value->data_value, columnName);
+    if (valueField.type().kind() == pvxs::Kind::Compound)
+    {
+        warnf(*logger_,
+              "[{}/{}] PV has compound (non-scalar) value field in default mode — skipping",
+              name_, pvName);
+        return;  // Do not push event to bus
+    }
+    EpicsMLDPConversion::convertPVToDataFrame(valueField, &event_value->data_value, pvName);
 
     IDataBus::EventBatch batch;
     batch.root_source = pvName;
