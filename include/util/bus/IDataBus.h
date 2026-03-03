@@ -13,6 +13,7 @@
  */
 
 #pragma once
+#include "common.pb.h"
 #include <chrono>
 #include <cstdint>
 #include <ingestion.grpc.pb.h>
@@ -30,14 +31,14 @@ namespace mldp_pvxs_driver::util::bus {
  * @brief Timestamped ingestion payload shared across the bus.
  *
  * Instances carry both coarse and fine grained timestamps along with the
- * generated @ref DataValue, allowing transport layers to forward the payload
+ * generated @ref dp::service::common::DataFrame, allowing transport layers to forward the payload
  * without copying.
  */
 struct EventValueStruct
 {
-    uint64_t  epoch_seconds; ///< Unix epoch seconds for the sample.
-    uint64_t  nanoseconds;   ///< Additional nanoseconds precision.
-    DataValue data_value;    ///< Protobuf payload (by value to avoid heap allocation).
+    uint64_t                       epoch_seconds; ///< Unix epoch seconds for the sample.
+    uint64_t                       nanoseconds;   ///< Additional nanoseconds precision.
+    dp::service::common::DataFrame data_value;    ///< Protobuf payload (by value to avoid heap allocation).
 };
 
 /**
@@ -71,16 +72,16 @@ struct SourceTimestamp
 struct SourceInfoStruct
 {
     std::string                    source_name;                      ///< Source/PV identifier.
-    std::optional<SourceTimestamp> first_timestamp;                 ///< Earliest known data timestamp.
-    std::optional<SourceTimestamp> last_timestamp;                  ///< Latest known data timestamp.
-    std::optional<std::string>     last_provider_id;                ///< Last provider ID that wrote the source.
-    std::optional<std::string>     last_provider_name;              ///< Last provider name that wrote the source.
-    std::optional<std::string>     last_bucket_id;                  ///< Backing storage bucket identifier.
-    std::optional<std::string>     last_bucket_data_type;           ///< Data type recorded in last bucket.
+    std::optional<SourceTimestamp> first_timestamp;                  ///< Earliest known data timestamp.
+    std::optional<SourceTimestamp> last_timestamp;                   ///< Latest known data timestamp.
+    std::optional<std::string>     last_provider_id;                 ///< Last provider ID that wrote the source.
+    std::optional<std::string>     last_provider_name;               ///< Last provider name that wrote the source.
+    std::optional<std::string>     last_bucket_id;                   ///< Backing storage bucket identifier.
+    std::optional<std::string>     last_bucket_data_type;            ///< Data type recorded in last bucket.
     std::optional<std::string>     last_bucket_data_timestamps_type; ///< Timestamp encoding used in last bucket.
-    std::optional<uint64_t>        last_bucket_sample_period;       ///< Sampling period in nanoseconds (if known).
-    std::optional<uint32_t>        last_bucket_sample_count;        ///< Number of samples in last bucket.
-    std::optional<int32_t>         num_buckets;                     ///< Total bucket count for the source.
+    std::optional<uint64_t>        last_bucket_sample_period;        ///< Sampling period in nanoseconds (if known).
+    std::optional<uint32_t>        last_bucket_sample_count;         ///< Number of samples in last bucket.
+    std::optional<int32_t>         num_buckets;                      ///< Total bucket count for the source.
 };
 
 /**
@@ -90,7 +91,7 @@ struct SourceInfoStruct
  */
 struct QuerySourcesDataOptions
 {
-    std::chrono::milliseconds timeout{std::chrono::seconds(5)};        ///< Total polling budget.
+    std::chrono::milliseconds timeout{std::chrono::seconds(5)};          ///< Total polling budget.
     std::chrono::seconds      lookback_window{std::chrono::seconds(30)}; ///< beginTime offset from now.
     std::chrono::seconds      forward_window{std::chrono::seconds(1)};   ///< endTime offset from now.
     std::chrono::seconds      rpc_deadline{std::chrono::seconds(5)};     ///< Per-RPC deadline.
@@ -125,7 +126,7 @@ public:
             EventValueStruct{
                 epoch_seconds,
                 nanoseconds,
-                DataValue{}});
+                dp::service::common::DataFrame{}});
     }
 
     virtual ~IDataBus() = default;
@@ -155,14 +156,10 @@ public:
      * @param source_names Source/PV identifiers to query.
      * @return Metadata rows for the sources known to the backend.
      */
-    virtual std::vector<SourceInfo> querySourcesInfo(const std::set<std::string>& source_names)
-    {
-        (void)source_names;
-        return {};
-    }
+    virtual std::vector<SourceInfo> querySourcesInfo(const std::set<std::string>& source_names) = 0;
 
     /**
-     * @brief Query MLDP data columns for sources over a relative time window.
+     * @brief Query MLDP data values for sources over a relative time window.
      *
      * This mirrors the query shape used by integration tests: `queryData`
      * with `pvNames`, `beginTime = now - lookback_window`, and
@@ -170,17 +167,13 @@ public:
      *
      * @param source_names Source/PV identifiers to query.
      * @param options Query tuning options (timeouts and relative query window).
-     * @return Map keyed by source name containing returned DataColumn payloads.
+     * @return Map keyed by source name with one DataValues entry per returned
+     *         data bucket (preserves bucket boundaries from queryData).
      *         Returns std::nullopt on transport/protocol failures.
      */
-    virtual std::optional<std::unordered_map<std::string, DataColumn>> querySourcesData(
+    virtual std::optional<std::unordered_map<std::string, std::vector<dp::service::common::DataValues>>> querySourcesData(
         const std::set<std::string>&   source_names,
-        const QuerySourcesDataOptions& options = QuerySourcesDataOptions{})
-    {
-        (void)source_names;
-        (void)options;
-        return std::nullopt;
-    }
+        const QuerySourcesDataOptions& options = QuerySourcesDataOptions{}) = 0;
 };
 
 } // namespace mldp_pvxs_driver::util::bus

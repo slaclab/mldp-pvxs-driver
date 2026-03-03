@@ -19,6 +19,7 @@
 
 #pragma once
 
+#include <common.pb.h>
 #include <ingestion.grpc.pb.h>
 #include <pv/pvData.h>
 #include <util/bus/IDataBus.h>
@@ -71,7 +72,9 @@ public:
      * @pre @p protoValue must point to a valid DataValue object.
      * @post @p protoValue contains the converted representation.
      */
-    static void convertPVToProtoValue(const ::epics::pvData::PVField& pvField, DataValue* protoValue);
+    static void convertPVToProtoValue(const ::epics::pvData::PVField& pvField,
+                                      dp::service::common::DataFrame* frame,
+                                      const std::string&              columnName = "value");
 
     /**
      * @brief Convert an NTTable with row timestamps to an EventBatch.

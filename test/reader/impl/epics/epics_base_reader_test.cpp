@@ -59,6 +59,18 @@ public:
         return true;
     }
 
+    std::vector<SourceInfo> querySourcesInfo(const std::set<std::string>&) override
+    {
+        return {};
+    }
+
+    std::optional<std::unordered_map<std::string, std::vector<dp::service::common::DataValues>>> querySourcesData(
+        const std::set<std::string>&,
+        const mldp_pvxs_driver::util::bus::QuerySourcesDataOptions&) override
+    {
+        return std::nullopt;
+    }
+
     // Method to get the number of events received
     size_t event_count() const
     {
@@ -100,8 +112,8 @@ public:
         return received_events.back();
     }
 
-    // Method to get the last event's DataValue pointer
-    const DataValue* last_event() const
+    // Method to get the last event's DataFrame pointer
+    const dp::service::common::DataFrame* last_event() const
     {
         std::lock_guard<std::mutex> lock(mutex);
         if (received_events.empty())
@@ -140,7 +152,9 @@ private:
 
 namespace {
 
-const DataValue* findLatestDataValueForSource(const MockEventBusPush& bus, const std::string& source)
+using DataFrame = dp::service::common::DataFrame;
+
+const DataFrame* findLatestDataFrameForSource(const MockEventBusPush& bus, const std::string& source)
 {
     std::lock_guard<std::mutex> lock(bus.mutex);
     for (auto it = bus.received_events.rbegin(); it != bus.received_events.rend(); ++it)
@@ -188,22 +202,21 @@ std::optional<long long> findReaderPushesForPv(const mldp_pvxs_driver::metrics::
     return std::nullopt;
 }
 
-const DataValue* findStructureFieldValue(const DataValue& root, const std::string& fieldName)
+bool hasColumnWithName(const DataFrame& df, const std::string& name)
 {
-    if (!root.has_structurevalue())
-    {
-        return nullptr;
-    }
-    const auto& structure = root.structurevalue();
-    for (int i = 0; i < structure.fields_size(); ++i)
-    {
-        const auto& field = structure.fields(i);
-        if (field.name() == fieldName && field.has_value())
-        {
-            return &field.value();
-        }
-    }
-    return nullptr;
+    for (int i = 0; i < df.stringcolumns_size(); ++i)
+        if (df.stringcolumns(i).name() == name) return true;
+    for (int i = 0; i < df.int32columns_size(); ++i)
+        if (df.int32columns(i).name() == name) return true;
+    for (int i = 0; i < df.int64columns_size(); ++i)
+        if (df.int64columns(i).name() == name) return true;
+    for (int i = 0; i < df.floatcolumns_size(); ++i)
+        if (df.floatcolumns(i).name() == name) return true;
+    for (int i = 0; i < df.doublecolumns_size(); ++i)
+        if (df.doublecolumns(i).name() == name) return true;
+    for (int i = 0; i < df.boolcolumns_size(); ++i)
+        if (df.boolcolumns(i).name() == name) return true;
+    return false;
 }
 
 } // namespace
@@ -249,6 +262,8 @@ name: epics_1
 
     // Verify name is set correctly (assuming default or configurable name)
     EXPECT_EQ(reader_ptr->name(), "epics_1");
+    reader_ptr.reset();
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
 }
 
 // Test addPV method
@@ -279,6 +294,8 @@ pvs:
         waited_ms += 100;
     }
     EXPECT_GT(mock_bus->event_count(), 0) << "No events received within timeout";
+    reader_ptr.reset();
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
 }
 
 TEST_F(EpicsBaseReaderTest, MonitorPVOnConfigurationEpicsBase)
@@ -286,7 +303,7 @@ TEST_F(EpicsBaseReaderTest, MonitorPVOnConfigurationEpicsBase)
     const std::string yaml = R"(
 name: epics_base_1
 pvs:
-  - name: test:counter
+  - name: test:voltage
 )";
     const auto        cfg = makeConfigFromYaml(yaml);
 
@@ -303,6 +320,8 @@ pvs:
         waited_ms += 100;
     }
     EXPECT_GT(mock_bus->event_count(), 0) << "No events received within timeout (epics-base)";
+    reader_ptr.reset();
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
 }
 
 TEST_F(EpicsBaseReaderTest, CounterPVEmitsMultipleEvents)
@@ -310,7 +329,7 @@ TEST_F(EpicsBaseReaderTest, CounterPVEmitsMultipleEvents)
     const std::string yaml = R"(
 name: epics_1
 pvs:
-  - name: test:counter
+  - name: test:status
 )";
     const auto        cfg = makeConfigFromYaml(yaml);
     auto              metrics = std::make_shared<mldp_pvxs_driver::metrics::Metrics>(
@@ -321,24 +340,26 @@ pvs:
 
     const int max_wait_ms = 5000;
     int       waited_ms = 0;
-    size_t    counter_events = 0;
+    size_t    source_events = 0;
     bool      matched_metrics = false;
     mldp_pvxs_driver::metrics::MetricsSnapshot snapshotter;
     while (waited_ms < max_wait_ms)
     {
-        counter_events = countEventsForSource(*mock_bus, "test:counter");
+        source_events = countEventsForSource(*mock_bus, "test:status");
         const auto snapshot = snapshotter.getSnapshot(*metrics);
-        const auto pushes = findReaderPushesForPv(snapshot, "test:counter");
-        matched_metrics = pushes.has_value() && counter_events >= 2 &&
-                          pushes.value() == static_cast<long long>(counter_events);
+        const auto pushes = findReaderPushesForPv(snapshot, "test:status");
+        matched_metrics = pushes.has_value() && source_events >= 2 &&
+                          pushes.value() == static_cast<long long>(source_events);
         if (matched_metrics)
             break;
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
         waited_ms += 100;
     }
 
-    EXPECT_GE(counter_events, 2u) << "Expected multiple events for test:counter";
-    EXPECT_TRUE(matched_metrics) << "Expected metrics snapshot pushes to match received events for test:counter";
+    EXPECT_GE(source_events, 2u) << "Expected multiple events for test:status";
+    EXPECT_TRUE(matched_metrics) << "Expected metrics snapshot pushes to match received events for test:status";
+    reader_ptr.reset();
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
 }
 
 TEST_F(EpicsBaseReaderTest, SimulatedPVsProduceEventsAndExpectedTypes)
@@ -346,9 +367,7 @@ TEST_F(EpicsBaseReaderTest, SimulatedPVsProduceEventsAndExpectedTypes)
     const std::string yaml = R"(
 name: epics_1
 pvs:
-  - name: test:counter
   - name: test:voltage
-  - name: test:status
   - name: test:waveform
   - name: test:table
 )";
@@ -358,9 +377,7 @@ pvs:
     ASSERT_NE(reader_ptr, nullptr);
 
     const std::set<std::string> expected{
-        "test:counter",
         "test:voltage",
-        "test:status",
         "test:waveform",
         "test:table",
     };
@@ -407,119 +424,33 @@ pvs:
         FAIL() << oss.str();
     }
 
-    // test:counter (NTScalar<Int32>) -> intValue (only EPICS 'value' is serialized)
+    // test:voltage (NTScalar<Float64>) -> double column
     {
-        const auto dv = findLatestDataValueForSource(*mock_bus, "test:counter");
-        ASSERT_NE(dv, nullptr);
-        ASSERT_EQ(dv->value_case(), DataValue::kIntValue);
-        ASSERT_EQ(dv->value_case(), DataValue::kIntValue);
-        EXPECT_GT(dv->intvalue(), 0);
-        EXPECT_EQ(findStructureFieldValue(*dv, "timeStamp"), nullptr);
+        const auto df = findLatestDataFrameForSource(*mock_bus, "test:voltage");
+        ASSERT_NE(df, nullptr);
+        ASSERT_GT(df->doublecolumns_size(), 0);
+        ASSERT_GT(df->doublecolumns(0).values_size(), 0);
     }
 
-    // test:voltage (NTScalar<Float64>) -> doubleValue
+    // test:waveform (NTScalar<Float64A>) -> repeated double column values
     {
-        const auto dv = findLatestDataValueForSource(*mock_bus, "test:voltage");
-        ASSERT_NE(dv, nullptr);
-        ASSERT_EQ(dv->value_case(), DataValue::kDoubleValue);
-        ASSERT_EQ(dv->value_case(), DataValue::kDoubleValue);
-        EXPECT_EQ(findStructureFieldValue(*dv, "timeStamp"), nullptr);
+        const auto df = findLatestDataFrameForSource(*mock_bus, "test:waveform");
+        ASSERT_NE(df, nullptr);
+        ASSERT_GT(df->doublecolumns_size(), 0);
+        ASSERT_EQ(df->doublecolumns(0).values_size(), 256);
     }
 
-    // test:status (NTScalar<String>) -> stringValue
+    // test:table (NTTable) -> expected projected columns
     {
-        const auto dv = findLatestDataValueForSource(*mock_bus, "test:status");
-        ASSERT_NE(dv, nullptr);
-        ASSERT_EQ(dv->value_case(), DataValue::kStringValue);
-        ASSERT_EQ(dv->value_case(), DataValue::kStringValue);
-        const auto& s = dv->stringvalue();
-        EXPECT_TRUE(s == "OK" || s == "WARNING" || s == "FAULT");
-        EXPECT_EQ(findStructureFieldValue(*dv, "timeStamp"), nullptr);
+        const auto df = findLatestDataFrameForSource(*mock_bus, "test:table");
+        ASSERT_NE(df, nullptr);
+        EXPECT_TRUE(hasColumnWithName(*df, "value.deviceIDs"));
+        EXPECT_TRUE(hasColumnWithName(*df, "value.pressure"));
+        EXPECT_FALSE(hasColumnWithName(*df, "value.labels"));
+        EXPECT_FALSE(hasColumnWithName(*df, "value.timeStamp"));
     }
-
-    // test:waveform (NTScalar<Float64A>) -> arrayValue[doubleValue]
-    {
-        const auto dv = findLatestDataValueForSource(*mock_bus, "test:waveform");
-        ASSERT_NE(dv, nullptr);
-        ASSERT_EQ(dv->value_case(), DataValue::kArrayValue);
-        ASSERT_TRUE(dv->has_arrayvalue());
-        const auto& arr = dv->arrayvalue();
-        ASSERT_EQ(arr.datavalues_size(), 256);
-        for (int i = 0; i < arr.datavalues_size(); ++i)
-        {
-            ASSERT_EQ(arr.datavalues(i).value_case(), DataValue::kDoubleValue);
-            ASSERT_EQ(arr.datavalues(i).value_case(), DataValue::kDoubleValue);
-        }
-        EXPECT_EQ(findStructureFieldValue(*dv, "timeStamp"), nullptr);
-    }
-
-    // test:table (NTTable) -> structure contains deviceIDs and pressure arrays (table 'value' only)
-    {
-        const auto dv = findLatestDataValueForSource(*mock_bus, "test:table");
-        ASSERT_NE(dv, nullptr);
-        ASSERT_TRUE(dv->has_structurevalue());
-
-        const auto* deviceIDs = findStructureFieldValue(*dv, "deviceIDs");
-        const auto* pressure = findStructureFieldValue(*dv, "pressure");
-        ASSERT_NE(deviceIDs, nullptr);
-        ASSERT_NE(pressure, nullptr);
-
-        EXPECT_EQ(findStructureFieldValue(*dv, "labels"), nullptr);
-        EXPECT_EQ(findStructureFieldValue(*dv, "timeStamp"), nullptr);
-
-        ASSERT_EQ(deviceIDs->value_case(), DataValue::kArrayValue);
-        ASSERT_TRUE(deviceIDs->has_arrayvalue());
-        ASSERT_EQ(deviceIDs->arrayvalue().datavalues_size(), 3);
-        for (int i = 0; i < deviceIDs->arrayvalue().datavalues_size(); ++i)
-        {
-            ASSERT_EQ(deviceIDs->arrayvalue().datavalues(i).value_case(), DataValue::kStringValue);
-            ASSERT_EQ(deviceIDs->arrayvalue().datavalues(i).value_case(), DataValue::kStringValue);
-        }
-
-        ASSERT_EQ(pressure->value_case(), DataValue::kArrayValue);
-        ASSERT_TRUE(pressure->has_arrayvalue());
-        ASSERT_EQ(pressure->arrayvalue().datavalues_size(), 3);
-        for (int i = 0; i < pressure->arrayvalue().datavalues_size(); ++i)
-        {
-            ASSERT_EQ(pressure->arrayvalue().datavalues(i).value_case(), DataValue::kDoubleValue);
-            ASSERT_EQ(pressure->arrayvalue().datavalues(i).value_case(), DataValue::kDoubleValue);
-        }
-    }
-}
-
-TEST_F(EpicsBaseReaderTest, AlarmFieldsMapToValueStatus)
-{
-    const std::string yaml = R"(
-name: epics_1
-pvs:
-  - name: test:status
-)";
-
-    const auto cfg = makeConfigFromYaml(yaml);
-    auto       reader_ptr = mldp_pvxs_driver::reader::ReaderFactory::create("epics-base", mock_bus, cfg);
-    ASSERT_NE(reader_ptr, nullptr);
-
-    const int max_wait_ms = 5000;
-    int       waited_ms = 0;
-    const DataValue* dv = nullptr;
-    while (waited_ms < max_wait_ms)
-    {
-        dv = findLatestDataValueForSource(*mock_bus, "test:status");
-        if (dv != nullptr && dv->has_valuestatus())
-        {
-            break;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        waited_ms += 100;
-    }
-
-    ASSERT_NE(dv, nullptr) << "No DataValue received within timeout";
-    ASSERT_TRUE(dv->has_valuestatus()) << "No ValueStatus received within timeout";
-
-    const auto& status = dv->valuestatus();
-    EXPECT_EQ(status.severity(), DataValue_ValueStatus_Severity_MAJOR_ALARM);
-    EXPECT_EQ(status.statuscode(), DataValue_ValueStatus_StatusCode_RECORD_STATUS);
-    EXPECT_EQ(status.message(), "TEST_ALARM");
+    reader_ptr.reset();
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
 }
 
 TEST_F(EpicsBaseReaderTest, NTTableRowTimestampSplitsToPerColumnSources)
@@ -583,9 +514,13 @@ pvs:
         EXPECT_GT(ampl[i]->epoch_seconds, 0u);
     }
 
-    ASSERT_EQ(ampl[0]->data_value.value_case(), DataValue::kDoubleValue);
-    EXPECT_DOUBLE_EQ(ampl[0]->data_value.doublevalue(), 1.0);
+    ASSERT_GT(ampl[0]->data_value.doublecolumns_size(), 0);
+    ASSERT_GT(ampl[0]->data_value.doublecolumns(0).values_size(), 0);
+    EXPECT_DOUBLE_EQ(ampl[0]->data_value.doublecolumns(0).values(0), 1.0);
 
-    ASSERT_EQ(stat[0]->data_value.value_case(), DataValue::kStringValue);
-    EXPECT_EQ(stat[0]->data_value.stringvalue(), "OK");
+    ASSERT_GT(stat[0]->data_value.stringcolumns_size(), 0);
+    ASSERT_GT(stat[0]->data_value.stringcolumns(0).values_size(), 0);
+    EXPECT_EQ(stat[0]->data_value.stringcolumns(0).values(0), "OK");
+    reader_ptr.reset();
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
 }

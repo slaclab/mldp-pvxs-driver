@@ -130,45 +130,10 @@ void EpicsPVXSReader::processDefaultMode(const std::string& pvName, const pvxs::
     }
     const uint64_t nanoseconds = nanosecondsField.as<uint64_t>();
 
-    auto  event_value = IDataBus::MakeEventValue(epoch_seconds, nanoseconds);
-    auto* valueStatus = event_value->data_value.mutable_valuestatus();
+    auto event_value = IDataBus::MakeEventValue(epoch_seconds, nanoseconds);
 
-    EpicsMLDPConversion::convertPVToProtoValue(valueField, &event_value->data_value);
-
-    if (const auto severityField = alarm["severity"]; severityField.valid())
-    {
-        const int sev = severityField.as<int>();
-        switch (sev)
-        {
-        case kAlarmSeverityNone:
-            valueStatus->set_severity(DataValue_ValueStatus_Severity_NO_ALARM);
-            break;
-        case kAlarmSeverityMinor:
-            valueStatus->set_severity(DataValue_ValueStatus_Severity_MINOR_ALARM);
-            break;
-        case kAlarmSeverityMajor:
-            valueStatus->set_severity(DataValue_ValueStatus_Severity_MAJOR_ALARM);
-            break;
-        case kAlarmSeverityInvalid:
-            valueStatus->set_severity(DataValue_ValueStatus_Severity_INVALID_ALARM);
-            break;
-        default:
-            valueStatus->set_severity(DataValue_ValueStatus_Severity_UNDEFINED_ALARM);
-            break;
-        }
-    }
-
-    if (const auto statusField = alarm["status"]; statusField.valid())
-    {
-        const int status = statusField.as<int>();
-        valueStatus->set_statuscode(status == 0 ? DataValue_ValueStatus_StatusCode_NO_STATUS
-                                                : DataValue_ValueStatus_StatusCode_RECORD_STATUS);
-    }
-
-    if (const auto messageField = alarm["message"]; messageField.valid())
-    {
-        valueStatus->set_message(messageField.as<std::string>());
-    }
+    // For simplicity, we ignore the alarm field in this default mode and just convert the value field to a DataFrame.
+    EpicsMLDPConversion::convertPVToDataFrame(valueField, &event_value->data_value);
 
     IDataBus::EventBatch batch;
     batch.root_source = pvName;

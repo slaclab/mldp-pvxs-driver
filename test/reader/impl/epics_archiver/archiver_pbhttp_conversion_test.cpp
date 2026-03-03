@@ -21,6 +21,7 @@
 
 using namespace mldp_pvxs_driver::reader::impl::epics_archiver;
 using namespace mldp_pvxs_driver::util::time;
+using DataFrame = dp::service::common::DataFrame;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -66,7 +67,8 @@ TEST(ArchiverPbHttpConversionTest, ScalarString)
     EXPECT_EQ(parsed.epoch_seconds, expectedEpoch(2024, 100));
     EXPECT_EQ(parsed.nanoseconds, 500u);
     ASSERT_TRUE(parsed.event != nullptr);
-    EXPECT_EQ(parsed.event->data_value.stringvalue(), "hello");
+    ASSERT_EQ(parsed.event->data_value.stringcolumns_size(), 1);
+    EXPECT_EQ(parsed.event->data_value.stringcolumns(0).values(0), "hello");
 }
 
 // ---------------------------------------------------------------------------
@@ -88,7 +90,8 @@ TEST(ArchiverPbHttpConversionTest, ScalarShort)
 
     EXPECT_EQ(parsed.epoch_seconds, expectedEpoch(2023, 200));
     EXPECT_EQ(parsed.nanoseconds, 0u);
-    EXPECT_EQ(parsed.event->data_value.intvalue(), -42);
+    ASSERT_EQ(parsed.event->data_value.int32columns_size(), 1);
+    EXPECT_EQ(parsed.event->data_value.int32columns(0).values(0), -42);
 }
 
 // ---------------------------------------------------------------------------
@@ -109,7 +112,8 @@ TEST(ArchiverPbHttpConversionTest, ScalarFloat)
     const auto parsed = ArchiverPbHttpConversion::parseSample(hdr, bytes);
 
     EXPECT_EQ(parsed.epoch_seconds, expectedEpoch(2022, 300));
-    EXPECT_NEAR(parsed.event->data_value.floatvalue(), 3.14f, 1e-5f);
+    ASSERT_EQ(parsed.event->data_value.floatcolumns_size(), 1);
+    EXPECT_NEAR(parsed.event->data_value.floatcolumns(0).values(0), 3.14f, 1e-5f);
 }
 
 // ---------------------------------------------------------------------------
@@ -129,7 +133,8 @@ TEST(ArchiverPbHttpConversionTest, ScalarEnum)
     const auto hdr    = makeHeader(EPICS::SCALAR_ENUM, 2021);
     const auto parsed = ArchiverPbHttpConversion::parseSample(hdr, bytes);
 
-    EXPECT_EQ(parsed.event->data_value.intvalue(), 7);
+    ASSERT_EQ(parsed.event->data_value.int32columns_size(), 1);
+    EXPECT_EQ(parsed.event->data_value.int32columns(0).values(0), 7);
 }
 
 // ---------------------------------------------------------------------------
@@ -149,7 +154,8 @@ TEST(ArchiverPbHttpConversionTest, ScalarByte)
     const auto hdr    = makeHeader(EPICS::SCALAR_BYTE, 2020);
     const auto parsed = ArchiverPbHttpConversion::parseSample(hdr, bytes);
 
-    EXPECT_EQ(parsed.event->data_value.bytearrayvalue(), std::string("\x01\x02\x03", 3));
+    ASSERT_EQ(parsed.event->data_value.stringcolumns_size(), 1);
+    EXPECT_EQ(parsed.event->data_value.stringcolumns(0).values(0), std::string("\x01\x02\x03", 3));
 }
 
 // ---------------------------------------------------------------------------
@@ -170,7 +176,8 @@ TEST(ArchiverPbHttpConversionTest, ScalarInt)
     const auto parsed = ArchiverPbHttpConversion::parseSample(hdr, bytes);
 
     EXPECT_EQ(parsed.nanoseconds, 123456789u);
-    EXPECT_EQ(parsed.event->data_value.intvalue(), 0x7FFFFFFF);
+    ASSERT_EQ(parsed.event->data_value.int32columns_size(), 1);
+    EXPECT_EQ(parsed.event->data_value.int32columns(0).values(0), 0x7FFFFFFF);
 }
 
 // ---------------------------------------------------------------------------
@@ -190,7 +197,8 @@ TEST(ArchiverPbHttpConversionTest, ScalarDouble)
     const auto hdr    = makeHeader(EPICS::SCALAR_DOUBLE, 2024);
     const auto parsed = ArchiverPbHttpConversion::parseSample(hdr, bytes);
 
-    EXPECT_NEAR(parsed.event->data_value.doublevalue(), 2.718281828, 1e-9);
+    ASSERT_EQ(parsed.event->data_value.doublecolumns_size(), 1);
+    EXPECT_NEAR(parsed.event->data_value.doublecolumns(0).values(0), 2.718281828, 1e-9);
 }
 
 // ---------------------------------------------------------------------------
@@ -212,12 +220,12 @@ TEST(ArchiverPbHttpConversionTest, WaveformString)
     const auto hdr    = makeHeader(EPICS::WAVEFORM_STRING, 2024);
     const auto parsed = ArchiverPbHttpConversion::parseSample(hdr, bytes);
 
-    ASSERT_TRUE(parsed.event->data_value.has_arrayvalue());
-    const auto& arr = parsed.event->data_value.arrayvalue();
-    ASSERT_EQ(arr.datavalues_size(), 3);
-    EXPECT_EQ(arr.datavalues(0).stringvalue(), "alpha");
-    EXPECT_EQ(arr.datavalues(1).stringvalue(), "beta");
-    EXPECT_EQ(arr.datavalues(2).stringvalue(), "gamma");
+    ASSERT_EQ(parsed.event->data_value.stringcolumns_size(), 1);
+    const auto& col = parsed.event->data_value.stringcolumns(0);
+    ASSERT_EQ(col.values_size(), 3);
+    EXPECT_EQ(col.values(0), "alpha");
+    EXPECT_EQ(col.values(1), "beta");
+    EXPECT_EQ(col.values(2), "gamma");
 }
 
 // ---------------------------------------------------------------------------
@@ -239,11 +247,12 @@ TEST(ArchiverPbHttpConversionTest, WaveformShort)
     const auto hdr    = makeHeader(EPICS::WAVEFORM_SHORT, 2024);
     const auto parsed = ArchiverPbHttpConversion::parseSample(hdr, bytes);
 
-    const auto& arr = parsed.event->data_value.arrayvalue();
-    ASSERT_EQ(arr.datavalues_size(), 3);
-    EXPECT_EQ(arr.datavalues(0).intvalue(), 1);
-    EXPECT_EQ(arr.datavalues(1).intvalue(), -2);
-    EXPECT_EQ(arr.datavalues(2).intvalue(), 3);
+    ASSERT_EQ(parsed.event->data_value.int32columns_size(), 1);
+    const auto& col = parsed.event->data_value.int32columns(0);
+    ASSERT_EQ(col.values_size(), 3);
+    EXPECT_EQ(col.values(0), 1);
+    EXPECT_EQ(col.values(1), -2);
+    EXPECT_EQ(col.values(2), 3);
 }
 
 // ---------------------------------------------------------------------------
@@ -264,10 +273,11 @@ TEST(ArchiverPbHttpConversionTest, WaveformFloat)
     const auto hdr    = makeHeader(EPICS::WAVEFORM_FLOAT, 2024);
     const auto parsed = ArchiverPbHttpConversion::parseSample(hdr, bytes);
 
-    const auto& arr = parsed.event->data_value.arrayvalue();
-    ASSERT_EQ(arr.datavalues_size(), 2);
-    EXPECT_NEAR(arr.datavalues(0).floatvalue(), 1.1f, 1e-5f);
-    EXPECT_NEAR(arr.datavalues(1).floatvalue(), 2.2f, 1e-5f);
+    ASSERT_EQ(parsed.event->data_value.floatcolumns_size(), 1);
+    const auto& col = parsed.event->data_value.floatcolumns(0);
+    ASSERT_EQ(col.values_size(), 2);
+    EXPECT_NEAR(col.values(0), 1.1f, 1e-5f);
+    EXPECT_NEAR(col.values(1), 2.2f, 1e-5f);
 }
 
 // ---------------------------------------------------------------------------
@@ -288,10 +298,11 @@ TEST(ArchiverPbHttpConversionTest, WaveformEnum)
     const auto hdr    = makeHeader(EPICS::WAVEFORM_ENUM, 2024);
     const auto parsed = ArchiverPbHttpConversion::parseSample(hdr, bytes);
 
-    const auto& arr = parsed.event->data_value.arrayvalue();
-    ASSERT_EQ(arr.datavalues_size(), 2);
-    EXPECT_EQ(arr.datavalues(0).intvalue(), 0);
-    EXPECT_EQ(arr.datavalues(1).intvalue(), 3);
+    ASSERT_EQ(parsed.event->data_value.int32columns_size(), 1);
+    const auto& col = parsed.event->data_value.int32columns(0);
+    ASSERT_EQ(col.values_size(), 2);
+    EXPECT_EQ(col.values(0), 0);
+    EXPECT_EQ(col.values(1), 3);
 }
 
 // ---------------------------------------------------------------------------
@@ -312,7 +323,8 @@ TEST(ArchiverPbHttpConversionTest, WaveformByte)
     const auto parsed = ArchiverPbHttpConversion::parseSample(hdr, bytes);
 
     EXPECT_EQ(parsed.nanoseconds, 77u);
-    EXPECT_EQ(parsed.event->data_value.bytearrayvalue(), std::string("\xDE\xAD\xBE\xEF", 4));
+    ASSERT_EQ(parsed.event->data_value.stringcolumns_size(), 1);
+    EXPECT_EQ(parsed.event->data_value.stringcolumns(0).values(0), std::string("\xDE\xAD\xBE\xEF", 4));
 }
 
 // ---------------------------------------------------------------------------
@@ -334,11 +346,12 @@ TEST(ArchiverPbHttpConversionTest, WaveformInt)
     const auto hdr    = makeHeader(EPICS::WAVEFORM_INT, 2024);
     const auto parsed = ArchiverPbHttpConversion::parseSample(hdr, bytes);
 
-    const auto& arr = parsed.event->data_value.arrayvalue();
-    ASSERT_EQ(arr.datavalues_size(), 3);
-    EXPECT_EQ(arr.datavalues(0).intvalue(), 100);
-    EXPECT_EQ(arr.datavalues(1).intvalue(), 200);
-    EXPECT_EQ(arr.datavalues(2).intvalue(), 300);
+    ASSERT_EQ(parsed.event->data_value.int32columns_size(), 1);
+    const auto& col = parsed.event->data_value.int32columns(0);
+    ASSERT_EQ(col.values_size(), 3);
+    EXPECT_EQ(col.values(0), 100);
+    EXPECT_EQ(col.values(1), 200);
+    EXPECT_EQ(col.values(2), 300);
 }
 
 // ---------------------------------------------------------------------------
@@ -359,10 +372,11 @@ TEST(ArchiverPbHttpConversionTest, WaveformDouble)
     const auto hdr    = makeHeader(EPICS::WAVEFORM_DOUBLE, 2024);
     const auto parsed = ArchiverPbHttpConversion::parseSample(hdr, bytes);
 
-    const auto& arr = parsed.event->data_value.arrayvalue();
-    ASSERT_EQ(arr.datavalues_size(), 2);
-    EXPECT_DOUBLE_EQ(arr.datavalues(0).doublevalue(), 1.0);
-    EXPECT_DOUBLE_EQ(arr.datavalues(1).doublevalue(), 2.0);
+    ASSERT_EQ(parsed.event->data_value.doublecolumns_size(), 1);
+    const auto& col = parsed.event->data_value.doublecolumns(0);
+    ASSERT_EQ(col.values_size(), 2);
+    EXPECT_DOUBLE_EQ(col.values(0), 1.0);
+    EXPECT_DOUBLE_EQ(col.values(1), 2.0);
 }
 
 // ---------------------------------------------------------------------------
@@ -383,7 +397,8 @@ TEST(ArchiverPbHttpConversionTest, V4GenericBytes)
     const auto parsed = ArchiverPbHttpConversion::parseSample(hdr, bytes);
 
     EXPECT_EQ(parsed.nanoseconds, 42u);
-    EXPECT_EQ(parsed.event->data_value.bytearrayvalue(), std::string("\xCA\xFE", 2));
+    ASSERT_EQ(parsed.event->data_value.stringcolumns_size(), 1);
+    EXPECT_EQ(parsed.event->data_value.stringcolumns(0).values(0), std::string("\xCA\xFE", 2));
 }
 
 // ---------------------------------------------------------------------------

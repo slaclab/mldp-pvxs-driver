@@ -154,9 +154,9 @@ public:
     std::vector<SourceInfo> querySourcesInfo(const std::set<std::string>& source_names) override;
 
     /**
-     * @brief Query MLDP data columns for a set of PV/source names.
+     * @brief Query MLDP data values for a set of PV/source names.
      */
-    std::optional<std::unordered_map<std::string, DataColumn>> querySourcesData(
+    std::optional<std::unordered_map<std::string, std::vector<dp::service::common::DataValues>>> querySourcesData(
         const std::set<std::string>&              source_names,
         const util::bus::QuerySourcesDataOptions& options = util::bus::QuerySourcesDataOptions{}) override;
 
@@ -206,7 +206,8 @@ private:
 
     explicit MLDPPVXSController(const config::Config& config);
     void workerLoop(std::size_t worker_index);
-    bool buildRequest(const QueueItem&                           item,
+    bool buildRequest(const std::string&                         source_name,
+                      const util::bus::IDataBus::EventValue&     event_value,
                       const std::string&                         request_id,
                       dp::service::ingestion::IngestDataRequest& request,
                       std::size_t&                               accepted_events,

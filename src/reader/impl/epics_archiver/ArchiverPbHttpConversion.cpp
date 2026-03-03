@@ -21,11 +21,12 @@
 using namespace mldp_pvxs_driver::reader::impl::epics_archiver;
 using namespace mldp_pvxs_driver::util::bus;
 using namespace mldp_pvxs_driver::util::time;
+using DataFrame = dp::service::common::DataFrame;
 
 namespace {
 
 // Helper: build a ParsedSample from already-computed epoch/nano + a proto message
-// that has been partially filled. The caller is responsible for setting the DataValue.
+// that has been partially filled. The caller is responsible for setting the DataFrame columns.
 ParsedSample makeBaseSample(const EPICS::PayloadInfo& header,
                             uint32_t                  secondsintoyear,
                             uint32_t                  nano)
@@ -67,12 +68,7 @@ ParsedSample parseWaveform(const EPICS::PayloadInfo& header,
         throw std::runtime_error("failed to parse PB/HTTP waveform sample");
     }
     auto s = makeBaseSample(header, msg.secondsintoyear(), msg.nano());
-    auto* arr = s.event->data_value.mutable_arrayvalue();
-    for (const auto& v : msg.val())
-    {
-        auto* element = arr->add_datavalues();
-        setter(element, v);
-    }
+    setter(&s.event->data_value, msg.val());
     return s;
 }
 
@@ -87,8 +83,10 @@ ParsedSample parseBlob(const EPICS::PayloadInfo& header,
     {
         throw std::runtime_error("failed to parse PB/HTTP blob sample");
     }
-    auto s = makeBaseSample(header, msg.secondsintoyear(), msg.nano());
-    s.event->data_value.set_bytearrayvalue(msg.val());
+    auto  s = makeBaseSample(header, msg.secondsintoyear(), msg.nano());
+    auto* c = s.event->data_value.add_stringcolumns();
+    c->set_name("value");
+    c->add_values(msg.val());
     return s;
 }
 
@@ -105,22 +103,30 @@ ParsedSample ArchiverPbHttpConversion::parseSample(const EPICS::PayloadInfo& hea
     case EPICS::SCALAR_STRING:
         return parseScalar<EPICS::ScalarString>(
             header, msg_bytes,
-            [](DataValue* dv, const std::string& v) { dv->set_stringvalue(v); });
+            [](DataFrame* df, const std::string& v) {
+                auto* c = df->add_stringcolumns(); c->set_name("value"); c->add_values(v);
+            });
 
     case EPICS::SCALAR_SHORT:
         return parseScalar<EPICS::ScalarShort>(
             header, msg_bytes,
-            [](DataValue* dv, int32_t v) { dv->set_intvalue(v); });
+            [](DataFrame* df, int32_t v) {
+                auto* c = df->add_int32columns(); c->set_name("value"); c->add_values(v);
+            });
 
     case EPICS::SCALAR_FLOAT:
         return parseScalar<EPICS::ScalarFloat>(
             header, msg_bytes,
-            [](DataValue* dv, float v) { dv->set_floatvalue(v); });
+            [](DataFrame* df, float v) {
+                auto* c = df->add_floatcolumns(); c->set_name("value"); c->add_values(v);
+            });
 
     case EPICS::SCALAR_ENUM:
         return parseScalar<EPICS::ScalarEnum>(
             header, msg_bytes,
-            [](DataValue* dv, int32_t v) { dv->set_intvalue(v); });
+            [](DataFrame* df, int32_t v) {
+                auto* c = df->add_int32columns(); c->set_name("value"); c->add_values(v);
+            });
 
     case EPICS::SCALAR_BYTE:
         return parseBlob<EPICS::ScalarByte>(header, msg_bytes);
@@ -128,33 +134,49 @@ ParsedSample ArchiverPbHttpConversion::parseSample(const EPICS::PayloadInfo& hea
     case EPICS::SCALAR_INT:
         return parseScalar<EPICS::ScalarInt>(
             header, msg_bytes,
-            [](DataValue* dv, int32_t v) { dv->set_intvalue(v); });
+            [](DataFrame* df, int32_t v) {
+                auto* c = df->add_int32columns(); c->set_name("value"); c->add_values(v);
+            });
 
     case EPICS::SCALAR_DOUBLE:
         return parseScalar<EPICS::ScalarDouble>(
             header, msg_bytes,
-            [](DataValue* dv, double v) { dv->set_doublevalue(v); });
+            [](DataFrame* df, double v) {
+                auto* c = df->add_doublecolumns(); c->set_name("value"); c->add_values(v);
+            });
 
     // ---- Waveforms ---------------------------------------------------------
     case EPICS::WAVEFORM_STRING:
         return parseWaveform<EPICS::VectorString>(
             header, msg_bytes,
-            [](DataValue* dv, const std::string& v) { dv->set_stringvalue(v); });
+            [](DataFrame* df, const auto& vals) {
+                auto* c = df->add_stringcolumns(); c->set_name("value");
+                for (const auto& v : vals) c->add_values(v);
+            });
 
     case EPICS::WAVEFORM_SHORT:
         return parseWaveform<EPICS::VectorShort>(
             header, msg_bytes,
-            [](DataValue* dv, int32_t v) { dv->set_intvalue(v); });
+            [](DataFrame* df, const auto& vals) {
+                auto* c = df->add_int32columns(); c->set_name("value");
+                for (const auto v : vals) c->add_values(v);
+            });
 
     case EPICS::WAVEFORM_FLOAT:
         return parseWaveform<EPICS::VectorFloat>(
             header, msg_bytes,
-            [](DataValue* dv, float v) { dv->set_floatvalue(v); });
+            [](DataFrame* df, const auto& vals) {
+                auto* c = df->add_floatcolumns(); c->set_name("value");
+                for (const auto v : vals) c->add_values(v);
+            });
 
     case EPICS::WAVEFORM_ENUM:
         return parseWaveform<EPICS::VectorEnum>(
             header, msg_bytes,
-            [](DataValue* dv, int32_t v) { dv->set_intvalue(v); });
+            [](DataFrame* df, const auto& vals) {
+                auto* c = df->add_int32columns(); c->set_name("value");
+                for (const auto v : vals) c->add_values(v);
+            });
 
     case EPICS::WAVEFORM_BYTE:
         return parseBlob<EPICS::VectorChar>(header, msg_bytes);
@@ -162,12 +184,18 @@ ParsedSample ArchiverPbHttpConversion::parseSample(const EPICS::PayloadInfo& hea
     case EPICS::WAVEFORM_INT:
         return parseWaveform<EPICS::VectorInt>(
             header, msg_bytes,
-            [](DataValue* dv, int32_t v) { dv->set_intvalue(v); });
+            [](DataFrame* df, const auto& vals) {
+                auto* c = df->add_int32columns(); c->set_name("value");
+                for (const auto v : vals) c->add_values(v);
+            });
 
     case EPICS::WAVEFORM_DOUBLE:
         return parseWaveform<EPICS::VectorDouble>(
             header, msg_bytes,
-            [](DataValue* dv, double v) { dv->set_doublevalue(v); });
+            [](DataFrame* df, const auto& vals) {
+                auto* c = df->add_doublecolumns(); c->set_name("value");
+                for (const auto v : vals) c->add_values(v);
+            });
 
     // ---- Generic bytes -----------------------------------------------------
     case EPICS::V4_GENERIC_BYTES:

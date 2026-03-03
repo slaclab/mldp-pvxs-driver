@@ -194,43 +194,6 @@ void EpicsBaseReader::processEvent(std::string pvName, ::epics::pvData::PVStruct
                     auto valueField = epics_value->getSubField("value");
                     EpicsPVDataConversion::convertPVToProtoValue(
                         valueField ? *valueField : *epics_value, &event_value->data_value);
-
-                    if (auto alarm = epics_value->getSubField<::epics::pvData::PVStructure>("alarm"))
-                    {
-                        auto* valueStatus = event_value->data_value.mutable_valuestatus();
-                        if (auto severityField = alarm->getSubField<::epics::pvData::PVScalar>("severity"))
-                        {
-                            const int sev = severityField->getAs<int>();
-                            switch (sev)
-                            {
-                            case 0:
-                                valueStatus->set_severity(DataValue_ValueStatus_Severity_NO_ALARM);
-                                break;
-                            case 1:
-                                valueStatus->set_severity(DataValue_ValueStatus_Severity_MINOR_ALARM);
-                                break;
-                            case 2:
-                                valueStatus->set_severity(DataValue_ValueStatus_Severity_MAJOR_ALARM);
-                                break;
-                            case 3:
-                                valueStatus->set_severity(DataValue_ValueStatus_Severity_INVALID_ALARM);
-                                break;
-                            default:
-                                valueStatus->set_severity(DataValue_ValueStatus_Severity_UNDEFINED_ALARM);
-                                break;
-                            }
-                        }
-                        if (auto statusField = alarm->getSubField<::epics::pvData::PVScalar>("status"))
-                        {
-                            const int status = statusField->getAs<int>();
-                            valueStatus->set_statuscode(status == 0 ? DataValue_ValueStatus_StatusCode_NO_STATUS
-                                                                    : DataValue_ValueStatus_StatusCode_RECORD_STATUS);
-                        }
-                        if (auto messageField = alarm->getSubField<::epics::pvData::PVScalar>("message"))
-                        {
-                            valueStatus->set_message(messageField->getAs<std::string>());
-                        }
-                    }
                 }
 
                 batch.tags.push_back(pvName);

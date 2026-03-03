@@ -28,6 +28,8 @@ using namespace mldp_pvxs_driver::util::pool;
 using namespace mldp_pvxs_driver::testutil;
 using mldp_pvxs_driver::controller::MLDPPVXSController;
 using mldp_pvxs_driver::config::makeConfigFromYaml;
+using dp::service::common::DataValue;
+using dp::service::common::Structure;
 
 static MLDPGrpcPoolConfig make_pool_config(int min_conn, int max_conn, std::string_view test_provider_id = "test_provider", std::string_view description = "test_provider_desc")
 {
@@ -44,6 +46,55 @@ static MLDPGrpcPoolConfig make_pool_config(int min_conn, int max_conn, std::stri
 namespace {
 
 constexpr auto kSubscribeTimeout = std::chrono::seconds(10);
+
+std::optional<int64_t> firstIntegerValue(const dp::service::common::DataValues& values)
+{
+    using DV = dp::service::common::DataValues;
+
+    auto fromDataValue = [](const dp::service::common::DataValue& v) -> std::optional<int64_t>
+    {
+        switch (v.value_case())
+        {
+        case dp::service::common::DataValue::kIntValue: return static_cast<int64_t>(v.intvalue());
+        case dp::service::common::DataValue::kLongValue: return static_cast<int64_t>(v.longvalue());
+        default: return std::nullopt;
+        }
+    };
+
+    switch (values.values_case())
+    {
+    case DV::kDataColumn:
+        if (values.datacolumn().datavalues_size() > 0)
+        {
+            return fromDataValue(values.datacolumn().datavalues(0));
+        }
+        break;
+    case DV::kSerializedDataColumn:
+    {
+        dp::service::common::DataColumn parsed;
+        if (parsed.ParseFromString(values.serializeddatacolumn().payload()) && parsed.datavalues_size() > 0)
+        {
+            return fromDataValue(parsed.datavalues(0));
+        }
+        break;
+    }
+    case DV::kInt32Column:
+        if (values.int32column().values_size() > 0)
+        {
+            return static_cast<int64_t>(values.int32column().values(0));
+        }
+        break;
+    case DV::kInt64Column:
+        if (values.int64column().values_size() > 0)
+        {
+            return static_cast<int64_t>(values.int64column().values(0));
+        }
+        break;
+    default:
+        break;
+    }
+    return std::nullopt;
+}
 
 class MLDPGrpcPoolIntegrationTest : public ::testing::Test
 {
@@ -255,7 +306,6 @@ TEST(MLDPGrpcPoolTest, UpdatesMetricsWhenConnectionsMove)
         dp::service::ingestion::IngestDataResponse response;
         request.set_providerid(providerId);
         request.set_clientrequestid("req_123");
-        request.add_tags("pv1");
         auto* frame = request.mutable_ingestiondataframe();
         auto* column = frame->add_datacolumns();
         column->set_name("pv1");
@@ -290,9 +340,10 @@ TEST_F(MLDPGrpcPoolIntegrationTest, QueryCounterPV)
     const auto result = queryAndCollectColumns({"test:counter"}, kSubscribeTimeout);
     ASSERT_TRUE(result.has_value());
 
-    const auto& column = result->at("test:counter");
-    ASSERT_GT(column.datavalues_size(), 0);
-    const auto& value = column.datavalues(0);
+    const auto& buckets = result->at("test:counter");
+    const auto  rows = flattenDataValues(buckets);
+    ASSERT_GT(rows.size(), 0);
+    const auto& value = rows[0];
     EXPECT_EQ(value.value_case(), DataValue::kIntValue);
     EXPECT_GT(value.intvalue(), 0);
 }
@@ -304,9 +355,10 @@ TEST_F(MLDPGrpcPoolIntegrationTest, QueryVoltagePV)
     const auto result = queryAndCollectColumns({"test:voltage"}, kSubscribeTimeout);
     ASSERT_TRUE(result.has_value());
 
-    const auto& column = result->at("test:voltage");
-    ASSERT_GT(column.datavalues_size(), 0);
-    const auto& value = column.datavalues(0);
+    const auto& buckets = result->at("test:voltage");
+    const auto  rows = flattenDataValues(buckets);
+    ASSERT_GT(rows.size(), 0);
+    const auto& value = rows[0];
     EXPECT_EQ(value.value_case(), DataValue::kDoubleValue);
     EXPECT_GE(value.doublevalue(), 0.4);
     EXPECT_LE(value.doublevalue(), 2.6);
@@ -319,9 +371,10 @@ TEST_F(MLDPGrpcPoolIntegrationTest, QueryStatusPV)
     const auto result = queryAndCollectColumns({"test:status"}, kSubscribeTimeout);
     ASSERT_TRUE(result.has_value());
 
-    const auto& column = result->at("test:status");
-    ASSERT_GT(column.datavalues_size(), 0);
-    const auto& value = column.datavalues(0);
+    const auto& buckets = result->at("test:status");
+    const auto  rows = flattenDataValues(buckets);
+    ASSERT_GT(rows.size(), 0);
+    const auto& value = rows[0];
     EXPECT_EQ(value.value_case(), DataValue::kStringValue);
     const auto& status = value.stringvalue();
     EXPECT_TRUE(status == "OK" || status == "WARNING" || status == "FAULT");
@@ -334,9 +387,10 @@ TEST_F(MLDPGrpcPoolIntegrationTest, QueryWaveformPV)
     const auto result = queryAndCollectColumns({"test:waveform"}, kSubscribeTimeout);
     ASSERT_TRUE(result.has_value());
 
-    const auto& column = result->at("test:waveform");
-    ASSERT_GT(column.datavalues_size(), 0);
-    const auto& value = column.datavalues(0);
+    const auto& buckets = result->at("test:waveform");
+    const auto  rows = flattenDataValues(buckets);
+    ASSERT_GT(rows.size(), 0);
+    const auto& value = rows[0];
     ASSERT_TRUE(value.has_arrayvalue());
 
     const auto& arrayValues = value.arrayvalue().datavalues();
@@ -356,9 +410,10 @@ TEST_F(MLDPGrpcPoolIntegrationTest, QueryTablePV)
     const auto result = queryAndCollectColumns({"test:table"}, kSubscribeTimeout);
     ASSERT_TRUE(result.has_value());
 
-    const auto& column = result->at("test:table");
-    ASSERT_GT(column.datavalues_size(), 0);
-    const auto& value = column.datavalues(0);
+    const auto& buckets = result->at("test:table");
+    const auto  rows = flattenDataValues(buckets);
+    ASSERT_GT(rows.size(), 0);
+    const auto& value = rows[0];
     ASSERT_TRUE(value.has_structurevalue());
 
     const auto& structure = value.structurevalue();
@@ -409,24 +464,24 @@ TEST_F(MLDPGrpcPoolIntegrationTest, QueryBsasTablePV)
     const auto result = queryAndCollectColumns({"PV_NAME_A_DOUBLE_VALUE", "PV_NAME_B_STRING_VALUE"}, kSubscribeTimeout);
     ASSERT_TRUE(result.has_value());
 
-    const auto& doubleColumn = result->at("PV_NAME_A_DOUBLE_VALUE");
-    const auto& stringColumn = result->at("PV_NAME_B_STRING_VALUE");
+    const auto doubleRows = flattenDataValues(result->at("PV_NAME_A_DOUBLE_VALUE"));
+    const auto stringRows = flattenDataValues(result->at("PV_NAME_B_STRING_VALUE"));
 
-    ASSERT_EQ(doubleColumn.datavalues_size(), 3);
-    EXPECT_EQ(doubleColumn.datavalues(0).value_case(), DataValue::kDoubleValue);
-    EXPECT_EQ(doubleColumn.datavalues(1).value_case(), DataValue::kDoubleValue);
-    EXPECT_EQ(doubleColumn.datavalues(2).value_case(), DataValue::kDoubleValue);
-    EXPECT_EQ(doubleColumn.datavalues(0).doublevalue(), 1.0);
-    EXPECT_EQ(doubleColumn.datavalues(1).doublevalue(), 2.0);
-    EXPECT_EQ(doubleColumn.datavalues(2).doublevalue(), 3.0);
+    ASSERT_GE(doubleRows.size(), 3);
+    EXPECT_EQ(doubleRows[0].value_case(), DataValue::kDoubleValue);
+    EXPECT_EQ(doubleRows[1].value_case(), DataValue::kDoubleValue);
+    EXPECT_EQ(doubleRows[2].value_case(), DataValue::kDoubleValue);
+    EXPECT_EQ(doubleRows[0].doublevalue(), 1.0);
+    EXPECT_EQ(doubleRows[1].doublevalue(), 2.0);
+    EXPECT_EQ(doubleRows[2].doublevalue(), 3.0);
 
-    ASSERT_EQ(stringColumn.datavalues_size(), 3);
-    EXPECT_EQ(stringColumn.datavalues(0).value_case(), DataValue::kStringValue);
-    EXPECT_EQ(stringColumn.datavalues(1).value_case(), DataValue::kStringValue);
-    EXPECT_EQ(stringColumn.datavalues(2).value_case(), DataValue::kStringValue);
-    EXPECT_EQ(stringColumn.datavalues(0).stringvalue(), "OK");
-    EXPECT_EQ(stringColumn.datavalues(1).stringvalue(), "WARNING");
-    EXPECT_EQ(stringColumn.datavalues(2).stringvalue(), "FAULT");
+    ASSERT_GE(stringRows.size(), 3);
+    EXPECT_EQ(stringRows[0].value_case(), DataValue::kStringValue);
+    EXPECT_EQ(stringRows[1].value_case(), DataValue::kStringValue);
+    EXPECT_EQ(stringRows[2].value_case(), DataValue::kStringValue);
+    EXPECT_EQ(stringRows[0].stringvalue(), "OK");
+    EXPECT_EQ(stringRows[1].stringvalue(), "WARNING");
+    EXPECT_EQ(stringRows[2].stringvalue(), "FAULT");
 }
 
 TEST_F(MLDPGrpcPoolIntegrationTest, CharacterizesDuplicateIngestBehaviorForSameSample)
@@ -445,7 +500,6 @@ TEST_F(MLDPGrpcPoolIntegrationTest, CharacterizesDuplicateIngestBehaviorForSameS
         dp::service::ingestion::IngestDataRequest request;
         request.set_providerid(providerId);
         request.set_clientrequestid(std::move(client_request_id));
-        request.add_tags(pvName);
 
         auto* frame = request.mutable_ingestiondataframe();
         auto* column = frame->add_datacolumns();
@@ -481,14 +535,14 @@ TEST_F(MLDPGrpcPoolIntegrationTest, CharacterizesDuplicateIngestBehaviorForSameS
 
     const auto result = queryAndCollectColumns({pvName}, std::chrono::seconds(10));
     ASSERT_TRUE(result.has_value());
-    const auto& column = result->at(pvName);
+    const auto rows = flattenDataValues(result->at(pvName));
 
     // Characterization test: some MLDP deployments deduplicate identical samples,
     // while others store both rows. This test records the current behavior while
     // still ensuring the query path returns the inserted sample value.
-    ASSERT_GE(column.datavalues_size(), 1);
-    ASSERT_LE(column.datavalues_size(), 2);
-    for (const auto& v : column.datavalues())
+    ASSERT_GE(rows.size(), 1);
+    ASSERT_LE(rows.size(), 2);
+    for (const auto& v : rows)
     {
         EXPECT_EQ(v.value_case(), DataValue::kIntValue);
         EXPECT_EQ(v.intvalue(), 42);
@@ -514,7 +568,6 @@ TEST_F(MLDPGrpcPoolIntegrationTest, IDataBusQueryApiReturnsMetadataAndDataForIns
     dp::service::ingestion::IngestDataRequest request;
     request.set_providerid(provider_id);
     request.set_clientrequestid("query_api_probe_req");
-    request.add_tags(pv_name);
     auto* frame = request.mutable_ingestiondataframe();
     auto* column = frame->add_datacolumns();
     column->set_name(pv_name);
@@ -579,11 +632,13 @@ TEST_F(MLDPGrpcPoolIntegrationTest, IDataBusQueryApiReturnsMetadataAndDataForIns
 
     const auto data = bus->querySourcesData(sources, options);
     ASSERT_TRUE(data.has_value());
-    const auto column_it = data->find(pv_name);
-    ASSERT_NE(column_it, data->end());
-    ASSERT_GT(column_it->second.datavalues_size(), 0);
-    EXPECT_EQ(column_it->second.datavalues(0).value_case(), DataValue::kIntValue);
-    EXPECT_EQ(column_it->second.datavalues(0).intvalue(), expected_value);
+    const auto buckets_it = data->find(pv_name);
+    ASSERT_NE(buckets_it, data->end());
+    ASSERT_FALSE(buckets_it->second.empty());
+    const auto& first_values = buckets_it->second.front();
+    const auto first = firstIntegerValue(first_values);
+    ASSERT_TRUE(first.has_value());
+    EXPECT_EQ(first.value(), expected_value);
 }
 
 TEST_F(MLDPGrpcPoolIntegrationTest, IDataBusQuerySourcesDataReturnsAllRequestedInsertedPVs)
@@ -610,7 +665,6 @@ TEST_F(MLDPGrpcPoolIntegrationTest, IDataBusQuerySourcesDataReturnsAllRequestedI
         dp::service::ingestion::IngestDataRequest request;
         request.set_providerid(provider_id);
         request.set_clientrequestid(request_id);
-        request.add_tags(pv_name);
         auto* frame = request.mutable_ingestiondataframe();
         auto* column = frame->add_datacolumns();
         column->set_name(pv_name);
@@ -650,10 +704,15 @@ TEST_F(MLDPGrpcPoolIntegrationTest, IDataBusQuerySourcesDataReturnsAllRequestedI
     const auto it_b = data->find(pv_b);
     ASSERT_NE(it_a, data->end());
     ASSERT_NE(it_b, data->end());
-    ASSERT_GT(it_a->second.datavalues_size(), 0);
-    ASSERT_GT(it_b->second.datavalues_size(), 0);
-    EXPECT_EQ(it_a->second.datavalues(0).value_case(), DataValue::kIntValue);
-    EXPECT_EQ(it_b->second.datavalues(0).value_case(), DataValue::kIntValue);
-    EXPECT_EQ(it_a->second.datavalues(0).intvalue(), value_a);
-    EXPECT_EQ(it_b->second.datavalues(0).intvalue(), value_b);
+    ASSERT_FALSE(it_a->second.empty());
+    ASSERT_FALSE(it_b->second.empty());
+
+    const auto& first_a = it_a->second.front();
+    const auto& first_b = it_b->second.front();
+    const auto first_int_a = firstIntegerValue(first_a);
+    const auto first_int_b = firstIntegerValue(first_b);
+    ASSERT_TRUE(first_int_a.has_value());
+    ASSERT_TRUE(first_int_b.has_value());
+    EXPECT_EQ(first_int_a.value(), value_a);
+    EXPECT_EQ(first_int_b.value(), value_b);
 }

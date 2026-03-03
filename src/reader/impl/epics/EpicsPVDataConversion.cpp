@@ -23,65 +23,136 @@ using namespace mldp_pvxs_driver::reader::impl::epics;
 using namespace mldp_pvxs_driver::util::log;
 using mldp_pvxs_driver::util::bus::EventValueStruct;
 using mldp_pvxs_driver::util::bus::IDataBus;
+using DataFrame = dp::service::common::DataFrame;
 
 namespace {
 
+// Appends a single-element typed column to frame.
 template <typename T>
-void setScalarValue(DataValue* protoValue, const T& value)
+void setScalarValue(DataFrame* frame, const T& value, const std::string& name)
 {
-    if constexpr (std::is_same_v<T, bool>)
+    if constexpr (std::is_same_v<T, bool> || std::is_same_v<T, epics::pvData::boolean>)
     {
-        protoValue->set_booleanvalue(value);
-    }
-    else if constexpr (std::is_same_v<T, epics::pvData::boolean>)
-    {
-        protoValue->set_booleanvalue(static_cast<bool>(value));
+        auto* c = frame->add_boolcolumns();
+        c->set_name(name);
+        c->add_values(static_cast<bool>(value));
     }
     else if constexpr (std::is_integral_v<T> && std::is_signed_v<T> && sizeof(T) <= 4)
     {
-        protoValue->set_intvalue(static_cast<int32_t>(value));
+        auto* c = frame->add_int32columns();
+        c->set_name(name);
+        c->add_values(static_cast<int32_t>(value));
     }
     else if constexpr (std::is_integral_v<T> && std::is_signed_v<T>)
     {
-        protoValue->set_longvalue(static_cast<int64_t>(value));
+        auto* c = frame->add_int64columns();
+        c->set_name(name);
+        c->add_values(static_cast<int64_t>(value));
     }
     else if constexpr (std::is_integral_v<T> && std::is_unsigned_v<T> && sizeof(T) <= 4)
     {
-        protoValue->set_uintvalue(static_cast<uint32_t>(value));
+        auto* c = frame->add_int32columns();
+        c->set_name(name);
+        c->add_values(static_cast<int32_t>(value));
     }
     else if constexpr (std::is_integral_v<T> && std::is_unsigned_v<T>)
     {
-        protoValue->set_ulongvalue(static_cast<uint64_t>(value));
+        auto* c = frame->add_int64columns();
+        c->set_name(name);
+        c->add_values(static_cast<int64_t>(value));
     }
     else if constexpr (std::is_same_v<T, float>)
     {
-        protoValue->set_floatvalue(value);
+        auto* c = frame->add_floatcolumns();
+        c->set_name(name);
+        c->add_values(value);
     }
     else if constexpr (std::is_same_v<T, double>)
     {
-        protoValue->set_doublevalue(value);
+        auto* c = frame->add_doublecolumns();
+        c->set_name(name);
+        c->add_values(value);
     }
     else if constexpr (std::is_same_v<T, std::string>)
     {
-        protoValue->set_stringvalue(value);
+        auto* c = frame->add_stringcolumns();
+        c->set_name(name);
+        c->add_values(value);
     }
 }
 
+// Appends a multi-element typed column to frame.
 template <typename T>
-void setArrayValues(DataValue* protoValue, const ::epics::pvData::shared_vector<const T>& values)
+void setArrayValues(DataFrame* frame, const ::epics::pvData::shared_vector<const T>& values, const std::string& name)
 {
-    auto* protoArray = protoValue->mutable_arrayvalue();
-    protoArray->mutable_datavalues()->Reserve(static_cast<int>(values.size()));
-    for (const auto& v : values)
+    if constexpr (std::is_same_v<T, bool> || std::is_same_v<T, epics::pvData::boolean>)
     {
-        auto* element = protoArray->add_datavalues();
-        setScalarValue(element, v);
+        auto* c = frame->add_boolarraycolumns();
+        c->set_name(name);
+        c->mutable_dimensions()->add_dims(static_cast<uint32_t>(values.size()));
+        c->mutable_values()->Reserve(static_cast<int>(values.size()));
+        for (const auto& v : values) c->add_values(static_cast<bool>(v));
+    }
+    else if constexpr (std::is_integral_v<T> && std::is_signed_v<T> && sizeof(T) <= 4)
+    {
+        auto* c = frame->add_int32arraycolumns();
+        c->set_name(name);
+        c->mutable_dimensions()->add_dims(static_cast<uint32_t>(values.size()));
+        c->mutable_values()->Reserve(static_cast<int>(values.size()));
+        for (const auto& v : values) c->add_values(static_cast<int32_t>(v));
+    }
+    else if constexpr (std::is_integral_v<T> && std::is_signed_v<T>)
+    {
+        auto* c = frame->add_int64arraycolumns();
+        c->set_name(name);
+        c->mutable_dimensions()->add_dims(static_cast<uint32_t>(values.size()));
+        c->mutable_values()->Reserve(static_cast<int>(values.size()));
+        for (const auto& v : values) c->add_values(static_cast<int64_t>(v));
+    }
+    else if constexpr (std::is_integral_v<T> && std::is_unsigned_v<T> && sizeof(T) <= 4)
+    {
+        auto* c = frame->add_int32arraycolumns();
+        c->set_name(name);
+        c->mutable_dimensions()->add_dims(static_cast<uint32_t>(values.size()));
+        c->mutable_values()->Reserve(static_cast<int>(values.size()));
+        for (const auto& v : values) c->add_values(static_cast<int32_t>(v));
+    }
+    else if constexpr (std::is_integral_v<T> && std::is_unsigned_v<T>)
+    {
+        auto* c = frame->add_int64arraycolumns();
+        c->set_name(name);
+        c->mutable_dimensions()->add_dims(static_cast<uint32_t>(values.size()));
+        c->mutable_values()->Reserve(static_cast<int>(values.size()));
+        for (const auto& v : values) c->add_values(static_cast<int64_t>(v));
+    }
+    else if constexpr (std::is_same_v<T, float>)
+    {
+        auto* c = frame->add_floatarraycolumns();
+        c->set_name(name);
+        c->mutable_dimensions()->add_dims(static_cast<uint32_t>(values.size()));
+        c->mutable_values()->Reserve(static_cast<int>(values.size()));
+        for (const auto& v : values) c->add_values(v);
+    }
+    else if constexpr (std::is_same_v<T, double>)
+    {
+        auto* c = frame->add_doublearraycolumns();
+        c->set_name(name);
+        c->mutable_dimensions()->add_dims(static_cast<uint32_t>(values.size()));
+        c->mutable_values()->Reserve(static_cast<int>(values.size()));
+        for (const auto& v : values) c->add_values(v);
+    }
+    else if constexpr (std::is_same_v<T, std::string>)
+    {
+        auto* c = frame->add_datacolumns();
+        c->set_name(name);
+        auto* sample = c->add_datavalues();
+        auto* list = sample->mutable_arrayvalue();
+        for (const auto& v : values) list->add_datavalues()->set_stringvalue(v);
     }
 }
 
-void convertStructure(const ::epics::pvData::PVStructure& pvStruct, DataValue* protoValue)
+void convertStructure(const ::epics::pvData::PVStructure& pvStruct, DataFrame* frame, const std::string& prefix)
 {
-    auto* structure = protoValue->mutable_structurevalue();
     const auto fieldNames = pvStruct.getStructure()->getFieldNames();
     const auto fields = pvStruct.getPVFields();
     for (size_t i = 0; i < fields.size(); ++i)
@@ -90,9 +161,7 @@ void convertStructure(const ::epics::pvData::PVStructure& pvStruct, DataValue* p
         {
             continue;
         }
-        auto* field = structure->add_fields();
-        field->set_name(fieldNames[i]);
-        EpicsPVDataConversion::convertPVToProtoValue(*fields[i], field->mutable_value());
+        EpicsPVDataConversion::convertPVToProtoValue(*fields[i], frame, prefix + "." + fieldNames[i]);
     }
 }
 
@@ -222,7 +291,9 @@ ColumnResult convertColumn(const ::epics::pvData::PVFieldPtr& col,
             {
                 ::epics::pvData::shared_vector<const epics::pvData::boolean> view;
                 scalarArray->getAs(view);
-                emitArray(view, [](auto* dv, epics::pvData::boolean v) { dv->set_booleanvalue(static_cast<bool>(v)); });
+                emitArray(view, [&colName](DataFrame* df, epics::pvData::boolean v) {
+                    setScalarValue(df, v, colName);
+                });
             }
             return result;
         case ::epics::pvData::pvByte:
@@ -231,14 +302,18 @@ ColumnResult convertColumn(const ::epics::pvData::PVFieldPtr& col,
             {
                 ::epics::pvData::shared_vector<const int32_t> view;
                 scalarArray->getAs(view);
-                emitArray(view, [](auto* dv, int32_t v) { dv->set_intvalue(v); });
+                emitArray(view, [&colName](DataFrame* df, int32_t v) {
+                    setScalarValue(df, v, colName);
+                });
             }
             return result;
         case ::epics::pvData::pvLong:
             {
                 ::epics::pvData::shared_vector<const int64_t> view;
                 scalarArray->getAs(view);
-                emitArray(view, [](auto* dv, int64_t v) { dv->set_longvalue(v); });
+                emitArray(view, [&colName](DataFrame* df, int64_t v) {
+                    setScalarValue(df, v, colName);
+                });
             }
             return result;
         case ::epics::pvData::pvUByte:
@@ -247,35 +322,45 @@ ColumnResult convertColumn(const ::epics::pvData::PVFieldPtr& col,
             {
                 ::epics::pvData::shared_vector<const uint32_t> view;
                 scalarArray->getAs(view);
-                emitArray(view, [](auto* dv, uint32_t v) { dv->set_uintvalue(v); });
+                emitArray(view, [&colName](DataFrame* df, uint32_t v) {
+                    setScalarValue(df, v, colName);
+                });
             }
             return result;
         case ::epics::pvData::pvULong:
             {
                 ::epics::pvData::shared_vector<const uint64_t> view;
                 scalarArray->getAs(view);
-                emitArray(view, [](auto* dv, uint64_t v) { dv->set_ulongvalue(v); });
+                emitArray(view, [&colName](DataFrame* df, uint64_t v) {
+                    setScalarValue(df, v, colName);
+                });
             }
             return result;
         case ::epics::pvData::pvFloat:
             {
                 ::epics::pvData::shared_vector<const float> view;
                 scalarArray->getAs(view);
-                emitArray(view, [](auto* dv, float v) { dv->set_floatvalue(v); });
+                emitArray(view, [&colName](DataFrame* df, float v) {
+                    setScalarValue(df, v, colName);
+                });
             }
             return result;
         case ::epics::pvData::pvDouble:
             {
                 ::epics::pvData::shared_vector<const double> view;
                 scalarArray->getAs(view);
-                emitArray(view, [](auto* dv, double v) { dv->set_doublevalue(v); });
+                emitArray(view, [&colName](DataFrame* df, double v) {
+                    setScalarValue(df, v, colName);
+                });
             }
             return result;
         case ::epics::pvData::pvString:
             {
                 ::epics::pvData::shared_vector<const std::string> view;
                 scalarArray->getAs(view);
-                emitArray(view, [](auto* dv, const std::string& v) { dv->set_stringvalue(v); });
+                emitArray(view, [&colName](DataFrame* df, const std::string& v) {
+                    setScalarValue(df, v, colName);
+                });
             }
             return result;
         default:
@@ -296,7 +381,7 @@ ColumnResult convertColumn(const ::epics::pvData::PVFieldPtr& col,
             ev.nanoseconds = tsNanos[i];
             if (view[i])
             {
-                EpicsPVDataConversion::convertPVToProtoValue(*view[i], &ev.data_value);
+                EpicsPVDataConversion::convertPVToProtoValue(*view[i], &ev.data_value, colName);
             }
         }
         result.events.reserve(n);
@@ -312,7 +397,9 @@ ColumnResult convertColumn(const ::epics::pvData::PVFieldPtr& col,
 
 } // namespace
 
-void EpicsPVDataConversion::convertPVToProtoValue(const ::epics::pvData::PVField& pvField, DataValue* protoValue)
+void EpicsPVDataConversion::convertPVToProtoValue(const ::epics::pvData::PVField& pvField,
+                                                   DataFrame*                      frame,
+                                                   const std::string&              columnName)
 {
     const auto fieldType = pvField.getField()->getType();
     switch (fieldType)
@@ -322,18 +409,18 @@ void EpicsPVDataConversion::convertPVToProtoValue(const ::epics::pvData::PVField
         const auto& pvScalar = static_cast<const ::epics::pvData::PVScalar&>(pvField);
             switch (pvScalar.getScalar()->getScalarType())
             {
-            case ::epics::pvData::pvBoolean: setScalarValue(protoValue, pvScalar.getAs<::epics::pvData::boolean>()); return;
+            case ::epics::pvData::pvBoolean: setScalarValue(frame, pvScalar.getAs<::epics::pvData::boolean>(), columnName); return;
             case ::epics::pvData::pvByte:
             case ::epics::pvData::pvShort:
-            case ::epics::pvData::pvInt: setScalarValue(protoValue, pvScalar.getAs<int32_t>()); return;
-            case ::epics::pvData::pvLong: setScalarValue(protoValue, pvScalar.getAs<int64_t>()); return;
+            case ::epics::pvData::pvInt: setScalarValue(frame, pvScalar.getAs<int32_t>(), columnName); return;
+            case ::epics::pvData::pvLong: setScalarValue(frame, pvScalar.getAs<int64_t>(), columnName); return;
             case ::epics::pvData::pvUByte:
             case ::epics::pvData::pvUShort:
-            case ::epics::pvData::pvUInt: setScalarValue(protoValue, pvScalar.getAs<uint32_t>()); return;
-            case ::epics::pvData::pvULong: setScalarValue(protoValue, pvScalar.getAs<uint64_t>()); return;
-            case ::epics::pvData::pvFloat: setScalarValue(protoValue, pvScalar.getAs<float>()); return;
-            case ::epics::pvData::pvDouble: setScalarValue(protoValue, pvScalar.getAs<double>()); return;
-            case ::epics::pvData::pvString: setScalarValue(protoValue, pvScalar.getAs<std::string>()); return;
+            case ::epics::pvData::pvUInt: setScalarValue(frame, pvScalar.getAs<uint32_t>(), columnName); return;
+            case ::epics::pvData::pvULong: setScalarValue(frame, pvScalar.getAs<uint64_t>(), columnName); return;
+            case ::epics::pvData::pvFloat: setScalarValue(frame, pvScalar.getAs<float>(), columnName); return;
+            case ::epics::pvData::pvDouble: setScalarValue(frame, pvScalar.getAs<double>(), columnName); return;
+            case ::epics::pvData::pvString: setScalarValue(frame, pvScalar.getAs<std::string>(), columnName); return;
             }
         }
         break;
@@ -346,7 +433,7 @@ void EpicsPVDataConversion::convertPVToProtoValue(const ::epics::pvData::PVField
                 {
                     ::epics::pvData::shared_vector<const ::epics::pvData::boolean> view;
                     pvArray.getAs(view);
-                    setArrayValues(protoValue, view);
+                    setArrayValues(frame, view, columnName);
                 }
                 return;
             case ::epics::pvData::pvByte:
@@ -355,14 +442,14 @@ void EpicsPVDataConversion::convertPVToProtoValue(const ::epics::pvData::PVField
                 {
                     ::epics::pvData::shared_vector<const int32_t> view;
                     pvArray.getAs(view);
-                    setArrayValues(protoValue, view);
+                    setArrayValues(frame, view, columnName);
                 }
                 return;
             case ::epics::pvData::pvLong:
                 {
                     ::epics::pvData::shared_vector<const int64_t> view;
                     pvArray.getAs(view);
-                    setArrayValues(protoValue, view);
+                    setArrayValues(frame, view, columnName);
                 }
                 return;
             case ::epics::pvData::pvUByte:
@@ -371,55 +458,52 @@ void EpicsPVDataConversion::convertPVToProtoValue(const ::epics::pvData::PVField
                 {
                     ::epics::pvData::shared_vector<const uint32_t> view;
                     pvArray.getAs(view);
-                    setArrayValues(protoValue, view);
+                    setArrayValues(frame, view, columnName);
                 }
                 return;
             case ::epics::pvData::pvULong:
                 {
                     ::epics::pvData::shared_vector<const uint64_t> view;
                     pvArray.getAs(view);
-                    setArrayValues(protoValue, view);
+                    setArrayValues(frame, view, columnName);
                 }
                 return;
             case ::epics::pvData::pvFloat:
                 {
                     ::epics::pvData::shared_vector<const float> view;
                     pvArray.getAs(view);
-                    setArrayValues(protoValue, view);
+                    setArrayValues(frame, view, columnName);
                 }
                 return;
             case ::epics::pvData::pvDouble:
                 {
                     ::epics::pvData::shared_vector<const double> view;
                     pvArray.getAs(view);
-                    setArrayValues(protoValue, view);
+                    setArrayValues(frame, view, columnName);
                 }
                 return;
             case ::epics::pvData::pvString:
                 {
                     ::epics::pvData::shared_vector<const std::string> view;
                     pvArray.getAs(view);
-                    setArrayValues(protoValue, view);
+                    setArrayValues(frame, view, columnName);
                 }
                 return;
             }
         }
         break;
     case ::epics::pvData::structure:
-        convertStructure(static_cast<const ::epics::pvData::PVStructure&>(pvField), protoValue);
+        convertStructure(static_cast<const ::epics::pvData::PVStructure&>(pvField), frame, columnName);
         return;
     case ::epics::pvData::structureArray:
         {
         const auto& pvStructArray = static_cast<const ::epics::pvData::PVStructureArray&>(pvField);
         const auto view = pvStructArray.view();
-            auto* protoArray = protoValue->mutable_arrayvalue();
-            protoArray->mutable_datavalues()->Reserve(static_cast<int>(view.size()));
             for (const auto& entry : view)
             {
-                auto* element = protoArray->add_datavalues();
                 if (entry)
                 {
-                    convertStructure(*entry, element);
+                    convertStructure(*entry, frame, columnName);
                 }
             }
             return;
@@ -430,7 +514,7 @@ void EpicsPVDataConversion::convertPVToProtoValue(const ::epics::pvData::PVField
             const auto value = pvUnion.get();
             if (value)
             {
-                convertPVToProtoValue(*value, protoValue);
+                convertPVToProtoValue(*value, frame, columnName);
                 return;
             }
         }
@@ -439,14 +523,11 @@ void EpicsPVDataConversion::convertPVToProtoValue(const ::epics::pvData::PVField
         {
         const auto& pvUnionArray = static_cast<const ::epics::pvData::PVUnionArray&>(pvField);
         const auto view = pvUnionArray.view();
-            auto* protoArray = protoValue->mutable_arrayvalue();
-            protoArray->mutable_datavalues()->Reserve(static_cast<int>(view.size()));
             for (const auto& entry : view)
             {
-                auto* element = protoArray->add_datavalues();
                 if (entry && entry->get())
                 {
-                    convertPVToProtoValue(*entry->get(), element);
+                    convertPVToProtoValue(*entry->get(), frame, columnName);
                 }
             }
             return;
@@ -457,7 +538,9 @@ void EpicsPVDataConversion::convertPVToProtoValue(const ::epics::pvData::PVField
 
     std::ostringstream oss;
     pvField.dumpValue(oss);
-    protoValue->set_stringvalue(oss.str());
+    auto* c = frame->add_stringcolumns();
+    c->set_name(columnName);
+    c->add_values(oss.str());
 }
 
 bool EpicsPVDataConversion::tryBuildNtTableRowTsBatch(mldp_pvxs_driver::util::log::ILogger&                    log,
