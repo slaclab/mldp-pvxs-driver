@@ -429,6 +429,7 @@ pvs:
         const auto df = findLatestDataFrameForSource(*mock_bus, "test:voltage");
         ASSERT_NE(df, nullptr);
         ASSERT_GT(df->doublecolumns_size(), 0);
+        EXPECT_EQ(df->doublecolumns(0).name(), "test:voltage");
         ASSERT_GT(df->doublecolumns(0).values_size(), 0);
     }
 
@@ -437,6 +438,7 @@ pvs:
         const auto df = findLatestDataFrameForSource(*mock_bus, "test:waveform");
         ASSERT_NE(df, nullptr);
         ASSERT_GT(df->doublecolumns_size(), 0);
+        EXPECT_EQ(df->doublecolumns(0).name(), "test:waveform");
         ASSERT_EQ(df->doublecolumns(0).values_size(), 256);
     }
 

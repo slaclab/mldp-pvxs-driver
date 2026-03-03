@@ -420,39 +420,43 @@ pvs:
         FAIL() << oss.str();
     }
 
-    // test:counter (NTScalar<Int32>) -> int32 column named "value"
+    // test:counter (NTScalar<Int32>) -> int32 column named by source PV
     {
         const auto df = findLatestDataFrameForSource(*mock_bus, "test:counter");
         ASSERT_NE(df, nullptr);
         ASSERT_GT(df->int32columns_size(), 0);
+        EXPECT_EQ(df->int32columns(0).name(), "test:counter");
         EXPECT_GT(df->int32columns(0).values(0), 0);
         EXPECT_FALSE(hasColumnWithName(*df, "value.timeStamp"));
     }
 
-    // test:voltage (NTScalar<Float64>) -> double column named "value"
+    // test:voltage (NTScalar<Float64>) -> double column named by source PV
     {
         const auto df = findLatestDataFrameForSource(*mock_bus, "test:voltage");
         ASSERT_NE(df, nullptr);
         ASSERT_GT(df->doublecolumns_size(), 0);
+        EXPECT_EQ(df->doublecolumns(0).name(), "test:voltage");
         EXPECT_FALSE(hasColumnWithName(*df, "value.timeStamp"));
     }
 
-    // test:status (NTScalar<String>) -> string column named "value"
+    // test:status (NTScalar<String>) -> string column named by source PV
     {
         const auto df = findLatestDataFrameForSource(*mock_bus, "test:status");
         ASSERT_NE(df, nullptr);
         ASSERT_GT(df->stringcolumns_size(), 0);
+        EXPECT_EQ(df->stringcolumns(0).name(), "test:status");
         ASSERT_GT(df->stringcolumns(0).values_size(), 0);
         const auto& s = df->stringcolumns(0).values(0);
         EXPECT_TRUE(s == "OK" || s == "WARNING" || s == "FAULT");
         EXPECT_FALSE(hasColumnWithName(*df, "value.timeStamp"));
     }
 
-    // test:waveform (NTScalar<Float64A>) -> double column with 256 values
+    // test:waveform (NTScalar<Float64A>) -> double column named by source PV
     {
         const auto df = findLatestDataFrameForSource(*mock_bus, "test:waveform");
         ASSERT_NE(df, nullptr);
         ASSERT_GT(df->doublecolumns_size(), 0);
+        EXPECT_EQ(df->doublecolumns(0).name(), "test:waveform");
         EXPECT_EQ(df->doublecolumns(0).values_size(), 256);
         EXPECT_FALSE(hasColumnWithName(*df, "value.timeStamp"));
     }

@@ -132,8 +132,10 @@ void EpicsPVXSReader::processDefaultMode(const std::string& pvName, const pvxs::
 
     auto event_value = IDataBus::MakeEventValue(epoch_seconds, nanoseconds);
 
-    // For simplicity, we ignore the alarm field in this default mode and just convert the value field to a DataFrame.
-    EpicsMLDPConversion::convertPVToDataFrame(valueField, &event_value->data_value);
+    // Keep existing structured/table naming ("value.*"), but map scalar/array
+    // payloads to the PV name instead of the generic "value".
+    const std::string columnName = (valueField.type().kind() == pvxs::Kind::Compound) ? "value" : pvName;
+    EpicsMLDPConversion::convertPVToDataFrame(valueField, &event_value->data_value, columnName);
 
     IDataBus::EventBatch batch;
     batch.root_source = pvName;

@@ -192,8 +192,19 @@ void EpicsBaseReader::processEvent(std::string pvName, ::epics::pvData::PVStruct
                 if (epics_value)
                 {
                     auto valueField = epics_value->getSubField("value");
-                    EpicsPVDataConversion::convertPVToProtoValue(
-                        valueField ? *valueField : *epics_value, &event_value->data_value);
+                    if (valueField)
+                    {
+                        const bool isStructPayload =
+                            (std::dynamic_pointer_cast<::epics::pvData::PVStructure>(valueField) != nullptr);
+                        const std::string columnName = isStructPayload ? "value" : pvName;
+                        EpicsPVDataConversion::convertPVToProtoValue(
+                            *valueField, &event_value->data_value, columnName);
+                    }
+                    else
+                    {
+                        EpicsPVDataConversion::convertPVToProtoValue(
+                            *epics_value, &event_value->data_value, pvName);
+                    }
                 }
 
                 batch.tags.push_back(pvName);

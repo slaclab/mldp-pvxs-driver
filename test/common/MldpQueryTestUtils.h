@@ -28,6 +28,17 @@ inline void appendDataValuesToRows(const dp::service::common::DataValues& src,
     };
 
     using DV = dp::service::common::DataValues;
+    auto pushArrayRow = [&](const auto& values, auto setScalar)
+    {
+        auto& row = rows->emplace_back();
+        auto* out = row.mutable_arrayvalue();
+        for (const auto& v : values)
+        {
+            auto* cell = out->add_datavalues();
+            setScalar(cell, v);
+        }
+    };
+
     switch (src.values_case())
     {
     case DV::kDataColumn:
@@ -89,6 +100,41 @@ inline void appendDataValuesToRows(const dp::service::common::DataValues& src,
             auto& row = rows->emplace_back();
             row.set_stringvalue(v);
         }
+        break;
+    case DV::kDoubleArrayColumn:
+        pushArrayRow(src.doublearraycolumn().values(),
+                     [](auto* cell, double v)
+                     {
+                         cell->set_doublevalue(v);
+                     });
+        break;
+    case DV::kFloatArrayColumn:
+        pushArrayRow(src.floatarraycolumn().values(),
+                     [](auto* cell, float v)
+                     {
+                         cell->set_floatvalue(v);
+                     });
+        break;
+    case DV::kInt32ArrayColumn:
+        pushArrayRow(src.int32arraycolumn().values(),
+                     [](auto* cell, int32_t v)
+                     {
+                         cell->set_intvalue(v);
+                     });
+        break;
+    case DV::kInt64ArrayColumn:
+        pushArrayRow(src.int64arraycolumn().values(),
+                     [](auto* cell, int64_t v)
+                     {
+                         cell->set_longvalue(v);
+                     });
+        break;
+    case DV::kBoolArrayColumn:
+        pushArrayRow(src.boolarraycolumn().values(),
+                     [](auto* cell, bool v)
+                     {
+                         cell->set_booleanvalue(v);
+                     });
         break;
     default:
         break;
