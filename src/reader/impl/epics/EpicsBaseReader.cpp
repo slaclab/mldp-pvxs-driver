@@ -23,6 +23,8 @@ using namespace mldp_pvxs_driver::metrics;
 using namespace mldp_pvxs_driver::util::bus;
 
 namespace {
+/// Build a logger named "epics_base_reader[:<readerName>]".
+/// If @p readerName is empty the suffix is omitted.
 std::shared_ptr<ILogger> makeLogger(const std::string& readerName)
 {
     std::string loggerName = "epics_base_reader";
@@ -35,20 +37,30 @@ std::shared_ptr<ILogger> makeLogger(const std::string& readerName)
 }
 } // namespace
 
+/// Construct the reader: build an EpicsReaderConfig from @p cfg, create the
+/// named logger, then immediately begin monitoring all configured PV names.
 EpicsBaseReader::EpicsBaseReader(std::shared_ptr<util::bus::IDataBus> bus,
                                  std::shared_ptr<metrics::Metrics>    metrics,
                                  const config::Config&                cfg)
-    : EpicsReaderBase(std::move(bus), std::move(metrics), EpicsReaderConfig(cfg), makeLogger(cfg.get("name")))
+    : EpicsReaderBase(
+          std::move(bus),
+          std::move(metrics),
+          EpicsReaderConfig(cfg),
+          makeLogger(cfg.get("name")))
 {
     addPV(pvNames());
 }
 
+/// Stop the reader: signal shutdown, then destroy the poller (joins its threads).
 EpicsBaseReader::~EpicsBaseReader()
 {
     running_ = false;
     epics_base_poller_.reset();
 }
 
+/// Create an EpicsBaseMonitorPoller for @p pvNames, configured with the poll
+/// thread count and interval from the reader config.  The poller calls
+/// drainEpicsBaseQueue() each time new data is available.
 void EpicsBaseReader::addPV(const PVSet& pvNames)
 {
     const std::vector<std::string> pv_list(pvNames.begin(), pvNames.end());
@@ -63,6 +75,10 @@ void EpicsBaseReader::addPV(const PVSet& pvNames)
         logger_);
 }
 
+/// Drain all pending updates from the poller under the drain mutex.
+/// For each update, increments the receive-event metric, then offloads
+/// conversion and bus delivery to the reader thread pool so the poller
+/// callback is never blocked by slow downstream processing.
 void EpicsBaseReader::drainEpicsBaseQueue()
 {
     if (!epics_base_poller_)
@@ -92,6 +108,134 @@ void EpicsBaseReader::drainEpicsBaseQueue()
                               });
 }
 
+/// Process a single PV update in Default (scalar/array) mode.
+///
+/// Extracts "timeStamp.secondsPastEpoch" and "timeStamp.nanoseconds" from
+/// @p epicsValue; falls back to wall-clock seconds when the timestamp is
+/// absent.  Missing or compound "value" fields are rejected with a warning.
+/// On success one EventBatch is pushed to the bus and @p emitted is set to 1.
+void EpicsBaseReader::processDefaultMode(const std::string&                     pvName,
+                                         const ::epics::pvData::PVStructurePtr& epicsValue,
+                                         std::size_t&                           emitted)
+{
+    IDataBus::EventBatch batch;
+    batch.root_source = pvName;
+    uint64_t epoch_seconds = 0;
+    uint64_t nanoseconds   = 0;
+    bool     setEpoch      = false;
+
+    if (epicsValue)
+    {
+        if (auto timeStamp = epicsValue->getSubField<::epics::pvData::PVStructure>("timeStamp"))
+        {
+            if (auto secondsField = timeStamp->getSubField<::epics::pvData::PVScalar>("secondsPastEpoch"))
+            {
+                epoch_seconds = secondsField->getAs<uint64_t>();
+                setEpoch      = true;
+            }
+            if (auto nanosField = timeStamp->getSubField<::epics::pvData::PVScalar>("nanoseconds"))
+            {
+                nanoseconds = nanosField->getAs<uint64_t>();
+            }
+        }
+    }
+    if (!setEpoch)
+    {
+        const auto now = std::chrono::system_clock::now().time_since_epoch();
+        epoch_seconds  = std::chrono::duration_cast<std::chrono::seconds>(now).count();
+    }
+
+    auto event_value = IDataBus::MakeEventValue(epoch_seconds, nanoseconds);
+
+    if (epicsValue)
+    {
+        auto valueField = epicsValue->getSubField("value");
+        if (!valueField)
+        {
+            warnf(*logger_,
+                  "[{}/{}] PV has no 'value' field in default mode — skipping",
+                  name_, pvName);
+            return;
+        }
+        const bool isStructPayload =
+            (std::dynamic_pointer_cast<::epics::pvData::PVStructure>(valueField) != nullptr);
+        if (isStructPayload)
+        {
+            warnf(*logger_,
+                  "[{}/{}] PV has compound (non-scalar) value field in default mode — skipping",
+                  name_, pvName);
+            return;
+        }
+        EpicsPVDataConversion::convertPVToProtoValue(*valueField, &event_value->data_value, pvName);
+    }
+
+    batch.tags.push_back(pvName);
+    batch.values[pvName].emplace_back(std::move(event_value));
+    emitted = 1;
+    bus_->push(std::move(batch));
+}
+
+/// Process a PV update in SlacBsasTable (NTTable row-timestamp) mode.
+///
+/// Delegates conversion to EpicsPVDataConversion::tryBuildNtTableRowTsBatch.
+/// Columns are flushed to the bus in batches of at most
+/// config_.columnBatchSize() entries to bound memory usage for wide tables.
+/// @p emitted receives the total number of data rows published across all columns.
+void EpicsBaseReader::processSlacBsasTableMode(const std::string&                     pvName,
+                                               const ::epics::pvData::PVStructurePtr& epicsValue,
+                                               const PVRuntimeConfig*                 runtimeCfg,
+                                               std::size_t&                           emitted)
+{
+    const prometheus::Labels sourceTag{{"source", pvName}};
+    const std::size_t        colBatchSize = config_.columnBatchSize();
+
+    IDataBus::EventBatch tableBatch;
+    tableBatch.root_source = pvName;
+    tableBatch.tags.push_back(pvName);
+    std::size_t colsInBatch = 0;
+
+    auto resetBatch = [&tableBatch, &pvName, &colsInBatch]()
+    {
+        tableBatch = IDataBus::EventBatch{};
+        tableBatch.root_source = pvName;
+        tableBatch.tags.push_back(pvName);
+        colsInBatch = 0;
+    };
+
+    if (!EpicsPVDataConversion::tryBuildNtTableRowTsBatch(
+            *logger_, pvName, epicsValue,
+            runtimeCfg ? runtimeCfg->tsSecondsField : "secondsPastEpoch",
+            runtimeCfg ? runtimeCfg->tsNanosField : "nanoseconds",
+            [&](std::string colName, std::vector<IDataBus::EventValue> events)
+            {
+                tableBatch.values[std::move(colName)] = std::move(events);
+                ++colsInBatch;
+                if (colBatchSize > 0 && colsInBatch >= colBatchSize)
+                {
+                    bus_->push(std::move(tableBatch));
+                    resetBatch();
+                }
+            },
+            emitted))
+    {
+        errorf(*logger_, "Error converting PV {} to MLDP SLAC BSAS table batch on reader {}.", pvName, name_);
+        metric_call(metrics_, [&](auto& m)
+                    {
+                        m.incrementReaderErrors(1.0, sourceTag);
+                    });
+    }
+    else if (!tableBatch.values.empty())
+    {
+        bus_->push(std::move(tableBatch));
+    }
+}
+
+/// Entry point for every EPICS Base update, called from the reader thread pool.
+///
+/// Looks up the runtime mode for @p pvName and dispatches to
+/// processDefaultMode() or processSlacBsasTableMode(). Records per-event
+/// processing-time and event-count metrics. Exceptions are caught, logged,
+/// and counted so that a single bad update cannot disrupt the monitoring loop.
 void EpicsBaseReader::processEvent(std::string pvName, ::epics::pvData::PVStructurePtr epics_value)
 {
     if (!running_.load())
@@ -112,122 +256,24 @@ void EpicsBaseReader::processEvent(std::string pvName, ::epics::pvData::PVStruct
         const auto processing_start = std::chrono::steady_clock::now();
 
         const auto* runtimeCfg = runtimeConfigFor(pvName);
-        const auto  mode = runtimeCfg ? runtimeCfg->mode : PVRuntimeConfig::Mode::Default;
+        const auto  mode       = runtimeCfg ? runtimeCfg->mode : PVRuntimeConfig::Mode::Default;
 
-        size_t emitted = 0;
+        std::size_t emitted = 0;
 
         switch (mode)
         {
         case PVRuntimeConfig::Mode::SlacBsasTable:
-            {
-                const std::size_t    colBatchSize = config_.columnBatchSize();
-                IDataBus::EventBatch tableBatch;
-                tableBatch.root_source = pvName;
-                tableBatch.tags.push_back(pvName);
-                std::size_t colsInBatch = 0;
-
-                if (!EpicsPVDataConversion::tryBuildNtTableRowTsBatch(
-                        *logger_, pvName, epics_value,
-                        runtimeCfg ? runtimeCfg->tsSecondsField : "secondsPastEpoch",
-                        runtimeCfg ? runtimeCfg->tsNanosField : "nanoseconds",
-                        [&](std::string colName, std::vector<IDataBus::EventValue> events)
-                        {
-                            tableBatch.values[std::move(colName)] = std::move(events);
-                            ++colsInBatch;
-                            if (colBatchSize > 0 && colsInBatch >= colBatchSize)
-                            {
-                                bus_->push(std::move(tableBatch));
-                                tableBatch = IDataBus::EventBatch{};
-                                tableBatch.root_source = pvName;
-                                tableBatch.tags.push_back(pvName);
-                                colsInBatch = 0;
-                            }
-                        },
-                        emitted))
-                {
-                    errorf(*logger_, "Error converting PV {} to MLDP SLAC BSAS table batch on reader {}.", pvName, name_);
-                    metric_call(metrics_, [&](auto& m)
-                                {
-                                    m.incrementReaderErrors(1.0, sourceTag);
-                                });
-                }
-                else if (!tableBatch.values.empty())
-                {
-                    bus_->push(std::move(tableBatch));
-                }
-            }
+            processSlacBsasTableMode(pvName, epics_value, runtimeCfg, emitted);
             break;
 
         case PVRuntimeConfig::Mode::Default:
         default:
-            {
-                IDataBus::EventBatch batch;
-                batch.root_source = pvName;
-                uint64_t epoch_seconds = 0;
-                uint64_t nanoseconds = 0;
-                bool     setEpoch = false;
-
-                if (epics_value)
-                {
-                    if (auto timeStamp = epics_value->getSubField<::epics::pvData::PVStructure>("timeStamp"))
-                    {
-                        if (auto secondsField = timeStamp->getSubField<::epics::pvData::PVScalar>("secondsPastEpoch"))
-                        {
-                            epoch_seconds = secondsField->getAs<uint64_t>();
-                            setEpoch = true;
-                        }
-                        if (auto nanosField = timeStamp->getSubField<::epics::pvData::PVScalar>("nanoseconds"))
-                        {
-                            nanoseconds = nanosField->getAs<uint64_t>();
-                        }
-                    }
-                }
-                if (!setEpoch)
-                {
-                    const auto now = std::chrono::system_clock::now().time_since_epoch();
-                    epoch_seconds = std::chrono::duration_cast<std::chrono::seconds>(now).count();
-                }
-
-                auto event_value = IDataBus::MakeEventValue(epoch_seconds, nanoseconds);
-
-                if (epics_value)
-                {
-                    auto valueField = epics_value->getSubField("value");
-                    if (valueField)
-                    {
-                        const bool isStructPayload =
-                            (std::dynamic_pointer_cast<::epics::pvData::PVStructure>(valueField) != nullptr);
-                        if (isStructPayload)
-                        {
-                            warnf(*logger_,
-                                  "[{}/{}] PV has compound (non-scalar) value field in default mode — skipping",
-                                  name_, pvName);
-                            return; // Do not push event to bus
-                        }
-                        EpicsPVDataConversion::convertPVToProtoValue(
-                            *valueField,
-                            &event_value->data_value,
-                            pvName);
-                    }
-                    else
-                    {
-                        warnf(*logger_,
-                              "[{}/{}] PV has no 'value' field in default mode — skipping",
-                              name_, pvName);
-                        return;  // Do not push event to bus
-                    }
-                }
-
-                batch.tags.push_back(pvName);
-                batch.values[pvName].emplace_back(std::move(event_value));
-                emitted = 1;
-                bus_->push(std::move(batch));
-            }
+            processDefaultMode(pvName, epics_value, emitted);
             break;
         }
 
         const auto   processing_end = std::chrono::steady_clock::now();
-        const double processing_ms = std::chrono::duration<double, std::milli>(processing_end - processing_start).count();
+        const double processing_ms  = std::chrono::duration<double, std::milli>(processing_end - processing_start).count();
         metric_call(metrics_, [&](auto& m)
                     {
                         m.observeReaderProcessingTimeMs(processing_ms, sourceTag);
@@ -237,7 +283,7 @@ void EpicsBaseReader::processEvent(std::string pvName, ::epics::pvData::PVStruct
         {
             metric_call(metrics_, [&](auto& m)
                         {
-                            m.incrementReaderEvents(static_cast<double>(1.0), sourceTag);
+                            m.incrementReaderEvents(1.0, sourceTag);
                         });
             tracef(*logger_, "[{}/{}] event published", name_, pvName);
         }

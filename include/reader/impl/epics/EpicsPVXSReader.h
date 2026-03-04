@@ -42,7 +42,10 @@ namespace mldp_pvxs_driver::reader::impl::epics {
  *
  * The reader supports two processing modes:
  * - **Default mode**: Standard scalar/array PVs with structure-level timestamps
- * - **SlacBsasTable mode**: SLAC BSAS NTTable structures with per-row timestamps
+ * - **SlacBsasTable mode**: SLAC BSAS NTTable structures with per-row timestamps.
+ *   Each NTTable column is a PV name; two fixed columns hold the per-row
+ *   timestamps.  See @c docs/readers/slac-bsas-table.md for the full structure
+ *   description and a concrete annotated example.
  *
  * Events are processed asynchronously using a thread pool to avoid blocking
  * the PVXS event loop. Metrics are collected for monitoring throughput,

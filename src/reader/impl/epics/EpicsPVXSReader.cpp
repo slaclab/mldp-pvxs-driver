@@ -14,8 +14,8 @@
 #include <metrics/Metrics.h>
 #include <reader/impl/epics/BSASEpicsMLDPConversion.h>
 #include <reader/impl/epics/EpicsMLDPConversion.h>
-#include <util/log/Logger.h>
 #include <util/StringFormat.h>
+#include <util/log/Logger.h>
 
 #include <chrono>
 
@@ -25,6 +25,8 @@ using namespace mldp_pvxs_driver::metrics;
 using namespace mldp_pvxs_driver::util::bus;
 
 namespace {
+/// Build a logger named "epics_pvxs_reader[:<readerName>]".
+/// If @p readerName is empty the suffix is omitted.
 std::shared_ptr<ILogger> makeLogger(const std::string& readerName)
 {
     std::string loggerName = "epics_pvxs_reader";
@@ -37,15 +39,22 @@ std::shared_ptr<ILogger> makeLogger(const std::string& readerName)
 }
 } // namespace
 
+/// Construct the reader: initialise the PVA context from the process environment
+/// (EPICS_PVA_* variables) and immediately begin monitoring all PV names declared
+/// in @p cfg.
 EpicsPVXSReader::EpicsPVXSReader(std::shared_ptr<util::bus::IDataBus> bus,
-                                 std::shared_ptr<metrics::Metrics>         metrics,
-                                 const config::Config&                     cfg)
+                                 std::shared_ptr<metrics::Metrics>    metrics,
+                                 const config::Config&                cfg)
     : EpicsReaderBase(std::move(bus), std::move(metrics), EpicsReaderConfig(cfg), makeLogger(cfg.get("name")))
 {
     pva_context_ = pvxs::client::Context::fromEnv();
     addPV(pvNames());
 }
 
+/// Subscribe to PVXS channel-access monitors for each PV in @p pvNames.
+/// Each incoming value is drained from the subscription queue in the PVXS
+/// network thread, a receive-event metric is recorded, and the value is then
+/// offloaded to the reader thread pool for actual conversion and bus delivery.
 void EpicsPVXSReader::addPV(const PVSet& pvNames)
 {
     std::lock_guard<std::mutex> lock(subscriptions_mutex_);
@@ -64,6 +73,9 @@ void EpicsPVXSReader::addPV(const PVSet& pvNames)
                                                          m.incrementReaderEventsReceived(1.0, {{"source", s.name()}});
                                                      });
                                          std::string pvName = s.name();
+
+                                         // pv event is processed into another thread to not block the PVXS network thread,
+                                         // which could cause monitor disconnects if processing takes too long
                                          reader_pool_->detach_task(
                                              [this, n = std::move(pvName), v = std::move(value)]() mutable
                                              {
@@ -77,6 +89,8 @@ void EpicsPVXSReader::addPV(const PVSet& pvNames)
     }
 }
 
+/// Log @p message at error level and increment the reader-error metric counter
+/// using @p tags as the label set.
 void EpicsPVXSReader::logAndRecordError(const std::string& message, const prometheus::Labels& tags)
 {
     errorf(*logger_, "{}", message);
@@ -86,6 +100,14 @@ void EpicsPVXSReader::logAndRecordError(const std::string& message, const promet
                 });
 }
 
+/// Process a single PV update in Default mode (non-BSAS, non-table).
+///
+/// Expects a compound PVXS value containing "value", "alarm", and "timeStamp"
+/// sub-fields.  "timeStamp" must carry "secondsPastEpoch" and "nanoseconds".
+/// Compound (nested) value fields are rejected with a warning because Default
+/// mode is designed for scalar / scalar-array payloads only.
+/// On success, one EventBatch with a single EventValue is pushed to the bus
+/// and @p emitted is set to 1.
 void EpicsPVXSReader::processDefaultMode(const std::string& pvName, const pvxs::Value& epicsValue, std::size_t& emitted)
 {
     const prometheus::Labels sourceTag{{"source", pvName}};
@@ -137,7 +159,7 @@ void EpicsPVXSReader::processDefaultMode(const std::string& pvName, const pvxs::
         warnf(*logger_,
               "[{}/{}] PV has compound (non-scalar) value field in default mode — skipping",
               name_, pvName);
-        return;  // Do not push event to bus
+        return; // Do not push event to bus
     }
     EpicsMLDPConversion::convertPVToDataFrame(valueField, &event_value->data_value, pvName);
 
@@ -149,6 +171,14 @@ void EpicsPVXSReader::processDefaultMode(const std::string& pvName, const pvxs::
     bus_->push(std::move(batch));
 }
 
+/// Process a PV update in SlacBsasTable mode (NTTable with per-row timestamps).
+///
+/// Delegates conversion to BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch.
+/// Columns are emitted in batches of at most config_.columnBatchSize() entries;
+/// each full batch is pushed to the bus immediately, keeping memory bounded for
+/// wide tables.  The thread pool is used for parallel column conversion when it
+/// has more than one worker thread.  @p emitted receives the total number of
+/// data rows published across all columns.
 void EpicsPVXSReader::processSlacBsasTableMode(const std::string&     pvName,
                                                const pvxs::Value&     epicsValue,
                                                const PVRuntimeConfig* runtimeCfg,
@@ -197,6 +227,13 @@ void EpicsPVXSReader::processSlacBsasTableMode(const std::string&     pvName,
     }
 }
 
+/// Entry point for every PVXS update, called from the reader thread pool.
+///
+/// Looks up the runtime configuration for @p pvName to determine the processing
+/// mode, dispatches to processDefaultMode() or processSlacBsasTableMode(), and
+/// records per-event processing-time and event-count metrics.  PVXS remote
+/// errors and unexpected exceptions are caught, logged, and counted so that a
+/// single bad update cannot disrupt the monitoring loop.
 void EpicsPVXSReader::processEvent(std::string pvName, pvxs::Value epics_value)
 {
     if (!running_.load())

@@ -66,6 +66,28 @@ reader:
 - **Mutex Protection**: Thread-safe queue access via `epics_base_drain_mutex_`
 - **Legacy Compatibility**: Works with traditional EPICS Channel Access
 
+## SLAC BSAS NTTable Handling
+
+`EpicsBaseReader` supports the same SLAC BSAS NTTable mode as `EpicsPVXSReader`.
+Each NTTable column (PV name) becomes a separate source in the event batch;
+the two per-row timestamp columns are consumed for row indexing and are not
+forwarded as sources.
+
+```yaml
+pvs:
+  - name: BSA:TABLE:PV
+    option:
+      type: slac-bsas-table
+      tsSeconds: secondsPastEpoch   # column holding per-row epoch seconds
+      tsNanos: nanoseconds          # column holding per-row nanoseconds
+```
+
+Conversion is handled by `EpicsPVDataConversion::tryBuildNtTableRowTsBatch()`.
+
+For a full description of the BSAS NTTable structure, field layout, and a
+concrete annotated example see
+[`docs/readers/slac-bsas-table.md`](slac-bsas-table.md).
+
 ## Use Cases
 
 - Legacy EPICS installations without PVAccess support

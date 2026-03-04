@@ -14,6 +14,20 @@
 using namespace mldp_pvxs_driver::reader::impl::epics;
 using DataFrame = dp::service::common::DataFrame;
 
+/*
+ * Conversion flow (single PV field -> DataFrame columns):
+ * 1) Inspect pvValue.type().code and dispatch by PVXS type family.
+ * 2) Scalars map to one typed scalar column with one value.
+ * 3) Scalar arrays map to one typed array column preserving full array payload.
+ * 4) Compound values recurse into children using dotted names:
+ *      parent.child[.grandchild...]
+ * 5) Null values are represented as a string column with literal "null".
+ *
+ * Notes:
+ * - Unsigned integers are normalized into signed MLDP column types:
+ *   UInt8/16/32 -> Int32, UInt64 -> Int64 (same rule for arrays).
+ * - String arrays are encoded as DataColumn/ArrayValue to preserve nested semantics.
+ */
 void EpicsMLDPConversion::convertPVToDataFrame(const pvxs::Value& pvValue,
                                                DataFrame*         frame,
                                                const std::string& columnName)
@@ -37,6 +51,7 @@ void EpicsMLDPConversion::convertPVToDataFrame(const pvxs::Value& pvValue,
 
     switch (pvValue.type().code)
     {
+    // --- Scalar primitives --------------------------------------------------
     case pvxs::TypeCode::Bool:
     {
         auto* c = frame->add_boolcolumns();
@@ -97,6 +112,9 @@ void EpicsMLDPConversion::convertPVToDataFrame(const pvxs::Value& pvValue,
         c->add_values(pvValue.as<std::string>());
         return;
     }
+
+    // --- Scalar array payloads ---------------------------------------------
+    // Arrays are kept as array columns rather than exploded into scalar rows.
     case pvxs::TypeCode::BoolA:
     {
         const auto arr = pvValue.as<pvxs::shared_array<const bool>>();
@@ -205,6 +223,9 @@ void EpicsMLDPConversion::convertPVToDataFrame(const pvxs::Value& pvValue,
         }
         return;
     }
+
+    // --- Compound / nested payloads ----------------------------------------
+    // Recursively flatten nested fields to dotted column names.
     case pvxs::TypeCode::Struct:
     case pvxs::TypeCode::Union:
     case pvxs::TypeCode::Any:
@@ -221,6 +242,8 @@ void EpicsMLDPConversion::convertPVToDataFrame(const pvxs::Value& pvValue,
         }
         return;
     }
+
+    // --- Explicit null ------------------------------------------------------
     case pvxs::TypeCode::Null:
     {
         auto* c = frame->add_stringcolumns();

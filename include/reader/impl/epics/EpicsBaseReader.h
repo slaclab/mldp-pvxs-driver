@@ -37,8 +37,10 @@ namespace mldp_pvxs_driver::reader::impl::epics {
  * in high-throughput scenarios.
  *
  * The reader supports both standard scalar/array PVs and SLAC BSAS NTTable
- * structures with per-row timestamps, configured through the reader's
- * YAML configuration.
+ * structures with per-row timestamps, configured through the reader's YAML
+ * configuration.  In BSAS mode each NTTable column is a PV name; two fixed
+ * columns hold the per-row timestamps.  See @c docs/readers/slac-bsas-table.md
+ * for the full structure description and a concrete annotated example.
  *
  * Configuration example:
  * @code{.yaml}
@@ -104,14 +106,50 @@ private:
     /**
      * @brief Process a single PV update event.
      *
-     * Converts the EPICS pvData structure to MLDP format and publishes
-     * it to the event bus. Handles both standard PVs and NTTable structures
-     * based on the PV's runtime configuration.
+     * Looks up the runtime mode for @p pvName and dispatches to
+     * processDefaultMode() or processSlacBsasTableMode(). Records
+     * processing-time and event-count metrics and catches exceptions so
+     * that a single bad update cannot disrupt the monitoring loop.
      *
-     * @param pvName Name of the PV that produced the update.
+     * @param pvName      Name of the PV that produced the update.
      * @param epics_value The pvData structure containing the update.
      */
     void processEvent(std::string pvName, ::epics::pvData::PVStructurePtr epics_value);
+
+    /**
+     * @brief Handle a PV update in Default (scalar/array) mode.
+     *
+     * Extracts the "value" and "timeStamp" sub-fields from @p epicsValue.
+     * Falls back to wall-clock time when the timestamp is absent.
+     * Compound (struct) value fields are rejected with a warning.
+     * On success one EventBatch is pushed to the bus and @p emitted is set to 1.
+     *
+     * @param pvName      Name of the source PV.
+     * @param epicsValue  Raw pvData structure received from EPICS Base.
+     * @param emitted     Set to 1 if an event was published, 0 otherwise.
+     */
+    void processDefaultMode(const std::string&                     pvName,
+                            const ::epics::pvData::PVStructurePtr& epicsValue,
+                            std::size_t&                           emitted);
+
+    /**
+     * @brief Handle a PV update in SlacBsasTable (NTTable row-timestamp) mode.
+     *
+     * Delegates conversion to EpicsPVDataConversion::tryBuildNtTableRowTsBatch.
+     * Columns are flushed to the bus in batches of at most
+     * config_.columnBatchSize() entries to bound memory usage for wide tables.
+     * @p emitted receives the total number of data rows published.
+     *
+     * @param pvName      Name of the source NTTable PV.
+     * @param epicsValue  Raw pvData structure received from EPICS Base.
+     * @param runtimeCfg  Per-PV runtime config supplying timestamp field names
+     *                    (may be null, in which case defaults are used).
+     * @param emitted     Accumulates the number of rows emitted.
+     */
+    void processSlacBsasTableMode(const std::string&                     pvName,
+                                  const ::epics::pvData::PVStructurePtr& epicsValue,
+                                  const PVRuntimeConfig*                 runtimeCfg,
+                                  std::size_t&                           emitted);
 
     std::unique_ptr<EpicsBaseMonitorPoller> epics_base_poller_;    ///< Underlying polling monitor.
     std::mutex                              epics_base_drain_mutex_; ///< Serializes drain operations.

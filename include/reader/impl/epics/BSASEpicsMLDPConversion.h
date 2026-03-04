@@ -16,6 +16,9 @@
  * Synchronous Acquisition System (BSAS) NTTable structures. The class extends
  * EpicsMLDPConversion with specialized handling for row-timestamped NTTable data,
  * where each row carries its own timestamp extracted from designated columns.
+ *
+ * For a complete description of the BSAS NTTable structure, field layout, and
+ * a concrete annotated example see @c docs/readers/slac-bsas-table.md.
  */
 
 #pragma once

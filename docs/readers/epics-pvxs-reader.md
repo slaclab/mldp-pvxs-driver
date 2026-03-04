@@ -80,21 +80,26 @@ reader_pool_->get_thread_count() > 1 ? reader_pool_.get() : nullptr
 
 ## SLAC BSAS NTTable Handling
 
-For PVs that return NTTable structures with per-row timestamps (SLAC BSAS format):
+For PVs that deliver NTTable structures with per-row timestamps (SLAC BSAS
+format), enable the mode with:
 
 ```yaml
 pvs:
   - name: BSA:TABLE:PV
     option:
       type: slac-bsas-table
-      tsSeconds: secondsPastEpoch    # Column containing epoch seconds
-      tsNanos: nanoseconds           # Column containing nanoseconds
+      tsSeconds: secondsPastEpoch    # column holding per-row epoch seconds
+      tsNanos: nanoseconds           # column holding per-row nanoseconds
 ```
 
-- Each table column becomes a separate source in the event batch
-- Timestamps are extracted per-row from the specified fields
-- Source name equals the column field name
-- Conversion handled by `BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch()`
+- Each NTTable column (PV name) becomes a separate source in the event batch.
+- The two timestamp columns are consumed for row indexing and are not forwarded.
+- Source name equals the PV-name column field name.
+- Conversion is handled by `BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch()`.
+
+For a full description of the BSAS NTTable structure, field layout, and a
+concrete annotated example see
+[`docs/readers/slac-bsas-table.md`](slac-bsas-table.md).
 
 ## Use Cases
 

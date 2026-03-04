@@ -26,6 +26,22 @@ using mldp_pvxs_driver::util::bus::IDataBus;
 
 namespace {
 
+/*
+ * Conversion flow overview (BSAS NTTable, row-timestamp mode):
+ * 1) Validate the incoming PVXS value and locate the NTTable "value" struct.
+ * 2) Resolve row timestamp arrays (seconds/nanoseconds), accepting either:
+ *    - top-level fields, or
+ *    - value.<field> columns.
+ * 3) Build normalized uint64 vectors for the timestamp fields only
+ *    (seconds/nanoseconds) so downstream row indexing is uniform regardless
+ *    of original integer width/signedness.
+ * 4) For each non-timestamp column:
+ *    - convert supported NTTable array types into one DataFrame-backed EventValue,
+ *    - attach the full row timestamp list to that frame,
+ *    - emit the result under the column name.
+ * 5) Report total emitted rows across all converted columns.
+ */
+
 /// Helper to interpret integer PVXS array fields (of any width) as uint64.
 struct UIntArrayView
 {
@@ -102,8 +118,8 @@ void fillTimestamps(dp::service::common::DataFrame& frame,
 /// Convert one NTTable column into a single EventValue whose DataFrame contains
 /// all @p rowCount timestamped values in the appropriate typed column.
 ///
-/// Compound column types (StructA/UnionA/AnyA) are not supported and produce an
-/// empty ColumnResult.
+/// Compound column types (StructA/UnionA/AnyA) are supported: each cell's nested
+/// "value" field (or the cell itself) is recursively converted via EpicsMLDPConversion.
 ColumnResult convertColumn(const pvxs::Value&           columns,
                            const pvxs::Value&           col,
                            const std::string&           colName,
@@ -289,6 +305,7 @@ bool BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch(mldp_pvxs_driver::util::
 {
     outEmitted = 0;
 
+    // Phase 1: Validate and locate NTTable payload.
     if (!epicsValue || epicsValue.type().kind() != pvxs::Kind::Compound)
     {
         warnf(log, "NTTable row-ts PV {} update is not a compound value", tablePvName);
@@ -302,6 +319,7 @@ bool BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch(mldp_pvxs_driver::util::
         return false;
     }
 
+    // Phase 2: Resolve row timestamp arrays (top-level first, then value.* fallback).
     pvxs::Value secondsValue = epicsValue[tsSecondsField];
     pvxs::Value nanosValue   = epicsValue[tsNanosField];
     if (!secondsValue.valid() || !nanosValue.valid())
@@ -320,6 +338,8 @@ bool BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch(mldp_pvxs_driver::util::
         return false;
     }
 
+    // Phase 3: Normalize timestamp arrays to uint64 and clamp row count to the
+    // shortest timestamp array to avoid out-of-bounds row access.
     const auto secondsArr = asUIntArrayView(secondsValue);
     const auto nanosArr   = asUIntArrayView(nanosValue);
     if (!secondsArr.has_value() || !nanosArr.has_value())
@@ -342,6 +362,8 @@ bool BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch(mldp_pvxs_driver::util::
         tsNanos[i]   = nanosArr->at(i);
     }
 
+    // Phase 4: Convert each non-timestamp column and emit it independently.
+    // One emitted EventValue contains one DataFrame with all rows of that column.
     for (const auto& col : columns.ichildren())
     {
         if (!col.valid())
@@ -381,6 +403,7 @@ bool BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch(mldp_pvxs_driver::util::
         }
     }
 
+    // Phase 5: report whether any rows were emitted.
     return outEmitted > 0;
 }
 
@@ -400,6 +423,7 @@ bool BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch(mldp_pvxs_driver::util::
 
     outEmitted = 0;
 
+    // Same validation/resolution flow as the sequential overload.
     if (!epicsValue || epicsValue.type().kind() != pvxs::Kind::Compound)
     {
         warnf(log, "NTTable row-ts PV {} update is not a compound value", tablePvName);
@@ -488,7 +512,8 @@ bool BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch(mldp_pvxs_driver::util::
             }));
     }
 
-    // Collect results and emit sequentially.
+    // Collect futures and emit sequentially to keep callback side effects ordered
+    // at this boundary (conversion work itself is parallelized).
     for (auto& fut : futures)
     {
         auto result = fut.get();

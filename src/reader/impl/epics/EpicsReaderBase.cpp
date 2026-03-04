@@ -14,9 +14,9 @@ using namespace mldp_pvxs_driver::reader::impl::epics;
 using namespace mldp_pvxs_driver::util::log;
 
 EpicsReaderBase::EpicsReaderBase(std::shared_ptr<util::bus::IDataBus> bus,
-                                 std::shared_ptr<metrics::Metrics>         metrics,
-                                 const EpicsReaderConfig&                  cfg,
-                                 std::shared_ptr<util::log::ILogger>       logger)
+                                 std::shared_ptr<metrics::Metrics>    metrics,
+                                 const EpicsReaderConfig&             cfg,
+                                 std::shared_ptr<util::log::ILogger>  logger)
     : Reader(std::move(bus), std::move(metrics))
     , logger_(std::move(logger))
     , config_(cfg)
