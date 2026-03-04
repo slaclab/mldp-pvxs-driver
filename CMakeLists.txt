@@ -24,6 +24,7 @@ set(ARGPARSE_VERSION "v3.2")
 set(METRIC_GRABBER_VERSION "v0.0.1")
 set(EPICSARCHIVERAP_VERSION "2.2.1")
 set(CPP_HTTPLIB_VERSION "v0.16.3")
+set(DP_GRPC_VERSION "v1.13")
 
 # Output directories
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
@@ -95,6 +96,14 @@ FetchContent_Declare(epicsarchiverap
     GIT_TAG ${EPICSARCHIVERAP_VERSION}
 )
 FetchContent_MakeAvailable(epicsarchiverap)
+
+# Acquire dp-grpc for MLDP proto definitions
+message(STATUS "Acquiring dp-grpc version ${DP_GRPC_VERSION}...")
+FetchContent_Declare(dp_grpc
+    GIT_REPOSITORY https://github.com/osprey-dcs/dp-grpc.git
+    GIT_TAG ${DP_GRPC_VERSION}
+)
+FetchContent_MakeAvailable(dp_grpc)
 
 
 # Find required packages
@@ -360,16 +369,17 @@ endif()
 
 # Proto file configuration
 
-set(PROTO_PATH $ENV{PROTO_PATH})
-message(STATUS "ProtoBuf mldp description file path: ${PROTO_PATH}")
+# Set DP_GRPC_PROTO_PATH from fetched content
+set(DP_GRPC_PROTO_PATH "${dp_grpc_SOURCE_DIR}/src/main/proto")
+message(STATUS "ProtoBuf dp-grpc description file path: ${DP_GRPC_PROTO_PATH}")
 
 # Set EPICSARCHIVERAP_PROTO_PATH from fetched content
 set(EPICSARCHIVERAP_PROTO_PATH "${epicsarchiverap_SOURCE_DIR}/src/proto")
 
 set(PROTO_FILES
-    ${PROTO_PATH}/common.proto
-    ${PROTO_PATH}/query.proto
-    ${PROTO_PATH}/ingestion.proto
+    ${DP_GRPC_PROTO_PATH}/common.proto
+    ${DP_GRPC_PROTO_PATH}/query.proto
+    ${DP_GRPC_PROTO_PATH}/ingestion.proto
     ${EPICSARCHIVERAP_PROTO_PATH}/EPICSEvent.proto
 )
 
@@ -398,7 +408,7 @@ add_custom_command(
     OUTPUT ${PROTO_SRCS} ${PROTO_HDRS} ${GRPC_SRCS} ${GRPC_HDRS}
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/proto
     COMMAND ${Protobuf_PROTOC_EXECUTABLE}
-    --proto_path=${PROTO_PATH}
+    --proto_path=${DP_GRPC_PROTO_PATH}
     --proto_path=${EPICSARCHIVERAP_PROTO_PATH}
     --cpp_out=${CMAKE_CURRENT_BINARY_DIR}/proto
     --grpc_out=${CMAKE_CURRENT_BINARY_DIR}/proto

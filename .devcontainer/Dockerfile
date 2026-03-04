@@ -129,12 +129,6 @@ RUN arch=$(cat /etc/epics_host_arch) && \
 # Set PVXS environment variable
 ENV PVXS_BASE=/opt/local
 
-# Download dp-grpc proto files pinned to tag v1.13
-RUN git clone --branch v1.13 https://github.com/osprey-dcs/dp-grpc.git /opt/dp-grpc
-
-# Set PROTO_PATH environment variable to the proto files location
-ENV PROTO_PATH=/opt/dp-grpc/src/main/proto
-
 # Set the working directory
 WORKDIR /workspace
 
