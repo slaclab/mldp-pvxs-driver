@@ -21,7 +21,6 @@
 
 using namespace mldp_pvxs_driver::reader::impl::epics;
 using namespace mldp_pvxs_driver::util::log;
-using mldp_pvxs_driver::util::bus::EventValueStruct;
 using mldp_pvxs_driver::util::bus::IDataBus;
 using DataFrame = dp::service::common::DataFrame;
 
@@ -245,9 +244,9 @@ std::optional<UIntArrayView> asUIntArrayView(const ::epics::pvData::PVFieldPtr& 
 
 struct ColumnResult
 {
-    std::string                                                          name;
-    std::vector<IDataBus::EventValue> events;
-    size_t                                                               emitted{0};
+    std::string                                  name;
+    std::vector<dp::service::common::DataFrame> events;
+    size_t                                       emitted{0};
 };
 
 ColumnResult convertColumn(const ::epics::pvData::PVFieldPtr& col,
@@ -269,18 +268,15 @@ ColumnResult convertColumn(const ::epics::pvData::PVFieldPtr& col,
         const auto emitArray = [&](auto view, auto&& setValue)
         {
             const auto n = std::min(rowCount, static_cast<size_t>(view.size()));
-            auto bulk = std::make_shared<std::vector<EventValueStruct>>(n);
+            result.events.reserve(result.events.size() + n);
             for (size_t i = 0; i < n; ++i)
             {
-                auto& ev = (*bulk)[i];
-                ev.epoch_seconds = tsSeconds[i];
-                ev.nanoseconds = tsNanos[i];
-                setValue(&ev.data_value, view[i]);
-            }
-            result.events.reserve(n);
-            for (size_t i = 0; i < n; ++i)
-            {
-                result.events.emplace_back(bulk, &(*bulk)[i]);
+                dp::service::common::DataFrame frame;
+                auto* ts = frame.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
+                ts->set_epochseconds(tsSeconds[i]);
+                ts->set_nanoseconds(tsNanos[i]);
+                setValue(&frame, view[i]);
+                result.events.emplace_back(std::move(frame));
             }
             result.emitted = n;
         };
@@ -373,21 +369,18 @@ ColumnResult convertColumn(const ::epics::pvData::PVFieldPtr& col,
     {
         const auto view = structArray->view();
         const auto n = std::min(rowCount, static_cast<size_t>(view.size()));
-        auto bulk = std::make_shared<std::vector<EventValueStruct>>(n);
+        result.events.reserve(result.events.size() + n);
         for (size_t i = 0; i < n; ++i)
         {
-            auto& ev = (*bulk)[i];
-            ev.epoch_seconds = tsSeconds[i];
-            ev.nanoseconds = tsNanos[i];
+            dp::service::common::DataFrame frame;
+            auto* ts = frame.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
+            ts->set_epochseconds(tsSeconds[i]);
+            ts->set_nanoseconds(tsNanos[i]);
             if (view[i])
             {
-                EpicsPVDataConversion::convertPVToProtoValue(*view[i], &ev.data_value, colName);
+                EpicsPVDataConversion::convertPVToProtoValue(*view[i], &frame, colName);
             }
-        }
-        result.events.reserve(n);
-        for (size_t i = 0; i < n; ++i)
-        {
-            result.events.emplace_back(bulk, &(*bulk)[i]);
+            result.events.emplace_back(std::move(frame));
         }
         result.emitted = n;
     }
@@ -552,12 +545,13 @@ bool EpicsPVDataConversion::tryBuildNtTableRowTsBatch(mldp_pvxs_driver::util::lo
                                                       size_t&                                                 outEmitted)
 {
     outBatch->tags.clear();
-    outBatch->values.clear();
+    outBatch->frames.clear();
     outBatch->tags.push_back(tablePvName);
     return tryBuildNtTableRowTsBatch(log, tablePvName, epicsValue,
         tsSecondsField, tsNanosField,
-        [&](std::string colName, std::vector<IDataBus::EventValue> events) {
-            outBatch->values[std::move(colName)] = std::move(events);
+        [&](std::string colName, std::vector<dp::service::common::DataFrame> events) {
+            (void)colName;
+            for (auto& frame : events) outBatch->frames.push_back(std::move(frame));
         }, outEmitted);
 }
 

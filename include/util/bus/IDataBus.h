@@ -17,8 +17,6 @@
 #include <chrono>
 #include <cstdint>
 #include <ingestion.grpc.pb.h>
-#include <map>
-#include <memory>
 #include <optional>
 #include <set>
 #include <string>
@@ -28,20 +26,6 @@
 namespace mldp_pvxs_driver::util::bus {
 
 /**
- * @brief Timestamped ingestion payload shared across the bus.
- *
- * Instances carry both coarse and fine grained timestamps along with the
- * generated @ref dp::service::common::DataFrame, allowing transport layers to forward the payload
- * without copying.
- */
-struct EventValueStruct
-{
-    uint64_t                       epoch_seconds; ///< Unix epoch seconds for the sample.
-    uint64_t                       nanoseconds;   ///< Additional nanoseconds precision.
-    dp::service::common::DataFrame data_value;    ///< Protobuf payload (by value to avoid heap allocation).
-};
-
-/**
  * @brief Container describing a batch of events to ingest.
  *
  * Tags provide additional metadata that should accompany the entire batch,
@@ -49,9 +33,9 @@ struct EventValueStruct
  */
 struct EventBatchStruct
 {
-    std::string                                                           root_source; ///< root source identifier for the batch.
-    std::vector<std::string>                                              tags;        ///< Optional metadata attached to the batch.
-    std::map<std::string, std::vector<std::shared_ptr<EventValueStruct>>> values;      ///< Payloads grouped per source ID.
+    std::string                                 root_source; ///< Root PV identifier used for batch-level metrics/correlation.
+    std::vector<std::string>                    tags;        ///< Optional metadata attached to the batch.
+    std::vector<dp::service::common::DataFrame> frames;      ///< One frame per ingestion payload; each frame must include timestamps.
 };
 
 /**
@@ -107,38 +91,21 @@ struct QuerySourcesDataOptions
 class IDataBus
 {
 public:
-    /// Shared ownership wrapper around the generated ingestion payload.
-    using EventValue = std::shared_ptr<EventValueStruct>;
     /// Batch of values grouped per source identifier with optional tags.
     using EventBatch = EventBatchStruct;
     /// Metadata describing one source/PV from MLDP query APIs.
     using SourceInfo = SourceInfoStruct;
-
-    /**
-     * @brief Helper factory that returns an empty event payload.
-     * @return Shared pointer users can populate before invoking @ref push.
-     */
-    static EventValue MakeEventValue(uint64_t epoch_seconds = 0, uint64_t nanoseconds = 0)
-    {
-        // Construct a temporary aggregate explicitly to avoid overload
-        // resolution issues with braced-init-lists and make_shared.
-        return std::make_shared<EventValueStruct>(
-            EventValueStruct{
-                epoch_seconds,
-                nanoseconds,
-                dp::service::common::DataFrame{}});
-    }
 
     virtual ~IDataBus() = default;
 
     /**
      * @brief Pushes a batch of populated ingestion events into the bus.
      *
-     * Each entry in @p batch_values.values represents a single source whose
-     * vector aggregates one or more payloads. Implementations may forward all
-     * entries in a single call to the back-end to minimize network round-trips.
+     * Each entry in @p batch_values.frames represents one ingestion payload.
+     * Implementations may forward all entries in a single call to the back-end
+     * to minimize network round-trips.
      * When @p batch_values.tags is empty, implementations may add their own
-     * default tags (such as each source name) before forwarding the batch.
+     * default tags before forwarding the batch.
      *
      * @param batch_values Aggregated batch describing tags and payloads. Each
      *                     payload is shared with the bus implementation.

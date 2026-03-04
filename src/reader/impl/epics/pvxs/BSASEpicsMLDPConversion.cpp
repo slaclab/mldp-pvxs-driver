@@ -36,7 +36,7 @@ namespace {
  *    (seconds/nanoseconds) so downstream row indexing is uniform regardless
  *    of original integer width/signedness.
  * 4) For each non-timestamp column:
- *    - convert supported NTTable array types into one DataFrame-backed EventValue,
+ *    - convert supported NTTable array types into one DataFrame payload,
  *    - attach the full row timestamp list to that frame,
  *    - emit the result under the column name.
  * 5) Report total emitted rows across all converted columns.
@@ -84,19 +84,19 @@ std::optional<UIntArrayView> asUIntArrayView(const pvxs::Value& value)
     switch (value.type().code)
     {
     case pvxs::TypeCode::UInt64A: return UIntArrayView{value.as<pvxs::shared_array<const uint64_t>>()};
-    case pvxs::TypeCode::Int64A:  return UIntArrayView{value.as<pvxs::shared_array<const int64_t>>()};
+    case pvxs::TypeCode::Int64A: return UIntArrayView{value.as<pvxs::shared_array<const int64_t>>()};
     case pvxs::TypeCode::UInt32A: return UIntArrayView{value.as<pvxs::shared_array<const uint32_t>>()};
-    case pvxs::TypeCode::Int32A:  return UIntArrayView{value.as<pvxs::shared_array<const int32_t>>()};
-    default:                      return std::nullopt;
+    case pvxs::TypeCode::Int32A: return UIntArrayView{value.as<pvxs::shared_array<const int32_t>>()};
+    default: return std::nullopt;
     }
 }
 
-/// Result of converting a single NTTable column to a DataFrame-based EventValue.
+/// Result of converting a single NTTable column to DataFrame payload(s).
 struct ColumnResult
 {
-    std::string                       name;
-    std::vector<IDataBus::EventValue> events;  ///< At most one element (all rows packed).
-    size_t                            emitted{0};
+    std::string                                 name;
+    std::vector<dp::service::common::DataFrame> events; ///< At most one element (all rows packed).
+    size_t                                      emitted{0};
 };
 
 /// Fill per-row timestamps into a DataFrame's TimestampList.
@@ -115,7 +115,7 @@ void fillTimestamps(dp::service::common::DataFrame& frame,
     }
 }
 
-/// Convert one NTTable column into a single EventValue whose DataFrame contains
+/// Convert one NTTable column into a single DataFrame that contains
 /// all @p rowCount timestamped values in the appropriate typed column.
 ///
 /// Compound column types (StructA/UnionA/AnyA) are supported: each cell's nested
@@ -137,17 +137,16 @@ ColumnResult convertColumn(const pvxs::Value&           columns,
     // the array and appends each element via addValFn().
     const auto emitTypedColumn =
         [&]<typename ColT, typename ArrT, typename ValT>(ColT* (dp::service::common::DataFrame::*addColFn)(),
-                                                          void (ColT::*addValFn)(ValT))
+                                                         void (ColT::*addValFn)(ValT))
     {
         const auto arr = col.as<pvxs::shared_array<const ArrT>>();
-        const auto n   = std::min(rowCount, static_cast<size_t>(arr.size()));
+        const auto n = std::min(rowCount, static_cast<size_t>(arr.size()));
         if (n == 0)
         {
             return;
         }
 
-        auto ev    = IDataBus::MakeEventValue(tsSeconds[0], tsNanos[0]);
-        auto& frame = ev->data_value;
+        dp::service::common::DataFrame frame;
 
         fillTimestamps(frame, n, tsSeconds, tsNanos);
 
@@ -159,7 +158,7 @@ ColumnResult convertColumn(const pvxs::Value&           columns,
             (c->*addValFn)(static_cast<ValT>(arr[i]));
         }
 
-        result.events.push_back(std::move(ev));
+        result.events.push_back(std::move(frame));
         result.emitted = n;
     };
 
@@ -212,60 +211,58 @@ ColumnResult convertColumn(const pvxs::Value&           columns,
         break;
 
     case pvxs::TypeCode::StringA:
-    {
-        const auto arr = col.as<pvxs::shared_array<const std::string>>();
-        const auto n   = std::min(rowCount, static_cast<size_t>(arr.size()));
-        if (n > 0)
         {
-            auto ev    = IDataBus::MakeEventValue(tsSeconds[0], tsNanos[0]);
-            auto& frame = ev->data_value;
-
-            fillTimestamps(frame, n, tsSeconds, tsNanos);
-
-            auto* c = frame.add_stringcolumns();
-            c->set_name(colName);
-            for (size_t i = 0; i < n; ++i)
+            const auto arr = col.as<pvxs::shared_array<const std::string>>();
+            const auto n = std::min(rowCount, static_cast<size_t>(arr.size()));
+            if (n > 0)
             {
-                c->add_values(arr[i]);
-            }
+                dp::service::common::DataFrame frame;
 
-            result.events.push_back(std::move(ev));
-            result.emitted = n;
+                fillTimestamps(frame, n, tsSeconds, tsNanos);
+
+                auto* c = frame.add_stringcolumns();
+                c->set_name(colName);
+                for (size_t i = 0; i < n; ++i)
+                {
+                    c->add_values(arr[i]);
+                }
+
+                result.events.push_back(std::move(frame));
+                result.emitted = n;
+            }
+            break;
         }
-        break;
-    }
 
     case pvxs::TypeCode::StructA:
     case pvxs::TypeCode::UnionA:
     case pvxs::TypeCode::AnyA:
-    {
-        // Compound array columns: convert each cell's value fields into the
-        // same DataFrame, using EpicsMLDPConversion for the actual type dispatch.
-        const auto arr = col.as<pvxs::shared_array<const pvxs::Value>>();
-        const auto n   = std::min(rowCount, static_cast<size_t>(arr.size()));
-        if (n > 0)
         {
-            auto ev    = IDataBus::MakeEventValue(tsSeconds[0], tsNanos[0]);
-            auto& frame = ev->data_value;
-
-            fillTimestamps(frame, n, tsSeconds, tsNanos);
-
-            for (size_t i = 0; i < n; ++i)
+            // Compound array columns: convert each cell's value fields into the
+            // same DataFrame, using EpicsMLDPConversion for the actual type dispatch.
+            const auto arr = col.as<pvxs::shared_array<const pvxs::Value>>();
+            const auto n = std::min(rowCount, static_cast<size_t>(arr.size()));
+            if (n > 0)
             {
-                const pvxs::Value cell = arr[i];
-                const pvxs::Value cellValue =
-                    (cell.valid() && cell.type().kind() == pvxs::Kind::Compound)
-                        ? cell["value"]
-                        : pvxs::Value{};
-                EpicsMLDPConversion::convertPVToDataFrame(
-                    cellValue.valid() ? cellValue : cell, &frame, colName);
-            }
+                dp::service::common::DataFrame frame;
 
-            result.events.push_back(std::move(ev));
-            result.emitted = n;
+                fillTimestamps(frame, n, tsSeconds, tsNanos);
+
+                for (size_t i = 0; i < n; ++i)
+                {
+                    const pvxs::Value cell = arr[i];
+                    const pvxs::Value cellValue =
+                        (cell.valid() && cell.type().kind() == pvxs::Kind::Compound)
+                            ? cell["value"]
+                            : pvxs::Value{};
+                    EpicsMLDPConversion::convertPVToDataFrame(
+                        cellValue.valid() ? cellValue : cell, &frame, colName);
+                }
+
+                result.events.push_back(std::move(frame));
+                result.emitted = n;
+            }
+            break;
         }
-        break;
-    }
 
     default:
         break;
@@ -286,13 +283,15 @@ bool BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch(mldp_pvxs_driver::util::
                                                         size_t&                               outEmitted)
 {
     outBatch->tags.clear();
-    outBatch->values.clear();
+    outBatch->frames.clear();
     outBatch->tags.push_back(tablePvName);
-    return tryBuildNtTableRowTsBatch(log, tablePvName, epicsValue,
-        tsSecondsField, tsNanosField,
-        [&](std::string colName, std::vector<IDataBus::EventValue> events) {
-            outBatch->values[std::move(colName)] = std::move(events);
-        }, outEmitted);
+    return tryBuildNtTableRowTsBatch(log, tablePvName, epicsValue, tsSecondsField, tsNanosField, [&](std::string colName, std::vector<dp::service::common::DataFrame> events)
+                                     {
+                                         (void)colName;
+                                         for (auto& frame : events)
+                                             outBatch->frames.push_back(std::move(frame));
+                                     },
+                                     outEmitted);
 }
 
 bool BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch(mldp_pvxs_driver::util::log::ILogger& log,
@@ -321,11 +320,11 @@ bool BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch(mldp_pvxs_driver::util::
 
     // Phase 2: Resolve row timestamp arrays (top-level first, then value.* fallback).
     pvxs::Value secondsValue = epicsValue[tsSecondsField];
-    pvxs::Value nanosValue   = epicsValue[tsNanosField];
+    pvxs::Value nanosValue = epicsValue[tsNanosField];
     if (!secondsValue.valid() || !nanosValue.valid())
     {
         secondsValue = columns[tsSecondsField];
-        nanosValue   = columns[tsNanosField];
+        nanosValue = columns[tsNanosField];
     }
 
     if (!secondsValue.valid() || !nanosValue.valid())
@@ -341,7 +340,7 @@ bool BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch(mldp_pvxs_driver::util::
     // Phase 3: Normalize timestamp arrays to uint64 and clamp row count to the
     // shortest timestamp array to avoid out-of-bounds row access.
     const auto secondsArr = asUIntArrayView(secondsValue);
-    const auto nanosArr   = asUIntArrayView(nanosValue);
+    const auto nanosArr = asUIntArrayView(nanosValue);
     if (!secondsArr.has_value() || !nanosArr.has_value())
     {
         warnf(log, "NTTable row-ts PV {} timestamp arrays have unsupported types", tablePvName);
@@ -359,11 +358,11 @@ bool BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch(mldp_pvxs_driver::util::
     for (size_t i = 0; i < rowCount; ++i)
     {
         tsSeconds[i] = secondsArr->at(i);
-        tsNanos[i]   = nanosArr->at(i);
+        tsNanos[i] = nanosArr->at(i);
     }
 
     // Phase 4: Convert each non-timestamp column and emit it independently.
-    // One emitted EventValue contains one DataFrame with all rows of that column.
+    // One emitted entry contains one DataFrame with all rows of that column.
     for (const auto& col : columns.ichildren())
     {
         if (!col.valid())
@@ -438,11 +437,11 @@ bool BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch(mldp_pvxs_driver::util::
     }
 
     pvxs::Value secondsValue = epicsValue[tsSecondsField];
-    pvxs::Value nanosValue   = epicsValue[tsNanosField];
+    pvxs::Value nanosValue = epicsValue[tsNanosField];
     if (!secondsValue.valid() || !nanosValue.valid())
     {
         secondsValue = columns[tsSecondsField];
-        nanosValue   = columns[tsNanosField];
+        nanosValue = columns[tsNanosField];
     }
 
     if (!secondsValue.valid() || !nanosValue.valid())
@@ -456,7 +455,7 @@ bool BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch(mldp_pvxs_driver::util::
     }
 
     const auto secondsArr = asUIntArrayView(secondsValue);
-    const auto nanosArr   = asUIntArrayView(nanosValue);
+    const auto nanosArr = asUIntArrayView(nanosValue);
     if (!secondsArr.has_value() || !nanosArr.has_value())
     {
         warnf(log, "NTTable row-ts PV {} timestamp arrays have unsupported types", tablePvName);
@@ -472,11 +471,11 @@ bool BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch(mldp_pvxs_driver::util::
 
     // Build shared timestamp arrays so parallel tasks can safely reference them.
     auto tsSeconds = std::make_shared<std::vector<uint64_t>>(rowCount);
-    auto tsNanos   = std::make_shared<std::vector<uint64_t>>(rowCount);
+    auto tsNanos = std::make_shared<std::vector<uint64_t>>(rowCount);
     for (size_t i = 0; i < rowCount; ++i)
     {
         (*tsSeconds)[i] = secondsArr->at(i);
-        (*tsNanos)[i]   = nanosArr->at(i);
+        (*tsNanos)[i] = nanosArr->at(i);
     }
 
     // Collect columns to dispatch in parallel.
@@ -485,6 +484,7 @@ bool BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch(mldp_pvxs_driver::util::
         pvxs::Value col;
         std::string name;
     };
+
     std::vector<ColInfo> colInfos;
     for (const auto& col : columns.ichildren())
     {

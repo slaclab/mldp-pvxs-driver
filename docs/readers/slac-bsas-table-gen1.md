@@ -115,14 +115,15 @@ Incoming NTTable update
 │ 3. For each non-timestamp column:       │
 │    • Convert typed array to DataFrame   │
 │    • Attach per-row TimestampList       │
-│    • Emit EventValue under column name  │
+│    • Emit DataFrame under column name   │
 │    • Flush batch when column limit hit  │
 └─────────────────────────────────────────┘
 ```
 
-Each non-timestamp column becomes its **own source** in the `EventBatch`,
-keyed by the column name.  The timestamp columns are consumed for row
-indexing and are never forwarded as sources themselves.
+Each non-timestamp column becomes its own `DataFrame` in `EventBatch.frames`,
+with source identity carried by the column name. Timestamp columns are consumed
+for row indexing and never forwarded as sources themselves. Every emitted frame
+must carry `datatimestamps.timestamplist`; untimestamped frames are dropped.
 
 ## Configuration
 

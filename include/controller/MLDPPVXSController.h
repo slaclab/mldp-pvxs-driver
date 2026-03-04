@@ -179,8 +179,8 @@ private:
     {
         std::string                                     root_source;
         std::shared_ptr<const std::vector<std::string>> tags;
-        /// Multiple columns batched into a single queue item.
-        std::vector<std::pair<std::string, std::vector<util::bus::IDataBus::EventValue>>> columns;
+        /// Multiple source/dataframes batched into a single queue item.
+        std::vector<std::pair<std::string, std::vector<dp::service::common::DataFrame>>> frames;
     };
 
     /// Per-worker channel: each worker has its own queue for source-affinity.
@@ -207,7 +207,7 @@ private:
     explicit MLDPPVXSController(const config::Config& config);
     void workerLoop(std::size_t worker_index);
     bool buildRequest(const std::string&                         source_name,
-                      const util::bus::IDataBus::EventValue&     event_value,
+                      const dp::service::common::DataFrame&      frame,
                       const std::string&                         request_id,
                       dp::service::ingestion::IngestDataRequest& request,
                       std::size_t&                               accepted_events,

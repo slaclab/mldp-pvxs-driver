@@ -45,11 +45,7 @@ public:
         std::lock_guard<std::mutex> lock(mutex);
         if (metrics_)
         {
-            size_t total_values = 0;
-            for (const auto& [_, values] : batch.values)
-            {
-                total_values += values.size();
-            }
+            const size_t total_values = batch.frames.size();
             const auto source = batch.root_source.empty() ? std::string("unknown") : batch.root_source;
             const prometheus::Labels tags{{"source", source}};
             metrics_->incrementBusPushes(static_cast<double>(total_values), tags);
@@ -85,10 +81,7 @@ public:
         size_t                      total = 0;
         for (const auto& batch : received_events)
         {
-            for (const auto& [_, values] : batch.values)
-            {
-                total += values.size();
-            }
+            total += batch.frames.size();
         }
         return total;
     }
@@ -122,16 +115,11 @@ public:
             return nullptr;
         }
         const auto& batch = received_events.back();
-        if (batch.values.empty())
+        if (batch.frames.empty())
         {
             return nullptr;
         }
-        const auto& first_entry = *batch.values.begin();
-        if (first_entry.second.empty() || first_entry.second.front() == nullptr)
-        {
-            return nullptr;
-        }
-        return &first_entry.second.front()->data_value;
+        return &batch.frames.front();
     }
 
     // Method to clear events
@@ -155,22 +143,36 @@ namespace {
 
 using DataFrame = dp::service::common::DataFrame;
 
+std::optional<std::string> frameSource(const DataFrame& frame)
+{
+    if (frame.doublecolumns_size() > 0) return frame.doublecolumns(0).name();
+    if (frame.floatcolumns_size() > 0) return frame.floatcolumns(0).name();
+    if (frame.int32columns_size() > 0) return frame.int32columns(0).name();
+    if (frame.int64columns_size() > 0) return frame.int64columns(0).name();
+    if (frame.boolcolumns_size() > 0) return frame.boolcolumns(0).name();
+    if (frame.stringcolumns_size() > 0) return frame.stringcolumns(0).name();
+    if (frame.datacolumns_size() > 0) return frame.datacolumns(0).name();
+    if (frame.doublearraycolumns_size() > 0) return frame.doublearraycolumns(0).name();
+    if (frame.floatarraycolumns_size() > 0) return frame.floatarraycolumns(0).name();
+    if (frame.int32arraycolumns_size() > 0) return frame.int32arraycolumns(0).name();
+    if (frame.int64arraycolumns_size() > 0) return frame.int64arraycolumns(0).name();
+    if (frame.boolarraycolumns_size() > 0) return frame.boolarraycolumns(0).name();
+    return std::nullopt;
+}
+
 const DataFrame* findLatestDataFrameForSource(const MockEventBusPush& bus, const std::string& source)
 {
     std::lock_guard<std::mutex> lock(bus.mutex);
     for (auto it = bus.received_events.rbegin(); it != bus.received_events.rend(); ++it)
     {
-        const auto vit = it->values.find(source);
-        if (vit == it->values.end() || vit->second.empty())
+        for (auto fit = it->frames.rbegin(); fit != it->frames.rend(); ++fit)
         {
-            continue;
+            const auto src = frameSource(*fit);
+            if (src.has_value() && *src == source)
+            {
+                return &(*fit);
+            }
         }
-        const auto& ev = vit->second.back();
-        if (!ev)
-        {
-            continue;
-        }
-        return &ev->data_value;
     }
     return nullptr;
 }
@@ -181,12 +183,14 @@ size_t countEventsForSource(const MockEventBusPush& bus, const std::string& sour
     size_t                      total = 0;
     for (const auto& batch : bus.received_events)
     {
-        const auto it = batch.values.find(source);
-        if (it == batch.values.end())
+        for (const auto& frame : batch.frames)
         {
-            continue;
+            const auto src = frameSource(frame);
+            if (src.has_value() && *src == source)
+            {
+                ++total;
+            }
         }
-        total += it->second.size();
     }
     return total;
 }
@@ -357,8 +361,14 @@ TEST_F(EpicsPVXSReaderTest, SimulatedPVsProduceEventsAndExpectedTypes)
             std::lock_guard<std::mutex> lock(mock_bus->mutex);
             for (const auto& batch : mock_bus->received_events)
             {
-                for (const auto& [source, _] : batch.values)
+                for (const auto& frame : batch.frames)
                 {
+                    const auto src = frameSource(frame);
+                    if (!src.has_value())
+                    {
+                        continue;
+                    }
+                    const auto& source = *src;
                     if (expected.count(source))
                     {
                         seen.insert(source);
@@ -429,19 +439,49 @@ pvs:
     EXPECT_EQ(countEventsForSource(*mock_bus, "secondsPastEpoch"), 0u);
     EXPECT_EQ(countEventsForSource(*mock_bus, "nanoseconds"), 0u);
 
-    // Collect events for each column across all batches
-    std::vector<IDataBus::EventValue> ampl, stat;
+    // Root source remains the root PV for metrics/correlation even when
+    // ingestion sources are split by BSAS column.
+    bool saw_root_for_column_batch = false;
     {
         std::lock_guard<std::mutex> lock(mock_bus->mutex);
         for (const auto& batch : mock_bus->received_events)
         {
-            if (auto it = batch.values.find("PV_NAME_A_DOUBLE_VALUE"); it != batch.values.end())
+            bool has_column = false;
+            for (const auto& frame : batch.frames)
             {
-                ampl.insert(ampl.end(), it->second.begin(), it->second.end());
+                const auto src = frameSource(frame);
+                if (src == "PV_NAME_A_DOUBLE_VALUE" || src == "PV_NAME_B_STRING_VALUE")
+                {
+                    has_column = true;
+                    break;
+                }
             }
-            if (auto it = batch.values.find("PV_NAME_B_STRING_VALUE"); it != batch.values.end())
+            if (has_column && batch.root_source == "test:bsas_table")
             {
-                stat.insert(stat.end(), it->second.begin(), it->second.end());
+                saw_root_for_column_batch = true;
+                break;
+            }
+        }
+    }
+    EXPECT_TRUE(saw_root_for_column_batch);
+
+    // Collect events for each column across all batches
+    std::vector<DataFrame> ampl, stat;
+    {
+        std::lock_guard<std::mutex> lock(mock_bus->mutex);
+        for (const auto& batch : mock_bus->received_events)
+        {
+            for (const auto& frame : batch.frames)
+            {
+                const auto src = frameSource(frame);
+                if (src == "PV_NAME_A_DOUBLE_VALUE")
+                {
+                    ampl.push_back(frame);
+                }
+                if (src == "PV_NAME_B_STRING_VALUE")
+                {
+                    stat.push_back(frame);
+                }
             }
         }
     }
@@ -452,18 +492,21 @@ pvs:
     // Per-row timestamps are shared across columns.
     for (size_t i = 0; i < 3; ++i)
     {
-        ASSERT_NE(ampl[i], nullptr);
-        ASSERT_NE(stat[i], nullptr);
-        EXPECT_EQ(ampl[i]->epoch_seconds, stat[i]->epoch_seconds);
-        EXPECT_EQ(ampl[i]->nanoseconds, stat[i]->nanoseconds);
-        EXPECT_GT(ampl[i]->epoch_seconds, 0u);
+        ASSERT_TRUE(ampl[i].has_datatimestamps());
+        ASSERT_TRUE(stat[i].has_datatimestamps());
+        ASSERT_GT(ampl[i].datatimestamps().timestamplist().timestamps_size(), 0);
+        ASSERT_GT(stat[i].datatimestamps().timestamplist().timestamps_size(), 0);
+        EXPECT_EQ(ampl[i].datatimestamps().timestamplist().timestamps(0).epochseconds(),
+                  stat[i].datatimestamps().timestamplist().timestamps(0).epochseconds());
+        EXPECT_EQ(ampl[i].datatimestamps().timestamplist().timestamps(0).nanoseconds(),
+                  stat[i].datatimestamps().timestamplist().timestamps(0).nanoseconds());
     }
 
-    ASSERT_GT(ampl[0]->data_value.doublecolumns_size(), 0);
-    ASSERT_GT(ampl[0]->data_value.doublecolumns(0).values_size(), 0);
-    EXPECT_DOUBLE_EQ(ampl[0]->data_value.doublecolumns(0).values(0), 1.0);
+    ASSERT_GT(ampl[0].doublecolumns_size(), 0);
+    ASSERT_GT(ampl[0].doublecolumns(0).values_size(), 0);
+    EXPECT_DOUBLE_EQ(ampl[0].doublecolumns(0).values(0), 1.0);
 
-    ASSERT_GT(stat[0]->data_value.stringcolumns_size(), 0);
-    ASSERT_GT(stat[0]->data_value.stringcolumns(0).values_size(), 0);
-    EXPECT_EQ(stat[0]->data_value.stringcolumns(0).values(0), "OK");
+    ASSERT_GT(stat[0].stringcolumns_size(), 0);
+    ASSERT_GT(stat[0].stringcolumns(0).values_size(), 0);
+    EXPECT_EQ(stat[0].stringcolumns(0).values(0), "OK");
 }

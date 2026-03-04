@@ -338,18 +338,17 @@ TEST(EpicsArchiverReaderPeriodicTailIntegrationTest, PeriodicTailBatchSpansMatch
     size_t total_events = 0u;
     for (size_t i = 0; i < batches.size(); ++i)
     {
-        const auto it = batches[i].values.find("TEST:PV:DOUBLE");
-        ASSERT_NE(it, batches[i].values.end());
-        ASSERT_FALSE(it->second.empty());
+        ASSERT_FALSE(batches[i].frames.empty());
+        total_events += batches[i].frames.size();
+        const auto& first_frame = batches[i].frames.front();
+        const auto& last_frame = batches[i].frames.back();
+        ASSERT_TRUE(first_frame.has_datatimestamps());
+        ASSERT_TRUE(last_frame.has_datatimestamps());
+        const auto& first_ts = first_frame.datatimestamps().timestamplist().timestamps(0);
+        const auto& last_ts = last_frame.datatimestamps().timestamplist().timestamps(0);
 
-        total_events += it->second.size();
-        const auto& first_ev = it->second.front();
-        const auto& last_ev = it->second.back();
-        ASSERT_TRUE(first_ev);
-        ASSERT_TRUE(last_ev);
-
-        const uint64_t first_ns = first_ev->epoch_seconds * 1'000'000'000ULL + first_ev->nanoseconds;
-        const uint64_t last_ns = last_ev->epoch_seconds * 1'000'000'000ULL + last_ev->nanoseconds;
+        const uint64_t first_ns = first_ts.epochseconds() * 1'000'000'000ULL + first_ts.nanoseconds();
+        const uint64_t last_ns = last_ts.epochseconds() * 1'000'000'000ULL + last_ts.nanoseconds();
         const uint64_t span_ns = last_ns - first_ns;
 
         if (i + 1 < batches.size())

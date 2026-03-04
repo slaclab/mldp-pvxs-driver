@@ -296,11 +296,14 @@ TEST(MLDPPVXSControllerTest, IdleStreamRotationStartsNewStreamAfterMaxAge)
     IDataBus::EventBatch batch;
     batch.root_source = "test-root";
     batch.tags = {"test"};
-    auto event = IDataBus::MakeEventValue();
-    auto* c1 = event->data_value.add_int32columns();
+    dp::service::common::DataFrame frame1;
+    auto* c1 = frame1.add_int32columns();
     c1->set_name("value");
     c1->add_values(1);
-    batch.values["test:signal"].push_back(event);
+    auto* ts1 = frame1.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
+    ts1->set_epochseconds(1);
+    ts1->set_nanoseconds(0);
+    batch.frames.push_back(std::move(frame1));
 
     ASSERT_TRUE(controller->push(std::move(batch)));
     ASSERT_TRUE(waitForCount(service.stream_count, 1, std::chrono::milliseconds(1000)));
@@ -311,11 +314,14 @@ TEST(MLDPPVXSControllerTest, IdleStreamRotationStartsNewStreamAfterMaxAge)
     IDataBus::EventBatch batch2;
     batch2.root_source = "test-root";
     batch2.tags = {"test"};
-    auto event2 = IDataBus::MakeEventValue();
-    auto* c2 = event2->data_value.add_int32columns();
+    dp::service::common::DataFrame frame2;
+    auto* c2 = frame2.add_int32columns();
     c2->set_name("value");
     c2->add_values(2);
-    batch2.values["test:signal"].push_back(event2);
+    auto* ts2 = frame2.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
+    ts2->set_epochseconds(2);
+    ts2->set_nanoseconds(0);
+    batch2.frames.push_back(std::move(frame2));
 
     ASSERT_TRUE(controller->push(std::move(batch2)));
     ASSERT_TRUE(waitForCount(service.stream_count, 2, std::chrono::milliseconds(1000)));

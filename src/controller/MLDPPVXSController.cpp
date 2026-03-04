@@ -18,6 +18,7 @@
 #include <chrono>
 #include <cstdint>
 #include <grpcpp/grpcpp.h>
+#include <set>
 #include <ranges>
 #include <stdexcept>
 #include <thread>
@@ -115,6 +116,51 @@ std::optional<std::pair<SourceTimestamp, SourceTimestamp>> extractTimestampRange
     }
 
     return std::nullopt;
+}
+
+bool hasTimestampList(const dp::service::common::DataFrame& frame)
+{
+    return frame.has_datatimestamps() &&
+           frame.datatimestamps().has_timestamplist() &&
+           frame.datatimestamps().timestamplist().timestamps_size() > 0;
+}
+
+template<typename ColT>
+void collectNames(const google::protobuf::RepeatedPtrField<ColT>& cols, std::set<std::string>& out)
+{
+    for (const auto& col : cols)
+    {
+        if (!col.name().empty())
+        {
+            out.insert(col.name());
+        }
+    }
+}
+
+std::optional<std::string> extractFrameSourceName(const dp::service::common::DataFrame& frame)
+{
+    std::set<std::string> names;
+    collectNames(frame.boolcolumns(), names);
+    collectNames(frame.int32columns(), names);
+    collectNames(frame.int64columns(), names);
+    collectNames(frame.floatcolumns(), names);
+    collectNames(frame.doublecolumns(), names);
+    collectNames(frame.stringcolumns(), names);
+    collectNames(frame.datacolumns(), names);
+    collectNames(frame.boolarraycolumns(), names);
+    collectNames(frame.int32arraycolumns(), names);
+    collectNames(frame.int64arraycolumns(), names);
+    collectNames(frame.floatarraycolumns(), names);
+    collectNames(frame.doublearraycolumns(), names);
+    collectNames(frame.enumcolumns(), names);
+    collectNames(frame.imagecolumns(), names);
+    collectNames(frame.structcolumns(), names);
+
+    if (names.size() != 1)
+    {
+        return std::nullopt;
+    }
+    return *names.begin();
 }
 
 } // namespace
@@ -239,12 +285,7 @@ bool MLDPPVXSController::push(EventBatch batch_values)
         return false;
     }
 
-    const bool hasEvents = std::ranges::any_of(batch_values.values,
-                                               [](const auto& entry)
-                                               {
-                                                   return !entry.second.empty();
-                                               });
-    if (!hasEvents)
+    if (batch_values.frames.empty())
     {
         warnf(*logger_, "Received empty batch for ingestion, skipping push.");
         return false;
@@ -252,18 +293,38 @@ bool MLDPPVXSController::push(EventBatch batch_values)
 
     auto tags = std::make_shared<const std::vector<std::string>>(batch_values.tags);
 
-    // Group columns by target worker channel, then enqueue one QueueItem per channel.
-    std::vector<std::vector<std::pair<std::string, std::vector<IDataBus::EventValue>>>> per_channel(channels_.size());
-    for (auto& [src_name, events] : batch_values.values)
+    // Group frames by target worker channel, then enqueue one QueueItem per channel.
+    std::vector<std::vector<std::pair<std::string, std::vector<dp::service::common::DataFrame>>>> per_channel(channels_.size());
+    for (auto& frame : batch_values.frames)
     {
-        if (events.empty())
+        const auto source_name = extractFrameSourceName(frame);
+        if (!source_name.has_value())
         {
+            errorf(*logger_, "Dropping frame: expected exactly one non-empty source name in DataFrame columns (root_source={})", batch_values.root_source);
+            metric_call(metrics_, [&](auto& m)
+                        {
+                            m.incrementBusFailures(1.0, {{"source", batch_values.root_source.empty() ? "unknown" : batch_values.root_source}});
+                        });
             continue;
         }
-        auto idx = std::hash<std::string>{}(src_name) % channels_.size();
-        per_channel[idx].emplace_back(src_name, std::move(events));
+        if (!hasTimestampList(frame))
+        {
+            errorf(*logger_, "Dropping frame for source {}: missing DataFrame.datatimestamps.timestamplist", *source_name);
+            metric_call(metrics_, [&](auto& m)
+                        {
+                            m.incrementBusFailures(1.0, {{"source", *source_name}});
+                        });
+            continue;
+        }
+        auto idx = std::hash<std::string>{}(*source_name) % channels_.size();
+        if (per_channel[idx].empty() || per_channel[idx].back().first != *source_name)
+        {
+            per_channel[idx].emplace_back(*source_name, std::vector<dp::service::common::DataFrame>{});
+        }
+        per_channel[idx].back().second.push_back(std::move(frame));
     }
 
+    bool enqueued = false;
     for (std::size_t idx = 0; idx < channels_.size(); ++idx)
     {
         if (per_channel[idx].empty())
@@ -280,10 +341,11 @@ bool MLDPPVXSController::push(EventBatch batch_values)
         }
         channels_[idx]->cv.notify_one();
         queued_items_.fetch_add(1, std::memory_order_relaxed);
+        enqueued = true;
     }
 
     updateQueueDepthMetric();
-    return true;
+    return enqueued;
 }
 
 std::vector<IDataBus::SourceInfo> MLDPPVXSController::querySourcesInfo(const std::set<std::string>& source_names)
@@ -755,9 +817,9 @@ void MLDPPVXSController::workerLoop(std::size_t worker_index)
         std::size_t payload_bytes_total = 0;
 
         std::size_t request_counter = 0;
-        for (const auto& [source_name, events] : item.columns)
+        for (const auto& [source_name, frames] : item.frames)
         {
-            for (const auto& event_value : events)
+            for (const auto& frame : frames)
             {
                 const auto frame_elapsed = std::chrono::steady_clock::now() - stream_start;
                 if (frame_elapsed >= config_.controllerStreamMaxAge())
@@ -775,7 +837,7 @@ void MLDPPVXSController::workerLoop(std::size_t worker_index)
                 std::size_t accepted_events = 0;
                 std::size_t payload_bytes = 0;
                 const auto request_id = util::format_string("pv_stream_{}_{}_{}", stream_start.time_since_epoch().count(), item.root_source, request_counter++);
-                if (!buildRequest(source_name, event_value, request_id, *request, accepted_events, payload_bytes))
+                if (!buildRequest(source_name, frame, request_id, *request, accepted_events, payload_bytes))
                 {
                     continue;
                 }
@@ -844,23 +906,17 @@ void MLDPPVXSController::workerLoop(std::size_t worker_index)
 }
 
 bool MLDPPVXSController::buildRequest(const std::string&                         source_name,
-                                      const util::bus::IDataBus::EventValue&     event_value,
+                                      const dp::service::common::DataFrame&      frame,
                                       const std::string&                         request_id,
                                       dp::service::ingestion::IngestDataRequest& request,
                                       std::size_t&                               accepted_events,
                                       std::size_t&                               payload_bytes)
 {
-    if (!event_value)
-    {
-        warnf(*logger_, "Skipping null event for source {}", source_name);
-        return false;
-    }
-
     request.set_providerid(provider_id_);
     request.set_clientrequestid(request_id);
 
     auto* data_frame = request.mutable_ingestiondataframe();
-    *data_frame = event_value->data_value;
+    *data_frame = frame;
 
     const bool has_columns = data_frame->doublecolumns_size() > 0 || data_frame->floatcolumns_size() > 0 ||
                              data_frame->datacolumns_size() > 0 || data_frame->int32columns_size() > 0 ||
@@ -876,22 +932,14 @@ bool MLDPPVXSController::buildRequest(const std::string&                        
         return false;
     }
 
-    if (!data_frame->has_datatimestamps() || !data_frame->datatimestamps().has_timestamplist() ||
-        data_frame->datatimestamps().timestamplist().timestamps_size() == 0)
+    if (!hasTimestampList(*data_frame))
     {
-        auto* ts_list = data_frame->mutable_datatimestamps()->mutable_timestamplist();
-        auto* ts = ts_list->add_timestamps();
-        if (event_value->epoch_seconds > 0)
-        {
-            ts->set_epochseconds(event_value->epoch_seconds);
-            ts->set_nanoseconds(event_value->nanoseconds);
-        }
-        else
-        {
-            const auto now = std::chrono::system_clock::now().time_since_epoch();
-            ts->set_epochseconds(std::chrono::duration_cast<std::chrono::seconds>(now).count());
-            ts->set_nanoseconds(0);
-        }
+        errorf(*logger_, "Dropping frame for source {}: missing DataFrame.datatimestamps.timestamplist", source_name);
+        metric_call(metrics_, [&](auto& m)
+                    {
+                        m.incrementBusFailures(1.0, {{"source", source_name}});
+                    });
+        return false;
     }
 
     accepted_events = static_cast<std::size_t>(data_frame->datatimestamps().timestamplist().timestamps_size());
