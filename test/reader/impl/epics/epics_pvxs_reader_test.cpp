@@ -12,6 +12,7 @@
 
 #include "../../../config/test_config_helpers.h"
 #include "../../../mock/sioc.h"
+#include "epics_typed_pv_test_utils.h"
 
 #include <config/Config.h>
 #include <metrics/Metrics.h>
@@ -172,23 +173,6 @@ const DataFrame* findLatestDataFrameForSource(const MockEventBusPush& bus, const
         return &ev->data_value;
     }
     return nullptr;
-}
-
-bool hasColumnWithName(const DataFrame& df, const std::string& name)
-{
-    for (int i = 0; i < df.stringcolumns_size(); ++i)
-        if (df.stringcolumns(i).name() == name) return true;
-    for (int i = 0; i < df.int32columns_size(); ++i)
-        if (df.int32columns(i).name() == name) return true;
-    for (int i = 0; i < df.int64columns_size(); ++i)
-        if (df.int64columns(i).name() == name) return true;
-    for (int i = 0; i < df.floatcolumns_size(); ++i)
-        if (df.floatcolumns(i).name() == name) return true;
-    for (int i = 0; i < df.doublecolumns_size(); ++i)
-        if (df.doublecolumns(i).name() == name) return true;
-    for (int i = 0; i < df.boolcolumns_size(); ++i)
-        if (df.boolcolumns(i).name() == name) return true;
-    return false;
 }
 
 size_t countEventsForSource(const MockEventBusPush& bus, const std::string& source)
@@ -356,29 +340,16 @@ pvs:
 
 TEST_F(EpicsPVXSReaderTest, SimulatedPVsProduceEventsAndExpectedTypes)
 {
-    const std::string yaml = R"(
-name: epics_1
-pvs:
-  - name: test:counter
-  - name: test:voltage
-  - name: test:status
-  - name: test:waveform
-  - name: test:table
-)";
+    const std::string yaml = epics_typed_pv_test_utils::buildTypedCoverageYaml("epics_1");
 
     const auto cfg = makeConfigFromYaml(yaml);
     auto       reader_ptr = mldp_pvxs_driver::reader::ReaderFactory::create("epics-pvxs", mock_bus, cfg);
     ASSERT_NE(reader_ptr, nullptr);
 
-    const std::set<std::string> expected{
-        "test:counter",
-        "test:voltage",
-        "test:status",
-        "test:waveform",
-    };
+    const auto expected = epics_typed_pv_test_utils::allTypedCoveragePvsSet();
 
     std::set<std::string> seen;
-    const int             max_wait_ms = 5000;
+    const int             max_wait_ms = 10000;
     int                   waited_ms = 0;
     while (seen != expected && waited_ms < max_wait_ms)
     {
@@ -419,54 +390,10 @@ pvs:
         FAIL() << oss.str();
     }
 
-    // test:counter (NTScalar<Int32>) -> int32 column named by source PV
-    {
-        const auto df = findLatestDataFrameForSource(*mock_bus, "test:counter");
-        ASSERT_NE(df, nullptr);
-        ASSERT_GT(df->int32columns_size(), 0);
-        EXPECT_EQ(df->int32columns(0).name(), "test:counter");
-        EXPECT_GT(df->int32columns(0).values(0), 0);
-        EXPECT_FALSE(hasColumnWithName(*df, "value.timeStamp"));
-    }
-
-    // test:voltage (NTScalar<Float64>) -> double column named by source PV
-    {
-        const auto df = findLatestDataFrameForSource(*mock_bus, "test:voltage");
-        ASSERT_NE(df, nullptr);
-        ASSERT_GT(df->doublecolumns_size(), 0);
-        EXPECT_EQ(df->doublecolumns(0).name(), "test:voltage");
-        EXPECT_FALSE(hasColumnWithName(*df, "value.timeStamp"));
-    }
-
-    // test:status (NTScalar<String>) -> string column named by source PV
-    {
-        const auto df = findLatestDataFrameForSource(*mock_bus, "test:status");
-        ASSERT_NE(df, nullptr);
-        ASSERT_GT(df->stringcolumns_size(), 0);
-        EXPECT_EQ(df->stringcolumns(0).name(), "test:status");
-        ASSERT_GT(df->stringcolumns(0).values_size(), 0);
-        const auto& s = df->stringcolumns(0).values(0);
-        EXPECT_TRUE(s == "OK" || s == "WARNING" || s == "FAULT");
-        EXPECT_FALSE(hasColumnWithName(*df, "value.timeStamp"));
-    }
-
-    // test:waveform (NTScalar<Float64A>) -> double array column named by source PV
-    // The waveform is a single sample (array of doubles) at one timestamp,
-    // so it maps to a DoubleArrayColumn rather than individual scalar rows.
-    {
-        const auto df = findLatestDataFrameForSource(*mock_bus, "test:waveform");
-        ASSERT_NE(df, nullptr);
-        ASSERT_GT(df->doublearraycolumns_size(), 0);
-        EXPECT_EQ(df->doublearraycolumns(0).name(), "test:waveform");
-        EXPECT_EQ(df->doublearraycolumns(0).values_size(), 256);
-        EXPECT_FALSE(hasColumnWithName(*df, "value.timeStamp"));
-    }
-
-    // test:table (NTTable) in default mode -> dropped, no DataFrame emitted
-    {
-        const auto df = findLatestDataFrameForSource(*mock_bus, "test:table");
-        EXPECT_EQ(df, nullptr) << "NTTable PVs must be dropped in default mode";
-    }
+    epics_typed_pv_test_utils::assertTypedCoverageDataFrames(
+        [this](const std::string& pv) {
+            return findLatestDataFrameForSource(*mock_bus, pv);
+        });
 }
 
 TEST_F(EpicsPVXSReaderTest, NTTableRowTimestampSplitsToPerColumnSources)
