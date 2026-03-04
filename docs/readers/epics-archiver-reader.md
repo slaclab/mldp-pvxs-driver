@@ -16,26 +16,26 @@ The `EpicsArchiverReader` provides access to historical EPICS data from the EPIC
 
 ```mermaid
 flowchart TB
-    subgraph EpicsArchiverReader[\"EpicsArchiverReader\"]
-        subgraph Worker[\"Background Worker Thread\"]
-            Fetch[\"HTTP Fetch<br/>(via CURL)\"]
-            Parse[\"PB/HTTP Stream Parser<br/>(line-by-line)\"]
-            Batch[\"Batch Splitter<br/>(by timestamp)\"]
+    subgraph EpicsArchiverReader["EpicsArchiverReader"]
+        subgraph Worker["Background Worker Thread"]
+            Fetch["HTTP Fetch<br/>(via CURL)"]
+            Parse["PB/HTTP Stream Parser<br/>(line-by-line)"]
+            Batch["Batch Splitter<br/>(by timestamp)"]
         end
 
         Worker --> ReaderPool
 
-        subgraph ReaderPool[\"Reader Thread Pool\"]
-            Convert[\"Data Conversion<br/>(SCALAR_DOUBLE → protobuf)\"]
+        subgraph ReaderPool["Reader Thread Pool"]
+            Convert["Data Conversion<br/>(SCALAR_DOUBLE → protobuf)"]
         end
 
-        ReaderPool --> Push[\"Push to Event Bus\"]
-        Push --> Bus[\"IDataBus\"]
+        ReaderPool --> Push["Push to Event Bus"]
+        Push --> Bus["IDataBus"]
     end
 
-    subgraph Modes[\"Fetch Modes\"]
-        Historical[\"One-Shot<br/>(at construction)\"]
-        Periodic[\"Periodic Tail<br/>(continuous polling)\"]
+    subgraph Modes["Fetch Modes"]
+        Historical["One-Shot<br/>(at construction)"]
+        Periodic["Periodic Tail<br/>(continuous polling)"]
     end
 
     Fetch -.->|mode| Modes
