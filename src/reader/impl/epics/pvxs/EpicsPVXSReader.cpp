@@ -37,6 +37,22 @@ std::shared_ptr<ILogger> makeLogger(const std::string& readerName)
     }
     return mldp_pvxs_driver::util::log::newLogger(loggerName);
 }
+
+bool hasTimestampList(const dp::service::common::DataFrame& frame)
+{
+    return frame.has_datatimestamps() &&
+           frame.datatimestamps().has_timestamplist() &&
+           frame.datatimestamps().timestamplist().timestamps_size() > 0;
+}
+
+void setSingleTimestamp(dp::service::common::DataFrame& frame, uint64_t seconds, uint64_t nanos)
+{
+    auto* ts_list = frame.mutable_datatimestamps()->mutable_timestamplist();
+    ts_list->clear_timestamps();
+    auto* ts = ts_list->add_timestamps();
+    ts->set_epochseconds(seconds);
+    ts->set_nanoseconds(nanos);
+}
 } // namespace
 
 /// Construct the reader: initialise the PVA context from the process environment
@@ -106,7 +122,7 @@ void EpicsPVXSReader::logAndRecordError(const std::string& message, const promet
 /// sub-fields.  "timeStamp" must carry "secondsPastEpoch" and "nanoseconds".
 /// Compound (nested) value fields are rejected with a warning because Default
 /// mode is designed for scalar / scalar-array payloads only.
-/// On success, one EventBatch with a single EventValue is pushed to the bus
+/// On success, one EventBatch with a single DataFrame is pushed to the bus
 /// and @p emitted is set to 1.
 void EpicsPVXSReader::processDefaultMode(const std::string& pvName, const pvxs::Value& epicsValue, std::size_t& emitted)
 {
@@ -152,7 +168,7 @@ void EpicsPVXSReader::processDefaultMode(const std::string& pvName, const pvxs::
     }
     const uint64_t nanoseconds = nanosecondsField.as<uint64_t>();
 
-    auto event_value = IDataBus::MakeEventValue(epoch_seconds, nanoseconds);
+    dp::service::common::DataFrame frame;
 
     if (valueField.type().kind() == pvxs::Kind::Compound)
     {
@@ -161,12 +177,12 @@ void EpicsPVXSReader::processDefaultMode(const std::string& pvName, const pvxs::
               name_, pvName);
         return; // Do not push event to bus
     }
-    EpicsMLDPConversion::convertPVToDataFrame(valueField, &event_value->data_value, pvName);
-
+    EpicsMLDPConversion::convertPVToDataFrame(valueField, &frame, pvName);
+    setSingleTimestamp(frame, epoch_seconds, nanoseconds);
     IDataBus::EventBatch batch;
     batch.root_source = pvName;
     batch.tags.push_back(pvName);
-    batch.values[pvName].emplace_back(std::move(event_value));
+    batch.frames.push_back(std::move(frame));
     emitted = 1;
     bus_->push(std::move(batch));
 }
@@ -204,9 +220,19 @@ void EpicsPVXSReader::processSlacBsasTableMode(const std::string&     pvName,
             *logger_, pvName, epicsValue,
             runtimeCfg ? runtimeCfg->tsSecondsField : "secondsPastEpoch",
             runtimeCfg ? runtimeCfg->tsNanosField : "nanoseconds",
-            [&](std::string colName, std::vector<IDataBus::EventValue> events)
+            [&](std::string colName, std::vector<dp::service::common::DataFrame> frames)
             {
-                tableBatch.values[std::move(colName)] = std::move(events);
+                for (auto& frame : frames)
+                {
+                    if (!hasTimestampList(frame))
+                    {
+                        logAndRecordError(
+                            util::format_string("Dropping BSAS frame without timestamps for column {} on reader {}", colName, name_),
+                            sourceTag);
+                        continue;
+                    }
+                    tableBatch.frames.push_back(std::move(frame));
+                }
                 ++colsInBatch;
                 if (colBatchSize > 0 && colsInBatch >= colBatchSize)
                 {
@@ -221,7 +247,7 @@ void EpicsPVXSReader::processSlacBsasTableMode(const std::string&     pvName,
             util::format_string("Error converting PV {} to MLDP SLAC BSAS table batch on reader {}.", pvName, name_),
             sourceTag);
     }
-    else if (!tableBatch.values.empty())
+    else if (!tableBatch.frames.empty())
     {
         bus_->push(std::move(tableBatch));
     }

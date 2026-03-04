@@ -35,6 +35,22 @@ std::shared_ptr<ILogger> makeLogger(const std::string& readerName)
     }
     return mldp_pvxs_driver::util::log::newLogger(loggerName);
 }
+
+bool hasTimestampList(const dp::service::common::DataFrame& frame)
+{
+    return frame.has_datatimestamps() &&
+           frame.datatimestamps().has_timestamplist() &&
+           frame.datatimestamps().timestamplist().timestamps_size() > 0;
+}
+
+void setSingleTimestamp(dp::service::common::DataFrame& frame, uint64_t seconds, uint64_t nanos)
+{
+    auto* ts_list = frame.mutable_datatimestamps()->mutable_timestamplist();
+    ts_list->clear_timestamps();
+    auto* ts = ts_list->add_timestamps();
+    ts->set_epochseconds(seconds);
+    ts->set_nanoseconds(nanos);
+}
 } // namespace
 
 /// Construct the reader: build an EpicsReaderConfig from @p cfg, create the
@@ -145,7 +161,7 @@ void EpicsBaseReader::processDefaultMode(const std::string&                     
         epoch_seconds  = std::chrono::duration_cast<std::chrono::seconds>(now).count();
     }
 
-    auto event_value = IDataBus::MakeEventValue(epoch_seconds, nanoseconds);
+    dp::service::common::DataFrame frame;
 
     if (epicsValue)
     {
@@ -166,11 +182,11 @@ void EpicsBaseReader::processDefaultMode(const std::string&                     
                   name_, pvName);
             return;
         }
-        EpicsPVDataConversion::convertPVToProtoValue(*valueField, &event_value->data_value, pvName);
+        EpicsPVDataConversion::convertPVToProtoValue(*valueField, &frame, pvName);
     }
-
+    setSingleTimestamp(frame, epoch_seconds, nanoseconds);
     batch.tags.push_back(pvName);
-    batch.values[pvName].emplace_back(std::move(event_value));
+    batch.frames.push_back(std::move(frame));
     emitted = 1;
     bus_->push(std::move(batch));
 }
@@ -206,9 +222,21 @@ void EpicsBaseReader::processSlacBsasTableMode(const std::string&               
             *logger_, pvName, epicsValue,
             runtimeCfg ? runtimeCfg->tsSecondsField : "secondsPastEpoch",
             runtimeCfg ? runtimeCfg->tsNanosField : "nanoseconds",
-            [&](std::string colName, std::vector<IDataBus::EventValue> events)
+            [&](std::string colName, std::vector<dp::service::common::DataFrame> frames)
             {
-                tableBatch.values[std::move(colName)] = std::move(events);
+                for (auto& frame : frames)
+                {
+                    if (!hasTimestampList(frame))
+                    {
+                        errorf(*logger_, "Dropping BSAS frame without timestamps for column {} on reader {}", colName, name_);
+                        metric_call(metrics_, [&](auto& m)
+                                    {
+                                        m.incrementReaderErrors(1.0, sourceTag);
+                                    });
+                        continue;
+                    }
+                    tableBatch.frames.push_back(std::move(frame));
+                }
                 ++colsInBatch;
                 if (colBatchSize > 0 && colsInBatch >= colBatchSize)
                 {
@@ -224,7 +252,7 @@ void EpicsBaseReader::processSlacBsasTableMode(const std::string&               
                         m.incrementReaderErrors(1.0, sourceTag);
                     });
     }
-    else if (!tableBatch.values.empty())
+    else if (!tableBatch.frames.empty())
     {
         bus_->push(std::move(tableBatch));
     }

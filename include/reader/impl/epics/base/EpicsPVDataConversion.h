@@ -54,10 +54,10 @@ public:
      * incremental processing of large tables.
      *
      * @param colName The name of the column being emitted.
-     * @param events Vector of EventValue objects, one per row in the table.
+     * @param frames Vector of DataFrame payloads.
      */
     using ColumnEmitFn = std::function<void(std::string colName,
-                                            std::vector<util::bus::IDataBus::EventValue> events)>;
+                                            std::vector<dp::service::common::DataFrame> frames)>;
 
     /**
      * @brief Convert an EPICS pvData field to an MLDP protobuf DataValue.

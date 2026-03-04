@@ -130,32 +130,33 @@ TEST(EpicsArchiverReaderHttpIntegrationTest, FetchesPbHttpStreamAndPublishesBusE
 
     const auto batches = bus->snapshot();
     ASSERT_EQ(batches.size(), 1u);
-    ASSERT_EQ(batches[0].values.size(), 1u);
+    ASSERT_EQ(batches[0].frames.size(), 4u);
     EXPECT_EQ(batches[0].root_source, "TEST:PV:DOUBLE");
-
-    const auto it = batches[0].values.find("TEST:PV:DOUBLE");
-    ASSERT_NE(it, batches[0].values.end());
-    ASSERT_EQ(it->second.size(), 4u);
 
     uint64_t prev_epoch = 0;
     uint64_t prev_nano = 0;
-    for (size_t i = 0; i < it->second.size(); ++i)
+    for (size_t i = 0; i < batches[0].frames.size(); ++i)
     {
-        ASSERT_TRUE(it->second[i]);
-        ASSERT_GT(it->second[i]->data_value.doublecolumns_size(), 0);
-        ASSERT_GT(it->second[i]->data_value.doublecolumns(0).values_size(), 0);
-        EXPECT_GE(it->second[i]->data_value.doublecolumns(0).values(0), gen_cfg.min_value);
-        EXPECT_LE(it->second[i]->data_value.doublecolumns(0).values(0), gen_cfg.max_value);
-        EXPECT_GT(it->second[i]->epoch_seconds, 0u);
-        EXPECT_LT(it->second[i]->nanoseconds, 1'000'000'000u);
+        const auto& frame = batches[0].frames[i];
+        ASSERT_GT(frame.doublecolumns_size(), 0);
+        ASSERT_GT(frame.doublecolumns(0).values_size(), 0);
+        EXPECT_EQ(frame.doublecolumns(0).name(), "TEST:PV:DOUBLE");
+        EXPECT_GE(frame.doublecolumns(0).values(0), gen_cfg.min_value);
+        EXPECT_LE(frame.doublecolumns(0).values(0), gen_cfg.max_value);
+        ASSERT_TRUE(frame.has_datatimestamps());
+        ASSERT_GT(frame.datatimestamps().timestamplist().timestamps_size(), 0);
+        const auto epoch = frame.datatimestamps().timestamplist().timestamps(0).epochseconds();
+        const auto nano = frame.datatimestamps().timestamplist().timestamps(0).nanoseconds();
+        EXPECT_GT(epoch, 0u);
+        EXPECT_LT(nano, 1'000'000'000u);
         if (i > 0)
         {
             const bool nondecreasing =
-                (it->second[i]->epoch_seconds > prev_epoch) || (it->second[i]->epoch_seconds == prev_epoch && it->second[i]->nanoseconds >= prev_nano);
+                (epoch > prev_epoch) || (epoch == prev_epoch && nano >= prev_nano);
             EXPECT_TRUE(nondecreasing);
         }
-        prev_epoch = it->second[i]->epoch_seconds;
-        prev_nano = it->second[i]->nanoseconds;
+        prev_epoch = epoch;
+        prev_nano = nano;
     }
 
     const auto req = server.lastRequest();
@@ -246,31 +247,31 @@ TEST(EpicsArchiverReaderHttpIntegrationTest, SplitsPublishedBatchesByHistoricalS
 
     for (const auto& batch : batches)
     {
-        const auto it = batch.values.find("TEST:PV:DOUBLE");
-        ASSERT_NE(it, batch.values.end());
-        ASSERT_FALSE(it->second.empty());
+        ASSERT_FALSE(batch.frames.empty());
+        const auto& first_frame = batch.frames.front();
+        const auto& last_frame = batch.frames.back();
+        ASSERT_TRUE(first_frame.has_datatimestamps());
+        ASSERT_TRUE(last_frame.has_datatimestamps());
+        const auto& first_ts = first_frame.datatimestamps().timestamplist().timestamps(0);
+        const auto& last_ts = last_frame.datatimestamps().timestamplist().timestamps(0);
 
-        const auto& first_ev = it->second.front();
-        const auto& last_ev = it->second.back();
-        ASSERT_TRUE(first_ev);
-        ASSERT_TRUE(last_ev);
-
-        const uint64_t first_ns = first_ev->epoch_seconds * 1'000'000'000ULL + first_ev->nanoseconds;
-        const uint64_t last_ns = last_ev->epoch_seconds * 1'000'000'000ULL + last_ev->nanoseconds;
+        const uint64_t first_ns = first_ts.epochseconds() * 1'000'000'000ULL + first_ts.nanoseconds();
+        const uint64_t last_ns = last_ts.epochseconds() * 1'000'000'000ULL + last_ts.nanoseconds();
         EXPECT_LE(last_ns - first_ns, 1'000'000'000ULL);
 
-        for (const auto& ev : it->second)
+        for (const auto& frame : batch.frames)
         {
-            ASSERT_TRUE(ev);
+            ASSERT_TRUE(frame.has_datatimestamps());
             total_events++;
+            const auto& ts = frame.datatimestamps().timestamplist().timestamps(0);
             if (!first)
             {
                 const bool nondecreasing =
-                    (ev->epoch_seconds > prev_epoch) || (ev->epoch_seconds == prev_epoch && ev->nanoseconds >= prev_nano);
+                    (ts.epochseconds() > prev_epoch) || (ts.epochseconds() == prev_epoch && ts.nanoseconds() >= prev_nano);
                 EXPECT_TRUE(nondecreasing);
             }
-            prev_epoch = ev->epoch_seconds;
-            prev_nano = ev->nanoseconds;
+            prev_epoch = ts.epochseconds();
+            prev_nano = ts.nanoseconds();
             first = false;
         }
     }

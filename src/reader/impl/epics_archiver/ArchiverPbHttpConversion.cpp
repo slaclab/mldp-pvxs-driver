@@ -11,7 +11,6 @@
 #include <reader/impl/epics_archiver/ArchiverPbHttpConversion.h>
 
 #include <EPICSEvent.pb.h>
-#include <util/bus/IDataBus.h>
 #include <util/time/DateTimeUtils.h>
 
 #include <cstdint>
@@ -34,7 +33,9 @@ ParsedSample makeBaseSample(const EPICS::PayloadInfo& header,
     ParsedSample s;
     s.epoch_seconds = DateTimeUtils::unixEpochSecondsFromYearAndSecondsIntoYear(header.year(), secondsintoyear);
     s.nanoseconds   = nano;
-    s.event         = IDataBus::MakeEventValue(s.epoch_seconds, s.nanoseconds);
+    auto* ts = s.frame.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
+    ts->set_epochseconds(s.epoch_seconds);
+    ts->set_nanoseconds(s.nanoseconds);
     return s;
 }
 
@@ -51,7 +52,7 @@ ParsedSample parseScalar(const EPICS::PayloadInfo& header,
         throw std::runtime_error("failed to parse PB/HTTP scalar sample");
     }
     auto s = makeBaseSample(header, msg.secondsintoyear(), msg.nano());
-    setter(&s.event->data_value, msg.val());
+    setter(&s.frame, msg.val());
     return s;
 }
 
@@ -68,7 +69,7 @@ ParsedSample parseWaveform(const EPICS::PayloadInfo& header,
         throw std::runtime_error("failed to parse PB/HTTP waveform sample");
     }
     auto s = makeBaseSample(header, msg.secondsintoyear(), msg.nano());
-    setter(&s.event->data_value, msg.val());
+    setter(&s.frame, msg.val());
     return s;
 }
 
@@ -84,7 +85,7 @@ ParsedSample parseBlob(const EPICS::PayloadInfo& header,
         throw std::runtime_error("failed to parse PB/HTTP blob sample");
     }
     auto  s = makeBaseSample(header, msg.secondsintoyear(), msg.nano());
-    auto* c = s.event->data_value.add_stringcolumns();
+    auto* c = s.frame.add_stringcolumns();
     c->set_name("value");
     c->add_values(msg.val());
     return s;

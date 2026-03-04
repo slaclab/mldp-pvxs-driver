@@ -41,6 +41,13 @@ namespace {
 
 constexpr const char* kArchiverPbRawPath = "/retrieval/data/getData.raw";
 
+bool hasTimestampList(const dp::service::common::DataFrame& frame)
+{
+    return frame.has_datatimestamps() &&
+           frame.datatimestamps().has_timestamplist() &&
+           frame.datatimestamps().timestamplist().timestamps_size() > 0;
+}
+
 std::string buildArchiverUrl(const EpicsArchiverReaderConfig&  cfg,
                              const std::string&                pv,
                              const std::string&                from,
@@ -322,8 +329,23 @@ void EpicsArchiverReader::flushChunk(PbChunkState& state)
         IDataBus::EventBatch batch;
         batch.root_source = pv.empty() ? name_ : pv;
         batch.tags.push_back(batch.root_source);
-        batch.values[pv.empty() ? name_ : pv] = std::move(state.events);
-        bus_->push(std::move(batch));
+        for (auto& frame : state.events)
+        {
+            if (!hasTimestampList(frame))
+            {
+                errorf(*logger_, "Dropping archiver frame without timestamps for root source {}", batch.root_source);
+                metric_call(metrics_, [&](auto& m)
+                            {
+                                m.incrementReaderErrors(1.0, source_tag);
+                            });
+                continue;
+            }
+            batch.frames.push_back(std::move(frame));
+        }
+        if (!batch.frames.empty())
+        {
+            bus_->push(std::move(batch));
+        }
 
         const auto   flush_end = std::chrono::steady_clock::now();
         const double flush_ms = std::chrono::duration<double, std::milli>(flush_end - flush_start).count();
@@ -459,7 +481,7 @@ void EpicsArchiverReader::parsePbHttpLineIntoState(const std::string& line, PbCh
     // appending it, so the sample that crosses the threshold belongs to the
     // new batch.
     splitBatchIfHistoricalWindowExceeded(state, parsed.epoch_seconds, parsed.nanoseconds);
-    state.events.emplace_back(std::move(parsed.event));
+    state.events.emplace_back(std::move(parsed.frame));
 }
 
 void EpicsArchiverReader::fetchConfiguredPVs()

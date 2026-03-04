@@ -64,11 +64,10 @@ public:
      * for the entire table to be converted.
      *
      * @param colName The name of the column being emitted.
-     * @param events Vector of EventValue objects, one per row in the table,
-     *               each carrying the column's value and the row's timestamp.
+     * @param frames Vector of DataFrame payloads.
      */
     using ColumnEmitFn = std::function<void(std::string colName,
-                                            std::vector<util::bus::IDataBus::EventValue> events)>;
+                                            std::vector<dp::service::common::DataFrame> frames)>;
 
     /**
      * @brief Convert an NTTable with row timestamps to an EventBatch.
@@ -88,8 +87,8 @@ public:
      * @return true if conversion succeeded, false on error (check logs for details).
      *
      * @pre @p outBatch must point to a valid, initialized EventBatch.
-     * @post On success, @p outBatch contains one entry per data column, each
-     *       with one EventValue per table row.
+     * @post On success, @p outBatch contains DataFrame payloads for each
+     *       converted data column.
      */
     static bool tryBuildNtTableRowTsBatch(mldp_pvxs_driver::util::log::ILogger&                    log,
                                           const std::string&                                       tablePvName,

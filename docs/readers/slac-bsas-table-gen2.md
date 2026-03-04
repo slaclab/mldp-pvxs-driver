@@ -146,14 +146,15 @@ Incoming NTTable update
 │    • Convert all six stat arrays to         │
 │      DataFrame columns                      │
 │    • Attach per-row TimestampList           │
-│    • Emit EventValue keyed by PV base name  │
+│    • Emit DataFrame keyed by PV base name   │
 │    • Flush batch when column limit hit      │
 └─────────────────────────────────────────────┘
 ```
 
-Each PV base name becomes its **own source** in the `EventBatch`, carrying all six
-statistic columns as a structured value.  The `pid` and timestamp columns are consumed
-for row indexing and are not forwarded as sources.
+Each PV base name becomes its own `DataFrame` in `EventBatch.frames`, carrying all six
+statistic columns as a structured value. The `pid` and timestamp columns are consumed
+for row indexing and are not forwarded as sources. Every emitted frame must carry
+`datatimestamps.timestamplist`; untimestamped frames are dropped.
 
 ## Configuration
 

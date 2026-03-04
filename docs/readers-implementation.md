@@ -50,16 +50,17 @@ protected:
 Readers push data using the `IDataBus` interface:
 
 ```cpp
-// Create an event value with timestamp
-auto event = IDataBus::MakeEventValue(epoch_seconds, nanoseconds);
-
-// Set the data value (protobuf)
-event->data_value.set_double_value(42.0);  // or other types
-
 // Create a batch and push
 IDataBus::EventBatch batch;
-batch.root_source = "my_source";
-batch.values["signal_name"].push_back(event);
+batch.root_source = "my_root_pv";  // metrics/correlation label
+dp::service::common::DataFrame frame;
+auto* col = frame.add_doublecolumns();
+col->set_name("signal_name");  // ingestion source identity
+col->add_values(42.0);
+auto* ts = frame.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
+ts->set_epochseconds(epoch_seconds);
+ts->set_nanoseconds(nanoseconds);
+batch.frames.push_back(std::move(frame));
 
 bus_->push(std::move(batch));
 ```
@@ -183,17 +184,16 @@ void <Name>Reader::workerLoop() {
 void <Name>Reader::processData(/* your data */) {
     // Convert to EventBatch and push
     IDataBus::EventBatch batch;
-    batch.root_source = name_;
+    batch.root_source = name_;  // root PV / reader identity for metrics
 
-    auto event = IDataBus::MakeEventValue(
-        /* epoch_seconds */,
-        /* nanoseconds */
-    );
-
-    // Set the appropriate data type
-    event->data_value.set_double_value(/* value */);
-
-    batch.values["signal_name"].push_back(event);
+    dp::service::common::DataFrame frame;
+    auto* c = frame.add_doublecolumns();
+    c->set_name("signal_name");
+    c->add_values(/* value */);
+    auto* ts = frame.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
+    ts->set_epochseconds(/* epoch_seconds */);
+    ts->set_nanoseconds(/* nanoseconds */);
+    batch.frames.push_back(std::move(frame));
 
     if (!bus_->push(std::move(batch))) {
         spdlog::warn("[{}] Failed to push event batch", name_);
@@ -360,18 +360,16 @@ void CounterReader::pushCounterValue(uint64_t value) {
     auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(epoch - seconds);
 
     // Create event with timestamp
-    auto event = util::bus::IDataBus::MakeEventValue(
-        static_cast<uint64_t>(seconds.count()),
-        static_cast<uint64_t>(nanos.count())
-    );
-
-    // Set the counter value as uint64
-    event->data_value.set_ulong_value(value);
-
-    // Create batch and push
     util::bus::IDataBus::EventBatch batch;
-    batch.root_source = name_;
-    batch.values[source_name_].push_back(event);
+    batch.root_source = name_;  // metrics/correlation root source
+    dp::service::common::DataFrame frame;
+    auto* c = frame.add_int64columns();
+    c->set_name(source_name_);
+    c->add_values(static_cast<int64_t>(value));
+    auto* ts = frame.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
+    ts->set_epochseconds(static_cast<uint64_t>(seconds.count()));
+    ts->set_nanoseconds(static_cast<uint64_t>(nanos.count()));
+    batch.frames.push_back(std::move(frame));
 
     if (!bus_->push(std::move(batch))) {
         spdlog::warn("[{}] Failed to push counter value {}", name_, value);
@@ -395,6 +393,12 @@ reader:
 ```
 
 ## Data Types
+
+## Frame Validation Rules
+
+- Every emitted `DataFrame` must include `datatimestamps.timestamplist` with at least one timestamp.
+- Readers/converters must not push frames without timestamps.
+- Controller drops and reports any frame that still arrives without timestamps.
 
 The `DataValue` protobuf message supports various data types:
 
