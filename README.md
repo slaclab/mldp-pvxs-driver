@@ -10,30 +10,30 @@ When running the controller/CLI orchestrator, the full config is a single YAML d
 unless marked optional.
 
 ```yaml
-controller_thread_pool: 2
-controller_stream_max_bytes: 2097152   # optional; flush stream after this payload size
-controller_stream_max_age_ms: 200      # optional; flush stream after this age in milliseconds
+controller-thread-pool: 2
+controller-stream-max-bytes: 2097152   # optional; flush stream after this payload size
+controller-stream-max-age-ms: 200      # optional; flush stream after this age in milliseconds
 
-mldp_pool:
-  provider_name: pvxs_provider
-  provider_description: "PVXS aggregate provider"   # optional
-  ingestion_url: dp-ingestion:50051
-  query_url: dp-query:50052                         # optional; defaults to `ingestion_url` when omitted
-  min_conn: 1
-  max_conn: 4
+mldp-pool:
+  provider-name: pvxs_provider
+  provider-description: "PVXS aggregate provider"   # optional
+  ingestion-url: dp-ingestion:50051
+  query-url: dp-query:50052                         # optional; defaults to `ingestion-url` when omitted
+  min-conn: 1
+  max-conn: 4
   credentials: # optional
-    pem_cert_chain: /etc/certs/client.crt
-    pem_private_key: /etc/certs/client.key
-    pem_root_certs: /etc/certs/ca.crt
+    pem-cert-chain: /etc/certs/client.crt
+    pem-private-key: /etc/certs/client.key
+    pem-root-certs: /etc/certs/ca.crt
 
 reader:                                  # optional; omit to start with no readers
   # ========== EPICS PVAccess Reader (Real-time Monitoring via PVXS) ==========
   - epics-pvxs:
       - name: pvxs_reader_a
-        thread_pool: 1                        # optional; default: 1 (thread pool size)
-        column_batch_size: 50                 # optional; default: 50 (max PVs per batch)
-        monitor_poll_threads: 2               # optional; default: 2 (polling threads)
-        monitor_poll_interval_ms: 5           # optional; default: 5 (poll interval in ms)
+        thread-pool: 1                        # optional; default: 1 (thread pool size)
+        column-batch-size: 50                 # optional; default: 50 (max PVs per batch)
+        monitor-poll-threads: 2               # optional; default: 2 (polling threads)
+        monitor-poll-interval-ms: 5           # optional; default: 5 (poll interval in ms)
         pvs:
           - name: "PV:NAME:1"
           - name: "PV:NAME:2"
@@ -47,10 +47,10 @@ reader:                                  # optional; omit to start with no reade
   # ========== EPICS Base Reader (Real-time Monitoring via Channel Access) ==========
   - epics-base:
       - name: base_reader_a
-        thread_pool: 1                        # optional; default: 1 (thread pool size)
-        column_batch_size: 50                 # optional; default: 50 (max PVs per batch)
-        monitor_poll_threads: 2               # optional; default: 2 (polling threads)
-        monitor_poll_interval_ms: 5           # optional; default: 5 (poll interval in ms)
+        thread-pool: 1                        # optional; default: 1 (thread pool size)
+        column-batch-size: 50                 # optional; default: 50 (max PVs per batch)
+        monitor-poll-threads: 2               # optional; default: 2 (polling threads)
+        monitor-poll-interval-ms: 5           # optional; default: 5 (poll interval in ms)
         pvs:
           - name: "PV:NAME:1"
           - name: "PV:NAME:2"
@@ -61,12 +61,12 @@ reader:                                  # optional; omit to start with no reade
       - name: archiver_reader_a
         hostname: "archiver.example.com:11200"
         mode: "historical_once"              # optional; default mode
-        start_date: "2026-01-01T00:00:00Z"
-        end_date: "2026-01-31T23:59:59Z"     # optional; omit for open-ended reads
-        tls_verify_peer: true                 # optional; default: true (verify cert chain)
-        tls_verify_host: true                 # optional; default: true (verify hostname)
-        connect_timeout_sec: 30               # optional; default: 30 seconds
-        total_timeout_sec: 300                # optional; default: 300 seconds (0 = infinite)
+        start-date: "2026-01-01T00:00:00Z"
+        end-date: "2026-01-31T23:59:59Z"     # optional; omit for open-ended reads
+        tls-verify-peer: true                 # optional; default: true (verify cert chain)
+        tls-verify-host: true                 # optional; default: true (verify hostname)
+        connect-timeout-sec: 30               # optional; default: 30 seconds
+        total-timeout-sec: 300                # optional; default: 300 seconds (0 = infinite)
         pvs:
           - name: "SYSTEM:SENSOR:TEMPERATURE:MAIN"
           - name: "SYSTEM:ACTUATOR:PRESSURE:OUTLET"
@@ -74,9 +74,9 @@ reader:                                  # optional; omit to start with no reade
       - name: archiver_reader_tail_polling
         hostname: "archiver.example.com:11200"
         mode: "periodic_tail"
-        poll_interval_sec: 5                  # required; wakeup interval
-        lookback_sec: 5                       # optional; defaults to poll_interval_sec
-        batch_duration_sec: 1                 # optional; split batches by historical sample-time span
+        poll-interval-sec: 5                  # required; wakeup interval
+        lookback-sec: 5                       # optional; defaults to poll-interval-sec
+        batch-duration-sec: 1                 # optional; split batches by historical sample-time span
         pvs:
           - name: "SYSTEM:SENSOR:TEMPERATURE:MAIN"
 
@@ -94,20 +94,20 @@ metrics:                                 # optional; omit to disable Prometheus 
 
 For detailed reader documentation, see [Reader Types](docs/readers.md).
 
-`mldp_pool` values mirror the driver's `provider_name` and target URLs but add connection-pool sizing.
+`mldp-pool` values mirror the driver's `provider-name` and target URLs but add connection-pool sizing.
 
-- `ingestion_url`: ingestion service address (DpIngestionService)
-- `query_url`: query service address (DpQueryService); if omitted, the driver uses `ingestion_url` for query RPCs too
+- `ingestion-url`: ingestion service address (DpIngestionService)
+- `query-url`: query service address (DpQueryService); if omitted, the driver uses `ingestion-url` for query RPCs too
 
 Readers are defined
 as sequences under `reader[]`, each with a `name` and an optional `pvs` list; if `pvs` is omitted, the reader will
 start without predefined channels.
 
-`mldp_pool.credentials` accepts:
+`mldp-pool.credentials` accepts:
 
 - `none` (insecure, no TLS)
 - `ssl` (TLS with system defaults)
-- a map with optional `pem_cert_chain`, `pem_private_key`, `pem_root_certs` paths (TLS with explicit PEM files)
+- a map with optional `pem-cert-chain`, `pem-private-key`, `pem-root-certs` paths (TLS with explicit PEM files)
 
 ## Command-line interface
 

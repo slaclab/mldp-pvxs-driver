@@ -28,6 +28,24 @@ std::string getAliasedString(const Config& cfg,
     return cfg.get(aliasKey, def);
 }
 
+int getAliasedInt(const Config& cfg, const std::string& primaryKey, const std::string& aliasKey, int def)
+{
+    if (cfg.hasChild(primaryKey))
+    {
+        return cfg.getInt(primaryKey, def);
+    }
+    return cfg.getInt(aliasKey, def);
+}
+
+bool getAliasedBool(const Config& cfg, const std::string& primaryKey, const std::string& aliasKey, bool def)
+{
+    if (cfg.hasChild(primaryKey))
+    {
+        return cfg.getBool(primaryKey, def);
+    }
+    return cfg.getBool(aliasKey, def);
+}
+
 void requireScalarChild(const Config& cfg, const std::string& key, const std::string& context)
 {
     const auto raw = cfg.raw();
@@ -203,28 +221,37 @@ void EpicsArchiverReaderConfig::parse(const Config& readerEntry)
     }
 
     // Parse start date (required in historical_once mode; ignored in periodic_tail)
-    requireScalarChildAny(readerEntry, "start_date", "startDate", "archiver reader config");
-    start_date_ = getAliasedString(readerEntry, "start_date", "startDate");
+    requireScalarChildAny(readerEntry, "start-date", "start_date", "archiver reader config");
+    requireScalarChildAny(readerEntry, "start-date", "startDate", "archiver reader config");
+    start_date_ = getAliasedString(
+        readerEntry,
+        "start-date",
+        readerEntry.hasChild("start_date") ? "start_date" : "startDate");
     if (fetch_mode_ == FetchMode::HistoricalOnce)
     {
-        if (!readerEntry.hasChild("start_date") && !readerEntry.hasChild("startDate"))
+        if (!readerEntry.hasChild("start-date") && !readerEntry.hasChild("start_date")
+            && !readerEntry.hasChild("startDate"))
         {
-            throw Error(makeMissingFieldMessage("start_date"));
+            throw Error(makeMissingFieldMessage("start-date"));
         }
         if (start_date_.empty())
         {
-            throw Error("start_date must not be empty");
+            throw Error("start-date must not be empty");
         }
     }
 
-    // Parse optional end date (accept snake_case and camelCase)
-    requireScalarChildAny(readerEntry, "end_date", "endDate", "archiver reader config");
-    const auto endDate = getAliasedString(readerEntry, "end_date", "endDate");
-    if (readerEntry.hasChild("end_date") || readerEntry.hasChild("endDate"))
+    // Parse optional end date (accept dash-case, snake_case, and camelCase)
+    requireScalarChildAny(readerEntry, "end-date", "end_date", "archiver reader config");
+    requireScalarChildAny(readerEntry, "end-date", "endDate", "archiver reader config");
+    const auto endDate = getAliasedString(
+        readerEntry,
+        "end-date",
+        readerEntry.hasChild("end_date") ? "end_date" : "endDate");
+    if (readerEntry.hasChild("end-date") || readerEntry.hasChild("end_date") || readerEntry.hasChild("endDate"))
     {
         if (endDate.empty())
         {
-            throw Error("end_date must not be empty when provided");
+            throw Error("end-date must not be empty when provided");
         }
         end_date_ = endDate;
     }
@@ -234,57 +261,57 @@ void EpicsArchiverReaderConfig::parse(const Config& readerEntry)
     }
 
     // Parse optional connection timeout (default: 30 seconds)
-    connect_timeout_sec_ = readerEntry.getInt("connect_timeout_sec", 30L);
+    connect_timeout_sec_ = getAliasedInt(readerEntry, "connect-timeout-sec", "connect_timeout_sec", 30L);
     if (connect_timeout_sec_ <= 0)
     {
-        throw Error("connect_timeout_sec must be positive (>0)");
+        throw Error("connect-timeout-sec must be positive (>0)");
     }
 
     // Parse optional total timeout (default: 300 seconds / 5 minutes)
     // Special case: 0 means infinite timeout (useful for long streaming sessions)
-    total_timeout_sec_ = readerEntry.getInt("total_timeout_sec", 300L);
+    total_timeout_sec_ = getAliasedInt(readerEntry, "total-timeout-sec", "total_timeout_sec", 300L);
     if (total_timeout_sec_ < 0)
     {
-        throw Error("total_timeout_sec must be >= 0 (0 = infinite for streaming)");
+        throw Error("total-timeout-sec must be >= 0 (0 = infinite for streaming)");
     }
     if (total_timeout_sec_ != 0 && total_timeout_sec_ < connect_timeout_sec_)
     {
-        throw Error("total_timeout_sec must be >= connect_timeout_sec (or 0 for infinite)");
+        throw Error("total-timeout-sec must be >= connect-timeout-sec (or 0 for infinite)");
     }
 
     // Parse optional historical batch duration threshold (default: 1 second)
-    batch_duration_sec_ = readerEntry.getInt("batch_duration_sec", 1L);
+    batch_duration_sec_ = getAliasedInt(readerEntry, "batch-duration-sec", "batch_duration_sec", 1L);
     if (batch_duration_sec_ <= 0)
     {
-        throw Error("batch_duration_sec must be positive (>0)");
+        throw Error("batch-duration-sec must be positive (>0)");
     }
 
     // Parse periodic tail polling controls
     if (fetch_mode_ == FetchMode::PeriodicTail)
     {
-        poll_interval_sec_ = readerEntry.getInt("poll_interval_sec", 0L);
+        poll_interval_sec_ = getAliasedInt(readerEntry, "poll-interval-sec", "poll_interval_sec", 0L);
         if (poll_interval_sec_ <= 0)
         {
-            throw Error("poll_interval_sec must be positive (>0) when mode=periodic_tail");
+            throw Error("poll-interval-sec must be positive (>0) when mode=periodic_tail");
         }
 
-        lookback_sec_ = readerEntry.getInt("lookback_sec", poll_interval_sec_);
+        lookback_sec_ = getAliasedInt(readerEntry, "lookback-sec", "lookback_sec", poll_interval_sec_);
         if (lookback_sec_ <= 0)
         {
-            throw Error("lookback_sec must be positive (>0) when mode=periodic_tail");
+            throw Error("lookback-sec must be positive (>0) when mode=periodic_tail");
         }
         if (lookback_sec_ > poll_interval_sec_)
         {
-            throw Error("lookback_sec must be <= poll_interval_sec when mode=periodic_tail");
+            throw Error("lookback-sec must be <= poll-interval-sec when mode=periodic_tail");
         }
     }
 
     // Parse optional TLS verification controls (secure by default)
-    tls_verify_peer_ = readerEntry.getBool("tls_verify_peer", true);
-    tls_verify_host_ = readerEntry.getBool("tls_verify_host", true);
+    tls_verify_peer_ = getAliasedBool(readerEntry, "tls-verify-peer", "tls_verify_peer", true);
+    tls_verify_host_ = getAliasedBool(readerEntry, "tls-verify-host", "tls_verify_host", true);
     if (tls_verify_host_ && !tls_verify_peer_)
     {
-        throw Error("tls_verify_host=true requires tls_verify_peer=true");
+        throw Error("tls-verify-host=true requires tls-verify-peer=true");
     }
 
     // Parse PVs

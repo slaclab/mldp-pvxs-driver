@@ -14,6 +14,17 @@ using namespace mldp_pvxs_driver::config;
 
 using namespace mldp_pvxs_driver::metrics;
 
+namespace {
+std::string pickKey(const Config& cfg, const std::string& dashKey, const std::string& underscoreKey)
+{
+    if (cfg.hasChild(dashKey))
+    {
+        return dashKey;
+    }
+    return underscoreKey;
+}
+} // namespace
+
 MetricsConfig::MetricsConfig() = default;
 
 MetricsConfig::MetricsConfig(const config::Config& metricsNode)
@@ -64,21 +75,22 @@ void MetricsConfig::parse(const config::Config& node)
         throw Error("metrics.endpoint must not be empty");
     }
 
-    // Parse optional scan_interval_seconds with default of 1
-    if (node.hasChild("scan_interval_seconds"))
+    // Parse optional scan-interval-seconds with default of 1.
+    const auto scanIntervalKey = pickKey(node, "scan-interval-seconds", "scan_interval_seconds");
+    if (node.hasChild(scanIntervalKey))
     {
         try
         {
-            scan_interval_seconds_ = std::stoul(node.get("scan_interval_seconds"));
+            scan_interval_seconds_ = std::stoul(node.get(scanIntervalKey));
         }
         catch (const std::exception&)
         {
-            throw Error("metrics.scan_interval_seconds must be a positive integer");
+            throw Error("metrics." + scanIntervalKey + " must be a positive integer");
         }
 
         if (scan_interval_seconds_ < 1)
         {
-            throw Error("metrics.scan_interval_seconds must be at least 1");
+            throw Error("metrics." + scanIntervalKey + " must be at least 1");
         }
     }
 

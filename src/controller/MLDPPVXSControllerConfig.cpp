@@ -18,6 +18,17 @@ using namespace mldp_pvxs_driver::controller;
 using namespace mldp_pvxs_driver::util::pool;
 using namespace mldp_pvxs_driver::config;
 
+namespace {
+std::string pickKey(const Config& cfg, const std::string& dashKey, const std::string& underscoreKey)
+{
+    if (cfg.hasChild(dashKey))
+    {
+        return dashKey;
+    }
+    return underscoreKey;
+}
+} // namespace
+
 MLDPPVXSControllerConfig::MLDPPVXSControllerConfig() = default;
 
 MLDPPVXSControllerConfig::MLDPPVXSControllerConfig(const ::mldp_pvxs_driver::config::Config& root)
@@ -90,41 +101,43 @@ void MLDPPVXSControllerConfig::parse(const ::mldp_pvxs_driver::config::Config& r
 
 void MLDPPVXSControllerConfig::parseThreadPool(const ::mldp_pvxs_driver::config::Config& root)
 {
-    if (!root.hasChild("controller_thread_pool"))
+    const auto threadPoolKey = pickKey(root, "controller-thread-pool", "controller_thread_pool");
+    if (!root.hasChild(threadPoolKey))
     {
-        throw Error(makeMissingFieldMessage("controller_thread_pool"));
+        throw Error(makeMissingFieldMessage(threadPoolKey));
     }
 
-    const auto threadPoolNodes = root.subConfig("controller_thread_pool");
+    const auto threadPoolNodes = root.subConfig(threadPoolKey);
     if (threadPoolNodes.empty())
     {
-        throw Error(makeMissingFieldMessage("controller_thread_pool"));
+        throw Error(makeMissingFieldMessage(threadPoolKey));
     }
 
     const auto& threadPoolNode = threadPoolNodes.front();
     if (!threadPoolNode.raw().has_val())
     {
-        throw Error("controller_thread_pool must be a scalar");
+        throw Error(threadPoolKey + " must be a scalar");
     }
 
     threadPoolNode >> controllerThreadPoolSize_;
     if (controllerThreadPoolSize_ <= 0)
     {
-        throw Error("controller_thread_pool must be greater than zero");
+        throw Error(threadPoolKey + " must be greater than zero");
     }
 }
 
 void MLDPPVXSControllerConfig::parsePool(const ::mldp_pvxs_driver::config::Config& root)
 {
-    if (!root.hasChild("mldp_pool"))
+    const auto poolKey = pickKey(root, "mldp-pool", "mldp_pool");
+    if (!root.hasChild(poolKey))
     {
-        throw Error(makeMissingFieldMessage("mldp_pool"));
+        throw Error(makeMissingFieldMessage(poolKey));
     }
 
-    const auto poolNodes = root.subConfig("mldp_pool");
+    const auto poolNodes = root.subConfig(poolKey);
     if (poolNodes.empty())
     {
-        throw Error(makeMissingFieldMessage("mldp_pool"));
+        throw Error(makeMissingFieldMessage(poolKey));
     }
 
     try
@@ -213,34 +226,36 @@ void MLDPPVXSControllerConfig::parseMetrics(const ::mldp_pvxs_driver::config::Co
 
 void MLDPPVXSControllerConfig::parseStreamLimits(const ::mldp_pvxs_driver::config::Config& root)
 {
-    if (root.hasChild("controller_stream_max_bytes"))
+    const auto maxBytesKey = pickKey(root, "controller-stream-max-bytes", "controller_stream_max_bytes");
+    if (root.hasChild(maxBytesKey))
     {
-        const auto nodes = root.subConfig("controller_stream_max_bytes");
+        const auto nodes = root.subConfig(maxBytesKey);
         if (nodes.empty() || !nodes.front().raw().has_val())
         {
-            throw Error("controller_stream_max_bytes must be a scalar");
+            throw Error(maxBytesKey + " must be a scalar");
         }
         int value = 0;
         nodes.front() >> value;
         if (value <= 0)
         {
-            throw Error("controller_stream_max_bytes must be greater than zero");
+            throw Error(maxBytesKey + " must be greater than zero");
         }
         controllerStreamMaxBytes_ = static_cast<std::size_t>(value);
     }
 
-    if (root.hasChild("controller_stream_max_age_ms"))
+    const auto maxAgeMsKey = pickKey(root, "controller-stream-max-age-ms", "controller_stream_max_age_ms");
+    if (root.hasChild(maxAgeMsKey))
     {
-        const auto nodes = root.subConfig("controller_stream_max_age_ms");
+        const auto nodes = root.subConfig(maxAgeMsKey);
         if (nodes.empty() || !nodes.front().raw().has_val())
         {
-            throw Error("controller_stream_max_age_ms must be a scalar");
+            throw Error(maxAgeMsKey + " must be a scalar");
         }
         int value = 0;
         nodes.front() >> value;
         if (value <= 0)
         {
-            throw Error("controller_stream_max_age_ms must be greater than zero");
+            throw Error(maxAgeMsKey + " must be greater than zero");
         }
         controllerStreamMaxAge_ = std::chrono::milliseconds(value);
     }

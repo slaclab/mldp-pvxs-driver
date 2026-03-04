@@ -34,8 +34,8 @@ TEST_F(EpicsArchiverReaderConfigTest, ValidConfigurationParsing)
     const std::string yaml = R"(
         name: test-archiver
         hostname: "archiver.slac.stanford.edu:11200"
-        start_date: "2026-01-01T00:00:00Z"
-        end_date: "2026-01-02T00:00:00Z"
+        start-date: "2026-01-01T00:00:00Z"
+        end-date: "2026-01-02T00:00:00Z"
         pvs:
           - name: "PV1"
           - name: "PV2"
@@ -64,7 +64,7 @@ TEST_F(EpicsArchiverReaderConfigTest, MissingNameThrows)
 {
     const std::string yaml = R"(
         hostname: "archiver.slac.stanford.edu:11200"
-        start_date: "2026-01-01T00:00:00Z"
+        start-date: "2026-01-01T00:00:00Z"
         pvs:
           - name: "PV1"
     )";
@@ -78,7 +78,7 @@ TEST_F(EpicsArchiverReaderConfigTest, MissingHostnameThrows)
 {
     const std::string yaml = R"(
         name: test-archiver
-        start_date: "2026-01-01T00:00:00Z"
+        start-date: "2026-01-01T00:00:00Z"
         pvs:
           - name: "PV1"
     )";
@@ -93,7 +93,7 @@ TEST_F(EpicsArchiverReaderConfigTest, MissingPvsThrows)
     const std::string yaml = R"(
         name: test-archiver
         hostname: "archiver.slac.stanford.edu:11200"
-        start_date: "2026-01-01T00:00:00Z"
+        start-date: "2026-01-01T00:00:00Z"
     )";
 
     auto cfg = makeConfigFromYaml(yaml);
@@ -106,7 +106,7 @@ TEST_F(EpicsArchiverReaderConfigTest, EmptyPvsIsValid)
     const std::string yaml = R"(
         name: test-archiver
         hostname: "archiver.slac.stanford.edu:11200"
-        start_date: "2026-01-01T00:00:00Z"
+        start-date: "2026-01-01T00:00:00Z"
         pvs: []
     )";
 
@@ -126,7 +126,7 @@ TEST_F(EpicsArchiverReaderConfigTest, PvWithoutNameThrows)
     const std::string yaml = R"(
         name: test-archiver
         hostname: "archiver.slac.stanford.edu:11200"
-        start_date: "2026-01-01T00:00:00Z"
+        start-date: "2026-01-01T00:00:00Z"
         pvs:
           - {}
     )";
@@ -141,7 +141,7 @@ TEST_F(EpicsArchiverReaderConfigTest, EmptyNameThrows)
     const std::string yaml = R"(
         name: ""
         hostname: "archiver.slac.stanford.edu:11200"
-        start_date: "2026-01-01T00:00:00Z"
+        start-date: "2026-01-01T00:00:00Z"
         pvs:
           - name: "PV1"
     )";
@@ -156,7 +156,7 @@ TEST_F(EpicsArchiverReaderConfigTest, EmptyHostnameThrows)
     const std::string yaml = R"(
         name: test-archiver
         hostname: ""
-        start_date: "2026-01-01T00:00:00Z"
+        start-date: "2026-01-01T00:00:00Z"
         pvs:
           - name: "PV1"
     )";
@@ -178,7 +178,7 @@ TEST_F(EpicsArchiverReaderConfigTest, SinglePvConfiguration)
     const std::string yaml = R"(
         name: single-pv-reader
         hostname: "localhost:11200"
-        start_date: "2026-01-01T00:00:00Z"
+        start-date: "2026-01-01T00:00:00Z"
         pvs:
           - name: "SLAC:GUNB:ELEC:LTU1:630:EPICS_PV"
     )";
@@ -206,13 +206,13 @@ TEST_F(EpicsArchiverReaderConfigTest, MissingStartDateThrows)
     EXPECT_THROW(EpicsArchiverReaderConfig config(cfg), EpicsArchiverReaderConfig::Error);
 }
 
-// Verifies end_date is optional and absent values are represented as nullopt.
+// Verifies end-date is optional and absent values are represented as nullopt.
 TEST_F(EpicsArchiverReaderConfigTest, EndDateIsOptional)
 {
     const std::string yaml = R"(
         name: test-archiver
         hostname: "archiver.slac.stanford.edu:11200"
-        start_date: "2026-01-01T00:00:00Z"
+        start-date: "2026-01-01T00:00:00Z"
         pvs:
           - name: "PV1"
     )";
@@ -252,7 +252,7 @@ TEST_F(EpicsArchiverReaderConfigTest, TlsVerificationDefaultsToEnabled)
     const std::string yaml = R"(
         name: test-archiver
         hostname: "archiver.slac.stanford.edu:11200"
-        start_date: "2026-01-01T00:00:00Z"
+        start-date: "2026-01-01T00:00:00Z"
         pvs:
           - name: "PV1"
     )";
@@ -273,7 +273,7 @@ TEST_F(EpicsArchiverReaderConfigTest, PeriodicTailDefaultsLookbackToPollInterval
         name: archiver-tail
         hostname: "localhost:11200"
         mode: "periodic_tail"
-        poll_interval_sec: 5
+        poll-interval-sec: 5
         pvs:
           - name: "PV1"
     )";
@@ -294,8 +294,8 @@ TEST_F(EpicsArchiverReaderConfigTest, PeriodicTailRejectsLookbackLargerThanPollI
         name: archiver-tail
         hostname: "localhost:11200"
         mode: "periodic_tail"
-        poll_interval_sec: 2
-        lookback_sec: 3
+        poll-interval-sec: 2
+        lookback-sec: 3
         pvs:
           - name: "PV1"
     )";
@@ -304,14 +304,14 @@ TEST_F(EpicsArchiverReaderConfigTest, PeriodicTailRejectsLookbackLargerThanPollI
     EXPECT_THROW(EpicsArchiverReaderConfig config(cfg), EpicsArchiverReaderConfig::Error);
 }
 
-// Verifies batch_duration_sec is parsed when explicitly configured.
+// Verifies batch-duration-sec is parsed when explicitly configured.
 TEST_F(EpicsArchiverReaderConfigTest, AcceptsBatchDurationSec)
 {
     const std::string yaml = R"(
         name: test-archiver
         hostname: "archiver.slac.stanford.edu:11200"
-        start_date: "2026-01-01T00:00:00Z"
-        batch_duration_sec: 3
+        start-date: "2026-01-01T00:00:00Z"
+        batch-duration-sec: 3
         pvs:
           - name: "PV1"
     )";
@@ -323,14 +323,14 @@ TEST_F(EpicsArchiverReaderConfigTest, AcceptsBatchDurationSec)
     EXPECT_EQ(config.batchDurationSec(), 3L);
 }
 
-// Verifies batch_duration_sec rejects zero and negative values.
+// Verifies batch-duration-sec rejects zero and negative values.
 TEST_F(EpicsArchiverReaderConfigTest, RejectsNonPositiveBatchDurationSec)
 {
     const std::string yaml_zero = R"(
         name: test-archiver
         hostname: "archiver.slac.stanford.edu:11200"
-        start_date: "2026-01-01T00:00:00Z"
-        batch_duration_sec: 0
+        start-date: "2026-01-01T00:00:00Z"
+        batch-duration-sec: 0
         pvs:
           - name: "PV1"
     )";
@@ -341,8 +341,8 @@ TEST_F(EpicsArchiverReaderConfigTest, RejectsNonPositiveBatchDurationSec)
     const std::string yaml_negative = R"(
         name: test-archiver
         hostname: "archiver.slac.stanford.edu:11200"
-        start_date: "2026-01-01T00:00:00Z"
-        batch_duration_sec: -1
+        start-date: "2026-01-01T00:00:00Z"
+        batch-duration-sec: -1
         pvs:
           - name: "PV1"
     )";
@@ -357,9 +357,9 @@ TEST_F(EpicsArchiverReaderConfigTest, AllowsDisablingTlsVerificationExplicitly)
     const std::string yaml = R"(
         name: test-archiver
         hostname: "archiver.slac.stanford.edu:11200"
-        start_date: "2026-01-01T00:00:00Z"
-        tls_verify_peer: false
-        tls_verify_host: false
+        start-date: "2026-01-01T00:00:00Z"
+        tls-verify-peer: false
+        tls-verify-host: false
         pvs:
           - name: "PV1"
     )";
@@ -377,9 +377,9 @@ TEST_F(EpicsArchiverReaderConfigTest, RejectsHostVerificationWithoutPeerVerifica
     const std::string yaml = R"(
         name: test-archiver
         hostname: "archiver.slac.stanford.edu:11200"
-        start_date: "2026-01-01T00:00:00Z"
-        tls_verify_peer: false
-        tls_verify_host: true
+        start-date: "2026-01-01T00:00:00Z"
+        tls-verify-peer: false
+        tls-verify-host: true
         pvs:
           - name: "PV1"
     )";

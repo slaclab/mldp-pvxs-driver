@@ -17,14 +17,14 @@ using mldp_pvxs_driver::config::makeConfigFromYaml;
 TEST(MLDPPVXSControllerConfigTest, ParsesValidConfig)
 {
     const std::string yaml = R"(
-controller_thread_pool: 2
-controller_stream_max_bytes: 1048576
-controller_stream_max_age_ms: 250
-mldp_pool:
-  provider_name: pvxs_provider
-  ingestion_url: https://mldp.example:443
-  min_conn: 1
-  max_conn: 4
+controller-thread-pool: 2
+controller-stream-max-bytes: 1048576
+controller-stream-max-age-ms: 250
+mldp-pool:
+  provider-name: pvxs_provider
+  ingestion-url: https://mldp.example:443
+  min-conn: 1
+  max-conn: 4
 reader:
   - epics-pvxs:
       - name: epics_1
@@ -70,7 +70,7 @@ TEST(MLDPPVXSControllerConfigTest, ParsesTlsCredentialsBlock)
 {
     using util::pool::MLDPGrpcPoolConfig;
 
-    const auto tempDir = std::filesystem::temp_directory_path() / "mldp_pool_credentials_test";
+    const auto tempDir = std::filesystem::temp_directory_path() / "mldp-pool_credentials_test";
     std::filesystem::create_directories(tempDir);
 
     const auto certPath = tempDir / "client.crt";
@@ -84,16 +84,16 @@ TEST(MLDPPVXSControllerConfigTest, ParsesTlsCredentialsBlock)
     }
 
     std::ostringstream yaml;
-    yaml << "controller_thread_pool: 1\n"
-         << "mldp_pool:\n"
-         << "  provider_name: pvxs_provider\n"
-         << "  ingestion_url: https://mldp.example:443\n"
-         << "  min_conn: 1\n"
-         << "  max_conn: 1\n"
+    yaml << "controller-thread-pool: 1\n"
+         << "mldp-pool:\n"
+         << "  provider-name: pvxs_provider\n"
+         << "  ingestion-url: https://mldp.example:443\n"
+         << "  min-conn: 1\n"
+         << "  max-conn: 1\n"
          << "  credentials:\n"
-         << "    pem_cert_chain: " << certPath.string() << "\n"
-         << "    pem_private_key: " << keyPath.string() << "\n"
-         << "    pem_root_certs: " << caPath.string() << "\n"
+         << "    pem-cert-chain: " << certPath.string() << "\n"
+         << "    pem-private-key: " << keyPath.string() << "\n"
+         << "    pem-root-certs: " << caPath.string() << "\n"
          << "reader: []\n";
 
     const auto cfg = makeConfigFromYaml(yaml.str());
@@ -112,12 +112,12 @@ TEST(MLDPPVXSControllerConfigTest, ParsesTlsCredentialsBlock)
 TEST(MLDPPVXSControllerConfigTest, ParsesMultipleEpicsReaders)
 {
     const std::string yaml = R"(
-controller_thread_pool: 3
-mldp_pool:
-  provider_name: pvxs_provider
-  ingestion_url: https://mldp.example:443
-  min_conn: 2
-  max_conn: 2
+controller-thread-pool: 3
+mldp-pool:
+  provider-name: pvxs_provider
+  ingestion-url: https://mldp.example:443
+  min-conn: 2
+  max-conn: 2
 reader:
   - epics-pvxs:
       - name: epics_1
@@ -149,14 +149,14 @@ reader:
 TEST(MLDPPVXSControllerConfigTest, ParsesOptionalQueryUrl)
 {
     const std::string yaml = R"(
-controller_thread_pool: 1
-mldp_pool:
-  provider_name: pvxs_provider
-  provider_description: "PVXS-based data provider"
-  ingestion_url: https://mldp-ingestion.example:50051
-  query_url: https://mldp-query.example:50052
-  min_conn: 1
-  max_conn: 2
+controller-thread-pool: 1
+mldp-pool:
+  provider-name: pvxs_provider
+  provider-description: "PVXS-based data provider"
+  ingestion-url: https://mldp-ingestion.example:50051
+  query-url: https://mldp-query.example:50052
+  min-conn: 1
+  max-conn: 2
 reader: []
 )";
 
@@ -171,11 +171,11 @@ reader: []
 TEST(MLDPPVXSControllerConfigTest, ThrowsWhenProviderNameMissing)
 {
     const std::string yaml = R"(
-controller_thread_pool: 1
-mldp_pool:
-  ingestion_url: https://mldp.example:443
-  min_conn: 1
-  max_conn: 1
+controller-thread-pool: 1
+mldp-pool:
+  ingestion-url: https://mldp.example:443
+  min-conn: 1
+  max-conn: 1
 )";
 
     const auto cfg = makeConfigFromYaml(yaml);
@@ -185,11 +185,11 @@ mldp_pool:
 TEST(MLDPPVXSControllerConfigTest, ThrowsWhenMinConnMissing)
 {
     const std::string yaml = R"(
-controller_thread_pool: 1
-mldp_pool:
-  provider_name: pvxs_provider
-  ingestion_url: https://mldp.example:443
-  max_conn: 2
+controller-thread-pool: 1
+mldp-pool:
+  provider-name: pvxs_provider
+  ingestion-url: https://mldp.example:443
+  max-conn: 2
 )";
 
     const auto cfg = makeConfigFromYaml(yaml);
@@ -199,12 +199,12 @@ mldp_pool:
 TEST(MLDPPVXSControllerConfigTest, ThrowsWhenMinConnExceedsMax)
 {
     const std::string yaml = R"(
-controller_thread_pool: 1
-mldp_pool:
-  provider_name: pvxs_provider
-  ingestion_url: https://mldp.example:443
-  min_conn: 5
-  max_conn: 2
+controller-thread-pool: 1
+mldp-pool:
+  provider-name: pvxs_provider
+  ingestion-url: https://mldp.example:443
+  min-conn: 5
+  max-conn: 2
 )";
 
     const auto cfg = makeConfigFromYaml(yaml);
@@ -214,7 +214,7 @@ mldp_pool:
 TEST(MLDPPVXSControllerConfigTest, ThrowsWithoutPoolConfig)
 {
     const std::string yaml = R"(
-controller_thread_pool: 1
+controller-thread-pool: 1
 reader: []
 )";
 
@@ -225,12 +225,12 @@ reader: []
 TEST(MLDPPVXSControllerConfigTest, ThrowsWhenReaderIsNotSequence)
 {
     const std::string yaml = R"(
-controller_thread_pool: 1
-mldp_pool:
-  provider_name: pvxs_provider
-  ingestion_url: https://mldp.example
-  min_conn: 1
-  max_conn: 1
+controller-thread-pool: 1
+mldp-pool:
+  provider-name: pvxs_provider
+  ingestion-url: https://mldp.example
+  min-conn: 1
+  max-conn: 1
 reader: invalid
 )";
 
@@ -241,12 +241,12 @@ reader: invalid
 TEST(MLDPPVXSControllerConfigTest, ThrowsForUnsupportedReaderType)
 {
     const std::string yaml = R"(
-controller_thread_pool: 1
-mldp_pool:
-  provider_name: pvxs_provider
-  ingestion_url: https://mldp.example
-  min_conn: 1
-  max_conn: 1
+controller-thread-pool: 1
+mldp-pool:
+  provider-name: pvxs_provider
+  ingestion-url: https://mldp.example
+  min-conn: 1
+  max-conn: 1
 reader:
   - foo:
       - bar
@@ -259,11 +259,11 @@ reader:
 TEST(MLDPPVXSControllerConfigTest, ThrowsWhenThreadPoolMissing)
 {
     const std::string yaml = R"(
-mldp_pool:
-  provider_name: pvxs_provider
-  ingestion_url: https://mldp.example
-  min_conn: 1
-  max_conn: 1
+mldp-pool:
+  provider-name: pvxs_provider
+  ingestion-url: https://mldp.example
+  min-conn: 1
+  max-conn: 1
 reader: []
 )";
 
