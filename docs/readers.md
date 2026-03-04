@@ -59,7 +59,7 @@ Polling-based EPICS Channel Access monitoring for legacy systems.
 - **Mode**: Polling with configurable interval
 - **Best For**: Legacy EPICS installations without PVAccess
 - **Key Feature**: Multiple polling threads with mutex-protected queue draining
-- **BSAS Support**: SLAC BSAS NTTable mode with per-row timestamps — see [SLAC BSAS NTTable Structure](readers/slac-bsas-table.md)
+- **BSAS Support**: SLAC BSAS NTTable mode with per-row timestamps — see [SLAC BSAS NTTable Gen 1](readers/slac-bsas-table-gen1.md), [Gen 2](readers/slac-bsas-table-gen2.md)
 
 → [Full Documentation: EpicsBaseReader](readers/epics-base-reader.md)
 
@@ -69,7 +69,7 @@ Modern event-driven EPICS PVAccess monitoring with advanced table support.
 
 - **Mode**: Event-driven subscriptions
 - **Best For**: High-frequency updates with minimal latency
-- **Key Feature**: Smart thread pool decisions + SLAC BSAS NTTable support — see [SLAC BSAS NTTable Structure](readers/slac-bsas-table.md)
+- **Key Feature**: Smart thread pool decisions + SLAC BSAS NTTable support — see [SLAC BSAS NTTable Gen 1](readers/slac-bsas-table-gen1.md), [Gen 2](readers/slac-bsas-table-gen2.md)
 
 → [Full Documentation: EpicsPVXSReader](readers/epics-pvxs-reader.md)
 
@@ -281,4 +281,5 @@ src/reader/
 - [Architecture Overview](architecture.md) - System-wide architecture and data flow
 - [Implementing Custom Readers](readers-implementation.md) - Complete guide with examples
 - [Configuration Reference](../config.md) - Full configuration schema
-- [SLAC BSAS NTTable Structure](readers/slac-bsas-table.md) - BSAS NTTable field layout, column conventions, and annotated example
+- [SLAC BSAS NTTable Gen 1](readers/slac-bsas-table-gen1.md) - BSAS Gen 1: raw per-pulse sample arrays
+- [SLAC BSAS NTTable Gen 2](readers/slac-bsas-table-gen2.md) - BSAS Gen 2: PID-indexed statistical summaries (planned)
