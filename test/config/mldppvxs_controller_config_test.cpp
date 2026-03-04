@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <controller/MLDPPVXSControllerConfig.h>
-#include <reader/impl/epics/EpicsReaderConfig.h>
+#include <reader/impl/epics/shared/EpicsReaderConfig.h>
 
 #include "test_config_helpers.h"
 

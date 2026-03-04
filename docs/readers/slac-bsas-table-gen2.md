@@ -183,7 +183,7 @@ pvs:
 |------------------------------|--------------------------------------------------------------------|
 | PVXS conversion class        | `include/reader/impl/epics/BSASGen2EpicsMLDPConversion.h`          |
 | PVXS conversion impl         | `src/reader/impl/epics/BSASGen2EpicsMLDPConversion.cpp`            |
-| EPICS Base conversion        | `include/reader/impl/epics/EpicsPVDataConversion.h`                |
-| PVXS reader dispatch         | `src/reader/impl/epics/EpicsPVXSReader.cpp`                        |
-| EPICS Base reader dispatch   | `src/reader/impl/epics/EpicsBaseReader.cpp`                        |
+| EPICS Base conversion        | `include/reader/impl/epics/base/EpicsPVDataConversion.h`                |
+| PVXS reader dispatch         | `src/reader/impl/epics/pvxs/EpicsPVXSReader.cpp`                        |
+| EPICS Base reader dispatch   | `src/reader/impl/epics/base/EpicsBaseReader.cpp`                        |
 | Mock IOC (concrete example)  | `test/mock/sioc.cpp`                                               |

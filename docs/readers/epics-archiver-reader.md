@@ -50,7 +50,7 @@ flowchart TB
 3. Initiates HTTP GET request to Archiver Appliance `/retrieval/data/getData.raw`
 4. Streams PB/HTTP response (PayloadInfo + ScalarDouble samples)
 5. Parses protobuf messages line-by-line
-6. Batches events by historical sample timestamps (using `batch_duration_sec`)
+6. Batches events by historical sample timestamps (using `batch-duration-sec`)
 7. Pushes batches to event bus
 8. Completes and thread exits (reader still running but idle)
 
@@ -61,7 +61,7 @@ flowchart TB
 3. Each iteration: generates time window from `now - lookback` to `now`
 4. Fetches archiver data for that window
 5. Processes and pushes new events
-6. Waits `poll_interval_sec` (interruptible via condition_variable)
+6. Waits `poll-interval-sec` (interruptible via condition_variable)
 7. Repeats until reader destruction
 
 ## Configuration
@@ -73,10 +73,10 @@ reader:
   - epics-archiver:
       - name: my_archiver_reader
         url: "http://archiver-appliance.example.com"
-        start_date: "2024-01-01T00:00:00Z"  # Required
-        end_date: "2024-01-02T00:00:00Z"    # Optional
-        batch_duration_sec: 1               # Split events by 1-second windows
-        thread_pool_size: 2                 # Conversion thread pool
+        start-date: "2024-01-01T00:00:00Z"  # Required
+        end-date: "2024-01-02T00:00:00Z"    # Optional
+        batch-duration-sec: 1               # Split events by 1-second windows
+        thread-pool-size: 2                 # Conversion thread pool
         pvs:
           - name: MY:ARCHIVER:PV
           - name: ANOTHER:HISTORICAL:PV
@@ -90,10 +90,10 @@ reader:
       - name: continuous_archiver
         url: "http://archiver.example.com"
         mode: periodic_tail             # Enable continuous polling
-        poll_interval_sec: 5            # Poll every 5 seconds
-        lookback_sec: 60                # Fetch last 60 seconds each time
-        batch_duration_sec: 1
-        thread_pool_size: 2
+        poll-interval-sec: 5            # Poll every 5 seconds
+        lookback-sec: 60                # Fetch last 60 seconds each time
+        batch-duration-sec: 1
+        thread-pool-size: 2
         pvs:
           - name: MY:PV:NAME
 ```
@@ -105,11 +105,11 @@ reader:
   - epics-archiver:
       - name: secure_archiver
         url: "https://archiver.example.com"
-        start_date: "2024-01-01T00:00:00Z"
-        connect_timeout_sec: 30         # Connection timeout (default: 30)
-        total_timeout_sec: 300          # Total operation timeout (default: 300)
-        tls_verify_peer: true           # Verify SSL peer (default: true)
-        tls_verify_host: true           # Verify hostname (default: true)
+        start-date: "2024-01-01T00:00:00Z"
+        connect-timeout-sec: 30         # Connection timeout (default: 30)
+        total-timeout-sec: 300          # Total operation timeout (default: 300)
+        tls-verify-peer: true           # Verify SSL peer (default: true)
+        tls-verify-host: true           # Verify hostname (default: true)
         pvs:
           - name: MY:PV
 ```
@@ -127,27 +127,27 @@ reader:
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `start_date` | string | — | **Required** ISO 8601 timestamp for query start |
-| `end_date` | string | — | ISO 8601 timestamp for query end (defaults to `start_date` + 1 day) |
-| `batch_duration_sec` | float | 1.0 | Split output batches using historical timestamps at this interval |
+| `start-date` | string | — | **Required** ISO 8601 timestamp for query start |
+| `end-date` | string | — | ISO 8601 timestamp for query end (defaults to `start-date` + 1 day) |
+| `batch-duration-sec` | float | 1.0 | Split output batches using historical timestamps at this interval |
 
 ### Periodic Tail Mode
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `mode` | string | `one_shot` | Set to `periodic_tail` to enable continuous polling |
-| `poll_interval_sec` | float | 5.0 | Polling interval in seconds |
-| `lookback_sec` | float | (poll_interval) | Seconds of history to fetch per poll (defaults to poll_interval) |
-| `batch_duration_sec` | float | 1.0 | Batch split interval |
+| `poll-interval-sec` | float | 5.0 | Polling interval in seconds |
+| `lookback-sec` | float | (poll_interval) | Seconds of history to fetch per poll (defaults to poll_interval) |
+| `batch-duration-sec` | float | 1.0 | Batch split interval |
 
 ### HTTP and TLS Configuration
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `connect_timeout_sec` | float | 30.0 | Connection establishment timeout |
-| `total_timeout_sec` | float | 300.0 | Total operation timeout |
-| `tls_verify_peer` | bool | true | Verify SSL peer certificate |
-| `tls_verify_host` | bool | true | Verify hostname matches certificate |
+| `connect-timeout-sec` | float | 30.0 | Connection establishment timeout |
+| `total-timeout-sec` | float | 300.0 | Total operation timeout |
+| `tls-verify-peer` | bool | true | Verify SSL peer certificate |
+| `tls-verify-host` | bool | true | Verify hostname matches certificate |
 
 ## Key Features
 
@@ -207,8 +207,8 @@ reader:
   - epics-archiver:
       - name: yesterday_backfill
         url: "http://archiver.example.com"
-        start_date: "2024-01-09T00:00:00Z"
-        end_date: "2024-01-10T00:00:00Z"
+        start-date: "2024-01-09T00:00:00Z"
+        end-date: "2024-01-10T00:00:00Z"
         pvs:
           - name: MY:SCALAR:PV
 ```
@@ -221,8 +221,8 @@ reader:
       - name: tail_reader
         url: "http://archiver.example.com"
         mode: periodic_tail
-        poll_interval_sec: 10
-        lookback_sec: 3600            # Keep 1 hour of history per poll
+        poll-interval-sec: 10
+        lookback-sec: 3600            # Keep 1 hour of history per poll
         pvs:
           - name: MY:PV
 ```
@@ -234,8 +234,8 @@ reader:
   - epics-archiver:
       - name: high_freq_archiver
         url: "http://archiver.example.com"
-        start_date: "2024-01-01T00:00:00Z"
-        batch_duration_sec: 0.1       # 100ms batches for high-frequency analysis
+        start-date: "2024-01-01T00:00:00Z"
+        batch-duration-sec: 0.1       # 100ms batches for high-frequency analysis
         pvs:
           - name: FAST:PV
 ```
@@ -256,10 +256,10 @@ The reader exposes standard MLDP reader metrics:
 
 ### Batch Splitting by Historical Timestamp
 
-Batches are created by grouping events that fall within the same `batch_duration_sec` window using the **archiver sample time**, not the reader's wall-clock processing time. This preserves the original temporal structure of the data.
+Batches are created by grouping events that fall within the same `batch-duration-sec` window using the **archiver sample time**, not the reader's wall-clock processing time. This preserves the original temporal structure of the data.
 
 ```cpp
-// Example: batch_duration_sec: 1.0
+// Example: batch-duration-sec: 1.0
 // Event from 2024-01-01T12:34:56.500Z  -> Batch [12:34:56, 12:34:57)
 // Event from 2024-01-01T12:34:57.200Z  -> Batch [12:34:57, 12:34:58)
 ```
@@ -272,7 +272,7 @@ Batches are created by grouping events that fall within the same `batch_duration
 
 ### Configuration Validation
 
-- `total_timeout_sec >= connect_timeout_sec` (enforced)
+- `total-timeout-sec >= connect-timeout-sec` (enforced)
 - All timeout values must be positive (enforced)
 - URL must be valid and accessible
 - At least one PV required

@@ -6,8 +6,8 @@ The `EpicsBaseReader` provides EPICS Channel Access monitoring using a polling-b
 
 | File           | Location                                         |
 |----------------|--------------------------------------------------|
-| Header         | `include/reader/impl/epics/EpicsBaseReader.h`    |
-| Implementation | `src/reader/impl/epics/EpicsBaseReader.cpp`      |
+| Header         | `include/reader/impl/epics/base/EpicsBaseReader.h`    |
+| Implementation | `src/reader/impl/epics/base/EpicsBaseReader.cpp`      |
 
 ## Architecture
 
@@ -51,9 +51,9 @@ flowchart TB
 reader:
   - epics-base:
       - name: my_base_reader
-        thread_pool_size: 2          # Conversion thread pool size
-        monitor_poll_threads: 2      # Number of polling threads
-        monitor_poll_interval_ms: 5  # Polling interval in ms
+        thread-pool-size: 2          # Conversion thread pool size
+        monitor-poll-threads: 2      # Number of polling threads
+        monitor-poll-interval-ms: 5  # Polling interval in ms
         pvs:
           - name: MY:PV:NAME
           - name: ANOTHER:PV

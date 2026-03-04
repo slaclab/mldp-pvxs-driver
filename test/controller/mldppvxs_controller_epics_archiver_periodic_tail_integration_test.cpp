@@ -34,21 +34,21 @@ protected:
         ASSERT_GT(server_->port(), 0);
 
         const std::string yaml = std::string(R"(
-controller_thread_pool: 1
-mldp_pool:
-  provider_name: test_provider_archiver_tail
-  provider_description: "Archiver Tail Integration Test Provider"
-  ingestion_url: dp-ingestion:50051
-  min_conn: 1
-  max_conn: 1
+controller-thread-pool: 1
+mldp-pool:
+  provider-name: test_provider_archiver_tail
+  provider-description: "Archiver Tail Integration Test Provider"
+  ingestion-url: dp-ingestion:50051
+  min-conn: 1
+  max-conn: 1
 reader:
   - epics-archiver:
       - name: archiver_tail_reader_test
         hostname: ")") + server_->baseUrl() +
                                  R"("
         mode: "periodic_tail"
-        poll_interval_sec: 1
-        batch_duration_sec: 2
+        poll-interval-sec: 1
+        batch-duration-sec: 2
         pvs:
           - name: "TEST:PV:DOUBLE"
 )";
@@ -188,6 +188,6 @@ TEST_F(MLDPPVXSControllerEpicsArchiverPeriodicTailIntegrationTest, RecordsReader
     EXPECT_GT(processing_time_count, 0.0) << "Reader should have at least one processing time observation";
 
     // Verify events published is at least as many as the expected batches
-    // (accounting for batch_duration_sec: 2, which may create multiple batches per poll)
+    // (accounting for batch-duration-sec: 2, which may create multiple batches per poll)
     EXPECT_GE(events_received, events_published) << "Should have more samples than batches due to batching";
 }

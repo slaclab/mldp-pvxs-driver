@@ -152,7 +152,7 @@ TEST(EpicsArchiverReaderPeriodicTailIntegrationTest, PollsRepeatedlyWithExplicit
         hostname: ")") + server.baseUrl() +
                              R"("
         mode: "periodic_tail"
-        poll_interval_sec: 1
+        poll-interval-sec: 1
         pvs:
           - name: "TEST:PV:DOUBLE"
     )";
@@ -174,7 +174,7 @@ TEST(EpicsArchiverReaderPeriodicTailIntegrationTest, PollsRepeatedlyWithExplicit
     reader.reset();
 }
 
-// Verifies periodic_tail fetches immediately and defaults lookback_sec to poll_interval_sec with contiguous windows.
+// Verifies periodic_tail fetches immediately and defaults lookback-sec to poll-interval-sec with contiguous windows.
 TEST(EpicsArchiverReaderPeriodicTailIntegrationTest, DefaultsLookbackToPollIntervalAndUsesContiguousWindows)
 {
     MockArchiverPbHttpServer::GenerationConfig gen_cfg;
@@ -191,7 +191,7 @@ TEST(EpicsArchiverReaderPeriodicTailIntegrationTest, DefaultsLookbackToPollInter
         hostname: ")") + server.baseUrl() +
                              R"("
         mode: "periodic_tail"
-        poll_interval_sec: 1
+        poll-interval-sec: 1
         pvs:
           - name: "TEST:PV:DOUBLE"
     )";
@@ -212,7 +212,7 @@ TEST(EpicsArchiverReaderPeriodicTailIntegrationTest, DefaultsLookbackToPollInter
     ASSERT_TRUE(history[1].from.has_value());
     ASSERT_TRUE(history[1].to.has_value());
 
-    // When lookback defaults to poll_interval_sec, the implementation uses the
+    // When lookback defaults to poll-interval-sec, the implementation uses the
     // previous iteration end timestamp as the next iteration start.
     EXPECT_EQ(*history[1].from, *history[0].to);
 
@@ -236,8 +236,8 @@ TEST(EpicsArchiverReaderPeriodicTailIntegrationTest, HonorsExplicitLookbackShort
         hostname: ")") + server.baseUrl() +
                              R"("
         mode: "periodic_tail"
-        poll_interval_sec: 2
-        lookback_sec: 1
+        poll-interval-sec: 2
+        lookback-sec: 1
         pvs:
           - name: "TEST:PV:DOUBLE"
     )";
@@ -263,7 +263,7 @@ TEST(EpicsArchiverReaderPeriodicTailIntegrationTest, HonorsExplicitLookbackShort
     reader.reset();
 }
 
-// Verifies batch_duration_sec controls batch splitting in periodic_tail mode as well.
+// Verifies batch-duration-sec controls batch splitting in periodic_tail mode as well.
 TEST(EpicsArchiverReaderPeriodicTailIntegrationTest, UsesBatchDurationSecForPeriodicTailBatchSplitting)
 {
     MockArchiverPbHttpServer::GenerationConfig gen_cfg;
@@ -280,9 +280,9 @@ TEST(EpicsArchiverReaderPeriodicTailIntegrationTest, UsesBatchDurationSecForPeri
         hostname: ")") + server.baseUrl() +
                              R"("
         mode: "periodic_tail"
-        poll_interval_sec: 2
-        lookback_sec: 2
-        batch_duration_sec: 1
+        poll-interval-sec: 2
+        lookback-sec: 2
+        batch-duration-sec: 1
         pvs:
           - name: "TEST:PV:DOUBLE"
     )";
@@ -300,7 +300,7 @@ TEST(EpicsArchiverReaderPeriodicTailIntegrationTest, UsesBatchDurationSecForPeri
     reader.reset();
 }
 
-// Verifies periodic_tail batches respect batch_duration_sec, allowing the final
+// Verifies periodic_tail batches respect batch-duration-sec, allowing the final
 // batch to be partial at iteration boundary.
 TEST(EpicsArchiverReaderPeriodicTailIntegrationTest, PeriodicTailBatchSpansMatchConfiguredWindowExceptFinalPartial)
 {
@@ -318,9 +318,9 @@ TEST(EpicsArchiverReaderPeriodicTailIntegrationTest, PeriodicTailBatchSpansMatch
         hostname: ")") + server.baseUrl() +
                              R"("
         mode: "periodic_tail"
-        poll_interval_sec: 10
-        lookback_sec: 2
-        batch_duration_sec: 1
+        poll-interval-sec: 10
+        lookback-sec: 2
+        batch-duration-sec: 1
         pvs:
           - name: "TEST:PV:DOUBLE"
     )";
@@ -387,8 +387,8 @@ TEST(EpicsArchiverReaderPeriodicTailIntegrationTest, TenSecondPollingCoversThirt
         hostname: ")") + server.baseUrl() +
                              R"("
         mode: "periodic_tail"
-        poll_interval_sec: 10
-        batch_duration_sec: 10
+        poll-interval-sec: 10
+        batch-duration-sec: 10
         pvs:
           - name: "TEST:PV:DOUBLE"
     )";
@@ -444,7 +444,7 @@ TEST(EpicsArchiverReaderPeriodicTailIntegrationTest, TenSecondPollingCoversThirt
     EXPECT_GE(total_covered_ms, 29999);
     EXPECT_LE(total_covered_ms, 31500);
 
-    // batch_duration_sec is set to 10s to align with the nominal fetch window,
+    // batch-duration-sec is set to 10s to align with the nominal fetch window,
     // but a few milliseconds of jitter can push a request window slightly above
     // 10s and trigger an extra split (split rule is strict `elapsed > threshold`).
     // Assert we saw at least one published batch per fetch and no pathological explosion.
@@ -473,7 +473,7 @@ TEST(EpicsArchiverReaderPeriodicTailIntegrationTest, DestructorStopsPromptlyWhil
         hostname: ")") + server.baseUrl() +
                              R"("
         mode: "periodic_tail"
-        poll_interval_sec: 2
+        poll-interval-sec: 2
         pvs:
           - name: "TEST:PV:DOUBLE"
     )";

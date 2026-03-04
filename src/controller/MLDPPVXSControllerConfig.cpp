@@ -18,17 +18,6 @@ using namespace mldp_pvxs_driver::controller;
 using namespace mldp_pvxs_driver::util::pool;
 using namespace mldp_pvxs_driver::config;
 
-namespace {
-std::string pickKey(const Config& cfg, const std::string& dashKey, const std::string& underscoreKey)
-{
-    if (cfg.hasChild(dashKey))
-    {
-        return dashKey;
-    }
-    return underscoreKey;
-}
-} // namespace
-
 MLDPPVXSControllerConfig::MLDPPVXSControllerConfig() = default;
 
 MLDPPVXSControllerConfig::MLDPPVXSControllerConfig(const ::mldp_pvxs_driver::config::Config& root)
@@ -101,7 +90,7 @@ void MLDPPVXSControllerConfig::parse(const ::mldp_pvxs_driver::config::Config& r
 
 void MLDPPVXSControllerConfig::parseThreadPool(const ::mldp_pvxs_driver::config::Config& root)
 {
-    const auto threadPoolKey = pickKey(root, "controller-thread-pool", "controller_thread_pool");
+    const std::string threadPoolKey = "controller-thread-pool";
     if (!root.hasChild(threadPoolKey))
     {
         throw Error(makeMissingFieldMessage(threadPoolKey));
@@ -128,7 +117,7 @@ void MLDPPVXSControllerConfig::parseThreadPool(const ::mldp_pvxs_driver::config:
 
 void MLDPPVXSControllerConfig::parsePool(const ::mldp_pvxs_driver::config::Config& root)
 {
-    const auto poolKey = pickKey(root, "mldp-pool", "mldp_pool");
+    const std::string poolKey = "mldp-pool";
     if (!root.hasChild(poolKey))
     {
         throw Error(makeMissingFieldMessage(poolKey));
@@ -226,7 +215,7 @@ void MLDPPVXSControllerConfig::parseMetrics(const ::mldp_pvxs_driver::config::Co
 
 void MLDPPVXSControllerConfig::parseStreamLimits(const ::mldp_pvxs_driver::config::Config& root)
 {
-    const auto maxBytesKey = pickKey(root, "controller-stream-max-bytes", "controller_stream_max_bytes");
+    const std::string maxBytesKey = "controller-stream-max-bytes";
     if (root.hasChild(maxBytesKey))
     {
         const auto nodes = root.subConfig(maxBytesKey);
@@ -243,7 +232,7 @@ void MLDPPVXSControllerConfig::parseStreamLimits(const ::mldp_pvxs_driver::confi
         controllerStreamMaxBytes_ = static_cast<std::size_t>(value);
     }
 
-    const auto maxAgeMsKey = pickKey(root, "controller-stream-max-age-ms", "controller_stream_max_age_ms");
+    const std::string maxAgeMsKey = "controller-stream-max-age-ms";
     if (root.hasChild(maxAgeMsKey))
     {
         const auto nodes = root.subConfig(maxAgeMsKey);

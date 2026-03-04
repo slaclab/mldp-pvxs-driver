@@ -14,17 +14,6 @@ using namespace mldp_pvxs_driver::config;
 
 using namespace mldp_pvxs_driver::metrics;
 
-namespace {
-std::string pickKey(const Config& cfg, const std::string& dashKey, const std::string& underscoreKey)
-{
-    if (cfg.hasChild(dashKey))
-    {
-        return dashKey;
-    }
-    return underscoreKey;
-}
-} // namespace
-
 MetricsConfig::MetricsConfig() = default;
 
 MetricsConfig::MetricsConfig(const config::Config& metricsNode)
@@ -76,7 +65,7 @@ void MetricsConfig::parse(const config::Config& node)
     }
 
     // Parse optional scan-interval-seconds with default of 1.
-    const auto scanIntervalKey = pickKey(node, "scan-interval-seconds", "scan_interval_seconds");
+    const std::string scanIntervalKey = "scan-interval-seconds";
     if (node.hasChild(scanIntervalKey))
     {
         try

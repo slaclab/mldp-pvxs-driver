@@ -8,7 +8,7 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
-#include <reader/impl/epics/EpicsBaseMonitorPoller.h>
+#include <reader/impl/epics/base/EpicsBaseMonitorPoller.h>
 
 #include <algorithm>
 #include <chrono>

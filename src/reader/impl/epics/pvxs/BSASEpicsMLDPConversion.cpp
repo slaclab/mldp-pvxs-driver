@@ -9,7 +9,7 @@
 //////////////////////////////////////////////////////////////////////////////
 
 #include <pvxs/data.h>
-#include <reader/impl/epics/BSASEpicsMLDPConversion.h>
+#include <reader/impl/epics/pvxs/BSASEpicsMLDPConversion.h>
 
 #include <algorithm>
 #include <cstdint>

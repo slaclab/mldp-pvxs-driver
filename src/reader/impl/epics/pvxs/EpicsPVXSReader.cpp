@@ -8,12 +8,12 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
-#include <reader/impl/epics/EpicsPVXSReader.h>
+#include <reader/impl/epics/pvxs/EpicsPVXSReader.h>
 
 #include <config/Config.h>
 #include <metrics/Metrics.h>
-#include <reader/impl/epics/BSASEpicsMLDPConversion.h>
-#include <reader/impl/epics/EpicsMLDPConversion.h>
+#include <reader/impl/epics/pvxs/BSASEpicsMLDPConversion.h>
+#include <reader/impl/epics/pvxs/EpicsMLDPConversion.h>
 #include <util/StringFormat.h>
 #include <util/log/Logger.h>
 

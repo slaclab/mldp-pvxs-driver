@@ -309,19 +309,19 @@ HTTP-based readers can use the shared `util/http` transport abstraction instead 
 ### Controller Settings
 
 ```yaml
-controller_thread_pool: 2              # Number of worker threads
-controller_stream_max_bytes: 2097152   # ~2MB stream threshold
-controller_stream_max_age_ms: 200      # 200ms stream rotation
+controller-thread-pool: 2              # Number of worker threads
+controller-stream-max-bytes: 2097152   # ~2MB stream threshold
+controller-stream-max-age-ms: 200      # 200ms stream rotation
 ```
 
 ### Connection Pool Settings
 
 ```yaml
-mldp_pool:
-  provider_name: pvxs_provider
-  ingestion_url: dp-ingestion:50051
-  min_conn: 1
-  max_conn: 4
+mldp-pool:
+  provider-name: pvxs_provider
+  ingestion-url: dp-ingestion:50051
+  min-conn: 1
+  max-conn: 4
 ```
 
 ### Reader Settings
@@ -330,7 +330,7 @@ mldp_pool:
 reader:
   - epics-pvxs:
       - name: my_reader
-        thread_pool_size: 2
+        thread-pool-size: 2
         pvs:
           - name: PV_NAME
 ```

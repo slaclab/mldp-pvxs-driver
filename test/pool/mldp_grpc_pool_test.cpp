@@ -34,12 +34,12 @@ using dp::service::common::Structure;
 static MLDPGrpcPoolConfig make_pool_config(int min_conn, int max_conn, std::string_view test_provider_id = "test_provider", std::string_view description = "test_provider_desc")
 {
     std::ostringstream yaml;
-    yaml << "provider_name: " << test_provider_id << "\n"
-         << "provider_description: " << description << "\n"
-         << "ingestion_url: dp-ingestion:50051\n"
-         << "query_url: dp-query:50052\n"
-         << "min_conn: " << min_conn << "\n"
-         << "max_conn: " << max_conn << "\n";
+    yaml << "provider-name: " << test_provider_id << "\n"
+         << "provider-description: " << description << "\n"
+         << "ingestion-url: dp-ingestion:50051\n"
+         << "query-url: dp-query:50052\n"
+         << "min-conn: " << min_conn << "\n"
+         << "max-conn: " << max_conn << "\n";
     return MLDPGrpcPoolConfig(makeConfigFromYaml(yaml.str()));
 }
 
@@ -153,14 +153,14 @@ protected:
         stopController();
 
         std::ostringstream yaml;
-        yaml << "controller_thread_pool: 1\n"
-             << "mldp_pool:\n"
-             << "  provider_name: test_provider\n"
-             << "  provider_description: \"Test Provider\"\n"
-             << "  ingestion_url: dp-ingestion:50051\n"
-             << "  query_url: dp-query:50052\n"
-             << "  min_conn: 1\n"
-             << "  max_conn: 1\n"
+        yaml << "controller-thread-pool: 1\n"
+             << "mldp-pool:\n"
+             << "  provider-name: test_provider\n"
+             << "  provider-description: \"Test Provider\"\n"
+             << "  ingestion-url: dp-ingestion:50051\n"
+             << "  query-url: dp-query:50052\n"
+             << "  min-conn: 1\n"
+             << "  max-conn: 1\n"
              << reader_section;
 
         const auto config = makeConfigFromYaml(yaml.str());

@@ -6,8 +6,8 @@ The `EpicsPVXSReader` provides modern EPICS PVAccess monitoring using an event-d
 
 | File           | Location                                         |
 |----------------|--------------------------------------------------|
-| Header         | `include/reader/impl/epics/EpicsPVXSReader.h`    |
-| Implementation | `src/reader/impl/epics/EpicsPVXSReader.cpp`      |
+| Header         | `include/reader/impl/epics/pvxs/EpicsPVXSReader.h`    |
+| Implementation | `src/reader/impl/epics/pvxs/EpicsPVXSReader.cpp`      |
 
 ## Architecture
 
@@ -48,8 +48,8 @@ flowchart TB
 reader:
   - epics-pvxs:
       - name: my_pvxs_reader
-        thread_pool_size: 2           # Conversion thread pool size
-        column_batch_size: 50         # NTTable column batch size
+        thread-pool-size: 2           # Conversion thread pool size
+        column-batch-size: 50         # NTTable column batch size
         pvs:
           - name: MY:PV:NAME
           - name: BSA:TABLE:PV

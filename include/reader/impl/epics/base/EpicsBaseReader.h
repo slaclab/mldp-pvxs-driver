@@ -21,8 +21,8 @@
 #pragma once
 
 #include <reader/ReaderFactory.h>
-#include <reader/impl/epics/EpicsBaseMonitorPoller.h>
-#include <reader/impl/epics/EpicsReaderBase.h>
+#include <reader/impl/epics/base/EpicsBaseMonitorPoller.h>
+#include <reader/impl/epics/shared/EpicsReaderBase.h>
 
 #include <mutex>
 

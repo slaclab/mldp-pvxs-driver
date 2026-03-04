@@ -8,7 +8,7 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
-#include <reader/impl/epics/EpicsReaderBase.h>
+#include <reader/impl/epics/shared/EpicsReaderBase.h>
 
 using namespace mldp_pvxs_driver::reader::impl::epics;
 using namespace mldp_pvxs_driver::util::log;

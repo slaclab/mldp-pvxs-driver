@@ -8,7 +8,7 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
-#include <reader/impl/epics/EpicsPVDataConversion.h>
+#include <reader/impl/epics/base/EpicsPVDataConversion.h>
 
 #include <algorithm>
 #include <cstdint>

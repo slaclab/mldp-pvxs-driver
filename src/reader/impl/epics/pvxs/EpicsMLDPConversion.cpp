@@ -8,7 +8,7 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
-#include <reader/impl/epics/EpicsMLDPConversion.h>
+#include <reader/impl/epics/pvxs/EpicsMLDPConversion.h>
 #include <cstdint>
 
 using namespace mldp_pvxs_driver::reader::impl::epics;

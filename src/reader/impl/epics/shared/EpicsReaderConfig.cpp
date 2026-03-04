@@ -8,7 +8,7 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
-#include <reader/impl/epics/EpicsReaderConfig.h>
+#include <reader/impl/epics/shared/EpicsReaderConfig.h>
 
 #include <algorithm>
 #include <utility>
@@ -17,27 +17,6 @@ using namespace mldp_pvxs_driver::config;
 using namespace mldp_pvxs_driver::reader::impl::epics;
 
 namespace {
-std::string getAliasedString(const Config& cfg,
-                             const std::string& primaryKey,
-                             const std::string& aliasKey,
-                             const std::string& def = "")
-{
-    if (cfg.hasChild(primaryKey))
-    {
-        return cfg.get(primaryKey, def);
-    }
-    return cfg.get(aliasKey, def);
-}
-
-int getAliasedInt(const Config& cfg, const std::string& primaryKey, const std::string& aliasKey, int def)
-{
-    if (cfg.hasChild(primaryKey))
-    {
-        return cfg.getInt(primaryKey, def);
-    }
-    return cfg.getInt(aliasKey, def);
-}
-
 std::string toLower(std::string value)
 {
     std::transform(value.begin(), value.end(), value.begin(),
@@ -188,10 +167,10 @@ void EpicsReaderConfig::parse(const Config& readerEntry)
         throw Error("name must not be empty");
     }
 
-    thread_pool_size_ = static_cast<unsigned int>(getAliasedInt(readerEntry, "thread-pool", "thread_pool", 1));
-    column_batch_size_ = static_cast<std::size_t>(getAliasedInt(readerEntry, "column-batch-size", "column_batch_size", 50));
-    monitor_poll_threads_ = static_cast<unsigned int>(getAliasedInt(readerEntry, "monitor-poll-threads", "monitor_poll_threads", 2));
-    monitor_poll_interval_ms_ = static_cast<unsigned int>(getAliasedInt(readerEntry, "monitor-poll-interval-ms", "monitor_poll_interval_ms", 5));
+    thread_pool_size_ = static_cast<unsigned int>(readerEntry.getInt("thread-pool", 1));
+    column_batch_size_ = static_cast<std::size_t>(readerEntry.getInt("column-batch-size", 50));
+    monitor_poll_threads_ = static_cast<unsigned int>(readerEntry.getInt("monitor-poll-threads", 2));
+    monitor_poll_interval_ms_ = static_cast<unsigned int>(readerEntry.getInt("monitor-poll-interval-ms", 5));
 
     if (readerEntry.hasChild("backend"))
     {
@@ -275,11 +254,6 @@ void EpicsReaderConfig::parse(const Config& readerEntry)
 
         }
 
-        // Normalize scalar option values when both legacy and dash aliases may be used.
-        if (!optionConfig.has_value())
-        {
-            option = getAliasedString(pvNode, "option", "option", option);
-        }
         pvs_.push_back({std::move(pvName), std::move(option), optionConfig, nttableRowTs});
         pvNames_.push_back(pvs_.back().name);
     }

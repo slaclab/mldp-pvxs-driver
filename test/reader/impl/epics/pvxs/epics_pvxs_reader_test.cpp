@@ -10,15 +10,15 @@
 #include <thread>
 #include <vector>
 
-#include "../../../config/test_config_helpers.h"
-#include "../../../mock/sioc.h"
-#include "epics_typed_pv_test_utils.h"
+#include "../../../../config/test_config_helpers.h"
+#include "../../../../mock/sioc.h"
+#include "../shared/epics_typed_pv_test_utils.h"
 
 #include <config/Config.h>
 #include <metrics/Metrics.h>
 #include <metrics/MetricsSnapshot.h>
 #include <reader/ReaderFactory.h>
-#include <reader/impl/epics/EpicsPVXSReader.h>
+#include <reader/impl/epics/pvxs/EpicsPVXSReader.h>
 #include <util/bus/IDataBus.h>
 
 using mldp_pvxs_driver::config::makeConfigFromYaml;

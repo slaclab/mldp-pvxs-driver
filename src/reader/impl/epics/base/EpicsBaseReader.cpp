@@ -8,11 +8,11 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
-#include <reader/impl/epics/EpicsBaseReader.h>
+#include <reader/impl/epics/base/EpicsBaseReader.h>
 
 #include <config/Config.h>
 #include <metrics/Metrics.h>
-#include <reader/impl/epics/EpicsPVDataConversion.h>
+#include <reader/impl/epics/base/EpicsPVDataConversion.h>
 #include <util/log/Logger.h>
 
 #include <chrono>

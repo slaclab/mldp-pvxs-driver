@@ -21,7 +21,7 @@
 #pragma once
 
 #include <reader/Reader.h>
-#include <reader/impl/epics/EpicsReaderConfig.h>
+#include <reader/impl/epics/shared/EpicsReaderConfig.h>
 #include <util/bus/IDataBus.h>
 #include <util/log/Logger.h>
 

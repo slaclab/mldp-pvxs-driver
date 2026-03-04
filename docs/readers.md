@@ -121,8 +121,8 @@ EPICS-specific readers (base, pvxs, archiver) share `EpicsReaderBase`:
 
 #### Thread Pool Management
 
-- Creates and manages `BS::light_thread_pool` for data conversion
-- Configurable via `thread_pool_size` parameter
+- Creates and manages `BS::light_thread-pool` for data conversion
+- Configurable via `thread-pool-size` parameter
 - Metrics track queue depth
 
 #### Common Features
@@ -134,8 +134,8 @@ EPICS-specific readers (base, pvxs, archiver) share `EpicsReaderBase`:
 
 | File           | Location                                         |
 |----------------|--------------------------------------------------|
-| Header         | `include/reader/impl/epics/EpicsReaderBase.h`    |
-| Implementation | `src/reader/impl/epics/EpicsReaderBase.cpp`      |
+| Header         | `include/reader/impl/epics/shared/EpicsReaderBase.h`    |
+| Implementation | `src/reader/impl/epics/shared/EpicsReaderBase.cpp`      |
 
 ## Factory Registration
 
@@ -257,21 +257,40 @@ include/reader/
 ├── ReaderFactory.h                   # Factory registration
 └── impl/
     └── epics/
-        ├── EpicsReaderBase.h         # Common EPICS base
-        ├── EpicsBaseReader.h
-        ├── EpicsPVXSReader.h
-        ├── EpicsArchiverReader.h
-        └── EpicsArchiverReaderConfig.h
+        ├── shared/
+        │   ├── EpicsReaderBase.h     # Common EPICS base
+        │   └── EpicsReaderConfig.h
+        ├── base/
+        │   ├── EpicsBaseReader.h
+        │   ├── EpicsBaseMonitorPoller.h
+        │   └── EpicsPVDataConversion.h
+        ├── pvxs/
+        │   ├── EpicsPVXSReader.h
+        │   ├── EpicsMLDPConversion.h
+        │   └── BSASEpicsMLDPConversion.h
+        └── epics_archiver/
+            ├── EpicsArchiverReader.h
+            └── EpicsArchiverReaderConfig.h
 
 src/reader/
 ├── Reader.cpp
 ├── ReaderFactory.cpp
 └── impl/
-    └── epics/
-        ├── EpicsReaderBase.cpp
-        ├── EpicsBaseReader.cpp
-        ├── EpicsPVXSReader.cpp
-        └── EpicsArchiverReader.cpp
+    ├── epics/
+    │   ├── shared/
+    │   │   ├── EpicsReaderBase.cpp
+    │   │   └── EpicsReaderConfig.cpp
+    │   ├── base/
+    │   │   ├── EpicsBaseReader.cpp
+    │   │   ├── EpicsBaseMonitorPoller.cpp
+    │   │   └── EpicsPVDataConversion.cpp
+    │   └── pvxs/
+    │       ├── EpicsPVXSReader.cpp
+    │       ├── EpicsMLDPConversion.cpp
+    │       └── BSASEpicsMLDPConversion.cpp
+    └── epics_archiver/
+        ├── EpicsArchiverReader.cpp
+        └── EpicsArchiverReaderConfig.cpp
 ```
 
 ---

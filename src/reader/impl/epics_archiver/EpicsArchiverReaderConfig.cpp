@@ -28,24 +28,6 @@ std::string getAliasedString(const Config& cfg,
     return cfg.get(aliasKey, def);
 }
 
-int getAliasedInt(const Config& cfg, const std::string& primaryKey, const std::string& aliasKey, int def)
-{
-    if (cfg.hasChild(primaryKey))
-    {
-        return cfg.getInt(primaryKey, def);
-    }
-    return cfg.getInt(aliasKey, def);
-}
-
-bool getAliasedBool(const Config& cfg, const std::string& primaryKey, const std::string& aliasKey, bool def)
-{
-    if (cfg.hasChild(primaryKey))
-    {
-        return cfg.getBool(primaryKey, def);
-    }
-    return cfg.getBool(aliasKey, def);
-}
-
 void requireScalarChild(const Config& cfg, const std::string& key, const std::string& context)
 {
     const auto raw = cfg.raw();
@@ -221,16 +203,11 @@ void EpicsArchiverReaderConfig::parse(const Config& readerEntry)
     }
 
     // Parse start date (required in historical_once mode; ignored in periodic_tail)
-    requireScalarChildAny(readerEntry, "start-date", "start_date", "archiver reader config");
     requireScalarChildAny(readerEntry, "start-date", "startDate", "archiver reader config");
-    start_date_ = getAliasedString(
-        readerEntry,
-        "start-date",
-        readerEntry.hasChild("start_date") ? "start_date" : "startDate");
+    start_date_ = getAliasedString(readerEntry, "start-date", "startDate");
     if (fetch_mode_ == FetchMode::HistoricalOnce)
     {
-        if (!readerEntry.hasChild("start-date") && !readerEntry.hasChild("start_date")
-            && !readerEntry.hasChild("startDate"))
+        if (!readerEntry.hasChild("start-date") && !readerEntry.hasChild("startDate"))
         {
             throw Error(makeMissingFieldMessage("start-date"));
         }
@@ -240,14 +217,10 @@ void EpicsArchiverReaderConfig::parse(const Config& readerEntry)
         }
     }
 
-    // Parse optional end date (accept dash-case, snake_case, and camelCase)
-    requireScalarChildAny(readerEntry, "end-date", "end_date", "archiver reader config");
+    // Parse optional end date (accept dash-case and camelCase)
     requireScalarChildAny(readerEntry, "end-date", "endDate", "archiver reader config");
-    const auto endDate = getAliasedString(
-        readerEntry,
-        "end-date",
-        readerEntry.hasChild("end_date") ? "end_date" : "endDate");
-    if (readerEntry.hasChild("end-date") || readerEntry.hasChild("end_date") || readerEntry.hasChild("endDate"))
+    const auto endDate = getAliasedString(readerEntry, "end-date", "endDate");
+    if (readerEntry.hasChild("end-date") || readerEntry.hasChild("endDate"))
     {
         if (endDate.empty())
         {
@@ -261,7 +234,7 @@ void EpicsArchiverReaderConfig::parse(const Config& readerEntry)
     }
 
     // Parse optional connection timeout (default: 30 seconds)
-    connect_timeout_sec_ = getAliasedInt(readerEntry, "connect-timeout-sec", "connect_timeout_sec", 30L);
+    connect_timeout_sec_ = readerEntry.getInt("connect-timeout-sec", 30L);
     if (connect_timeout_sec_ <= 0)
     {
         throw Error("connect-timeout-sec must be positive (>0)");
@@ -269,7 +242,7 @@ void EpicsArchiverReaderConfig::parse(const Config& readerEntry)
 
     // Parse optional total timeout (default: 300 seconds / 5 minutes)
     // Special case: 0 means infinite timeout (useful for long streaming sessions)
-    total_timeout_sec_ = getAliasedInt(readerEntry, "total-timeout-sec", "total_timeout_sec", 300L);
+    total_timeout_sec_ = readerEntry.getInt("total-timeout-sec", 300L);
     if (total_timeout_sec_ < 0)
     {
         throw Error("total-timeout-sec must be >= 0 (0 = infinite for streaming)");
@@ -280,7 +253,7 @@ void EpicsArchiverReaderConfig::parse(const Config& readerEntry)
     }
 
     // Parse optional historical batch duration threshold (default: 1 second)
-    batch_duration_sec_ = getAliasedInt(readerEntry, "batch-duration-sec", "batch_duration_sec", 1L);
+    batch_duration_sec_ = readerEntry.getInt("batch-duration-sec", 1L);
     if (batch_duration_sec_ <= 0)
     {
         throw Error("batch-duration-sec must be positive (>0)");
@@ -289,13 +262,13 @@ void EpicsArchiverReaderConfig::parse(const Config& readerEntry)
     // Parse periodic tail polling controls
     if (fetch_mode_ == FetchMode::PeriodicTail)
     {
-        poll_interval_sec_ = getAliasedInt(readerEntry, "poll-interval-sec", "poll_interval_sec", 0L);
+        poll_interval_sec_ = readerEntry.getInt("poll-interval-sec", 0L);
         if (poll_interval_sec_ <= 0)
         {
             throw Error("poll-interval-sec must be positive (>0) when mode=periodic_tail");
         }
 
-        lookback_sec_ = getAliasedInt(readerEntry, "lookback-sec", "lookback_sec", poll_interval_sec_);
+        lookback_sec_ = readerEntry.getInt("lookback-sec", poll_interval_sec_);
         if (lookback_sec_ <= 0)
         {
             throw Error("lookback-sec must be positive (>0) when mode=periodic_tail");
@@ -307,8 +280,8 @@ void EpicsArchiverReaderConfig::parse(const Config& readerEntry)
     }
 
     // Parse optional TLS verification controls (secure by default)
-    tls_verify_peer_ = getAliasedBool(readerEntry, "tls-verify-peer", "tls_verify_peer", true);
-    tls_verify_host_ = getAliasedBool(readerEntry, "tls-verify-host", "tls_verify_host", true);
+    tls_verify_peer_ = readerEntry.getBool("tls-verify-peer", true);
+    tls_verify_host_ = readerEntry.getBool("tls-verify-host", true);
     if (tls_verify_host_ && !tls_verify_peer_)
     {
         throw Error("tls-verify-host=true requires tls-verify-peer=true");

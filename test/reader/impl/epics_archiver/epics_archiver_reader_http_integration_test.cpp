@@ -117,7 +117,7 @@ TEST(EpicsArchiverReaderHttpIntegrationTest, FetchesPbHttpStreamAndPublishesBusE
         name: archiver-http-test
         hostname: ")") + server.baseUrl() +
                              R"("
-        start_date: "2026-02-25T08:00:00.000Z"
+        start-date: "2026-02-25T08:00:00.000Z"
         pvs:
           - name: "TEST:PV:DOUBLE"
     )";
@@ -166,7 +166,7 @@ TEST(EpicsArchiverReaderHttpIntegrationTest, FetchesPbHttpStreamAndPublishesBusE
     EXPECT_FALSE(req.to.has_value());
 }
 
-// Verifies the reader includes the optional end_date as the archiver 'to' query parameter.
+// Verifies the reader includes the optional end-date as the archiver 'to' query parameter.
 TEST(EpicsArchiverReaderHttpIntegrationTest, IncludesOptionalToQueryWhenConfigured)
 {
     MockArchiverPbHttpServer::GenerationConfig gen_cfg;
@@ -183,8 +183,8 @@ TEST(EpicsArchiverReaderHttpIntegrationTest, IncludesOptionalToQueryWhenConfigur
         name: archiver-http-test-to
         hostname: ")") + server.baseUrl() +
                              R"("
-        start_date: "2026-02-25T08:00:00.000Z"
-        end_date: "2026-02-25T08:00:02.000Z"
+        start-date: "2026-02-25T08:00:00.000Z"
+        end-date: "2026-02-25T08:00:02.000Z"
         pvs:
           - name: "TEST:PV:DOUBLE"
     )";
@@ -220,9 +220,9 @@ TEST(EpicsArchiverReaderHttpIntegrationTest, SplitsPublishedBatchesByHistoricalS
         name: archiver-http-batch-split
         hostname: ")") + server.baseUrl() +
                              R"("
-        start_date: "2026-02-25T08:00:00.000Z"
-        end_date: "2026-02-25T08:00:05.000Z"
-        batch_duration_sec: 1
+        start-date: "2026-02-25T08:00:00.000Z"
+        end-date: "2026-02-25T08:00:05.000Z"
+        batch-duration-sec: 1
         pvs:
           - name: "TEST:PV:DOUBLE"
     )";
@@ -298,7 +298,7 @@ TEST(EpicsArchiverReaderHttpIntegrationTest, DestructorAbortsOngoingLongDownload
         name: archiver-http-cancel-on-destroy
         hostname: ")") + server.baseUrl() +
                              R"("
-        start_date: "2026-02-25T08:00:00.000Z"
+        start-date: "2026-02-25T08:00:00.000Z"
         pvs:
           - name: "TEST:PV:DOUBLE"
     )";

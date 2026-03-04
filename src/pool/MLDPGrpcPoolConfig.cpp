@@ -16,17 +16,6 @@
 using namespace mldp_pvxs_driver::config;
 using namespace mldp_pvxs_driver::util::pool;
 
-namespace {
-std::string pickKey(const Config& cfg, const std::string& dashKey, const std::string& underscoreKey)
-{
-    if (cfg.hasChild(dashKey))
-    {
-        return dashKey;
-    }
-    return underscoreKey;
-}
-} // namespace
-
 MLDPGrpcPoolConfig::MLDPGrpcPoolConfig() = default;
 
 MLDPGrpcPoolConfig::MLDPGrpcPoolConfig(const config::Config& root)
@@ -80,7 +69,7 @@ void MLDPGrpcPoolConfig::parse(const config::Config& root)
     {
         throw Error("mldp_pool configuration node is invalid");
     }
-    const auto providerNameKey = pickKey(root, "provider-name", "provider_name");
+    const std::string providerNameKey = "provider-name";
     if (!root.hasChild(providerNameKey))
     {
         throw Error(makeMissingFieldMessage(providerNameKey));
@@ -90,7 +79,7 @@ void MLDPGrpcPoolConfig::parse(const config::Config& root)
     {
         throw Error("mldp_pool." + providerNameKey + " must not be empty");
     }
-    const auto providerDescriptionKey = pickKey(root, "provider-description", "provider_description");
+    const std::string providerDescriptionKey = "provider-description";
     if (root.hasChild(providerDescriptionKey))
     {
         provider_description_ = root.get(providerDescriptionKey);
@@ -100,10 +89,7 @@ void MLDPGrpcPoolConfig::parse(const config::Config& root)
         provider_description_ = provider_name_;
     }
 
-    const auto ingestionUrlKey = root.hasChild("ingestion-url")      ? "ingestion-url"
-                                 : root.hasChild("ingestion_url")    ? "ingestion_url"
-                                 : root.hasChild("url")              ? "url"
-                                                                      : "ingestion-url";
+    const std::string ingestionUrlKey = "ingestion-url";
     if (!root.hasChild(ingestionUrlKey))
     {
         throw Error(makeMissingFieldMessage(ingestionUrlKey));
@@ -114,7 +100,7 @@ void MLDPGrpcPoolConfig::parse(const config::Config& root)
         throw Error("mldp_pool." + ingestionUrlKey + " must not be empty");
     }
     query_url_ = ingestion_url_;
-    const auto queryUrlKey = pickKey(root, "query-url", "query_url");
+    const std::string queryUrlKey = "query-url";
     if (root.hasChild(queryUrlKey))
     {
         query_url_ = root.get(queryUrlKey);
@@ -124,7 +110,7 @@ void MLDPGrpcPoolConfig::parse(const config::Config& root)
         }
     }
 
-    const auto minConnKey = pickKey(root, "min-conn", "min_conn");
+    const std::string minConnKey = "min-conn";
     if (!root.hasChild(minConnKey))
     {
         throw Error(makeMissingFieldMessage(minConnKey));
@@ -135,7 +121,7 @@ void MLDPGrpcPoolConfig::parse(const config::Config& root)
         throw Error("mldp_pool." + minConnKey + " must be greater than zero");
     }
 
-    const auto maxConnKey = pickKey(root, "max-conn", "max_conn");
+    const std::string maxConnKey = "max-conn";
     if (!root.hasChild(maxConnKey))
     {
         throw Error(makeMissingFieldMessage(maxConnKey));
@@ -182,12 +168,9 @@ void MLDPGrpcPoolConfig::parse(const config::Config& root)
         {
             credentials_.type = Credentials::Type::Ssl;
 
-            const char* const certChainKey = credentialsTree.has_child("pem-cert-chain") ? "pem-cert-chain"
-                                            : "pem_cert_chain";
-            const char* const privateKeyKey = credentialsTree.has_child("pem-private-key") ? "pem-private-key"
-                                             : "pem_private_key";
-            const char* const rootCertsKey = credentialsTree.has_child("pem-root-certs") ? "pem-root-certs"
-                                            : "pem_root_certs";
+            const char* const certChainKey = "pem-cert-chain";
+            const char* const privateKeyKey = "pem-private-key";
+            const char* const rootCertsKey = "pem-root-certs";
 
             if (credentialsTree.has_child(certChainKey))
             {
@@ -225,13 +208,13 @@ std::string MLDPGrpcPoolConfig::readFile(const std::string& path)
 
     std::ostringstream buffer;
     buffer << file.rdbuf();
-    
+
     if (file.bad())
     {
         std::ostringstream oss;
         oss << "Error reading credentials file at '" << path << "'";
         throw Error(oss.str());
     }
-    
+
     return buffer.str();
 }

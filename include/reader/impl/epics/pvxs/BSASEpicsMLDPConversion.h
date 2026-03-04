@@ -26,7 +26,7 @@
 #include <BS_thread_pool.hpp>
 #include <functional>
 #include <pvxs/client.h>
-#include <reader/impl/epics/EpicsMLDPConversion.h>
+#include <reader/impl/epics/pvxs/EpicsMLDPConversion.h>
 #include <string>
 #include <util/bus/IDataBus.h>
 
