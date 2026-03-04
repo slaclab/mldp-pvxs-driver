@@ -43,6 +43,18 @@ public:
         return true;
     }
 
+    std::vector<SourceInfo> querySourcesInfo(const std::set<std::string>&) override
+    {
+        return {};
+    }
+
+    std::optional<std::unordered_map<std::string, std::vector<dp::service::common::DataValues>>> querySourcesData(
+        const std::set<std::string>&,
+        const mldp_pvxs_driver::util::bus::QuerySourcesDataOptions&) override
+    {
+        return std::nullopt;
+    }
+
     std::vector<EventBatch> snapshot() const
     {
         std::lock_guard<std::mutex> lock(mu_);
@@ -130,9 +142,10 @@ TEST(EpicsArchiverReaderHttpIntegrationTest, FetchesPbHttpStreamAndPublishesBusE
     for (size_t i = 0; i < it->second.size(); ++i)
     {
         ASSERT_TRUE(it->second[i]);
-        EXPECT_EQ(it->second[i]->data_value.value_case(), DataValue::kDoubleValue);
-        EXPECT_GE(it->second[i]->data_value.doublevalue(), gen_cfg.min_value);
-        EXPECT_LE(it->second[i]->data_value.doublevalue(), gen_cfg.max_value);
+        ASSERT_GT(it->second[i]->data_value.doublecolumns_size(), 0);
+        ASSERT_GT(it->second[i]->data_value.doublecolumns(0).values_size(), 0);
+        EXPECT_GE(it->second[i]->data_value.doublecolumns(0).values(0), gen_cfg.min_value);
+        EXPECT_LE(it->second[i]->data_value.doublecolumns(0).values(0), gen_cfg.max_value);
         EXPECT_GT(it->second[i]->epoch_seconds, 0u);
         EXPECT_LT(it->second[i]->nanoseconds, 1'000'000'000u);
         if (i > 0)

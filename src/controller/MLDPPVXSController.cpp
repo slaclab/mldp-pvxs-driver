@@ -16,6 +16,7 @@
 #include <util/StringFormat.h>
 
 #include <chrono>
+#include <cstdint>
 #include <grpcpp/grpcpp.h>
 #include <ranges>
 #include <stdexcept>
@@ -37,6 +38,9 @@ std::shared_ptr<mldp_pvxs_driver::util::log::ILogger> makeControllerLogger()
     std::string loggerName = "controlller";
     return mldp_pvxs_driver::util::log::newLogger(loggerName);
 }
+
+using dp::service::common::Timestamp;
+using dp::service::common::DataTimestamps;
 
 SourceTimestamp makeSourceTimestamp(const Timestamp& ts)
 {
@@ -112,6 +116,7 @@ std::optional<std::pair<SourceTimestamp, SourceTimestamp>> extractTimestampRange
 
     return std::nullopt;
 }
+
 } // namespace
 
 std::shared_ptr<MLDPPVXSController> MLDPPVXSController::create(const config::Config& config)
@@ -382,20 +387,16 @@ std::vector<IDataBus::SourceInfo> MLDPPVXSController::querySourcesInfo(const std
             std::unordered_map<std::string, IDataBus::SourceInfo> merged_infos;
             for (const auto& bucket : data_response.querydata().databuckets())
             {
-                if (!bucket.has_datacolumn())
-                {
-                    continue;
-                }
-                const auto& column = bucket.datacolumn();
-                if (!source_names.contains(column.name()))
+                const auto& pvname = bucket.pvname();
+                if (pvname.empty() || !source_names.contains(pvname))
                 {
                     continue;
                 }
 
-                auto& info = merged_infos[column.name()];
+                auto& info = merged_infos[pvname];
                 if (info.source_name.empty())
                 {
-                    info.source_name = column.name();
+                    info.source_name = pvname;
                     info.num_buckets = 0;
                 }
                 if (info.num_buckets.has_value())
@@ -511,13 +512,13 @@ std::vector<IDataBus::SourceInfo> MLDPPVXSController::querySourcesInfo(const std
     return infos;
 }
 
-std::optional<std::unordered_map<std::string, DataColumn>> MLDPPVXSController::querySourcesData(
+std::optional<std::unordered_map<std::string, std::vector<dp::service::common::DataValues>>> MLDPPVXSController::querySourcesData(
     const std::set<std::string>&              source_names,
     const util::bus::QuerySourcesDataOptions& options)
 {
     if (source_names.empty())
     {
-        return std::unordered_map<std::string, DataColumn>{};
+        return std::unordered_map<std::string, std::vector<dp::service::common::DataValues>>{};
     }
     if (!mldp_query_pool_)
     {
@@ -559,7 +560,7 @@ std::optional<std::unordered_map<std::string, DataColumn>> MLDPPVXSController::q
             }
             if (spec->pvnames().empty())
             {
-                return std::unordered_map<std::string, DataColumn>{};
+                return std::unordered_map<std::string, std::vector<dp::service::common::DataValues>>{};
             }
 
             const auto now = std::chrono::system_clock::now();
@@ -577,24 +578,21 @@ std::optional<std::unordered_map<std::string, DataColumn>> MLDPPVXSController::q
             const auto                            status = query_stub->queryData(&context, request, &response);
             if (status.ok() && response.has_querydata() && !response.has_exceptionalresult())
             {
-                std::unordered_map<std::string, DataColumn> collected;
+                std::unordered_map<std::string, std::vector<dp::service::common::DataValues>> collected;
                 for (const auto& bucket : response.querydata().databuckets())
                 {
-                    if (!bucket.has_datacolumn())
+                    const auto& pvname = bucket.pvname();
+                    if (pvname.empty() || !source_names.contains(pvname) || !bucket.has_datavalues())
                     {
                         continue;
                     }
 
-                    const auto& column = bucket.datacolumn();
-                    if (!source_names.contains(column.name()))
-                    {
-                        continue;
-                    }
-                    collected.emplace(column.name(), column);
-                    if (collected.size() == source_names.size())
-                    {
-                        return collected;
-                    }
+                    collected[pvname].push_back(bucket.datavalues());
+                }
+
+                if (collected.size() == source_names.size())
+                {
+                    return collected;
                 }
             }
 
@@ -753,57 +751,80 @@ void MLDPPVXSController::workerLoop(std::size_t worker_index)
             }
         }
 
-        google::protobuf::Arena arena;
-        auto*                   request = google::protobuf::Arena::CreateMessage<dp::service::ingestion::IngestDataRequest>(&arena);
-        std::size_t             accepted_events = 0;
-        std::size_t             payload_bytes = 0;
-        const auto              request_id = util::format_string("pv_stream_{}_{}", stream_start.time_since_epoch().count(), item.root_source);
-        if (!buildRequest(item, request_id, *request, accepted_events, payload_bytes))
-        {
-            continue;
-        }
+        std::size_t accepted_events_total = 0;
+        std::size_t payload_bytes_total = 0;
 
-        if ((stream_payload_bytes + payload_bytes) > config_.controllerStreamMaxBytes() && stream_payload_bytes > 0)
+        std::size_t request_counter = 0;
+        for (const auto& [source_name, events] : item.columns)
         {
-            close_stream("max bytes exceeded");
-            if (!ensure_stream())
+            for (const auto& event_value : events)
             {
-                record_send_time({{"source", "unknown"}});
-                continue;
+                const auto frame_elapsed = std::chrono::steady_clock::now() - stream_start;
+                if (frame_elapsed >= config_.controllerStreamMaxAge())
+                {
+                    close_stream("stream age exceeded");
+                    if (!ensure_stream())
+                    {
+                        record_send_time({{"source", "unknown"}});
+                        continue;
+                    }
+                }
+
+                google::protobuf::Arena arena;
+                auto* request = google::protobuf::Arena::CreateMessage<dp::service::ingestion::IngestDataRequest>(&arena);
+                std::size_t accepted_events = 0;
+                std::size_t payload_bytes = 0;
+                const auto request_id = util::format_string("pv_stream_{}_{}_{}", stream_start.time_since_epoch().count(), item.root_source, request_counter++);
+                if (!buildRequest(source_name, event_value, request_id, *request, accepted_events, payload_bytes))
+                {
+                    continue;
+                }
+
+                if ((stream_payload_bytes + payload_bytes) > config_.controllerStreamMaxBytes() && stream_payload_bytes > 0)
+                {
+                    close_stream("max bytes exceeded");
+                    if (!ensure_stream())
+                    {
+                        record_send_time({{"source", "unknown"}});
+                        continue;
+                    }
+                }
+
+                if (!writer->Write(*request))
+                {
+                    errorf(*logger_, "Failed to write source {} event to ingestion stream", source_name);
+                    metric_call(metrics_, [&](auto& m)
+                                {
+                                    m.incrementBusFailures(1.0, {{"source", source_name}});
+                                });
+                    close_stream("write failed");
+                    continue;
+                }
+
+                stream_payload_bytes += payload_bytes;
+                accepted_events_total += accepted_events;
+                payload_bytes_total += payload_bytes;
             }
         }
 
-        if (!writer->Write(*request))
-        {
-            errorf(*logger_, "Failed to write {} columns with {} events to ingestion stream", item.columns.size(), accepted_events);
-            metric_call(metrics_, [&](auto& m)
-                        {
-                            m.incrementBusFailures(1.0, {{"source", item.root_source}});
-                        });
-            close_stream("write failed");
-            record_send_time({{"source", item.root_source}});
-            continue;
-        }
-
-        stream_payload_bytes += payload_bytes;
-        if (accepted_events > 0)
+        if (accepted_events_total > 0)
         {
             metric_call(metrics_, [&](auto& m)
                         {
-                            m.incrementBusPushes(static_cast<double>(accepted_events), {{"source", item.root_source}});
+                            m.incrementBusPushes(static_cast<double>(accepted_events_total), {{"source", item.root_source}});
                         });
         }
-        if (payload_bytes > 0)
+        if (payload_bytes_total > 0)
         {
             metric_call(metrics_, [&](auto& m)
                         {
-                            m.incrementBusPayloadBytes(static_cast<double>(payload_bytes), {{"source", item.root_source}});
+                            m.incrementBusPayloadBytes(static_cast<double>(payload_bytes_total), {{"source", item.root_source}});
                         });
             const auto   item_elapsed = std::chrono::steady_clock::now() - item_start;
             const double elapsed_milliseconds = std::chrono::duration<double, std::milli>(item_elapsed).count();
             if (elapsed_milliseconds > 0.0)
             {
-                const double bytes_per_second = (static_cast<double>(payload_bytes) * 1000.0) / elapsed_milliseconds;
+                const double bytes_per_second = (static_cast<double>(payload_bytes_total) * 1000.0) / elapsed_milliseconds;
                 metric_call(metrics_, [&](auto& m)
                             {
                                 m.setBusPayloadBytesPerSecond(bytes_per_second, {{"source", item.root_source}});
@@ -822,82 +843,58 @@ void MLDPPVXSController::workerLoop(std::size_t worker_index)
     close_stream("shutdown");
 }
 
-bool MLDPPVXSController::buildRequest(const QueueItem&                           item,
+bool MLDPPVXSController::buildRequest(const std::string&                         source_name,
+                                      const util::bus::IDataBus::EventValue&     event_value,
                                       const std::string&                         request_id,
                                       dp::service::ingestion::IngestDataRequest& request,
                                       std::size_t&                               accepted_events,
                                       std::size_t&                               payload_bytes)
 {
-    request.set_providerid(provider_id_);
-    request.set_clientrequestid(request_id);
-
-    if (item.tags)
+    if (!event_value)
     {
-        for (const auto& tag : *item.tags)
-        {
-            request.add_tags(tag);
-        }
-    }
-
-    auto* dataFrame = request.mutable_ingestiondataframe();
-    auto* timestamps = dataFrame->mutable_datatimestamps();
-    auto* timestampList = timestamps->mutable_timestamplist();
-
-    // Timestamps are written from the first column (all columns share the same row timestamps).
-    bool timestamps_written = false;
-
-    for (auto& [col_name, events] : item.columns)
-    {
-        auto* column = dataFrame->add_datacolumns();
-        column->set_name(col_name);
-
-        const int eventCount = static_cast<int>(events.size());
-        column->mutable_datavalues()->Reserve(eventCount);
-        if (!timestamps_written)
-        {
-            timestampList->mutable_timestamps()->Reserve(eventCount);
-        }
-
-        for (auto& event_value : events)
-        {
-            if (!event_value)
-            {
-                warnf(*logger_, "Skipping null event for source {}", col_name);
-                continue;
-            }
-
-            if (!timestamps_written)
-            {
-                auto* ts = timestampList->add_timestamps();
-                if (event_value->epoch_seconds)
-                {
-                    ts->set_epochseconds(event_value->epoch_seconds);
-                    if (event_value->nanoseconds)
-                    {
-                        ts->set_nanoseconds(event_value->nanoseconds);
-                    }
-                }
-                else
-                {
-                    const auto now = std::chrono::system_clock::now().time_since_epoch();
-                    ts->set_epochseconds(std::chrono::duration_cast<std::chrono::seconds>(now).count());
-                }
-            }
-
-            auto* dataValue = column->add_datavalues();
-            *dataValue = std::move(event_value->data_value);
-            ++accepted_events;
-        }
-
-        timestamps_written = true;
-    }
-
-    if (dataFrame->datacolumns_size() == 0)
-    {
-        warnf(*logger_, "No valid columns for source {}, skipping request", item.root_source);
+        warnf(*logger_, "Skipping null event for source {}", source_name);
         return false;
     }
 
+    request.set_providerid(provider_id_);
+    request.set_clientrequestid(request_id);
+
+    auto* data_frame = request.mutable_ingestiondataframe();
+    *data_frame = event_value->data_value;
+
+    const bool has_columns = data_frame->doublecolumns_size() > 0 || data_frame->floatcolumns_size() > 0 ||
+                             data_frame->datacolumns_size() > 0 || data_frame->int32columns_size() > 0 ||
+                             data_frame->int64columns_size() > 0 || data_frame->boolcolumns_size() > 0 ||
+                             data_frame->stringcolumns_size() > 0 || data_frame->enumcolumns_size() > 0 ||
+                             data_frame->imagecolumns_size() > 0 || data_frame->structcolumns_size() > 0 ||
+                             data_frame->doublearraycolumns_size() > 0 || data_frame->floatarraycolumns_size() > 0 ||
+                             data_frame->int32arraycolumns_size() > 0 || data_frame->int64arraycolumns_size() > 0 ||
+                             data_frame->boolarraycolumns_size() > 0;
+    if (!has_columns)
+    {
+        warnf(*logger_, "No valid columns for source {}, skipping request", source_name);
+        return false;
+    }
+
+    if (!data_frame->has_datatimestamps() || !data_frame->datatimestamps().has_timestamplist() ||
+        data_frame->datatimestamps().timestamplist().timestamps_size() == 0)
+    {
+        auto* ts_list = data_frame->mutable_datatimestamps()->mutable_timestamplist();
+        auto* ts = ts_list->add_timestamps();
+        if (event_value->epoch_seconds > 0)
+        {
+            ts->set_epochseconds(event_value->epoch_seconds);
+            ts->set_nanoseconds(event_value->nanoseconds);
+        }
+        else
+        {
+            const auto now = std::chrono::system_clock::now().time_since_epoch();
+            ts->set_epochseconds(std::chrono::duration_cast<std::chrono::seconds>(now).count());
+            ts->set_nanoseconds(0);
+        }
+    }
+
+    accepted_events = static_cast<std::size_t>(data_frame->datatimestamps().timestamplist().timestamps_size());
     payload_bytes = static_cast<std::size_t>(request.ByteSizeLong());
     return true;
 }

@@ -25,12 +25,12 @@ EpicsBaseMonitorPoller::EpicsBaseMonitorPoller(const std::vector<std::string>& p
                                                unsigned int                   poll_interval_ms,
                                                DataHandler                    on_data_available,
                                                std::shared_ptr<util::log::ILogger> logger)
-    : poll_interval_ms_(poll_interval_ms)
+    : pva_client_(::epics::pvaClient::PvaClient::get("pva"))
+    , ca_client_(::epics::pvaClient::PvaClient::get("ca"))
+    , poll_interval_ms_(poll_interval_ms)
     , on_data_available_(std::move(on_data_available))
     , logger_(std::move(logger))
 {
-    pva_client_ = ::epics::pvaClient::PvaClient::get("pva ca");
-
     subscriptions_.reserve(pv_names.size());
     for (const auto& pv : pv_names)
     {
@@ -43,7 +43,8 @@ EpicsBaseMonitorPoller::EpicsBaseMonitorPoller(const std::vector<std::string>& p
             }
             continue;
         }
-        auto channel = pva_client_->channel(selection.pv_name, selection.provider);
+        auto client_ = selection.provider == "pva" ? pva_client_ : ca_client_;
+        auto channel = client_->channel(selection.pv_name);
         auto monitor = channel->createMonitor("field(value,alarm,timeStamp)");
         monitor->connect();
         monitor->start();

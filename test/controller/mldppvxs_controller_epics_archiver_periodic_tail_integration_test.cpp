@@ -16,6 +16,7 @@
 using namespace mldp_pvxs_driver::controller;
 using namespace mldp_pvxs_driver::testutil;
 
+using dp::service::common::DataValue;
 using mldp_pvxs_driver::config::makeConfigFromYaml;
 using mldp_pvxs_driver::reader::impl::epics_archiver::MockArchiverPbHttpServer;
 
@@ -102,12 +103,11 @@ TEST_F(MLDPPVXSControllerEpicsArchiverPeriodicTailIntegrationTest, IngestsPeriod
         std::chrono::seconds(10),
         std::chrono::seconds(120));
     ASSERT_TRUE(result.has_value());
-    const auto& column = result->at("TEST:PV:DOUBLE");
+    const auto  rows = flattenDataValues(result->at("TEST:PV:DOUBLE"));
 
     // We don't assert an exact count because periodic scheduling jitter and backend dedup behavior can vary.
-    ASSERT_GT(column.datavalues_size(), 0);
-    EXPECT_EQ(column.name(), "TEST:PV:DOUBLE");
-    EXPECT_EQ(column.datavalues(0).value_case(), DataValue::kDoubleValue);
+    ASSERT_GT(rows.size(), 0);
+    EXPECT_EQ(rows[0].value_case(), DataValue::kDoubleValue);
 
     // Verify that reader metrics were recorded correctly during data ingestion
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
@@ -120,7 +120,7 @@ TEST_F(MLDPPVXSControllerEpicsArchiverPeriodicTailIntegrationTest, IngestsPeriod
                                                            "TEST:PV:DOUBLE");
     EXPECT_GT(events_received, 0.0) << "Reader should have recorded events received from archiver";
     // Events received should be at least as many as the data values we got
-    EXPECT_GE(events_received, column.datavalues_size())
+    EXPECT_GE(events_received, static_cast<double>(rows.size()))
         << "Metrics events_received should match or exceed ingested data values";
 
     // Verify reader events published metric

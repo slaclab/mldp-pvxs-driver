@@ -21,6 +21,7 @@
 
 #pragma once
 
+#include <pv/configuration.h>
 #include <pv/pvData.h>
 #include <pv/pvaClient.h>
 #include <util/log/Logger.h>
@@ -123,6 +124,9 @@ public:
     void drain(const DrainHandler& handler);
 
 private:
+    ::epics::pvaClient::PvaClientPtr pva_client_; ///< Shared pvaClient instance for creating channels and monitors.
+    ::epics::pvaClient::PvaClientPtr ca_client_;  ///< Shared caClient instance for Channel Access (if needed).
+
     /**
      * @brief Internal representation of a PV subscription.
      */
@@ -181,8 +185,6 @@ private:
     unsigned int                        poll_interval_ms_{5}; ///< Sleep interval when idle.
     DataHandler                         on_data_available_;   ///< New data notification callback.
     std::shared_ptr<util::log::ILogger> logger_;              ///< Logger instance.
-
-    ::epics::pvaClient::PvaClientPtr pva_client_; ///< Shared pvaClient instance.
 
     std::vector<Subscription> subscriptions_;  ///< All active subscriptions.
     std::vector<std::thread>  poller_threads_; ///< Polling thread handles.

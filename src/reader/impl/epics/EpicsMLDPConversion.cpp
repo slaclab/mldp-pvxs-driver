@@ -9,87 +9,224 @@
 //////////////////////////////////////////////////////////////////////////////
 
 #include <reader/impl/epics/EpicsMLDPConversion.h>
+#include <cstdint>
 
 using namespace mldp_pvxs_driver::reader::impl::epics;
+using DataFrame = dp::service::common::DataFrame;
 
-void EpicsMLDPConversion::convertPVToProtoValue(const pvxs::Value& pvValue, DataValue* protoValue)
+void EpicsMLDPConversion::convertPVToDataFrame(const pvxs::Value& pvValue,
+                                               DataFrame*         frame,
+                                               const std::string& columnName)
 {
-    const auto typeValueSetter = [&pvValue, protoValue]<typename T>(void (DataValue::*setter)(T))
+    // For compound types, recursively expand children as sub-columns named
+    // "columnName.fieldName".
+    static const auto structSetter = [](const pvxs::Value& structValue,
+                                        DataFrame*         df,
+                                        const std::string& name)
     {
-        (*protoValue.*setter)(pvValue.as<std::remove_cvref_t<T>>());
-    };
-
-    const auto typeArraySetter = [&pvValue, protoValue]<typename T>(void (DataValue::*setter)(T))
-    {
-        auto arr = pvValue.as<pvxs::shared_array<const std::remove_cvref_t<T>>>();
-        auto* protoArray = protoValue->mutable_arrayvalue();
-        protoArray->mutable_datavalues()->Reserve(static_cast<int>(arr.size()));
-        for (const auto& i : arr)
-        {
-            auto* element = protoArray->add_datavalues();
-            (*element.*setter)(i);
-        }
-    };
-
-    static constexpr auto structSetter = [](const pvxs::Value& structValue, DataValue* protoStruct)
-    {
-        auto* structure = protoStruct->mutable_structurevalue();
         for (const auto& member : structValue.ichildren())
         {
             if (!member.valid())
             {
                 continue;
             }
-            auto* field = structure->add_fields();
-            field->set_name(structValue.nameOf(member));
-            convertPVToProtoValue(member, field->mutable_value());
+            const std::string subName = name + "." + std::string(structValue.nameOf(member));
+            convertPVToDataFrame(member, df, subName);
         }
     };
 
-    const auto stringSetter = static_cast<void (DataValue::*)(const std::string&)>(&DataValue::set_stringvalue);
-
     switch (pvValue.type().code)
     {
-    case pvxs::TypeCode::Bool: return typeValueSetter(&DataValue::set_booleanvalue);
-    case pvxs::TypeCode::BoolA: return typeArraySetter(&DataValue::set_booleanvalue);
+    case pvxs::TypeCode::Bool:
+    {
+        auto* c = frame->add_boolcolumns();
+        c->set_name(columnName);
+        c->add_values(pvValue.as<bool>());
+        return;
+    }
     case pvxs::TypeCode::Int8:
     case pvxs::TypeCode::Int16:
-    case pvxs::TypeCode::Int32: return typeValueSetter(&DataValue::set_intvalue);
-    case pvxs::TypeCode::Int64: return typeValueSetter(&DataValue::set_longvalue);
+    case pvxs::TypeCode::Int32:
+    {
+        auto* c = frame->add_int32columns();
+        c->set_name(columnName);
+        c->add_values(pvValue.as<int32_t>());
+        return;
+    }
+    case pvxs::TypeCode::Int64:
+    {
+        auto* c = frame->add_int64columns();
+        c->set_name(columnName);
+        c->add_values(pvValue.as<int64_t>());
+        return;
+    }
     case pvxs::TypeCode::UInt8:
     case pvxs::TypeCode::UInt16:
-    case pvxs::TypeCode::UInt32: return typeValueSetter(&DataValue::set_uintvalue);
-    case pvxs::TypeCode::UInt64: return typeValueSetter(&DataValue::set_ulongvalue);
+    case pvxs::TypeCode::UInt32:
+    {
+        auto* c = frame->add_int32columns();
+        c->set_name(columnName);
+        c->add_values(static_cast<int32_t>(pvValue.as<uint32_t>()));
+        return;
+    }
+    case pvxs::TypeCode::UInt64:
+    {
+        auto* c = frame->add_int64columns();
+        c->set_name(columnName);
+        c->add_values(static_cast<int64_t>(pvValue.as<uint64_t>()));
+        return;
+    }
+    case pvxs::TypeCode::Float32:
+    {
+        auto* c = frame->add_floatcolumns();
+        c->set_name(columnName);
+        c->add_values(pvValue.as<float>());
+        return;
+    }
+    case pvxs::TypeCode::Float64:
+    {
+        auto* c = frame->add_doublecolumns();
+        c->set_name(columnName);
+        c->add_values(pvValue.as<double>());
+        return;
+    }
+    case pvxs::TypeCode::String:
+    {
+        auto* c = frame->add_stringcolumns();
+        c->set_name(columnName);
+        c->add_values(pvValue.as<std::string>());
+        return;
+    }
+    case pvxs::TypeCode::BoolA:
+    {
+        const auto arr = pvValue.as<pvxs::shared_array<const bool>>();
+        auto*      c   = frame->add_boolarraycolumns();
+        c->set_name(columnName);
+        c->mutable_dimensions()->add_dims(static_cast<uint32_t>(arr.size()));
+        c->mutable_values()->Reserve(static_cast<int>(arr.size()));
+        for (const auto v : arr)
+        {
+            c->add_values(v);
+        }
+        return;
+    }
     case pvxs::TypeCode::Int8A:
     case pvxs::TypeCode::Int16A:
-    case pvxs::TypeCode::Int32A: return typeArraySetter(&DataValue::set_intvalue);
-    case pvxs::TypeCode::Int64A: return typeArraySetter(&DataValue::set_longvalue);
+    case pvxs::TypeCode::Int32A:
+    {
+        const auto arr = pvValue.as<pvxs::shared_array<const int32_t>>();
+        auto*      c   = frame->add_int32arraycolumns();
+        c->set_name(columnName);
+        c->mutable_dimensions()->add_dims(static_cast<uint32_t>(arr.size()));
+        c->mutable_values()->Reserve(static_cast<int>(arr.size()));
+        for (const auto v : arr)
+        {
+            c->add_values(v);
+        }
+        return;
+    }
+    case pvxs::TypeCode::Int64A:
+    {
+        const auto arr = pvValue.as<pvxs::shared_array<const int64_t>>();
+        auto*      c   = frame->add_int64arraycolumns();
+        c->set_name(columnName);
+        c->mutable_dimensions()->add_dims(static_cast<uint32_t>(arr.size()));
+        c->mutable_values()->Reserve(static_cast<int>(arr.size()));
+        for (const auto v : arr)
+        {
+            c->add_values(v);
+        }
+        return;
+    }
     case pvxs::TypeCode::UInt8A:
     case pvxs::TypeCode::UInt16A:
-    case pvxs::TypeCode::UInt32A: return typeArraySetter(&DataValue::set_uintvalue);
-    case pvxs::TypeCode::UInt64A: return typeArraySetter(&DataValue::set_ulongvalue);
-    case pvxs::TypeCode::Float32: return typeValueSetter(&DataValue::set_floatvalue);
-    case pvxs::TypeCode::Float64: return typeValueSetter(&DataValue::set_doublevalue);
-    case pvxs::TypeCode::Float32A: return typeArraySetter(&DataValue::set_floatvalue);
-    case pvxs::TypeCode::Float64A: return typeArraySetter(&DataValue::set_doublevalue);
-    case pvxs::TypeCode::String: return typeValueSetter(stringSetter);
-    case pvxs::TypeCode::StringA: return typeArraySetter(stringSetter);
+    case pvxs::TypeCode::UInt32A:
+    {
+        const auto arr = pvValue.as<pvxs::shared_array<const uint32_t>>();
+        auto*      c   = frame->add_int32arraycolumns();
+        c->set_name(columnName);
+        c->mutable_dimensions()->add_dims(static_cast<uint32_t>(arr.size()));
+        c->mutable_values()->Reserve(static_cast<int>(arr.size()));
+        for (const auto v : arr)
+        {
+            c->add_values(static_cast<int32_t>(v));
+        }
+        return;
+    }
+    case pvxs::TypeCode::UInt64A:
+    {
+        const auto arr = pvValue.as<pvxs::shared_array<const uint64_t>>();
+        auto*      c   = frame->add_int64arraycolumns();
+        c->set_name(columnName);
+        c->mutable_dimensions()->add_dims(static_cast<uint32_t>(arr.size()));
+        c->mutable_values()->Reserve(static_cast<int>(arr.size()));
+        for (const auto v : arr)
+        {
+            c->add_values(static_cast<int64_t>(v));
+        }
+        return;
+    }
+    case pvxs::TypeCode::Float32A:
+    {
+        const auto arr = pvValue.as<pvxs::shared_array<const float>>();
+        auto*      c   = frame->add_floatarraycolumns();
+        c->set_name(columnName);
+        c->mutable_dimensions()->add_dims(static_cast<uint32_t>(arr.size()));
+        c->mutable_values()->Reserve(static_cast<int>(arr.size()));
+        for (const auto v : arr)
+        {
+            c->add_values(v);
+        }
+        return;
+    }
+    case pvxs::TypeCode::Float64A:
+    {
+        const auto arr = pvValue.as<pvxs::shared_array<const double>>();
+        auto*      c   = frame->add_doublearraycolumns();
+        c->set_name(columnName);
+        c->mutable_dimensions()->add_dims(static_cast<uint32_t>(arr.size()));
+        c->mutable_values()->Reserve(static_cast<int>(arr.size()));
+        for (const auto v : arr)
+        {
+            c->add_values(v);
+        }
+        return;
+    }
+    case pvxs::TypeCode::StringA:
+    {
+        const auto arr = pvValue.as<pvxs::shared_array<const std::string>>();
+        auto*      c   = frame->add_datacolumns();
+        c->set_name(columnName);
+        auto* sample = c->add_datavalues();
+        auto* list   = sample->mutable_arrayvalue();
+        for (const auto& v : arr)
+        {
+            list->add_datavalues()->set_stringvalue(v);
+        }
+        return;
+    }
     case pvxs::TypeCode::Struct:
     case pvxs::TypeCode::Union:
-    case pvxs::TypeCode::Any: return structSetter(pvValue, protoValue);
+    case pvxs::TypeCode::Any:
+        structSetter(pvValue, frame, columnName);
+        return;
     case pvxs::TypeCode::StructA:
     case pvxs::TypeCode::UnionA:
     case pvxs::TypeCode::AnyA:
+    {
+        const auto arr = pvValue.as<pvxs::shared_array<const pvxs::Value>>();
+        for (const auto& cell : arr)
         {
-            auto arr = pvValue.as<pvxs::shared_array<const pvxs::Value>>();
-            auto* av = protoValue->mutable_arrayvalue();
-            av->mutable_datavalues()->Reserve(static_cast<int>(arr.size()));
-            for (const auto& i : arr)
-            {
-                structSetter(i, av->add_datavalues());
-            }
-            return;
+            structSetter(cell, frame, columnName);
         }
-    case pvxs::TypeCode::Null: return protoValue->set_stringvalue("null");
+        return;
+    }
+    case pvxs::TypeCode::Null:
+    {
+        auto* c = frame->add_stringcolumns();
+        c->set_name(columnName);
+        c->add_values("null");
+        return;
+    }
     }
 }

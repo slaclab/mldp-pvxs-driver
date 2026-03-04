@@ -25,7 +25,7 @@ using namespace mldp_pvxs_driver::util::bus;
 namespace {
 std::shared_ptr<ILogger> makeLogger(const std::string& readerName)
 {
-    std::string loggerName = "epics_reader_base";
+    std::string loggerName = "epics_base_reader";
     if (!readerName.empty())
     {
         loggerName += ":";
@@ -36,8 +36,8 @@ std::shared_ptr<ILogger> makeLogger(const std::string& readerName)
 } // namespace
 
 EpicsBaseReader::EpicsBaseReader(std::shared_ptr<util::bus::IDataBus> bus,
-                                 std::shared_ptr<metrics::Metrics>         metrics,
-                                 const config::Config&                     cfg)
+                                 std::shared_ptr<metrics::Metrics>    metrics,
+                                 const config::Config&                cfg)
     : EpicsReaderBase(std::move(bus), std::move(metrics), EpicsReaderConfig(cfg), makeLogger(cfg.get("name")))
 {
     addPV(pvNames());
@@ -120,7 +120,7 @@ void EpicsBaseReader::processEvent(std::string pvName, ::epics::pvData::PVStruct
         {
         case PVRuntimeConfig::Mode::SlacBsasTable:
             {
-                const std::size_t colBatchSize = config_.columnBatchSize();
+                const std::size_t    colBatchSize = config_.columnBatchSize();
                 IDataBus::EventBatch tableBatch;
                 tableBatch.root_source = pvName;
                 tableBatch.tags.push_back(pvName);
@@ -130,7 +130,8 @@ void EpicsBaseReader::processEvent(std::string pvName, ::epics::pvData::PVStruct
                         *logger_, pvName, epics_value,
                         runtimeCfg ? runtimeCfg->tsSecondsField : "secondsPastEpoch",
                         runtimeCfg ? runtimeCfg->tsNanosField : "nanoseconds",
-                        [&](std::string colName, std::vector<IDataBus::EventValue> events) {
+                        [&](std::string colName, std::vector<IDataBus::EventValue> events)
+                        {
                             tableBatch.values[std::move(colName)] = std::move(events);
                             ++colsInBatch;
                             if (colBatchSize > 0 && colsInBatch >= colBatchSize)
@@ -164,7 +165,7 @@ void EpicsBaseReader::processEvent(std::string pvName, ::epics::pvData::PVStruct
                 batch.root_source = pvName;
                 uint64_t epoch_seconds = 0;
                 uint64_t nanoseconds = 0;
-                bool setEpoch = false;
+                bool     setEpoch = false;
 
                 if (epics_value)
                 {
@@ -192,44 +193,28 @@ void EpicsBaseReader::processEvent(std::string pvName, ::epics::pvData::PVStruct
                 if (epics_value)
                 {
                     auto valueField = epics_value->getSubField("value");
-                    EpicsPVDataConversion::convertPVToProtoValue(
-                        valueField ? *valueField : *epics_value, &event_value->data_value);
-
-                    if (auto alarm = epics_value->getSubField<::epics::pvData::PVStructure>("alarm"))
+                    if (valueField)
                     {
-                        auto* valueStatus = event_value->data_value.mutable_valuestatus();
-                        if (auto severityField = alarm->getSubField<::epics::pvData::PVScalar>("severity"))
+                        const bool isStructPayload =
+                            (std::dynamic_pointer_cast<::epics::pvData::PVStructure>(valueField) != nullptr);
+                        if (isStructPayload)
                         {
-                            const int sev = severityField->getAs<int>();
-                            switch (sev)
-                            {
-                            case 0:
-                                valueStatus->set_severity(DataValue_ValueStatus_Severity_NO_ALARM);
-                                break;
-                            case 1:
-                                valueStatus->set_severity(DataValue_ValueStatus_Severity_MINOR_ALARM);
-                                break;
-                            case 2:
-                                valueStatus->set_severity(DataValue_ValueStatus_Severity_MAJOR_ALARM);
-                                break;
-                            case 3:
-                                valueStatus->set_severity(DataValue_ValueStatus_Severity_INVALID_ALARM);
-                                break;
-                            default:
-                                valueStatus->set_severity(DataValue_ValueStatus_Severity_UNDEFINED_ALARM);
-                                break;
-                            }
+                            warnf(*logger_,
+                                  "[{}/{}] PV has compound (non-scalar) value field in default mode — skipping",
+                                  name_, pvName);
+                            return; // Do not push event to bus
                         }
-                        if (auto statusField = alarm->getSubField<::epics::pvData::PVScalar>("status"))
-                        {
-                            const int status = statusField->getAs<int>();
-                            valueStatus->set_statuscode(status == 0 ? DataValue_ValueStatus_StatusCode_NO_STATUS
-                                                                    : DataValue_ValueStatus_StatusCode_RECORD_STATUS);
-                        }
-                        if (auto messageField = alarm->getSubField<::epics::pvData::PVScalar>("message"))
-                        {
-                            valueStatus->set_message(messageField->getAs<std::string>());
-                        }
+                        EpicsPVDataConversion::convertPVToProtoValue(
+                            *valueField,
+                            &event_value->data_value,
+                            pvName);
+                    }
+                    else
+                    {
+                        warnf(*logger_,
+                              "[{}/{}] PV has no 'value' field in default mode — skipping",
+                              name_, pvName);
+                        return;  // Do not push event to bus
                     }
                 }
 

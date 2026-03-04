@@ -10,10 +10,10 @@
 
 /**
  * @file EpicsMLDPConversion.h
- * @brief Conversion utilities for transforming PVXS values to MLDP protobuf format.
+ * @brief Conversion utilities for transforming PVXS values to MLDP protobuf DataFrame format.
  *
  * This header provides the EpicsMLDPConversion class which handles the conversion
- * of EPICS PVXS data types to the MLDP ingestion protobuf DataValue format.
+ * of EPICS PVXS data types to the MLDP ingestion protobuf DataFrame columnar format.
  */
 
 #pragma once
@@ -21,15 +21,17 @@
 #include <ingestion.grpc.pb.h>
 #include <pvxs/client.h>
 #include <pvxs/nt.h>
+#include <string>
 
 namespace mldp_pvxs_driver::reader::impl::epics {
 
 /**
- * @brief Utility class for converting PVXS values to MLDP protobuf DataValue format.
+ * @brief Utility class for converting PVXS values to MLDP protobuf DataFrame format.
  *
  * This class provides static methods to convert EPICS PV Access (PVXS) data structures
- * into the protobuf DataValue format used by the MLDP ingestion service. The conversion
- * handles various EPICS data types including scalars, arrays, and structured types.
+ * into typed DataFrame columns used by the MLDP ingestion service. The conversion
+ * handles various EPICS data types including scalars, arrays, and structured types,
+ * mapping each to the appropriate strongly-typed column (DoubleColumn, Int32Column, etc.).
  *
  * @note This class is designed for use with the PVXS library. For EPICS Base (pvData)
  *       conversions, see EpicsPVDataConversion.
@@ -41,24 +43,36 @@ class EpicsMLDPConversion
 {
 public:
     /**
-     * @brief Convert a PVXS value to an MLDP protobuf DataValue.
+     * @brief Convert a PVXS value into a typed column appended to a DataFrame.
      *
-     * Transforms the given PVXS Value into the corresponding protobuf DataValue
-     * representation. The method handles scalar types (int, double, string, etc.),
-     * array types, and enum types.
+     * Appends one typed column (or a set of sub-columns for compound types) to the
+     * given DataFrame. Scalar PVXS types produce a single-element column; array types
+     * produce a multi-element column; compound (Struct/Union/Any) types are expanded
+     * recursively into sub-columns named @p columnName.fieldName.
      *
-     * @param[in] pvValue The PVXS value to convert. Must be a valid value field
-     *                    (typically extracted from a monitored PV structure).
-     * @param[out] protoValue Pointer to the DataValue protobuf message that will
-     *                        be populated with the converted data. Must not be null.
+     * Type mapping:
+     * - Bool / BoolA        → BoolColumn
+     * - Int8/16/32 / arrays → Int32Column
+     * - Int64 / array       → Int64Column
+     * - UInt8/16/32 / arrays→ Int32Column (reinterpreted as signed)
+     * - UInt64 / array      → Int64Column (reinterpreted as signed)
+     * - Float32 / array     → FloatColumn
+     * - Float64 / array     → DoubleColumn
+     * - String / array      → StringColumn
+     * - Struct/Union/Any    → recursive sub-columns
+     * - Null                → StringColumn with value "null"
      *
-     * @pre @p protoValue must point to a valid DataValue object.
-     * @post @p protoValue contains the converted representation of @p pvValue.
+     * @param[in]  pvValue    The PVXS value to convert.
+     * @param[out] frame      DataFrame to which the typed column(s) will be appended.
+     *                        Must not be null.
+     * @param[in]  columnName Name assigned to the appended column (default: "value").
      *
-     * @note For compound types, only the "value" field is extracted and converted.
-     *       Alarm and timestamp information should be handled separately.
+     * @pre @p frame must point to a valid, initialized DataFrame.
+     * @post On return, @p frame contains at least one additional typed column.
      */
-    static void convertPVToProtoValue(const pvxs::Value& pvValue, DataValue* protoValue);
+    static void convertPVToDataFrame(const pvxs::Value& pvValue,
+                                     dp::service::common::DataFrame* frame,
+                                     const std::string& columnName = "value");
 };
 
 } // namespace mldp_pvxs_driver::reader::impl::epics
