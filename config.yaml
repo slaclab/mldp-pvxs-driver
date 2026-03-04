@@ -94,6 +94,29 @@ reader:
         batch-duration-sec: 1                 # optional; split published batches by historical sample-time span
         pvs:
           - name: "SYSTEM:SENSOR:TEMPERATURE:MAIN"
+  
+  # ========== EPICS Archiver Reader (Historical Data Retrieval) ==========
+  - epics-archiver:
+      - name: archiver_reader_a
+        hostname: "archiver.example.com:11200"
+        mode: "historical_once"              # optional; default mode
+        start-date: "2026-01-01T00:00:00Z"
+        end-date: "2026-01-31T23:59:59Z"     # optional; omit for open-ended reads
+        tls-verify-peer: true                 # optional; default: true (verify cert chain)
+        tls-verify-host: true                 # optional; default: true (verify hostname)
+        connect-timeout-sec: 30               # optional; default: 30 seconds
+        total-timeout-sec: 300                # optional; default: 300 seconds (0 = infinite)
+        pvs:
+          - name: "SYSTEM:SENSOR:TEMPERATURE:MAIN"
+          - name: "SYSTEM:ACTUATOR:PRESSURE:OUTLET"
 
+      - name: archiver_reader_tail_polling
+        hostname: "archiver.example.com:11200"
+        mode: "periodic_tail"
+        poll-interval-sec: 5                  # required; wakeup interval
+        lookback-sec: 5                       # optional; defaults to poll-interval-sec
+        batch-duration-sec: 1                 # optional; split batches by historical sample-time span
+        pvs:
+          - name: "SYSTEM:SENSOR:TEMPERATURE:MAIN"
 metrics:                                 # optional; omit to disable Prometheus endpoint
   endpoint: 0.0.0.0:9464
