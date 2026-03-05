@@ -690,7 +690,7 @@ void MLDPPVXSController::workerLoop(std::size_t worker_index)
                     }
                     else
                     {
-                        warnf(*logger_, "{}: {}", status_str, reason);
+                        tracef(*logger_, "{}: {}", status_str, reason);
                     }
                 }
             }
