@@ -29,6 +29,22 @@
 
 namespace mldp_pvxs_driver::reader::impl::epics_archiver {
 
+inline constexpr char NameKey[] = "name";
+inline constexpr char HostnameKey[] = "hostname";
+inline constexpr char ModeKey[] = "mode";
+inline constexpr char StartDateKey[] = "start-date";
+inline constexpr char StartDateAliasKey[] = "startDate";
+inline constexpr char EndDateKey[] = "end-date";
+inline constexpr char EndDateAliasKey[] = "endDate";
+inline constexpr char ConnectTimeoutSecKey[] = "connect-timeout-sec";
+inline constexpr char TotalTimeoutSecKey[] = "total-timeout-sec";
+inline constexpr char BatchDurationSecKey[] = "batch-duration-sec";
+inline constexpr char PollIntervalSecKey[] = "poll-interval-sec";
+inline constexpr char LookbackSecKey[] = "lookback-sec";
+inline constexpr char TlsVerifyPeerKey[] = "tls-verify-peer";
+inline constexpr char TlsVerifyHostKey[] = "tls-verify-host";
+inline constexpr char PvsKey[] = "pvs";
+
 /**
  * @brief Configuration parser for EPICS Archiver Appliance reader.
  *
@@ -145,7 +161,7 @@ public:
     /**
      * @brief Get the configured fetch mode (one-shot historical or periodic tail polling).
      */
-    FetchMode                         fetchMode() const;
+    FetchMode fetchMode() const;
 
     /**
      * @brief Get the ordered list of PV entries to retrieve.

@@ -38,6 +38,8 @@ uint32_t MetricsConfig::scanIntervalSeconds() const
 
 void MetricsConfig::parse(const config::Config& node)
 {
+    using namespace mldp_pvxs_driver::metrics;
+
     // If the node is not valid it means there was no `metrics` block in
     // the top-level configuration. Treat this as "metrics not configured"
     // and leave this object in its default (invalid) state instead of
@@ -53,33 +55,32 @@ void MetricsConfig::parse(const config::Config& node)
         throw Error("metrics block must be a map");
     }
 
-    if (!node.hasChild("endpoint"))
+    if (!node.hasChild(EndpointKey))
     {
-        throw Error(makeMissingFieldMessage("endpoint"));
+        throw Error(makeMissingFieldMessage(EndpointKey));
     }
 
-    endpoint_ = node.get("endpoint");
+    endpoint_ = node.get(EndpointKey);
     if (endpoint_.empty())
     {
-        throw Error("metrics.endpoint must not be empty");
+        throw Error(std::string("metrics.") + EndpointKey + " must not be empty");
     }
 
     // Parse optional scan-interval-seconds with default of 1.
-    const std::string scanIntervalKey = "scan-interval-seconds";
-    if (node.hasChild(scanIntervalKey))
+    if (node.hasChild(ScanIntervalSecondsKey))
     {
         try
         {
-            scan_interval_seconds_ = std::stoul(node.get(scanIntervalKey));
+            scan_interval_seconds_ = std::stoul(node.get(ScanIntervalSecondsKey));
         }
         catch (const std::exception&)
         {
-            throw Error("metrics." + scanIntervalKey + " must be a positive integer");
+            throw Error(std::string("metrics.") + ScanIntervalSecondsKey + " must be a positive integer");
         }
 
         if (scan_interval_seconds_ < 1)
         {
-            throw Error("metrics." + scanIntervalKey + " must be at least 1");
+            throw Error(std::string("metrics.") + ScanIntervalSecondsKey + " must be at least 1");
         }
     }
 

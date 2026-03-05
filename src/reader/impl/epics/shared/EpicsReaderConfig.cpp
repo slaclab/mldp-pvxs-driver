@@ -44,8 +44,10 @@ void requireScalarChild(const Config& cfg, const std::string& key, const std::st
 
 std::optional<EpicsReaderConfig::PVConfig::NTTableRowTimestampOptions> parseNtTableRowTsOption(
     const std::string& pvName,
-    const Config& optionCfg)
+    const Config&      optionCfg)
 {
+    using namespace mldp_pvxs_driver::reader::impl::epics;
+
     const std::string optionContext = "pvs[].option (pv '" + pvName + "')";
 
     if (!optionCfg.valid())
@@ -54,13 +56,13 @@ std::optional<EpicsReaderConfig::PVConfig::NTTableRowTimestampOptions> parseNtTa
     }
 
     // Only interpret the subtree when it advertises a supported type.
-    if (!optionCfg.hasChild("type"))
+    if (!optionCfg.hasChild(OptionTypeKey))
     {
         return std::nullopt;
     }
 
-    requireScalarChild(optionCfg, "type", optionContext);
-    const auto type = optionCfg.get("type");
+    requireScalarChild(optionCfg, OptionTypeKey, optionContext);
+    const auto type = optionCfg.get(OptionTypeKey);
     if (toLower(type) != "slac-bsas-table")
     {
         return std::nullopt;
@@ -68,22 +70,22 @@ std::optional<EpicsReaderConfig::PVConfig::NTTableRowTimestampOptions> parseNtTa
 
     EpicsReaderConfig::PVConfig::NTTableRowTimestampOptions opts;
 
-    requireScalarChild(optionCfg, "tsSeconds", optionContext);
-    requireScalarChild(optionCfg, "tsNanos", optionContext);
-    opts.tsSecondsField = optionCfg.get("tsSeconds", opts.tsSecondsField);
-    opts.tsNanosField = optionCfg.get("tsNanos", opts.tsNanosField);
+    requireScalarChild(optionCfg, TsSecondsKey, optionContext);
+    requireScalarChild(optionCfg, TsNanosKey, optionContext);
+    opts.tsSecondsField = optionCfg.get(TsSecondsKey, opts.tsSecondsField);
+    opts.tsNanosField = optionCfg.get(TsNanosKey, opts.tsNanosField);
     if (opts.tsSecondsField.empty())
     {
-        throw EpicsReaderConfig::Error(optionContext + ".tsSeconds must not be empty");
+        throw EpicsReaderConfig::Error(optionContext + "." + std::string(TsSecondsKey) + " must not be empty");
     }
     if (opts.tsNanosField.empty())
     {
-        throw EpicsReaderConfig::Error(optionContext + ".tsNanos must not be empty");
+        throw EpicsReaderConfig::Error(optionContext + "." + std::string(TsNanosKey) + " must not be empty");
     }
 
-    if (optionCfg.hasChild("sourceName"))
+    if (optionCfg.hasChild(SourceNameKey))
     {
-        throw EpicsReaderConfig::Error(optionContext + ".sourceName is not supported for type 'slac-bsas-table'; source name always equals the column field name");
+        throw EpicsReaderConfig::Error(optionContext + "." + std::string(SourceNameKey) + " is not supported for type 'slac-bsas-table'; source name always equals the column field name");
     }
 
     return opts;
@@ -144,15 +146,17 @@ const std::vector<std::string>& EpicsReaderConfig::pvNames() const
 
 void EpicsReaderConfig::parse(const Config& readerEntry)
 {
-    if (!readerEntry.hasChild("name"))
+    using namespace mldp_pvxs_driver::reader::impl::epics;
+
+    if (!readerEntry.hasChild(NameKey))
     {
-        throw Error(makeMissingFieldMessage("name"));
+        throw Error(makeMissingFieldMessage(NameKey));
     }
 
-    const auto nameNodes = readerEntry.subConfig("name");
+    const auto nameNodes = readerEntry.subConfig(NameKey);
     if (nameNodes.empty())
     {
-        throw Error(makeMissingFieldMessage("name"));
+        throw Error(makeMissingFieldMessage(NameKey));
     }
 
     const auto& nameNode = nameNodes.front();
@@ -167,27 +171,27 @@ void EpicsReaderConfig::parse(const Config& readerEntry)
         throw Error("name must not be empty");
     }
 
-    thread_pool_size_ = static_cast<unsigned int>(readerEntry.getInt("thread-pool", 1));
-    column_batch_size_ = static_cast<std::size_t>(readerEntry.getInt("column-batch-size", 50));
-    monitor_poll_threads_ = static_cast<unsigned int>(readerEntry.getInt("monitor-poll-threads", 2));
-    monitor_poll_interval_ms_ = static_cast<unsigned int>(readerEntry.getInt("monitor-poll-interval-ms", 5));
+    thread_pool_size_ = static_cast<unsigned int>(readerEntry.getInt(ThreadPoolKey, 1));
+    column_batch_size_ = static_cast<std::size_t>(readerEntry.getInt(ColumnBatchSizeKey, 50));
+    monitor_poll_threads_ = static_cast<unsigned int>(readerEntry.getInt(MonitorPollThreadsKey, 2));
+    monitor_poll_interval_ms_ = static_cast<unsigned int>(readerEntry.getInt(MonitorPollIntervalMsKey, 5));
 
-    if (readerEntry.hasChild("backend"))
+    if (readerEntry.hasChild(BackendKey))
     {
         throw Error("backend is not supported; choose epics-pvxs or epics-base reader type");
     }
 
-    if (!readerEntry.hasChild("pvs"))
+    if (!readerEntry.hasChild(PvsKey))
     {
         return;
     }
 
-    if (!readerEntry.isSequence("pvs"))
+    if (!readerEntry.isSequence(PvsKey))
     {
         throw Error("pvs must be a sequence");
     }
 
-    const auto pvNodes = readerEntry.subConfig("pvs");
+    const auto pvNodes = readerEntry.subConfig(PvsKey);
 
     pvs_.clear();
     pvNames_.clear();
@@ -201,15 +205,15 @@ void EpicsReaderConfig::parse(const Config& readerEntry)
             throw Error("Each entry in pvs must be a map");
         }
 
-        if (!pvNode.hasChild("name"))
+        if (!pvNode.hasChild(PvNameKey))
         {
-            throw Error(makeMissingFieldMessage("pvs[].name"));
+            throw Error(makeMissingFieldMessage(std::string(PvsKey) + "[].name"));
         }
 
-        const auto pvNameNodes = pvNode.subConfig("name");
+        const auto pvNameNodes = pvNode.subConfig(PvNameKey);
         if (pvNameNodes.empty())
         {
-            throw Error(makeMissingFieldMessage("pvs[].name"));
+            throw Error(makeMissingFieldMessage(std::string(PvsKey) + "[].name"));
         }
 
         const auto& pvNameNode = pvNameNodes.front();
@@ -225,15 +229,15 @@ void EpicsReaderConfig::parse(const Config& readerEntry)
             throw Error("pvs[].name must not be empty");
         }
 
-        std::string option;
-        std::optional<Config> optionConfig;
+        std::string                                         option;
+        std::optional<Config>                               optionConfig;
         std::optional<PVConfig::NTTableRowTimestampOptions> nttableRowTs;
-        if (pvNode.hasChild("option"))
+        if (pvNode.hasChild(PvOptionKey))
         {
-            const auto optionNodes = pvNode.subConfig("option");
+            const auto optionNodes = pvNode.subConfig(PvOptionKey);
             if (optionNodes.empty())
             {
-            throw Error(makeMissingFieldMessage("pvs[].option"));
+                throw Error(makeMissingFieldMessage(std::string(PvsKey) + "[].option"));
             }
 
             const auto& optionNode = optionNodes.front();
@@ -251,7 +255,6 @@ void EpicsReaderConfig::parse(const Config& readerEntry)
             {
                 throw Error("pvs[].option must be a scalar or map");
             }
-
         }
 
         pvs_.push_back({std::move(pvName), std::move(option), optionConfig, nttableRowTs});

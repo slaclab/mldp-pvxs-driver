@@ -17,6 +17,9 @@
 
 namespace mldp_pvxs_driver::metrics {
 
+inline constexpr char EndpointKey[] = "endpoint";
+inline constexpr char ScanIntervalSecondsKey[] = "scan-interval-seconds";
+
 /**
  * @brief Strongly typed view over the metrics publication configuration.
  *
@@ -71,7 +74,7 @@ public:
      * @return true when the object was constructed from a valid YAML node, or
      *         false when default-constructed.
      */
-    bool               valid() const;
+    bool valid() const;
 
     /**
      * @brief Host:port pair where the Prometheus exposer should bind.
@@ -91,8 +94,8 @@ public:
 private:
     void parse(const config::Config& node);
 
-    bool        valid_ = false;      ///< Tracks whether parsing succeeded.
-    std::string endpoint_;           ///< Cached endpoint string (host:port).
+    bool        valid_ = false;             ///< Tracks whether parsing succeeded.
+    std::string endpoint_;                  ///< Cached endpoint string (host:port).
     uint32_t    scan_interval_seconds_ = 1; ///< System metrics scan interval in seconds.
 };
 

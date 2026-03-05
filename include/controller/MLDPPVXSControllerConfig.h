@@ -22,6 +22,13 @@
 
 namespace mldp_pvxs_driver::controller {
 
+inline constexpr char ControllerThreadPoolKey[] = "controller-thread-pool";
+inline constexpr char MldpPoolKey[] = "mldp-pool";
+inline constexpr char ReaderKey[] = "reader";
+inline constexpr char ControllerStreamMaxBytesKey[] = "controller-stream-max-bytes";
+inline constexpr char ControllerStreamMaxAgeMsKey[] = "controller-stream-max-age-ms";
+inline constexpr char MetricsKey[] = "metrics";
+
 /**
  * @brief Typed view over the controller configuration tree.
  *

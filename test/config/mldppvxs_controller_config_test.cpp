@@ -22,7 +22,8 @@ controller-stream-max-bytes: 1048576
 controller-stream-max-age-ms: 250
 mldp-pool:
   provider-name: pvxs_provider
-  ingestion-url: https://mldp.example:443
+  ingestion-url: https://mldp-ingestion.example:443
+  query-url: https://mldp-query.example:443
   min-conn: 1
   max-conn: 4
 reader:
@@ -48,8 +49,8 @@ metrics:
     // pool config
     EXPECT_EQ("pvxs_provider", controllerCfg.pool().providerName());
     EXPECT_EQ(1, controllerCfg.pool().minConnections());
-    EXPECT_EQ("https://mldp.example:443", controllerCfg.pool().ingestionUrl());
-    EXPECT_EQ("https://mldp.example:443", controllerCfg.pool().queryUrl());
+    EXPECT_EQ("https://mldp-ingestion.example:443", controllerCfg.pool().ingestionUrl());
+    EXPECT_EQ("https://mldp-query.example:443", controllerCfg.pool().queryUrl());
     EXPECT_EQ(4, controllerCfg.pool().maxConnections());
 
     // epics reader config
@@ -87,7 +88,8 @@ TEST(MLDPPVXSControllerConfigTest, ParsesTlsCredentialsBlock)
     yaml << "controller-thread-pool: 1\n"
          << "mldp-pool:\n"
          << "  provider-name: pvxs_provider\n"
-         << "  ingestion-url: https://mldp.example:443\n"
+         << "  ingestion-url: https://mldp-ingestion.example:443\n"
+         << "  query-url: https://mldp-query.example:443\n"
          << "  min-conn: 1\n"
          << "  max-conn: 1\n"
          << "  credentials:\n"
@@ -96,7 +98,7 @@ TEST(MLDPPVXSControllerConfigTest, ParsesTlsCredentialsBlock)
          << "    pem-root-certs: " << caPath.string() << "\n"
          << "reader: []\n";
 
-    const auto cfg = makeConfigFromYaml(yaml.str());
+    const auto               cfg = makeConfigFromYaml(yaml.str());
     MLDPPVXSControllerConfig controllerCfg(cfg);
 
     const auto& creds = controllerCfg.pool().credentials();
@@ -115,7 +117,8 @@ TEST(MLDPPVXSControllerConfigTest, ParsesMultipleEpicsReaders)
 controller-thread-pool: 3
 mldp-pool:
   provider-name: pvxs_provider
-  ingestion-url: https://mldp.example:443
+  ingestion-url: https://mldp-ingestion.example:443
+  query-url: https://mldp-query.example:443
   min-conn: 2
   max-conn: 2
 reader:

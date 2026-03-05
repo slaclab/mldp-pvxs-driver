@@ -65,89 +65,84 @@ const MLDPGrpcPoolConfig::Credentials& MLDPGrpcPoolConfig::credentials() const
 
 void MLDPGrpcPoolConfig::parse(const config::Config& root)
 {
+    using namespace mldp_pvxs_driver::util::pool;
+
     if (!root.valid())
     {
         throw Error("mldp-pool configuration node is invalid");
     }
-    const std::string providerNameKey = "provider-name";
-    if (!root.hasChild(providerNameKey))
+    if (!root.hasChild(ProviderNameKey))
     {
-        throw Error(makeMissingFieldMessage(providerNameKey));
+        throw Error(makeMissingFieldMessage(ProviderNameKey));
     }
-    provider_name_ = root.get(providerNameKey);
+    provider_name_ = root.get(ProviderNameKey);
     if (provider_name_.empty())
     {
-        throw Error("mldp-pool." + providerNameKey + " must not be empty");
+        throw Error(std::string("mldp-pool.") + ProviderNameKey + " must not be empty");
     }
-    const std::string providerDescriptionKey = "provider-description";
-    if (root.hasChild(providerDescriptionKey))
+    if (root.hasChild(ProviderDescriptionKey))
     {
-        provider_description_ = root.get(providerDescriptionKey);
+        provider_description_ = root.get(ProviderDescriptionKey);
     }
     else
     {
         provider_description_ = provider_name_;
     }
 
-    const std::string ingestionUrlKey = "ingestion-url";
-    if (!root.hasChild(ingestionUrlKey))
+    if (!root.hasChild(IngestionUrlKey))
     {
-        throw Error(makeMissingFieldMessage(ingestionUrlKey));
+        throw Error(makeMissingFieldMessage(IngestionUrlKey));
     }
-    ingestion_url_ = root.get(ingestionUrlKey);
+    ingestion_url_ = root.get(IngestionUrlKey);
     if (ingestion_url_.empty())
     {
-        throw Error("mldp-pool." + ingestionUrlKey + " must not be empty");
+        throw Error(std::string("mldp-pool.") + IngestionUrlKey + " must not be empty");
     }
-    query_url_ = ingestion_url_;
-    const std::string queryUrlKey = "query-url";
-    if (!root.hasChild(queryUrlKey))
+    if (!root.hasChild(QueryUrlKey))
     {
-        throw Error(makeMissingFieldMessage(queryUrlKey));
+        throw Error(makeMissingFieldMessage(QueryUrlKey));
     }
-    query_url_ = root.get(queryUrlKey);
+    query_url_ = root.get(QueryUrlKey);
     if (query_url_.empty())
     {
-        throw Error("mldp-pool." + queryUrlKey + " must not be empty");
+        throw Error(std::string("mldp-pool.") + QueryUrlKey + " must not be empty");
     }
     if (query_url_ == ingestion_url_)
     {
-        throw Error("mldp-pool." + queryUrlKey + " must not be equal to ingestion-url");
+        throw Error(std::string("mldp-pool.") + QueryUrlKey + " must not be equal to ingestion-url");
     }
 
-    const std::string minConnKey = "min-conn";
-    if (!root.hasChild(minConnKey))
+    if (!root.hasChild(MinConnKey))
     {
-        throw Error(makeMissingFieldMessage(minConnKey));
+        throw Error(makeMissingFieldMessage(MinConnKey));
     }
-    min_conn_ = root.getInt(minConnKey);
+    min_conn_ = root.getInt(MinConnKey);
     if (min_conn_ <= 0)
     {
-        throw Error("mldp-pool." + minConnKey + " must be greater than zero");
+        throw Error(std::string("mldp-pool.") + MinConnKey + " must be greater than zero");
     }
 
-    const std::string maxConnKey = "max-conn";
-    if (!root.hasChild(maxConnKey))
+    if (!root.hasChild(MaxConnKey))
     {
-        throw Error(makeMissingFieldMessage(maxConnKey));
+        throw Error(makeMissingFieldMessage(MaxConnKey));
     }
-    max_conn_ = root.getInt(maxConnKey);
+    max_conn_ = root.getInt(MaxConnKey);
     if (max_conn_ <= 0)
     {
-        throw Error("mldp-pool." + maxConnKey + " must be greater than zero");
+        throw Error(std::string("mldp-pool.") + MaxConnKey + " must be greater than zero");
     }
     if (max_conn_ < min_conn_)
     {
-        throw Error("mldp-pool." + maxConnKey + " must be greater than or equal to " + minConnKey);
+        throw Error(std::string("mldp-pool.") + MaxConnKey + " must be greater than or equal to " + MinConnKey);
     }
 
     credentials_ = Credentials{};
-    if (root.hasChild("credentials"))
+    if (root.hasChild(CredentialsKey))
     {
-        const auto credentialNodes = root.subConfig("credentials");
+        const auto credentialNodes = root.subConfig(CredentialsKey);
         if (credentialNodes.empty())
         {
-            throw Error("mldp-pool.credentials is present but empty");
+            throw Error(std::string("mldp-pool.") + CredentialsKey + " is present but empty");
         }
 
         const auto& credentialsNode = credentialNodes.front();
@@ -173,26 +168,22 @@ void MLDPGrpcPoolConfig::parse(const config::Config& root)
         {
             credentials_.type = Credentials::Type::Ssl;
 
-            const char* const certChainKey = "pem-cert-chain";
-            const char* const privateKeyKey = "pem-private-key";
-            const char* const rootCertsKey = "pem-root-certs";
-
-            if (credentialsTree.has_child(certChainKey))
+            if (credentialsTree.has_child(PemCertChainKey))
             {
                 std::string path;
-                credentialsTree[certChainKey] >> path;
+                credentialsTree[PemCertChainKey] >> path;
                 credentials_.ssl_options.pem_cert_chain = readFile(path);
             }
-            if (credentialsTree.has_child(privateKeyKey))
+            if (credentialsTree.has_child(PemPrivateKeyKey))
             {
                 std::string path;
-                credentialsTree[privateKeyKey] >> path;
+                credentialsTree[PemPrivateKeyKey] >> path;
                 credentials_.ssl_options.pem_private_key = readFile(path);
             }
-            if (credentialsTree.has_child(rootCertsKey))
+            if (credentialsTree.has_child(PemRootCertsKey))
             {
                 std::string path;
-                credentialsTree[rootCertsKey] >> path;
+                credentialsTree[PemRootCertsKey] >> path;
                 credentials_.ssl_options.pem_root_certs = readFile(path);
             }
         }

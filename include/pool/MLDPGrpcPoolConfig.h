@@ -18,6 +18,17 @@
 
 namespace mldp_pvxs_driver::util::pool {
 
+inline constexpr char ProviderNameKey[] = "provider-name";
+inline constexpr char ProviderDescriptionKey[] = "provider-description";
+inline constexpr char IngestionUrlKey[] = "ingestion-url";
+inline constexpr char QueryUrlKey[] = "query-url";
+inline constexpr char MinConnKey[] = "min-conn";
+inline constexpr char MaxConnKey[] = "max-conn";
+inline constexpr char CredentialsKey[] = "credentials";
+inline constexpr char PemCertChainKey[] = "pem-cert-chain";
+inline constexpr char PemPrivateKeyKey[] = "pem-private-key";
+inline constexpr char PemRootCertsKey[] = "pem-root-certs";
+
 /**
  * @brief Typed view of the MLDP gRPC pool configuration.
  *
@@ -75,12 +86,12 @@ public:
     {
         enum class Type
         {
-            Insecure,  ///< No TLS encryption
-            Ssl        ///< TLS with optional custom certificates
+            Insecure, ///< No TLS encryption
+            Ssl       ///< TLS with optional custom certificates
         };
 
-        Type                           type{Type::Insecure};
-        grpc::SslCredentialsOptions    ssl_options{};  ///< Populated from file paths if provided
+        Type                        type{Type::Insecure};
+        grpc::SslCredentialsOptions ssl_options{}; ///< Populated from file paths if provided
     };
 
     MLDPGrpcPoolConfig();
@@ -96,7 +107,7 @@ public:
     const Credentials& credentials() const;
 
 private:
-    void parse(const config::Config& root);
+    void               parse(const config::Config& root);
     static std::string readFile(const std::string& path);
 
     bool        valid_ = false; ///< Tracks whether parsing succeeded.

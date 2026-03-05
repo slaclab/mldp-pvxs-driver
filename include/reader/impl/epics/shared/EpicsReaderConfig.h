@@ -29,6 +29,20 @@
 
 namespace mldp_pvxs_driver::reader::impl::epics {
 
+inline constexpr char NameKey[] = "name";
+inline constexpr char ThreadPoolKey[] = "thread-pool";
+inline constexpr char ColumnBatchSizeKey[] = "column-batch-size";
+inline constexpr char MonitorPollThreadsKey[] = "monitor-poll-threads";
+inline constexpr char MonitorPollIntervalMsKey[] = "monitor-poll-interval-ms";
+inline constexpr char BackendKey[] = "backend";
+inline constexpr char PvsKey[] = "pvs";
+inline constexpr char PvNameKey[] = "name";
+inline constexpr char PvOptionKey[] = "option";
+inline constexpr char OptionTypeKey[] = "type";
+inline constexpr char TsSecondsKey[] = "tsSeconds";
+inline constexpr char TsNanosKey[] = "tsNanos";
+inline constexpr char SourceNameKey[] = "sourceName";
+
 /**
  * @brief Strongly typed view over a single EPICS reader configuration entry.
  *
@@ -77,8 +91,8 @@ public:
          */
         struct NTTableRowTimestampOptions
         {
-            std::string       tsSecondsField = "secondsPastEpoch";
-            std::string       tsNanosField = "nanoseconds";
+            std::string tsSecondsField = "secondsPastEpoch";
+            std::string tsNanosField = "nanoseconds";
         };
 
         std::string                               name;         ///< Fully qualified PV name to monitor.
