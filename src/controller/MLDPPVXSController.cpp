@@ -716,6 +716,7 @@ void MLDPPVXSController::workerLoop(std::size_t worker_index)
         handle.reset();
         context.reset();
         stream_payload_bytes = 0;
+        request_counter = 0;
     };
 
     // Lazily opens a stream when work appears. Worker holds one active stream
