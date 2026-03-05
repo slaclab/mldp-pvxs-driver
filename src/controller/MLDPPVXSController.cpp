@@ -653,10 +653,60 @@ void MLDPPVXSController::workerLoop(std::size_t worker_index)
             return;
         }
         writer->WritesDone();
-        const auto status = writer->Finish();
-        if (!status.ok())
+        auto    status = writer->Finish();
+        int64_t requested_requests = static_cast<int64_t>(request_counter);
+        if (status.ok())
         {
-            errorf(*logger_, "Ingestion stream failed ({}) : {}", reason, status.error_message());
+            if (response.has_ingestdatastreamresult())
+            {
+                const auto& result = response.ingestdatastreamresult();
+                if (result.numrequests() < 0)
+                {
+                    errorf(*logger_, "Ingestion stream finished with invalid numrequests ({}): {}", reason, result.numrequests());
+                }
+                else
+                {
+                    const char* status_str = nullptr;
+                    if (result.numrequests() < requested_requests)
+                    {
+                        status_str = "[INCOMPLETE - lost or skipped requests]";
+                        errorf(*logger_, "Ingestion stream finished with incomplete requests ({}): server accepted {} of {} sent",
+                               reason, result.numrequests(), requested_requests);
+                    }
+                    else if (result.numrequests() > requested_requests)
+                    {
+                        status_str = "[SERVER ERROR - extra requests acknowledged]";
+                        errorf(*logger_, "Ingestion stream finished with mismatch ({}): server reports {} but we sent {}",
+                               reason, result.numrequests(), requested_requests);
+                    }
+                    else
+                    {
+                        status_str = "OK";
+                        tracef(*logger_, "Ingestion stream finished successfully ({}): {} requests", reason, result.numrequests());
+                    }
+                    if (!status_str)
+                    {
+                        tracef(*logger_, "Ingestion stream finished successfully ({}): {} requests", reason, result.numrequests());
+                    }
+                    else
+                    {
+                        warnf(*logger_, "{}: {}", status_str, reason);
+                    }
+                }
+            }
+            if (response.has_exceptionalresult())
+            {
+                const auto& result = response.exceptionalresult();
+                errorf(*logger_, "Ingestion stream finished with exceptional result ({}): {}", reason, result.message());
+                metric_call(metrics_, [&](auto& m)
+                            {
+                                m.incrementBusFailures(1.0, {{"source", "unknown"}});
+                            });
+            }
+        }
+        else
+        {
+            errorf(*logger_, "Ingestion stream finished with error ({}): {}", reason, status.error_message());
             metric_call(metrics_, [&](auto& m)
                         {
                             m.incrementBusFailures(1.0, {{"source", "unknown"}});
