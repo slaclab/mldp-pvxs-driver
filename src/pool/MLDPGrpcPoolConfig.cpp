@@ -67,7 +67,7 @@ void MLDPGrpcPoolConfig::parse(const config::Config& root)
 {
     if (!root.valid())
     {
-        throw Error("mldp_pool configuration node is invalid");
+        throw Error("mldp-pool configuration node is invalid");
     }
     const std::string providerNameKey = "provider-name";
     if (!root.hasChild(providerNameKey))
@@ -77,7 +77,7 @@ void MLDPGrpcPoolConfig::parse(const config::Config& root)
     provider_name_ = root.get(providerNameKey);
     if (provider_name_.empty())
     {
-        throw Error("mldp_pool." + providerNameKey + " must not be empty");
+        throw Error("mldp-pool." + providerNameKey + " must not be empty");
     }
     const std::string providerDescriptionKey = "provider-description";
     if (root.hasChild(providerDescriptionKey))
@@ -97,17 +97,22 @@ void MLDPGrpcPoolConfig::parse(const config::Config& root)
     ingestion_url_ = root.get(ingestionUrlKey);
     if (ingestion_url_.empty())
     {
-        throw Error("mldp_pool." + ingestionUrlKey + " must not be empty");
+        throw Error("mldp-pool." + ingestionUrlKey + " must not be empty");
     }
     query_url_ = ingestion_url_;
     const std::string queryUrlKey = "query-url";
-    if (root.hasChild(queryUrlKey))
+    if (!root.hasChild(queryUrlKey))
     {
-        query_url_ = root.get(queryUrlKey);
-        if (query_url_.empty())
-        {
-            throw Error("mldp_pool." + queryUrlKey + " must not be empty when provided");
-        }
+        throw Error(makeMissingFieldMessage(queryUrlKey));
+    }
+    query_url_ = root.get(queryUrlKey);
+    if (query_url_.empty())
+    {
+        throw Error("mldp-pool." + queryUrlKey + " must not be empty");
+    }
+    if (query_url_ == ingestion_url_)
+    {
+        throw Error("mldp-pool." + queryUrlKey + " must not be equal to ingestion-url");
     }
 
     const std::string minConnKey = "min-conn";
@@ -118,7 +123,7 @@ void MLDPGrpcPoolConfig::parse(const config::Config& root)
     min_conn_ = root.getInt(minConnKey);
     if (min_conn_ <= 0)
     {
-        throw Error("mldp_pool." + minConnKey + " must be greater than zero");
+        throw Error("mldp-pool." + minConnKey + " must be greater than zero");
     }
 
     const std::string maxConnKey = "max-conn";
@@ -129,11 +134,11 @@ void MLDPGrpcPoolConfig::parse(const config::Config& root)
     max_conn_ = root.getInt(maxConnKey);
     if (max_conn_ <= 0)
     {
-        throw Error("mldp_pool." + maxConnKey + " must be greater than zero");
+        throw Error("mldp-pool." + maxConnKey + " must be greater than zero");
     }
     if (max_conn_ < min_conn_)
     {
-        throw Error("mldp_pool." + maxConnKey + " must be greater than or equal to " + minConnKey);
+        throw Error("mldp-pool." + maxConnKey + " must be greater than or equal to " + minConnKey);
     }
 
     credentials_ = Credentials{};
@@ -142,7 +147,7 @@ void MLDPGrpcPoolConfig::parse(const config::Config& root)
         const auto credentialNodes = root.subConfig("credentials");
         if (credentialNodes.empty())
         {
-            throw Error("mldp_pool.credentials is present but empty");
+            throw Error("mldp-pool.credentials is present but empty");
         }
 
         const auto& credentialsNode = credentialNodes.front();
@@ -161,7 +166,7 @@ void MLDPGrpcPoolConfig::parse(const config::Config& root)
             }
             else
             {
-                throw Error("mldp_pool.credentials must be 'none', 'ssl', or a map of TLS options");
+                throw Error("mldp-pool.credentials must be 'none', 'ssl', or a map of TLS options");
             }
         }
         else

@@ -19,6 +19,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 // Forward declaration to resolve circular dependency
 namespace mldp_pvxs_driver::config {
@@ -55,10 +56,16 @@ public:
      * @throws std::out_of_range if the requested type has not been registered.
      */
     static std::unique_ptr<Reader> create(
-        const std::string&                                            type,
-        std::shared_ptr<util::bus::IDataBus>                     bus,
-        const ::mldp_pvxs_driver::config::Config&                     cfg,
-        std::shared_ptr<mldp_pvxs_driver::metrics::Metrics>           metrics = nullptr);
+        const std::string&                                  type,
+        std::shared_ptr<util::bus::IDataBus>                bus,
+        const ::mldp_pvxs_driver::config::Config&           cfg,
+        std::shared_ptr<mldp_pvxs_driver::metrics::Metrics> metrics = nullptr);
+
+    /**
+     * @brief Get list of all registered reader types.
+     * @return Vector of type identifiers.
+     */
+    static std::vector<std::string> registeredTypes();
 
 private:
     /**
@@ -77,9 +84,9 @@ public:
     {
         ReaderFactory::registerType(
             typeName,
-            [](std::shared_ptr<util::bus::IDataBus> bus,
-               std::shared_ptr<mldp_pvxs_driver::metrics::Metrics>        metrics,
-               const mldp_pvxs_driver::config::Config&                    cfg)
+            [](std::shared_ptr<util::bus::IDataBus>                bus,
+               std::shared_ptr<mldp_pvxs_driver::metrics::Metrics> metrics,
+               const mldp_pvxs_driver::config::Config&             cfg)
             {
                 return std::make_unique<ReaderT>(std::move(bus), std::move(metrics), cfg);
             });

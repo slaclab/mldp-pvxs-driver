@@ -14,8 +14,8 @@
 #include <metrics/MetricsConfig.h>
 #include <pool/MLDPGrpcPoolConfig.h>
 
-#include <optional>
 #include <chrono>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -109,14 +109,14 @@ private:
     void parseMetrics(const ::mldp_pvxs_driver::config::Config& root);
     void parseStreamLimits(const ::mldp_pvxs_driver::config::Config& root);
 
-    bool                                valid_ = false;
-    util::pool::MLDPGrpcPoolConfig      pool_;
-    int                                 controllerThreadPoolSize_ = 0;
-    std::size_t                         controllerStreamMaxBytes_ = 2 * 1024 * 1024;
-    std::chrono::milliseconds           controllerStreamMaxAge_{200};
-    std::vector<config::Config>         readerConfigs_;
+    bool                                                valid_ = false;
+    util::pool::MLDPGrpcPoolConfig                      pool_;
+    int                                                 controllerThreadPoolSize_ = 1;
+    std::size_t                                         controllerStreamMaxBytes_ = 2 * 1024 * 1024;
+    std::chrono::milliseconds                           controllerStreamMaxAge_{200};
+    std::vector<config::Config>                         readerConfigs_;
     std::vector<std::pair<std::string, config::Config>> readerEntries_;
-    std::optional<metrics::MetricsConfig> metricsConfig_;
+    std::optional<metrics::MetricsConfig>               metricsConfig_;
 };
 
 } // namespace mldp_pvxs_driver::controller

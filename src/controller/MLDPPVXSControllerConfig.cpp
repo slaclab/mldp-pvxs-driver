@@ -10,7 +10,7 @@
 
 #include "config/Config.h"
 #include <controller/MLDPPVXSControllerConfig.h>
-
+#include <reader/ReaderFactory.h>
 
 using namespace mldp_pvxs_driver::config;
 using namespace mldp_pvxs_driver::metrics;
@@ -55,7 +55,6 @@ std::size_t MLDPPVXSControllerConfig::controllerStreamMaxBytes() const
     return controllerStreamMaxBytes_;
 }
 
-
 std::chrono::milliseconds MLDPPVXSControllerConfig::controllerStreamMaxAge() const
 {
     return controllerStreamMaxAge_;
@@ -93,13 +92,15 @@ void MLDPPVXSControllerConfig::parseThreadPool(const ::mldp_pvxs_driver::config:
     const std::string threadPoolKey = "controller-thread-pool";
     if (!root.hasChild(threadPoolKey))
     {
-        throw Error(makeMissingFieldMessage(threadPoolKey));
+        controllerThreadPoolSize_ = 1;
+        return;
     }
 
     const auto threadPoolNodes = root.subConfig(threadPoolKey);
     if (threadPoolNodes.empty())
     {
-        throw Error(makeMissingFieldMessage(threadPoolKey));
+        controllerThreadPoolSize_ = 1;
+        return;
     }
 
     const auto& threadPoolNode = threadPoolNodes.front();
@@ -154,6 +155,8 @@ void MLDPPVXSControllerConfig::parseReaders(const ::mldp_pvxs_driver::config::Co
         throw Error("reader must be a sequence");
     }
 
+    const auto registeredTypes = mldp_pvxs_driver::reader::ReaderFactory::registeredTypes();
+
     const auto readerBlocks = root.subConfig("reader");
     for (const auto& readerBlock : readerBlocks)
     {
@@ -164,22 +167,16 @@ void MLDPPVXSControllerConfig::parseReaders(const ::mldp_pvxs_driver::config::Co
 
         bool handledType = false;
 
-        const std::pair<std::string, std::string> supportedTypes[] = {
-            {"epics-pvxs", "epics-pvxs"},
-            {"epics-base", "epics-base"},
-            {"epics-archiver", "epics-archiver"},
-        };
-
-        for (const auto& [key, typeName] : supportedTypes)
+        for (const auto& typeName : registeredTypes)
         {
-            if (readerBlock.hasChild(key))
+            if (readerBlock.hasChild(typeName))
             {
                 handledType = true;
-                if (!readerBlock.isSequence(key))
+                if (!readerBlock.isSequence(typeName))
                 {
-                    throw Error("reader[]." + key + " must be a sequence");
+                    throw Error("reader[]." + typeName + " must be a sequence");
                 }
-                const auto nodes = readerBlock.subConfig(key);
+                const auto nodes = readerBlock.subConfig(typeName);
                 for (const auto& node : nodes)
                 {
                     readerConfigs_.push_back(node);
@@ -190,7 +187,14 @@ void MLDPPVXSControllerConfig::parseReaders(const ::mldp_pvxs_driver::config::Co
 
         if (!handledType)
         {
-            throw Error("reader entry does not specify a supported type (expected 'epics-pvxs', 'epics-base', or 'epics-archiver')");
+            std::string available;
+            for (size_t i = 0; i < registeredTypes.size(); ++i)
+            {
+                if (i > 0)
+                    available += ", ";
+                available += "'" + registeredTypes[i] + "'";
+            }
+            throw Error("reader entry does not specify a registered type (expected " + available + ")");
         }
     }
 }
@@ -248,5 +252,4 @@ void MLDPPVXSControllerConfig::parseStreamLimits(const ::mldp_pvxs_driver::confi
         }
         controllerStreamMaxAge_ = std::chrono::milliseconds(value);
     }
-
 }
