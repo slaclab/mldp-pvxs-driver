@@ -49,167 +49,114 @@ void EpicsMLDPConversion::convertPVToDataFrame(const pvxs::Value& pvValue,
         }
     };
 
+    // Templated helpers to keep switch cases as compact type-dispatch only.
+    const auto scalarIdentity = [](auto value) { return value; };
+
+    const auto writeScalarColumn = [&]<typename PvType>(auto&& addColumn,
+                                                        auto&& mapValue)
+    {
+        auto* c = addColumn();
+        c->set_name(columnName);
+        c->add_values(mapValue(pvValue.as<PvType>()));
+    };
+
+    const auto writeArrayColumn = [&]<typename PvType>(auto&& addColumn,
+                                                       auto&& appendValue)
+    {
+        const auto arr = pvValue.as<pvxs::shared_array<const PvType>>();
+        auto*      c   = addColumn();
+        c->set_name(columnName);
+        c->mutable_dimensions()->add_dims(static_cast<uint32_t>(arr.size()));
+        c->mutable_values()->Reserve(static_cast<int>(arr.size()));
+        for (const auto& v : arr)
+        {
+            appendValue(c, v);
+        }
+    };
+
     switch (pvValue.type().code)
     {
     // --- Scalar primitives --------------------------------------------------
     case pvxs::TypeCode::Bool:
-    {
-        auto* c = frame->add_boolcolumns();
-        c->set_name(columnName);
-        c->add_values(pvValue.as<bool>());
+        writeScalarColumn.template operator()<bool>([&]() { return frame->add_boolcolumns(); },
+                                                    scalarIdentity);
         return;
-    }
     case pvxs::TypeCode::Int8:
     case pvxs::TypeCode::Int16:
     case pvxs::TypeCode::Int32:
-    {
-        auto* c = frame->add_int32columns();
-        c->set_name(columnName);
-        c->add_values(pvValue.as<int32_t>());
+        writeScalarColumn.template operator()<int32_t>(
+            [&]() { return frame->add_int32columns(); }, scalarIdentity);
         return;
-    }
     case pvxs::TypeCode::Int64:
-    {
-        auto* c = frame->add_int64columns();
-        c->set_name(columnName);
-        c->add_values(pvValue.as<int64_t>());
+        writeScalarColumn.template operator()<int64_t>(
+            [&]() { return frame->add_int64columns(); }, scalarIdentity);
         return;
-    }
     case pvxs::TypeCode::UInt8:
     case pvxs::TypeCode::UInt16:
     case pvxs::TypeCode::UInt32:
-    {
-        auto* c = frame->add_int32columns();
-        c->set_name(columnName);
-        c->add_values(static_cast<int32_t>(pvValue.as<uint32_t>()));
+        writeScalarColumn.template operator()<uint32_t>(
+            [&]() { return frame->add_int32columns(); },
+            [](uint32_t value) { return static_cast<int32_t>(value); });
         return;
-    }
     case pvxs::TypeCode::UInt64:
-    {
-        auto* c = frame->add_int64columns();
-        c->set_name(columnName);
-        c->add_values(static_cast<int64_t>(pvValue.as<uint64_t>()));
+        writeScalarColumn.template operator()<uint64_t>(
+            [&]() { return frame->add_int64columns(); },
+            [](uint64_t value) { return static_cast<int64_t>(value); });
         return;
-    }
     case pvxs::TypeCode::Float32:
-    {
-        auto* c = frame->add_floatcolumns();
-        c->set_name(columnName);
-        c->add_values(pvValue.as<float>());
+        writeScalarColumn.template operator()<float>([&]() { return frame->add_floatcolumns(); },
+                                                     scalarIdentity);
         return;
-    }
     case pvxs::TypeCode::Float64:
-    {
-        auto* c = frame->add_doublecolumns();
-        c->set_name(columnName);
-        c->add_values(pvValue.as<double>());
+        writeScalarColumn.template operator()<double>(
+            [&]() { return frame->add_doublecolumns(); }, scalarIdentity);
         return;
-    }
     case pvxs::TypeCode::String:
-    {
-        auto* c = frame->add_stringcolumns();
-        c->set_name(columnName);
-        c->add_values(pvValue.as<std::string>());
+        writeScalarColumn.template operator()<std::string>(
+            [&]() { return frame->add_stringcolumns(); }, scalarIdentity);
         return;
-    }
 
     // --- Scalar array payloads ---------------------------------------------
     // Arrays are kept as array columns rather than exploded into scalar rows.
     case pvxs::TypeCode::BoolA:
-    {
-        const auto arr = pvValue.as<pvxs::shared_array<const bool>>();
-        auto*      c   = frame->add_boolarraycolumns();
-        c->set_name(columnName);
-        c->mutable_dimensions()->add_dims(static_cast<uint32_t>(arr.size()));
-        c->mutable_values()->Reserve(static_cast<int>(arr.size()));
-        for (const auto v : arr)
-        {
-            c->add_values(v);
-        }
+        writeArrayColumn.template operator()<bool>(
+            [&]() { return frame->add_boolarraycolumns(); },
+            [](auto* c, bool value) { c->add_values(value); });
         return;
-    }
     case pvxs::TypeCode::Int8A:
     case pvxs::TypeCode::Int16A:
     case pvxs::TypeCode::Int32A:
-    {
-        const auto arr = pvValue.as<pvxs::shared_array<const int32_t>>();
-        auto*      c   = frame->add_int32arraycolumns();
-        c->set_name(columnName);
-        c->mutable_dimensions()->add_dims(static_cast<uint32_t>(arr.size()));
-        c->mutable_values()->Reserve(static_cast<int>(arr.size()));
-        for (const auto v : arr)
-        {
-            c->add_values(v);
-        }
+        writeArrayColumn.template operator()<int32_t>(
+            [&]() { return frame->add_int32arraycolumns(); },
+            [](auto* c, int32_t value) { c->add_values(value); });
         return;
-    }
     case pvxs::TypeCode::Int64A:
-    {
-        const auto arr = pvValue.as<pvxs::shared_array<const int64_t>>();
-        auto*      c   = frame->add_int64arraycolumns();
-        c->set_name(columnName);
-        c->mutable_dimensions()->add_dims(static_cast<uint32_t>(arr.size()));
-        c->mutable_values()->Reserve(static_cast<int>(arr.size()));
-        for (const auto v : arr)
-        {
-            c->add_values(v);
-        }
+        writeArrayColumn.template operator()<int64_t>(
+            [&]() { return frame->add_int64arraycolumns(); },
+            [](auto* c, int64_t value) { c->add_values(value); });
         return;
-    }
     case pvxs::TypeCode::UInt8A:
     case pvxs::TypeCode::UInt16A:
     case pvxs::TypeCode::UInt32A:
-    {
-        const auto arr = pvValue.as<pvxs::shared_array<const uint32_t>>();
-        auto*      c   = frame->add_int32arraycolumns();
-        c->set_name(columnName);
-        c->mutable_dimensions()->add_dims(static_cast<uint32_t>(arr.size()));
-        c->mutable_values()->Reserve(static_cast<int>(arr.size()));
-        for (const auto v : arr)
-        {
-            c->add_values(static_cast<int32_t>(v));
-        }
+        writeArrayColumn.template operator()<uint32_t>(
+            [&]() { return frame->add_int32arraycolumns(); },
+            [](auto* c, uint32_t value) { c->add_values(static_cast<int32_t>(value)); });
         return;
-    }
     case pvxs::TypeCode::UInt64A:
-    {
-        const auto arr = pvValue.as<pvxs::shared_array<const uint64_t>>();
-        auto*      c   = frame->add_int64arraycolumns();
-        c->set_name(columnName);
-        c->mutable_dimensions()->add_dims(static_cast<uint32_t>(arr.size()));
-        c->mutable_values()->Reserve(static_cast<int>(arr.size()));
-        for (const auto v : arr)
-        {
-            c->add_values(static_cast<int64_t>(v));
-        }
+        writeArrayColumn.template operator()<uint64_t>(
+            [&]() { return frame->add_int64arraycolumns(); },
+            [](auto* c, uint64_t value) { c->add_values(static_cast<int64_t>(value)); });
         return;
-    }
     case pvxs::TypeCode::Float32A:
-    {
-        const auto arr = pvValue.as<pvxs::shared_array<const float>>();
-        auto*      c   = frame->add_floatarraycolumns();
-        c->set_name(columnName);
-        c->mutable_dimensions()->add_dims(static_cast<uint32_t>(arr.size()));
-        c->mutable_values()->Reserve(static_cast<int>(arr.size()));
-        for (const auto v : arr)
-        {
-            c->add_values(v);
-        }
+        writeArrayColumn.template operator()<float>(
+            [&]() { return frame->add_floatarraycolumns(); },
+            [](auto* c, float value) { c->add_values(value); });
         return;
-    }
     case pvxs::TypeCode::Float64A:
-    {
-        const auto arr = pvValue.as<pvxs::shared_array<const double>>();
-        auto*      c   = frame->add_doublearraycolumns();
-        c->set_name(columnName);
-        c->mutable_dimensions()->add_dims(static_cast<uint32_t>(arr.size()));
-        c->mutable_values()->Reserve(static_cast<int>(arr.size()));
-        for (const auto v : arr)
-        {
-            c->add_values(v);
-        }
+        writeArrayColumn.template operator()<double>(
+            [&]() { return frame->add_doublearraycolumns(); },
+            [](auto* c, double value) { c->add_values(value); });
         return;
-    }
     case pvxs::TypeCode::StringA:
     {
         const auto arr = pvValue.as<pvxs::shared_array<const std::string>>();
