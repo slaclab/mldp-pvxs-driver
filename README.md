@@ -152,7 +152,7 @@ mldp_pvxs_driver [--help] [--version] [--config PATH] [--log-level LEVEL] [--met
   - Print a compact, user-friendly summary of the effective startup configuration.
   - Default: disabled
 - `--dry-run`
-  - Load and validate config, print effective configuration, then exit without starting driver/readers.
+  - Load and validate config, then exit without starting driver/readers.
   - Default: disabled
 
 ### Examples
@@ -167,8 +167,11 @@ mldp_pvxs_driver [--help] [--version] [--config PATH] [--log-level LEVEL] [--met
 # Print effective config at startup (compact format)
 ./mldp_pvxs_driver --config ./config.yaml --print-config-startup
 
-# Validate config + print effective summary, then exit
+# Validate config and exit without starting runtime components
 ./mldp_pvxs_driver --config ./config.yaml --dry-run
+
+# Validate + print effective config summary, then exit
+./mldp_pvxs_driver --config ./config.yaml --print-config --dry-run
 
 # Show help/version
 ./mldp_pvxs_driver --help

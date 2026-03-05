@@ -118,7 +118,7 @@ void configure_parameter(ArgumentParser& program)
         .implicit_value(true);
 
     program.add_argument("--dry-run")
-        .help("Validate and print effective configuration, then exit without starting the driver")
+        .help("Validate configuration and exit without starting the driver")
         .default_value(false)
         .implicit_value(true);
 
@@ -344,24 +344,35 @@ int main(int argc, char** argv)
         // Load configuration
         auto config_path = program.get<std::string>("--config");
         spdlog::info("Loading configuration from {}", config_path);
-        const bool printConfig = program.get<bool>("--print-config-startup") || program.get<bool>("--dry-run");
+        const bool dryRun = program.get<bool>("--dry-run");
+        const bool printConfig = program.get<bool>("--print-config-startup");
         auto config = Config::configFromFile(config_path);
         if (printConfig)
         {
-            try
+            if (dryRun)
             {
-                std::cout << mldp_pvxs_driver::cli::formatStartupConfig(config, config_path);
-                std::cout.flush();
-            }
-            catch (...)
-            {
+                // Dry-run must avoid side effects like reading credential files from disk.
+                // Print a YAML-derived flattened table and exit.
                 std::cout << mldp_pvxs_driver::cli::formatConfigKeyValueTable(config, config_path);
                 std::cout.flush();
-                throw;
+            }
+            else
+            {
+                try
+                {
+                    std::cout << mldp_pvxs_driver::cli::formatStartupConfig(config, config_path);
+                    std::cout.flush();
+                }
+                catch (...)
+                {
+                    std::cout << mldp_pvxs_driver::cli::formatConfigKeyValueTable(config, config_path);
+                    std::cout.flush();
+                    throw;
+                }
             }
         }
 
-        if (program.get<bool>("--dry-run"))
+        if (dryRun)
         {
             spdlog::info("Dry-run requested. Configuration validated; exiting without starting driver.");
             setLogger(nullptr);
