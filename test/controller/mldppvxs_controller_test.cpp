@@ -33,6 +33,7 @@ mldp-pool:
   provider-name: test_provider
   provider-description: "Test Provider"
   ingestion-url: dp-ingestion:50051
+  query-url: dp-query:50052
   min-conn: 1
   max-conn: 1
 reader: []
@@ -44,6 +45,7 @@ mldp-pool:
   provider-name: test_provider
   provider-description: "Test Provider"
   ingestion-url: dp-ingestion:50051
+  query-url: dp-query:50052
   min-conn: 1
   max-conn: 1
 reader:
@@ -59,6 +61,7 @@ mldp-pool:
   provider-name: test_provider
   provider-description: "Test Provider"
   ingestion-url: dp-ingestion:50051
+  query-url: dp-query:50052
   min-conn: 1
   max-conn: 1
 reader:
@@ -282,6 +285,7 @@ TEST(MLDPPVXSControllerTest, IdleStreamRotationStartsNewStreamAfterMaxAge)
          << "  provider-name: test_provider\n"
          << "  provider-description: \"Test Provider\"\n"
          << "  ingestion-url: 127.0.0.1:" << port << "\n"
+         << "  query-url: localhost:" << port << "\n"
          << "  min-conn: 1\n"
          << "  max-conn: 1\n"
          << "reader: []\n";

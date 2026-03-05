@@ -44,6 +44,7 @@ inline constexpr char LookbackSecKey[] = "lookback-sec";
 inline constexpr char TlsVerifyPeerKey[] = "tls-verify-peer";
 inline constexpr char TlsVerifyHostKey[] = "tls-verify-host";
 inline constexpr char PvsKey[] = "pvs";
+inline constexpr char PvNameKey[] = "name";
 
 /**
  * @brief Configuration parser for EPICS Archiver Appliance reader.

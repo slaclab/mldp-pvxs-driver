@@ -314,15 +314,15 @@ void EpicsArchiverReaderConfig::parse(const Config& readerEntry)
             throw Error("Each entry in pvs must be a map");
         }
 
-        if (!pvNode.hasChild("name"))
+        if (!pvNode.hasChild(PvNameKey))
         {
-            throw Error(makeMissingFieldMessage("pvs[].name"));
+            throw Error(makeMissingFieldMessage(std::string(PvsKey) + "[]." + PvNameKey));
         }
 
-        const auto pvNameNodes = pvNode.subConfig("name");
+        const auto pvNameNodes = pvNode.subConfig(PvNameKey);
         if (pvNameNodes.empty())
         {
-            throw Error(makeMissingFieldMessage("pvs[].name"));
+            throw Error(makeMissingFieldMessage(std::string(PvsKey) + "[]." + PvNameKey));
         }
 
         const auto& pvNameNode = pvNameNodes.front();
