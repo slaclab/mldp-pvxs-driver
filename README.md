@@ -27,7 +27,7 @@ mldp-pool:
   provider-name: pvxs_provider
   provider-description: "PVXS aggregate provider"   # optional
   ingestion-url: dp-ingestion:50051
-  query-url: dp-query:50052                         # optional; defaults to `ingestion-url` when omitted
+  query-url: dp-query:50052
   min-conn: 1
   max-conn: 4
   credentials: # optional
@@ -106,7 +106,7 @@ For detailed reader documentation, see [Reader Types](docs/readers.md).
 `mldp-pool` values mirror the driver's `provider-name` and target URLs but add connection-pool sizing.
 
 - `ingestion-url`: ingestion service address (DpIngestionService)
-- `query-url`: query service address (DpQueryService); if omitted, the driver uses `ingestion-url` for query RPCs too
+- `query-url`: query service address (DpQueryService)
 
 Readers are defined
 as sequences under `reader[]`, each with a `name` and an optional `pvs` list; if `pvs` is omitted, the reader will
@@ -125,7 +125,7 @@ The driver is configured via a YAML file (see above) and is started from the com
 ### Usage
 
 ```bash
-mldp_pvxs_driver [--help] [--version] [--config PATH] [--log-level LEVEL] [--metrics-output FILE] [--metrics-interval SECONDS]
+mldp_pvxs_driver [--help] [--version] [--config PATH] [--log-level LEVEL] [--metrics-output FILE] [--metrics-interval SECONDS] [--print-config-startup] [--dry-run]
 ```
 
 ### Options
@@ -148,6 +148,12 @@ mldp_pvxs_driver [--help] [--version] [--config PATH] [--log-level LEVEL] [--met
 - `--metrics-interval SECONDS`
   - Interval in seconds for periodic metrics dumps.
   - Default: `5`
+- `--print-config-startup` (alias: `--print-config`)
+  - Print a compact, user-friendly summary of the effective startup configuration.
+  - Default: disabled
+- `--dry-run`
+  - Load and validate config, print effective configuration, then exit without starting driver/readers.
+  - Default: disabled
 
 ### Examples
 
@@ -157,6 +163,12 @@ mldp_pvxs_driver [--help] [--version] [--config PATH] [--log-level LEVEL] [--met
 
 # Enable debug logging
 ./mldp_pvxs_driver --config ./config.yaml --log-level debug
+
+# Print effective config at startup (compact format)
+./mldp_pvxs_driver --config ./config.yaml --print-config-startup
+
+# Validate config + print effective summary, then exit
+./mldp_pvxs_driver --config ./config.yaml --dry-run
 
 # Show help/version
 ./mldp_pvxs_driver --help

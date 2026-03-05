@@ -296,7 +296,7 @@ The driver uses a logging abstraction layer (`util::log`) so library code is not
 - Detailed guide: [Logging Abstraction Guide](logging.md)
 - Logging interface and helpers: `include/util/log/ILog.h`, `include/util/log/Logger.h`
 - Default/simple logger implementation: `include/util/log/CoutLogger.h`, `src/util/log/CoutLogger.cpp`
-- spdlog adapter used by the executable: `include/SpdlogLogger.h`, `src/SpdlogLogger.cpp`
+- spdlog adapter used by the executable: `include/SpdlogLogger.h`, `src/cli/SpdlogLogger.cpp`
 
 ### HTTP Transport Provider (`util/http`)
 

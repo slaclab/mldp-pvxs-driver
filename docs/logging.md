@@ -29,11 +29,11 @@ Built-in fallback implementation:
 CLI adapter example (spdlog-backed):
 
 - `include/SpdlogLogger.h`
-- `src/SpdlogLogger.cpp`
+- `src/cli/SpdlogLogger.cpp`
 
 Executable integration example:
 
-- `src/mldp_pvxs_driver_main.cpp`
+- `src/cli/mldp_pvxs_driver_main.cpp`
 
 ## High-Level Relationships
 

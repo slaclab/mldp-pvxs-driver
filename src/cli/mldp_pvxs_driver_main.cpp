@@ -39,6 +39,7 @@
 #include <controller/MLDPPVXSController.h>
 #include <metrics/MetricsSnapshot.h>
 #include <mldp_pvxs_driver_version.h>
+#include <cli/ConfigPrinter.h>
 
 #include "PeriodicMetricsDumper.h"
 #include "SpdlogLogger.h"
@@ -110,6 +111,16 @@ void configure_parameter(ArgumentParser& program)
         .default_value(5)
         .scan<'d', int>()
         .metavar("SECONDS");
+
+    program.add_argument("--print-config-startup", "--print-config")
+        .help("Print a compact summary of effective configuration at startup")
+        .default_value(false)
+        .implicit_value(true);
+
+    program.add_argument("--dry-run")
+        .help("Validate and print effective configuration, then exit without starting the driver")
+        .default_value(false)
+        .implicit_value(true);
 
     // add metrics help to epilog
     program.add_epilog(
@@ -333,7 +344,31 @@ int main(int argc, char** argv)
         // Load configuration
         auto config_path = program.get<std::string>("--config");
         spdlog::info("Loading configuration from {}", config_path);
+        const bool printConfig = program.get<bool>("--print-config-startup") || program.get<bool>("--dry-run");
         auto config = Config::configFromFile(config_path);
+        if (printConfig)
+        {
+            try
+            {
+                std::cout << mldp_pvxs_driver::cli::formatStartupConfig(config, config_path);
+                std::cout.flush();
+            }
+            catch (...)
+            {
+                std::cout << mldp_pvxs_driver::cli::formatConfigKeyValueTable(config, config_path);
+                std::cout.flush();
+                throw;
+            }
+        }
+
+        if (program.get<bool>("--dry-run"))
+        {
+            spdlog::info("Dry-run requested. Configuration validated; exiting without starting driver.");
+            setLogger(nullptr);
+            setLoggerFactory({});
+            spdlog::shutdown();
+            return EXIT_SUCCESS;
+        }
 
         // Start the driver
         spdlog::info("Starting driver...");

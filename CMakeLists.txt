@@ -460,7 +460,6 @@ add_library(lib${PROJECT_NAME}
     "${CMAKE_CURRENT_SOURCE_DIR}/src/metrics/Metrics.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/metrics/MetricsConfig.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/metrics/MetricsSnapshot.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/PeriodicMetricsDumper.cpp"
 )
 target_link_libraries(lib${PROJECT_NAME} PUBLIC
     lib${PROJECT_NAME}_proto
@@ -552,6 +551,7 @@ if(MLDP_PVXS_DRIVER_TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/sioc.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/config/epics_reader_config_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/config/mldppvxs_controller_config_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/cli/config_printer_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/controller/mldppvxs_controller_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/controller/mldppvxs_controller_epics_archiver_periodic_tail_integration_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/ryml_single_header_translation_unit.cpp"
@@ -568,6 +568,8 @@ if(MLDP_PVXS_DRIVER_TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/test/metrics/periodic_metrics_dumper_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/metrics/metrics_histogram_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/metrics/system_metrics_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/ConfigPrinter.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/PeriodicMetricsDumper.cpp"
     )
     target_link_libraries(${PROJECT_NAME}_test PRIVATE gtest_main lib${PROJECT_NAME})
     if(TARGET httplib::httplib)
@@ -614,8 +616,10 @@ endif()
 if(MLDP_PVXS_DRIVER_MAIN)
     add_executable(${PROJECT_NAME}
         "${CMAKE_CURRENT_SOURCE_DIR}/ext/rapidyaml/include/rapidyaml-0.10.0.hpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/mldp_pvxs_driver_main.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/SpdlogLogger.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/SpdlogLogger.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/ConfigPrinter.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/PeriodicMetricsDumper.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/mldp_pvxs_driver_main.cpp"
     )
 
     # The reader implementations self-register via static initialization (REGISTER_READER).

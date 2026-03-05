@@ -5,7 +5,8 @@ controller-stream-max-age-ms: 200      # optional; flush stream after this age i
 mldp-pool:
   provider-name: pvxs_provider
   provider-description: "PVXS aggregate provider"   # optional
-  url: dp-ingestion:50051
+  ingestion-url: dp-ingestion:50051
+  query-url: dp-query:50052
   min-conn: 1
   max-conn: 4
   credentials: # optional
