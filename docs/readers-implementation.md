@@ -6,6 +6,16 @@ This guide explains how to implement a custom reader for the MLDP PVXS Driver. R
 
 The driver uses an **abstract Reader pattern** with a factory-based registration system. This allows new data sources to be added without modifying the core ingestion pipeline.
 
+## Logging Rule
+
+**Custom readers must use the project's logging abstraction in `util::log`. Do not call `spdlog::...` directly from reader/library code.**
+
+- Reader code should depend on `mldp_pvxs_driver::util::log::ILogger` and helpers like `infof`, `warnf`, `errorf`, and `tracef`.
+- Create a named logger with `mldp_pvxs_driver::util::log::newLogger(...)` so logs are scoped per reader instance.
+- Keep backend-specific code such as `spdlog` wiring in the executable layer, not in reusable reader implementations.
+
+See [Logging Abstraction Guide](logging.md) for the full model and examples.
+
 ```mermaid
 flowchart LR
     subgraph YourReader["Your Custom Reader"]
@@ -67,7 +77,98 @@ bus_->push(std::move(batch));
 
 ## Step-by-Step Implementation
 
-### Step 1: Create the Header File
+### Step 1: Create a Typed Config Class
+
+Follow the same pattern as `EpicsReaderConfig` and `EpicsArchiverReaderConfig`: parse and validate YAML once in a dedicated config object, then pass that typed view into the reader runtime.
+
+Create `include/reader/impl/<category>/<Name>ReaderConfig.h`:
+
+```cpp
+#pragma once
+
+#include <config/Config.h>
+
+#include <chrono>
+#include <stdexcept>
+#include <string>
+
+namespace mldp_pvxs_driver::reader::impl::<category> {
+
+class <Name>ReaderConfig {
+public:
+    class Error : public std::runtime_error {
+    public:
+        using std::runtime_error::runtime_error;
+    };
+
+    <Name>ReaderConfig();
+    explicit <Name>ReaderConfig(const config::Config& cfg);
+
+    bool valid() const;
+
+    const std::string& name() const;
+    const std::string& sourceName() const;
+    std::chrono::milliseconds interval() const;
+    uint64_t startValue() const;
+
+private:
+    void parse(const config::Config& cfg);
+
+    bool valid_{false};
+    std::string name_;
+    std::string source_name_;
+    std::chrono::milliseconds interval_{1000};
+    uint64_t start_value_{0};
+};
+
+} // namespace mldp_pvxs_driver::reader::impl::<category>
+```
+
+Create `src/reader/impl/<category>/<Name>ReaderConfig.cpp`:
+
+```cpp
+#include <reader/impl/<category>/<Name>ReaderConfig.h>
+
+namespace mldp_pvxs_driver::reader::impl::<category> {
+
+<Name>ReaderConfig::<Name>ReaderConfig() = default;
+
+<Name>ReaderConfig::<Name>ReaderConfig(const config::Config& cfg) {
+    parse(cfg);
+}
+
+bool <Name>ReaderConfig::valid() const {
+    return valid_;
+}
+
+const std::string& <Name>ReaderConfig::name() const {
+    return name_;
+}
+
+const std::string& <Name>ReaderConfig::sourceName() const {
+    return source_name_;
+}
+
+std::chrono::milliseconds <Name>ReaderConfig::interval() const {
+    return interval_;
+}
+
+uint64_t <Name>ReaderConfig::startValue() const {
+    return start_value_;
+}
+
+void <Name>ReaderConfig::parse(const config::Config& cfg) {
+    name_ = cfg.get<std::string>("name").value_or("my_reader");
+    source_name_ = cfg.get<std::string>("source_name").value_or("my:source");
+    interval_ = std::chrono::milliseconds(cfg.get<int>("interval_ms").value_or(1000));
+    start_value_ = cfg.get<uint64_t>("start_value").value_or(0);
+    valid_ = true;
+}
+
+} // namespace mldp_pvxs_driver::reader::impl::<category>
+```
+
+### Step 2: Create the Reader Header
 
 Create `include/reader/impl/<category>/<Name>Reader.h`:
 
@@ -76,12 +177,12 @@ Create `include/reader/impl/<category>/<Name>Reader.h`:
 
 #include <reader/Reader.h>
 #include <reader/ReaderFactory.h>
-#include <config/Config.h>
+#include <reader/impl/<category>/<Name>ReaderConfig.h>
+#include <util/log/ILog.h>
 
 #include <atomic>
 #include <thread>
 #include <string>
-#include <vector>
 
 namespace mldp_pvxs_driver::reader::impl::<category> {
 
@@ -103,12 +204,10 @@ public:
     void stop();
 
 private:
-    std::string name_;
+    <Name>ReaderConfig config_;
+    std::shared_ptr<util::log::ILogger> logger_;
     std::atomic<bool> running_{false};
     std::thread worker_thread_;
-
-    // Reader-specific configuration
-    // ...
 
     void workerLoop();
     void processData(/* your data type */);
@@ -120,29 +219,33 @@ REGISTER_READER("<type-name>", <Name>Reader)
 } // namespace
 ```
 
-### Step 2: Implement the Reader
+### Step 3: Implement the Reader
 
 Create `src/reader/impl/<category>/<Name>Reader.cpp`:
 
 ```cpp
 #include <reader/impl/<category>/<Name>Reader.h>
-#include <spdlog/spdlog.h>
+
+using namespace mldp_pvxs_driver::util::log;
 
 namespace mldp_pvxs_driver::reader::impl::<category> {
+
+std::shared_ptr<util::log::ILogger> make<Name>ReaderLogger(const <Name>ReaderConfig& cfg) {
+    return newLogger("reader:<type-name>:" + cfg.name());
+}
 
 <Name>Reader::<Name>Reader(
     std::shared_ptr<util::bus::IDataBus> bus,
     std::shared_ptr<metrics::Metrics> metrics,
     const config::Config& cfg)
     : Reader(std::move(bus), std::move(metrics))
+    , config_(cfg)
+    , logger_(make<Name>ReaderLogger(config_))
 {
-    // Parse configuration
-    name_ = cfg.get<std::string>("name").value_or("unnamed");
-
     // Initialize your data source connection
     // ...
 
-    spdlog::info("[{}] Reader initialized", name_);
+    infof(*logger_, "Reader initialized");
 }
 
 <Name>Reader::~<Name>Reader() {
@@ -150,7 +253,7 @@ namespace mldp_pvxs_driver::reader::impl::<category> {
 }
 
 std::string <Name>Reader::name() const {
-    return name_;
+    return config_.name();
 }
 
 void <Name>Reader::start() {
@@ -159,7 +262,7 @@ void <Name>Reader::start() {
     }
 
     worker_thread_ = std::thread([this] { workerLoop(); });
-    spdlog::info("[{}] Reader started", name_);
+    infof(*logger_, "Reader started");
 }
 
 void <Name>Reader::stop() {
@@ -170,7 +273,7 @@ void <Name>Reader::stop() {
     if (worker_thread_.joinable()) {
         worker_thread_.join();
     }
-    spdlog::info("[{}] Reader stopped", name_);
+    infof(*logger_, "Reader stopped");
 }
 
 void <Name>Reader::workerLoop() {
@@ -184,11 +287,11 @@ void <Name>Reader::workerLoop() {
 void <Name>Reader::processData(/* your data */) {
     // Convert to EventBatch and push
     IDataBus::EventBatch batch;
-    batch.root_source = name_;  // root PV / reader identity for metrics
+    batch.root_source = config_.name();  // root PV / reader identity for metrics
 
     dp::service::common::DataFrame frame;
     auto* c = frame.add_doublecolumns();
-    c->set_name("signal_name");
+    c->set_name(config_.sourceName());
     c->add_values(/* value */);
     auto* ts = frame.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
     ts->set_epochseconds(/* epoch_seconds */);
@@ -196,25 +299,32 @@ void <Name>Reader::processData(/* your data */) {
     batch.frames.push_back(std::move(frame));
 
     if (!bus_->push(std::move(batch))) {
-        spdlog::warn("[{}] Failed to push event batch", name_);
+        warnf(*logger_, "Failed to push event batch");
     }
 }
 
 } // namespace
 ```
 
-### Step 3: Update CMakeLists.txt
+Important:
+
+- The logger name should include the reader type and instance name, for example `reader:counter:test_counter`.
+- Format through `infof(*logger_, ...)` or similar helpers, not through `spdlog::info(...)`.
+- This keeps reader code backend-agnostic and consistent with the rest of the library.
+
+### Step 4: Update CMakeLists.txt
 
 Add your source files to the library target in `CMakeLists.txt`:
 
 ```cmake
 target_sources(mldp_pvxs_driver_lib PRIVATE
     # ... existing sources ...
+    src/reader/impl/<category>/<Name>ReaderConfig.cpp
     src/reader/impl/<category>/<Name>Reader.cpp
 )
 ```
 
-### Step 4: Configure via YAML
+### Step 5: Configure via YAML
 
 ```yaml
 reader:
@@ -229,6 +339,49 @@ reader:
 
 Here's a complete example of a simple reader that generates incrementing counter values at a configurable interval.
 
+### Header: `include/reader/impl/test/CounterReaderConfig.h`
+
+```cpp
+#pragma once
+
+#include <config/Config.h>
+
+#include <chrono>
+#include <stdexcept>
+#include <string>
+
+namespace mldp_pvxs_driver::reader::impl::test {
+
+class CounterReaderConfig {
+public:
+    class Error : public std::runtime_error {
+    public:
+        using std::runtime_error::runtime_error;
+    };
+
+    CounterReaderConfig();
+    explicit CounterReaderConfig(const config::Config& cfg);
+
+    bool valid() const;
+
+    const std::string& name() const;
+    const std::string& sourceName() const;
+    std::chrono::milliseconds interval() const;
+    uint64_t startValue() const;
+
+private:
+    void parse(const config::Config& cfg);
+
+    bool valid_{false};
+    std::string name_;
+    std::string source_name_;
+    std::chrono::milliseconds interval_{1000};
+    uint64_t start_value_{0};
+};
+
+} // namespace mldp_pvxs_driver::reader::impl::test
+```
+
 ### Header: `include/reader/impl/test/CounterReader.h`
 
 ```cpp
@@ -236,11 +389,10 @@ Here's a complete example of a simple reader that generates incrementing counter
 
 #include <reader/Reader.h>
 #include <reader/ReaderFactory.h>
-#include <config/Config.h>
+#include <reader/impl/test/CounterReaderConfig.h>
+#include <util/log/ILog.h>
 
 #include <atomic>
-#include <chrono>
-#include <string>
 #include <thread>
 
 namespace mldp_pvxs_driver::reader::impl::test {
@@ -264,9 +416,8 @@ public:
     void stop();
 
 private:
-    std::string name_;
-    std::string source_name_;
-    std::chrono::milliseconds interval_;
+    CounterReaderConfig config_;
+    std::shared_ptr<util::log::ILogger> logger_;
 
     std::atomic<bool> running_{false};
     std::atomic<uint64_t> counter_{0};
@@ -286,28 +437,30 @@ REGISTER_READER("counter", CounterReader)
 
 ```cpp
 #include <reader/impl/test/CounterReader.h>
-#include <spdlog/spdlog.h>
+
+using namespace mldp_pvxs_driver::util::log;
 
 namespace mldp_pvxs_driver::reader::impl::test {
+
+std::shared_ptr<util::log::ILogger> makeCounterReaderLogger(const CounterReaderConfig& cfg) {
+    return newLogger("reader:counter:" + cfg.name());
+}
 
 CounterReader::CounterReader(
     std::shared_ptr<util::bus::IDataBus> bus,
     std::shared_ptr<metrics::Metrics> metrics,
     const config::Config& cfg)
     : Reader(std::move(bus), std::move(metrics))
+    , config_(cfg)
+    , logger_(makeCounterReaderLogger(config_))
 {
-    // Parse configuration with defaults
-    name_ = cfg.get<std::string>("name").value_or("counter_reader");
-    source_name_ = cfg.get<std::string>("source_name").value_or("counter");
+    counter_.store(config_.startValue());
 
-    auto interval_ms = cfg.get<int>("interval_ms").value_or(1000);
-    interval_ = std::chrono::milliseconds(interval_ms);
-
-    auto start_value = cfg.get<uint64_t>("start_value").value_or(0);
-    counter_.store(start_value);
-
-    spdlog::info("[{}] CounterReader initialized: source={}, interval={}ms, start={}",
-                 name_, source_name_, interval_ms, start_value);
+    infof(*logger_,
+          "CounterReader initialized: source={}, interval={}ms, start={}",
+          config_.sourceName(),
+          config_.interval().count(),
+          config_.startValue());
 }
 
 CounterReader::~CounterReader() {
@@ -315,17 +468,17 @@ CounterReader::~CounterReader() {
 }
 
 std::string CounterReader::name() const {
-    return name_;
+    return config_.name();
 }
 
 void CounterReader::start() {
     if (running_.exchange(true)) {
-        spdlog::warn("[{}] Already running", name_);
+        warnf(*logger_, "Already running");
         return;
     }
 
     worker_thread_ = std::thread([this] { workerLoop(); });
-    spdlog::info("[{}] Started", name_);
+    infof(*logger_, "Started");
 }
 
 void CounterReader::stop() {
@@ -336,19 +489,16 @@ void CounterReader::stop() {
     if (worker_thread_.joinable()) {
         worker_thread_.join();
     }
-    spdlog::info("[{}] Stopped", name_);
+    infof(*logger_, "Stopped");
 }
 
 void CounterReader::workerLoop() {
     while (running_) {
-        auto now = std::chrono::system_clock::now();
-        auto epoch = now.time_since_epoch();
-
         uint64_t value = counter_.fetch_add(1);
         pushCounterValue(value);
 
         // Sleep until next interval
-        std::this_thread::sleep_for(interval_);
+        std::this_thread::sleep_for(config_.interval());
     }
 }
 
@@ -361,10 +511,10 @@ void CounterReader::pushCounterValue(uint64_t value) {
 
     // Create event with timestamp
     util::bus::IDataBus::EventBatch batch;
-    batch.root_source = name_;  // metrics/correlation root source
+    batch.root_source = config_.name();  // metrics/correlation root source
     dp::service::common::DataFrame frame;
     auto* c = frame.add_int64columns();
-    c->set_name(source_name_);
+    c->set_name(config_.sourceName());
     c->add_values(static_cast<int64_t>(value));
     auto* ts = frame.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
     ts->set_epochseconds(static_cast<uint64_t>(seconds.count()));
@@ -372,10 +522,54 @@ void CounterReader::pushCounterValue(uint64_t value) {
     batch.frames.push_back(std::move(frame));
 
     if (!bus_->push(std::move(batch))) {
-        spdlog::warn("[{}] Failed to push counter value {}", name_, value);
+        warnf(*logger_, "Failed to push counter value {}", value);
     } else {
-        spdlog::trace("[{}] Pushed counter value {}", name_, value);
+        tracef(*logger_, "Pushed counter value {}", value);
     }
+}
+
+} // namespace mldp_pvxs_driver::reader::impl::test
+```
+
+### Implementation: `src/reader/impl/test/CounterReaderConfig.cpp`
+
+```cpp
+#include <reader/impl/test/CounterReaderConfig.h>
+
+namespace mldp_pvxs_driver::reader::impl::test {
+
+CounterReaderConfig::CounterReaderConfig() = default;
+
+CounterReaderConfig::CounterReaderConfig(const config::Config& cfg) {
+    parse(cfg);
+}
+
+bool CounterReaderConfig::valid() const {
+    return valid_;
+}
+
+const std::string& CounterReaderConfig::name() const {
+    return name_;
+}
+
+const std::string& CounterReaderConfig::sourceName() const {
+    return source_name_;
+}
+
+std::chrono::milliseconds CounterReaderConfig::interval() const {
+    return interval_;
+}
+
+uint64_t CounterReaderConfig::startValue() const {
+    return start_value_;
+}
+
+void CounterReaderConfig::parse(const config::Config& cfg) {
+    name_ = cfg.get<std::string>("name").value_or("counter_reader");
+    source_name_ = cfg.get<std::string>("source_name").value_or("counter");
+    interval_ = std::chrono::milliseconds(cfg.get<int>("interval_ms").value_or(1000));
+    start_value_ = cfg.get<uint64_t>("start_value").value_or(0);
+    valid_ = true;
 }
 
 } // namespace mldp_pvxs_driver::reader::impl::test
@@ -424,11 +618,24 @@ For array types, use the corresponding `mutable_*_array()` methods.
 - Protect shared data structures with mutexes
 - Consider using thread pools for parallel processing (see `BS::light_thread_pool`)
 
+### Configuration Management
+
+- Create a dedicated `<Name>ReaderConfig` class that parses and validates YAML once.
+- Keep config defaults, aliases, and validation errors inside the config class, not inside the reader runtime.
+- Let the reader consume typed accessors such as `config_.name()` or `config_.interval()` instead of calling `cfg.get(...)` throughout the implementation.
+
 ### Error Handling
 
 - Handle connection failures gracefully with retries
 - Log errors with appropriate severity levels
 - Don't let exceptions propagate from worker threads
+
+### Logging Abstraction
+
+- Use `util::log::ILogger` plus helper functions such as `infof`, `warnf`, `errorf`, and `tracef`.
+- Create per-reader loggers with `newLogger("reader:<type>:<name>")`.
+- Do not use `spdlog::info`, `spdlog::warn`, or other backend APIs directly in reader code.
+- Treat direct backend logging in library code as a documentation and implementation bug; backend selection belongs in the executable layer.
 
 ### Performance
 

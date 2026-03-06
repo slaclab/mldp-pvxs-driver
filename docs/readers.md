@@ -6,10 +6,10 @@ The MLDP PVXS Driver uses an **abstract Reader pattern** to support multiple dat
 
 ## Supported Reader Types
 
-| Reader Type      | Status      | Data Source          | Documentation                        |
-|------------------|-------------|----------------------|--------------------------------------|
-| `epics-base`     | Implemented | EPICS Control System | [EpicsBaseReader](readers/epics-base-reader.md) |
-| `epics-pvxs`     | Implemented | EPICS Control System | [EpicsPVXSReader](readers/epics-pvxs-reader.md) |
+| Reader Type      | Status      | Data Source          | Documentation                                           |
+|------------------|-------------|----------------------|---------------------------------------------------------|
+| `epics-base`     | Implemented | EPICS Control System | [EpicsBaseReader](readers/epics-base-reader.md)         |
+| `epics-pvxs`     | Implemented | EPICS Control System | [EpicsPVXSReader](readers/epics-pvxs-reader.md)         |
 | `epics-archiver` | Implemented | EPICS Archiver       | [EpicsArchiverReader](readers/epics-archiver-reader.md) |
 
 ## Reader Class Hierarchy
@@ -79,7 +79,7 @@ Historical data retrieval and continuous tail polling from EPICS Archiver Applia
 
 - **Mode**: One-shot historical fetch or periodic polling
 - **Best For**: Data backfill, archiver tailing, time-series analysis
-- **Key Feature**: PB/HTTP streaming, configurable timeouts, graceful shutdown
+- **Key Feature**: PB/HTTP streaming, configurable timeouts
 
 → [Full Documentation: EpicsArchiverReader](readers/epics-archiver-reader.md)
 
@@ -132,10 +132,10 @@ EPICS-specific readers (base, pvxs, archiver) share `EpicsReaderBase`:
 - Protobuf conversion utilities
 - Error handling and metrics collection
 
-| File           | Location                                         |
-|----------------|--------------------------------------------------|
-| Header         | `include/reader/impl/epics/shared/EpicsReaderBase.h`    |
-| Implementation | `src/reader/impl/epics/shared/EpicsReaderBase.cpp`      |
+| File           | Location                                             |
+|----------------|------------------------------------------------------|
+| Header         | `include/reader/impl/epics/shared/EpicsReaderBase.h` |
+| Implementation | `src/reader/impl/epics/shared/EpicsReaderBase.cpp`   |
 
 ## Factory Registration
 
@@ -230,28 +230,30 @@ See **[Implementing Custom Readers](readers-implementation.md)**.
 ### Key Implementation Patterns
 
 **Pattern 1: Polling Reader** (like EpicsBaseReader)
+
 - Spawn dedicated polling thread(s)
 - Drain data into thread-safe queue
 - Push to event bus from worker thread
 - Handle shutdown cleanly
 
 **Pattern 2: Event-Driven Reader** (like EpicsPVXSReader)
+
 - Register callbacks with data source
 - Use thread pool for async processing if needed
 - Push events to bus from callback or pool
 - Implement proper subscription cleanup
 
 **Pattern 3: Batch/Streaming Reader** (like EpicsArchiverReader)
+
 - Fetch data in background worker
 - Stream or batch parse response data
 - Split into logical batches by time or size
 - Push batches to event bus
 - Handle graceful shutdown of in-flight requests
 
-
 ## Implementation Files Organization
 
-```
+```TEXT
 include/reader/
 ├── Reader.h                          # Abstract base class
 ├── ReaderFactory.h                   # Factory registration

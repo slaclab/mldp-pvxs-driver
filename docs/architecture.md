@@ -2,7 +2,7 @@
 
 ## Overview
 
-The MLDP PVXS Driver is a high-performance data ingestion system that bridges various data sources with the MLDP (Machine Learning Data Platform) service. It uses a sophisticated push-based architecture designed for minimal latency and maximum throughput.
+The MLDP PVXS Driver is a high-performance data ingestion system that bridges various data sources with the MLDP (Machine Learning Data Platform) service. It uses a push-based architecture designed for minimal latency and maximum throughput.
 
 The driver implements an **abstract Reader pattern** that allows plugging in different data sources. Currently implemented are EPICS-based readers, with the architecture designed to support future implementations such as EPICS Archiver, HDF5 files, and other data sources.
 
