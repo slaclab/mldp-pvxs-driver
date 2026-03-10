@@ -51,55 +51,7 @@ epics:nt/NTTable:1.0
 ## Concrete Example
 
 A two-row BSAS Gen 2 table update for two acquired PVs (`XCOR:LI28:202:BACT` and
-`BPMS:LI28:202:X`) would look like:
-
-```cpp
-// ── Schema ─────────────────────────────────────────────────────────────────
-nt::NTTable bsasGen2Builder;
-bsasGen2Builder.add_column(TypeCode::UInt64,  "pid");
-// PV A statistics
-bsasGen2Builder.add_column(TypeCode::Float64, "XCOR:LI28:202:BACT.Val");
-bsasGen2Builder.add_column(TypeCode::UInt32,  "XCOR:LI28:202:BACT.CNT");
-bsasGen2Builder.add_column(TypeCode::Float64, "XCOR:LI28:202:BACT.RMS");
-bsasGen2Builder.add_column(TypeCode::Float64, "XCOR:LI28:202:BACT.AVG");
-bsasGen2Builder.add_column(TypeCode::Float64, "XCOR:LI28:202:BACT.MIN");
-bsasGen2Builder.add_column(TypeCode::Float64, "XCOR:LI28:202:BACT.MAX");
-// PV B statistics
-bsasGen2Builder.add_column(TypeCode::Float64, "BPMS:LI28:202:X.Val");
-bsasGen2Builder.add_column(TypeCode::UInt32,  "BPMS:LI28:202:X.CNT");
-bsasGen2Builder.add_column(TypeCode::Float64, "BPMS:LI28:202:X.RMS");
-bsasGen2Builder.add_column(TypeCode::Float64, "BPMS:LI28:202:X.AVG");
-bsasGen2Builder.add_column(TypeCode::Float64, "BPMS:LI28:202:X.MIN");
-bsasGen2Builder.add_column(TypeCode::Float64, "BPMS:LI28:202:X.MAX");
-// Timestamps
-bsasGen2Builder.add_column(TypeCode::UInt64,  "secondsPastEpoch");
-bsasGen2Builder.add_column(TypeCode::UInt32,  "nanoseconds");
-
-// ── Update (2 rows = 2 pulse IDs) ──────────────────────────────────────────
-pv["value.pid"]                      = {1999UL,  2999UL};
-
-pv["value.XCOR:LI28:202:BACT.Val"]  = {0.12,    0.15};
-pv["value.XCOR:LI28:202:BACT.CNT"]  = {10U,     10U};
-pv["value.XCOR:LI28:202:BACT.RMS"]  = {0.121,   0.151};
-pv["value.XCOR:LI28:202:BACT.AVG"]  = {0.119,   0.148};
-pv["value.XCOR:LI28:202:BACT.MIN"]  = {0.10,    0.13};
-pv["value.XCOR:LI28:202:BACT.MAX"]  = {0.14,    0.17};
-
-pv["value.BPMS:LI28:202:X.Val"]     = {-0.5,    -0.4};
-pv["value.BPMS:LI28:202:X.CNT"]     = {10U,     10U};
-pv["value.BPMS:LI28:202:X.RMS"]     = {0.51,    0.41};
-pv["value.BPMS:LI28:202:X.AVG"]     = {-0.49,   -0.39};
-pv["value.BPMS:LI28:202:X.MIN"]     = {-0.6,    -0.5};
-pv["value.BPMS:LI28:202:X.MAX"]     = {-0.4,    -0.3};
-
-pv["value.secondsPastEpoch"]         = {T,       T};
-pv["value.nanoseconds"]              = {T_ns+0,  T_ns+1};
-
-pv["timeStamp.secondsPastEpoch"]     = T;
-pv["timeStamp.nanoseconds"]          = T_ns;
-```
-
-In tabular form:
+`BPMS:LI28:202:X`) would look like in tabular form:
 
 | Row | pid    | XCOR…BACT.Val | XCOR…BACT.CNT | XCOR…BACT.AVG | … | secondsPastEpoch | nanoseconds |
 |-----|--------|---------------|---------------|---------------|---|------------------|-------------|

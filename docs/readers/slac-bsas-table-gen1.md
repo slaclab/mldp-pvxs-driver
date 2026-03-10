@@ -45,34 +45,7 @@ epics:nt/NTTable:1.0
 ## Concrete Example
 
 From [`test/mock/sioc.cpp`](../../test/mock/sioc.cpp), a three-row BSAS table
-update looks like this:
-
-```cpp
-// ── Schema (defined once at PV creation) ──────────────────────────────────
-nt::NTTable bsasTableBuilder;
-bsasTableBuilder.add_column(TypeCode::Float64, "PV_NAME_A_DOUBLE_VALUE");
-bsasTableBuilder.add_column(TypeCode::String,  "PV_NAME_B_STRING_VALUE");
-bsasTableBuilder.add_column(TypeCode::UInt32,  "secondsPastEpoch");  // timestamp col
-bsasTableBuilder.add_column(TypeCode::UInt32,  "nanoseconds");       // timestamp col
-
-// ── Update (3 rows = 3 beam pulses captured in one IOC cycle) ─────────────
-pv["labels"] = {"PV_NAME_A_DOUBLE_VALUE", "PV_NAME_B_STRING_VALUE",
-                "secondsPastEpoch", "nanoseconds"};
-
-// Measurement data — one value per pulse
-pv["value.PV_NAME_A_DOUBLE_VALUE"] = {1.0, 2.0, 3.0};
-pv["value.PV_NAME_B_STRING_VALUE"] = {"OK", "WARNING", "FAULT"};
-
-// Per-row timestamps — nanosecond offset distinguishes individual pulses
-pv["value.secondsPastEpoch"] = {T,    T,    T   };
-pv["value.nanoseconds"]      = {T+0,  T+1,  T+2 };
-
-// NTTable-level timestamp — metadata for the update itself (not per-row)
-pv["timeStamp.secondsPastEpoch"] = T;
-pv["timeStamp.nanoseconds"]      = T;
-```
-
-In tabular form, those three rows map to:
+update looks like this in tabular form, those three rows map to:
 
 | Row | PV_NAME_A_DOUBLE_VALUE | PV_NAME_B_STRING_VALUE | secondsPastEpoch | nanoseconds |
 |-----|------------------------|------------------------|------------------|-------------|
