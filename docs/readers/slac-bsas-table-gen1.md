@@ -47,11 +47,11 @@ epics:nt/NTTable:1.0
 From [`test/mock/sioc.cpp`](../../test/mock/sioc.cpp), a three-row BSAS table
 update looks like this in tabular form, those three rows map to:
 
-| Row | PV_NAME_A_DOUBLE_VALUE | PV_NAME_B_STRING_VALUE | secondsPastEpoch | nanoseconds |
-|-----|------------------------|------------------------|------------------|-------------|
-|  0  | 1.0                    | `"OK"`                 | T                | T + 0       |
-|  1  | 2.0                    | `"WARNING"`            | T                | T + 1       |
-|  2  | 3.0                    | `"FAULT"`              | T                | T + 2       |
+ PV_NAME_A_DOUBLE_VALUE | PV_NAME_B_STRING_VALUE | secondsPastEpoch | nanoseconds |
+------------------------|------------------------|------------------|-------------|
+ 1.0                    | `"OK"`                 | T                | T + 0       |
+ 2.0                    | `"WARNING"`            | T                | T + 1       |
+ 3.0                    | `"FAULT"`              | T                | T + 2       |
 
 ## Timestamp Resolution
 

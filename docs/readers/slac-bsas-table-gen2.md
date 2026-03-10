@@ -53,10 +53,10 @@ epics:nt/NTTable:1.0
 A two-row BSAS Gen 2 table update for two acquired PVs (`XCOR:LI28:202:BACT` and
 `BPMS:LI28:202:X`) would look like in tabular form:
 
-| Row | pid    | XCOR…BACT.Val | XCOR…BACT.CNT | XCOR…BACT.AVG | … | secondsPastEpoch | nanoseconds |
-|-----|--------|---------------|---------------|---------------|---|------------------|-------------|
-|  0  | 1999   | 0.12          | 10            | 0.119         | … | T                | T_ns + 0    |
-|  1  | 2999   | 0.15          | 10            | 0.148         | … | T                | T_ns + 1    |
+ pid    | XCOR…BACT.Val | XCOR…BACT.CNT | XCOR…BACT.AVG | … | secondsPastEpoch | nanoseconds |
+--------|---------------|---------------|---------------|---|------------------|-------------|
+ 1999   | 0.12          | 10            | 0.119         | … | T                | T_ns + 0    |
+ 2999   | 0.15          | 10            | 0.148         | … | T                | T_ns + 1    |
 
 ## Comparison with Gen 1
 
