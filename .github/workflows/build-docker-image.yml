@@ -237,172 +237,19 @@ jobs:
             PVXS_VERSION=${{ matrix.pvxs_version }}
 
   build-release-artifacts:
-    if: (github.event_name != 'workflow_call' || inputs.run_release_artifacts) && (github.event_name == 'workflow_call' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')))
-    name: Build Release Artifacts
-    runs-on: ubuntu-latest
+    if: inputs.run_release_artifacts && (github.event_name == 'workflow_call' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')))
     needs: build-docker-image
-    permissions:
-      contents: write
-      packages: write
-    env:
-      EPICS_VERSION: ${{ needs.build-docker-image.outputs.epics_version }}
-      PVXS_VERSION: ${{ needs.build-docker-image.outputs.pvxs_version }}
-      RELEASE_VARIANT: ${{ needs.build-docker-image.outputs.variant }}
-      RUNTIME_VARIANT: ${{ needs.build-docker-image.outputs.runtime_variant }}
-      BASE_OS_IMAGE: ${{ needs.build-docker-image.outputs.base_os_image }}
-      NEED_LAST: ${{ needs.build-docker-image.outputs.need_last }}
-    outputs:
-      release_version: ${{ steps.version.outputs.version }}
-    steps:
-      - name: Check out repository code
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ inputs.source_ref || github.ref }}
-
-      - name: Log in to the Container registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ env.REGISTRY_PASSWORD }}
-
-      - name: Determine release version
-        id: version
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ "${GITHUB_EVENT_NAME}" == "workflow_call" ]]; then
-            raw="${{ inputs.publish_version }}"
-            if [[ "$raw" =~ ^release-v?([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
-              version="${BASH_REMATCH[1]}-rc.${GITHUB_RUN_NUMBER}"
-            elif [[ "$raw" =~ ^v?([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
-              version="${BASH_REMATCH[1]}-rc.${GITHUB_RUN_NUMBER}"
-            else
-              echo "Unsupported workflow_call publish_version: '$raw'" >&2
-              echo "Expected release-X.Y.Z, release-vX.Y.Z, X.Y.Z, or vX.Y.Z" >&2
-              exit 1
-            fi
-          elif [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
-            version="${{ needs.build-docker-image.outputs.manual_ref }}"
-          else
-            version="${GITHUB_REF_NAME#v}"
-          fi
-          # Normalize: our release tag is always prefixed with a single 'v'.
-          # If the selected ref already includes 'v' (e.g. 'v0.2.0'), drop it here.
-          version="${version#v}"
-          echo "version=${version}" >> "$GITHUB_OUTPUT"
-
-      - name: Compute local base image alias
-        id: base_alias
-        shell: bash
-        run: |
-          set -euo pipefail
-          alias="mldp-pvxs-driver-artifact-base:${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          echo "tag=$alias" >> "$GITHUB_OUTPUT"
-
-      - name: Compute base image
-        id: base
-        shell: bash
-        run: |
-          set -euo pipefail
-          raw="${{ steps.version.outputs.version }}"
-          safe=$(printf '%s' "$raw" | tr '/:' '--' | tr -cd 'A-Za-z0-9_.-')
-          if [[ -z "$safe" ]]; then
-            safe="ref"
-          fi
-          echo "image=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ env.RELEASE_VARIANT }}:${safe}" >> "$GITHUB_OUTPUT"
-
-      - name: Compute release image
-        id: artifact
-        shell: bash
-        run: |
-          set -euo pipefail
-          raw="${{ steps.version.outputs.version }}"
-          safe=$(printf '%s' "$raw" | tr '/:' '--' | tr -cd 'A-Za-z0-9_.-')
-          if [[ -z "$safe" ]]; then
-            safe="ref"
-          fi
-          echo "image=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ env.RUNTIME_VARIANT }}:v${safe}" >> "$GITHUB_OUTPUT"
-
-      - name: Prepare release image tags
-        id: artifact_tags
-        shell: bash
-        run: |
-          set -euo pipefail
-          {
-            echo "tags<<EOF"
-            echo "${{ steps.artifact.outputs.image }}"
-            if [[ "${{ env.NEED_LAST }}" == "true" ]]; then
-              echo "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ env.RUNTIME_VARIANT }}:latest"
-            fi
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Build base image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: .devcontainer/Dockerfile
-          tags: |
-            ${{ steps.base.outputs.image }}
-            ${{ steps.base_alias.outputs.tag }}
-          load: true
-          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ env.RELEASE_VARIANT }}:${{ env.BUILDKIT_CACHE_TAG }}
-          build-args: |
-            BASE_OS_IMAGE=${{ env.BASE_OS_IMAGE }}
-            COMPILER=gcc
-            EPICS_VERSION=${{ env.EPICS_VERSION }}
-            PVXS_VERSION=${{ env.PVXS_VERSION }}
-
-      - name: Build and push driver artifact image
-        env:
-          # Use PAT if available (for cross-repo access), otherwise fall back to GITHUB_TOKEN
-          GITHUB_TOKEN: ${{ secrets.METRICS_GRABBER_PAT != '' && secrets.METRICS_GRABBER_PAT || secrets.GITHUB_TOKEN }}
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: .devcontainer/Dockerfile.artifacts
-          push: true
-          tags: ${{ steps.artifact_tags.outputs.tags }}
-          secrets: |
-            github_token=${{ env.GITHUB_TOKEN }}
-          build-args: |
-            BASE_IMAGE=${{ steps.base_alias.outputs.tag }}
-            BUILD_TYPE=Release
-            RUNTIME_IMAGE=${{ env.BASE_OS_IMAGE }}
-
-      - name: Pull artifact image for local use
-        shell: bash
-        run: |
-          set -euo pipefail
-          docker pull "${{ steps.artifact.outputs.image }}"
-          docker tag "${{ steps.artifact.outputs.image }}" mldp-pvxs-driver-artifacts:latest
-
-      - name: Save driver artifact image
-        shell: bash
-        run: |
-          set -euo pipefail
-          docker save mldp-pvxs-driver-artifacts:latest -o driver-artifact-image.tar
-
-      - name: Upload driver artifact image
-        uses: actions/upload-artifact@v6
-        with:
-          name: driver-artifact-image
-          path: driver-artifact-image.tar
-
-      - name: Extract driver binary
-        shell: bash
-        run: |
-          set -euo pipefail
-          id=$(docker create mldp-pvxs-driver-artifacts:latest)
-          docker cp "$id:/workspace/build/bin/mldp_pvxs_driver" ./mldp_pvxs_driver-rockylinux-9.3-epics-${{ env.EPICS_VERSION }}
-          docker rm "$id"
-
-      - name: Upload driver binary artifact
-        uses: actions/upload-artifact@v6
-        with:
-          name: driver-binary
-          path: ./mldp_pvxs_driver-rockylinux-9.3-epics-${{ env.EPICS_VERSION }}
+    uses: ./.github/workflows/build-artifact-image.yml
+    secrets: inherit
+    with:
+      source_ref: ${{ github.event_name == 'workflow_dispatch' && inputs.source_ref || github.ref }}
+      publish_version: ${{ github.event_name == 'workflow_dispatch' && needs.build-docker-image.outputs.manual_ref || github.ref_name }}
+      base_image: ghcr.io/${{ github.repository }}/dev:${{ needs.build-docker-image.outputs.variant }}
+      runtime_variant: ${{ needs.build-docker-image.outputs.runtime_variant }}
+      epics_version: ${{ needs.build-docker-image.outputs.epics_version }}
+      base_os_image: ${{ needs.build-docker-image.outputs.base_os_image }}
+      need_last: ${{ needs.build-docker-image.outputs.need_last == 'true' }}
+      push_image: true
 
   create-github-release:
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))
