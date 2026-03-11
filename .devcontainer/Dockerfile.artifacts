@@ -14,6 +14,7 @@ ARG BUILD_TYPE=Debug
 ARG RUNTIME_IMAGE=rockylinux/rockylinux:9.3
 
 FROM ${BASE_IMAGE} AS builder
+ARG BUILD_TYPE
 
 WORKDIR /workspace
 
