@@ -195,17 +195,17 @@ jobs:
       push_images: false
       run_release_artifacts: false
 
-  build_prerelease_artifact_image:
-    name: Build artifact image (no push)
-    if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-')
-    needs: build_prerelease_docker_image
-    uses: ./.github/workflows/build-artifact-image.yml
-    secrets: inherit
-    with:
-      source_ref: ${{ github.event.pull_request.head.sha }}
-      publish_version: ${{ github.head_ref }}
-      base_image: ghcr.io/${{ github.repository }}/dev:rockylinux-9.3-builder-r7.0.8.1-1.4.1
-      runtime_variant: rockylinux-9.3-r7.0.8.1-1.4.1
-      epics_version: R7.0.8.1
-      base_os_image: rockylinux/rockylinux:9.3
-      push_image: false
+  # build_prerelease_artifact_image:
+  #   name: Build artifact image (no push)
+  #   if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-')
+  #   needs: build_prerelease_docker_image
+  #   uses: ./.github/workflows/build-artifact-image.yml
+  #   secrets: inherit
+  #   with:
+  #     source_ref: ${{ github.event.pull_request.head.sha }}
+  #     publish_version: ${{ github.head_ref }}
+  #     base_image: ghcr.io/${{ github.repository }}/dev:rockylinux-9.3-builder-r7.0.8.1-1.4.1
+  #     runtime_variant: rockylinux-9.3-r7.0.8.1-1.4.1
+  #     epics_version: R7.0.8.1
+  #     base_os_image: rockylinux/rockylinux:9.3
+  #     push_image: false
