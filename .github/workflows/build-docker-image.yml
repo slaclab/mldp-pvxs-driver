@@ -271,6 +271,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           ref: ${{ github.ref }}
+          fetch-depth: 0
 
       - name: Download driver binary artifact
         uses: actions/download-artifact@v6
@@ -310,14 +311,23 @@ jobs:
           echo "Release already exists and 'overwrite_release' is false; failing as requested."
           exit 1
 
+      - name: Generate changelog with git-cliff
+        id: changelog
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          args: --latest --strip header
+        env:
+          OUTPUT: CHANGELOG_BODY.md
+
       - name: Create or update release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.version.outputs.version }}
           name: v${{ steps.version.outputs.version }}
+          body_path: CHANGELOG_BODY.md
           draft: false
           prerelease: false
-          generate_release_notes: true
           overwrite_files: ${{ env.OVERWRITE_RELEASE }}
           files: |
             release-artifacts/mldp_pvxs_driver-rockylinux-9.3-epics-${{ env.EPICS_VERSION }}

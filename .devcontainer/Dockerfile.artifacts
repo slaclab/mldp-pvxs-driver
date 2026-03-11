@@ -46,7 +46,16 @@ RUN --mount=type=secret,id=github_token,required=false \
       -DEPICS_HOST_ARCH=${arch}; \
     cmake --build build -j "$(nproc)"
 
-RUN install -Dm755 /workspace/build/bin/mldp_pvxs_driver /tmp/mldp/usr/bin/mldp_pvxs_driver
+# Collect the driver binary and all its non-system runtime dependencies into /opt/local
+RUN set -euo pipefail; \
+    install -Dm755 /workspace/build/bin/mldp_pvxs_driver /opt/local/bin/mldp_pvxs_driver; \
+    mkdir -p /opt/local/lib/driver-deps; \
+    ldd /opt/local/bin/mldp_pvxs_driver \
+      | awk '/=>/ { print $3 }' \
+      | grep -v '^/opt/local/' \
+      | grep -v '^\(not\|linux-vdso\)' \
+      | grep -v '^$' \
+      | xargs -I{} cp -n {} /opt/local/lib/driver-deps/ || true
 
 FROM ${RUNTIME_IMAGE} AS runtime
 
@@ -56,14 +65,11 @@ ENV EPICS_BASE=/opt/local
 ENV PVXS_BASE=/opt/local
 
 RUN dnf update -y && \
-    dnf install -y dnf-plugins-core epel-release && \
-    dnf config-manager --set-enabled crb && \
     dnf install -y --setopt=install_weak_deps=False \
       ca-certificates \
       curl-minimal \
       file \
       gnupg2 \
-      grpc \
       libcurl-minimal \
       libgcc \
       libstdc++ \
@@ -72,11 +78,9 @@ RUN dnf update -y && \
     dnf clean all && \
     rm -rf /var/cache/dnf
 
-RUN mkdir -p /workspace/build/bin
-
-COPY --from=builder /tmp/mldp/usr/bin/mldp_pvxs_driver /usr/local/bin/mldp_pvxs_driver
-COPY --from=builder /workspace/build/bin/mldp_pvxs_driver /workspace/build/bin/mldp_pvxs_driver
 COPY --from=builder /opt/local /opt/local
 COPY --from=builder /tmp/epics_host_arch /etc/epics_host_arch
 
-CMD ["/usr/local/bin/mldp_pvxs_driver"]
+RUN echo /opt/local/lib/driver-deps > /etc/ld.so.conf.d/driver-deps.conf && ldconfig
+
+CMD ["/opt/local/bin/mldp_pvxs_driver"]

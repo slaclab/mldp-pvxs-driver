@@ -188,7 +188,7 @@ jobs:
         run: |
           set -euo pipefail
           id=$(docker create mldp-pvxs-driver-artifacts:latest)
-          docker cp "$id:/workspace/build/bin/mldp_pvxs_driver" ./mldp_pvxs_driver-rockylinux-9.3-epics-${{ env.EPICS_VERSION }}
+          docker cp "$id:/opt/local/bin/mldp_pvxs_driver" ./mldp_pvxs_driver-rockylinux-9.3-epics-${{ env.EPICS_VERSION }}
           docker rm "$id"
 
       - name: Upload driver binary artifact
