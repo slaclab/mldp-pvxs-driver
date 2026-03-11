@@ -292,26 +292,6 @@ jobs:
           version="${version#v}"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
 
-      - name: Compute local base image alias
-        id: base_alias
-        shell: bash
-        run: |
-          set -euo pipefail
-          alias="mldp-pvxs-driver-artifact-base:${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          echo "tag=$alias" >> "$GITHUB_OUTPUT"
-
-      - name: Compute base image
-        id: base
-        shell: bash
-        run: |
-          set -euo pipefail
-          raw="${{ steps.version.outputs.version }}"
-          safe=$(printf '%s' "$raw" | tr '/:' '--' | tr -cd 'A-Za-z0-9_.-')
-          if [[ -z "$safe" ]]; then
-            safe="ref"
-          fi
-          echo "image=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ env.RELEASE_VARIANT }}:${safe}" >> "$GITHUB_OUTPUT"
-
       - name: Compute release image
         id: artifact
         shell: bash
@@ -338,22 +318,6 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Build base image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: .devcontainer/Dockerfile
-          tags: |
-            ${{ steps.base.outputs.image }}
-            ${{ steps.base_alias.outputs.tag }}
-          load: true
-          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ env.RELEASE_VARIANT }}:${{ env.BUILDKIT_CACHE_TAG }}
-          build-args: |
-            BASE_OS_IMAGE=${{ env.BASE_OS_IMAGE }}
-            COMPILER=gcc
-            EPICS_VERSION=${{ env.EPICS_VERSION }}
-            PVXS_VERSION=${{ env.PVXS_VERSION }}
-
       - name: Build and push driver artifact image
         env:
           # Use PAT if available (for cross-repo access), otherwise fall back to GITHUB_TOKEN
@@ -364,10 +328,10 @@ jobs:
           file: .devcontainer/Dockerfile.artifacts
           push: true
           tags: ${{ steps.artifact_tags.outputs.tags }}
-          secrets: |
-            github_token=${{ env.GITHUB_TOKEN }}
+          secret-envs: |
+            github_token=GITHUB_TOKEN
           build-args: |
-            BASE_IMAGE=${{ steps.base_alias.outputs.tag }}
+            BASE_IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/dev:${{ env.RELEASE_VARIANT }}
             BUILD_TYPE=Release
             RUNTIME_IMAGE=${{ env.BASE_OS_IMAGE }}
 
