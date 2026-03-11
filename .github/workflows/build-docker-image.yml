@@ -28,6 +28,11 @@ on:
         required: false
         default: true
         type: boolean
+      push_release_artifacts:
+        description: "When false, validate artifact image builds locally without pushing."
+        required: false
+        default: true
+        type: boolean
     secrets:
       METRICS_GRABBER_PAT:
         description: "Optional PAT for cross-repository access during Docker builds."
@@ -266,6 +271,13 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ env.REGISTRY_PASSWORD }}
 
+      - name: Compute local artifact image alias
+        id: local_artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "image=mldp-pvxs-driver-artifacts:${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+
       - name: Determine release version
         id: version
         shell: bash
@@ -319,6 +331,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Build and push driver artifact image
+        if: github.event_name != 'workflow_call' || inputs.push_release_artifacts
         env:
           # Use PAT if available (for cross-repo access), otherwise fall back to GITHUB_TOKEN
           GITHUB_TOKEN: ${{ secrets.METRICS_GRABBER_PAT != '' && secrets.METRICS_GRABBER_PAT || secrets.GITHUB_TOKEN }}
@@ -335,12 +348,39 @@ jobs:
             BUILD_TYPE=Release
             RUNTIME_IMAGE=${{ env.BASE_OS_IMAGE }}
 
+      - name: Build driver artifact image (validation only, no push)
+        if: github.event_name == 'workflow_call' && !inputs.push_release_artifacts
+        env:
+          # Use PAT if available (for cross-repo access), otherwise fall back to GITHUB_TOKEN
+          GITHUB_TOKEN: ${{ secrets.METRICS_GRABBER_PAT != '' && secrets.METRICS_GRABBER_PAT || secrets.GITHUB_TOKEN }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: .devcontainer/Dockerfile.artifacts
+          push: false
+          load: true
+          tags: ${{ steps.local_artifact.outputs.image }}
+          secret-envs: |
+            github_token=GITHUB_TOKEN
+          build-args: |
+            BASE_IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/dev:${{ env.RELEASE_VARIANT }}
+            BUILD_TYPE=Release
+            RUNTIME_IMAGE=${{ env.BASE_OS_IMAGE }}
+
       - name: Pull artifact image for local use
+        if: github.event_name != 'workflow_call' || inputs.push_release_artifacts
         shell: bash
         run: |
           set -euo pipefail
           docker pull "${{ steps.artifact.outputs.image }}"
           docker tag "${{ steps.artifact.outputs.image }}" mldp-pvxs-driver-artifacts:latest
+
+      - name: Tag local artifact image for follow-up steps
+        if: github.event_name == 'workflow_call' && !inputs.push_release_artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker tag "${{ steps.local_artifact.outputs.image }}" mldp-pvxs-driver-artifacts:latest
 
       - name: Save driver artifact image
         shell: bash

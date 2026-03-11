@@ -194,3 +194,16 @@ jobs:
       publish_version: ${{ github.head_ref }}
       push_images: false
       run_release_artifacts: false
+
+  build_prerelease_artifact_image:
+    name: Build artifact image (no push)
+    if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-')
+    needs: build_prerelease_docker_image
+    uses: ./.github/workflows/build-docker-image.yml
+    secrets: inherit
+    with:
+      source_ref: ${{ github.event.pull_request.head.sha }}
+      publish_version: ${{ github.head_ref }}
+      push_images: false
+      run_release_artifacts: true
+      push_release_artifacts: false
