@@ -14,7 +14,7 @@ footer = ""
 [git]
 conventional_commits = true
 filter_unconventional = true
-split_commits = false
+split_commits = true
 commit_parsers = [
   { message = "^feat", group = "Features" },
   { message = "^fix", group = "Bug Fixes" },
