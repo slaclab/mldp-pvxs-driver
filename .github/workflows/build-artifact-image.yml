@@ -110,7 +110,7 @@ jobs:
           if [[ -z "$safe" ]]; then
             safe="ref"
           fi
-          echo "image=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ env.RUNTIME_VARIANT }}:v${safe}" >> "$GITHUB_OUTPUT"
+          echo "image=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/driver-${{ env.RUNTIME_VARIANT }}:v${safe}" >> "$GITHUB_OUTPUT"
 
       - name: Compute local artifact image alias
         id: local_artifact
@@ -128,7 +128,7 @@ jobs:
             echo "tags<<EOF"
             echo "${{ steps.artifact.outputs.image }}"
             if [[ "${{ env.NEED_LAST }}" == "true" ]]; then
-              echo "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ env.RUNTIME_VARIANT }}:latest"
+              echo "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/driver-${{ env.RUNTIME_VARIANT }}:latest"
             fi
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
