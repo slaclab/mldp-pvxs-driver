@@ -72,7 +72,6 @@ jobs:
           ref: ${{ inputs.source_ref || github.ref }}
 
       - name: Log in to the Container registry
-        if: inputs.push_image
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
