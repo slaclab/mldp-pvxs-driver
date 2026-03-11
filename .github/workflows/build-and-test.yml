@@ -182,3 +182,15 @@ jobs:
             COMPILER=gcc
             EPICS_VERSION=${{ env.EPICS_VERSION }}
             PVXS_VERSION=${{ env.PVXS_VERSION }}
+
+  build_prerelease_docker_image:
+    name: Build docker image (no push)
+    if: github.event_name == 'pull_request'
+    needs: build_test_container
+    uses: ./.github/workflows/build-docker-image.yml
+    secrets: inherit
+    with:
+      source_ref: ${{ github.event.pull_request.head.sha }}
+      publish_version: ${{ github.head_ref }}
+      push_images: false
+      run_release_artifacts: false
