@@ -264,11 +264,13 @@ jobs:
       EPICS_VERSION: ${{ needs.build-docker-image.outputs.epics_version }}
       PVXS_VERSION: ${{ needs.build-docker-image.outputs.pvxs_version }}
       RELEASE_VARIANT: ${{ needs.build-docker-image.outputs.variant }}
+      RELEASE_VERSION: ${{ needs.build-release-artifacts.outputs.release_version || github.ref_name }}
+      OVERWRITE_RELEASE: ${{ github.event_name == 'workflow_dispatch' && inputs.overwrite_release || false }}
     steps:
       - name: Check out repository code
         uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.source_ref || github.ref }}
+          ref: ${{ github.ref }}
 
       - name: Download driver binary artifact
         uses: actions/download-artifact@v6
@@ -281,11 +283,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
-            version="${{ needs.build-docker-image.outputs.manual_ref }}"
-          else
-            version="${GITHUB_REF_NAME#v}"
-          fi
+          version="${{ env.RELEASE_VERSION }}"
           # Normalize: our release tag is always prefixed with a single 'v'.
           # If the selected ref already includes 'v' (e.g. 'v0.2.0'), drop it here.
           version="${version#v}"
@@ -307,7 +305,7 @@ jobs:
           fi
 
       - name: Fail if release exists and overwrite not allowed
-        if: steps.check_release.outputs.exists == 'true' && !inputs.overwrite_release
+        if: steps.check_release.outputs.exists == 'true' && env.OVERWRITE_RELEASE != 'true'
         run: |
           echo "Release already exists and 'overwrite_release' is false; failing as requested."
           exit 1
@@ -320,6 +318,6 @@ jobs:
           draft: false
           prerelease: false
           generate_release_notes: true
-          overwrite_files: ${{ inputs.overwrite_release }}
+          overwrite_files: ${{ env.OVERWRITE_RELEASE }}
           files: |
             release-artifacts/mldp_pvxs_driver-rockylinux-9.3-epics-${{ env.EPICS_VERSION }}

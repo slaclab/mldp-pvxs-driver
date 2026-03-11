@@ -2,6 +2,10 @@ name: Build Artifact Image
 
 on:
   workflow_call:
+    outputs:
+      release_version:
+        description: "Normalized release version computed from publish_version."
+        value: ${{ jobs.build-artifact-image.outputs.release_version }}
     inputs:
       source_ref:
         description: "Git ref to build (branch, tag, or SHA)."
@@ -178,18 +182,6 @@ jobs:
         run: |
           set -euo pipefail
           docker tag "${{ steps.local_artifact.outputs.image }}" mldp-pvxs-driver-artifacts:latest
-
-      - name: Save driver artifact image
-        shell: bash
-        run: |
-          set -euo pipefail
-          docker save mldp-pvxs-driver-artifacts:latest -o driver-artifact-image.tar
-
-      - name: Upload driver artifact image
-        uses: actions/upload-artifact@v6
-        with:
-          name: driver-artifact-image
-          path: driver-artifact-image.tar
 
       - name: Extract driver binary
         shell: bash
