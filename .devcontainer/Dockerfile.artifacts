@@ -57,10 +57,10 @@ ENV PVXS_BASE=/opt/local
 RUN dnf update -y && \
     dnf install -y --setopt=install_weak_deps=False \
       ca-certificates \
-      curl \
+      curl-minimal \
       file \
       gnupg2 \
-      libcurl \
+      libcurl-minimal \
       libgcc \
       libstdc++ \
       readline \
