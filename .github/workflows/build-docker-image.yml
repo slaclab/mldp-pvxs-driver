@@ -298,12 +298,17 @@ jobs:
             PVXS_VERSION=${{ env.PVXS_VERSION }}
 
       - name: Build and push driver artifact image
+        env:
+          # Use PAT if available (for cross-repo access), otherwise fall back to GITHUB_TOKEN
+          GITHUB_TOKEN: ${{ secrets.METRICS_GRABBER_PAT != '' && secrets.METRICS_GRABBER_PAT || secrets.GITHUB_TOKEN }}
         uses: docker/build-push-action@v6
         with:
           context: .
           file: .devcontainer/Dockerfile.artifacts
           push: true
           tags: ${{ steps.artifact_tags.outputs.tags }}
+          secrets: |
+            github_token=${{ env.GITHUB_TOKEN }}
           build-args: |
             BASE_IMAGE=${{ steps.base_alias.outputs.tag }}
             BUILD_TYPE=Release

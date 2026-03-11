@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1.7
+
 # Builds the driver inside a container.
 # Intended to be used with a prebuilt dev image as the base (e.g. the image built in CI).
 #
@@ -16,7 +18,15 @@ FROM ${BASE_IMAGE} AS builder
 WORKDIR /workspace
 
 COPY . /workspace
-RUN arch=$(cat /etc/epics_host_arch 2>/dev/null || true) && \
+RUN --mount=type=secret,id=github_token \
+    token_file=/run/secrets/github_token && \
+    if [ -f "$token_file" ] && [ -s "$token_file" ]; then \
+      token="$(cat "$token_file")" && \
+      git config --global credential.helper store && \
+      printf 'https://%s:x-oauth-basic@github.com\n' "$token" > /root/.git-credentials && \
+      chmod 600 /root/.git-credentials; \
+    fi && \
+    arch=$(cat /etc/epics_host_arch 2>/dev/null || true) && \
     if [ -z "$arch" ]; then arch=$(/opt/epics/startup/EpicsHostArch); fi && \
     echo "$arch" > /tmp/epics_host_arch && \
     cmake -S . -B build -G Ninja \
@@ -25,7 +35,8 @@ RUN arch=$(cat /etc/epics_host_arch 2>/dev/null || true) && \
       -DMLDP_PVXS_DRIVER_TESTS=OFF \
       -DEPICS_BASE=/opt/local \
       -DEPICS_HOST_ARCH=${arch} && \
-    cmake --build build -j "$(nproc)"
+    cmake --build build -j "$(nproc)" && \
+    rm -f /root/.git-credentials
 
 RUN install -Dm755 /workspace/build/bin/mldp_pvxs_driver /tmp/mldp/usr/bin/mldp_pvxs_driver
 
