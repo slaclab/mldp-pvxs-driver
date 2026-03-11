@@ -4,15 +4,13 @@ The MLDP PVXS Driver uses an **abstract Reader pattern** to support multiple dat
 
 > **Related:** [Architecture Overview](architecture.md) | [Implementing Custom Readers](readers-implementation.md)
 
-## Supported and Future Reader Types
+## Supported Reader Types
 
-| Reader Type      | Status      | Data Source          | Description                      |
-|------------------|-------------|----------------------|----------------------------------|
-| `epics-base`     | Implemented | EPICS Control System | Polling-based Channel Access     |
-| `epics-pvxs`     | Implemented | EPICS Control System | Event-driven PVAccess (PVXS)     |
-| `epics-archiver` | Future      | EPICS Archiver       | Historical data retrieval        |
-| `hdf5`           | Future      | HDF5 Files           | Data replay from files           |
-| Others           | Future      | Various              | Extensible for new sources       |
+| Reader Type      | Status      | Data Source          | Documentation                                           |
+|------------------|-------------|----------------------|---------------------------------------------------------|
+| `epics-base`     | Implemented | EPICS Control System | [EpicsBaseReader](readers/epics-base-reader.md)         |
+| `epics-pvxs`     | Implemented | EPICS Control System | [EpicsPVXSReader](readers/epics-pvxs-reader.md)         |
+| `epics-archiver` | Implemented | EPICS Archiver       | [EpicsArchiverReader](readers/epics-archiver-reader.md) |
 
 ## Reader Class Hierarchy
 
@@ -41,250 +39,103 @@ classDiagram
         epics-pvxs
     }
 
-    class ArchiverReader {
-        <<Future>>
+    class EpicsArchiverReader {
+        Historical + Periodic
         epics-archiver
     }
 
-    class HDF5Reader {
-        <<Future>>
-        hdf5
-    }
-
     Reader <|-- EpicsReaderBase
-    Reader <|-- ArchiverReader
-    Reader <|-- HDF5Reader
+    Reader <|-- EpicsArchiverReader
     EpicsReaderBase <|-- EpicsBaseReader
     EpicsReaderBase <|-- EpicsPVXSReader
 ```
 
-## Current EPICS Reader Implementations
+## Implemented Readers
 
-## EpicsBaseReader (Polling-Based)
+### EpicsBaseReader
 
-The `EpicsBaseReader` provides EPICS Channel Access monitoring using a polling-based approach. It uses the legacy EPICS Base client library with a dedicated monitor poller that periodically drains monitor queues.
+Polling-based EPICS Channel Access monitoring for legacy systems.
 
-**Registration Type:** `"epics-base"`
+- **Mode**: Polling with configurable interval
+- **Best For**: Legacy EPICS installations without PVAccess
+- **Key Feature**: Multiple polling threads with mutex-protected queue draining
+- **BSAS Support**: SLAC BSAS NTTable mode with per-row timestamps — see [SLAC BSAS NTTable Gen 1](readers/slac-bsas-table-gen1.md), [Gen 2](readers/slac-bsas-table-gen2.md)
 
-| File           | Location                                         |
-|----------------|--------------------------------------------------|
-| Header         | `include/reader/impl/epics/EpicsBaseReader.h`    |
-| Implementation | `src/reader/impl/epics/EpicsBaseReader.cpp`      |
+→ [Full Documentation: EpicsBaseReader](readers/epics-base-reader.md)
 
-### EpicsBaseReader Architecture
+### EpicsPVXSReader
 
-```mermaid
-flowchart TB
-    subgraph EpicsBaseReader["EpicsBaseReader"]
-        subgraph MonitorPoller["EpicsBaseMonitorPoller"]
-            PT1["Poll Thread 1"]
-            PT2["Poll Thread 2"]
-            PTN["Poll Thread N"]
+Modern event-driven EPICS PVAccess monitoring with advanced table support.
 
-            PT1 --> MonitorQueues
-            PT2 --> MonitorQueues
-            PTN --> MonitorQueues
+- **Mode**: Event-driven subscriptions
+- **Best For**: High-frequency updates with minimal latency
+- **Key Feature**: Smart thread pool decisions + SLAC BSAS NTTable support — see [SLAC BSAS NTTable Gen 1](readers/slac-bsas-table-gen1.md), [Gen 2](readers/slac-bsas-table-gen2.md)
 
-            MonitorQueues["Monitor Queues<br/>(per PV)"]
-        end
+→ [Full Documentation: EpicsPVXSReader](readers/epics-pvxs-reader.md)
 
-        MonitorQueues --> DrainQueue
+### EpicsArchiverReader
 
-        DrainQueue["drainEpicsBaseQueue()<br/>(mutex protected)"]
+Historical data retrieval and continuous tail polling from EPICS Archiver Appliance.
 
-        DrainQueue --> ReaderPool
+- **Mode**: One-shot historical fetch or periodic polling
+- **Best For**: Data backfill, archiver tailing, time-series analysis
+- **Key Feature**: PB/HTTP streaming, configurable timeouts
 
-        ReaderPool["Reader Thread Pool<br/>(data conversion)"]
-    end
-```
+→ [Full Documentation: EpicsArchiverReader](readers/epics-archiver-reader.md)
 
-### EpicsBaseReader Data Flow
+## Architecture Overview
 
-1. EPICS PV updates are captured by pvaClient monitors
-2. Updates are stored in per-PV monitor queues
-3. Dedicated polling threads periodically drain queues
-4. `drainEpicsBaseQueue()` is called (protected by mutex)
-5. Events are dispatched to the reader thread pool
-6. `processEvent()` converts data and pushes to the bus
+### Core Pattern
 
-### EpicsBaseReader Configuration
+All readers follow the same pattern:
 
-```yaml
-reader:
-  - epics-base:
-      - name: my_base_reader
-        thread_pool_size: 2          # Conversion thread pool size
-        monitor_poll_threads: 2      # Number of polling threads
-        monitor_poll_interval_ms: 5  # Polling interval in ms
-        pvs:
-          - name: MY:PV:NAME
-          - name: ANOTHER:PV
-```
+1. **Initialization**: Register with `ReaderFactory` using a unique type name
+2. **Data Acquisition**: Connect to data source and capture updates
+3. **Data Processing**: Convert source data to MLDP protobuf format
+4. **Publishing**: Push events to `IDataBus` for downstream processing
 
-### EpicsBaseReader Key Features
+### Reader Base Class
 
-- **Polling Interval Control**: Configurable polling frequency
-- **Multiple Poll Threads**: Parallel queue draining
-- **Mutex Protection**: Thread-safe queue access via `epics_base_drain_mutex_`
-- **Legacy Compatibility**: Works with traditional EPICS Channel Access
-
-### EpicsBaseReader Use Cases
-
-- Legacy EPICS installations without PVAccess support
-- Environments requiring Channel Access protocol
-- Systems where polling is preferred over event-driven updates
-
----
-
-## EpicsPVXSReader (Event-Driven)
-
-The `EpicsPVXSReader` provides modern EPICS PVAccess monitoring using an event-driven subscription model. It uses the PVXS client library for direct PV access with immediate event callbacks.
-
-**Registration Type:** `"epics-pvxs"`
-
-| File           | Location                                         |
-|----------------|--------------------------------------------------|
-| Header         | `include/reader/impl/epics/EpicsPVXSReader.h`    |
-| Implementation | `src/reader/impl/epics/EpicsPVXSReader.cpp`      |
-
-### EpicsPVXSReader Architecture
-
-```mermaid
-flowchart TB
-    subgraph EpicsPVXSReader["EpicsPVXSReader"]
-        subgraph Context["pvxs::client::Context"]
-            subgraph Subscriptions["PV Subscriptions"]
-                M1["monitor(pv1) --> callback"]
-                M2["monitor(pv2) --> callback"]
-                MN["monitor(pvN) --> callback"]
-            end
-        end
-
-        Subscriptions -->|immediate event| ReaderPool
-
-        subgraph ReaderPool["Reader Thread Pool<br/>(conditional usage)"]
-            Condition["if thread_count > 1 → use pool<br/>else → direct execution"]
-        end
-
-        ReaderPool --> ProcessEvent
-
-        ProcessEvent["processEvent()<br/>(data conversion + push)"]
-    end
-```
-
-### EpicsPVXSReader Data Flow
-
-1. PVXS context establishes subscriptions via `pva_context_.monitor(pv)`
-2. Subscription callbacks fire immediately on PV value changes
-3. Events are dispatched to the reader thread pool (or direct if single-threaded)
-4. `processEvent()` converts PVXS Value to protobuf
-5. Event batch is pushed to the bus
-
-### EpicsPVXSReader Configuration
-
-```yaml
-reader:
-  - epics-pvxs:
-      - name: my_pvxs_reader
-        thread_pool_size: 2           # Conversion thread pool size
-        column_batch_size: 50         # NTTable column batch size
-        pvs:
-          - name: MY:PV:NAME
-          - name: BSA:TABLE:PV
-            option:                   # For SLAC BSAS NTTable with row timestamps
-              type: slac-bsas-table
-              tsSeconds: secondsPastEpoch
-              tsNanos: nanoseconds
-```
-
-### EpicsPVXSReader Key Features
-
-- **Event-Driven**: Immediate response to PV changes (no polling overhead)
-- **Smart Threading**: Conditional thread pool usage based on thread count
-- **NTTable Support**: Special handling for tabular data with row timestamps
-- **PVXS Options**: Support for custom channel options
-
-### Conditional Parallelization
-
-The reader implements smart thread pool decisions to avoid overhead:
+All readers inherit from `Reader` and must provide:
 
 ```cpp
-// Line 132 in EpicsPVXSReader.cpp
-reader_pool_->get_thread_count() > 1 ? reader_pool_.get() : nullptr
+class MyReader : public Reader {
+public:
+    MyReader(std::shared_ptr<IDataBus> bus,
+             std::shared_ptr<metrics::Metrics> metrics = nullptr);
+
+    virtual ~MyReader();
+
+    // Return human-readable identifier
+    virtual std::string name() const override;
+
+protected:
+    std::shared_ptr<IDataBus> bus_;       // Event bus
+    std::shared_ptr<metrics::Metrics> metrics_; // Optional metrics
+};
 ```
 
-- **Single thread (= 1)**: Bypass thread pool, execute directly
-- **Multiple threads (> 1)**: Use thread pool for parallel conversion
+### Common Base: EpicsReaderBase
 
-### SLAC BSAS NTTable Handling
+EPICS-specific readers (base, pvxs, archiver) share `EpicsReaderBase`:
 
-For PVs that return NTTable structures with per-row timestamps (SLAC BSAS format):
+#### Thread Pool Management
 
-```yaml
-pvs:
-  - name: BSA:TABLE:PV
-    option:
-      type: slac-bsas-table
-      tsSeconds: secondsPastEpoch    # Column containing epoch seconds
-      tsNanos: nanoseconds           # Column containing nanoseconds
-```
+- Creates and manages `BS::light_thread-pool` for data conversion
+- Configurable via `thread-pool-size` parameter
+- Metrics track queue depth
 
-- Each table column becomes a separate source in the event batch
-- Timestamps are extracted per-row from the specified fields
-- Source name equals the column field name
-- Conversion handled by `BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch()`
+#### Common Features
 
-### EpicsPVXSReader Use Cases
-
-- Modern EPICS installations with PVAccess support
-- High-frequency PV updates requiring minimal latency
-- Applications needing immediate event notification
-- Systems with NTTable data structures
-
----
-
-## Comparison
-
-| Feature            | EpicsBaseReader                  | EpicsPVXSReader                  |
-|--------------------|----------------------------------|----------------------------------|
-| Protocol           | Channel Access                   | PVAccess (PVXS)                  |
-| Event Model        | Polling                          | Event-driven (subscriptions)     |
-| Latency            | Poll interval dependent          | Immediate                        |
-| Thread Model       | Poll threads + conversion pool   | Callback + conditional pool      |
-| NTTable Support    | Basic                            | Advanced (row timestamps)        |
-| Configuration Type | `epics-base`                     | `epics-pvxs`                     |
-| Best For           | Legacy systems                   | Modern high-performance          |
-
-## Common Base: EpicsReaderBase
-
-Both readers inherit from `EpicsReaderBase`, which provides:
-
-### Thread Pool Management
-
-- Creates and manages `BS::light_thread_pool`
-- Configurable pool size via `thread_pool_size`
-- Metrics for queue depth monitoring
-
-### Common Configuration
-
-- PV name lists
-- Reader naming
+- PV name list management
 - Logging integration
+- Protobuf conversion utilities
+- Error handling and metrics collection
 
-### Event Processing Interface
-
-- Abstract `processEvent()` method
-- Common protobuf conversion utilities
-- Error handling and metrics
-
-### EpicsReaderBase Source Files
-
-| File           | Location                                         |
-|----------------|--------------------------------------------------|
-| Header         | `include/reader/impl/epics/EpicsReaderBase.h`    |
-| Implementation | `src/reader/impl/epics/EpicsReaderBase.cpp`      |
-
----
+| File           | Location                                             |
+|----------------|------------------------------------------------------|
+| Header         | `include/reader/impl/epics/shared/EpicsReaderBase.h` |
+| Implementation | `src/reader/impl/epics/shared/EpicsReaderBase.cpp`   |
 
 ## Factory Registration
 
@@ -296,19 +147,37 @@ REGISTER_READER("epics-base", EpicsBaseReader)
 
 // In EpicsPVXSReader.h
 REGISTER_READER("epics-pvxs", EpicsPVXSReader)
+
+// In EpicsArchiverReader.h
+REGISTER_READER("epics-archiver", EpicsArchiverReader)
 ```
 
-The `ReaderFactory` creates readers based on YAML configuration:
+The `ReaderFactory` creates readers dynamically from configuration:
 
 ```cpp
 auto reader = ReaderFactory::create("epics-pvxs", config, bus);
 ```
 
----
+## Configuration Pattern
+
+All readers use YAML-based configuration:
+
+```yaml
+reader:
+  - <reader-type>:
+      - name: instance_name
+        param1: value1
+        param2: value2
+        pvs:
+          - name: PV_NAME_1
+          - name: PV_NAME_2
+```
+
+Configuration is validated and type-checked before reader instantiation.
 
 ## Metrics
 
-Both readers expose Prometheus metrics:
+All MLDP readers expose consistent Prometheus metrics:
 
 | Metric                                           | Description                       |
 |--------------------------------------------------|-----------------------------------|
@@ -318,6 +187,18 @@ Both readers expose Prometheus metrics:
 | `mldp_pvxs_driver_reader_processing_time_ms`     | Event processing time histogram   |
 | `mldp_pvxs_driver_reader_queue_depth`            | Monitor queue size (EpicsBase)    |
 | `mldp_pvxs_driver_reader_pool_queue_depth`       | Thread pool queue depth           |
+
+## Comparison Matrix
+
+| Feature            | EpicsBaseReader                  | EpicsPVXSReader                  | EpicsArchiverReader             |
+|--------------------|----------------------------------|----------------------------------|---------------------------------|
+| Protocol           | Channel Access                   | PVAccess (PVXS)                  | HTTP (PB/HTTP streaming)        |
+| Event Model        | Polling                          | Event-driven                     | Fetch (one-shot or periodic)    |
+| Latency            | Poll interval dependent          | Immediate                        | Variable (depends on window)    |
+| Thread Model       | Poll threads + conversion pool   | Callback + conditional pool      | Worker thread + conversion pool |
+| Data Source        | Live PVs                         | Live PVs                         | Historical archiver data        |
+| Configuration      | `epics-base`                     | `epics-pvxs`                     | `epics-archiver`                |
+| Best For           | Legacy systems                   | Modern high-performance          | Backfill and data replay        |
 
 ---
 
@@ -334,11 +215,92 @@ For a complete guide on implementing custom readers, including:
 
 See **[Implementing Custom Readers](readers-implementation.md)**.
 
-### Future Reader Ideas
+### Reader Development Checklist
 
-| Reader            | Data Source                 | Use Case                          |
-|-------------------|-----------------------------|-----------------------------------|
-| `epics-archiver`  | EPICS Archiver Appliance    | Historical data replay, backfill  |
-| `hdf5`            | HDF5 Files                  | Offline data analysis, simulation |
-| `csv`             | CSV Files                   | Test data injection               |
-| `kafka`           | Kafka Topics                | Stream processing integration     |
+1. ✅ Understand the `Reader` interface and `IDataBus` API
+2. ✅ Design your data source integration (polling, events, streaming, etc.)
+3. ✅ Implement data conversion to protobuf format
+4. ✅ Create configuration parser (YAML → reader config)
+5. ✅ Handle threading and lifecycle (start/stop, shutdown gracefully)
+6. ✅ Add Prometheus metrics
+7. ✅ Write comprehensive tests
+8. ✅ Register with `REGISTER_READER` macro
+9. ✅ Update configuration schema documentation
+
+### Key Implementation Patterns
+
+**Pattern 1: Polling Reader** (like EpicsBaseReader)
+
+- Spawn dedicated polling thread(s)
+- Drain data into thread-safe queue
+- Push to event bus from worker thread
+- Handle shutdown cleanly
+
+**Pattern 2: Event-Driven Reader** (like EpicsPVXSReader)
+
+- Register callbacks with data source
+- Use thread pool for async processing if needed
+- Push events to bus from callback or pool
+- Implement proper subscription cleanup
+
+**Pattern 3: Batch/Streaming Reader** (like EpicsArchiverReader)
+
+- Fetch data in background worker
+- Stream or batch parse response data
+- Split into logical batches by time or size
+- Push batches to event bus
+- Handle graceful shutdown of in-flight requests
+
+## Implementation Files Organization
+
+```TEXT
+include/reader/
+├── Reader.h                          # Abstract base class
+├── ReaderFactory.h                   # Factory registration
+└── impl/
+    └── epics/
+        ├── shared/
+        │   ├── EpicsReaderBase.h     # Common EPICS base
+        │   └── EpicsReaderConfig.h
+        ├── base/
+        │   ├── EpicsBaseReader.h
+        │   ├── EpicsBaseMonitorPoller.h
+        │   └── EpicsPVDataConversion.h
+        ├── pvxs/
+        │   ├── EpicsPVXSReader.h
+        │   ├── EpicsMLDPConversion.h
+        │   └── BSASEpicsMLDPConversion.h
+        └── epics_archiver/
+            ├── EpicsArchiverReader.h
+            └── EpicsArchiverReaderConfig.h
+
+src/reader/
+├── Reader.cpp
+├── ReaderFactory.cpp
+└── impl/
+    ├── epics/
+    │   ├── shared/
+    │   │   ├── EpicsReaderBase.cpp
+    │   │   └── EpicsReaderConfig.cpp
+    │   ├── base/
+    │   │   ├── EpicsBaseReader.cpp
+    │   │   ├── EpicsBaseMonitorPoller.cpp
+    │   │   └── EpicsPVDataConversion.cpp
+    │   └── pvxs/
+    │       ├── EpicsPVXSReader.cpp
+    │       ├── EpicsMLDPConversion.cpp
+    │       └── BSASEpicsMLDPConversion.cpp
+    └── epics_archiver/
+        ├── EpicsArchiverReader.cpp
+        └── EpicsArchiverReaderConfig.cpp
+```
+
+---
+
+## See Also
+
+- [Architecture Overview](architecture.md) - System-wide architecture and data flow
+- [Implementing Custom Readers](readers-implementation.md) - Complete guide with examples
+- [Configuration Reference](../config.md) - Full configuration schema
+- [SLAC BSAS NTTable Gen 1](readers/slac-bsas-table-gen1.md) - BSAS Gen 1: raw per-pulse sample arrays
+- [SLAC BSAS NTTable Gen 2](readers/slac-bsas-table-gen2.md) - BSAS Gen 2: PID-indexed statistical summaries (planned)

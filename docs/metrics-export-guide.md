@@ -18,11 +18,11 @@ The driver can expose metrics via a Prometheus-compatible HTTP endpoint using th
 ```yaml
 metrics:
   endpoint: 0.0.0.0:9464
-  scan_interval_seconds: 1
+  scan-interval-seconds: 1
 ```
 
 - **`endpoint`** (required): Host:port where the Prometheus exposer binds
-- **`scan_interval_seconds`** (optional, default: 1): Interval between system metrics collection scans
+- **`scan-interval-seconds`** (optional, default: 1): Interval between system metrics collection scans
 
 The endpoint serves metrics in Prometheus text exposition format at `http://<endpoint>/metrics`.
 
@@ -194,7 +194,7 @@ See the format specification above. Histogram samples are grouped under the base
    ```yaml
    metrics:
      endpoint: 0.0.0.0:9464
-     scan_interval_seconds: 2
+     scan-interval-seconds: 2
    ```
 
 2. **JSONL exports every 5 seconds**:

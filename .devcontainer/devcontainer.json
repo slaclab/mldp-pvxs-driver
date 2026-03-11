@@ -13,8 +13,12 @@
 	// Features to add to the dev container. More info: https://containers.dev/features.
 	// "features": {},
 
-	// Use 'forwardPorts' to make a list of ports inside the container available locally.
-	// "forwardPorts": [],
+	// Use 'forwardPorts' to make a list of ports inside the compose network available locally.
+	"forwardPorts": [
+		"mongodb:27017",
+		"dp-ingestion:50051",
+		"dp-query:50052"
+	],
 
 	// Use 'postCreateCommand' to run commands after the container is created.
 	// "postCreateCommand": "uname -a",
@@ -38,5 +42,16 @@
 	},
 
 	// Uncomment to connect as root instead. More info: https://aka.ms/dev-containers-non-root.
-	"remoteUser": "root"
+	"remoteUser": "root",
+	"portsAttributes": {
+		"mongodb:27017": {
+			"label": "mongodb"
+		},
+		"dp-ingestion:50051": {
+			"label": "dp-ingestion (gRPC)"
+		},
+		"dp-query:50052": {
+			"label": "dp-query (gRPC)"
+		}
+	}
 }

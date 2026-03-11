@@ -18,6 +18,17 @@
 
 namespace mldp_pvxs_driver::util::pool {
 
+inline constexpr char ProviderNameKey[] = "provider-name";
+inline constexpr char ProviderDescriptionKey[] = "provider-description";
+inline constexpr char IngestionUrlKey[] = "ingestion-url";
+inline constexpr char QueryUrlKey[] = "query-url";
+inline constexpr char MinConnKey[] = "min-conn";
+inline constexpr char MaxConnKey[] = "max-conn";
+inline constexpr char CredentialsKey[] = "credentials";
+inline constexpr char PemCertChainKey[] = "pem-cert-chain";
+inline constexpr char PemPrivateKeyKey[] = "pem-private-key";
+inline constexpr char PemRootCertsKey[] = "pem-root-certs";
+
 /**
  * @brief Typed view of the MLDP gRPC pool configuration.
  *
@@ -26,7 +37,8 @@ namespace mldp_pvxs_driver::util::pool {
  * mldp_pool:
  *   provider_name: pvxs_provider
  *   provider_description: "PVXS-based data provider"
- *   url: https://mldp.example:443
+ *   ingestion_url: https://mldp-ingestion.example:443
+ *   query_url: https://mldp-query.example:443 # optional, defaults to ingestion_url
  *   min_conn: 1
  *   max_conn: 4
  *   credentials: ssl  # or 'none' for insecure, or a map for custom TLS
@@ -37,7 +49,8 @@ namespace mldp_pvxs_driver::util::pool {
  * mldp_pool:
  *   provider_name: pvxs_provider
  *   provider_description: "PVXS-based data provider"
- *   url: https://mldp.example:443
+ *   ingestion_url: https://mldp-ingestion.example:443
+ *   query_url: https://mldp-query.example:443 # optional
  *   min_conn: 1
  *   max_conn: 4
  *   credentials:
@@ -73,12 +86,12 @@ public:
     {
         enum class Type
         {
-            Insecure,  ///< No TLS encryption
-            Ssl        ///< TLS with optional custom certificates
+            Insecure, ///< No TLS encryption
+            Ssl       ///< TLS with optional custom certificates
         };
 
-        Type                           type{Type::Insecure};
-        grpc::SslCredentialsOptions    ssl_options{};  ///< Populated from file paths if provided
+        Type                        type{Type::Insecure};
+        grpc::SslCredentialsOptions ssl_options{}; ///< Populated from file paths if provided
     };
 
     MLDPGrpcPoolConfig();
@@ -87,19 +100,21 @@ public:
     bool               valid() const;
     const std::string& providerName() const;
     const std::string& providerDescription() const;
-    const std::string& url() const;
+    const std::string& ingestionUrl() const;
+    const std::string& queryUrl() const;
     int                minConnections() const;
     int                maxConnections() const;
     const Credentials& credentials() const;
 
 private:
-    void parse(const config::Config& root);
+    void               parse(const config::Config& root);
     static std::string readFile(const std::string& path);
 
     bool        valid_ = false; ///< Tracks whether parsing succeeded.
     std::string provider_name_;
     std::string provider_description_;
-    std::string url_;
+    std::string ingestion_url_;
+    std::string query_url_;
     int         min_conn_ = 0;
     int         max_conn_ = 0;
     Credentials credentials_;

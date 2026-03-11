@@ -33,9 +33,14 @@ const std::string& MLDPGrpcPoolConfig::providerName() const
     return provider_name_;
 }
 
-const std::string& MLDPGrpcPoolConfig::url() const
+const std::string& MLDPGrpcPoolConfig::ingestionUrl() const
 {
-    return url_;
+    return ingestion_url_;
+}
+
+const std::string& MLDPGrpcPoolConfig::queryUrl() const
+{
+    return query_url_;
 }
 
 const std::string& MLDPGrpcPoolConfig::providerDescription() const
@@ -60,69 +65,84 @@ const MLDPGrpcPoolConfig::Credentials& MLDPGrpcPoolConfig::credentials() const
 
 void MLDPGrpcPoolConfig::parse(const config::Config& root)
 {
+    using namespace mldp_pvxs_driver::util::pool;
+
     if (!root.valid())
     {
-        throw Error("mldp_pool configuration node is invalid");
+        throw Error("mldp-pool configuration node is invalid");
     }
-    if (!root.hasChild("provider_name"))
+    if (!root.hasChild(ProviderNameKey))
     {
-        throw Error(makeMissingFieldMessage("provider_name"));
+        throw Error(makeMissingFieldMessage(ProviderNameKey));
     }
-    provider_name_ = root.get("provider_name");
+    provider_name_ = root.get(ProviderNameKey);
     if (provider_name_.empty())
     {
-        throw Error("mldp_pool.provider_name must not be empty");
+        throw Error(std::string("mldp-pool.") + ProviderNameKey + " must not be empty");
     }
-    if (root.hasChild("provider_description"))
+    if (root.hasChild(ProviderDescriptionKey))
     {
-        provider_description_ = root.get("provider_description");
+        provider_description_ = root.get(ProviderDescriptionKey);
     }
     else
     {
         provider_description_ = provider_name_;
     }
 
-    if (!root.hasChild("url"))
+    if (!root.hasChild(IngestionUrlKey))
     {
-        throw Error(makeMissingFieldMessage("url"));
+        throw Error(makeMissingFieldMessage(IngestionUrlKey));
     }
-    url_ = root.get("url");
-    if (url_.empty())
+    ingestion_url_ = root.get(IngestionUrlKey);
+    if (ingestion_url_.empty())
     {
-        throw Error("mldp_pool.url must not be empty");
+        throw Error(std::string("mldp-pool.") + IngestionUrlKey + " must not be empty");
+    }
+    if (!root.hasChild(QueryUrlKey))
+    {
+        throw Error(makeMissingFieldMessage(QueryUrlKey));
+    }
+    query_url_ = root.get(QueryUrlKey);
+    if (query_url_.empty())
+    {
+        throw Error(std::string("mldp-pool.") + QueryUrlKey + " must not be empty");
+    }
+    if (query_url_ == ingestion_url_)
+    {
+        throw Error(std::string("mldp-pool.") + QueryUrlKey + " must not be equal to ingestion-url");
     }
 
-    if (!root.hasChild("min_conn"))
+    if (!root.hasChild(MinConnKey))
     {
-        throw Error(makeMissingFieldMessage("min_conn"));
+        throw Error(makeMissingFieldMessage(MinConnKey));
     }
-    min_conn_ = root.getInt("min_conn");
+    min_conn_ = root.getInt(MinConnKey);
     if (min_conn_ <= 0)
     {
-        throw Error("mldp_pool.min_conn must be greater than zero");
+        throw Error(std::string("mldp-pool.") + MinConnKey + " must be greater than zero");
     }
 
-    if (!root.hasChild("max_conn"))
+    if (!root.hasChild(MaxConnKey))
     {
-        throw Error(makeMissingFieldMessage("max_conn"));
+        throw Error(makeMissingFieldMessage(MaxConnKey));
     }
-    max_conn_ = root.getInt("max_conn");
+    max_conn_ = root.getInt(MaxConnKey);
     if (max_conn_ <= 0)
     {
-        throw Error("mldp_pool.max_conn must be greater than zero");
+        throw Error(std::string("mldp-pool.") + MaxConnKey + " must be greater than zero");
     }
     if (max_conn_ < min_conn_)
     {
-        throw Error("mldp_pool.max_conn must be greater than or equal to min_conn");
+        throw Error(std::string("mldp-pool.") + MaxConnKey + " must be greater than or equal to " + MinConnKey);
     }
 
     credentials_ = Credentials{};
-    if (root.hasChild("credentials"))
+    if (root.hasChild(CredentialsKey))
     {
-        const auto credentialNodes = root.subConfig("credentials");
+        const auto credentialNodes = root.subConfig(CredentialsKey);
         if (credentialNodes.empty())
         {
-            throw Error("mldp_pool.credentials is present but empty");
+            throw Error(std::string("mldp-pool.") + CredentialsKey + " is present but empty");
         }
 
         const auto& credentialsNode = credentialNodes.front();
@@ -141,29 +161,29 @@ void MLDPGrpcPoolConfig::parse(const config::Config& root)
             }
             else
             {
-                throw Error("mldp_pool.credentials must be 'none', 'ssl', or a map of TLS options");
+                throw Error("mldp-pool.credentials must be 'none', 'ssl', or a map of TLS options");
             }
         }
         else
         {
             credentials_.type = Credentials::Type::Ssl;
 
-            if (credentialsTree.has_child("pem_cert_chain"))
+            if (credentialsTree.has_child(PemCertChainKey))
             {
                 std::string path;
-                credentialsTree["pem_cert_chain"] >> path;
+                credentialsTree[PemCertChainKey] >> path;
                 credentials_.ssl_options.pem_cert_chain = readFile(path);
             }
-            if (credentialsTree.has_child("pem_private_key"))
+            if (credentialsTree.has_child(PemPrivateKeyKey))
             {
                 std::string path;
-                credentialsTree["pem_private_key"] >> path;
+                credentialsTree[PemPrivateKeyKey] >> path;
                 credentials_.ssl_options.pem_private_key = readFile(path);
             }
-            if (credentialsTree.has_child("pem_root_certs"))
+            if (credentialsTree.has_child(PemRootCertsKey))
             {
                 std::string path;
-                credentialsTree["pem_root_certs"] >> path;
+                credentialsTree[PemRootCertsKey] >> path;
                 credentials_.ssl_options.pem_root_certs = readFile(path);
             }
         }
@@ -184,13 +204,13 @@ std::string MLDPGrpcPoolConfig::readFile(const std::string& path)
 
     std::ostringstream buffer;
     buffer << file.rdbuf();
-    
+
     if (file.bad())
     {
         std::ostringstream oss;
         oss << "Error reading credentials file at '" << path << "'";
         throw Error(oss.str());
     }
-    
+
     return buffer.str();
 }

@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       image:
-        description: "Full GHCR image name (no tag needed). Example: ghcr.io/slaclab/mldp-pvxs-driver/ubuntu-noble-r7.0.8.1-1.4.1"
+        description: "Full GHCR image name (no tag needed). Example: ghcr.io/slaclab/mldp-pvxs-driver/rockylinux-9.3-r7.0.8.1-1.4.1"
         required: true
-        default: "ghcr.io/slaclab/mldp-pvxs-driver/ubuntu-noble-r7.0.8.1-1.4.1"
+        default: "ghcr.io/slaclab/mldp-pvxs-driver/rockylinux-9.3-r7.0.8.1-1.4.1"
         type: string
       tag:
         description: "Optional tag to delete (e.g. v0.2.1, latest, buildcache). Leave empty to delete ALL versions of the image."

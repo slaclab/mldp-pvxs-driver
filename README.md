@@ -2,74 +2,112 @@
 
 ![logo](./logos/SLAC-lab-hires.png)
 
-This driver integrates PVXS-exposed EPICS process variables with the SLAC MLDP ingestion API (see [MLDP](https://github.com/osprey-dcs/dp-service.git)), translating PV updates into MLDP payloads and forwarding them over gRPC so downstream analysis pipelines receive timely ML measurements while remaining compatible with other data sources.
+This project provides a generic driver architecture for ingesting real-time or historical samples into the MLDP ingestion API (see [MLDP](https://github.com/osprey-dcs/dp-service.git)). It separates source readers from batching/transport so multiple data-source implementations can publish normalized payloads to MLDP over gRPC.
 
 ## Configuration
 
-When running the controller/CLI orchestrator, the full config is a single YAML document. Every block shown is required
+When running the CLI, the full config is a single YAML document. Every block shown is required
 unless marked optional.
 
 ```yaml
-controller_thread_pool: 2
+controller-thread-pool: 2                   # worker threads for controller-side batching and send work
+controller-stream-max-bytes: 2097152        # optional; flush a gRPC stream after this payload size
+controller-stream-max-age-ms: 200           # optional; flush a gRPC stream after this many milliseconds
 
-mldp_pool:
-  provider_name: pvxs_provider
-  provider_description: "PVXS aggregate provider"   # optional
-  url: https://ingest.example:443
-  min_conn: 1
-  max_conn: 4
-  credentials: # optional
-    pem_cert_chain: /etc/certs/client.crt
-    pem_private_key: /etc/certs/client.key
-    pem_root_certs: /etc/certs/ca.crt
+mldp-pool:                                  # MLDP gRPC provider and connection-pool settings
+  provider-name: pvxs_provider              # provider name advertised to MLDP
+  provider-description: "PVXS aggregate provider"   # optional; human-readable provider label
+  ingestion-url: dp-ingestion:50051         # MLDP ingestion service address
+  query-url: dp-query:50052                 # MLDP query service address
+  min-conn: 1                               # minimum number of gRPC connections to keep ready
+  max-conn: 4                               # maximum number of gRPC connections allowed in the pool
+  credentials:                              # optional; TLS client credential files
+    pem-cert-chain: /etc/certs/client.crt   # client certificate chain PEM file
+    pem-private-key: /etc/certs/client.key  # client private key PEM file
+    pem-root-certs: /etc/certs/ca.crt       # CA bundle PEM file used to verify the server
 
-reader:                                  # optional; omit to start with no readers
-  # PVXS reader (event-driven, recommended for modern EPICS)
-  - epics-pvxs:
-      - name: pvxs_reader
-        thread_pool_size: 2              # optional; conversion thread pool size
-        column_batch_size: 50            # optional; max columns per batch for NTTable
-        pvs:
-          - name: MY:PV:NAME
-          - name: BSA:TABLE:PV
-            option:                      # optional; for SLAC BSAS NTTable with row timestamps
-              type: slac-bsas-table
-              tsSeconds: secondsPastEpoch
-              tsNanos: nanoseconds
+reader:                                     # optional; list of reader instances to start
+  # ========== EPICS PVAccess Reader (Real-time Monitoring via PVXS) ==========
+  - epics-pvxs:                             # PVAccess reader type using PVXS subscriptions
+      - name: pvxs_reader_a                 # unique reader instance name for logs and metrics
+        thread-pool: 1                      # optional; default: 1; conversion worker pool for processing PV updates
+        column-batch-size: 50               # optional; default: 50; max NTTable columns processed per batch
+        monitor-poll-threads: 2             # optional; default: 2; threads draining monitor events from the queue
+        monitor-poll-interval-ms: 5         # optional; default: 5; sleep between monitor queue polls
+        pvs:                                # PV list monitored by this reader
+          - name: "PV:NAME:1"               # PV name to subscribe to
+          - name: "PV:NAME:2"               # PV name to subscribe to
+            option: "VALUE"                 # optional; scalar channel option passed to the monitor
+          - name: "TABLE:PV"                # PV expected to publish NT Table data
+            option:                         # optional; structured monitor option for NT Table handling
+              type: "slac-bsas-table"       # enable SLAC BSAS row-by-row NT Table conversion
+              tsSeconds: "secondsFieldName" # NT Table field containing per-row epoch seconds
+              tsNanos: "nanosFieldName"     # NT Table field containing per-row nanoseconds
 
-  # Base reader (polling-based, for legacy Channel Access)
-  - epics-base:
-      - name: base_reader
-        thread_pool_size: 2              # optional; conversion thread pool size
-        monitor_poll_threads: 2          # optional; number of polling threads
-        monitor_poll_interval_ms: 5      # optional; polling interval in ms
-        pvs:
-          - name: LEGACY:PV:ONE
-          - name: LEGACY:PV:TWO
+  # ========== EPICS Base Reader (Real-time Monitoring via Channel Access) ==========
+  - epics-base:                             # Channel Access reader type for legacy EPICS deployments
+      - name: base_reader_a                 # unique reader instance name for logs and metrics
+        thread-pool: 1                      # optional; default: 1; conversion worker pool for processing PV updates
+        column-batch-size: 50               # optional; default: 50; max NTTable columns processed per batch
+        monitor-poll-threads: 2             # optional; default: 2; threads draining monitor events from the queue
+        monitor-poll-interval-ms: 5         # optional; default: 5; sleep between monitor queue polls
+        pvs:                                # PV list monitored by this reader
+          - name: "PV:NAME:1"               # PV name to subscribe to
+          - name: "PV:NAME:2"               # PV name to subscribe to
+            option: "VALUE"                 # optional; scalar channel option passed to the monitor
 
-metrics:                                 # optional; omit to disable Prometheus endpoint
-  endpoint: 0.0.0.0:9464
-  scan_interval_seconds: 1             # optional; interval for system metrics scan
+  # ========== EPICS Archiver Reader (Historical Data Retrieval) ==========
+  - epics-archiver:                         # archiver reader type for historical fetches or tail polling
+      - name: archiver_reader_a             # unique reader instance name for logs and metrics
+        hostname: "archiver.example.com:11200"  # archiver appliance host and port
+        mode: "historical_once"             # optional; fetch a fixed historical window once
+        start-date: "2026-01-01T00:00:00Z" # inclusive ISO 8601 start time for the query window
+        end-date: "2026-01-31T23:59:59Z"   # optional; inclusive ISO 8601 end time for the query window
+        tls-verify-peer: true               # optional; default: true; verify the server certificate chain
+        tls-verify-host: true               # optional; default: true; verify the certificate hostname
+        connect-timeout-sec: 30             # optional; default: 30; connection setup timeout in seconds
+        total-timeout-sec: 300              # optional; default: 300; total request timeout in seconds
+        pvs:                                # PV list to fetch from the archiver
+          - name: "SYSTEM:SENSOR:TEMPERATURE:MAIN"   # archived PV name to retrieve
+          - name: "SYSTEM:ACTUATOR:PRESSURE:OUTLET"  # archived PV name to retrieve
+
+      - name: archiver_reader_tail_polling  # reader instance that repeatedly tails recent history
+        hostname: "archiver.example.com:11200"  # archiver appliance host and port
+        mode: "periodic_tail"               # continuously poll recent archiver data
+        poll-interval-sec: 5                # required; seconds between polling cycles
+        lookback-sec: 5                     # optional; trailing history window fetched each cycle
+        batch-duration-sec: 1               # optional; split output batches by sample-time span in seconds
+        pvs:                                # PV list to fetch from the archiver
+          - name: "SYSTEM:SENSOR:TEMPERATURE:MAIN"   # archived PV name to retrieve
+
+metrics:                                    # optional; Prometheus exporter settings
+  endpoint: 0.0.0.0:9464                    # bind address for the metrics HTTP endpoint
 ```
 
 ### Supported Reader Types
 
-| Reader Type  | Description                                              |
-|--------------|----------------------------------------------------------|
-| `epics-pvxs` | Event-driven PVAccess reader using PVXS (recommended)    |
-| `epics-base` | Polling-based Channel Access reader for legacy systems   |
+| Reader Type      | Description                                                       |
+|------------------|-------------------------------------------------------------------|
+| `epics-pvxs`     | Event-driven PVAccess reader using PVXS (recommended)             |
+| `epics-base`     | Polling-based Channel Access reader for legacy systems            |
+| `epics-archiver` | Historical and periodic-tail reader from EPICS Archiver Appliance |
 
 For detailed reader documentation, see [Reader Types](docs/readers.md).
 
-`mldp_pool` values mirror the driver's `provider_name` and target URL but add connection-pool sizing. Readers are defined
+`mldp-pool` values mirror the driver's `provider-name` and target URLs but add connection-pool sizing.
+
+- `ingestion-url`: ingestion service address (DpIngestionService)
+- `query-url`: query service address (DpQueryService)
+
+Readers are defined
 as sequences under `reader[]`, each with a `name` and an optional `pvs` list; if `pvs` is omitted, the reader will
 start without predefined channels.
 
-`mldp_pool.credentials` accepts:
+`mldp-pool.credentials` accepts:
 
 - `none` (insecure, no TLS)
 - `ssl` (TLS with system defaults)
-- a map with optional `pem_cert_chain`, `pem_private_key`, `pem_root_certs` paths (TLS with explicit PEM files)
+- a map with optional `pem-cert-chain`, `pem-private-key`, `pem-root-certs` paths (TLS with explicit PEM files)
 
 ## Command-line interface
 
@@ -78,7 +116,7 @@ The driver is configured via a YAML file (see above) and is started from the com
 ### Usage
 
 ```bash
-mldp_pvxs_driver [--help] [--version] [--config PATH] [--log-level LEVEL] [--metrics-output FILE] [--metrics-interval SECONDS]
+mldp_pvxs_driver [--help] [--version] [--config PATH] [--log-level LEVEL] [--metrics-output FILE] [--metrics-interval SECONDS] [--print-config-startup] [--dry-run]
 ```
 
 ### Options
@@ -101,6 +139,12 @@ mldp_pvxs_driver [--help] [--version] [--config PATH] [--log-level LEVEL] [--met
 - `--metrics-interval SECONDS`
   - Interval in seconds for periodic metrics dumps.
   - Default: `5`
+- `--print-config-startup` (alias: `--print-config`)
+  - Print a compact, user-friendly summary of the effective startup configuration.
+  - Default: disabled
+- `--dry-run`
+  - Load and validate config, then exit without starting driver/readers.
+  - Default: disabled
 
 ### Examples
 
@@ -111,12 +155,21 @@ mldp_pvxs_driver [--help] [--version] [--config PATH] [--log-level LEVEL] [--met
 # Enable debug logging
 ./mldp_pvxs_driver --config ./config.yaml --log-level debug
 
+# Print effective config at startup (compact format)
+./mldp_pvxs_driver --config ./config.yaml --print-config-startup
+
+# Validate config and exit without starting runtime components
+./mldp_pvxs_driver --config ./config.yaml --dry-run
+
+# Validate + print effective config summary, then exit
+./mldp_pvxs_driver --config ./config.yaml --print-config --dry-run
+
 # Show help/version
 ./mldp_pvxs_driver --help
 ./mldp_pvxs_driver --version
 ```
 
-For periodic metrics dumps and manual triggers (Ctrl+P, Ctrl+D, SIGUSR1/SIGQUIT), see `docs/metrics-export-guide.md`.
+For periodic metrics dumps and manual triggers (Ctrl+P, Ctrl+D, SIGUSR1/SIGQUIT), see the [metrics export guide](docs/metrics-export-guide.md).
 
 ## Architecture
 
@@ -127,6 +180,8 @@ This project uses a pipeline-style architecture: PVXS clients feed PV updates in
 - [Architecture Overview](docs/architecture.md) - System architecture, data flow, and design patterns
 - [Reader Types](docs/readers.md) - Available reader implementations (EPICS Base, PVXS)
 - [Implementing Custom Readers](docs/readers-implementation.md) - Guide to creating new reader types
+- [Logging Abstraction Guide](docs/logging.md) - How `util::log` works and how to implement custom logger classes
+- [HTTP Transport Provider](docs/http-provider.md) - Shared `util/http` abstraction and curl-backed implementation for HTTP-based readers
 
 For developer information and contribution guidelines see [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -151,32 +206,47 @@ For developer information and contribution guidelines see [CONTRIBUTING.md](CONT
 Tagged releases (`vX.Y.Z`) publish:
 
 - A container image (recommended way to run).
-- A standalone executable artifact (currently named `mldp_pvxs_driver-ubuntu-noble-epics-R7.0.8.1`).
-- An AppImage for easier distribution (currently named `mldp_pvxs_driver-ubuntu-noble-epics-R7.0.8.1-pvxs-1.4.1-x86_64.AppImage`).
+- A standalone executable artifact (currently named `mldp_pvxs_driver-rockylinux-9.3-epics-R7.0.8.1`).
+- An AppImage for easier distribution (currently named `mldp_pvxs_driver-rockylinux-9.3-epics-R7.0.8.1-pvxs-1.4.1-x86_64.AppImage`).
 
 ### Builder image + build cache (for developers)
 
-CI publishes a reusable **builder image** tagged by EPICS + PVXS versions:
+The current CI/CD publishes and refreshes four related builder/dev refs in GHCR:
 
-```bash
-docker pull ghcr.io/slaclab/mldp-pvxs-driver/build:epics-7.0.8.1-pvxs-1.4.1
-```
+- `ghcr.io/slaclab/mldp-pvxs-driver/build:epics-7.0.8.1-pvxs-1.4.1`
+  - Shared builder image tagged only by EPICS + PVXS versions.
+  - Published by the release workflow in [`.github/workflows/build-docker-image.yml`](/Users/bisegni/dev/github/slaclab/mldp-pvxs-driver/.github/workflows/build-docker-image.yml).
+- `ghcr.io/slaclab/mldp-pvxs-driver/dev:rockylinux-9.3-builder-r7.0.8.1-1.4.1`
+  - Latest reusable dev image for the active matrix variant.
+  - Refreshed by `main` CI in [`.github/workflows/build-and-test.yml`](/Users/bisegni/dev/github/slaclab/mldp-pvxs-driver/.github/workflows/build-and-test.yml) when content changes.
+- `ghcr.io/slaclab/mldp-pvxs-driver/rockylinux-9.3-builder-r7.0.8.1-1.4.1:buildcache`
+  - Variant-specific builder image tag used to keep the registry cache warm.
+- `ghcr.io/slaclab/mldp-pvxs-driver/rockylinux-9.3-builder-r7.0.8.1-1.4.1:buildkitcache`
+  - Registry-backed BuildKit cache export used by both CI workflows.
 
-You can also use it as a BuildKit cache source in local `docker buildx` builds (if the tag exists, it will be used; if it does not exist yet, the build still succeeds):
+For local `docker buildx` builds, use both the shared builder image and the variant-specific BuildKit cache as cache sources, which matches the current CI setup:
 
 ```bash
 docker login ghcr.io
 
 docker buildx build \
   -f .devcontainer/Dockerfile \
-  --build-arg BASE_OS_IMAGE=ubuntu:noble \
+  --build-arg BASE_OS_IMAGE=rockylinux/rockylinux:9.3 \
   --build-arg EPICS_VERSION=R7.0.8.1 \
   --build-arg PVXS_VERSION=1.4.1 \
   --cache-from type=registry,ref=ghcr.io/slaclab/mldp-pvxs-driver/build:epics-7.0.8.1-pvxs-1.4.1 \
+  --cache-from type=registry,ref=ghcr.io/slaclab/mldp-pvxs-driver/rockylinux-9.3-builder-r7.0.8.1-1.4.1:buildkitcache \
   -t mldp-pvxs-driver-dev:latest \
   --load \
   .
 ```
+
+Notes:
+
+- The shared `build:epics-...-pvxs-...` tag is the stable cross-branch builder reference.
+- The `dev:<variant>` tag tracks the latest dev image for that OS/EPICS/PVXS matrix entry.
+- The `:buildkitcache` ref is not a runnable image; it is a registry cache export for BuildKit.
+- The `:<variant>:buildcache` tag is a pushed builder image that helps keep the cache hot on `main`.
 
 #### EPICS/PVXS locations
 
@@ -216,3 +286,13 @@ either:
 - install compatible EPICS Base + PVXS and ensure they are discoverable by the dynamic loader (e.g., via
   `LD_LIBRARY_PATH` or a matching install prefix), and install the required gRPC/Protobuf/OpenSSL runtime packages, or
 - run via the published Docker image, which includes the correct runtime environment.
+
+## Legal
+
+## Copyright Notice
+
+COPYRIGHT © SLAC National Accelerator Laboratory. All rights reserved. This work is supported [in part] by the U.S. Department of Energy, Office of Basic Energy Sciences under contract DE-AC02-76SF00515.
+
+## Usage Restrictions
+
+Neither the name of the Leland Stanford Junior University, SLAC National Accelerator Laboratory, U.S. Department of Energy nor the names of its contributors may be used to endorse or promote products derived from this software without specific prior written permission.

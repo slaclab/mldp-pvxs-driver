@@ -20,8 +20,8 @@
 
 #include <util/log/CoutLogger.h>
 #include <util/log/ILog.h>
+#include <util/StringFormat.h>
 
-#include <format>
 #include <string>
 
 namespace mldp_pvxs_driver::util::log {
@@ -51,6 +51,7 @@ inline void logf(Level level, std::string_view fmt, Args&&... args)
 		return;
 	}
 
+#if HAVE_STD_FORMAT
 	try
 	{
 		// libstdc++'s std::make_format_args expects lvalue references.
@@ -62,6 +63,10 @@ inline void logf(Level level, std::string_view fmt, Args&&... args)
 		logger.log(Level::Error, std::string("Log format error: ") + ex.what());
 		logger.log(level, fmt);
 	}
+#else
+	// Fallback using util::format_string for older C++ standards
+	logger.log(level, format_string(std::string(fmt), std::forward<Args>(args)...));
+#endif
 }
 
 // Convenience level helpers (global logger)
@@ -108,6 +113,7 @@ inline void logf(ILogger& logger, Level level, std::string_view fmt, Args&&... a
 		return;
 	}
 
+#if HAVE_STD_FORMAT
 	try
 	{
 		logger.log(level, std::vformat(fmt, std::make_format_args(args...)));
@@ -117,6 +123,10 @@ inline void logf(ILogger& logger, Level level, std::string_view fmt, Args&&... a
 		logger.log(Level::Error, std::string("Log format error: ") + ex.what());
 		logger.log(level, fmt);
 	}
+#else
+	// Fallback using util::format_string for older C++ standards
+	logger.log(level, format_string(std::string(fmt), std::forward<Args>(args)...));
+#endif
 }
 
 template <typename... Args>

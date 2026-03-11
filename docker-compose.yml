@@ -9,17 +9,15 @@ services:
       - "27017:27017"
 
   dp-ingestion:
-    image: ghcr.io/eed-web-application/dp-service:v1.11.0
+    image: ghcr.io/slaclab/dp-service:v1.13
     container_name: dp-ingestion
     depends_on:
       - mongodb
     entrypoint:
       - "java"
+    environment:
+      - DP_MONGO_DB_URI=mongodb://admin:admin@mongodb:27017/dp?authSource=admin
     command:
-      - "-Ddp.MongoClient.dbHost=mongodb"
-      - "-Ddp.MongoClient.dbPort=27017"
-      - "-Ddp.MongoClient.dbUser=admin"
-      - "-Ddp.MongoClient.dbPassword=admin"
       - "-cp"
       - "/app/app.jar"
       - "com.ospreydcs.dp.service.ingest.server.IngestionGrpcServer"
@@ -27,12 +25,14 @@ services:
       - "50051:50051"
   
   dp-query:
-    image: ghcr.io/eed-web-application/dp-service:v1.11.0
+    image: ghcr.io/slaclab/dp-service:v1.13
     container_name: dp-query
     depends_on:
       - mongodb
     entrypoint:
       - "java"
+    environment:
+      - DP_MONGO_DB_URI=mongodb://admin:admin@mongodb:27017/dp?authSource=admin
     command:
         - "-Ddp.MongoClient.dbHost=mongodb"
         - "-Ddp.MongoClient.dbPort=27017"

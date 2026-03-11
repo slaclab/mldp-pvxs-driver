@@ -1,0 +1,162 @@
+//////////////////////////////////////////////////////////////////////////////
+// This file is part of 'mldp-pvxs-driver'.
+// It is subject to the license terms in the LICENSE.txt file found in the
+// top-level directory of this distribution and at:
+//    https://confluence.slac.stanford.edu/display/ppareg/LICENSE.html.
+// No part of 'mldp-pvxs-driver', including this file,
+// may be copied, modified, propagated, or distributed except according to
+// the terms contained in the LICENSE.txt file.
+//////////////////////////////////////////////////////////////////////////////
+
+/**
+ * @file EpicsReaderConfig.h
+ * @brief Configuration parser for EPICS reader instances.
+ *
+ * This header provides the EpicsReaderConfig class for parsing and validating
+ * EPICS reader configuration from YAML. It handles reader-level settings
+ * (name, thread pool size) as well as per-PV configuration including
+ * connection options and SLAC BSAS NTTable processing settings.
+ */
+
+#pragma once
+
+#include <config/Config.h>
+
+#include <optional>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+namespace mldp_pvxs_driver::reader::impl::epics {
+
+inline constexpr char NameKey[] = "name";
+inline constexpr char ThreadPoolKey[] = "thread-pool";
+inline constexpr char ColumnBatchSizeKey[] = "column-batch-size";
+inline constexpr char MonitorPollThreadsKey[] = "monitor-poll-threads";
+inline constexpr char MonitorPollIntervalMsKey[] = "monitor-poll-interval-ms";
+inline constexpr char BackendKey[] = "backend";
+inline constexpr char PvsKey[] = "pvs";
+inline constexpr char PvNameKey[] = "name";
+inline constexpr char PvOptionKey[] = "option";
+inline constexpr char OptionTypeKey[] = "type";
+inline constexpr char TsSecondsKey[] = "tsSeconds";
+inline constexpr char TsNanosKey[] = "tsNanos";
+inline constexpr char SourceNameKey[] = "sourceName";
+
+/**
+ * @brief Strongly typed view over a single EPICS reader configuration entry.
+ *
+ * The reader entry is expected to provide a unique reader name plus a set of PV
+ * definitions, each optionally carrying a transport \p option string. The class
+ * validates the YAML node upon construction and exposes the parsed data through
+ * cheap accessors so that runtime code does not need to reason about YAML
+ * specifics.
+ */
+class EpicsReaderConfig
+{
+public:
+    /**
+     * @brief Exception thrown when the reader configuration cannot be parsed.
+     *
+     * The message is descriptive (missing fields, wrong types, etc.) so callers
+     * can surface errors directly to the control plane or logs.
+     */
+    class Error : public std::runtime_error
+    {
+    public:
+        using std::runtime_error::runtime_error;
+    };
+
+    /**
+     * @brief Definition of a single PV entry as parsed from the YAML config.
+     *
+     * @note The @ref option field is optional in the YAML; it remains empty when
+     *       not provided. It can be a scalar string or an arbitrary subtree;
+     *       when a subtree is provided it is preserved in @ref optionConfig.
+     */
+    struct PVConfig
+    {
+        /**
+         * @brief Options for the SLAC BSAS row-timestamped NTTable handling.
+         *
+         * Activated when the YAML subtree under @ref optionConfig contains:
+         *
+         * option:
+         *   type: slac-bsas-table
+         *   tsSeconds: secondsPastEpoch
+         *   tsNanos: nanoseconds
+         *
+         * Source naming: each NTTable data column becomes a source whose name
+         * equals the column field name.
+         */
+        struct NTTableRowTimestampOptions
+        {
+            std::string tsSecondsField = "secondsPastEpoch";
+            std::string tsNanosField = "nanoseconds";
+        };
+
+        std::string                               name;         ///< Fully qualified PV name to monitor.
+        std::string                               option;       ///< Backend-specific connection option (may be empty).
+        std::optional<config::Config>             optionConfig; ///< Optional raw subtree for future extensions.
+        std::optional<NTTableRowTimestampOptions> nttableRowTs; ///< Parsed options when `type: slac-bsas-table` is selected.
+    };
+
+    EpicsReaderConfig();
+    /**
+     * @brief Build a typed view over the provided YAML node.
+     * @throws Error when any of the required fields (name or pvs) are missing
+     *         or malformed.
+     */
+    explicit EpicsReaderConfig(const ::mldp_pvxs_driver::config::Config& readerEntry);
+
+    /** @return Whether the wrapped YAML node passed validation. */
+    bool valid() const;
+
+    /** @return Configured reader name. */
+    const std::string& name() const;
+
+    /** @return Number of threads in the reader processing pool. */
+    unsigned int threadPoolSize() const;
+
+    /** @return Number of threads polling EPICS Base monitor queues. */
+    unsigned int monitorPollThreads() const;
+
+    /** @return Poll interval (ms) for EPICS Base monitor queues when idle. */
+    unsigned int monitorPollIntervalMs() const;
+
+    /**
+     * @return Max columns per bus push for NTTable row-ts batches.
+     *
+     * When an NTTable update produces more columns than this value,
+     * the reader pushes multiple EventBatch messages, each carrying at
+     * most this many columns.  A value of 0 means push all columns at once.
+     * Default: 50.
+     */
+    std::size_t columnBatchSize() const;
+
+    /** @return Ordered list of PV entries as defined in the YAML. */
+    const std::vector<PVConfig>& pvs() const;
+
+    /**
+     * @brief Convenience accessor returning just the PV names.
+     *
+     * Useful for subsystems that only care about the identifiers while still
+     * letting others use @ref pvs() for access to richer metadata.
+     */
+    const std::vector<std::string>& pvNames() const;
+
+private:
+    /** @brief Populate the typed fields from the raw YAML node. */
+    void parse(const ::mldp_pvxs_driver::config::Config& readerEntry);
+
+    bool                     valid_ = false;
+    std::string              name_;
+    unsigned int             thread_pool_size_{2};
+    std::size_t              column_batch_size_{50};
+    unsigned int             monitor_poll_threads_{2};
+    unsigned int             monitor_poll_interval_ms_{5};
+    std::vector<PVConfig>    pvs_;
+    std::vector<std::string> pvNames_;
+};
+
+} // namespace mldp_pvxs_driver::reader::impl::epics

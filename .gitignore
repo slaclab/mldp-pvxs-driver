@@ -9,3 +9,5 @@ config*.yaml
 config-*.yml
 metrics.jsonl
 Testing/
+.memory
+.claude

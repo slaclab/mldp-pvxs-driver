@@ -2,7 +2,7 @@
 
 ## Overview
 
-The MLDP PVXS Driver is a high-performance data ingestion system that bridges various data sources with the MLDP (Machine Learning Data Platform) service. It uses a sophisticated push-based architecture designed for minimal latency and maximum throughput.
+The MLDP PVXS Driver is a high-performance data ingestion system that bridges various data sources with the MLDP (Machine Learning Data Platform) service. It uses a push-based architecture designed for minimal latency and maximum throughput.
 
 The driver implements an **abstract Reader pattern** that allows plugging in different data sources. Currently implemented are EPICS-based readers, with the architecture designed to support future implementations such as EPICS Archiver, HDF5 files, and other data sources.
 
@@ -26,7 +26,7 @@ flowchart TB
         end
     end
 
-    IEventBusPush["IEventBusPush<br/>(Push Interface)"]
+    IDataBus["IDataBus<br/>(Push Interface)"]
 
     subgraph Controller["MLDPPVXSController"]
         HashPart["Hash-Based Partitioning<br/>(Source Affinity)"]
@@ -46,12 +46,12 @@ flowchart TB
     DS4 --> R4
     DS1 --> R2
 
-    R1 --> IEventBusPush
-    R2 --> IEventBusPush
-    R3 --> IEventBusPush
-    R4 --> IEventBusPush
+    R1 --> IDataBus
+    R2 --> IDataBus
+    R3 --> IDataBus
+    R4 --> IDataBus
 
-    IEventBusPush --> HashPart
+    IDataBus --> HashPart
     HashPart --> W0
     HashPart --> W1
     HashPart --> WN
@@ -79,7 +79,7 @@ All readers:
 
 - Inherit from the abstract `Reader` base class
 - Register via `REGISTER_READER` macro
-- Push events through `IEventBusPush` interface
+- Push events through `IDataBus` interface
 - Are decoupled from gRPC/controller implementation
 
 For details on existing readers, see [Reader Types](readers.md). To implement a custom reader, see [Implementing Custom Readers](readers-implementation.md).
@@ -241,7 +241,7 @@ flowchart TB
         AlarmMap["Alarm/Status mapping"]
     end
 
-    ProcessEvent --> EventBusPush["IEventBusPush::push(EventBatch)"]
+    ProcessEvent --> EventBusPush["IDataBus::push(EventBatch)"]
 
     EventBusPush --> HashPart
 
@@ -284,27 +284,44 @@ flowchart TB
 
 ### Producer-Consumer (Event Bus)
 
-- `IEventBusPush` interface decouples readers from controller
+- `IDataBus` interface decouples readers from controller
 - Async event delivery via thread pools
+
+## Cross-Cutting Utilities
+
+### Logging Abstraction
+
+The driver uses a logging abstraction layer (`util::log`) so library code is not coupled to a specific backend. The executable can install a concrete logger implementation (for example the spdlog-backed adapter).
+
+- Detailed guide: [Logging Abstraction Guide](logging.md)
+- Logging interface and helpers: `include/util/log/ILog.h`, `include/util/log/Logger.h`
+- Default/simple logger implementation: `include/util/log/CoutLogger.h`, `src/util/log/CoutLogger.cpp`
+- spdlog adapter used by the executable: `include/SpdlogLogger.h`, `src/cli/SpdlogLogger.cpp`
+
+### HTTP Transport Provider (`util/http`)
+
+HTTP-based readers can use the shared `util/http` transport abstraction instead of managing raw `libcurl` directly. This centralizes TLS defaults, timeouts, header handling, and streaming callback plumbing.
+
+- Detailed documentation: [HTTP Transport Provider](http-provider.md)
 
 ## Configuration
 
 ### Controller Settings
 
 ```yaml
-controller_thread_pool: 2              # Number of worker threads
-controller_stream_max_bytes: 2097152   # ~2MB stream threshold
-controller_stream_max_age_ms: 200      # 200ms stream rotation
+controller-thread-pool: 2              # Number of worker threads
+controller-stream-max-bytes: 2097152   # ~2MB stream threshold
+controller-stream-max-age-ms: 200      # 200ms stream rotation
 ```
 
 ### Connection Pool Settings
 
 ```yaml
-mldp_pool:
-  provider_name: pvxs_provider
-  url: dp-ingestion:50051
-  min_conn: 1
-  max_conn: 4
+mldp-pool:
+  provider-name: pvxs_provider
+  ingestion-url: dp-ingestion:50051
+  min-conn: 1
+  max-conn: 4
 ```
 
 ### Reader Settings
@@ -313,7 +330,7 @@ mldp_pool:
 reader:
   - epics-pvxs:
       - name: my_reader
-        thread_pool_size: 2
+        thread-pool-size: 2
         pvs:
           - name: PV_NAME
 ```

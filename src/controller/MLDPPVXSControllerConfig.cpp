@@ -10,7 +10,7 @@
 
 #include "config/Config.h"
 #include <controller/MLDPPVXSControllerConfig.h>
-
+#include <reader/ReaderFactory.h>
 
 using namespace mldp_pvxs_driver::config;
 using namespace mldp_pvxs_driver::metrics;
@@ -55,7 +55,6 @@ std::size_t MLDPPVXSControllerConfig::controllerStreamMaxBytes() const
     return controllerStreamMaxBytes_;
 }
 
-
 std::chrono::milliseconds MLDPPVXSControllerConfig::controllerStreamMaxAge() const
 {
     return controllerStreamMaxAge_;
@@ -90,41 +89,45 @@ void MLDPPVXSControllerConfig::parse(const ::mldp_pvxs_driver::config::Config& r
 
 void MLDPPVXSControllerConfig::parseThreadPool(const ::mldp_pvxs_driver::config::Config& root)
 {
-    if (!root.hasChild("controller_thread_pool"))
+    using namespace mldp_pvxs_driver::controller;
+    if (!root.hasChild(ControllerThreadPoolKey))
     {
-        throw Error(makeMissingFieldMessage("controller_thread_pool"));
+        controllerThreadPoolSize_ = 1;
+        return;
     }
 
-    const auto threadPoolNodes = root.subConfig("controller_thread_pool");
+    const auto threadPoolNodes = root.subConfig(ControllerThreadPoolKey);
     if (threadPoolNodes.empty())
     {
-        throw Error(makeMissingFieldMessage("controller_thread_pool"));
+        controllerThreadPoolSize_ = 1;
+        return;
     }
 
     const auto& threadPoolNode = threadPoolNodes.front();
     if (!threadPoolNode.raw().has_val())
     {
-        throw Error("controller_thread_pool must be a scalar");
+        throw Error(std::string(ControllerThreadPoolKey) + " must be a scalar");
     }
 
     threadPoolNode >> controllerThreadPoolSize_;
     if (controllerThreadPoolSize_ <= 0)
     {
-        throw Error("controller_thread_pool must be greater than zero");
+        throw Error(std::string(ControllerThreadPoolKey) + " must be greater than zero");
     }
 }
 
 void MLDPPVXSControllerConfig::parsePool(const ::mldp_pvxs_driver::config::Config& root)
 {
-    if (!root.hasChild("mldp_pool"))
+    using namespace mldp_pvxs_driver::controller;
+    if (!root.hasChild(MldpPoolKey))
     {
-        throw Error(makeMissingFieldMessage("mldp_pool"));
+        throw Error(makeMissingFieldMessage(MldpPoolKey));
     }
 
-    const auto poolNodes = root.subConfig("mldp_pool");
+    const auto poolNodes = root.subConfig(MldpPoolKey);
     if (poolNodes.empty())
     {
-        throw Error(makeMissingFieldMessage("mldp_pool"));
+        throw Error(makeMissingFieldMessage(MldpPoolKey));
     }
 
     try
@@ -139,20 +142,23 @@ void MLDPPVXSControllerConfig::parsePool(const ::mldp_pvxs_driver::config::Confi
 
 void MLDPPVXSControllerConfig::parseReaders(const ::mldp_pvxs_driver::config::Config& root)
 {
+    using namespace mldp_pvxs_driver::controller;
     readerConfigs_.clear();
     readerEntries_.clear();
 
-    if (!root.hasChild("reader"))
+    if (!root.hasChild(ReaderKey))
     {
         return;
     }
 
-    if (!root.isSequence("reader"))
+    if (!root.isSequence(ReaderKey))
     {
         throw Error("reader must be a sequence");
     }
 
-    const auto readerBlocks = root.subConfig("reader");
+    const auto registeredTypes = mldp_pvxs_driver::reader::ReaderFactory::registeredTypes();
+
+    const auto readerBlocks = root.subConfig(ReaderKey);
     for (const auto& readerBlock : readerBlocks)
     {
         if (!readerBlock.raw().is_map())
@@ -162,21 +168,16 @@ void MLDPPVXSControllerConfig::parseReaders(const ::mldp_pvxs_driver::config::Co
 
         bool handledType = false;
 
-        const std::pair<std::string, std::string> supportedTypes[] = {
-            {"epics-pvxs", "epics-pvxs"},
-            {"epics-base", "epics-base"},
-        };
-
-        for (const auto& [key, typeName] : supportedTypes)
+        for (const auto& typeName : registeredTypes)
         {
-            if (readerBlock.hasChild(key))
+            if (readerBlock.hasChild(typeName))
             {
                 handledType = true;
-                if (!readerBlock.isSequence(key))
+                if (!readerBlock.isSequence(typeName))
                 {
-                    throw Error("reader[]." + key + " must be a sequence");
+                    throw Error("reader[]." + typeName + " must be a sequence");
                 }
-                const auto nodes = readerBlock.subConfig(key);
+                const auto nodes = readerBlock.subConfig(typeName);
                 for (const auto& node : nodes)
                 {
                     readerConfigs_.push_back(node);
@@ -187,21 +188,29 @@ void MLDPPVXSControllerConfig::parseReaders(const ::mldp_pvxs_driver::config::Co
 
         if (!handledType)
         {
-            throw Error("reader entry does not specify a supported type (expected 'epics-pvxs' or 'epics-base')");
+            std::string available;
+            for (size_t i = 0; i < registeredTypes.size(); ++i)
+            {
+                if (i > 0)
+                    available += ", ";
+                available += "'" + registeredTypes[i] + "'";
+            }
+            throw Error("reader entry does not specify a registered type (expected " + available + ")");
         }
     }
 }
 
 void MLDPPVXSControllerConfig::parseMetrics(const ::mldp_pvxs_driver::config::Config& root)
 {
+    using namespace mldp_pvxs_driver::controller;
     metricsConfig_.reset();
-    if (!root.hasChild("metrics"))
+    if (!root.hasChild(MetricsKey))
     {
         metricsConfig_.emplace(Config()); // empty config
         return;
     }
 
-    const auto metricsNodes = root.subConfig("metrics");
+    const auto metricsNodes = root.subConfig(MetricsKey);
     if (metricsNodes.empty())
     {
         throw Error("metrics block is present but empty");
@@ -212,36 +221,36 @@ void MLDPPVXSControllerConfig::parseMetrics(const ::mldp_pvxs_driver::config::Co
 
 void MLDPPVXSControllerConfig::parseStreamLimits(const ::mldp_pvxs_driver::config::Config& root)
 {
-    if (root.hasChild("controller_stream_max_bytes"))
+    using namespace mldp_pvxs_driver::controller;
+    if (root.hasChild(ControllerStreamMaxBytesKey))
     {
-        const auto nodes = root.subConfig("controller_stream_max_bytes");
+        const auto nodes = root.subConfig(ControllerStreamMaxBytesKey);
         if (nodes.empty() || !nodes.front().raw().has_val())
         {
-            throw Error("controller_stream_max_bytes must be a scalar");
+            throw Error(std::string(ControllerStreamMaxBytesKey) + " must be a scalar");
         }
         int value = 0;
         nodes.front() >> value;
         if (value <= 0)
         {
-            throw Error("controller_stream_max_bytes must be greater than zero");
+            throw Error(std::string(ControllerStreamMaxBytesKey) + " must be greater than zero");
         }
         controllerStreamMaxBytes_ = static_cast<std::size_t>(value);
     }
 
-    if (root.hasChild("controller_stream_max_age_ms"))
+    if (root.hasChild(ControllerStreamMaxAgeMsKey))
     {
-        const auto nodes = root.subConfig("controller_stream_max_age_ms");
+        const auto nodes = root.subConfig(ControllerStreamMaxAgeMsKey);
         if (nodes.empty() || !nodes.front().raw().has_val())
         {
-            throw Error("controller_stream_max_age_ms must be a scalar");
+            throw Error(std::string(ControllerStreamMaxAgeMsKey) + " must be a scalar");
         }
         int value = 0;
         nodes.front() >> value;
         if (value <= 0)
         {
-            throw Error("controller_stream_max_age_ms must be greater than zero");
+            throw Error(std::string(ControllerStreamMaxAgeMsKey) + " must be greater than zero");
         }
         controllerStreamMaxAge_ = std::chrono::milliseconds(value);
     }
-
 }

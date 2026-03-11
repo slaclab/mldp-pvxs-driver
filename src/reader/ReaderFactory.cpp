@@ -21,16 +21,28 @@ ReaderFactory::registry()
     return instance;
 }
 
+std::vector<std::string> ReaderFactory::registeredTypes()
+{
+    auto&                    reg = registry();
+    std::vector<std::string> types;
+    types.reserve(reg.size());
+    for (const auto& [type, fn] : reg)
+    {
+        types.push_back(type);
+    }
+    return types;
+}
+
 void ReaderFactory::registerType(const std::string& type, CreatorFn fn)
 {
     registry()[type] = std::move(fn);
 }
 
 std::unique_ptr<Reader> ReaderFactory::create(
-    const std::string&                                            type,
-    std::shared_ptr<::mldp_pvxs_driver::util::bus::IEventBusPush> bus,
-    const ::mldp_pvxs_driver::config::Config&                     cfg,
-    std::shared_ptr<mldp_pvxs_driver::metrics::Metrics>           metrics)
+    const std::string&                                  type,
+    std::shared_ptr<util::bus::IDataBus>                bus,
+    const ::mldp_pvxs_driver::config::Config&           cfg,
+    std::shared_ptr<mldp_pvxs_driver::metrics::Metrics> metrics)
 {
     auto& reg = registry();
     auto  it = reg.find(type);

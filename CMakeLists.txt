@@ -9,7 +9,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 option(MLDP_PVXS_DRIVER_MAIN "Build MLDP PVXS driver executable" ON)
 option(MLDP_PVXS_DRIVER_TESTS "Build MLDP PVXS driver tests" OFF)
 option(MLDP_PVXS_DRIVER_COVERAGE "Enable code coverage instrumentation" OFF)
-option(MLDP_PVXS_DRIVER_LINK_EPICS_PVXS_STATIC "Link EPICS and PVXS libraries statically (prefer .a over .so)" ON)
+option(MLDP_PVXS_DRIVER_LINK_EPICS_PVXS_STATIC "Link EPICS and PVXS libraries statically (prefer .a over .so)" OFF)
 
 # Default to Release build
 if(NOT CMAKE_BUILD_TYPE)
@@ -22,6 +22,9 @@ set(PROMETHEUS_CPP_VERSION "v1.3.0")
 set(SPDLOG_VERSION "v1.16.0")
 set(ARGPARSE_VERSION "v3.2")
 set(METRIC_GRABBER_VERSION "v0.0.1")
+set(EPICSARCHIVERAP_VERSION "2.2.1")
+set(CPP_HTTPLIB_VERSION "v0.16.3")
+set(DP_GRPC_VERSION "v1.13")
 
 # Output directories
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
@@ -82,14 +85,47 @@ message(STATUS "Acquiring metric-grabber version ${METRIC_GRABBER_VERSION}...")
 FetchContent_Declare(metric_grabber
     GIT_REPOSITORY https://github.com/slaclab/metrics-grabber.git
     GIT_TAG ${METRIC_GRABBER_VERSION}
+    PATCH_COMMAND sed -i -e "/#include <memory>/a #include <vector>" include/metricsgrabber/MetricsCollector.hpp
 )
 FetchContent_MakeAvailable(metric_grabber)
+
+# Acquire epicsarchiverap for EPICSEvent proto
+message(STATUS "Acquiring epicsarchiverap for EPICSEvent.proto...")
+FetchContent_Declare(epicsarchiverap
+    GIT_REPOSITORY https://github.com/archiver-appliance/epicsarchiverap.git
+    GIT_TAG ${EPICSARCHIVERAP_VERSION}
+)
+FetchContent_MakeAvailable(epicsarchiverap)
+
+# Acquire dp-grpc for MLDP proto definitions
+message(STATUS "Acquiring dp-grpc version ${DP_GRPC_VERSION}...")
+FetchContent_Declare(dp_grpc
+    GIT_REPOSITORY https://github.com/osprey-dcs/dp-grpc.git
+    GIT_TAG ${DP_GRPC_VERSION}
+)
+FetchContent_MakeAvailable(dp_grpc)
 
 
 # Find required packages
 find_package(Protobuf REQUIRED)
+# OpenSSL must be found before gRPC so that gRPC's imported targets (gRPC::grpc)
+# can resolve the OpenSSL::SSL / OpenSSL::Crypto targets they reference.
+find_package(OpenSSL REQUIRED)
 find_package(gRPC REQUIRED)
 find_package(Threads REQUIRED)
+find_package(CURL REQUIRED)
+# The libcurl-devel RPM on Rocky Linux ships a cmake config that embeds the
+# Debian multiarch include path (/usr/include/x86_64-linux-gnu) which does not
+# exist on RPM-based systems.  Strip any such paths from the imported target so
+# CMake's generator step does not abort with a non-existent path error.
+if(TARGET CURL::libcurl)
+    get_target_property(_curl_inc_dirs CURL::libcurl INTERFACE_INCLUDE_DIRECTORIES)
+    if(_curl_inc_dirs)
+        list(FILTER _curl_inc_dirs EXCLUDE REGEX "/usr/include/[a-zA-Z0-9_]+-linux-[a-zA-Z0-9]+$")
+        set_target_properties(CURL::libcurl PROPERTIES INTERFACE_INCLUDE_DIRECTORIES "${_curl_inc_dirs}")
+    endif()
+    unset(_curl_inc_dirs)
+endif()
 find_package(PkgConfig QUIET)
 
 # epics-base (7.0+)
@@ -333,13 +369,18 @@ endif()
 
 # Proto file configuration
 
-set(PROTO_PATH $ENV{PROTO_PATH})
-message(STATUS "ProtoBuf mldp description file path: ${PROTO_PATH}")
+# Set DP_GRPC_PROTO_PATH from fetched content
+set(DP_GRPC_PROTO_PATH "${dp_grpc_SOURCE_DIR}/src/main/proto")
+message(STATUS "ProtoBuf dp-grpc description file path: ${DP_GRPC_PROTO_PATH}")
+
+# Set EPICSARCHIVERAP_PROTO_PATH from fetched content
+set(EPICSARCHIVERAP_PROTO_PATH "${epicsarchiverap_SOURCE_DIR}/src/proto")
 
 set(PROTO_FILES
-    ${PROTO_PATH}/common.proto
-    ${PROTO_PATH}/query.proto
-    ${PROTO_PATH}/ingestion.proto
+    ${DP_GRPC_PROTO_PATH}/common.proto
+    ${DP_GRPC_PROTO_PATH}/query.proto
+    ${DP_GRPC_PROTO_PATH}/ingestion.proto
+    ${EPICSARCHIVERAP_PROTO_PATH}/EPICSEvent.proto
 )
 
 # Generate proto sources
@@ -367,7 +408,8 @@ add_custom_command(
     OUTPUT ${PROTO_SRCS} ${PROTO_HDRS} ${GRPC_SRCS} ${GRPC_HDRS}
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/proto
     COMMAND ${Protobuf_PROTOC_EXECUTABLE}
-    --proto_path=${PROTO_PATH}
+    --proto_path=${DP_GRPC_PROTO_PATH}
+    --proto_path=${EPICSARCHIVERAP_PROTO_PATH}
     --cpp_out=${CMAKE_CURRENT_BINARY_DIR}/proto
     --grpc_out=${CMAKE_CURRENT_BINARY_DIR}/proto
     --plugin=protoc-gen-grpc=${GRPC_CPP_PLUGIN}
@@ -393,30 +435,31 @@ target_include_directories(lib${PROJECT_NAME}_proto PUBLIC
 # Base library
 add_library(lib${PROJECT_NAME}
     "${CMAKE_CURRENT_SOURCE_DIR}/ext/BS_thread_pool/include/BS_thread_pool.hpp"
-    # "${CMAKE_CURRENT_SOURCE_DIR}/include/bus/IEventBusPush.h"
-    # "${CMAKE_CURRENT_SOURCE_DIR}/include/reader/Reader.h"
-    # "${CMAKE_CURRENT_SOURCE_DIR}/include/reader/ReaderFactory.h"
-    # "${CMAKE_CURRENT_SOURCE_DIR}/include/mldp_pvxs_driver.h"
-    # "${CMAKE_CURRENT_SOURCE_DIR}/include/reader/impl/epics/EpicsReader.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/ReaderFactory.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/util/log/CoutLogger.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/util/http/CurlHttpClient.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/util/http/HttpUrlUtils.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/util/time/DateTimeUtils.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/config/Config.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/EpicsReaderBase.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/EpicsPVXSReader.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/EpicsBaseReader.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/EpicsReaderConfig.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/EpicsMLDPConversion.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/BSASEpicsMLDPConversion.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/EpicsPVDataConversion.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/EpicsBaseMonitorPoller.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/shared/EpicsReaderBase.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/pvxs/EpicsPVXSReader.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/base/EpicsBaseReader.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/shared/EpicsReaderConfig.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/pvxs/EpicsMLDPConversion.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/pvxs/BSASEpicsMLDPConversion.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/base/EpicsPVDataConversion.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/base/EpicsBaseMonitorPoller.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics_archiver/ArchiverPbHttpConversion.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics_archiver/EpicsArchiverReader.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics_archiver/EpicsArchiverReaderConfig.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/pool/MLDPGrpcPoolConfig.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/pool/MLDPGrpcPool.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/pool/MLDPGrpcIngestionPool.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/pool/MLDPGrpcQueryPool.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/controller/MLDPPVXSControllerConfig.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/controller/MLDPPVXSController.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/metrics/Metrics.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/metrics/MetricsConfig.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/metrics/MetricsSnapshot.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/PeriodicMetricsDumper.cpp"
 )
 target_link_libraries(lib${PROJECT_NAME} PUBLIC
     lib${PROJECT_NAME}_proto
@@ -431,6 +474,7 @@ target_link_libraries(lib${PROJECT_NAME} PUBLIC
     prometheus-cpp::core
     prometheus-cpp::pull
     spdlog::spdlog
+    CURL::libcurl
     metricsgrabber
 )
 target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/ext/BS_thread_pool/include")
@@ -498,21 +542,41 @@ if(MLDP_PVXS_DRIVER_TESTS)
         GIT_REPOSITORY "https://github.com/google/googletest.git"
         GIT_TAG "main")
     FetchContent_MakeAvailable(googletest)
+    FetchContent_Declare(cpp_httplib
+        GIT_REPOSITORY "https://github.com/yhirose/cpp-httplib.git"
+        GIT_TAG ${CPP_HTTPLIB_VERSION})
+    FetchContent_MakeAvailable(cpp_httplib)
     enable_testing()
     add_executable(${PROJECT_NAME}_test
         "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/sioc.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/config/epics_reader_config_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/config/mldppvxs_controller_config_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/cli/config_printer_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/controller/mldppvxs_controller_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/controller/mldppvxs_controller_epics_archiver_periodic_tail_integration_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/ryml_single_header_translation_unit.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/test/pool/test_mldp_grpc_pool.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics/epics_pvxs_reader_test.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics/epics_base_reader_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/pool/mldp_grpc_pool_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics/pvxs/epics_pvxs_reader_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics/base/epics_base_reader_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_archiver/archiver_pbhttp_conversion_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_archiver/epics_archiver_reader_config_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_archiver/MockArchiverPbHttpServer.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_archiver/epics_archiver_pbhttp_integration_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_archiver/epics_archiver_reader_http_integration_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_archiver/epics_archiver_reader_periodic_tail_integration_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/util/http/curl_http_client_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/metrics/periodic_metrics_dumper_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/metrics/metrics_histogram_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/metrics/system_metrics_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/ConfigPrinter.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/PeriodicMetricsDumper.cpp"
     )
     target_link_libraries(${PROJECT_NAME}_test PRIVATE gtest_main lib${PROJECT_NAME})
+    if(TARGET httplib::httplib)
+        target_link_libraries(${PROJECT_NAME}_test PRIVATE httplib::httplib)
+    elseif(TARGET httplib)
+        target_link_libraries(${PROJECT_NAME}_test PRIVATE httplib)
+    endif()
 
     if(MLDP_PVXS_DRIVER_COVERAGE)
         target_compile_options(${PROJECT_NAME}_test PRIVATE -O0 -g --coverage)
@@ -552,8 +616,10 @@ endif()
 if(MLDP_PVXS_DRIVER_MAIN)
     add_executable(${PROJECT_NAME}
         "${CMAKE_CURRENT_SOURCE_DIR}/ext/rapidyaml/include/rapidyaml-0.10.0.hpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/mldp_pvxs_driver_main.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/SpdlogLogger.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/SpdlogLogger.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/ConfigPrinter.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/PeriodicMetricsDumper.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/mldp_pvxs_driver_main.cpp"
     )
 
     # The reader implementations self-register via static initialization (REGISTER_READER).

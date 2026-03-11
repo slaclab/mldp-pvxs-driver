@@ -281,6 +281,8 @@ PVServer::PVServer()
 
                                              m_pvBsasTable.post(pv);
                                          }
+
+                                         // update all the typed PVs using their configured update functions
                                          for (auto& entry : m_typedPvs)
                                          {
                                              auto pv = entry.pv.fetch();

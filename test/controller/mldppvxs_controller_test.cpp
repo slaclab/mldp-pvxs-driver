@@ -9,43 +9,45 @@
 #include <grpcpp/security/server_credentials.h>
 #include <ingestion.grpc.pb.h>
 
-#include <prometheus/text_serializer.h>
-
 #include <chrono>
 #include <optional>
 #include <thread>
 #include <type_traits>
 #include <unistd.h>
 
+#include "../common/MldpMetricsTestUtils.h"
 #include "../config/test_config_helpers.h"
 #include "../mock/sioc.h"
 
-namespace mldp_pvxs_driver::controller {
+using namespace mldp_pvxs_driver::controller;
+using namespace mldp_pvxs_driver::testutil;
 
-using config::makeConfigFromYaml;
-using util::bus::IEventBusPush;
+using mldp_pvxs_driver::config::makeConfigFromYaml;
+using mldp_pvxs_driver::util::bus::IDataBus;
 
 namespace {
 
     constexpr std::string_view kMinimalControllerConfig = R"(
-controller_thread_pool: 1
-mldp_pool:
-  provider_name: test_provider
-  provider_description: "Test Provider"
-  url: dp-ingestion:50051
-  min_conn: 1
-  max_conn: 1
+controller-thread-pool: 1
+mldp-pool:
+  provider-name: test_provider
+  provider-description: "Test Provider"
+  ingestion-url: dp-ingestion:50051
+  query-url: dp-query:50052
+  min-conn: 1
+  max-conn: 1
 reader: []
 )";
 
     constexpr std::string_view kEpicsControllerConfig = R"(
-controller_thread_pool: 1
-mldp_pool:
-  provider_name: test_provider
-  provider_description: "Test Provider"
-  url: dp-ingestion:50051
-  min_conn: 1
-  max_conn: 1
+controller-thread-pool: 1
+mldp-pool:
+  provider-name: test_provider
+  provider-description: "Test Provider"
+  ingestion-url: dp-ingestion:50051
+  query-url: dp-query:50052
+  min-conn: 1
+  max-conn: 1
 reader:
   - epics-pvxs:
       - name: epics_reader_1
@@ -54,13 +56,14 @@ reader:
 )";
 
     constexpr std::string_view kBsasNtTableRowTsControllerConfig = R"(
-controller_thread_pool: 1
-mldp_pool:
-  provider_name: test_provider
-  provider_description: "Test Provider"
-  url: dp-ingestion:50051
-  min_conn: 1
-  max_conn: 1
+controller-thread-pool: 1
+mldp-pool:
+  provider-name: test_provider
+  provider-description: "Test Provider"
+  ingestion-url: dp-ingestion:50051
+  query-url: dp-query:50052
+  min-conn: 1
+  max-conn: 1
 reader:
   - epics-pvxs:
       - name: epics_reader_1
@@ -69,119 +72,6 @@ reader:
             option:
               type: slac-bsas-table
 )";
-
-    std::optional<mldp_pvxs_driver::metrics::ReaderMetrics> findReaderMetrics(
-        const mldp_pvxs_driver::metrics::MetricsData& snapshot,
-        const std::string& pvName)
-    {
-        for (const auto& reader : snapshot.readers)
-        {
-            if (reader.pv_name == pvName)
-            {
-                return reader;
-            }
-        }
-        return std::nullopt;
-    }
-
-    mldp_pvxs_driver::metrics::ReaderMetrics aggregateReaderMetrics(
-        const mldp_pvxs_driver::metrics::MetricsData& snapshot)
-    {
-        mldp_pvxs_driver::metrics::ReaderMetrics aggregated;
-        for (const auto& reader : snapshot.readers)
-        {
-            aggregated.pushes += reader.pushes;
-            aggregated.bytes_total += reader.bytes_total;
-            aggregated.bytes_per_sec += reader.bytes_per_sec;
-        }
-        return aggregated;
-    }
-
-    std::string serializeMetricsText(const mldp_pvxs_driver::metrics::Metrics& metrics)
-    {
-        prometheus::TextSerializer serializer;
-        std::ostringstream         out;
-        serializer.Serialize(out, metrics.registry()->Collect());
-        return out.str();
-    }
-
-    std::string extractLabelValue(std::string_view line, std::string_view label)
-    {
-        const auto label_start = line.find(label);
-        if (label_start == std::string_view::npos)
-        {
-            return "";
-        }
-        const auto quote_start = line.find('"', label_start);
-        if (quote_start == std::string_view::npos)
-        {
-            return "";
-        }
-        const auto quote_end = line.find('"', quote_start + 1);
-        if (quote_end == std::string_view::npos)
-        {
-            return "";
-        }
-        return std::string(line.substr(quote_start + 1, quote_end - quote_start - 1));
-    }
-
-    double extractMetricValue(std::string_view line)
-    {
-        const auto last_space = line.rfind(' ');
-        if (last_space == std::string_view::npos)
-        {
-            return 0.0;
-        }
-        try
-        {
-            return std::stod(std::string(line.substr(last_space + 1)));
-        }
-        catch (...)
-        {
-            return 0.0;
-        }
-    }
-
-    double getMetricValueForSource(const std::string& text, std::string_view metric, const std::string& source)
-    {
-        std::istringstream stream(text);
-        std::string        line;
-        while (std::getline(stream, line))
-        {
-            if (line.empty() || line.front() == '#')
-            {
-                continue;
-            }
-            if (line.find(metric) == std::string::npos)
-            {
-                continue;
-            }
-            const auto label_value = extractLabelValue(line, "source=");
-            if (label_value == source)
-            {
-                return extractMetricValue(line);
-            }
-        }
-        return 0.0;
-    }
-
-    double getGaugeValue(const std::string& text, std::string_view metric)
-    {
-        std::istringstream stream(text);
-        std::string        line;
-        while (std::getline(stream, line))
-        {
-            if (line.empty() || line.front() == '#')
-            {
-                continue;
-            }
-            if (line.find(metric) != std::string::npos)
-            {
-                return extractMetricValue(line);
-            }
-        }
-        return 0.0;
-    }
 
     class TestIngestionService final : public dp::service::ingestion::DpIngestionService::Service
     {
@@ -234,7 +124,7 @@ reader:
 
 TEST(MLDPPVXSControllerTest, ImplementsEventBusPushContract)
 {
-    static_assert(std::is_base_of_v<IEventBusPush, MLDPPVXSController>);
+    static_assert(std::is_base_of_v<IDataBus, MLDPPVXSController>);
     SUCCEED();
 }
 
@@ -389,14 +279,15 @@ TEST(MLDPPVXSControllerTest, IdleStreamRotationStartsNewStreamAfterMaxAge)
     ASSERT_GT(port, 0);
 
     std::ostringstream yaml;
-    yaml << "controller_thread_pool: 1\n"
-         << "controller_stream_max_age_ms: 150\n"
-         << "mldp_pool:\n"
-         << "  provider_name: test_provider\n"
-         << "  provider_description: \"Test Provider\"\n"
-         << "  url: 127.0.0.1:" << port << "\n"
-         << "  min_conn: 1\n"
-         << "  max_conn: 1\n"
+    yaml << "controller-thread-pool: 1\n"
+         << "controller-stream-max-age-ms: 150\n"
+         << "mldp-pool:\n"
+         << "  provider-name: test_provider\n"
+         << "  provider-description: \"Test Provider\"\n"
+         << "  ingestion-url: 127.0.0.1:" << port << "\n"
+         << "  query-url: localhost:" << port << "\n"
+         << "  min-conn: 1\n"
+         << "  max-conn: 1\n"
          << "reader: []\n";
 
     const auto config = makeConfigFromYaml(yaml.str());
@@ -406,12 +297,17 @@ TEST(MLDPPVXSControllerTest, IdleStreamRotationStartsNewStreamAfterMaxAge)
     ASSERT_TRUE(controller);
     controller->start();
 
-    IEventBusPush::EventBatch batch;
+    IDataBus::EventBatch batch;
     batch.root_source = "test-root";
     batch.tags = {"test"};
-    auto event = IEventBusPush::MakeEventValue();
-    event->data_value.set_intvalue(1);
-    batch.values["test:signal"].push_back(event);
+    dp::service::common::DataFrame frame1;
+    auto* c1 = frame1.add_int32columns();
+    c1->set_name("value");
+    c1->add_values(1);
+    auto* ts1 = frame1.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
+    ts1->set_epochseconds(1);
+    ts1->set_nanoseconds(0);
+    batch.frames.push_back(std::move(frame1));
 
     ASSERT_TRUE(controller->push(std::move(batch)));
     ASSERT_TRUE(waitForCount(service.stream_count, 1, std::chrono::milliseconds(1000)));
@@ -419,12 +315,17 @@ TEST(MLDPPVXSControllerTest, IdleStreamRotationStartsNewStreamAfterMaxAge)
 
     ASSERT_TRUE(waitForCount(service.stream_close_count, 1, std::chrono::milliseconds(1000)));
 
-    IEventBusPush::EventBatch batch2;
+    IDataBus::EventBatch batch2;
     batch2.root_source = "test-root";
     batch2.tags = {"test"};
-    auto event2 = IEventBusPush::MakeEventValue();
-    event2->data_value.set_intvalue(2);
-    batch2.values["test:signal"].push_back(event2);
+    dp::service::common::DataFrame frame2;
+    auto* c2 = frame2.add_int32columns();
+    c2->set_name("value");
+    c2->add_values(2);
+    auto* ts2 = frame2.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
+    ts2->set_epochseconds(2);
+    ts2->set_nanoseconds(0);
+    batch2.frames.push_back(std::move(frame2));
 
     ASSERT_TRUE(controller->push(std::move(batch2)));
     ASSERT_TRUE(waitForCount(service.stream_count, 2, std::chrono::milliseconds(1000)));
@@ -433,5 +334,3 @@ TEST(MLDPPVXSControllerTest, IdleStreamRotationStartsNewStreamAfterMaxAge)
     controller->stop();
     server->Shutdown();
 }
-
-} // namespace mldp_pvxs_driver::controller
