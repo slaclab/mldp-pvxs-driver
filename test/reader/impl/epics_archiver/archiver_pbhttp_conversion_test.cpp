@@ -154,6 +154,7 @@ TEST(ArchiverPbHttpConversionTest, ScalarByte)
     const auto parsed = ArchiverPbHttpConversion::parseSample(hdr, bytes);
 
     ASSERT_EQ(parsed.frame.stringcolumns_size(), 1);
+    EXPECT_EQ(parsed.frame.stringcolumns(0).name(), "TEST:PV");
     EXPECT_EQ(parsed.frame.stringcolumns(0).values(0), std::string("\x01\x02\x03", 3));
 }
 
@@ -323,6 +324,7 @@ TEST(ArchiverPbHttpConversionTest, WaveformByte)
 
     EXPECT_EQ(parsed.nanoseconds, 77u);
     ASSERT_EQ(parsed.frame.stringcolumns_size(), 1);
+    EXPECT_EQ(parsed.frame.stringcolumns(0).name(), "TEST:PV");
     EXPECT_EQ(parsed.frame.stringcolumns(0).values(0), std::string("\xDE\xAD\xBE\xEF", 4));
 }
 
@@ -397,6 +399,7 @@ TEST(ArchiverPbHttpConversionTest, V4GenericBytes)
 
     EXPECT_EQ(parsed.nanoseconds, 42u);
     ASSERT_EQ(parsed.frame.stringcolumns_size(), 1);
+    EXPECT_EQ(parsed.frame.stringcolumns(0).name(), "TEST:PV");
     EXPECT_EQ(parsed.frame.stringcolumns(0).values(0), std::string("\xCA\xFE", 2));
 }
 

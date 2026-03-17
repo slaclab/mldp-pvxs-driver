@@ -14,13 +14,16 @@
 #include <util/time/DateTimeUtils.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <random>
 #include <stdexcept>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -39,6 +42,33 @@ namespace {
     {
         int64_t epoch_ns = 0;
         double  value = 0.0;
+    };
+
+    enum class MockPayloadKind
+    {
+        ScalarString,
+        ScalarShort,
+        ScalarFloat,
+        ScalarEnum,
+        ScalarByte,
+        ScalarInt,
+        ScalarDouble,
+        WaveformString,
+        WaveformShort,
+        WaveformFloat,
+        WaveformEnum,
+        WaveformByte,
+        WaveformInt,
+        WaveformDouble,
+        V4GenericBytes,
+    };
+
+    struct MockPayloadSpec
+    {
+        std::string_view   suffix;
+        MockPayloadKind    kind;
+        EPICS::PayloadType payload_type;
+        uint32_t           element_count;
     };
 
     struct CivilDate
@@ -125,7 +155,6 @@ namespace {
 
     ParsedUtcTime parseIso8601Utc(const std::string& s)
     {
-        // Expected format: YYYY-MM-DDTHH:MM:SS[.fraction]Z
         if (s.size() < 20 || s.back() != 'Z')
         {
             throw std::runtime_error("timestamp must be ISO-8601 UTC with trailing Z");
@@ -174,6 +203,60 @@ namespace {
     {
         seed ^= value + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2);
         return seed;
+    }
+
+    bool endsWith(std::string_view value, std::string_view suffix)
+    {
+        return value.size() >= suffix.size() && value.substr(value.size() - suffix.size()) == suffix;
+    }
+
+    const MockPayloadSpec& defaultPayloadSpec()
+    {
+        static const MockPayloadSpec kDefault{
+            .suffix = "",
+            .kind = MockPayloadKind::ScalarDouble,
+            .payload_type = EPICS::SCALAR_DOUBLE,
+            .element_count = 1u};
+        return kDefault;
+    }
+
+    const MockPayloadSpec& payloadSpecForPv(std::string_view pv)
+    {
+        static const std::array<MockPayloadSpec, 15> kSpecs{{
+            {"_SCALAR_STRING", MockPayloadKind::ScalarString, EPICS::SCALAR_STRING, 1u},
+            {"_SCALAR_SHORT", MockPayloadKind::ScalarShort, EPICS::SCALAR_SHORT, 1u},
+            {"_SCALAR_FLOAT", MockPayloadKind::ScalarFloat, EPICS::SCALAR_FLOAT, 1u},
+            {"_SCALAR_ENUM", MockPayloadKind::ScalarEnum, EPICS::SCALAR_ENUM, 1u},
+            {"_SCALAR_BYTE", MockPayloadKind::ScalarByte, EPICS::SCALAR_BYTE, 1u},
+            {"_SCALAR_INT", MockPayloadKind::ScalarInt, EPICS::SCALAR_INT, 1u},
+            {"_SCALAR_DOUBLE", MockPayloadKind::ScalarDouble, EPICS::SCALAR_DOUBLE, 1u},
+            {"_WAVEFORM_STRING", MockPayloadKind::WaveformString, EPICS::WAVEFORM_STRING, 4u},
+            {"_WAVEFORM_SHORT", MockPayloadKind::WaveformShort, EPICS::WAVEFORM_SHORT, 4u},
+            {"_WAVEFORM_FLOAT", MockPayloadKind::WaveformFloat, EPICS::WAVEFORM_FLOAT, 4u},
+            {"_WAVEFORM_ENUM", MockPayloadKind::WaveformEnum, EPICS::WAVEFORM_ENUM, 4u},
+            {"_WAVEFORM_BYTE", MockPayloadKind::WaveformByte, EPICS::WAVEFORM_BYTE, 4u},
+            {"_WAVEFORM_INT", MockPayloadKind::WaveformInt, EPICS::WAVEFORM_INT, 4u},
+            {"_WAVEFORM_DOUBLE", MockPayloadKind::WaveformDouble, EPICS::WAVEFORM_DOUBLE, 4u},
+            {"_V4_GENERIC_BYTES", MockPayloadKind::V4GenericBytes, EPICS::V4_GENERIC_BYTES, 4u},
+        }};
+
+        for (const auto& spec : kSpecs)
+        {
+            if (endsWith(pv, spec.suffix))
+            {
+                return spec;
+            }
+        }
+        return defaultPayloadSpec();
+    }
+
+    template<typename IntT>
+    IntT clampRoundedIntegral(double value)
+    {
+        const auto rounded = std::llround(value);
+        const auto lo = static_cast<long long>(std::numeric_limits<IntT>::min());
+        const auto hi = static_cast<long long>(std::numeric_limits<IntT>::max());
+        return static_cast<IntT>(std::clamp<long long>(rounded, lo, hi));
     }
 
     std::vector<SamplePoint> generateSamples(const MockArchiverPbHttpServer::GenerationConfig& cfg,
@@ -270,19 +353,91 @@ namespace {
             .nano = static_cast<uint32_t>(nano)};
     }
 
+    int32_t sampleIntValue(const SamplePoint& sample)
+    {
+        return clampRoundedIntegral<int32_t>(sample.value * 10.0);
+    }
+
+    int32_t sampleShortValue(const SamplePoint& sample)
+    {
+        return clampRoundedIntegral<int16_t>(sample.value * 4.0);
+    }
+
+    int32_t sampleEnumValue(const SamplePoint& sample)
+    {
+        return static_cast<int32_t>(std::llabs(std::llround(sample.value))) % 16;
+    }
+
+    float sampleFloatValue(const SamplePoint& sample)
+    {
+        return static_cast<float>(sample.value);
+    }
+
+    std::string sampleStringValue(const std::string& pv, const SamplePoint& sample)
+    {
+        return pv + ":sample:" + std::to_string(sample.epoch_ns);
+    }
+
+    std::string sampleBytesValue(const SamplePoint& sample)
+    {
+        std::string value(4, '\0');
+        const auto base = static_cast<uint32_t>(std::llabs(std::llround(sample.value * 100.0)));
+        for (size_t i = 0; i < value.size(); ++i)
+        {
+            value[i] = static_cast<char>((base + static_cast<uint32_t>(i * 37)) & 0xFFu);
+        }
+        return value;
+    }
+
+    std::array<int32_t, 4> waveformIntValues(const SamplePoint& sample)
+    {
+        const int32_t base = sampleIntValue(sample);
+        return {base, base + 1, base + 2, base + 3};
+    }
+
+    std::array<int32_t, 4> waveformShortValues(const SamplePoint& sample)
+    {
+        const int32_t base = sampleShortValue(sample);
+        return {base, base + 1, base + 2, base + 3};
+    }
+
+    std::array<int32_t, 4> waveformEnumValues(const SamplePoint& sample)
+    {
+        const int32_t base = sampleEnumValue(sample);
+        return {base % 16, (base + 1) % 16, (base + 2) % 16, (base + 3) % 16};
+    }
+
+    std::array<float, 4> waveformFloatValues(const SamplePoint& sample)
+    {
+        const float base = sampleFloatValue(sample);
+        return {base, base + 0.25f, base + 0.5f, base + 0.75f};
+    }
+
+    std::array<double, 4> waveformDoubleValues(const SamplePoint& sample)
+    {
+        return {sample.value, sample.value + 0.25, sample.value + 0.5, sample.value + 0.75};
+    }
+
+    std::array<std::string, 4> waveformStringValues(const std::string& pv, const SamplePoint& sample)
+    {
+        const std::string base = sampleStringValue(pv, sample);
+        return {base + ":0", base + ":1", base + ":2", base + ":3"};
+    }
+
     void appendChunk(std::string&                                      body,
                      const std::string&                                pv,
                      int32_t                                           year,
                      const std::vector<SamplePoint>&                   samples,
                      size_t                                            begin_idx,
                      size_t                                            end_idx,
-                     const MockArchiverPbHttpServer::GenerationConfig& cfg)
+                     const MockArchiverPbHttpServer::GenerationConfig& cfg,
+                     const MockPayloadSpec&                            payload_spec)
     {
         EPICS::PayloadInfo header;
-        header.set_type(EPICS::SCALAR_DOUBLE);
+        header.set_type(payload_spec.payload_type);
         header.set_pvname(pv);
         header.set_year(year);
-        header.set_elementcount(1);
+        header.set_elementcount(payload_spec.element_count);
         auto* egu = header.add_headers();
         egu->set_name("EGU");
         egu->set_val(cfg.egu);
@@ -295,14 +450,196 @@ namespace {
 
         for (size_t i = begin_idx; i < end_idx; ++i)
         {
-            const auto          pbt = toPbTime(samples[i].epoch_ns);
-            EPICS::ScalarDouble sample;
-            sample.set_secondsintoyear(pbt.seconds_into_year);
-            sample.set_nano(pbt.nano);
-            sample.set_val(samples[i].value);
-            sample.set_severity(0);
-            sample.set_status(0);
-            body += escapePbHttpLine(serializeProto(sample));
+            const auto& sample = samples[i];
+            const auto  pbt = toPbTime(sample.epoch_ns);
+
+            switch (payload_spec.kind)
+            {
+            case MockPayloadKind::ScalarString:
+            {
+                EPICS::ScalarString msg;
+                msg.set_secondsintoyear(pbt.seconds_into_year);
+                msg.set_nano(pbt.nano);
+                msg.set_val(sampleStringValue(pv, sample));
+                msg.set_severity(0);
+                msg.set_status(0);
+                body += escapePbHttpLine(serializeProto(msg));
+                break;
+            }
+            case MockPayloadKind::ScalarShort:
+            {
+                EPICS::ScalarShort msg;
+                msg.set_secondsintoyear(pbt.seconds_into_year);
+                msg.set_nano(pbt.nano);
+                msg.set_val(sampleShortValue(sample));
+                msg.set_severity(0);
+                msg.set_status(0);
+                body += escapePbHttpLine(serializeProto(msg));
+                break;
+            }
+            case MockPayloadKind::ScalarFloat:
+            {
+                EPICS::ScalarFloat msg;
+                msg.set_secondsintoyear(pbt.seconds_into_year);
+                msg.set_nano(pbt.nano);
+                msg.set_val(sampleFloatValue(sample));
+                msg.set_severity(0);
+                msg.set_status(0);
+                body += escapePbHttpLine(serializeProto(msg));
+                break;
+            }
+            case MockPayloadKind::ScalarEnum:
+            {
+                EPICS::ScalarEnum msg;
+                msg.set_secondsintoyear(pbt.seconds_into_year);
+                msg.set_nano(pbt.nano);
+                msg.set_val(sampleEnumValue(sample));
+                msg.set_severity(0);
+                msg.set_status(0);
+                body += escapePbHttpLine(serializeProto(msg));
+                break;
+            }
+            case MockPayloadKind::ScalarByte:
+            {
+                EPICS::ScalarByte msg;
+                msg.set_secondsintoyear(pbt.seconds_into_year);
+                msg.set_nano(pbt.nano);
+                msg.set_val(sampleBytesValue(sample));
+                msg.set_severity(0);
+                msg.set_status(0);
+                body += escapePbHttpLine(serializeProto(msg));
+                break;
+            }
+            case MockPayloadKind::ScalarInt:
+            {
+                EPICS::ScalarInt msg;
+                msg.set_secondsintoyear(pbt.seconds_into_year);
+                msg.set_nano(pbt.nano);
+                msg.set_val(sampleIntValue(sample));
+                msg.set_severity(0);
+                msg.set_status(0);
+                body += escapePbHttpLine(serializeProto(msg));
+                break;
+            }
+            case MockPayloadKind::ScalarDouble:
+            {
+                EPICS::ScalarDouble msg;
+                msg.set_secondsintoyear(pbt.seconds_into_year);
+                msg.set_nano(pbt.nano);
+                msg.set_val(sample.value);
+                msg.set_severity(0);
+                msg.set_status(0);
+                body += escapePbHttpLine(serializeProto(msg));
+                break;
+            }
+            case MockPayloadKind::WaveformString:
+            {
+                EPICS::VectorString msg;
+                msg.set_secondsintoyear(pbt.seconds_into_year);
+                msg.set_nano(pbt.nano);
+                for (const auto& value : waveformStringValues(pv, sample))
+                {
+                    msg.add_val(value);
+                }
+                msg.set_severity(0);
+                msg.set_status(0);
+                body += escapePbHttpLine(serializeProto(msg));
+                break;
+            }
+            case MockPayloadKind::WaveformShort:
+            {
+                EPICS::VectorShort msg;
+                msg.set_secondsintoyear(pbt.seconds_into_year);
+                msg.set_nano(pbt.nano);
+                for (const auto value : waveformShortValues(sample))
+                {
+                    msg.add_val(value);
+                }
+                msg.set_severity(0);
+                msg.set_status(0);
+                body += escapePbHttpLine(serializeProto(msg));
+                break;
+            }
+            case MockPayloadKind::WaveformFloat:
+            {
+                EPICS::VectorFloat msg;
+                msg.set_secondsintoyear(pbt.seconds_into_year);
+                msg.set_nano(pbt.nano);
+                for (const auto value : waveformFloatValues(sample))
+                {
+                    msg.add_val(value);
+                }
+                msg.set_severity(0);
+                msg.set_status(0);
+                body += escapePbHttpLine(serializeProto(msg));
+                break;
+            }
+            case MockPayloadKind::WaveformEnum:
+            {
+                EPICS::VectorEnum msg;
+                msg.set_secondsintoyear(pbt.seconds_into_year);
+                msg.set_nano(pbt.nano);
+                for (const auto value : waveformEnumValues(sample))
+                {
+                    msg.add_val(value);
+                }
+                msg.set_severity(0);
+                msg.set_status(0);
+                body += escapePbHttpLine(serializeProto(msg));
+                break;
+            }
+            case MockPayloadKind::WaveformByte:
+            {
+                EPICS::VectorChar msg;
+                msg.set_secondsintoyear(pbt.seconds_into_year);
+                msg.set_nano(pbt.nano);
+                msg.set_val(sampleBytesValue(sample));
+                msg.set_severity(0);
+                msg.set_status(0);
+                body += escapePbHttpLine(serializeProto(msg));
+                break;
+            }
+            case MockPayloadKind::WaveformInt:
+            {
+                EPICS::VectorInt msg;
+                msg.set_secondsintoyear(pbt.seconds_into_year);
+                msg.set_nano(pbt.nano);
+                for (const auto value : waveformIntValues(sample))
+                {
+                    msg.add_val(value);
+                }
+                msg.set_severity(0);
+                msg.set_status(0);
+                body += escapePbHttpLine(serializeProto(msg));
+                break;
+            }
+            case MockPayloadKind::WaveformDouble:
+            {
+                EPICS::VectorDouble msg;
+                msg.set_secondsintoyear(pbt.seconds_into_year);
+                msg.set_nano(pbt.nano);
+                for (const auto value : waveformDoubleValues(sample))
+                {
+                    msg.add_val(value);
+                }
+                msg.set_severity(0);
+                msg.set_status(0);
+                body += escapePbHttpLine(serializeProto(msg));
+                break;
+            }
+            case MockPayloadKind::V4GenericBytes:
+            {
+                EPICS::V4GenericBytes msg;
+                msg.set_secondsintoyear(pbt.seconds_into_year);
+                msg.set_nano(pbt.nano);
+                msg.set_val(sampleBytesValue(sample));
+                msg.set_severity(0);
+                msg.set_status(0);
+                body += escapePbHttpLine(serializeProto(msg));
+                break;
+            }
+            }
+
             body.push_back('\n');
         }
 
@@ -314,11 +651,12 @@ namespace {
                                     const std::string&                                from,
                                     const std::optional<std::string>&                 to)
     {
+        const auto& payload_spec = payloadSpecForPv(pv);
         const int64_t from_ns = parseIso8601Utc(from).epoch_ns;
         const int64_t to_ns = to.has_value()
                                   ? parseIso8601Utc(*to).epoch_ns
                                   : (from_ns + static_cast<int64_t>(cfg.open_ended_duration_sec) * kNanosPerSecond);
-        const auto    samples = generateSamples(cfg, pv, from_ns, to_ns);
+        const auto samples = generateSamples(cfg, pv, from_ns, to_ns);
 
         std::string body;
         if (samples.empty())
@@ -335,7 +673,7 @@ namespace {
             {
                 ++chunk_end;
             }
-            appendChunk(body, pv, year, samples, chunk_begin, chunk_end, cfg);
+            appendChunk(body, pv, year, samples, chunk_begin, chunk_end, cfg, payload_spec);
             chunk_begin = chunk_end;
         }
         return body;
@@ -351,7 +689,6 @@ MockArchiverPbHttpServer::MockArchiverPbHttpServer()
 MockArchiverPbHttpServer::MockArchiverPbHttpServer(const GenerationConfig& config)
     : config_(config)
 {
-    // Register the mock Archiver Appliance PB/HTTP endpoint used by integration tests.
     server_.Get(kMockArchiverPbHttpPath, [this](const httplib::Request& req, httplib::Response& res)
                 {
                     RequestLog log;
@@ -374,8 +711,6 @@ MockArchiverPbHttpServer::MockArchiverPbHttpServer(const GenerationConfig& confi
                         last_request_ = log;
                         request_history_.push_back(log);
                         last_response_success_.reset();
-                        // Each handled request gets a monotonically increasing id so tests
-                        // can wait for completion of "the latest" request deterministically.
                         markLastRequestStartedLocked();
                     }
                     cv_.notify_all();
@@ -405,9 +740,7 @@ MockArchiverPbHttpServer::MockArchiverPbHttpServer(const GenerationConfig& confi
 
                     try
                     {
-                        // Generate a deterministic PB/HTTP payload for the requested time range.
-                        auto body = std::make_shared<std::string>(
-                            buildMockPbHttpBody(config_, *log.pv, *log.from, log.to));
+                        auto body = std::make_shared<std::string>(buildMockPbHttpBody(config_, *log.pv, *log.from, log.to));
                         auto body_for_stream = body;
                         auto body_for_releaser = body;
                         const uint32_t stream_chunk_delay_ms = config_.stream_chunk_delay_ms;
@@ -419,8 +752,6 @@ MockArchiverPbHttpServer::MockArchiverPbHttpServer(const GenerationConfig& confi
                         res.status = 200;
                         res.set_header("Content-Type", "application/octet-stream");
                         res.set_header("X-Mock-PV", log.pv->c_str());
-                        // Stream the response in small writes to exercise client-side streaming
-                        // parsing logic. The payload is pre-generated, but sent incrementally.
                         res.set_content_provider(
                             body->size(),
                             "application/octet-stream",
@@ -439,15 +770,12 @@ MockArchiverPbHttpServer::MockArchiverPbHttpServer(const GenerationConfig& confi
                                 }
                                 if (stream_chunk_delay_ms > 0)
                                 {
-                                    // simulate delay from each chunk to allow testing cancellation or slowness of the transmission during an in-flight response stream
                                     std::this_thread::sleep_for(std::chrono::milliseconds(stream_chunk_delay_ms));
                                 }
                                 return true;
                             },
                             [this, request_id, body_for_releaser = std::move(body_for_releaser)](bool success) mutable
                             {
-                                // Release the buffered payload and notify tests waiting for the
-                                // most recent response to finish sending.
                                 body_for_releaser.reset();
                                 {
                                     std::lock_guard<std::mutex> lock(mu_);
@@ -490,7 +818,6 @@ void MockArchiverPbHttpServer::start()
 
     thread_ = std::thread([this]()
                           {
-                              // Blocking server loop; runs until stop() calls server_.stop().
                               server_.listen_after_bind();
                           });
     std::this_thread::sleep_for(std::chrono::milliseconds(25));
@@ -546,7 +873,6 @@ bool MockArchiverPbHttpServer::waitForLastResponseComplete(std::chrono::millisec
 {
     std::unique_lock<std::mutex> lock(mu_);
     const uint64_t               target_request_id = last_request_id_;
-    // Wait until the latest observed request id is marked completed.
     return cv_.wait_for(lock,
                         timeout,
                         [&]()
@@ -568,7 +894,6 @@ const MockArchiverPbHttpServer::GenerationConfig& MockArchiverPbHttpServer::gene
 
 void MockArchiverPbHttpServer::markLastRequestStartedLocked()
 {
-    // Must be called while mu_ is held.
     ++last_request_id_;
 }
 

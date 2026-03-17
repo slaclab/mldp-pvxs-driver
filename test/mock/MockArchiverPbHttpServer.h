@@ -30,11 +30,11 @@ inline constexpr const char* kMockArchiverPbHttpPv = "TEST:PV:DOUBLE";
 /**
  * @brief Reusable local HTTP mock for Archiver Appliance PB/HTTP tests.
  *
- * Serves randomized `SCALAR_DOUBLE` PB/HTTP data for
- * `/retrieval/data/getData.raw`, validates required query parameters (`pv`,
- * `from`), accepts optional `to`, and records the last request. Samples are
- * generated across the requested time range with configurable production
- * behavior.
+ * Serves deterministic PB/HTTP data for `/retrieval/data/getData.raw`,
+ * validates required query parameters (`pv`, `from`), accepts optional `to`,
+ * and records the last request. The requested PV name may end with
+ * `_<PAYLOAD_TYPE>` to choose which payload family the mock emits; unsuffixed
+ * PVs default to `SCALAR_DOUBLE` for backward compatibility.
  */
 class MockArchiverPbHttpServer
 {

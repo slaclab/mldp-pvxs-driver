@@ -86,7 +86,7 @@ ParsedSample parseBlob(const EPICS::PayloadInfo& header,
     }
     auto  s = makeBaseSample(header, msg.secondsintoyear(), msg.nano());
     auto* c = s.frame.add_stringcolumns();
-    c->set_name("value");
+    c->set_name(header.pvname());
     c->add_values(msg.val());
     return s;
 }
