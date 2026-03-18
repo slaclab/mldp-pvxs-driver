@@ -67,13 +67,13 @@ flowchart TB
 
 The driver uses a **factory pattern** with abstract readers to support multiple data sources:
 
-| Reader Type       | Status      | Description                           |
-|-------------------|-------------|---------------------------------------|
-| `epics-base`      | Implemented | Polling-based EPICS Channel Access    |
-| `epics-pvxs`      | Implemented | Event-driven EPICS PVAccess (PVXS)    |
-| `epics-archiver`  | Future      | Historical data from EPICS Archiver   |
-| `hdf5`            | Future      | Data replay from HDF5 files           |
-| Others            | Future      | Extensible for new data sources       |
+Reader Type      | Status      | Description
+---------------- | ----------- | ---------------------------------------
+`epics-base`     | Implemented | Polling-based EPICS Channel Access
+`epics-pvxs`     | Implemented | Event-driven EPICS PVAccess (PVXS)
+`epics-archiver` | Future      | Historical data from EPICS Archiver
+`hdf5`           | Future      | Data replay from HDF5 files
+Others           | Future      | Extensible for new data sources
 
 All readers:
 
@@ -191,11 +191,11 @@ flowchart TB
 
 ### Thread Pool Types
 
-| Pool                 | Location             | Purpose                          | Default Size |
-|----------------------|----------------------|----------------------------------|--------------|
-| Reader Pool          | Per-Reader           | Convert EPICS data to protobuf   | 2 threads    |
-| Controller Pool      | MLDPPVXSController   | Process batches, write to gRPC   | 2 threads    |
-| Monitor Poll Threads | EpicsBaseReader only | Poll EPICS Base queues           | 2 threads    |
+Pool                 | Location             | Purpose                        | Default Size
+-------------------- | -------------------- | ------------------------------ | ------------
+Reader Pool          | Per-Reader           | Convert EPICS data to protobuf | 2 threads
+Controller Pool      | MLDPPVXSController   | Process batches, write to gRPC | 2 threads
+Monitor Poll Threads | EpicsBaseReader only | Poll EPICS Base queues         | 2 threads
 
 ### Conditional Parallelization
 
