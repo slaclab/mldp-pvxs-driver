@@ -560,7 +560,7 @@ if(MLDP_PVXS_DRIVER_TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics/base/epics_base_reader_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_archiver/archiver_pbhttp_conversion_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_archiver/epics_archiver_reader_config_test.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_archiver/MockArchiverPbHttpServer.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/MockArchiverPbHttpServer.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_archiver/epics_archiver_pbhttp_integration_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_archiver/epics_archiver_reader_http_integration_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_archiver/epics_archiver_reader_periodic_tail_integration_test.cpp"

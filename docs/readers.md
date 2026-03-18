@@ -6,11 +6,11 @@ The MLDP PVXS Driver uses an **abstract Reader pattern** to support multiple dat
 
 ## Supported Reader Types
 
-| Reader Type      | Status      | Data Source          | Documentation                                           |
-|------------------|-------------|----------------------|---------------------------------------------------------|
-| `epics-base`     | Implemented | EPICS Control System | [EpicsBaseReader](readers/epics-base-reader.md)         |
-| `epics-pvxs`     | Implemented | EPICS Control System | [EpicsPVXSReader](readers/epics-pvxs-reader.md)         |
-| `epics-archiver` | Implemented | EPICS Archiver       | [EpicsArchiverReader](readers/epics-archiver-reader.md) |
+Reader Type      | Status      | Data Source          | Documentation
+---------------- | ----------- | -------------------- | ---------------------------------------------------------
+`epics-base`     | Implemented | EPICS Control System | [EpicsBaseReader](readers/epics-base-reader.md)
+`epics-pvxs`     | Implemented | EPICS Control System | [EpicsPVXSReader](readers/epics-pvxs-reader.md)
+`epics-archiver` | Implemented | EPICS Archiver       | [EpicsArchiverReader](readers/epics-archiver-reader.md)
 
 ## Reader Class Hierarchy
 
@@ -132,10 +132,10 @@ EPICS-specific readers (base, pvxs, archiver) share `EpicsReaderBase`:
 - Protobuf conversion utilities
 - Error handling and metrics collection
 
-| File           | Location                                             |
-|----------------|------------------------------------------------------|
-| Header         | `include/reader/impl/epics/shared/EpicsReaderBase.h` |
-| Implementation | `src/reader/impl/epics/shared/EpicsReaderBase.cpp`   |
+File           | Location
+-------------- | ------------------------------------------------------
+Header         | `include/reader/impl/epics/shared/EpicsReaderBase.h`
+Implementation | `src/reader/impl/epics/shared/EpicsReaderBase.cpp`
 
 ## Factory Registration
 
@@ -179,26 +179,26 @@ Configuration is validated and type-checked before reader instantiation.
 
 All MLDP readers expose consistent Prometheus metrics:
 
-| Metric                                           | Description                       |
-|--------------------------------------------------|-----------------------------------|
-| `mldp_pvxs_driver_reader_events_received_total`  | Raw PV updates received           |
-| `mldp_pvxs_driver_reader_events_total`           | Successfully processed events     |
-| `mldp_pvxs_driver_reader_errors_total`           | Conversion/remote errors          |
-| `mldp_pvxs_driver_reader_processing_time_ms`     | Event processing time histogram   |
-| `mldp_pvxs_driver_reader_queue_depth`            | Monitor queue size (EpicsBase)    |
-| `mldp_pvxs_driver_reader_pool_queue_depth`       | Thread pool queue depth           |
+Metric                                          | Description
+----------------------------------------------- | ---------------------------------
+`mldp_pvxs_driver_reader_events_received_total` | Raw PV updates received
+`mldp_pvxs_driver_reader_events_total`          | Successfully processed events
+`mldp_pvxs_driver_reader_errors_total`          | Conversion/remote errors
+`mldp_pvxs_driver_reader_processing_time_ms`    | Event processing time histogram
+`mldp_pvxs_driver_reader_queue_depth`           | Monitor queue size (EpicsBase)
+`mldp_pvxs_driver_reader_pool_queue_depth`      | Thread pool queue depth
 
 ## Comparison Matrix
 
-| Feature            | EpicsBaseReader                  | EpicsPVXSReader                  | EpicsArchiverReader             |
-|--------------------|----------------------------------|----------------------------------|---------------------------------|
-| Protocol           | Channel Access                   | PVAccess (PVXS)                  | HTTP (PB/HTTP streaming)        |
-| Event Model        | Polling                          | Event-driven                     | Fetch (one-shot or periodic)    |
-| Latency            | Poll interval dependent          | Immediate                        | Variable (depends on window)    |
-| Thread Model       | Poll threads + conversion pool   | Callback + conditional pool      | Worker thread + conversion pool |
-| Data Source        | Live PVs                         | Live PVs                         | Historical archiver data        |
-| Configuration      | `epics-base`                     | `epics-pvxs`                     | `epics-archiver`                |
-| Best For           | Legacy systems                   | Modern high-performance          | Backfill and data replay        |
+Feature        | EpicsBaseReader                | EpicsPVXSReader                | EpicsArchiverReader
+-------------- | ------------------------------ | ------------------------------ | ---------------------------------
+Protocol       | Channel Access                 | PVAccess (PVXS)                | HTTP (PB/HTTP streaming)
+Event Model    | Polling                        | Event-driven                   | Fetch (one-shot or periodic)
+Latency        | Poll interval dependent        | Immediate                      | Variable (depends on window)
+Thread Model   | Poll threads + conversion pool | Callback + conditional pool    | Worker thread + conversion pool
+Data Source    | Live PVs                       | Live PVs                       | Historical archiver data
+Configuration  | `epics-base`                   | `epics-pvxs`                   | `epics-archiver`
+Best For       | Legacy systems                 | Modern high-performance        | Backfill and data replay
 
 ---
 

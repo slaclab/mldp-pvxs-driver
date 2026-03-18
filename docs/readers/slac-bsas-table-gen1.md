@@ -21,7 +21,7 @@ array columns.  They are **not** the NTTable-level `timeStamp` scalar, which
 records when the whole update was produced, not when individual rows were
 sampled.
 
-```
+```Text
 epics:nt/NTTable:1.0
 ├── labels                               # string[] — column names in value.* order
 ├── value                                # Struct: one array field per column
@@ -47,11 +47,11 @@ epics:nt/NTTable:1.0
 From [`test/mock/sioc.cpp`](../../test/mock/sioc.cpp), a three-row BSAS table
 update looks like this in tabular form, those three rows map to:
 
- PV_NAME_A_DOUBLE_VALUE | PV_NAME_B_STRING_VALUE | secondsPastEpoch | nanoseconds |
-------------------------|------------------------|------------------|-------------|
- 1.0                    | `"OK"`                 | T                | T + 0       |
- 2.0                    | `"WARNING"`            | T                | T + 1       |
- 3.0                    | `"FAULT"`              | T                | T + 2       |
+PV_NAME_A_DOUBLE_VALUE | PV_NAME_B_STRING_VALUE | secondsPastEpoch | nanoseconds
+---------------------- | ---------------------- | ---------------- | -----------
+1.0                    | `"OK"`                 | T                | T + 0
+2.0                    | `"WARNING"`            | T                | T + 1
+3.0                    | `"FAULT"`              | T                | T + 2
 
 ## Timestamp Resolution
 
@@ -66,7 +66,7 @@ the defaults match the SLAC convention.
 
 ## How the Driver Processes a BSAS Update
 
-```
+```Text
 Incoming NTTable update
         │
         ▼
@@ -109,19 +109,19 @@ pvs:
       tsNanos:   nanoseconds        # omit to use this default
 ```
 
-| Key         | Default            | Description                                    |
-|-------------|--------------------|------------------------------------------------|
-| `type`      | *(required)*       | Must be `slac-bsas-table` to activate this mode|
-| `tsSeconds` | `secondsPastEpoch` | Name of the per-row epoch-seconds column       |
-| `tsNanos`   | `nanoseconds`      | Name of the per-row nanoseconds column         |
+Key         | Default            | Description
+----------- | ------------------ | ----------------------------------------------
+`type`      | *(required)*       | Must be `slac-bsas-table` to activate this mode
+`tsSeconds` | `secondsPastEpoch` | Name of the per-row epoch-seconds column
+`tsNanos`   | `nanoseconds`      | Name of the per-row nanoseconds column
 
 ## Implementation References
 
-| Component                    | File                                                          |
-|------------------------------|---------------------------------------------------------------|
-| PVXS conversion class        | `include/reader/impl/epics/pvxs/BSASEpicsMLDPConversion.h`         |
-| PVXS conversion impl         | `src/reader/impl/epics/pvxs/BSASEpicsMLDPConversion.cpp`           |
-| EPICS Base conversion        | `include/reader/impl/epics/base/EpicsPVDataConversion.h`           |
-| PVXS reader dispatch         | `src/reader/impl/epics/pvxs/EpicsPVXSReader.cpp`                   |
-| EPICS Base reader dispatch   | `src/reader/impl/epics/base/EpicsBaseReader.cpp`                   |
-| Mock IOC (concrete example)  | `test/mock/sioc.cpp`                                          |
+Component                   | File
+--------------------------- | -----------------------------------------------------------
+PVXS conversion class       | `include/reader/impl/epics/pvxs/BSASEpicsMLDPConversion.h`
+PVXS conversion impl        | `src/reader/impl/epics/pvxs/BSASEpicsMLDPConversion.cpp`
+EPICS Base conversion       | `include/reader/impl/epics/base/EpicsPVDataConversion.h`
+PVXS reader dispatch        | `src/reader/impl/epics/pvxs/EpicsPVXSReader.cpp`
+EPICS Base reader dispatch  | `src/reader/impl/epics/base/EpicsBaseReader.cpp`
+Mock IOC (concrete example) | `test/mock/sioc.cpp`

@@ -11,7 +11,7 @@
 #include <gtest/gtest.h>
 
 #include "../../../config/test_config_helpers.h"
-#include "MockArchiverPbHttpServer.h"
+#include "../../../mock/MockArchiverPbHttpServer.h"
 
 #include <reader/impl/epics_archiver/EpicsArchiverReader.h>
 #include <util/bus/IDataBus.h>

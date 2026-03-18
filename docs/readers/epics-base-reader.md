@@ -4,10 +4,10 @@ The `EpicsBaseReader` provides EPICS Channel Access monitoring using a polling-b
 
 **Registration Type:** `"epics-base"`
 
-| File           | Location                                         |
-|----------------|--------------------------------------------------|
-| Header         | `include/reader/impl/epics/base/EpicsBaseReader.h`    |
-| Implementation | `src/reader/impl/epics/base/EpicsBaseReader.cpp`      |
+File           | Location
+-------------- | -----------------------------------------------
+Header         | `include/reader/impl/epics/base/EpicsBaseReader.h`
+Implementation | `src/reader/impl/epics/base/EpicsBaseReader.cpp`
 
 ## Architecture
 

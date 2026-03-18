@@ -6,7 +6,7 @@
 #include "../common/MldpMetricsTestUtils.h"
 #include "../common/MldpQueryTestUtils.h"
 #include "../config/test_config_helpers.h"
-#include "../reader/impl/epics_archiver/MockArchiverPbHttpServer.h"
+#include "../mock/MockArchiverPbHttpServer.h"
 
 #include <chrono>
 #include <memory>

@@ -4,10 +4,10 @@ The `EpicsPVXSReader` provides modern EPICS PVAccess monitoring using an event-d
 
 **Registration Type:** `"epics-pvxs"`
 
-| File           | Location                                         |
-|----------------|--------------------------------------------------|
-| Header         | `include/reader/impl/epics/pvxs/EpicsPVXSReader.h`    |
-| Implementation | `src/reader/impl/epics/pvxs/EpicsPVXSReader.cpp`      |
+File           | Location
+-------------- | -----------------------------------------------
+Header         | `include/reader/impl/epics/pvxs/EpicsPVXSReader.h`
+Implementation | `src/reader/impl/epics/pvxs/EpicsPVXSReader.cpp`
 
 ## Architecture
 
