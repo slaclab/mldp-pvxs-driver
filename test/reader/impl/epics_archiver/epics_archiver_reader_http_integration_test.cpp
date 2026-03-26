@@ -12,6 +12,8 @@
 
 #include "../../../config/test_config_helpers.h"
 #include "../../../mock/MockArchiverPbHttpServer.h"
+#include "../../../mock/MockDataBus.h"
+#include "../../../mock/EpicsArchiverTestUtils.h"
 
 #include <reader/impl/epics_archiver/EpicsArchiverReader.h>
 #include <util/bus/IDataBus.h>
@@ -20,10 +22,8 @@
 #include <cstdint>
 #include <map>
 #include <memory>
-#include <mutex>
 #include <set>
 #include <string>
-#include <thread>
 #include <vector>
 
 namespace {
@@ -32,85 +32,11 @@ using mldp_pvxs_driver::config::makeConfigFromYaml;
 using mldp_pvxs_driver::reader::impl::epics_archiver::EpicsArchiverReader;
 using mldp_pvxs_driver::reader::impl::epics_archiver::MockArchiverPbHttpServer;
 using mldp_pvxs_driver::util::bus::IDataBus;
-
-class MockEventBusPush final : public IDataBus
-{
-public:
-    using EventBatch = IDataBus::EventBatch;
-
-    bool push(EventBatch batch) override
-    {
-        std::lock_guard<std::mutex> lock(mu_);
-        received.emplace_back(std::move(batch));
-        return true;
-    }
-
-    std::vector<SourceInfo> querySourcesInfo(const std::set<std::string>&) override
-    {
-        return {};
-    }
-
-    std::optional<std::unordered_map<std::string, std::vector<dp::service::common::DataValues>>> querySourcesData(
-        const std::set<std::string>&,
-        const mldp_pvxs_driver::util::bus::QuerySourcesDataOptions&) override
-    {
-        return std::nullopt;
-    }
-
-    std::vector<EventBatch> snapshot() const
-    {
-        std::lock_guard<std::mutex> lock(mu_);
-        return received;
-    }
-
-private:
-    mutable std::mutex      mu_;
-    std::vector<EventBatch> received;
-};
-
-bool waitForMockRequestStartAndCompletion(const MockArchiverPbHttpServer& server,
-                                          std::chrono::milliseconds       timeout)
-{
-    const auto deadline = std::chrono::steady_clock::now() + timeout;
-    while (std::chrono::steady_clock::now() < deadline)
-    {
-        if (!server.lastRequest().path.empty())
-        {
-            return server.waitForLastResponseComplete(
-                std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now()));
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    return false;
-}
-
-bool waitForMockRequestStart(const MockArchiverPbHttpServer& server, std::chrono::milliseconds timeout)
-{
-    const auto deadline = std::chrono::steady_clock::now() + timeout;
-    while (std::chrono::steady_clock::now() < deadline)
-    {
-        if (!server.lastRequest().path.empty())
-        {
-            return true;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    return false;
-}
-
-bool waitForBatchCount(const MockEventBusPush& bus, size_t expected_batches, std::chrono::milliseconds timeout)
-{
-    const auto deadline = std::chrono::steady_clock::now() + timeout;
-    while (std::chrono::steady_clock::now() < deadline)
-    {
-        if (bus.snapshot().size() >= expected_batches)
-        {
-            return true;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    return bus.snapshot().size() >= expected_batches;
-}
+using mldp_pvxs_driver::test::mock::waitForMockRequestStartAndCompletion;
+using mldp_pvxs_driver::test::mock::waitForMockRequestStart;
+using mldp_pvxs_driver::test::mock::waitForAtLeastPublishedBatches;
+// Backward compatibility alias
+using MockEventBusPush = mldp_pvxs_driver::test::mock::MockDataBus;
 
 // Verifies the reader fetches PB/HTTP data and publishes parsed samples to the event bus.
 TEST(EpicsArchiverReaderHttpIntegrationTest, FetchesPbHttpStreamAndPublishesBusEvents)
@@ -259,7 +185,7 @@ TEST(EpicsArchiverReaderHttpIntegrationTest, FetchesMixedTypedPvSetUsingPvSuffix
 
     ASSERT_TRUE(server.waitForRequestCount(4u, std::chrono::seconds(2)));
     ASSERT_TRUE(waitForMockRequestStartAndCompletion(server, std::chrono::seconds(2)));
-    ASSERT_TRUE(waitForBatchCount(*bus, 4u, std::chrono::seconds(2)));
+    ASSERT_TRUE(waitForAtLeastPublishedBatches(*bus, 4u, std::chrono::seconds(2)));
     EXPECT_EQ(reader->name(), "archiver-http-mixed-types");
 
     const auto history = server.requestHistory();
