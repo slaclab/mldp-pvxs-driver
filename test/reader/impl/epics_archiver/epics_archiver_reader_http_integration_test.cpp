@@ -11,17 +11,19 @@
 #include <gtest/gtest.h>
 
 #include "../../../config/test_config_helpers.h"
-#include "MockArchiverPbHttpServer.h"
+#include "../../../mock/MockArchiverPbHttpServer.h"
+#include "../../../mock/MockDataBus.h"
+#include "../../../mock/EpicsArchiverTestUtils.h"
 
 #include <reader/impl/epics_archiver/EpicsArchiverReader.h>
 #include <util/bus/IDataBus.h>
 
 #include <chrono>
 #include <cstdint>
+#include <map>
 #include <memory>
-#include <mutex>
+#include <set>
 #include <string>
-#include <thread>
 #include <vector>
 
 namespace {
@@ -30,71 +32,11 @@ using mldp_pvxs_driver::config::makeConfigFromYaml;
 using mldp_pvxs_driver::reader::impl::epics_archiver::EpicsArchiverReader;
 using mldp_pvxs_driver::reader::impl::epics_archiver::MockArchiverPbHttpServer;
 using mldp_pvxs_driver::util::bus::IDataBus;
-
-class MockEventBusPush final : public IDataBus
-{
-public:
-    using EventBatch = IDataBus::EventBatch;
-
-    bool push(EventBatch batch) override
-    {
-        std::lock_guard<std::mutex> lock(mu_);
-        received.emplace_back(std::move(batch));
-        return true;
-    }
-
-    std::vector<SourceInfo> querySourcesInfo(const std::set<std::string>&) override
-    {
-        return {};
-    }
-
-    std::optional<std::unordered_map<std::string, std::vector<dp::service::common::DataValues>>> querySourcesData(
-        const std::set<std::string>&,
-        const mldp_pvxs_driver::util::bus::QuerySourcesDataOptions&) override
-    {
-        return std::nullopt;
-    }
-
-    std::vector<EventBatch> snapshot() const
-    {
-        std::lock_guard<std::mutex> lock(mu_);
-        return received;
-    }
-
-private:
-    mutable std::mutex      mu_;
-    std::vector<EventBatch> received;
-};
-
-bool waitForMockRequestStartAndCompletion(const MockArchiverPbHttpServer& server,
-                                          std::chrono::milliseconds       timeout)
-{
-    const auto deadline = std::chrono::steady_clock::now() + timeout;
-    while (std::chrono::steady_clock::now() < deadline)
-    {
-        if (!server.lastRequest().path.empty())
-        {
-            return server.waitForLastResponseComplete(
-                std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now()));
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    return false;
-}
-
-bool waitForMockRequestStart(const MockArchiverPbHttpServer& server, std::chrono::milliseconds timeout)
-{
-    const auto deadline = std::chrono::steady_clock::now() + timeout;
-    while (std::chrono::steady_clock::now() < deadline)
-    {
-        if (!server.lastRequest().path.empty())
-        {
-            return true;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    return false;
-}
+using mldp_pvxs_driver::test::mock::waitForMockRequestStartAndCompletion;
+using mldp_pvxs_driver::test::mock::waitForMockRequestStart;
+using mldp_pvxs_driver::test::mock::waitForAtLeastPublishedBatches;
+// Backward compatibility alias
+using MockEventBusPush = mldp_pvxs_driver::test::mock::MockDataBus;
 
 // Verifies the reader fetches PB/HTTP data and publishes parsed samples to the event bus.
 TEST(EpicsArchiverReaderHttpIntegrationTest, FetchesPbHttpStreamAndPublishesBusEvents)
@@ -198,6 +140,99 @@ TEST(EpicsArchiverReaderHttpIntegrationTest, IncludesOptionalToQueryWhenConfigur
     const auto req = server.lastRequest();
     ASSERT_TRUE(req.to.has_value());
     EXPECT_EQ(*req.to, "2026-02-25T08:00:02.000Z");
+}
+
+// Verifies a single reader can fetch differently typed PVs and preserve per-PV column families.
+TEST(EpicsArchiverReaderHttpIntegrationTest, FetchesMixedTypedPvSetUsingPvSuffixes)
+{
+    MockArchiverPbHttpServer::GenerationConfig gen_cfg;
+    gen_cfg.min_events_per_second = 4;
+    gen_cfg.max_events_per_second = 4;
+    gen_cfg.open_ended_duration_sec = 1;
+    gen_cfg.min_value = -5.0;
+    gen_cfg.max_value = 5.0;
+    gen_cfg.random_seed = 777;
+
+    MockArchiverPbHttpServer server(gen_cfg);
+    server.start();
+    ASSERT_GT(server.port(), 0);
+
+    auto bus = std::make_shared<MockEventBusPush>();
+
+    const std::string pv_string = "TEST:PV:STRING_SCALAR_STRING";
+    const std::string pv_int = "TEST:PV:INT_SCALAR_INT";
+    const std::string pv_waveform = "TEST:PV:WF_WAVEFORM_DOUBLE";
+    const std::string pv_bytes = "TEST:PV:BYTES_V4_GENERIC_BYTES";
+
+    const std::string yaml = std::string(R"(
+        name: archiver-http-mixed-types
+        hostname: ")") + server.baseUrl() +
+                             R"("
+        start-date: "2026-02-25T08:00:00.000Z"
+        pvs:
+          - name: ")" + pv_string +
+                             R"("
+          - name: ")" + pv_int +
+                             R"("
+          - name: ")" + pv_waveform +
+                             R"("
+          - name: ")" + pv_bytes +
+                             R"("
+    )";
+
+    auto reader_cfg = makeConfigFromYaml(yaml);
+    auto reader = std::make_unique<EpicsArchiverReader>(bus, nullptr, reader_cfg);
+
+    ASSERT_TRUE(server.waitForRequestCount(4u, std::chrono::seconds(2)));
+    ASSERT_TRUE(waitForMockRequestStartAndCompletion(server, std::chrono::seconds(2)));
+    ASSERT_TRUE(waitForAtLeastPublishedBatches(*bus, 4u, std::chrono::seconds(2)));
+    EXPECT_EQ(reader->name(), "archiver-http-mixed-types");
+
+    const auto history = server.requestHistory();
+    std::set<std::string> requested_pvs;
+    for (const auto& req : history)
+    {
+        if (req.pv.has_value())
+        {
+            requested_pvs.insert(*req.pv);
+        }
+    }
+    EXPECT_EQ(requested_pvs, (std::set<std::string>{pv_string, pv_int, pv_waveform, pv_bytes}));
+
+    const auto batches = bus->snapshot();
+    std::map<std::string, const IDataBus::EventBatch*> batches_by_source;
+    for (const auto& batch : batches)
+    {
+        batches_by_source.emplace(batch.root_source, &batch);
+    }
+
+    ASSERT_TRUE(batches_by_source.count(pv_string));
+    ASSERT_TRUE(batches_by_source.count(pv_int));
+    ASSERT_TRUE(batches_by_source.count(pv_waveform));
+    ASSERT_TRUE(batches_by_source.count(pv_bytes));
+
+    const auto* string_batch = batches_by_source.at(pv_string);
+    ASSERT_FALSE(string_batch->frames.empty());
+    EXPECT_GT(string_batch->frames[0].stringcolumns_size(), 0);
+    EXPECT_EQ(string_batch->frames[0].stringcolumns(0).name(), pv_string);
+    EXPECT_NE(string_batch->frames[0].stringcolumns(0).values(0).find(pv_string), std::string::npos);
+
+    const auto* int_batch = batches_by_source.at(pv_int);
+    ASSERT_FALSE(int_batch->frames.empty());
+    EXPECT_GT(int_batch->frames[0].int32columns_size(), 0);
+    EXPECT_EQ(int_batch->frames[0].int32columns(0).name(), pv_int);
+
+    const auto* waveform_batch = batches_by_source.at(pv_waveform);
+    ASSERT_FALSE(waveform_batch->frames.empty());
+    EXPECT_GT(waveform_batch->frames[0].doublecolumns_size(), 0);
+    EXPECT_EQ(waveform_batch->frames[0].doublecolumns(0).name(), pv_waveform);
+    EXPECT_EQ(waveform_batch->frames[0].doublecolumns(0).values_size(), 4);
+
+    const auto* bytes_batch = batches_by_source.at(pv_bytes);
+    ASSERT_FALSE(bytes_batch->frames.empty());
+    EXPECT_GT(bytes_batch->frames[0].stringcolumns_size(), 0);
+    EXPECT_EQ(bytes_batch->frames[0].stringcolumns(0).name(), pv_bytes);
+    EXPECT_EQ(bytes_batch->frames[0].stringcolumns(0).values(0).size(), 4);
 }
 
 // Verifies published batches are split by historical sample timestamps and still include the 'to' query.

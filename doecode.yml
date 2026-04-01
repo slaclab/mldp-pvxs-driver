@@ -1,0 +1,49 @@
+---
+code_id: 176947
+site_ownership_code: "SLAC"
+open_source: true
+repository_link: "https://github.com/slaclab/mldp-pvxs-driver"
+landing_page: ""
+project_type: "OS"
+software_type: "S"
+official_use_only: {}
+developers:
+- email: ""
+  orcid: ""
+  first_name: "Claudio"
+  last_name: "Bisegni"
+  middle_name: ""
+  affiliations:
+  - "SLAC National Accelerator Laboratory (SLAC), Menlo Park, CA (United States)"
+  - "SLAC Stanford"
+- email: "lauralewisdev@gmail.com"
+  orcid: ""
+  first_name: "Laura"
+  last_name: "Lewis"
+  middle_name: ""
+  affiliations:
+  - "SLAC National Accelerator Laboratory"
+contributors: []
+sponsoring_organizations: []
+contributing_organizations: []
+research_organizations: []
+related_identifiers: []
+award_dois: []
+software_title: "slaclab/mldp-pvxs-driver"
+acronym: "mldp-pvxs-driver"
+description: "MLDP ingestion driver for EPICS and beyond"
+programming_languages:
+- "C++"
+- "C++/CLI"
+country_of_origin: "United States"
+project_keywords: []
+licenses:
+- "BSD 3-clause \"New\" or \"Revised\" License"
+date_record_added: "2026-03-05"
+date_record_updated: "2026-03-26"
+is_file_certified: false
+last_editor: "bisegni@slac.stanford.edu"
+is_limited: false
+links:
+- rel: "citation"
+  href: "https://www.osti.gov/doecode/biblio/176947"

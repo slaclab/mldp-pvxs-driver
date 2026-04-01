@@ -11,7 +11,9 @@
 #include <gtest/gtest.h>
 
 #include "../../../config/test_config_helpers.h"
-#include "MockArchiverPbHttpServer.h"
+#include "../../../mock/MockArchiverPbHttpServer.h"
+#include "../../../mock/MockDataBus.h"
+#include "../../../mock/EpicsArchiverTestUtils.h"
 
 #include <reader/impl/epics_archiver/EpicsArchiverReader.h>
 #include <util/bus/IDataBus.h>
@@ -32,86 +34,20 @@ using mldp_pvxs_driver::config::makeConfigFromYaml;
 using mldp_pvxs_driver::reader::impl::epics_archiver::EpicsArchiverReader;
 using mldp_pvxs_driver::reader::impl::epics_archiver::MockArchiverPbHttpServer;
 using mldp_pvxs_driver::util::bus::IDataBus;
+using mldp_pvxs_driver::test::mock::waitForMockRequestStartAndCompletion;
+using mldp_pvxs_driver::test::mock::waitForMockRequestStart;
+using mldp_pvxs_driver::test::mock::waitForAtLeastPublishedBatches;
+// Backward compatibility alias
+using MockEventBusPush = mldp_pvxs_driver::test::mock::MockDataBus;
 
-class MockEventBusPush final : public IDataBus
-{
-public:
-    using EventBatch = IDataBus::EventBatch;
-
-    bool push(EventBatch batch) override
-    {
-        std::lock_guard<std::mutex> lock(mu_);
-        received_.emplace_back(std::move(batch));
-        return true;
-    }
-
-    std::vector<SourceInfo> querySourcesInfo(const std::set<std::string>&) override
-    {
-        return {};
-    }
-
-    std::optional<std::unordered_map<std::string, std::vector<dp::service::common::DataValues>>> querySourcesData(
-        const std::set<std::string>&,
-        const mldp_pvxs_driver::util::bus::QuerySourcesDataOptions&) override
-    {
-        return std::nullopt;
-    }
-
-    std::vector<EventBatch> snapshot() const
-    {
-        std::lock_guard<std::mutex> lock(mu_);
-        return received_;
-    }
-
-private:
-    mutable std::mutex      mu_;
-    std::vector<EventBatch> received_;
-};
-
-bool waitForMockRequestStartAndCompletion(const MockArchiverPbHttpServer& server,
-                                          std::chrono::milliseconds       timeout)
-{
-    const auto deadline = std::chrono::steady_clock::now() + timeout;
-    while (std::chrono::steady_clock::now() < deadline)
-    {
-        if (!server.lastRequest().path.empty())
-        {
-            return server.waitForLastResponseComplete(
-                std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now()));
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    return false;
-}
-
-bool waitForMockRequestStart(const MockArchiverPbHttpServer& server, std::chrono::milliseconds timeout)
-{
-    const auto deadline = std::chrono::steady_clock::now() + timeout;
-    while (std::chrono::steady_clock::now() < deadline)
-    {
-        if (!server.lastRequest().path.empty())
-        {
-            return true;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    return false;
-}
-
-bool waitForAtLeastPublishedBatches(const MockEventBusPush& bus, size_t min_batches, std::chrono::milliseconds timeout)
-{
-    const auto deadline = std::chrono::steady_clock::now() + timeout;
-    while (std::chrono::steady_clock::now() < deadline)
-    {
-        if (bus.snapshot().size() >= min_batches)
-        {
-            return true;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    return bus.snapshot().size() >= min_batches;
-}
-
+/// Parses ISO 8601 UTC timestamp string with millisecond precision to Unix epoch milliseconds.
+///
+/// Converts timestamps in the format "YYYY-MM-DDTHH:MM:SS.SSSZ" (e.g., "2024-01-15T10:30:45.123Z")
+/// to the number of milliseconds since Unix epoch (1970-01-01T00:00:00Z).
+/// Uses Howard Hinnant's civil date conversion algorithm for accurate date calculations.
+///
+/// @param s ISO 8601 UTC timestamp string with millisecond precision (format: YYYY-MM-DDTHH:MM:SS.SSSZ)
+/// @return Unix epoch time in milliseconds, or -1 if the string format is invalid
 int64_t parseIso8601UtcMillisToEpochMs(const std::string& s)
 {
     int year = 0, month = 0, day = 0, hour = 0, min = 0, sec = 0, ms = 0;
@@ -121,6 +57,8 @@ int64_t parseIso8601UtcMillisToEpochMs(const std::string& s)
     }
 
     // Howard Hinnant civil date conversion.
+    // Calculates days since epoch for a civil date using efficient integer arithmetic.
+    // Reference: https://howardhinnant.github.io/date_algorithms.html
     auto daysFromCivil = [](int y, unsigned m, unsigned d) -> int64_t
     {
         y -= m <= 2;

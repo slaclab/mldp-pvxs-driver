@@ -4,6 +4,8 @@
 
 This project provides a generic driver architecture for ingesting real-time or historical samples into the MLDP ingestion API (see [MLDP](https://github.com/osprey-dcs/dp-service.git)). It separates source readers from batching/transport so multiple data-source implementations can publish normalized payloads to MLDP over gRPC.
 
+[DOI Code - 10.11578/dc.20260305.3](https://doi.org/10.11578/dc.20260305.3)
+
 ## Configuration
 
 When running the CLI, the full config is a single YAML document. Every block shown is required

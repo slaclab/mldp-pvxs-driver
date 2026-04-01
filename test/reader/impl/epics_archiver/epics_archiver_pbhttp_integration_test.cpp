@@ -10,7 +10,7 @@
 
 #include <gtest/gtest.h>
 
-#include "MockArchiverPbHttpServer.h"
+#include "../../../mock/MockArchiverPbHttpServer.h"
 
 #include <EPICSEvent.pb.h>
 #include <util/http/CurlHttpClient.h>
@@ -183,6 +183,36 @@ TEST_F(ArchiverPbHttpMockServerTest, SupportsFromOnlyQueryAndReturnsPbHttpBody)
     }
 }
 
+// Verifies the mock derives the PB/HTTP payload type from the requested PV suffix.
+TEST_F(ArchiverPbHttpMockServerTest, SelectsPayloadTypeFromRequestedPvSuffix)
+{
+    std::string collected;
+    const auto  response = client_.streamGet(
+        HttpRequest{
+            .url = server_.baseUrl() + kPath + "?pv=TEST%3APV_WAVEFORM_DOUBLE&from=2026-02-25T08%3A00%3A00.000Z"},
+        [&](const char* data, std::size_t size)
+        {
+            collected.append(data, size);
+        });
+
+    EXPECT_EQ(response.http_status, 200);
+    ASSERT_TRUE(server_.waitForLastResponseComplete(std::chrono::seconds(2)));
+
+    const auto lines = splitLinesKeepEmpty(collected);
+    ASSERT_GE(lines.size(), 6u);
+
+    EPICS::PayloadInfo header;
+    ASSERT_TRUE(header.ParseFromString(unescapePbHttpLine(lines[0])));
+    EXPECT_EQ(header.type(), EPICS::WAVEFORM_DOUBLE);
+    EXPECT_EQ(header.pvname(), "TEST:PV_WAVEFORM_DOUBLE");
+    EXPECT_EQ(header.elementcount(), 4);
+
+    EPICS::VectorDouble sample;
+    ASSERT_TRUE(sample.ParseFromString(unescapePbHttpLine(lines[1])));
+    ASSERT_EQ(sample.val_size(), 4);
+    EXPECT_NE(sample.val(0), sample.val(1));
+}
+
 // Verifies the mock PB/HTTP server accepts and records the optional 'to' query parameter.
 TEST_F(ArchiverPbHttpMockServerTest, AcceptsOptionalToQuery)
 {
@@ -196,6 +226,35 @@ TEST_F(ArchiverPbHttpMockServerTest, AcceptsOptionalToQuery)
     const auto req = server_.lastRequest();
     ASSERT_TRUE(req.to.has_value());
     EXPECT_EQ(*req.to, "2026-02-25T08:00:02.000Z");
+}
+
+// Verifies the mock chooses the response payload family from the requested PV suffix.
+TEST_F(ArchiverPbHttpMockServerTest, SupportsTypedPayloadSelectionFromPvSuffix)
+{
+    std::string collected;
+    const auto  response = client_.streamGet(
+        HttpRequest{
+            .url = server_.baseUrl() + kPath + "?pv=TEST%3APV_STRING_SCALAR_STRING&from=2026-02-25T08%3A00%3A00.000Z"},
+        [&](const char* data, std::size_t size)
+        {
+            collected.append(data, size);
+        });
+
+    EXPECT_EQ(response.http_status, 200);
+    EXPECT_FALSE(collected.empty());
+    ASSERT_TRUE(server_.waitForLastResponseComplete(std::chrono::seconds(2)));
+
+    const auto lines = splitLinesKeepEmpty(collected);
+    ASSERT_GE(lines.size(), 6u);
+
+    EPICS::PayloadInfo header;
+    ASSERT_TRUE(header.ParseFromString(unescapePbHttpLine(lines[0])));
+    EXPECT_EQ(header.type(), EPICS::SCALAR_STRING);
+    EXPECT_EQ(header.pvname(), "TEST:PV_STRING_SCALAR_STRING");
+
+    EPICS::ScalarString sample;
+    ASSERT_TRUE(sample.ParseFromString(unescapePbHttpLine(lines[1])));
+    EXPECT_FALSE(sample.val().empty());
 }
 
 // Verifies requests missing the required pv parameter return HTTP 400.
