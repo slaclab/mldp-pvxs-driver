@@ -10,10 +10,14 @@
 
 #include "util/log/Logger.h"
 #include <controller/MLDPPVXSController.h>
-#include <google/protobuf/arena.h>
 #include <memory>
 #include <reader/ReaderFactory.h>
 #include <util/StringFormat.h>
+#include <writer/grpc/MLDPGrpcWriter.h>
+
+#ifdef MLDP_PVXS_HDF5_ENABLED
+#include <writer/hdf5/HDF5Writer.h>
+#endif
 
 #include <algorithm>
 #include <chrono>
@@ -30,8 +34,8 @@ using namespace mldp_pvxs_driver::util::bus;
 using namespace mldp_pvxs_driver::config;
 using namespace mldp_pvxs_driver::reader;
 using namespace mldp_pvxs_driver::util::log;
+using namespace mldp_pvxs_driver::writer;
 
-using mldp_pvxs_driver::util::pool::MLDPGrpcIngestionePool;
 using mldp_pvxs_driver::util::pool::MLDPGrpcQueryPool;
 
 namespace {
@@ -123,13 +127,6 @@ std::optional<std::pair<SourceTimestamp, SourceTimestamp>> extractTimestampRange
     return std::nullopt;
 }
 
-bool hasTimestampList(const dp::service::common::DataFrame& frame)
-{
-    return frame.has_datatimestamps() &&
-           frame.datatimestamps().has_timestamplist() &&
-           frame.datatimestamps().timestamplist().timestamps_size() > 0;
-}
-
 } // namespace
 
 std::shared_ptr<MLDPPVXSController> MLDPPVXSController::create(const config::Config& config)
@@ -149,16 +146,12 @@ MLDPPVXSController::MLDPPVXSController(const config::Config& config)
 
 MLDPPVXSController::~MLDPPVXSController()
 {
-    // Destructor implementation
     if (running_.load())
     {
         stop();
     }
-    // clear pools
     thread_pool_.reset();
-    mldp_ingestion_pool_.reset();
     mldp_query_pool_.reset();
-    // clear metrics
     metrics_.reset();
 }
 
@@ -170,41 +163,43 @@ void MLDPPVXSController::start()
         return;
     }
 
-    // Start order matters:
-    // 1) mark running
-    // 2) initialize ingestion/query pools and register provider
-    // 3) spawn workers
-    // 4) construct readers (readers can immediately push to this bus)
     running_.store(true);
     infof(*logger_, "Controller is starting");
-    // Start allocating mldp pool (constructor registers provider)
-    mldp_ingestion_pool_ = MLDPGrpcIngestionePool::create(config_.pool(), metrics_);
-    mldp_query_pool_ = MLDPGrpcQueryPool::create(config_.pool(), metrics_);
-    provider_id_ = mldp_ingestion_pool_->providerId();
-    if (provider_id_.empty())
+
+    // -- Build writers from config --
+    const auto& writerCfg = config_.writerConfig();
+
+    if (writerCfg.grpcEnabled && writerCfg.grpcConfig.has_value())
     {
-        running_ = false;
-        throw std::runtime_error("Failed to register provider with MLDP ingestion service");
+        auto w = std::make_unique<MLDPGrpcWriter>(writerCfg.grpcConfig.value(), metrics_);
+        w->start();
+        writers_.push_back(std::move(w));
     }
 
-    const std::size_t worker_count = std::max<std::size_t>(1, static_cast<std::size_t>(config_.controllerThreadPoolSize()));
-    next_channel_.store(0, std::memory_order_relaxed);
-    queued_items_.store(0);
-    channels_.clear();
-    channels_.reserve(worker_count);
-    for (std::size_t i = 0; i < worker_count; ++i)
+#ifdef MLDP_PVXS_HDF5_ENABLED
+    if (writerCfg.hdf5Enabled && writerCfg.hdf5Config.has_value())
     {
-        channels_.push_back(std::make_unique<WorkerChannel>());
+        auto w = std::make_unique<HDF5Writer>(writerCfg.hdf5Config.value());
+        w->start();
+        writers_.push_back(std::move(w));
     }
-    for (std::size_t i = 0; i < worker_count; ++i)
+#endif
+
+    if (writers_.empty())
     {
-        thread_pool_->detach_task([this, i]()
-                                  {
-                                      workerLoop(i);
-                                  });
+        running_.store(false);
+        throw std::runtime_error("Controller: no writers were started");
     }
 
-    // Start readers (dispatch based on declared reader type)
+    // -- Query pool (used by querySourcesInfo / querySourcesData) --
+    // Re-use the pool config from the gRPC writer config when available,
+    // otherwise skip (HDF5-only mode has no query pool).
+    if (writerCfg.grpcEnabled && writerCfg.grpcConfig.has_value())
+    {
+        mldp_query_pool_ = MLDPGrpcQueryPool::create(writerCfg.grpcConfig->poolConfig, metrics_);
+    }
+
+    // -- Readers --
     infof(*logger_, "Starting readers");
     for (const auto& entry : config_.readerEntries())
     {
@@ -218,31 +213,22 @@ void MLDPPVXSController::start()
 
 void MLDPPVXSController::stop()
 {
-    if (running_.load() == false)
+    if (!running_.load())
     {
         warnf(*logger_, "Controller already stopped");
         return;
     }
     infof(*logger_, "Controller is stopping");
-    // Stop order:
-    // 1) reject new pushes
-    // 2) tear down readers so no new events are produced
-    // 3) signal worker channels and wait for drain/exit
     running_.store(false);
-    // clear readers
+
     readers_.clear();
-    // Signal all worker channels to shut down
-    for (auto& ch : channels_)
+
+    for (auto& w : writers_)
     {
-        {
-            std::lock_guard lk(ch->mutex);
-            ch->shutdown = true;
-        }
-        ch->cv.notify_one();
+        w->stop();
     }
-    // Wait for all worker tasks to complete
-    thread_pool_->wait();
-    channels_.clear();
+    writers_.clear();
+
     infof(*logger_, "Controller stopped");
 }
 
@@ -265,39 +251,33 @@ bool MLDPPVXSController::push(EventBatch batch_values)
         return false;
     }
 
-    auto tags = std::make_shared<const std::vector<std::string>>(batch_values.tags);
-
-    // Distribute frames in round-robin order and enqueue directly to worker
-    // queues to avoid building a temporary per-channel structure.
-    bool enqueued = false;
-    for (auto& frame : batch_values.frames)
+    // Best-effort fan-out: copy for all-but-last writer; move for the last.
+    bool anyAccepted = false;
+    const std::size_t n = writers_.size();
+    // Save root_source before the loop: std::move on the last iteration
+    // would leave batch_values.root_source in a valid-but-unspecified state.
+    const std::string rootSource = batch_values.root_source;
+    for (std::size_t i = 0; i < n; ++i)
     {
-        if (!hasTimestampList(frame))
+        bool ok = false;
+        if (i + 1 < n)
         {
-            errorf(*logger_, "Dropping frame for root source {}: missing DataFrame.datatimestamps.timestamplist", batch_values.root_source);
-            metric_call(metrics_, [&](auto& m)
-                        {
-                            m.incrementBusFailures(1.0, {{"source", batch_values.root_source}});
-                        });
-            continue;
+            // Copy for all writers except the last
+            ok = writers_[i]->push(batch_values);
         }
-
-        const auto idx = next_channel_.fetch_add(1, std::memory_order_relaxed) % channels_.size();
-        QueueItem  item{
-            batch_values.root_source,
-            tags,
-            std::move(frame)};
+        else
         {
-            std::lock_guard lk(channels_[idx]->mutex);
-            channels_[idx]->items.push_back(std::move(item));
+            // Move for the last writer
+            ok = writers_[i]->push(std::move(batch_values));
         }
-        channels_[idx]->cv.notify_one();
-        queued_items_.fetch_add(1, std::memory_order_relaxed);
-        enqueued = true;
+        if (!ok)
+        {
+            warnf(*logger_, "Writer '{}' rejected batch for source {}",
+                  writers_[i]->name(), rootSource);
+        }
+        anyAccepted = anyAccepted || ok;
     }
-
-    updateQueueDepthMetric();
-    return enqueued;
+    return anyAccepted;
 }
 
 std::vector<IDataBus::SourceInfo> MLDPPVXSController::querySourcesInfo(const std::set<std::string>& source_names)
@@ -318,7 +298,7 @@ std::vector<IDataBus::SourceInfo> MLDPPVXSController::querySourcesInfo(const std
 
     try
     {
-        util::pool::PooledHandle<util::pool::MLDPGrpcObject> handle = mldp_query_pool_->acquire();
+        mldp_pvxs_driver::util::pool::PooledHandle<mldp_pvxs_driver::util::pool::MLDPGrpcObject> handle = mldp_query_pool_->acquire();
         auto*                                                query_stub = handle->query_stub.get();
         if (!query_stub)
         {
@@ -554,7 +534,7 @@ std::optional<std::unordered_map<std::string, std::vector<dp::service::common::D
 
     try
     {
-        util::pool::PooledHandle<util::pool::MLDPGrpcObject> handle = mldp_query_pool_->acquire();
+        mldp_pvxs_driver::util::pool::PooledHandle<mldp_pvxs_driver::util::pool::MLDPGrpcObject> handle = mldp_query_pool_->acquire();
         auto*                                                query_stub = handle->query_stub.get();
         if (!query_stub)
         {
@@ -629,339 +609,6 @@ std::optional<std::unordered_map<std::string, std::vector<dp::service::common::D
     return std::nullopt;
 }
 
-void MLDPPVXSController::workerLoop(std::size_t worker_index)
-{
-    // Worker threads block on the shared queue, build per-source ingestion
-    // requests, and write them into a gRPC client-streaming RPC. Each worker
-    // keeps a single stream open at a time and flushes (closes/reopens) when
-    // byte or age thresholds are reached or when a write fails.
-    auto&                                                                          ch = *channels_[worker_index];
-    std::optional<util::pool::PooledHandle<util::pool::MLDPGrpcObject>>            handle;
-    std::unique_ptr<grpc::ClientWriter<dp::service::ingestion::IngestDataRequest>> writer;
-    std::unique_ptr<grpc::ClientContext>                                           context;
-    dp::service::ingestion::IngestDataStreamResponse                               response;
-    std::chrono::steady_clock::time_point                                          stream_start;
-    std::size_t                                                                    stream_payload_bytes = 0;
-    std::uint64_t                                                                  request_counter = 0;
-
-    // Gracefully finalizes the current stream and releases pooled handle/stub
-    // ownership. Safe to call repeatedly.
-    const auto close_stream = [&](const char* reason)
-    {
-        if (!writer)
-        {
-            return;
-        }
-        writer->WritesDone();
-        auto    status = writer->Finish();
-        int64_t requested_requests = static_cast<int64_t>(request_counter);
-        if (status.ok())
-        {
-            if (response.has_ingestdatastreamresult())
-            {
-                const auto& result = response.ingestdatastreamresult();
-                if (result.numrequests() < 0)
-                {
-                    errorf(*logger_, "Ingestion stream finished with invalid numrequests ({}): {}", reason, result.numrequests());
-                }
-                else
-                {
-                    const char* status_str = nullptr;
-                    if (result.numrequests() < requested_requests)
-                    {
-                        status_str = "[INCOMPLETE - lost or skipped requests]";
-                        errorf(*logger_, "Ingestion stream finished with incomplete requests ({}): server accepted {} of {} sent",
-                               reason, result.numrequests(), requested_requests);
-                    }
-                    else if (result.numrequests() > requested_requests)
-                    {
-                        status_str = "[SERVER ERROR - extra requests acknowledged]";
-                        errorf(*logger_, "Ingestion stream finished with mismatch ({}): server reports {} but we sent {}",
-                               reason, result.numrequests(), requested_requests);
-                    }
-                    else
-                    {
-                        status_str = "OK";
-                        tracef(*logger_, "Ingestion stream finished successfully ({}): {} requests", reason, result.numrequests());
-                    }
-                    if (!status_str)
-                    {
-                        tracef(*logger_, "Ingestion stream finished successfully ({}): {} requests", reason, result.numrequests());
-                    }
-                    else
-                    {
-                        tracef(*logger_, "{}: {}", status_str, reason);
-                    }
-                }
-            }
-            if (response.has_exceptionalresult())
-            {
-                const auto& result = response.exceptionalresult();
-                errorf(*logger_, "Ingestion stream finished with exceptional result ({}): {}", reason, result.message());
-                metric_call(metrics_, [&](auto& m)
-                            {
-                                m.incrementBusFailures(1.0, {{"source", "unknown"}});
-                            });
-            }
-        }
-        else
-        {
-            errorf(*logger_, "Ingestion stream finished with error ({}): {}", reason, status.error_message());
-            metric_call(metrics_, [&](auto& m)
-                        {
-                            m.incrementBusFailures(1.0, {{"source", "unknown"}});
-                        });
-        }
-        writer.reset();
-        handle.reset();
-        context.reset();
-        stream_payload_bytes = 0;
-        request_counter = 0;
-    };
-
-    // Lazily opens a stream when work appears. Worker holds one active stream
-    // at a time to amortize connection overhead across many frames.
-    const auto ensure_stream = [&]()
-    {
-        if (writer)
-        {
-            return true;
-        }
-        try
-        {
-            context = std::make_unique<grpc::ClientContext>();
-            response = dp::service::ingestion::IngestDataStreamResponse();
-            handle.emplace(mldp_ingestion_pool_->acquire());
-            writer = (*handle)->stub->ingestDataStream(context.get(), &response);
-            if (!writer)
-            {
-                errorf(*logger_, "Failed to open ingestion stream for queued events");
-                metric_call(metrics_, [&](auto& m)
-                            {
-                                m.incrementBusFailures(1.0, {{"source", "unknown"}});
-                            });
-                handle.reset();
-                context.reset();
-                return false;
-            }
-            stream_start = std::chrono::steady_clock::now();
-            stream_payload_bytes = 0;
-            return true;
-        }
-        catch (const std::exception& ex)
-        {
-            errorf(*logger_, "Failed to acquire ingestion stream: {}", ex.what());
-            metric_call(metrics_, [&](auto& m)
-                        {
-                            m.incrementBusFailures(1.0, {{"source", "unknown"}});
-                        });
-            handle.reset();
-            writer.reset();
-            return false;
-        }
-    };
-
-    // Wait window doubles as an idle stream flush interval.
-    const auto dequeue_timeout = config_.controllerStreamMaxAge();
-    while (true)
-    {
-        QueueItem item;
-        bool      has_item = false;
-        {
-            std::unique_lock lk(ch.mutex);
-            ch.cv.wait_for(lk, dequeue_timeout, [&]
-                           {
-                               return !ch.items.empty() || ch.shutdown;
-                           });
-            if (ch.shutdown && ch.items.empty())
-            {
-                lk.unlock();
-                break;
-            }
-            if (!ch.items.empty())
-            {
-                item = std::move(ch.items.front());
-                ch.items.pop_front();
-                has_item = true;
-            }
-        }
-        if (!has_item)
-        {
-            // No new work: close an old idle stream so bytes/age thresholds are
-            // enforced even during sparse traffic.
-            if (writer)
-            {
-                const auto elapsed = std::chrono::steady_clock::now() - stream_start;
-                if (elapsed >= config_.controllerStreamMaxAge())
-                {
-                    close_stream("stream age exceeded (idle)");
-                }
-            }
-            continue;
-        }
-
-        queued_items_.fetch_sub(1, std::memory_order_relaxed);
-        updateQueueDepthMetric();
-
-        const auto item_start = std::chrono::steady_clock::now();
-        const auto record_send_time = [this, item_start](prometheus::Labels tags)
-        {
-            const auto   elapsed = std::chrono::steady_clock::now() - item_start;
-            const double elapsed_seconds = std::chrono::duration<double>(elapsed).count();
-            metric_call(metrics_, [&](auto& m)
-                        {
-                            m.observeControllerSendTimeSeconds(elapsed_seconds, std::move(tags));
-                        });
-        };
-
-        if (!ensure_stream())
-        {
-            record_send_time({{"source", "unknown"}});
-            continue;
-        }
-
-        const auto elapsed = std::chrono::steady_clock::now() - stream_start;
-        if (elapsed >= config_.controllerStreamMaxAge())
-        {
-            close_stream("stream age exceeded");
-            if (!ensure_stream())
-            {
-                record_send_time({{"source", "unknown"}});
-                continue;
-            }
-        }
-
-        std::size_t accepted_events_total = 0;
-        std::size_t payload_bytes_total = 0;
-
-        const auto frame_elapsed = std::chrono::steady_clock::now() - stream_start;
-        if (frame_elapsed >= config_.controllerStreamMaxAge())
-        {
-            close_stream("stream age exceeded");
-            if (!ensure_stream())
-            {
-                record_send_time({{"source", "unknown"}});
-                continue;
-            }
-        }
-
-        google::protobuf::Arena arena;
-        auto*                   request = google::protobuf::Arena::CreateMessage<dp::service::ingestion::IngestDataRequest>(&arena);
-        std::size_t             accepted_events = 0;
-        std::size_t             payload_bytes = 0;
-        const auto              request_id = util::format_string("pv_stream_{}_{}_{}", stream_start.time_since_epoch().count(), item.root_source, request_counter++);
-        if (!buildRequest(item.root_source, item.frame, request_id, *request, accepted_events, payload_bytes))
-        {
-            continue;
-        }
-
-        if ((stream_payload_bytes + payload_bytes) > config_.controllerStreamMaxBytes() && stream_payload_bytes > 0)
-        {
-            close_stream("max bytes exceeded");
-            if (!ensure_stream())
-            {
-                record_send_time({{"source", "unknown"}});
-                continue;
-            }
-        }
-
-        if (!writer->Write(*request))
-        {
-            errorf(*logger_, "Failed to write source {} event to ingestion stream", item.root_source);
-            metric_call(metrics_, [&](auto& m)
-                        {
-                            m.incrementBusFailures(1.0, {{"source", item.root_source}});
-                        });
-            close_stream("write failed");
-            continue;
-        }
-
-        stream_payload_bytes += payload_bytes;
-        accepted_events_total += accepted_events;
-        payload_bytes_total += payload_bytes;
-
-        if (accepted_events_total > 0)
-        {
-            metric_call(metrics_, [&](auto& m)
-                        {
-                            m.incrementBusPushes(static_cast<double>(accepted_events_total), {{"source", item.root_source}});
-                        });
-        }
-        if (payload_bytes_total > 0)
-        {
-            metric_call(metrics_, [&](auto& m)
-                        {
-                            m.incrementBusPayloadBytes(static_cast<double>(payload_bytes_total), {{"source", item.root_source}});
-                        });
-            const auto   item_elapsed = std::chrono::steady_clock::now() - item_start;
-            const double elapsed_milliseconds = std::chrono::duration<double, std::milli>(item_elapsed).count();
-            if (elapsed_milliseconds > 0.0)
-            {
-                const double bytes_per_second = (static_cast<double>(payload_bytes_total) * 1000.0) / elapsed_milliseconds;
-                metric_call(metrics_, [&](auto& m)
-                            {
-                                m.setBusPayloadBytesPerSecond(bytes_per_second, {{"source", item.root_source}});
-                            });
-            }
-        }
-        record_send_time({{"source", item.root_source}});
-
-        const auto post_elapsed = std::chrono::steady_clock::now() - stream_start;
-        if (post_elapsed >= config_.controllerStreamMaxAge() || stream_payload_bytes >= config_.controllerStreamMaxBytes())
-        {
-            close_stream("threshold reached");
-        }
-    }
-
-    close_stream("shutdown");
-}
-
-bool MLDPPVXSController::buildRequest(const std::string&                         source_name,
-                                      const dp::service::common::DataFrame&      frame,
-                                      const std::string&                         request_id,
-                                      dp::service::ingestion::IngestDataRequest& request,
-                                      std::size_t&                               accepted_events,
-                                      std::size_t&                               payload_bytes)
-{
-    // Build a self-contained request and validate minimum ingestion contract:
-    // - at least one populated column
-    // - timestamp list present
-    // Callers rely on false to skip bad frames without failing the worker loop.
-    request.set_providerid(provider_id_);
-    request.set_clientrequestid(request_id);
-
-    auto* data_frame = request.mutable_ingestiondataframe();
-    *data_frame = frame;
-
-    const bool has_columns = data_frame->doublecolumns_size() > 0 || data_frame->floatcolumns_size() > 0 ||
-                             data_frame->datacolumns_size() > 0 || data_frame->int32columns_size() > 0 ||
-                             data_frame->int64columns_size() > 0 || data_frame->boolcolumns_size() > 0 ||
-                             data_frame->stringcolumns_size() > 0 || data_frame->enumcolumns_size() > 0 ||
-                             data_frame->imagecolumns_size() > 0 || data_frame->structcolumns_size() > 0 ||
-                             data_frame->doublearraycolumns_size() > 0 || data_frame->floatarraycolumns_size() > 0 ||
-                             data_frame->int32arraycolumns_size() > 0 || data_frame->int64arraycolumns_size() > 0 ||
-                             data_frame->boolarraycolumns_size() > 0;
-    if (!has_columns)
-    {
-        warnf(*logger_, "No valid columns for source {}, skipping request", source_name);
-        return false;
-    }
-
-    if (!hasTimestampList(*data_frame))
-    {
-        errorf(*logger_, "Dropping frame for source {}: missing DataFrame.datatimestamps.timestamplist", source_name);
-        metric_call(metrics_, [&](auto& m)
-                    {
-                        m.incrementBusFailures(1.0, {{"source", source_name}});
-                    });
-        return false;
-    }
-
-    accepted_events = static_cast<std::size_t>(data_frame->datatimestamps().timestamplist().timestamps_size());
-    payload_bytes = static_cast<std::size_t>(request.ByteSizeLong());
-    return true;
-}
-
 Metrics& MLDPPVXSController::metrics() const
 {
     if (!metrics_)
@@ -969,13 +616,4 @@ Metrics& MLDPPVXSController::metrics() const
         throw std::runtime_error("Metrics not configured for controller");
     }
     return *metrics_;
-}
-
-void MLDPPVXSController::updateQueueDepthMetric()
-{
-    const double depth = static_cast<double>(queued_items_.load(std::memory_order_relaxed));
-    metric_call(metrics_, [&](auto& m)
-                {
-                    m.setControllerQueueDepth(depth);
-                });
 }

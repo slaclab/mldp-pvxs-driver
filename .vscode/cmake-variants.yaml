@@ -50,6 +50,21 @@ coverage:
       settings:
         MLDP_PVXS_DRIVER_COVERAGE: OFF
 
+hdf5:
+  default: off
+  description: "HDF5 writer support"
+  choices:
+    on:
+      short: HDF5 ON
+      long: Build with HDF5 writer support (fetched from GitHub HDFGroup/hdf5 hdf5_2_1_0)
+      settings:
+        MLDP_PVXS_ENABLE_HDF5: ON
+    off:
+      short: HDF5 OFF
+      long: Build without HDF5 writer support
+      settings:
+        MLDP_PVXS_ENABLE_HDF5: OFF
+
 verboseMakefile:
   default: off
   description: "Verbose Makefile output"

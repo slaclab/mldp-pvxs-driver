@@ -10,6 +10,7 @@ option(MLDP_PVXS_DRIVER_MAIN "Build MLDP PVXS driver executable" ON)
 option(MLDP_PVXS_DRIVER_TESTS "Build MLDP PVXS driver tests" OFF)
 option(MLDP_PVXS_DRIVER_COVERAGE "Enable code coverage instrumentation" OFF)
 option(MLDP_PVXS_DRIVER_LINK_EPICS_PVXS_STATIC "Link EPICS and PVXS libraries statically (prefer .a over .so)" OFF)
+option(MLDP_PVXS_ENABLE_HDF5 "Build with HDF5 writer support" ON)
 
 # Default to Release build
 if(NOT CMAKE_BUILD_TYPE)
@@ -114,6 +115,49 @@ find_package(OpenSSL REQUIRED)
 find_package(gRPC REQUIRED)
 find_package(Threads REQUIRED)
 find_package(CURL REQUIRED)
+
+# ---- HDF5 (optional writer back-end) ----
+if(MLDP_PVXS_ENABLE_HDF5)
+    set(HDF5_VERSION_TAG "hdf5_2_1_0")
+    message(STATUS "Acquiring HDF5 ${HDF5_VERSION_TAG} from GitHub HDFGroup/hdf5...")
+
+    # Disable HDF5's own tests and tools to keep the build lean.
+    # Force static-only so we always get hdf5_cpp-static (not hdf5_cpp-shared).
+    set(BUILD_SHARED_LIBS       OFF CACHE BOOL "" FORCE)
+    set(HDF5_BUILD_TOOLS       OFF CACHE BOOL "" FORCE)
+    set(HDF5_BUILD_EXAMPLES    OFF CACHE BOOL "" FORCE)
+    set(HDF5_BUILD_TESTING     OFF CACHE BOOL "" FORCE)
+    set(BUILD_TESTING          OFF CACHE BOOL "" FORCE)
+    set(HDF5_BUILD_HL_LIB      ON  CACHE BOOL "" FORCE)
+    set(HDF5_BUILD_CPP_LIB     ON  CACHE BOOL "" FORCE)
+    set(HDF5_ENABLE_Z_LIB_SUPPORT ON CACHE BOOL "" FORCE)
+
+    FetchContent_Declare(hdf5
+        GIT_REPOSITORY https://github.com/HDFGroup/hdf5.git
+        GIT_TAG        ${HDF5_VERSION_TAG}
+        GIT_SHALLOW    TRUE
+    )
+    FetchContent_MakeAvailable(hdf5)
+
+    # HDFGroup's CMake (hdf5_2_1_0) names its targets:
+    #   hdf5_cpp-static  (static, always built when HDF5_BUILD_CPP_LIB=ON)
+    #   hdf5_cpp-shared  (shared, only when BUILD_SHARED_LIBS=ON)
+    # We default to static since we force BUILD_SHARED_LIBS=OFF above.
+    if(TARGET hdf5_cpp-shared)
+        set(_MLDP_HDF5_TARGET hdf5_cpp-shared)
+    elseif(TARGET hdf5_cpp-static)
+        set(_MLDP_HDF5_TARGET hdf5_cpp-static)
+    elseif(TARGET hdf5_cpp)
+        set(_MLDP_HDF5_TARGET hdf5_cpp)
+    else()
+        message(FATAL_ERROR "HDF5 FetchContent succeeded but no C++ target (hdf5_cpp-static / hdf5_cpp-shared / hdf5_cpp) was found")
+    endif()
+
+    message(STATUS "HDF5 writer enabled — using target ${_MLDP_HDF5_TARGET}")
+    add_compile_definitions(MLDP_PVXS_HDF5_ENABLED)
+else()
+    message(STATUS "MLDP_PVXS_ENABLE_HDF5=OFF — HDF5 writer excluded")
+endif()
 # The libcurl-devel RPM on Rocky Linux ships a cmake config that embeds the
 # Debian multiarch include path (/usr/include/x86_64-linux-gnu) which does not
 # exist on RPM-based systems.  Strip any such paths from the imported target so
@@ -457,6 +501,14 @@ add_library(lib${PROJECT_NAME}
     "${CMAKE_CURRENT_SOURCE_DIR}/src/pool/MLDPGrpcQueryPool.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/controller/MLDPPVXSControllerConfig.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/controller/MLDPPVXSController.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/WriterConfig.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/grpc/MLDPGrpcWriterConfig.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/grpc/MLDPGrpcWriter.cpp"
+    $<$<BOOL:${MLDP_PVXS_ENABLE_HDF5}>:
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/hdf5/HDF5WriterConfig.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/hdf5/HDF5FilePool.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/hdf5/HDF5Writer.cpp"
+    >
     "${CMAKE_CURRENT_SOURCE_DIR}/src/metrics/Metrics.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/metrics/MetricsConfig.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/metrics/MetricsSnapshot.cpp"
@@ -476,6 +528,7 @@ target_link_libraries(lib${PROJECT_NAME} PUBLIC
     spdlog::spdlog
     CURL::libcurl
     metricsgrabber
+    $<$<BOOL:${MLDP_PVXS_ENABLE_HDF5}>:${_MLDP_HDF5_TARGET}>
 )
 target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/ext/BS_thread_pool/include")
 target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/ext/rapidyaml/include")

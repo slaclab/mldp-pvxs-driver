@@ -11,12 +11,14 @@
 #include "config/Config.h"
 #include <controller/MLDPPVXSControllerConfig.h>
 #include <reader/ReaderFactory.h>
+#include <writer/WriterConfig.h>
 
 using namespace mldp_pvxs_driver::config;
 using namespace mldp_pvxs_driver::metrics;
 using namespace mldp_pvxs_driver::controller;
 using namespace mldp_pvxs_driver::util::pool;
 using namespace mldp_pvxs_driver::config;
+using namespace mldp_pvxs_driver::writer;
 
 MLDPPVXSControllerConfig::MLDPPVXSControllerConfig() = default;
 
@@ -37,12 +39,12 @@ bool MLDPPVXSControllerConfig::valid() const
 
 const MLDPGrpcPoolConfig& MLDPPVXSControllerConfig::pool() const
 {
-    return pool_;
+    return pool_.value();
 }
 
 const std::string& MLDPPVXSControllerConfig::providerName() const
 {
-    return pool_.providerName();
+    return pool_.value().providerName();
 }
 
 int MLDPPVXSControllerConfig::controllerThreadPoolSize() const
@@ -77,11 +79,17 @@ const std::optional<MetricsConfig>& MLDPPVXSControllerConfig::metricsConfig() co
     return metricsConfig_;
 }
 
+const mldp_pvxs_driver::writer::WriterConfig& MLDPPVXSControllerConfig::writerConfig() const
+{
+    return writerConfig_;
+}
+
 void MLDPPVXSControllerConfig::parse(const ::mldp_pvxs_driver::config::Config& root)
 {
     parseThreadPool(root);
-    parsePool(root);
     parseStreamLimits(root);
+    parseWriter(root);
+    parsePool(root);
     parseReaders(root);
     parseMetrics(root);
     valid_ = true;
@@ -116,12 +124,56 @@ void MLDPPVXSControllerConfig::parseThreadPool(const ::mldp_pvxs_driver::config:
     }
 }
 
+void MLDPPVXSControllerConfig::parseWriter(const ::mldp_pvxs_driver::config::Config& root)
+{
+    if (root.hasChild(WriterKey))
+    {
+        const auto writerNodes = root.subConfig(WriterKey);
+        if (writerNodes.empty())
+        {
+            throw Error("writer block is present but empty");
+        }
+        try
+        {
+            writerConfig_ = WriterConfig::parse(writerNodes.front(), root);
+        }
+        catch (const WriterConfig::Error& e)
+        {
+            throw Error(e.what());
+        }
+        catch (const std::invalid_argument& e)
+        {
+            throw Error(e.what());
+        }
+    }
+    else
+    {
+        // No writer block → default: gRPC enabled, parsed from root
+        writerConfig_ = WriterConfig{};
+        writerConfig_.grpcEnabled = true;
+        writerConfig_.hdf5Enabled = false;
+        try
+        {
+            writerConfig_.grpcConfig = MLDPGrpcWriterConfig::parse(root);
+        }
+        catch (const MLDPGrpcWriterConfig::Error& e)
+        {
+            throw Error(e.what());
+        }
+    }
+}
+
 void MLDPPVXSControllerConfig::parsePool(const ::mldp_pvxs_driver::config::Config& root)
 {
     using namespace mldp_pvxs_driver::controller;
+    if (!writerConfig_.grpcEnabled)
+    {
+        // gRPC writer not active — pool not required
+        return;
+    }
     if (!root.hasChild(MldpPoolKey))
     {
-        throw Error(makeMissingFieldMessage(MldpPoolKey));
+        throw Error("writer.grpc is enabled but '" + std::string(MldpPoolKey) + "' block is missing");
     }
 
     const auto poolNodes = root.subConfig(MldpPoolKey);

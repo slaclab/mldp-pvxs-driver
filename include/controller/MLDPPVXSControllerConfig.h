@@ -13,6 +13,7 @@
 #include <config/Config.h>
 #include <metrics/MetricsConfig.h>
 #include <pool/MLDPGrpcPoolConfig.h>
+#include <writer/WriterConfig.h>
 
 #include <chrono>
 #include <optional>
@@ -59,8 +60,16 @@ public:
     /** @return Whether the configuration passed validation. */
     bool valid() const;
 
-    /** @return Pool configuration managed by the controller. */
+    /**
+     * @return Pool configuration managed by the controller.
+     *
+     * Only valid when `writerConfig().grpcEnabled` is true.  Calling
+     * this when the gRPC writer is disabled results in undefined behaviour.
+     */
     const util::pool::MLDPGrpcPoolConfig& pool() const;
+
+    /** @return Writer configuration (which writers are active and their settings). */
+    const writer::WriterConfig& writerConfig() const;
 
     /** @return Logical provider name to register with MLDP. */
     const std::string& providerName() const;
@@ -111,13 +120,15 @@ public:
 private:
     void parse(const ::mldp_pvxs_driver::config::Config& root);
     void parseThreadPool(const ::mldp_pvxs_driver::config::Config& root);
+    void parseWriter(const ::mldp_pvxs_driver::config::Config& root);
     void parsePool(const ::mldp_pvxs_driver::config::Config& root);
     void parseReaders(const ::mldp_pvxs_driver::config::Config& root);
     void parseMetrics(const ::mldp_pvxs_driver::config::Config& root);
     void parseStreamLimits(const ::mldp_pvxs_driver::config::Config& root);
 
     bool                                                valid_ = false;
-    util::pool::MLDPGrpcPoolConfig                      pool_;
+    std::optional<util::pool::MLDPGrpcPoolConfig>       pool_;
+    writer::WriterConfig                                writerConfig_;
     int                                                 controllerThreadPoolSize_ = 1;
     std::size_t                                         controllerStreamMaxBytes_ = 2 * 1024 * 1024;
     std::chrono::milliseconds                           controllerStreamMaxAge_{200};
