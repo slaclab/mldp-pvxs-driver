@@ -10,7 +10,9 @@
 
 #pragma once
 
+#include <config/Config.h>
 #include <writer/IWriter.h>
+#include <writer/WriterFactory.h>
 #include <writer/grpc/MLDPGrpcWriterConfig.h>
 
 #include <metrics/Metrics.h>
@@ -42,8 +44,21 @@ namespace mldp_pvxs_driver::writer {
  * original controller.
  */
 class MLDPGrpcWriter final : public IWriter {
+    REGISTER_WRITER("grpc", MLDPGrpcWriter)
 public:
-    explicit MLDPGrpcWriter(MLDPGrpcWriterConfig config,
+    /**
+     * @brief Factory constructor — parses config from the root YAML node.
+     *
+     * Called by the @ref WriterFactory registry. Delegates to the typed
+     * constructor after calling @c MLDPGrpcWriterConfig::parse(root).
+     */
+    explicit MLDPGrpcWriter(const config::Config&             root,
+                            std::shared_ptr<metrics::Metrics> metrics = nullptr);
+
+    /**
+     * @brief Typed constructor — for direct use and unit tests.
+     */
+    explicit MLDPGrpcWriter(MLDPGrpcWriterConfig              config,
                             std::shared_ptr<metrics::Metrics> metrics = nullptr);
     ~MLDPGrpcWriter() override;
 

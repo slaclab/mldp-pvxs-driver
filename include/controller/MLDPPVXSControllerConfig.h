@@ -114,6 +114,16 @@ public:
      */
     const std::vector<std::pair<std::string, config::Config>>& readerEntries() const;
 
+    /**
+     * @return Writer entries as (type, config-node) pairs.
+     *
+     * Each element is the writer type identifier (e.g. "grpc", "hdf5") paired
+     * with the YAML node that the @ref WriterFactory should pass to the
+     * writer's constructor.  For gRPC this is the root config node (pool keys
+     * live at the root); for HDF5 this is the `writer.hdf5` sub-node.
+     */
+    const std::vector<std::pair<std::string, config::Config>>& writerEntries() const;
+
     /** @return Optional metrics configuration when the YAML provides it. */
     const std::optional<metrics::MetricsConfig>& metricsConfig() const;
 
@@ -134,6 +144,7 @@ private:
     std::chrono::milliseconds                           controllerStreamMaxAge_{200};
     std::vector<config::Config>                         readerConfigs_;
     std::vector<std::pair<std::string, config::Config>> readerEntries_;
+    std::vector<std::pair<std::string, config::Config>> writerEntries_;
     std::optional<metrics::MetricsConfig>               metricsConfig_;
 };
 

@@ -499,9 +499,11 @@ add_library(lib${PROJECT_NAME}
     "${CMAKE_CURRENT_SOURCE_DIR}/src/pool/MLDPGrpcPoolConfig.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/pool/MLDPGrpcIngestionPool.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/pool/MLDPGrpcQueryPool.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/MLDPQueryClient.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/controller/MLDPPVXSControllerConfig.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/controller/MLDPPVXSController.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/WriterConfig.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/WriterFactory.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/grpc/MLDPGrpcWriterConfig.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/grpc/MLDPGrpcWriter.cpp"
     $<$<BOOL:${MLDP_PVXS_ENABLE_HDF5}>:

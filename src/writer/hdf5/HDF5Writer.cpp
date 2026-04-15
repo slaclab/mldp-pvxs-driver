@@ -24,6 +24,12 @@ using namespace mldp_pvxs_driver::util::log;
 // Construction / destruction
 // ---------------------------------------------------------------------------
 
+HDF5Writer::HDF5Writer(const config::Config& node,
+                       std::shared_ptr<metrics::Metrics> /*metrics*/)
+    : HDF5Writer(HDF5WriterConfig::parse(node))
+{
+}
+
 HDF5Writer::HDF5Writer(HDF5WriterConfig config)
     : config_(std::move(config))
 {

@@ -50,6 +50,12 @@ bool hasTimestampListW(const dp::service::common::DataFrame& frame)
 // Construction / destruction
 // ---------------------------------------------------------------------------
 
+MLDPGrpcWriter::MLDPGrpcWriter(const config::Config& root,
+                               std::shared_ptr<Metrics> metrics)
+    : MLDPGrpcWriter(MLDPGrpcWriterConfig::parse(root), std::move(metrics))
+{
+}
+
 MLDPGrpcWriter::MLDPGrpcWriter(MLDPGrpcWriterConfig config,
                                std::shared_ptr<Metrics> metrics)
     : config_(std::move(config))

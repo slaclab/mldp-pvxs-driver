@@ -12,13 +12,11 @@
 
 #include <writer/hdf5/HDF5FilePool.h>
 
-#include <algorithm>
 #include <chrono>
 #include <ctime>
 #include <filesystem>
 #include <iomanip>
 #include <sstream>
-#include <stdexcept>
 
 using namespace mldp_pvxs_driver::writer;
 

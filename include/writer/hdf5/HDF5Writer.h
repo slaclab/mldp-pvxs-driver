@@ -12,7 +12,9 @@
 
 #ifdef MLDP_PVXS_HDF5_ENABLED
 
+#include <config/Config.h>
 #include <writer/IWriter.h>
+#include <writer/WriterFactory.h>
 #include <writer/hdf5/HDF5FilePool.h>
 #include <writer/hdf5/HDF5WriterConfig.h>
 
@@ -49,7 +51,20 @@ namespace mldp_pvxs_driver::writer {
  * @endcode
  */
 class HDF5Writer final : public IWriter {
+    REGISTER_WRITER("hdf5", HDF5Writer)
 public:
+    /**
+     * @brief Factory constructor — parses config from the writer.hdf5 YAML sub-node.
+     *
+     * Called by the @ref WriterFactory registry. The @p metrics parameter is
+     * accepted for interface uniformity but is not used by the HDF5 writer.
+     */
+    explicit HDF5Writer(const config::Config&             node,
+                        std::shared_ptr<metrics::Metrics> metrics = nullptr);
+
+    /**
+     * @brief Typed constructor — for direct use and unit tests.
+     */
     explicit HDF5Writer(HDF5WriterConfig config);
     ~HDF5Writer() override;
 

@@ -5,6 +5,7 @@
 #include <metrics/Metrics.h>
 #include <metrics/MetricsConfig.h>
 #include <pool/MLDPGrpcPool.h>
+#include <query/MLDPQueryClient.h>
 #include <query.grpc.pb.h>
 
 #include "../common/MldpQueryTestUtils.h"
@@ -549,7 +550,7 @@ TEST_F(MLDPGrpcPoolIntegrationTest, CharacterizesDuplicateIngestBehaviorForSameS
     }
 }
 
-TEST_F(MLDPGrpcPoolIntegrationTest, IDataBusQueryApiReturnsMetadataAndDataForInsertedPV)
+TEST_F(MLDPGrpcPoolIntegrationTest, QueryClientReturnsMetadataAndDataForInsertedPV)
 {
     startControllerWithNoReaders();
     ASSERT_TRUE(controller_);
@@ -591,14 +592,14 @@ TEST_F(MLDPGrpcPoolIntegrationTest, IDataBusQueryApiReturnsMetadataAndDataForIns
         ASSERT_FALSE(response.has_exceptionalresult());
     }
 
-    std::shared_ptr<mldp_pvxs_driver::util::bus::IDataBus> bus = controller_;
+    mldp_pvxs_driver::query::MLDPQueryClient queryClient(make_pool_config(1, 1, "query_api_probe_provider", "query api probe provider"));
     const std::set<std::string> sources{pv_name};
 
     const auto metadata_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
     std::optional<mldp_pvxs_driver::util::bus::IDataBus::SourceInfo> source_info;
     while (std::chrono::steady_clock::now() < metadata_deadline)
     {
-        const auto infos = bus->querySourcesInfo(sources);
+        const auto infos = queryClient.querySourcesInfo(sources);
         const auto it = std::find_if(infos.begin(),
                                      infos.end(),
                                      [&](const auto& info)
@@ -630,7 +631,7 @@ TEST_F(MLDPGrpcPoolIntegrationTest, IDataBusQueryApiReturnsMetadataAndDataForIns
     options.forward_window = std::chrono::seconds(5);
     options.rpc_deadline = std::chrono::seconds(5);
 
-    const auto data = bus->querySourcesData(sources, options);
+    const auto data = queryClient.querySourcesData(sources, options);
     ASSERT_TRUE(data.has_value());
     const auto buckets_it = data->find(pv_name);
     ASSERT_NE(buckets_it, data->end());
@@ -641,7 +642,7 @@ TEST_F(MLDPGrpcPoolIntegrationTest, IDataBusQueryApiReturnsMetadataAndDataForIns
     EXPECT_EQ(first.value(), expected_value);
 }
 
-TEST_F(MLDPGrpcPoolIntegrationTest, IDataBusQuerySourcesDataReturnsAllRequestedInsertedPVs)
+TEST_F(MLDPGrpcPoolIntegrationTest, QueryClientReturnsAllRequestedInsertedPVs)
 {
     startControllerWithNoReaders();
     ASSERT_TRUE(controller_);
@@ -687,7 +688,7 @@ TEST_F(MLDPGrpcPoolIntegrationTest, IDataBusQuerySourcesDataReturnsAllRequestedI
     ingest_one(pv_a, value_a, "query_data_multi_req_a");
     ingest_one(pv_b, value_b, "query_data_multi_req_b");
 
-    std::shared_ptr<mldp_pvxs_driver::util::bus::IDataBus> bus = controller_;
+    mldp_pvxs_driver::query::MLDPQueryClient queryClient(make_pool_config(1, 1, "query_data_multi_probe_provider", "query data multi probe provider"));
     const std::set<std::string> sources{pv_a, pv_b};
 
     mldp_pvxs_driver::util::bus::QuerySourcesDataOptions options;
@@ -696,7 +697,7 @@ TEST_F(MLDPGrpcPoolIntegrationTest, IDataBusQuerySourcesDataReturnsAllRequestedI
     options.forward_window = std::chrono::seconds(5);
     options.rpc_deadline = std::chrono::seconds(5);
 
-    const auto data = bus->querySourcesData(sources, options);
+    const auto data = queryClient.querySourcesData(sources, options);
     ASSERT_TRUE(data.has_value());
     ASSERT_EQ(data->size(), sources.size());
 

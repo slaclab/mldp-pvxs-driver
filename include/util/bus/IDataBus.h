@@ -16,7 +16,6 @@
 #include "common.pb.h"
 #include <chrono>
 #include <cstdint>
-#include <ingestion.grpc.pb.h>
 #include <optional>
 #include <set>
 #include <string>
@@ -112,35 +111,6 @@ public:
      * @return true if the batch was accepted for delivery.
      */
     virtual bool push(EventBatch batch_values) = 0;
-
-    /**
-     * @brief Query MLDP metadata for a set of source identifiers.
-     *
-     * The default implementation returns an empty list; concrete backends may
-     * override it when they can query metadata services (for example
-     * `DpQueryService::queryPvMetadata`).
-     *
-     * @param source_names Source/PV identifiers to query.
-     * @return Metadata rows for the sources known to the backend.
-     */
-    virtual std::vector<SourceInfo> querySourcesInfo(const std::set<std::string>& source_names) = 0;
-
-    /**
-     * @brief Query MLDP data values for sources over a relative time window.
-     *
-     * This mirrors the query shape used by integration tests: `queryData`
-     * with `pvNames`, `beginTime = now - lookback_window`, and
-     * `endTime = now + forward_window`.
-     *
-     * @param source_names Source/PV identifiers to query.
-     * @param options Query tuning options (timeouts and relative query window).
-     * @return Map keyed by source name with one DataValues entry per returned
-     *         data bucket (preserves bucket boundaries from queryData).
-     *         Returns std::nullopt on transport/protocol failures.
-     */
-    virtual std::optional<std::unordered_map<std::string, std::vector<dp::service::common::DataValues>>> querySourcesData(
-        const std::set<std::string>&   source_names,
-        const QuerySourcesDataOptions& options = QuerySourcesDataOptions{}) = 0;
 };
 
 } // namespace mldp_pvxs_driver::util::bus

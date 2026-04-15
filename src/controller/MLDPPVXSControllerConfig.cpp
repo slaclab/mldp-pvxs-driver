@@ -74,6 +74,12 @@ MLDPPVXSControllerConfig::readerEntries() const
     return readerEntries_;
 }
 
+const std::vector<std::pair<std::string, Config>>&
+MLDPPVXSControllerConfig::writerEntries() const
+{
+    return writerEntries_;
+}
+
 const std::optional<MetricsConfig>& MLDPPVXSControllerConfig::metricsConfig() const
 {
     return metricsConfig_;
@@ -126,6 +132,8 @@ void MLDPPVXSControllerConfig::parseThreadPool(const ::mldp_pvxs_driver::config:
 
 void MLDPPVXSControllerConfig::parseWriter(const ::mldp_pvxs_driver::config::Config& root)
 {
+    writerEntries_.clear();
+
     if (root.hasChild(WriterKey))
     {
         const auto writerNodes = root.subConfig(WriterKey);
@@ -133,9 +141,10 @@ void MLDPPVXSControllerConfig::parseWriter(const ::mldp_pvxs_driver::config::Con
         {
             throw Error("writer block is present but empty");
         }
+        const auto& writerNode = writerNodes.front();
         try
         {
-            writerConfig_ = WriterConfig::parse(writerNodes.front(), root);
+            writerConfig_ = WriterConfig::parse(writerNode, root);
         }
         catch (const WriterConfig::Error& e)
         {
@@ -144,6 +153,21 @@ void MLDPPVXSControllerConfig::parseWriter(const ::mldp_pvxs_driver::config::Con
         catch (const std::invalid_argument& e)
         {
             throw Error(e.what());
+        }
+
+        // Build writerEntries_: gRPC writer uses the root node (pool keys live there);
+        // HDF5 writer uses its own sub-node.
+        if (writerConfig_.grpcEnabled)
+        {
+            writerEntries_.push_back({"grpc", root});
+        }
+        if (writerConfig_.hdf5Enabled && writerNode.hasChild(WriterHdf5Key))
+        {
+            const auto hdf5Nodes = writerNode.subConfig(WriterHdf5Key);
+            if (!hdf5Nodes.empty())
+            {
+                writerEntries_.push_back({"hdf5", hdf5Nodes.front()});
+            }
         }
     }
     else
@@ -160,6 +184,7 @@ void MLDPPVXSControllerConfig::parseWriter(const ::mldp_pvxs_driver::config::Con
         {
             throw Error(e.what());
         }
+        writerEntries_.push_back({"grpc", root});
     }
 }
 

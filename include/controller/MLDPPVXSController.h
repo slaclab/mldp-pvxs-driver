@@ -14,8 +14,6 @@
 #include <config/Config.h>
 #include <controller/MLDPPVXSControllerConfig.h>
 #include <metrics/Metrics.h>
-#include <pool/MLDPGrpcPool.h>
-#include <pool/MLDPGrpcQueryPool.h>
 #include <reader/Reader.h>
 #include <util/bus/IDataBus.h>
 #include <util/log/Logger.h>
@@ -23,10 +21,7 @@
 
 #include <atomic>
 #include <memory>
-#include <optional>
-#include <set>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 namespace mldp_pvxs_driver::controller {
@@ -149,34 +144,13 @@ public:
     void stop();
 
     /**
-     * @brief Forward a batch of events produced by readers to the MLDP ingestion API.
+     * @brief Forward a batch of events produced by readers to the configured writers.
      *
      * Readers invoke this method with a collection of source/payload pairs and
-     * optional batch tags. The controller splits each source into a queue item
-     * and returns immediately after enqueueing; worker threads drain the queue,
-     * aggregate requests into gRPC streams, and flush based on configured byte
-     * and time thresholds. Network errors are logged and reported via metrics.
+     * optional batch tags. The controller fans the batch out to all active writers
+     * in a best-effort manner (copy for all-but-last, move for last).
      */
     bool push(EventBatch batch_values) override;
-
-    /**
-     * @brief Query source metadata from MLDP query API for a list of PV names.
-     *
-     * The method prefers the metadata RPC. If unavailable (older MLDP query
-     * servers), it falls back to queryData and derives first/last timestamps
-     * from returned bucket timestamp structures.
-     */
-    std::vector<SourceInfo> querySourcesInfo(const std::set<std::string>& source_names) override;
-
-    /**
-     * @brief Query MLDP data values for a set of PV/source names.
-     *
-     * Retries until @p options.timeout expires because source visibility can
-     * be eventually consistent. Returns nullopt on hard failure/timeout.
-     */
-    std::optional<std::unordered_map<std::string, std::vector<dp::service::common::DataValues>>> querySourcesData(
-        const std::set<std::string>&              source_names,
-        const util::bus::QuerySourcesDataOptions& options = util::bus::QuerySourcesDataOptions{}) override;
 
     /**
      * @brief Access the shared metrics collector.
@@ -191,9 +165,8 @@ private:
     std::shared_ptr<BS::light_thread_pool>                 thread_pool_; ///< Shared worker pool.
     std::shared_ptr<metrics::Metrics>                      metrics_;     ///< Shared metrics collector/exposer.
     std::atomic<bool>                                      running_{false};
-    util::pool::MLDPGrpcQueryPool::MLDPGrpcQueryPoolShrdPtr mldp_query_pool_; ///< MLDP query gRPC connection pool.
-    std::vector<reader::ReaderUPtr>                         readers_;    ///< Owned reader instances.
-    std::vector<writer::IWriterUPtr>                        writers_;    ///< Fan-out writer instances.
+    std::vector<reader::ReaderUPtr>                        readers_;     ///< Owned reader instances.
+    std::vector<writer::IWriterUPtr>                       writers_;     ///< Fan-out writer instances.
 
     explicit MLDPPVXSController(const config::Config& config);
 };
