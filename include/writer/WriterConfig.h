@@ -19,9 +19,11 @@
 
 namespace mldp_pvxs_driver::writer {
 
-/// YAML key for the top-level writer block.
+/// YAML key: top-level `writer` block.
 inline constexpr char WriterKey[] = "writer";
+/// YAML key: `writer.grpc` — sequence of gRPC writer instances.
 inline constexpr char WriterGrpcKey[] = "grpc";
+/// YAML key: `writer.hdf5` — sequence of HDF5 writer instances (requires MLDP_PVXS_HDF5_ENABLED).
 inline constexpr char WriterHdf5Key[] = "hdf5";
 
 /**
@@ -54,10 +56,10 @@ struct WriterConfig
         using std::runtime_error::runtime_error;
     };
 
-    /// One entry per configured gRPC writer instance (preserves declaration order).
+    /// YAML key: `writer.grpc` — one entry per configured gRPC writer instance (preserves declaration order).
     std::vector<MLDPGrpcWriterConfig> grpcConfigs;
 
-    /// One entry per configured HDF5 writer instance (preserves declaration order).
+    /// YAML key: `writer.hdf5` — one entry per configured HDF5 writer instance (preserves declaration order).
     std::vector<HDF5WriterConfig> hdf5Configs;
 
     /** @return true if at least one writer instance is configured. */

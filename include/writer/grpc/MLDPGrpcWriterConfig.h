@@ -19,13 +19,16 @@
 
 namespace mldp_pvxs_driver::writer {
 
-// ---------------------------------------------------------------------------
 // YAML keys owned by the gRPC writer block (under writer.grpc[i]).
-// ---------------------------------------------------------------------------
+/// YAML key: `writer.grpc[i].name` — required, unique instance name.
 inline constexpr char GrpcNameKey[] = "name";
+/// YAML key: `writer.grpc[i].mldp-pool` — required, connection pool sub-block.
 inline constexpr char GrpcPoolKey[] = "mldp-pool";
+/// YAML key: `writer.grpc[i].thread-pool` — worker thread count (default: 1).
 inline constexpr char GrpcThreadPoolKey[] = "thread-pool";
+/// YAML key: `writer.grpc[i].stream-max-bytes` — flush stream after this payload size in bytes (default: 2097152).
 inline constexpr char GrpcStreamMaxBytesKey[] = "stream-max-bytes";
+/// YAML key: `writer.grpc[i].stream-max-age-ms` — flush stream after this age in ms (default: 200).
 inline constexpr char GrpcStreamMaxAgeMsKey[] = "stream-max-age-ms";
 
 /**
@@ -57,19 +60,19 @@ struct MLDPGrpcWriterConfig
         using std::runtime_error::runtime_error;
     };
 
-    /// Underlying pool configuration (connection endpoints, credentials, …).
+    /// YAML key: `writer.grpc[i].mldp-pool` — underlying pool configuration (connection endpoints, credentials).
     util::pool::MLDPGrpcPoolConfig poolConfig;
 
-    /// Unique instance name (required; writer.grpc[i].name).
+    /// YAML key: `writer.grpc[i].name` — unique instance name.  Required.
     std::string name;
 
-    /// Number of concurrent ingestion worker threads.
+    /// YAML key: `writer.grpc[i].thread-pool` — number of concurrent ingestion worker threads.  Default: 1.
     int threadPoolSize{1};
 
-    /// Max protobuf payload bytes per stream before flushing.
+    /// YAML key: `writer.grpc[i].stream-max-bytes` — max protobuf payload bytes per stream before flushing.  Default: 2 MiB.
     std::size_t streamMaxBytes{2 * 1024 * 1024};
 
-    /// Max stream age before flushing.
+    /// YAML key: `writer.grpc[i].stream-max-age-ms` — max stream age before flushing.  Default: 200 ms.
     std::chrono::milliseconds streamMaxAge{200};
 
     /**

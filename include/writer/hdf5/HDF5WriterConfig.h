@@ -19,12 +19,18 @@
 
 namespace mldp_pvxs_driver::writer {
 
-/// YAML keys for the writer.hdf5[i] block.
+// YAML keys for the writer.hdf5[i] block.
+/// YAML key: `writer.hdf5[i].name` — required, unique instance name.
 inline constexpr char HDF5NameKey[] = "name";
+/// YAML key: `writer.hdf5[i].base-path` — required, output directory for HDF5 files.
 inline constexpr char HDF5BasePathKey[] = "base-path";
+/// YAML key: `writer.hdf5[i].max-file-age-s` — rotate file after N seconds (default: 3600).
 inline constexpr char HDF5MaxFileAgeKey[] = "max-file-age-s";
+/// YAML key: `writer.hdf5[i].max-file-size-mb` — rotate file at N MiB (default: 512).
 inline constexpr char HDF5MaxFileSizeMBKey[] = "max-file-size-mb";
+/// YAML key: `writer.hdf5[i].flush-interval-ms` — flush thread period in ms (default: 1000).
 inline constexpr char HDF5FlushIntervalMsKey[] = "flush-interval-ms";
+/// YAML key: `writer.hdf5[i].compression-level` — DEFLATE level 0–9 (default: 0 = off).
 inline constexpr char HDF5CompressionKey[] = "compression-level";
 
 /**
@@ -42,22 +48,22 @@ struct HDF5WriterConfig
         using std::runtime_error::runtime_error;
     };
 
-    /// Directory where HDF5 files are created.  Required.
+    /// YAML key: `writer.hdf5[i].base-path` — directory where HDF5 files are created.  Required.
     std::string basePath;
 
-    /// Unique instance name (required; writer.hdf5[i].name).
+    /// YAML key: `writer.hdf5[i].name` — unique instance name.  Required.
     std::string name;
 
-    /// Maximum age of an open file before rotation.  Default: 1 hour.
+    /// YAML key: `writer.hdf5[i].max-file-age-s` — maximum age of an open file before rotation.  Default: 3600 s (1 hour).
     std::chrono::seconds maxFileAge{3600};
 
-    /// Maximum size (MiB) of an open file before rotation.  Default: 512 MiB.
+    /// YAML key: `writer.hdf5[i].max-file-size-mb` — maximum size (MiB) of an open file before rotation.  Default: 512 MiB.
     uint64_t maxFileSizeMB{512};
 
-    /// How often the flush thread calls H5File::flush.  Default: 1 s.
+    /// YAML key: `writer.hdf5[i].flush-interval-ms` — how often the flush thread calls H5File::flush.  Default: 1000 ms.
     std::chrono::milliseconds flushInterval{1000};
 
-    /// DEFLATE compression level 0–9 (0 = no compression).  Default: 0.
+    /// YAML key: `writer.hdf5[i].compression-level` — DEFLATE level 0–9 (0 = no compression).  Default: 0.
     int compressionLevel{0};
 
     /**

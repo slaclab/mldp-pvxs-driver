@@ -8,83 +8,106 @@ This project provides a generic driver architecture for ingesting real-time or h
 
 ## Configuration
 
-When running the CLI, the full config is a single YAML document. Every block shown is required
-unless marked optional.
+The full config is a single YAML document passed via `--config`. Every block shown is required unless marked optional.
 
 ```yaml
-controller-thread-pool: 2                   # worker threads for controller-side batching and send work
-controller-stream-max-bytes: 2097152        # optional; flush a gRPC stream after this payload size
-controller-stream-max-age-ms: 200           # optional; flush a gRPC stream after this many milliseconds
+writer:                                     # required — at least one writer instance must be configured
 
-mldp-pool:                                  # MLDP gRPC provider and connection-pool settings
-  provider-name: pvxs_provider              # provider name advertised to MLDP
-  provider-description: "PVXS aggregate provider"   # optional; human-readable provider label
-  ingestion-url: dp-ingestion:50051         # MLDP ingestion service address
-  query-url: dp-query:50052                 # MLDP query service address
-  min-conn: 1                               # minimum number of gRPC connections to keep ready
-  max-conn: 4                               # maximum number of gRPC connections allowed in the pool
-  credentials:                              # optional; TLS client credential files
-    pem-cert-chain: /etc/certs/client.crt   # client certificate chain PEM file
-    pem-private-key: /etc/certs/client.key  # client private key PEM file
-    pem-root-certs: /etc/certs/ca.crt       # CA bundle PEM file used to verify the server
+  # ========== gRPC Ingestion Writer ==========
+  grpc:
+    - name: grpc_main                       # required; unique instance name
+      thread-pool: 2                        # optional; default: 1; worker threads for gRPC ingestion
+      stream-max-bytes: 2097152             # optional; default: 2097152; flush stream after this payload size
+      stream-max-age-ms: 200               # optional; default: 200; flush stream after this many ms
+      mldp-pool:                            # required; MLDP gRPC connection-pool settings
+        provider-name: pvxs_provider        # required; provider name advertised to MLDP
+        provider-description: "PVXS provider"  # optional; human-readable label
+        ingestion-url: dp-ingestion:50051   # required; MLDP ingestion service address
+        query-url: dp-query:50052           # optional; defaults to ingestion-url
+        min-conn: 1                         # optional; default: 1; minimum open connections
+        max-conn: 4                         # optional; default: 4; maximum connections in pool
+        credentials: ssl                    # optional; "none", "ssl", or TLS map (see below)
+        # credentials:                      # alternative: custom TLS PEM files
+        #   pem-cert-chain: /etc/certs/client.crt
+        #   pem-private-key: /etc/certs/client.key
+        #   pem-root-certs: /etc/certs/ca.crt
 
-reader:                                     # optional; list of reader instances to start
-  # ========== EPICS PVAccess Reader (Real-time Monitoring via PVXS) ==========
-  - epics-pvxs:                             # PVAccess reader type using PVXS subscriptions
-      - name: pvxs_reader_a                 # unique reader instance name for logs and metrics
-        thread-pool: 1                      # optional; default: 1; conversion worker pool for processing PV updates
-        column-batch-size: 50               # optional; default: 50; max NTTable columns processed per batch
-        monitor-poll-threads: 2             # optional; default: 2; threads draining monitor events from the queue
-        monitor-poll-interval-ms: 5         # optional; default: 5; sleep between monitor queue polls
-        pvs:                                # PV list monitored by this reader
-          - name: "PV:NAME:1"               # PV name to subscribe to
-          - name: "PV:NAME:2"               # PV name to subscribe to
-            option: "VALUE"                 # optional; scalar channel option passed to the monitor
-          - name: "TABLE:PV"                # PV expected to publish NT Table data
-            option:                         # optional; structured monitor option for NT Table handling
-              type: "slac-bsas-table"       # enable SLAC BSAS row-by-row NT Table conversion
-              tsSeconds: "secondsFieldName" # NT Table field containing per-row epoch seconds
-              tsNanos: "nanosFieldName"     # NT Table field containing per-row nanoseconds
+  # ========== HDF5 Storage Writer (optional; requires -DMLDP_PVXS_HDF5_ENABLED=ON) ==========
+  hdf5:
+    - name: hdf5_local                      # required; unique instance name
+      base-path: /data/hdf5                 # required; directory for HDF5 output files
+      max-file-age-s: 3600                  # optional; default: 3600; rotate after N seconds
+      max-file-size-mb: 512                 # optional; default: 512; rotate after N MiB
+      flush-interval-ms: 1000              # optional; default: 1000; flush thread period in ms
+      compression-level: 0                  # optional; default: 0; DEFLATE level 0–9
 
-  # ========== EPICS Base Reader (Real-time Monitoring via Channel Access) ==========
-  - epics-base:                             # Channel Access reader type for legacy EPICS deployments
-      - name: base_reader_a                 # unique reader instance name for logs and metrics
-        thread-pool: 1                      # optional; default: 1; conversion worker pool for processing PV updates
-        column-batch-size: 50               # optional; default: 50; max NTTable columns processed per batch
-        monitor-poll-threads: 2             # optional; default: 2; threads draining monitor events from the queue
-        monitor-poll-interval-ms: 5         # optional; default: 5; sleep between monitor queue polls
-        pvs:                                # PV list monitored by this reader
-          - name: "PV:NAME:1"               # PV name to subscribe to
-          - name: "PV:NAME:2"               # PV name to subscribe to
-            option: "VALUE"                 # optional; scalar channel option passed to the monitor
+reader:                                     # optional; list of reader groups to start
 
-  # ========== EPICS Archiver Reader (Historical Data Retrieval) ==========
-  - epics-archiver:                         # archiver reader type for historical fetches or tail polling
-      - name: archiver_reader_a             # unique reader instance name for logs and metrics
-        hostname: "archiver.example.com:11200"  # archiver appliance host and port
-        mode: "historical_once"             # optional; fetch a fixed historical window once
-        start-date: "2026-01-01T00:00:00Z" # inclusive ISO 8601 start time for the query window
-        end-date: "2026-01-31T23:59:59Z"   # optional; inclusive ISO 8601 end time for the query window
-        tls-verify-peer: true               # optional; default: true; verify the server certificate chain
-        tls-verify-host: true               # optional; default: true; verify the certificate hostname
-        connect-timeout-sec: 30             # optional; default: 30; connection setup timeout in seconds
-        total-timeout-sec: 300              # optional; default: 300; total request timeout in seconds
-        pvs:                                # PV list to fetch from the archiver
-          - name: "SYSTEM:SENSOR:TEMPERATURE:MAIN"   # archived PV name to retrieve
-          - name: "SYSTEM:ACTUATOR:PRESSURE:OUTLET"  # archived PV name to retrieve
+  # ========== EPICS PVAccess Reader (real-time monitoring via PVXS) ==========
+  - epics-pvxs:
+      - name: pvxs_reader_a                 # required; unique instance name
+        thread-pool: 1                      # optional; default: 2; event processing workers
+        column-batch-size: 50               # optional; default: 50; max NTTable columns per batch push
+        pvs:
+          - name: "PV:NAME:1"
+          - name: "PV:NAME:2"
+            option: "VALUE"                 # optional; scalar channel option
+          - name: "TABLE:PV"
+            option:                         # optional; structured option for SLAC BSAS NTTable
+              type: "slac-bsas-table"       # enable row-by-row NTTable conversion
+              tsSeconds: "secondsFieldName" # NTTable field carrying per-row epoch seconds
+              tsNanos: "nanosFieldName"     # NTTable field carrying per-row nanoseconds
 
-      - name: archiver_reader_tail_polling  # reader instance that repeatedly tails recent history
-        hostname: "archiver.example.com:11200"  # archiver appliance host and port
-        mode: "periodic_tail"               # continuously poll recent archiver data
-        poll-interval-sec: 5                # required; seconds between polling cycles
-        lookback-sec: 5                     # optional; trailing history window fetched each cycle
-        batch-duration-sec: 1               # optional; split output batches by sample-time span in seconds
-        pvs:                                # PV list to fetch from the archiver
-          - name: "SYSTEM:SENSOR:TEMPERATURE:MAIN"   # archived PV name to retrieve
+  # ========== EPICS Base Reader (real-time monitoring via Channel Access) ==========
+  - epics-base:
+      - name: base_reader_a                 # required; unique instance name
+        thread-pool: 1                      # optional; default: 2
+        column-batch-size: 50               # optional; default: 50
+        monitor-poll-threads: 2             # optional; default: 2; CA monitor queue poll threads
+        monitor-poll-interval-ms: 5         # optional; default: 5; ms between queue polls when idle
+        pvs:
+          - name: "PV:NAME:1"
+          - name: "PV:NAME:2"
+            option: "VALUE"                 # optional; scalar channel option
+
+  # ========== EPICS Archiver Reader (historical fetch or continuous tail) ==========
+  - epics-archiver:
+      - name: archiver_historical           # one-shot historical fetch
+        hostname: "archiver.example.com:11200"  # required; archiver host:port
+        mode: "historical_once"             # optional; default: historical_once
+        start-date: "2026-01-01T00:00:00Z" # required for historical_once; ISO 8601
+        end-date: "2026-01-31T23:59:59Z"   # optional; ISO 8601 end of window
+        connect-timeout-sec: 30             # optional; default: 30
+        total-timeout-sec: 300              # optional; default: 300 (0 = infinite)
+        batch-duration-sec: 1               # optional; default: 1; sample-time span per output batch
+        tls-verify-peer: true               # optional; default: true
+        tls-verify-host: true               # optional; default: true
+        pvs:
+          - name: "SYSTEM:SENSOR:TEMPERATURE:MAIN"
+          - name: "SYSTEM:ACTUATOR:PRESSURE:OUTLET"
+
+      - name: archiver_tail                 # continuous tail polling
+        hostname: "archiver.example.com:11200"
+        mode: "periodic_tail"
+        poll-interval-sec: 5               # required for periodic_tail; seconds between polls
+        lookback-sec: 5                    # optional; defaults to poll-interval-sec
+        batch-duration-sec: 1              # optional; default: 1
+        pvs:
+          - name: "SYSTEM:SENSOR:TEMPERATURE:MAIN"
 
 metrics:                                    # optional; Prometheus exporter settings
-  endpoint: 0.0.0.0:9464                    # bind address for the metrics HTTP endpoint
+  endpoint: 0.0.0.0:9464                    # required when block is present; bind host:port
+  scan-interval-seconds: 1                  # optional; default: 1; system metrics scan interval
 ```
+
+### Supported Writer Types
+
+| Writer Type | Description |
+|-------------|-------------|
+| `grpc` | gRPC ingestion writer — forwards batches to the MLDP ingestion service |
+| `hdf5` | HDF5 storage writer — writes batches to local HDF5 files (build flag required) |
+
+Multiple instances of the same type are supported (each entry in the sequence is independent).
 
 ### Supported Reader Types
 
@@ -94,22 +117,14 @@ metrics:                                    # optional; Prometheus exporter sett
 | `epics-base`     | Polling-based Channel Access reader for legacy systems            |
 | `epics-archiver` | Historical and periodic-tail reader from EPICS Archiver Appliance |
 
-For detailed reader documentation, see [Reader Types](docs/readers.md).
-
-`mldp-pool` values mirror the driver's `provider-name` and target URLs but add connection-pool sizing.
-
-- `ingestion-url`: ingestion service address (DpIngestionService)
-- `query-url`: query service address (DpQueryService)
-
-Readers are defined
-as sequences under `reader[]`, each with a `name` and an optional `pvs` list; if `pvs` is omitted, the reader will
-start without predefined channels.
-
 `mldp-pool.credentials` accepts:
 
-- `none` (insecure, no TLS)
-- `ssl` (TLS with system defaults)
-- a map with optional `pem-cert-chain`, `pem-private-key`, `pem-root-certs` paths (TLS with explicit PEM files)
+- `none` — insecure, no TLS
+- `ssl` — TLS with system trust store
+- a map with optional `pem-cert-chain`, `pem-private-key`, `pem-root-certs` file paths (custom TLS)
+
+For the complete configuration reference including all keys, types, and defaults, see [Configuration Reference](docs/configuration.md).
+Example YAML files are in [`docs/examples/`](docs/examples/).
 
 ## Command-line interface
 
@@ -180,10 +195,16 @@ This project uses a pipeline-style architecture: PVXS clients feed PV updates in
 ### Documentation
 
 - [Architecture Overview](docs/architecture.md) - System architecture, data flow, and design patterns
-- [Reader Types](docs/readers.md) - Available reader implementations (EPICS Base, PVXS)
+- [Configuration Reference](docs/configuration.md) - Complete YAML schema with all keys, types, and defaults
+- [Reader Types](docs/readers.md) - Available reader implementations (EPICS Base, PVXS, Archiver)
 - [Implementing Custom Readers](docs/readers-implementation.md) - Guide to creating new reader types
-- [Logging Abstraction Guide](docs/logging.md) - How `util::log` works and how to implement custom logger classes
-- [HTTP Transport Provider](docs/http-provider.md) - Shared `util/http` abstraction and curl-backed implementation for HTTP-based readers
+- [Writers Overview](docs/writers-implementation.md) - Writer pattern, factory registration, new writer guide
+- [gRPC Writer](docs/writers/grpc-writer.md) - gRPC ingestion writer details and configuration
+- [HDF5 Writer](docs/writers/hdf5-writer.md) - HDF5 storage writer details and configuration
+- [MLDP Query Client](docs/query-client.md) - Standalone out-of-band query API
+- [Logging Abstraction Guide](docs/logging.md) - How `util::log` works and custom logger implementation
+- [HTTP Transport Provider](docs/http-provider.md) - Shared `util/http` abstraction for HTTP-based readers
+- [Metrics Export Guide](docs/metrics-export-guide.md) - Prometheus metrics and manual dump triggers
 
 For developer information and contribution guidelines see [CONTRIBUTING.md](CONTRIBUTING.md).
 
