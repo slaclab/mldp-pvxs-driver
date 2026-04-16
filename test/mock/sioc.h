@@ -35,6 +35,6 @@ private:
     pvxs::server::SharedPV m_pvStatus;    // String
     pvxs::server::SharedPV m_pvWaveform;  // Float64A
     pvxs::server::SharedPV m_pvTable;     // Struct
-    pvxs::server::SharedPV m_pvBsasTable; // NTTable with per-row timestamps
+    pvxs::server::SharedPV m_pvBsasTable; // NTTable with per-row timestamps: PV_A (Float64), PV_B (Int32), PV_C (Float32), secondsPastEpoch (UInt32), nanoseconds (UInt32)
     std::vector<TypedPV>   m_typedPvs;
 };

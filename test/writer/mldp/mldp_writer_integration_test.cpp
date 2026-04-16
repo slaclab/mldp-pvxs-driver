@@ -456,27 +456,36 @@ TEST_F(MLDPWriterIntegrationTest, QueryBsasTablePV)
 {
     startControllerWithBsasTableReader();
 
-    const auto result = queryAndCollectColumns({"PV_NAME_A_DOUBLE_VALUE", "PV_NAME_B_STRING_VALUE"}, kSubscribeTimeout);
-    ASSERT_TRUE(result.has_value());
+    // PV_A: Float64 column
+    const auto resultA = queryAndCollectColumns({"PV_A"}, kSubscribeTimeout);
+    ASSERT_TRUE(resultA.has_value()) << "PV_A not found in dp-service";
 
-    const auto doubleRows = flattenDataValues(result->at("PV_NAME_A_DOUBLE_VALUE"));
-    const auto stringRows = flattenDataValues(result->at("PV_NAME_B_STRING_VALUE"));
-
+    const auto doubleRows = flattenDataValues(resultA->at("PV_A"));
     ASSERT_GE(doubleRows.size(), 3);
     EXPECT_EQ(doubleRows[0].value_case(), DataValue::kDoubleValue);
     EXPECT_EQ(doubleRows[1].value_case(), DataValue::kDoubleValue);
     EXPECT_EQ(doubleRows[2].value_case(), DataValue::kDoubleValue);
-    EXPECT_EQ(doubleRows[0].doublevalue(), 1.0);
-    EXPECT_EQ(doubleRows[1].doublevalue(), 2.0);
-    EXPECT_EQ(doubleRows[2].doublevalue(), 3.0);
 
-    ASSERT_GE(stringRows.size(), 3);
-    EXPECT_EQ(stringRows[0].value_case(), DataValue::kStringValue);
-    EXPECT_EQ(stringRows[1].value_case(), DataValue::kStringValue);
-    EXPECT_EQ(stringRows[2].value_case(), DataValue::kStringValue);
-    EXPECT_EQ(stringRows[0].stringvalue(), "OK");
-    EXPECT_EQ(stringRows[1].stringvalue(), "WARNING");
-    EXPECT_EQ(stringRows[2].stringvalue(), "FAULT");
+    // PV_B: Int32 column
+    const auto resultB = queryAndCollectColumns({"PV_B"}, kSubscribeTimeout);
+    ASSERT_TRUE(resultB.has_value()) << "PV_B not found in dp-service";
+
+    const auto intRows = flattenDataValues(resultB->at("PV_B"));
+    ASSERT_GE(intRows.size(), 3);
+    EXPECT_EQ(intRows[0].value_case(), DataValue::kIntValue);
+    EXPECT_EQ(intRows[1].value_case(), DataValue::kIntValue);
+    EXPECT_EQ(intRows[2].value_case(), DataValue::kIntValue);
+
+    // PV_C: Float32 column (arrives as floatValue or doubleValue depending on server)
+    const auto resultC = queryAndCollectColumns({"PV_C"}, kSubscribeTimeout);
+    ASSERT_TRUE(resultC.has_value()) << "PV_C not found in dp-service";
+
+    const auto floatRows = flattenDataValues(resultC->at("PV_C"));
+    ASSERT_GE(floatRows.size(), 3);
+    for (const auto& v : floatRows)
+    {
+        EXPECT_TRUE(v.value_case() == DataValue::kFloatValue || v.value_case() == DataValue::kDoubleValue);
+    }
 }
 
 TEST_F(MLDPWriterIntegrationTest, CharacterizesDuplicateIngestBehaviorForSameSample)
@@ -588,7 +597,7 @@ TEST_F(MLDPWriterIntegrationTest, QueryClientReturnsMetadataAndDataForInsertedPV
 
     std::shared_ptr<mldp_pvxs_driver::query::IQueryable> queryClient =
         std::make_shared<mldp_pvxs_driver::query::impl::mldp::MLDPQueryClient>(make_pool_config(1, 1, "query_api_probe_provider", "query api probe provider"));
-    const std::set<std::string>              sources{pv_name};
+    const std::set<std::string> sources{pv_name};
 
     const auto                                                       metadata_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
     std::optional<mldp_pvxs_driver::util::bus::IDataBus::SourceInfo> source_info;
@@ -685,7 +694,7 @@ TEST_F(MLDPWriterIntegrationTest, QueryClientReturnsAllRequestedInsertedPVs)
 
     std::shared_ptr<mldp_pvxs_driver::query::IQueryable> queryClient =
         std::make_shared<mldp_pvxs_driver::query::impl::mldp::MLDPQueryClient>(make_pool_config(1, 1, "query_data_multi_probe_provider", "query data multi probe provider"));
-    const std::set<std::string>              sources{pv_a, pv_b};
+    const std::set<std::string> sources{pv_a, pv_b};
 
     mldp_pvxs_driver::util::bus::QuerySourcesDataOptions options;
     options.timeout = std::chrono::seconds(10);

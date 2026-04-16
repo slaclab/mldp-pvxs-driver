@@ -426,15 +426,15 @@ pvs:
     int       waited_ms = 0;
     while (waited_ms < max_wait_ms)
     {
-        if (countEventsForSource(*mock_bus, "PV_NAME_A_DOUBLE_VALUE") >= 3 &&
-            countEventsForSource(*mock_bus, "PV_NAME_B_STRING_VALUE") >= 3)
+        if (countEventsForSource(*mock_bus, "PV_A") >= 3 &&
+            countEventsForSource(*mock_bus, "PV_B") >= 3)
             break;
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
         waited_ms += 100;
     }
 
-    EXPECT_GE(countEventsForSource(*mock_bus, "PV_NAME_A_DOUBLE_VALUE"), 3u);
-    EXPECT_GE(countEventsForSource(*mock_bus, "PV_NAME_B_STRING_VALUE"), 3u);
+    EXPECT_GE(countEventsForSource(*mock_bus, "PV_A"), 3u);
+    EXPECT_GE(countEventsForSource(*mock_bus, "PV_B"), 3u);
 
     // Verify no timestamp columns leaked as sources
     EXPECT_EQ(countEventsForSource(*mock_bus, "secondsPastEpoch"), 0u);
@@ -451,7 +451,7 @@ pvs:
             for (const auto& frame : batch.frames)
             {
                 const auto src = frameSource(frame);
-                if (src == "PV_NAME_A_DOUBLE_VALUE" || src == "PV_NAME_B_STRING_VALUE")
+                if (src == "PV_A" || src == "PV_B")
                 {
                     has_column = true;
                     break;
@@ -475,11 +475,11 @@ pvs:
             for (const auto& frame : batch.frames)
             {
                 const auto src = frameSource(frame);
-                if (src == "PV_NAME_A_DOUBLE_VALUE")
+                if (src == "PV_A")
                 {
                     ampl.push_back(frame);
                 }
-                if (src == "PV_NAME_B_STRING_VALUE")
+                if (src == "PV_B")
                 {
                     stat.push_back(frame);
                 }
@@ -503,11 +503,11 @@ pvs:
                   stat[i].datatimestamps().timestamplist().timestamps(0).nanoseconds());
     }
 
+    // PV_A: Float64 column — values are 1.0+sin(time) based, just check type
     ASSERT_GT(ampl[0].doublecolumns_size(), 0);
     ASSERT_GT(ampl[0].doublecolumns(0).values_size(), 0);
-    EXPECT_DOUBLE_EQ(ampl[0].doublecolumns(0).values(0), 1.0);
 
-    ASSERT_GT(stat[0].stringcolumns_size(), 0);
-    ASSERT_GT(stat[0].stringcolumns(0).values_size(), 0);
-    EXPECT_EQ(stat[0].stringcolumns(0).values(0), "OK");
+    // PV_B: Int32 column (was String in old mock)
+    ASSERT_GT(stat[0].int32columns_size(), 0);
+    ASSERT_GT(stat[0].int32columns(0).values_size(), 0);
 }
