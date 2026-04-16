@@ -610,7 +610,7 @@ if(MLDP_PVXS_DRIVER_TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/test/controller/mldppvxs_controller_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/controller/mldppvxs_controller_epics_archiver_periodic_tail_integration_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/ryml_single_header_translation_unit.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/test/pool/mldp_grpc_writer_integration_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/writer/grpc/mldp_grpc_writer_integration_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics/pvxs/epics_pvxs_reader_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics/base/epics_base_reader_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_archiver/archiver_pbhttp_conversion_test.cpp"
@@ -674,6 +674,29 @@ if(MLDP_PVXS_DRIVER_TESTS)
 
     include(GoogleTest)
     gtest_discover_tests(${PROJECT_NAME}_test)
+
+    if(MLDP_PVXS_ENABLE_HDF5)
+        # HDF5 writer unit and integration tests
+        add_executable(mldp_hdf5_writer_test
+            "${CMAKE_CURRENT_SOURCE_DIR}/test/writer/hdf5/hdf5_writer_config_test.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/test/writer/hdf5/hdf5_file_pool_test.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/test/writer/hdf5/hdf5_writer_test.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/test/ryml_single_header_translation_unit.cpp"
+        )
+        target_include_directories(mldp_hdf5_writer_test PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/include"
+            "${CMAKE_CURRENT_SOURCE_DIR}/test"
+            "${CMAKE_CURRENT_BINARY_DIR}"
+        )
+        if(APPLE)
+            target_link_libraries(mldp_hdf5_writer_test PRIVATE gtest_main
+                -Wl,-force_load $<TARGET_FILE:lib${PROJECT_NAME}>)
+        else()
+            target_link_libraries(mldp_hdf5_writer_test PRIVATE gtest_main
+                -Wl,--whole-archive lib${PROJECT_NAME} -Wl,--no-whole-archive)
+        endif()
+        gtest_discover_tests(mldp_hdf5_writer_test PROPERTIES LABELS "hdf5")
+    endif()
 endif()
 
 # Driver executable

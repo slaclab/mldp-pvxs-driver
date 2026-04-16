@@ -9,9 +9,9 @@
 #include <query/IQueryable.h>
 #include <query/impl/mldp/MLDPQueryClient.h>
 
-#include "../common/MldpQueryTestUtils.h"
-#include "../config/test_config_helpers.h"
-#include "../mock/sioc.h"
+#include "../../common/MldpQueryTestUtils.h"
+#include "../../config/test_config_helpers.h"
+#include "../../mock/sioc.h"
 
 #include <algorithm>
 #include <atomic>
