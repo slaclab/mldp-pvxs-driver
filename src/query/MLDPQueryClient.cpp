@@ -8,7 +8,7 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
-#include <query/MLDPQueryClient.h>
+#include <query/impl/mldp/MLDPQueryClient.h>
 
 #include <util/log/Logger.h>
 
@@ -21,7 +21,7 @@
 #include <thread>
 #include <unordered_map>
 
-using namespace mldp_pvxs_driver::query;
+using namespace mldp_pvxs_driver::query::impl::mldp;
 using namespace mldp_pvxs_driver::util::bus;
 using namespace mldp_pvxs_driver::util::log;
 using mldp_pvxs_driver::util::pool::MLDPGrpcQueryPool;

@@ -6,7 +6,8 @@
 #include <metrics/MetricsConfig.h>
 #include <pool/MLDPGrpcPool.h>
 #include <query.grpc.pb.h>
-#include <query/MLDPQueryClient.h>
+#include <query/IQueryable.h>
+#include <query/impl/mldp/MLDPQueryClient.h>
 
 #include "../common/MldpQueryTestUtils.h"
 #include "../config/test_config_helpers.h"
@@ -584,14 +585,15 @@ TEST_F(MLDPGrpcPoolIntegrationTest, QueryClientReturnsMetadataAndDataForInserted
         ASSERT_FALSE(response.has_exceptionalresult());
     }
 
-    mldp_pvxs_driver::query::MLDPQueryClient queryClient(make_pool_config(1, 1, "query_api_probe_provider", "query api probe provider"));
+    std::shared_ptr<mldp_pvxs_driver::query::IQueryable> queryClient =
+        std::make_shared<mldp_pvxs_driver::query::impl::mldp::MLDPQueryClient>(make_pool_config(1, 1, "query_api_probe_provider", "query api probe provider"));
     const std::set<std::string>              sources{pv_name};
 
     const auto                                                       metadata_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
     std::optional<mldp_pvxs_driver::util::bus::IDataBus::SourceInfo> source_info;
     while (std::chrono::steady_clock::now() < metadata_deadline)
     {
-        const auto infos = queryClient.querySourcesInfo(sources);
+        const auto infos = queryClient->querySourcesInfo(sources);
         const auto it = std::find_if(infos.begin(),
                                      infos.end(),
                                      [&](const auto& info)
@@ -623,7 +625,7 @@ TEST_F(MLDPGrpcPoolIntegrationTest, QueryClientReturnsMetadataAndDataForInserted
     options.forward_window = std::chrono::seconds(5);
     options.rpc_deadline = std::chrono::seconds(5);
 
-    const auto data = queryClient.querySourcesData(sources, options);
+    const auto data = queryClient->querySourcesData(sources, options);
     ASSERT_TRUE(data.has_value());
     const auto buckets_it = data->find(pv_name);
     ASSERT_NE(buckets_it, data->end());
@@ -680,7 +682,8 @@ TEST_F(MLDPGrpcPoolIntegrationTest, QueryClientReturnsAllRequestedInsertedPVs)
     ingest_one(pv_a, value_a, "query_data_multi_req_a");
     ingest_one(pv_b, value_b, "query_data_multi_req_b");
 
-    mldp_pvxs_driver::query::MLDPQueryClient queryClient(make_pool_config(1, 1, "query_data_multi_probe_provider", "query data multi probe provider"));
+    std::shared_ptr<mldp_pvxs_driver::query::IQueryable> queryClient =
+        std::make_shared<mldp_pvxs_driver::query::impl::mldp::MLDPQueryClient>(make_pool_config(1, 1, "query_data_multi_probe_provider", "query data multi probe provider"));
     const std::set<std::string>              sources{pv_a, pv_b};
 
     mldp_pvxs_driver::util::bus::QuerySourcesDataOptions options;
@@ -689,7 +692,7 @@ TEST_F(MLDPGrpcPoolIntegrationTest, QueryClientReturnsAllRequestedInsertedPVs)
     options.forward_window = std::chrono::seconds(5);
     options.rpc_deadline = std::chrono::seconds(5);
 
-    const auto data = queryClient.querySourcesData(sources, options);
+    const auto data = queryClient->querySourcesData(sources, options);
     ASSERT_TRUE(data.has_value());
     ASSERT_EQ(data->size(), sources.size());
 

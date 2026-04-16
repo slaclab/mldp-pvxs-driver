@@ -16,6 +16,7 @@
 #include <pool/MLDPGrpcQueryPool.h>
 #include <util/bus/IDataBus.h>
 #include <util/log/Logger.h>
+#include <query/IQueryable.h>
 
 #include <chrono>
 #include <memory>
@@ -25,7 +26,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace mldp_pvxs_driver::query {
+namespace mldp_pvxs_driver::query::impl::mldp {
 
 /**
  * @brief Standalone MLDP query client.
@@ -42,7 +43,7 @@ namespace mldp_pvxs_driver::query {
  * auto data  = client.querySourcesData({"MY:PV"}, options);
  * @endcode
  */
-class MLDPQueryClient
+class MLDPQueryClient : public IQueryable
 {
 public:
     /**
@@ -54,7 +55,7 @@ public:
     explicit MLDPQueryClient(const util::pool::MLDPGrpcPoolConfig& poolConfig,
                              std::shared_ptr<metrics::Metrics>     metrics = nullptr);
 
-    ~MLDPQueryClient() = default;
+    ~MLDPQueryClient() override = default;
 
     // Non-copyable, movable
     MLDPQueryClient(const MLDPQueryClient&) = delete;
@@ -73,7 +74,7 @@ public:
      * @return Metadata rows for the sources known to the backend.
      */
     std::vector<util::bus::IDataBus::SourceInfo>
-    querySourcesInfo(const std::set<std::string>& source_names);
+    querySourcesInfo(const std::set<std::string>& source_names) override;
 
     /**
      * @brief Query MLDP data values for sources over a relative time window.
@@ -88,11 +89,11 @@ public:
      */
     std::optional<std::unordered_map<std::string, std::vector<dp::service::common::DataValues>>>
     querySourcesData(const std::set<std::string>&              source_names,
-                     const util::bus::QuerySourcesDataOptions& options = util::bus::QuerySourcesDataOptions{});
+                     const util::bus::QuerySourcesDataOptions& options = {}) override;
 
 private:
     std::shared_ptr<util::log::ILogger>                     logger_;
     util::pool::MLDPGrpcQueryPool::MLDPGrpcQueryPoolShrdPtr pool_;
 };
 
-} // namespace mldp_pvxs_driver::query
+} // namespace mldp_pvxs_driver::query::impl::mldp
