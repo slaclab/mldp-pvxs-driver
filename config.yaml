@@ -1,18 +1,32 @@
-controller-thread-pool: 2
-controller-stream-max-bytes: 2097152   # optional; flush stream after this payload size
-controller-stream-max-age-ms: 200      # optional; flush stream after this age in milliseconds
+writer:
+  # ========== gRPC / MLDP Ingestion Writer ==========
+  # Each list entry creates one writer instance identified by its name.
+  # Multiple instances can be configured to fan-out to different MLDP endpoints.
+  grpc:
+    - name: grpc_main
+      thread-pool: 2                         # optional; default: 1 (worker threads for ingestion)
+      stream-max-bytes: 2097152              # optional; flush stream after this payload size (bytes)
+      stream-max-age-ms: 200                 # optional; flush stream after this age in milliseconds
+      mldp-pool:
+        provider-name: pvxs_provider
+        provider-description: "PVXS aggregate provider"   # optional
+        ingestion-url: dp-ingestion:50051
+        query-url: dp-query:50052
+        min-conn: 1
+        max-conn: 4
+        credentials:                         # optional; omit for insecure (no TLS)
+          pem-cert-chain: /etc/certs/client.crt
+          pem-private-key: /etc/certs/client.key
+          pem-root-certs: /etc/certs/ca.crt
 
-mldp-pool:
-  provider-name: pvxs_provider
-  provider-description: "PVXS aggregate provider"   # optional
-  ingestion-url: dp-ingestion:50051
-  query-url: dp-query:50052
-  min-conn: 1
-  max-conn: 4
-  credentials: # optional
-    pem-cert-chain: /etc/certs/client.crt
-    pem-private-key: /etc/certs/client.key
-    pem-root-certs: /etc/certs/ca.crt
+  # ========== HDF5 Writer (optional, requires MLDP_PVXS_ENABLE_HDF5=ON) ==========
+  # hdf5:
+  #   - name: hdf5_main
+  #     base-path: /data/hdf5
+  #     max-file-age-s: 3600                 # optional; default: 3600
+  #     max-file-size-mb: 512                # optional; default: 512
+  #     flush-interval-ms: 1000              # optional; default: 1000
+  #     compression-level: 0                 # optional; 0-9, default: 0 (no compression)
 
 reader:
   # ========== EPICS PVAccess Reader (Real-time Monitoring via PVXS) ==========
@@ -53,50 +67,7 @@ reader:
   # Purpose: Retrieve archived EPICS data from EPICS Archiver Appliance
   # Modes:
   #   - historical_once (default): one-shot fetch using start-date[/end-date]
-  #   - periodic_tail: wake up every poll-interval-sec and fetch explicit [now-lookback-sec, now]
-  - epics-archiver:
-      - name: archiver_reader_a
-        hostname: "archiver.example.com:11200"
-        mode: "historical_once"              # optional; default mode
-        start-date: "2026-01-01T00:00:00Z"
-        end-date: "2026-01-31T23:59:59Z"     # optional; omit for open-ended reads
-        tls-verify-peer: true                 # optional; default: true (verify cert chain)
-        tls-verify-host: true                 # optional; default: true (verify hostname)
-        connect-timeout-sec: 30               # optional; default: 30 seconds (connection establishment)
-        total-timeout-sec: 300                # optional; default: 300 seconds (5 minutes)
-        pvs:
-          - name: "SYSTEM:SENSOR:TEMPERATURE:MAIN"
-          - name: "SYSTEM:ACTUATOR:PRESSURE:OUTLET"
-  
-      - name: archiver_reader_long_streaming
-        hostname: "archiver.example.com:11200"
-        start-date: "2026-01-01T00:00:00Z"
-        tls-verify-peer: false                # optional; disable only for internal/self-signed testing
-        tls-verify-host: false                # must also disable hostname check when peer verify is off
-        connect-timeout-sec: 30               # connection timeout (must be > 0)
-        total-timeout-sec: 0                  # 0 = infinite (for long streaming sessions)
-        pvs:                                  # Low-speed detection (1KB/s for 60s) still catches stalls
-          - name: "REACTOR:CORE:FLOW:RATE"
-  
-      - name: archiver_reader_b
-        hostname: "archiver2.example.com:11200"
-        start-date: "2026-02-01T00:00:00Z"
-        connect-timeout-sec: 60               # longer timeout for slower archiver
-        total-timeout-sec: 600                # longer operation timeout (10 minutes)
-        pvs:
-          - name: "FACILITY:POWER:VOLTAGE:PRIMARY"
-          - name: "FACILITY:COOLING:TEMPERATURE:SECONDARY"
-  
-      - name: archiver_reader_tail_polling
-        hostname: "archiver.example.com:11200"
-        mode: "periodic_tail"
-        poll-interval-sec: 5                  # required; wakeup interval
-        lookback-sec: 5                       # optional; defaults to poll-interval-sec; must be <= poll-interval-sec
-        batch-duration-sec: 1                 # optional; split published batches by historical sample-time span
-        pvs:
-          - name: "SYSTEM:SENSOR:TEMPERATURE:MAIN"
-  
-  # ========== EPICS Archiver Reader (Historical Data Retrieval) ==========
+  #   - periodic_tail: wake up every poll-interval-sec and fetch [now-lookback-sec, now]
   - epics-archiver:
       - name: archiver_reader_a
         hostname: "archiver.example.com:11200"
@@ -119,5 +90,6 @@ reader:
         batch-duration-sec: 1                 # optional; split batches by historical sample-time span
         pvs:
           - name: "SYSTEM:SENSOR:TEMPERATURE:MAIN"
+
 metrics:                                 # optional; omit to disable Prometheus endpoint
   endpoint: 0.0.0.0:9464

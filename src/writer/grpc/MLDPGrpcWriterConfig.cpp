@@ -8,26 +8,31 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
-#include <controller/MLDPPVXSControllerConfig.h>
 #include <writer/grpc/MLDPGrpcWriterConfig.h>
 
 using namespace mldp_pvxs_driver::writer;
-using namespace mldp_pvxs_driver::controller;
 using namespace mldp_pvxs_driver::config;
 
-MLDPGrpcWriterConfig MLDPGrpcWriterConfig::parse(const Config& root)
+MLDPGrpcWriterConfig MLDPGrpcWriterConfig::parse(const Config& grpcNode)
 {
     MLDPGrpcWriterConfig cfg;
 
-    // Pool configuration from root mldp-pool block
-    if (!root.hasChild(MldpPoolKey))
+    // name — required, non-empty
+    cfg.name = grpcNode.get(GrpcNameKey, "");
+    if (cfg.name.empty())
     {
-        throw Error("writer.grpc is enabled but '" + std::string(MldpPoolKey) + "' block is missing");
+        throw Error("writer.grpc instance is missing required '" + std::string(GrpcNameKey) + "' field");
     }
-    const auto poolNodes = root.subConfig(MldpPoolKey);
+
+    // Pool configuration from the writer.grpc[i].mldp-pool block
+    if (!grpcNode.hasChild(GrpcPoolKey))
+    {
+        throw Error("writer.grpc is enabled but '" + std::string(GrpcPoolKey) + "' block is missing");
+    }
+    const auto poolNodes = grpcNode.subConfig(GrpcPoolKey);
     if (poolNodes.empty())
     {
-        throw Error("'" + std::string(MldpPoolKey) + "' block is empty");
+        throw Error("'" + std::string(GrpcPoolKey) + "' block is empty");
     }
     try
     {
@@ -39,48 +44,48 @@ MLDPGrpcWriterConfig MLDPGrpcWriterConfig::parse(const Config& root)
     }
 
     // Thread pool size
-    if (root.hasChild(ControllerThreadPoolKey))
+    if (grpcNode.hasChild(GrpcThreadPoolKey))
     {
-        const auto nodes = root.subConfig(ControllerThreadPoolKey);
+        const auto nodes = grpcNode.subConfig(GrpcThreadPoolKey);
         if (!nodes.empty() && nodes.front().raw().has_val())
         {
             int val = 1;
             nodes.front() >> val;
             if (val <= 0)
             {
-                throw Error(std::string(ControllerThreadPoolKey) + " must be > 0");
+                throw Error(std::string(GrpcThreadPoolKey) + " must be > 0");
             }
             cfg.threadPoolSize = val;
         }
     }
 
     // Stream max bytes
-    if (root.hasChild(ControllerStreamMaxBytesKey))
+    if (grpcNode.hasChild(GrpcStreamMaxBytesKey))
     {
-        const auto nodes = root.subConfig(ControllerStreamMaxBytesKey);
+        const auto nodes = grpcNode.subConfig(GrpcStreamMaxBytesKey);
         if (!nodes.empty() && nodes.front().raw().has_val())
         {
             int val = 0;
             nodes.front() >> val;
             if (val <= 0)
             {
-                throw Error(std::string(ControllerStreamMaxBytesKey) + " must be > 0");
+                throw Error(std::string(GrpcStreamMaxBytesKey) + " must be > 0");
             }
             cfg.streamMaxBytes = static_cast<std::size_t>(val);
         }
     }
 
     // Stream max age
-    if (root.hasChild(ControllerStreamMaxAgeMsKey))
+    if (grpcNode.hasChild(GrpcStreamMaxAgeMsKey))
     {
-        const auto nodes = root.subConfig(ControllerStreamMaxAgeMsKey);
+        const auto nodes = grpcNode.subConfig(GrpcStreamMaxAgeMsKey);
         if (!nodes.empty() && nodes.front().raw().has_val())
         {
             int val = 0;
             nodes.front() >> val;
             if (val <= 0)
             {
-                throw Error(std::string(ControllerStreamMaxAgeMsKey) + " must be > 0");
+                throw Error(std::string(GrpcStreamMaxAgeMsKey) + " must be > 0");
             }
             cfg.streamMaxAge = std::chrono::milliseconds(val);
         }

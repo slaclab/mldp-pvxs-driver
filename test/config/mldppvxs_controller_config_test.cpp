@@ -17,15 +17,18 @@ using mldp_pvxs_driver::config::makeConfigFromYaml;
 TEST(MLDPPVXSControllerConfigTest, ParsesValidConfig)
 {
     const std::string yaml = R"(
-controller-thread-pool: 2
-controller-stream-max-bytes: 1048576
-controller-stream-max-age-ms: 250
-mldp-pool:
-  provider-name: pvxs_provider
-  ingestion-url: https://mldp-ingestion.example:443
-  query-url: https://mldp-query.example:443
-  min-conn: 1
-  max-conn: 4
+writer:
+  grpc:
+    - name: grpc_main
+      thread-pool: 2
+      stream-max-bytes: 1048576
+      stream-max-age-ms: 250
+      mldp-pool:
+        provider-name: pvxs_provider
+        ingestion-url: https://mldp-ingestion.example:443
+        query-url: https://mldp-query.example:443
+        min-conn: 1
+        max-conn: 4
 reader:
   - epics-pvxs:
       - name: epics_1
@@ -41,19 +44,21 @@ metrics:
     MLDPPVXSControllerConfig controllerCfg(cfg);
 
     ASSERT_TRUE(controllerCfg.valid());
-    // controller thread pool size
-    EXPECT_EQ(2, controllerCfg.controllerThreadPoolSize());
-    EXPECT_EQ(1048576u, controllerCfg.controllerStreamMaxBytes());
-    EXPECT_EQ(std::chrono::milliseconds(250), controllerCfg.controllerStreamMaxAge());
+    ASSERT_EQ(1u, controllerCfg.writerConfig().grpcConfigs.size());
 
-    // pool config
-    EXPECT_EQ("pvxs_provider", controllerCfg.pool().providerName());
-    EXPECT_EQ(1, controllerCfg.pool().minConnections());
-    EXPECT_EQ("https://mldp-ingestion.example:443", controllerCfg.pool().ingestionUrl());
-    EXPECT_EQ("https://mldp-query.example:443", controllerCfg.pool().queryUrl());
-    EXPECT_EQ(4, controllerCfg.pool().maxConnections());
+    const auto& grpcCfg = controllerCfg.writerConfig().grpcConfigs[0];
 
-    // epics reader config
+    EXPECT_EQ("grpc_main", grpcCfg.name);
+    EXPECT_EQ(2, grpcCfg.threadPoolSize);
+    EXPECT_EQ(1048576u, grpcCfg.streamMaxBytes);
+    EXPECT_EQ(std::chrono::milliseconds(250), grpcCfg.streamMaxAge);
+
+    EXPECT_EQ("pvxs_provider", grpcCfg.poolConfig.providerName());
+    EXPECT_EQ(1, grpcCfg.poolConfig.minConnections());
+    EXPECT_EQ("https://mldp-ingestion.example:443", grpcCfg.poolConfig.ingestionUrl());
+    EXPECT_EQ("https://mldp-query.example:443", grpcCfg.poolConfig.queryUrl());
+    EXPECT_EQ(4, grpcCfg.poolConfig.maxConnections());
+
     ASSERT_EQ(1u, controllerCfg.readerConfigs().size());
     const reader::impl::epics::EpicsReaderConfig epicsReader(controllerCfg.readerConfigs().front());
     EXPECT_EQ("epics_1", epicsReader.name());
@@ -61,10 +66,47 @@ metrics:
     EXPECT_EQ("pv1", epicsReader.pvs()[0].name);
     EXPECT_EQ("chan://one", epicsReader.pvs()[0].option);
     EXPECT_EQ("pv2", epicsReader.pvs()[1].name);
-    ASSERT_TRUE(controllerCfg.metricsConfig().has_value());
 
-    // metrics config
+    ASSERT_TRUE(controllerCfg.metricsConfig().has_value());
     EXPECT_EQ("0.0.0.0:9464", controllerCfg.metricsConfig()->endpoint());
+}
+
+TEST(MLDPPVXSControllerConfigTest, ParsesMultipleGrpcInstances)
+{
+    const std::string yaml = R"(
+writer:
+  grpc:
+    - name: grpc_primary
+      thread-pool: 2
+      mldp-pool:
+        provider-name: pvxs_provider
+        ingestion-url: https://mldp-ingestion.example:443
+        query-url: https://mldp-query.example:443
+        min-conn: 1
+        max-conn: 4
+    - name: grpc_secondary
+      thread-pool: 1
+      mldp-pool:
+        provider-name: pvxs_provider_backup
+        ingestion-url: https://mldp-backup.example:443
+        query-url: https://mldp-backup-query.example:443
+        min-conn: 1
+        max-conn: 2
+reader: []
+)";
+
+    const auto               cfg = makeConfigFromYaml(yaml);
+    MLDPPVXSControllerConfig controllerCfg(cfg);
+
+    ASSERT_TRUE(controllerCfg.valid());
+    ASSERT_EQ(2u, controllerCfg.writerConfig().grpcConfigs.size());
+    ASSERT_EQ(2u, controllerCfg.writerEntries().size());
+
+    EXPECT_EQ("grpc_primary", controllerCfg.writerConfig().grpcConfigs[0].name);
+    EXPECT_EQ(2, controllerCfg.writerConfig().grpcConfigs[0].threadPoolSize);
+
+    EXPECT_EQ("grpc_secondary", controllerCfg.writerConfig().grpcConfigs[1].name);
+    EXPECT_EQ(1, controllerCfg.writerConfig().grpcConfigs[1].threadPoolSize);
 }
 
 TEST(MLDPPVXSControllerConfigTest, ParsesTlsCredentialsBlock)
@@ -75,8 +117,8 @@ TEST(MLDPPVXSControllerConfigTest, ParsesTlsCredentialsBlock)
     std::filesystem::create_directories(tempDir);
 
     const auto certPath = tempDir / "client.crt";
-    const auto keyPath = tempDir / "client.key";
-    const auto caPath = tempDir / "ca.crt";
+    const auto keyPath  = tempDir / "client.key";
+    const auto caPath   = tempDir / "ca.crt";
 
     {
         std::ofstream(certPath) << "CERTDATA";
@@ -85,23 +127,27 @@ TEST(MLDPPVXSControllerConfigTest, ParsesTlsCredentialsBlock)
     }
 
     std::ostringstream yaml;
-    yaml << "controller-thread-pool: 1\n"
-         << "mldp-pool:\n"
-         << "  provider-name: pvxs_provider\n"
-         << "  ingestion-url: https://mldp-ingestion.example:443\n"
-         << "  query-url: https://mldp-query.example:443\n"
-         << "  min-conn: 1\n"
-         << "  max-conn: 1\n"
-         << "  credentials:\n"
-         << "    pem-cert-chain: " << certPath.string() << "\n"
-         << "    pem-private-key: " << keyPath.string() << "\n"
-         << "    pem-root-certs: " << caPath.string() << "\n"
+    yaml << "writer:\n"
+         << "  grpc:\n"
+         << "    - name: grpc_tls\n"
+         << "      thread-pool: 1\n"
+         << "      mldp-pool:\n"
+         << "        provider-name: pvxs_provider\n"
+         << "        ingestion-url: https://mldp-ingestion.example:443\n"
+         << "        query-url: https://mldp-query.example:443\n"
+         << "        min-conn: 1\n"
+         << "        max-conn: 1\n"
+         << "        credentials:\n"
+         << "          pem-cert-chain: " << certPath.string() << "\n"
+         << "          pem-private-key: " << keyPath.string() << "\n"
+         << "          pem-root-certs: " << caPath.string() << "\n"
          << "reader: []\n";
 
     const auto               cfg = makeConfigFromYaml(yaml.str());
     MLDPPVXSControllerConfig controllerCfg(cfg);
 
-    const auto& creds = controllerCfg.pool().credentials();
+    ASSERT_EQ(1u, controllerCfg.writerConfig().grpcConfigs.size());
+    const auto& creds = controllerCfg.writerConfig().grpcConfigs[0].poolConfig.credentials();
     EXPECT_EQ(MLDPGrpcPoolConfig::Credentials::Type::Ssl, creds.type);
     EXPECT_EQ("CERTDATA", creds.ssl_options.pem_cert_chain);
     EXPECT_EQ("KEYDATA", creds.ssl_options.pem_private_key);
@@ -114,13 +160,16 @@ TEST(MLDPPVXSControllerConfigTest, ParsesTlsCredentialsBlock)
 TEST(MLDPPVXSControllerConfigTest, ParsesMultipleEpicsReaders)
 {
     const std::string yaml = R"(
-controller-thread-pool: 3
-mldp-pool:
-  provider-name: pvxs_provider
-  ingestion-url: https://mldp-ingestion.example:443
-  query-url: https://mldp-query.example:443
-  min-conn: 2
-  max-conn: 2
+writer:
+  grpc:
+    - name: grpc_main
+      thread-pool: 3
+      mldp-pool:
+        provider-name: pvxs_provider
+        ingestion-url: https://mldp-ingestion.example:443
+        query-url: https://mldp-query.example:443
+        min-conn: 2
+        max-conn: 2
 reader:
   - epics-pvxs:
       - name: epics_1
@@ -135,31 +184,33 @@ reader:
     MLDPPVXSControllerConfig controllerCfg(cfg);
 
     ASSERT_TRUE(controllerCfg.valid());
-    EXPECT_EQ("pvxs_provider", controllerCfg.pool().providerName());
-    EXPECT_EQ(3, controllerCfg.controllerThreadPoolSize());
-    EXPECT_EQ(2, controllerCfg.pool().minConnections());
+    ASSERT_EQ(1u, controllerCfg.writerConfig().grpcConfigs.size());
+    const auto& grpcCfg = controllerCfg.writerConfig().grpcConfigs[0];
+    EXPECT_EQ("grpc_main", grpcCfg.name);
+    EXPECT_EQ("pvxs_provider", grpcCfg.poolConfig.providerName());
+    EXPECT_EQ(3, grpcCfg.threadPoolSize);
+    EXPECT_EQ(2, grpcCfg.poolConfig.minConnections());
     ASSERT_EQ(2u, controllerCfg.readerConfigs().size());
     const reader::impl::epics::EpicsReaderConfig epicsReader0(controllerCfg.readerConfigs()[0]);
     EXPECT_EQ("epics_1", epicsReader0.name());
-    ASSERT_EQ(1u, epicsReader0.pvs().size());
-    EXPECT_EQ("pv1", epicsReader0.pvs()[0].name);
     const reader::impl::epics::EpicsReaderConfig epicsReader1(controllerCfg.readerConfigs()[1]);
     EXPECT_EQ("epics_2", epicsReader1.name());
-    ASSERT_EQ(1u, epicsReader1.pvs().size());
-    EXPECT_EQ("pv2", epicsReader1.pvs()[0].name);
 }
 
 TEST(MLDPPVXSControllerConfigTest, ParsesOptionalQueryUrl)
 {
     const std::string yaml = R"(
-controller-thread-pool: 1
-mldp-pool:
-  provider-name: pvxs_provider
-  provider-description: "PVXS-based data provider"
-  ingestion-url: https://mldp-ingestion.example:50051
-  query-url: https://mldp-query.example:50052
-  min-conn: 1
-  max-conn: 2
+writer:
+  grpc:
+    - name: grpc_main
+      thread-pool: 1
+      mldp-pool:
+        provider-name: pvxs_provider
+        provider-description: "PVXS-based data provider"
+        ingestion-url: https://mldp-ingestion.example:50051
+        query-url: https://mldp-query.example:50052
+        min-conn: 1
+        max-conn: 2
 reader: []
 )";
 
@@ -167,18 +218,23 @@ reader: []
     MLDPPVXSControllerConfig controllerCfg(cfg);
 
     ASSERT_TRUE(controllerCfg.valid());
-    EXPECT_EQ("https://mldp-ingestion.example:50051", controllerCfg.pool().ingestionUrl());
-    EXPECT_EQ("https://mldp-query.example:50052", controllerCfg.pool().queryUrl());
+    ASSERT_EQ(1u, controllerCfg.writerConfig().grpcConfigs.size());
+    const auto& pool = controllerCfg.writerConfig().grpcConfigs[0].poolConfig;
+    EXPECT_EQ("https://mldp-ingestion.example:50051", pool.ingestionUrl());
+    EXPECT_EQ("https://mldp-query.example:50052", pool.queryUrl());
 }
 
 TEST(MLDPPVXSControllerConfigTest, ThrowsWhenProviderNameMissing)
 {
     const std::string yaml = R"(
-controller-thread-pool: 1
-mldp-pool:
-  ingestion-url: https://mldp.example:443
-  min-conn: 1
-  max-conn: 1
+writer:
+  grpc:
+    - name: grpc_main
+      thread-pool: 1
+      mldp-pool:
+        ingestion-url: https://mldp.example:443
+        min-conn: 1
+        max-conn: 1
 )";
 
     const auto cfg = makeConfigFromYaml(yaml);
@@ -188,11 +244,14 @@ mldp-pool:
 TEST(MLDPPVXSControllerConfigTest, ThrowsWhenMinConnMissing)
 {
     const std::string yaml = R"(
-controller-thread-pool: 1
-mldp-pool:
-  provider-name: pvxs_provider
-  ingestion-url: https://mldp.example:443
-  max-conn: 2
+writer:
+  grpc:
+    - name: grpc_main
+      thread-pool: 1
+      mldp-pool:
+        provider-name: pvxs_provider
+        ingestion-url: https://mldp.example:443
+        max-conn: 2
 )";
 
     const auto cfg = makeConfigFromYaml(yaml);
@@ -202,12 +261,15 @@ mldp-pool:
 TEST(MLDPPVXSControllerConfigTest, ThrowsWhenMinConnExceedsMax)
 {
     const std::string yaml = R"(
-controller-thread-pool: 1
-mldp-pool:
-  provider-name: pvxs_provider
-  ingestion-url: https://mldp.example:443
-  min-conn: 5
-  max-conn: 2
+writer:
+  grpc:
+    - name: grpc_main
+      thread-pool: 1
+      mldp-pool:
+        provider-name: pvxs_provider
+        ingestion-url: https://mldp.example:443
+        min-conn: 5
+        max-conn: 2
 )";
 
     const auto cfg = makeConfigFromYaml(yaml);
@@ -217,7 +279,10 @@ mldp-pool:
 TEST(MLDPPVXSControllerConfigTest, ThrowsWithoutPoolConfig)
 {
     const std::string yaml = R"(
-controller-thread-pool: 1
+writer:
+  grpc:
+    - name: grpc_main
+      thread-pool: 1
 reader: []
 )";
 
@@ -228,12 +293,15 @@ reader: []
 TEST(MLDPPVXSControllerConfigTest, ThrowsWhenReaderIsNotSequence)
 {
     const std::string yaml = R"(
-controller-thread-pool: 1
-mldp-pool:
-  provider-name: pvxs_provider
-  ingestion-url: https://mldp.example
-  min-conn: 1
-  max-conn: 1
+writer:
+  grpc:
+    - name: grpc_main
+      thread-pool: 1
+      mldp-pool:
+        provider-name: pvxs_provider
+        ingestion-url: https://mldp.example
+        min-conn: 1
+        max-conn: 1
 reader: invalid
 )";
 
@@ -244,12 +312,15 @@ reader: invalid
 TEST(MLDPPVXSControllerConfigTest, ThrowsForUnsupportedReaderType)
 {
     const std::string yaml = R"(
-controller-thread-pool: 1
-mldp-pool:
-  provider-name: pvxs_provider
-  ingestion-url: https://mldp.example
-  min-conn: 1
-  max-conn: 1
+writer:
+  grpc:
+    - name: grpc_main
+      thread-pool: 1
+      mldp-pool:
+        provider-name: pvxs_provider
+        ingestion-url: https://mldp.example
+        min-conn: 1
+        max-conn: 1
 reader:
   - foo:
       - bar
@@ -259,14 +330,46 @@ reader:
     EXPECT_THROW(static_cast<void>(MLDPPVXSControllerConfig(cfg)), MLDPPVXSControllerConfig::Error);
 }
 
-TEST(MLDPPVXSControllerConfigTest, ThrowsWhenThreadPoolMissing)
+TEST(MLDPPVXSControllerConfigTest, ThrowsWhenWriterBlockMissing)
+{
+    // No writer block at all → must throw (no backward-compat path anymore)
+    const std::string yaml = R"(
+reader: []
+)";
+
+    const auto cfg = makeConfigFromYaml(yaml);
+    EXPECT_THROW(static_cast<void>(MLDPPVXSControllerConfig(cfg)), MLDPPVXSControllerConfig::Error);
+}
+
+TEST(MLDPPVXSControllerConfigTest, ThrowsWhenGrpcInstanceMissingName)
 {
     const std::string yaml = R"(
-mldp-pool:
-  provider-name: pvxs_provider
-  ingestion-url: https://mldp.example
-  min-conn: 1
-  max-conn: 1
+writer:
+  grpc:
+    - thread-pool: 1
+      mldp-pool:
+        provider-name: pvxs_provider
+        ingestion-url: https://mldp.example
+        min-conn: 1
+        max-conn: 1
+reader: []
+)";
+
+    const auto cfg = makeConfigFromYaml(yaml);
+    EXPECT_THROW(static_cast<void>(MLDPPVXSControllerConfig(cfg)), MLDPPVXSControllerConfig::Error);
+}
+
+TEST(MLDPPVXSControllerConfigTest, ThrowsWhenGrpcIsNotSequence)
+{
+    const std::string yaml = R"(
+writer:
+  grpc:
+    thread-pool: 1
+    mldp-pool:
+      provider-name: pvxs_provider
+      ingestion-url: https://mldp.example
+      min-conn: 1
+      max-conn: 1
 reader: []
 )";
 

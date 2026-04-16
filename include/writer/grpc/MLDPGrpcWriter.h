@@ -65,7 +65,7 @@ public:
 
     std::string name() const override
     {
-        return "grpc";
+        return config_.name;
     }
 
     void start() override;

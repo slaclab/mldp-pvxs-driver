@@ -87,17 +87,25 @@ std::string mldp_pvxs_driver::cli::formatStartupConfig(
     std::ostringstream out;
     out << "=== Effective Startup Configuration ===\n";
     out << "file: " << configPath << "\n";
-    out << "controller: threads=" << controllerConfig.controllerThreadPoolSize()
-        << " stream_max_bytes=" << controllerConfig.controllerStreamMaxBytes()
-        << " stream_max_age_ms=" << controllerConfig.controllerStreamMaxAge().count() << "\n";
 
-    const auto& pool = controllerConfig.pool();
-    out << "mldp-pool: provider=" << pool.providerName()
-        << " conn=" << pool.minConnections() << ".." << pool.maxConnections()
-        << " ingestion=" << pool.ingestionUrl()
-        << " query=" << pool.queryUrl()
-        << " credentials=" << credentialsSummary(pool.credentials())
-        << "\n";
+    for (const auto& grpcCfg : controllerConfig.writerConfig().grpcConfigs)
+    {
+        out << "writer.grpc[" << grpcCfg.name << "]: threads=" << grpcCfg.threadPoolSize
+            << " stream_max_bytes=" << grpcCfg.streamMaxBytes
+            << " stream_max_age_ms=" << grpcCfg.streamMaxAge.count() << "\n";
+
+        const auto& pool = grpcCfg.poolConfig;
+        out << "  mldp-pool: provider=" << pool.providerName()
+            << " conn=" << pool.minConnections() << ".." << pool.maxConnections()
+            << " ingestion=" << pool.ingestionUrl()
+            << " query=" << pool.queryUrl()
+            << " credentials=" << credentialsSummary(pool.credentials())
+            << "\n";
+    }
+    for (const auto& hdf5Cfg : controllerConfig.writerConfig().hdf5Configs)
+    {
+        out << "writer.hdf5[" << hdf5Cfg.name << "]: base-path=" << hdf5Cfg.basePath << "\n";
+    }
 
     if (controllerConfig.metricsConfig().has_value() && controllerConfig.metricsConfig()->valid())
     {

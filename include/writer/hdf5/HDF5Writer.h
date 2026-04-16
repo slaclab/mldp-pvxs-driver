@@ -68,7 +68,7 @@ public:
     explicit HDF5Writer(HDF5WriterConfig config);
     ~HDF5Writer() override;
 
-    std::string name() const override { return "hdf5"; }
+    std::string name() const override { return config_.name; }
     void start() override;
     bool push(util::bus::IDataBus::EventBatch batch) noexcept override;
     void stop() noexcept override;

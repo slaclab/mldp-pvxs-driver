@@ -43,7 +43,7 @@ std::shared_ptr<MLDPPVXSController> MLDPPVXSController::create(const config::Con
 MLDPPVXSController::MLDPPVXSController(const config::Config& config)
     : logger_(makeControllerLogger())
     , config_(config)
-    , thread_pool_(std::make_shared<BS::light_thread_pool>(config_.controllerThreadPoolSize()))
+    , thread_pool_(std::make_shared<BS::light_thread_pool>(1)) // resized in start()
     , metrics_(std::make_shared<metrics::Metrics>(*config_.metricsConfig()))
     , running_(false)
 {
@@ -69,6 +69,10 @@ void MLDPPVXSController::start()
 
     running_.store(true);
     infof(*logger_, "Controller is starting");
+
+    // Resize the fan-out thread pool to match the number of writer instances.
+    const std::size_t numWriters = config_.writerEntries().size();
+    thread_pool_ = std::make_shared<BS::light_thread_pool>(std::max(numWriters, std::size_t{1}));
 
     // -- Build writers via factory from configured entries --
     for (const auto& [type, writerNode] : config_.writerEntries())

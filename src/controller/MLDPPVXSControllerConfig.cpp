@@ -16,8 +16,6 @@
 using namespace mldp_pvxs_driver::config;
 using namespace mldp_pvxs_driver::metrics;
 using namespace mldp_pvxs_driver::controller;
-using namespace mldp_pvxs_driver::util::pool;
-using namespace mldp_pvxs_driver::config;
 using namespace mldp_pvxs_driver::writer;
 
 MLDPPVXSControllerConfig::MLDPPVXSControllerConfig() = default;
@@ -35,31 +33,6 @@ MLDPPVXSControllerConfig::MLDPPVXSControllerConfig(const ::mldp_pvxs_driver::con
 bool MLDPPVXSControllerConfig::valid() const
 {
     return valid_;
-}
-
-const MLDPGrpcPoolConfig& MLDPPVXSControllerConfig::pool() const
-{
-    return pool_.value();
-}
-
-const std::string& MLDPPVXSControllerConfig::providerName() const
-{
-    return pool_.value().providerName();
-}
-
-int MLDPPVXSControllerConfig::controllerThreadPoolSize() const
-{
-    return controllerThreadPoolSize_;
-}
-
-std::size_t MLDPPVXSControllerConfig::controllerStreamMaxBytes() const
-{
-    return controllerStreamMaxBytes_;
-}
-
-std::chrono::milliseconds MLDPPVXSControllerConfig::controllerStreamMaxAge() const
-{
-    return controllerStreamMaxAge_;
 }
 
 const std::vector<Config>&
@@ -92,134 +65,63 @@ const mldp_pvxs_driver::writer::WriterConfig& MLDPPVXSControllerConfig::writerCo
 
 void MLDPPVXSControllerConfig::parse(const ::mldp_pvxs_driver::config::Config& root)
 {
-    parseThreadPool(root);
-    parseStreamLimits(root);
     parseWriter(root);
-    parsePool(root);
     parseReaders(root);
     parseMetrics(root);
     valid_ = true;
-}
-
-void MLDPPVXSControllerConfig::parseThreadPool(const ::mldp_pvxs_driver::config::Config& root)
-{
-    using namespace mldp_pvxs_driver::controller;
-    if (!root.hasChild(ControllerThreadPoolKey))
-    {
-        controllerThreadPoolSize_ = 1;
-        return;
-    }
-
-    const auto threadPoolNodes = root.subConfig(ControllerThreadPoolKey);
-    if (threadPoolNodes.empty())
-    {
-        controllerThreadPoolSize_ = 1;
-        return;
-    }
-
-    const auto& threadPoolNode = threadPoolNodes.front();
-    if (!threadPoolNode.raw().has_val())
-    {
-        throw Error(std::string(ControllerThreadPoolKey) + " must be a scalar");
-    }
-
-    threadPoolNode >> controllerThreadPoolSize_;
-    if (controllerThreadPoolSize_ <= 0)
-    {
-        throw Error(std::string(ControllerThreadPoolKey) + " must be greater than zero");
-    }
 }
 
 void MLDPPVXSControllerConfig::parseWriter(const ::mldp_pvxs_driver::config::Config& root)
 {
     writerEntries_.clear();
 
-    if (root.hasChild(WriterKey))
+    if (!root.hasChild(WriterKey))
     {
-        const auto writerNodes = root.subConfig(WriterKey);
-        if (writerNodes.empty())
-        {
-            throw Error("writer block is present but empty");
-        }
-        const auto& writerNode = writerNodes.front();
-        try
-        {
-            writerConfig_ = WriterConfig::parse(writerNode, root);
-        }
-        catch (const WriterConfig::Error& e)
-        {
-            throw Error(e.what());
-        }
-        catch (const std::invalid_argument& e)
-        {
-            throw Error(e.what());
-        }
-
-        // Build writerEntries_: gRPC writer uses the root node (pool keys live there);
-        // HDF5 writer uses its own sub-node.
-        if (writerConfig_.grpcEnabled)
-        {
-            writerEntries_.push_back({"grpc", root});
-        }
-        if (writerConfig_.hdf5Enabled && writerNode.hasChild(WriterHdf5Key))
-        {
-            const auto hdf5Nodes = writerNode.subConfig(WriterHdf5Key);
-            if (!hdf5Nodes.empty())
-            {
-                writerEntries_.push_back({"hdf5", hdf5Nodes.front()});
-            }
-        }
-    }
-    else
-    {
-        // No writer block → default: gRPC enabled, parsed from root
-        writerConfig_ = WriterConfig{};
-        writerConfig_.grpcEnabled = true;
-        writerConfig_.hdf5Enabled = false;
-        try
-        {
-            writerConfig_.grpcConfig = MLDPGrpcWriterConfig::parse(root);
-        }
-        catch (const MLDPGrpcWriterConfig::Error& e)
-        {
-            throw Error(e.what());
-        }
-        writerEntries_.push_back({"grpc", root});
-    }
-}
-
-void MLDPPVXSControllerConfig::parsePool(const ::mldp_pvxs_driver::config::Config& root)
-{
-    using namespace mldp_pvxs_driver::controller;
-    if (!writerConfig_.grpcEnabled)
-    {
-        // gRPC writer not active — pool not required
-        return;
-    }
-    if (!root.hasChild(MldpPoolKey))
-    {
-        throw Error("writer.grpc is enabled but '" + std::string(MldpPoolKey) + "' block is missing");
+        throw Error("'writer' block is missing; configure at least one writer under writer.grpc or writer.hdf5");
     }
 
-    const auto poolNodes = root.subConfig(MldpPoolKey);
-    if (poolNodes.empty())
+    const auto writerNodes = root.subConfig(WriterKey);
+    if (writerNodes.empty())
     {
-        throw Error(makeMissingFieldMessage(MldpPoolKey));
+        throw Error("writer block is present but empty");
     }
+    const auto& writerNode = writerNodes.front();
 
     try
     {
-        pool_ = util::pool::MLDPGrpcPoolConfig(poolNodes.front());
+        writerConfig_ = WriterConfig::parse(writerNode);
     }
-    catch (const util::pool::MLDPGrpcPoolConfig::Error& e)
+    catch (const WriterConfig::Error& e)
     {
         throw Error(e.what());
+    }
+    catch (const std::invalid_argument& e)
+    {
+        throw Error(e.what());
+    }
+
+    // Build one writerEntry per configured instance (sequence items).
+    // The config node passed to the factory is the per-instance map node.
+    if (writerNode.hasChild(WriterGrpcKey))
+    {
+        const auto grpcItems = writerNode.subConfig(WriterGrpcKey);
+        for (const auto& item : grpcItems)
+        {
+            writerEntries_.push_back({"grpc", item});
+        }
+    }
+    if (writerNode.hasChild(WriterHdf5Key))
+    {
+        const auto hdf5Items = writerNode.subConfig(WriterHdf5Key);
+        for (const auto& item : hdf5Items)
+        {
+            writerEntries_.push_back({"hdf5", item});
+        }
     }
 }
 
 void MLDPPVXSControllerConfig::parseReaders(const ::mldp_pvxs_driver::config::Config& root)
 {
-    using namespace mldp_pvxs_driver::controller;
     readerConfigs_.clear();
     readerEntries_.clear();
 
@@ -279,7 +181,6 @@ void MLDPPVXSControllerConfig::parseReaders(const ::mldp_pvxs_driver::config::Co
 
 void MLDPPVXSControllerConfig::parseMetrics(const ::mldp_pvxs_driver::config::Config& root)
 {
-    using namespace mldp_pvxs_driver::controller;
     metricsConfig_.reset();
     if (!root.hasChild(MetricsKey))
     {
@@ -294,40 +195,4 @@ void MLDPPVXSControllerConfig::parseMetrics(const ::mldp_pvxs_driver::config::Co
     }
 
     metricsConfig_.emplace(metricsNodes.front());
-}
-
-void MLDPPVXSControllerConfig::parseStreamLimits(const ::mldp_pvxs_driver::config::Config& root)
-{
-    using namespace mldp_pvxs_driver::controller;
-    if (root.hasChild(ControllerStreamMaxBytesKey))
-    {
-        const auto nodes = root.subConfig(ControllerStreamMaxBytesKey);
-        if (nodes.empty() || !nodes.front().raw().has_val())
-        {
-            throw Error(std::string(ControllerStreamMaxBytesKey) + " must be a scalar");
-        }
-        int value = 0;
-        nodes.front() >> value;
-        if (value <= 0)
-        {
-            throw Error(std::string(ControllerStreamMaxBytesKey) + " must be greater than zero");
-        }
-        controllerStreamMaxBytes_ = static_cast<std::size_t>(value);
-    }
-
-    if (root.hasChild(ControllerStreamMaxAgeMsKey))
-    {
-        const auto nodes = root.subConfig(ControllerStreamMaxAgeMsKey);
-        if (nodes.empty() || !nodes.front().raw().has_val())
-        {
-            throw Error(std::string(ControllerStreamMaxAgeMsKey) + " must be a scalar");
-        }
-        int value = 0;
-        nodes.front() >> value;
-        if (value <= 0)
-        {
-            throw Error(std::string(ControllerStreamMaxAgeMsKey) + " must be greater than zero");
-        }
-        controllerStreamMaxAge_ = std::chrono::milliseconds(value);
-    }
 }

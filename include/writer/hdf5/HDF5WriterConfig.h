@@ -19,7 +19,8 @@
 
 namespace mldp_pvxs_driver::writer {
 
-/// YAML keys for the writer.hdf5 block.
+/// YAML keys for the writer.hdf5[i] block.
+inline constexpr char HDF5NameKey[]            = "name";
 inline constexpr char HDF5BasePathKey[]        = "base-path";
 inline constexpr char HDF5MaxFileAgeKey[]      = "max-file-age-s";
 inline constexpr char HDF5MaxFileSizeMBKey[]   = "max-file-size-mb";
@@ -41,6 +42,9 @@ struct HDF5WriterConfig {
 
     /// Directory where HDF5 files are created.  Required.
     std::string basePath;
+
+    /// Unique instance name (required; writer.hdf5[i].name).
+    std::string name;
 
     /// Maximum age of an open file before rotation.  Default: 1 hour.
     std::chrono::seconds maxFileAge{3600};

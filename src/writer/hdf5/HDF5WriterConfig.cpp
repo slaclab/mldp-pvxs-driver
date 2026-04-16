@@ -17,6 +17,13 @@ HDF5WriterConfig HDF5WriterConfig::parse(const Config& node)
 {
     HDF5WriterConfig cfg;
 
+    // name — required, non-empty
+    cfg.name = node.get(HDF5NameKey, "");
+    if (cfg.name.empty())
+    {
+        throw Error("writer.hdf5 instance is missing required '" + std::string(HDF5NameKey) + "' field");
+    }
+
     // base-path — required
     cfg.basePath = node.get(HDF5BasePathKey, "");
     if (cfg.basePath.empty())

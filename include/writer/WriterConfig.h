@@ -14,63 +14,63 @@
 #include <writer/grpc/MLDPGrpcWriterConfig.h>
 #include <writer/hdf5/HDF5WriterConfig.h>
 
-#include <optional>
 #include <stdexcept>
+#include <vector>
 
 namespace mldp_pvxs_driver::writer {
 
 /// YAML key for the top-level writer block.
-inline constexpr char WriterKey[]       = "writer";
-inline constexpr char WriterGrpcKey[]   = "grpc";
-inline constexpr char WriterHdf5Key[]   = "hdf5";
-inline constexpr char WriterEnabledKey[] = "enabled";
+inline constexpr char WriterKey[]     = "writer";
+inline constexpr char WriterGrpcKey[] = "grpc";
+inline constexpr char WriterHdf5Key[] = "hdf5";
 
 /**
  * @brief Top-level writer configuration.
  *
- * Controls which output destinations are active.  At least one writer
- * must be enabled; if none are enabled @ref parse throws
- * `std::invalid_argument`.
+ * Each writer type is configured as a YAML sequence; each sequence entry
+ * becomes one writer instance identified by its `name` field.  Presence in
+ * the sequence is sufficient — there is no separate `enabled` flag.  At
+ * least one instance (of any type) must be configured.
  *
- * Backward compatibility: configs with no `writer:` block default to
- * `grpcEnabled = true`, `hdf5Enabled = false`.
- *
- * YAML example (both writers enabled):
+ * YAML example (two gRPC writers + one HDF5 writer):
  * @code{.yaml}
  * writer:
  *   grpc:
- *     enabled: true
+ *     - name: grpc_main
+ *       thread-pool: 2
+ *       mldp-pool: { ... }
+ *     - name: grpc_backup
+ *       mldp-pool: { ... }
  *   hdf5:
- *     enabled: true
- *     base-path: /data/hdf5
- *     max-file-age-s: 3600
+ *     - name: hdf5_local
+ *       base-path: /data/hdf5
  * @endcode
  */
-struct WriterConfig {
-    class Error : public std::runtime_error {
+struct WriterConfig
+{
+    class Error : public std::runtime_error
+    {
     public:
         using std::runtime_error::runtime_error;
     };
 
-    bool grpcEnabled{true};
-    bool hdf5Enabled{false};
+    /// One entry per configured gRPC writer instance (preserves declaration order).
+    std::vector<MLDPGrpcWriterConfig> grpcConfigs;
 
-    std::optional<MLDPGrpcWriterConfig> grpcConfig;
-    std::optional<HDF5WriterConfig>     hdf5Config;
+    /// One entry per configured HDF5 writer instance (preserves declaration order).
+    std::vector<HDF5WriterConfig> hdf5Configs;
 
-    /** @return true if at least one writer is enabled. */
-    bool anyEnabled() const noexcept { return grpcEnabled || hdf5Enabled; }
+    /** @return true if at least one writer instance is configured. */
+    bool anyEnabled() const noexcept { return !grpcConfigs.empty() || !hdf5Configs.empty(); }
 
     /**
      * @brief Parse the `writer:` YAML block.
      *
      * @param writerNode  Config node anchored at `writer`.
-     * @param root        Root YAML config (needed for pool and thread-pool keys).
-     * @throws WriterConfig::Error on bad config.
-     * @throws std::invalid_argument when no writer is enabled.
+     * @throws WriterConfig::Error on bad config (bad sequence shape, parse errors).
+     * @throws std::invalid_argument when no writer instance is configured.
      */
-    static WriterConfig parse(const config::Config& writerNode,
-                              const config::Config& root);
+    static WriterConfig parse(const config::Config& writerNode);
 };
 
 } // namespace mldp_pvxs_driver::writer

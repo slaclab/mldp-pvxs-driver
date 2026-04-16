@@ -19,25 +19,34 @@
 
 namespace mldp_pvxs_driver::writer {
 
+// ---------------------------------------------------------------------------
+// YAML keys owned by the gRPC writer block (under writer.grpc[i]).
+// ---------------------------------------------------------------------------
+inline constexpr char GrpcNameKey[]           = "name";
+inline constexpr char GrpcPoolKey[]           = "mldp-pool";
+inline constexpr char GrpcThreadPoolKey[]     = "thread-pool";
+inline constexpr char GrpcStreamMaxBytesKey[] = "stream-max-bytes";
+inline constexpr char GrpcStreamMaxAgeMsKey[] = "stream-max-age-ms";
+
 /**
  * @brief Configuration for the gRPC ingestion writer.
  *
- * Extracts the gRPC-specific knobs that were previously embedded in
- * `MLDPPVXSControllerConfig` and collocates them with the writer they
- * govern.
+ * All gRPC-specific knobs live under the `writer.grpc` YAML block.
  *
  * YAML mapping:
  * @code{.yaml}
  * writer:
  *   grpc:
- *     enabled: true    # parsed by WriterConfig, not here
- * # pool config is read from the root mldp-pool block
- * mldp-pool:
- *   provider-name: …
- *   …
- * controller-thread-pool: 4
- * controller-stream-max-bytes: 2097152
- * controller-stream-max-age-ms: 200
+ *     enabled: true                   # parsed by WriterConfig, not here
+ *     thread-pool: 4                  # optional; default: 1
+ *     stream-max-bytes: 2097152       # optional; flush stream after this payload size
+ *     stream-max-age-ms: 200          # optional; flush stream after this age in ms
+ *     mldp-pool:
+ *       provider-name: …
+ *       ingestion-url: …
+ *       query-url: …
+ *       min-conn: 1
+ *       max-conn: 4
  * @endcode
  */
 struct MLDPGrpcWriterConfig
@@ -51,6 +60,9 @@ struct MLDPGrpcWriterConfig
     /// Underlying pool configuration (connection endpoints, credentials, …).
     util::pool::MLDPGrpcPoolConfig poolConfig;
 
+    /// Unique instance name (required; writer.grpc[i].name).
+    std::string name;
+
     /// Number of concurrent ingestion worker threads.
     int threadPoolSize{1};
 
@@ -61,13 +73,14 @@ struct MLDPGrpcWriterConfig
     std::chrono::milliseconds streamMaxAge{200};
 
     /**
-     * @brief Parse gRPC writer configuration.
+     * @brief Parse gRPC writer configuration from the `writer.grpc` YAML node.
      *
-     * @param root  Root YAML config node (contains `mldp-pool`,
-     *              `controller-thread-pool`, `controller-stream-*`).
+     * @param grpcNode  Config node anchored at `writer.grpc` (contains
+     *                  `mldp-pool`, `thread-pool`, `stream-max-bytes`,
+     *                  `stream-max-age-ms`).
      * @throws MLDPGrpcWriterConfig::Error on validation failures.
      */
-    static MLDPGrpcWriterConfig parse(const config::Config& root);
+    static MLDPGrpcWriterConfig parse(const config::Config& grpcNode);
 };
 
 } // namespace mldp_pvxs_driver::writer
