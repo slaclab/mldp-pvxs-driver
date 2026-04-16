@@ -69,14 +69,14 @@ public:
     /**
      * @brief Gauge for idle connections available in the pool.
      */
-    void setPoolConnectionsAvailable(double value, prometheus::Labels tags = {});
+    void   setPoolConnectionsAvailable(double value, prometheus::Labels tags = {});
     double poolConnectionsInUse(prometheus::Labels tags = {}) const;
     double poolConnectionsAvailable(prometheus::Labels tags = {}) const;
 
     // Controller metrics -------------------------------------------------
-    void   observeControllerSendTimeSeconds(double value, prometheus::Labels tags = {});
-    void   setControllerQueueDepth(double value, prometheus::Labels tags = {});
-    void   setControllerChannelQueueDepth(double value, prometheus::Labels tags = {});
+    void observeControllerSendTimeSeconds(double value, prometheus::Labels tags = {});
+    void setControllerQueueDepth(double value, prometheus::Labels tags = {});
+    void setControllerChannelQueueDepth(double value, prometheus::Labels tags = {});
 
     // Bus metrics ---------------------------------------------------------
     void   incrementBusPushes(double value = 1.0, prometheus::Labels tags = {});
@@ -95,17 +95,17 @@ private:
 
     prometheus::Histogram::BucketBoundaries reader_processing_time_ms_buckets_;
 
-    prometheus::Family<prometheus::Counter>& reader_events_family_;
-    prometheus::Family<prometheus::Counter>& reader_events_received_family_;
-    prometheus::Family<prometheus::Counter>& reader_errors_family_;
+    prometheus::Family<prometheus::Counter>&   reader_events_family_;
+    prometheus::Family<prometheus::Counter>&   reader_events_received_family_;
+    prometheus::Family<prometheus::Counter>&   reader_errors_family_;
     prometheus::Family<prometheus::Histogram>& reader_processing_time_ms_family_;
-    prometheus::Family<prometheus::Gauge>& reader_queue_depth_family_;
-    prometheus::Family<prometheus::Gauge>& reader_pool_queue_depth_family_;
+    prometheus::Family<prometheus::Gauge>&     reader_queue_depth_family_;
+    prometheus::Family<prometheus::Gauge>&     reader_pool_queue_depth_family_;
 
     prometheus::Family<prometheus::Gauge>& pool_connections_in_use_family_;
     prometheus::Family<prometheus::Gauge>& pool_connections_available_family_;
 
-    prometheus::Histogram::BucketBoundaries controller_send_time_buckets_;
+    prometheus::Histogram::BucketBoundaries    controller_send_time_buckets_;
     prometheus::Family<prometheus::Histogram>& controller_send_time_family_;
     prometheus::Family<prometheus::Gauge>&     controller_queue_depth_family_;
     prometheus::Family<prometheus::Gauge>&     controller_channel_queue_depth_family_;

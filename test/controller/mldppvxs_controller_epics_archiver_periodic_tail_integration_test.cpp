@@ -104,7 +104,7 @@ TEST_F(MLDPPVXSControllerEpicsArchiverPeriodicTailIntegrationTest, IngestsPeriod
         std::chrono::seconds(10),
         std::chrono::seconds(120));
     ASSERT_TRUE(result.has_value());
-    const auto  rows = flattenDataValues(result->at("TEST:PV:DOUBLE"));
+    const auto rows = flattenDataValues(result->at("TEST:PV:DOUBLE"));
 
     // We don't assert an exact count because periodic scheduling jitter and backend dedup behavior can vary.
     ASSERT_GT(rows.size(), 0);

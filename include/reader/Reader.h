@@ -25,7 +25,7 @@ class IDataBus;
 namespace mldp_pvxs_driver::reader {
 
 using ReaderUPtr = std::unique_ptr<class Reader>;
-    
+
 /**
  * @brief Contract for reader implementations that sample data and forward events to the bus.
  *
@@ -36,7 +36,7 @@ class Reader
 public:
     /** @brief Construct the reader with the event bus connection that will receive updates. */
     Reader(std::shared_ptr<util::bus::IDataBus> bus,
-           std::shared_ptr<metrics::Metrics>         metrics = nullptr)
+           std::shared_ptr<metrics::Metrics>    metrics = nullptr)
         : bus_(std::move(bus))
         , metrics_(std::move(metrics)) {}
 
@@ -52,7 +52,7 @@ protected:
      */
     std::shared_ptr<util::bus::IDataBus> bus_;
     /** @brief Shared metrics collector (may be null when not configured). */
-    std::shared_ptr<metrics::Metrics>         metrics_;
+    std::shared_ptr<metrics::Metrics> metrics_;
 };
 
 } // namespace mldp_pvxs_driver::reader

@@ -10,13 +10,13 @@
 
 #ifdef MLDP_PVXS_HDF5_ENABLED
 
-#include <writer/hdf5/HDF5FilePool.h>
+    #include <writer/hdf5/HDF5FilePool.h>
 
-#include <chrono>
-#include <ctime>
-#include <filesystem>
-#include <iomanip>
-#include <sstream>
+    #include <chrono>
+    #include <ctime>
+    #include <filesystem>
+    #include <iomanip>
+    #include <sstream>
 
 using namespace mldp_pvxs_driver::writer;
 
@@ -39,14 +39,14 @@ std::string HDF5FilePool::safeName(const std::string& source)
 
 std::string HDF5FilePool::nowUtcFileSuffix()
 {
-    const auto now = std::chrono::system_clock::now();
+    const auto        now = std::chrono::system_clock::now();
     const std::time_t t = std::chrono::system_clock::to_time_t(now);
-    std::tm utc{};
-#if defined(_WIN32)
+    std::tm           utc{};
+    #if defined(_WIN32)
     gmtime_s(&utc, &t);
-#else
+    #else
     gmtime_r(&t, &utc);
-#endif
+    #endif
     std::ostringstream oss;
     oss << std::put_time(&utc, "%Y%m%dT%H%M%SZ");
     return oss.str();
@@ -81,7 +81,7 @@ bool HDF5FilePool::needsRotation(const FileEntry& entry) const noexcept
 
 std::shared_ptr<FileEntry> HDF5FilePool::openFile(const std::string& sourceName)
 {
-    const std::string fileName = safeName(sourceName) + "_" + nowUtcFileSuffix() + ".h5";
+    const std::string           fileName = safeName(sourceName) + "_" + nowUtcFileSuffix() + ".h5";
     const std::filesystem::path filePath = std::filesystem::path(config_.basePath) / fileName;
 
     auto entry = std::make_shared<FileEntry>();
@@ -95,7 +95,7 @@ std::shared_ptr<FileEntry> HDF5FilePool::openFile(const std::string& sourceName)
 std::shared_ptr<FileEntry> HDF5FilePool::acquire(const std::string& sourceName)
 {
     std::lock_guard<std::mutex> lk(mutex_);
-    auto it = entries_.find(sourceName);
+    auto                        it = entries_.find(sourceName);
     if (it != entries_.end())
     {
         if (!needsRotation(*it->second))
@@ -103,7 +103,13 @@ std::shared_ptr<FileEntry> HDF5FilePool::acquire(const std::string& sourceName)
             return it->second;
         }
         // Rotate: close old (other holders keep shared_ptr alive until done)
-        try { it->second->file.close(); } catch (...) {}
+        try
+        {
+            it->second->file.close();
+        }
+        catch (...)
+        {
+        }
         entries_.erase(it);
     }
     auto entry = openFile(sourceName);
@@ -114,7 +120,7 @@ std::shared_ptr<FileEntry> HDF5FilePool::acquire(const std::string& sourceName)
 void HDF5FilePool::recordWrite(const std::string& sourceName, uint64_t bytes)
 {
     std::lock_guard<std::mutex> lk(mutex_);
-    auto it = entries_.find(sourceName);
+    auto                        it = entries_.find(sourceName);
     if (it != entries_.end())
     {
         it->second->bytesWritten += bytes;
@@ -126,7 +132,13 @@ void HDF5FilePool::flushAll() noexcept
     std::lock_guard<std::mutex> lk(mutex_);
     for (auto& [name, entry] : entries_)
     {
-        try { entry->file.flush(H5F_SCOPE_LOCAL); } catch (...) {}
+        try
+        {
+            entry->file.flush(H5F_SCOPE_LOCAL);
+        }
+        catch (...)
+        {
+        }
     }
 }
 
@@ -135,7 +147,13 @@ void HDF5FilePool::closeAll() noexcept
     std::lock_guard<std::mutex> lk(mutex_);
     for (auto& [name, entry] : entries_)
     {
-        try { entry->file.close(); } catch (...) {}
+        try
+        {
+            entry->file.close();
+        }
+        catch (...)
+        {
+        }
     }
     entries_.clear();
 }

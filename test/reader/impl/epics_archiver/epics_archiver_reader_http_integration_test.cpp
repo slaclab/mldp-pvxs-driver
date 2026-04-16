@@ -11,9 +11,9 @@
 #include <gtest/gtest.h>
 
 #include "../../../config/test_config_helpers.h"
+#include "../../../mock/EpicsArchiverTestUtils.h"
 #include "../../../mock/MockArchiverPbHttpServer.h"
 #include "../../../mock/MockDataBus.h"
-#include "../../../mock/EpicsArchiverTestUtils.h"
 
 #include <reader/impl/epics_archiver/EpicsArchiverReader.h>
 #include <util/bus/IDataBus.h>
@@ -31,10 +31,10 @@ namespace {
 using mldp_pvxs_driver::config::makeConfigFromYaml;
 using mldp_pvxs_driver::reader::impl::epics_archiver::EpicsArchiverReader;
 using mldp_pvxs_driver::reader::impl::epics_archiver::MockArchiverPbHttpServer;
-using mldp_pvxs_driver::util::bus::IDataBus;
-using mldp_pvxs_driver::test::mock::waitForMockRequestStartAndCompletion;
-using mldp_pvxs_driver::test::mock::waitForMockRequestStart;
 using mldp_pvxs_driver::test::mock::waitForAtLeastPublishedBatches;
+using mldp_pvxs_driver::test::mock::waitForMockRequestStart;
+using mldp_pvxs_driver::test::mock::waitForMockRequestStartAndCompletion;
+using mldp_pvxs_driver::util::bus::IDataBus;
 // Backward compatibility alias
 using MockEventBusPush = mldp_pvxs_driver::test::mock::MockDataBus;
 
@@ -188,7 +188,7 @@ TEST(EpicsArchiverReaderHttpIntegrationTest, FetchesMixedTypedPvSetUsingPvSuffix
     ASSERT_TRUE(waitForAtLeastPublishedBatches(*bus, 4u, std::chrono::seconds(2)));
     EXPECT_EQ(reader->name(), "archiver-http-mixed-types");
 
-    const auto history = server.requestHistory();
+    const auto            history = server.requestHistory();
     std::set<std::string> requested_pvs;
     for (const auto& req : history)
     {
@@ -199,7 +199,7 @@ TEST(EpicsArchiverReaderHttpIntegrationTest, FetchesMixedTypedPvSetUsingPvSuffix
     }
     EXPECT_EQ(requested_pvs, (std::set<std::string>{pv_string, pv_int, pv_waveform, pv_bytes}));
 
-    const auto batches = bus->snapshot();
+    const auto                                         batches = bus->snapshot();
     std::map<std::string, const IDataBus::EventBatch*> batches_by_source;
     for (const auto& batch : batches)
     {

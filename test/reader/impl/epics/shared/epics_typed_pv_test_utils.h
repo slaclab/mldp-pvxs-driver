@@ -8,8 +8,7 @@
 
 #include <util/bus/IDataBus.h>
 
-namespace epics_typed_pv_test_utils
-{
+namespace epics_typed_pv_test_utils {
 
 using DataFrame = dp::service::common::DataFrame;
 
@@ -67,115 +66,146 @@ inline std::string buildTypedCoverageYaml(const std::string& readerName)
 inline bool hasColumnWithName(const DataFrame& df, const std::string& name)
 {
     for (int i = 0; i < df.stringcolumns_size(); ++i)
-        if (df.stringcolumns(i).name() == name) return true;
+        if (df.stringcolumns(i).name() == name)
+            return true;
     for (int i = 0; i < df.int32columns_size(); ++i)
-        if (df.int32columns(i).name() == name) return true;
+        if (df.int32columns(i).name() == name)
+            return true;
     for (int i = 0; i < df.int64columns_size(); ++i)
-        if (df.int64columns(i).name() == name) return true;
+        if (df.int64columns(i).name() == name)
+            return true;
     for (int i = 0; i < df.floatcolumns_size(); ++i)
-        if (df.floatcolumns(i).name() == name) return true;
+        if (df.floatcolumns(i).name() == name)
+            return true;
     for (int i = 0; i < df.doublecolumns_size(); ++i)
-        if (df.doublecolumns(i).name() == name) return true;
+        if (df.doublecolumns(i).name() == name)
+            return true;
     for (int i = 0; i < df.boolcolumns_size(); ++i)
-        if (df.boolcolumns(i).name() == name) return true;
+        if (df.boolcolumns(i).name() == name)
+            return true;
     return false;
 }
 
-template<typename FinderFn>
+template <typename FinderFn>
 void assertTypedCoverageDataFrames(const FinderFn& findLatestDataFrameForSourceFn)
 {
-    const auto requireLatest = [&](const std::string& pv) -> const DataFrame* {
+    const auto requireLatest = [&](const std::string& pv) -> const DataFrame*
+    {
         const auto* df = findLatestDataFrameForSourceFn(pv);
         EXPECT_NE(df, nullptr) << "Missing dataframe for " << pv;
         return df;
     };
 
-    const auto expectInt32Scalar = [&](const std::string& pv) {
+    const auto expectInt32Scalar = [&](const std::string& pv)
+    {
         const auto* df = requireLatest(pv);
-        if (!df) return;
+        if (!df)
+            return;
         EXPECT_GT(df->int32columns_size(), 0);
         EXPECT_EQ(df->int32columns(0).name(), pv);
         EXPECT_FALSE(hasColumnWithName(*df, "value.timeStamp"));
     };
-    const auto expectInt64Scalar = [&](const std::string& pv) {
+    const auto expectInt64Scalar = [&](const std::string& pv)
+    {
         const auto* df = requireLatest(pv);
-        if (!df) return;
+        if (!df)
+            return;
         EXPECT_GT(df->int64columns_size(), 0);
         EXPECT_EQ(df->int64columns(0).name(), pv);
         EXPECT_FALSE(hasColumnWithName(*df, "value.timeStamp"));
     };
-    const auto expectFloatScalar = [&](const std::string& pv) {
+    const auto expectFloatScalar = [&](const std::string& pv)
+    {
         const auto* df = requireLatest(pv);
-        if (!df) return;
+        if (!df)
+            return;
         EXPECT_GT(df->floatcolumns_size(), 0);
         EXPECT_EQ(df->floatcolumns(0).name(), pv);
         EXPECT_FALSE(hasColumnWithName(*df, "value.timeStamp"));
     };
-    const auto expectDoubleScalar = [&](const std::string& pv) {
+    const auto expectDoubleScalar = [&](const std::string& pv)
+    {
         const auto* df = requireLatest(pv);
-        if (!df) return;
+        if (!df)
+            return;
         EXPECT_GT(df->doublecolumns_size(), 0);
         EXPECT_EQ(df->doublecolumns(0).name(), pv);
         EXPECT_FALSE(hasColumnWithName(*df, "value.timeStamp"));
     };
-    const auto expectBoolScalar = [&](const std::string& pv) {
+    const auto expectBoolScalar = [&](const std::string& pv)
+    {
         const auto* df = requireLatest(pv);
-        if (!df) return;
+        if (!df)
+            return;
         EXPECT_GT(df->boolcolumns_size(), 0);
         EXPECT_EQ(df->boolcolumns(0).name(), pv);
         EXPECT_FALSE(hasColumnWithName(*df, "value.timeStamp"));
     };
-    const auto expectStringScalar = [&](const std::string& pv) {
+    const auto expectStringScalar = [&](const std::string& pv)
+    {
         const auto* df = requireLatest(pv);
-        if (!df) return;
+        if (!df)
+            return;
         EXPECT_GT(df->stringcolumns_size(), 0);
         EXPECT_EQ(df->stringcolumns(0).name(), pv);
         EXPECT_GT(df->stringcolumns(0).values_size(), 0);
         EXPECT_FALSE(hasColumnWithName(*df, "value.timeStamp"));
     };
-    const auto expectBoolArray = [&](const std::string& pv) {
+    const auto expectBoolArray = [&](const std::string& pv)
+    {
         const auto* df = requireLatest(pv);
-        if (!df) return;
+        if (!df)
+            return;
         EXPECT_GT(df->boolarraycolumns_size(), 0);
         EXPECT_EQ(df->boolarraycolumns(0).name(), pv);
         EXPECT_EQ(df->boolarraycolumns(0).values_size(), 4);
         EXPECT_FALSE(hasColumnWithName(*df, "value.timeStamp"));
     };
-    const auto expectInt32Array = [&](const std::string& pv) {
+    const auto expectInt32Array = [&](const std::string& pv)
+    {
         const auto* df = requireLatest(pv);
-        if (!df) return;
+        if (!df)
+            return;
         EXPECT_GT(df->int32arraycolumns_size(), 0);
         EXPECT_EQ(df->int32arraycolumns(0).name(), pv);
         EXPECT_EQ(df->int32arraycolumns(0).values_size(), 4);
         EXPECT_FALSE(hasColumnWithName(*df, "value.timeStamp"));
     };
-    const auto expectInt64Array = [&](const std::string& pv) {
+    const auto expectInt64Array = [&](const std::string& pv)
+    {
         const auto* df = requireLatest(pv);
-        if (!df) return;
+        if (!df)
+            return;
         EXPECT_GT(df->int64arraycolumns_size(), 0);
         EXPECT_EQ(df->int64arraycolumns(0).name(), pv);
         EXPECT_EQ(df->int64arraycolumns(0).values_size(), 4);
         EXPECT_FALSE(hasColumnWithName(*df, "value.timeStamp"));
     };
-    const auto expectFloatArray = [&](const std::string& pv) {
+    const auto expectFloatArray = [&](const std::string& pv)
+    {
         const auto* df = requireLatest(pv);
-        if (!df) return;
+        if (!df)
+            return;
         EXPECT_GT(df->floatarraycolumns_size(), 0);
         EXPECT_EQ(df->floatarraycolumns(0).name(), pv);
         EXPECT_EQ(df->floatarraycolumns(0).values_size(), 4);
         EXPECT_FALSE(hasColumnWithName(*df, "value.timeStamp"));
     };
-    const auto expectDoubleArray = [&](const std::string& pv, int expectedSize) {
+    const auto expectDoubleArray = [&](const std::string& pv, int expectedSize)
+    {
         const auto* df = requireLatest(pv);
-        if (!df) return;
+        if (!df)
+            return;
         EXPECT_GT(df->doublearraycolumns_size(), 0);
         EXPECT_EQ(df->doublearraycolumns(0).name(), pv);
         EXPECT_EQ(df->doublearraycolumns(0).values_size(), expectedSize);
         EXPECT_FALSE(hasColumnWithName(*df, "value.timeStamp"));
     };
-    const auto expectStringArrayAsDataColumn = [&](const std::string& pv) {
+    const auto expectStringArrayAsDataColumn = [&](const std::string& pv)
+    {
         const auto* df = requireLatest(pv);
-        if (!df) return;
+        if (!df)
+            return;
         EXPECT_GT(df->datacolumns_size(), 0);
         EXPECT_EQ(df->datacolumns(0).name(), pv);
         EXPECT_GT(df->datacolumns(0).datavalues_size(), 0);

@@ -50,13 +50,13 @@ bool hasTimestampListW(const dp::service::common::DataFrame& frame)
 // Construction / destruction
 // ---------------------------------------------------------------------------
 
-MLDPGrpcWriter::MLDPGrpcWriter(const config::Config& root,
+MLDPGrpcWriter::MLDPGrpcWriter(const config::Config&    root,
                                std::shared_ptr<Metrics> metrics)
     : MLDPGrpcWriter(MLDPGrpcWriterConfig::parse(root), std::move(metrics))
 {
 }
 
-MLDPGrpcWriter::MLDPGrpcWriter(MLDPGrpcWriterConfig config,
+MLDPGrpcWriter::MLDPGrpcWriter(MLDPGrpcWriterConfig     config,
                                std::shared_ptr<Metrics> metrics)
     : config_(std::move(config))
     , logger_(makeWriterLogger())
@@ -113,7 +113,10 @@ void MLDPGrpcWriter::start()
     }
     for (std::size_t i = 0; i < workerCount; ++i)
     {
-        threadPool_->detach_task([this, i]() { workerLoop(i); });
+        threadPool_->detach_task([this, i]()
+                                 {
+                                     workerLoop(i);
+                                 });
     }
 
     infof(*logger_, "MLDPGrpcWriter started with {} workers", workerCount);
@@ -175,7 +178,9 @@ bool MLDPGrpcWriter::push(util::bus::IDataBus::EventBatch batch) noexcept
         if (!hasTimestampListW(frame))
         {
             metric_call(metrics_, [&](auto& m)
-                        { m.incrementBusFailures(1.0, {{"source", batch.root_source}}); });
+                        {
+                            m.incrementBusFailures(1.0, {{"source", batch.root_source}});
+                        });
             continue;
         }
         const auto idx = nextChannel_.fetch_add(1, std::memory_order_relaxed) % channels_.size();
@@ -198,18 +203,21 @@ bool MLDPGrpcWriter::push(util::bus::IDataBus::EventBatch batch) noexcept
 
 void MLDPGrpcWriter::workerLoop(std::size_t workerIndex)
 {
-    auto& ch = *channels_[workerIndex];
+    auto&                                                                                                   ch = *channels_[workerIndex];
     std::optional<mldp_pvxs_driver::util::pool::PooledHandle<mldp_pvxs_driver::util::pool::MLDPGrpcObject>> handle;
-    std::unique_ptr<grpc::ClientWriter<dp::service::ingestion::IngestDataRequest>> writer;
-    std::unique_ptr<grpc::ClientContext>                                            context;
-    dp::service::ingestion::IngestDataStreamResponse                                response;
-    std::chrono::steady_clock::time_point                                           streamStart;
-    std::size_t                                                                     streamPayloadBytes = 0;
-    std::uint64_t                                                                   requestCounter = 0;
+    std::unique_ptr<grpc::ClientWriter<dp::service::ingestion::IngestDataRequest>>                          writer;
+    std::unique_ptr<grpc::ClientContext>                                                                    context;
+    dp::service::ingestion::IngestDataStreamResponse                                                        response;
+    std::chrono::steady_clock::time_point                                                                   streamStart;
+    std::size_t                                                                                             streamPayloadBytes = 0;
+    std::uint64_t                                                                                           requestCounter = 0;
 
     const auto close_stream = [&](const char* reason)
     {
-        if (!writer) { return; }
+        if (!writer)
+        {
+            return;
+        }
         writer->WritesDone();
         auto    status = writer->Finish();
         int64_t requestedRequests = static_cast<int64_t>(requestCounter);
@@ -242,14 +250,18 @@ void MLDPGrpcWriter::workerLoop(std::size_t workerIndex)
                 errorf(*logger_, "Ingestion stream finished with exceptional result ({}): {}",
                        reason, response.exceptionalresult().message());
                 metric_call(metrics_, [&](auto& m)
-                            { m.incrementBusFailures(1.0, {{"source", "unknown"}}); });
+                            {
+                                m.incrementBusFailures(1.0, {{"source", "unknown"}});
+                            });
             }
         }
         else
         {
             errorf(*logger_, "Ingestion stream finished with error ({}): {}", reason, status.error_message());
             metric_call(metrics_, [&](auto& m)
-                        { m.incrementBusFailures(1.0, {{"source", "unknown"}}); });
+                        {
+                            m.incrementBusFailures(1.0, {{"source", "unknown"}});
+                        });
         }
         writer.reset();
         handle.reset();
@@ -260,7 +272,10 @@ void MLDPGrpcWriter::workerLoop(std::size_t workerIndex)
 
     const auto ensure_stream = [&]() -> bool
     {
-        if (writer) { return true; }
+        if (writer)
+        {
+            return true;
+        }
         try
         {
             context = std::make_unique<grpc::ClientContext>();
@@ -271,7 +286,9 @@ void MLDPGrpcWriter::workerLoop(std::size_t workerIndex)
             {
                 errorf(*logger_, "Failed to open ingestion stream");
                 metric_call(metrics_, [&](auto& m)
-                            { m.incrementBusFailures(1.0, {{"source", "unknown"}}); });
+                            {
+                                m.incrementBusFailures(1.0, {{"source", "unknown"}});
+                            });
                 handle.reset();
                 context.reset();
                 return false;
@@ -284,7 +301,9 @@ void MLDPGrpcWriter::workerLoop(std::size_t workerIndex)
         {
             errorf(*logger_, "Failed to acquire ingestion stream: {}", ex.what());
             metric_call(metrics_, [&](auto& m)
-                        { m.incrementBusFailures(1.0, {{"source", "unknown"}}); });
+                        {
+                            m.incrementBusFailures(1.0, {{"source", "unknown"}});
+                        });
             handle.reset();
             writer.reset();
             return false;
@@ -299,8 +318,13 @@ void MLDPGrpcWriter::workerLoop(std::size_t workerIndex)
         {
             std::unique_lock lk(ch.mutex);
             ch.cv.wait_for(lk, dequeueTimeout, [&]
-                           { return !ch.items.empty() || ch.shutdown; });
-            if (ch.shutdown && ch.items.empty()) { break; }
+                           {
+                               return !ch.items.empty() || ch.shutdown;
+                           });
+            if (ch.shutdown && ch.items.empty())
+            {
+                break;
+            }
             if (!ch.items.empty())
             {
                 item = std::move(ch.items.front());
@@ -331,7 +355,9 @@ void MLDPGrpcWriter::workerLoop(std::size_t workerIndex)
             const auto   elapsed = std::chrono::steady_clock::now() - itemStart;
             const double sec = std::chrono::duration<double>(elapsed).count();
             metric_call(metrics_, [&](auto& m)
-                        { m.observeControllerSendTimeSeconds(sec, std::move(tags)); });
+                        {
+                            m.observeControllerSendTimeSeconds(sec, std::move(tags));
+                        });
         };
 
         if (!ensure_stream())
@@ -351,7 +377,7 @@ void MLDPGrpcWriter::workerLoop(std::size_t workerIndex)
         }
 
         google::protobuf::Arena arena;
-        auto* request = google::protobuf::Arena::CreateMessage<
+        auto*                   request = google::protobuf::Arena::CreateMessage<
             dp::service::ingestion::IngestDataRequest>(&arena);
         std::size_t acceptedEvents = 0;
         std::size_t payloadBytes = 0;
@@ -380,7 +406,9 @@ void MLDPGrpcWriter::workerLoop(std::size_t workerIndex)
         {
             errorf(*logger_, "Failed to write source {} to ingestion stream", item.root_source);
             metric_call(metrics_, [&](auto& m)
-                        { m.incrementBusFailures(1.0, {{"source", item.root_source}}); });
+                        {
+                            m.incrementBusFailures(1.0, {{"source", item.root_source}});
+                        });
             close_stream("write failed");
             continue;
         }
@@ -389,21 +417,27 @@ void MLDPGrpcWriter::workerLoop(std::size_t workerIndex)
         if (acceptedEvents > 0)
         {
             metric_call(metrics_, [&](auto& m)
-                        { m.incrementBusPushes(static_cast<double>(acceptedEvents),
-                                               {{"source", item.root_source}}); });
+                        {
+                            m.incrementBusPushes(static_cast<double>(acceptedEvents),
+                                                 {{"source", item.root_source}});
+                        });
         }
         if (payloadBytes > 0)
         {
             metric_call(metrics_, [&](auto& m)
-                        { m.incrementBusPayloadBytes(static_cast<double>(payloadBytes),
-                                                     {{"source", item.root_source}}); });
+                        {
+                            m.incrementBusPayloadBytes(static_cast<double>(payloadBytes),
+                                                       {{"source", item.root_source}});
+                        });
             const auto   elapsed = std::chrono::steady_clock::now() - itemStart;
             const double ms = std::chrono::duration<double, std::milli>(elapsed).count();
             if (ms > 0.0)
             {
                 const double bps = (static_cast<double>(payloadBytes) * 1000.0) / ms;
                 metric_call(metrics_, [&](auto& m)
-                            { m.setBusPayloadBytesPerSecond(bps, {{"source", item.root_source}}); });
+                            {
+                                m.setBusPayloadBytesPerSecond(bps, {{"source", item.root_source}});
+                            });
             }
         }
         record_send_time({{"source", item.root_source}});
@@ -424,11 +458,11 @@ void MLDPGrpcWriter::workerLoop(std::size_t workerIndex)
 // ---------------------------------------------------------------------------
 
 bool MLDPGrpcWriter::buildRequest(const std::string&                         sourceName,
-                                   const dp::service::common::DataFrame&      frame,
-                                   const std::string&                         requestId,
-                                   dp::service::ingestion::IngestDataRequest& request,
-                                   std::size_t&                               acceptedEvents,
-                                   std::size_t&                               payloadBytes)
+                                  const dp::service::common::DataFrame&      frame,
+                                  const std::string&                         requestId,
+                                  dp::service::ingestion::IngestDataRequest& request,
+                                  std::size_t&                               acceptedEvents,
+                                  std::size_t&                               payloadBytes)
 {
     request.set_providerid(providerId_);
     request.set_clientrequestid(requestId);
@@ -438,12 +472,12 @@ bool MLDPGrpcWriter::buildRequest(const std::string&                         sou
 
     const bool hasColumns =
         dataFrame->doublecolumns_size() > 0 || dataFrame->floatcolumns_size() > 0 ||
-        dataFrame->datacolumns_size() > 0   || dataFrame->int32columns_size() > 0 ||
-        dataFrame->int64columns_size() > 0  || dataFrame->boolcolumns_size() > 0  ||
-        dataFrame->stringcolumns_size() > 0 || dataFrame->enumcolumns_size() > 0  ||
-        dataFrame->imagecolumns_size() > 0  || dataFrame->structcolumns_size() > 0 ||
+        dataFrame->datacolumns_size() > 0 || dataFrame->int32columns_size() > 0 ||
+        dataFrame->int64columns_size() > 0 || dataFrame->boolcolumns_size() > 0 ||
+        dataFrame->stringcolumns_size() > 0 || dataFrame->enumcolumns_size() > 0 ||
+        dataFrame->imagecolumns_size() > 0 || dataFrame->structcolumns_size() > 0 ||
         dataFrame->doublearraycolumns_size() > 0 || dataFrame->floatarraycolumns_size() > 0 ||
-        dataFrame->int32arraycolumns_size() > 0  || dataFrame->int64arraycolumns_size() > 0 ||
+        dataFrame->int32arraycolumns_size() > 0 || dataFrame->int64arraycolumns_size() > 0 ||
         dataFrame->boolarraycolumns_size() > 0;
 
     if (!hasColumns)
@@ -456,7 +490,9 @@ bool MLDPGrpcWriter::buildRequest(const std::string&                         sou
     {
         errorf(*logger_, "Dropping frame for source {}: missing DataFrame.datatimestamps.timestamplist", sourceName);
         metric_call(metrics_, [&](auto& m)
-                    { m.incrementBusFailures(1.0, {{"source", sourceName}}); });
+                    {
+                        m.incrementBusFailures(1.0, {{"source", sourceName}});
+                    });
         return false;
     }
 
@@ -473,5 +509,8 @@ bool MLDPGrpcWriter::buildRequest(const std::string&                         sou
 void MLDPGrpcWriter::updateQueueDepthMetric()
 {
     const double depth = static_cast<double>(queuedItems_.load(std::memory_order_relaxed));
-    metric_call(metrics_, [&](auto& m) { m.setControllerQueueDepth(depth); });
+    metric_call(metrics_, [&](auto& m)
+                {
+                    m.setControllerQueueDepth(depth);
+                });
 }

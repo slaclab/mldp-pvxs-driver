@@ -15,11 +15,9 @@
 #include <grpcpp/grpcpp.h>
 #include <query.grpc.pb.h>
 
-#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <set>
-#include <stdexcept>
 #include <thread>
 #include <unordered_map>
 
@@ -64,36 +62,39 @@ extractTimestampRange(const DataTimestamps& data_timestamps)
             return std::nullopt;
         }
         SourceTimestamp first = makeSourceTimestamp(list.timestamps(0));
-        SourceTimestamp last  = first;
+        SourceTimestamp last = first;
         for (int i = 1; i < list.timestamps_size(); ++i)
         {
             const SourceTimestamp current = makeSourceTimestamp(list.timestamps(i));
-            if (isBefore(current, first)) first = current;
-            if (isBefore(last, current))  last  = current;
+            if (isBefore(current, first))
+                first = current;
+            if (isBefore(last, current))
+                last = current;
         }
         return std::make_pair(first, last);
     }
     if (data_timestamps.has_samplingclock())
     {
         const auto& clock = data_timestamps.samplingclock();
-        if (!clock.has_starttime()) return std::nullopt;
+        if (!clock.has_starttime())
+            return std::nullopt;
         const SourceTimestamp first = makeSourceTimestamp(clock.starttime());
-        SourceTimestamp       last  = first;
-        const auto count       = static_cast<uint64_t>(clock.count());
-        const auto period_nanos = clock.periodnanos();
+        SourceTimestamp       last = first;
+        const auto            count = static_cast<uint64_t>(clock.count());
+        const auto            period_nanos = clock.periodnanos();
         if (count > 1 && period_nanos > 0)
         {
-            const auto steps        = count - 1;
+            const auto steps = count - 1;
             const auto offset_nanos = static_cast<unsigned __int128>(steps) *
                                       static_cast<unsigned __int128>(period_nanos);
-            const auto add_secs  = static_cast<uint64_t>(offset_nanos / 1'000'000'000ULL);
+            const auto add_secs = static_cast<uint64_t>(offset_nanos / 1'000'000'000ULL);
             const auto add_nanos = static_cast<uint64_t>(offset_nanos % 1'000'000'000ULL);
             last.epoch_seconds += add_secs;
-            last.nanoseconds   += add_nanos;
+            last.nanoseconds += add_nanos;
             if (last.nanoseconds >= 1'000'000'000ULL)
             {
                 last.epoch_seconds += 1;
-                last.nanoseconds   -= 1'000'000'000ULL;
+                last.nanoseconds -= 1'000'000'000ULL;
             }
         }
         return std::make_pair(first, last);
@@ -122,16 +123,17 @@ std::vector<IDataBus::SourceInfo>
 MLDPQueryClient::querySourcesInfo(const std::set<std::string>& source_names)
 {
     std::vector<IDataBus::SourceInfo> infos;
-    if (source_names.empty()) return infos;
+    if (source_names.empty())
+        return infos;
 
     try
     {
-        auto  handle     = pool_->acquire();
+        auto  handle = pool_->acquire();
         auto* query_stub = handle->query_stub.get();
         if (!query_stub)
         {
             handle->query_stub = handle->makeQueryStub();
-            query_stub         = handle->query_stub.get();
+            query_stub = handle->query_stub.get();
         }
         if (!query_stub)
         {
@@ -140,13 +142,15 @@ MLDPQueryClient::querySourcesInfo(const std::set<std::string>& source_names)
         }
 
         dp::service::query::QueryPvMetadataRequest request;
-        auto* pv_name_list = request.mutable_pvnamelist();
+        auto*                                      pv_name_list = request.mutable_pvnamelist();
         pv_name_list->mutable_pvnames()->Reserve(static_cast<int>(source_names.size()));
         for (const auto& source : source_names)
         {
-            if (!source.empty()) pv_name_list->add_pvnames(source);
+            if (!source.empty())
+                pv_name_list->add_pvnames(source);
         }
-        if (pv_name_list->pvnames().empty()) return infos;
+        if (pv_name_list->pvnames().empty())
+            return infos;
 
         grpc::ClientContext                         context;
         dp::service::query::QueryPvMetadataResponse response;
@@ -169,12 +173,14 @@ MLDPQueryClient::querySourcesInfo(const std::set<std::string>& source_names)
                   status.error_message());
 
             dp::service::query::QueryDataRequest data_request;
-            auto* spec = data_request.mutable_queryspec();
+            auto*                                spec = data_request.mutable_queryspec();
             for (const auto& source : source_names)
             {
-                if (!source.empty()) spec->add_pvnames(source);
+                if (!source.empty())
+                    spec->add_pvnames(source);
             }
-            if (spec->pvnames().empty()) return infos;
+            if (spec->pvnames().empty())
+                return infos;
 
             auto* begin_ts = spec->mutable_begintime();
             begin_ts->set_epochseconds(0);
@@ -182,7 +188,9 @@ MLDPQueryClient::querySourcesInfo(const std::set<std::string>& source_names)
             end_ts->set_epochseconds(
                 static_cast<uint64_t>(
                     std::chrono::duration_cast<std::chrono::seconds>(
-                        std::chrono::system_clock::now().time_since_epoch()).count()) + 1);
+                        std::chrono::system_clock::now().time_since_epoch())
+                        .count()) +
+                1);
 
             grpc::ClientContext                   data_context;
             dp::service::query::QueryDataResponse data_response;
@@ -202,7 +210,8 @@ MLDPQueryClient::querySourcesInfo(const std::set<std::string>& source_names)
             for (const auto& bucket : data_response.querydata().databuckets())
             {
                 const auto& pvname = bucket.pvname();
-                if (pvname.empty() || !source_names.contains(pvname)) continue;
+                if (pvname.empty() || !source_names.contains(pvname))
+                    continue;
 
                 auto& info = merged_infos[pvname];
                 if (info.source_name.empty())
@@ -214,10 +223,12 @@ MLDPQueryClient::querySourcesInfo(const std::set<std::string>& source_names)
                 {
                     info.num_buckets = info.num_buckets.value() + 1;
                 }
-                if (!bucket.has_datatimestamps()) continue;
+                if (!bucket.has_datatimestamps())
+                    continue;
 
                 const auto range = extractTimestampRange(bucket.datatimestamps());
-                if (!range.has_value()) continue;
+                if (!range.has_value())
+                    continue;
 
                 const auto& [bucket_first, bucket_last] = range.value();
                 if (!info.first_timestamp.has_value() || isBefore(bucket_first, info.first_timestamp.value()))
@@ -232,13 +243,13 @@ MLDPQueryClient::querySourcesInfo(const std::set<std::string>& source_names)
                 if (data_timestamps.has_samplingclock())
                 {
                     const auto& clock = data_timestamps.samplingclock();
-                    info.last_bucket_sample_period        = clock.periodnanos();
-                    info.last_bucket_sample_count         = clock.count();
+                    info.last_bucket_sample_period = clock.periodnanos();
+                    info.last_bucket_sample_count = clock.count();
                     info.last_bucket_data_timestamps_type = "SAMPLING_CLOCK";
                 }
                 else if (data_timestamps.has_timestamplist())
                 {
-                    info.last_bucket_sample_count         =
+                    info.last_bucket_sample_count =
                         static_cast<uint32_t>(data_timestamps.timestamplist().timestamps_size());
                     info.last_bucket_data_timestamps_type = "TIMESTAMP_LIST";
                 }
@@ -258,7 +269,8 @@ MLDPQueryClient::querySourcesInfo(const std::set<std::string>& source_names)
                    response.exceptionalresult().message());
             return infos;
         }
-        if (!response.has_metadataresult()) return infos;
+        if (!response.has_metadataresult())
+            return infos;
 
         const auto& pv_infos = response.metadataresult().pvinfos();
         infos.reserve(static_cast<std::size_t>(pv_infos.size()));
@@ -300,8 +312,8 @@ MLDPQueryClient::querySourcesInfo(const std::set<std::string>& source_names)
 // ---------------------------------------------------------------------------
 
 std::optional<std::unordered_map<std::string, std::vector<dp::service::common::DataValues>>>
-MLDPQueryClient::querySourcesData(const std::set<std::string>&     source_names,
-                                   const QuerySourcesDataOptions&   options)
+MLDPQueryClient::querySourcesData(const std::set<std::string>&   source_names,
+                                  const QuerySourcesDataOptions& options)
 {
     if (source_names.empty())
     {
@@ -315,12 +327,12 @@ MLDPQueryClient::querySourcesData(const std::set<std::string>&     source_names,
 
     try
     {
-        auto  handle     = pool_->acquire();
+        auto  handle = pool_->acquire();
         auto* query_stub = handle->query_stub.get();
         if (!query_stub)
         {
             handle->query_stub = handle->makeQueryStub();
-            query_stub         = handle->query_stub.get();
+            query_stub = handle->query_stub.get();
         }
         if (!query_stub)
         {
@@ -332,20 +344,21 @@ MLDPQueryClient::querySourcesData(const std::set<std::string>&     source_names,
         while (std::chrono::steady_clock::now() < deadline)
         {
             dp::service::query::QueryDataRequest request;
-            auto* spec = request.mutable_queryspec();
+            auto*                                spec = request.mutable_queryspec();
             for (const auto& source : source_names)
             {
-                if (!source.empty()) spec->add_pvnames(source);
+                if (!source.empty())
+                    spec->add_pvnames(source);
             }
             if (spec->pvnames().empty())
             {
                 return std::unordered_map<std::string, std::vector<dp::service::common::DataValues>>{};
             }
 
-            const auto now   = std::chrono::system_clock::now();
+            const auto now = std::chrono::system_clock::now();
             const auto begin = now - options.lookback_window;
-            const auto end   = now + options.forward_window;
-            auto* begin_ts   = spec->mutable_begintime();
+            const auto end = now + options.forward_window;
+            auto*      begin_ts = spec->mutable_begintime();
             begin_ts->set_epochseconds(
                 std::chrono::duration_cast<std::chrono::seconds>(begin.time_since_epoch()).count());
             auto* end_ts = spec->mutable_endtime();
@@ -356,7 +369,7 @@ MLDPQueryClient::querySourcesData(const std::set<std::string>&     source_names,
             context.set_deadline(std::chrono::system_clock::now() + options.rpc_deadline);
 
             dp::service::query::QueryDataResponse response;
-            const auto status = query_stub->queryData(&context, request, &response);
+            const auto                            status = query_stub->queryData(&context, request, &response);
             if (status.ok() && response.has_querydata() && !response.has_exceptionalresult())
             {
                 std::unordered_map<std::string, std::vector<dp::service::common::DataValues>> collected;
@@ -367,7 +380,8 @@ MLDPQueryClient::querySourcesData(const std::set<std::string>&     source_names,
                         continue;
                     collected[pvname].push_back(bucket.datavalues());
                 }
-                if (collected.size() == source_names.size()) return collected;
+                if (collected.size() == source_names.size())
+                    return collected;
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(200));
         }

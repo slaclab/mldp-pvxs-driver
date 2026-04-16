@@ -9,8 +9,8 @@
 //////////////////////////////////////////////////////////////////////////////
 
 #include <metrics/Metrics.h>
-#include <util/log/Logger.h>
 #include <metricsgrabber/MetricsGrabber.hpp>
+#include <util/log/Logger.h>
 
 #include <unistd.h>
 #include <utility>
@@ -75,8 +75,8 @@ Metrics::Metrics(const MetricsConfig& config)
                                                      "mldp_pvxs_driver_controller_queue_depth",
                                                      "Number of queued controller tasks waiting to send batches."))
     , controller_channel_queue_depth_family_(makeGaugeFamily(*registry_,
-                                                              "mldp_pvxs_driver_controller_channel_queue_depth",
-                                                              "Number of items queued in each per-worker channel."))
+                                                             "mldp_pvxs_driver_controller_channel_queue_depth",
+                                                             "Number of items queued in each per-worker channel."))
     // Bus metrics
     , bus_push_family_(makeCounterFamily(*registry_, "mldp_pvxs_driver_bus_push_total", "Number of events pushed onto the bus."))
     , bus_failure_family_(makeCounterFamily(*registry_, "mldp_pvxs_driver_bus_failure_total", "Number of bus push failures reported by the MLDP gRPC API."))
@@ -157,7 +157,7 @@ void Metrics::collectSystemMetricsLoop()
             auto metricResult = system_metrics_collector_->collect();
             if (metricResult.has_value())
             {
-                const auto& snapshot = *metricResult;
+                const auto&        snapshot = *metricResult;
                 prometheus::Labels labels = {};
 
                 // Update CPU metrics (counters)
@@ -253,7 +253,9 @@ void Metrics::collectSystemMetricsLoop()
                 {
                     process_nice_family_.Add(labels).Set(static_cast<double>(*snapshot.nice));
                 }
-            } else if(metricResult.has_error()){
+            }
+            else if (metricResult.has_error())
+            {
                 // Log the error but continue - metrics collection is best effort and shouldn't crash the driver
                 errorf("Failed to collect system metrics: {}", metricResult.error());
             }

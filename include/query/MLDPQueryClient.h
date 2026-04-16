@@ -57,10 +57,10 @@ public:
     ~MLDPQueryClient() = default;
 
     // Non-copyable, movable
-    MLDPQueryClient(const MLDPQueryClient&)            = delete;
+    MLDPQueryClient(const MLDPQueryClient&) = delete;
     MLDPQueryClient& operator=(const MLDPQueryClient&) = delete;
-    MLDPQueryClient(MLDPQueryClient&&)                 = default;
-    MLDPQueryClient& operator=(MLDPQueryClient&&)      = default;
+    MLDPQueryClient(MLDPQueryClient&&) = default;
+    MLDPQueryClient& operator=(MLDPQueryClient&&) = default;
 
     /**
      * @brief Query MLDP metadata for a set of source identifiers.
@@ -91,8 +91,8 @@ public:
                      const util::bus::QuerySourcesDataOptions& options = util::bus::QuerySourcesDataOptions{});
 
 private:
-    std::shared_ptr<util::log::ILogger>                      logger_;
-    util::pool::MLDPGrpcQueryPool::MLDPGrpcQueryPoolShrdPtr  pool_;
+    std::shared_ptr<util::log::ILogger>                     logger_;
+    util::pool::MLDPGrpcQueryPool::MLDPGrpcQueryPoolShrdPtr pool_;
 };
 
 } // namespace mldp_pvxs_driver::query

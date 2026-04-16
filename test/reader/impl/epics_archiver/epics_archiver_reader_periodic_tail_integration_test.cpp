@@ -11,9 +11,9 @@
 #include <gtest/gtest.h>
 
 #include "../../../config/test_config_helpers.h"
+#include "../../../mock/EpicsArchiverTestUtils.h"
 #include "../../../mock/MockArchiverPbHttpServer.h"
 #include "../../../mock/MockDataBus.h"
-#include "../../../mock/EpicsArchiverTestUtils.h"
 
 #include <reader/impl/epics_archiver/EpicsArchiverReader.h>
 #include <util/bus/IDataBus.h>
@@ -33,10 +33,10 @@ namespace {
 using mldp_pvxs_driver::config::makeConfigFromYaml;
 using mldp_pvxs_driver::reader::impl::epics_archiver::EpicsArchiverReader;
 using mldp_pvxs_driver::reader::impl::epics_archiver::MockArchiverPbHttpServer;
-using mldp_pvxs_driver::util::bus::IDataBus;
-using mldp_pvxs_driver::test::mock::waitForMockRequestStartAndCompletion;
-using mldp_pvxs_driver::test::mock::waitForMockRequestStart;
 using mldp_pvxs_driver::test::mock::waitForAtLeastPublishedBatches;
+using mldp_pvxs_driver::test::mock::waitForMockRequestStart;
+using mldp_pvxs_driver::test::mock::waitForMockRequestStartAndCompletion;
+using mldp_pvxs_driver::util::bus::IDataBus;
 // Backward compatibility alias
 using MockEventBusPush = mldp_pvxs_driver::test::mock::MockDataBus;
 

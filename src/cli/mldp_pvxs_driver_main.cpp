@@ -16,8 +16,8 @@
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
 
-#include <util/log/Logger.h>
 #include <util/StringFormat.h>
+#include <util/log/Logger.h>
 
 #include <csignal>
 
@@ -35,11 +35,11 @@
 #include <prometheus/text_serializer.h>
 #include <rapidyaml-0.10.0.hpp>
 
+#include <cli/ConfigPrinter.h>
 #include <config/Config.h>
 #include <controller/MLDPPVXSController.h>
 #include <metrics/MetricsSnapshot.h>
 #include <mldp_pvxs_driver_version.h>
-#include <cli/ConfigPrinter.h>
 
 #include "PeriodicMetricsDumper.h"
 #include "SpdlogLogger.h"
@@ -275,7 +275,7 @@ int main(int argc, char** argv)
         // Metrics printing can be triggered either by Ctrl+P (foreground terminal)
         // or by sending SIGUSR1/SIGQUIT to the process.
         mldp_pvxs_driver::metrics::MetricsSnapshot metrics_snapshot;
-        const auto metricHandler = [&metrics_snapshot]()
+        const auto                                 metricHandler = [&metrics_snapshot]()
         {
             if (driver)
             {
@@ -346,7 +346,7 @@ int main(int argc, char** argv)
         spdlog::info("Loading configuration from {}", config_path);
         const bool dryRun = program.get<bool>("--dry-run");
         const bool printConfig = program.get<bool>("--print-config-startup");
-        auto config = Config::configFromFile(config_path);
+        auto       config = Config::configFromFile(config_path);
         if (printConfig)
         {
             if (dryRun)

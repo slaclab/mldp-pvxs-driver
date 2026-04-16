@@ -10,12 +10,12 @@
 
 #ifdef MLDP_PVXS_HDF5_ENABLED
 
-#include <writer/hdf5/HDF5Writer.h>
+    #include <writer/hdf5/HDF5Writer.h>
 
-#include <util/log/Logger.h>
+    #include <util/log/Logger.h>
 
-#include <stdexcept>
-#include <vector>
+    #include <stdexcept>
+    #include <vector>
 
 using namespace mldp_pvxs_driver::writer;
 using namespace mldp_pvxs_driver::util::log;
@@ -52,8 +52,14 @@ void HDF5Writer::start()
     stopping_.store(false);
     pool_ = std::make_unique<HDF5FilePool>(config_);
 
-    writerThread_ = std::thread([this] { writerLoop(); });
-    flushThread_  = std::thread([this] { flushLoop(); });
+    writerThread_ = std::thread([this]
+                                {
+                                    writerLoop();
+                                });
+    flushThread_ = std::thread([this]
+                               {
+                                   flushLoop();
+                               });
 }
 
 void HDF5Writer::stop() noexcept
@@ -64,8 +70,26 @@ void HDF5Writer::stop() noexcept
     }
     queueCv_.notify_all();
 
-    if (writerThread_.joinable()) { try { writerThread_.join(); } catch (...) {} }
-    if (flushThread_.joinable())  { try { flushThread_.join();  } catch (...) {} }
+    if (writerThread_.joinable())
+    {
+        try
+        {
+            writerThread_.join();
+        }
+        catch (...)
+        {
+        }
+    }
+    if (flushThread_.joinable())
+    {
+        try
+        {
+            flushThread_.join();
+        }
+        catch (...)
+        {
+        }
+    }
 
     if (pool_)
     {
@@ -87,7 +111,7 @@ bool HDF5Writer::push(util::bus::IDataBus::EventBatch batch) noexcept
     std::lock_guard<std::mutex> lk(queueMutex_);
     if (queue_.size() >= kQueueCapacity)
     {
-        return false;   // back-pressure: queue full
+        return false; // back-pressure: queue full
     }
     queue_.push_back(std::move(batch));
     queueCv_.notify_one();
@@ -105,10 +129,13 @@ void HDF5Writer::writerLoop()
         EventBatch batch;
         {
             std::unique_lock<std::mutex> lk(queueMutex_);
-            queueCv_.wait(lk, [this] { return !queue_.empty() || stopping_.load(); });
+            queueCv_.wait(lk, [this]
+                          {
+                              return !queue_.empty() || stopping_.load();
+                          });
             if (queue_.empty())
             {
-                break;   // stopping and queue drained
+                break; // stopping and queue drained
             }
             batch = std::move(queue_.front());
             queue_.pop_front();
@@ -123,10 +150,10 @@ void HDF5Writer::writerLoop()
         {
             try
             {
-                auto entry = pool_->acquire(batch.root_source);
+                auto              entry = pool_->acquire(batch.root_source);
                 const std::size_t sizeBefore = static_cast<std::size_t>(entry->file.getFileSize());
                 appendFrame(batch.root_source, frame, entry->file);
-                const std::size_t sizeAfter  = static_cast<std::size_t>(entry->file.getFileSize());
+                const std::size_t sizeAfter = static_cast<std::size_t>(entry->file.getFileSize());
                 if (sizeAfter > sizeBefore)
                 {
                     pool_->recordWrite(batch.root_source,
@@ -169,9 +196,9 @@ void HDF5Writer::flushLoop()
 
 static constexpr hsize_t kChunkSize = 1024;
 
-H5::DataSet HDF5Writer::ensureDataset(H5::H5File&        file,
-                                       const std::string& name,
-                                       const H5::DataType& dtype)
+H5::DataSet HDF5Writer::ensureDataset(H5::H5File&         file,
+                                      const std::string&  name,
+                                      const H5::DataType& dtype)
 {
     if (file.nameExists(name))
     {
@@ -179,11 +206,11 @@ H5::DataSet HDF5Writer::ensureDataset(H5::H5File&        file,
     }
 
     // Chunked unlimited dataset
-    hsize_t      dims[1] = {0};
-    hsize_t      maxDims[1] = {H5S_UNLIMITED};
+    hsize_t       dims[1] = {0};
+    hsize_t       maxDims[1] = {H5S_UNLIMITED};
     H5::DataSpace space(1, dims, maxDims);
 
-    hsize_t      chunkDims[1] = {kChunkSize};
+    hsize_t               chunkDims[1] = {kChunkSize};
     H5::DSetCreatPropList props;
     props.setChunk(1, chunkDims);
     if (config_.compressionLevel > 0)
@@ -195,8 +222,8 @@ H5::DataSet HDF5Writer::ensureDataset(H5::H5File&        file,
 }
 
 void HDF5Writer::appendFrame(const std::string&                    sourceName,
-                              const dp::service::common::DataFrame& frame,
-                              H5::H5File&                           file)
+                             const dp::service::common::DataFrame& frame,
+                             H5::H5File&                           file)
 {
     // -- timestamps dataset --
     if (!frame.has_datatimestamps() ||
@@ -205,7 +232,7 @@ void HDF5Writer::appendFrame(const std::string&                    sourceName,
         return;
     }
     const auto& tslist = frame.datatimestamps().timestamplist();
-    const int tsCount = tslist.timestamps_size();
+    const int   tsCount = tslist.timestamps_size();
     if (tsCount <= 0)
     {
         return;
@@ -223,7 +250,7 @@ void HDF5Writer::appendFrame(const std::string&                    sourceName,
     }
 
     {
-        auto ds = ensureDataset(file, "timestamps", H5::PredType::NATIVE_INT64);
+        auto    ds = ensureDataset(file, "timestamps", H5::PredType::NATIVE_INT64);
         hsize_t curDims[1] = {0};
         hsize_t maxDims[1] = {H5S_UNLIMITED};
         ds.getSpace().getSimpleExtentDims(curDims, maxDims);
@@ -232,9 +259,9 @@ void HDF5Writer::appendFrame(const std::string&                    sourceName,
         H5::DataSpace fspace = ds.getSpace();
         fspace.getSimpleExtentDims(curDims, maxDims);
         hsize_t offset[1] = {curDims[0] - static_cast<hsize_t>(tsCount)};
-        hsize_t count[1]  = {static_cast<hsize_t>(tsCount)};
+        hsize_t count[1] = {static_cast<hsize_t>(tsCount)};
         fspace.selectHyperslab(H5S_SELECT_SET, count, offset);
-        hsize_t mDims[1] = {static_cast<hsize_t>(tsCount)};
+        hsize_t       mDims[1] = {static_cast<hsize_t>(tsCount)};
         H5::DataSpace mspace(1, mDims);
         ds.write(nsVec.data(), H5::PredType::NATIVE_INT64, mspace, fspace);
     }
@@ -242,10 +269,16 @@ void HDF5Writer::appendFrame(const std::string&                    sourceName,
     // -- double columns --
     for (const auto& col : frame.doublecolumns())
     {
-        if (col.name().empty()) { continue; }
+        if (col.name().empty())
+        {
+            continue;
+        }
         const int n = col.values_size();
-        if (n <= 0) { continue; }
-        auto ds = ensureDataset(file, col.name(), H5::PredType::NATIVE_DOUBLE);
+        if (n <= 0)
+        {
+            continue;
+        }
+        auto    ds = ensureDataset(file, col.name(), H5::PredType::NATIVE_DOUBLE);
         hsize_t curDims[1] = {0};
         hsize_t maxDims[1] = {H5S_UNLIMITED};
         ds.getSpace().getSimpleExtentDims(curDims, maxDims);
@@ -254,10 +287,10 @@ void HDF5Writer::appendFrame(const std::string&                    sourceName,
         H5::DataSpace fspace = ds.getSpace();
         fspace.getSimpleExtentDims(curDims, maxDims);
         hsize_t offset[1] = {curDims[0] - static_cast<hsize_t>(n)};
-        hsize_t count[1]  = {static_cast<hsize_t>(n)};
+        hsize_t count[1] = {static_cast<hsize_t>(n)};
         fspace.selectHyperslab(H5S_SELECT_SET, count, offset);
-        hsize_t mDims[1] = {static_cast<hsize_t>(n)};
-        H5::DataSpace mspace(1, mDims);
+        hsize_t             mDims[1] = {static_cast<hsize_t>(n)};
+        H5::DataSpace       mspace(1, mDims);
         std::vector<double> buf(col.values().begin(), col.values().end());
         ds.write(buf.data(), H5::PredType::NATIVE_DOUBLE, mspace, fspace);
     }
@@ -265,10 +298,16 @@ void HDF5Writer::appendFrame(const std::string&                    sourceName,
     // -- float columns --
     for (const auto& col : frame.floatcolumns())
     {
-        if (col.name().empty()) { continue; }
+        if (col.name().empty())
+        {
+            continue;
+        }
         const int n = col.values_size();
-        if (n <= 0) { continue; }
-        auto ds = ensureDataset(file, col.name(), H5::PredType::NATIVE_FLOAT);
+        if (n <= 0)
+        {
+            continue;
+        }
+        auto    ds = ensureDataset(file, col.name(), H5::PredType::NATIVE_FLOAT);
         hsize_t curDims[1] = {0};
         hsize_t maxDims[1] = {H5S_UNLIMITED};
         ds.getSpace().getSimpleExtentDims(curDims, maxDims);
@@ -277,10 +316,10 @@ void HDF5Writer::appendFrame(const std::string&                    sourceName,
         H5::DataSpace fspace = ds.getSpace();
         fspace.getSimpleExtentDims(curDims, maxDims);
         hsize_t offset[1] = {curDims[0] - static_cast<hsize_t>(n)};
-        hsize_t count[1]  = {static_cast<hsize_t>(n)};
+        hsize_t count[1] = {static_cast<hsize_t>(n)};
         fspace.selectHyperslab(H5S_SELECT_SET, count, offset);
-        hsize_t mDims[1] = {static_cast<hsize_t>(n)};
-        H5::DataSpace mspace(1, mDims);
+        hsize_t            mDims[1] = {static_cast<hsize_t>(n)};
+        H5::DataSpace      mspace(1, mDims);
         std::vector<float> buf(col.values().begin(), col.values().end());
         ds.write(buf.data(), H5::PredType::NATIVE_FLOAT, mspace, fspace);
     }
@@ -288,10 +327,16 @@ void HDF5Writer::appendFrame(const std::string&                    sourceName,
     // -- int32 columns --
     for (const auto& col : frame.int32columns())
     {
-        if (col.name().empty()) { continue; }
+        if (col.name().empty())
+        {
+            continue;
+        }
         const int n = col.values_size();
-        if (n <= 0) { continue; }
-        auto ds = ensureDataset(file, col.name(), H5::PredType::NATIVE_INT32);
+        if (n <= 0)
+        {
+            continue;
+        }
+        auto    ds = ensureDataset(file, col.name(), H5::PredType::NATIVE_INT32);
         hsize_t curDims[1] = {0};
         hsize_t maxDims[1] = {H5S_UNLIMITED};
         ds.getSpace().getSimpleExtentDims(curDims, maxDims);
@@ -300,10 +345,10 @@ void HDF5Writer::appendFrame(const std::string&                    sourceName,
         H5::DataSpace fspace = ds.getSpace();
         fspace.getSimpleExtentDims(curDims, maxDims);
         hsize_t offset[1] = {curDims[0] - static_cast<hsize_t>(n)};
-        hsize_t count[1]  = {static_cast<hsize_t>(n)};
+        hsize_t count[1] = {static_cast<hsize_t>(n)};
         fspace.selectHyperslab(H5S_SELECT_SET, count, offset);
-        hsize_t mDims[1] = {static_cast<hsize_t>(n)};
-        H5::DataSpace mspace(1, mDims);
+        hsize_t              mDims[1] = {static_cast<hsize_t>(n)};
+        H5::DataSpace        mspace(1, mDims);
         std::vector<int32_t> buf(col.values().begin(), col.values().end());
         ds.write(buf.data(), H5::PredType::NATIVE_INT32, mspace, fspace);
     }
@@ -311,10 +356,16 @@ void HDF5Writer::appendFrame(const std::string&                    sourceName,
     // -- int64 columns --
     for (const auto& col : frame.int64columns())
     {
-        if (col.name().empty()) { continue; }
+        if (col.name().empty())
+        {
+            continue;
+        }
         const int n = col.values_size();
-        if (n <= 0) { continue; }
-        auto ds = ensureDataset(file, col.name(), H5::PredType::NATIVE_INT64);
+        if (n <= 0)
+        {
+            continue;
+        }
+        auto    ds = ensureDataset(file, col.name(), H5::PredType::NATIVE_INT64);
         hsize_t curDims[1] = {0};
         hsize_t maxDims[1] = {H5S_UNLIMITED};
         ds.getSpace().getSimpleExtentDims(curDims, maxDims);
@@ -323,10 +374,10 @@ void HDF5Writer::appendFrame(const std::string&                    sourceName,
         H5::DataSpace fspace = ds.getSpace();
         fspace.getSimpleExtentDims(curDims, maxDims);
         hsize_t offset[1] = {curDims[0] - static_cast<hsize_t>(n)};
-        hsize_t count[1]  = {static_cast<hsize_t>(n)};
+        hsize_t count[1] = {static_cast<hsize_t>(n)};
         fspace.selectHyperslab(H5S_SELECT_SET, count, offset);
-        hsize_t mDims[1] = {static_cast<hsize_t>(n)};
-        H5::DataSpace mspace(1, mDims);
+        hsize_t              mDims[1] = {static_cast<hsize_t>(n)};
+        H5::DataSpace        mspace(1, mDims);
         std::vector<int64_t> buf(col.values().begin(), col.values().end());
         ds.write(buf.data(), H5::PredType::NATIVE_INT64, mspace, fspace);
     }
@@ -334,10 +385,16 @@ void HDF5Writer::appendFrame(const std::string&                    sourceName,
     // -- bool columns --
     for (const auto& col : frame.boolcolumns())
     {
-        if (col.name().empty()) { continue; }
+        if (col.name().empty())
+        {
+            continue;
+        }
         const int n = col.values_size();
-        if (n <= 0) { continue; }
-        auto ds = ensureDataset(file, col.name(), H5::PredType::NATIVE_HBOOL);
+        if (n <= 0)
+        {
+            continue;
+        }
+        auto    ds = ensureDataset(file, col.name(), H5::PredType::NATIVE_HBOOL);
         hsize_t curDims[1] = {0};
         hsize_t maxDims[1] = {H5S_UNLIMITED};
         ds.getSpace().getSimpleExtentDims(curDims, maxDims);
@@ -346,14 +403,17 @@ void HDF5Writer::appendFrame(const std::string&                    sourceName,
         H5::DataSpace fspace = ds.getSpace();
         fspace.getSimpleExtentDims(curDims, maxDims);
         hsize_t offset[1] = {curDims[0] - static_cast<hsize_t>(n)};
-        hsize_t count[1]  = {static_cast<hsize_t>(n)};
+        hsize_t count[1] = {static_cast<hsize_t>(n)};
         fspace.selectHyperslab(H5S_SELECT_SET, count, offset);
-        hsize_t mDims[1] = {static_cast<hsize_t>(n)};
+        hsize_t       mDims[1] = {static_cast<hsize_t>(n)};
         H5::DataSpace mspace(1, mDims);
         // protobuf bool is stored as int; HDF5 HBOOL is typedef to unsigned int
         std::vector<unsigned int> buf;
         buf.reserve(static_cast<std::size_t>(n));
-        for (int i = 0; i < n; ++i) { buf.push_back(col.values(i) ? 1u : 0u); }
+        for (int i = 0; i < n; ++i)
+        {
+            buf.push_back(col.values(i) ? 1u : 0u);
+        }
         ds.write(buf.data(), H5::PredType::NATIVE_HBOOL, mspace, fspace);
     }
 }

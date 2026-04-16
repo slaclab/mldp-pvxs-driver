@@ -168,8 +168,8 @@ std::string mldp_pvxs_driver::cli::formatStartupConfig(
 
 namespace {
 void collectFlatRows(const mldp_pvxs_driver::config::ryml::ConstNodeRef& node,
-                     const std::string&                                   path,
-                     std::vector<std::pair<std::string, std::string>>&    rows)
+                     const std::string&                                  path,
+                     std::vector<std::pair<std::string, std::string>>&   rows)
 {
     if (node.invalid())
     {
@@ -184,7 +184,7 @@ void collectFlatRows(const mldp_pvxs_driver::config::ryml::ConstNodeRef& node,
             {
                 continue;
             }
-            const auto keyView = child.key();
+            const auto        keyView = child.key();
             const std::string key{keyView.str, keyView.len};
             const std::string nextPath = path.empty() ? key : (path + "." + key);
             collectFlatRows(child, nextPath, rows);

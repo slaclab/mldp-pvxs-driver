@@ -137,8 +137,8 @@ void EpicsBaseReader::processDefaultMode(const std::string&                     
     IDataBus::EventBatch batch;
     batch.root_source = pvName;
     uint64_t epoch_seconds = 0;
-    uint64_t nanoseconds   = 0;
-    bool     setEpoch      = false;
+    uint64_t nanoseconds = 0;
+    bool     setEpoch = false;
 
     if (epicsValue)
     {
@@ -147,7 +147,7 @@ void EpicsBaseReader::processDefaultMode(const std::string&                     
             if (auto secondsField = timeStamp->getSubField<::epics::pvData::PVScalar>("secondsPastEpoch"))
             {
                 epoch_seconds = secondsField->getAs<uint64_t>();
-                setEpoch      = true;
+                setEpoch = true;
             }
             if (auto nanosField = timeStamp->getSubField<::epics::pvData::PVScalar>("nanoseconds"))
             {
@@ -158,7 +158,7 @@ void EpicsBaseReader::processDefaultMode(const std::string&                     
     if (!setEpoch)
     {
         const auto now = std::chrono::system_clock::now().time_since_epoch();
-        epoch_seconds  = std::chrono::duration_cast<std::chrono::seconds>(now).count();
+        epoch_seconds = std::chrono::duration_cast<std::chrono::seconds>(now).count();
     }
 
     dp::service::common::DataFrame frame;
@@ -284,7 +284,7 @@ void EpicsBaseReader::processEvent(std::string pvName, ::epics::pvData::PVStruct
         const auto processing_start = std::chrono::steady_clock::now();
 
         const auto* runtimeCfg = runtimeConfigFor(pvName);
-        const auto  mode       = runtimeCfg ? runtimeCfg->mode : PVRuntimeConfig::Mode::Default;
+        const auto  mode = runtimeCfg ? runtimeCfg->mode : PVRuntimeConfig::Mode::Default;
 
         std::size_t emitted = 0;
 
@@ -301,7 +301,7 @@ void EpicsBaseReader::processEvent(std::string pvName, ::epics::pvData::PVStruct
         }
 
         const auto   processing_end = std::chrono::steady_clock::now();
-        const double processing_ms  = std::chrono::duration<double, std::milli>(processing_end - processing_start).count();
+        const double processing_ms = std::chrono::duration<double, std::milli>(processing_end - processing_start).count();
         metric_call(metrics_, [&](auto& m)
                     {
                         m.observeReaderProcessingTimeMs(processing_ms, sourceTag);

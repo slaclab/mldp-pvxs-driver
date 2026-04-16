@@ -12,23 +12,23 @@
 
 #ifdef MLDP_PVXS_HDF5_ENABLED
 
-#include <config/Config.h>
-#include <writer/IWriter.h>
-#include <writer/WriterFactory.h>
-#include <writer/hdf5/HDF5FilePool.h>
-#include <writer/hdf5/HDF5WriterConfig.h>
+    #include <config/Config.h>
+    #include <writer/IWriter.h>
+    #include <writer/WriterFactory.h>
+    #include <writer/hdf5/HDF5FilePool.h>
+    #include <writer/hdf5/HDF5WriterConfig.h>
 
-#include <H5Cpp.h>
-#include <common.pb.h>
+    #include <H5Cpp.h>
+    #include <common.pb.h>
 
-#include <atomic>
-#include <condition_variable>
-#include <deque>
-#include <memory>
-#include <mutex>
-#include <string>
-#include <thread>
-#include <unordered_map>
+    #include <atomic>
+    #include <condition_variable>
+    #include <deque>
+    #include <memory>
+    #include <mutex>
+    #include <string>
+    #include <thread>
+    #include <unordered_map>
 
 namespace mldp_pvxs_driver::writer {
 
@@ -50,7 +50,8 @@ namespace mldp_pvxs_driver::writer {
  * └── …
  * @endcode
  */
-class HDF5Writer final : public IWriter {
+class HDF5Writer final : public IWriter
+{
     REGISTER_WRITER("hdf5", HDF5Writer)
 public:
     /**
@@ -68,7 +69,11 @@ public:
     explicit HDF5Writer(HDF5WriterConfig config);
     ~HDF5Writer() override;
 
-    std::string name() const override { return config_.name; }
+    std::string name() const override
+    {
+        return config_.name;
+    }
+
     void start() override;
     bool push(util::bus::IDataBus::EventBatch batch) noexcept override;
     void stop() noexcept override;
@@ -78,7 +83,7 @@ private:
 
     static constexpr std::size_t kQueueCapacity = 8192;
 
-    HDF5WriterConfig             config_;
+    HDF5WriterConfig              config_;
     std::unique_ptr<HDF5FilePool> pool_;
 
     // Queue
@@ -98,8 +103,8 @@ private:
                      const dp::service::common::DataFrame& frame,
                      H5::H5File&                           file);
 
-    H5::DataSet ensureDataset(H5::H5File&        file,
-                              const std::string& name,
+    H5::DataSet ensureDataset(H5::H5File&         file,
+                              const std::string&  name,
                               const H5::DataType& dtype);
 };
 

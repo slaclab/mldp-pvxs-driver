@@ -89,8 +89,8 @@ public:
      * @throws EpicsReaderConfig::Error if configuration is invalid.
      */
     EpicsPVXSReader(std::shared_ptr<util::bus::IDataBus> bus,
-                    std::shared_ptr<metrics::Metrics>         metrics,
-                    const config::Config&                     cfg);
+                    std::shared_ptr<metrics::Metrics>    metrics,
+                    const config::Config&                cfg);
 
     /**
      * @brief Add PVs to the monitor.
@@ -114,9 +114,9 @@ private:
      *  Standard EPICS alarm severity values.
      *  @{
      */
-    static constexpr int kAlarmSeverityNone    = 0; ///< No alarm.
-    static constexpr int kAlarmSeverityMinor   = 1; ///< Minor alarm.
-    static constexpr int kAlarmSeverityMajor   = 2; ///< Major alarm.
+    static constexpr int kAlarmSeverityNone = 0;    ///< No alarm.
+    static constexpr int kAlarmSeverityMinor = 1;   ///< Minor alarm.
+    static constexpr int kAlarmSeverityMajor = 2;   ///< Major alarm.
     static constexpr int kAlarmSeverityInvalid = 3; ///< Invalid/disconnected.
     /** @} */
 

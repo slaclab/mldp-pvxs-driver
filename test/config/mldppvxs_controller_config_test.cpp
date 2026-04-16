@@ -117,8 +117,8 @@ TEST(MLDPPVXSControllerConfigTest, ParsesTlsCredentialsBlock)
     std::filesystem::create_directories(tempDir);
 
     const auto certPath = tempDir / "client.crt";
-    const auto keyPath  = tempDir / "client.key";
-    const auto caPath   = tempDir / "ca.crt";
+    const auto keyPath = tempDir / "client.key";
+    const auto caPath = tempDir / "ca.crt";
 
     {
         std::ofstream(certPath) << "CERTDATA";

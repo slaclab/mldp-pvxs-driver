@@ -76,4 +76,3 @@ reader: []
     EXPECT_NE(printed.find("metrics: disabled"), std::string::npos);
     EXPECT_NE(printed.find("readers: count=0"), std::string::npos);
 }
-

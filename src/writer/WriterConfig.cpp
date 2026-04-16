@@ -46,8 +46,7 @@ WriterConfig WriterConfig::parse(const Config& writerNode)
             throw Error("writer.hdf5 must be a sequence of writer instances");
         }
 #ifndef MLDP_PVXS_HDF5_ENABLED
-        throw Error("writer.hdf5 instances are configured but this build was compiled without "
-                    "HDF5 support (MLDP_PVXS_ENABLE_HDF5=OFF)");
+        throw Error("writer.hdf5 instances are configured but this build was compiled without " "HDF5 support (MLDP_PVXS_ENABLE_HDF5=OFF)");
 #else
         const auto hdf5Items = writerNode.subConfig(WriterHdf5Key);
         for (const auto& item : hdf5Items)

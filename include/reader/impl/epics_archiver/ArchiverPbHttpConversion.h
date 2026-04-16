@@ -33,8 +33,8 @@ namespace mldp_pvxs_driver::reader::impl::epics_archiver {
  */
 struct ParsedSample
 {
-    uint64_t                      epoch_seconds; ///< UNIX epoch seconds of the sample.
-    uint32_t                      nanoseconds;   ///< Sub-second nanoseconds of the sample.
+    uint64_t                       epoch_seconds; ///< UNIX epoch seconds of the sample.
+    uint32_t                       nanoseconds;   ///< Sub-second nanoseconds of the sample.
     dp::service::common::DataFrame frame;         ///< Converted frame payload (includes timestamp list).
 };
 

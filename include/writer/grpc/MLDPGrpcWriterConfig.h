@@ -22,9 +22,9 @@ namespace mldp_pvxs_driver::writer {
 // ---------------------------------------------------------------------------
 // YAML keys owned by the gRPC writer block (under writer.grpc[i]).
 // ---------------------------------------------------------------------------
-inline constexpr char GrpcNameKey[]           = "name";
-inline constexpr char GrpcPoolKey[]           = "mldp-pool";
-inline constexpr char GrpcThreadPoolKey[]     = "thread-pool";
+inline constexpr char GrpcNameKey[] = "name";
+inline constexpr char GrpcPoolKey[] = "mldp-pool";
+inline constexpr char GrpcThreadPoolKey[] = "thread-pool";
 inline constexpr char GrpcStreamMaxBytesKey[] = "stream-max-bytes";
 inline constexpr char GrpcStreamMaxAgeMsKey[] = "stream-max-age-ms";
 

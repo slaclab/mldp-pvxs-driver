@@ -5,21 +5,21 @@
 #include <metrics/Metrics.h>
 #include <metrics/MetricsConfig.h>
 #include <pool/MLDPGrpcPool.h>
-#include <query/MLDPQueryClient.h>
 #include <query.grpc.pb.h>
+#include <query/MLDPQueryClient.h>
 
 #include "../common/MldpQueryTestUtils.h"
 #include "../config/test_config_helpers.h"
 #include "../mock/sioc.h"
 
-#include <atomic>
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <future>
 #include <initializer_list>
 #include <optional>
-#include <sstream>
 #include <set>
+#include <sstream>
 #include <string_view>
 #include <thread>
 #include <unordered_map>
@@ -27,10 +27,10 @@
 
 using namespace mldp_pvxs_driver::util::pool;
 using namespace mldp_pvxs_driver::testutil;
-using mldp_pvxs_driver::controller::MLDPPVXSController;
-using mldp_pvxs_driver::config::makeConfigFromYaml;
 using dp::service::common::DataValue;
 using dp::service::common::Structure;
+using mldp_pvxs_driver::config::makeConfigFromYaml;
+using mldp_pvxs_driver::controller::MLDPPVXSController;
 
 static MLDPGrpcPoolConfig make_pool_config(int min_conn, int max_conn, std::string_view test_provider_id = "test_provider", std::string_view description = "test_provider_desc")
 {
@@ -71,14 +71,14 @@ std::optional<int64_t> firstIntegerValue(const dp::service::common::DataValues& 
         }
         break;
     case DV::kSerializedDataColumn:
-    {
-        dp::service::common::DataColumn parsed;
-        if (parsed.ParseFromString(values.serializeddatacolumn().payload()) && parsed.datavalues_size() > 0)
         {
-            return fromDataValue(parsed.datavalues(0));
+            dp::service::common::DataColumn parsed;
+            if (parsed.ParseFromString(values.serializeddatacolumn().payload()) && parsed.datavalues_size() > 0)
+            {
+                return fromDataValue(parsed.datavalues(0));
+            }
+            break;
         }
-        break;
-    }
     case DV::kInt32Column:
         if (values.int32column().values_size() > 0)
         {
@@ -137,15 +137,7 @@ protected:
     void startControllerWithBsasTableReader()
     {
         const std::string reader_section =
-            "reader:\n"
-            "  - epics-pvxs:\n"
-            "      - name: epics_reader_1\n"
-            "        pvs:\n"
-            "          - name: test:bsas_table\n"
-            "            option:\n"
-            "              type: slac-bsas-table\n"
-            "              tsSeconds: secondsPastEpoch\n"
-            "              tsNanos: nanoseconds\n";
+            "reader:\n" "  - epics-pvxs:\n" "      - name: epics_reader_1\n" "        pvs:\n" "          - name: test:bsas_table\n" "            option:\n" "              type: slac-bsas-table\n" "              tsSeconds: secondsPastEpoch\n" "              tsNanos: nanoseconds\n";
         startControllerWithReaderSection(reader_section);
     }
 
@@ -182,11 +174,11 @@ protected:
         controller_.reset();
     }
 
-    static std::unique_ptr<PVServer>             pvServer_;
-    std::shared_ptr<MLDPPVXSController>          controller_;
+    static std::unique_ptr<PVServer>    pvServer_;
+    std::shared_ptr<MLDPPVXSController> controller_;
 };
 
-std::unique_ptr<PVServer>           MLDPGrpcPoolIntegrationTest::pvServer_;
+std::unique_ptr<PVServer> MLDPGrpcPoolIntegrationTest::pvServer_;
 
 } // namespace
 
@@ -290,9 +282,9 @@ TEST(MLDPGrpcPoolTest, MultipleObjectsHaveSeparateChannels)
 TEST(MLDPGrpcPoolTest, UpdatesMetricsWhenConnectionsMove)
 {
     const prometheus::Labels ingestionPoolLabel{{"pool", "ingestion"}};
-    auto        metrics = std::make_shared<mldp_pvxs_driver::metrics::Metrics>(mldp_pvxs_driver::metrics::MetricsConfig());
-    auto        pool = MLDPGrpcPool::create(make_pool_config(1, 1, "test_prv_1"), metrics);
-    const auto& providerId = pool->providerId();
+    auto                     metrics = std::make_shared<mldp_pvxs_driver::metrics::Metrics>(mldp_pvxs_driver::metrics::MetricsConfig());
+    auto                     pool = MLDPGrpcPool::create(make_pool_config(1, 1, "test_prv_1"), metrics);
+    const auto&              providerId = pool->providerId();
     EXPECT_DOUBLE_EQ(metrics->poolConnectionsAvailable(ingestionPoolLabel), 1.0);
     EXPECT_DOUBLE_EQ(metrics->poolConnectionsInUse(ingestionPoolLabel), 0.0);
 
@@ -408,54 +400,54 @@ TEST_F(MLDPGrpcPoolIntegrationTest, QueryWaveformPV)
 // {
 //     startControllerWithEpicsPVs({"test:table"});
 
-//     const auto result = queryAndCollectColumns({"test:table"}, kSubscribeTimeout);
-//     ASSERT_TRUE(result.has_value());
+// const auto result = queryAndCollectColumns({"test:table"}, kSubscribeTimeout);
+// ASSERT_TRUE(result.has_value());
 
-//     const auto& buckets = result->at("test:table");
-//     const auto  rows = flattenDataValues(buckets);
-//     ASSERT_GT(rows.size(), 0);
-//     const auto& value = rows[0];
-//     ASSERT_TRUE(value.has_structurevalue());
+// const auto& buckets = result->at("test:table");
+// const auto  rows = flattenDataValues(buckets);
+// ASSERT_GT(rows.size(), 0);
+// const auto& value = rows[0];
+// ASSERT_TRUE(value.has_structurevalue());
 
-//     const auto& structure = value.structurevalue();
-//     const Structure::Field* deviceField = nullptr;
-//     const Structure::Field* pressureField = nullptr;
-//     for (const auto& field : structure.fields())
+// const auto& structure = value.structurevalue();
+// const Structure::Field* deviceField = nullptr;
+// const Structure::Field* pressureField = nullptr;
+// for (const auto& field : structure.fields())
+// {
+//     if (field.name() == "deviceIDs")
 //     {
-//         if (field.name() == "deviceIDs")
-//         {
-//             deviceField = &field;
-//         }
-//         else if (field.name() == "pressure")
-//         {
-//             pressureField = &field;
-//         }
+//         deviceField = &field;
 //     }
-
-//     ASSERT_NE(deviceField, nullptr);
-//     ASSERT_NE(pressureField, nullptr);
-//     ASSERT_TRUE(deviceField->value().has_arrayvalue());
-//     ASSERT_TRUE(pressureField->value().has_arrayvalue());
-
-//     const auto& devices = deviceField->value().arrayvalue().datavalues();
-//     const auto& pressures = pressureField->value().arrayvalue().datavalues();
-//     EXPECT_EQ(devices.size(), 3);
-//     EXPECT_EQ(pressures.size(), 3);
-//     ASSERT_EQ(devices.size(), pressures.size());
-
-//     EXPECT_EQ(devices[0].value_case(), DataValue::kStringValue);
-//     EXPECT_EQ(devices[1].value_case(), DataValue::kStringValue);
-//     EXPECT_EQ(devices[2].value_case(), DataValue::kStringValue);
-//     EXPECT_EQ(devices[0].stringvalue(), "Device A");
-//     EXPECT_EQ(devices[1].stringvalue(), "Device B");
-//     EXPECT_EQ(devices[2].stringvalue(), "Device C");
-
-//     for (const auto& entry : pressures)
+//     else if (field.name() == "pressure")
 //     {
-//         EXPECT_EQ(entry.value_case(), DataValue::kDoubleValue);
-//         EXPECT_GE(entry.doublevalue(), -1.6);
-//         EXPECT_LE(entry.doublevalue(), 1.6);
+//         pressureField = &field;
 //     }
+// }
+
+// ASSERT_NE(deviceField, nullptr);
+// ASSERT_NE(pressureField, nullptr);
+// ASSERT_TRUE(deviceField->value().has_arrayvalue());
+// ASSERT_TRUE(pressureField->value().has_arrayvalue());
+
+// const auto& devices = deviceField->value().arrayvalue().datavalues();
+// const auto& pressures = pressureField->value().arrayvalue().datavalues();
+// EXPECT_EQ(devices.size(), 3);
+// EXPECT_EQ(pressures.size(), 3);
+// ASSERT_EQ(devices.size(), pressures.size());
+
+// EXPECT_EQ(devices[0].value_case(), DataValue::kStringValue);
+// EXPECT_EQ(devices[1].value_case(), DataValue::kStringValue);
+// EXPECT_EQ(devices[2].value_case(), DataValue::kStringValue);
+// EXPECT_EQ(devices[0].stringvalue(), "Device A");
+// EXPECT_EQ(devices[1].stringvalue(), "Device B");
+// EXPECT_EQ(devices[2].stringvalue(), "Device C");
+
+// for (const auto& entry : pressures)
+// {
+//     EXPECT_EQ(entry.value_case(), DataValue::kDoubleValue);
+//     EXPECT_GE(entry.doublevalue(), -1.6);
+//     EXPECT_LE(entry.doublevalue(), 1.6);
+// }
 // }
 
 TEST_F(MLDPGrpcPoolIntegrationTest, QueryBsasTablePV)
@@ -490,11 +482,11 @@ TEST_F(MLDPGrpcPoolIntegrationTest, CharacterizesDuplicateIngestBehaviorForSameS
     auto pool = MLDPGrpcPool::create(make_pool_config(1, 1, "duplicate_probe_provider", "duplicate probe provider"));
     ASSERT_TRUE(pool);
 
-    const auto providerId = pool->providerId();
+    const auto        providerId = pool->providerId();
     const std::string pvName = "test:duplicate:probe";
-    const auto now = std::chrono::system_clock::now().time_since_epoch();
-    const auto ts_sec = std::chrono::duration_cast<std::chrono::seconds>(now).count();
-    const auto ts_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(now).count() % 1'000'000'000LL;
+    const auto        now = std::chrono::system_clock::now().time_since_epoch();
+    const auto        ts_sec = std::chrono::duration_cast<std::chrono::seconds>(now).count();
+    const auto        ts_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(now).count() % 1'000'000'000LL;
 
     auto buildRequest = [&](std::string client_request_id)
     {
@@ -523,10 +515,10 @@ TEST_F(MLDPGrpcPoolIntegrationTest, CharacterizesDuplicateIngestBehaviorForSameS
 
         for (int i = 0; i < 2; ++i)
         {
-            auto request = buildRequest("dup_probe_req_" + std::to_string(i));
+            auto                                       request = buildRequest("dup_probe_req_" + std::to_string(i));
             dp::service::ingestion::IngestDataResponse response;
-            grpc::ClientContext context;
-            const auto status = handle->stub->ingestData(&context, request, &response);
+            grpc::ClientContext                        context;
+            const auto                                 status = handle->stub->ingestData(&context, request, &response);
             ASSERT_TRUE(status.ok());
             ASSERT_TRUE(response.has_ackresult());
             EXPECT_EQ(response.ackresult().numrows(), 1);
@@ -560,11 +552,11 @@ TEST_F(MLDPGrpcPoolIntegrationTest, QueryClientReturnsMetadataAndDataForInserted
     const auto provider_id = pool->providerId();
     ASSERT_FALSE(provider_id.empty());
 
-    const auto now = std::chrono::system_clock::now().time_since_epoch();
-    const auto ts_sec = std::chrono::duration_cast<std::chrono::seconds>(now).count();
-    const auto ts_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(now).count() % 1'000'000'000LL;
+    const auto        now = std::chrono::system_clock::now().time_since_epoch();
+    const auto        ts_sec = std::chrono::duration_cast<std::chrono::seconds>(now).count();
+    const auto        ts_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(now).count() % 1'000'000'000LL;
     const std::string pv_name = "test:query:api:probe:" + std::to_string(ts_sec) + ":" + std::to_string(ts_ns);
-    constexpr int expected_value = 777;
+    constexpr int     expected_value = 777;
 
     dp::service::ingestion::IngestDataRequest request;
     request.set_providerid(provider_id);
@@ -584,8 +576,8 @@ TEST_F(MLDPGrpcPoolIntegrationTest, QueryClientReturnsMetadataAndDataForInserted
         auto handle = pool->acquire();
         ASSERT_TRUE(handle);
         dp::service::ingestion::IngestDataResponse response;
-        grpc::ClientContext context;
-        const auto status = handle->stub->ingestData(&context, request, &response);
+        grpc::ClientContext                        context;
+        const auto                                 status = handle->stub->ingestData(&context, request, &response);
         ASSERT_TRUE(status.ok());
         ASSERT_TRUE(response.has_ackresult());
         ASSERT_EQ(response.ackresult().numrows(), 1);
@@ -593,9 +585,9 @@ TEST_F(MLDPGrpcPoolIntegrationTest, QueryClientReturnsMetadataAndDataForInserted
     }
 
     mldp_pvxs_driver::query::MLDPQueryClient queryClient(make_pool_config(1, 1, "query_api_probe_provider", "query api probe provider"));
-    const std::set<std::string> sources{pv_name};
+    const std::set<std::string>              sources{pv_name};
 
-    const auto metadata_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    const auto                                                       metadata_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
     std::optional<mldp_pvxs_driver::util::bus::IDataBus::SourceInfo> source_info;
     while (std::chrono::steady_clock::now() < metadata_deadline)
     {
@@ -637,7 +629,7 @@ TEST_F(MLDPGrpcPoolIntegrationTest, QueryClientReturnsMetadataAndDataForInserted
     ASSERT_NE(buckets_it, data->end());
     ASSERT_FALSE(buckets_it->second.empty());
     const auto& first_values = buckets_it->second.front();
-    const auto first = firstIntegerValue(first_values);
+    const auto  first = firstIntegerValue(first_values);
     ASSERT_TRUE(first.has_value());
     EXPECT_EQ(first.value(), expected_value);
 }
@@ -658,8 +650,8 @@ TEST_F(MLDPGrpcPoolIntegrationTest, QueryClientReturnsAllRequestedInsertedPVs)
 
     const std::string pv_a = "test:query:data:multi:a:" + std::to_string(ts_sec) + ":" + std::to_string(ts_ns);
     const std::string pv_b = "test:query:data:multi:b:" + std::to_string(ts_sec) + ":" + std::to_string(ts_ns);
-    constexpr int value_a = 101;
-    constexpr int value_b = 202;
+    constexpr int     value_a = 101;
+    constexpr int     value_b = 202;
 
     auto ingest_one = [&](const std::string& pv_name, int value_int, const std::string& request_id)
     {
@@ -677,8 +669,8 @@ TEST_F(MLDPGrpcPoolIntegrationTest, QueryClientReturnsAllRequestedInsertedPVs)
         auto handle = pool->acquire();
         ASSERT_TRUE(handle);
         dp::service::ingestion::IngestDataResponse response;
-        grpc::ClientContext context;
-        const auto status = handle->stub->ingestData(&context, request, &response);
+        grpc::ClientContext                        context;
+        const auto                                 status = handle->stub->ingestData(&context, request, &response);
         ASSERT_TRUE(status.ok());
         ASSERT_TRUE(response.has_ackresult());
         ASSERT_EQ(response.ackresult().numrows(), 1);
@@ -689,7 +681,7 @@ TEST_F(MLDPGrpcPoolIntegrationTest, QueryClientReturnsAllRequestedInsertedPVs)
     ingest_one(pv_b, value_b, "query_data_multi_req_b");
 
     mldp_pvxs_driver::query::MLDPQueryClient queryClient(make_pool_config(1, 1, "query_data_multi_probe_provider", "query data multi probe provider"));
-    const std::set<std::string> sources{pv_a, pv_b};
+    const std::set<std::string>              sources{pv_a, pv_b};
 
     mldp_pvxs_driver::util::bus::QuerySourcesDataOptions options;
     options.timeout = std::chrono::seconds(10);
@@ -710,8 +702,8 @@ TEST_F(MLDPGrpcPoolIntegrationTest, QueryClientReturnsAllRequestedInsertedPVs)
 
     const auto& first_a = it_a->second.front();
     const auto& first_b = it_b->second.front();
-    const auto first_int_a = firstIntegerValue(first_a);
-    const auto first_int_b = firstIntegerValue(first_b);
+    const auto  first_int_a = firstIntegerValue(first_a);
+    const auto  first_int_b = firstIntegerValue(first_b);
     ASSERT_TRUE(first_int_a.has_value());
     ASSERT_TRUE(first_int_b.has_value());
     EXPECT_EQ(first_int_a.value(), value_a);

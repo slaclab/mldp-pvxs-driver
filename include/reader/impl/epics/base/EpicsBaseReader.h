@@ -76,8 +76,8 @@ public:
      * @throws EpicsReaderConfig::Error if configuration is invalid.
      */
     EpicsBaseReader(std::shared_ptr<util::bus::IDataBus> bus,
-                    std::shared_ptr<metrics::Metrics>         metrics,
-                    const config::Config&                     cfg);
+                    std::shared_ptr<metrics::Metrics>    metrics,
+                    const config::Config&                cfg);
 
     /**
      * @brief Destructor - stops monitoring and releases resources.
@@ -151,7 +151,7 @@ private:
                                   const PVRuntimeConfig*                 runtimeCfg,
                                   std::size_t&                           emitted);
 
-    std::unique_ptr<EpicsBaseMonitorPoller> epics_base_poller_;    ///< Underlying polling monitor.
+    std::unique_ptr<EpicsBaseMonitorPoller> epics_base_poller_;      ///< Underlying polling monitor.
     std::mutex                              epics_base_drain_mutex_; ///< Serializes drain operations.
 
     REGISTER_READER("epics-base", EpicsBaseReader)

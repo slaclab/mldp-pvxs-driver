@@ -30,7 +30,7 @@ TEST(MetricsHistogramTest, RecordsReaderProcessingTimeWithSourceTag)
 
     metrics.observeReaderProcessingTimeMs(2.0, {{"source", "pv:test"}});
 
-    const auto text = serializeMetrics(metrics);
+    const auto        text = serializeMetrics(metrics);
     const std::string count_line = "mldp_pvxs_driver_reader_processing_time_ms_count{source=\"pv:test\"} 1";
     const std::string sum_line = "mldp_pvxs_driver_reader_processing_time_ms_sum{source=\"pv:test\"}";
     const std::string bucket_prefix = "mldp_pvxs_driver_reader_processing_time_ms_bucket{source=\"pv:test\"";

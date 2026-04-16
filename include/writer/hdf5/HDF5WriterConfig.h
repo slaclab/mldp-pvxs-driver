@@ -20,12 +20,12 @@
 namespace mldp_pvxs_driver::writer {
 
 /// YAML keys for the writer.hdf5[i] block.
-inline constexpr char HDF5NameKey[]            = "name";
-inline constexpr char HDF5BasePathKey[]        = "base-path";
-inline constexpr char HDF5MaxFileAgeKey[]      = "max-file-age-s";
-inline constexpr char HDF5MaxFileSizeMBKey[]   = "max-file-size-mb";
+inline constexpr char HDF5NameKey[] = "name";
+inline constexpr char HDF5BasePathKey[] = "base-path";
+inline constexpr char HDF5MaxFileAgeKey[] = "max-file-age-s";
+inline constexpr char HDF5MaxFileSizeMBKey[] = "max-file-size-mb";
 inline constexpr char HDF5FlushIntervalMsKey[] = "flush-interval-ms";
-inline constexpr char HDF5CompressionKey[]     = "compression-level";
+inline constexpr char HDF5CompressionKey[] = "compression-level";
 
 /**
  * @brief Configuration for the HDF5 file writer.
@@ -34,8 +34,10 @@ inline constexpr char HDF5CompressionKey[]     = "compression-level";
  * created under @ref basePath; files are rotated when either the age
  * or the size threshold is exceeded.
  */
-struct HDF5WriterConfig {
-    class Error : public std::runtime_error {
+struct HDF5WriterConfig
+{
+    class Error : public std::runtime_error
+    {
     public:
         using std::runtime_error::runtime_error;
     };

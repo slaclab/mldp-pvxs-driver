@@ -66,7 +66,7 @@ public:
      * @param colName The name of the column being emitted.
      * @param frames Vector of DataFrame payloads.
      */
-    using ColumnEmitFn = std::function<void(std::string colName,
+    using ColumnEmitFn = std::function<void(std::string                                 colName,
                                             std::vector<dp::service::common::DataFrame> frames)>;
 
     /**
@@ -90,13 +90,13 @@ public:
      * @post On success, @p outBatch contains DataFrame payloads for each
      *       converted data column.
      */
-    static bool tryBuildNtTableRowTsBatch(mldp_pvxs_driver::util::log::ILogger&                    log,
-                                          const std::string&                                       tablePvName,
-                                          const pvxs::Value&                                       epicsValue,
-                                          const std::string&                                       tsSecondsField,
-                                          const std::string&                                       tsNanosField,
-                                          util::bus::IDataBus::EventBatch*                    outBatch,
-                                          size_t&                                                  outEmitted);
+    static bool tryBuildNtTableRowTsBatch(mldp_pvxs_driver::util::log::ILogger& log,
+                                          const std::string&                    tablePvName,
+                                          const pvxs::Value&                    epicsValue,
+                                          const std::string&                    tsSecondsField,
+                                          const std::string&                    tsNanosField,
+                                          util::bus::IDataBus::EventBatch*      outBatch,
+                                          size_t&                               outEmitted);
 
     /**
      * @brief Convert an NTTable with row timestamps using streaming column emission.

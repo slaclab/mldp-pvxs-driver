@@ -76,9 +76,9 @@ public:
      * @param logger Logger instance for diagnostic output.
      */
     EpicsReaderBase(std::shared_ptr<util::bus::IDataBus> bus,
-                    std::shared_ptr<metrics::Metrics>         metrics,
-                    const EpicsReaderConfig&                  cfg,
-                    std::shared_ptr<util::log::ILogger>       logger);
+                    std::shared_ptr<metrics::Metrics>    metrics,
+                    const EpicsReaderConfig&             cfg,
+                    std::shared_ptr<util::log::ILogger>  logger);
 
     /**
      * @brief Virtual destructor - stops the thread pool.

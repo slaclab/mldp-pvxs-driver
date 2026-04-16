@@ -45,8 +45,8 @@ public:
         std::lock_guard<std::mutex> lock(mutex);
         if (metrics_)
         {
-            const size_t total_values = batch.frames.size();
-            const auto source = batch.root_source.empty() ? std::string("unknown") : batch.root_source;
+            const size_t             total_values = batch.frames.size();
+            const auto               source = batch.root_source.empty() ? std::string("unknown") : batch.root_source;
             const prometheus::Labels tags{{"source", source}};
             metrics_->incrementBusPushes(static_cast<double>(total_values), tags);
             metrics_->incrementBusPayloadBytes(0.0, tags);
@@ -133,18 +133,30 @@ using DataFrame = dp::service::common::DataFrame;
 
 std::optional<std::string> frameSource(const DataFrame& frame)
 {
-    if (frame.doublecolumns_size() > 0) return frame.doublecolumns(0).name();
-    if (frame.floatcolumns_size() > 0) return frame.floatcolumns(0).name();
-    if (frame.int32columns_size() > 0) return frame.int32columns(0).name();
-    if (frame.int64columns_size() > 0) return frame.int64columns(0).name();
-    if (frame.boolcolumns_size() > 0) return frame.boolcolumns(0).name();
-    if (frame.stringcolumns_size() > 0) return frame.stringcolumns(0).name();
-    if (frame.datacolumns_size() > 0) return frame.datacolumns(0).name();
-    if (frame.doublearraycolumns_size() > 0) return frame.doublearraycolumns(0).name();
-    if (frame.floatarraycolumns_size() > 0) return frame.floatarraycolumns(0).name();
-    if (frame.int32arraycolumns_size() > 0) return frame.int32arraycolumns(0).name();
-    if (frame.int64arraycolumns_size() > 0) return frame.int64arraycolumns(0).name();
-    if (frame.boolarraycolumns_size() > 0) return frame.boolarraycolumns(0).name();
+    if (frame.doublecolumns_size() > 0)
+        return frame.doublecolumns(0).name();
+    if (frame.floatcolumns_size() > 0)
+        return frame.floatcolumns(0).name();
+    if (frame.int32columns_size() > 0)
+        return frame.int32columns(0).name();
+    if (frame.int64columns_size() > 0)
+        return frame.int64columns(0).name();
+    if (frame.boolcolumns_size() > 0)
+        return frame.boolcolumns(0).name();
+    if (frame.stringcolumns_size() > 0)
+        return frame.stringcolumns(0).name();
+    if (frame.datacolumns_size() > 0)
+        return frame.datacolumns(0).name();
+    if (frame.doublearraycolumns_size() > 0)
+        return frame.doublearraycolumns(0).name();
+    if (frame.floatarraycolumns_size() > 0)
+        return frame.floatarraycolumns(0).name();
+    if (frame.int32arraycolumns_size() > 0)
+        return frame.int32arraycolumns(0).name();
+    if (frame.int64arraycolumns_size() > 0)
+        return frame.int64arraycolumns(0).name();
+    if (frame.boolarraycolumns_size() > 0)
+        return frame.boolarraycolumns(0).name();
     return std::nullopt;
 }
 
@@ -308,10 +320,10 @@ pvs:
     auto reader_ptr = mldp_pvxs_driver::reader::ReaderFactory::create("epics-pvxs", mock_bus, cfg, metrics);
     ASSERT_NE(reader_ptr, nullptr);
 
-    const int max_wait_ms = 5000;
-    int       waited_ms = 0;
-    size_t    counter_events = 0;
-    bool      matched_metrics = false;
+    const int                                  max_wait_ms = 5000;
+    int                                        waited_ms = 0;
+    size_t                                     counter_events = 0;
+    bool                                       matched_metrics = false;
     mldp_pvxs_driver::metrics::MetricsSnapshot snapshotter;
     while (waited_ms < max_wait_ms)
     {
@@ -389,7 +401,8 @@ TEST_F(EpicsPVXSReaderTest, SimulatedPVsProduceEventsAndExpectedTypes)
     }
 
     epics_typed_pv_test_utils::assertTypedCoverageDataFrames(
-        [this](const std::string& pv) {
+        [this](const std::string& pv)
+        {
             return findLatestDataFrameForSource(*mock_bus, pv);
         });
 }

@@ -144,7 +144,7 @@ bool MLDPPVXSController::push(EventBatch batch_values)
     // writers run concurrently.  Every writer receives its own copy of the
     // batch;
     const std::string rootSource = batch_values.root_source;
-    const std::size_t n          = writers_.size();
+    const std::size_t n = writers_.size();
 
     std::vector<std::future<bool>> futures;
     futures.reserve(n);
@@ -155,9 +155,10 @@ bool MLDPPVXSController::push(EventBatch batch_values)
         auto*      writerPtr = writers_[i].get();
         EventBatch batchCopy = batch_values; // explicit copy for each task
         futures.push_back(
-            thread_pool_->submit_task([writerPtr, b = std::move(batchCopy)]() mutable -> bool {
-                return writerPtr->push(std::move(b));
-            }));
+            thread_pool_->submit_task([writerPtr, b = std::move(batchCopy)]() mutable -> bool
+                                      {
+                                          return writerPtr->push(std::move(b));
+                                      }));
     }
 
     // Collect results; warn for any writer that rejected the batch.

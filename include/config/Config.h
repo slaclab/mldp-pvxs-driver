@@ -53,7 +53,6 @@ inline std::string makeMissingFieldMessage(const std::string& field)
 class Config
 {
 public:
-
     [[nodiscard]] static Config configFromFile(const std::string& filename);
 
     /**

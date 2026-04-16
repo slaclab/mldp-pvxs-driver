@@ -70,9 +70,9 @@ public:
      * @pre @p frame must point to a valid, initialized DataFrame.
      * @post On return, @p frame contains at least one additional typed column.
      */
-    static void convertPVToDataFrame(const pvxs::Value& pvValue,
+    static void convertPVToDataFrame(const pvxs::Value&              pvValue,
                                      dp::service::common::DataFrame* frame,
-                                     const std::string& columnName = "value");
+                                     const std::string&              columnName = "value");
 };
 
 } // namespace mldp_pvxs_driver::reader::impl::epics

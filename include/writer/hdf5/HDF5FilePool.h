@@ -12,27 +12,28 @@
 
 #ifdef MLDP_PVXS_HDF5_ENABLED
 
-#include <writer/hdf5/HDF5WriterConfig.h>
+    #include <writer/hdf5/HDF5WriterConfig.h>
 
-#include <H5Cpp.h>
+    #include <H5Cpp.h>
 
-#include <chrono>
-#include <cstdint>
-#include <filesystem>
-#include <memory>
-#include <mutex>
-#include <string>
-#include <unordered_map>
+    #include <chrono>
+    #include <cstdint>
+    #include <filesystem>
+    #include <memory>
+    #include <mutex>
+    #include <string>
+    #include <unordered_map>
 
 namespace mldp_pvxs_driver::writer {
 
 /**
  * @brief RAII entry describing one open HDF5 file for a single data source.
  */
-struct FileEntry {
-    H5::H5File                            file;        ///< Open HDF5 file handle.
-    std::filesystem::path                 path;        ///< Absolute path on disk.
-    std::chrono::steady_clock::time_point openedAt;    ///< When the file was opened.
+struct FileEntry
+{
+    H5::H5File                            file;            ///< Open HDF5 file handle.
+    std::filesystem::path                 path;            ///< Absolute path on disk.
+    std::chrono::steady_clock::time_point openedAt;        ///< When the file was opened.
     uint64_t                              bytesWritten{0}; ///< Cumulative bytes written since open.
 };
 
@@ -56,7 +57,8 @@ struct FileEntry {
  * @endcode
  * where `:` and other characters outside `[A-Za-z0-9._-]` are replaced by `_`.
  */
-class HDF5FilePool {
+class HDF5FilePool
+{
 public:
     explicit HDF5FilePool(HDF5WriterConfig config);
     ~HDF5FilePool();
@@ -93,14 +95,14 @@ public:
     void closeAll() noexcept;
 
 private:
-    const HDF5WriterConfig config_;
-    mutable std::mutex mutex_;
+    const HDF5WriterConfig                                      config_;
+    mutable std::mutex                                          mutex_;
     std::unordered_map<std::string, std::shared_ptr<FileEntry>> entries_;
 
-    bool needsRotation(const FileEntry& entry) const noexcept;
+    bool                       needsRotation(const FileEntry& entry) const noexcept;
     std::shared_ptr<FileEntry> openFile(const std::string& sourceName);
-    static std::string safeName(const std::string& source);
-    static std::string nowUtcFileSuffix();
+    static std::string         safeName(const std::string& source);
+    static std::string         nowUtcFileSuffix();
 };
 
 } // namespace mldp_pvxs_driver::writer

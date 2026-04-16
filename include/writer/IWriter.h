@@ -37,7 +37,8 @@ namespace mldp_pvxs_driver::writer {
  * - @ref push must be safe to call concurrently from multiple threads.
  * - @ref start and @ref stop are called from a single owner thread.
  */
-class IWriter {
+class IWriter
+{
 public:
     virtual ~IWriter() = default;
 
@@ -81,7 +82,10 @@ public:
      *
      * @return true (default) — healthy; override to expose deeper state.
      */
-    virtual bool isHealthy() const noexcept { return true; }
+    virtual bool isHealthy() const noexcept
+    {
+        return true;
+    }
 };
 
 /// Convenience alias for unique ownership of a writer.
