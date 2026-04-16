@@ -13,9 +13,9 @@ The full config is a single YAML document passed via `--config`. Every block sho
 ```yaml
 writer:                                     # required — at least one writer instance must be configured
 
-  # ========== gRPC Ingestion Writer ==========
-  grpc:
-    - name: grpc_main                       # required; unique instance name
+  # ========== MLDP Ingestion Writer ==========
+  mldp:
+    - name: mldp_main                       # required; unique instance name
       thread-pool: 2                        # optional; default: 1; worker threads for gRPC ingestion
       stream-max-bytes: 2097152             # optional; default: 2097152; flush stream after this payload size
       stream-max-age-ms: 200               # optional; default: 200; flush stream after this many ms
@@ -104,7 +104,7 @@ metrics:                                    # optional; Prometheus exporter sett
 
 | Writer Type | Description |
 |-------------|-------------|
-| `grpc` | gRPC ingestion writer — forwards batches to the MLDP ingestion service |
+| `mldp` | gRPC ingestion writer — forwards batches to the MLDP ingestion service |
 | `hdf5` | HDF5 storage writer — writes batches to local HDF5 files (build flag required) |
 
 Multiple instances of the same type are supported (each entry in the sequence is independent).
@@ -199,7 +199,7 @@ This project uses a pipeline-style architecture: PVXS clients feed PV updates in
 - [Reader Types](docs/readers.md) - Available reader implementations (EPICS Base, PVXS, Archiver)
 - [Implementing Custom Readers](docs/readers-implementation.md) - Guide to creating new reader types
 - [Writers Overview](docs/writers-implementation.md) - Writer pattern, factory registration, new writer guide
-- [gRPC Writer](docs/writers/grpc-writer.md) - gRPC ingestion writer details and configuration
+- [MLDP Writer](docs/writers/mldp-writer.md) - gRPC ingestion writer details and configuration
 - [HDF5 Writer](docs/writers/hdf5-writer.md) - HDF5 storage writer details and configuration
 - [MLDP Query Client](docs/query-client.md) - Standalone out-of-band query API
 - [Logging Abstraction Guide](docs/logging.md) - How `util::log` works and custom logger implementation

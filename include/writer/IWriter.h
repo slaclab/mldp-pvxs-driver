@@ -43,7 +43,7 @@ public:
     virtual ~IWriter() = default;
 
     /**
-     * @brief Human-readable name of this writer (e.g. "grpc", "hdf5").
+     * @brief Human-readable name of this writer (e.g. "mldp", "hdf5").
      */
     virtual std::string name() const = 0;
 

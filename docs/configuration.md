@@ -29,14 +29,14 @@ metrics:        # optional — Prometheus HTTP endpoint
 
 Top-level key. Must contain at least one writer instance across all types.
 
-### `writer.grpc[]` — gRPC Ingestion Writer
+### `writer.mldp[]` — MLDP Ingestion Writer
 
-Sequence of gRPC writer instances. Each element is an independent writer with its own thread pool and connection pool.
+Sequence of MLDP ingestion writer instances. Each element is an independent writer with its own thread pool and connection pool.
 
 ```yaml
 writer:
-  grpc:
-    - name: grpc_main              # required — unique instance name
+  mldp:
+    - name: mldp_main              # required — unique instance name
       thread-pool: 4               # optional; default: 1
       stream-max-bytes: 2097152    # optional; default: 2097152 (2 MiB)
       stream-max-age-ms: 200       # optional; default: 200 ms
@@ -74,7 +74,7 @@ mldp-pool:
     pem-root-certs:  /etc/certs/ca.crt       # optional
 ```
 
-→ [Full gRPC Writer Documentation](writers/grpc-writer.md)
+→ [Full MLDP Writer Documentation](writers/mldp-writer.md)
 
 ---
 
@@ -244,6 +244,6 @@ When `metrics:` is absent the Prometheus exposer is not started.
 
 | File | Description |
 |------|-------------|
-| [`docs/examples/config-grpc-only.yaml`](examples/config-grpc-only.yaml) | Minimal single gRPC writer + PVXS reader |
-| [`docs/examples/config-grpc-and-hdf5.yaml`](examples/config-grpc-and-hdf5.yaml) | Dual writer (gRPC + HDF5) |
+| [`docs/examples/config-mldp-only.yaml`](examples/config-mldp-only.yaml) | Minimal single gRPC writer + PVXS reader |
+| [`docs/examples/config-mldp-and-hdf5.yaml`](examples/config-mldp-and-hdf5.yaml) | Dual writer (gRPC + HDF5) |
 | [`docs/examples/config-epics-archiver.yaml`](examples/config-epics-archiver.yaml) | Archiver reader with gRPC writer |

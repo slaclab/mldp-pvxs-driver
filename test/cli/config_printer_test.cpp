@@ -16,8 +16,8 @@ mldp-pool:
   min-conn: 1
   max-conn: 4
 writer:
-  grpc:
-    - name: grpc_main
+  mldp:
+    - name: mldp_main
       mldp-pool:
         provider-name: pvxs_provider
         ingestion-url: https://mldp-ingestion.example:443
@@ -70,8 +70,8 @@ mldp-pool:
   min-conn: 1
   max-conn: 1
 writer:
-  grpc:
-    - name: grpc_main
+  mldp:
+    - name: mldp_main
       mldp-pool:
         provider-name: test_provider
         ingestion-url: dp-ingestion:50051

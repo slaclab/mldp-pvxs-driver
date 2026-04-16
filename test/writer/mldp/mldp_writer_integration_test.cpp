@@ -98,7 +98,7 @@ std::optional<int64_t> firstIntegerValue(const dp::service::common::DataValues& 
     return std::nullopt;
 }
 
-class MLDPGrpcWriterIntegrationTest : public ::testing::Test
+class MLDPWriterIntegrationTest : public ::testing::Test
 {
 protected:
     static void SetUpTestSuite()
@@ -148,8 +148,8 @@ protected:
 
         std::ostringstream yaml;
         yaml << "writer:\n"
-             << "  grpc:\n"
-             << "    - name: grpc_main\n"
+             << "  mldp:\n"
+             << "    - name: mldp_main\n"
              << "      mldp-pool:\n"
              << "        provider-name: test_provider\n"
              << "        ingestion-url: dp-ingestion:50051\n"
@@ -180,11 +180,11 @@ protected:
     std::shared_ptr<MLDPPVXSController> controller_;
 };
 
-std::unique_ptr<PVServer> MLDPGrpcWriterIntegrationTest::pvServer_;
+std::unique_ptr<PVServer> MLDPWriterIntegrationTest::pvServer_;
 
 } // namespace
 
-TEST(MLDPGrpcWriterPoolTest, AcquireBlocksUntilReleased)
+TEST(MLDPWriterPoolTest, AcquireBlocksUntilReleased)
 {
     // Scope: Verifies that when the pool has a single object (min=max=1),
     // a second caller blocks in `acquire()` until the first holder
@@ -252,7 +252,7 @@ TEST(MLDPGrpcWriterPoolTest, AcquireBlocksUntilReleased)
     fut.get();
 }
 
-TEST(MLDPGrpcWriterPoolTest, MultipleObjectsHaveSeparateChannels)
+TEST(MLDPWriterPoolTest, MultipleObjectsHaveSeparateChannels)
 {
     // Scope: Verifies that when the pool is allowed to grow (max_size=2),
     // two concurrently-acquired pooled objects each own distinct
@@ -281,7 +281,7 @@ TEST(MLDPGrpcWriterPoolTest, MultipleObjectsHaveSeparateChannels)
     EXPECT_EQ(pool->available(), 2u);
 }
 
-TEST(MLDPGrpcWriterPoolTest, UpdatesMetricsWhenConnectionsMove)
+TEST(MLDPWriterPoolTest, UpdatesMetricsWhenConnectionsMove)
 {
     const prometheus::Labels ingestionPoolLabel{{"pool", "ingestion"}};
     auto                     metrics = std::make_shared<mldp_pvxs_driver::metrics::Metrics>(mldp_pvxs_driver::metrics::MetricsConfig());
@@ -328,7 +328,7 @@ TEST(MLDPGrpcWriterPoolTest, UpdatesMetricsWhenConnectionsMove)
     EXPECT_DOUBLE_EQ(metrics->poolConnectionsInUse(ingestionPoolLabel), 0.0);
 }
 
-TEST_F(MLDPGrpcWriterIntegrationTest, QueryCounterPV)
+TEST_F(MLDPWriterIntegrationTest, QueryCounterPV)
 {
     startControllerWithEpicsPVs({"test:counter"});
 
@@ -343,7 +343,7 @@ TEST_F(MLDPGrpcWriterIntegrationTest, QueryCounterPV)
     EXPECT_GT(value.intvalue(), 0);
 }
 
-TEST_F(MLDPGrpcWriterIntegrationTest, QueryVoltagePV)
+TEST_F(MLDPWriterIntegrationTest, QueryVoltagePV)
 {
     startControllerWithEpicsPVs({"test:voltage"});
 
@@ -359,7 +359,7 @@ TEST_F(MLDPGrpcWriterIntegrationTest, QueryVoltagePV)
     EXPECT_LE(value.doublevalue(), 2.6);
 }
 
-TEST_F(MLDPGrpcWriterIntegrationTest, QueryStatusPV)
+TEST_F(MLDPWriterIntegrationTest, QueryStatusPV)
 {
     startControllerWithEpicsPVs({"test:status"});
 
@@ -375,7 +375,7 @@ TEST_F(MLDPGrpcWriterIntegrationTest, QueryStatusPV)
     EXPECT_TRUE(status == "OK" || status == "WARNING" || status == "FAULT");
 }
 
-TEST_F(MLDPGrpcWriterIntegrationTest, QueryWaveformPV)
+TEST_F(MLDPWriterIntegrationTest, QueryWaveformPV)
 {
     startControllerWithEpicsPVs({"test:waveform"});
 
@@ -398,7 +398,7 @@ TEST_F(MLDPGrpcWriterIntegrationTest, QueryWaveformPV)
     }
 }
 
-// TEST_F(MLDPGrpcWriterIntegrationTest, QueryTablePV)
+// TEST_F(MLDPWriterIntegrationTest, QueryTablePV)
 // {
 //     startControllerWithEpicsPVs({"test:table"});
 
@@ -452,7 +452,7 @@ TEST_F(MLDPGrpcWriterIntegrationTest, QueryWaveformPV)
 // }
 // }
 
-TEST_F(MLDPGrpcWriterIntegrationTest, QueryBsasTablePV)
+TEST_F(MLDPWriterIntegrationTest, QueryBsasTablePV)
 {
     startControllerWithBsasTableReader();
 
@@ -479,7 +479,7 @@ TEST_F(MLDPGrpcWriterIntegrationTest, QueryBsasTablePV)
     EXPECT_EQ(stringRows[2].stringvalue(), "FAULT");
 }
 
-TEST_F(MLDPGrpcWriterIntegrationTest, CharacterizesDuplicateIngestBehaviorForSameSample)
+TEST_F(MLDPWriterIntegrationTest, CharacterizesDuplicateIngestBehaviorForSameSample)
 {
     auto pool = MLDPGrpcPool::create(make_pool_config(1, 1, "duplicate_probe_provider", "duplicate probe provider"));
     ASSERT_TRUE(pool);
@@ -544,7 +544,7 @@ TEST_F(MLDPGrpcWriterIntegrationTest, CharacterizesDuplicateIngestBehaviorForSam
     }
 }
 
-TEST_F(MLDPGrpcWriterIntegrationTest, QueryClientReturnsMetadataAndDataForInsertedPV)
+TEST_F(MLDPWriterIntegrationTest, QueryClientReturnsMetadataAndDataForInsertedPV)
 {
     startControllerWithNoReaders();
     ASSERT_TRUE(controller_);
@@ -637,7 +637,7 @@ TEST_F(MLDPGrpcWriterIntegrationTest, QueryClientReturnsMetadataAndDataForInsert
     EXPECT_EQ(first.value(), expected_value);
 }
 
-TEST_F(MLDPGrpcWriterIntegrationTest, QueryClientReturnsAllRequestedInsertedPVs)
+TEST_F(MLDPWriterIntegrationTest, QueryClientReturnsAllRequestedInsertedPVs)
 {
     startControllerWithNoReaders();
     ASSERT_TRUE(controller_);

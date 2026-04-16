@@ -1,10 +1,10 @@
-# gRPC Ingestion Writer
+# MLDP Ingestion Writer
 
 > **Related:** [Writers Overview](../writers-implementation.md) | [Architecture](../architecture.md) | [MLDP Query Client](../query-client.md)
 
 ## Overview
 
-`MLDPGrpcWriter` forwards event batches to an MLDP ingestion service over gRPC. It registers as type `"grpc"` in the writer factory.
+`MLDPWriter` forwards event batches to the MLDP ingestion service over gRPC. It registers as type `"mldp"` in the writer factory.
 
 ## Internal Architecture
 
@@ -25,15 +25,15 @@ push() → round-robin → WorkerChannel[i].deque
 
 ## Configuration
 
-Under `writer.grpc[i]`:
+Under `writer.mldp[i]`:
 
 ```yaml
 writer:
-  grpc:
-    - name: grpc_main            # required — unique instance name
-      thread-pool: 4             # optional; default: 1
-      stream-max-bytes: 2097152  # optional; default: 2 MiB
-      stream-max-age-ms: 200     # optional; default: 200 ms
+  mldp:
+    - name: mldp_main             # required — unique instance name
+      thread-pool: 4              # optional; default: 1
+      stream-max-bytes: 2097152   # optional; default: 2 MiB
+      stream-max-age-ms: 200      # optional; default: 200 ms
       mldp-pool:
         provider-name: pvxs_provider
         ingestion-url: grpc://ingest-host:50051
@@ -62,10 +62,10 @@ writer:
 
 | File | Purpose |
 |------|---------|
-| `include/writer/grpc/MLDPGrpcWriter.h` | Class definition, `WorkerChannel`, `QueueItem`. |
-| `include/writer/grpc/MLDPGrpcWriterConfig.h` | Config struct, YAML keys, `parse()`. |
-| `src/writer/grpc/MLDPGrpcWriter.cpp` | `workerLoop()`, `buildRequest()`, metrics. |
+| `include/writer/mldp/MLDPWriter.h` | Class definition, `WorkerChannel`, `QueueItem`. |
+| `include/writer/mldp/MLDPWriterConfig.h` | Config struct, YAML keys, `parse()`. |
+| `src/writer/mldp/MLDPWriter.cpp` | `workerLoop()`, `buildRequest()`, metrics. |
 
 ## Metrics
 
-`MLDPGrpcWriter` updates queue-depth gauges via `updateQueueDepthMetric()` after each `push()` and worker drain. Metrics are injected as `std::shared_ptr<metrics::Metrics>` at construction.
+`MLDPWriter` updates queue-depth gauges via `updateQueueDepthMetric()` after each `push()` and worker drain. Metrics are injected as `std::shared_ptr<metrics::Metrics>` at construction.

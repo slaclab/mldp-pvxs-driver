@@ -12,7 +12,6 @@
 
 #include <config/Config.h>
 #include <metrics/MetricsConfig.h>
-#include <writer/WriterConfig.h>
 
 #include <optional>
 #include <stdexcept>
@@ -54,9 +53,6 @@ public:
     /** @return Whether the configuration passed validation. */
     bool valid() const;
 
-    /** @return Writer configuration (which writers are active and their settings). */
-    const writer::WriterConfig& writerConfig() const;
-
     /**
      * @return Raw configuration blocks for registered reader instances.
      *
@@ -80,7 +76,7 @@ public:
     /**
      * @return Writer entries as (type, config-node) pairs.
      *
-     * Each element is the writer type identifier (e.g. "grpc", "hdf5") paired
+     * Each element is the writer type identifier (e.g. "mldp", "hdf5") paired
      * with the YAML node that the @ref WriterFactory should pass to the
      * writer's constructor.
      */
@@ -96,7 +92,6 @@ private:
     void parseMetrics(const ::mldp_pvxs_driver::config::Config& root);
 
     bool                                                valid_ = false;
-    writer::WriterConfig                                writerConfig_;
     std::vector<config::Config>                         readerConfigs_;
     std::vector<std::pair<std::string, config::Config>> readerEntries_;
     std::vector<std::pair<std::string, config::Config>> writerEntries_;

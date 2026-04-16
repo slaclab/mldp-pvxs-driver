@@ -36,8 +36,8 @@ mldp-pool:
   min-conn: 1
   max-conn: 1
 writer:
-  grpc:
-    - name: grpc_main
+  mldp:
+    - name: mldp_main
       mldp-pool:
         provider-name: test_provider
         ingestion-url: dp-ingestion:50051
@@ -56,8 +56,8 @@ mldp-pool:
   min-conn: 1
   max-conn: 1
 writer:
-  grpc:
-    - name: grpc_main
+  mldp:
+    - name: mldp_main
       mldp-pool:
         provider-name: test_provider
         ingestion-url: dp-ingestion:50051
@@ -80,8 +80,8 @@ mldp-pool:
   min-conn: 1
   max-conn: 1
 writer:
-  grpc:
-    - name: grpc_main
+  mldp:
+    - name: mldp_main
       mldp-pool:
         provider-name: test_provider
         ingestion-url: dp-ingestion:50051
@@ -311,8 +311,8 @@ TEST(MLDPPVXSControllerTest, IdleStreamRotationStartsNewStreamAfterMaxAge)
          << "  min-conn: 1\n"
          << "  max-conn: 1\n"
          << "writer:\n"
-         << "  grpc:\n"
-         << "    - name: grpc_main\n"
+         << "  mldp:\n"
+         << "    - name: mldp_main\n"
          << "      stream-max-age-ms: 150\n"
          << "      mldp-pool:\n"
          << "        provider-name: test_provider\n"

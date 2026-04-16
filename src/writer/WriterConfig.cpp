@@ -9,33 +9,39 @@
 //////////////////////////////////////////////////////////////////////////////
 
 #include <writer/WriterConfig.h>
+#include <writer/mldp/MLDPWriterConfig.h>
+
+#ifdef MLDP_PVXS_HDF5_ENABLED
+#include <writer/hdf5/HDF5WriterConfig.h>
+#endif
 
 using namespace mldp_pvxs_driver::writer;
 using namespace mldp_pvxs_driver::config;
 
-WriterConfig WriterConfig::parse(const Config& writerNode)
+void WriterConfig::validate(const Config& writerNode)
 {
-    WriterConfig cfg;
+    int instanceCount = 0;
 
-    // -- gRPC writer instances --
-    if (writerNode.hasChild(WriterGrpcKey))
+    // -- MLDP writer instances — parse each to catch per-instance errors --
+    if (writerNode.hasChild(WriterMldpKey))
     {
-        if (!writerNode.isSequence(WriterGrpcKey))
+        if (!writerNode.isSequence(WriterMldpKey))
         {
-            throw Error("writer.grpc must be a sequence of writer instances");
+            throw Error("writer.mldp must be a sequence of writer instances");
         }
-        const auto grpcItems = writerNode.subConfig(WriterGrpcKey);
-        for (const auto& item : grpcItems)
+        const auto items = writerNode.subConfig(WriterMldpKey);
+        for (const auto& item : items)
         {
             try
             {
-                cfg.grpcConfigs.push_back(MLDPGrpcWriterConfig::parse(item));
+                MLDPWriterConfig::parse(item);
             }
-            catch (const MLDPGrpcWriterConfig::Error& e)
+            catch (const MLDPWriterConfig::Error& e)
             {
-                throw Error(std::string("writer.grpc: ") + e.what());
+                throw Error(std::string("writer.mldp: ") + e.what());
             }
         }
+        instanceCount += static_cast<int>(items.size());
     }
 
     // -- HDF5 writer instances --
@@ -46,27 +52,27 @@ WriterConfig WriterConfig::parse(const Config& writerNode)
             throw Error("writer.hdf5 must be a sequence of writer instances");
         }
 #ifndef MLDP_PVXS_HDF5_ENABLED
-        throw Error("writer.hdf5 instances are configured but this build was compiled without " "HDF5 support (MLDP_PVXS_ENABLE_HDF5=OFF)");
+        throw Error("writer.hdf5 instances are configured but this build was compiled without "
+                    "HDF5 support (MLDP_PVXS_ENABLE_HDF5=OFF)");
 #else
-        const auto hdf5Items = writerNode.subConfig(WriterHdf5Key);
-        for (const auto& item : hdf5Items)
+        const auto items = writerNode.subConfig(WriterHdf5Key);
+        for (const auto& item : items)
         {
             try
             {
-                cfg.hdf5Configs.push_back(HDF5WriterConfig::parse(item));
+                HDF5WriterConfig::parse(item);
             }
             catch (const HDF5WriterConfig::Error& e)
             {
                 throw Error(std::string("writer.hdf5: ") + e.what());
             }
         }
+        instanceCount += static_cast<int>(items.size());
 #endif
     }
 
-    if (!cfg.anyEnabled())
+    if (instanceCount == 0)
     {
         throw std::invalid_argument("writer config: at least one writer instance must be configured");
     }
-
-    return cfg;
 }

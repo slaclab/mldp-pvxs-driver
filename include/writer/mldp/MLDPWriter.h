@@ -13,7 +13,7 @@
 #include <config/Config.h>
 #include <writer/IWriter.h>
 #include <writer/WriterFactory.h>
-#include <writer/grpc/MLDPGrpcWriterConfig.h>
+#include <writer/mldp/MLDPWriterConfig.h>
 
 #include <metrics/Metrics.h>
 #include <pool/MLDPGrpcPool.h>
@@ -32,36 +32,35 @@
 namespace mldp_pvxs_driver::writer {
 
 /**
- * @brief gRPC ingestion writer.
+ * @brief MLDP ingestion writer.
  *
- * Migrated verbatim from `MLDPPVXSController` — all worker logic
- * (`WorkerChannel`, `QueueItem`, `workerLoop()`, `buildRequest()`) lives
- * here.  No logic changes from the original controller implementation.
+ * Forwards event batches to the MLDP ingestion service over gRPC.
+ * All worker logic (`WorkerChannel`, `QueueItem`, `workerLoop()`,
+ * `buildRequest()`) lives here.
  *
  * The writer owns its `MLDPGrpcIngestionePool` and its thread pool.
  * `start()` registers the provider and spawns worker threads.
- * `push()` round-robins frames across channels identically to the
- * original controller.
+ * `push()` round-robins frames across channels.
  */
-class MLDPGrpcWriter final : public IWriter
+class MLDPWriter final : public IWriter
 {
-    REGISTER_WRITER("grpc", MLDPGrpcWriter)
+    REGISTER_WRITER("mldp", MLDPWriter)
 public:
     /**
      * @brief Factory constructor — parses config from the root YAML node.
      *
      * Called by the @ref WriterFactory registry. Delegates to the typed
-     * constructor after calling @c MLDPGrpcWriterConfig::parse(root).
+     * constructor after calling @c MLDPWriterConfig::parse(root).
      */
-    explicit MLDPGrpcWriter(const config::Config&             root,
-                            std::shared_ptr<metrics::Metrics> metrics = nullptr);
+    explicit MLDPWriter(const config::Config&             root,
+                        std::shared_ptr<metrics::Metrics> metrics = nullptr);
 
     /**
      * @brief Typed constructor — for direct use and unit tests.
      */
-    explicit MLDPGrpcWriter(MLDPGrpcWriterConfig              config,
-                            std::shared_ptr<metrics::Metrics> metrics = nullptr);
-    ~MLDPGrpcWriter() override;
+    explicit MLDPWriter(MLDPWriterConfig                  config,
+                        std::shared_ptr<metrics::Metrics> metrics = nullptr);
+    ~MLDPWriter() override;
 
     std::string name() const override
     {
@@ -98,7 +97,7 @@ private:
         bool                    shutdown{false};
     };
 
-    MLDPGrpcWriterConfig                                              config_;
+    MLDPWriterConfig                                                  config_;
     std::shared_ptr<mldp_pvxs_driver::util::log::ILogger>             logger_;
     std::shared_ptr<metrics::Metrics>                                 metrics_;
     std::shared_ptr<BS::light_thread_pool>                            threadPool_;

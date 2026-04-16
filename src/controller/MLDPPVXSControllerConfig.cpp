@@ -58,11 +58,6 @@ const std::optional<MetricsConfig>& MLDPPVXSControllerConfig::metricsConfig() co
     return metricsConfig_;
 }
 
-const mldp_pvxs_driver::writer::WriterConfig& MLDPPVXSControllerConfig::writerConfig() const
-{
-    return writerConfig_;
-}
-
 void MLDPPVXSControllerConfig::parse(const ::mldp_pvxs_driver::config::Config& root)
 {
     parseWriter(root);
@@ -77,7 +72,7 @@ void MLDPPVXSControllerConfig::parseWriter(const ::mldp_pvxs_driver::config::Con
 
     if (!root.hasChild(WriterKey))
     {
-        throw Error("'writer' block is missing; configure at least one writer under writer.grpc or writer.hdf5");
+        throw Error("'writer' block is missing; configure at least one writer under writer.mldp or writer.hdf5");
     }
 
     const auto writerNodes = root.subConfig(WriterKey);
@@ -89,7 +84,7 @@ void MLDPPVXSControllerConfig::parseWriter(const ::mldp_pvxs_driver::config::Con
 
     try
     {
-        writerConfig_ = WriterConfig::parse(writerNode);
+        WriterConfig::validate(writerNode);
     }
     catch (const WriterConfig::Error& e)
     {
@@ -102,12 +97,12 @@ void MLDPPVXSControllerConfig::parseWriter(const ::mldp_pvxs_driver::config::Con
 
     // Build one writerEntry per configured instance (sequence items).
     // The config node passed to the factory is the per-instance map node.
-    if (writerNode.hasChild(WriterGrpcKey))
+    if (writerNode.hasChild(WriterMldpKey))
     {
-        const auto grpcItems = writerNode.subConfig(WriterGrpcKey);
-        for (const auto& item : grpcItems)
+        const auto mldpItems = writerNode.subConfig(WriterMldpKey);
+        for (const auto& item : mldpItems)
         {
-            writerEntries_.push_back({"grpc", item});
+            writerEntries_.push_back({"mldp", item});
         }
     }
     if (writerNode.hasChild(WriterHdf5Key))

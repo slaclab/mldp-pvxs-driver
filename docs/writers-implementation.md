@@ -75,8 +75,8 @@ Writers are configured under the top-level `writer:` block. Each type owns a YAM
 
 ```yaml
 writer:
-  grpc:
-    - name: grpc_main
+  mldp:
+    - name: mldp_main
       mldp-pool:
         provider-name: pvxs_provider
   hdf5:
@@ -90,7 +90,7 @@ writer:
 
 | Type | Doc | Header |
 |------|-----|--------|
-| `grpc` | [gRPC Writer](writers/grpc-writer.md) | `include/writer/grpc/MLDPGrpcWriter.h` |
+| `mldp` | [MLDP Writer](writers/mldp-writer.md) | `include/writer/mldp/MLDPWriter.h` |
 | `hdf5` | [HDF5 Writer](writers/hdf5-writer.md) | `include/writer/hdf5/HDF5Writer.h` |
 
 ---
@@ -190,7 +190,7 @@ Update `WriterConfig::parse()` to recognise `"my-type"` and forward the node to 
 
 ### 5 — Add a doc page
 
-Create `docs/writers/my-type-writer.md` following the pattern in [grpc-writer.md](writers/grpc-writer.md):
+Create `docs/writers/my-type-writer.md` following the pattern in [mldp-writer.md](writers/mldp-writer.md):
 - Overview / architecture diagram
 - Config table with all YAML keys, types, defaults
 - Lifecycle table

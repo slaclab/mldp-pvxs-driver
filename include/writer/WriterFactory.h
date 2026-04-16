@@ -83,8 +83,8 @@ public:
  *
  * Example:
  * @code
- * class MLDPGrpcWriter final : public IWriter {
- *     REGISTER_WRITER("grpc", MLDPGrpcWriter)
+ * class MLDPWriter final : public IWriter {
+ *     REGISTER_WRITER("mldp", MLDPWriter)
  *     …
  * };
  * @endcode

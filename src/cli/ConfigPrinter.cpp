@@ -14,6 +14,8 @@
 #include <pool/MLDPGrpcPoolConfig.h>
 #include <reader/impl/epics/shared/EpicsReaderConfig.h>
 #include <reader/impl/epics_archiver/EpicsArchiverReaderConfig.h>
+#include <writer/hdf5/HDF5WriterConfig.h>
+#include <writer/mldp/MLDPWriterConfig.h>
 
 #include <algorithm>
 #include <iomanip>
@@ -88,23 +90,42 @@ std::string mldp_pvxs_driver::cli::formatStartupConfig(
     out << "=== Effective Startup Configuration ===\n";
     out << "file: " << configPath << "\n";
 
-    for (const auto& grpcCfg : controllerConfig.writerConfig().grpcConfigs)
+    for (const auto& [type, writerNode] : controllerConfig.writerEntries())
     {
-        out << "writer.grpc[" << grpcCfg.name << "]: threads=" << grpcCfg.threadPoolSize
-            << " stream_max_bytes=" << grpcCfg.streamMaxBytes
-            << " stream_max_age_ms=" << grpcCfg.streamMaxAge.count() << "\n";
+        if (type == "mldp")
+        {
+            try
+            {
+                const auto mldpCfg = writer::MLDPWriterConfig::parse(writerNode);
+                out << "writer.mldp[" << mldpCfg.name << "]: threads=" << mldpCfg.threadPoolSize
+                    << " stream_max_bytes=" << mldpCfg.streamMaxBytes
+                    << " stream_max_age_ms=" << mldpCfg.streamMaxAge.count() << "\n";
 
-        const auto& pool = grpcCfg.poolConfig;
-        out << "  mldp-pool: provider=" << pool.providerName()
-            << " conn=" << pool.minConnections() << ".." << pool.maxConnections()
-            << " ingestion=" << pool.ingestionUrl()
-            << " query=" << pool.queryUrl()
-            << " credentials=" << credentialsSummary(pool.credentials())
-            << "\n";
-    }
-    for (const auto& hdf5Cfg : controllerConfig.writerConfig().hdf5Configs)
-    {
-        out << "writer.hdf5[" << hdf5Cfg.name << "]: base-path=" << hdf5Cfg.basePath << "\n";
+                const auto& pool = mldpCfg.poolConfig;
+                out << "  mldp-pool: provider=" << pool.providerName()
+                    << " conn=" << pool.minConnections() << ".." << pool.maxConnections()
+                    << " ingestion=" << pool.ingestionUrl()
+                    << " query=" << pool.queryUrl()
+                    << " credentials=" << credentialsSummary(pool.credentials())
+                    << "\n";
+            }
+            catch (const writer::MLDPWriterConfig::Error& e)
+            {
+                out << "writer.mldp[?]: parse error: " << e.what() << "\n";
+            }
+        }
+        else if (type == "hdf5")
+        {
+            try
+            {
+                const auto hdf5Cfg = writer::HDF5WriterConfig::parse(writerNode);
+                out << "writer.hdf5[" << hdf5Cfg.name << "]: base-path=" << hdf5Cfg.basePath << "\n";
+            }
+            catch (const writer::HDF5WriterConfig::Error& e)
+            {
+                out << "writer.hdf5[?]: parse error: " << e.what() << "\n";
+            }
+        }
     }
 
     if (controllerConfig.metricsConfig().has_value() && controllerConfig.metricsConfig()->valid())

@@ -8,7 +8,7 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
-#include <writer/grpc/MLDPGrpcWriter.h>
+#include <writer/mldp/MLDPWriter.h>
 
 #include <util/StringFormat.h>
 #include <util/log/Logger.h>
@@ -50,13 +50,13 @@ bool hasTimestampListW(const dp::service::common::DataFrame& frame)
 // Construction / destruction
 // ---------------------------------------------------------------------------
 
-MLDPGrpcWriter::MLDPGrpcWriter(const config::Config&    root,
+MLDPWriter::MLDPWriter(const config::Config&    root,
                                std::shared_ptr<Metrics> metrics)
-    : MLDPGrpcWriter(MLDPGrpcWriterConfig::parse(root), std::move(metrics))
+    : MLDPWriter(MLDPWriterConfig::parse(root), std::move(metrics))
 {
 }
 
-MLDPGrpcWriter::MLDPGrpcWriter(MLDPGrpcWriterConfig     config,
+MLDPWriter::MLDPWriter(MLDPWriterConfig     config,
                                std::shared_ptr<Metrics> metrics)
     : config_(std::move(config))
     , logger_(makeWriterLogger())
@@ -64,7 +64,7 @@ MLDPGrpcWriter::MLDPGrpcWriter(MLDPGrpcWriterConfig     config,
 {
 }
 
-MLDPGrpcWriter::~MLDPGrpcWriter()
+MLDPWriter::~MLDPWriter()
 {
     if (running_.load())
     {
@@ -78,16 +78,16 @@ MLDPGrpcWriter::~MLDPGrpcWriter()
 // IWriter lifecycle
 // ---------------------------------------------------------------------------
 
-void MLDPGrpcWriter::start()
+void MLDPWriter::start()
 {
     if (running_.load())
     {
-        warnf(*logger_, "MLDPGrpcWriter already started");
+        warnf(*logger_, "MLDPWriter already started");
         return;
     }
 
     running_.store(true);
-    infof(*logger_, "MLDPGrpcWriter starting");
+    infof(*logger_, "MLDPWriter starting");
 
     threadPool_ = std::make_shared<BS::light_thread_pool>(
         static_cast<std::size_t>(
@@ -98,7 +98,7 @@ void MLDPGrpcWriter::start()
     if (providerId_.empty())
     {
         running_.store(false);
-        throw std::runtime_error("MLDPGrpcWriter: failed to register provider with MLDP ingestion service");
+        throw std::runtime_error("MLDPWriter: failed to register provider with MLDP ingestion service");
     }
 
     const std::size_t workerCount = std::max<std::size_t>(
@@ -119,16 +119,16 @@ void MLDPGrpcWriter::start()
                                  });
     }
 
-    infof(*logger_, "MLDPGrpcWriter started with {} workers", workerCount);
+    infof(*logger_, "MLDPWriter started with {} workers", workerCount);
 }
 
-void MLDPGrpcWriter::stop() noexcept
+void MLDPWriter::stop() noexcept
 {
     if (!running_.load())
     {
         return;
     }
-    infof(*logger_, "MLDPGrpcWriter stopping");
+    infof(*logger_, "MLDPWriter stopping");
     running_.store(false);
     for (auto& ch : channels_)
     {
@@ -143,15 +143,15 @@ void MLDPGrpcWriter::stop() noexcept
         threadPool_->wait();
     }
     channels_.clear();
-    infof(*logger_, "MLDPGrpcWriter stopped");
+    infof(*logger_, "MLDPWriter stopped");
 }
 
-bool MLDPGrpcWriter::isHealthy() const noexcept
+bool MLDPWriter::isHealthy() const noexcept
 {
     return running_.load();
 }
 
-const std::string& MLDPGrpcWriter::providerId() const
+const std::string& MLDPWriter::providerId() const
 {
     return providerId_;
 }
@@ -160,7 +160,7 @@ const std::string& MLDPGrpcWriter::providerId() const
 // push — identical round-robin logic from the original controller
 // ---------------------------------------------------------------------------
 
-bool MLDPGrpcWriter::push(util::bus::IDataBus::EventBatch batch) noexcept
+bool MLDPWriter::push(util::bus::IDataBus::EventBatch batch) noexcept
 {
     if (!running_.load())
     {
@@ -201,7 +201,7 @@ bool MLDPGrpcWriter::push(util::bus::IDataBus::EventBatch batch) noexcept
 // workerLoop — identical to original MLDPPVXSController::workerLoop
 // ---------------------------------------------------------------------------
 
-void MLDPGrpcWriter::workerLoop(std::size_t workerIndex)
+void MLDPWriter::workerLoop(std::size_t workerIndex)
 {
     auto&                                                                                                   ch = *channels_[workerIndex];
     std::optional<mldp_pvxs_driver::util::pool::PooledHandle<mldp_pvxs_driver::util::pool::MLDPGrpcObject>> handle;
@@ -457,7 +457,7 @@ void MLDPGrpcWriter::workerLoop(std::size_t workerIndex)
 // buildRequest — identical to original MLDPPVXSController::buildRequest
 // ---------------------------------------------------------------------------
 
-bool MLDPGrpcWriter::buildRequest(const std::string&                         sourceName,
+bool MLDPWriter::buildRequest(const std::string&                         sourceName,
                                   const dp::service::common::DataFrame&      frame,
                                   const std::string&                         requestId,
                                   dp::service::ingestion::IngestDataRequest& request,
@@ -506,7 +506,7 @@ bool MLDPGrpcWriter::buildRequest(const std::string&                         sou
 // Metrics helper
 // ---------------------------------------------------------------------------
 
-void MLDPGrpcWriter::updateQueueDepthMetric()
+void MLDPWriter::updateQueueDepthMetric()
 {
     const double depth = static_cast<double>(queuedItems_.load(std::memory_order_relaxed));
     metric_call(metrics_, [&](auto& m)
