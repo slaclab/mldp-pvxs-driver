@@ -27,6 +27,7 @@ flowchart TB
     end
 
     IDataBus["IDataBus<br/>(Push Interface)"]
+    WriterFactory["WriterFactory<br/>(Static Registration)"]
 
     subgraph Controller["MLDPPVXSController"]
         HashPart["Hash-Based Partitioning<br/>(Source Affinity)"]
@@ -61,6 +62,7 @@ flowchart TB
     WN --> GrpcPool
 
     GrpcPool --> MLDPService
+    Controller --> WriterFactory
 ```
 
 ## Reader Abstraction
@@ -81,6 +83,7 @@ All readers:
 - Register via `REGISTER_READER` macro
 - Push events through `IDataBus` interface
 - Are decoupled from gRPC/controller implementation
+- Are mirrored on the writer side by `WriterFactory` and `REGISTER_WRITER`
 
 For details on existing readers, see [Reader Types](readers.md). To implement a custom reader, see [Implementing Custom Readers](readers-implementation.md).
 
@@ -266,11 +269,12 @@ flowchart TB
 
 ## Key Design Patterns
 
-### Factory Pattern (ReaderFactory)
+### Factory Pattern (ReaderFactory / WriterFactory)
 
 - Runtime reader type selection via YAML configuration
 - Static registration via `REGISTER_READER` macro
 - Extensible for new reader backends
+- Writer selection follows the same pattern via `WriterFactory` and `REGISTER_WRITER`
 
 ### Template Method Pattern (EpicsReaderBase)
 
@@ -285,6 +289,7 @@ flowchart TB
 ### Producer-Consumer (Event Bus)
 
 - `IDataBus` interface decouples readers from controller
+- `MLDPQueryClient` handles out-of-band metadata/data queries instead of `IDataBus`
 - Async event delivery via thread pools
 
 ## Cross-Cutting Utilities

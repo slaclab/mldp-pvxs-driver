@@ -6,6 +6,8 @@ This guide explains how to implement a custom reader for the MLDP PVXS Driver. R
 
 The driver uses an **abstract Reader pattern** with a factory-based registration system. This allows new data sources to be added without modifying the core ingestion pipeline.
 
+> **Related:** [Architecture Overview](architecture.md) | [Implementing Custom Writers](writers-implementation.md) | [MLDP Query Client](query-client.md)
+
 ## Logging Rule
 
 **Custom readers must use the project's logging abstraction in `util::log`. Do not call `spdlog::...` directly from reader/library code.**
@@ -74,6 +76,8 @@ batch.frames.push_back(std::move(frame));
 
 bus_->push(std::move(batch));
 ```
+
+For query-side code, use `MLDPQueryClient` instead of adding query methods to `IDataBus`. The bus remains push-only, while query operations are handled out of band.
 
 ## Step-by-Step Implementation
 
@@ -702,3 +706,8 @@ TEST(<Name>ReaderTest, PushesEventsCorrectly) {
 
 - [Architecture Overview](architecture.md) - System architecture and data flow
 - [Reader Types](readers.md) - Existing reader implementations and comparison
+- [Implementing Custom Writers](writers-implementation.md) - Writer-side mirror of this guide
+- [MLDP Query Client](query-client.md) - Standalone query API for metadata and historical data
+- [EpicsBaseReader Implementation](readers/epics-base-reader-implementation.md) - Polling-based EPICS Channel Access reader
+- [EpicsPVXSReader Implementation](readers/epics-pvxs-reader-implementation.md) - Event-driven PVAccess reader
+- [EpicsArchiverReader Implementation](readers/epics-archiver-reader-implementation.md) - Historical EPICS Archiver reader
