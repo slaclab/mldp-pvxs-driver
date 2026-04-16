@@ -28,7 +28,6 @@ using mldp_pvxs_driver::util::bus::IDataBus;
 namespace {
 
 constexpr std::string_view kMinimalControllerConfig = R"(
-controller-thread-pool: 1
 mldp-pool:
   provider-name: test_provider
   provider-description: "Test Provider"
@@ -36,11 +35,19 @@ mldp-pool:
   query-url: dp-query:50052
   min-conn: 1
   max-conn: 1
+writer:
+  grpc:
+    - name: grpc_main
+      mldp-pool:
+        provider-name: test_provider
+        ingestion-url: dp-ingestion:50051
+        query-url: dp-query:50052
+        min-conn: 1
+        max-conn: 1
 reader: []
 )";
 
 constexpr std::string_view kEpicsControllerConfig = R"(
-controller-thread-pool: 1
 mldp-pool:
   provider-name: test_provider
   provider-description: "Test Provider"
@@ -48,6 +55,15 @@ mldp-pool:
   query-url: dp-query:50052
   min-conn: 1
   max-conn: 1
+writer:
+  grpc:
+    - name: grpc_main
+      mldp-pool:
+        provider-name: test_provider
+        ingestion-url: dp-ingestion:50051
+        query-url: dp-query:50052
+        min-conn: 1
+        max-conn: 1
 reader:
   - epics-pvxs:
       - name: epics_reader_1
@@ -56,7 +72,6 @@ reader:
 )";
 
 constexpr std::string_view kBsasNtTableRowTsControllerConfig = R"(
-controller-thread-pool: 1
 mldp-pool:
   provider-name: test_provider
   provider-description: "Test Provider"
@@ -64,6 +79,15 @@ mldp-pool:
   query-url: dp-query:50052
   min-conn: 1
   max-conn: 1
+writer:
+  grpc:
+    - name: grpc_main
+      mldp-pool:
+        provider-name: test_provider
+        ingestion-url: dp-ingestion:50051
+        query-url: dp-query:50052
+        min-conn: 1
+        max-conn: 1
 reader:
   - epics-pvxs:
       - name: epics_reader_1
@@ -279,15 +303,23 @@ TEST(MLDPPVXSControllerTest, IdleStreamRotationStartsNewStreamAfterMaxAge)
     ASSERT_GT(port, 0);
 
     std::ostringstream yaml;
-    yaml << "controller-thread-pool: 1\n"
-         << "controller-stream-max-age-ms: 150\n"
-         << "mldp-pool:\n"
+    yaml << "mldp-pool:\n"
          << "  provider-name: test_provider\n"
          << "  provider-description: \"Test Provider\"\n"
          << "  ingestion-url: 127.0.0.1:" << port << "\n"
          << "  query-url: localhost:" << port << "\n"
          << "  min-conn: 1\n"
          << "  max-conn: 1\n"
+         << "writer:\n"
+         << "  grpc:\n"
+         << "    - name: grpc_main\n"
+         << "      stream-max-age-ms: 150\n"
+         << "      mldp-pool:\n"
+         << "        provider-name: test_provider\n"
+         << "        ingestion-url: 127.0.0.1:" << port << "\n"
+         << "        query-url: localhost:" << port << "\n"
+         << "        min-conn: 1\n"
+         << "        max-conn: 1\n"
          << "reader: []\n";
 
     const auto config = makeConfigFromYaml(yaml.str());

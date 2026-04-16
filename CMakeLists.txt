@@ -610,7 +610,7 @@ if(MLDP_PVXS_DRIVER_TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/test/controller/mldppvxs_controller_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/controller/mldppvxs_controller_epics_archiver_periodic_tail_integration_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/ryml_single_header_translation_unit.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/test/pool/mldp_grpc_pool_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/pool/mldp_grpc_writer_integration_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics/pvxs/epics_pvxs_reader_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics/base/epics_base_reader_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_archiver/archiver_pbhttp_conversion_test.cpp"
@@ -626,7 +626,16 @@ if(MLDP_PVXS_DRIVER_TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/ConfigPrinter.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/PeriodicMetricsDumper.cpp"
     )
-    target_link_libraries(${PROJECT_NAME}_test PRIVATE gtest_main lib${PROJECT_NAME})
+    # The writer/reader implementations self-register via static initialization (REGISTER_WRITER,
+    # REGISTER_READER).  Without --whole-archive the linker drops those object files and the
+    # factory registrations never fire.
+    if(APPLE)
+        target_link_libraries(${PROJECT_NAME}_test PRIVATE gtest_main
+            -Wl,-force_load $<TARGET_FILE:lib${PROJECT_NAME}>)
+    else()
+        target_link_libraries(${PROJECT_NAME}_test PRIVATE gtest_main
+            -Wl,--whole-archive lib${PROJECT_NAME} -Wl,--no-whole-archive)
+    endif()
     if(TARGET httplib::httplib)
         target_link_libraries(${PROJECT_NAME}_test PRIVATE httplib::httplib)
     elseif(TARGET httplib)
