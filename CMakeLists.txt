@@ -608,7 +608,7 @@ if(MLDP_PVXS_DRIVER_TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/test/config/epics_reader_config_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/config/mldppvxs_controller_config_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/cli/config_printer_test.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/test/controller/mldppvxs_controller_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/controller/mldppvxs_controller_mldp_writer_integration_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/controller/mldppvxs_controller_epics_archiver_periodic_tail_integration_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/ryml_single_header_translation_unit.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/writer/mldp/mldp_writer_integration_test.cpp"
@@ -698,6 +698,27 @@ if(MLDP_PVXS_DRIVER_TESTS)
                 -Wl,--whole-archive lib${PROJECT_NAME} -Wl,--no-whole-archive)
         endif()
         gtest_discover_tests(mldp_hdf5_writer_test PROPERTIES LABELS "hdf5")
+
+        # Controller → HDF5 end-to-end integration tests
+        add_executable(mldp_controller_hdf5_integration_test
+            "${CMAKE_CURRENT_SOURCE_DIR}/test/controller/mldppvxs_controller_hdf5_integration_test.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/sioc.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/test/ryml_single_header_translation_unit.cpp"
+        )
+        target_include_directories(mldp_controller_hdf5_integration_test PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/include"
+            "${CMAKE_CURRENT_SOURCE_DIR}/test"
+            "${CMAKE_CURRENT_BINARY_DIR}"
+        )
+        if(APPLE)
+            target_link_libraries(mldp_controller_hdf5_integration_test PRIVATE gtest_main
+                -Wl,-force_load $<TARGET_FILE:lib${PROJECT_NAME}>)
+        else()
+            target_link_libraries(mldp_controller_hdf5_integration_test PRIVATE gtest_main
+                -Wl,--whole-archive lib${PROJECT_NAME} -Wl,--no-whole-archive)
+        endif()
+        gtest_discover_tests(mldp_controller_hdf5_integration_test
+            PROPERTIES LABELS "hdf5;controller;integration")
     endif()
 endif()
 
