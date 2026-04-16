@@ -43,7 +43,8 @@ namespace mldp_pvxs_driver::writer {
  * `push()` round-robins frames across channels identically to the
  * original controller.
  */
-class MLDPGrpcWriter final : public IWriter {
+class MLDPGrpcWriter final : public IWriter
+{
     REGISTER_WRITER("grpc", MLDPGrpcWriter)
 public:
     /**
@@ -62,7 +63,11 @@ public:
                             std::shared_ptr<metrics::Metrics> metrics = nullptr);
     ~MLDPGrpcWriter() override;
 
-    std::string name() const override { return "grpc"; }
+    std::string name() const override
+    {
+        return "grpc";
+    }
+
     void start() override;
     bool push(util::bus::IDataBus::EventBatch batch) noexcept override;
     void stop() noexcept override;
@@ -79,9 +84,9 @@ private:
     /// Smallest unit of queued work: one frame + shared batch metadata.
     struct QueueItem
     {
-        std::string                                      root_source;
-        std::shared_ptr<const std::vector<std::string>>  tags;
-        dp::service::common::DataFrame                   frame;
+        std::string                                     root_source;
+        std::shared_ptr<const std::vector<std::string>> tags;
+        dp::service::common::DataFrame                  frame;
     };
 
     /// Per-worker channel: each worker has its own deque.
@@ -93,16 +98,16 @@ private:
         bool                    shutdown{false};
     };
 
-    MLDPGrpcWriterConfig                                          config_;
-    std::shared_ptr<mldp_pvxs_driver::util::log::ILogger>        logger_;
-    std::shared_ptr<metrics::Metrics>                             metrics_;
-    std::shared_ptr<BS::light_thread_pool>                        threadPool_;
+    MLDPGrpcWriterConfig                                              config_;
+    std::shared_ptr<mldp_pvxs_driver::util::log::ILogger>             logger_;
+    std::shared_ptr<metrics::Metrics>                                 metrics_;
+    std::shared_ptr<BS::light_thread_pool>                            threadPool_;
     util::pool::MLDPGrpcIngestionePool::MLDPGrpcIngestionePoolShrdPtr ingestionPool_;
-    std::string                                                   providerId_;
-    std::vector<std::unique_ptr<WorkerChannel>>                   channels_;
-    std::atomic<std::size_t>                                      nextChannel_{0};
-    std::atomic<std::size_t>                                      queuedItems_{0};
-    std::atomic<bool>                                             running_{false};
+    std::string                                                       providerId_;
+    std::vector<std::unique_ptr<WorkerChannel>>                       channels_;
+    std::atomic<std::size_t>                                          nextChannel_{0};
+    std::atomic<std::size_t>                                          queuedItems_{0};
+    std::atomic<bool>                                                 running_{false};
 
     void workerLoop(std::size_t workerIndex);
     bool buildRequest(const std::string&                         sourceName,

@@ -10,6 +10,7 @@
 
 #include "util/log/Logger.h"
 #include <controller/MLDPPVXSController.h>
+#include <future>
 #include <memory>
 #include <reader/ReaderFactory.h>
 #include <util/StringFormat.h>
@@ -87,9 +88,9 @@ void MLDPPVXSController::start()
     infof(*logger_, "Starting readers");
     for (const auto& entry : config_.readerEntries())
     {
-        const auto& type         = entry.first;
+        const auto& type = entry.first;
         const auto& readerConfig = entry.second;
-        auto        reader       = ReaderFactory::create(type, shared_from_this(), readerConfig, metrics_);
+        auto        reader = ReaderFactory::create(type, shared_from_this(), readerConfig, metrics_);
         readers_.push_back(std::move(reader));
     }
     infof(*logger_, "Controller started");
@@ -135,23 +136,31 @@ bool MLDPPVXSController::push(EventBatch batch_values)
         return false;
     }
 
-    // Best-effort fan-out: copy for all-but-last writer; move for the last.
-    bool              anyAccepted = false;
-    const std::size_t n           = writers_.size();
-    // Save root_source before the loop: std::move on the last iteration
-    // would leave batch_values.root_source in a valid-but-unspecified state.
+    // Parallel fan-out: submit one task per writer to the thread pool so all
+    // writers run concurrently.  Every writer receives its own copy of the
+    // batch;
     const std::string rootSource = batch_values.root_source;
+    const std::size_t n          = writers_.size();
+
+    std::vector<std::future<bool>> futures;
+    futures.reserve(n);
+
     for (std::size_t i = 0; i < n; ++i)
     {
-        bool ok = false;
-        if (i + 1 < n)
-        {
-            ok = writers_[i]->push(batch_values);
-        }
-        else
-        {
-            ok = writers_[i]->push(std::move(batch_values));
-        }
+        // Capture writer pointer and a copy of the batch per task.
+        auto*      writerPtr = writers_[i].get();
+        EventBatch batchCopy = batch_values; // explicit copy for each task
+        futures.push_back(
+            thread_pool_->submit_task([writerPtr, b = std::move(batchCopy)]() mutable -> bool {
+                return writerPtr->push(std::move(b));
+            }));
+    }
+
+    // Collect results; warn for any writer that rejected the batch.
+    bool anyAccepted = false;
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        const bool ok = futures[i].get();
         if (!ok)
         {
             warnf(*logger_, "Writer '{}' rejected batch for source {}",

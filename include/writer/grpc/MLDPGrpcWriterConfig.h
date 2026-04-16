@@ -40,8 +40,10 @@ namespace mldp_pvxs_driver::writer {
  * controller-stream-max-age-ms: 200
  * @endcode
  */
-struct MLDPGrpcWriterConfig {
-    class Error : public std::runtime_error {
+struct MLDPGrpcWriterConfig
+{
+    class Error : public std::runtime_error
+    {
     public:
         using std::runtime_error::runtime_error;
     };
