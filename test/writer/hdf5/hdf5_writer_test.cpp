@@ -150,4 +150,271 @@ TEST_F(HDF5WriterTest, WriterFactoryCreatesHDF5Writer)
     w->stop();
 }
 
+// ---------------------------------------------------------------------------
+// Helper: open the first .h5 file found under tempDir_
+// ---------------------------------------------------------------------------
+static fs::path findH5File(const fs::path& dir)
+{
+    for (const auto& entry : fs::recursive_directory_iterator(dir))
+    {
+        if (entry.is_regular_file() && entry.path().extension() == ".h5")
+            return entry.path();
+    }
+    return {};
+}
+
+// ---------------------------------------------------------------------------
+// String column tests
+// ---------------------------------------------------------------------------
+
+TEST_F(HDF5WriterTest, StringColumnWritten)
+{
+    HDF5Writer w(makeConfig());
+    w.start();
+
+    dp::service::common::DataFrame frame;
+    auto* ts = frame.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
+    ts->set_epochseconds(1700000000);
+    ts->set_nanoseconds(0);
+
+    auto* col = frame.add_stringcolumns();
+    col->set_name("STATUS");
+    col->add_values("OK");
+
+    IDataBus::EventBatch batch;
+    batch.root_source = "TEST:STRING";
+    batch.frames.push_back(std::move(frame));
+    w.push(batch);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    w.stop();
+
+    auto h5path = findH5File(tempDir_);
+    ASSERT_FALSE(h5path.empty()) << "No .h5 file written";
+
+    H5::H5File file(h5path.string(), H5F_ACC_RDONLY);
+    ASSERT_TRUE(file.nameExists("STATUS")) << "Dataset 'STATUS' missing";
+
+    H5::DataSet   ds = file.openDataSet("STATUS");
+    H5::DataSpace sp = ds.getSpace();
+    hsize_t       dims[1]{0};
+    sp.getSimpleExtentDims(dims);
+    EXPECT_EQ(dims[0], 1u);
+
+    // Read back and verify value
+    H5::StrType vlStr(H5::PredType::C_S1, H5T_VARIABLE);
+    std::vector<char*> buf(1, nullptr);
+    ds.read(buf.data(), vlStr);
+    EXPECT_STREQ(buf[0], "OK");
+    H5::DataSet::vlenReclaim(buf.data(), vlStr, sp);
+}
+
+TEST_F(HDF5WriterTest, StringColumnMultipleValuesWritten)
+{
+    HDF5Writer w(makeConfig());
+    w.start();
+
+    // Push two frames — dataset should grow to 2 rows
+    for (int i = 0; i < 2; ++i)
+    {
+        dp::service::common::DataFrame frame;
+        auto* ts = frame.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
+        ts->set_epochseconds(1700000000 + i);
+        ts->set_nanoseconds(0);
+        auto* col = frame.add_stringcolumns();
+        col->set_name("LABEL");
+        col->add_values(i == 0 ? "FIRST" : "SECOND");
+        IDataBus::EventBatch batch;
+        batch.root_source = "TEST:STRPV";
+        batch.frames.push_back(std::move(frame));
+        w.push(batch);
+    }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    w.stop();
+
+    auto h5path = findH5File(tempDir_);
+    ASSERT_FALSE(h5path.empty());
+
+    H5::H5File    file(h5path.string(), H5F_ACC_RDONLY);
+    H5::DataSet   ds = file.openDataSet("LABEL");
+    H5::DataSpace sp = ds.getSpace();
+    hsize_t       dims[1]{0};
+    sp.getSimpleExtentDims(dims);
+    EXPECT_EQ(dims[0], 2u);
+}
+
+// ---------------------------------------------------------------------------
+// Array (waveform) column tests
+// ---------------------------------------------------------------------------
+
+TEST_F(HDF5WriterTest, DoubleArrayColumnWrittenAs2DDataset)
+{
+    HDF5Writer w(makeConfig());
+    w.start();
+
+    constexpr int kArrayLen = 4;
+
+    dp::service::common::DataFrame frame;
+    auto* ts = frame.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
+    ts->set_epochseconds(1700000000);
+    ts->set_nanoseconds(0);
+
+    auto* col = frame.add_doublearraycolumns();
+    col->set_name("WAVEFORM");
+    col->mutable_dimensions()->add_dims(kArrayLen);
+    for (int i = 0; i < kArrayLen; ++i)
+        col->add_values(static_cast<double>(i) * 1.5);
+
+    IDataBus::EventBatch batch;
+    batch.root_source = "TEST:WAVE";
+    batch.frames.push_back(std::move(frame));
+    w.push(batch);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    w.stop();
+
+    auto h5path = findH5File(tempDir_);
+    ASSERT_FALSE(h5path.empty());
+
+    H5::H5File    file(h5path.string(), H5F_ACC_RDONLY);
+    ASSERT_TRUE(file.nameExists("WAVEFORM")) << "Dataset 'WAVEFORM' missing";
+
+    H5::DataSet   ds = file.openDataSet("WAVEFORM");
+    H5::DataSpace sp = ds.getSpace();
+    ASSERT_EQ(sp.getSimpleExtentNdims(), 2);
+    hsize_t dims[2]{0, 0};
+    sp.getSimpleExtentDims(dims);
+    EXPECT_EQ(dims[0], 1u)         << "Expected 1 sample (row)";
+    EXPECT_EQ(dims[1], kArrayLen)  << "Expected array length " << kArrayLen;
+
+    std::vector<double> readback(kArrayLen);
+    ds.read(readback.data(), H5::PredType::NATIVE_DOUBLE);
+    for (int i = 0; i < kArrayLen; ++i)
+        EXPECT_DOUBLE_EQ(readback[i], static_cast<double>(i) * 1.5);
+}
+
+TEST_F(HDF5WriterTest, DoubleArrayColumnGrowsRowsAcrossUpdates)
+{
+    HDF5Writer w(makeConfig());
+    w.start();
+
+    constexpr int kArrayLen  = 3;
+    constexpr int kNumFrames = 4;
+
+    for (int f = 0; f < kNumFrames; ++f)
+    {
+        dp::service::common::DataFrame frame;
+        auto* ts = frame.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
+        ts->set_epochseconds(1700000000 + f);
+        ts->set_nanoseconds(0);
+        auto* col = frame.add_doublearraycolumns();
+        col->set_name("WAVEFORM");
+        col->mutable_dimensions()->add_dims(kArrayLen);
+        for (int i = 0; i < kArrayLen; ++i)
+            col->add_values(static_cast<double>(f * kArrayLen + i));
+        IDataBus::EventBatch batch;
+        batch.root_source = "TEST:WAVEGROW";
+        batch.frames.push_back(std::move(frame));
+        w.push(batch);
+    }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    w.stop();
+
+    auto h5path = findH5File(tempDir_);
+    ASSERT_FALSE(h5path.empty());
+
+    H5::H5File    file(h5path.string(), H5F_ACC_RDONLY);
+    H5::DataSet   ds = file.openDataSet("WAVEFORM");
+    H5::DataSpace sp = ds.getSpace();
+    hsize_t       dims[2]{0, 0};
+    sp.getSimpleExtentDims(dims);
+    EXPECT_EQ(dims[0], static_cast<hsize_t>(kNumFrames));
+    EXPECT_EQ(dims[1], static_cast<hsize_t>(kArrayLen));
+}
+
+TEST_F(HDF5WriterTest, FloatArrayColumnWrittenAs2DDataset)
+{
+    HDF5Writer w(makeConfig());
+    w.start();
+
+    constexpr int kArrayLen = 8;
+
+    dp::service::common::DataFrame frame;
+    auto* ts = frame.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
+    ts->set_epochseconds(1700000000);
+    ts->set_nanoseconds(0);
+
+    auto* col = frame.add_floatarraycolumns();
+    col->set_name("FLOATWAVE");
+    col->mutable_dimensions()->add_dims(kArrayLen);
+    for (int i = 0; i < kArrayLen; ++i)
+        col->add_values(static_cast<float>(i) * 0.5f);
+
+    IDataBus::EventBatch batch;
+    batch.root_source = "TEST:FWAVE";
+    batch.frames.push_back(std::move(frame));
+    w.push(batch);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    w.stop();
+
+    auto h5path = findH5File(tempDir_);
+    ASSERT_FALSE(h5path.empty());
+
+    H5::H5File    file(h5path.string(), H5F_ACC_RDONLY);
+    ASSERT_TRUE(file.nameExists("FLOATWAVE"));
+    H5::DataSet   ds = file.openDataSet("FLOATWAVE");
+    H5::DataSpace sp = ds.getSpace();
+    hsize_t       dims[2]{0, 0};
+    sp.getSimpleExtentDims(dims);
+    EXPECT_EQ(dims[0], 1u);
+    EXPECT_EQ(dims[1], static_cast<hsize_t>(kArrayLen));
+}
+
+TEST_F(HDF5WriterTest, Int32ArrayColumnWrittenAs2DDataset)
+{
+    HDF5Writer w(makeConfig());
+    w.start();
+
+    constexpr int kArrayLen = 6;
+
+    dp::service::common::DataFrame frame;
+    auto* ts = frame.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
+    ts->set_epochseconds(1700000000);
+    ts->set_nanoseconds(0);
+
+    auto* col = frame.add_int32arraycolumns();
+    col->set_name("INTWAVE");
+    col->mutable_dimensions()->add_dims(kArrayLen);
+    for (int i = 0; i < kArrayLen; ++i)
+        col->add_values(i * 10);
+
+    IDataBus::EventBatch batch;
+    batch.root_source = "TEST:IWAVE";
+    batch.frames.push_back(std::move(frame));
+    w.push(batch);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    w.stop();
+
+    auto h5path = findH5File(tempDir_);
+    ASSERT_FALSE(h5path.empty());
+
+    H5::H5File    file(h5path.string(), H5F_ACC_RDONLY);
+    ASSERT_TRUE(file.nameExists("INTWAVE"));
+    H5::DataSet   ds = file.openDataSet("INTWAVE");
+    H5::DataSpace sp = ds.getSpace();
+    hsize_t       dims[2]{0, 0};
+    sp.getSimpleExtentDims(dims);
+    EXPECT_EQ(dims[0], 1u);
+    EXPECT_EQ(dims[1], static_cast<hsize_t>(kArrayLen));
+
+    std::vector<int32_t> readback(kArrayLen);
+    ds.read(readback.data(), H5::PredType::NATIVE_INT32);
+    for (int i = 0; i < kArrayLen; ++i)
+        EXPECT_EQ(readback[i], i * 10);
+}
+
 #endif // MLDP_PVXS_HDF5_ENABLED

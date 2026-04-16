@@ -209,8 +209,9 @@ TEST_F(ControllerHDF5Test, BsasNTTableWritesDatasets)
     tsSp.getSimpleExtentDims(dims);
     EXPECT_GT(dims[0], 0u) << "'timestamps' dataset is empty";
 
-    const bool hasDoubleCol = file.nameExists("PV_NAME_A_DOUBLE_VALUE");
-    const bool hasStringCol = file.nameExists("PV_NAME_B_STRING_VALUE");
-    EXPECT_TRUE(hasDoubleCol || hasStringCol)
-        << "Expected at least one column dataset (PV_NAME_A_DOUBLE_VALUE or PV_NAME_B_STRING_VALUE) in " << h5path;
+    const bool hasDoubleCol = file.nameExists("PV_A");
+    const bool hasInt32Col  = file.nameExists("PV_B");
+    const bool hasFloatCol  = file.nameExists("PV_C");
+    EXPECT_TRUE(hasDoubleCol || hasInt32Col || hasFloatCol)
+        << "Expected at least one column dataset (PV_A, PV_B, or PV_C) in " << h5path;
 }

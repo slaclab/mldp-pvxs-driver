@@ -416,6 +416,269 @@ void HDF5Writer::appendFrame(const std::string&                    sourceName,
         }
         ds.write(buf.data(), H5::PredType::NATIVE_HBOOL, mspace, fspace);
     }
+
+    // -- string columns --
+    {
+        const H5::StrType vlStrType(H5::PredType::C_S1, H5T_VARIABLE);
+        for (const auto& col : frame.stringcolumns())
+        {
+            if (col.name().empty())
+            {
+                continue;
+            }
+            const int n = col.values_size();
+            if (n <= 0)
+            {
+                continue;
+            }
+            auto    ds = ensureDataset(file, col.name(), vlStrType);
+            hsize_t curDims[1] = {0};
+            hsize_t maxDims[1] = {H5S_UNLIMITED};
+            ds.getSpace().getSimpleExtentDims(curDims, maxDims);
+            const hsize_t newSize = curDims[0] + static_cast<hsize_t>(n);
+            ds.extend(&newSize);
+            H5::DataSpace fspace = ds.getSpace();
+            fspace.getSimpleExtentDims(curDims, maxDims);
+            hsize_t offset[1] = {curDims[0] - static_cast<hsize_t>(n)};
+            hsize_t count[1]  = {static_cast<hsize_t>(n)};
+            fspace.selectHyperslab(H5S_SELECT_SET, count, offset);
+            hsize_t       mDims[1] = {static_cast<hsize_t>(n)};
+            H5::DataSpace mspace(1, mDims);
+            // HDF5 VL string write requires array of const char*
+            std::vector<const char*> ptrs;
+            ptrs.reserve(static_cast<std::size_t>(n));
+            for (int i = 0; i < n; ++i)
+            {
+                ptrs.push_back(col.values(i).c_str());
+            }
+            ds.write(ptrs.data(), vlStrType, mspace, fspace);
+        }
+    }
+
+    // -- double array columns — 2-D dataset (N_samples, array_len) --
+    for (const auto& col : frame.doublearraycolumns())
+    {
+        if (col.name().empty() || !col.has_dimensions())
+        {
+            continue;
+        }
+        const auto& dims = col.dimensions();
+        if (dims.dims_size() == 0)
+        {
+            continue;
+        }
+        const hsize_t arrayLen = static_cast<hsize_t>(dims.dims(0));
+        if (arrayLen == 0)
+        {
+            continue;
+        }
+        const hsize_t nSamples = static_cast<hsize_t>(col.values_size()) / arrayLen;
+        if (nSamples == 0)
+        {
+            continue;
+        }
+        auto    ds = ensureDataset2D(file, col.name(), H5::PredType::NATIVE_DOUBLE, arrayLen);
+        hsize_t curDims[2] = {0, arrayLen};
+        hsize_t maxDims[2] = {H5S_UNLIMITED, arrayLen};
+        ds.getSpace().getSimpleExtentDims(curDims, maxDims);
+        hsize_t newDims[2] = {curDims[0] + nSamples, arrayLen};
+        ds.extend(newDims);
+        H5::DataSpace fspace = ds.getSpace();
+        fspace.getSimpleExtentDims(curDims, maxDims);
+        hsize_t offset[2] = {curDims[0] - nSamples, 0};
+        hsize_t count[2]  = {nSamples, arrayLen};
+        fspace.selectHyperslab(H5S_SELECT_SET, count, offset);
+        hsize_t       mDims[2] = {nSamples, arrayLen};
+        H5::DataSpace mspace(2, mDims);
+        std::vector<double> buf(col.values().begin(), col.values().end());
+        ds.write(buf.data(), H5::PredType::NATIVE_DOUBLE, mspace, fspace);
+    }
+
+    // -- float array columns --
+    for (const auto& col : frame.floatarraycolumns())
+    {
+        if (col.name().empty() || !col.has_dimensions())
+        {
+            continue;
+        }
+        const auto& dims = col.dimensions();
+        if (dims.dims_size() == 0)
+        {
+            continue;
+        }
+        const hsize_t arrayLen = static_cast<hsize_t>(dims.dims(0));
+        if (arrayLen == 0)
+        {
+            continue;
+        }
+        const hsize_t nSamples = static_cast<hsize_t>(col.values_size()) / arrayLen;
+        if (nSamples == 0)
+        {
+            continue;
+        }
+        auto    ds = ensureDataset2D(file, col.name(), H5::PredType::NATIVE_FLOAT, arrayLen);
+        hsize_t curDims[2] = {0, arrayLen};
+        hsize_t maxDims[2] = {H5S_UNLIMITED, arrayLen};
+        ds.getSpace().getSimpleExtentDims(curDims, maxDims);
+        hsize_t newDims[2] = {curDims[0] + nSamples, arrayLen};
+        ds.extend(newDims);
+        H5::DataSpace fspace = ds.getSpace();
+        fspace.getSimpleExtentDims(curDims, maxDims);
+        hsize_t offset[2] = {curDims[0] - nSamples, 0};
+        hsize_t count[2]  = {nSamples, arrayLen};
+        fspace.selectHyperslab(H5S_SELECT_SET, count, offset);
+        hsize_t       mDims[2] = {nSamples, arrayLen};
+        H5::DataSpace mspace(2, mDims);
+        std::vector<float> buf(col.values().begin(), col.values().end());
+        ds.write(buf.data(), H5::PredType::NATIVE_FLOAT, mspace, fspace);
+    }
+
+    // -- int32 array columns --
+    for (const auto& col : frame.int32arraycolumns())
+    {
+        if (col.name().empty() || !col.has_dimensions())
+        {
+            continue;
+        }
+        const auto& dims = col.dimensions();
+        if (dims.dims_size() == 0)
+        {
+            continue;
+        }
+        const hsize_t arrayLen = static_cast<hsize_t>(dims.dims(0));
+        if (arrayLen == 0)
+        {
+            continue;
+        }
+        const hsize_t nSamples = static_cast<hsize_t>(col.values_size()) / arrayLen;
+        if (nSamples == 0)
+        {
+            continue;
+        }
+        auto    ds = ensureDataset2D(file, col.name(), H5::PredType::NATIVE_INT32, arrayLen);
+        hsize_t curDims[2] = {0, arrayLen};
+        hsize_t maxDims[2] = {H5S_UNLIMITED, arrayLen};
+        ds.getSpace().getSimpleExtentDims(curDims, maxDims);
+        hsize_t newDims[2] = {curDims[0] + nSamples, arrayLen};
+        ds.extend(newDims);
+        H5::DataSpace fspace = ds.getSpace();
+        fspace.getSimpleExtentDims(curDims, maxDims);
+        hsize_t offset[2] = {curDims[0] - nSamples, 0};
+        hsize_t count[2]  = {nSamples, arrayLen};
+        fspace.selectHyperslab(H5S_SELECT_SET, count, offset);
+        hsize_t              mDims[2] = {nSamples, arrayLen};
+        H5::DataSpace        mspace(2, mDims);
+        std::vector<int32_t> buf(col.values().begin(), col.values().end());
+        ds.write(buf.data(), H5::PredType::NATIVE_INT32, mspace, fspace);
+    }
+
+    // -- int64 array columns --
+    for (const auto& col : frame.int64arraycolumns())
+    {
+        if (col.name().empty() || !col.has_dimensions())
+        {
+            continue;
+        }
+        const auto& dims = col.dimensions();
+        if (dims.dims_size() == 0)
+        {
+            continue;
+        }
+        const hsize_t arrayLen = static_cast<hsize_t>(dims.dims(0));
+        if (arrayLen == 0)
+        {
+            continue;
+        }
+        const hsize_t nSamples = static_cast<hsize_t>(col.values_size()) / arrayLen;
+        if (nSamples == 0)
+        {
+            continue;
+        }
+        auto    ds = ensureDataset2D(file, col.name(), H5::PredType::NATIVE_INT64, arrayLen);
+        hsize_t curDims[2] = {0, arrayLen};
+        hsize_t maxDims[2] = {H5S_UNLIMITED, arrayLen};
+        ds.getSpace().getSimpleExtentDims(curDims, maxDims);
+        hsize_t newDims[2] = {curDims[0] + nSamples, arrayLen};
+        ds.extend(newDims);
+        H5::DataSpace fspace = ds.getSpace();
+        fspace.getSimpleExtentDims(curDims, maxDims);
+        hsize_t offset[2] = {curDims[0] - nSamples, 0};
+        hsize_t count[2]  = {nSamples, arrayLen};
+        fspace.selectHyperslab(H5S_SELECT_SET, count, offset);
+        hsize_t              mDims[2] = {nSamples, arrayLen};
+        H5::DataSpace        mspace(2, mDims);
+        std::vector<int64_t> buf(col.values().begin(), col.values().end());
+        ds.write(buf.data(), H5::PredType::NATIVE_INT64, mspace, fspace);
+    }
+
+    // -- bool array columns --
+    for (const auto& col : frame.boolarraycolumns())
+    {
+        if (col.name().empty() || !col.has_dimensions())
+        {
+            continue;
+        }
+        const auto& dims = col.dimensions();
+        if (dims.dims_size() == 0)
+        {
+            continue;
+        }
+        const hsize_t arrayLen = static_cast<hsize_t>(dims.dims(0));
+        if (arrayLen == 0)
+        {
+            continue;
+        }
+        const hsize_t nSamples = static_cast<hsize_t>(col.values_size()) / arrayLen;
+        if (nSamples == 0)
+        {
+            continue;
+        }
+        auto    ds = ensureDataset2D(file, col.name(), H5::PredType::NATIVE_HBOOL, arrayLen);
+        hsize_t curDims[2] = {0, arrayLen};
+        hsize_t maxDims[2] = {H5S_UNLIMITED, arrayLen};
+        ds.getSpace().getSimpleExtentDims(curDims, maxDims);
+        hsize_t newDims[2] = {curDims[0] + nSamples, arrayLen};
+        ds.extend(newDims);
+        H5::DataSpace fspace = ds.getSpace();
+        fspace.getSimpleExtentDims(curDims, maxDims);
+        hsize_t offset[2] = {curDims[0] - nSamples, 0};
+        hsize_t count[2]  = {nSamples, arrayLen};
+        fspace.selectHyperslab(H5S_SELECT_SET, count, offset);
+        hsize_t       mDims[2] = {nSamples, arrayLen};
+        H5::DataSpace mspace(2, mDims);
+        std::vector<unsigned int> buf;
+        buf.reserve(static_cast<std::size_t>(col.values_size()));
+        for (int i = 0; i < col.values_size(); ++i)
+        {
+            buf.push_back(col.values(i) ? 1u : 0u);
+        }
+        ds.write(buf.data(), H5::PredType::NATIVE_HBOOL, mspace, fspace);
+    }
+}
+
+H5::DataSet HDF5Writer::ensureDataset2D(H5::H5File&         file,
+                                        const std::string&  name,
+                                        const H5::DataType& dtype,
+                                        hsize_t             arrayLen)
+{
+    if (file.nameExists(name))
+    {
+        return file.openDataSet(name);
+    }
+
+    hsize_t       dims[2]    = {0, arrayLen};
+    hsize_t       maxDims[2] = {H5S_UNLIMITED, arrayLen};
+    H5::DataSpace space(2, dims, maxDims);
+
+    hsize_t               chunkDims[2] = {kChunkSize, arrayLen};
+    H5::DSetCreatPropList props;
+    props.setChunk(2, chunkDims);
+    if (config_.compressionLevel > 0)
+    {
+        props.setDeflate(config_.compressionLevel);
+    }
+
+    return file.createDataSet(name, dtype, space, props);
 }
 
 #endif // MLDP_PVXS_HDF5_ENABLED

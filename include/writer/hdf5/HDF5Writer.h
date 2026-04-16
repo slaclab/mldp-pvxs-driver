@@ -106,6 +106,11 @@ private:
     H5::DataSet ensureDataset(H5::H5File&         file,
                               const std::string&  name,
                               const H5::DataType& dtype);
+
+    H5::DataSet ensureDataset2D(H5::H5File&         file,
+                                const std::string&  name,
+                                const H5::DataType& dtype,
+                                hsize_t             arrayLen);
 };
 
 } // namespace mldp_pvxs_driver::writer

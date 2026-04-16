@@ -42,6 +42,88 @@ One file per `root_source`. File name format:
 
 Characters outside `[A-Za-z0-9._-]` in the source name are replaced by `_`.
 
+All datasets are 1-D, shape `(N,)`, `maxDims=H5S_UNLIMITED`, chunked at 1024 elements, optionally DEFLATE-compressed. Array (waveform) datasets are 2-D, shape `(N_samples, array_len)`.
+
+### Scalar PVs
+
+Each update produces one DataFrame → one new row appended to each dataset.
+
+| PV type | HDF5 dataset name | HDF5 type |
+|---------|-------------------|-----------|
+| Bool | `<pv_name>` | `NATIVE_HBOOL` |
+| Int8 / Int16 / Int32 | `<pv_name>` | `NATIVE_INT32` |
+| UInt8 / UInt16 / UInt32 | `<pv_name>` | `NATIVE_INT32` (reinterpret) |
+| Int64 | `<pv_name>` | `NATIVE_INT64` |
+| UInt64 | `<pv_name>` | `NATIVE_INT64` (reinterpret) |
+| Float32 | `<pv_name>` | `NATIVE_FLOAT` |
+| Float64 | `<pv_name>` | `NATIVE_DOUBLE` |
+| String | `<pv_name>` | variable-length string |
+
+`timestamps` stores `epochSeconds × 10⁹ + nanoseconds` as `int64`.
+
+Example for one scalar PV:
+```
+/
+├── timestamps    int64   [N]
+└── <pv_name>     double  [N]
+```
+
+### Scalar Array PVs (waveforms)
+
+Each update produces one DataFrame with one `*ArrayColumn`. The writer creates a 2-D dataset `(N_samples, array_len)` where:
+- `N_samples` grows by 1 per update
+- `array_len` is fixed from `ArrayDimensions.dims[0]` on first write
+
+**Constraint:** array length must be consistent across updates — the dataset shape is fixed at creation. For EPICS waveform records this is always true (`NELM` is constant).
+
+| PV type | HDF5 dataset name | HDF5 type |
+|---------|-------------------|-----------|
+| Float64A | `<pv_name>` | `NATIVE_DOUBLE` shape `(N, len)` |
+| Float32A | `<pv_name>` | `NATIVE_FLOAT` shape `(N, len)` |
+| Int32A / UInt32A | `<pv_name>` | `NATIVE_INT32` shape `(N, len)` |
+| Int64A / UInt64A | `<pv_name>` | `NATIVE_INT64` shape `(N, len)` |
+| BoolA | `<pv_name>` | `NATIVE_HBOOL` shape `(N, len)` |
+
+Example for a waveform PV with 256 elements, 10 updates:
+```
+/
+├── timestamps    int64   [10]
+└── <pv_name>     double  [10, 256]
+```
+
+### BSAS NTTable (`slac-bsas-table` mode)
+
+Each NTTable update carries `rowCount` rows. Each non-timestamp column is converted into a separate `DataFrame` and appended as a separate HDF5 dataset. All datasets grow by `rowCount` per update, keeping timestamp alignment across columns.
+
+Timestamp columns (`tsSeconds` / `tsNanos` fields) are consumed to build the `timestamps` dataset and are **not** emitted as data datasets.
+
+Supported BSAS column types: Float64, Float32, Int32. String columns in NTTable are not yet supported and are silently dropped.
+
+Example for a BSAS table with columns `secondsPastEpoch`, `nanoseconds`, `PV_A` (Float64), `PV_B` (Int32), `PV_C` (Float32):
+```
+/
+├── timestamps    int64   [rowCount × updates]
+├── PV_A          double  [rowCount × updates]
+├── PV_B          int32   [rowCount × updates]
+└── PV_C          float   [rowCount × updates]
+```
+
+### Written vs. not-written summary
+
+| DataFrame field | Written to HDF5 | HDF5 type |
+|----------------|----------------|-----------|
+| `doubleColumns` | ✅ | `NATIVE_DOUBLE` 1-D |
+| `floatColumns` | ✅ | `NATIVE_FLOAT` 1-D |
+| `int32Columns` | ✅ | `NATIVE_INT32` 1-D |
+| `int64Columns` | ✅ | `NATIVE_INT64` 1-D |
+| `boolColumns` | ✅ | `NATIVE_HBOOL` 1-D |
+| `stringColumns` | ✅ | variable-length string 1-D |
+| `doubleArrayColumns` | ✅ | `NATIVE_DOUBLE` 2-D `(N, len)` |
+| `floatArrayColumns` | ✅ | `NATIVE_FLOAT` 2-D `(N, len)` |
+| `int32ArrayColumns` | ✅ | `NATIVE_INT32` 2-D `(N, len)` |
+| `int64ArrayColumns` | ✅ | `NATIVE_INT64` 2-D `(N, len)` |
+| `boolArrayColumns` | ✅ | `NATIVE_HBOOL` 2-D `(N, len)` |
+
 ## File Rotation
 
 `HDF5FilePool` rotates a file when **either** threshold is exceeded:
@@ -98,7 +180,7 @@ writer:
 | `include/writer/hdf5/HDF5Writer.h` | Class definition (guard: `MLDP_PVXS_HDF5_ENABLED`). |
 | `include/writer/hdf5/HDF5WriterConfig.h` | Config struct, YAML keys, `parse()`. |
 | `include/writer/hdf5/HDF5FilePool.h` | Per-source file pool, rotation, flush. |
-| `src/writer/hdf5/HDF5Writer.cpp` | `appendFrame()`, `ensureDataset()`, thread loops. |
+| `src/writer/hdf5/HDF5Writer.cpp` | `appendFrame()`, `ensureDataset()`, `ensureDataset2D()`, thread loops. |
 
 ## Build Requirement
 

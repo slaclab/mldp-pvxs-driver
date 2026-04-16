@@ -168,6 +168,10 @@ inline std::optional<std::unordered_map<std::string, std::vector<dp::service::co
 
     std::unordered_set<std::string> nameSet(pvNames.begin(), pvNames.end());
 
+    // Accumulate across multiple query rounds: each round may return a subset of
+    // the requested PVs.  We only return once every requested name has been seen.
+    std::unordered_map<std::string, std::vector<dp::service::common::DataValues>> collected;
+
     while (std::chrono::steady_clock::now() < deadline)
     {
         dp::service::query::QueryDataRequest request;
@@ -194,7 +198,6 @@ inline std::optional<std::unordered_map<std::string, std::vector<dp::service::co
         const auto                            status = stub->queryData(&context, request, &response);
         if (status.ok() && response.has_querydata() && !response.has_exceptionalresult())
         {
-            std::unordered_map<std::string, std::vector<dp::service::common::DataValues>> collected;
             for (const auto& bucket : response.querydata().databuckets())
             {
                 if (!bucket.has_datavalues())
