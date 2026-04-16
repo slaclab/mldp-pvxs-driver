@@ -45,6 +45,25 @@ static std::string buildYaml(const std::string& pvName, const std::string& baseP
         "          - name: " + pvName + "\n";
 }
 
+static std::string buildBsasTableYaml(const std::string& pvName, const std::string& basePath)
+{
+    return std::string(
+        "writer:\n"
+        "  hdf5:\n"
+        "    - name: hdf5-test\n"
+        "      base-path: \"") + basePath + "\"\n"
+        "      flush-interval-ms: 100\n"
+        "reader:\n"
+        "  - epics-pvxs:\n"
+        "      - name: test-reader\n"
+        "        pvs:\n"
+        "          - name: " + pvName + "\n"
+        "            option:\n"
+        "              type: slac-bsas-table\n"
+        "              tsSeconds: secondsPastEpoch\n"
+        "              tsNanos: nanoseconds\n";
+}
+
 // ---------------------------------------------------------------------------
 // Fixture
 // ---------------------------------------------------------------------------
@@ -170,11 +189,15 @@ INSTANTIATE_TEST_SUITE_P(ArrayTypes,
 // NTTable test
 // ---------------------------------------------------------------------------
 
-TEST_F(ControllerHDF5Test, NTTablePressureWritesDatasets)
+TEST_F(ControllerHDF5Test, BsasNTTableWritesDatasets)
 {
-    startController("test:table");
+    auto cfg = makeConfigFromYaml(buildBsasTableYaml("test:bsas_table", tempDir_.string()));
+    controller_ = mldp_pvxs_driver::controller::MLDPPVXSController::create(cfg);
+    ASSERT_TRUE(controller_) << "Failed to create controller for PV: test:bsas_table";
+    controller_->start();
+
     const auto h5path = waitForH5File();
-    ASSERT_FALSE(h5path.empty()) << "No .h5 file written for test:table";
+    ASSERT_FALSE(h5path.empty()) << "No .h5 file written for test:bsas_table";
     controller_->stop();
     controller_.reset();
 
@@ -186,8 +209,8 @@ TEST_F(ControllerHDF5Test, NTTablePressureWritesDatasets)
     tsSp.getSimpleExtentDims(dims);
     EXPECT_GT(dims[0], 0u) << "'timestamps' dataset is empty";
 
-    const bool hasPressure  = file.nameExists("pressure");
-    const bool hasDeviceIDs = file.nameExists("deviceIDs");
-    EXPECT_TRUE(hasPressure || hasDeviceIDs)
-        << "Expected at least one column dataset (pressure or deviceIDs) in " << h5path;
+    const bool hasDoubleCol = file.nameExists("PV_NAME_A_DOUBLE_VALUE");
+    const bool hasStringCol = file.nameExists("PV_NAME_B_STRING_VALUE");
+    EXPECT_TRUE(hasDoubleCol || hasStringCol)
+        << "Expected at least one column dataset (PV_NAME_A_DOUBLE_VALUE or PV_NAME_B_STRING_VALUE) in " << h5path;
 }
