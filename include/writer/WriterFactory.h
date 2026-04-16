@@ -12,13 +12,12 @@
 
 #include <config/Config.h>
 #include <metrics/Metrics.h>
+#include <util/factory/Factory.h>
 #include <writer/IWriter.h>
 
 #include <functional>
 #include <memory>
-#include <stdexcept>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 namespace mldp_pvxs_driver::writer {
@@ -35,27 +34,10 @@ namespace mldp_pvxs_driver::writer {
  * This mirrors the @c ReaderFactory pattern under `include/reader/`.
  */
 class WriterFactory
+    : public util::factory::Factory<WriterFactory, IWriter, const config::Config&, std::shared_ptr<metrics::Metrics>>
 {
 public:
-    /**
-     * @brief Signature of the factory callback stored in the registry.
-     *
-     * @param writerTypeNode  Config node whose semantics are writer-specific:
-     *                        for gRPC this is the root config (pool keys live at
-     *                        the root level); for HDF5 this is the `writer.hdf5`
-     *                        sub-node.
-     * @param metrics         Shared metrics collector (may be null).
-     */
-    using CreatorFn = std::function<IWriterUPtr(
-        const config::Config&             writerTypeNode,
-        std::shared_ptr<metrics::Metrics> metrics)>;
-
-    /**
-     * @brief Register a builder for the writer type identified by @p type.
-     * @param type  Identifier used when calling @ref create (e.g. "grpc", "hdf5").
-     * @param fn    Factory callback that constructs and returns the writer.
-     */
-    static void registerType(const std::string& type, CreatorFn fn);
+    static constexpr std::string_view kTypeName = "writer";
 
     /**
      * @brief Construct a writer of @p type configured via @p writerTypeNode.
@@ -66,12 +48,6 @@ public:
         const std::string&                type,
         const config::Config&             writerTypeNode,
         std::shared_ptr<metrics::Metrics> metrics = nullptr);
-
-    /** @brief Return identifiers of all registered writer types. */
-    static std::vector<std::string> registeredTypes();
-
-private:
-    static std::unordered_map<std::string, CreatorFn>& registry();
 };
 
 /**

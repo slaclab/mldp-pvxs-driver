@@ -12,31 +12,6 @@
 #include <reader/ReaderFactory.h>
 
 using namespace mldp_pvxs_driver::reader;
-using namespace mldp_pvxs_driver::util::bus;
-
-std::unordered_map<std::string, ReaderFactory::CreatorFn>&
-ReaderFactory::registry()
-{
-    static std::unordered_map<std::string, CreatorFn> instance;
-    return instance;
-}
-
-std::vector<std::string> ReaderFactory::registeredTypes()
-{
-    auto&                    reg = registry();
-    std::vector<std::string> types;
-    types.reserve(reg.size());
-    for (const auto& [type, fn] : reg)
-    {
-        types.push_back(type);
-    }
-    return types;
-}
-
-void ReaderFactory::registerType(const std::string& type, CreatorFn fn)
-{
-    registry()[type] = std::move(fn);
-}
 
 std::unique_ptr<Reader> ReaderFactory::create(
     const std::string&                                  type,
@@ -44,11 +19,7 @@ std::unique_ptr<Reader> ReaderFactory::create(
     const ::mldp_pvxs_driver::config::Config&           cfg,
     std::shared_ptr<mldp_pvxs_driver::metrics::Metrics> metrics)
 {
-    auto& reg = registry();
-    auto  it = reg.find(type);
-    if (it == reg.end())
-    {
-        throw std::runtime_error("Unknown reader type: " + type);
-    }
-    return it->second(std::move(bus), std::move(metrics), cfg);
+    // Reorder: public API is (type, bus, cfg, metrics)
+    //          CreatorFn expects (bus, metrics, cfg)
+    return Factory::create(type, std::move(bus), std::move(metrics), cfg);
 }

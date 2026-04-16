@@ -479,6 +479,7 @@ target_include_directories(lib${PROJECT_NAME}_proto PUBLIC
 # Base library
 add_library(lib${PROJECT_NAME}
     "${CMAKE_CURRENT_SOURCE_DIR}/ext/BS_thread_pool/include/BS_thread_pool.hpp"
+    # ReaderFactory.cpp and WriterFactory.cpp are thin wrappers; Factory.h is header-only (no registry .cpp needed)
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/ReaderFactory.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/util/log/CoutLogger.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/util/http/CurlHttpClient.cpp"
@@ -620,6 +621,7 @@ if(MLDP_PVXS_DRIVER_TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_archiver/epics_archiver_reader_http_integration_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_archiver/epics_archiver_reader_periodic_tail_integration_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/util/http/curl_http_client_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/util/factory/factory_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/metrics/periodic_metrics_dumper_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/metrics/metrics_histogram_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/metrics/system_metrics_test.cpp"
