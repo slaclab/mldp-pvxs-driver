@@ -12,7 +12,7 @@
 #pragma once
 
 #include <config/Config.h>
-#include <reader/Reader.h>
+#include <reader/IReader.h>
 #include <util/bus/IDataBus.h>
 #include <util/factory/Factory.h>
 

@@ -14,7 +14,7 @@
 #include <config/Config.h>
 #include <controller/MLDPPVXSControllerConfig.h>
 #include <metrics/Metrics.h>
-#include <reader/Reader.h>
+#include <reader/IReader.h>
 #include <util/bus/IDataBus.h>
 #include <util/log/Logger.h>
 #include <writer/IWriter.h>
@@ -160,8 +160,8 @@ public:
     metrics::Metrics& metrics() const;
 
 private:
-    std::shared_ptr<mldp_pvxs_driver::util::log::ILogger> logger_;      ///< Logger instance for controller logging.
     MLDPPVXSControllerConfig                              config_;      ///< Typed controller configuration.
+    std::shared_ptr<mldp_pvxs_driver::util::log::ILogger> logger_;      ///< Logger instance for controller logging.
     std::shared_ptr<BS::light_thread_pool>                thread_pool_; ///< Shared worker pool.
     std::shared_ptr<metrics::Metrics>                     metrics_;     ///< Shared metrics collector/exposer.
     std::atomic<bool>                                     running_{false};

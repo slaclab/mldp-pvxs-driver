@@ -10,7 +10,18 @@ This project provides a generic driver architecture for ingesting real-time or h
 
 The full config is a single YAML document passed via `--config`. Every block shown is required unless marked optional.
 
+The top-level document is the **controller configuration** (`MLDPPVXSControllerConfig`). It has three top-level keys:
+
+| Key | Required | Description |
+|-----|----------|-------------|
+| `name` | no | Controller instance name; used as Prometheus label `controller` (default: `"default"`) |
+| `writer` | **yes (≥1)** | One or more writer instances (`mldp`, `hdf5`). Controller throws at startup if absent or empty. |
+| `reader` | **yes (≥1)**  | One or more reader groups (`epics-pvxs`, `epics-base`, `epics-archiver`) |
+| `metrics` | no | Prometheus exporter settings |
+
 ```yaml
+name: my_controller                         # optional; default: "default"; scopes Prometheus metrics label 'controller'
+
 writer:                                     # required — at least one writer instance must be configured
 
   # ========== MLDP Ingestion Writer ==========

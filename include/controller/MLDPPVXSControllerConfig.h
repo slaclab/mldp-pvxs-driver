@@ -20,7 +20,8 @@
 
 namespace mldp_pvxs_driver::controller {
 
-inline constexpr char ReaderKey[] = "reader";
+inline constexpr char NameKey[]    = "name";
+inline constexpr char ReaderKey[]  = "reader";
 inline constexpr char MetricsKey[] = "metrics";
 
 /**
@@ -52,6 +53,9 @@ public:
 
     /** @return Whether the configuration passed validation. */
     bool valid() const;
+
+    /** @return Unique controller instance name (used as Prometheus label). */
+    const std::string& name() const;
 
     /**
      * @return Raw configuration blocks for registered reader instances.
@@ -92,6 +96,7 @@ private:
     void parseMetrics(const ::mldp_pvxs_driver::config::Config& root);
 
     bool                                                valid_ = false;
+    std::string                                         name_{"default"};
     std::vector<config::Config>                         readerConfigs_;
     std::vector<std::pair<std::string, config::Config>> readerEntries_;
     std::vector<std::pair<std::string, config::Config>> writerEntries_;

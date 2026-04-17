@@ -22,7 +22,6 @@ include(FetchContent)
 set(PROMETHEUS_CPP_VERSION "v1.3.0")
 set(SPDLOG_VERSION "v1.16.0")
 set(ARGPARSE_VERSION "v3.2")
-set(METRIC_GRABBER_VERSION "v0.0.1")
 set(EPICSARCHIVERAP_VERSION "2.2.1")
 set(CPP_HTTPLIB_VERSION "v0.16.3")
 set(DP_GRPC_VERSION "v1.13")
@@ -81,14 +80,6 @@ else()
     unset(ENABLE_TESTING CACHE)
 endif()
 
-# acquiring metric-grabber to enanceh mldp driver with systme metrics
-message(STATUS "Acquiring metric-grabber version ${METRIC_GRABBER_VERSION}...")
-FetchContent_Declare(metric_grabber
-    GIT_REPOSITORY https://github.com/slaclab/metrics-grabber.git
-    GIT_TAG ${METRIC_GRABBER_VERSION}
-    PATCH_COMMAND sed -i -e "/#include <memory>/a #include <vector>" include/metricsgrabber/MetricsCollector.hpp
-)
-FetchContent_MakeAvailable(metric_grabber)
 
 # Acquire epicsarchiverap for EPICSEvent proto
 message(STATUS "Acquiring epicsarchiverap for EPICSEvent.proto...")
@@ -515,6 +506,8 @@ add_library(lib${PROJECT_NAME}
     "${CMAKE_CURRENT_SOURCE_DIR}/src/metrics/Metrics.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/metrics/MetricsConfig.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/metrics/MetricsSnapshot.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/metrics/procmon/MetricsCollector.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/metrics/procmon/ProcReader.cpp"
 )
 target_link_libraries(lib${PROJECT_NAME} PUBLIC
     lib${PROJECT_NAME}_proto
@@ -530,13 +523,13 @@ target_link_libraries(lib${PROJECT_NAME} PUBLIC
     prometheus-cpp::pull
     spdlog::spdlog
     CURL::libcurl
-    metricsgrabber
     $<$<BOOL:${MLDP_PVXS_ENABLE_HDF5}>:${_MLDP_HDF5_TARGET}>
 )
 target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/ext/BS_thread_pool/include")
 target_compile_definitions(lib${PROJECT_NAME} PUBLIC BS_THREAD_POOL_NATIVE_EXTENSIONS)
 target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/ext/rapidyaml/include")
 target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
+target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include/metrics")
 # Ensure the build tree's generated headers (e.g. config.h) are visible to users of the library
 target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_BINARY_DIR}")
 set_target_properties(lib${PROJECT_NAME} PROPERTIES PREFIX "")

@@ -17,17 +17,14 @@ flowchart TB
         DS4["Others<br/>(Future)"]
     end
 
-    subgraph ReaderLayer["ABSTRACT READER LAYER"]
-        subgraph Readers["All readers implement Reader base class"]
-            R1["EpicsBaseReader<br/>(Polling)<br/>Monitor Poller<br/>Thread Pool"]
-            R2["EpicsPVXSReader<br/>(Event-Driven)<br/>PVXS<br/>Subscriptions"]
-            R3["ArchiverReader<br/>(Future)<br/>Archiver<br/>API"]
-            R4["HDF5Reader<br/>(Future)<br/>File<br/>Parsing"]
-        end
+    subgraph ReaderLayer["ABSTRACT READER LAYER — all readers inherit IReader"]
+        R1["EpicsBaseReader<br/>(Polling)<br/>Monitor Poller · Thread Pool"]
+        R2["EpicsPVXSReader<br/>(Event-Driven)<br/>PVXS Subscriptions"]
+        R3["ArchiverReader<br/>(Future)<br/>Archiver API"]
+        R4["HDF5Reader<br/>(Future)<br/>File Parsing"]
     end
 
     IDataBus["IDataBus<br/>(Push Interface)"]
-    WriterFactory["WriterFactory<br/>(Static Registration)"]
 
     subgraph Controller["MLDPPVXSController"]
         HashPart["Hash-Based Partitioning<br/>(Source Affinity)"]
@@ -38,14 +35,21 @@ flowchart TB
         end
     end
 
-    GrpcPool["MLDPGrpcPool<br/>(Connection Pooling)"]
+    WriterFactory["WriterFactory<br/>(Static Registration)"]
+
+    subgraph WriterLayer["WRITER LAYER — all writers implement IWriter"]
+        WR1["MLDPWriter<br/>(gRPC)<br/>Thread Pool · WorkerChannels"]
+        WR2["HDF5Writer<br/>(Disk)<br/>MPSC Queue · Flush Thread"]
+    end
+
     MLDPService["MLDP Ingestion Service<br/>(gRPC Streams)"]
+    HDF5Files["HDF5 Files<br/>(Local Disk)"]
 
     DS1 --> R1
+    DS1 --> R2
     DS2 --> R3
     DS3 --> R4
     DS4 --> R4
-    DS1 --> R2
 
     R1 --> IDataBus
     R2 --> IDataBus
@@ -57,12 +61,15 @@ flowchart TB
     HashPart --> W1
     HashPart --> WN
 
-    W0 --> GrpcPool
-    W1 --> GrpcPool
-    WN --> GrpcPool
+    W0 --> WriterFactory
+    W1 --> WriterFactory
+    WN --> WriterFactory
 
-    GrpcPool --> MLDPService
-    Controller --> WriterFactory
+    WriterFactory --> WR1
+    WriterFactory --> WR2
+
+    WR1 --> MLDPService
+    WR2 --> HDF5Files
 ```
 
 ## Reader Abstraction
@@ -82,10 +89,50 @@ All readers:
 - Inherit from the abstract `Reader` base class
 - Register via `REGISTER_READER` macro
 - Push events through `IDataBus` interface
-- Are decoupled from gRPC/controller implementation
+- Are decoupled from writer implementation
 - Are mirrored on the writer side by `WriterFactory` and `REGISTER_WRITER`
 
 For details on existing readers, see [Reader Types](readers.md). To implement a custom reader, see [Implementing Custom Readers](readers-implementation.md).
+
+## Writer Abstraction
+
+Writers are the **output side** of the pipeline. They consume `IDataBus::EventBatch` objects from worker queues and deliver data to a sink.
+
+Writer Type | Status      | Description
+----------- | ----------- | -------------------------------------------
+`mldp`      | Implemented | Streams data to MLDP ingestion service (gRPC)
+`hdf5`      | Implemented | Writes data to rotated HDF5 files on disk
+
+All writers:
+
+- Implement the `IWriter` pure abstract interface (`include/writer/IWriter.h`)
+- Register via `REGISTER_WRITER` macro (static init, before `main`)
+- Are instantiated and managed by `WriterFactory`
+- Receive `EventBatch` via thread-safe `push()` method
+
+```
+IWriter  (pure abstract)
+├── MLDPWriter  → gRPC → MLDP ingestion service
+└── HDF5Writer  → HDF5 files on local disk
+```
+
+### MLDPWriter
+
+- Type key: `"mldp"`
+- Owns `MLDPWriter` (connection pool)
+- N worker threads, each with own `WorkerChannel` (mutex + deque)
+- `push()` distributes frames across workers
+- Flushes gRPC stream on `stream-max-bytes` or `stream-max-age-ms`
+
+### HDF5Writer
+
+- Type key: `"hdf5"`
+- Requires build flag: `MLDP_PVXS_HDF5_ENABLED`
+- One HDF5 file per `root_source`, managed by `HDF5FilePool`
+- Bounded MPSC queue (capacity 8192) drained by writer thread
+- Dedicated flush thread calls `HDF5FilePool::flushAll()` every `flush-interval-ms`
+- Files rotate on age (`max-file-age-s`) or size (`max-file-size-mb`)
+- HDF5 layout: `timestamps` dataset (int64, ns-epoch) + one dataset per DataFrame column (unlimited + chunked)
 
 ## Push Model Architecture
 
@@ -291,6 +338,7 @@ flowchart TB
 - `IDataBus` interface decouples readers from controller
 - `MLDPQueryClient` handles out-of-band metadata/data queries instead of `IDataBus`
 - Async event delivery via thread pools
+- Workers dispatch `EventBatch` to registered `IWriter` instances (`MLDPWriter`, `HDF5Writer`)
 
 ## Cross-Cutting Utilities
 
@@ -313,21 +361,24 @@ HTTP-based readers can use the shared `util/http` transport abstraction instead 
 
 ### Controller Settings
 
-```yaml
-controller-thread-pool: 2              # Number of worker threads
-controller-stream-max-bytes: 2097152   # ~2MB stream threshold
-controller-stream-max-age-ms: 200      # 200ms stream rotation
-```
-
-### Connection Pool Settings
+The controller config (`MLDPPVXSControllerConfig`) holds four top-level keys — no thread-pool or stream knobs at this level; those live in each writer's config.
 
 ```yaml
-mldp-pool:
-  provider-name: pvxs_provider
-  ingestion-url: dp-ingestion:50051
-  min-conn: 1
-  max-conn: 4
+name: my_controller   # optional; default: "default"; used as Prometheus label 'controller'
+
+writer:           # required; at least one writer instance must be present or controller fails to start
+  mldp:
+      ...
+
+reader:           # list of reader instances (by type)
+  - epics-pvxs:
+      ...
+
+metrics:          # optional Prometheus / metrics config
+  ...
 ```
+
+> **Note:** `name` scopes all controller-emitted Prometheus metrics under a `controller` label. Run multiple controller instances with distinct names to avoid metric collisions.
 
 ### Reader Settings
 
@@ -338,6 +389,31 @@ reader:
         thread-pool-size: 2
         pvs:
           - name: PV_NAME
+```
+
+### Writer Settings
+
+```yaml
+writer:
+  mldp:
+    - name: mldp_main                  # required, unique instance name
+      thread-pool: 4                   # worker threads (default: 1)
+      stream-max-bytes: 2097152        # gRPC stream flush threshold (~2MB)
+      stream-max-age-ms: 200           # gRPC stream age flush (ms)
+      mldp-pool:
+        provider-name: my_provider
+        ingestion-url: grpc://host:50051
+        query-url: grpc://host:50052
+        min-conn: 1
+        max-conn: 4
+
+  hdf5:                                # requires MLDP_PVXS_HDF5_ENABLED build flag
+    - name: hdf5_local                 # required, unique instance name
+      base-path: /data/hdf5            # required, output directory
+      max-file-age-s: 3600             # rotate after N seconds (default: 3600)
+      max-file-size-mb: 512            # rotate at N MiB (default: 512)
+      flush-interval-ms: 1000          # flush thread period ms (default: 1000)
+      compression-level: 0             # DEFLATE 0–9; 0 = off (default: 0)
 ```
 
 ## Metrics & Observability

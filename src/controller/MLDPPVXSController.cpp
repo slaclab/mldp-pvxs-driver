@@ -28,10 +28,9 @@ using namespace mldp_pvxs_driver::writer;
 
 namespace {
 // Creates a dedicated logger for controller lifecycle and bus operations.
-std::shared_ptr<mldp_pvxs_driver::util::log::ILogger> makeControllerLogger()
+std::shared_ptr<mldp_pvxs_driver::util::log::ILogger> makeControllerLogger(const std::string& name)
 {
-    std::string loggerName = "controlller";
-    return mldp_pvxs_driver::util::log::newLogger(loggerName);
+    return mldp_pvxs_driver::util::log::newLogger("controller." + name);
 }
 } // namespace
 
@@ -41,10 +40,10 @@ std::shared_ptr<MLDPPVXSController> MLDPPVXSController::create(const config::Con
 }
 
 MLDPPVXSController::MLDPPVXSController(const config::Config& config)
-    : logger_(makeControllerLogger())
-    , config_(config)
+    : config_(config)
+    , logger_(makeControllerLogger(config_.name()))
     , thread_pool_(std::make_shared<BS::light_thread_pool>(1)) // resized in start()
-    , metrics_(std::make_shared<metrics::Metrics>(*config_.metricsConfig()))
+    , metrics_(std::make_shared<metrics::Metrics>(*config_.metricsConfig(), config_.name()))
     , running_(false)
 {
 }
@@ -67,6 +66,16 @@ void MLDPPVXSController::start()
         return;
     }
 
+    // Validate minimal requirements before allocating any resources.
+    if (config_.writerEntries().empty())
+    {
+        throw std::runtime_error("Controller: no writers are configured; add at least one writer instance under 'writer:'");
+    }
+    if (config_.readerEntries().empty())
+    {
+        throw std::runtime_error("Controller: no readers are configured; add at least one reader instance under 'reader:'");
+    }
+
     running_.store(true);
     infof(*logger_, "Controller is starting");
 
@@ -82,12 +91,6 @@ void MLDPPVXSController::start()
         auto w = WriterFactory::create(type, writerNode, metrics_);
         w->start();
         writers_.push_back(std::move(w));
-    }
-
-    if (writers_.empty())
-    {
-        running_.store(false);
-        throw std::runtime_error("Controller: no writers are configured");
     }
 
     // -- Readers --

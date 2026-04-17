@@ -35,6 +35,11 @@ bool MLDPPVXSControllerConfig::valid() const
     return valid_;
 }
 
+const std::string& MLDPPVXSControllerConfig::name() const
+{
+    return name_;
+}
+
 const std::vector<Config>&
 MLDPPVXSControllerConfig::readerConfigs() const
 {
@@ -60,6 +65,7 @@ const std::optional<MetricsConfig>& MLDPPVXSControllerConfig::metricsConfig() co
 
 void MLDPPVXSControllerConfig::parse(const ::mldp_pvxs_driver::config::Config& root)
 {
+    name_ = root.get(NameKey, "default");
     parseWriter(root);
     parseReaders(root);
     parseMetrics(root);
