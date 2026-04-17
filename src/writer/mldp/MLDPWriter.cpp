@@ -31,12 +31,6 @@ using mldp_pvxs_driver::util::pool::MLDPGrpcIngestionePool;
 
 namespace {
 
-std::shared_ptr<mldp_pvxs_driver::util::log::ILogger> makeWriterLogger()
-{
-    std::string n = "grpc_writer";
-    return mldp_pvxs_driver::util::log::newLogger(n);
-}
-
 bool hasTimestampListW(const dp::service::common::DataFrame& frame)
 {
     return frame.has_datatimestamps() &&
@@ -51,15 +45,15 @@ bool hasTimestampListW(const dp::service::common::DataFrame& frame)
 // ---------------------------------------------------------------------------
 
 MLDPWriter::MLDPWriter(const config::Config&    root,
-                               std::shared_ptr<Metrics> metrics)
+                       std::shared_ptr<Metrics> metrics)
     : MLDPWriter(MLDPWriterConfig::parse(root), std::move(metrics))
 {
 }
 
-MLDPWriter::MLDPWriter(MLDPWriterConfig     config,
-                               std::shared_ptr<Metrics> metrics)
+MLDPWriter::MLDPWriter(MLDPWriterConfig         config,
+                       std::shared_ptr<Metrics> metrics)
     : config_(std::move(config))
-    , logger_(makeWriterLogger())
+    , logger_(mldp_pvxs_driver::util::log::newLogger("grpc_writer:" + config_.name))
     , metrics_(std::move(metrics))
 {
 }
@@ -91,7 +85,10 @@ void MLDPWriter::start()
 
     threadPool_ = std::make_shared<BS::light_thread_pool>(
         static_cast<std::size_t>(std::max(1, config_.threadPoolSize)),
-        [](std::size_t i) { BS::this_thread::set_os_thread_name("mldp-pool-" + std::to_string(i)); });
+        [](std::size_t i)
+        {
+            BS::this_thread::set_os_thread_name("mldp-pool-" + std::to_string(i));
+        });
 
     ingestionPool_ = MLDPGrpcIngestionePool::create(config_.poolConfig, metrics_);
     providerId_ = ingestionPool_->providerId();
@@ -378,7 +375,7 @@ void MLDPWriter::workerLoop(std::size_t workerIndex)
 
         google::protobuf::Arena arena;
         auto*                   request = google::protobuf::Arena::CreateMessage<
-            dp::service::ingestion::IngestDataRequest>(&arena);
+                              dp::service::ingestion::IngestDataRequest>(&arena);
         std::size_t acceptedEvents = 0;
         std::size_t payloadBytes = 0;
         const auto  requestId = mldp_pvxs_driver::util::format_string(
@@ -458,11 +455,11 @@ void MLDPWriter::workerLoop(std::size_t workerIndex)
 // ---------------------------------------------------------------------------
 
 bool MLDPWriter::buildRequest(const std::string&                         sourceName,
-                                  const dp::service::common::DataFrame&      frame,
-                                  const std::string&                         requestId,
-                                  dp::service::ingestion::IngestDataRequest& request,
-                                  std::size_t&                               acceptedEvents,
-                                  std::size_t&                               payloadBytes)
+                              const dp::service::common::DataFrame&      frame,
+                              const std::string&                         requestId,
+                              dp::service::ingestion::IngestDataRequest& request,
+                              std::size_t&                               acceptedEvents,
+                              std::size_t&                               payloadBytes)
 {
     request.set_providerid(providerId_);
     request.set_clientrequestid(requestId);

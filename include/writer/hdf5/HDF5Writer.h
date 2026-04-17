@@ -11,6 +11,7 @@
 #pragma once
 
 #include <config/Config.h>
+#include <util/log/ILog.h>
 #include <writer/IWriter.h>
 #include <writer/WriterFactory.h>
 #include <writer/hdf5/HDF5FilePool.h>
@@ -82,6 +83,7 @@ private:
     static constexpr std::size_t kQueueCapacity = 8192;
 
     HDF5WriterConfig              config_;
+    std::shared_ptr<util::log::ILogger> logger_;
     std::unique_ptr<HDF5FilePool> pool_;
 
     // Queue
