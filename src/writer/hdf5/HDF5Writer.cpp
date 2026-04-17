@@ -205,6 +205,7 @@ bool HDF5Writer::push(util::bus::IDataBus::EventBatch batch) noexcept
         debugf(*logger_, "HDF5Writer [{}] push rejected — writer is stopping", config_.name);
         return false;
     }
+    const uint64_t seq = nextBatchSeq_.fetch_add(1, std::memory_order_relaxed);
     std::lock_guard<std::mutex> lk(queueMutex_);
     if (queue_.size() >= kQueueCapacity)
     {
@@ -212,7 +213,7 @@ bool HDF5Writer::push(util::bus::IDataBus::EventBatch batch) noexcept
         warnf(*logger_, "HDF5Writer [{}] queue full ({} items) — dropping batch", config_.name, queue_.size());
         return false;
     }
-    queue_.push_back(std::move(batch));
+    queue_.push_back({seq, std::move(batch)});
     queueCv_.notify_one();
     return true;
 }
@@ -229,7 +230,7 @@ void HDF5Writer::writerLoop()
         // --- Phase 1: drain the entire queue under a single lock window -----
         // Swapping into a local deque releases queueMutex_ before any I/O,
         // so push() is never blocked by slow HDF5 operations.
-        std::deque<EventBatch> drained;
+        std::deque<QueueEntry> drained;
         {
             std::unique_lock<std::mutex> lk(queueMutex_);
             queueCv_.wait(lk, [this]
@@ -258,14 +259,14 @@ void HDF5Writer::writerLoop()
         // Byte accounting uses frame.ByteSizeLong() (protobuf serialized size)
         // as a proxy for data written, because HDF5 buffers appends in memory
         // and getFileSize() does not reflect writes until the next flush.
-        for (auto& batch : drained)
+        for (auto& entry : drained)
         {
-            for (const auto& frame : batch.frames)
+            for (const auto& frame : entry.batch.frames)
             {
                 try
                 {
                     // acquire() may create or rotate the file for this source.
-                    auto entry = pool_->acquire(batch.root_source);
+                    auto ev = pool_->acquire(entry.batch.root_source);
 
                     // Measure bytes written to update rotation accounting.
                     // Use the serialized frame size as the byte count — HDF5
@@ -273,8 +274,8 @@ void HDF5Writer::writerLoop()
                     // until the next flush, so a file-size delta is always 0.
                     const uint64_t written = static_cast<uint64_t>(frame.ByteSizeLong());
                     {
-                        std::lock_guard<std::mutex> fileLk(entry->fileMutex);
-                        appendFrame(batch.root_source, frame, entry->file);
+                        std::lock_guard<std::mutex> fileLk(ev->fileMutex);
+                        appendFrame(entry.batch.root_source, frame, ev->file, entry.batchSeq);
                     }
                     // IMPORTANT: fileMutex must be released BEFORE calling
                     // recordWrite().  recordWrite() acquires the pool's internal
@@ -282,10 +283,10 @@ void HDF5Writer::writerLoop()
                     // here while the flush thread holds pool mutex_ and waits for
                     // fileMutex would cause a deadlock.
                     tracef(*logger_, "HDF5Writer [{}] source={} wrote {} bytes",
-                           config_.name, batch.root_source, written);
+                           config_.name, entry.batch.root_source, written);
                     if (written > 0)
                     {
-                        pool_->recordWrite(batch.root_source, written);
+                        pool_->recordWrite(entry.batch.root_source, written);
                     }
                 }
                 catch (const H5::Exception& ex)
@@ -293,17 +294,17 @@ void HDF5Writer::writerLoop()
                     // H5::Exception does NOT inherit std::exception — must be
                     // caught explicitly or the thread will terminate silently.
                     errorf(*logger_, "HDF5Writer [{}] source={} appendFrame HDF5 error: {}",
-                           config_.name, batch.root_source, ex.getCDetailMsg());
+                           config_.name, entry.batch.root_source, ex.getCDetailMsg());
                 }
                 catch (const std::exception& ex)
                 {
                     errorf(*logger_, "HDF5Writer [{}] source={} appendFrame failed: {}",
-                           config_.name, batch.root_source, ex.what());
+                           config_.name, entry.batch.root_source, ex.what());
                 }
                 catch (...)
                 {
                     errorf(*logger_, "HDF5Writer [{}] source={} appendFrame failed — unknown exception",
-                           config_.name, batch.root_source);
+                           config_.name, entry.batch.root_source);
                 }
             }
         }
@@ -483,7 +484,8 @@ H5::DataSet HDF5Writer::ensureDataset(H5::H5File&         file,
 
 void HDF5Writer::appendFrame(const std::string&                    sourceName,
                              const dp::service::common::DataFrame& frame,
-                             H5::H5File&                           file)
+                             H5::H5File&                           file,
+                             uint64_t                              batchSeq)
 {
     // Frames without a timestamp list carry no time context — skip entirely.
     if (!frame.has_datatimestamps() || !frame.datatimestamps().has_timestamplist())
@@ -511,19 +513,33 @@ void HDF5Writer::appendFrame(const std::string&                    sourceName,
 
     // -------------------------------------------------------------------------
     // 1. timestamps dataset — int64 nanoseconds-since-epoch
+    //    Skip if this batchSeq has already written timestamps for this source
+    //    (split-column NTTable frames share the same batchSeq and timestamps).
     // -------------------------------------------------------------------------
     {
-        std::vector<int64_t> nsVec;
-        nsVec.reserve(static_cast<std::size_t>(tsCount));
-        for (int i = 0; i < tsCount; ++i)
+        auto it = lastTsBatchSeq_.find(sourceName);
+        if (it != lastTsBatchSeq_.end() && it->second == batchSeq)
         {
-            const auto& ts = tslist.timestamps(i);
-            nsVec.push_back(
-                static_cast<int64_t>(ts.epochseconds()) * 1'000'000'000LL +
-                static_cast<int64_t>(ts.nanoseconds()));
+            tracef(*logger_,
+                   "HDF5Writer appendFrame source={} batchSeq={} — "
+                   "timestamps already written (split-column frame), skipping",
+                   sourceName, batchSeq);
         }
-        auto ds = ensure1D("timestamps", H5::PredType::NATIVE_INT64);
-        append1D(ds, H5::PredType::NATIVE_INT64, nsVec.data(), static_cast<hsize_t>(tsCount));
+        else
+        {
+            std::vector<int64_t> nsVec;
+            nsVec.reserve(static_cast<std::size_t>(tsCount));
+            for (int i = 0; i < tsCount; ++i)
+            {
+                const auto& ts = tslist.timestamps(i);
+                nsVec.push_back(
+                    static_cast<int64_t>(ts.epochseconds()) * 1'000'000'000LL +
+                    static_cast<int64_t>(ts.nanoseconds()));
+            }
+            auto ds = ensure1D("timestamps", H5::PredType::NATIVE_INT64);
+            append1D(ds, H5::PredType::NATIVE_INT64, nsVec.data(), static_cast<hsize_t>(tsCount));
+            lastTsBatchSeq_[sourceName] = batchSeq;
+        }
     }
 
     // -------------------------------------------------------------------------

@@ -86,11 +86,20 @@ private:
     std::shared_ptr<util::log::ILogger> logger_;
     std::unique_ptr<HDF5FilePool> pool_;
 
+    struct QueueEntry {
+        uint64_t   batchSeq;
+        EventBatch batch;
+    };
+
     // Queue
-    std::mutex              queueMutex_;
-    std::condition_variable queueCv_;
-    std::deque<EventBatch>  queue_;
-    std::atomic<bool>       stopping_{false};
+    std::mutex               queueMutex_;
+    std::condition_variable  queueCv_;
+    std::deque<QueueEntry>   queue_;
+    std::atomic<bool>        stopping_{false};
+    std::atomic<uint64_t>    nextBatchSeq_{0};
+
+    // Accessed only from writerThread_ — no lock needed.
+    std::unordered_map<std::string, uint64_t> lastTsBatchSeq_;
 
     // Worker threads
     std::thread writerThread_;
@@ -101,7 +110,8 @@ private:
 
     void appendFrame(const std::string&                    sourceName,
                      const dp::service::common::DataFrame& frame,
-                     H5::H5File&                           file);
+                     H5::H5File&                           file,
+                     uint64_t                              batchSeq);
 
     H5::DataSet ensureDataset(H5::H5File&         file,
                               const std::string&  name,

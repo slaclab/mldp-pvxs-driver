@@ -752,4 +752,274 @@ TEST_F(HDF5WriterTest, Int64ArrayColumnWrittenAs2DDataset)
         EXPECT_EQ(readback[i], static_cast<int64_t>(i) * 1000000000LL);
 }
 
+// ---------------------------------------------------------------------------
+// BSAS NTTable split-column dedup tests
+//
+// A BSAS table update arrives as ONE EventBatch with multiple DataFrames —
+// one DataFrame per column — all sharing the same root_source and identical
+// timestamps.  The batchSeq mechanism must write timestamps only once per
+// batch, so the timestamps dataset has exactly kRows rows (not kRows × nCols).
+// ---------------------------------------------------------------------------
+
+// Build a DataFrame with the given timestamps and an addColumn callback.
+static dp::service::common::DataFrame makeBsasFrame(
+    const std::vector<std::pair<int64_t, uint32_t>>& timestamps,
+    std::function<void(dp::service::common::DataFrame&)> addColumn)
+{
+    dp::service::common::DataFrame frame;
+    auto* tsList = frame.mutable_datatimestamps()->mutable_timestamplist();
+    for (const auto& [sec, ns] : timestamps)
+    {
+        auto* ts = tsList->add_timestamps();
+        ts->set_epochseconds(sec);
+        ts->set_nanoseconds(ns);
+    }
+    addColumn(frame);
+    return frame;
+}
+
+// ---------------------------------------------------------------------------
+// Test 1 — split-column same batch: timestamps written exactly once.
+//   One EventBatch, 3 DataFrames (one per column), same timestamps.
+//   batchSeq is shared → dedup fires for frames 2 and 3.
+// ---------------------------------------------------------------------------
+TEST_F(HDF5WriterTest, BsasSplitColumnTimestampsWrittenOnce)
+{
+    constexpr int kRows = 3;
+    const std::string kSource = "BSAS:TEST:TABLE";
+
+    const std::vector<std::pair<int64_t, uint32_t>> ts = {
+        {1700000000, 0},
+        {1700000000, 1},
+        {1700000000, 2},
+    };
+
+    // One batch, three frames — same timestamps, different columns.
+    // This is exactly how the NTTable reader splits columns.
+    IDataBus::EventBatch batch;
+    batch.root_source = kSource;
+
+    batch.frames.push_back(makeBsasFrame(ts, [](dp::service::common::DataFrame& f) {
+        auto* col = f.add_doublecolumns();
+        col->set_name("PV_A");
+        for (int i = 0; i < 3; ++i) col->add_values(1.0 + i);
+    }));
+    batch.frames.push_back(makeBsasFrame(ts, [](dp::service::common::DataFrame& f) {
+        auto* col = f.add_int32columns();
+        col->set_name("PV_B");
+        for (int i = 0; i < 3; ++i) col->add_values(10 + i);
+    }));
+    batch.frames.push_back(makeBsasFrame(ts, [](dp::service::common::DataFrame& f) {
+        auto* col = f.add_floatcolumns();
+        col->set_name("PV_C");
+        for (int i = 0; i < 3; ++i) col->add_values(2.5f + static_cast<float>(i));
+    }));
+
+    HDF5Writer w(makeConfig());
+    w.start();
+    w.push(std::move(batch));
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+    w.stop();
+
+    auto h5path = findH5File(tempDir_);
+    ASSERT_FALSE(h5path.empty()) << "No .hdf5 file written";
+
+    H5::H5File file(h5path.string(), H5F_ACC_RDONLY);
+
+    // --- timestamps: must have exactly kRows rows (not 3×kRows) ---
+    ASSERT_TRUE(file.nameExists("timestamps")) << "'timestamps' dataset missing";
+    {
+        hsize_t dims[1]{0};
+        file.openDataSet("timestamps").getSpace().getSimpleExtentDims(dims);
+        EXPECT_EQ(dims[0], static_cast<hsize_t>(kRows))
+            << "timestamps has " << dims[0] << " rows; expected " << kRows
+            << " (split-column dedup failed — timestamps duplicated)";
+    }
+
+    // --- each column: must have exactly kRows rows ---
+    for (const char* name : {"PV_A", "PV_B", "PV_C"})
+    {
+        ASSERT_TRUE(file.nameExists(name)) << name << " dataset missing";
+        hsize_t dims[1]{0};
+        file.openDataSet(name).getSpace().getSimpleExtentDims(dims);
+        EXPECT_EQ(dims[0], static_cast<hsize_t>(kRows)) << name << " row count wrong";
+    }
+
+    // --- verify actual column values ---
+    {
+        std::vector<double> vals(kRows);
+        file.openDataSet("PV_A").read(vals.data(), H5::PredType::NATIVE_DOUBLE);
+        for (int i = 0; i < kRows; ++i)
+            EXPECT_DOUBLE_EQ(vals[i], 1.0 + i) << "PV_A[" << i << "] wrong";
+    }
+    {
+        std::vector<int32_t> vals(kRows);
+        file.openDataSet("PV_B").read(vals.data(), H5::PredType::NATIVE_INT32);
+        for (int i = 0; i < kRows; ++i)
+            EXPECT_EQ(vals[i], 10 + i) << "PV_B[" << i << "] wrong";
+    }
+    {
+        std::vector<float> vals(kRows);
+        file.openDataSet("PV_C").read(vals.data(), H5::PredType::NATIVE_FLOAT);
+        for (int i = 0; i < kRows; ++i)
+            EXPECT_FLOAT_EQ(vals[i], 2.5f + static_cast<float>(i)) << "PV_C[" << i << "] wrong";
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Test 2 — two separate BSAS update batches: timestamps must grow to 2×kRows.
+//   Each push() is a new EventBatch (new batchSeq) → dedup must NOT fire.
+// ---------------------------------------------------------------------------
+TEST_F(HDF5WriterTest, BsasTwoUpdatesTimestampsGrow)
+{
+    constexpr int kRows = 3;
+    const std::string kSource = "BSAS:TEST:TABLE2";
+
+    const std::vector<std::pair<int64_t, uint32_t>> ts1 = {
+        {1700000010, 0}, {1700000010, 1}, {1700000010, 2}
+    };
+    const std::vector<std::pair<int64_t, uint32_t>> ts2 = {
+        {1700000020, 0}, {1700000020, 1}, {1700000020, 2}
+    };
+
+    HDF5Writer w(makeConfig());
+    w.start();
+
+    // Batch 1 — first update: two columns, same timestamps, one push
+    {
+        IDataBus::EventBatch batch;
+        batch.root_source = kSource;
+        batch.frames.push_back(makeBsasFrame(ts1, [kRows](dp::service::common::DataFrame& f) {
+            auto* col = f.add_doublecolumns();
+            col->set_name("PV_A");
+            for (int i = 0; i < kRows; ++i) col->add_values(static_cast<double>(i));
+        }));
+        batch.frames.push_back(makeBsasFrame(ts1, [kRows](dp::service::common::DataFrame& f) {
+            auto* col = f.add_int32columns();
+            col->set_name("PV_B");
+            for (int i = 0; i < kRows; ++i) col->add_values(i);
+        }));
+        w.push(std::move(batch));
+    }
+
+    // Batch 2 — second update: different timestamps, separate push → new batchSeq
+    {
+        IDataBus::EventBatch batch;
+        batch.root_source = kSource;
+        batch.frames.push_back(makeBsasFrame(ts2, [kRows](dp::service::common::DataFrame& f) {
+            auto* col = f.add_doublecolumns();
+            col->set_name("PV_A");
+            for (int i = 0; i < kRows; ++i) col->add_values(10.0 + i);
+        }));
+        batch.frames.push_back(makeBsasFrame(ts2, [kRows](dp::service::common::DataFrame& f) {
+            auto* col = f.add_int32columns();
+            col->set_name("PV_B");
+            for (int i = 0; i < kRows; ++i) col->add_values(100 + i);
+        }));
+        w.push(std::move(batch));
+    }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+    w.stop();
+
+    auto h5path = findH5File(tempDir_);
+    ASSERT_FALSE(h5path.empty()) << "No .hdf5 file written";
+
+    H5::H5File file(h5path.string(), H5F_ACC_RDONLY);
+
+    // timestamps must have 2×kRows rows (two distinct update windows)
+    ASSERT_TRUE(file.nameExists("timestamps"));
+    {
+        hsize_t dims[1]{0};
+        file.openDataSet("timestamps").getSpace().getSimpleExtentDims(dims);
+        EXPECT_EQ(dims[0], static_cast<hsize_t>(2 * kRows))
+            << "timestamps should have " << 2 * kRows << " rows after two updates";
+    }
+
+    // PV_A and PV_B must also have 2×kRows rows
+    for (const char* name : {"PV_A", "PV_B"})
+    {
+        ASSERT_TRUE(file.nameExists(name)) << name << " dataset missing";
+        hsize_t dims[1]{0};
+        file.openDataSet(name).getSpace().getSimpleExtentDims(dims);
+        EXPECT_EQ(dims[0], static_cast<hsize_t>(2 * kRows))
+            << name << " should have " << 2 * kRows << " rows after two updates";
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Test 3 — coincidental same timestamp values across two separate push()es.
+//   Different batchSeq → dedup must NOT fire → timestamps = 2×kRows.
+// ---------------------------------------------------------------------------
+TEST_F(HDF5WriterTest, BsasCoincidentalSameTimestampsNotDeduped)
+{
+    constexpr int kRows = 2;
+    const std::string kSource = "BSAS:TEST:COINCIDENT";
+
+    // Intentionally identical timestamps in both separate batches
+    const std::vector<std::pair<int64_t, uint32_t>> sameTs = {
+        {1700000030, 999}, {1700000030, 1000}
+    };
+
+    HDF5Writer w(makeConfig());
+    w.start();
+
+    // Two separate push() calls (different batchSeq) with identical ts values.
+    // The batchSeq mechanism must prevent false dedup here.
+    {
+        IDataBus::EventBatch batch;
+        batch.root_source = kSource;
+        batch.frames.push_back(makeBsasFrame(sameTs, [kRows](dp::service::common::DataFrame& f) {
+            auto* col = f.add_doublecolumns();
+            col->set_name("PV_A");
+            for (int i = 0; i < kRows; ++i) col->add_values(1.0);
+        }));
+        w.push(std::move(batch));
+    }
+    {
+        IDataBus::EventBatch batch;
+        batch.root_source = kSource;
+        batch.frames.push_back(makeBsasFrame(sameTs, [kRows](dp::service::common::DataFrame& f) {
+            auto* col = f.add_int32columns();
+            col->set_name("PV_B");
+            for (int i = 0; i < kRows; ++i) col->add_values(42);
+        }));
+        w.push(std::move(batch));
+    }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+    w.stop();
+
+    auto h5path = findH5File(tempDir_);
+    ASSERT_FALSE(h5path.empty()) << "No .hdf5 file written";
+
+    H5::H5File file(h5path.string(), H5F_ACC_RDONLY);
+
+    // timestamps: 2×kRows — two independent batches must both write timestamps
+    ASSERT_TRUE(file.nameExists("timestamps"));
+    {
+        hsize_t dims[1]{0};
+        file.openDataSet("timestamps").getSpace().getSimpleExtentDims(dims);
+        EXPECT_EQ(dims[0], static_cast<hsize_t>(2 * kRows))
+            << "timestamps must NOT be deduped for separate batches with same ts values";
+    }
+
+    // PV_A: kRows rows (batch 1 only)
+    ASSERT_TRUE(file.nameExists("PV_A"));
+    {
+        hsize_t dims[1]{0};
+        file.openDataSet("PV_A").getSpace().getSimpleExtentDims(dims);
+        EXPECT_EQ(dims[0], static_cast<hsize_t>(kRows)) << "PV_A row count wrong";
+    }
+
+    // PV_B: kRows rows (batch 2 only)
+    ASSERT_TRUE(file.nameExists("PV_B"));
+    {
+        hsize_t dims[1]{0};
+        file.openDataSet("PV_B").getSpace().getSimpleExtentDims(dims);
+        EXPECT_EQ(dims[0], static_cast<hsize_t>(kRows)) << "PV_B row count wrong";
+    }
+}
+
 #endif // MLDP_PVXS_HDF5_ENABLED
