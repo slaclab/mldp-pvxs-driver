@@ -57,7 +57,7 @@ protected:
 // Tests
 // ---------------------------------------------------------------------------
 
-/// acquire() must return a non-null entry whose file exists on disk as a .h5.
+/// acquire() must return a non-null entry whose file exists on disk as a .hdf5.
 TEST_F(HDF5FilePoolTest, AcquireCreatesFileOnDisk)
 {
     HDF5FilePool pool(makeConfig());
@@ -65,7 +65,7 @@ TEST_F(HDF5FilePoolTest, AcquireCreatesFileOnDisk)
 
     ASSERT_NE(entry, nullptr);
     EXPECT_TRUE(std::filesystem::exists(entry->path));
-    EXPECT_EQ(entry->path.extension().string(), ".h5");
+    EXPECT_EQ(entry->path.extension().string(), ".hdf5");
 }
 
 /// Two successive acquire() calls for the same source return the same entry (same path).

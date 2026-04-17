@@ -106,7 +106,7 @@ protected:
         {
             for (const auto& e : fs::recursive_directory_iterator(tempDir_))
             {
-                if (e.is_regular_file() && e.path().extension() == ".h5")
+                if (e.is_regular_file() && e.path().extension() == ".hdf5")
                     return e.path();
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -184,6 +184,83 @@ INSTANTIATE_TEST_SUITE_P(ArrayTypes,
                                            "test:float32_array",
                                            "test:float64_array",
                                            "test:string_array"));
+
+// ---------------------------------------------------------------------------
+// Data-value readback tests
+// ---------------------------------------------------------------------------
+
+TEST_F(ControllerHDF5Test, VoltagePVDataStoredInHDF5)
+{
+    // test:voltage publishes Float64 NTScalar: 1.5 + sin(time), range (0.5, 2.5)
+    startController("test:voltage");
+    const auto h5path = waitForH5File();
+    ASSERT_FALSE(h5path.empty()) << "No .h5 file written for test:voltage";
+    controller_->stop();
+    controller_.reset();
+
+    H5::H5File file(h5path.string(), H5F_ACC_RDONLY);
+
+    // timestamps dataset must exist and be non-empty
+    ASSERT_TRUE(file.nameExists("timestamps")) << "'timestamps' dataset missing";
+    {
+        H5::DataSet   tsDs = file.openDataSet("timestamps");
+        H5::DataSpace tsSp = tsDs.getSpace();
+        hsize_t       tsDims[1]{0};
+        tsSp.getSimpleExtentDims(tsDims);
+        EXPECT_GT(tsDims[0], 0u) << "'timestamps' dataset is empty";
+    }
+
+    // value column must exist with at least one sample in the expected range
+    ASSERT_TRUE(file.nameExists("test:voltage")) << "'test:voltage' dataset missing";
+    H5::DataSet   ds = file.openDataSet("test:voltage");
+    H5::DataSpace sp = ds.getSpace();
+    hsize_t       dims[1]{0};
+    sp.getSimpleExtentDims(dims);
+    ASSERT_GT(dims[0], 0u) << "'test:voltage' dataset is empty";
+
+    std::vector<double> values(dims[0]);
+    ds.read(values.data(), H5::PredType::NATIVE_DOUBLE);
+    for (const auto v : values)
+    {
+        EXPECT_GT(v, 0.4) << "voltage sample out of expected range: " << v;
+        EXPECT_LT(v, 2.6) << "voltage sample out of expected range: " << v;
+    }
+}
+
+TEST_F(ControllerHDF5Test, CounterPVDataStoredInHDF5)
+{
+    // test:counter publishes Int32 NTScalar: monotonically increasing counter (>0)
+    startController("test:counter");
+    const auto h5path = waitForH5File();
+    ASSERT_FALSE(h5path.empty()) << "No .h5 file written for test:counter";
+    controller_->stop();
+    controller_.reset();
+
+    H5::H5File file(h5path.string(), H5F_ACC_RDONLY);
+
+    ASSERT_TRUE(file.nameExists("timestamps")) << "'timestamps' dataset missing";
+    {
+        H5::DataSet   tsDs = file.openDataSet("timestamps");
+        H5::DataSpace tsSp = tsDs.getSpace();
+        hsize_t       tsDims[1]{0};
+        tsSp.getSimpleExtentDims(tsDims);
+        EXPECT_GT(tsDims[0], 0u) << "'timestamps' dataset is empty";
+    }
+
+    ASSERT_TRUE(file.nameExists("test:counter")) << "'test:counter' dataset missing";
+    H5::DataSet   ds = file.openDataSet("test:counter");
+    H5::DataSpace sp = ds.getSpace();
+    hsize_t       dims[1]{0};
+    sp.getSimpleExtentDims(dims);
+    ASSERT_GT(dims[0], 0u) << "'test:counter' dataset is empty";
+
+    std::vector<int32_t> values(dims[0]);
+    ds.read(values.data(), H5::PredType::NATIVE_INT32);
+    for (const auto v : values)
+    {
+        EXPECT_GT(v, 0) << "counter sample should be positive: " << v;
+    }
+}
 
 // ---------------------------------------------------------------------------
 // NTTable test

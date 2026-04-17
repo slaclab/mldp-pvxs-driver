@@ -7,23 +7,9 @@
             "request": "launch",
             "program": "${workspaceFolder}/build/bin/mldp_pvxs_driver_test",
             "args": [],
-            // "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
             "console": "integratedTerminal",
-            "initCommands": [
-                // "settings set target.disable-aslr false"
-            ]
-            
-            // "environment": [],
-            // "externalConsole": false,
-            // "MIMode": "lldb",
-            // "setupCommands": [
-            //     {
-            //         "description": "Enable pretty-printing for lldb",
-            //         "text": "-enable-pretty-printing",
-            //         "ignoreFailures": true
-            //     }
-            // ]
+            "initCommands": []
         },
         {
             "name": "(lldb) Launch Tests - Specific Test",
@@ -52,6 +38,38 @@
             ]
         },
         {
+            "name": "(lldb) Launch HDF5 Driver (PV as Parameter)",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/bin/mldp_pvxs_driver",
+            "args": [
+                "--config",
+                "${workspaceFolder}/.vscode/config-hdf5-pv-${input:pvName}.yaml",
+                "--log-level",
+                "${input:logLevel}"
+            ],
+            "preLaunchTask": "Generate HDF5 Config for PV",
+            "cwd": "${workspaceFolder}",
+            "disableASLR": false,
+            "console": "integratedTerminal",
+            "initCommands": [
+                "settings set target.disable-aslr false"
+            ]
+        },
+        {
+            "name": "(lldb) Launch mock_sioc_server",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/bin/mock_sioc_server",
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "disableASLR": false,
+            "console": "integratedTerminal",
+            "initCommands": [
+                "settings set target.disable-aslr false"
+            ]
+        },
+        {
             "name": "(lldb) Launch Main",
             "type": "lldb",
             "request": "launch",
@@ -62,21 +80,12 @@
                 "--log-level",
                 "${input:logLevel}"
             ],
-            // "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
             "disableASLR": false,
             "console": "integratedTerminal",
             "initCommands": [
                 "settings set target.disable-aslr false"
             ]
-            // "environment": [],
-            // "externalConsole": false,
-            // "setupCommands": [
-            //     {
-            //         "description": "Keep ASLR enabled (workaround for restricted personality())",
-            //         "text": "settings set target.disable-aslr false"
-            //     }
-            // ]
         }
     ],
     "inputs": [
@@ -85,6 +94,12 @@
             "type": "promptString",
             "description": "Enter GTest filter (e.g., pvxs_mldp_driver.counter)",
             "default": "*"
+        },
+        {
+            "id": "pvName",
+            "type": "promptString",
+            "description": "PV name to use (e.g., TEST:VOLTAGE)",
+            "default": "TEST:VOLTAGE"
         },
         {
             "id": "configPath",
@@ -96,7 +111,8 @@
             "id": "logLevel",
             "type": "promptString",
             "description": "Log level for --log-level (trace, debug, info, warn, error, critical, off)",
-            "default": "info"
+            "default": "info",
+            "options": ["trace", "debug", "info", "warn", "error", "critical", "off"]
         }
     ]
 }

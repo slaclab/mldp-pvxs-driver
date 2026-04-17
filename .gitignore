@@ -12,3 +12,4 @@ Testing/
 .memory
 .claude
 PROCESS_LOG*.md
+data/

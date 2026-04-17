@@ -534,6 +534,7 @@ target_link_libraries(lib${PROJECT_NAME} PUBLIC
     $<$<BOOL:${MLDP_PVXS_ENABLE_HDF5}>:${_MLDP_HDF5_TARGET}>
 )
 target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/ext/BS_thread_pool/include")
+target_compile_definitions(lib${PROJECT_NAME} PUBLIC BS_THREAD_POOL_NATIVE_EXTENSIONS)
 target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/ext/rapidyaml/include")
 target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 # Ensure the build tree's generated headers (e.g. config.h) are visible to users of the library
@@ -722,6 +723,27 @@ if(MLDP_PVXS_DRIVER_TESTS)
     endif()
 endif()
 
+# Mock IOC Server executable (standalone, always built if main is enabled)
+if(MLDP_PVXS_DRIVER_MAIN)
+    add_executable(mock_sioc_server
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/sioc.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/sioc_main.cpp"
+    )
+    target_link_libraries(mock_sioc_server PRIVATE
+        pvxs
+        epics-pvaccess
+        epics-pvaccessca
+        epics-pvdata
+        epics-ca
+        epics-pvaclient
+        epics-com
+        Threads::Threads
+    )
+    target_include_directories(mock_sioc_server PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/mock"
+    )
+endif()
+
 # Driver executable
 if(MLDP_PVXS_DRIVER_MAIN)
     add_executable(${PROJECT_NAME}
@@ -788,6 +810,7 @@ install(FILES "${CMAKE_CURRENT_BINARY_DIR}/config.h"
 if(MLDP_PVXS_DRIVER_MAIN)
     install(TARGETS
         ${PROJECT_NAME}
+        mock_sioc_server
         RUNTIME DESTINATION bin
     )
 endif()

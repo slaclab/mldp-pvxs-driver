@@ -7,6 +7,23 @@
       "command": "${workspaceFolder}/scripts/add-licenses-include-h.sh",
       "problemMatcher": [],
       "group": "build"
+    },
+    {
+      "label": "Generate HDF5 Config for PV",
+      "type": "shell",
+      "command": "${workspaceFolder}/scripts/generate-hdf5-config.sh",
+      "args": [
+        "${input:pvName}"
+      ],
+      "problemMatcher": [],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "new"
+      }
     }
   ]
 }

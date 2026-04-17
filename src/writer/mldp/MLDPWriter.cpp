@@ -90,8 +90,8 @@ void MLDPWriter::start()
     infof(*logger_, "MLDPWriter starting");
 
     threadPool_ = std::make_shared<BS::light_thread_pool>(
-        static_cast<std::size_t>(
-            std::max(1, config_.threadPoolSize)));
+        static_cast<std::size_t>(std::max(1, config_.threadPoolSize)),
+        [](std::size_t i) { BS::this_thread::set_os_thread_name("mldp-pool-" + std::to_string(i)); });
 
     ingestionPool_ = MLDPGrpcIngestionePool::create(config_.poolConfig, metrics_);
     providerId_ = ingestionPool_->providerId();

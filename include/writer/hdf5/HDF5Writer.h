@@ -10,25 +10,23 @@
 
 #pragma once
 
-#ifdef MLDP_PVXS_HDF5_ENABLED
+#include <config/Config.h>
+#include <writer/IWriter.h>
+#include <writer/WriterFactory.h>
+#include <writer/hdf5/HDF5FilePool.h>
+#include <writer/hdf5/HDF5WriterConfig.h>
 
-    #include <config/Config.h>
-    #include <writer/IWriter.h>
-    #include <writer/WriterFactory.h>
-    #include <writer/hdf5/HDF5FilePool.h>
-    #include <writer/hdf5/HDF5WriterConfig.h>
+#include <H5Cpp.h>
+#include <common.pb.h>
 
-    #include <H5Cpp.h>
-    #include <common.pb.h>
-
-    #include <atomic>
-    #include <condition_variable>
-    #include <deque>
-    #include <memory>
-    #include <mutex>
-    #include <string>
-    #include <thread>
-    #include <unordered_map>
+#include <atomic>
+#include <condition_variable>
+#include <deque>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <thread>
+#include <unordered_map>
 
 namespace mldp_pvxs_driver::writer {
 
@@ -114,5 +112,3 @@ private:
 };
 
 } // namespace mldp_pvxs_driver::writer
-
-#endif // MLDP_PVXS_HDF5_ENABLED

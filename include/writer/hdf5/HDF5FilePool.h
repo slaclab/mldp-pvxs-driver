@@ -10,19 +10,17 @@
 
 #pragma once
 
-#ifdef MLDP_PVXS_HDF5_ENABLED
+#include <writer/hdf5/HDF5WriterConfig.h>
 
-    #include <writer/hdf5/HDF5WriterConfig.h>
+#include <H5Cpp.h>
 
-    #include <H5Cpp.h>
-
-    #include <chrono>
-    #include <cstdint>
-    #include <filesystem>
-    #include <memory>
-    #include <mutex>
-    #include <string>
-    #include <unordered_map>
+#include <chrono>
+#include <cstdint>
+#include <filesystem>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <unordered_map>
 
 namespace mldp_pvxs_driver::writer {
 
@@ -35,6 +33,7 @@ struct FileEntry
     std::filesystem::path                 path;            ///< Absolute path on disk.
     std::chrono::steady_clock::time_point openedAt;        ///< When the file was opened.
     uint64_t                              bytesWritten{0}; ///< Cumulative bytes written since open.
+    mutable std::mutex                    fileMutex;       ///< Guards all access to file (HDF5 is not thread-safe).
 };
 
 /**
@@ -45,11 +44,13 @@ struct FileEntry
  * opened) when either the configured age or size threshold is exceeded.
  *
  * Thread-safety:
- * - The mutex is held **only** during the map lookup / rotation decision and
- *   the map update.  Actual HDF5 I/O is performed by the caller while holding
- *   the `shared_ptr<FileEntry>` — no lock is needed for the write itself.
- * - Multiple writers can therefore perform concurrent I/O on **different**
- *   sources without contention.
+ * - The pool mutex guards the map (lookup / rotation / insertion).
+ * - Each `FileEntry` owns a `fileMutex` that must be held for any HDF5 I/O
+ *   on that entry's `file` handle.  This prevents concurrent access from the
+ *   writer thread (appendFrame) and the flush thread (flushAll), which would
+ *   otherwise corrupt the HDF5 metadata cache.
+ * - Multiple writers can perform concurrent I/O on **different** sources
+ *   without contention (each source has its own `fileMutex`).
  *
  * File naming convention:
  * @code
@@ -106,5 +107,3 @@ private:
 };
 
 } // namespace mldp_pvxs_driver::writer
-
-#endif // MLDP_PVXS_HDF5_ENABLED

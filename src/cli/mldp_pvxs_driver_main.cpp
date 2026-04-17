@@ -439,6 +439,11 @@ int main(int argc, char** argv)
 
         // Stop the driver
         spdlog::info("Stopping driver...");
+
+        // Restore terminal BEFORE stopping the driver so the console is usable
+        // even if driver->stop() blocks (e.g. on a hung thread).
+        restore_terminal();
+
         driver->stop();
 
         // Stop periodic metrics dumper if it was started
