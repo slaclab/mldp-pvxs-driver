@@ -124,6 +124,21 @@ Example for a BSAS table with columns `secondsPastEpoch`, `nanoseconds`, `PV_A` 
 | `int64ArrayColumns` | ✅ | `NATIVE_INT64` 2-D `(N, len)` |
 | `boolArrayColumns` | ✅ | `NATIVE_HBOOL` 2-D `(N, len)` |
 
+## Behavior With Pre-Existing Files
+
+`HDF5FilePool` always opens new files with `H5F_ACC_TRUNC`. Consequences:
+
+| Scenario | Result |
+|----------|--------|
+| Pre-existing `.h5` files in `base-path` | **Ignored** — pool has no scan/discovery on startup |
+| Same source + same UTC second on restart | Existing file **truncated** (overwritten) |
+| Rotation triggered (age or size) | Old entry closed; **new** timestamped file created; old file untouched |
+| Two writer instances, same `base-path`, same source, same UTC second | Both open same filename with `TRUNC` → **data corruption** |
+
+**No retention/cleanup policy**: files accumulate in `base-path` indefinitely. External cleanup (cron, logrotate, etc.) is the operator's responsibility.
+
+**No append-to-existing**: restarting the writer always starts a fresh file, never continues writing into a file from a previous run.
+
 ## File Rotation
 
 `HDF5FilePool` rotates a file when **either** threshold is exceeded:
