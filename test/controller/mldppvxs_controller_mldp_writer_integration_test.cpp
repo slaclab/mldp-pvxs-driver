@@ -44,7 +44,11 @@ writer:
         query-url: dp-query:50052
         min-conn: 1
         max-conn: 1
-reader: []
+reader:
+  - epics-pvxs:
+      - name: epics_reader_1
+        pvs:
+          - name: test:counter
 )";
 
 constexpr std::string_view kEpicsControllerConfig = R"(
@@ -320,7 +324,11 @@ TEST(MLDPPVXSControllerTest, IdleStreamRotationStartsNewStreamAfterMaxAge)
          << "        query-url: localhost:" << port << "\n"
          << "        min-conn: 1\n"
          << "        max-conn: 1\n"
-         << "reader: []\n";
+         << "reader:\n"
+         << "  - epics-pvxs:\n"
+         << "      - name: epics_reader_1\n"
+         << "        pvs:\n"
+         << "          - name: test:counter\n";
 
     const auto config = makeConfigFromYaml(yaml.str());
     ASSERT_TRUE(config.valid());

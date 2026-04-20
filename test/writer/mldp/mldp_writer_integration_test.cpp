@@ -118,7 +118,7 @@ protected:
 
     void startControllerWithNoReaders()
     {
-        startControllerWithReaderSection("reader: []\n");
+        startControllerWithEpicsPVs({"test:counter"});
     }
 
     void startControllerWithEpicsPVs(std::initializer_list<std::string_view> pv_names)
