@@ -49,6 +49,8 @@ PVServer::PVServer()
     m_pvBsasTable.open(bsasTableType.create());
     m_server.addPV("test:bsas_table", m_pvBsasTable);
 
+    m_cuHxr.registerPV(m_server);
+
     const auto makeScalar = []<typename T>(auto valueFn)
     {
         return [valueFn](pvxs::Value& pv, int counter, double time)
@@ -295,6 +297,8 @@ PVServer::PVServer()
                                              pv["timeStamp.nanoseconds"] = nanos;
                                              entry.pv.post(pv);
                                          }
+
+                                         m_cuHxr.post(seconds, nanos, counter, time);
 
                                          time += 0.5;
                                          std::this_thread::sleep_for(std::chrono::milliseconds(500));

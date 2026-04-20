@@ -599,6 +599,7 @@ if(MLDP_PVXS_DRIVER_TESTS)
     enable_testing()
     add_executable(${PROJECT_NAME}_test
         "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/sioc.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/Gen1NTablePV.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/config/epics_reader_config_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/config/mldppvxs_controller_config_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/cli/config_printer_test.cpp"
@@ -637,6 +638,9 @@ if(MLDP_PVXS_DRIVER_TESTS)
     elseif(TARGET httplib)
         target_link_libraries(${PROJECT_NAME}_test PRIVATE httplib)
     endif()
+    target_compile_definitions(${PROJECT_NAME}_test PRIVATE
+        MLDP_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/data"
+    )
 
     if(MLDP_PVXS_DRIVER_COVERAGE)
         target_compile_options(${PROJECT_NAME}_test PRIVATE -O0 -g --coverage)
@@ -697,6 +701,7 @@ if(MLDP_PVXS_DRIVER_TESTS)
         add_executable(mldp_controller_hdf5_integration_test
             "${CMAKE_CURRENT_SOURCE_DIR}/test/controller/mldppvxs_controller_hdf5_integration_test.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/sioc.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/Gen1NTablePV.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/test/ryml_single_header_translation_unit.cpp"
         )
         target_include_directories(mldp_controller_hdf5_integration_test PRIVATE
@@ -713,6 +718,9 @@ if(MLDP_PVXS_DRIVER_TESTS)
         endif()
         gtest_discover_tests(mldp_controller_hdf5_integration_test
             PROPERTIES LABELS "hdf5;controller;integration")
+        target_compile_definitions(mldp_controller_hdf5_integration_test PRIVATE
+            MLDP_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/data"
+        )
     endif()
 endif()
 
@@ -720,6 +728,7 @@ endif()
 if(MLDP_PVXS_DRIVER_MAIN)
     add_executable(mock_sioc_server
         "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/sioc.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/Gen1NTablePV.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/sioc_main.cpp"
     )
     target_link_libraries(mock_sioc_server PRIVATE
@@ -734,6 +743,9 @@ if(MLDP_PVXS_DRIVER_MAIN)
     )
     target_include_directories(mock_sioc_server PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/test/mock"
+    )
+    target_compile_definitions(mock_sioc_server PRIVATE
+        MLDP_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/data"
     )
 endif()
 

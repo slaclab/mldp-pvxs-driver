@@ -48,7 +48,6 @@
                 "--log-level",
                 "${input:logLevel}"
             ],
-            "preLaunchTask": "Generate HDF5 Config for PV",
             "cwd": "${workspaceFolder}",
             "disableASLR": false,
             "console": "integratedTerminal",
@@ -102,6 +101,25 @@
             "default": "TEST:VOLTAGE"
         },
         {
+            "id": "pvMode",
+            "type": "pickString",
+            "description": "PV processing mode",
+            "options": ["default", "slac-bsas-table"],
+            "default": "default"
+        },
+        {
+            "id": "tsSeconds",
+            "type": "promptString",
+            "description": "NTTable column for epoch seconds (slac-bsas-table mode only)",
+            "default": "secondsPastEpoch"
+        },
+        {
+            "id": "tsNanos",
+            "type": "promptString",
+            "description": "NTTable column for nanoseconds (slac-bsas-table mode only)",
+            "default": "nanoseconds"
+        },
+        {
             "id": "configPath",
             "type": "promptString",
             "description": "Config file path for --config",
@@ -109,10 +127,10 @@
         },
         {
             "id": "logLevel",
-            "type": "promptString",
-            "description": "Log level for --log-level (trace, debug, info, warn, error, critical, off)",
-            "default": "info",
-            "options": ["trace", "debug", "info", "warn", "error", "critical", "off"]
+            "type": "pickString",
+            "description": "Log level for --log-level",
+            "options": ["trace", "debug", "info", "warn", "error", "critical", "off"],
+            "default": "info"
         }
     ]
 }

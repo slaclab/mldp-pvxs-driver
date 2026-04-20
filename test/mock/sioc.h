@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Gen1NTablePV.h"
+
 #include <atomic>
 #include <functional>
 #include <string>
@@ -36,5 +38,9 @@ private:
     pvxs::server::SharedPV m_pvWaveform;  // Float64A
     pvxs::server::SharedPV m_pvTable;     // Struct
     pvxs::server::SharedPV m_pvBsasTable; // NTTable with per-row timestamps: PV_A (Float64), PV_B (Int32), PV_C (Float32), secondsPastEpoch (UInt32), nanoseconds (UInt32)
+    Gen1NTablePV           m_cuHxr{   // CU-HXR — cu-hxr Gen1 BSAS NTTable
+        "CU-HXR",
+        MLDP_TEST_DATA_DIR "/signals.cu-hxr.prod"
+    };
     std::vector<TypedPV>   m_typedPvs;
 };

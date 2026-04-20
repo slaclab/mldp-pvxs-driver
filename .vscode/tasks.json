@@ -13,7 +13,13 @@
       "type": "shell",
       "command": "${workspaceFolder}/scripts/generate-hdf5-config.sh",
       "args": [
-        "${input:pvName}"
+        "${input:pvName}",
+        "--mode",
+        "${input:pvMode}",
+        "--ts-seconds",
+        "${input:tsSeconds}",
+        "--ts-nanos",
+        "${input:tsNanos}"
       ],
       "problemMatcher": [],
       "group": {
@@ -24,6 +30,33 @@
         "reveal": "always",
         "panel": "new"
       }
+    }
+  ],
+  "inputs": [
+    {
+      "id": "pvName",
+      "type": "promptString",
+      "description": "PV name to use (e.g., TEST:VOLTAGE)",
+      "default": "TEST:VOLTAGE"
+    },
+    {
+      "id": "pvMode",
+      "type": "pickString",
+      "description": "PV processing mode",
+      "options": ["default", "slac-bsas-table"],
+      "default": "default"
+    },
+    {
+      "id": "tsSeconds",
+      "type": "promptString",
+      "description": "NTTable column for epoch seconds (slac-bsas-table mode only)",
+      "default": "secondsPastEpoch"
+    },
+    {
+      "id": "tsNanos",
+      "type": "promptString",
+      "description": "NTTable column for nanoseconds (slac-bsas-table mode only)",
+      "default": "nanoseconds"
     }
   ]
 }
