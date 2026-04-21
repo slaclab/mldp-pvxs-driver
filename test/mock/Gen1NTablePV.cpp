@@ -21,12 +21,19 @@ using namespace pvxs;
 std::string Gen1NTablePV::sanitizeFieldName(const std::string& pvName)
 {
     std::string out = pvName;
+    // Explicitly map ':' → '_' (EPICS PV name separator).
+    for (char& c : out)
+    {
+        if (c == ':')
+            c = '_';
+    }
+    // Replace any remaining character that is not alphanumeric or '_'.
     for (char& c : out)
     {
         if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_')
             c = '_';
     }
-    // Field names must not start with a digit
+    // Field names must not start with a digit.
     if (!out.empty() && std::isdigit(static_cast<unsigned char>(out[0])))
         out.insert(out.begin(), '_');
     return out;
