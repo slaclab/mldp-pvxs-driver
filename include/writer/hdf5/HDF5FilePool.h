@@ -61,7 +61,22 @@ struct FileEntry
 class HDF5FilePool
 {
 public:
+    /**
+     * @brief Construct the pool with the given writer configuration.
+     *
+     * Does not open any files; files are opened lazily on the first call to
+     * acquire() for each source.
+     *
+     * @param config  Validated writer configuration (basePath, rotation thresholds, etc.).
+     */
     explicit HDF5FilePool(HDF5WriterConfig config);
+
+    /**
+     * @brief Destructor — calls closeAll() to flush and close every open file.
+     *
+     * Safe to call while no other thread is using the pool (caller must ensure
+     * acquire() / recordWrite() / flushAll() have quiesced first).
+     */
     ~HDF5FilePool();
 
     /**
@@ -96,14 +111,60 @@ public:
     void closeAll() noexcept;
 
 private:
-    const HDF5WriterConfig                                      config_;
-    mutable std::mutex                                          mutex_;
-    std::unordered_map<std::string, std::shared_ptr<FileEntry>> entries_;
+    const HDF5WriterConfig                                      config_;   ///< Immutable pool configuration.
+    mutable std::mutex                                          mutex_;    ///< Guards entries_ map (lookup, insert, rotate).
+    std::unordered_map<std::string, std::shared_ptr<FileEntry>> entries_;  ///< sourceName → open FileEntry.
 
-    bool                       needsRotation(const FileEntry& entry) const noexcept;
+    /**
+     * @brief Return true if @p entry has exceeded the configured age or size limit.
+     *
+     * Called under mutex_ during acquire() to decide whether to rotate.
+     * Checks:
+     * - `steady_clock::now() - entry.openedAt >= config_.maxFileAge`
+     * - `entry.bytesWritten >= config_.maxFileSizeMB * 1024 * 1024`
+     *
+     * @param entry  FileEntry to evaluate (must not be concurrently modified).
+     * @return true if the file should be closed and replaced with a new one.
+     */
+    bool needsRotation(const FileEntry& entry) const noexcept;
+
+    /**
+     * @brief Open a new HDF5 file for @p sourceName and insert it into entries_.
+     *
+     * File path is:
+     * @code
+     * config_.basePath / safeName(sourceName) + "_" + nowUtcFileSuffix() + ".h5"
+     * @endcode
+     * The file is created with H5F_ACC_TRUNC (truncate/create).  If the base
+     * directory does not exist it is created recursively.
+     *
+     * @param sourceName  Root source identifier; used to build the file name.
+     * @return Shared pointer to the newly created and inserted FileEntry.
+     * @throws H5::FileIException if the HDF5 library cannot create the file.
+     */
     std::shared_ptr<FileEntry> openFile(const std::string& sourceName);
-    static std::string         safeName(const std::string& source);
-    static std::string         nowUtcFileSuffix();
+
+    /**
+     * @brief Sanitise @p source for use as a file-name component.
+     *
+     * Replaces every character outside `[A-Za-z0-9._-]` with `_`.
+     * This prevents path-separator injection and ensures the resulting
+     * filename is valid on all POSIX and NTFS file systems.
+     *
+     * @param source  Raw source/PV name (may contain `:`, `/`, spaces, etc.).
+     * @return Sanitised copy safe for embedding in a file path.
+     */
+    static std::string safeName(const std::string& source);
+
+    /**
+     * @brief Return a UTC timestamp string suitable for use in file names.
+     *
+     * Format: `YYYYMMDDTHHMMSSz`  (ISO 8601 basic, UTC, 'z' suffix).
+     * Example: `20240315T142233z`
+     *
+     * @return Timestamp string based on the current UTC wall-clock time.
+     */
+    static std::string nowUtcFileSuffix();
 };
 
 } // namespace mldp_pvxs_driver::writer

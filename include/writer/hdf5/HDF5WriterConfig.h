@@ -42,6 +42,14 @@ inline constexpr char HDF5CompressionKey[] = "compression-level";
  */
 struct HDF5WriterConfig
 {
+    /**
+     * @brief Exception thrown by @ref parse on invalid or missing configuration.
+     *
+     * Derives from `std::runtime_error`; the `what()` string contains the
+     * offending YAML key and a human-readable explanation.  Callers that
+     * construct an `HDF5Writer` via the factory must catch this type (or its
+     * base) to surface configuration errors at startup.
+     */
     class Error : public std::runtime_error
     {
     public:
