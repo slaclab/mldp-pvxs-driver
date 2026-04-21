@@ -49,7 +49,7 @@ namespace mldp_pvxs_driver::writer {
  * └── …
  * @endcode
  *
- * **Compound layout** (auto-detected NTTable sources via `EventBatch::is_nttable`):
+ * **Compound layout** (auto-detected NTTable sources via `EventBatch::is_tabular`):
  * @code
  * / (root)
  * └── <root_source>   compound   shape=(N_rows,) unlimited+chunked
@@ -99,14 +99,20 @@ public:
      * Declared public so anonymous-namespace helpers in the .cpp can use
      * HDF5Writer::FieldType without friendship.
      */
-    enum class FieldType { Float64, Float32, Int32, Int64, Bool };
+    enum class FieldType
+    {
+        Float64,
+        Float32,
+        Int32,
+        Int64,
+        Bool
+    };
 
 private:
-
     /**
-     * @brief Accumulation buffer for one NTTable source.
+     * @brief Accumulation buffer for one tabular source.
      *
-     * NTTable data is stored as one independent 1-D dataset per column, each
+     * Tabular data is stored as one independent 1-D dataset per column, each
      * with its native type, plus separate 1-D timestamp datasets.  Column
      * names are written once to a companion string dataset.  This avoids the
      * HDF5 compound-type object-header size limit that would otherwise reject
@@ -118,18 +124,18 @@ private:
      *  /<source>/nanoseconds            int64   [N_rows]
      *  /<source>/<colName>              typed   [N_rows]  (one per column, original type preserved)
      *
-     * Columns from the same NTTable update round may arrive in multiple
+     * Columns from the same tabular update round may arrive in multiple
      * EventBatches (split by column-batch-size).  The buffer accumulates all
-     * columns until the end_of_source_update marker arrives, then flushes.
+     * columns until the end_of_batch_group marker arrives, then flushes.
      *
      * Schema is locked after the first flush; subsequent rounds must match
      * (unknown columns warned+skipped; missing columns filled with NaN/0).
      */
-    struct NTTableBuffer
+    struct TabularBuffer
     {
         // ---- schema (locked after first flush) ----
-        bool                               schemaFixed{false};
-        std::vector<std::string>           colNames;    ///< Ordered column names.
+        bool                                         schemaFixed{false};
+        std::vector<std::string>                     colNames; ///< Ordered column names.
         std::unordered_map<std::string, std::size_t> colIndex; ///< colName → column index.
 
         // ---- per-column variant storage ----
@@ -138,15 +144,15 @@ private:
             std::vector<float>,
             std::vector<int32_t>,
             std::vector<int64_t>,
-            std::vector<uint8_t>    // bool stored as uint8
-        >;
+            std::vector<uint8_t> // bool stored as uint8
+            >;
 
-        std::vector<ColumnData>                    columns;   // columns[colIdx], one per column
-        std::unordered_map<std::string, FieldType> colTypes;  // colName -> FieldType enum
+        std::vector<ColumnData>                    columns;  // columns[colIdx], one per column
+        std::unordered_map<std::string, FieldType> colTypes; // colName -> FieldType enum
 
         // ---- cross-batch accumulation ----
-        std::vector<int64_t> tsSeconds;   ///< Row epoch-seconds for current round.
-        std::vector<int64_t> tsNanos;     ///< Row nanoseconds for current round.
+        std::vector<int64_t> tsSeconds; ///< Row epoch-seconds for current round.
+        std::vector<int64_t> tsNanos;   ///< Row nanoseconds for current round.
         std::size_t          rowCount{0};
         int64_t              roundFirstTs{-1}; ///< First-row ns-epoch of current round; -1 = none.
 
@@ -159,25 +165,26 @@ private:
     // State
     // -----------------------------------------------------------------------
 
-    HDF5WriterConfig              config_;
+    HDF5WriterConfig                    config_;
     std::shared_ptr<util::log::ILogger> logger_;
-    std::unique_ptr<HDF5FilePool> pool_;
+    std::unique_ptr<HDF5FilePool>       pool_;
 
-    struct QueueEntry {
+    struct QueueEntry
+    {
         uint64_t   batchSeq;
         EventBatch batch;
     };
 
     // Queue — shared between caller threads and writerThread_.
-    std::mutex               queueMutex_;
-    std::condition_variable  queueCv_;
-    std::deque<QueueEntry>   queue_;
-    std::atomic<bool>        stopping_{false};
-    std::atomic<uint64_t>    nextBatchSeq_{0};
+    std::mutex              queueMutex_;
+    std::condition_variable queueCv_;
+    std::deque<QueueEntry>  queue_;
+    std::atomic<bool>       stopping_{false};
+    std::atomic<uint64_t>   nextBatchSeq_{0};
 
     // Accessed only from writerThread_ — no lock needed.
-    std::unordered_map<std::string, uint64_t>     lastTsBatchSeq_;
-    std::unordered_map<std::string, NTTableBuffer> ntTableBuffers_;
+    std::unordered_map<std::string, uint64_t>      lastTsBatchSeq_;
+    std::unordered_map<std::string, TabularBuffer> tabularBuffers_;
 
     // Worker threads
     std::thread writerThread_;
@@ -190,8 +197,8 @@ private:
     void writerLoop();
     void flushLoop();
 
-    /// Returns true if @p batch should be routed to the compound NTTable path.
-    static bool isNTTableBatch(const EventBatch& batch);
+    /// Returns true if @p batch should be routed to the compound tabular path.
+    static bool isTabularBatch(const EventBatch& batch);
 
     // ---- columnar path (existing) ----
 
@@ -212,19 +219,19 @@ private:
     // ---- NTTable 2D matrix path ----
 
     /**
-     * @brief Process one NTTable batch: accumulate all frames then flush.
+     * @brief Process one tabular batch: accumulate all frames then flush.
      */
-    void processNTTableBatch(const QueueEntry& entry);
+    void processTabularBatch(const QueueEntry& entry);
 
     /**
-     * @brief Accumulate one DataFrame into the NTTable buffer.
+     * @brief Accumulate one DataFrame into the tabular buffer.
      *
      * Extracts timestamps (first frame of each round) and column values into
      * @p buf.  Missing columns are filled with NaN at flush time.
      */
-    void accumulateNTTableFrame(const std::string&                    sourceName,
+    void accumulateTabularFrame(const std::string&                    sourceName,
                                 const dp::service::common::DataFrame& frame,
-                                NTTableBuffer&                        buf);
+                                TabularBuffer&                        buf);
 
     /**
      * @brief Write buffered rows to the per-column HDF5 datasets and clear the buffer.
@@ -234,8 +241,8 @@ private:
      *   /<source>/nanoseconds       int64    (0,) → (N_rows,)  unlimited
      *   /<source>/<colName>         typed    (0,) → (N_rows,)  unlimited, one per column
      */
-    void flushNTTableBuffer(const std::string& sourceName,
-                            NTTableBuffer&     buf,
+    void flushTabularBuffer(const std::string& sourceName,
+                            TabularBuffer&     buf,
                             H5::H5File&        file);
 };
 

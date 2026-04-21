@@ -83,7 +83,10 @@ void MLDPPVXSController::start()
     const std::size_t numWriters = config_.writerEntries().size();
     thread_pool_ = std::make_shared<BS::light_thread_pool>(
         std::max(numWriters, std::size_t{1}),
-        [](std::size_t i) { BS::this_thread::set_os_thread_name("ctrl-pool-" + std::to_string(i)); });
+        [](std::size_t i)
+        {
+            BS::this_thread::set_os_thread_name("ctrl-pool-" + std::to_string(i));
+        });
 
     // -- Build writers via factory from configured entries --
     for (const auto& [type, writerNode] : config_.writerEntries())
@@ -139,7 +142,7 @@ bool MLDPPVXSController::push(EventBatch batch_values)
         return false;
     }
 
-    if (batch_values.frames.empty() && !batch_values.end_of_source_update)
+    if (batch_values.frames.empty() && !batch_values.end_of_batch_group)
     {
         warnf(*logger_, "Received empty batch for root source {}, skipping push.", batch_values.root_source);
         return false;

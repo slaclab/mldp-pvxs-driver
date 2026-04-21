@@ -97,6 +97,17 @@ All readers follow the same pattern:
 3. **Data Processing**: Convert source data to MLDP protobuf format
 4. **Publishing**: Push events to `IDataBus` for downstream processing
 
+### EventBatch data contract
+
+Each call to `IDataBus::push()` delivers one `EventBatch` containing one or more `DataFrame` objects. Two optional fields exist on `EventBatch` to support multi-column, row-synchronized table writes:
+
+- **`is_tabular`** — when `true`, the batch carries one column of a structured table. Defaults to `false`.
+- **`end_of_batch_group`** — when `true`, signals the end of a column group and triggers a writer flush. Only meaningful when `is_tabular=true`. Defaults to `false`.
+
+Readers that produce scalar values or waveforms must leave both fields at their defaults. Only readers whose data source natively provides synchronized multi-column tables (e.g. EPICS NTTable, SLAC BSAS payloads) should set these fields.
+
+For the full two-phase protocol and writer behaviour, see [Tabular / multi-column batch protocol](readers-implementation.md#eventbatch-tabular-fields) in the implementation guide.
+
 ### Reader Base Class
 
 All readers inherit from `Reader` and must provide:

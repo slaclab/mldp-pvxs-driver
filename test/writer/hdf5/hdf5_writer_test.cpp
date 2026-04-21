@@ -12,18 +12,18 @@
 
 #ifdef MLDP_PVXS_HDF5_ENABLED
 
-#include <writer/hdf5/HDF5Writer.h>
-#include <writer/hdf5/HDF5WriterConfig.h>
-#include <writer/WriterFactory.h>
-#include <util/bus/IDataBus.h>
-#include <common.pb.h>
+    #include <common.pb.h>
+    #include <util/bus/IDataBus.h>
+    #include <writer/WriterFactory.h>
+    #include <writer/hdf5/HDF5Writer.h>
+    #include <writer/hdf5/HDF5WriterConfig.h>
 
-#include <chrono>
-#include <filesystem>
-#include <string>
-#include <thread>
+    #include <chrono>
+    #include <filesystem>
+    #include <string>
+    #include <thread>
 
-#include "../../config/test_config_helpers.h"
+    #include "../../config/test_config_helpers.h"
 
 using namespace mldp_pvxs_driver::writer;
 using namespace mldp_pvxs_driver::util::bus;
@@ -43,13 +43,16 @@ protected:
         fs::create_directories(tempDir_);
     }
 
-    void TearDown() override { fs::remove_all(tempDir_); }
+    void TearDown() override
+    {
+        fs::remove_all(tempDir_);
+    }
 
     HDF5WriterConfig makeConfig()
     {
         HDF5WriterConfig cfg;
-        cfg.basePath      = tempDir_.string();
-        cfg.name          = "test_writer";
+        cfg.basePath = tempDir_.string();
+        cfg.name = "test_writer";
         cfg.flushInterval = std::chrono::milliseconds(100);
         return cfg;
     }
@@ -60,7 +63,7 @@ protected:
         dp::service::common::DataFrame frame;
 
         auto* timestamps = frame.mutable_datatimestamps()->mutable_timestamplist();
-        auto* ts         = timestamps->add_timestamps();
+        auto* ts = timestamps->add_timestamps();
         ts->set_epochseconds(1700000000);
         ts->set_nanoseconds(0);
 
@@ -126,8 +129,10 @@ TEST_F(HDF5WriterTest, PushWritesFileToBasePath)
     w.stop();
 
     bool found = false;
-    for (const auto& entry : fs::recursive_directory_iterator(tempDir_)) {
-        if (entry.is_regular_file() && entry.path().extension() == ".hdf5") {
+    for (const auto& entry : fs::recursive_directory_iterator(tempDir_))
+    {
+        if (entry.is_regular_file() && entry.path().extension() == ".hdf5")
+        {
             found = true;
             break;
         }
@@ -138,10 +143,7 @@ TEST_F(HDF5WriterTest, PushWritesFileToBasePath)
 TEST_F(HDF5WriterTest, WriterFactoryCreatesHDF5Writer)
 {
     auto node = makeConfigFromYaml(
-        "name: factory_writer\n"
-        "base-path: " + tempDir_.string() + "\n"
-        "flush-interval-ms: 100\n"
-    );
+        "name: factory_writer\n" "base-path: " + tempDir_.string() + "\n" "flush-interval-ms: 100\n");
 
     auto w = WriterFactory::create("hdf5", node, nullptr);
     ASSERT_NE(w, nullptr);
@@ -173,7 +175,7 @@ TEST_F(HDF5WriterTest, StringColumnWritten)
     w.start();
 
     dp::service::common::DataFrame frame;
-    auto* ts = frame.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
+    auto*                          ts = frame.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
     ts->set_epochseconds(1700000000);
     ts->set_nanoseconds(0);
 
@@ -202,7 +204,7 @@ TEST_F(HDF5WriterTest, StringColumnWritten)
     EXPECT_EQ(dims[0], 1u);
 
     // Read back and verify value
-    H5::StrType vlStr(H5::PredType::C_S1, H5T_VARIABLE);
+    H5::StrType        vlStr(H5::PredType::C_S1, H5T_VARIABLE);
     std::vector<char*> buf(1, nullptr);
     ds.read(buf.data(), vlStr);
     EXPECT_STREQ(buf[0], "OK");
@@ -218,7 +220,7 @@ TEST_F(HDF5WriterTest, StringColumnMultipleValuesWritten)
     for (int i = 0; i < 2; ++i)
     {
         dp::service::common::DataFrame frame;
-        auto* ts = frame.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
+        auto*                          ts = frame.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
         ts->set_epochseconds(1700000000 + i);
         ts->set_nanoseconds(0);
         auto* col = frame.add_stringcolumns();
@@ -256,7 +258,7 @@ TEST_F(HDF5WriterTest, DoubleArrayColumnWrittenAs2DDataset)
     constexpr int kArrayLen = 4;
 
     dp::service::common::DataFrame frame;
-    auto* ts = frame.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
+    auto*                          ts = frame.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
     ts->set_epochseconds(1700000000);
     ts->set_nanoseconds(0);
 
@@ -277,7 +279,7 @@ TEST_F(HDF5WriterTest, DoubleArrayColumnWrittenAs2DDataset)
     auto h5path = findH5File(tempDir_);
     ASSERT_FALSE(h5path.empty());
 
-    H5::H5File    file(h5path.string(), H5F_ACC_RDONLY);
+    H5::H5File file(h5path.string(), H5F_ACC_RDONLY);
     ASSERT_TRUE(file.nameExists("WAVEFORM")) << "Dataset 'WAVEFORM' missing";
 
     H5::DataSet   ds = file.openDataSet("WAVEFORM");
@@ -285,8 +287,8 @@ TEST_F(HDF5WriterTest, DoubleArrayColumnWrittenAs2DDataset)
     ASSERT_EQ(sp.getSimpleExtentNdims(), 2);
     hsize_t dims[2]{0, 0};
     sp.getSimpleExtentDims(dims);
-    EXPECT_EQ(dims[0], 1u)         << "Expected 1 sample (row)";
-    EXPECT_EQ(dims[1], kArrayLen)  << "Expected array length " << kArrayLen;
+    EXPECT_EQ(dims[0], 1u) << "Expected 1 sample (row)";
+    EXPECT_EQ(dims[1], kArrayLen) << "Expected array length " << kArrayLen;
 
     std::vector<double> readback(kArrayLen);
     ds.read(readback.data(), H5::PredType::NATIVE_DOUBLE);
@@ -299,13 +301,13 @@ TEST_F(HDF5WriterTest, DoubleArrayColumnGrowsRowsAcrossUpdates)
     HDF5Writer w(makeConfig());
     w.start();
 
-    constexpr int kArrayLen  = 3;
+    constexpr int kArrayLen = 3;
     constexpr int kNumFrames = 4;
 
     for (int f = 0; f < kNumFrames; ++f)
     {
         dp::service::common::DataFrame frame;
-        auto* ts = frame.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
+        auto*                          ts = frame.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
         ts->set_epochseconds(1700000000 + f);
         ts->set_nanoseconds(0);
         auto* col = frame.add_doublearraycolumns();
@@ -342,7 +344,7 @@ TEST_F(HDF5WriterTest, FloatArrayColumnWrittenAs2DDataset)
     constexpr int kArrayLen = 8;
 
     dp::service::common::DataFrame frame;
-    auto* ts = frame.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
+    auto*                          ts = frame.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
     ts->set_epochseconds(1700000000);
     ts->set_nanoseconds(0);
 
@@ -363,7 +365,7 @@ TEST_F(HDF5WriterTest, FloatArrayColumnWrittenAs2DDataset)
     auto h5path = findH5File(tempDir_);
     ASSERT_FALSE(h5path.empty());
 
-    H5::H5File    file(h5path.string(), H5F_ACC_RDONLY);
+    H5::H5File file(h5path.string(), H5F_ACC_RDONLY);
     ASSERT_TRUE(file.nameExists("FLOATWAVE"));
     H5::DataSet   ds = file.openDataSet("FLOATWAVE");
     H5::DataSpace sp = ds.getSpace();
@@ -381,7 +383,7 @@ TEST_F(HDF5WriterTest, Int32ArrayColumnWrittenAs2DDataset)
     constexpr int kArrayLen = 6;
 
     dp::service::common::DataFrame frame;
-    auto* ts = frame.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
+    auto*                          ts = frame.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
     ts->set_epochseconds(1700000000);
     ts->set_nanoseconds(0);
 
@@ -402,7 +404,7 @@ TEST_F(HDF5WriterTest, Int32ArrayColumnWrittenAs2DDataset)
     auto h5path = findH5File(tempDir_);
     ASSERT_FALSE(h5path.empty());
 
-    H5::H5File    file(h5path.string(), H5F_ACC_RDONLY);
+    H5::H5File file(h5path.string(), H5F_ACC_RDONLY);
     ASSERT_TRUE(file.nameExists("INTWAVE"));
     H5::DataSet   ds = file.openDataSet("INTWAVE");
     H5::DataSpace sp = ds.getSpace();
@@ -427,7 +429,7 @@ TEST_F(HDF5WriterTest, DoubleColumnDataReadBack)
     w.start();
 
     dp::service::common::DataFrame frame;
-    auto* ts = frame.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
+    auto*                          ts = frame.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
     ts->set_epochseconds(1700000000);
     ts->set_nanoseconds(500000000);
 
@@ -449,7 +451,7 @@ TEST_F(HDF5WriterTest, DoubleColumnDataReadBack)
     H5::H5File file(h5path.string(), H5F_ACC_RDONLY);
     ASSERT_TRUE(file.nameExists("VOLTAGE"));
 
-    H5::DataSet      ds = file.openDataSet("VOLTAGE");
+    H5::DataSet         ds = file.openDataSet("VOLTAGE");
     std::vector<double> readback(1);
     ds.read(readback.data(), H5::PredType::NATIVE_DOUBLE);
     EXPECT_DOUBLE_EQ(readback[0], 1.23);
@@ -461,7 +463,7 @@ TEST_F(HDF5WriterTest, FloatColumnWrittenAndReadBack)
     w.start();
 
     dp::service::common::DataFrame frame;
-    auto* ts = frame.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
+    auto*                          ts = frame.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
     ts->set_epochseconds(1700000001);
     ts->set_nanoseconds(0);
 
@@ -483,9 +485,9 @@ TEST_F(HDF5WriterTest, FloatColumnWrittenAndReadBack)
     H5::H5File file(h5path.string(), H5F_ACC_RDONLY);
     ASSERT_TRUE(file.nameExists("TEMP"));
 
-    H5::DataSet     ds = file.openDataSet("TEMP");
-    H5::DataSpace   sp = ds.getSpace();
-    hsize_t         dims[1]{0};
+    H5::DataSet   ds = file.openDataSet("TEMP");
+    H5::DataSpace sp = ds.getSpace();
+    hsize_t       dims[1]{0};
     sp.getSimpleExtentDims(dims);
     EXPECT_EQ(dims[0], 1u);
 
@@ -500,7 +502,7 @@ TEST_F(HDF5WriterTest, Int32ColumnWrittenAndReadBack)
     w.start();
 
     dp::service::common::DataFrame frame;
-    auto* ts = frame.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
+    auto*                          ts = frame.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
     ts->set_epochseconds(1700000002);
     ts->set_nanoseconds(0);
 
@@ -522,9 +524,9 @@ TEST_F(HDF5WriterTest, Int32ColumnWrittenAndReadBack)
     H5::H5File file(h5path.string(), H5F_ACC_RDONLY);
     ASSERT_TRUE(file.nameExists("COUNTER"));
 
-    H5::DataSet      ds = file.openDataSet("COUNTER");
-    H5::DataSpace    sp = ds.getSpace();
-    hsize_t          dims[1]{0};
+    H5::DataSet   ds = file.openDataSet("COUNTER");
+    H5::DataSpace sp = ds.getSpace();
+    hsize_t       dims[1]{0};
     sp.getSimpleExtentDims(dims);
     EXPECT_EQ(dims[0], 1u);
 
@@ -539,7 +541,7 @@ TEST_F(HDF5WriterTest, Int64ColumnWrittenAndReadBack)
     w.start();
 
     dp::service::common::DataFrame frame;
-    auto* ts = frame.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
+    auto*                          ts = frame.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
     ts->set_epochseconds(1700000003);
     ts->set_nanoseconds(0);
 
@@ -561,9 +563,9 @@ TEST_F(HDF5WriterTest, Int64ColumnWrittenAndReadBack)
     H5::H5File file(h5path.string(), H5F_ACC_RDONLY);
     ASSERT_TRUE(file.nameExists("BIGVAL"));
 
-    H5::DataSet      ds = file.openDataSet("BIGVAL");
-    H5::DataSpace    sp = ds.getSpace();
-    hsize_t          dims[1]{0};
+    H5::DataSet   ds = file.openDataSet("BIGVAL");
+    H5::DataSpace sp = ds.getSpace();
+    hsize_t       dims[1]{0};
     sp.getSimpleExtentDims(dims);
     EXPECT_EQ(dims[0], 1u);
 
@@ -578,7 +580,7 @@ TEST_F(HDF5WriterTest, BoolColumnWrittenAndReadBack)
     w.start();
 
     dp::service::common::DataFrame frame;
-    auto* ts = frame.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
+    auto*                          ts = frame.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
     ts->set_epochseconds(1700000004);
     ts->set_nanoseconds(0);
 
@@ -600,9 +602,9 @@ TEST_F(HDF5WriterTest, BoolColumnWrittenAndReadBack)
     H5::H5File file(h5path.string(), H5F_ACC_RDONLY);
     ASSERT_TRUE(file.nameExists("ENABLED"));
 
-    H5::DataSet      ds = file.openDataSet("ENABLED");
-    H5::DataSpace    sp = ds.getSpace();
-    hsize_t          dims[1]{0};
+    H5::DataSet   ds = file.openDataSet("ENABLED");
+    H5::DataSpace sp = ds.getSpace();
+    hsize_t       dims[1]{0};
     sp.getSimpleExtentDims(dims);
     EXPECT_EQ(dims[0], 1u);
 
@@ -617,10 +619,10 @@ TEST_F(HDF5WriterTest, TimestampDatasetWrittenAndReadBack)
     w.start();
 
     constexpr int64_t kEpochSec = 1700000005;
-    constexpr int64_t kNanos    = 123456789;
+    constexpr int64_t kNanos = 123456789;
 
     dp::service::common::DataFrame frame;
-    auto* ts = frame.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
+    auto*                          ts = frame.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
     ts->set_epochseconds(kEpochSec);
     ts->set_nanoseconds(static_cast<uint32_t>(kNanos));
 
@@ -666,7 +668,7 @@ TEST_F(HDF5WriterTest, FloatArrayColumnValuesReadBack)
     constexpr int kArrayLen = 4;
 
     dp::service::common::DataFrame frame;
-    auto* ts = frame.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
+    auto*                          ts = frame.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
     ts->set_epochseconds(1700000006);
     ts->set_nanoseconds(0);
 
@@ -687,7 +689,7 @@ TEST_F(HDF5WriterTest, FloatArrayColumnValuesReadBack)
     auto h5path = findH5File(tempDir_);
     ASSERT_FALSE(h5path.empty());
 
-    H5::H5File    file(h5path.string(), H5F_ACC_RDONLY);
+    H5::H5File file(h5path.string(), H5F_ACC_RDONLY);
     ASSERT_TRUE(file.nameExists("FWAVE_VALS"));
     H5::DataSet   ds = file.openDataSet("FWAVE_VALS");
     H5::DataSpace sp = ds.getSpace();
@@ -715,7 +717,7 @@ TEST_F(HDF5WriterTest, Int64ArrayColumnWrittenAs2DDataset)
     constexpr int kArrayLen = 5;
 
     dp::service::common::DataFrame frame;
-    auto* ts = frame.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
+    auto*                          ts = frame.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
     ts->set_epochseconds(1700000007);
     ts->set_nanoseconds(0);
 
@@ -736,7 +738,7 @@ TEST_F(HDF5WriterTest, Int64ArrayColumnWrittenAs2DDataset)
     auto h5path = findH5File(tempDir_);
     ASSERT_FALSE(h5path.empty());
 
-    H5::H5File    file(h5path.string(), H5F_ACC_RDONLY);
+    H5::H5File file(h5path.string(), H5F_ACC_RDONLY);
     ASSERT_TRUE(file.nameExists("BIGWAVE"));
     H5::DataSet   ds = file.openDataSet("BIGWAVE");
     H5::DataSpace sp = ds.getSpace();
@@ -763,11 +765,11 @@ TEST_F(HDF5WriterTest, Int64ArrayColumnWrittenAs2DDataset)
 
 // Build a DataFrame with the given timestamps and an addColumn callback.
 static dp::service::common::DataFrame makeBsasFrame(
-    const std::vector<std::pair<int64_t, uint32_t>>& timestamps,
+    const std::vector<std::pair<int64_t, uint32_t>>&     timestamps,
     std::function<void(dp::service::common::DataFrame&)> addColumn)
 {
     dp::service::common::DataFrame frame;
-    auto* tsList = frame.mutable_datatimestamps()->mutable_timestamplist();
+    auto*                          tsList = frame.mutable_datatimestamps()->mutable_timestamplist();
     for (const auto& [sec, ns] : timestamps)
     {
         auto* ts = tsList->add_timestamps();
@@ -785,7 +787,7 @@ static dp::service::common::DataFrame makeBsasFrame(
 // ---------------------------------------------------------------------------
 TEST_F(HDF5WriterTest, BsasSplitColumnTimestampsWrittenOnce)
 {
-    constexpr int kRows = 3;
+    constexpr int     kRows = 3;
     const std::string kSource = "BSAS:TEST:TABLE";
 
     const std::vector<std::pair<int64_t, uint32_t>> ts = {
@@ -799,21 +801,27 @@ TEST_F(HDF5WriterTest, BsasSplitColumnTimestampsWrittenOnce)
     IDataBus::EventBatch batch;
     batch.root_source = kSource;
 
-    batch.frames.push_back(makeBsasFrame(ts, [](dp::service::common::DataFrame& f) {
-        auto* col = f.add_doublecolumns();
-        col->set_name("PV_A");
-        for (int i = 0; i < 3; ++i) col->add_values(1.0 + i);
-    }));
-    batch.frames.push_back(makeBsasFrame(ts, [](dp::service::common::DataFrame& f) {
-        auto* col = f.add_int32columns();
-        col->set_name("PV_B");
-        for (int i = 0; i < 3; ++i) col->add_values(10 + i);
-    }));
-    batch.frames.push_back(makeBsasFrame(ts, [](dp::service::common::DataFrame& f) {
-        auto* col = f.add_floatcolumns();
-        col->set_name("PV_C");
-        for (int i = 0; i < 3; ++i) col->add_values(2.5f + static_cast<float>(i));
-    }));
+    batch.frames.push_back(makeBsasFrame(ts, [](dp::service::common::DataFrame& f)
+                                         {
+                                             auto* col = f.add_doublecolumns();
+                                             col->set_name("PV_A");
+                                             for (int i = 0; i < 3; ++i)
+                                                 col->add_values(1.0 + i);
+                                         }));
+    batch.frames.push_back(makeBsasFrame(ts, [](dp::service::common::DataFrame& f)
+                                         {
+                                             auto* col = f.add_int32columns();
+                                             col->set_name("PV_B");
+                                             for (int i = 0; i < 3; ++i)
+                                                 col->add_values(10 + i);
+                                         }));
+    batch.frames.push_back(makeBsasFrame(ts, [](dp::service::common::DataFrame& f)
+                                         {
+                                             auto* col = f.add_floatcolumns();
+                                             col->set_name("PV_C");
+                                             for (int i = 0; i < 3; ++i)
+                                                 col->add_values(2.5f + static_cast<float>(i));
+                                         }));
 
     HDF5Writer w(makeConfig());
     w.start();
@@ -873,15 +881,17 @@ TEST_F(HDF5WriterTest, BsasSplitColumnTimestampsWrittenOnce)
 // ---------------------------------------------------------------------------
 TEST_F(HDF5WriterTest, BsasTwoUpdatesTimestampsGrow)
 {
-    constexpr int kRows = 3;
+    constexpr int     kRows = 3;
     const std::string kSource = "BSAS:TEST:TABLE2";
 
     const std::vector<std::pair<int64_t, uint32_t>> ts1 = {
-        {1700000010, 0}, {1700000010, 1}, {1700000010, 2}
-    };
+        {1700000010, 0},
+        {1700000010, 1},
+        {1700000010, 2}};
     const std::vector<std::pair<int64_t, uint32_t>> ts2 = {
-        {1700000020, 0}, {1700000020, 1}, {1700000020, 2}
-    };
+        {1700000020, 0},
+        {1700000020, 1},
+        {1700000020, 2}};
 
     HDF5Writer w(makeConfig());
     w.start();
@@ -890,16 +900,20 @@ TEST_F(HDF5WriterTest, BsasTwoUpdatesTimestampsGrow)
     {
         IDataBus::EventBatch batch;
         batch.root_source = kSource;
-        batch.frames.push_back(makeBsasFrame(ts1, [kRows](dp::service::common::DataFrame& f) {
-            auto* col = f.add_doublecolumns();
-            col->set_name("PV_A");
-            for (int i = 0; i < kRows; ++i) col->add_values(static_cast<double>(i));
-        }));
-        batch.frames.push_back(makeBsasFrame(ts1, [kRows](dp::service::common::DataFrame& f) {
-            auto* col = f.add_int32columns();
-            col->set_name("PV_B");
-            for (int i = 0; i < kRows; ++i) col->add_values(i);
-        }));
+        batch.frames.push_back(makeBsasFrame(ts1, [kRows](dp::service::common::DataFrame& f)
+                                             {
+                                                 auto* col = f.add_doublecolumns();
+                                                 col->set_name("PV_A");
+                                                 for (int i = 0; i < kRows; ++i)
+                                                     col->add_values(static_cast<double>(i));
+                                             }));
+        batch.frames.push_back(makeBsasFrame(ts1, [kRows](dp::service::common::DataFrame& f)
+                                             {
+                                                 auto* col = f.add_int32columns();
+                                                 col->set_name("PV_B");
+                                                 for (int i = 0; i < kRows; ++i)
+                                                     col->add_values(i);
+                                             }));
         w.push(std::move(batch));
     }
 
@@ -907,16 +921,20 @@ TEST_F(HDF5WriterTest, BsasTwoUpdatesTimestampsGrow)
     {
         IDataBus::EventBatch batch;
         batch.root_source = kSource;
-        batch.frames.push_back(makeBsasFrame(ts2, [kRows](dp::service::common::DataFrame& f) {
-            auto* col = f.add_doublecolumns();
-            col->set_name("PV_A");
-            for (int i = 0; i < kRows; ++i) col->add_values(10.0 + i);
-        }));
-        batch.frames.push_back(makeBsasFrame(ts2, [kRows](dp::service::common::DataFrame& f) {
-            auto* col = f.add_int32columns();
-            col->set_name("PV_B");
-            for (int i = 0; i < kRows; ++i) col->add_values(100 + i);
-        }));
+        batch.frames.push_back(makeBsasFrame(ts2, [kRows](dp::service::common::DataFrame& f)
+                                             {
+                                                 auto* col = f.add_doublecolumns();
+                                                 col->set_name("PV_A");
+                                                 for (int i = 0; i < kRows; ++i)
+                                                     col->add_values(10.0 + i);
+                                             }));
+        batch.frames.push_back(makeBsasFrame(ts2, [kRows](dp::service::common::DataFrame& f)
+                                             {
+                                                 auto* col = f.add_int32columns();
+                                                 col->set_name("PV_B");
+                                                 for (int i = 0; i < kRows; ++i)
+                                                     col->add_values(100 + i);
+                                             }));
         w.push(std::move(batch));
     }
 
@@ -954,13 +972,13 @@ TEST_F(HDF5WriterTest, BsasTwoUpdatesTimestampsGrow)
 // ---------------------------------------------------------------------------
 TEST_F(HDF5WriterTest, BsasCoincidentalSameTimestampsNotDeduped)
 {
-    constexpr int kRows = 2;
+    constexpr int     kRows = 2;
     const std::string kSource = "BSAS:TEST:COINCIDENT";
 
     // Intentionally identical timestamps in both separate batches
     const std::vector<std::pair<int64_t, uint32_t>> sameTs = {
-        {1700000030, 999}, {1700000030, 1000}
-    };
+        {1700000030, 999},
+        {1700000030, 1000}};
 
     HDF5Writer w(makeConfig());
     w.start();
@@ -970,21 +988,25 @@ TEST_F(HDF5WriterTest, BsasCoincidentalSameTimestampsNotDeduped)
     {
         IDataBus::EventBatch batch;
         batch.root_source = kSource;
-        batch.frames.push_back(makeBsasFrame(sameTs, [kRows](dp::service::common::DataFrame& f) {
-            auto* col = f.add_doublecolumns();
-            col->set_name("PV_A");
-            for (int i = 0; i < kRows; ++i) col->add_values(1.0);
-        }));
+        batch.frames.push_back(makeBsasFrame(sameTs, [kRows](dp::service::common::DataFrame& f)
+                                             {
+                                                 auto* col = f.add_doublecolumns();
+                                                 col->set_name("PV_A");
+                                                 for (int i = 0; i < kRows; ++i)
+                                                     col->add_values(1.0);
+                                             }));
         w.push(std::move(batch));
     }
     {
         IDataBus::EventBatch batch;
         batch.root_source = kSource;
-        batch.frames.push_back(makeBsasFrame(sameTs, [kRows](dp::service::common::DataFrame& f) {
-            auto* col = f.add_int32columns();
-            col->set_name("PV_B");
-            for (int i = 0; i < kRows; ++i) col->add_values(42);
-        }));
+        batch.frames.push_back(makeBsasFrame(sameTs, [kRows](dp::service::common::DataFrame& f)
+                                             {
+                                                 auto* col = f.add_int32columns();
+                                                 col->set_name("PV_B");
+                                                 for (int i = 0; i < kRows; ++i)
+                                                     col->add_values(42);
+                                             }));
         w.push(std::move(batch));
     }
 
@@ -1029,16 +1051,16 @@ TEST_F(HDF5WriterTest, BsasCoincidentalSameTimestampsNotDeduped)
 /// Build one NTTable EventBatch: root_source == tags[0], multiple frames,
 /// one column per frame.  All rows share the same timestamps.
 static IDataBus::EventBatch makeNTTableBatch(
-    const std::string&                        pvName,
-    const std::vector<std::string>&           colNames,
-    const std::vector<std::vector<double>>&   colValues,
-    int64_t                                   epochSec = 1700000000LL,
-    int64_t                                   epochNs  = 0LL)
+    const std::string&                      pvName,
+    const std::vector<std::string>&         colNames,
+    const std::vector<std::vector<double>>& colValues,
+    int64_t                                 epochSec = 1700000000LL,
+    int64_t                                 epochNs = 0LL)
 {
     IDataBus::EventBatch batch;
     batch.root_source = pvName;
-    batch.tags        = {pvName};
-    batch.is_nttable  = true;
+    batch.tags = {pvName};
+    batch.is_tabular = true;
 
     const int nRows = static_cast<int>(colValues.empty() ? 0 : colValues[0].size());
 
@@ -1072,17 +1094,17 @@ static IDataBus::EventBatch makeNTTableBatchMixed(
     const std::string& pvName,
     int                nRows,
     int64_t            epochSec = 1700000000LL,
-    int64_t            epochNs  = 0LL)
+    int64_t            epochNs = 0LL)
 {
     IDataBus::EventBatch batch;
     batch.root_source = pvName;
-    batch.tags        = {pvName};
-    batch.is_nttable  = true;
+    batch.tags = {pvName};
+    batch.is_tabular = true;
 
     // Frame 1: double column "DBL_COL"
     {
         dp::service::common::DataFrame frame;
-        auto* tsList = frame.mutable_datatimestamps()->mutable_timestamplist();
+        auto*                          tsList = frame.mutable_datatimestamps()->mutable_timestamplist();
         for (int r = 0; r < nRows; ++r)
         {
             auto* ts = tsList->add_timestamps();
@@ -1099,7 +1121,7 @@ static IDataBus::EventBatch makeNTTableBatchMixed(
     // Frame 2: int32 column "INT_COL"
     {
         dp::service::common::DataFrame frame;
-        auto* tsList = frame.mutable_datatimestamps()->mutable_timestamplist();
+        auto*                          tsList = frame.mutable_datatimestamps()->mutable_timestamplist();
         for (int r = 0; r < nRows; ++r)
         {
             auto* ts = tsList->add_timestamps();
@@ -1116,15 +1138,15 @@ static IDataBus::EventBatch makeNTTableBatchMixed(
     return batch;
 }
 
-/// Build the end_of_source_update marker batch that the reader emits after all
-/// column batches for one NTTable update round.
+/// Build the end_of_batch_group marker batch that the reader emits after all
+/// column batches for one tabular batch group.
 static IDataBus::EventBatch makeEndOfUpdateMarker(const std::string& pvName)
 {
     IDataBus::EventBatch marker;
-    marker.root_source          = pvName;
+    marker.root_source = pvName;
     marker.tags.push_back(pvName);
-    marker.is_nttable           = true;
-    marker.end_of_source_update = true;
+    marker.is_tabular = true;
+    marker.end_of_batch_group = true;
     return marker;
 }
 
@@ -1135,7 +1157,7 @@ TEST_F(HDF5WriterTest, NTTableBatchCreatesPerColumnDatasets)
     HDF5Writer w(makeConfig());
     w.start();
 
-    const std::vector<std::string> cols{"SIG_A", "SIG_B", "SIG_C"};
+    const std::vector<std::string>         cols{"SIG_A", "SIG_B", "SIG_C"};
     const std::vector<std::vector<double>> vals{
         {1.0, 2.0, 3.0},
         {4.0, 5.0, 6.0},
@@ -1182,7 +1204,7 @@ TEST_F(HDF5WriterTest, NTTableBatchCreatesPerColumnDatasets)
 
     // Verify actual values of SIG_A match input.
     {
-        H5::DataSet ds = grp.openDataSet("SIG_A");
+        H5::DataSet         ds = grp.openDataSet("SIG_A");
         std::vector<double> buf(kRows);
         ds.read(buf.data(), H5::PredType::NATIVE_DOUBLE);
         EXPECT_DOUBLE_EQ(buf[0], 1.0);
@@ -1210,8 +1232,7 @@ TEST_F(HDF5WriterTest, NTTableBatchAppendsRowsAcrossMultipleBatches)
     for (int b = 0; b < kBatches; ++b)
     {
         const std::vector<std::vector<double>> vals{
-            {static_cast<double>(b * 10), static_cast<double>(b * 10 + 1), static_cast<double>(b * 10 + 2)}
-        };
+            {static_cast<double>(b * 10), static_cast<double>(b * 10 + 1), static_cast<double>(b * 10 + 2)}};
         auto batch = makeNTTableBatch("NT:TABLE2", cols, vals,
                                       1700000000LL + b * 10LL);
         EXPECT_TRUE(w.push(std::move(batch)));
@@ -1239,7 +1260,7 @@ TEST_F(HDF5WriterTest, NTTableBatchAppendsRowsAcrossMultipleBatches)
 
 TEST_F(HDF5WriterTest, NTTableBatchDoesNotWriteTimestampsDataset)
 {
-    const std::vector<std::string> cols{"X"};
+    const std::vector<std::string>         cols{"X"};
     const std::vector<std::vector<double>> vals{{42.0, 43.0}};
 
     HDF5Writer w(makeConfig());
@@ -1273,7 +1294,7 @@ TEST_F(HDF5WriterTest, NTTableBatchDoesNotWriteTimestampsDataset)
 
 TEST_F(HDF5WriterTest, NTTablePreservesColumnTypes)
 {
-    constexpr int kRows = 4;
+    constexpr int     kRows = 4;
     const std::string pvName = "NT:TYPED";
 
     HDF5Writer w(makeConfig());
@@ -1296,7 +1317,7 @@ TEST_F(HDF5WriterTest, NTTablePreservesColumnTypes)
     // DBL_COL must be a floating-point type of size 8 (double).
     ASSERT_TRUE(grp.nameExists("DBL_COL")) << "'NT:TYPED/DBL_COL' not found";
     {
-        H5::DataSet ds = grp.openDataSet("DBL_COL");
+        H5::DataSet  ds = grp.openDataSet("DBL_COL");
         H5::DataType dtype = ds.getDataType();
         EXPECT_EQ(dtype.getClass(), H5T_FLOAT)
             << "DBL_COL should be H5T_FLOAT";
@@ -1317,7 +1338,7 @@ TEST_F(HDF5WriterTest, NTTablePreservesColumnTypes)
     // INT_COL must be an integer type of size 4 (int32).
     ASSERT_TRUE(grp.nameExists("INT_COL")) << "'NT:TYPED/INT_COL' not found";
     {
-        H5::DataSet ds = grp.openDataSet("INT_COL");
+        H5::DataSet  ds = grp.openDataSet("INT_COL");
         H5::DataType dtype = ds.getDataType();
         EXPECT_EQ(dtype.getClass(), H5T_INTEGER)
             << "INT_COL should be H5T_INTEGER";
@@ -1343,8 +1364,8 @@ TEST_F(HDF5WriterTest, NonNTTableBatchUsesColumnarLayout)
     w.start();
 
     dp::service::common::DataFrame frame;
-    auto* tsList = frame.mutable_datatimestamps()->mutable_timestamplist();
-    auto* ts = tsList->add_timestamps();
+    auto*                          tsList = frame.mutable_datatimestamps()->mutable_timestamplist();
+    auto*                          ts = tsList->add_timestamps();
     ts->set_epochseconds(1700000001);
     ts->set_nanoseconds(0);
     auto* col = frame.add_doublecolumns();

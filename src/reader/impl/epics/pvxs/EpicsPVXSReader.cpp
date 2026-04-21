@@ -206,7 +206,7 @@ void EpicsPVXSReader::processSlacBsasTableMode(const std::string&     pvName,
     IDataBus::EventBatch tableBatch;
     tableBatch.root_source = pvName;
     tableBatch.tags.push_back(pvName);
-    tableBatch.is_nttable  = true;
+    tableBatch.is_tabular = true;
     std::size_t colsInBatch = 0;
 
     auto resetBatch = [&tableBatch, &pvName, &colsInBatch]()
@@ -214,7 +214,7 @@ void EpicsPVXSReader::processSlacBsasTableMode(const std::string&     pvName,
         tableBatch = IDataBus::EventBatch{};
         tableBatch.root_source = pvName;
         tableBatch.tags.push_back(pvName);
-        tableBatch.is_nttable  = true;
+        tableBatch.is_tabular = true;
         colsInBatch = 0;
     };
 
@@ -257,10 +257,10 @@ void EpicsPVXSReader::processSlacBsasTableMode(const std::string&     pvName,
     // Signal end of this NTTable update round so downstream writers (e.g. HDF5)
     // know all column batches have been emitted and can flush accumulated state.
     IDataBus::EventBatch markerBatch;
-    markerBatch.root_source          = pvName;
+    markerBatch.root_source = pvName;
     markerBatch.tags.push_back(pvName);
-    markerBatch.is_nttable           = true;
-    markerBatch.end_of_source_update = true;
+    markerBatch.is_tabular = true;
+    markerBatch.end_of_batch_group = true;
     bus_->push(std::move(markerBatch));
 }
 

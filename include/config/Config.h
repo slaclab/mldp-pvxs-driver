@@ -37,7 +37,7 @@ using ConfigTreePtr = std::shared_ptr<ryml::Tree>;
 inline std::string makeMissingFieldMessage(const std::string& field)
 {
     std::ostringstream oss;
-    oss << "Missing required field '" << field << "' in epics reader config";
+    oss << "Missing required field '" << field << "' in configuration";
     return oss.str();
 }
 

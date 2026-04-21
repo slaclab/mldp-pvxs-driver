@@ -207,7 +207,7 @@ bool HDF5Writer::push(util::bus::IDataBus::EventBatch batch) noexcept
         debugf(*logger_, "HDF5Writer [{}] push rejected — writer is stopping", config_.name);
         return false;
     }
-    const uint64_t seq = nextBatchSeq_.fetch_add(1, std::memory_order_relaxed);
+    const uint64_t              seq = nextBatchSeq_.fetch_add(1, std::memory_order_relaxed);
     std::lock_guard<std::mutex> lk(queueMutex_);
     if (queue_.size() >= kQueueCapacity)
     {
@@ -255,34 +255,34 @@ void HDF5Writer::writerLoop()
         }
 
         // --- Phase 2: write each frame to HDF5 ------------------------------
-        // end_of_source_update marker → flush NTTable buffer for that source.
-        // NTTable column batches (tags[0] == root_source) → accumulate.
+        // end_of_batch_group marker → flush tabular buffer for that source.
+        // Tabular column batches (tags[0] == root_source) → accumulate.
         // All other batches → existing columnar path.
         for (auto& entry : drained)
         {
             try
             {
-                if (entry.batch.end_of_source_update)
+                if (entry.batch.end_of_batch_group)
                 {
                     // Marker: flush whatever is accumulated for this source.
                     const auto& source = entry.batch.root_source;
-                    auto        it     = ntTableBuffers_.find(source);
-                    if (it != ntTableBuffers_.end() && it->second.rowCount > 0)
+                    auto        it = tabularBuffers_.find(source);
+                    if (it != tabularBuffers_.end() && it->second.rowCount > 0)
                     {
-                        auto ev = pool_->acquire(source);
+                        auto                        ev = pool_->acquire(source);
                         std::lock_guard<std::mutex> fileLk(ev->fileMutex);
-                        flushNTTableBuffer(source, it->second, ev->file);
+                        flushTabularBuffer(source, it->second, ev->file);
                     }
                 }
-                else if (isNTTableBatch(entry.batch))
+                else if (isTabularBatch(entry.batch))
                 {
-                    processNTTableBatch(entry);
+                    processTabularBatch(entry);
                 }
                 else
                 {
                     for (const auto& frame : entry.batch.frames)
                     {
-                        auto ev = pool_->acquire(entry.batch.root_source);
+                        auto           ev = pool_->acquire(entry.batch.root_source);
                         const uint64_t written = static_cast<uint64_t>(frame.ByteSizeLong());
                         {
                             std::lock_guard<std::mutex> fileLk(ev->fileMutex);
@@ -391,7 +391,7 @@ void append1D(H5::DataSet& ds, const H5::DataType& h5type, const CType* data, hs
     H5::DataSpace fspace = ds.getSpace();
     fspace.getSimpleExtentDims(curDims, maxDims);
     hsize_t offset[1] = {curDims[0] - n};
-    hsize_t count[1]  = {n};
+    hsize_t count[1] = {n};
     fspace.selectHyperslab(H5S_SELECT_SET, count, offset);
     H5::DataSpace mspace(1, count);
     ds.write(data, h5type, mspace, fspace);
@@ -399,8 +399,7 @@ void append1D(H5::DataSet& ds, const H5::DataType& h5type, const CType* data, hs
 
 // Append nSamples rows to a 2-D dataset (nSamples × arrayLen): extend → hyperslab → write.
 template <typename CType>
-void append2D(H5::DataSet& ds, const H5::DataType& h5type,
-              const CType* data, hsize_t nSamples, hsize_t arrayLen)
+void append2D(H5::DataSet& ds, const H5::DataType& h5type, const CType* data, hsize_t nSamples, hsize_t arrayLen)
 {
     hsize_t curDims[2] = {0, arrayLen}, maxDims[2] = {H5S_UNLIMITED, arrayLen};
     ds.getSpace().getSimpleExtentDims(curDims, maxDims);
@@ -409,7 +408,7 @@ void append2D(H5::DataSet& ds, const H5::DataType& h5type,
     H5::DataSpace fspace = ds.getSpace();
     fspace.getSimpleExtentDims(curDims, maxDims);
     hsize_t offset[2] = {curDims[0] - nSamples, 0};
-    hsize_t count[2]  = {nSamples, arrayLen};
+    hsize_t count[2] = {nSamples, arrayLen};
     fspace.selectHyperslab(H5S_SELECT_SET, count, offset);
     H5::DataSpace mspace(2, count);
     ds.write(data, h5type, mspace, fspace);
@@ -419,7 +418,8 @@ void append2D(H5::DataSet& ds, const H5::DataType& h5type,
 // ProtoCol must expose: name(), values_size(), values() (proto repeated numeric).
 template <typename CType, typename ProtoCol, typename EnsureFn>
 void writeScalarColumns(const google::protobuf::RepeatedPtrField<ProtoCol>& cols,
-                        const H5::DataType& h5type, EnsureFn ensureDataset)
+                        const H5::DataType&                                 h5type,
+                        EnsureFn                                            ensureDataset)
 {
     for (const auto& col : cols)
     {
@@ -429,7 +429,7 @@ void writeScalarColumns(const google::protobuf::RepeatedPtrField<ProtoCol>& cols
         if (n <= 0)
             continue;
         std::vector<CType> buf(col.values().begin(), col.values().end());
-        auto ds = ensureDataset(col.name(), h5type);
+        auto               ds = ensureDataset(col.name(), h5type);
         append1D(ds, h5type, buf.data(), static_cast<hsize_t>(n));
     }
 }
@@ -438,7 +438,8 @@ void writeScalarColumns(const google::protobuf::RepeatedPtrField<ProtoCol>& cols
 // ProtoCol must expose: name(), has_dimensions(), dimensions().dims(0), values_size(), values().
 template <typename CType, typename ProtoCol, typename EnsureFn2D>
 void writeArrayColumns(const google::protobuf::RepeatedPtrField<ProtoCol>& cols,
-                       const H5::DataType& h5type, EnsureFn2D ensureDataset2D)
+                       const H5::DataType&                                 h5type,
+                       EnsureFn2D                                          ensureDataset2D)
 {
     for (const auto& col : cols)
     {
@@ -454,7 +455,7 @@ void writeArrayColumns(const google::protobuf::RepeatedPtrField<ProtoCol>& cols,
         if (nSamples == 0)
             continue;
         std::vector<CType> buf(col.values().begin(), col.values().end());
-        auto ds = ensureDataset2D(col.name(), h5type, arrayLen);
+        auto               ds = ensureDataset2D(col.name(), h5type, arrayLen);
         append2D(ds, h5type, buf.data(), nSamples, arrayLen);
     }
 }
@@ -466,18 +467,54 @@ void writeArrayColumns(const google::protobuf::RepeatedPtrField<ProtoCol>& cols,
 template <typename T>
 const H5::PredType& mapNativeType();
 
-template <> const H5::PredType& mapNativeType<double>()   { return H5::PredType::NATIVE_DOUBLE; }
-template <> const H5::PredType& mapNativeType<float>()    { return H5::PredType::NATIVE_FLOAT;  }
-template <> const H5::PredType& mapNativeType<int32_t>()  { return H5::PredType::NATIVE_INT32;  }
-template <> const H5::PredType& mapNativeType<int64_t>()  { return H5::PredType::NATIVE_INT64;  }
-template <> const H5::PredType& mapNativeType<uint8_t>()  { return H5::PredType::NATIVE_UINT8;  }
+template <>
+const H5::PredType& mapNativeType<double>()
+{
+    return H5::PredType::NATIVE_DOUBLE;
+}
+
+template <>
+const H5::PredType& mapNativeType<float>()
+{
+    return H5::PredType::NATIVE_FLOAT;
+}
+
+template <>
+const H5::PredType& mapNativeType<int32_t>()
+{
+    return H5::PredType::NATIVE_INT32;
+}
+
+template <>
+const H5::PredType& mapNativeType<int64_t>()
+{
+    return H5::PredType::NATIVE_INT64;
+}
+
+template <>
+const H5::PredType& mapNativeType<uint8_t>()
+{
+    return H5::PredType::NATIVE_UINT8;
+}
 
 // Fill value used when padding a column shorter than the timestamp vector.
 template <typename T>
-T fillValue() { return T{0}; }
+T fillValue()
+{
+    return T{0};
+}
 
-template <> double fillValue<double>() { return std::numeric_limits<double>::quiet_NaN(); }
-template <> float  fillValue<float>()  { return std::numeric_limits<float>::quiet_NaN();  }
+template <>
+double fillValue<double>()
+{
+    return std::numeric_limits<double>::quiet_NaN();
+}
+
+template <>
+float fillValue<float>()
+{
+    return std::numeric_limits<float>::quiet_NaN();
+}
 
 } // namespace
 
@@ -546,8 +583,7 @@ void HDF5Writer::appendFrame(const std::string&                    sourceName,
         if (it != lastTsBatchSeq_.end() && it->second == batchSeq)
         {
             tracef(*logger_,
-                   "HDF5Writer appendFrame source={} batchSeq={} — "
-                   "timestamps already written (split-column frame), skipping",
+                   "HDF5Writer appendFrame source={} batchSeq={} — " "timestamps already written (split-column frame), skipping",
                    sourceName, batchSeq);
         }
         else
@@ -570,10 +606,10 @@ void HDF5Writer::appendFrame(const std::string&                    sourceName,
     // -------------------------------------------------------------------------
     // 2. Scalar columns
     // -------------------------------------------------------------------------
-    writeScalarColumns<double>  (frame.doublecolumns(), H5::PredType::NATIVE_DOUBLE, ensure1D);
-    writeScalarColumns<float>   (frame.floatcolumns(),  H5::PredType::NATIVE_FLOAT,  ensure1D);
-    writeScalarColumns<int32_t> (frame.int32columns(),  H5::PredType::NATIVE_INT32,  ensure1D);
-    writeScalarColumns<int64_t> (frame.int64columns(),  H5::PredType::NATIVE_INT64,  ensure1D);
+    writeScalarColumns<double>(frame.doublecolumns(), H5::PredType::NATIVE_DOUBLE, ensure1D);
+    writeScalarColumns<float>(frame.floatcolumns(), H5::PredType::NATIVE_FLOAT, ensure1D);
+    writeScalarColumns<int32_t>(frame.int32columns(), H5::PredType::NATIVE_INT32, ensure1D);
+    writeScalarColumns<int64_t>(frame.int64columns(), H5::PredType::NATIVE_INT64, ensure1D);
 
     // bool: protobuf bool → unsigned int for HDF5 NATIVE_HBOOL
     for (const auto& col : frame.boolcolumns())
@@ -613,10 +649,10 @@ void HDF5Writer::appendFrame(const std::string&                    sourceName,
     // -------------------------------------------------------------------------
     // 3. Array columns (2-D datasets: N_samples × array_len)
     // -------------------------------------------------------------------------
-    writeArrayColumns<double>  (frame.doublearraycolumns(), H5::PredType::NATIVE_DOUBLE, ensure2D);
-    writeArrayColumns<float>   (frame.floatarraycolumns(),  H5::PredType::NATIVE_FLOAT,  ensure2D);
-    writeArrayColumns<int32_t> (frame.int32arraycolumns(),  H5::PredType::NATIVE_INT32,  ensure2D);
-    writeArrayColumns<int64_t> (frame.int64arraycolumns(),  H5::PredType::NATIVE_INT64,  ensure2D);
+    writeArrayColumns<double>(frame.doublearraycolumns(), H5::PredType::NATIVE_DOUBLE, ensure2D);
+    writeArrayColumns<float>(frame.floatarraycolumns(), H5::PredType::NATIVE_FLOAT, ensure2D);
+    writeArrayColumns<int32_t>(frame.int32arraycolumns(), H5::PredType::NATIVE_INT32, ensure2D);
+    writeArrayColumns<int64_t>(frame.int64arraycolumns(), H5::PredType::NATIVE_INT64, ensure2D);
 
     // bool array: bool → unsigned int conversion
     for (const auto& col : frame.boolarraycolumns())
@@ -674,40 +710,40 @@ H5::DataSet HDF5Writer::ensureDataset2D(H5::H5File&         file,
 }
 
 // ---------------------------------------------------------------------------
-// isNTTableBatch() — detect NTTable batches by tag convention
+// isTabularBatch() — detect tabular batches by tag convention
 // ---------------------------------------------------------------------------
 
-bool HDF5Writer::isNTTableBatch(const EventBatch& batch)
+bool HDF5Writer::isTabularBatch(const EventBatch& batch)
 {
-    return batch.is_nttable;
+    return batch.is_tabular;
 }
 
 // ---------------------------------------------------------------------------
-// processNTTableBatch() — accumulate all column frames, then flush compound
+// processTabularBatch() — accumulate all column frames, then flush compound
 // ---------------------------------------------------------------------------
 
-void HDF5Writer::processNTTableBatch(const QueueEntry& entry)
+void HDF5Writer::processTabularBatch(const QueueEntry& entry)
 {
-    const auto& batch  = entry.batch;
+    const auto& batch = entry.batch;
     const auto& source = batch.root_source;
-    auto& buf = ntTableBuffers_[source];
+    auto&       buf = tabularBuffers_[source];
 
     for (const auto& frame : batch.frames)
-        accumulateNTTableFrame(source, frame, buf);
+        accumulateTabularFrame(source, frame, buf);
 
     // Don't flush here — accumulate across batches until timestamp changes.
-    // Flushing is triggered by accumulateNTTableFrame() when it detects a
+    // Flushing is triggered by accumulateTabularFrame() when it detects a
     // new update round (different first-row timestamp), or by writerLoop()
     // draining the entire queue (handled in writerLoop after all drained batches).
 }
 
 // ---------------------------------------------------------------------------
-// accumulateNTTableFrame() — extract timestamps + typed columns into buffer
+// accumulateTabularFrame() — extract timestamps + typed columns into buffer
 // ---------------------------------------------------------------------------
 
-void HDF5Writer::accumulateNTTableFrame(const std::string&                    sourceName,
+void HDF5Writer::accumulateTabularFrame(const std::string&                    sourceName,
                                         const dp::service::common::DataFrame& frame,
-                                        NTTableBuffer&                        buf)
+                                        TabularBuffer&                        buf)
 {
     // Determine the first-row timestamp of this frame to detect round changes.
     int64_t frameFirstTs = -1;
@@ -726,14 +762,15 @@ void HDF5Writer::accumulateNTTableFrame(const std::string&                    so
     if (buf.rowCount > 0 && frameFirstTs != -1 && frameFirstTs != buf.roundFirstTs)
     {
         buf.columns.clear();
-        if (!buf.schemaFixed) {
+        if (!buf.schemaFixed)
+        {
             buf.colIndex.clear();
             buf.colNames.clear();
             buf.colTypes.clear();
         }
         buf.tsSeconds.clear();
         buf.tsNanos.clear();
-        buf.rowCount     = 0;
+        buf.rowCount = 0;
         buf.roundFirstTs = -1;
     }
 
@@ -742,7 +779,7 @@ void HDF5Writer::accumulateNTTableFrame(const std::string&                    so
         frame.datatimestamps().has_timestamplist())
     {
         const auto& tsList = frame.datatimestamps().timestamplist();
-        const int   n      = tsList.timestamps_size();
+        const int   n = tsList.timestamps_size();
         buf.tsSeconds.reserve(static_cast<std::size_t>(n));
         buf.tsNanos.reserve(static_cast<std::size_t>(n));
         for (int i = 0; i < n; ++i)
@@ -750,144 +787,174 @@ void HDF5Writer::accumulateNTTableFrame(const std::string&                    so
             buf.tsSeconds.push_back(static_cast<int64_t>(tsList.timestamps(i).epochseconds()));
             buf.tsNanos.push_back(static_cast<int64_t>(tsList.timestamps(i).nanoseconds()));
         }
-        buf.rowCount     = static_cast<std::size_t>(n);
+        buf.rowCount = static_cast<std::size_t>(n);
         buf.roundFirstTs = frameFirstTs;
     }
 
     // Typed per-column accumulation — one block per proto column type.
 
     // double columns
-    for (const auto& col : frame.doublecolumns()) {
-        if (col.name().empty()) continue;
+    for (const auto& col : frame.doublecolumns())
+    {
+        if (col.name().empty())
+            continue;
         const int n = col.values_size();
-        if (n <= 0) continue;
-        if (buf.schemaFixed && buf.colIndex.find(col.name()) == buf.colIndex.end()) {
+        if (n <= 0)
+            continue;
+        if (buf.schemaFixed && buf.colIndex.find(col.name()) == buf.colIndex.end())
+        {
             if (buf.warnedUnknown.insert(col.name()).second)
                 warnf(*logger_,
-                      "HDF5Writer NTTable source={} unknown column '{}' after schema lock, skipping",
+                      "HDF5Writer tabular source={} unknown column '{}' after schema lock, skipping",
                       sourceName, col.name());
             continue;
         }
-        if (!buf.schemaFixed && buf.colIndex.find(col.name()) == buf.colIndex.end()) {
+        if (!buf.schemaFixed && buf.colIndex.find(col.name()) == buf.colIndex.end())
+        {
             buf.colIndex[col.name()] = buf.colNames.size();
             buf.colNames.push_back(col.name());
             buf.colTypes[col.name()] = FieldType::Float64;
             buf.columns.emplace_back(std::vector<double>{});
         }
         const std::size_t colIdx = buf.colIndex.at(col.name());
-        auto& vec = std::get<std::vector<double>>(buf.columns[colIdx]);
-        while (vec.size() + static_cast<std::size_t>(n) < buf.rowCount) vec.push_back(fillValue<double>());
+        auto&             vec = std::get<std::vector<double>>(buf.columns[colIdx]);
+        while (vec.size() + static_cast<std::size_t>(n) < buf.rowCount)
+            vec.push_back(fillValue<double>());
         for (int i = 0; i < n; ++i)
             vec.push_back(static_cast<double>(col.values(i)));
     }
 
     // float columns
-    for (const auto& col : frame.floatcolumns()) {
-        if (col.name().empty()) continue;
+    for (const auto& col : frame.floatcolumns())
+    {
+        if (col.name().empty())
+            continue;
         const int n = col.values_size();
-        if (n <= 0) continue;
-        if (buf.schemaFixed && buf.colIndex.find(col.name()) == buf.colIndex.end()) {
+        if (n <= 0)
+            continue;
+        if (buf.schemaFixed && buf.colIndex.find(col.name()) == buf.colIndex.end())
+        {
             if (buf.warnedUnknown.insert(col.name()).second)
                 warnf(*logger_,
-                      "HDF5Writer NTTable source={} unknown column '{}' after schema lock, skipping",
+                      "HDF5Writer tabular source={} unknown column '{}' after schema lock, skipping",
                       sourceName, col.name());
             continue;
         }
-        if (!buf.schemaFixed && buf.colIndex.find(col.name()) == buf.colIndex.end()) {
+        if (!buf.schemaFixed && buf.colIndex.find(col.name()) == buf.colIndex.end())
+        {
             buf.colIndex[col.name()] = buf.colNames.size();
             buf.colNames.push_back(col.name());
             buf.colTypes[col.name()] = FieldType::Float32;
             buf.columns.emplace_back(std::vector<float>{});
         }
         const std::size_t colIdx = buf.colIndex.at(col.name());
-        auto& vec = std::get<std::vector<float>>(buf.columns[colIdx]);
-        while (vec.size() + static_cast<std::size_t>(n) < buf.rowCount) vec.push_back(fillValue<float>());
+        auto&             vec = std::get<std::vector<float>>(buf.columns[colIdx]);
+        while (vec.size() + static_cast<std::size_t>(n) < buf.rowCount)
+            vec.push_back(fillValue<float>());
         for (int i = 0; i < n; ++i)
             vec.push_back(static_cast<float>(col.values(i)));
     }
 
     // int32 columns
-    for (const auto& col : frame.int32columns()) {
-        if (col.name().empty()) continue;
+    for (const auto& col : frame.int32columns())
+    {
+        if (col.name().empty())
+            continue;
         const int n = col.values_size();
-        if (n <= 0) continue;
-        if (buf.schemaFixed && buf.colIndex.find(col.name()) == buf.colIndex.end()) {
+        if (n <= 0)
+            continue;
+        if (buf.schemaFixed && buf.colIndex.find(col.name()) == buf.colIndex.end())
+        {
             if (buf.warnedUnknown.insert(col.name()).second)
                 warnf(*logger_,
-                      "HDF5Writer NTTable source={} unknown column '{}' after schema lock, skipping",
+                      "HDF5Writer tabular source={} unknown column '{}' after schema lock, skipping",
                       sourceName, col.name());
             continue;
         }
-        if (!buf.schemaFixed && buf.colIndex.find(col.name()) == buf.colIndex.end()) {
+        if (!buf.schemaFixed && buf.colIndex.find(col.name()) == buf.colIndex.end())
+        {
             buf.colIndex[col.name()] = buf.colNames.size();
             buf.colNames.push_back(col.name());
             buf.colTypes[col.name()] = FieldType::Int32;
             buf.columns.emplace_back(std::vector<int32_t>{});
         }
         const std::size_t colIdx = buf.colIndex.at(col.name());
-        auto& vec = std::get<std::vector<int32_t>>(buf.columns[colIdx]);
-        while (vec.size() + static_cast<std::size_t>(n) < buf.rowCount) vec.push_back(fillValue<int32_t>());
+        auto&             vec = std::get<std::vector<int32_t>>(buf.columns[colIdx]);
+        while (vec.size() + static_cast<std::size_t>(n) < buf.rowCount)
+            vec.push_back(fillValue<int32_t>());
         for (int i = 0; i < n; ++i)
             vec.push_back(static_cast<int32_t>(col.values(i)));
     }
 
     // int64 columns
-    for (const auto& col : frame.int64columns()) {
-        if (col.name().empty()) continue;
+    for (const auto& col : frame.int64columns())
+    {
+        if (col.name().empty())
+            continue;
         const int n = col.values_size();
-        if (n <= 0) continue;
-        if (buf.schemaFixed && buf.colIndex.find(col.name()) == buf.colIndex.end()) {
+        if (n <= 0)
+            continue;
+        if (buf.schemaFixed && buf.colIndex.find(col.name()) == buf.colIndex.end())
+        {
             if (buf.warnedUnknown.insert(col.name()).second)
                 warnf(*logger_,
-                      "HDF5Writer NTTable source={} unknown column '{}' after schema lock, skipping",
+                      "HDF5Writer tabular source={} unknown column '{}' after schema lock, skipping",
                       sourceName, col.name());
             continue;
         }
-        if (!buf.schemaFixed && buf.colIndex.find(col.name()) == buf.colIndex.end()) {
+        if (!buf.schemaFixed && buf.colIndex.find(col.name()) == buf.colIndex.end())
+        {
             buf.colIndex[col.name()] = buf.colNames.size();
             buf.colNames.push_back(col.name());
             buf.colTypes[col.name()] = FieldType::Int64;
             buf.columns.emplace_back(std::vector<int64_t>{});
         }
         const std::size_t colIdx = buf.colIndex.at(col.name());
-        auto& vec = std::get<std::vector<int64_t>>(buf.columns[colIdx]);
-        while (vec.size() + static_cast<std::size_t>(n) < buf.rowCount) vec.push_back(fillValue<int64_t>());
+        auto&             vec = std::get<std::vector<int64_t>>(buf.columns[colIdx]);
+        while (vec.size() + static_cast<std::size_t>(n) < buf.rowCount)
+            vec.push_back(fillValue<int64_t>());
         for (int i = 0; i < n; ++i)
             vec.push_back(static_cast<int64_t>(col.values(i)));
     }
 
     // bool columns (stored as uint8_t)
-    for (const auto& col : frame.boolcolumns()) {
-        if (col.name().empty()) continue;
+    for (const auto& col : frame.boolcolumns())
+    {
+        if (col.name().empty())
+            continue;
         const int n = col.values_size();
-        if (n <= 0) continue;
-        if (buf.schemaFixed && buf.colIndex.find(col.name()) == buf.colIndex.end()) {
+        if (n <= 0)
+            continue;
+        if (buf.schemaFixed && buf.colIndex.find(col.name()) == buf.colIndex.end())
+        {
             if (buf.warnedUnknown.insert(col.name()).second)
                 warnf(*logger_,
-                      "HDF5Writer NTTable source={} unknown column '{}' after schema lock, skipping",
+                      "HDF5Writer tabular source={} unknown column '{}' after schema lock, skipping",
                       sourceName, col.name());
             continue;
         }
-        if (!buf.schemaFixed && buf.colIndex.find(col.name()) == buf.colIndex.end()) {
+        if (!buf.schemaFixed && buf.colIndex.find(col.name()) == buf.colIndex.end())
+        {
             buf.colIndex[col.name()] = buf.colNames.size();
             buf.colNames.push_back(col.name());
             buf.colTypes[col.name()] = FieldType::Bool;
             buf.columns.emplace_back(std::vector<uint8_t>{});
         }
         const std::size_t colIdx = buf.colIndex.at(col.name());
-        auto& vec = std::get<std::vector<uint8_t>>(buf.columns[colIdx]);
-        while (vec.size() + static_cast<std::size_t>(n) < buf.rowCount) vec.push_back(fillValue<uint8_t>());
+        auto&             vec = std::get<std::vector<uint8_t>>(buf.columns[colIdx]);
+        while (vec.size() + static_cast<std::size_t>(n) < buf.rowCount)
+            vec.push_back(fillValue<uint8_t>());
         for (int i = 0; i < n; ++i)
             vec.push_back(static_cast<uint8_t>(col.values(i) ? 1 : 0));
     }
 }
 
 // ---------------------------------------------------------------------------
-// flushNTTableBuffer() — write per-column 1-D datasets under a group
+// flushTabularBuffer() — write per-column 1-D datasets under a group
 // ---------------------------------------------------------------------------
 
-void HDF5Writer::flushNTTableBuffer(const std::string& sourceName,
-                                    NTTableBuffer&     buf,
+void HDF5Writer::flushTabularBuffer(const std::string& sourceName,
+                                    TabularBuffer&     buf,
                                     H5::H5File&        file)
 {
     const std::size_t nRows = buf.rowCount;
@@ -899,7 +966,7 @@ void HDF5Writer::flushNTTableBuffer(const std::string& sourceName,
     {
         buf.schemaFixed = true;
         infof(*logger_,
-              "HDF5Writer NTTable source={} schema locked ({} columns)",
+              "HDF5Writer tabular source={} schema locked ({} columns)",
               sourceName, buf.colNames.size());
     }
 
@@ -915,7 +982,7 @@ void HDF5Writer::flushNTTableBuffer(const std::string& sourceName,
         file.createGroup(sourceName);
 
     // ---- timestamp datasets: <source>/secondsPastEpoch and <source>/nanoseconds ----
-    const std::string secPath  = sourceName + "/secondsPastEpoch";
+    const std::string secPath = sourceName + "/secondsPastEpoch";
     const std::string nanoPath = sourceName + "/nanoseconds";
 
     buf.tsSeconds.resize(nRows, 0LL);
@@ -937,14 +1004,15 @@ void HDF5Writer::flushNTTableBuffer(const std::string& sourceName,
     {
         const std::string dsPath = sourceName + "/" + buf.colNames[i];
         std::visit([&](auto& vec)
-        {
-            using T = typename std::decay_t<decltype(vec)>::value_type;
-            while (vec.size() < nRows)
-                vec.push_back(fillValue<T>());
-            const H5::PredType& h5type = mapNativeType<T>();
-            H5::DataSet ds = ensureDataset(file, dsPath, h5type);
-            append1D(ds, h5type, vec.data(), static_cast<hsize_t>(nRows));
-        }, buf.columns[i]);
+                   {
+                       using T = typename std::decay_t<decltype(vec)>::value_type;
+                       while (vec.size() < nRows)
+                           vec.push_back(fillValue<T>());
+                       const H5::PredType& h5type = mapNativeType<T>();
+                       H5::DataSet         ds = ensureDataset(file, dsPath, h5type);
+                       append1D(ds, h5type, vec.data(), static_cast<hsize_t>(nRows));
+                   },
+                   buf.columns[i]);
     }
 
     // Approximate bytes written: nRows × (nCols × sizeof(double) + 2 × sizeof(int64_t))
@@ -953,7 +1021,7 @@ void HDF5Writer::flushNTTableBuffer(const std::string& sourceName,
         (static_cast<uint64_t>(nCols) * sizeof(double) +
          2ULL * sizeof(int64_t));
 
-    tracef(*logger_, "HDF5Writer NTTable source={} flushed {} rows × {} cols (~{} bytes)",
+    tracef(*logger_, "HDF5Writer tabular source={} flushed {} rows × {} cols (~{} bytes)",
            sourceName, nRows, nCols, approxBytes);
 
     // Clear buffer, preserving typed column slots so accumulation can resume.
@@ -969,11 +1037,11 @@ void HDF5Writer::flushNTTableBuffer(const std::string& sourceName,
             const auto ft = buf.colTypes.at(buf.colNames[i]);
             switch (ft)
             {
-                case FieldType::Float64: buf.columns[i] = std::vector<double>{};   break;
-                case FieldType::Float32: buf.columns[i] = std::vector<float>{};    break;
-                case FieldType::Int32:   buf.columns[i] = std::vector<int32_t>{}; break;
-                case FieldType::Int64:   buf.columns[i] = std::vector<int64_t>{}; break;
-                case FieldType::Bool:    buf.columns[i] = std::vector<uint8_t>{}; break;
+            case FieldType::Float64: buf.columns[i] = std::vector<double>{}; break;
+            case FieldType::Float32: buf.columns[i] = std::vector<float>{}; break;
+            case FieldType::Int32: buf.columns[i] = std::vector<int32_t>{}; break;
+            case FieldType::Int64: buf.columns[i] = std::vector<int64_t>{}; break;
+            case FieldType::Bool: buf.columns[i] = std::vector<uint8_t>{}; break;
             }
         }
     }
