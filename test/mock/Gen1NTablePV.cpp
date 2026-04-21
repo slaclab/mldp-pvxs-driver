@@ -10,7 +10,6 @@
 
 #include "Gen1NTablePV.h"
 
-#include <algorithm>
 #include <cmath>
 #include <fstream>
 #include <stdexcept>
@@ -48,6 +47,7 @@ Gen1NTablePV::Gen1NTablePV(std::string pvName, std::string signalsFile)
         {
             m_columnNames.push_back(line);
             m_fieldNames.push_back(sanitizeFieldName(line));
+            // m_fieldNames.push_back(line);
         }
     }
 

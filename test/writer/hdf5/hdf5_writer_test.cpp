@@ -1022,4 +1022,350 @@ TEST_F(HDF5WriterTest, BsasCoincidentalSameTimestampsNotDeduped)
     }
 }
 
+// ---------------------------------------------------------------------------
+// NTTable compound dataset tests
+// ---------------------------------------------------------------------------
+
+/// Build one NTTable EventBatch: root_source == tags[0], multiple frames,
+/// one column per frame.  All rows share the same timestamps.
+static IDataBus::EventBatch makeNTTableBatch(
+    const std::string&                        pvName,
+    const std::vector<std::string>&           colNames,
+    const std::vector<std::vector<double>>&   colValues,
+    int64_t                                   epochSec = 1700000000LL,
+    int64_t                                   epochNs  = 0LL)
+{
+    IDataBus::EventBatch batch;
+    batch.root_source = pvName;
+    batch.tags        = {pvName};
+
+    const int nRows = static_cast<int>(colValues.empty() ? 0 : colValues[0].size());
+
+    for (std::size_t ci = 0; ci < colNames.size(); ++ci)
+    {
+        dp::service::common::DataFrame frame;
+
+        // Every frame carries the full timestamp list (reader produces it per frame).
+        auto* tsList = frame.mutable_datatimestamps()->mutable_timestamplist();
+        for (int r = 0; r < nRows; ++r)
+        {
+            auto* ts = tsList->add_timestamps();
+            ts->set_epochseconds(static_cast<uint64_t>(epochSec));
+            ts->set_nanoseconds(static_cast<uint64_t>(epochNs + r));
+        }
+
+        auto* col = frame.add_doublecolumns();
+        col->set_name(colNames[ci]);
+        for (int r = 0; r < nRows; ++r)
+            col->add_values(colValues[ci][static_cast<std::size_t>(r)]);
+
+        batch.frames.push_back(std::move(frame));
+    }
+
+    return batch;
+}
+
+/// Build one NTTable EventBatch with mixed column types:
+/// one float64 column ("DBL_COL") and one int32 column ("INT_COL").
+static IDataBus::EventBatch makeNTTableBatchMixed(
+    const std::string& pvName,
+    int                nRows,
+    int64_t            epochSec = 1700000000LL,
+    int64_t            epochNs  = 0LL)
+{
+    IDataBus::EventBatch batch;
+    batch.root_source = pvName;
+    batch.tags        = {pvName};
+
+    // Frame 1: double column "DBL_COL"
+    {
+        dp::service::common::DataFrame frame;
+        auto* tsList = frame.mutable_datatimestamps()->mutable_timestamplist();
+        for (int r = 0; r < nRows; ++r)
+        {
+            auto* ts = tsList->add_timestamps();
+            ts->set_epochseconds(static_cast<uint64_t>(epochSec));
+            ts->set_nanoseconds(static_cast<uint64_t>(epochNs + r));
+        }
+        auto* col = frame.add_doublecolumns();
+        col->set_name("DBL_COL");
+        for (int r = 0; r < nRows; ++r)
+            col->add_values(static_cast<double>(r) * 1.5);
+        batch.frames.push_back(std::move(frame));
+    }
+
+    // Frame 2: int32 column "INT_COL"
+    {
+        dp::service::common::DataFrame frame;
+        auto* tsList = frame.mutable_datatimestamps()->mutable_timestamplist();
+        for (int r = 0; r < nRows; ++r)
+        {
+            auto* ts = tsList->add_timestamps();
+            ts->set_epochseconds(static_cast<uint64_t>(epochSec));
+            ts->set_nanoseconds(static_cast<uint64_t>(epochNs + r));
+        }
+        auto* col = frame.add_int32columns();
+        col->set_name("INT_COL");
+        for (int r = 0; r < nRows; ++r)
+            col->add_values(r * 10);
+        batch.frames.push_back(std::move(frame));
+    }
+
+    return batch;
+}
+
+/// Build the end_of_source_update marker batch that the reader emits after all
+/// column batches for one NTTable update round.
+static IDataBus::EventBatch makeEndOfUpdateMarker(const std::string& pvName)
+{
+    IDataBus::EventBatch marker;
+    marker.root_source          = pvName;
+    marker.tags.push_back(pvName);
+    marker.end_of_source_update = true;
+    return marker;
+}
+
+TEST_F(HDF5WriterTest, NTTableBatchCreatesPerColumnDatasets)
+{
+    constexpr int kRows = 3;
+
+    HDF5Writer w(makeConfig());
+    w.start();
+
+    const std::vector<std::string> cols{"SIG_A", "SIG_B", "SIG_C"};
+    const std::vector<std::vector<double>> vals{
+        {1.0, 2.0, 3.0},
+        {4.0, 5.0, 6.0},
+        {7.0, 8.0, 9.0},
+    };
+
+    auto batch = makeNTTableBatch("TEST:TABLE", cols, vals);
+    EXPECT_TRUE(w.push(std::move(batch)));
+    EXPECT_TRUE(w.push(makeEndOfUpdateMarker("TEST:TABLE")));
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    w.stop();
+
+    auto h5path = findH5File(tempDir_);
+    ASSERT_FALSE(h5path.empty()) << "HDF5 file not created for TEST:TABLE";
+
+    H5::H5File file(h5path.string(), H5F_ACC_RDONLY);
+
+    // Group "TEST:TABLE" must exist.
+    ASSERT_TRUE(file.nameExists("TEST:TABLE")) << "Group 'TEST:TABLE' not found";
+    H5::Group grp = file.openGroup("TEST:TABLE");
+
+    // Timestamp columns as 1D int64 datasets of length kRows.
+    for (const auto& tsName : {"secondsPastEpoch", "nanoseconds"})
+    {
+        ASSERT_TRUE(grp.nameExists(tsName))
+            << "Timestamp dataset 'TEST:TABLE/" << tsName << "' not found";
+        hsize_t dims[1]{0};
+        grp.openDataSet(tsName).getSpace().getSimpleExtentDims(dims);
+        EXPECT_EQ(dims[0], static_cast<hsize_t>(kRows))
+            << "Timestamp column '" << tsName << "' length mismatch";
+    }
+
+    // Each signal column as a 1D dataset of length kRows.
+    for (const auto& colName : cols)
+    {
+        ASSERT_TRUE(grp.nameExists(colName))
+            << "Column dataset 'TEST:TABLE/" << colName << "' not found";
+        hsize_t dims[1]{0};
+        grp.openDataSet(colName).getSpace().getSimpleExtentDims(dims);
+        EXPECT_EQ(dims[0], static_cast<hsize_t>(kRows))
+            << "Column '" << colName << "' length mismatch";
+    }
+
+    // Verify actual values of SIG_A match input.
+    {
+        H5::DataSet ds = grp.openDataSet("SIG_A");
+        std::vector<double> buf(kRows);
+        ds.read(buf.data(), H5::PredType::NATIVE_DOUBLE);
+        EXPECT_DOUBLE_EQ(buf[0], 1.0);
+        EXPECT_DOUBLE_EQ(buf[1], 2.0);
+        EXPECT_DOUBLE_EQ(buf[2], 3.0);
+    }
+
+    // Old flat/2D datasets must NOT exist.
+    EXPECT_FALSE(file.nameExists("TEST:TABLE__columns"))
+        << "Legacy '__columns' dataset must not be written";
+    EXPECT_FALSE(file.nameExists("TEST:TABLE__timestamps"))
+        << "Legacy '__timestamps' dataset must not be written";
+}
+
+TEST_F(HDF5WriterTest, NTTableBatchAppendsRowsAcrossMultipleBatches)
+{
+    constexpr int kRows = 3;
+    constexpr int kBatches = 4;
+
+    HDF5Writer w(makeConfig());
+    w.start();
+
+    const std::vector<std::string> cols{"SIGNAL"};
+
+    for (int b = 0; b < kBatches; ++b)
+    {
+        const std::vector<std::vector<double>> vals{
+            {static_cast<double>(b * 10), static_cast<double>(b * 10 + 1), static_cast<double>(b * 10 + 2)}
+        };
+        auto batch = makeNTTableBatch("NT:TABLE2", cols, vals,
+                                      1700000000LL + b * 10LL);
+        EXPECT_TRUE(w.push(std::move(batch)));
+        EXPECT_TRUE(w.push(makeEndOfUpdateMarker("NT:TABLE2")));
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    w.stop();
+
+    auto h5path = findH5File(tempDir_);
+    ASSERT_FALSE(h5path.empty());
+
+    H5::H5File file(h5path.string(), H5F_ACC_RDONLY);
+    ASSERT_TRUE(file.nameExists("NT:TABLE2")) << "Group 'NT:TABLE2' not found";
+
+    H5::Group grp = file.openGroup("NT:TABLE2");
+    ASSERT_TRUE(grp.nameExists("SIGNAL")) << "Column 'NT:TABLE2/SIGNAL' not found";
+
+    hsize_t dims[1]{0};
+    grp.openDataSet("SIGNAL").getSpace().getSimpleExtentDims(dims);
+    EXPECT_EQ(dims[0], static_cast<hsize_t>(kRows * kBatches))
+        << "Total row count should be kRows * kBatches";
+}
+
+TEST_F(HDF5WriterTest, NTTableBatchDoesNotWriteTimestampsDataset)
+{
+    const std::vector<std::string> cols{"X"};
+    const std::vector<std::vector<double>> vals{{42.0, 43.0}};
+
+    HDF5Writer w(makeConfig());
+    w.start();
+    auto batch = makeNTTableBatch("NT:NOTIMEDS", cols, vals);
+    w.push(std::move(batch));
+    w.push(makeEndOfUpdateMarker("NT:NOTIMEDS"));
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    w.stop();
+
+    auto h5path = findH5File(tempDir_);
+    ASSERT_FALSE(h5path.empty());
+
+    H5::H5File file(h5path.string(), H5F_ACC_RDONLY);
+    // NTTable must NOT create a shared /timestamps dataset.
+    EXPECT_FALSE(file.nameExists("timestamps"))
+        << "NTTable source must not create a shared /timestamps dataset";
+    // Must have the per-column group layout.
+    ASSERT_TRUE(file.nameExists("NT:NOTIMEDS")) << "Group 'NT:NOTIMEDS' not found";
+    H5::Group grp = file.openGroup("NT:NOTIMEDS");
+    EXPECT_TRUE(grp.nameExists("X"))
+        << "Column dataset 'NT:NOTIMEDS/X' not found";
+    EXPECT_TRUE(grp.nameExists("secondsPastEpoch"))
+        << "Timestamp dataset 'NT:NOTIMEDS/secondsPastEpoch' not found";
+    // Legacy flat datasets must NOT exist.
+    EXPECT_FALSE(file.nameExists("NT:NOTIMEDS__timestamps"))
+        << "Legacy '__timestamps' dataset must not be written";
+    EXPECT_FALSE(file.nameExists("NT:NOTIMEDS__columns"))
+        << "Legacy '__columns' dataset must not be written";
+}
+
+TEST_F(HDF5WriterTest, NTTablePreservesColumnTypes)
+{
+    constexpr int kRows = 4;
+    const std::string pvName = "NT:TYPED";
+
+    HDF5Writer w(makeConfig());
+    w.start();
+
+    auto batch = makeNTTableBatchMixed(pvName, kRows);
+    EXPECT_TRUE(w.push(std::move(batch)));
+    EXPECT_TRUE(w.push(makeEndOfUpdateMarker(pvName)));
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    w.stop();
+
+    auto h5path = findH5File(tempDir_);
+    ASSERT_FALSE(h5path.empty()) << "HDF5 file not created for NT:TYPED";
+
+    H5::H5File file(h5path.string(), H5F_ACC_RDONLY);
+    ASSERT_TRUE(file.nameExists(pvName)) << "Group 'NT:TYPED' not found";
+    H5::Group grp = file.openGroup(pvName);
+
+    // DBL_COL must be a floating-point type of size 8 (double).
+    ASSERT_TRUE(grp.nameExists("DBL_COL")) << "'NT:TYPED/DBL_COL' not found";
+    {
+        H5::DataSet ds = grp.openDataSet("DBL_COL");
+        H5::DataType dtype = ds.getDataType();
+        EXPECT_EQ(dtype.getClass(), H5T_FLOAT)
+            << "DBL_COL should be H5T_FLOAT";
+        EXPECT_EQ(dtype.getSize(), static_cast<size_t>(8))
+            << "DBL_COL element size should be 8 bytes (double)";
+
+        // Also verify length and a spot value.
+        hsize_t dims[1]{0};
+        ds.getSpace().getSimpleExtentDims(dims);
+        EXPECT_EQ(dims[0], static_cast<hsize_t>(kRows));
+
+        std::vector<double> buf(kRows);
+        ds.read(buf.data(), H5::PredType::NATIVE_DOUBLE);
+        EXPECT_DOUBLE_EQ(buf[0], 0.0);
+        EXPECT_DOUBLE_EQ(buf[1], 1.5);
+    }
+
+    // INT_COL must be an integer type of size 4 (int32).
+    ASSERT_TRUE(grp.nameExists("INT_COL")) << "'NT:TYPED/INT_COL' not found";
+    {
+        H5::DataSet ds = grp.openDataSet("INT_COL");
+        H5::DataType dtype = ds.getDataType();
+        EXPECT_EQ(dtype.getClass(), H5T_INTEGER)
+            << "INT_COL should be H5T_INTEGER";
+        EXPECT_EQ(dtype.getSize(), static_cast<size_t>(4))
+            << "INT_COL element size should be 4 bytes (int32)";
+
+        // Also verify length and a spot value.
+        hsize_t dims[1]{0};
+        ds.getSpace().getSimpleExtentDims(dims);
+        EXPECT_EQ(dims[0], static_cast<hsize_t>(kRows));
+
+        std::vector<int32_t> buf(kRows);
+        ds.read(buf.data(), H5::PredType::NATIVE_INT32);
+        EXPECT_EQ(buf[0], 0);
+        EXPECT_EQ(buf[1], 10);
+    }
+}
+
+TEST_F(HDF5WriterTest, NonNTTableBatchUsesColumnarLayout)
+{
+    // Batch without tags[0]==root_source → columnar path unchanged.
+    HDF5Writer w(makeConfig());
+    w.start();
+
+    dp::service::common::DataFrame frame;
+    auto* tsList = frame.mutable_datatimestamps()->mutable_timestamplist();
+    auto* ts = tsList->add_timestamps();
+    ts->set_epochseconds(1700000001);
+    ts->set_nanoseconds(0);
+    auto* col = frame.add_doublecolumns();
+    col->set_name("SCALAR");
+    col->add_values(9.9);
+
+    IDataBus::EventBatch batch;
+    batch.root_source = "SCALAR:PV";
+    // No tags — or tags != root_source → columnar.
+    batch.frames.push_back(std::move(frame));
+    w.push(std::move(batch));
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    w.stop();
+
+    auto h5path = findH5File(tempDir_);
+    ASSERT_FALSE(h5path.empty());
+
+    H5::H5File file(h5path.string(), H5F_ACC_RDONLY);
+    // Columnar: separate SCALAR dataset + timestamps.
+    EXPECT_TRUE(file.nameExists("SCALAR"));
+    EXPECT_TRUE(file.nameExists("timestamps"));
+    EXPECT_FALSE(file.nameExists("SCALAR:PV"))
+        << "Columnar batch must not create compound dataset named after root_source";
+}
+
 #endif // MLDP_PVXS_HDF5_ENABLED

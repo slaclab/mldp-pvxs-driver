@@ -139,7 +139,7 @@ bool MLDPPVXSController::push(EventBatch batch_values)
         return false;
     }
 
-    if (batch_values.frames.empty())
+    if (batch_values.frames.empty() && !batch_values.end_of_source_update)
     {
         warnf(*logger_, "Received empty batch for root source {}, skipping push.", batch_values.root_source);
         return false;

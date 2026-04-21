@@ -104,7 +104,11 @@ std::shared_ptr<FileEntry> HDF5FilePool::openFile(const std::string& sourceName)
     entry->path = filePath;
     entry->openedAt = std::chrono::steady_clock::now();
     entry->bytesWritten = 0;
-    entry->file = H5::H5File(filePath.string(), H5F_ACC_TRUNC);
+    // Use the latest HDF5 file format so large compound types (e.g. 1367-field
+    // NTTable datasets) fit within the object header size limit.
+    H5::FileAccPropList fapl;
+    fapl.setLibverBounds(H5F_LIBVER_LATEST, H5F_LIBVER_LATEST);
+    entry->file = H5::H5File(filePath.string(), H5F_ACC_TRUNC, H5::FileCreatPropList::DEFAULT, fapl);
     debugf("HDF5FilePool file opened: {}", filePath.string());
     return entry;
 }

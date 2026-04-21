@@ -163,6 +163,12 @@ bool MLDPWriter::push(util::bus::IDataBus::EventBatch batch) noexcept
     {
         return false;
     }
+    if (batch.end_of_source_update)
+    {
+        // Marker-only batch emitted by readers to signal end of one NTTable
+        // update round.  Nothing to forward to gRPC — skip silently.
+        return true;
+    }
     if (batch.root_source.empty() || batch.frames.empty())
     {
         return false;
