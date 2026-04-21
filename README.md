@@ -216,6 +216,7 @@ This project uses a pipeline-style architecture: PVXS clients feed PV updates in
 - [Logging Abstraction Guide](docs/logging.md) - How `util::log` works and custom logger implementation
 - [HTTP Transport Provider](docs/http-provider.md) - Shared `util/http` abstraction for HTTP-based readers
 - [Metrics Export Guide](docs/metrics-export-guide.md) - Prometheus metrics and manual dump triggers
+- [Metrics Extension Guide](docs/metrics-extension-guide.md) - How to add per-component metric classes (`ExtendedMetrics` hierarchy)
 
 For developer information and contribution guidelines see [CONTRIBUTING.md](CONTRIBUTING.md).
 
