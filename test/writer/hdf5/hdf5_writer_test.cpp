@@ -1038,6 +1038,7 @@ static IDataBus::EventBatch makeNTTableBatch(
     IDataBus::EventBatch batch;
     batch.root_source = pvName;
     batch.tags        = {pvName};
+    batch.is_nttable  = true;
 
     const int nRows = static_cast<int>(colValues.empty() ? 0 : colValues[0].size());
 
@@ -1076,6 +1077,7 @@ static IDataBus::EventBatch makeNTTableBatchMixed(
     IDataBus::EventBatch batch;
     batch.root_source = pvName;
     batch.tags        = {pvName};
+    batch.is_nttable  = true;
 
     // Frame 1: double column "DBL_COL"
     {
@@ -1121,6 +1123,7 @@ static IDataBus::EventBatch makeEndOfUpdateMarker(const std::string& pvName)
     IDataBus::EventBatch marker;
     marker.root_source          = pvName;
     marker.tags.push_back(pvName);
+    marker.is_nttable           = true;
     marker.end_of_source_update = true;
     return marker;
 }
