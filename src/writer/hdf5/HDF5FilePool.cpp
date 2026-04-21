@@ -10,6 +10,7 @@
 
 #include <writer/hdf5/HDF5FilePool.h>
 
+#include <writer/hdf5/HDF5WriterMetrics.h>
 #include <util/log/Logger.h>
 
 #include <chrono>
@@ -125,6 +126,10 @@ std::shared_ptr<FileEntry> HDF5FilePool::acquire(const std::string& sourceName)
         }
         // Rotate: close old (other holders keep shared_ptr alive until done)
         infof("HDF5FilePool rotating file for source='{}' — closing {}", sourceName, it->second->path.string());
+        if (metrics_)
+        {
+            metrics_->incrementFileRotations(sourceName);
+        }
         try
         {
             std::lock_guard<std::mutex> fileLk(it->second->fileMutex);
@@ -211,4 +216,9 @@ void HDF5FilePool::closeAll() noexcept
     }
     entries_.clear();
     debugf("HDF5FilePool all files closed");
+}
+
+void HDF5FilePool::setMetrics(metrics::HDF5WriterMetrics* metrics) noexcept
+{
+    metrics_ = metrics;
 }

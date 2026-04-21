@@ -502,6 +502,7 @@ add_library(lib${PROJECT_NAME}
         "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/hdf5/HDF5WriterConfig.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/hdf5/HDF5FilePool.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/hdf5/HDF5Writer.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/hdf5/HDF5WriterMetrics.cpp"
     >
     "${CMAKE_CURRENT_SOURCE_DIR}/src/metrics/Metrics.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/metrics/MetricsConfig.cpp"
@@ -681,6 +682,7 @@ if(MLDP_PVXS_DRIVER_TESTS)
             "${CMAKE_CURRENT_SOURCE_DIR}/test/writer/hdf5/hdf5_writer_config_test.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/test/writer/hdf5/hdf5_file_pool_test.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/test/writer/hdf5/hdf5_writer_test.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/test/writer/hdf5/hdf5_writer_metrics_test.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/test/ryml_single_header_translation_unit.cpp"
         )
         target_include_directories(mldp_hdf5_writer_test PRIVATE

@@ -91,6 +91,7 @@
 #include <writer/hdf5/HDF5Writer.h>
 
 #include <BS_thread_pool.hpp>
+#include <writer/hdf5/HDF5WriterMetrics.h>
 #include <util/log/Logger.h>
 
 #include <cstring>
@@ -105,9 +106,14 @@ using namespace mldp_pvxs_driver::writer;
 // ---------------------------------------------------------------------------
 
 HDF5Writer::HDF5Writer(const config::Config& node,
-                       std::shared_ptr<metrics::Metrics> /*metrics*/)
+                       std::shared_ptr<metrics::Metrics> metrics)
     : HDF5Writer(HDF5WriterConfig::parse(node))
 {
+    if (metrics)
+    {
+        writerMetrics_ = std::make_unique<metrics::HDF5WriterMetrics>(
+            *metrics->registry(), metrics->controllerName(), config_.name);
+    }
 }
 
 HDF5Writer::HDF5Writer(HDF5WriterConfig config)
@@ -138,6 +144,10 @@ void HDF5Writer::start()
 
     stopping_.store(false);
     pool_ = std::make_unique<HDF5FilePool>(config_);
+    if (writerMetrics_)
+    {
+        pool_->setMetrics(writerMetrics_.get());
+    }
 
     writerThread_ = std::thread([this]
                                 {
@@ -213,6 +223,10 @@ bool HDF5Writer::push(util::bus::IDataBus::EventBatch batch) noexcept
     {
         // Back-pressure: drop the batch rather than blocking the caller.
         warnf(*logger_, "HDF5Writer [{}] queue full ({} items) — dropping batch", config_.name, queue_.size());
+        if (writerMetrics_)
+        {
+            writerMetrics_->incrementQueueDrops();
+        }
         return false;
     }
     queue_.push_back({seq, std::move(batch)});
@@ -248,6 +262,12 @@ void HDF5Writer::writerLoop()
             drained.swap(queue_); // O(1); queue_ is left empty
         }
 
+        // Update queue-depth metric now that we've drained.
+        if (writerMetrics_)
+        {
+            writerMetrics_->setQueueDepth(static_cast<double>(queue_.size()));
+        }
+
         if (!pool_)
         {
             warnf(*logger_, "HDF5Writer [{}] pool not initialised — skipping {} batches", config_.name, drained.size());
@@ -271,7 +291,16 @@ void HDF5Writer::writerLoop()
                     {
                         auto                        ev = pool_->acquire(source);
                         std::lock_guard<std::mutex> fileLk(ev->fileMutex);
+                        const auto t0 = std::chrono::steady_clock::now();
                         flushTabularBuffer(source, it->second, ev->file);
+                        if (writerMetrics_)
+                        {
+                            const double ms = std::chrono::duration<double, std::milli>(
+                                                  std::chrono::steady_clock::now() - t0)
+                                                  .count();
+                            writerMetrics_->observeWriteLatencyMs(ms);
+                            writerMetrics_->incrementBatchesWritten();
+                        }
                     }
                 }
                 else if (isTabularBatch(entry.batch))
@@ -287,14 +316,34 @@ void HDF5Writer::writerLoop()
                             frame.timestamps.size() * frame.columns.size() * sizeof(double));
                         {
                             std::lock_guard<std::mutex> fileLk(ev->fileMutex);
+                            const auto t0 = std::chrono::steady_clock::now();
                             appendFrame(entry.batch.root_source, frame, ev->file, entry.batchSeq);
+                            if (writerMetrics_)
+                            {
+                                const double ms = std::chrono::duration<double, std::milli>(
+                                                      std::chrono::steady_clock::now() - t0)
+                                                      .count();
+                                writerMetrics_->observeWriteLatencyMs(ms);
+                            }
                         }
                         tracef(*logger_, "HDF5Writer [{}] source={} wrote ~{} bytes",
                                config_.name, entry.batch.root_source, written);
                         if (written > 0)
                         {
                             pool_->recordWrite(entry.batch.root_source, written);
+                            if (writerMetrics_)
+                            {
+                                writerMetrics_->incrementBytesWritten(entry.batch.root_source,
+                                                                       static_cast<double>(written));
+                                writerMetrics_->incrementRowsWritten(
+                                    entry.batch.root_source,
+                                    static_cast<double>(frame.timestamps.size()));
+                            }
                         }
+                    }
+                    if (writerMetrics_)
+                    {
+                        writerMetrics_->incrementBatchesWritten();
                     }
                 }
             }

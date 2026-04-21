@@ -50,6 +50,9 @@ public:
     /** @return Registry that can be scraped/exported by HTTP exposers. */
     std::shared_ptr<prometheus::Registry> registry() const;
 
+    /** @return Controller name stamped on all metric labels. */
+    const std::string& controllerName() const;
+
     // Reader metrics ------------------------------------------------------
     void   incrementReaderEvents(double value = 1.0, prometheus::Labels tags = {});
     void   incrementReaderEventsReceived(double value = 1.0, prometheus::Labels tags = {});

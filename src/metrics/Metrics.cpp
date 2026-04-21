@@ -271,6 +271,11 @@ std::shared_ptr<prometheus::Registry> Metrics::registry() const
     return registry_;
 }
 
+const std::string& Metrics::controllerName() const
+{
+    return controller_name_;
+}
+
 void Metrics::incrementReaderEvents(double value, prometheus::Labels tags)
 {
 

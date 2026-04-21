@@ -22,6 +22,12 @@
 #include <string>
 #include <unordered_map>
 
+// Forward-declare to avoid a circular include cycle:
+//   HDF5FilePool.h ← HDF5WriterMetrics.h ← WriterMetrics.h
+namespace mldp_pvxs_driver::metrics {
+class HDF5WriterMetrics;
+} // namespace mldp_pvxs_driver::metrics
+
 namespace mldp_pvxs_driver::writer {
 
 /**
@@ -110,10 +116,22 @@ public:
      */
     void closeAll() noexcept;
 
+    /**
+     * @brief Attach a metrics object for rotation instrumentation.
+     *
+     * Must be called before the first acquire() that can trigger a rotation.
+     * Non-owning: the pointer is only valid as long as the @ref HDF5WriterMetrics
+     * object lives (which is the lifetime of the owning HDF5Writer).
+     *
+     * @param metrics  Non-owning pointer; may be null (disables rotation metric).
+     */
+    void setMetrics(metrics::HDF5WriterMetrics* metrics) noexcept;
+
 private:
     const HDF5WriterConfig                                      config_;   ///< Immutable pool configuration.
     mutable std::mutex                                          mutex_;    ///< Guards entries_ map (lookup, insert, rotate).
     std::unordered_map<std::string, std::shared_ptr<FileEntry>> entries_;  ///< sourceName → open FileEntry.
+    metrics::HDF5WriterMetrics*                                 metrics_{nullptr}; ///< Non-owning; may be null.
 
     /**
      * @brief Return true if @p entry has exceeded the configured age or size limit.

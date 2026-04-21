@@ -8,6 +8,9 @@ The MLDP PVXS driver provides comprehensive metrics collection and export capabi
 2. **JSON Lines (JSONL) file exports** for periodic logging
 3. **System-level metrics** (CPU, memory, file descriptors, I/O) using the metric-grabber library
 4. **Manual dump triggers** via keyboard shortcuts and signals
+5. **Per-component extended metrics** via the `ExtendedMetrics` hierarchy (HDF5 writer, and future components)
+
+> **Adding new metrics?** See [metrics-extension-guide.md](metrics-extension-guide.md) for the step-by-step pattern.
 
 ## Features
 
@@ -54,6 +57,15 @@ When the Prometheus endpoint is configured, the driver collects:
 - `mldp_pvxs_driver_bus_payload_bytes_total` - Total protobuf bytes sent
 - `mldp_pvxs_driver_bus_payload_bytes_per_second` - Current throughput
 - `mldp_pvxs_driver_bus_stream_rotations_total` - Stream open/close cycles
+
+**HDF5 writer metrics** (per writer instance; requires `MLDP_PVXS_HDF5_ENABLED`):
+- `mldp_pvxs_driver_hdf5_batches_written_total` — EventBatches written to HDF5 `{controller, writer}`
+- `mldp_pvxs_driver_hdf5_rows_written_total` — Rows (samples) appended per source `{controller, writer, source}`
+- `mldp_pvxs_driver_hdf5_bytes_written_total` — Bytes written per source `{controller, writer, source}`
+- `mldp_pvxs_driver_hdf5_queue_depth` — Current write-queue depth `{controller, writer}`
+- `mldp_pvxs_driver_hdf5_queue_drops_total` — Batches dropped on queue overflow `{controller, writer}`
+- `mldp_pvxs_driver_hdf5_file_rotations_total` — File rotations per source `{controller, writer, source}`
+- `mldp_pvxs_driver_hdf5_write_latency_ms` — Histogram of write latency (ms) `{controller, writer}`
 
 **System-level metrics** (sampled at configured interval):
   - **Process CPU time (counters):**

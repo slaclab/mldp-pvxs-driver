@@ -237,3 +237,47 @@ writer:
 ## Build Requirement
 
 HDF5 writer compiles only when `MLDP_PVXS_HDF5_ENABLED` is defined. Pass `-DMLDP_PVXS_HDF5_ENABLED=ON` to CMake. The factory registration (`REGISTER_WRITER`) is inside the same guard, so the type `"hdf5"` is absent from the factory when the option is off.
+
+---
+
+## Metrics
+
+When the HDF5 writer is constructed via the factory (i.e. a `shared_ptr<Metrics>` is passed),
+it creates an `HDF5WriterMetrics` instance registered into the shared Prometheus registry.
+All metrics appear automatically in the HTTP endpoint and JSONL export without any
+additional wiring.
+
+Constant labels on all families: `{controller=<controller_name>, writer=<instance_name>}`.
+
+| Metric | Type | Extra label | Description |
+|--------|------|-------------|-------------|
+| `mldp_pvxs_driver_hdf5_batches_written_total` | Counter | — | EventBatches written (columnar or tabular) |
+| `mldp_pvxs_driver_hdf5_rows_written_total` | Counter | `source` | Rows (samples) appended per PV source |
+| `mldp_pvxs_driver_hdf5_bytes_written_total` | Counter | `source` | Bytes written per PV source (estimated) |
+| `mldp_pvxs_driver_hdf5_queue_depth` | Gauge | — | Write-queue depth after each drain cycle |
+| `mldp_pvxs_driver_hdf5_queue_drops_total` | Counter | — | Batches dropped on queue overflow |
+| `mldp_pvxs_driver_hdf5_file_rotations_total` | Counter | `source` | File rotations (age or size threshold) |
+| `mldp_pvxs_driver_hdf5_write_latency_ms` | Histogram | — | `appendFrame` / `flushTabularBuffer` latency (ms) |
+
+Metrics are null-safe: if `Metrics` is not provided (unit-test constructor), no instrumentation
+occurs and no registry access is attempted.
+
+### Smoke-test
+
+```bash
+curl -s http://localhost:9464/metrics | grep mldp_pvxs_driver_hdf5
+```
+
+Expected families (when at least one batch has been written):
+```
+mldp_pvxs_driver_hdf5_batches_written_total{controller="...",writer="..."} N
+mldp_pvxs_driver_hdf5_queue_depth{controller="...",writer="..."} 0
+mldp_pvxs_driver_hdf5_write_latency_ms_bucket{...}
+…
+```
+
+### Implementation
+
+`HDF5WriterMetrics` inherits `WriterMetrics → ExtendedMetrics`.
+See [metrics-extension-guide.md](../metrics-extension-guide.md) for the full pattern
+used to create new per-component metric classes.

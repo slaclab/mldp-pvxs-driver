@@ -11,11 +11,13 @@
 #pragma once
 
 #include <config/Config.h>
+#include <metrics/Metrics.h>
 #include <util/log/ILog.h>
 #include <writer/IWriter.h>
 #include <writer/WriterFactory.h>
 #include <writer/hdf5/HDF5FilePool.h>
 #include <writer/hdf5/HDF5WriterConfig.h>
+#include <writer/hdf5/HDF5WriterMetrics.h>
 
 #include <H5Cpp.h>
 #include <util/bus/DataBatch.h>
@@ -228,6 +230,7 @@ private:
     HDF5WriterConfig                    config_;  ///< Immutable writer configuration (name, paths, thresholds).
     std::shared_ptr<util::log::ILogger> logger_;  ///< Shared logger; messages tagged with config_.name.
     std::unique_ptr<HDF5FilePool>       pool_;    ///< Manages per-source HDF5 file handles and rotation.
+    std::unique_ptr<metrics::HDF5WriterMetrics> writerMetrics_; ///< Per-writer Prometheus metrics; may be null.
 
     /**
      * @brief Single entry in the bounded writer queue.
