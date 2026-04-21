@@ -35,6 +35,8 @@ struct EventBatchStruct
     std::string                                 root_source; ///< Root PV identifier used for batch-level metrics/correlation.
     std::vector<std::string>                    tags;        ///< Optional metadata attached to the batch.
     std::vector<dp::service::common::DataFrame> frames;      ///< One frame per ingestion payload; each frame must include timestamps.
+    bool end_of_source_update{false}; ///< Signals that all column batches for one NTTable update round have been emitted. Writers should flush accumulated state; other writers should skip this batch.
+    bool is_nttable{false};           ///< True when this batch carries NTTable column frames (slac-bsas-table mode). Used by writers to route to the NTTable accumulation path instead of the columnar path.
 };
 
 /**

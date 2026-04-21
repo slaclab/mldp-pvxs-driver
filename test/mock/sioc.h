@@ -19,6 +19,9 @@ public:
 
     ~PVServer();
 
+    /// Sanitized field names for the CU-HXR Gen1 NTTable columns.
+    const std::vector<std::string>& gen1CuHxrColumnNames() const { return m_cuHxr.fieldNames(); }
+
 private:
     struct TypedPV
     {

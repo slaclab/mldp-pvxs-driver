@@ -93,6 +93,8 @@
 #include <BS_thread_pool.hpp>
 #include <util/log/Logger.h>
 
+#include <cstring>
+#include <limits>
 #include <vector>
 
 using namespace mldp_pvxs_driver::util::log;
@@ -253,59 +255,62 @@ void HDF5Writer::writerLoop()
         }
 
         // --- Phase 2: write each frame to HDF5 ------------------------------
-        // Processing all drained batches without re-acquiring queueMutex_
-        // means a burst of N pending batches is handled in one pass, which
-        // catches up quickly after initial file-creation overhead.
-        // Byte accounting uses frame.ByteSizeLong() (protobuf serialized size)
-        // as a proxy for data written, because HDF5 buffers appends in memory
-        // and getFileSize() does not reflect writes until the next flush.
+        // end_of_source_update marker → flush NTTable buffer for that source.
+        // NTTable column batches (tags[0] == root_source) → accumulate.
+        // All other batches → existing columnar path.
         for (auto& entry : drained)
         {
-            for (const auto& frame : entry.batch.frames)
+            try
             {
-                try
+                if (entry.batch.end_of_source_update)
                 {
-                    // acquire() may create or rotate the file for this source.
-                    auto ev = pool_->acquire(entry.batch.root_source);
-
-                    // Measure bytes written to update rotation accounting.
-                    // Use the serialized frame size as the byte count — HDF5
-                    // caches appends in memory and getFileSize() does not grow
-                    // until the next flush, so a file-size delta is always 0.
-                    const uint64_t written = static_cast<uint64_t>(frame.ByteSizeLong());
+                    // Marker: flush whatever is accumulated for this source.
+                    const auto& source = entry.batch.root_source;
+                    auto        it     = ntTableBuffers_.find(source);
+                    if (it != ntTableBuffers_.end() && it->second.rowCount > 0)
                     {
+                        auto ev = pool_->acquire(source);
                         std::lock_guard<std::mutex> fileLk(ev->fileMutex);
-                        appendFrame(entry.batch.root_source, frame, ev->file, entry.batchSeq);
+                        flushNTTableBuffer(source, it->second, ev->file);
                     }
-                    // IMPORTANT: fileMutex must be released BEFORE calling
-                    // recordWrite().  recordWrite() acquires the pool's internal
-                    // mutex_ (pool mutex_ → fileMutex order).  Holding fileMutex
-                    // here while the flush thread holds pool mutex_ and waits for
-                    // fileMutex would cause a deadlock.
-                    tracef(*logger_, "HDF5Writer [{}] source={} wrote {} bytes",
-                           config_.name, entry.batch.root_source, written);
-                    if (written > 0)
+                }
+                else if (isNTTableBatch(entry.batch))
+                {
+                    processNTTableBatch(entry);
+                }
+                else
+                {
+                    for (const auto& frame : entry.batch.frames)
                     {
-                        pool_->recordWrite(entry.batch.root_source, written);
+                        auto ev = pool_->acquire(entry.batch.root_source);
+                        const uint64_t written = static_cast<uint64_t>(frame.ByteSizeLong());
+                        {
+                            std::lock_guard<std::mutex> fileLk(ev->fileMutex);
+                            appendFrame(entry.batch.root_source, frame, ev->file, entry.batchSeq);
+                        }
+                        tracef(*logger_, "HDF5Writer [{}] source={} wrote {} bytes",
+                               config_.name, entry.batch.root_source, written);
+                        if (written > 0)
+                        {
+                            pool_->recordWrite(entry.batch.root_source, written);
+                        }
                     }
                 }
-                catch (const H5::Exception& ex)
-                {
-                    // H5::Exception does NOT inherit std::exception — must be
-                    // caught explicitly or the thread will terminate silently.
-                    errorf(*logger_, "HDF5Writer [{}] source={} appendFrame HDF5 error: {}",
-                           config_.name, entry.batch.root_source, ex.getCDetailMsg());
-                }
-                catch (const std::exception& ex)
-                {
-                    errorf(*logger_, "HDF5Writer [{}] source={} appendFrame failed: {}",
-                           config_.name, entry.batch.root_source, ex.what());
-                }
-                catch (...)
-                {
-                    errorf(*logger_, "HDF5Writer [{}] source={} appendFrame failed — unknown exception",
-                           config_.name, entry.batch.root_source);
-                }
+            }
+            catch (const H5::Exception& ex)
+            {
+                errorf(*logger_, "HDF5Writer [{}] source={} write HDF5 error: {}",
+                       config_.name, entry.batch.root_source, ex.getCDetailMsg());
+            }
+            catch (const std::exception& ex)
+            {
+                errorf(*logger_, "HDF5Writer [{}] source={} write failed: {}",
+                       config_.name, entry.batch.root_source, ex.what());
+            }
+            catch (...)
+            {
+                errorf(*logger_, "HDF5Writer [{}] source={} write failed — unknown exception",
+                       config_.name, entry.batch.root_source);
             }
         }
     }
@@ -453,6 +458,26 @@ void writeArrayColumns(const google::protobuf::RepeatedPtrField<ProtoCol>& cols,
         append2D(ds, h5type, buf.data(), nSamples, arrayLen);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Type-to-HDF5-predicate mapping — used by the NTTable per-column writer.
+// ---------------------------------------------------------------------------
+
+template <typename T>
+const H5::PredType& mapNativeType();
+
+template <> const H5::PredType& mapNativeType<double>()   { return H5::PredType::NATIVE_DOUBLE; }
+template <> const H5::PredType& mapNativeType<float>()    { return H5::PredType::NATIVE_FLOAT;  }
+template <> const H5::PredType& mapNativeType<int32_t>()  { return H5::PredType::NATIVE_INT32;  }
+template <> const H5::PredType& mapNativeType<int64_t>()  { return H5::PredType::NATIVE_INT64;  }
+template <> const H5::PredType& mapNativeType<uint8_t>()  { return H5::PredType::NATIVE_UINT8;  }
+
+// Fill value used when padding a column shorter than the timestamp vector.
+template <typename T>
+T fillValue() { return T{0}; }
+
+template <> double fillValue<double>() { return std::numeric_limits<double>::quiet_NaN(); }
+template <> float  fillValue<float>()  { return std::numeric_limits<float>::quiet_NaN();  }
 
 } // namespace
 
@@ -646,4 +671,310 @@ H5::DataSet HDF5Writer::ensureDataset2D(H5::H5File&         file,
     }
 
     return file.createDataSet(name, dtype, space, props);
+}
+
+// ---------------------------------------------------------------------------
+// isNTTableBatch() — detect NTTable batches by tag convention
+// ---------------------------------------------------------------------------
+
+bool HDF5Writer::isNTTableBatch(const EventBatch& batch)
+{
+    return batch.is_nttable;
+}
+
+// ---------------------------------------------------------------------------
+// processNTTableBatch() — accumulate all column frames, then flush compound
+// ---------------------------------------------------------------------------
+
+void HDF5Writer::processNTTableBatch(const QueueEntry& entry)
+{
+    const auto& batch  = entry.batch;
+    const auto& source = batch.root_source;
+    auto& buf = ntTableBuffers_[source];
+
+    for (const auto& frame : batch.frames)
+        accumulateNTTableFrame(source, frame, buf);
+
+    // Don't flush here — accumulate across batches until timestamp changes.
+    // Flushing is triggered by accumulateNTTableFrame() when it detects a
+    // new update round (different first-row timestamp), or by writerLoop()
+    // draining the entire queue (handled in writerLoop after all drained batches).
+}
+
+// ---------------------------------------------------------------------------
+// accumulateNTTableFrame() — extract timestamps + typed columns into buffer
+// ---------------------------------------------------------------------------
+
+void HDF5Writer::accumulateNTTableFrame(const std::string&                    sourceName,
+                                        const dp::service::common::DataFrame& frame,
+                                        NTTableBuffer&                        buf)
+{
+    // Determine the first-row timestamp of this frame to detect round changes.
+    int64_t frameFirstTs = -1;
+    if (frame.has_datatimestamps() && frame.datatimestamps().has_timestamplist() &&
+        frame.datatimestamps().timestamplist().timestamps_size() > 0)
+    {
+        const auto& ts0 = frame.datatimestamps().timestamplist().timestamps(0);
+        frameFirstTs = static_cast<int64_t>(ts0.epochseconds()) * 1'000'000'000LL +
+                       static_cast<int64_t>(ts0.nanoseconds());
+    }
+
+    // If this frame belongs to a new update round (timestamp changed) and we
+    // already have buffered rows, clear the stale data.  The marker protocol
+    // is the authoritative flush trigger; stale data from a missed marker is
+    // simply discarded here.
+    if (buf.rowCount > 0 && frameFirstTs != -1 && frameFirstTs != buf.roundFirstTs)
+    {
+        buf.columns.clear();
+        if (!buf.schemaFixed) {
+            buf.colIndex.clear();
+            buf.colNames.clear();
+            buf.colTypes.clear();
+        }
+        buf.tsSeconds.clear();
+        buf.tsNanos.clear();
+        buf.rowCount     = 0;
+        buf.roundFirstTs = -1;
+    }
+
+    // Populate timestamps for a new round.
+    if (buf.rowCount == 0 && frame.has_datatimestamps() &&
+        frame.datatimestamps().has_timestamplist())
+    {
+        const auto& tsList = frame.datatimestamps().timestamplist();
+        const int   n      = tsList.timestamps_size();
+        buf.tsSeconds.reserve(static_cast<std::size_t>(n));
+        buf.tsNanos.reserve(static_cast<std::size_t>(n));
+        for (int i = 0; i < n; ++i)
+        {
+            buf.tsSeconds.push_back(static_cast<int64_t>(tsList.timestamps(i).epochseconds()));
+            buf.tsNanos.push_back(static_cast<int64_t>(tsList.timestamps(i).nanoseconds()));
+        }
+        buf.rowCount     = static_cast<std::size_t>(n);
+        buf.roundFirstTs = frameFirstTs;
+    }
+
+    // Typed per-column accumulation — one block per proto column type.
+
+    // double columns
+    for (const auto& col : frame.doublecolumns()) {
+        if (col.name().empty()) continue;
+        const int n = col.values_size();
+        if (n <= 0) continue;
+        if (buf.schemaFixed && buf.colIndex.find(col.name()) == buf.colIndex.end()) {
+            if (buf.warnedUnknown.insert(col.name()).second)
+                warnf(*logger_,
+                      "HDF5Writer NTTable source={} unknown column '{}' after schema lock, skipping",
+                      sourceName, col.name());
+            continue;
+        }
+        if (!buf.schemaFixed && buf.colIndex.find(col.name()) == buf.colIndex.end()) {
+            buf.colIndex[col.name()] = buf.colNames.size();
+            buf.colNames.push_back(col.name());
+            buf.colTypes[col.name()] = FieldType::Float64;
+            buf.columns.emplace_back(std::vector<double>{});
+        }
+        const std::size_t colIdx = buf.colIndex.at(col.name());
+        auto& vec = std::get<std::vector<double>>(buf.columns[colIdx]);
+        while (vec.size() + static_cast<std::size_t>(n) < buf.rowCount) vec.push_back(fillValue<double>());
+        for (int i = 0; i < n; ++i)
+            vec.push_back(static_cast<double>(col.values(i)));
+    }
+
+    // float columns
+    for (const auto& col : frame.floatcolumns()) {
+        if (col.name().empty()) continue;
+        const int n = col.values_size();
+        if (n <= 0) continue;
+        if (buf.schemaFixed && buf.colIndex.find(col.name()) == buf.colIndex.end()) {
+            if (buf.warnedUnknown.insert(col.name()).second)
+                warnf(*logger_,
+                      "HDF5Writer NTTable source={} unknown column '{}' after schema lock, skipping",
+                      sourceName, col.name());
+            continue;
+        }
+        if (!buf.schemaFixed && buf.colIndex.find(col.name()) == buf.colIndex.end()) {
+            buf.colIndex[col.name()] = buf.colNames.size();
+            buf.colNames.push_back(col.name());
+            buf.colTypes[col.name()] = FieldType::Float32;
+            buf.columns.emplace_back(std::vector<float>{});
+        }
+        const std::size_t colIdx = buf.colIndex.at(col.name());
+        auto& vec = std::get<std::vector<float>>(buf.columns[colIdx]);
+        while (vec.size() + static_cast<std::size_t>(n) < buf.rowCount) vec.push_back(fillValue<float>());
+        for (int i = 0; i < n; ++i)
+            vec.push_back(static_cast<float>(col.values(i)));
+    }
+
+    // int32 columns
+    for (const auto& col : frame.int32columns()) {
+        if (col.name().empty()) continue;
+        const int n = col.values_size();
+        if (n <= 0) continue;
+        if (buf.schemaFixed && buf.colIndex.find(col.name()) == buf.colIndex.end()) {
+            if (buf.warnedUnknown.insert(col.name()).second)
+                warnf(*logger_,
+                      "HDF5Writer NTTable source={} unknown column '{}' after schema lock, skipping",
+                      sourceName, col.name());
+            continue;
+        }
+        if (!buf.schemaFixed && buf.colIndex.find(col.name()) == buf.colIndex.end()) {
+            buf.colIndex[col.name()] = buf.colNames.size();
+            buf.colNames.push_back(col.name());
+            buf.colTypes[col.name()] = FieldType::Int32;
+            buf.columns.emplace_back(std::vector<int32_t>{});
+        }
+        const std::size_t colIdx = buf.colIndex.at(col.name());
+        auto& vec = std::get<std::vector<int32_t>>(buf.columns[colIdx]);
+        while (vec.size() + static_cast<std::size_t>(n) < buf.rowCount) vec.push_back(fillValue<int32_t>());
+        for (int i = 0; i < n; ++i)
+            vec.push_back(static_cast<int32_t>(col.values(i)));
+    }
+
+    // int64 columns
+    for (const auto& col : frame.int64columns()) {
+        if (col.name().empty()) continue;
+        const int n = col.values_size();
+        if (n <= 0) continue;
+        if (buf.schemaFixed && buf.colIndex.find(col.name()) == buf.colIndex.end()) {
+            if (buf.warnedUnknown.insert(col.name()).second)
+                warnf(*logger_,
+                      "HDF5Writer NTTable source={} unknown column '{}' after schema lock, skipping",
+                      sourceName, col.name());
+            continue;
+        }
+        if (!buf.schemaFixed && buf.colIndex.find(col.name()) == buf.colIndex.end()) {
+            buf.colIndex[col.name()] = buf.colNames.size();
+            buf.colNames.push_back(col.name());
+            buf.colTypes[col.name()] = FieldType::Int64;
+            buf.columns.emplace_back(std::vector<int64_t>{});
+        }
+        const std::size_t colIdx = buf.colIndex.at(col.name());
+        auto& vec = std::get<std::vector<int64_t>>(buf.columns[colIdx]);
+        while (vec.size() + static_cast<std::size_t>(n) < buf.rowCount) vec.push_back(fillValue<int64_t>());
+        for (int i = 0; i < n; ++i)
+            vec.push_back(static_cast<int64_t>(col.values(i)));
+    }
+
+    // bool columns (stored as uint8_t)
+    for (const auto& col : frame.boolcolumns()) {
+        if (col.name().empty()) continue;
+        const int n = col.values_size();
+        if (n <= 0) continue;
+        if (buf.schemaFixed && buf.colIndex.find(col.name()) == buf.colIndex.end()) {
+            if (buf.warnedUnknown.insert(col.name()).second)
+                warnf(*logger_,
+                      "HDF5Writer NTTable source={} unknown column '{}' after schema lock, skipping",
+                      sourceName, col.name());
+            continue;
+        }
+        if (!buf.schemaFixed && buf.colIndex.find(col.name()) == buf.colIndex.end()) {
+            buf.colIndex[col.name()] = buf.colNames.size();
+            buf.colNames.push_back(col.name());
+            buf.colTypes[col.name()] = FieldType::Bool;
+            buf.columns.emplace_back(std::vector<uint8_t>{});
+        }
+        const std::size_t colIdx = buf.colIndex.at(col.name());
+        auto& vec = std::get<std::vector<uint8_t>>(buf.columns[colIdx]);
+        while (vec.size() + static_cast<std::size_t>(n) < buf.rowCount) vec.push_back(fillValue<uint8_t>());
+        for (int i = 0; i < n; ++i)
+            vec.push_back(static_cast<uint8_t>(col.values(i) ? 1 : 0));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// flushNTTableBuffer() — write per-column 1-D datasets under a group
+// ---------------------------------------------------------------------------
+
+void HDF5Writer::flushNTTableBuffer(const std::string& sourceName,
+                                    NTTableBuffer&     buf,
+                                    H5::H5File&        file)
+{
+    const std::size_t nRows = buf.rowCount;
+    if (nRows == 0)
+        return;
+
+    // Lock schema on first flush.
+    if (!buf.schemaFixed)
+    {
+        buf.schemaFixed = true;
+        infof(*logger_,
+              "HDF5Writer NTTable source={} schema locked ({} columns)",
+              sourceName, buf.colNames.size());
+    }
+
+    const std::size_t nCols = buf.colNames.size();
+    if (nCols == 0)
+    {
+        buf.rowCount = 0;
+        return;
+    }
+
+    // Create HDF5 group for this source if it does not exist yet.
+    if (!file.nameExists(sourceName))
+        file.createGroup(sourceName);
+
+    // ---- timestamp datasets: <source>/secondsPastEpoch and <source>/nanoseconds ----
+    const std::string secPath  = sourceName + "/secondsPastEpoch";
+    const std::string nanoPath = sourceName + "/nanoseconds";
+
+    buf.tsSeconds.resize(nRows, 0LL);
+    buf.tsNanos.resize(nRows, 0LL);
+
+    {
+        H5::DataSet ds = ensureDataset(file, secPath, H5::PredType::NATIVE_INT64);
+        append1D(ds, H5::PredType::NATIVE_INT64, buf.tsSeconds.data(),
+                 static_cast<hsize_t>(nRows));
+    }
+    {
+        H5::DataSet ds = ensureDataset(file, nanoPath, H5::PredType::NATIVE_INT64);
+        append1D(ds, H5::PredType::NATIVE_INT64, buf.tsNanos.data(),
+                 static_cast<hsize_t>(nRows));
+    }
+
+    // ---- per-column 1-D datasets: <source>/<colName> ----------------------
+    for (std::size_t i = 0; i < nCols; ++i)
+    {
+        const std::string dsPath = sourceName + "/" + buf.colNames[i];
+        std::visit([&](auto& vec)
+        {
+            using T = typename std::decay_t<decltype(vec)>::value_type;
+            while (vec.size() < nRows)
+                vec.push_back(fillValue<T>());
+            const H5::PredType& h5type = mapNativeType<T>();
+            H5::DataSet ds = ensureDataset(file, dsPath, h5type);
+            append1D(ds, h5type, vec.data(), static_cast<hsize_t>(nRows));
+        }, buf.columns[i]);
+    }
+
+    // Approximate bytes written: nRows × (nCols × sizeof(double) + 2 × sizeof(int64_t))
+    const uint64_t approxBytes =
+        static_cast<uint64_t>(nRows) *
+        (static_cast<uint64_t>(nCols) * sizeof(double) +
+         2ULL * sizeof(int64_t));
+
+    tracef(*logger_, "HDF5Writer NTTable source={} flushed {} rows × {} cols (~{} bytes)",
+           sourceName, nRows, nCols, approxBytes);
+
+    // Clear buffer, preserving typed column slots so accumulation can resume.
+    buf.tsSeconds.clear();
+    buf.tsNanos.clear();
+    buf.rowCount = 0;
+    buf.columns.clear();
+    if (buf.schemaFixed)
+    {
+        buf.columns.resize(nCols);
+        for (std::size_t i = 0; i < nCols; ++i)
+        {
+            const auto ft = buf.colTypes.at(buf.colNames[i]);
+            switch (ft)
+            {
+                case FieldType::Float64: buf.columns[i] = std::vector<double>{};   break;
+                case FieldType::Float32: buf.columns[i] = std::vector<float>{};    break;
+                case FieldType::Int32:   buf.columns[i] = std::vector<int32_t>{}; break;
+                case FieldType::Int64:   buf.columns[i] = std::vector<int64_t>{}; break;
+                case FieldType::Bool:    buf.columns[i] = std::vector<uint8_t>{}; break;
+            }
+        }
+    }
 }

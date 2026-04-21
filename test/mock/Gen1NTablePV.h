@@ -48,6 +48,12 @@ public:
     /// Replaces any character not in [A-Za-z0-9_] with '_'.
     static std::string sanitizeFieldName(const std::string& pvName);
 
+    /// Original PV names as loaded from the signals file (used for labels).
+    const std::vector<std::string>& columnNames() const { return m_columnNames; }
+
+    /// Sanitized field names used in the NTTable schema.
+    const std::vector<std::string>& fieldNames() const { return m_fieldNames; }
+
 private:
     std::string              m_pvName;
     std::vector<std::string> m_columnNames;      ///< original PV names (used for labels)

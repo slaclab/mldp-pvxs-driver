@@ -27,11 +27,24 @@ push() → bounded MPSC deque
 
 ## HDF5 File Layout
 
+Two layouts exist depending on PV type:
+
+**Columnar (scalar / waveform PVs)** — flat root-level datasets:
 ```
 / (root)
 ├── timestamps        int64   ns-since-epoch   shape=(N,) unlimited+chunked
 ├── <col_name_0>      …       type from DataFrame column
 └── …
+```
+
+**NTTable (`slac-bsas-table` mode)** — one HDF5 group per source:
+```
+/ (root)
+└── <source>/
+    ├── secondsPastEpoch   int64   [N_rows]   unlimited+chunked
+    ├── nanoseconds        int64   [N_rows]   unlimited+chunked
+    ├── <col_0>            typed   [N_rows]   unlimited+chunked
+    └── …
 ```
 
 One file per `root_source`. File name format:
@@ -93,19 +106,43 @@ Example for a waveform PV with 256 elements, 10 updates:
 
 ### BSAS NTTable (`slac-bsas-table` mode)
 
-Each NTTable update carries `rowCount` rows. Each non-timestamp column is converted into a separate `DataFrame` and appended as a separate HDF5 dataset. All datasets grow by `rowCount` per update, keeping timestamp alignment across columns.
+Each NTTable update carries `rowCount` rows. All datasets live inside an HDF5 group named after the PV source. Timestamp columns (`tsSeconds` / `tsNanos` fields) are stored as `secondsPastEpoch` and `nanoseconds` datasets; all other columns are stored by their field name.
 
-Timestamp columns (`tsSeconds` / `tsNanos` fields) are consumed to build the `timestamps` dataset and are **not** emitted as data datasets.
+Supported BSAS column types: Float64, Float32, Int32. String columns are silently dropped.
 
-Supported BSAS column types: Float64, Float32, Int32. String columns in NTTable are not yet supported and are silently dropped.
-
-Example for a BSAS table with columns `secondsPastEpoch`, `nanoseconds`, `PV_A` (Float64), `PV_B` (Int32), `PV_C` (Float32):
+Example for a BSAS table with columns `secondsPastEpoch`, `nanoseconds`, `PV_A` (Float64), `PV_B` (Int32), `PV_C` (Float32), PV source `test:bsas_table`:
 ```
-/
-├── timestamps    int64   [rowCount × updates]
-├── PV_A          double  [rowCount × updates]
-├── PV_B          int32   [rowCount × updates]
-└── PV_C          float   [rowCount × updates]
+/ (root)
+└── test:bsas_table/
+    ├── secondsPastEpoch   int64   [rowCount × updates]
+    ├── nanoseconds        int64   [rowCount × updates]
+    ├── PV_A               double  [rowCount × updates]
+    ├── PV_B               int32   [rowCount × updates]
+    └── PV_C               float   [rowCount × updates]
+```
+
+### Gen1 NTTable (`slac-bsas-table` mode, Gen1 BSAS)
+
+Gen1 BSAS NTTable PVs use the same `slac-bsas-table` type and produce the same per-source group layout. Column names from the NTTable schema are used directly as dataset names (sanitized to valid HDF5 identifiers: non-`[A-Za-z0-9_]` characters replaced with `_`).
+
+Example for a Gen1 CU-HXR table with source `CU-HXR`:
+```
+/ (root)
+└── CU-HXR/
+    ├── secondsPastEpoch        int64   [N_rows]
+    ├── nanoseconds             int64   [N_rows]
+    ├── ACCL_IN20_300_L0A_ACUHBR  double  [N_rows]
+    ├── ACCL_IN20_300_L0A_PCUHBR  double  [N_rows]
+    └── …  (one dataset per signal column)
+```
+
+Configuration:
+```yaml
+- name: CU-HXR
+  option:
+    type: slac-bsas-table
+    tsSeconds: secondsPastEpoch
+    tsNanos: nanoseconds
 ```
 
 ### Written vs. not-written summary

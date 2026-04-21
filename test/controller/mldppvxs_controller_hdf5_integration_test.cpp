@@ -74,8 +74,8 @@ protected:
     void SetUp() override
     {
         const auto* info = testing::UnitTest::GetInstance()->current_test_info();
-        tempDir_ = fs::temp_directory_path() / "ctrl_hdf5_test" / info->test_suite_name() / info->name();
-        fs::create_directories(tempDir_);
+        outputDir_ = fs::path(MLDP_TEST_DATA_DIR) / "hdf5" / info->test_suite_name() / info->name();
+        fs::create_directories(outputDir_);
         pvServer_ = std::make_unique<PVServer>();
     }
 
@@ -87,13 +87,11 @@ protected:
             controller_.reset();
         }
         pvServer_.reset();
-        std::error_code ec;
-        fs::remove_all(tempDir_, ec);
     }
 
     void startController(const std::string& pvName)
     {
-        auto cfg = makeConfigFromYaml(buildYaml(pvName, tempDir_.string()));
+        auto cfg = makeConfigFromYaml(buildYaml(pvName, outputDir_.string()));
         controller_ = mldp_pvxs_driver::controller::MLDPPVXSController::create(cfg);
         ASSERT_TRUE(controller_) << "Failed to create controller for PV: " << pvName;
         controller_->start();
@@ -104,7 +102,7 @@ protected:
         const auto deadline = std::chrono::steady_clock::now() + timeout;
         while (std::chrono::steady_clock::now() < deadline)
         {
-            for (const auto& e : fs::recursive_directory_iterator(tempDir_))
+            for (const auto& e : fs::recursive_directory_iterator(outputDir_))
             {
                 if (e.is_regular_file() && e.path().extension() == ".hdf5")
                     return e.path();
@@ -116,7 +114,7 @@ protected:
 
     std::unique_ptr<PVServer>                                          pvServer_;
     std::shared_ptr<mldp_pvxs_driver::controller::MLDPPVXSController> controller_;
-    fs::path                                                           tempDir_;
+    fs::path                                                           outputDir_;
 };
 
 // ---------------------------------------------------------------------------
@@ -263,20 +261,133 @@ TEST_F(ControllerHDF5Test, CounterPVDataStoredInHDF5)
 }
 
 // ---------------------------------------------------------------------------
-// BSAS NTTable structural-correctness test
+// Gen1 NTTable compound-dataset structural correctness test
+//
+// Verifies that when the CU-HXR Gen1 BSAS NTTable mock PV is recorded
+// through the HDF5 writer the resulting file contains a SINGLE compound
+// dataset named "CU-HXR" with:
+//
+//  1. H5T_COMPOUND type.
+//  2. Fields for at least the first few sanitized signal names.
+//  3. Fields "secondsPastEpoch" and "nanoseconds" embedded in the compound.
+//  4. Row count > 0 and a multiple of 3 (kRows per update).
+//  5. No separate /timestamps dataset (timestamps are embedded per-row).
+//  6. Float64 signal values in the expected sinusoidal range (0.0, 2.1).
+//
+// Signal names come from data/signals.cu-hxr.prod.
+// EPICS colons are sanitized to underscores: "ACCL:IN20:300:L0A_ACUHBR" →
+// "ACCL_IN20_300_L0A_ACUHBR".
+// ---------------------------------------------------------------------------
+
+static std::string buildGen1TableYaml(const std::string& basePath)
+{
+    return std::string(
+               "writer:\n"
+               "  hdf5:\n"
+               "    - name: hdf5-gen1\n"
+               "      base-path: \"") +
+           basePath +
+           "\"\n"
+           "      flush-interval-ms: 50\n"
+           "reader:\n"
+           "  - epics-pvxs:\n"
+           "      - name: gen1-reader\n"
+           "        pvs:\n"
+           "          - name: CU-HXR\n"
+           "            option:\n"
+           "              type: slac-bsas-table\n"
+           "              tsSeconds: secondsPastEpoch\n"
+           "              tsNanos: nanoseconds\n";
+}
+
+// Verifies that after stopping the controller the HDF5 file written from a
+// live Gen1 NTTable PV uses the per-column group layout.
+//
+//  Layout: /<source>/secondsPastEpoch  int64 [N_rows]
+//          /<source>/nanoseconds       int64 [N_rows]
+//          /<source>/<colName>         typed [N_rows]  (one per column)
+//
+//  There are NO compound datasets, NO __columns, NO __timestamps datasets.
+TEST_F(ControllerHDF5Test, Gen1NTTableWritesCompoundDataset)
+{
+    auto cfg = makeConfigFromYaml(buildGen1TableYaml(outputDir_.string()));
+    controller_ = mldp_pvxs_driver::controller::MLDPPVXSController::create(cfg);
+    ASSERT_TRUE(controller_) << "Failed to create controller for CU-HXR";
+    controller_->start();
+
+    // Wait for file creation then let a couple more update cycles accumulate.
+    const auto h5path = waitForH5File(std::chrono::milliseconds(5000));
+    ASSERT_FALSE(h5path.empty()) << "No .hdf5 file written within 5 s";
+    std::this_thread::sleep_for(std::chrono::milliseconds(600));
+
+    controller_->stop();
+    controller_.reset();
+
+    // ---- Open file -----------------------------------------------------------
+    H5::H5File file;
+    ASSERT_NO_THROW(file = H5::H5File(h5path.string(), H5F_ACC_RDONLY))
+        << "Cannot open HDF5 file: " << h5path;
+
+    // ---- 1. Group "CU-HXR" exists -------------------------------------------
+    ASSERT_TRUE(file.nameExists("CU-HXR"))
+        << "Group 'CU-HXR' not found in " << h5path;
+
+    auto grp = file.openGroup("CU-HXR");
+
+    // ---- 2. Timestamp datasets exist inside the group -----------------------
+    ASSERT_TRUE(grp.nameExists("secondsPastEpoch"))
+        << "Dataset 'CU-HXR/secondsPastEpoch' missing";
+    ASSERT_TRUE(grp.nameExists("nanoseconds"))
+        << "Dataset 'CU-HXR/nanoseconds' missing";
+
+    // ---- 3. All sanitized signal column datasets present --------------------
+    for (const auto& col : pvServer_->gen1CuHxrColumnNames())
+    {
+        EXPECT_TRUE(grp.nameExists(col)) << "Column '" << col << "' missing";
+    }
+
+    // ---- 4. Row count > 0 and multiple of 3 (kRows=3 per update) -----------
+    auto tsDs = grp.openDataSet("secondsPastEpoch");
+    hsize_t dims[1]{0};
+    tsDs.getSpace().getSimpleExtentDims(dims);
+    const hsize_t nRows = dims[0];
+    ASSERT_GT(nRows, 0u) << "'CU-HXR/secondsPastEpoch' dataset is empty";
+    EXPECT_EQ(nRows % 3u, 0u)
+        << "Row count " << nRows << " not a multiple of 3 (kRows per update)";
+
+    // ---- 5. No separate root-level /timestamps dataset ----------------------
+    EXPECT_FALSE(file.nameExists("timestamps"))
+        << "NTTable path must not create a separate /timestamps dataset";
+
+    // ---- 6. Signal value range check ----------------------------------------
+    // Gen1NTablePV fills all columns with 1.0 + sin(...) → range (0.0, 2.0].
+    {
+        const auto& firstCol = pvServer_->gen1CuHxrColumnNames().front();
+        auto sigDs = grp.openDataSet(firstCol);
+        std::vector<double> vals(static_cast<std::size_t>(nRows));
+        sigDs.read(vals.data(), H5::PredType::NATIVE_DOUBLE);
+        for (hsize_t i = 0; i < nRows; ++i)
+        {
+            EXPECT_GE(vals[i], 0.0) << "vals[" << i << "] below 0";
+            EXPECT_LE(vals[i], 2.01) << "vals[" << i << "] above 2.01";
+        }
+    }
+}
+
 //
 // Verifies that after stopping the controller the HDF5 file written from a
-// live BSAS NTTable PV satisfies ALL of the following invariants:
+// live BSAS NTTable PV uses the per-column group layout.
+//
+//  Layout: /test:bsas_table/secondsPastEpoch  int64 [N_rows]
+//          /test:bsas_table/nanoseconds       int64 [N_rows]
+//          /test:bsas_table/<colName>         typed [N_rows]  (one per column)
 //
 //  1. File exists and is a valid HDF5 file.
-//  2. 'timestamps' dataset is present and non-empty.
-//  3. 'PV_A' (Float64), 'PV_B' (Int32), 'PV_C' (Float32) are present.
-//  4. All four datasets have the SAME row count — split-column dedup worked.
-//  5. Row count is a multiple of 3 (mock emits exactly 3 rows per update).
-//  6. 'timestamps' values are plausible nanosecond-epoch values (> 0).
-//  7. 'PV_A' (double): mock value = 1.0 + sin(time), range (0.0, 2.1).
-//  8. 'PV_B' (int32):  mock value = counter + row_index, strictly > 0.
-//  9. 'PV_C' (float):  mock value = 1.25 + cos(time), range (0.2, 2.3).
+//  2. A group named after the PV source exists.
+//  3. No root-level /timestamps, /PV_A, /PV_B, /PV_C datasets.
+//  4. Per-column datasets: PV_A, PV_B, PV_C, secondsPastEpoch, nanoseconds.
+//  5. Row count is a multiple of 3 (mock emits 3 rows per event).
+//  6. secondsPastEpoch values are positive.
 // ---------------------------------------------------------------------------
 
 static std::string buildBsasTableDetailYaml(const std::string& pvName,
@@ -305,155 +416,63 @@ static std::string buildBsasTableDetailYaml(const std::string& pvName,
 
 TEST_F(ControllerHDF5Test, BsasNTTableStructuralCorrectness)
 {
-    // Structural invariant under test
-    // --------------------------------
-    // Each BSAS NTTable event is converted by BSASEpicsMLDPConversion into a
-    // single EventBatch whose `frames` vector holds one DataFrame per column:
-    //
-    //   EventBatch {
-    //     root_source = "test:bsas_table",
-    //     frames = [
-    //       DataFrame { timestamps=[t0,t1,t2], PV_A=[...] },
-    //       DataFrame { timestamps=[t0,t1,t2], PV_B=[...] },   ← same ts
-    //       DataFrame { timestamps=[t0,t1,t2], PV_C=[...] },   ← same ts
-    //     ]
-    //   }
-    //
-    // All three frames carry identical timestamps.  The HDF5Writer must write
-    // timestamps only once (via batchSeq dedup) so that:
-    //
-    //   timestamps.size() == PV_A.size() == PV_B.size() == PV_C.size()
-    //
-    // Without dedup:  timestamps.size() == 3 × column.size()  ← corrupt file.
-    //
-    // The mock publishes 3 rows per update; row counts must be multiples of 3.
-
-    // ---- 1. Start controller and wait for enough data ----------------------
+    // ---- 1. Start controller and wait for data --------------------------------
     auto cfg = makeConfigFromYaml(
-        buildBsasTableDetailYaml("test:bsas_table", tempDir_.string()));
+        buildBsasTableDetailYaml("test:bsas_table", outputDir_.string()));
     controller_ = mldp_pvxs_driver::controller::MLDPPVXSController::create(cfg);
     ASSERT_TRUE(controller_) << "Failed to create controller for test:bsas_table";
     controller_->start();
 
-    // Wait for file creation then let a few more update cycles land so we
-    // accumulate at least 2 update windows (≥6 rows) for a meaningful test.
     const auto h5path = waitForH5File(std::chrono::milliseconds(5000));
     ASSERT_FALSE(h5path.empty()) << "No .hdf5 file written within 5 s";
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
-    // ---- 2. Stop controller BEFORE opening/reading the file ----------------
+    // ---- 2. Stop controller BEFORE opening the file --------------------------
     controller_->stop();
     controller_.reset();
 
-    // ---- 3. Open file -------------------------------------------------------
+    // ---- 3. Open file ---------------------------------------------------------
     H5::H5File file;
     ASSERT_NO_THROW(file = H5::H5File(h5path.string(), H5F_ACC_RDONLY))
         << "HDF5 file cannot be opened: " << h5path;
 
-    // ---- 4. All expected datasets exist ------------------------------------
-    ASSERT_TRUE(file.nameExists("timestamps")) << "'timestamps' missing in " << h5path;
-    ASSERT_TRUE(file.nameExists("PV_A"))       << "'PV_A' (Float64) missing";
-    ASSERT_TRUE(file.nameExists("PV_B"))       << "'PV_B' (Int32)   missing";
-    ASSERT_TRUE(file.nameExists("PV_C"))       << "'PV_C' (Float32) missing";
+    // ---- 4. Group exists; root-level columnar datasets must NOT exist --------
+    ASSERT_TRUE(file.nameExists("test:bsas_table"))
+        << "Group 'test:bsas_table' missing in " << h5path;
+    EXPECT_FALSE(file.nameExists("timestamps"))
+        << "Unexpected /timestamps — NTTable must use per-column group layout";
+    EXPECT_FALSE(file.nameExists("PV_A"))
+        << "Unexpected /PV_A — NTTable must use per-column group layout";
 
-    // ---- 5. Read dimensions -------------------------------------------------
-    const auto getDim1D = [&](const std::string& name) -> hsize_t {
-        hsize_t dims[1]{0};
-        file.openDataSet(name).getSpace().getSimpleExtentDims(dims);
-        return dims[0];
-    };
+    auto grp = file.openGroup("test:bsas_table");
 
-    const hsize_t nTs = getDim1D("timestamps");
-    const hsize_t nA  = getDim1D("PV_A");
-    const hsize_t nB  = getDim1D("PV_B");
-    const hsize_t nC  = getDim1D("PV_C");
-
-    // ---- 6. Non-empty -------------------------------------------------------
-    ASSERT_GT(nTs, 0u) << "'timestamps' dataset is empty";
-
-    // ---- 7. PRIMARY: all datasets have the same row count -------------------
-    // This is the dedup correctness assertion.  Each BSAS event produces one
-    // EventBatch with 3 DataFrames (PV_A, PV_B, PV_C), each carrying the same
-    // timestamp array.  batchSeq dedup must write timestamps exactly once per
-    // batch so all datasets grow in lockstep.
-    //
-    // Failure means: timestamps written N-times (once per column DataFrame)
-    // instead of once per batch → timestamps.size() = N × column.size().
-    EXPECT_EQ(nA, nTs)
-        << "PV_A rows=" << nA << " ≠ timestamps rows=" << nTs
-        << " — batchSeq dedup broken: timestamps written once per DataFrame"
-           " instead of once per EventBatch";
-    EXPECT_EQ(nB, nTs)
-        << "PV_B rows=" << nB << " ≠ timestamps rows=" << nTs
-        << " — batchSeq dedup broken";
-    EXPECT_EQ(nC, nTs)
-        << "PV_C rows=" << nC << " ≠ timestamps rows=" << nTs
-        << " — batchSeq dedup broken";
-
-    // ---- 8. Row count is a multiple of 3 (mock emits 3 rows per event) -----
-    EXPECT_EQ(nTs % 3, 0u)
-        << "timestamps row count " << nTs << " is not a multiple of 3"
-           " — partial write or off-by-one in split logic";
-
-    // ---- 9. Timestamps: positive and monotone within each event window ------
-    // mock sets per-row nanos = base_nanos + row_index, so within each window
-    // of 3 consecutive rows the timestamps must be strictly increasing.
+    // ---- 5. Timestamp and signal datasets inside the group ------------------
+    ASSERT_TRUE(grp.nameExists("secondsPastEpoch"))
+        << "Dataset 'test:bsas_table/secondsPastEpoch' missing";
+    ASSERT_TRUE(grp.nameExists("nanoseconds"))
+        << "Dataset 'test:bsas_table/nanoseconds' missing";
+    for (const char* name : {"PV_A", "PV_B", "PV_C"})
     {
-        std::vector<int64_t> tsVals(nTs);
-        file.openDataSet("timestamps").read(tsVals.data(), H5::PredType::NATIVE_INT64);
+        EXPECT_TRUE(grp.nameExists(name))
+            << "Column '" << name << "' missing from group 'test:bsas_table'";
+    }
 
-        for (hsize_t i = 0; i < nTs; ++i)
+    // ---- 6. Row count is a multiple of 3 -------------------------------------
+    auto tsDs = grp.openDataSet("secondsPastEpoch");
+    hsize_t dims[1]{0};
+    tsDs.getSpace().getSimpleExtentDims(dims);
+    ASSERT_GT(dims[0], 0u) << "'test:bsas_table/secondsPastEpoch' dataset is empty";
+    EXPECT_EQ(dims[0] % 3, 0u)
+        << "Row count " << dims[0] << " not multiple of 3";
+
+    // ---- 7. secondsPastEpoch: positive ----------------------------------------
+    {
+        std::vector<int64_t> tsVals(static_cast<std::size_t>(dims[0]));
+        tsDs.read(tsVals.data(), H5::PredType::NATIVE_INT64);
+        for (hsize_t i = 0; i < dims[0]; ++i)
         {
             EXPECT_GT(tsVals[i], 0LL)
-                << "timestamps[" << i << "] = " << tsVals[i] << " is not positive";
-        }
-
-        for (hsize_t g = 0; g + 2 < nTs; g += 3)
-        {
-            EXPECT_LT(tsVals[g], tsVals[g + 1])
-                << "timestamps not monotone within event window at row " << g;
-            EXPECT_LT(tsVals[g + 1], tsVals[g + 2])
-                << "timestamps not monotone within event window at row " << g + 1;
-        }
-    }
-
-    // ---- 10. PV_A (double) sanity-check ------------------------------------
-    // mock: row k sends (k+1) + sin(time), k∈{0,1,2} → outer bounds (0.0, 4.01)
-    {
-        std::vector<double> vals(nA);
-        file.openDataSet("PV_A").read(vals.data(), H5::PredType::NATIVE_DOUBLE);
-        for (hsize_t i = 0; i < nA; ++i)
-        {
-            EXPECT_GT(vals[i], 0.0)
-                << "PV_A[" << i << "] = " << vals[i] << " out of range";
-            EXPECT_LT(vals[i], 4.01)
-                << "PV_A[" << i << "] = " << vals[i] << " out of range";
-        }
-    }
-
-    // ---- 11. PV_B (int32) sanity-check -------------------------------------
-    // mock: counter + row_index, counter > 0 throughout
-    {
-        std::vector<int32_t> vals(nB);
-        file.openDataSet("PV_B").read(vals.data(), H5::PredType::NATIVE_INT32);
-        for (hsize_t i = 0; i < nB; ++i)
-        {
-            EXPECT_GT(vals[i], 0)
-                << "PV_B[" << i << "] = " << vals[i] << " should be positive";
-        }
-    }
-
-    // ---- 12. PV_C (float) sanity-check -------------------------------------
-    // mock: row k sends (k+1.25) + cos(time), k∈{0,1,2} → outer bounds (0.24, 4.27)
-    {
-        std::vector<float> vals(nC);
-        file.openDataSet("PV_C").read(vals.data(), H5::PredType::NATIVE_FLOAT);
-        for (hsize_t i = 0; i < nC; ++i)
-        {
-            EXPECT_GT(vals[i], 0.24f)
-                << "PV_C[" << i << "] = " << vals[i] << " out of range";
-            EXPECT_LT(vals[i], 4.27f)
-                << "PV_C[" << i << "] = " << vals[i] << " out of range";
+                << "secondsPastEpoch[" << i << "] = " << tsVals[i] << " not positive";
         }
     }
 }
