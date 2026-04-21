@@ -12,7 +12,6 @@
 
 #ifdef MLDP_PVXS_HDF5_ENABLED
 
-    #include <common.pb.h>
     #include <util/bus/IDataBus.h>
     #include <writer/WriterFactory.h>
     #include <writer/hdf5/HDF5Writer.h>
@@ -57,20 +56,15 @@ protected:
         return cfg;
     }
 
-    /// Build a minimal EventBatch that passes the DataFrame timestamp check.
+    /// Build a minimal EventBatch with a double column and a timestamp.
     static IDataBus::EventBatch makeValidBatch()
     {
-        dp::service::common::DataFrame frame;
-
-        auto* timestamps = frame.mutable_datatimestamps()->mutable_timestamplist();
-        auto* ts = timestamps->add_timestamps();
-        ts->set_epochseconds(1700000000);
-        ts->set_nanoseconds(0);
-
-        auto* col = frame.add_doublecolumns();
-        col->set_name("VOLTAGE");
-        col->add_values(1.23);
-
+        DataBatch frame;
+        frame.timestamps.push_back({1700000000, 0});
+        DataColumn col;
+        col.name   = "VOLTAGE";
+        col.values = std::vector<double>{1.23};
+        frame.columns.push_back(std::move(col));
         IDataBus::EventBatch batch;
         batch.root_source = "TEST:PV";
         batch.frames.push_back(std::move(frame));
@@ -174,15 +168,12 @@ TEST_F(HDF5WriterTest, StringColumnWritten)
     HDF5Writer w(makeConfig());
     w.start();
 
-    dp::service::common::DataFrame frame;
-    auto*                          ts = frame.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
-    ts->set_epochseconds(1700000000);
-    ts->set_nanoseconds(0);
-
-    auto* col = frame.add_stringcolumns();
-    col->set_name("STATUS");
-    col->add_values("OK");
-
+    DataBatch frame;
+    DataColumn col;
+    frame.timestamps.push_back({1700000000, 0});
+    col.name   = "STATUS";
+    col.values = std::vector<std::string>{"OK"};
+    frame.columns.push_back(std::move(col));
     IDataBus::EventBatch batch;
     batch.root_source = "TEST:STRING";
     batch.frames.push_back(std::move(frame));
@@ -219,13 +210,12 @@ TEST_F(HDF5WriterTest, StringColumnMultipleValuesWritten)
     // Push two frames — dataset should grow to 2 rows
     for (int i = 0; i < 2; ++i)
     {
-        dp::service::common::DataFrame frame;
-        auto*                          ts = frame.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
-        ts->set_epochseconds(1700000000 + i);
-        ts->set_nanoseconds(0);
-        auto* col = frame.add_stringcolumns();
-        col->set_name("LABEL");
-        col->add_values(i == 0 ? "FIRST" : "SECOND");
+        DataBatch frame;
+        DataColumn col;
+        frame.timestamps.push_back({static_cast<uint64_t>(1700000000 + i), 0});
+        col.name   = "LABEL";
+        col.values = std::vector<std::string>{i == 0 ? "FIRST" : "SECOND"};
+        frame.columns.push_back(std::move(col));
         IDataBus::EventBatch batch;
         batch.root_source = "TEST:STRPV";
         batch.frames.push_back(std::move(frame));
@@ -257,17 +247,17 @@ TEST_F(HDF5WriterTest, DoubleArrayColumnWrittenAs2DDataset)
 
     constexpr int kArrayLen = 4;
 
-    dp::service::common::DataFrame frame;
-    auto*                          ts = frame.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
-    ts->set_epochseconds(1700000000);
-    ts->set_nanoseconds(0);
-
-    auto* col = frame.add_doublearraycolumns();
-    col->set_name("WAVEFORM");
-    col->mutable_dimensions()->add_dims(kArrayLen);
-    for (int i = 0; i < kArrayLen; ++i)
-        col->add_values(static_cast<double>(i) * 1.5);
-
+    DataBatch frame;
+    DataColumn col;
+    frame.timestamps.push_back({1700000000, 0});
+    col.name   = "WAVEFORM";
+    col.values = std::vector<std::vector<double>>{std::vector<double>(kArrayLen)};
+    {
+        auto& inner = std::get<std::vector<std::vector<double>>>(col.values)[0];
+        for (int i = 0; i < kArrayLen; ++i) inner[i] = static_cast<double>(i) * 1.5;
+    }
+    frame.array_dims["WAVEFORM"] = ArrayDims{{static_cast<uint32_t>(kArrayLen)}};
+    frame.columns.push_back(std::move(col));
     IDataBus::EventBatch batch;
     batch.root_source = "TEST:WAVE";
     batch.frames.push_back(std::move(frame));
@@ -306,15 +296,15 @@ TEST_F(HDF5WriterTest, DoubleArrayColumnGrowsRowsAcrossUpdates)
 
     for (int f = 0; f < kNumFrames; ++f)
     {
-        dp::service::common::DataFrame frame;
-        auto*                          ts = frame.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
-        ts->set_epochseconds(1700000000 + f);
-        ts->set_nanoseconds(0);
-        auto* col = frame.add_doublearraycolumns();
-        col->set_name("WAVEFORM");
-        col->mutable_dimensions()->add_dims(kArrayLen);
-        for (int i = 0; i < kArrayLen; ++i)
-            col->add_values(static_cast<double>(f * kArrayLen + i));
+        DataBatch frame;
+        DataColumn col;
+        frame.timestamps.push_back({static_cast<uint64_t>(1700000000 + f), 0});
+        col.name = "WAVEFORM";
+        std::vector<double> inner(kArrayLen);
+        for (int i = 0; i < kArrayLen; ++i) inner[i] = static_cast<double>(f * kArrayLen + i);
+        col.values = std::vector<std::vector<double>>{std::move(inner)};
+        frame.array_dims["WAVEFORM"] = ArrayDims{{static_cast<uint32_t>(kArrayLen)}};
+        frame.columns.push_back(std::move(col));
         IDataBus::EventBatch batch;
         batch.root_source = "TEST:WAVEGROW";
         batch.frames.push_back(std::move(frame));
@@ -343,17 +333,15 @@ TEST_F(HDF5WriterTest, FloatArrayColumnWrittenAs2DDataset)
 
     constexpr int kArrayLen = 8;
 
-    dp::service::common::DataFrame frame;
-    auto*                          ts = frame.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
-    ts->set_epochseconds(1700000000);
-    ts->set_nanoseconds(0);
-
-    auto* col = frame.add_floatarraycolumns();
-    col->set_name("FLOATWAVE");
-    col->mutable_dimensions()->add_dims(kArrayLen);
-    for (int i = 0; i < kArrayLen; ++i)
-        col->add_values(static_cast<float>(i) * 0.5f);
-
+    DataBatch frame;
+    DataColumn col;
+    frame.timestamps.push_back({1700000000, 0});
+    col.name = "FLOATWAVE";
+    std::vector<float> inner(kArrayLen);
+    for (int i = 0; i < kArrayLen; ++i) inner[i] = static_cast<float>(i) * 0.5f;
+    col.values = std::vector<std::vector<float>>{std::move(inner)};
+    frame.array_dims["FLOATWAVE"] = ArrayDims{{static_cast<uint32_t>(kArrayLen)}};
+    frame.columns.push_back(std::move(col));
     IDataBus::EventBatch batch;
     batch.root_source = "TEST:FWAVE";
     batch.frames.push_back(std::move(frame));
@@ -382,17 +370,15 @@ TEST_F(HDF5WriterTest, Int32ArrayColumnWrittenAs2DDataset)
 
     constexpr int kArrayLen = 6;
 
-    dp::service::common::DataFrame frame;
-    auto*                          ts = frame.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
-    ts->set_epochseconds(1700000000);
-    ts->set_nanoseconds(0);
-
-    auto* col = frame.add_int32arraycolumns();
-    col->set_name("INTWAVE");
-    col->mutable_dimensions()->add_dims(kArrayLen);
-    for (int i = 0; i < kArrayLen; ++i)
-        col->add_values(i * 10);
-
+    DataBatch frame;
+    DataColumn col;
+    frame.timestamps.push_back({1700000000, 0});
+    col.name = "INTWAVE";
+    std::vector<int32_t> inner(kArrayLen);
+    for (int i = 0; i < kArrayLen; ++i) inner[i] = i * 10;
+    col.values = std::vector<std::vector<int32_t>>{std::move(inner)};
+    frame.array_dims["INTWAVE"] = ArrayDims{{static_cast<uint32_t>(kArrayLen)}};
+    frame.columns.push_back(std::move(col));
     IDataBus::EventBatch batch;
     batch.root_source = "TEST:IWAVE";
     batch.frames.push_back(std::move(frame));
@@ -428,14 +414,12 @@ TEST_F(HDF5WriterTest, DoubleColumnDataReadBack)
     HDF5Writer w(makeConfig());
     w.start();
 
-    dp::service::common::DataFrame frame;
-    auto*                          ts = frame.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
-    ts->set_epochseconds(1700000000);
-    ts->set_nanoseconds(500000000);
-
-    auto* col = frame.add_doublecolumns();
-    col->set_name("VOLTAGE");
-    col->add_values(1.23);
+    DataBatch frame;
+    DataColumn col;
+    frame.timestamps.push_back({1700000000, 500000000});
+    col.name   = "VOLTAGE";
+    col.values = std::vector<double>{1.23};
+    frame.columns.push_back(std::move(col));
 
     IDataBus::EventBatch batch;
     batch.root_source = "TEST:DBLREADBACK";
@@ -462,14 +446,12 @@ TEST_F(HDF5WriterTest, FloatColumnWrittenAndReadBack)
     HDF5Writer w(makeConfig());
     w.start();
 
-    dp::service::common::DataFrame frame;
-    auto*                          ts = frame.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
-    ts->set_epochseconds(1700000001);
-    ts->set_nanoseconds(0);
-
-    auto* col = frame.add_floatcolumns();
-    col->set_name("TEMP");
-    col->add_values(3.14f);
+    DataBatch frame;
+    DataColumn col;
+    frame.timestamps.push_back({1700000001, 0});
+    col.name   = "TEMP";
+    col.values = std::vector<float>{3.14f};
+    frame.columns.push_back(std::move(col));
 
     IDataBus::EventBatch batch;
     batch.root_source = "TEST:FLTREADBACK";
@@ -501,14 +483,12 @@ TEST_F(HDF5WriterTest, Int32ColumnWrittenAndReadBack)
     HDF5Writer w(makeConfig());
     w.start();
 
-    dp::service::common::DataFrame frame;
-    auto*                          ts = frame.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
-    ts->set_epochseconds(1700000002);
-    ts->set_nanoseconds(0);
-
-    auto* col = frame.add_int32columns();
-    col->set_name("COUNTER");
-    col->add_values(42);
+    DataBatch frame;
+    DataColumn col;
+    frame.timestamps.push_back({1700000002, 0});
+    col.name   = "COUNTER";
+    col.values = std::vector<int32_t>{42};
+    frame.columns.push_back(std::move(col));
 
     IDataBus::EventBatch batch;
     batch.root_source = "TEST:I32READBACK";
@@ -540,14 +520,12 @@ TEST_F(HDF5WriterTest, Int64ColumnWrittenAndReadBack)
     HDF5Writer w(makeConfig());
     w.start();
 
-    dp::service::common::DataFrame frame;
-    auto*                          ts = frame.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
-    ts->set_epochseconds(1700000003);
-    ts->set_nanoseconds(0);
-
-    auto* col = frame.add_int64columns();
-    col->set_name("BIGVAL");
-    col->add_values(9876543210LL);
+    DataBatch frame;
+    DataColumn col;
+    frame.timestamps.push_back({1700000003, 0});
+    col.name   = "BIGVAL";
+    col.values = std::vector<int64_t>{9876543210LL};
+    frame.columns.push_back(std::move(col));
 
     IDataBus::EventBatch batch;
     batch.root_source = "TEST:I64READBACK";
@@ -579,14 +557,12 @@ TEST_F(HDF5WriterTest, BoolColumnWrittenAndReadBack)
     HDF5Writer w(makeConfig());
     w.start();
 
-    dp::service::common::DataFrame frame;
-    auto*                          ts = frame.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
-    ts->set_epochseconds(1700000004);
-    ts->set_nanoseconds(0);
-
-    auto* col = frame.add_boolcolumns();
-    col->set_name("ENABLED");
-    col->add_values(true);
+    DataBatch frame;
+    DataColumn col;
+    frame.timestamps.push_back({1700000004, 0});
+    col.name   = "ENABLED";
+    col.values = std::vector<bool>{true};
+    frame.columns.push_back(std::move(col));
 
     IDataBus::EventBatch batch;
     batch.root_source = "TEST:BOOLREADBACK";
@@ -621,14 +597,12 @@ TEST_F(HDF5WriterTest, TimestampDatasetWrittenAndReadBack)
     constexpr int64_t kEpochSec = 1700000005;
     constexpr int64_t kNanos = 123456789;
 
-    dp::service::common::DataFrame frame;
-    auto*                          ts = frame.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
-    ts->set_epochseconds(kEpochSec);
-    ts->set_nanoseconds(static_cast<uint32_t>(kNanos));
-
-    auto* col = frame.add_doublecolumns();
-    col->set_name("DUMMY");
-    col->add_values(0.0);
+    DataBatch frame;
+    DataColumn col;
+    frame.timestamps.push_back({static_cast<uint64_t>(kEpochSec), static_cast<uint64_t>(kNanos)});
+    col.name   = "DUMMY";
+    col.values = std::vector<double>{0.0};
+    frame.columns.push_back(std::move(col));
 
     IDataBus::EventBatch batch;
     batch.root_source = "TEST:TSREADBACK";
@@ -667,16 +641,15 @@ TEST_F(HDF5WriterTest, FloatArrayColumnValuesReadBack)
 
     constexpr int kArrayLen = 4;
 
-    dp::service::common::DataFrame frame;
-    auto*                          ts = frame.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
-    ts->set_epochseconds(1700000006);
-    ts->set_nanoseconds(0);
-
-    auto* col = frame.add_floatarraycolumns();
-    col->set_name("FWAVE_VALS");
-    col->mutable_dimensions()->add_dims(kArrayLen);
-    for (int i = 0; i < kArrayLen; ++i)
-        col->add_values(static_cast<float>(i) * 2.5f);
+    DataBatch frame;
+    DataColumn col;
+    frame.timestamps.push_back({1700000006, 0});
+    col.name = "FWAVE_VALS";
+    std::vector<float> finner(kArrayLen);
+    for (int i = 0; i < kArrayLen; ++i) finner[i] = static_cast<float>(i) * 2.5f;
+    col.values = std::vector<std::vector<float>>{std::move(finner)};
+    frame.array_dims["FWAVE_VALS"] = ArrayDims{{static_cast<uint32_t>(kArrayLen)}};
+    frame.columns.push_back(std::move(col));
 
     IDataBus::EventBatch batch;
     batch.root_source = "TEST:FWAVEVALS";
@@ -716,16 +689,15 @@ TEST_F(HDF5WriterTest, Int64ArrayColumnWrittenAs2DDataset)
 
     constexpr int kArrayLen = 5;
 
-    dp::service::common::DataFrame frame;
-    auto*                          ts = frame.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
-    ts->set_epochseconds(1700000007);
-    ts->set_nanoseconds(0);
-
-    auto* col = frame.add_int64arraycolumns();
-    col->set_name("BIGWAVE");
-    col->mutable_dimensions()->add_dims(kArrayLen);
-    for (int i = 0; i < kArrayLen; ++i)
-        col->add_values(static_cast<int64_t>(i) * 1000000000LL);
+    DataBatch frame;
+    DataColumn col;
+    frame.timestamps.push_back({1700000007, 0});
+    col.name = "BIGWAVE";
+    std::vector<int64_t> i64inner(kArrayLen);
+    for (int i = 0; i < kArrayLen; ++i) i64inner[i] = static_cast<int64_t>(i) * 1000000000LL;
+    col.values = std::vector<std::vector<int64_t>>{std::move(i64inner)};
+    frame.array_dims["BIGWAVE"] = ArrayDims{{static_cast<uint32_t>(kArrayLen)}};
+    frame.columns.push_back(std::move(col));
 
     IDataBus::EventBatch batch;
     batch.root_source = "TEST:I64WAVE";
@@ -763,19 +735,14 @@ TEST_F(HDF5WriterTest, Int64ArrayColumnWrittenAs2DDataset)
 // batch, so the timestamps dataset has exactly kRows rows (not kRows × nCols).
 // ---------------------------------------------------------------------------
 
-// Build a DataFrame with the given timestamps and an addColumn callback.
-static dp::service::common::DataFrame makeBsasFrame(
+// Build a DataBatch with the given timestamps and an addColumn callback.
+static DataBatch makeBsasFrame(
     const std::vector<std::pair<int64_t, uint32_t>>&     timestamps,
-    std::function<void(dp::service::common::DataFrame&)> addColumn)
+    std::function<void(DataBatch&)> addColumn)
 {
-    dp::service::common::DataFrame frame;
-    auto*                          tsList = frame.mutable_datatimestamps()->mutable_timestamplist();
+    DataBatch frame;
     for (const auto& [sec, ns] : timestamps)
-    {
-        auto* ts = tsList->add_timestamps();
-        ts->set_epochseconds(sec);
-        ts->set_nanoseconds(ns);
-    }
+        frame.timestamps.push_back({static_cast<uint64_t>(sec), static_cast<uint64_t>(ns)});
     addColumn(frame);
     return frame;
 }
@@ -801,26 +768,26 @@ TEST_F(HDF5WriterTest, BsasSplitColumnTimestampsWrittenOnce)
     IDataBus::EventBatch batch;
     batch.root_source = kSource;
 
-    batch.frames.push_back(makeBsasFrame(ts, [](dp::service::common::DataFrame& f)
+    batch.frames.push_back(makeBsasFrame(ts, [](DataBatch& f)
                                          {
-                                             auto* col = f.add_doublecolumns();
-                                             col->set_name("PV_A");
-                                             for (int i = 0; i < 3; ++i)
-                                                 col->add_values(1.0 + i);
+                                             DataColumn col;
+                                             col.name   = "PV_A";
+                                             col.values = std::vector<double>{1.0, 2.0, 3.0};
+                                             f.columns.push_back(std::move(col));
                                          }));
-    batch.frames.push_back(makeBsasFrame(ts, [](dp::service::common::DataFrame& f)
+    batch.frames.push_back(makeBsasFrame(ts, [](DataBatch& f)
                                          {
-                                             auto* col = f.add_int32columns();
-                                             col->set_name("PV_B");
-                                             for (int i = 0; i < 3; ++i)
-                                                 col->add_values(10 + i);
+                                             DataColumn col;
+                                             col.name   = "PV_B";
+                                             col.values = std::vector<int32_t>{10, 11, 12};
+                                             f.columns.push_back(std::move(col));
                                          }));
-    batch.frames.push_back(makeBsasFrame(ts, [](dp::service::common::DataFrame& f)
+    batch.frames.push_back(makeBsasFrame(ts, [](DataBatch& f)
                                          {
-                                             auto* col = f.add_floatcolumns();
-                                             col->set_name("PV_C");
-                                             for (int i = 0; i < 3; ++i)
-                                                 col->add_values(2.5f + static_cast<float>(i));
+                                             DataColumn col;
+                                             col.name   = "PV_C";
+                                             col.values = std::vector<float>{2.5f, 3.5f, 4.5f};
+                                             f.columns.push_back(std::move(col));
                                          }));
 
     HDF5Writer w(makeConfig());
@@ -900,19 +867,23 @@ TEST_F(HDF5WriterTest, BsasTwoUpdatesTimestampsGrow)
     {
         IDataBus::EventBatch batch;
         batch.root_source = kSource;
-        batch.frames.push_back(makeBsasFrame(ts1, [kRows](dp::service::common::DataFrame& f)
+        batch.frames.push_back(makeBsasFrame(ts1, [kRows](DataBatch& f)
                                              {
-                                                 auto* col = f.add_doublecolumns();
-                                                 col->set_name("PV_A");
-                                                 for (int i = 0; i < kRows; ++i)
-                                                     col->add_values(static_cast<double>(i));
+                                                 DataColumn col;
+                                                 col.name = "PV_A";
+                                                 std::vector<double> v(kRows);
+                                                 for (int i = 0; i < kRows; ++i) v[i] = static_cast<double>(i);
+                                                 col.values = std::move(v);
+                                                 f.columns.push_back(std::move(col));
                                              }));
-        batch.frames.push_back(makeBsasFrame(ts1, [kRows](dp::service::common::DataFrame& f)
+        batch.frames.push_back(makeBsasFrame(ts1, [kRows](DataBatch& f)
                                              {
-                                                 auto* col = f.add_int32columns();
-                                                 col->set_name("PV_B");
-                                                 for (int i = 0; i < kRows; ++i)
-                                                     col->add_values(i);
+                                                 DataColumn col;
+                                                 col.name = "PV_B";
+                                                 std::vector<int32_t> v(kRows);
+                                                 for (int i = 0; i < kRows; ++i) v[i] = i;
+                                                 col.values = std::move(v);
+                                                 f.columns.push_back(std::move(col));
                                              }));
         w.push(std::move(batch));
     }
@@ -921,19 +892,23 @@ TEST_F(HDF5WriterTest, BsasTwoUpdatesTimestampsGrow)
     {
         IDataBus::EventBatch batch;
         batch.root_source = kSource;
-        batch.frames.push_back(makeBsasFrame(ts2, [kRows](dp::service::common::DataFrame& f)
+        batch.frames.push_back(makeBsasFrame(ts2, [kRows](DataBatch& f)
                                              {
-                                                 auto* col = f.add_doublecolumns();
-                                                 col->set_name("PV_A");
-                                                 for (int i = 0; i < kRows; ++i)
-                                                     col->add_values(10.0 + i);
+                                                 DataColumn col;
+                                                 col.name = "PV_A";
+                                                 std::vector<double> v(kRows);
+                                                 for (int i = 0; i < kRows; ++i) v[i] = 10.0 + i;
+                                                 col.values = std::move(v);
+                                                 f.columns.push_back(std::move(col));
                                              }));
-        batch.frames.push_back(makeBsasFrame(ts2, [kRows](dp::service::common::DataFrame& f)
+        batch.frames.push_back(makeBsasFrame(ts2, [kRows](DataBatch& f)
                                              {
-                                                 auto* col = f.add_int32columns();
-                                                 col->set_name("PV_B");
-                                                 for (int i = 0; i < kRows; ++i)
-                                                     col->add_values(100 + i);
+                                                 DataColumn col;
+                                                 col.name = "PV_B";
+                                                 std::vector<int32_t> v(kRows);
+                                                 for (int i = 0; i < kRows; ++i) v[i] = 100 + i;
+                                                 col.values = std::move(v);
+                                                 f.columns.push_back(std::move(col));
                                              }));
         w.push(std::move(batch));
     }
@@ -988,24 +963,24 @@ TEST_F(HDF5WriterTest, BsasCoincidentalSameTimestampsNotDeduped)
     {
         IDataBus::EventBatch batch;
         batch.root_source = kSource;
-        batch.frames.push_back(makeBsasFrame(sameTs, [kRows](dp::service::common::DataFrame& f)
+        batch.frames.push_back(makeBsasFrame(sameTs, [kRows](DataBatch& f)
                                              {
-                                                 auto* col = f.add_doublecolumns();
-                                                 col->set_name("PV_A");
-                                                 for (int i = 0; i < kRows; ++i)
-                                                     col->add_values(1.0);
+                                                 DataColumn col;
+                                                 col.name = "PV_A";
+                                                 col.values = std::vector<double>(kRows, 1.0);
+                                                 f.columns.push_back(std::move(col));
                                              }));
         w.push(std::move(batch));
     }
     {
         IDataBus::EventBatch batch;
         batch.root_source = kSource;
-        batch.frames.push_back(makeBsasFrame(sameTs, [kRows](dp::service::common::DataFrame& f)
+        batch.frames.push_back(makeBsasFrame(sameTs, [kRows](DataBatch& f)
                                              {
-                                                 auto* col = f.add_int32columns();
-                                                 col->set_name("PV_B");
-                                                 for (int i = 0; i < kRows; ++i)
-                                                     col->add_values(42);
+                                                 DataColumn col;
+                                                 col.name = "PV_B";
+                                                 col.values = std::vector<int32_t>(kRows, 42);
+                                                 f.columns.push_back(std::move(col));
                                              }));
         w.push(std::move(batch));
     }
@@ -1066,21 +1041,16 @@ static IDataBus::EventBatch makeNTTableBatch(
 
     for (std::size_t ci = 0; ci < colNames.size(); ++ci)
     {
-        dp::service::common::DataFrame frame;
+        DataBatch frame;
 
         // Every frame carries the full timestamp list (reader produces it per frame).
-        auto* tsList = frame.mutable_datatimestamps()->mutable_timestamplist();
         for (int r = 0; r < nRows; ++r)
-        {
-            auto* ts = tsList->add_timestamps();
-            ts->set_epochseconds(static_cast<uint64_t>(epochSec));
-            ts->set_nanoseconds(static_cast<uint64_t>(epochNs + r));
-        }
+            frame.timestamps.push_back({static_cast<uint64_t>(epochSec), static_cast<uint64_t>(epochNs + r)});
 
-        auto* col = frame.add_doublecolumns();
-        col->set_name(colNames[ci]);
-        for (int r = 0; r < nRows; ++r)
-            col->add_values(colValues[ci][static_cast<std::size_t>(r)]);
+        DataColumn col;
+        col.name = colNames[ci];
+        col.values = colValues[ci]; // std::vector<double> directly
+        frame.columns.push_back(std::move(col));
 
         batch.frames.push_back(std::move(frame));
     }
@@ -1103,35 +1073,29 @@ static IDataBus::EventBatch makeNTTableBatchMixed(
 
     // Frame 1: double column "DBL_COL"
     {
-        dp::service::common::DataFrame frame;
-        auto*                          tsList = frame.mutable_datatimestamps()->mutable_timestamplist();
+        DataBatch frame;
         for (int r = 0; r < nRows; ++r)
-        {
-            auto* ts = tsList->add_timestamps();
-            ts->set_epochseconds(static_cast<uint64_t>(epochSec));
-            ts->set_nanoseconds(static_cast<uint64_t>(epochNs + r));
-        }
-        auto* col = frame.add_doublecolumns();
-        col->set_name("DBL_COL");
-        for (int r = 0; r < nRows; ++r)
-            col->add_values(static_cast<double>(r) * 1.5);
+            frame.timestamps.push_back({static_cast<uint64_t>(epochSec), static_cast<uint64_t>(epochNs + r)});
+        DataColumn col;
+        col.name = "DBL_COL";
+        std::vector<double> v(nRows);
+        for (int r = 0; r < nRows; ++r) v[r] = static_cast<double>(r) * 1.5;
+        col.values = std::move(v);
+        frame.columns.push_back(std::move(col));
         batch.frames.push_back(std::move(frame));
     }
 
     // Frame 2: int32 column "INT_COL"
     {
-        dp::service::common::DataFrame frame;
-        auto*                          tsList = frame.mutable_datatimestamps()->mutable_timestamplist();
+        DataBatch frame;
         for (int r = 0; r < nRows; ++r)
-        {
-            auto* ts = tsList->add_timestamps();
-            ts->set_epochseconds(static_cast<uint64_t>(epochSec));
-            ts->set_nanoseconds(static_cast<uint64_t>(epochNs + r));
-        }
-        auto* col = frame.add_int32columns();
-        col->set_name("INT_COL");
-        for (int r = 0; r < nRows; ++r)
-            col->add_values(r * 10);
+            frame.timestamps.push_back({static_cast<uint64_t>(epochSec), static_cast<uint64_t>(epochNs + r)});
+        DataColumn col;
+        col.name = "INT_COL";
+        std::vector<int32_t> v(nRows);
+        for (int r = 0; r < nRows; ++r) v[r] = r * 10;
+        col.values = std::move(v);
+        frame.columns.push_back(std::move(col));
         batch.frames.push_back(std::move(frame));
     }
 
@@ -1363,15 +1327,12 @@ TEST_F(HDF5WriterTest, NonNTTableBatchUsesColumnarLayout)
     HDF5Writer w(makeConfig());
     w.start();
 
-    dp::service::common::DataFrame frame;
-    auto*                          tsList = frame.mutable_datatimestamps()->mutable_timestamplist();
-    auto*                          ts = tsList->add_timestamps();
-    ts->set_epochseconds(1700000001);
-    ts->set_nanoseconds(0);
-    auto* col = frame.add_doublecolumns();
-    col->set_name("SCALAR");
-    col->add_values(9.9);
-
+    DataBatch frame;
+    DataColumn col;
+    frame.timestamps.push_back({1700000001, 0});
+    col.name   = "SCALAR";
+    col.values = std::vector<double>{9.9};
+    frame.columns.push_back(std::move(col));
     IDataBus::EventBatch batch;
     batch.root_source = "SCALAR:PV";
     // No tags — or tags != root_source → columnar.

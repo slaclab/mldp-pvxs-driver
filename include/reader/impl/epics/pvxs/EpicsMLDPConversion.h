@@ -10,28 +10,40 @@
 
 /**
  * @file EpicsMLDPConversion.h
- * @brief Conversion utilities for transforming PVXS values to MLDP protobuf DataFrame format.
+ * @brief Conversion utilities for transforming PVXS values to MLDP DataBatch format.
  *
  * This header provides the EpicsMLDPConversion class which handles the conversion
- * of EPICS PVXS data types to the MLDP ingestion protobuf DataFrame columnar format.
+ * of EPICS PVXS data types to the MLDP bus DataBatch columnar format.
  */
 
 #pragma once
 
-#include <ingestion.grpc.pb.h>
 #include <pvxs/client.h>
 #include <pvxs/nt.h>
 #include <string>
+#include <util/bus/DataBatch.h>
 
 namespace mldp_pvxs_driver::reader::impl::epics {
 
 /**
- * @brief Utility class for converting PVXS values to MLDP protobuf DataFrame format.
+ * @brief Utility class for converting PVXS values to MLDP DataBatch format.
  *
  * This class provides static methods to convert EPICS PV Access (PVXS) data structures
- * into typed DataFrame columns used by the MLDP ingestion service. The conversion
- * handles various EPICS data types including scalars, arrays, and structured types,
- * mapping each to the appropriate strongly-typed column (DoubleColumn, Int32Column, etc.).
+ * into typed DataBatch columns used by the MLDP bus. The conversion handles various
+ * EPICS data types including scalars, arrays, and structured types, mapping each to
+ * the appropriate strongly-typed ColumnValues variant.
+ *
+ * Type mapping:
+ * - Bool / BoolA          → std::vector<bool> / std::vector<std::vector<bool>>
+ * - Int8/16/32 / arrays   → std::vector<int32_t> / std::vector<std::vector<int32_t>>
+ * - Int64 / array         → std::vector<int64_t> / std::vector<std::vector<int64_t>>
+ * - UInt8/16/32 / arrays  → std::vector<int32_t> / std::vector<std::vector<int32_t>> (reinterpreted)
+ * - UInt64 / array        → std::vector<int64_t> / std::vector<std::vector<int64_t>> (reinterpreted)
+ * - Float32 / array       → std::vector<float> / std::vector<std::vector<float>>
+ * - Float64 / array       → std::vector<double> / std::vector<std::vector<double>>
+ * - String / StringA      → std::vector<std::string> (array dims recorded for StringA)
+ * - Struct/Union/Any      → recursive sub-columns with dotted names
+ * - Null                  → std::vector<std::string>{"null"}
  *
  * @note This class is designed for use with the PVXS library. For EPICS Base (pvData)
  *       conversions, see EpicsPVDataConversion.
@@ -43,36 +55,26 @@ class EpicsMLDPConversion
 {
 public:
     /**
-     * @brief Convert a PVXS value into a typed column appended to a DataFrame.
+     * @brief Convert a PVXS value into typed column(s) appended to a DataBatch.
      *
-     * Appends one typed column (or a set of sub-columns for compound types) to the
-     * given DataFrame. Scalar PVXS types produce a single-element column; array types
-     * produce a multi-element column; compound (Struct/Union/Any) types are expanded
-     * recursively into sub-columns named @p columnName.fieldName.
-     *
-     * Type mapping:
-     * - Bool / BoolA        → BoolColumn
-     * - Int8/16/32 / arrays → Int32Column
-     * - Int64 / array       → Int64Column
-     * - UInt8/16/32 / arrays→ Int32Column (reinterpreted as signed)
-     * - UInt64 / array      → Int64Column (reinterpreted as signed)
-     * - Float32 / array     → FloatColumn
-     * - Float64 / array     → DoubleColumn
-     * - String / array      → StringColumn
-     * - Struct/Union/Any    → recursive sub-columns
-     * - Null                → StringColumn with value "null"
+     * Appends one DataColumn (or a set of sub-columns for compound types) to the
+     * given DataBatch. Scalar PVXS types produce a single-element column; array
+     * types produce a vector-of-vectors column (one inner vector per sample) and
+     * record the array shape in @p batch->array_dims; compound (Struct/Union/Any)
+     * types are expanded recursively into sub-columns named @p columnName.fieldName.
      *
      * @param[in]  pvValue    The PVXS value to convert.
-     * @param[out] frame      DataFrame to which the typed column(s) will be appended.
-     *                        Must not be null.
+     * @param[out] batch      DataBatch to which the typed column(s) will be appended.
+     *                        Must not be null. The caller is responsible for setting
+     *                        timestamps before or after this call.
      * @param[in]  columnName Name assigned to the appended column (default: "value").
      *
-     * @pre @p frame must point to a valid, initialized DataFrame.
-     * @post On return, @p frame contains at least one additional typed column.
+     * @pre @p batch must point to a valid, initialized DataBatch.
+     * @post On return, @p batch contains at least one additional DataColumn.
      */
-    static void convertPVToDataFrame(const pvxs::Value&              pvValue,
-                                     dp::service::common::DataFrame* frame,
-                                     const std::string&              columnName = "value");
+    static void convertPVToDataBatch(const pvxs::Value&        pvValue,
+                                     util::bus::DataBatch*     batch,
+                                     const std::string&        columnName = "value");
 };
 
 } // namespace mldp_pvxs_driver::reader::impl::epics

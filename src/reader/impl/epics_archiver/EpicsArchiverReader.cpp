@@ -41,11 +41,9 @@ namespace {
 
 constexpr const char* kArchiverPbRawPath = "/retrieval/data/getData.raw";
 
-bool hasTimestampList(const dp::service::common::DataFrame& frame)
+bool hasTimestamps(const DataBatch& batch)
 {
-    return frame.has_datatimestamps() &&
-           frame.datatimestamps().has_timestamplist() &&
-           frame.datatimestamps().timestamplist().timestamps_size() > 0;
+    return !batch.timestamps.empty();
 }
 
 std::string buildArchiverUrl(const EpicsArchiverReaderConfig&  cfg,
@@ -332,9 +330,9 @@ void EpicsArchiverReader::flushChunk(PbChunkState& state)
         batch.tags.push_back(batch.root_source);
         for (auto& frame : state.events)
         {
-            if (!hasTimestampList(frame))
+            if (!hasTimestamps(frame))
             {
-                errorf(*logger_, "Dropping archiver frame without timestamps for root source {}", batch.root_source);
+                errorf(*logger_, "Dropping archiver batch without timestamps for root source {}", batch.root_source);
                 metric_call(metrics_, [&](auto& m)
                             {
                                 m.incrementReaderErrors(1.0, source_tag);
@@ -482,7 +480,7 @@ void EpicsArchiverReader::parsePbHttpLineIntoState(const std::string& line, PbCh
     // appending it, so the sample that crosses the threshold belongs to the
     // new batch.
     splitBatchIfHistoricalWindowExceeded(state, parsed.epoch_seconds, parsed.nanoseconds);
-    state.events.emplace_back(std::move(parsed.frame));
+    state.events.emplace_back(std::move(parsed.batch));
 }
 
 void EpicsArchiverReader::fetchConfiguredPVs()

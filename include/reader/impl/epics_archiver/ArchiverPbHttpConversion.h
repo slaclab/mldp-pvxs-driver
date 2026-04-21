@@ -14,14 +14,14 @@
  *
  * Provides a static-only utility class that parses serialised protobuf samples
  * from the EPICS Archiver Appliance PB/HTTP protocol into the internal
- * DataFrame format used by the event bus. All 15 payload types defined in
+ * DataBatch format used by the event bus. All 15 payload types defined in
  * EPICSEvent.proto are supported.
  */
 
 #pragma once
 
 #include <EPICSEvent.pb.h>
-#include <util/bus/IDataBus.h>
+#include <util/bus/DataBatch.h>
 
 #include <cstdint>
 #include <string>
@@ -33,9 +33,9 @@ namespace mldp_pvxs_driver::reader::impl::epics_archiver {
  */
 struct ParsedSample
 {
-    uint64_t                       epoch_seconds; ///< UNIX epoch seconds of the sample.
-    uint32_t                       nanoseconds;   ///< Sub-second nanoseconds of the sample.
-    dp::service::common::DataFrame frame;         ///< Converted frame payload (includes timestamp list).
+    uint64_t             epoch_seconds; ///< UNIX epoch seconds of the sample.
+    uint32_t             nanoseconds;   ///< Sub-second nanoseconds of the sample.
+    util::bus::DataBatch batch;         ///< Converted batch payload (includes timestamp list).
 };
 
 /**

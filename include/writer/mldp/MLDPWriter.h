@@ -11,6 +11,7 @@
 #pragma once
 
 #include <config/Config.h>
+#include <util/bus/DataBatch.h>
 #include <writer/IWriter.h>
 #include <writer/WriterFactory.h>
 #include <writer/mldp/MLDPWriterConfig.h>
@@ -85,7 +86,7 @@ private:
     {
         std::string                                     root_source;
         std::shared_ptr<const std::vector<std::string>> tags;
-        dp::service::common::DataFrame                  frame;
+        util::bus::DataBatch                            frame;
     };
 
     /// Per-worker channel: each worker has its own deque.
@@ -110,11 +111,12 @@ private:
 
     void workerLoop(std::size_t workerIndex);
     bool buildRequest(const std::string&                         sourceName,
-                      const dp::service::common::DataFrame&      frame,
+                      const util::bus::DataBatch&                batch,
                       const std::string&                         requestId,
                       dp::service::ingestion::IngestDataRequest& request,
                       std::size_t&                               acceptedEvents,
                       std::size_t&                               payloadBytes);
+    static dp::service::common::DataFrame toDataFrame(const util::bus::DataBatch& batch);
     void updateQueueDepthMetric();
 };
 

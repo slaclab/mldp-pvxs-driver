@@ -12,30 +12,32 @@
 #include <reader/impl/epics/pvxs/EpicsMLDPConversion.h>
 
 using namespace mldp_pvxs_driver::reader::impl::epics;
-using DataFrame = dp::service::common::DataFrame;
+using namespace mldp_pvxs_driver::util::bus;
 
 /*
- * Conversion flow (single PV field -> DataFrame columns):
+ * Conversion flow (single PV field -> DataBatch columns):
  * 1) Inspect pvValue.type().code and dispatch by PVXS type family.
- * 2) Scalars map to one typed scalar column with one value.
- * 3) Scalar arrays map to one typed array column preserving full array payload.
+ * 2) Scalars map to one DataColumn with a single-element typed vector.
+ * 3) Scalar arrays map to one DataColumn with a vector-of-vectors (one inner
+ *    vector containing the full array), with dims recorded in array_dims.
  * 4) Compound values recurse into children using dotted names:
  *      parent.child[.grandchild...]
  * 5) Null values are represented as a string column with literal "null".
  *
  * Notes:
- * - Unsigned integers are normalized into signed MLDP column types:
- *   UInt8/16/32 -> Int32, UInt64 -> Int64 (same rule for arrays).
- * - String arrays are encoded as DataColumn/ArrayValue to preserve nested semantics.
+ * - Unsigned integers are normalized into signed ColumnValues types:
+ *   UInt8/16/32 -> int32_t, UInt64 -> int64_t (same rule for arrays).
+ * - StringA is stored as std::vector<std::string> with array_dims recorded so
+ *   downstream consumers can distinguish scalar-string from string-array columns.
  */
-void EpicsMLDPConversion::convertPVToDataFrame(const pvxs::Value& pvValue,
-                                               DataFrame*         frame,
+void EpicsMLDPConversion::convertPVToDataBatch(const pvxs::Value& pvValue,
+                                               DataBatch*         batch,
                                                const std::string& columnName)
 {
     // For compound types, recursively expand children as sub-columns named
     // "columnName.fieldName".
     static const auto structSetter = [](const pvxs::Value& structValue,
-                                        DataFrame*         df,
+                                        DataBatch*         db,
                                         const std::string& name)
     {
         for (const auto& member : structValue.ichildren())
@@ -45,208 +47,156 @@ void EpicsMLDPConversion::convertPVToDataFrame(const pvxs::Value& pvValue,
                 continue;
             }
             const std::string subName = name + "." + std::string(structValue.nameOf(member));
-            convertPVToDataFrame(member, df, subName);
+            convertPVToDataBatch(member, db, subName);
         }
     };
 
-    // Templated helpers to keep switch cases as compact type-dispatch only.
-    const auto scalarIdentity = [](auto value)
+    // Helper: append a scalar DataColumn with a single-element vector.
+    const auto appendScalarColumn = [&](ColumnValues values)
     {
-        return value;
+        DataColumn col;
+        col.name   = columnName;
+        col.values = std::move(values);
+        batch->columns.push_back(std::move(col));
     };
 
-    const auto writeScalarColumn = [&]<typename PvType>(auto&& addColumn,
-                                                        auto&& mapValue)
+    // Helper: append an array DataColumn with a vector-of-one-inner-vector and
+    // record dims in array_dims.
+    const auto appendArrayColumn = [&](ColumnValues values, uint32_t size)
     {
-        auto* c = addColumn();
-        c->set_name(columnName);
-        c->add_values(mapValue(pvValue.as<PvType>()));
-    };
-
-    const auto writeArrayColumn = [&]<typename PvType>(auto&& addColumn,
-                                                       auto&& appendValue)
-    {
-        const auto arr = pvValue.as<pvxs::shared_array<const PvType>>();
-        auto*      c = addColumn();
-        c->set_name(columnName);
-        c->mutable_dimensions()->add_dims(static_cast<uint32_t>(arr.size()));
-        c->mutable_values()->Reserve(static_cast<int>(arr.size()));
-        for (const auto& v : arr)
-        {
-            appendValue(c, v);
-        }
+        DataColumn col;
+        col.name   = columnName;
+        col.values = std::move(values);
+        batch->columns.push_back(std::move(col));
+        batch->array_dims[columnName] = ArrayDims{{size}};
     };
 
     switch (pvValue.type().code)
     {
     // --- Scalar primitives --------------------------------------------------
     case pvxs::TypeCode::Bool:
-        writeScalarColumn.template operator()<bool>([&]()
-                                                    {
-                                                        return frame->add_boolcolumns();
-                                                    },
-                                                    scalarIdentity);
+        appendScalarColumn(std::vector<bool>{pvValue.as<bool>()});
         return;
+
     case pvxs::TypeCode::Int8:
     case pvxs::TypeCode::Int16:
     case pvxs::TypeCode::Int32:
-        writeScalarColumn.template operator()<int32_t>(
-            [&]()
-            {
-                return frame->add_int32columns();
-            },
-            scalarIdentity);
+        appendScalarColumn(std::vector<int32_t>{pvValue.as<int32_t>()});
         return;
+
     case pvxs::TypeCode::Int64:
-        writeScalarColumn.template operator()<int64_t>(
-            [&]()
-            {
-                return frame->add_int64columns();
-            },
-            scalarIdentity);
+        appendScalarColumn(std::vector<int64_t>{pvValue.as<int64_t>()});
         return;
+
     case pvxs::TypeCode::UInt8:
     case pvxs::TypeCode::UInt16:
     case pvxs::TypeCode::UInt32:
-        writeScalarColumn.template operator()<uint32_t>(
-            [&]()
-            {
-                return frame->add_int32columns();
-            },
-            [](uint32_t value)
-            {
-                return static_cast<int32_t>(value);
-            });
+        appendScalarColumn(std::vector<int32_t>{static_cast<int32_t>(pvValue.as<uint32_t>())});
         return;
+
     case pvxs::TypeCode::UInt64:
-        writeScalarColumn.template operator()<uint64_t>(
-            [&]()
-            {
-                return frame->add_int64columns();
-            },
-            [](uint64_t value)
-            {
-                return static_cast<int64_t>(value);
-            });
+        appendScalarColumn(std::vector<int64_t>{static_cast<int64_t>(pvValue.as<uint64_t>())});
         return;
+
     case pvxs::TypeCode::Float32:
-        writeScalarColumn.template operator()<float>([&]()
-                                                     {
-                                                         return frame->add_floatcolumns();
-                                                     },
-                                                     scalarIdentity);
+        appendScalarColumn(std::vector<float>{pvValue.as<float>()});
         return;
+
     case pvxs::TypeCode::Float64:
-        writeScalarColumn.template operator()<double>(
-            [&]()
-            {
-                return frame->add_doublecolumns();
-            },
-            scalarIdentity);
+        appendScalarColumn(std::vector<double>{pvValue.as<double>()});
         return;
+
     case pvxs::TypeCode::String:
-        writeScalarColumn.template operator()<std::string>(
-            [&]()
-            {
-                return frame->add_stringcolumns();
-            },
-            scalarIdentity);
+        appendScalarColumn(std::vector<std::string>{pvValue.as<std::string>()});
         return;
 
     // --- Scalar array payloads ---------------------------------------------
-    // Arrays are kept as array columns rather than exploded into scalar rows.
+    // Each array becomes a DataColumn whose ColumnValues is a vector-of-one-
+    // inner-vector. Dims are recorded in array_dims.
     case pvxs::TypeCode::BoolA:
-        writeArrayColumn.template operator()<bool>(
-            [&]()
-            {
-                return frame->add_boolarraycolumns();
-            },
-            [](auto* c, bool value)
-            {
-                c->add_values(value);
-            });
-        return;
+        {
+            const auto arr = pvValue.as<pvxs::shared_array<const bool>>();
+            std::vector<bool> inner(arr.begin(), arr.end());
+            const auto sz = static_cast<uint32_t>(inner.size());
+            appendArrayColumn(std::vector<std::vector<bool>>{std::move(inner)}, sz);
+            return;
+        }
+
     case pvxs::TypeCode::Int8A:
     case pvxs::TypeCode::Int16A:
     case pvxs::TypeCode::Int32A:
-        writeArrayColumn.template operator()<int32_t>(
-            [&]()
-            {
-                return frame->add_int32arraycolumns();
-            },
-            [](auto* c, int32_t value)
-            {
-                c->add_values(value);
-            });
-        return;
+        {
+            const auto arr = pvValue.as<pvxs::shared_array<const int32_t>>();
+            std::vector<int32_t> inner(arr.begin(), arr.end());
+            const auto sz = static_cast<uint32_t>(inner.size());
+            appendArrayColumn(std::vector<std::vector<int32_t>>{std::move(inner)}, sz);
+            return;
+        }
+
     case pvxs::TypeCode::Int64A:
-        writeArrayColumn.template operator()<int64_t>(
-            [&]()
-            {
-                return frame->add_int64arraycolumns();
-            },
-            [](auto* c, int64_t value)
-            {
-                c->add_values(value);
-            });
-        return;
+        {
+            const auto arr = pvValue.as<pvxs::shared_array<const int64_t>>();
+            std::vector<int64_t> inner(arr.begin(), arr.end());
+            const auto sz = static_cast<uint32_t>(inner.size());
+            appendArrayColumn(std::vector<std::vector<int64_t>>{std::move(inner)}, sz);
+            return;
+        }
+
     case pvxs::TypeCode::UInt8A:
     case pvxs::TypeCode::UInt16A:
     case pvxs::TypeCode::UInt32A:
-        writeArrayColumn.template operator()<uint32_t>(
-            [&]()
-            {
-                return frame->add_int32arraycolumns();
-            },
-            [](auto* c, uint32_t value)
-            {
-                c->add_values(static_cast<int32_t>(value));
-            });
-        return;
+        {
+            const auto arr = pvValue.as<pvxs::shared_array<const uint32_t>>();
+            std::vector<int32_t> inner;
+            inner.reserve(arr.size());
+            for (const auto& v : arr)
+                inner.push_back(static_cast<int32_t>(v));
+            const auto sz = static_cast<uint32_t>(inner.size());
+            appendArrayColumn(std::vector<std::vector<int32_t>>{std::move(inner)}, sz);
+            return;
+        }
+
     case pvxs::TypeCode::UInt64A:
-        writeArrayColumn.template operator()<uint64_t>(
-            [&]()
-            {
-                return frame->add_int64arraycolumns();
-            },
-            [](auto* c, uint64_t value)
-            {
-                c->add_values(static_cast<int64_t>(value));
-            });
-        return;
+        {
+            const auto arr = pvValue.as<pvxs::shared_array<const uint64_t>>();
+            std::vector<int64_t> inner;
+            inner.reserve(arr.size());
+            for (const auto& v : arr)
+                inner.push_back(static_cast<int64_t>(v));
+            const auto sz = static_cast<uint32_t>(inner.size());
+            appendArrayColumn(std::vector<std::vector<int64_t>>{std::move(inner)}, sz);
+            return;
+        }
+
     case pvxs::TypeCode::Float32A:
-        writeArrayColumn.template operator()<float>(
-            [&]()
-            {
-                return frame->add_floatarraycolumns();
-            },
-            [](auto* c, float value)
-            {
-                c->add_values(value);
-            });
-        return;
+        {
+            const auto arr = pvValue.as<pvxs::shared_array<const float>>();
+            std::vector<float> inner(arr.begin(), arr.end());
+            const auto sz = static_cast<uint32_t>(inner.size());
+            appendArrayColumn(std::vector<std::vector<float>>{std::move(inner)}, sz);
+            return;
+        }
+
     case pvxs::TypeCode::Float64A:
-        writeArrayColumn.template operator()<double>(
-            [&]()
-            {
-                return frame->add_doublearraycolumns();
-            },
-            [](auto* c, double value)
-            {
-                c->add_values(value);
-            });
-        return;
+        {
+            const auto arr = pvValue.as<pvxs::shared_array<const double>>();
+            std::vector<double> inner(arr.begin(), arr.end());
+            const auto sz = static_cast<uint32_t>(inner.size());
+            appendArrayColumn(std::vector<std::vector<double>>{std::move(inner)}, sz);
+            return;
+        }
+
     case pvxs::TypeCode::StringA:
         {
+            // StringA is stored as std::vector<std::string> (index 5) with dims.
             const auto arr = pvValue.as<pvxs::shared_array<const std::string>>();
-            auto*      c = frame->add_datacolumns();
-            c->set_name(columnName);
-            auto* sample = c->add_datavalues();
-            auto* list = sample->mutable_arrayvalue();
-            for (const auto& v : arr)
-            {
-                list->add_datavalues()->set_stringvalue(v);
-            }
+            std::vector<std::string> vals(arr.begin(), arr.end());
+            const auto sz = static_cast<uint32_t>(vals.size());
+            DataColumn col;
+            col.name   = columnName;
+            col.values = std::move(vals);
+            batch->columns.push_back(std::move(col));
+            batch->array_dims[columnName] = ArrayDims{{sz}};
             return;
         }
 
@@ -255,8 +205,9 @@ void EpicsMLDPConversion::convertPVToDataFrame(const pvxs::Value& pvValue,
     case pvxs::TypeCode::Struct:
     case pvxs::TypeCode::Union:
     case pvxs::TypeCode::Any:
-        structSetter(pvValue, frame, columnName);
+        structSetter(pvValue, batch, columnName);
         return;
+
     case pvxs::TypeCode::StructA:
     case pvxs::TypeCode::UnionA:
     case pvxs::TypeCode::AnyA:
@@ -264,18 +215,14 @@ void EpicsMLDPConversion::convertPVToDataFrame(const pvxs::Value& pvValue,
             const auto arr = pvValue.as<pvxs::shared_array<const pvxs::Value>>();
             for (const auto& cell : arr)
             {
-                structSetter(cell, frame, columnName);
+                structSetter(cell, batch, columnName);
             }
             return;
         }
 
     // --- Explicit null ------------------------------------------------------
     case pvxs::TypeCode::Null:
-        {
-            auto* c = frame->add_stringcolumns();
-            c->set_name(columnName);
-            c->add_values("null");
-            return;
-        }
+        appendScalarColumn(std::vector<std::string>{"null"});
+        return;
     }
 }

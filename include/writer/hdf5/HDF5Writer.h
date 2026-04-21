@@ -18,7 +18,7 @@
 #include <writer/hdf5/HDF5WriterConfig.h>
 
 #include <H5Cpp.h>
-#include <common.pb.h>
+#include <util/bus/DataBatch.h>
 
 #include <atomic>
 #include <condition_variable>
@@ -45,7 +45,7 @@ namespace mldp_pvxs_driver::writer {
  * @code
  * / (root)
  * ├── timestamps          int64   ns-since-epoch   shape=(N,) unlimited+chunked
- * ├── <col_name_0>        …       per DataFrame col
+ * ├── <col_name_0>        …       per DataBatch column
  * └── …
  * @endcode
  *
@@ -202,10 +202,10 @@ private:
 
     // ---- columnar path (existing) ----
 
-    void appendFrame(const std::string&                    sourceName,
-                     const dp::service::common::DataFrame& frame,
-                     H5::H5File&                           file,
-                     uint64_t                              batchSeq);
+    void appendFrame(const std::string&              sourceName,
+                     const util::bus::DataBatch&     batch,
+                     H5::H5File&                     file,
+                     uint64_t                        batchSeq);
 
     H5::DataSet ensureDataset(H5::H5File&         file,
                               const std::string&  name,
@@ -224,14 +224,14 @@ private:
     void processTabularBatch(const QueueEntry& entry);
 
     /**
-     * @brief Accumulate one DataFrame into the tabular buffer.
+     * @brief Accumulate one DataBatch into the tabular buffer.
      *
      * Extracts timestamps (first frame of each round) and column values into
      * @p buf.  Missing columns are filled with NaN at flush time.
      */
-    void accumulateTabularFrame(const std::string&                    sourceName,
-                                const dp::service::common::DataFrame& frame,
-                                TabularBuffer&                        buf);
+    void accumulateTabularFrame(const std::string&              sourceName,
+                                const util::bus::DataBatch&     batch,
+                                TabularBuffer&                  buf);
 
     /**
      * @brief Write buffered rows to the per-column HDF5 datasets and clear the buffer.

@@ -10,18 +10,17 @@
 
 /**
  * @file EpicsPVDataConversion.h
- * @brief Conversion utilities for EPICS Base pvData to MLDP protobuf format.
+ * @brief Conversion utilities for EPICS Base pvData to MLDP DataBatch format.
  *
  * This header provides the EpicsPVDataConversion class for converting EPICS Base
- * pvData structures to the MLDP ingestion protobuf format. It includes support
- * for standard scalar/array PVs as well as SLAC BSAS NTTable structures.
+ * pvData structures to the MLDP bus DataBatch format. It includes support for
+ * standard scalar/array PVs as well as SLAC BSAS NTTable structures.
  */
 
 #pragma once
 
-#include <common.pb.h>
-#include <ingestion.grpc.pb.h>
 #include <pv/pvData.h>
+#include <util/bus/DataBatch.h>
 #include <util/bus/IDataBus.h>
 #include <util/log/Logger.h>
 
@@ -31,12 +30,12 @@
 namespace mldp_pvxs_driver::reader::impl::epics {
 
 /**
- * @brief Conversion utilities for EPICS Base pvData to MLDP protobuf format.
+ * @brief Conversion utilities for EPICS Base pvData to MLDP DataBatch format.
  *
  * This class provides static methods for converting EPICS Base pvData structures
- * (PVField, PVStructure) to the protobuf DataValue format used by the MLDP
- * ingestion service. It handles various EPICS data types and provides specialized
- * support for SLAC BSAS NTTable structures with per-row timestamps.
+ * (PVField, PVStructure) to the DataBatch columnar format used by the MLDP bus.
+ * It handles various EPICS data types and provides specialized support for SLAC
+ * BSAS NTTable structures with per-row timestamps.
  *
  * @note This class is designed for EPICS Base (pvData). For PVXS conversions,
  *       see EpicsMLDPConversion and BSASEpicsMLDPConversion.
@@ -54,27 +53,28 @@ public:
      * incremental processing of large tables.
      *
      * @param colName The name of the column being emitted.
-     * @param frames Vector of DataFrame payloads.
+     * @param batches Vector of DataBatch payloads.
      */
-    using ColumnEmitFn = std::function<void(std::string                                 colName,
-                                            std::vector<dp::service::common::DataFrame> frames)>;
+    using ColumnEmitFn = std::function<void(std::string                       colName,
+                                            std::vector<util::bus::DataBatch> batches)>;
 
     /**
-     * @brief Convert an EPICS pvData field to an MLDP protobuf DataValue.
+     * @brief Convert an EPICS pvData field to a DataBatch column.
      *
-     * Transforms the given pvData PVField into the corresponding protobuf
-     * DataValue representation. Handles scalar types, array types, and
+     * Transforms the given pvData PVField into the corresponding DataBatch
+     * column representation. Handles scalar types, array types, and
      * enumerated types.
      *
      * @param[in] pvField The pvData field to convert.
-     * @param[out] protoValue Pointer to the DataValue to populate. Must not be null.
+     * @param[out] batch Pointer to the DataBatch to populate. Must not be null.
+     * @param[in] columnName Name assigned to the appended column (default: "value").
      *
-     * @pre @p protoValue must point to a valid DataValue object.
-     * @post @p protoValue contains the converted representation.
+     * @pre @p batch must point to a valid DataBatch object.
+     * @post @p batch contains the converted representation.
      */
-    static void convertPVToProtoValue(const ::epics::pvData::PVField& pvField,
-                                      dp::service::common::DataFrame* frame,
-                                      const std::string&              columnName = "value");
+    static void convertPVToDataBatch(const ::epics::pvData::PVField& pvField,
+                                     util::bus::DataBatch*           batch,
+                                     const std::string&              columnName = "value");
 
     /**
      * @brief Convert an NTTable with row timestamps to an EventBatch.

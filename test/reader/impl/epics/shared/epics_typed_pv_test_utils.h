@@ -10,7 +10,9 @@
 
 namespace epics_typed_pv_test_utils {
 
-using DataFrame = dp::service::common::DataFrame;
+using DataBatch      = mldp_pvxs_driver::util::bus::DataBatch;
+using DataColumn     = mldp_pvxs_driver::util::bus::DataColumn;
+using ColumnValues   = mldp_pvxs_driver::util::bus::ColumnValues;
 
 inline const std::vector<std::string>& allTypedCoveragePvs()
 {
@@ -63,25 +65,25 @@ inline std::string buildTypedCoverageYaml(const std::string& readerName)
     return yaml;
 }
 
-inline bool hasColumnWithName(const DataFrame& df, const std::string& name)
+/// Return a pointer to the first DataColumn with the given name, or nullptr.
+inline const DataColumn* findDataColumn(const DataBatch& batch, const std::string& name)
 {
-    for (int i = 0; i < df.stringcolumns_size(); ++i)
-        if (df.stringcolumns(i).name() == name)
+    for (const auto& col : batch.columns)
+    {
+        if (col.name == name)
+            return &col;
+    }
+    return nullptr;
+}
+
+/// Return true if any column (regular or enum) in the batch has the given name.
+inline bool hasColumnWithName(const DataBatch& batch, const std::string& name)
+{
+    for (const auto& col : batch.columns)
+        if (col.name == name)
             return true;
-    for (int i = 0; i < df.int32columns_size(); ++i)
-        if (df.int32columns(i).name() == name)
-            return true;
-    for (int i = 0; i < df.int64columns_size(); ++i)
-        if (df.int64columns(i).name() == name)
-            return true;
-    for (int i = 0; i < df.floatcolumns_size(); ++i)
-        if (df.floatcolumns(i).name() == name)
-            return true;
-    for (int i = 0; i < df.doublecolumns_size(); ++i)
-        if (df.doublecolumns(i).name() == name)
-            return true;
-    for (int i = 0; i < df.boolcolumns_size(); ++i)
-        if (df.boolcolumns(i).name() == name)
+    for (const auto& col : batch.enum_columns)
+        if (col.name == name)
             return true;
     return false;
 }
@@ -89,128 +91,191 @@ inline bool hasColumnWithName(const DataFrame& df, const std::string& name)
 template <typename FinderFn>
 void assertTypedCoverageDataFrames(const FinderFn& findLatestDataFrameForSourceFn)
 {
-    const auto requireLatest = [&](const std::string& pv) -> const DataFrame*
+    const auto requireLatest = [&](const std::string& pv) -> const DataBatch*
     {
-        const auto* df = findLatestDataFrameForSourceFn(pv);
-        EXPECT_NE(df, nullptr) << "Missing dataframe for " << pv;
-        return df;
+        const auto* batch = findLatestDataFrameForSourceFn(pv);
+        EXPECT_NE(batch, nullptr) << "Missing dataframe for " << pv;
+        return batch;
     };
 
     const auto expectInt32Scalar = [&](const std::string& pv)
     {
-        const auto* df = requireLatest(pv);
-        if (!df)
+        const auto* batch = requireLatest(pv);
+        if (!batch)
             return;
-        EXPECT_GT(df->int32columns_size(), 0);
-        EXPECT_EQ(df->int32columns(0).name(), pv);
-        EXPECT_FALSE(hasColumnWithName(*df, "value.timeStamp"));
+        const auto* col = findDataColumn(*batch, pv);
+        EXPECT_NE(col, nullptr) << "Missing int32 column for " << pv;
+        if (!col)
+            return;
+        EXPECT_TRUE(std::holds_alternative<std::vector<int32_t>>(col->values))
+            << "Column " << pv << " is not int32";
+        EXPECT_GT(std::get<std::vector<int32_t>>(col->values).size(), 0u);
+        EXPECT_FALSE(hasColumnWithName(*batch, "value.timeStamp"));
     };
     const auto expectInt64Scalar = [&](const std::string& pv)
     {
-        const auto* df = requireLatest(pv);
-        if (!df)
+        const auto* batch = requireLatest(pv);
+        if (!batch)
             return;
-        EXPECT_GT(df->int64columns_size(), 0);
-        EXPECT_EQ(df->int64columns(0).name(), pv);
-        EXPECT_FALSE(hasColumnWithName(*df, "value.timeStamp"));
+        const auto* col = findDataColumn(*batch, pv);
+        EXPECT_NE(col, nullptr) << "Missing int64 column for " << pv;
+        if (!col)
+            return;
+        EXPECT_TRUE(std::holds_alternative<std::vector<int64_t>>(col->values))
+            << "Column " << pv << " is not int64";
+        EXPECT_GT(std::get<std::vector<int64_t>>(col->values).size(), 0u);
+        EXPECT_FALSE(hasColumnWithName(*batch, "value.timeStamp"));
     };
     const auto expectFloatScalar = [&](const std::string& pv)
     {
-        const auto* df = requireLatest(pv);
-        if (!df)
+        const auto* batch = requireLatest(pv);
+        if (!batch)
             return;
-        EXPECT_GT(df->floatcolumns_size(), 0);
-        EXPECT_EQ(df->floatcolumns(0).name(), pv);
-        EXPECT_FALSE(hasColumnWithName(*df, "value.timeStamp"));
+        const auto* col = findDataColumn(*batch, pv);
+        EXPECT_NE(col, nullptr) << "Missing float column for " << pv;
+        if (!col)
+            return;
+        EXPECT_TRUE(std::holds_alternative<std::vector<float>>(col->values))
+            << "Column " << pv << " is not float";
+        EXPECT_GT(std::get<std::vector<float>>(col->values).size(), 0u);
+        EXPECT_FALSE(hasColumnWithName(*batch, "value.timeStamp"));
     };
     const auto expectDoubleScalar = [&](const std::string& pv)
     {
-        const auto* df = requireLatest(pv);
-        if (!df)
+        const auto* batch = requireLatest(pv);
+        if (!batch)
             return;
-        EXPECT_GT(df->doublecolumns_size(), 0);
-        EXPECT_EQ(df->doublecolumns(0).name(), pv);
-        EXPECT_FALSE(hasColumnWithName(*df, "value.timeStamp"));
+        const auto* col = findDataColumn(*batch, pv);
+        EXPECT_NE(col, nullptr) << "Missing double column for " << pv;
+        if (!col)
+            return;
+        EXPECT_TRUE(std::holds_alternative<std::vector<double>>(col->values))
+            << "Column " << pv << " is not double";
+        EXPECT_GT(std::get<std::vector<double>>(col->values).size(), 0u);
+        EXPECT_FALSE(hasColumnWithName(*batch, "value.timeStamp"));
     };
     const auto expectBoolScalar = [&](const std::string& pv)
     {
-        const auto* df = requireLatest(pv);
-        if (!df)
+        const auto* batch = requireLatest(pv);
+        if (!batch)
             return;
-        EXPECT_GT(df->boolcolumns_size(), 0);
-        EXPECT_EQ(df->boolcolumns(0).name(), pv);
-        EXPECT_FALSE(hasColumnWithName(*df, "value.timeStamp"));
+        const auto* col = findDataColumn(*batch, pv);
+        EXPECT_NE(col, nullptr) << "Missing bool column for " << pv;
+        if (!col)
+            return;
+        EXPECT_TRUE(std::holds_alternative<std::vector<bool>>(col->values))
+            << "Column " << pv << " is not bool";
+        EXPECT_GT(std::get<std::vector<bool>>(col->values).size(), 0u);
+        EXPECT_FALSE(hasColumnWithName(*batch, "value.timeStamp"));
     };
     const auto expectStringScalar = [&](const std::string& pv)
     {
-        const auto* df = requireLatest(pv);
-        if (!df)
+        const auto* batch = requireLatest(pv);
+        if (!batch)
             return;
-        EXPECT_GT(df->stringcolumns_size(), 0);
-        EXPECT_EQ(df->stringcolumns(0).name(), pv);
-        EXPECT_GT(df->stringcolumns(0).values_size(), 0);
-        EXPECT_FALSE(hasColumnWithName(*df, "value.timeStamp"));
+        const auto* col = findDataColumn(*batch, pv);
+        EXPECT_NE(col, nullptr) << "Missing string column for " << pv;
+        if (!col)
+            return;
+        EXPECT_TRUE(std::holds_alternative<std::vector<std::string>>(col->values))
+            << "Column " << pv << " is not string";
+        EXPECT_GT(std::get<std::vector<std::string>>(col->values).size(), 0u);
+        EXPECT_FALSE(hasColumnWithName(*batch, "value.timeStamp"));
     };
     const auto expectBoolArray = [&](const std::string& pv)
     {
-        const auto* df = requireLatest(pv);
-        if (!df)
+        const auto* batch = requireLatest(pv);
+        if (!batch)
             return;
-        EXPECT_GT(df->boolarraycolumns_size(), 0);
-        EXPECT_EQ(df->boolarraycolumns(0).name(), pv);
-        EXPECT_EQ(df->boolarraycolumns(0).values_size(), 4);
-        EXPECT_FALSE(hasColumnWithName(*df, "value.timeStamp"));
+        const auto* col = findDataColumn(*batch, pv);
+        EXPECT_NE(col, nullptr) << "Missing bool array column for " << pv;
+        if (!col)
+            return;
+        EXPECT_TRUE(std::holds_alternative<std::vector<std::vector<bool>>>(col->values))
+            << "Column " << pv << " is not bool array";
+        const auto& rows = std::get<std::vector<std::vector<bool>>>(col->values);
+        EXPECT_GT(rows.size(), 0u);
+        EXPECT_EQ(rows[0].size(), 4u);
+        EXPECT_FALSE(hasColumnWithName(*batch, "value.timeStamp"));
     };
     const auto expectInt32Array = [&](const std::string& pv)
     {
-        const auto* df = requireLatest(pv);
-        if (!df)
+        const auto* batch = requireLatest(pv);
+        if (!batch)
             return;
-        EXPECT_GT(df->int32arraycolumns_size(), 0);
-        EXPECT_EQ(df->int32arraycolumns(0).name(), pv);
-        EXPECT_EQ(df->int32arraycolumns(0).values_size(), 4);
-        EXPECT_FALSE(hasColumnWithName(*df, "value.timeStamp"));
+        const auto* col = findDataColumn(*batch, pv);
+        EXPECT_NE(col, nullptr) << "Missing int32 array column for " << pv;
+        if (!col)
+            return;
+        EXPECT_TRUE(std::holds_alternative<std::vector<std::vector<int32_t>>>(col->values))
+            << "Column " << pv << " is not int32 array";
+        const auto& rows = std::get<std::vector<std::vector<int32_t>>>(col->values);
+        EXPECT_GT(rows.size(), 0u);
+        EXPECT_EQ(rows[0].size(), 4u);
+        EXPECT_FALSE(hasColumnWithName(*batch, "value.timeStamp"));
     };
     const auto expectInt64Array = [&](const std::string& pv)
     {
-        const auto* df = requireLatest(pv);
-        if (!df)
+        const auto* batch = requireLatest(pv);
+        if (!batch)
             return;
-        EXPECT_GT(df->int64arraycolumns_size(), 0);
-        EXPECT_EQ(df->int64arraycolumns(0).name(), pv);
-        EXPECT_EQ(df->int64arraycolumns(0).values_size(), 4);
-        EXPECT_FALSE(hasColumnWithName(*df, "value.timeStamp"));
+        const auto* col = findDataColumn(*batch, pv);
+        EXPECT_NE(col, nullptr) << "Missing int64 array column for " << pv;
+        if (!col)
+            return;
+        EXPECT_TRUE(std::holds_alternative<std::vector<std::vector<int64_t>>>(col->values))
+            << "Column " << pv << " is not int64 array";
+        const auto& rows = std::get<std::vector<std::vector<int64_t>>>(col->values);
+        EXPECT_GT(rows.size(), 0u);
+        EXPECT_EQ(rows[0].size(), 4u);
+        EXPECT_FALSE(hasColumnWithName(*batch, "value.timeStamp"));
     };
     const auto expectFloatArray = [&](const std::string& pv)
     {
-        const auto* df = requireLatest(pv);
-        if (!df)
+        const auto* batch = requireLatest(pv);
+        if (!batch)
             return;
-        EXPECT_GT(df->floatarraycolumns_size(), 0);
-        EXPECT_EQ(df->floatarraycolumns(0).name(), pv);
-        EXPECT_EQ(df->floatarraycolumns(0).values_size(), 4);
-        EXPECT_FALSE(hasColumnWithName(*df, "value.timeStamp"));
+        const auto* col = findDataColumn(*batch, pv);
+        EXPECT_NE(col, nullptr) << "Missing float array column for " << pv;
+        if (!col)
+            return;
+        EXPECT_TRUE(std::holds_alternative<std::vector<std::vector<float>>>(col->values))
+            << "Column " << pv << " is not float array";
+        const auto& rows = std::get<std::vector<std::vector<float>>>(col->values);
+        EXPECT_GT(rows.size(), 0u);
+        EXPECT_EQ(rows[0].size(), 4u);
+        EXPECT_FALSE(hasColumnWithName(*batch, "value.timeStamp"));
     };
     const auto expectDoubleArray = [&](const std::string& pv, int expectedSize)
     {
-        const auto* df = requireLatest(pv);
-        if (!df)
+        const auto* batch = requireLatest(pv);
+        if (!batch)
             return;
-        EXPECT_GT(df->doublearraycolumns_size(), 0);
-        EXPECT_EQ(df->doublearraycolumns(0).name(), pv);
-        EXPECT_EQ(df->doublearraycolumns(0).values_size(), expectedSize);
-        EXPECT_FALSE(hasColumnWithName(*df, "value.timeStamp"));
+        const auto* col = findDataColumn(*batch, pv);
+        EXPECT_NE(col, nullptr) << "Missing double array column for " << pv;
+        if (!col)
+            return;
+        EXPECT_TRUE(std::holds_alternative<std::vector<std::vector<double>>>(col->values))
+            << "Column " << pv << " is not double array";
+        const auto& rows = std::get<std::vector<std::vector<double>>>(col->values);
+        EXPECT_GT(rows.size(), 0u);
+        EXPECT_EQ(static_cast<int>(rows[0].size()), expectedSize);
+        EXPECT_FALSE(hasColumnWithName(*batch, "value.timeStamp"));
     };
     const auto expectStringArrayAsDataColumn = [&](const std::string& pv)
     {
-        const auto* df = requireLatest(pv);
-        if (!df)
+        const auto* batch = requireLatest(pv);
+        if (!batch)
             return;
-        EXPECT_GT(df->datacolumns_size(), 0);
-        EXPECT_EQ(df->datacolumns(0).name(), pv);
-        EXPECT_GT(df->datacolumns(0).datavalues_size(), 0);
-        EXPECT_EQ(df->datacolumns(0).datavalues(0).arrayvalue().datavalues_size(), 4);
-        EXPECT_FALSE(hasColumnWithName(*df, "value.timeStamp"));
+        const auto* col = findDataColumn(*batch, pv);
+        EXPECT_NE(col, nullptr) << "Missing string array column for " << pv;
+        if (!col)
+            return;
+        EXPECT_TRUE(std::holds_alternative<std::vector<std::string>>(col->values))
+            << "Column " << pv << " is not string (array)";
+        const auto& vals = std::get<std::vector<std::string>>(col->values);
+        EXPECT_EQ(vals.size(), 4u);
+        EXPECT_FALSE(hasColumnWithName(*batch, "value.timeStamp"));
     };
 
     expectInt32Scalar("test:counter");

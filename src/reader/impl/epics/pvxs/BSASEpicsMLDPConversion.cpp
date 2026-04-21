@@ -22,6 +22,7 @@
 
 using namespace mldp_pvxs_driver::reader::impl::epics;
 using namespace mldp_pvxs_driver::util::log;
+using namespace mldp_pvxs_driver::util::bus;
 using mldp_pvxs_driver::util::bus::IDataBus;
 
 namespace {
@@ -36,8 +37,8 @@ namespace {
  *    (seconds/nanoseconds) so downstream row indexing is uniform regardless
  *    of original integer width/signedness.
  * 4) For each non-timestamp column:
- *    - convert supported NTTable array types into one DataFrame payload,
- *    - attach the full row timestamp list to that frame,
+ *    - convert supported NTTable array types into one DataBatch payload,
+ *    - attach the full row timestamp list to that batch,
  *    - emit the result under the column name.
  * 5) Report total emitted rows across all converted columns.
  */
@@ -91,31 +92,28 @@ std::optional<UIntArrayView> asUIntArrayView(const pvxs::Value& value)
     }
 }
 
-/// Result of converting a single NTTable column to DataFrame payload(s).
+/// Result of converting a single NTTable column to DataBatch payload(s).
 struct ColumnResult
 {
-    std::string                                 name;
-    std::vector<dp::service::common::DataFrame> events; ///< At most one element (all rows packed).
-    size_t                                      emitted{0};
+    std::string                    name;
+    std::vector<DataBatch>         events; ///< At most one element (all rows packed).
+    size_t                         emitted{0};
 };
 
-/// Fill per-row timestamps into a DataFrame's TimestampList.
-void fillTimestamps(dp::service::common::DataFrame& frame,
-                    size_t                          n,
-                    const std::vector<uint64_t>&    tsSeconds,
-                    const std::vector<uint64_t>&    tsNanos)
+/// Fill per-row timestamps into a DataBatch's timestamps vector.
+void fillTimestamps(DataBatch&                   batch,
+                    size_t                       n,
+                    const std::vector<uint64_t>& tsSeconds,
+                    const std::vector<uint64_t>& tsNanos)
 {
-    auto* tsList = frame.mutable_datatimestamps()->mutable_timestamplist();
-    tsList->mutable_timestamps()->Reserve(static_cast<int>(n));
+    batch.timestamps.reserve(n);
     for (size_t i = 0; i < n; ++i)
     {
-        auto* ts = tsList->add_timestamps();
-        ts->set_epochseconds(tsSeconds[i]);
-        ts->set_nanoseconds(tsNanos[i]);
+        batch.timestamps.push_back(TimestampEntry{tsSeconds[i], tsNanos[i]});
     }
 }
 
-/// Convert one NTTable column into a single DataFrame that contains
+/// Convert one NTTable column into a single DataBatch that contains
 /// all @p rowCount timestamped values in the appropriate typed column.
 ///
 /// Compound column types (StructA/UnionA/AnyA) are supported: each cell's nested
@@ -132,12 +130,10 @@ ColumnResult convertColumn(const pvxs::Value&           columns,
 
     const auto colCode = col.type().code;
 
-    // Generic helper: fills a typed scalar column from a PVXS shared_array.
-    // Calls addColFn() on the frame to add the typed column, then iterates
-    // the array and appends each element via addValFn().
+    // Generic helper: builds a DataBatch with one typed DataColumn from a PVXS
+    // shared_array. Iterates the array and casts each element via CastFn.
     const auto emitTypedColumn =
-        [&]<typename ColT, typename ArrT, typename ValT>(ColT* (dp::service::common::DataFrame::*addColFn)(),
-                                                         void (ColT::*addValFn)(ValT))
+        [&]<typename ArrT, typename OutT>(auto castFn)
     {
         const auto arr = col.as<pvxs::shared_array<const ArrT>>();
         const auto n = std::min(rowCount, static_cast<size_t>(arr.size()));
@@ -146,68 +142,62 @@ ColumnResult convertColumn(const pvxs::Value&           columns,
             return;
         }
 
-        dp::service::common::DataFrame frame;
+        DataBatch batch;
+        fillTimestamps(batch, n, tsSeconds, tsNanos);
 
-        fillTimestamps(frame, n, tsSeconds, tsNanos);
-
-        auto* c = (frame.*addColFn)();
-        c->set_name(colName);
-        c->mutable_values()->Reserve(static_cast<int>(n));
+        std::vector<OutT> vals;
+        vals.reserve(n);
         for (size_t i = 0; i < n; ++i)
         {
-            (c->*addValFn)(static_cast<ValT>(arr[i]));
+            vals.push_back(castFn(arr[i]));
         }
 
-        result.events.push_back(std::move(frame));
+        DataColumn dc;
+        dc.name   = colName;
+        dc.values = std::move(vals);
+        batch.columns.push_back(std::move(dc));
+
+        result.events.push_back(std::move(batch));
         result.emitted = n;
     };
+
+    // Identity cast helper.
+    const auto identity = [](auto v) { return v; };
 
     switch (colCode)
     {
     case pvxs::TypeCode::BoolA:
-        emitTypedColumn.template operator()<dp::service::common::BoolColumn, bool, bool>(
-            &dp::service::common::DataFrame::add_boolcolumns,
-            &dp::service::common::BoolColumn::add_values);
+        emitTypedColumn.template operator()<bool, bool>(identity);
         break;
 
     case pvxs::TypeCode::Int8A:
     case pvxs::TypeCode::Int16A:
     case pvxs::TypeCode::Int32A:
-        emitTypedColumn.template operator()<dp::service::common::Int32Column, int32_t, int32_t>(
-            &dp::service::common::DataFrame::add_int32columns,
-            &dp::service::common::Int32Column::add_values);
+        emitTypedColumn.template operator()<int32_t, int32_t>(identity);
         break;
 
     case pvxs::TypeCode::Int64A:
-        emitTypedColumn.template operator()<dp::service::common::Int64Column, int64_t, int64_t>(
-            &dp::service::common::DataFrame::add_int64columns,
-            &dp::service::common::Int64Column::add_values);
+        emitTypedColumn.template operator()<int64_t, int64_t>(identity);
         break;
 
     case pvxs::TypeCode::UInt8A:
     case pvxs::TypeCode::UInt16A:
     case pvxs::TypeCode::UInt32A:
-        emitTypedColumn.template operator()<dp::service::common::Int32Column, uint32_t, int32_t>(
-            &dp::service::common::DataFrame::add_int32columns,
-            &dp::service::common::Int32Column::add_values);
+        emitTypedColumn.template operator()<uint32_t, int32_t>(
+            [](uint32_t v) { return static_cast<int32_t>(v); });
         break;
 
     case pvxs::TypeCode::UInt64A:
-        emitTypedColumn.template operator()<dp::service::common::Int64Column, uint64_t, int64_t>(
-            &dp::service::common::DataFrame::add_int64columns,
-            &dp::service::common::Int64Column::add_values);
+        emitTypedColumn.template operator()<uint64_t, int64_t>(
+            [](uint64_t v) { return static_cast<int64_t>(v); });
         break;
 
     case pvxs::TypeCode::Float32A:
-        emitTypedColumn.template operator()<dp::service::common::FloatColumn, float, float>(
-            &dp::service::common::DataFrame::add_floatcolumns,
-            &dp::service::common::FloatColumn::add_values);
+        emitTypedColumn.template operator()<float, float>(identity);
         break;
 
     case pvxs::TypeCode::Float64A:
-        emitTypedColumn.template operator()<dp::service::common::DoubleColumn, double, double>(
-            &dp::service::common::DataFrame::add_doublecolumns,
-            &dp::service::common::DoubleColumn::add_values);
+        emitTypedColumn.template operator()<double, double>(identity);
         break;
 
     case pvxs::TypeCode::StringA:
@@ -216,18 +206,16 @@ ColumnResult convertColumn(const pvxs::Value&           columns,
             const auto n = std::min(rowCount, static_cast<size_t>(arr.size()));
             if (n > 0)
             {
-                dp::service::common::DataFrame frame;
+                DataBatch batch;
+                fillTimestamps(batch, n, tsSeconds, tsNanos);
 
-                fillTimestamps(frame, n, tsSeconds, tsNanos);
+                std::vector<std::string> vals(arr.begin(), arr.begin() + static_cast<ptrdiff_t>(n));
+                DataColumn dc;
+                dc.name   = colName;
+                dc.values = std::move(vals);
+                batch.columns.push_back(std::move(dc));
 
-                auto* c = frame.add_stringcolumns();
-                c->set_name(colName);
-                for (size_t i = 0; i < n; ++i)
-                {
-                    c->add_values(arr[i]);
-                }
-
-                result.events.push_back(std::move(frame));
+                result.events.push_back(std::move(batch));
                 result.emitted = n;
             }
             break;
@@ -238,14 +226,13 @@ ColumnResult convertColumn(const pvxs::Value&           columns,
     case pvxs::TypeCode::AnyA:
         {
             // Compound array columns: convert each cell's value fields into the
-            // same DataFrame, using EpicsMLDPConversion for the actual type dispatch.
+            // same DataBatch, using EpicsMLDPConversion for the actual type dispatch.
             const auto arr = col.as<pvxs::shared_array<const pvxs::Value>>();
             const auto n = std::min(rowCount, static_cast<size_t>(arr.size()));
             if (n > 0)
             {
-                dp::service::common::DataFrame frame;
-
-                fillTimestamps(frame, n, tsSeconds, tsNanos);
+                DataBatch batch;
+                fillTimestamps(batch, n, tsSeconds, tsNanos);
 
                 for (size_t i = 0; i < n; ++i)
                 {
@@ -254,11 +241,11 @@ ColumnResult convertColumn(const pvxs::Value&           columns,
                         (cell.valid() && cell.type().kind() == pvxs::Kind::Compound)
                             ? cell["value"]
                             : pvxs::Value{};
-                    EpicsMLDPConversion::convertPVToDataFrame(
-                        cellValue.valid() ? cellValue : cell, &frame, colName);
+                    EpicsMLDPConversion::convertPVToDataBatch(
+                        cellValue.valid() ? cellValue : cell, &batch, colName);
                 }
 
-                result.events.push_back(std::move(frame));
+                result.events.push_back(std::move(batch));
                 result.emitted = n;
             }
             break;
@@ -285,11 +272,12 @@ bool BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch(mldp_pvxs_driver::util::
     outBatch->tags.clear();
     outBatch->frames.clear();
     outBatch->tags.push_back(tablePvName);
-    return tryBuildNtTableRowTsBatch(log, tablePvName, epicsValue, tsSecondsField, tsNanosField, [&](std::string colName, std::vector<dp::service::common::DataFrame> events)
+    return tryBuildNtTableRowTsBatch(log, tablePvName, epicsValue, tsSecondsField, tsNanosField,
+                                     [&](std::string colName, std::vector<DataBatch> batches)
                                      {
                                          (void)colName;
-                                         for (auto& frame : events)
-                                             outBatch->frames.push_back(std::move(frame));
+                                         for (auto& b : batches)
+                                             outBatch->frames.push_back(std::move(b));
                                      },
                                      outEmitted);
 }
@@ -362,7 +350,7 @@ bool BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch(mldp_pvxs_driver::util::
     }
 
     // Phase 4: Convert each non-timestamp column and emit it independently.
-    // One emitted entry contains one DataFrame with all rows of that column.
+    // One emitted entry contains one DataBatch with all rows of that column.
     for (const auto& col : columns.ichildren())
     {
         if (!col.valid())

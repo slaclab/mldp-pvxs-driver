@@ -10,6 +10,7 @@
 
 #include <writer/mldp/MLDPWriter.h>
 
+#include <common.pb.h>
 #include <util/StringFormat.h>
 #include <util/log/Logger.h>
 
@@ -178,7 +179,7 @@ bool MLDPWriter::push(util::bus::IDataBus::EventBatch batch) noexcept
     bool enqueued = false;
     for (auto& frame : batch.frames)
     {
-        if (!hasTimestampListW(frame))
+        if (frame.timestamps.empty())
         {
             metric_call(metrics_, [&](auto& m)
                         {
@@ -457,11 +458,170 @@ void MLDPWriter::workerLoop(std::size_t workerIndex)
 }
 
 // ---------------------------------------------------------------------------
+// toDataFrame — convert DataBatch → protobuf DataFrame
+// ---------------------------------------------------------------------------
+
+dp::service::common::DataFrame MLDPWriter::toDataFrame(const util::bus::DataBatch& batch)
+{
+    dp::service::common::DataFrame df;
+
+    // Timestamps
+    {
+        auto* tsList = df.mutable_datatimestamps()->mutable_timestamplist();
+        for (const auto& ts : batch.timestamps)
+        {
+            auto* entry = tsList->add_timestamps();
+            entry->set_epochseconds(static_cast<uint64_t>(ts.epoch_seconds));
+            entry->set_nanoseconds(static_cast<uint64_t>(ts.nanoseconds));
+        }
+    }
+
+    // Typed columns
+    for (const auto& col : batch.columns)
+    {
+        std::visit(
+            [&](const auto& vec)
+            {
+                using T = std::decay_t<decltype(vec)>;
+
+                if constexpr (std::is_same_v<T, std::vector<double>>)
+                {
+                    auto* c = df.add_doublecolumns();
+                    c->set_name(col.name);
+                    for (auto v : vec) { c->add_values(v); }
+                }
+                else if constexpr (std::is_same_v<T, std::vector<float>>)
+                {
+                    auto* c = df.add_floatcolumns();
+                    c->set_name(col.name);
+                    for (auto v : vec) { c->add_values(v); }
+                }
+                else if constexpr (std::is_same_v<T, std::vector<int64_t>>)
+                {
+                    auto* c = df.add_int64columns();
+                    c->set_name(col.name);
+                    for (auto v : vec) { c->add_values(v); }
+                }
+                else if constexpr (std::is_same_v<T, std::vector<int32_t>>)
+                {
+                    auto* c = df.add_int32columns();
+                    c->set_name(col.name);
+                    for (auto v : vec) { c->add_values(v); }
+                }
+                else if constexpr (std::is_same_v<T, std::vector<bool>>)
+                {
+                    auto* c = df.add_boolcolumns();
+                    c->set_name(col.name);
+                    for (auto v : vec) { c->add_values(v); }
+                }
+                else if constexpr (std::is_same_v<T, std::vector<std::string>>)
+                {
+                    auto* c = df.add_stringcolumns();
+                    c->set_name(col.name);
+                    for (const auto& v : vec) { c->add_values(v); }
+                }
+                else if constexpr (std::is_same_v<T, std::vector<std::vector<uint8_t>>>)
+                {
+                    auto* c = df.add_structcolumns();
+                    c->set_name(col.name);
+                    c->set_schemaid("");
+                    for (const auto& blob : vec)
+                    {
+                        c->add_values(blob.data(), blob.size());
+                    }
+                }
+                else if constexpr (std::is_same_v<T, std::vector<std::vector<double>>>)
+                {
+                    auto* c = df.add_doublearraycolumns();
+                    c->set_name(col.name);
+                    for (const auto& arr : vec)
+                    {
+                        for (auto v : arr) { c->add_values(v); }
+                    }
+                    auto it = batch.array_dims.find(col.name);
+                    if (it != batch.array_dims.end())
+                    {
+                        for (auto d : it->second.dims) { c->mutable_dimensions()->add_dims(d); }
+                    }
+                }
+                else if constexpr (std::is_same_v<T, std::vector<std::vector<float>>>)
+                {
+                    auto* c = df.add_floatarraycolumns();
+                    c->set_name(col.name);
+                    for (const auto& arr : vec)
+                    {
+                        for (auto v : arr) { c->add_values(v); }
+                    }
+                    auto it = batch.array_dims.find(col.name);
+                    if (it != batch.array_dims.end())
+                    {
+                        for (auto d : it->second.dims) { c->mutable_dimensions()->add_dims(d); }
+                    }
+                }
+                else if constexpr (std::is_same_v<T, std::vector<std::vector<int64_t>>>)
+                {
+                    auto* c = df.add_int64arraycolumns();
+                    c->set_name(col.name);
+                    for (const auto& arr : vec)
+                    {
+                        for (auto v : arr) { c->add_values(v); }
+                    }
+                    auto it = batch.array_dims.find(col.name);
+                    if (it != batch.array_dims.end())
+                    {
+                        for (auto d : it->second.dims) { c->mutable_dimensions()->add_dims(d); }
+                    }
+                }
+                else if constexpr (std::is_same_v<T, std::vector<std::vector<int32_t>>>)
+                {
+                    auto* c = df.add_int32arraycolumns();
+                    c->set_name(col.name);
+                    for (const auto& arr : vec)
+                    {
+                        for (auto v : arr) { c->add_values(v); }
+                    }
+                    auto it = batch.array_dims.find(col.name);
+                    if (it != batch.array_dims.end())
+                    {
+                        for (auto d : it->second.dims) { c->mutable_dimensions()->add_dims(d); }
+                    }
+                }
+                else if constexpr (std::is_same_v<T, std::vector<std::vector<bool>>>)
+                {
+                    auto* c = df.add_boolarraycolumns();
+                    c->set_name(col.name);
+                    for (const auto& arr : vec)
+                    {
+                        for (auto v : arr) { c->add_values(v); }
+                    }
+                    auto it = batch.array_dims.find(col.name);
+                    if (it != batch.array_dims.end())
+                    {
+                        for (auto d : it->second.dims) { c->mutable_dimensions()->add_dims(d); }
+                    }
+                }
+            },
+            col.values);
+    }
+
+    // Enum columns
+    for (const auto& ecol : batch.enum_columns)
+    {
+        auto* c = df.add_enumcolumns();
+        c->set_name(ecol.name);
+        c->set_enumid(ecol.enum_id);
+        for (auto v : ecol.values) { c->add_values(v); }
+    }
+
+    return df;
+}
+
+// ---------------------------------------------------------------------------
 // buildRequest — identical to original MLDPPVXSController::buildRequest
 // ---------------------------------------------------------------------------
 
 bool MLDPWriter::buildRequest(const std::string&                         sourceName,
-                              const dp::service::common::DataFrame&      frame,
+                              const util::bus::DataBatch&                batch,
                               const std::string&                         requestId,
                               dp::service::ingestion::IngestDataRequest& request,
                               std::size_t&                               acceptedEvents,
@@ -470,18 +630,19 @@ bool MLDPWriter::buildRequest(const std::string&                         sourceN
     request.set_providerid(providerId_);
     request.set_clientrequestid(requestId);
 
-    auto* dataFrame = request.mutable_ingestiondataframe();
-    *dataFrame = frame;
+    auto  dataFrame  = toDataFrame(batch);
+    auto* dataFrame_ptr = request.mutable_ingestiondataframe();
+    *dataFrame_ptr = std::move(dataFrame);
 
     const bool hasColumns =
-        dataFrame->doublecolumns_size() > 0 || dataFrame->floatcolumns_size() > 0 ||
-        dataFrame->datacolumns_size() > 0 || dataFrame->int32columns_size() > 0 ||
-        dataFrame->int64columns_size() > 0 || dataFrame->boolcolumns_size() > 0 ||
-        dataFrame->stringcolumns_size() > 0 || dataFrame->enumcolumns_size() > 0 ||
-        dataFrame->imagecolumns_size() > 0 || dataFrame->structcolumns_size() > 0 ||
-        dataFrame->doublearraycolumns_size() > 0 || dataFrame->floatarraycolumns_size() > 0 ||
-        dataFrame->int32arraycolumns_size() > 0 || dataFrame->int64arraycolumns_size() > 0 ||
-        dataFrame->boolarraycolumns_size() > 0;
+        dataFrame_ptr->doublecolumns_size() > 0 || dataFrame_ptr->floatcolumns_size() > 0 ||
+        dataFrame_ptr->datacolumns_size() > 0 || dataFrame_ptr->int32columns_size() > 0 ||
+        dataFrame_ptr->int64columns_size() > 0 || dataFrame_ptr->boolcolumns_size() > 0 ||
+        dataFrame_ptr->stringcolumns_size() > 0 || dataFrame_ptr->enumcolumns_size() > 0 ||
+        dataFrame_ptr->imagecolumns_size() > 0 || dataFrame_ptr->structcolumns_size() > 0 ||
+        dataFrame_ptr->doublearraycolumns_size() > 0 || dataFrame_ptr->floatarraycolumns_size() > 0 ||
+        dataFrame_ptr->int32arraycolumns_size() > 0 || dataFrame_ptr->int64arraycolumns_size() > 0 ||
+        dataFrame_ptr->boolarraycolumns_size() > 0;
 
     if (!hasColumns)
     {
@@ -489,7 +650,7 @@ bool MLDPWriter::buildRequest(const std::string&                         sourceN
         return false;
     }
 
-    if (!hasTimestampListW(*dataFrame))
+    if (!hasTimestampListW(*dataFrame_ptr))
     {
         errorf(*logger_, "Dropping frame for source {}: missing DataFrame.datatimestamps.timestamplist", sourceName);
         metric_call(metrics_, [&](auto& m)
@@ -500,7 +661,7 @@ bool MLDPWriter::buildRequest(const std::string&                         sourceN
     }
 
     acceptedEvents = static_cast<std::size_t>(
-        dataFrame->datatimestamps().timestamplist().timestamps_size());
+        dataFrame_ptr->datatimestamps().timestamplist().timestamps_size());
     payloadBytes = static_cast<std::size_t>(request.ByteSizeLong());
     return true;
 }

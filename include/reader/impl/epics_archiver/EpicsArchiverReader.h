@@ -52,12 +52,12 @@ namespace mldp_pvxs_driver::reader::impl::epics_archiver {
  */
 struct PbChunkState
 {
-    bool                                        have_header = false;           ///< True after PayloadInfo has been parsed.
-    EPICS::PayloadInfo                          header;                        ///< Payload header for the current chunk.
-    std::vector<dp::service::common::DataFrame> events;                        ///< Converted sample frames for this chunk.
-    bool                                        have_batch_start_time = false; ///< True after first sample of current output batch.
-    uint64_t                                    batch_start_epoch_seconds = 0; ///< Historical batch start (seconds).
-    uint32_t                                    batch_start_nanoseconds = 0;   ///< Historical batch start (nanoseconds).
+    bool                               have_header = false;           ///< True after PayloadInfo has been parsed.
+    EPICS::PayloadInfo                 header;                        ///< Payload header for the current chunk.
+    std::vector<util::bus::DataBatch>  events;                        ///< Converted sample batches for this chunk.
+    bool                               have_batch_start_time = false; ///< True after first sample of current output batch.
+    uint64_t                           batch_start_epoch_seconds = 0; ///< Historical batch start (seconds).
+    uint32_t                           batch_start_nanoseconds = 0;   ///< Historical batch start (nanoseconds).
 };
 
 /**

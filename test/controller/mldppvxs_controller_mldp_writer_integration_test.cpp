@@ -24,6 +24,8 @@ using namespace mldp_pvxs_driver::testutil;
 
 using mldp_pvxs_driver::config::makeConfigFromYaml;
 using mldp_pvxs_driver::util::bus::IDataBus;
+using mldp_pvxs_driver::util::bus::DataBatch;
+using mldp_pvxs_driver::util::bus::DataColumn;
 
 namespace {
 
@@ -340,13 +342,12 @@ TEST(MLDPPVXSControllerTest, IdleStreamRotationStartsNewStreamAfterMaxAge)
     IDataBus::EventBatch batch;
     batch.root_source = "test-root";
     batch.tags = {"test"};
-    dp::service::common::DataFrame frame1;
-    auto*                          c1 = frame1.add_int32columns();
-    c1->set_name("value");
-    c1->add_values(1);
-    auto* ts1 = frame1.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
-    ts1->set_epochseconds(1);
-    ts1->set_nanoseconds(0);
+    DataBatch frame1;
+    frame1.timestamps.push_back({1, 0});
+    DataColumn col1;
+    col1.name   = "value";
+    col1.values = std::vector<int32_t>{1};
+    frame1.columns.push_back(std::move(col1));
     batch.frames.push_back(std::move(frame1));
 
     ASSERT_TRUE(controller->push(std::move(batch)));
@@ -358,13 +359,12 @@ TEST(MLDPPVXSControllerTest, IdleStreamRotationStartsNewStreamAfterMaxAge)
     IDataBus::EventBatch batch2;
     batch2.root_source = "test-root";
     batch2.tags = {"test"};
-    dp::service::common::DataFrame frame2;
-    auto*                          c2 = frame2.add_int32columns();
-    c2->set_name("value");
-    c2->add_values(2);
-    auto* ts2 = frame2.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
-    ts2->set_epochseconds(2);
-    ts2->set_nanoseconds(0);
+    DataBatch frame2;
+    frame2.timestamps.push_back({2, 0});
+    DataColumn col2;
+    col2.name   = "value";
+    col2.values = std::vector<int32_t>{2};
+    frame2.columns.push_back(std::move(col2));
     batch2.frames.push_back(std::move(frame2));
 
     ASSERT_TRUE(controller->push(std::move(batch2)));

@@ -13,7 +13,7 @@
  */
 
 #pragma once
-#include "common.pb.h"
+#include <util/bus/DataBatch.h>
 #include <chrono>
 #include <cstdint>
 #include <optional>
@@ -32,7 +32,7 @@ struct EventBatchStruct
 {
     std::string                                 root_source;                 ///< Root PV identifier used for batch-level metrics/correlation.
     std::vector<std::string>                    tags;                        ///< Optional metadata attached to the batch.
-    std::vector<dp::service::common::DataFrame> frames;                      ///< One frame per ingestion payload; each frame must include timestamps.
+    std::vector<util::bus::DataBatch>            frames;                      ///< One DataBatch per ingestion payload; each batch must include timestamps.
     bool                                        end_of_batch_group{false};   ///< Flush sentinel. Signals that all column batches for one logical row-synchronized group have been emitted. Writers should flush any accumulated tabular state when this is true.
     bool                                        is_tabular{false};           ///< True when this batch carries column frames for a multi-column, row-synchronized table. Writers that support tabular layout accumulate column batches before flushing.
 };
