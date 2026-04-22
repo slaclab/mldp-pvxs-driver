@@ -751,6 +751,28 @@ if(MLDP_PVXS_DRIVER_MAIN)
     )
 endif()
 
+# HDF5 dump tool — inspect driver-produced HDF5 files (head/tail rows, no full load)
+if(MLDP_PVXS_ENABLE_HDF5)
+    add_executable(hdf5_dump
+        "${CMAKE_CURRENT_SOURCE_DIR}/tools/hdf5_dump.cpp"
+    )
+    target_include_directories(hdf5_dump PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+        "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    target_link_libraries(hdf5_dump PRIVATE
+        ${_MLDP_HDF5_TARGET}
+        argparse::argparse
+        spdlog::spdlog
+    )
+    target_compile_definitions(hdf5_dump PRIVATE
+        MLDP_PVXS_HDF5_ENABLED
+    )
+    target_include_directories(hdf5_dump PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/ext/BS_thread_pool/include"
+    )
+endif()
+
 # Driver executable
 if(MLDP_PVXS_DRIVER_MAIN)
     add_executable(${PROJECT_NAME}

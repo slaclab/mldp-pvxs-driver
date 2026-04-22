@@ -54,6 +54,20 @@ std::string HDF5FilePool::nowUtcFileSuffix()
     return oss.str();
 }
 
+static std::filesystem::path tempFilePath(const std::filesystem::path& basePath,
+                                          const std::string& sourceName,
+                                          const std::string& suffix)
+{
+    return basePath / ("." + HDF5FilePool::safeName(sourceName) + "_" + suffix + ".hdf5");
+}
+
+static std::filesystem::path finalFilePath(const std::filesystem::path& basePath,
+                                           const std::string& sourceName,
+                                           const std::string& suffix)
+{
+    return basePath / (HDF5FilePool::safeName(sourceName) + "_" + suffix + ".hdf5");
+}
+
 // ---------------------------------------------------------------------------
 // HDF5FilePool
 // ---------------------------------------------------------------------------
@@ -97,21 +111,49 @@ bool HDF5FilePool::needsRotation(const FileEntry& entry) const noexcept
 
 std::shared_ptr<FileEntry> HDF5FilePool::openFile(const std::string& sourceName)
 {
-    const std::string           fileName = safeName(sourceName) + "_" + nowUtcFileSuffix() + ".hdf5";
-    const std::filesystem::path filePath = std::filesystem::path(config_.basePath) / fileName;
+    const std::string           suffix = nowUtcFileSuffix();
+    const std::filesystem::path filePath = tempFilePath(config_.basePath, sourceName, suffix);
+    const std::filesystem::path finalPath = finalFilePath(config_.basePath, sourceName, suffix);
 
     infof("HDF5FilePool opening new file for source='{}' path={}", sourceName, filePath.string());
     auto entry = std::make_shared<FileEntry>();
     entry->path = filePath;
+    entry->finalPath = finalPath;
     entry->openedAt = std::chrono::steady_clock::now();
     entry->bytesWritten = 0;
     // Use the latest HDF5 file format so large compound types (e.g. 1367-field
     // NTTable datasets) fit within the object header size limit.
+    // Disable SWMR-style file locking so readers (e.g. h5web, h5py) can open
+    // the file while the writer is running and after an unclean shutdown that
+    // leaves the "writer open" consistency flag set.
     H5::FileAccPropList fapl;
     fapl.setLibverBounds(H5F_LIBVER_LATEST, H5F_LIBVER_LATEST);
+    H5Pset_file_locking(fapl.getId(), static_cast<hbool_t>(false), static_cast<hbool_t>(true));
     entry->file = H5::H5File(filePath.string(), H5F_ACC_TRUNC, H5::FileCreatPropList::DEFAULT, fapl);
     debugf("HDF5FilePool file opened: {}", filePath.string());
     return entry;
+}
+
+static void finalizeClosedFile(const std::shared_ptr<FileEntry>& entry)
+{
+    if (!entry)
+    {
+        return;
+    }
+    if (entry->path == entry->finalPath)
+    {
+        return;
+    }
+    std::error_code ec;
+    std::filesystem::rename(entry->path, entry->finalPath, ec);
+    if (ec)
+    {
+        errorf("HDF5FilePool failed to rename {} -> {}: {}",
+               entry->path.string(), entry->finalPath.string(), ec.message());
+        return;
+    }
+    debugf("HDF5FilePool renamed {} -> {}", entry->path.string(), entry->finalPath.string());
+    entry->path = entry->finalPath;
 }
 
 std::shared_ptr<FileEntry> HDF5FilePool::acquire(const std::string& sourceName)
@@ -134,6 +176,7 @@ std::shared_ptr<FileEntry> HDF5FilePool::acquire(const std::string& sourceName)
         {
             std::lock_guard<std::mutex> fileLk(it->second->fileMutex);
             it->second->file.close();
+            finalizeClosedFile(it->second);
         }
         catch (const H5::Exception& ex)
         {
@@ -172,7 +215,7 @@ void HDF5FilePool::flushAll() noexcept
         try
         {
             std::lock_guard<std::mutex> fileLk(entry->fileMutex);
-            entry->file.flush(H5F_SCOPE_LOCAL);
+            entry->file.flush(H5F_SCOPE_GLOBAL);
         }
         catch (const H5::Exception& ex)
         {
@@ -200,6 +243,7 @@ void HDF5FilePool::closeAll() noexcept
             std::lock_guard<std::mutex> fileLk(entry->fileMutex);
             entry->file.close();
             debugf("HDF5FilePool closed {}", entry->path.string());
+            finalizeClosedFile(entry);
         }
         catch (const H5::Exception& ex)
         {

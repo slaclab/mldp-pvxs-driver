@@ -36,7 +36,8 @@ namespace mldp_pvxs_driver::writer {
 struct FileEntry
 {
     H5::H5File                            file;            ///< Open HDF5 file handle.
-    std::filesystem::path                 path;            ///< Absolute path on disk.
+    std::filesystem::path                 path;            ///< Current on-disk path while open (hidden temp name).
+    std::filesystem::path                 finalPath;       ///< Final visible path after clean close.
     std::chrono::steady_clock::time_point openedAt;        ///< When the file was opened.
     uint64_t                              bytesWritten{0}; ///< Cumulative bytes written since open.
     mutable std::mutex                    fileMutex;       ///< Guards all access to file (HDF5 is not thread-safe).
@@ -60,7 +61,7 @@ struct FileEntry
  *
  * File naming convention:
  * @code
- * <base-path>/<safe_source>_<YYYYMMDDTHHMMSSz>.h5
+ * <base-path>/.<safe_source>_<YYYYMMDDTHHMMSSz>.h5
  * @endcode
  * where `:` and other characters outside `[A-Za-z0-9._-]` are replaced by `_`.
  */
@@ -151,10 +152,11 @@ private:
      *
      * File path is:
      * @code
-     * config_.basePath / safeName(sourceName) + "_" + nowUtcFileSuffix() + ".h5"
+     * config_.basePath / "." + safeName(sourceName) + "_" + nowUtcFileSuffix() + ".hdf5"
      * @endcode
      * The file is created with H5F_ACC_TRUNC (truncate/create).  If the base
-     * directory does not exist it is created recursively.
+     * directory does not exist it is created recursively.  The final visible
+     * path is stored separately and restored on clean close.
      *
      * @param sourceName  Root source identifier; used to build the file name.
      * @return Shared pointer to the newly created and inserted FileEntry.
