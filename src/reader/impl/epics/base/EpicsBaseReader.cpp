@@ -177,6 +177,7 @@ void EpicsBaseReader::processDefaultMode(const std::string&                     
     batch.tags.push_back(pvName);
     batch.frames.push_back(std::move(batch_frame));
     emitted = 1;
+    batch.reader_name = name();
     bus_->push(std::move(batch));
 }
 
@@ -229,6 +230,7 @@ void EpicsBaseReader::processSlacBsasTableMode(const std::string&               
                 ++colsInBatch;
                 if (colBatchSize > 0 && colsInBatch >= colBatchSize)
                 {
+                    tableBatch.reader_name = name();
                     bus_->push(std::move(tableBatch));
                     resetBatch();
                 }
@@ -243,6 +245,7 @@ void EpicsBaseReader::processSlacBsasTableMode(const std::string&               
     }
     else if (!tableBatch.frames.empty())
     {
+        tableBatch.reader_name = name();
         bus_->push(std::move(tableBatch));
     }
 }

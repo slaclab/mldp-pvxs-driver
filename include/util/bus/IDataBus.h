@@ -30,6 +30,8 @@ namespace mldp_pvxs_driver::util::bus {
  */
 struct EventBatchStruct
 {
+    /// Identity of the producing reader (set by reader before push).
+    std::string                                 reader_name;
     std::string                                 root_source;                 ///< Root PV identifier used for batch-level metrics/correlation.
     std::vector<std::string>                    tags;                        ///< Optional metadata attached to the batch.
     std::vector<util::bus::DataBatch>            frames;                      ///< One DataBatch per ingestion payload; each batch must include timestamps.

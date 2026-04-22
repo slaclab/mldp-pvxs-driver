@@ -339,6 +339,7 @@ flowchart TB
 - `MLDPQueryClient` handles out-of-band metadata/data queries instead of `IDataBus`
 - Async event delivery via thread pools
 - Workers dispatch `EventBatch` to registered `IWriter` instances (`MLDPWriter`, `HDF5Writer`)
+- Optional **reader-to-writer routing** selectively dispatches batches based on config — see [Controller Documentation](controller.md#reader-to-writer-routing)
 
 ## Cross-Cutting Utilities
 
@@ -361,7 +362,7 @@ HTTP-based readers can use the shared `util/http` transport abstraction instead 
 
 ### Controller Settings
 
-The controller config (`MLDPPVXSControllerConfig`) holds four top-level keys — no thread-pool or stream knobs at this level; those live in each writer's config.
+The controller config (`MLDPPVXSControllerConfig`) holds five top-level keys — no thread-pool or stream knobs at this level; those live in each writer's config.
 
 ```yaml
 name: my_controller   # optional; default: "default"; used as Prometheus label 'controller'
@@ -374,11 +375,17 @@ reader:           # list of reader instances (by type)
   - epics-pvxs:
       ...
 
+routing:          # optional; selective reader-to-writer dispatch
+  writer_name:
+    from: [reader_1, reader_2]
+
 metrics:          # optional Prometheus / metrics config
   ...
 ```
 
 > **Note:** `name` scopes all controller-emitted Prometheus metrics under a `controller` label. Run multiple controller instances with distinct names to avoid metric collisions.
+
+→ [Full Controller Documentation](controller.md)
 
 ### Reader Settings
 

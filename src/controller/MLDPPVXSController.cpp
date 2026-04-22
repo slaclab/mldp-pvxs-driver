@@ -105,6 +105,23 @@ void MLDPPVXSController::start()
         auto        reader = ReaderFactory::create(type, shared_from_this(), readerConfig, metrics_);
         readers_.push_back(std::move(reader));
     }
+    // -- Build route table from config --
+    {
+        std::unordered_set<std::string> known_writers;
+        for (const auto& w : writers_) known_writers.insert(w->name());
+
+        std::unordered_set<std::string> known_readers;
+        for (const auto& r : readers_) known_readers.insert(r->name());
+
+        route_table_ = RouteTable::build(config_.routeEntries(), known_readers, known_writers);
+
+        // Warn about orphan readers/writers
+        for (const auto& name : route_table_.orphanReaders(known_readers))
+            warnf(*logger_, "Reader '{}' not mentioned in any route — will not feed any writer", name);
+        for (const auto& name : route_table_.orphanWriters(known_writers))
+            warnf(*logger_, "Writer '{}' not mentioned in any route — will receive no data", name);
+    }
+
     infof(*logger_, "Controller started");
 }
 
@@ -148,6 +165,11 @@ bool MLDPPVXSController::push(EventBatch batch_values)
         return false;
     }
 
+    if (!route_table_.isAllToAll() && batch_values.reader_name.empty())
+    {
+        warnf(*logger_, "Batch from source '{}' has empty reader_name — routing may drop it", batch_values.root_source);
+    }
+
     // Parallel fan-out: submit one task per writer to the thread pool so all
     // writers run concurrently.  Every writer receives its own copy of the
     // batch;
@@ -155,10 +177,15 @@ bool MLDPPVXSController::push(EventBatch batch_values)
     const std::size_t n = writers_.size();
 
     std::vector<std::future<bool>> futures;
+    std::vector<std::size_t>        writer_indices; // track which writer each future corresponds to
     futures.reserve(n);
+    writer_indices.reserve(n);
 
     for (std::size_t i = 0; i < n; ++i)
     {
+        if (!route_table_.accepts(writers_[i]->name(), batch_values.reader_name))
+            continue;
+
         // Capture writer pointer and a copy of the batch per task.
         auto*      writerPtr = writers_[i].get();
         EventBatch batchCopy = batch_values; // explicit copy for each task
@@ -167,17 +194,18 @@ bool MLDPPVXSController::push(EventBatch batch_values)
                                       {
                                           return writerPtr->push(std::move(b));
                                       }));
+        writer_indices.push_back(i);
     }
 
     // Collect results; warn for any writer that rejected the batch.
     bool anyAccepted = false;
-    for (std::size_t i = 0; i < n; ++i)
+    for (std::size_t fi = 0; fi < futures.size(); ++fi)
     {
-        const bool ok = futures[i].get();
+        const bool ok = futures[fi].get();
         if (!ok)
         {
             warnf(*logger_, "Writer '{}' rejected batch for source {}",
-                  writers_[i]->name(), rootSource);
+                  writers_[writer_indices[fi]]->name(), rootSource);
         }
         anyAccepted = anyAccepted || ok;
     }

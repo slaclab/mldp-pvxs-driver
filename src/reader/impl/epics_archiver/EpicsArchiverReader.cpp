@@ -343,6 +343,7 @@ void EpicsArchiverReader::flushChunk(PbChunkState& state)
         }
         if (!batch.frames.empty())
         {
+            batch.reader_name = name();
             bus_->push(std::move(batch));
         }
 

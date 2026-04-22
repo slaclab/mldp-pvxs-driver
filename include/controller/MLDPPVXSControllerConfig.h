@@ -11,6 +11,7 @@
 #pragma once
 
 #include <config/Config.h>
+#include <controller/RouteTable.h>
 #include <metrics/MetricsConfig.h>
 
 #include <optional>
@@ -23,6 +24,7 @@ namespace mldp_pvxs_driver::controller {
 inline constexpr char NameKey[]    = "name";
 inline constexpr char ReaderKey[]  = "reader";
 inline constexpr char MetricsKey[] = "metrics";
+inline constexpr char RoutingKey[] = "routing";
 
 /**
  * @brief Typed view over the controller configuration tree.
@@ -89,11 +91,15 @@ public:
     /** @return Optional metrics configuration when the YAML provides it. */
     const std::optional<metrics::MetricsConfig>& metricsConfig() const;
 
+    /** @return Route entries mapping writer names to their source reader lists. */
+    const std::vector<RouteTable::RouteEntry>& routeEntries() const;
+
 private:
     void parse(const ::mldp_pvxs_driver::config::Config& root);
     void parseWriter(const ::mldp_pvxs_driver::config::Config& root);
     void parseReaders(const ::mldp_pvxs_driver::config::Config& root);
     void parseMetrics(const ::mldp_pvxs_driver::config::Config& root);
+    void parseRouting(const ::mldp_pvxs_driver::config::Config& root);
 
     bool                                                valid_ = false;
     std::string                                         name_{"default"};
@@ -101,6 +107,7 @@ private:
     std::vector<std::pair<std::string, config::Config>> readerEntries_;
     std::vector<std::pair<std::string, config::Config>> writerEntries_;
     std::optional<metrics::MetricsConfig>               metricsConfig_;
+    std::vector<RouteTable::RouteEntry>                  routeEntries_;
 };
 
 } // namespace mldp_pvxs_driver::controller

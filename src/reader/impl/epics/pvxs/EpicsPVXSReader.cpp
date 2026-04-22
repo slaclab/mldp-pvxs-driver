@@ -175,6 +175,7 @@ void EpicsPVXSReader::processDefaultMode(const std::string& pvName, const pvxs::
     eventBatch.tags.push_back(pvName);
     eventBatch.frames.push_back(std::move(batch));
     emitted = 1;
+    eventBatch.reader_name = name();
     bus_->push(std::move(eventBatch));
 }
 
@@ -229,6 +230,7 @@ void EpicsPVXSReader::processSlacBsasTableMode(const std::string&     pvName,
                 ++colsInBatch;
                 if (colBatchSize > 0 && colsInBatch >= colBatchSize)
                 {
+                    tableBatch.reader_name = name();
                     bus_->push(std::move(tableBatch));
                     resetBatch();
                 }
@@ -242,6 +244,7 @@ void EpicsPVXSReader::processSlacBsasTableMode(const std::string&     pvName,
     }
     else if (!tableBatch.frames.empty())
     {
+        tableBatch.reader_name = name();
         bus_->push(std::move(tableBatch));
     }
 
@@ -252,6 +255,7 @@ void EpicsPVXSReader::processSlacBsasTableMode(const std::string&     pvName,
     markerBatch.tags.push_back(pvName);
     markerBatch.is_tabular = true;
     markerBatch.end_of_batch_group = true;
+    markerBatch.reader_name = name();
     bus_->push(std::move(markerBatch));
 }
 
