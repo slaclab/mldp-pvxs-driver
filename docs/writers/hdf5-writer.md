@@ -185,7 +185,27 @@ Configuration:
 | File age ≥ threshold | `max-file-age-s` | 3600 s (1 h) |
 | Bytes written ≥ threshold | `max-file-size-mb` | 512 MiB |
 
-Rotation: close current file → open new file with fresh timestamp suffix.
+### How rotation works
+
+Rotation is performed **inside `acquire()`**, the only entry point for obtaining a file handle. The sequence is:
+
+1. Writer calls `pool->acquire(sourceName)`.
+2. `acquire()` locks the pool mutex, finds the current `FileEntry`, and calls `needsRotation()`.
+3. If the age or size threshold is exceeded:
+   - The old file is closed (under `fileMutex`) and renamed from its hidden temp path to its final visible path.
+   - A new `FileEntry` with a fresh timestamped file is created and inserted into the pool map.
+   - The new entry is returned to the caller.
+4. If no threshold is exceeded, the existing entry is returned as-is.
+
+### Why no data is lost during rotation
+
+The writer **must** call `acquire()` before every write operation — there is no way to write to a file without first obtaining its `shared_ptr<FileEntry>`. This design guarantees correctness:
+
+- **Tabular (NTTable) path:** column batches accumulate in a `TabularBuffer` (in-memory, not tied to any file). Only when the `end_of_batch_group` marker arrives does the writer call `acquire()` and then `flushTabularBuffer()`. If rotation triggers at this point, the accumulated rows are written to the **new** file — no partial data is left in the old file.
+- **Columnar (scalar/waveform) path:** each `appendFrame()` call is preceded by `acquire()`. Rotation happens before the frame is written, so the frame lands in the new file.
+- **Flush thread:** `flushAll()` calls `H5File::flush()` on all currently open files. It does not call `acquire()`, so it never triggers rotation. It only ensures OS/HDF5 buffers are synced to disk.
+
+In all cases, the old file is fully flushed and closed before the new file is returned. Datasets are recreated lazily in the new file via `ensureDataset()` / `ensureDataset2D()`, which check `file.nameExists()` and create fresh chunked datasets on first access. Schema metadata (column names, types) lives in `TabularBuffer` and `HDF5Writer` state, not in `FileEntry`, so it survives rotation.
 
 ## Configuration
 
