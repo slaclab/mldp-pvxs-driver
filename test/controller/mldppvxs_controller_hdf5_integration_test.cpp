@@ -97,6 +97,10 @@ protected:
         controller_->start();
     }
 
+    // Wait for a *final* (non-dotfile) HDF5 file to appear.  These are created
+    // by HDF5FilePool only after the file is renamed on close, i.e. after
+    // stop() is called.  Call waitForActivity() first to confirm data is
+    // flowing, then stop() the controller, then call this.
     fs::path waitForH5File(std::chrono::milliseconds timeout = std::chrono::milliseconds(3000))
     {
         const auto deadline = std::chrono::steady_clock::now() + timeout;
@@ -104,7 +108,26 @@ protected:
         {
             for (const auto& e : fs::recursive_directory_iterator(outputDir_))
             {
-                if (e.is_regular_file() && e.path().extension() == ".hdf5")
+                if (e.is_regular_file() && e.path().extension() == ".hdf5"
+                    && e.path().filename().string().front() != '.')
+                    return e.path();
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        return {};
+    }
+
+    // Wait for a dotfile (temp HDF5) to appear, confirming data is flowing.
+    // Returns the final path the file will have after rename (strip leading dot).
+    fs::path waitForActivity(std::chrono::milliseconds timeout = std::chrono::milliseconds(3000))
+    {
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        while (std::chrono::steady_clock::now() < deadline)
+        {
+            for (const auto& e : fs::recursive_directory_iterator(outputDir_))
+            {
+                if (e.is_regular_file() && e.path().extension() == ".hdf5"
+                    && e.path().filename().string().front() == '.')
                     return e.path();
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -144,10 +167,12 @@ class PvHDF5Test : public ControllerHDF5Test,
 TEST_P(PvHDF5Test, WritesNonEmptyTimestamps)
 {
     startController(GetParam());
-    const auto h5path = waitForH5File();
-    ASSERT_FALSE(h5path.empty()) << "No .h5 file written for PV: " << GetParam();
+    const auto dotfile = waitForActivity();
+    ASSERT_FALSE(dotfile.empty()) << "No .hdf5 temp file written for PV: " << GetParam();
     controller_->stop();
     controller_.reset();
+    const auto h5path = waitForH5File();
+    ASSERT_FALSE(h5path.empty()) << "No final .hdf5 file after stop() for PV: " << GetParam();
     checkH5HasTimestamps(h5path);
 }
 
@@ -191,10 +216,11 @@ TEST_F(ControllerHDF5Test, VoltagePVDataStoredInHDF5)
 {
     // test:voltage publishes Float64 NTScalar: 1.5 + sin(time), range (0.5, 2.5)
     startController("test:voltage");
-    const auto h5path = waitForH5File();
-    ASSERT_FALSE(h5path.empty()) << "No .h5 file written for test:voltage";
+    ASSERT_FALSE(waitForActivity().empty()) << "No .hdf5 temp file written for test:voltage";
     controller_->stop();
     controller_.reset();
+    const auto h5path = waitForH5File();
+    ASSERT_FALSE(h5path.empty()) << "No final .hdf5 file after stop() for test:voltage";
 
     H5::H5File file(h5path.string(), H5F_ACC_RDONLY);
 
@@ -229,10 +255,11 @@ TEST_F(ControllerHDF5Test, CounterPVDataStoredInHDF5)
 {
     // test:counter publishes Int32 NTScalar: monotonically increasing counter (>0)
     startController("test:counter");
-    const auto h5path = waitForH5File();
-    ASSERT_FALSE(h5path.empty()) << "No .h5 file written for test:counter";
+    ASSERT_FALSE(waitForActivity().empty()) << "No .hdf5 temp file written for test:counter";
     controller_->stop();
     controller_.reset();
+    const auto h5path = waitForH5File();
+    ASSERT_FALSE(h5path.empty()) << "No final .hdf5 file after stop() for test:counter";
 
     H5::H5File file(h5path.string(), H5F_ACC_RDONLY);
 
@@ -315,13 +342,15 @@ TEST_F(ControllerHDF5Test, Gen1NTTableWritesCompoundDataset)
     ASSERT_TRUE(controller_) << "Failed to create controller for CU-HXR";
     controller_->start();
 
-    // Wait for file creation then let a couple more update cycles accumulate.
-    const auto h5path = waitForH5File(std::chrono::milliseconds(5000));
-    ASSERT_FALSE(h5path.empty()) << "No .hdf5 file written within 5 s";
+    // Wait for activity (dotfile) then let a couple more update cycles accumulate.
+    ASSERT_FALSE(waitForActivity(std::chrono::milliseconds(5000)).empty())
+        << "No .hdf5 temp file written within 5 s";
     std::this_thread::sleep_for(std::chrono::milliseconds(600));
 
     controller_->stop();
     controller_.reset();
+    const auto h5path = waitForH5File(std::chrono::milliseconds(3000));
+    ASSERT_FALSE(h5path.empty()) << "No final .hdf5 file after stop() for CU-HXR";
 
     // ---- Open file -----------------------------------------------------------
     H5::H5File file;
@@ -423,13 +452,15 @@ TEST_F(ControllerHDF5Test, BsasNTTableStructuralCorrectness)
     ASSERT_TRUE(controller_) << "Failed to create controller for test:bsas_table";
     controller_->start();
 
-    const auto h5path = waitForH5File(std::chrono::milliseconds(5000));
-    ASSERT_FALSE(h5path.empty()) << "No .hdf5 file written within 5 s";
+    ASSERT_FALSE(waitForActivity(std::chrono::milliseconds(5000)).empty())
+        << "No .hdf5 temp file written within 5 s";
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
     // ---- 2. Stop controller BEFORE opening the file --------------------------
     controller_->stop();
     controller_.reset();
+    const auto h5path = waitForH5File(std::chrono::milliseconds(3000));
+    ASSERT_FALSE(h5path.empty()) << "No final .hdf5 file after stop() for test:bsas_table";
 
     // ---- 3. Open file ---------------------------------------------------------
     H5::H5File file;

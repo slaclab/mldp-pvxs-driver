@@ -79,6 +79,9 @@ bool RouteTable::accepts(const std::string& writer_name,
 std::vector<std::string> RouteTable::orphanReaders(
     const std::unordered_set<std::string>& known_readers) const
 {
+    if (all_to_all_) {
+        return {}; // all-to-all: no orphans by definition
+    }
     std::unordered_set<std::string> mentioned;
     for (const auto& [_, wr] : table_) {
         if (wr.accept_all) {
@@ -100,6 +103,9 @@ std::vector<std::string> RouteTable::orphanReaders(
 std::vector<std::string> RouteTable::orphanWriters(
     const std::unordered_set<std::string>& known_writers) const
 {
+    if (all_to_all_) {
+        return {}; // all-to-all: no orphans by definition
+    }
     std::vector<std::string> orphans;
     for (const auto& writer : known_writers) {
         if (!table_.contains(writer)) {
