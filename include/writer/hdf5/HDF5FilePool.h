@@ -128,6 +128,18 @@ public:
      */
     void setMetrics(metrics::HDF5WriterMetrics* metrics) noexcept;
 
+    /**
+     * @brief Sanitise @p source for use as a file-name component.
+     *
+     * Replaces every character outside `[A-Za-z0-9._-]` with `_`.
+     * This prevents path-separator injection and ensures the resulting
+     * filename is valid on all POSIX and NTFS file systems.
+     *
+     * @param source  Raw source/PV name (may contain `:`, `/`, spaces, etc.).
+     * @return Sanitised copy safe for embedding in a file path.
+     */
+    static std::string safeName(const std::string& source);
+
 private:
     const HDF5WriterConfig                                      config_;   ///< Immutable pool configuration.
     mutable std::mutex                                          mutex_;    ///< Guards entries_ map (lookup, insert, rotate).
@@ -163,18 +175,6 @@ private:
      * @throws H5::FileIException if the HDF5 library cannot create the file.
      */
     std::shared_ptr<FileEntry> openFile(const std::string& sourceName);
-
-    /**
-     * @brief Sanitise @p source for use as a file-name component.
-     *
-     * Replaces every character outside `[A-Za-z0-9._-]` with `_`.
-     * This prevents path-separator injection and ensures the resulting
-     * filename is valid on all POSIX and NTFS file systems.
-     *
-     * @param source  Raw source/PV name (may contain `:`, `/`, spaces, etc.).
-     * @return Sanitised copy safe for embedding in a file path.
-     */
-    static std::string safeName(const std::string& source);
 
     /**
      * @brief Return a UTC timestamp string suitable for use in file names.

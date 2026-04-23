@@ -1,6 +1,6 @@
 # Configuration Reference
 
-> **Related:** [Architecture Overview](architecture.md) | [Writers](writers-implementation.md) | [Readers](readers.md) | [Metrics Export](metrics-export-guide.md)
+> **Related:** [Architecture Overview](architecture.md) | [Controller](controller.md) | [Writers](writers-implementation.md) | [Readers](readers.md) | [Metrics Export](metrics-export-guide.md)
 
 Complete YAML schema reference for the MLDP PVXS Driver. All keys are case-sensitive.
 
@@ -17,6 +17,10 @@ reader:         # optional — list of reader groups
   - epics-pvxs: [...]
   - epics-base: [...]
   - epics-archiver: [...]
+
+routing:        # optional — selective reader-to-writer dispatch
+  writer_name:
+    from: [reader_1, reader_2]
 
 metrics:        # optional — Prometheus HTTP endpoint
   endpoint: "0.0.0.0:9464"
@@ -216,6 +220,46 @@ Two fetch modes:
 | `pvs[].name` | string | — | **Required.** PV name to retrieve from the archiver. |
 
 → [EpicsArchiverReader Implementation](readers/epics-archiver-reader-implementation.md)
+
+---
+
+## `routing:` Block
+
+Optional. Controls which readers feed which writers. When absent, all readers feed all writers (backward compatible default).
+
+The routing model is **writer-centric**: each writer declares which readers it accepts.
+
+```yaml
+routing:
+  mldp_main:
+    from: [scalar_reader, bsas_reader]
+  hdf5_bsas:
+    from: [bsas_reader]
+  monitoring:
+    from: [all]         # accepts batches from every reader
+```
+
+| Key | Type | Required | Description |
+|-----|------|----------|-------------|
+| `routing` | map | No | Top-level routing block. Each key is a writer instance name. |
+| `routing.<writer>.from` | sequence | Yes (per entry) | Reader names this writer accepts. Use `all` to accept every reader. |
+
+### Behavior
+
+| Scenario | Result |
+|----------|--------|
+| No `routing:` block | All-to-all dispatch (every reader feeds every writer). |
+| Writer listed in `routing:` | Writer receives only from its listed readers. |
+| Writer **not** listed in `routing:` | Writer receives **nothing** — a startup warning is logged. |
+| `from: [all]` | Writer accepts batches from any reader. |
+
+### Startup Validation
+
+- Every writer name in `routing:` must match a configured writer instance. Unknown names cause a startup failure.
+- Every reader name in `from:` must match a configured reader instance (except `all`). Unknown names cause a startup failure.
+- Orphan warnings are logged for readers/writers not mentioned in any route.
+
+→ [Full Controller Documentation](controller.md#reader-to-writer-routing)
 
 ---
 

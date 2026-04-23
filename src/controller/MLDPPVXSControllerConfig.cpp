@@ -10,6 +10,7 @@
 
 #include "config/Config.h"
 #include <controller/MLDPPVXSControllerConfig.h>
+#include <controller/RouteTable.h>
 #include <reader/ReaderFactory.h>
 #include <writer/WriterConfig.h>
 
@@ -63,12 +64,19 @@ const std::optional<MetricsConfig>& MLDPPVXSControllerConfig::metricsConfig() co
     return metricsConfig_;
 }
 
+const std::vector<RouteTable::RouteEntry>&
+MLDPPVXSControllerConfig::routeEntries() const
+{
+    return routeEntries_;
+}
+
 void MLDPPVXSControllerConfig::parse(const ::mldp_pvxs_driver::config::Config& root)
 {
     name_ = root.get(NameKey, "default");
     parseWriter(root);
     parseReaders(root);
     parseMetrics(root);
+    parseRouting(root);
     valid_ = true;
 }
 
@@ -196,4 +204,71 @@ void MLDPPVXSControllerConfig::parseMetrics(const ::mldp_pvxs_driver::config::Co
     }
 
     metricsConfig_.emplace(metricsNodes.front());
+}
+
+void MLDPPVXSControllerConfig::parseRouting(const ::mldp_pvxs_driver::config::Config& root)
+{
+    routeEntries_.clear();
+
+    if (!root.hasChild(RoutingKey))
+    {
+        return; // no routing = all-to-all
+    }
+
+    const auto routingNodes = root.subConfig(RoutingKey);
+    if (routingNodes.empty())
+    {
+        return;
+    }
+    const auto& routingNode = routingNodes.front();
+    const auto  rawNode     = routingNode.raw();
+
+    if (!rawNode.is_map())
+    {
+        throw Error("routing must be a map");
+    }
+
+    for (const auto& child : rawNode)
+    {
+        if (!child.has_key())
+        {
+            throw Error("routing entry must have a key (writer name)");
+        }
+
+        std::string writerName;
+        c4::from_chars(child.key(), &writerName);
+
+        if (!routingNode.hasChild(writerName))
+        {
+            throw Error("routing entry '" + writerName + "' not accessible");
+        }
+
+        const auto writerNodes = routingNode.subConfig(writerName);
+        if (writerNodes.empty())
+        {
+            throw Error("routing entry '" + writerName + "' is empty");
+        }
+        const auto& writerCfg = writerNodes.front();
+
+        if (!writerCfg.hasChild("from"))
+        {
+            throw Error("routing entry '" + writerName + "' must have a 'from' sequence");
+        }
+
+        if (!writerCfg.isSequence("from"))
+        {
+            throw Error("routing entry '" + writerName + "': 'from' must be a sequence");
+        }
+
+        std::vector<std::string> fromReaders;
+        const auto               fromNodes = writerCfg.subConfig("from");
+        for (const auto& fromNode : fromNodes)
+        {
+            std::string readerName;
+            fromNode >> readerName;
+            fromReaders.push_back(std::move(readerName));
+        }
+
+        routeEntries_.push_back({writerName, std::move(fromReaders)});
+    }
 }

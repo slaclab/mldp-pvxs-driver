@@ -13,6 +13,7 @@
 #include <BS_thread_pool.hpp>
 #include <config/Config.h>
 #include <controller/MLDPPVXSControllerConfig.h>
+#include <controller/RouteTable.h>
 #include <metrics/Metrics.h>
 #include <reader/IReader.h>
 #include <util/bus/IDataBus.h>
@@ -167,6 +168,7 @@ private:
     std::atomic<bool>                                     running_{false};
     std::vector<reader::ReaderUPtr>                       readers_; ///< Owned reader instances.
     std::vector<writer::IWriterUPtr>                      writers_; ///< Fan-out writer instances.
+    RouteTable                                            route_table_; ///< Selective reader→writer dispatch.
 
     explicit MLDPPVXSController(const config::Config& config);
 };
