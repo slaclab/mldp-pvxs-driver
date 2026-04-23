@@ -250,7 +250,7 @@ namespace {
         return defaultPayloadSpec();
     }
 
-    template<typename IntT>
+    template <typename IntT>
     IntT clampRoundedIntegral(double value)
     {
         const auto rounded = std::llround(value);
@@ -381,7 +381,7 @@ namespace {
     std::string sampleBytesValue(const SamplePoint& sample)
     {
         std::string value(4, '\0');
-        const auto base = static_cast<uint32_t>(std::llabs(std::llround(sample.value * 100.0)));
+        const auto  base = static_cast<uint32_t>(std::llabs(std::llround(sample.value * 100.0)));
         for (size_t i = 0; i < value.size(); ++i)
         {
             value[i] = static_cast<char>((base + static_cast<uint32_t>(i * 37)) & 0xFFu);
@@ -456,188 +456,188 @@ namespace {
             switch (payload_spec.kind)
             {
             case MockPayloadKind::ScalarString:
-            {
-                EPICS::ScalarString msg;
-                msg.set_secondsintoyear(pbt.seconds_into_year);
-                msg.set_nano(pbt.nano);
-                msg.set_val(sampleStringValue(pv, sample));
-                msg.set_severity(0);
-                msg.set_status(0);
-                body += escapePbHttpLine(serializeProto(msg));
-                break;
-            }
+                {
+                    EPICS::ScalarString msg;
+                    msg.set_secondsintoyear(pbt.seconds_into_year);
+                    msg.set_nano(pbt.nano);
+                    msg.set_val(sampleStringValue(pv, sample));
+                    msg.set_severity(0);
+                    msg.set_status(0);
+                    body += escapePbHttpLine(serializeProto(msg));
+                    break;
+                }
             case MockPayloadKind::ScalarShort:
-            {
-                EPICS::ScalarShort msg;
-                msg.set_secondsintoyear(pbt.seconds_into_year);
-                msg.set_nano(pbt.nano);
-                msg.set_val(sampleShortValue(sample));
-                msg.set_severity(0);
-                msg.set_status(0);
-                body += escapePbHttpLine(serializeProto(msg));
-                break;
-            }
+                {
+                    EPICS::ScalarShort msg;
+                    msg.set_secondsintoyear(pbt.seconds_into_year);
+                    msg.set_nano(pbt.nano);
+                    msg.set_val(sampleShortValue(sample));
+                    msg.set_severity(0);
+                    msg.set_status(0);
+                    body += escapePbHttpLine(serializeProto(msg));
+                    break;
+                }
             case MockPayloadKind::ScalarFloat:
-            {
-                EPICS::ScalarFloat msg;
-                msg.set_secondsintoyear(pbt.seconds_into_year);
-                msg.set_nano(pbt.nano);
-                msg.set_val(sampleFloatValue(sample));
-                msg.set_severity(0);
-                msg.set_status(0);
-                body += escapePbHttpLine(serializeProto(msg));
-                break;
-            }
+                {
+                    EPICS::ScalarFloat msg;
+                    msg.set_secondsintoyear(pbt.seconds_into_year);
+                    msg.set_nano(pbt.nano);
+                    msg.set_val(sampleFloatValue(sample));
+                    msg.set_severity(0);
+                    msg.set_status(0);
+                    body += escapePbHttpLine(serializeProto(msg));
+                    break;
+                }
             case MockPayloadKind::ScalarEnum:
-            {
-                EPICS::ScalarEnum msg;
-                msg.set_secondsintoyear(pbt.seconds_into_year);
-                msg.set_nano(pbt.nano);
-                msg.set_val(sampleEnumValue(sample));
-                msg.set_severity(0);
-                msg.set_status(0);
-                body += escapePbHttpLine(serializeProto(msg));
-                break;
-            }
+                {
+                    EPICS::ScalarEnum msg;
+                    msg.set_secondsintoyear(pbt.seconds_into_year);
+                    msg.set_nano(pbt.nano);
+                    msg.set_val(sampleEnumValue(sample));
+                    msg.set_severity(0);
+                    msg.set_status(0);
+                    body += escapePbHttpLine(serializeProto(msg));
+                    break;
+                }
             case MockPayloadKind::ScalarByte:
-            {
-                EPICS::ScalarByte msg;
-                msg.set_secondsintoyear(pbt.seconds_into_year);
-                msg.set_nano(pbt.nano);
-                msg.set_val(sampleBytesValue(sample));
-                msg.set_severity(0);
-                msg.set_status(0);
-                body += escapePbHttpLine(serializeProto(msg));
-                break;
-            }
+                {
+                    EPICS::ScalarByte msg;
+                    msg.set_secondsintoyear(pbt.seconds_into_year);
+                    msg.set_nano(pbt.nano);
+                    msg.set_val(sampleBytesValue(sample));
+                    msg.set_severity(0);
+                    msg.set_status(0);
+                    body += escapePbHttpLine(serializeProto(msg));
+                    break;
+                }
             case MockPayloadKind::ScalarInt:
-            {
-                EPICS::ScalarInt msg;
-                msg.set_secondsintoyear(pbt.seconds_into_year);
-                msg.set_nano(pbt.nano);
-                msg.set_val(sampleIntValue(sample));
-                msg.set_severity(0);
-                msg.set_status(0);
-                body += escapePbHttpLine(serializeProto(msg));
-                break;
-            }
+                {
+                    EPICS::ScalarInt msg;
+                    msg.set_secondsintoyear(pbt.seconds_into_year);
+                    msg.set_nano(pbt.nano);
+                    msg.set_val(sampleIntValue(sample));
+                    msg.set_severity(0);
+                    msg.set_status(0);
+                    body += escapePbHttpLine(serializeProto(msg));
+                    break;
+                }
             case MockPayloadKind::ScalarDouble:
-            {
-                EPICS::ScalarDouble msg;
-                msg.set_secondsintoyear(pbt.seconds_into_year);
-                msg.set_nano(pbt.nano);
-                msg.set_val(sample.value);
-                msg.set_severity(0);
-                msg.set_status(0);
-                body += escapePbHttpLine(serializeProto(msg));
-                break;
-            }
+                {
+                    EPICS::ScalarDouble msg;
+                    msg.set_secondsintoyear(pbt.seconds_into_year);
+                    msg.set_nano(pbt.nano);
+                    msg.set_val(sample.value);
+                    msg.set_severity(0);
+                    msg.set_status(0);
+                    body += escapePbHttpLine(serializeProto(msg));
+                    break;
+                }
             case MockPayloadKind::WaveformString:
-            {
-                EPICS::VectorString msg;
-                msg.set_secondsintoyear(pbt.seconds_into_year);
-                msg.set_nano(pbt.nano);
-                for (const auto& value : waveformStringValues(pv, sample))
                 {
-                    msg.add_val(value);
+                    EPICS::VectorString msg;
+                    msg.set_secondsintoyear(pbt.seconds_into_year);
+                    msg.set_nano(pbt.nano);
+                    for (const auto& value : waveformStringValues(pv, sample))
+                    {
+                        msg.add_val(value);
+                    }
+                    msg.set_severity(0);
+                    msg.set_status(0);
+                    body += escapePbHttpLine(serializeProto(msg));
+                    break;
                 }
-                msg.set_severity(0);
-                msg.set_status(0);
-                body += escapePbHttpLine(serializeProto(msg));
-                break;
-            }
             case MockPayloadKind::WaveformShort:
-            {
-                EPICS::VectorShort msg;
-                msg.set_secondsintoyear(pbt.seconds_into_year);
-                msg.set_nano(pbt.nano);
-                for (const auto value : waveformShortValues(sample))
                 {
-                    msg.add_val(value);
+                    EPICS::VectorShort msg;
+                    msg.set_secondsintoyear(pbt.seconds_into_year);
+                    msg.set_nano(pbt.nano);
+                    for (const auto value : waveformShortValues(sample))
+                    {
+                        msg.add_val(value);
+                    }
+                    msg.set_severity(0);
+                    msg.set_status(0);
+                    body += escapePbHttpLine(serializeProto(msg));
+                    break;
                 }
-                msg.set_severity(0);
-                msg.set_status(0);
-                body += escapePbHttpLine(serializeProto(msg));
-                break;
-            }
             case MockPayloadKind::WaveformFloat:
-            {
-                EPICS::VectorFloat msg;
-                msg.set_secondsintoyear(pbt.seconds_into_year);
-                msg.set_nano(pbt.nano);
-                for (const auto value : waveformFloatValues(sample))
                 {
-                    msg.add_val(value);
+                    EPICS::VectorFloat msg;
+                    msg.set_secondsintoyear(pbt.seconds_into_year);
+                    msg.set_nano(pbt.nano);
+                    for (const auto value : waveformFloatValues(sample))
+                    {
+                        msg.add_val(value);
+                    }
+                    msg.set_severity(0);
+                    msg.set_status(0);
+                    body += escapePbHttpLine(serializeProto(msg));
+                    break;
                 }
-                msg.set_severity(0);
-                msg.set_status(0);
-                body += escapePbHttpLine(serializeProto(msg));
-                break;
-            }
             case MockPayloadKind::WaveformEnum:
-            {
-                EPICS::VectorEnum msg;
-                msg.set_secondsintoyear(pbt.seconds_into_year);
-                msg.set_nano(pbt.nano);
-                for (const auto value : waveformEnumValues(sample))
                 {
-                    msg.add_val(value);
+                    EPICS::VectorEnum msg;
+                    msg.set_secondsintoyear(pbt.seconds_into_year);
+                    msg.set_nano(pbt.nano);
+                    for (const auto value : waveformEnumValues(sample))
+                    {
+                        msg.add_val(value);
+                    }
+                    msg.set_severity(0);
+                    msg.set_status(0);
+                    body += escapePbHttpLine(serializeProto(msg));
+                    break;
                 }
-                msg.set_severity(0);
-                msg.set_status(0);
-                body += escapePbHttpLine(serializeProto(msg));
-                break;
-            }
             case MockPayloadKind::WaveformByte:
-            {
-                EPICS::VectorChar msg;
-                msg.set_secondsintoyear(pbt.seconds_into_year);
-                msg.set_nano(pbt.nano);
-                msg.set_val(sampleBytesValue(sample));
-                msg.set_severity(0);
-                msg.set_status(0);
-                body += escapePbHttpLine(serializeProto(msg));
-                break;
-            }
+                {
+                    EPICS::VectorChar msg;
+                    msg.set_secondsintoyear(pbt.seconds_into_year);
+                    msg.set_nano(pbt.nano);
+                    msg.set_val(sampleBytesValue(sample));
+                    msg.set_severity(0);
+                    msg.set_status(0);
+                    body += escapePbHttpLine(serializeProto(msg));
+                    break;
+                }
             case MockPayloadKind::WaveformInt:
-            {
-                EPICS::VectorInt msg;
-                msg.set_secondsintoyear(pbt.seconds_into_year);
-                msg.set_nano(pbt.nano);
-                for (const auto value : waveformIntValues(sample))
                 {
-                    msg.add_val(value);
+                    EPICS::VectorInt msg;
+                    msg.set_secondsintoyear(pbt.seconds_into_year);
+                    msg.set_nano(pbt.nano);
+                    for (const auto value : waveformIntValues(sample))
+                    {
+                        msg.add_val(value);
+                    }
+                    msg.set_severity(0);
+                    msg.set_status(0);
+                    body += escapePbHttpLine(serializeProto(msg));
+                    break;
                 }
-                msg.set_severity(0);
-                msg.set_status(0);
-                body += escapePbHttpLine(serializeProto(msg));
-                break;
-            }
             case MockPayloadKind::WaveformDouble:
-            {
-                EPICS::VectorDouble msg;
-                msg.set_secondsintoyear(pbt.seconds_into_year);
-                msg.set_nano(pbt.nano);
-                for (const auto value : waveformDoubleValues(sample))
                 {
-                    msg.add_val(value);
+                    EPICS::VectorDouble msg;
+                    msg.set_secondsintoyear(pbt.seconds_into_year);
+                    msg.set_nano(pbt.nano);
+                    for (const auto value : waveformDoubleValues(sample))
+                    {
+                        msg.add_val(value);
+                    }
+                    msg.set_severity(0);
+                    msg.set_status(0);
+                    body += escapePbHttpLine(serializeProto(msg));
+                    break;
                 }
-                msg.set_severity(0);
-                msg.set_status(0);
-                body += escapePbHttpLine(serializeProto(msg));
-                break;
-            }
             case MockPayloadKind::V4GenericBytes:
-            {
-                EPICS::V4GenericBytes msg;
-                msg.set_secondsintoyear(pbt.seconds_into_year);
-                msg.set_nano(pbt.nano);
-                msg.set_val(sampleBytesValue(sample));
-                msg.set_severity(0);
-                msg.set_status(0);
-                body += escapePbHttpLine(serializeProto(msg));
-                break;
-            }
+                {
+                    EPICS::V4GenericBytes msg;
+                    msg.set_secondsintoyear(pbt.seconds_into_year);
+                    msg.set_nano(pbt.nano);
+                    msg.set_val(sampleBytesValue(sample));
+                    msg.set_severity(0);
+                    msg.set_status(0);
+                    body += escapePbHttpLine(serializeProto(msg));
+                    break;
+                }
             }
 
             body.push_back('\n');
@@ -651,12 +651,12 @@ namespace {
                                     const std::string&                                from,
                                     const std::optional<std::string>&                 to)
     {
-        const auto& payload_spec = payloadSpecForPv(pv);
+        const auto&   payload_spec = payloadSpecForPv(pv);
         const int64_t from_ns = parseIso8601Utc(from).epoch_ns;
         const int64_t to_ns = to.has_value()
                                   ? parseIso8601Utc(*to).epoch_ns
                                   : (from_ns + static_cast<int64_t>(cfg.open_ended_duration_sec) * kNanosPerSecond);
-        const auto samples = generateSamples(cfg, pv, from_ns, to_ns);
+        const auto    samples = generateSamples(cfg, pv, from_ns, to_ns);
 
         std::string body;
         if (samples.empty())
@@ -740,11 +740,11 @@ MockArchiverPbHttpServer::MockArchiverPbHttpServer(const GenerationConfig& confi
 
                     try
                     {
-                        auto body = std::make_shared<std::string>(buildMockPbHttpBody(config_, *log.pv, *log.from, log.to));
-                        auto body_for_stream = body;
-                        auto body_for_releaser = body;
+                        auto           body = std::make_shared<std::string>(buildMockPbHttpBody(config_, *log.pv, *log.from, log.to));
+                        auto           body_for_stream = body;
+                        auto           body_for_releaser = body;
                         const uint32_t stream_chunk_delay_ms = config_.stream_chunk_delay_ms;
-                        uint64_t request_id = 0;
+                        uint64_t       request_id = 0;
                         {
                             std::lock_guard<std::mutex> lock(mu_);
                             request_id = last_request_id_;

@@ -41,11 +41,9 @@ namespace {
 
 constexpr const char* kArchiverPbRawPath = "/retrieval/data/getData.raw";
 
-bool hasTimestampList(const dp::service::common::DataFrame& frame)
+bool hasTimestamps(const DataBatch& batch)
 {
-    return frame.has_datatimestamps() &&
-           frame.datatimestamps().has_timestamplist() &&
-           frame.datatimestamps().timestamplist().timestamps_size() > 0;
+    return !batch.timestamps.empty();
 }
 
 std::string buildArchiverUrl(const EpicsArchiverReaderConfig&  cfg,
@@ -115,9 +113,9 @@ uint64_t elapsedNanoseconds(uint64_t start_epoch, uint32_t start_nano, uint64_t 
 } // namespace
 
 EpicsArchiverReader::EpicsArchiverReader(
-    std::shared_ptr<IDataBus> bus,
-    std::shared_ptr<Metrics>         metrics,
-    const ::mldp_pvxs_driver::config::Config&                     cfg)
+    std::shared_ptr<IDataBus>                 bus,
+    std::shared_ptr<Metrics>                  metrics,
+    const ::mldp_pvxs_driver::config::Config& cfg)
     : ::mldp_pvxs_driver::reader::Reader(std::move(bus), std::move(metrics))
     , logger_(::mldp_pvxs_driver::util::log::newLogger("reader:epics-archiver:" + cfg.get("name")))
     , http_client_(nullptr)
@@ -234,41 +232,42 @@ void EpicsArchiverReader::runWorker()
                 }
                 break;
             }
-        case EpicsArchiverReaderConfig::FetchMode::PeriodicTail: {
-            infof(*logger_,
-                  "Archiver reader '{}' running in periodic_tail mode (poll_interval={}s lookback={}s)",
-                  name_,
-                  config_.pollIntervalSec(),
-                  config_.lookbackSec());
-
-            std::optional<std::chrono::system_clock::time_point> previous_iteration_end;
-            const bool                                           contiguous_windows = (config_.lookbackSec() == config_.pollIntervalSec());
-
-            while (running_.load())
+        case EpicsArchiverReaderConfig::FetchMode::PeriodicTail:
             {
-                const auto iteration_end = DateTimeUtils::truncateToMilliseconds(std::chrono::system_clock::now());
-                auto       iteration_start = iteration_end - std::chrono::seconds(config_.lookbackSec());
-                if (contiguous_windows && previous_iteration_end.has_value())
+                infof(*logger_,
+                      "Archiver reader '{}' running in periodic_tail mode (poll_interval={}s lookback={}s)",
+                      name_,
+                      config_.pollIntervalSec(),
+                      config_.lookbackSec());
+
+                std::optional<std::chrono::system_clock::time_point> previous_iteration_end;
+                const bool                                           contiguous_windows = (config_.lookbackSec() == config_.pollIntervalSec());
+
+                while (running_.load())
                 {
-                    iteration_start = *previous_iteration_end;
+                    const auto iteration_end = DateTimeUtils::truncateToMilliseconds(std::chrono::system_clock::now());
+                    auto       iteration_start = iteration_end - std::chrono::seconds(config_.lookbackSec());
+                    if (contiguous_windows && previous_iteration_end.has_value())
+                    {
+                        iteration_start = *previous_iteration_end;
+                    }
+
+                    const std::string from = DateTimeUtils::formatIso8601UtcMillis(iteration_start);
+                    const std::string to = DateTimeUtils::formatIso8601UtcMillis(iteration_end);
+                    debugf(*logger_, "Periodic tail fetch for '{}' window [{} -> {}]", name_, from, to);
+                    fetchConfiguredPVs(from, to);
+                    previous_iteration_end = iteration_end;
+
+                    std::unique_lock<std::mutex> lock(worker_mutex_);
+                    worker_cv_.wait_for(lock,
+                                        std::chrono::seconds(config_.pollIntervalSec()),
+                                        [this]()
+                                        {
+                                            return !running_.load();
+                                        });
                 }
-
-                const std::string from = DateTimeUtils::formatIso8601UtcMillis(iteration_start);
-                const std::string to = DateTimeUtils::formatIso8601UtcMillis(iteration_end);
-                debugf(*logger_, "Periodic tail fetch for '{}' window [{} -> {}]", name_, from, to);
-                fetchConfiguredPVs(from, to);
-                previous_iteration_end = iteration_end;
-
-                std::unique_lock<std::mutex> lock(worker_mutex_);
-                worker_cv_.wait_for(lock,
-                                    std::chrono::seconds(config_.pollIntervalSec()),
-                                    [this]()
-                                    {
-                                        return !running_.load();
-                                    });
+                break;
             }
-            break;
-        }
         default:
             throw std::runtime_error("Unsupported fetch mode in Archiver reader configuration");
         }
@@ -324,16 +323,16 @@ void EpicsArchiverReader::flushChunk(PbChunkState& state)
     if (!state.events.empty())
     {
         const prometheus::Labels source_tag{{"source", pv}};
-        const auto                flush_start = std::chrono::steady_clock::now();
+        const auto               flush_start = std::chrono::steady_clock::now();
 
         IDataBus::EventBatch batch;
         batch.root_source = pv.empty() ? name_ : pv;
         batch.tags.push_back(batch.root_source);
         for (auto& frame : state.events)
         {
-            if (!hasTimestampList(frame))
+            if (!hasTimestamps(frame))
             {
-                errorf(*logger_, "Dropping archiver frame without timestamps for root source {}", batch.root_source);
+                errorf(*logger_, "Dropping archiver batch without timestamps for root source {}", batch.root_source);
                 metric_call(metrics_, [&](auto& m)
                             {
                                 m.incrementReaderErrors(1.0, source_tag);
@@ -344,6 +343,7 @@ void EpicsArchiverReader::flushChunk(PbChunkState& state)
         }
         if (!batch.frames.empty())
         {
+            batch.reader_name = name();
             bus_->push(std::move(batch));
         }
 
@@ -450,7 +450,7 @@ void EpicsArchiverReader::parsePbHttpLineIntoState(const std::string& line, PbCh
     const auto parsed = ArchiverPbHttpConversion::parseSample(state.header, msg_bytes);
 
     // Record that we received a sample from the archiver
-    const std::string pv = state.header.pvname();
+    const std::string        pv = state.header.pvname();
     const prometheus::Labels source_tag{{"source", pv}};
     metric_call(metrics_, [&](auto& m)
                 {
@@ -481,7 +481,7 @@ void EpicsArchiverReader::parsePbHttpLineIntoState(const std::string& line, PbCh
     // appending it, so the sample that crosses the threshold belongs to the
     // new batch.
     splitBatchIfHistoricalWindowExceeded(state, parsed.epoch_seconds, parsed.nanoseconds);
-    state.events.emplace_back(std::move(parsed.frame));
+    state.events.emplace_back(std::move(parsed.batch));
 }
 
 void EpicsArchiverReader::fetchConfiguredPVs()

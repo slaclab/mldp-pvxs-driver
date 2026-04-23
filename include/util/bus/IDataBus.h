@@ -13,14 +13,11 @@
  */
 
 #pragma once
-#include "common.pb.h"
+#include <util/bus/DataBatch.h>
 #include <chrono>
 #include <cstdint>
-#include <ingestion.grpc.pb.h>
 #include <optional>
-#include <set>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 namespace mldp_pvxs_driver::util::bus {
@@ -33,9 +30,13 @@ namespace mldp_pvxs_driver::util::bus {
  */
 struct EventBatchStruct
 {
-    std::string                                 root_source; ///< Root PV identifier used for batch-level metrics/correlation.
-    std::vector<std::string>                    tags;        ///< Optional metadata attached to the batch.
-    std::vector<dp::service::common::DataFrame> frames;      ///< One frame per ingestion payload; each frame must include timestamps.
+    /// Identity of the producing reader (set by reader before push).
+    std::string                                 reader_name;
+    std::string                                 root_source;                 ///< Root PV identifier used for batch-level metrics/correlation.
+    std::vector<std::string>                    tags;                        ///< Optional metadata attached to the batch.
+    std::vector<util::bus::DataBatch>            frames;                      ///< One DataBatch per ingestion payload; each batch must include timestamps.
+    bool                                        end_of_batch_group{false};   ///< Flush sentinel. Signals that all column batches for one logical row-synchronized group have been emitted. Writers should flush any accumulated tabular state when this is true.
+    bool                                        is_tabular{false};           ///< True when this batch carries column frames for a multi-column, row-synchronized table. Writers that support tabular layout accumulate column batches before flushing.
 };
 
 /**
@@ -112,35 +113,6 @@ public:
      * @return true if the batch was accepted for delivery.
      */
     virtual bool push(EventBatch batch_values) = 0;
-
-    /**
-     * @brief Query MLDP metadata for a set of source identifiers.
-     *
-     * The default implementation returns an empty list; concrete backends may
-     * override it when they can query metadata services (for example
-     * `DpQueryService::queryPvMetadata`).
-     *
-     * @param source_names Source/PV identifiers to query.
-     * @return Metadata rows for the sources known to the backend.
-     */
-    virtual std::vector<SourceInfo> querySourcesInfo(const std::set<std::string>& source_names) = 0;
-
-    /**
-     * @brief Query MLDP data values for sources over a relative time window.
-     *
-     * This mirrors the query shape used by integration tests: `queryData`
-     * with `pvNames`, `beginTime = now - lookback_window`, and
-     * `endTime = now + forward_window`.
-     *
-     * @param source_names Source/PV identifiers to query.
-     * @param options Query tuning options (timeouts and relative query window).
-     * @return Map keyed by source name with one DataValues entry per returned
-     *         data bucket (preserves bucket boundaries from queryData).
-     *         Returns std::nullopt on transport/protocol failures.
-     */
-    virtual std::optional<std::unordered_map<std::string, std::vector<dp::service::common::DataValues>>> querySourcesData(
-        const std::set<std::string>&   source_names,
-        const QuerySourcesDataOptions& options = QuerySourcesDataOptions{}) = 0;
 };
 
 } // namespace mldp_pvxs_driver::util::bus

@@ -38,8 +38,9 @@ PVServer::PVServer()
 
     m_pvBsasTable = server::SharedPV::buildReadonly();
     nt::NTTable bsasTableBuilder;
-    bsasTableBuilder.add_column(TypeCode::Float64, "PV_NAME_A_DOUBLE_VALUE");
-    bsasTableBuilder.add_column(TypeCode::String, "PV_NAME_B_STRING_VALUE");
+    bsasTableBuilder.add_column(TypeCode::Float64, "PV_A");  // double PV
+    bsasTableBuilder.add_column(TypeCode::Int32,   "PV_B");  // int32 PV
+    bsasTableBuilder.add_column(TypeCode::Float32, "PV_C");  // float32 PV
     // NTTable columns are always arrays-of-scalars; add_column() takes the scalar element type.
     bsasTableBuilder.add_column(TypeCode::UInt32, "secondsPastEpoch");
     bsasTableBuilder.add_column(TypeCode::UInt32, "nanoseconds");
@@ -47,6 +48,8 @@ PVServer::PVServer()
 
     m_pvBsasTable.open(bsasTableType.create());
     m_server.addPV("test:bsas_table", m_pvBsasTable);
+
+    m_cuHxr.registerPV(m_server);
 
     const auto makeScalar = []<typename T>(auto valueFn)
     {
@@ -259,26 +262,29 @@ PVServer::PVServer()
                                              m_pvTable.post(pv);
                                          }
                                          {
-                                             // BSAS-style NTTable: per-row timestamp arrays + sampled PV columns.
+                                             // BSAS-style NTTable: per-row timestamp arrays + data columns.
+                                             // PV_A (Float64), PV_B (Int32), PV_C (Float32)
                                              auto pv = m_pvBsasTable.fetch();
-                                             pv["labels"] = pvxs::shared_array<const std::string>{"PV_NAME_A_DOUBLE_VALUE", "PV_NAME_B_STRING_VALUE",
-                                                                                                  "secondsPastEpoch", "nanoseconds"};
-                                             pv["value.PV_NAME_A_DOUBLE_VALUE"] = pvxs::shared_array<const double>{1.0, 2.0, 3.0};
-                                             pv["value.PV_NAME_B_STRING_VALUE"] = pvxs::shared_array<const std::string>{"OK", "WARNING", "FAULT"};
-                                             pvxs::shared_array<uint64_t> secArr(3);
-                                             pvxs::shared_array<uint64_t> nanoArr(3);
+                                             pv["labels"] = pvxs::shared_array<const std::string>{"PV_A", "PV_B", "PV_C",
+                                                                                                   "secondsPastEpoch", "nanoseconds"};
+                                             pv["value.PV_A"] = pvxs::shared_array<const double>{1.0 + std::sin(time), 2.0 + std::sin(time), 3.0 + std::sin(time)};
+                                             pvxs::shared_array<int32_t> pvBArr(3);
+                                             for (size_t i = 0; i < 3; ++i) pvBArr[i] = static_cast<int32_t>(counter + static_cast<int>(i));
+                                             pv["value.PV_B"] = pvBArr.freeze();
+                                             pv["value.PV_C"] = pvxs::shared_array<const float>{1.25f + static_cast<float>(std::cos(time)),
+                                                                                                  2.25f + static_cast<float>(std::cos(time)),
+                                                                                                  3.25f + static_cast<float>(std::cos(time))};
+                                             pvxs::shared_array<uint32_t> secArr(3);
+                                             pvxs::shared_array<uint32_t> nanoArr(3);
                                              for (size_t i = 0; i < 3; ++i)
                                              {
-                                                 secArr[i] = seconds;
-                                                 nanoArr[i] = nanos + i;
+                                                 secArr[i]  = static_cast<uint32_t>(seconds);
+                                                 nanoArr[i] = static_cast<uint32_t>(nanos + i);
                                              }
-                                             // As regular NTTable columns.
                                              pv["value.secondsPastEpoch"] = secArr.freeze();
-                                             pv["value.nanoseconds"] = nanoArr.freeze();
-                                             // As BSAS row-ts top-level arrays.
+                                             pv["value.nanoseconds"]      = nanoArr.freeze();
                                              pv["timeStamp.secondsPastEpoch"] = seconds;
-                                             pv["timeStamp.nanoseconds"] = nanos;
-
+                                             pv["timeStamp.nanoseconds"]      = nanos;
                                              m_pvBsasTable.post(pv);
                                          }
 
@@ -291,6 +297,8 @@ PVServer::PVServer()
                                              pv["timeStamp.nanoseconds"] = nanos;
                                              entry.pv.post(pv);
                                          }
+
+                                         m_cuHxr.post(seconds, nanos, counter, time);
 
                                          time += 0.5;
                                          std::this_thread::sleep_for(std::chrono::milliseconds(500));

@@ -11,10 +11,9 @@
 #pragma once
 
 #include <config/Config.h>
+#include <controller/RouteTable.h>
 #include <metrics/MetricsConfig.h>
-#include <pool/MLDPGrpcPoolConfig.h>
 
-#include <chrono>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -22,12 +21,10 @@
 
 namespace mldp_pvxs_driver::controller {
 
-inline constexpr char ControllerThreadPoolKey[] = "controller-thread-pool";
-inline constexpr char MldpPoolKey[] = "mldp-pool";
-inline constexpr char ReaderKey[] = "reader";
-inline constexpr char ControllerStreamMaxBytesKey[] = "controller-stream-max-bytes";
-inline constexpr char ControllerStreamMaxAgeMsKey[] = "controller-stream-max-age-ms";
+inline constexpr char NameKey[]    = "name";
+inline constexpr char ReaderKey[]  = "reader";
 inline constexpr char MetricsKey[] = "metrics";
+inline constexpr char RoutingKey[] = "routing";
 
 /**
  * @brief Typed view over the controller configuration tree.
@@ -59,31 +56,8 @@ public:
     /** @return Whether the configuration passed validation. */
     bool valid() const;
 
-    /** @return Pool configuration managed by the controller. */
-    const util::pool::MLDPGrpcPoolConfig& pool() const;
-
-    /** @return Logical provider name to register with MLDP. */
-    const std::string& providerName() const;
-
-    /** @return Number of controller threads to spin up. */
-    int controllerThreadPoolSize() const;
-
-    /**
-     * @return Max protobuf payload bytes per stream before flushing.
-     *
-     * When a single writer thread accumulates more than this many payload bytes
-     * across queued requests, it closes the current gRPC stream and opens a new
-     * one to continue sending.
-     */
-    std::size_t controllerStreamMaxBytes() const;
-
-    /**
-     * @return Max stream age in milliseconds before flushing.
-     *
-     * Writer threads close and reopen a stream when it has been open longer
-     * than this duration, even if the byte threshold has not yet been reached.
-     */
-    std::chrono::milliseconds controllerStreamMaxAge() const;
+    /** @return Unique controller instance name (used as Prometheus label). */
+    const std::string& name() const;
 
     /**
      * @return Raw configuration blocks for registered reader instances.
@@ -105,25 +79,35 @@ public:
      */
     const std::vector<std::pair<std::string, config::Config>>& readerEntries() const;
 
+    /**
+     * @return Writer entries as (type, config-node) pairs.
+     *
+     * Each element is the writer type identifier (e.g. "mldp", "hdf5") paired
+     * with the YAML node that the @ref WriterFactory should pass to the
+     * writer's constructor.
+     */
+    const std::vector<std::pair<std::string, config::Config>>& writerEntries() const;
+
     /** @return Optional metrics configuration when the YAML provides it. */
     const std::optional<metrics::MetricsConfig>& metricsConfig() const;
 
+    /** @return Route entries mapping writer names to their source reader lists. */
+    const std::vector<RouteTable::RouteEntry>& routeEntries() const;
+
 private:
     void parse(const ::mldp_pvxs_driver::config::Config& root);
-    void parseThreadPool(const ::mldp_pvxs_driver::config::Config& root);
-    void parsePool(const ::mldp_pvxs_driver::config::Config& root);
+    void parseWriter(const ::mldp_pvxs_driver::config::Config& root);
     void parseReaders(const ::mldp_pvxs_driver::config::Config& root);
     void parseMetrics(const ::mldp_pvxs_driver::config::Config& root);
-    void parseStreamLimits(const ::mldp_pvxs_driver::config::Config& root);
+    void parseRouting(const ::mldp_pvxs_driver::config::Config& root);
 
     bool                                                valid_ = false;
-    util::pool::MLDPGrpcPoolConfig                      pool_;
-    int                                                 controllerThreadPoolSize_ = 1;
-    std::size_t                                         controllerStreamMaxBytes_ = 2 * 1024 * 1024;
-    std::chrono::milliseconds                           controllerStreamMaxAge_{200};
+    std::string                                         name_{"default"};
     std::vector<config::Config>                         readerConfigs_;
     std::vector<std::pair<std::string, config::Config>> readerEntries_;
+    std::vector<std::pair<std::string, config::Config>> writerEntries_;
     std::optional<metrics::MetricsConfig>               metricsConfig_;
+    std::vector<RouteTable::RouteEntry>                  routeEntries_;
 };
 
 } // namespace mldp_pvxs_driver::controller

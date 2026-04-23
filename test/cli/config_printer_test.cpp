@@ -9,15 +9,21 @@ using mldp_pvxs_driver::config::makeConfigFromYaml;
 TEST(ConfigPrinterTest, FormatsCompactSummaryAcrossReaderTypes)
 {
     const std::string yaml = R"(
-controller-thread-pool: 2
-controller-stream-max-bytes: 1048576
-controller-stream-max-age-ms: 250
 mldp-pool:
   provider-name: pvxs_provider
   ingestion-url: https://mldp-ingestion.example:443
   query-url: https://mldp-query.example:443
   min-conn: 1
   max-conn: 4
+writer:
+  mldp:
+    - name: mldp_main
+      mldp-pool:
+        provider-name: pvxs_provider
+        ingestion-url: https://mldp-ingestion.example:443
+        query-url: https://mldp-query.example:443
+        min-conn: 1
+        max-conn: 4
 reader:
   - epics-pvxs:
       - name: epics_live
@@ -57,13 +63,21 @@ metrics:
 TEST(ConfigPrinterTest, ShowsMetricsDisabledWhenNotConfigured)
 {
     const std::string yaml = R"(
-controller-thread-pool: 1
 mldp-pool:
   provider-name: test_provider
   ingestion-url: dp-ingestion:50051
   query-url: dp-query:50052
   min-conn: 1
   max-conn: 1
+writer:
+  mldp:
+    - name: mldp_main
+      mldp-pool:
+        provider-name: test_provider
+        ingestion-url: dp-ingestion:50051
+        query-url: dp-query:50052
+        min-conn: 1
+        max-conn: 1
 reader: []
 )";
 
@@ -76,4 +90,3 @@ reader: []
     EXPECT_NE(printed.find("metrics: disabled"), std::string::npos);
     EXPECT_NE(printed.find("readers: count=0"), std::string::npos);
 }
-

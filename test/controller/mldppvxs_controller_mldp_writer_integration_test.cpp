@@ -3,10 +3,10 @@
 #include <controller/MLDPPVXSController.h>
 #include <metrics/MetricsSnapshot.h>
 
+#include <grpcpp/security/server_credentials.h>
 #include <grpcpp/server.h>
 #include <grpcpp/server_builder.h>
 #include <grpcpp/server_context.h>
-#include <grpcpp/security/server_credentials.h>
 #include <ingestion.grpc.pb.h>
 
 #include <chrono>
@@ -24,11 +24,12 @@ using namespace mldp_pvxs_driver::testutil;
 
 using mldp_pvxs_driver::config::makeConfigFromYaml;
 using mldp_pvxs_driver::util::bus::IDataBus;
+using mldp_pvxs_driver::util::bus::DataBatch;
+using mldp_pvxs_driver::util::bus::DataColumn;
 
 namespace {
 
-    constexpr std::string_view kMinimalControllerConfig = R"(
-controller-thread-pool: 1
+constexpr std::string_view kMinimalControllerConfig = R"(
 mldp-pool:
   provider-name: test_provider
   provider-description: "Test Provider"
@@ -36,18 +37,15 @@ mldp-pool:
   query-url: dp-query:50052
   min-conn: 1
   max-conn: 1
-reader: []
-)";
-
-    constexpr std::string_view kEpicsControllerConfig = R"(
-controller-thread-pool: 1
-mldp-pool:
-  provider-name: test_provider
-  provider-description: "Test Provider"
-  ingestion-url: dp-ingestion:50051
-  query-url: dp-query:50052
-  min-conn: 1
-  max-conn: 1
+writer:
+  mldp:
+    - name: mldp_main
+      mldp-pool:
+        provider-name: test_provider
+        ingestion-url: dp-ingestion:50051
+        query-url: dp-query:50052
+        min-conn: 1
+        max-conn: 1
 reader:
   - epics-pvxs:
       - name: epics_reader_1
@@ -55,8 +53,7 @@ reader:
           - name: test:counter
 )";
 
-    constexpr std::string_view kBsasNtTableRowTsControllerConfig = R"(
-controller-thread-pool: 1
+constexpr std::string_view kEpicsControllerConfig = R"(
 mldp-pool:
   provider-name: test_provider
   provider-description: "Test Provider"
@@ -64,6 +61,39 @@ mldp-pool:
   query-url: dp-query:50052
   min-conn: 1
   max-conn: 1
+writer:
+  mldp:
+    - name: mldp_main
+      mldp-pool:
+        provider-name: test_provider
+        ingestion-url: dp-ingestion:50051
+        query-url: dp-query:50052
+        min-conn: 1
+        max-conn: 1
+reader:
+  - epics-pvxs:
+      - name: epics_reader_1
+        pvs:
+          - name: test:counter
+)";
+
+constexpr std::string_view kBsasNtTableRowTsControllerConfig = R"(
+mldp-pool:
+  provider-name: test_provider
+  provider-description: "Test Provider"
+  ingestion-url: dp-ingestion:50051
+  query-url: dp-query:50052
+  min-conn: 1
+  max-conn: 1
+writer:
+  mldp:
+    - name: mldp_main
+      mldp-pool:
+        provider-name: test_provider
+        ingestion-url: dp-ingestion:50051
+        query-url: dp-query:50052
+        min-conn: 1
+        max-conn: 1
 reader:
   - epics-pvxs:
       - name: epics_reader_1
@@ -73,52 +103,52 @@ reader:
               type: slac-bsas-table
 )";
 
-    class TestIngestionService final : public dp::service::ingestion::DpIngestionService::Service
+class TestIngestionService final : public dp::service::ingestion::DpIngestionService::Service
+{
+public:
+    std::atomic<int> stream_count{0};
+    std::atomic<int> request_count{0};
+    std::atomic<int> stream_close_count{0};
+
+    grpc::Status registerProvider(grpc::ServerContext*,
+                                  const dp::service::ingestion::RegisterProviderRequest* request,
+                                  dp::service::ingestion::RegisterProviderResponse*      response) override
     {
-    public:
-        std::atomic<int> stream_count{0};
-        std::atomic<int> request_count{0};
-        std::atomic<int> stream_close_count{0};
-
-        grpc::Status registerProvider(grpc::ServerContext*,
-                                      const dp::service::ingestion::RegisterProviderRequest* request,
-                                      dp::service::ingestion::RegisterProviderResponse* response) override
-        {
-            auto* result = response->mutable_registrationresult();
-            result->set_providerid("test-provider-id");
-            result->set_providername(request->providername());
-            result->set_isnewprovider(true);
-            return grpc::Status::OK;
-        }
-
-        grpc::Status ingestDataStream(grpc::ServerContext*,
-                                      grpc::ServerReader<dp::service::ingestion::IngestDataRequest>* reader,
-                                      dp::service::ingestion::IngestDataStreamResponse*) override
-        {
-            stream_count.fetch_add(1, std::memory_order_relaxed);
-            dp::service::ingestion::IngestDataRequest request;
-            while (reader->Read(&request))
-            {
-                request_count.fetch_add(1, std::memory_order_relaxed);
-            }
-            stream_close_count.fetch_add(1, std::memory_order_relaxed);
-            return grpc::Status::OK;
-        }
-    };
-
-    bool waitForCount(std::atomic<int>& counter, int target, std::chrono::milliseconds timeout)
-    {
-        const auto deadline = std::chrono::steady_clock::now() + timeout;
-        while (std::chrono::steady_clock::now() < deadline)
-        {
-            if (counter.load(std::memory_order_relaxed) >= target)
-            {
-                return true;
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        }
-        return counter.load(std::memory_order_relaxed) >= target;
+        auto* result = response->mutable_registrationresult();
+        result->set_providerid("test-provider-id");
+        result->set_providername(request->providername());
+        result->set_isnewprovider(true);
+        return grpc::Status::OK;
     }
+
+    grpc::Status ingestDataStream(grpc::ServerContext*,
+                                  grpc::ServerReader<dp::service::ingestion::IngestDataRequest>* reader,
+                                  dp::service::ingestion::IngestDataStreamResponse*) override
+    {
+        stream_count.fetch_add(1, std::memory_order_relaxed);
+        dp::service::ingestion::IngestDataRequest request;
+        while (reader->Read(&request))
+        {
+            request_count.fetch_add(1, std::memory_order_relaxed);
+        }
+        stream_close_count.fetch_add(1, std::memory_order_relaxed);
+        return grpc::Status::OK;
+    }
+};
+
+bool waitForCount(std::atomic<int>& counter, int target, std::chrono::milliseconds timeout)
+{
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (std::chrono::steady_clock::now() < deadline)
+    {
+        if (counter.load(std::memory_order_relaxed) >= target)
+        {
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    return counter.load(std::memory_order_relaxed) >= target;
+}
 
 } // namespace
 
@@ -171,14 +201,14 @@ TEST(MLDPPVXSControllerTest, BsasNtTableRowTsAggregatesPushAndBandwidthMetrics)
 
     ASSERT_NO_THROW(controller->start(););
 
-    const int                                          max_wait_ms = 8000;
-    int                                                waited_ms = 0;
-    const mldp_pvxs_driver::metrics::MetricsSnapshot   snapshotter;
+    const int                                             max_wait_ms = 8000;
+    int                                                   waited_ms = 0;
+    const mldp_pvxs_driver::metrics::MetricsSnapshot      snapshotter;
     std::optional<mldp_pvxs_driver::metrics::MetricsData> snapshot;
-    std::string                                        metrics_text;
-    double                                             table_send_sum = 0.0;
-    double                                             table_send_count = 0.0;
-    double                                             queue_depth = 0.0;
+    std::string                                           metrics_text;
+    double                                                table_send_sum = 0.0;
+    double                                                table_send_count = 0.0;
+    double                                                queue_depth = 0.0;
 
     while (waited_ms < max_wait_ms)
     {
@@ -232,9 +262,9 @@ TEST(MLDPPVXSControllerTest, EpicsCounterEmitsSingleReaderMetric)
 
     ASSERT_NO_THROW(controller->start(););
 
-    const int                                        max_wait_ms = 8000;
-    int                                              waited_ms = 0;
-    const mldp_pvxs_driver::metrics::MetricsSnapshot snapshotter;
+    const int                                             max_wait_ms = 8000;
+    int                                                   waited_ms = 0;
+    const mldp_pvxs_driver::metrics::MetricsSnapshot      snapshotter;
     std::optional<mldp_pvxs_driver::metrics::MetricsData> snapshot;
 
     while (waited_ms < max_wait_ms)
@@ -279,16 +309,28 @@ TEST(MLDPPVXSControllerTest, IdleStreamRotationStartsNewStreamAfterMaxAge)
     ASSERT_GT(port, 0);
 
     std::ostringstream yaml;
-    yaml << "controller-thread-pool: 1\n"
-         << "controller-stream-max-age-ms: 150\n"
-         << "mldp-pool:\n"
+    yaml << "mldp-pool:\n"
          << "  provider-name: test_provider\n"
          << "  provider-description: \"Test Provider\"\n"
          << "  ingestion-url: 127.0.0.1:" << port << "\n"
          << "  query-url: localhost:" << port << "\n"
          << "  min-conn: 1\n"
          << "  max-conn: 1\n"
-         << "reader: []\n";
+         << "writer:\n"
+         << "  mldp:\n"
+         << "    - name: mldp_main\n"
+         << "      stream-max-age-ms: 150\n"
+         << "      mldp-pool:\n"
+         << "        provider-name: test_provider\n"
+         << "        ingestion-url: 127.0.0.1:" << port << "\n"
+         << "        query-url: localhost:" << port << "\n"
+         << "        min-conn: 1\n"
+         << "        max-conn: 1\n"
+         << "reader:\n"
+         << "  - epics-pvxs:\n"
+         << "      - name: epics_reader_1\n"
+         << "        pvs:\n"
+         << "          - name: test:counter\n";
 
     const auto config = makeConfigFromYaml(yaml.str());
     ASSERT_TRUE(config.valid());
@@ -300,13 +342,12 @@ TEST(MLDPPVXSControllerTest, IdleStreamRotationStartsNewStreamAfterMaxAge)
     IDataBus::EventBatch batch;
     batch.root_source = "test-root";
     batch.tags = {"test"};
-    dp::service::common::DataFrame frame1;
-    auto* c1 = frame1.add_int32columns();
-    c1->set_name("value");
-    c1->add_values(1);
-    auto* ts1 = frame1.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
-    ts1->set_epochseconds(1);
-    ts1->set_nanoseconds(0);
+    DataBatch frame1;
+    frame1.timestamps.push_back({1, 0});
+    DataColumn col1;
+    col1.name   = "value";
+    col1.values = std::vector<int32_t>{1};
+    frame1.columns.push_back(std::move(col1));
     batch.frames.push_back(std::move(frame1));
 
     ASSERT_TRUE(controller->push(std::move(batch)));
@@ -318,13 +359,12 @@ TEST(MLDPPVXSControllerTest, IdleStreamRotationStartsNewStreamAfterMaxAge)
     IDataBus::EventBatch batch2;
     batch2.root_source = "test-root";
     batch2.tags = {"test"};
-    dp::service::common::DataFrame frame2;
-    auto* c2 = frame2.add_int32columns();
-    c2->set_name("value");
-    c2->add_values(2);
-    auto* ts2 = frame2.mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
-    ts2->set_epochseconds(2);
-    ts2->set_nanoseconds(0);
+    DataBatch frame2;
+    frame2.timestamps.push_back({2, 0});
+    DataColumn col2;
+    col2.name   = "value";
+    col2.values = std::vector<int32_t>{2};
+    frame2.columns.push_back(std::move(col2));
     batch2.frames.push_back(std::move(frame2));
 
     ASSERT_TRUE(controller->push(std::move(batch2)));

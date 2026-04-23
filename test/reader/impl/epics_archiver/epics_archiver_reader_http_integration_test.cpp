@@ -11,19 +11,21 @@
 #include <gtest/gtest.h>
 
 #include "../../../config/test_config_helpers.h"
+#include "../../../mock/EpicsArchiverTestUtils.h"
 #include "../../../mock/MockArchiverPbHttpServer.h"
 #include "../../../mock/MockDataBus.h"
-#include "../../../mock/EpicsArchiverTestUtils.h"
 
 #include <reader/impl/epics_archiver/EpicsArchiverReader.h>
 #include <util/bus/IDataBus.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <map>
 #include <memory>
 #include <set>
 #include <string>
+#include <variant>
 #include <vector>
 
 namespace {
@@ -31,12 +33,22 @@ namespace {
 using mldp_pvxs_driver::config::makeConfigFromYaml;
 using mldp_pvxs_driver::reader::impl::epics_archiver::EpicsArchiverReader;
 using mldp_pvxs_driver::reader::impl::epics_archiver::MockArchiverPbHttpServer;
-using mldp_pvxs_driver::util::bus::IDataBus;
-using mldp_pvxs_driver::test::mock::waitForMockRequestStartAndCompletion;
-using mldp_pvxs_driver::test::mock::waitForMockRequestStart;
 using mldp_pvxs_driver::test::mock::waitForAtLeastPublishedBatches;
+using mldp_pvxs_driver::test::mock::waitForMockRequestStart;
+using mldp_pvxs_driver::test::mock::waitForMockRequestStartAndCompletion;
+using mldp_pvxs_driver::util::bus::DataBatch;
+using mldp_pvxs_driver::util::bus::DataColumn;
+using mldp_pvxs_driver::util::bus::IDataBus;
 // Backward compatibility alias
 using MockEventBusPush = mldp_pvxs_driver::test::mock::MockDataBus;
+
+// Helper: get first DataColumn with a vector<double> from a DataBatch.
+auto findDoubleCol   = [](const DataBatch& b, std::size_t idx) -> const DataColumn& { return b.columns.at(idx); };
+auto getDoubles      = [](const DataColumn& c) -> const std::vector<double>& { return std::get<std::vector<double>>(c.values); };
+auto getStrings      = [](const DataColumn& c) -> const std::vector<std::string>& { return std::get<std::vector<std::string>>(c.values); };
+auto getInt32s       = [](const DataColumn& c) -> const std::vector<int32_t>& { return std::get<std::vector<int32_t>>(c.values); };
+auto getDoubleArrays = [](const DataColumn& c) -> const std::vector<std::vector<double>>& { return std::get<std::vector<std::vector<double>>>(c.values); };
+auto getBlobs        = [](const DataColumn& c) -> const std::vector<std::vector<uint8_t>>& { return std::get<std::vector<std::vector<uint8_t>>>(c.values); };
 
 // Verifies the reader fetches PB/HTTP data and publishes parsed samples to the event bus.
 TEST(EpicsArchiverReaderHttpIntegrationTest, FetchesPbHttpStreamAndPublishesBusEvents)
@@ -80,15 +92,16 @@ TEST(EpicsArchiverReaderHttpIntegrationTest, FetchesPbHttpStreamAndPublishesBusE
     for (size_t i = 0; i < batches[0].frames.size(); ++i)
     {
         const auto& frame = batches[0].frames[i];
-        ASSERT_GT(frame.doublecolumns_size(), 0);
-        ASSERT_GT(frame.doublecolumns(0).values_size(), 0);
-        EXPECT_EQ(frame.doublecolumns(0).name(), "TEST:PV:DOUBLE");
-        EXPECT_GE(frame.doublecolumns(0).values(0), gen_cfg.min_value);
-        EXPECT_LE(frame.doublecolumns(0).values(0), gen_cfg.max_value);
-        ASSERT_TRUE(frame.has_datatimestamps());
-        ASSERT_GT(frame.datatimestamps().timestamplist().timestamps_size(), 0);
-        const auto epoch = frame.datatimestamps().timestamplist().timestamps(0).epochseconds();
-        const auto nano = frame.datatimestamps().timestamplist().timestamps(0).nanoseconds();
+        ASSERT_FALSE(frame.columns.empty());
+        const auto& col     = findDoubleCol(frame, 0);
+        const auto& doubles = getDoubles(col);
+        ASSERT_FALSE(doubles.empty());
+        EXPECT_EQ(col.name, "TEST:PV:DOUBLE");
+        EXPECT_GE(doubles[0], gen_cfg.min_value);
+        EXPECT_LE(doubles[0], gen_cfg.max_value);
+        ASSERT_FALSE(frame.timestamps.empty());
+        const auto epoch = frame.timestamps[0].epoch_seconds;
+        const auto nano  = frame.timestamps[0].nanoseconds;
         EXPECT_GT(epoch, 0u);
         EXPECT_LT(nano, 1'000'000'000u);
         if (i > 0)
@@ -188,7 +201,7 @@ TEST(EpicsArchiverReaderHttpIntegrationTest, FetchesMixedTypedPvSetUsingPvSuffix
     ASSERT_TRUE(waitForAtLeastPublishedBatches(*bus, 4u, std::chrono::seconds(2)));
     EXPECT_EQ(reader->name(), "archiver-http-mixed-types");
 
-    const auto history = server.requestHistory();
+    const auto            history = server.requestHistory();
     std::set<std::string> requested_pvs;
     for (const auto& req : history)
     {
@@ -199,7 +212,7 @@ TEST(EpicsArchiverReaderHttpIntegrationTest, FetchesMixedTypedPvSetUsingPvSuffix
     }
     EXPECT_EQ(requested_pvs, (std::set<std::string>{pv_string, pv_int, pv_waveform, pv_bytes}));
 
-    const auto batches = bus->snapshot();
+    const auto                                         batches = bus->snapshot();
     std::map<std::string, const IDataBus::EventBatch*> batches_by_source;
     for (const auto& batch : batches)
     {
@@ -213,26 +226,41 @@ TEST(EpicsArchiverReaderHttpIntegrationTest, FetchesMixedTypedPvSetUsingPvSuffix
 
     const auto* string_batch = batches_by_source.at(pv_string);
     ASSERT_FALSE(string_batch->frames.empty());
-    EXPECT_GT(string_batch->frames[0].stringcolumns_size(), 0);
-    EXPECT_EQ(string_batch->frames[0].stringcolumns(0).name(), pv_string);
-    EXPECT_NE(string_batch->frames[0].stringcolumns(0).values(0).find(pv_string), std::string::npos);
+    {
+        const auto& col = string_batch->frames[0].columns.at(0);
+        EXPECT_EQ(col.name, pv_string);
+        const auto& sv = getStrings(col);
+        ASSERT_FALSE(sv.empty());
+        EXPECT_NE(sv[0].find(pv_string), std::string::npos);
+    }
 
     const auto* int_batch = batches_by_source.at(pv_int);
     ASSERT_FALSE(int_batch->frames.empty());
-    EXPECT_GT(int_batch->frames[0].int32columns_size(), 0);
-    EXPECT_EQ(int_batch->frames[0].int32columns(0).name(), pv_int);
+    {
+        const auto& col = int_batch->frames[0].columns.at(0);
+        EXPECT_EQ(col.name, pv_int);
+        EXPECT_NO_THROW(getInt32s(col));
+    }
 
     const auto* waveform_batch = batches_by_source.at(pv_waveform);
     ASSERT_FALSE(waveform_batch->frames.empty());
-    EXPECT_GT(waveform_batch->frames[0].doublecolumns_size(), 0);
-    EXPECT_EQ(waveform_batch->frames[0].doublecolumns(0).name(), pv_waveform);
-    EXPECT_EQ(waveform_batch->frames[0].doublecolumns(0).values_size(), 4);
+    {
+        const auto& col     = waveform_batch->frames[0].columns.at(0);
+        const auto& arrays  = getDoubleArrays(col);
+        EXPECT_EQ(col.name, pv_waveform);
+        ASSERT_FALSE(arrays.empty());
+        EXPECT_EQ(arrays[0].size(), 4u);
+    }
 
     const auto* bytes_batch = batches_by_source.at(pv_bytes);
     ASSERT_FALSE(bytes_batch->frames.empty());
-    EXPECT_GT(bytes_batch->frames[0].stringcolumns_size(), 0);
-    EXPECT_EQ(bytes_batch->frames[0].stringcolumns(0).name(), pv_bytes);
-    EXPECT_EQ(bytes_batch->frames[0].stringcolumns(0).values(0).size(), 4);
+    {
+        const auto& col   = bytes_batch->frames[0].columns.at(0);
+        EXPECT_EQ(col.name, pv_bytes);
+        const auto& blobs = getBlobs(col);
+        ASSERT_FALSE(blobs.empty());
+        EXPECT_EQ(blobs[0].size(), 4u);
+    }
 }
 
 // Verifies published batches are split by historical sample timestamps and still include the 'to' query.
@@ -285,28 +313,31 @@ TEST(EpicsArchiverReaderHttpIntegrationTest, SplitsPublishedBatchesByHistoricalS
         ASSERT_FALSE(batch.frames.empty());
         const auto& first_frame = batch.frames.front();
         const auto& last_frame = batch.frames.back();
-        ASSERT_TRUE(first_frame.has_datatimestamps());
-        ASSERT_TRUE(last_frame.has_datatimestamps());
-        const auto& first_ts = first_frame.datatimestamps().timestamplist().timestamps(0);
-        const auto& last_ts = last_frame.datatimestamps().timestamplist().timestamps(0);
+        ASSERT_FALSE(first_frame.timestamps.empty());
+        ASSERT_FALSE(last_frame.timestamps.empty());
+        const auto first_epoch_s = first_frame.timestamps[0].epoch_seconds;
+        const auto first_nano_s  = first_frame.timestamps[0].nanoseconds;
+        const auto last_epoch_s  = last_frame.timestamps[0].epoch_seconds;
+        const auto last_nano_s   = last_frame.timestamps[0].nanoseconds;
 
-        const uint64_t first_ns = first_ts.epochseconds() * 1'000'000'000ULL + first_ts.nanoseconds();
-        const uint64_t last_ns = last_ts.epochseconds() * 1'000'000'000ULL + last_ts.nanoseconds();
+        const uint64_t first_ns = first_epoch_s * 1'000'000'000ULL + first_nano_s;
+        const uint64_t last_ns  = last_epoch_s * 1'000'000'000ULL + last_nano_s;
         EXPECT_LE(last_ns - first_ns, 1'000'000'000ULL);
 
         for (const auto& frame : batch.frames)
         {
-            ASSERT_TRUE(frame.has_datatimestamps());
+            ASSERT_FALSE(frame.timestamps.empty());
             total_events++;
-            const auto& ts = frame.datatimestamps().timestamplist().timestamps(0);
+            const auto ts_epoch = frame.timestamps[0].epoch_seconds;
+            const auto ts_nano  = frame.timestamps[0].nanoseconds;
             if (!first)
             {
                 const bool nondecreasing =
-                    (ts.epochseconds() > prev_epoch) || (ts.epochseconds() == prev_epoch && ts.nanoseconds() >= prev_nano);
+                    (ts_epoch > prev_epoch) || (ts_epoch == prev_epoch && ts_nano >= prev_nano);
                 EXPECT_TRUE(nondecreasing);
             }
-            prev_epoch = ts.epochseconds();
-            prev_nano = ts.nanoseconds();
+            prev_epoch = ts_epoch;
+            prev_nano = ts_nano;
             first = false;
         }
     }

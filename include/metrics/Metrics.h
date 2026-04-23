@@ -25,7 +25,7 @@
 #include <metrics/MetricsConfig.h>
 
 // Forward declaration for metric-grabber
-namespace metricsgrabber {
+namespace procmon {
 class MetricsCollector;
 }
 
@@ -44,11 +44,14 @@ class Metrics
 public:
     /** @brief Construct a collector with an optional metrics configuration. */
     Metrics() = delete;
-    explicit Metrics(const MetricsConfig& config);
+    explicit Metrics(const MetricsConfig& config, std::string controller_name = "default");
     ~Metrics();
 
     /** @return Registry that can be scraped/exported by HTTP exposers. */
     std::shared_ptr<prometheus::Registry> registry() const;
+
+    /** @return Controller name stamped on all metric labels. */
+    const std::string& controllerName() const;
 
     // Reader metrics ------------------------------------------------------
     void   incrementReaderEvents(double value = 1.0, prometheus::Labels tags = {});
@@ -69,14 +72,14 @@ public:
     /**
      * @brief Gauge for idle connections available in the pool.
      */
-    void setPoolConnectionsAvailable(double value, prometheus::Labels tags = {});
+    void   setPoolConnectionsAvailable(double value, prometheus::Labels tags = {});
     double poolConnectionsInUse(prometheus::Labels tags = {}) const;
     double poolConnectionsAvailable(prometheus::Labels tags = {}) const;
 
     // Controller metrics -------------------------------------------------
-    void   observeControllerSendTimeSeconds(double value, prometheus::Labels tags = {});
-    void   setControllerQueueDepth(double value, prometheus::Labels tags = {});
-    void   setControllerChannelQueueDepth(double value, prometheus::Labels tags = {});
+    void observeControllerSendTimeSeconds(double value, prometheus::Labels tags = {});
+    void setControllerQueueDepth(double value, prometheus::Labels tags = {});
+    void setControllerChannelQueueDepth(double value, prometheus::Labels tags = {});
 
     // Bus metrics ---------------------------------------------------------
     void   incrementBusPushes(double value = 1.0, prometheus::Labels tags = {});
@@ -91,30 +94,31 @@ public:
 
 private:
     MetricsConfig                         config_;
+    std::string                           controller_name_;
     std::shared_ptr<prometheus::Registry> registry_;
 
     prometheus::Histogram::BucketBoundaries reader_processing_time_ms_buckets_;
 
-    prometheus::Family<prometheus::Counter>& reader_events_family_;
-    prometheus::Family<prometheus::Counter>& reader_events_received_family_;
-    prometheus::Family<prometheus::Counter>& reader_errors_family_;
-    prometheus::Family<prometheus::Histogram>& reader_processing_time_ms_family_;
-    prometheus::Family<prometheus::Gauge>& reader_queue_depth_family_;
-    prometheus::Family<prometheus::Gauge>& reader_pool_queue_depth_family_;
+    prometheus::Family<prometheus::Counter>*   reader_events_family_{nullptr};
+    prometheus::Family<prometheus::Counter>*   reader_events_received_family_{nullptr};
+    prometheus::Family<prometheus::Counter>*   reader_errors_family_{nullptr};
+    prometheus::Family<prometheus::Histogram>* reader_processing_time_ms_family_{nullptr};
+    prometheus::Family<prometheus::Gauge>*     reader_queue_depth_family_{nullptr};
+    prometheus::Family<prometheus::Gauge>*     reader_pool_queue_depth_family_{nullptr};
 
-    prometheus::Family<prometheus::Gauge>& pool_connections_in_use_family_;
-    prometheus::Family<prometheus::Gauge>& pool_connections_available_family_;
+    prometheus::Family<prometheus::Gauge>* pool_connections_in_use_family_{nullptr};
+    prometheus::Family<prometheus::Gauge>* pool_connections_available_family_{nullptr};
 
-    prometheus::Histogram::BucketBoundaries controller_send_time_buckets_;
-    prometheus::Family<prometheus::Histogram>& controller_send_time_family_;
-    prometheus::Family<prometheus::Gauge>&     controller_queue_depth_family_;
-    prometheus::Family<prometheus::Gauge>&     controller_channel_queue_depth_family_;
+    prometheus::Histogram::BucketBoundaries    controller_send_time_buckets_;
+    prometheus::Family<prometheus::Histogram>* controller_send_time_family_{nullptr};
+    prometheus::Family<prometheus::Gauge>*     controller_queue_depth_family_{nullptr};
+    prometheus::Family<prometheus::Gauge>*     controller_channel_queue_depth_family_{nullptr};
 
-    prometheus::Family<prometheus::Counter>& bus_push_family_;
-    prometheus::Family<prometheus::Counter>& bus_failure_family_;
-    prometheus::Family<prometheus::Counter>& bus_payload_bytes_family_;
-    prometheus::Family<prometheus::Gauge>&   bus_payload_bytes_per_second_family_;
-    prometheus::Family<prometheus::Counter>& bus_stream_rotations_family_;
+    prometheus::Family<prometheus::Counter>* bus_push_family_{nullptr};
+    prometheus::Family<prometheus::Counter>* bus_failure_family_{nullptr};
+    prometheus::Family<prometheus::Counter>* bus_payload_bytes_family_{nullptr};
+    prometheus::Family<prometheus::Gauge>*   bus_payload_bytes_per_second_family_{nullptr};
+    prometheus::Family<prometheus::Counter>* bus_stream_rotations_family_{nullptr};
 
     std::unique_ptr<prometheus::Exposer> exposer_;
 
@@ -127,41 +131,41 @@ private:
     std::thread       system_metrics_thread_;
 
     // CPU metrics (counters - values accumulate over time)
-    prometheus::Family<prometheus::Counter>& process_cpu_user_ticks_family_;
-    prometheus::Family<prometheus::Counter>& process_cpu_system_ticks_family_;
-    prometheus::Family<prometheus::Counter>& process_cpu_children_user_ticks_family_;
-    prometheus::Family<prometheus::Counter>& process_cpu_children_system_ticks_family_;
+    prometheus::Family<prometheus::Counter>* process_cpu_user_ticks_family_{nullptr};
+    prometheus::Family<prometheus::Counter>* process_cpu_system_ticks_family_{nullptr};
+    prometheus::Family<prometheus::Counter>* process_cpu_children_user_ticks_family_{nullptr};
+    prometheus::Family<prometheus::Counter>* process_cpu_children_system_ticks_family_{nullptr};
 
     // Memory metrics (gauges - current values)
-    prometheus::Family<prometheus::Gauge>& process_memory_virtual_bytes_family_;
-    prometheus::Family<prometheus::Gauge>& process_memory_rss_bytes_family_;
-    prometheus::Family<prometheus::Gauge>& process_memory_virtual_peak_bytes_family_;
-    prometheus::Family<prometheus::Gauge>& process_memory_rss_anon_bytes_family_;
-    prometheus::Family<prometheus::Gauge>& process_memory_rss_file_bytes_family_;
-    prometheus::Family<prometheus::Gauge>& process_memory_rss_shmem_bytes_family_;
-    prometheus::Family<prometheus::Gauge>& process_memory_rss_total_bytes_family_;
+    prometheus::Family<prometheus::Gauge>* process_memory_virtual_bytes_family_{nullptr};
+    prometheus::Family<prometheus::Gauge>* process_memory_rss_bytes_family_{nullptr};
+    prometheus::Family<prometheus::Gauge>* process_memory_virtual_peak_bytes_family_{nullptr};
+    prometheus::Family<prometheus::Gauge>* process_memory_rss_anon_bytes_family_{nullptr};
+    prometheus::Family<prometheus::Gauge>* process_memory_rss_file_bytes_family_{nullptr};
+    prometheus::Family<prometheus::Gauge>* process_memory_rss_shmem_bytes_family_{nullptr};
+    prometheus::Family<prometheus::Gauge>* process_memory_rss_total_bytes_family_{nullptr};
 
     // I/O metrics (counters - bytes accumulate over time)
-    prometheus::Family<prometheus::Counter>& process_io_read_bytes_family_;
-    prometheus::Family<prometheus::Counter>& process_io_write_bytes_family_;
-    prometheus::Family<prometheus::Counter>& process_io_cancelled_write_bytes_family_;
+    prometheus::Family<prometheus::Counter>* process_io_read_bytes_family_{nullptr};
+    prometheus::Family<prometheus::Counter>* process_io_write_bytes_family_{nullptr};
+    prometheus::Family<prometheus::Counter>* process_io_cancelled_write_bytes_family_{nullptr};
 
     // Context switches (counters)
-    prometheus::Family<prometheus::Counter>& process_context_switches_voluntary_family_;
-    prometheus::Family<prometheus::Counter>& process_context_switches_involuntary_family_;
+    prometheus::Family<prometheus::Counter>* process_context_switches_voluntary_family_{nullptr};
+    prometheus::Family<prometheus::Counter>* process_context_switches_involuntary_family_{nullptr};
 
     // File descriptors (gauge)
-    prometheus::Family<prometheus::Gauge>& process_fds_open_family_;
+    prometheus::Family<prometheus::Gauge>* process_fds_open_family_{nullptr};
 
     // Thread count (gauge)
-    prometheus::Family<prometheus::Gauge>& process_threads_family_;
+    prometheus::Family<prometheus::Gauge>* process_threads_family_{nullptr};
 
     // Process info
-    prometheus::Family<prometheus::Gauge>& process_priority_family_;
-    prometheus::Family<prometheus::Gauge>& process_nice_family_;
+    prometheus::Family<prometheus::Gauge>* process_priority_family_{nullptr};
+    prometheus::Family<prometheus::Gauge>* process_nice_family_{nullptr};
 
     // Metric grabber collector
-    std::unique_ptr<metricsgrabber::MetricsCollector> system_metrics_collector_;
+    std::unique_ptr<procmon::MetricsCollector> system_metrics_collector_;
 };
 
 // Helper to safely call a metrics method when the pointer may be null.

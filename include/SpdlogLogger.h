@@ -16,8 +16,9 @@
 
 namespace spdlog {
 class logger;
+
 namespace level {
-enum level_enum : int;
+    enum level_enum : int;
 }
 } // namespace spdlog
 

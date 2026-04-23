@@ -62,6 +62,7 @@ Polling-based EPICS Channel Access monitoring for legacy systems.
 - **BSAS Support**: SLAC BSAS NTTable mode with per-row timestamps — see [SLAC BSAS NTTable Gen 1](readers/slac-bsas-table-gen1.md), [Gen 2](readers/slac-bsas-table-gen2.md)
 
 → [Full Documentation: EpicsBaseReader](readers/epics-base-reader.md)
+→ [Implementation Guide](readers/epics-base-reader-implementation.md)
 
 ### EpicsPVXSReader
 
@@ -72,6 +73,7 @@ Modern event-driven EPICS PVAccess monitoring with advanced table support.
 - **Key Feature**: Smart thread pool decisions + SLAC BSAS NTTable support — see [SLAC BSAS NTTable Gen 1](readers/slac-bsas-table-gen1.md), [Gen 2](readers/slac-bsas-table-gen2.md)
 
 → [Full Documentation: EpicsPVXSReader](readers/epics-pvxs-reader.md)
+→ [Implementation Guide](readers/epics-pvxs-reader-implementation.md)
 
 ### EpicsArchiverReader
 
@@ -82,6 +84,7 @@ Historical data retrieval and continuous tail polling from EPICS Archiver Applia
 - **Key Feature**: PB/HTTP streaming, configurable timeouts
 
 → [Full Documentation: EpicsArchiverReader](readers/epics-archiver-reader.md)
+→ [Implementation Guide](readers/epics-archiver-reader-implementation.md)
 
 ## Architecture Overview
 
@@ -93,6 +96,17 @@ All readers follow the same pattern:
 2. **Data Acquisition**: Connect to data source and capture updates
 3. **Data Processing**: Convert source data to MLDP protobuf format
 4. **Publishing**: Push events to `IDataBus` for downstream processing
+
+### EventBatch data contract
+
+Each call to `IDataBus::push()` delivers one `EventBatch` containing one or more `DataFrame` objects. Two optional fields exist on `EventBatch` to support multi-column, row-synchronized table writes:
+
+- **`is_tabular`** — when `true`, the batch carries one column of a structured table. Defaults to `false`.
+- **`end_of_batch_group`** — when `true`, signals the end of a column group and triggers a writer flush. Only meaningful when `is_tabular=true`. Defaults to `false`.
+
+Readers that produce scalar values or waveforms must leave both fields at their defaults. Only readers whose data source natively provides synchronized multi-column tables (e.g. EPICS NTTable, SLAC BSAS payloads) should set these fields.
+
+For the full two-phase protocol and writer behaviour, see [Tabular / multi-column batch protocol](readers-implementation.md#eventbatch-tabular-fields) in the implementation guide.
 
 ### Reader Base Class
 

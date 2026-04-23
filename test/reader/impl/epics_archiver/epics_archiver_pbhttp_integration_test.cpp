@@ -131,7 +131,7 @@ TEST_F(ArchiverPbHttpMockServerTest, SupportsFromOnlyQueryAndReturnsPbHttpBody)
     std::string collected;
     const auto  response = client_.streamGet(
         HttpRequest{
-             .url = server_.baseUrl() + kPath + "?pv=TEST%3APV%3ADOUBLE&from=2026-02-25T08%3A00%3A00.000Z"},
+            .url = server_.baseUrl() + kPath + "?pv=TEST%3APV%3ADOUBLE&from=2026-02-25T08%3A00%3A00.000Z"},
         [&](const char* data, std::size_t size)
         {
             collected.append(data, size);

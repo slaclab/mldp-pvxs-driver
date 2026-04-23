@@ -24,9 +24,9 @@
 #include <util/bus/IDataBus.h>
 #include <util/log/ILog.h>
 
-#include <cstdint>
 #include <atomic>
 #include <condition_variable>
+#include <cstdint>
 #include <exception>
 #include <map>
 #include <memory>
@@ -52,12 +52,12 @@ namespace mldp_pvxs_driver::reader::impl::epics_archiver {
  */
 struct PbChunkState
 {
-    bool                                              have_header = false;           ///< True after PayloadInfo has been parsed.
-    EPICS::PayloadInfo                                header;                        ///< Payload header for the current chunk.
-    std::vector<dp::service::common::DataFrame> events;                        ///< Converted sample frames for this chunk.
-    bool                                              have_batch_start_time = false; ///< True after first sample of current output batch.
-    uint64_t                                          batch_start_epoch_seconds = 0; ///< Historical batch start (seconds).
-    uint32_t                                          batch_start_nanoseconds = 0;   ///< Historical batch start (nanoseconds).
+    bool                               have_header = false;           ///< True after PayloadInfo has been parsed.
+    EPICS::PayloadInfo                 header;                        ///< Payload header for the current chunk.
+    std::vector<util::bus::DataBatch>  events;                        ///< Converted sample batches for this chunk.
+    bool                               have_batch_start_time = false; ///< True after first sample of current output batch.
+    uint64_t                           batch_start_epoch_seconds = 0; ///< Historical batch start (seconds).
+    uint32_t                           batch_start_nanoseconds = 0;   ///< Historical batch start (nanoseconds).
 };
 
 /**
@@ -76,9 +76,9 @@ public:
      * @param metrics Metrics collector for instrumentation (may be null).
      * @param cfg Reader configuration.
      */
-    EpicsArchiverReader(std::shared_ptr<util::bus::IDataBus> bus,
-                        std::shared_ptr<::mldp_pvxs_driver::metrics::Metrics>         metrics,
-                        const ::mldp_pvxs_driver::config::Config&                     cfg);
+    EpicsArchiverReader(std::shared_ptr<util::bus::IDataBus>                  bus,
+                        std::shared_ptr<::mldp_pvxs_driver::metrics::Metrics> metrics,
+                        const ::mldp_pvxs_driver::config::Config&             cfg);
 
     /**
      * @brief Destructor - stops reader and releases resources.
@@ -93,15 +93,15 @@ public:
     std::string name() const override;
 
 private:
-    std::shared_ptr<util::log::ILogger>                          logger_;      ///< Logger instance for this reader.
-    std::unique_ptr<::mldp_pvxs_driver::util::http::IHttpClient> http_client_; ///< Shared HTTP transport abstraction.
-    std::string                                                  name_;        ///< Reader name from configuration.
-    EpicsArchiverReaderConfig                                    config_;      ///< Parsed archiver reader configuration.
-    std::thread                                                  reader_thread_; ///< Background worker fetching archiver data.
-    std::atomic<bool>                                            running_{false}; ///< Worker loop/lifecycle flag.
-    mutable std::mutex                                           worker_mutex_;   ///< Protects worker status fields.
-    std::condition_variable                                      worker_cv_;      ///< Interruptible wakeup for periodic tail polling.
-    std::exception_ptr                                           worker_error_;   ///< Captures worker exception for diagnostics.
+    std::shared_ptr<util::log::ILogger>                          logger_;              ///< Logger instance for this reader.
+    std::unique_ptr<::mldp_pvxs_driver::util::http::IHttpClient> http_client_;         ///< Shared HTTP transport abstraction.
+    std::string                                                  name_;                ///< Reader name from configuration.
+    EpicsArchiverReaderConfig                                    config_;              ///< Parsed archiver reader configuration.
+    std::thread                                                  reader_thread_;       ///< Background worker fetching archiver data.
+    std::atomic<bool>                                            running_{false};      ///< Worker loop/lifecycle flag.
+    mutable std::mutex                                           worker_mutex_;        ///< Protects worker status fields.
+    std::condition_variable                                      worker_cv_;           ///< Interruptible wakeup for periodic tail polling.
+    std::exception_ptr                                           worker_error_;        ///< Captures worker exception for diagnostics.
     bool                                                         worker_done_ = false; ///< True after worker thread exits.
 
     /// Per-PV high-water mark: the last sample timestamp published in a previous

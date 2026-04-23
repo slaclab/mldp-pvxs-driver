@@ -11,3 +11,5 @@ metrics.jsonl
 Testing/
 .memory
 .claude
+PROCESS_LOG*.md
+data/hdf5/

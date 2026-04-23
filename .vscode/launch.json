@@ -7,23 +7,9 @@
             "request": "launch",
             "program": "${workspaceFolder}/build/bin/mldp_pvxs_driver_test",
             "args": [],
-            // "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
             "console": "integratedTerminal",
-            "initCommands": [
-                // "settings set target.disable-aslr false"
-            ]
-            
-            // "environment": [],
-            // "externalConsole": false,
-            // "MIMode": "lldb",
-            // "setupCommands": [
-            //     {
-            //         "description": "Enable pretty-printing for lldb",
-            //         "text": "-enable-pretty-printing",
-            //         "ignoreFailures": true
-            //     }
-            // ]
+            "initCommands": []
         },
         {
             "name": "(lldb) Launch Tests - Specific Test",
@@ -52,6 +38,37 @@
             ]
         },
         {
+            "name": "(lldb) Launch HDF5 Driver (PV as Parameter)",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/bin/mldp_pvxs_driver",
+            "args": [
+                "--config",
+                "${workspaceFolder}/.vscode/config-hdf5-pv-${input:pvName}.yaml",
+                "--log-level",
+                "${input:logLevel}"
+            ],
+            "cwd": "${workspaceFolder}",
+            "disableASLR": false,
+            "console": "integratedTerminal",
+            "initCommands": [
+                "settings set target.disable-aslr false"
+            ]
+        },
+        {
+            "name": "(lldb) Launch mock_sioc_server",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/bin/mock_sioc_server",
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "disableASLR": false,
+            "console": "integratedTerminal",
+            "initCommands": [
+                "settings set target.disable-aslr false"
+            ]
+        },
+        {
             "name": "(lldb) Launch Main",
             "type": "lldb",
             "request": "launch",
@@ -62,21 +79,12 @@
                 "--log-level",
                 "${input:logLevel}"
             ],
-            // "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
             "disableASLR": false,
             "console": "integratedTerminal",
             "initCommands": [
                 "settings set target.disable-aslr false"
             ]
-            // "environment": [],
-            // "externalConsole": false,
-            // "setupCommands": [
-            //     {
-            //         "description": "Keep ASLR enabled (workaround for restricted personality())",
-            //         "text": "settings set target.disable-aslr false"
-            //     }
-            // ]
         }
     ],
     "inputs": [
@@ -87,6 +95,31 @@
             "default": "*"
         },
         {
+            "id": "pvName",
+            "type": "promptString",
+            "description": "PV name to use (e.g., TEST:VOLTAGE)",
+            "default": "TEST:VOLTAGE"
+        },
+        {
+            "id": "pvMode",
+            "type": "pickString",
+            "description": "PV processing mode",
+            "options": ["default", "slac-bsas-table"],
+            "default": "default"
+        },
+        {
+            "id": "tsSeconds",
+            "type": "promptString",
+            "description": "NTTable column for epoch seconds (slac-bsas-table mode only)",
+            "default": "secondsPastEpoch"
+        },
+        {
+            "id": "tsNanos",
+            "type": "promptString",
+            "description": "NTTable column for nanoseconds (slac-bsas-table mode only)",
+            "default": "nanoseconds"
+        },
+        {
             "id": "configPath",
             "type": "promptString",
             "description": "Config file path for --config",
@@ -94,8 +127,9 @@
         },
         {
             "id": "logLevel",
-            "type": "promptString",
-            "description": "Log level for --log-level (trace, debug, info, warn, error, critical, off)",
+            "type": "pickString",
+            "description": "Log level for --log-level",
+            "options": ["trace", "debug", "info", "warn", "error", "critical", "off"],
             "default": "info"
         }
     ]

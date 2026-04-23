@@ -14,6 +14,8 @@
 #include <pool/MLDPGrpcPoolConfig.h>
 #include <reader/impl/epics/shared/EpicsReaderConfig.h>
 #include <reader/impl/epics_archiver/EpicsArchiverReaderConfig.h>
+#include <writer/hdf5/HDF5WriterConfig.h>
+#include <writer/mldp/MLDPWriterConfig.h>
 
 #include <algorithm>
 #include <iomanip>
@@ -87,17 +89,44 @@ std::string mldp_pvxs_driver::cli::formatStartupConfig(
     std::ostringstream out;
     out << "=== Effective Startup Configuration ===\n";
     out << "file: " << configPath << "\n";
-    out << "controller: threads=" << controllerConfig.controllerThreadPoolSize()
-        << " stream_max_bytes=" << controllerConfig.controllerStreamMaxBytes()
-        << " stream_max_age_ms=" << controllerConfig.controllerStreamMaxAge().count() << "\n";
 
-    const auto& pool = controllerConfig.pool();
-    out << "mldp-pool: provider=" << pool.providerName()
-        << " conn=" << pool.minConnections() << ".." << pool.maxConnections()
-        << " ingestion=" << pool.ingestionUrl()
-        << " query=" << pool.queryUrl()
-        << " credentials=" << credentialsSummary(pool.credentials())
-        << "\n";
+    for (const auto& [type, writerNode] : controllerConfig.writerEntries())
+    {
+        if (type == "mldp")
+        {
+            try
+            {
+                const auto mldpCfg = writer::MLDPWriterConfig::parse(writerNode);
+                out << "writer.mldp[" << mldpCfg.name << "]: threads=" << mldpCfg.threadPoolSize
+                    << " stream_max_bytes=" << mldpCfg.streamMaxBytes
+                    << " stream_max_age_ms=" << mldpCfg.streamMaxAge.count() << "\n";
+
+                const auto& pool = mldpCfg.poolConfig;
+                out << "  mldp-pool: provider=" << pool.providerName()
+                    << " conn=" << pool.minConnections() << ".." << pool.maxConnections()
+                    << " ingestion=" << pool.ingestionUrl()
+                    << " query=" << pool.queryUrl()
+                    << " credentials=" << credentialsSummary(pool.credentials())
+                    << "\n";
+            }
+            catch (const writer::MLDPWriterConfig::Error& e)
+            {
+                out << "writer.mldp[?]: parse error: " << e.what() << "\n";
+            }
+        }
+        else if (type == "hdf5")
+        {
+            try
+            {
+                const auto hdf5Cfg = writer::HDF5WriterConfig::parse(writerNode);
+                out << "writer.hdf5[" << hdf5Cfg.name << "]: base-path=" << hdf5Cfg.basePath << "\n";
+            }
+            catch (const writer::HDF5WriterConfig::Error& e)
+            {
+                out << "writer.hdf5[?]: parse error: " << e.what() << "\n";
+            }
+        }
+    }
 
     if (controllerConfig.metricsConfig().has_value() && controllerConfig.metricsConfig()->valid())
     {
@@ -160,8 +189,8 @@ std::string mldp_pvxs_driver::cli::formatStartupConfig(
 
 namespace {
 void collectFlatRows(const mldp_pvxs_driver::config::ryml::ConstNodeRef& node,
-                     const std::string&                                   path,
-                     std::vector<std::pair<std::string, std::string>>&    rows)
+                     const std::string&                                  path,
+                     std::vector<std::pair<std::string, std::string>>&   rows)
 {
     if (node.invalid())
     {
@@ -176,7 +205,7 @@ void collectFlatRows(const mldp_pvxs_driver::config::ryml::ConstNodeRef& node,
             {
                 continue;
             }
-            const auto keyView = child.key();
+            const auto        keyView = child.key();
             const std::string key{keyView.str, keyView.len};
             const std::string nextPath = path.empty() ? key : (path + "." + key);
             collectFlatRows(child, nextPath, rows);

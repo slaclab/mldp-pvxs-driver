@@ -48,12 +48,12 @@ private:
     };
 
     std::shared_ptr<mldp_pvxs_driver::util::log::ILogger> logger_;
-    const MLDPGrpcPoolConfig                               config_;
-    mutable std::mutex                                     mutex_;
-    std::condition_variable                                cv_;
-    std::vector<Item>                                      items_;
-    std::size_t                                            current_size_{0};
-    std::shared_ptr<metrics::Metrics>                      metrics_;
+    const MLDPGrpcPoolConfig                              config_;
+    mutable std::mutex                                    mutex_;
+    std::condition_variable                               cv_;
+    std::vector<Item>                                     items_;
+    std::size_t                                           current_size_{0};
+    std::shared_ptr<metrics::Metrics>                     metrics_;
 
     MLDPGrpcQueryPool() = delete;
     MLDPGrpcQueryPool(const MLDPGrpcQueryPool&) = delete;
@@ -68,4 +68,3 @@ private:
 };
 
 } // namespace mldp_pvxs_driver::util::pool
-

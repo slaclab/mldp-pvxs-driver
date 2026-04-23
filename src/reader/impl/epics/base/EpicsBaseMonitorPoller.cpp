@@ -20,10 +20,10 @@ constexpr std::string_view kPvaPrefix{"pva://"};
 constexpr std::string_view kCaPrefix{"ca://"};
 } // namespace
 
-EpicsBaseMonitorPoller::EpicsBaseMonitorPoller(const std::vector<std::string>& pv_names,
-                                               unsigned int                   poll_threads,
-                                               unsigned int                   poll_interval_ms,
-                                               DataHandler                    on_data_available,
+EpicsBaseMonitorPoller::EpicsBaseMonitorPoller(const std::vector<std::string>&     pv_names,
+                                               unsigned int                        poll_threads,
+                                               unsigned int                        poll_interval_ms,
+                                               DataHandler                         on_data_available,
                                                std::shared_ptr<util::log::ILogger> logger)
     : pva_client_(::epics::pvaClient::PvaClient::get("pva"))
     , ca_client_(::epics::pvaClient::PvaClient::get("ca"))

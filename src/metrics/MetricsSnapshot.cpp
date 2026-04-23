@@ -8,14 +8,13 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
-#include <metrics/MetricsSnapshot.h>
 #include <metrics/Metrics.h>
+#include <metrics/MetricsSnapshot.h>
 
 #include <prometheus/text_serializer.h>
 
-#include <iostream>
 #include <iomanip>
-#include <sstream>
+#include <iostream>
 #include <map>
 #include <sstream>
 
@@ -102,11 +101,11 @@ MetricsData MetricsSnapshot::getSnapshot(const Metrics& metrics) const
 
     // Parse prometheus text to extract metrics
     std::map<std::string, std::map<std::string, double>> reader_metrics; // reader -> metric_type -> value
-    double pool_in_use = 0.0;
-    double pool_available = 0.0;
+    double                                               pool_in_use = 0.0;
+    double                                               pool_available = 0.0;
 
     std::istringstream stream(text);
-    std::string line;
+    std::string        line;
     while (std::getline(stream, line))
     {
         // Skip comments and empty lines
@@ -165,7 +164,7 @@ MetricsData MetricsSnapshot::getSnapshot(const Metrics& metrics) const
 
     // Build snapshot
     MetricsData snapshot;
-    
+
     const auto getMetric = [](const std::map<std::string, double>& metrics_data, std::string_view key)
     {
         const auto it = metrics_data.find(std::string(key));
@@ -186,11 +185,11 @@ MetricsData MetricsSnapshot::getSnapshot(const Metrics& metrics) const
         rm.bytes_per_sec = getMetric(metrics_data, "bytes_per_sec");
         snapshot.readers.push_back(rm);
     }
-    
+
     // Set pool metrics
     snapshot.pool.in_use = static_cast<long long>(pool_in_use);
     snapshot.pool.available = static_cast<long long>(pool_available);
-    
+
     return snapshot;
 }
 
@@ -222,7 +221,7 @@ std::string MetricsSnapshot::toString(const MetricsData& snapshot)
     output << "  Total:      " << snapshot.pool.total() << "\n";
 
     output << "=====================================================================\n";
-    
+
     return output.str();
 }
 

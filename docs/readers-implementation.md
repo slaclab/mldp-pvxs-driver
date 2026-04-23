@@ -6,6 +6,8 @@ This guide explains how to implement a custom reader for the MLDP PVXS Driver. R
 
 The driver uses an **abstract Reader pattern** with a factory-based registration system. This allows new data sources to be added without modifying the core ingestion pipeline.
 
+> **Related:** [Architecture Overview](architecture.md) | [Implementing Custom Writers](writers-implementation.md) | [MLDP Query Client](query-client.md)
+
 ## Logging Rule
 
 **Custom readers must use the project's logging abstraction in `util::log`. Do not call `spdlog::...` directly from reader/library code.**
@@ -74,6 +76,65 @@ batch.frames.push_back(std::move(frame));
 
 bus_->push(std::move(batch));
 ```
+
+For query-side code, use `MLDPQueryClient` instead of adding query methods to `IDataBus`. The bus remains push-only, while query operations are handled out of band.
+
+### EventBatch tabular fields
+
+`IDataBus::EventBatch` carries two optional fields that coordinate multi-column, row-synchronized table writes. Both default to `false` and must be left as `false` by any reader that does not produce structured table data.
+
+#### `is_tabular`
+
+Set to `true` when the batch carries one column of a multi-column table whose rows are time-synchronized across all columns. Writers that support tabular layout (e.g. `HDF5Writer`) accumulate column batches marked `is_tabular=true` and hold them until the flush sentinel arrives. Writers that do not support tabular layout ignore this field and process each batch individually.
+
+#### `end_of_batch_group`
+
+A flush sentinel. Set to `true` on the final batch of a logical group to signal "all columns for this row group have been emitted — flush now." Only meaningful when `is_tabular=true`. The sentinel batch itself normally carries no data frames (`frames` is empty).
+
+#### Two-phase protocol
+
+Emit one batch per column, then one empty sentinel batch:
+
+```cpp
+// Phase 1: one batch per column, all marked is_tabular=true
+IDataBus::EventBatch col_a;
+col_a.root_source   = "pv:table";
+col_a.frames        = {/* col_A data */};
+col_a.is_tabular    = true;
+bus_->push(std::move(col_a));
+
+IDataBus::EventBatch col_b;
+col_b.root_source   = "pv:table";
+col_b.frames        = {/* col_B data */};
+col_b.is_tabular    = true;
+bus_->push(std::move(col_b));
+
+IDataBus::EventBatch col_c;
+col_c.root_source   = "pv:table";
+col_c.frames        = {/* col_C data */};
+col_c.is_tabular    = true;
+bus_->push(std::move(col_c));
+
+// Phase 2: flush sentinel — no data frames
+IDataBus::EventBatch sentinel;
+sentinel.root_source        = "pv:table";
+sentinel.is_tabular         = true;
+sentinel.end_of_batch_group = true;
+bus_->push(std::move(sentinel));
+```
+
+All batches in the group must share the same `root_source` so that the writer can correlate them. When the writer receives the sentinel it flushes all buffered columns as a single compound dataset.
+
+#### When NOT to use these fields
+
+Most readers produce scalar values or waveforms and must never set `is_tabular` or `end_of_batch_group`. Only set them when the data source natively produces synchronized multi-column tables — for example, EPICS NTTable structures, SLAC BSAS table payloads, or structured message-bus records where every column shares the same set of row timestamps.
+
+#### Writer behaviour summary
+
+| Writer supports tabular layout | `is_tabular=false` | `is_tabular=true` (column) | `is_tabular=true, end_of_batch_group=true` (sentinel) |
+|---|---|---|---|
+| Yes (e.g. HDF5Writer) | Flush immediately | Buffer column | Flush all buffered columns as compound dataset |
+| No | Flush immediately | Flush immediately (ignores flag) | Flush immediately (ignores flag) |
 
 ## Step-by-Step Implementation
 
@@ -702,3 +763,8 @@ TEST(<Name>ReaderTest, PushesEventsCorrectly) {
 
 - [Architecture Overview](architecture.md) - System architecture and data flow
 - [Reader Types](readers.md) - Existing reader implementations and comparison
+- [Implementing Custom Writers](writers-implementation.md) - Writer-side mirror of this guide
+- [MLDP Query Client](query-client.md) - Standalone query API for metadata and historical data
+- [EpicsBaseReader Implementation](readers/epics-base-reader-implementation.md) - Polling-based EPICS Channel Access reader
+- [EpicsPVXSReader Implementation](readers/epics-pvxs-reader-implementation.md) - Event-driven PVAccess reader
+- [EpicsArchiverReader Implementation](readers/epics-archiver-reader-implementation.md) - Historical EPICS Archiver reader

@@ -14,7 +14,7 @@
 
 namespace mldp_pvxs_driver::testutil {
 
-inline void appendDataValuesToRows(const dp::service::common::DataValues& src,
+inline void appendDataValuesToRows(const dp::service::common::DataValues&       src,
                                    std::vector<dp::service::common::DataValue>* rows)
 {
     if (!rows)
@@ -48,17 +48,17 @@ inline void appendDataValuesToRows(const dp::service::common::DataValues& src,
         }
         break;
     case DV::kSerializedDataColumn:
-    {
-        dp::service::common::DataColumn parsed;
-        if (parsed.ParseFromString(src.serializeddatacolumn().payload()))
         {
-            for (const auto& v : parsed.datavalues())
+            dp::service::common::DataColumn parsed;
+            if (parsed.ParseFromString(src.serializeddatacolumn().payload()))
             {
-                pushRow(v);
+                for (const auto& v : parsed.datavalues())
+                {
+                    pushRow(v);
+                }
             }
+            break;
         }
-        break;
-    }
     case DV::kDoubleColumn:
         for (double v : src.doublecolumn().values())
         {
@@ -168,6 +168,10 @@ inline std::optional<std::unordered_map<std::string, std::vector<dp::service::co
 
     std::unordered_set<std::string> nameSet(pvNames.begin(), pvNames.end());
 
+    // Accumulate across multiple query rounds: each round may return a subset of
+    // the requested PVs.  We only return once every requested name has been seen.
+    std::unordered_map<std::string, std::vector<dp::service::common::DataValues>> collected;
+
     while (std::chrono::steady_clock::now() < deadline)
     {
         dp::service::query::QueryDataRequest request;
@@ -191,10 +195,9 @@ inline std::optional<std::unordered_map<std::string, std::vector<dp::service::co
         context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(5));
 
         dp::service::query::QueryDataResponse response;
-        const auto status = stub->queryData(&context, request, &response);
+        const auto                            status = stub->queryData(&context, request, &response);
         if (status.ok() && response.has_querydata() && !response.has_exceptionalresult())
         {
-            std::unordered_map<std::string, std::vector<dp::service::common::DataValues>> collected;
             for (const auto& bucket : response.querydata().databuckets())
             {
                 if (!bucket.has_datavalues())

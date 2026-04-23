@@ -22,9 +22,9 @@ class Metrics;
  */
 struct ReaderMetrics
 {
-    std::string pv_name;           ///< PV identifier
-    long long   pushes = 0;        ///< Total number of pushes
-    double      bytes_total = 0.0; ///< Total bytes transferred
+    std::string pv_name;             ///< PV identifier
+    long long   pushes = 0;          ///< Total number of pushes
+    double      bytes_total = 0.0;   ///< Total bytes transferred
     double      bytes_per_sec = 0.0; ///< Current transfer rate (bytes/second)
 };
 
@@ -33,10 +33,13 @@ struct ReaderMetrics
  */
 struct PoolMetrics
 {
-    long long in_use = 0;     ///< Connections currently in use
-    long long available = 0;  ///< Connections available in pool
-    
-    long long total() const { return in_use + available; }
+    long long in_use = 0;    ///< Connections currently in use
+    long long available = 0; ///< Connections available in pool
+
+    long long total() const
+    {
+        return in_use + available;
+    }
 };
 
 /**

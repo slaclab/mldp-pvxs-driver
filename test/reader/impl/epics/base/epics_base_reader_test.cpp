@@ -23,6 +23,9 @@
 
 using mldp_pvxs_driver::config::makeConfigFromYaml;
 using mldp_pvxs_driver::util::bus::IDataBus;
+using mldp_pvxs_driver::util::bus::DataBatch;
+using mldp_pvxs_driver::util::bus::DataColumn;
+using mldp_pvxs_driver::util::bus::TimestampEntry;
 using namespace mldp_pvxs_driver::reader::impl::epics;
 
 // Concrete mock implementation of IDataBus for testing
@@ -45,8 +48,8 @@ public:
         std::lock_guard<std::mutex> lock(mutex);
         if (metrics_)
         {
-            const size_t total_values = batch.frames.size();
-            const auto source = batch.root_source.empty() ? std::string("unknown") : batch.root_source;
+            const size_t             total_values = batch.frames.size();
+            const auto               source = batch.root_source.empty() ? std::string("unknown") : batch.root_source;
             const prometheus::Labels tags{{"source", source}};
             metrics_->incrementBusPushes(static_cast<double>(total_values), tags);
             metrics_->incrementBusPayloadBytes(0.0, tags);
@@ -54,18 +57,6 @@ public:
         }
         received_events.push_back(std::move(batch));
         return true;
-    }
-
-    std::vector<SourceInfo> querySourcesInfo(const std::set<std::string>&) override
-    {
-        return {};
-    }
-
-    std::optional<std::unordered_map<std::string, std::vector<dp::service::common::DataValues>>> querySourcesData(
-        const std::set<std::string>&,
-        const mldp_pvxs_driver::util::bus::QuerySourcesDataOptions&) override
-    {
-        return std::nullopt;
     }
 
     // Method to get the number of events received
@@ -106,8 +97,8 @@ public:
         return received_events.back();
     }
 
-    // Method to get the last event's DataFrame pointer
-    const dp::service::common::DataFrame* last_event() const
+    // Method to get the last event's DataBatch pointer
+    const DataBatch* last_event() const
     {
         std::lock_guard<std::mutex> lock(mutex);
         if (received_events.empty())
@@ -141,26 +132,16 @@ private:
 
 namespace {
 
-using DataFrame = dp::service::common::DataFrame;
-
-std::optional<std::string> frameSource(const DataFrame& frame)
+std::optional<std::string> frameSource(const DataBatch& batch)
 {
-    if (frame.doublecolumns_size() > 0) return frame.doublecolumns(0).name();
-    if (frame.floatcolumns_size() > 0) return frame.floatcolumns(0).name();
-    if (frame.int32columns_size() > 0) return frame.int32columns(0).name();
-    if (frame.int64columns_size() > 0) return frame.int64columns(0).name();
-    if (frame.boolcolumns_size() > 0) return frame.boolcolumns(0).name();
-    if (frame.stringcolumns_size() > 0) return frame.stringcolumns(0).name();
-    if (frame.datacolumns_size() > 0) return frame.datacolumns(0).name();
-    if (frame.doublearraycolumns_size() > 0) return frame.doublearraycolumns(0).name();
-    if (frame.floatarraycolumns_size() > 0) return frame.floatarraycolumns(0).name();
-    if (frame.int32arraycolumns_size() > 0) return frame.int32arraycolumns(0).name();
-    if (frame.int64arraycolumns_size() > 0) return frame.int64arraycolumns(0).name();
-    if (frame.boolarraycolumns_size() > 0) return frame.boolarraycolumns(0).name();
+    if (!batch.columns.empty())
+        return batch.columns[0].name;
+    if (!batch.enum_columns.empty())
+        return batch.enum_columns[0].name;
     return std::nullopt;
 }
 
-const DataFrame* findLatestDataFrameForSource(const MockEventBusPush& bus, const std::string& source)
+const DataBatch* findLatestDataFrameForSource(const MockEventBusPush& bus, const std::string& source)
 {
     std::lock_guard<std::mutex> lock(bus.mutex);
     for (auto it = bus.received_events.rbegin(); it != bus.received_events.rend(); ++it)
@@ -326,10 +307,10 @@ pvs:
     auto reader_ptr = mldp_pvxs_driver::reader::ReaderFactory::create("epics-base", mock_bus, cfg, metrics);
     ASSERT_NE(reader_ptr, nullptr);
 
-    const int max_wait_ms = 5000;
-    int       waited_ms = 0;
-    size_t    source_events = 0;
-    bool      matched_metrics = false;
+    const int                                  max_wait_ms = 5000;
+    int                                        waited_ms = 0;
+    size_t                                     source_events = 0;
+    bool                                       matched_metrics = false;
     mldp_pvxs_driver::metrics::MetricsSnapshot snapshotter;
     while (waited_ms < max_wait_ms)
     {
@@ -409,7 +390,8 @@ TEST_F(EpicsBaseReaderTest, SimulatedPVsProduceEventsAndExpectedTypes)
     }
 
     epics_typed_pv_test_utils::assertTypedCoverageDataFrames(
-        [this](const std::string& pv) {
+        [this](const std::string& pv)
+        {
             return findLatestDataFrameForSource(*mock_bus, pv);
         });
 
@@ -436,15 +418,15 @@ pvs:
     int       waited_ms = 0;
     while (waited_ms < max_wait_ms)
     {
-        if (countEventsForSource(*mock_bus, "PV_NAME_A_DOUBLE_VALUE") >= 3 &&
-            countEventsForSource(*mock_bus, "PV_NAME_B_STRING_VALUE") >= 3)
+        if (countEventsForSource(*mock_bus, "PV_A") >= 3 &&
+            countEventsForSource(*mock_bus, "PV_B") >= 3)
             break;
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
         waited_ms += 100;
     }
 
-    EXPECT_GE(countEventsForSource(*mock_bus, "PV_NAME_A_DOUBLE_VALUE"), 3u);
-    EXPECT_GE(countEventsForSource(*mock_bus, "PV_NAME_B_STRING_VALUE"), 3u);
+    EXPECT_GE(countEventsForSource(*mock_bus, "PV_A"), 3u);
+    EXPECT_GE(countEventsForSource(*mock_bus, "PV_B"), 3u);
 
     // EPICS Base path may surface timestamp columns as sources; don't assert on them here.
     // Root source remains the root PV for metrics/correlation while ingestion
@@ -458,7 +440,7 @@ pvs:
             for (const auto& frame : batch.frames)
             {
                 const auto src = frameSource(frame);
-                if (src == "PV_NAME_A_DOUBLE_VALUE" || src == "PV_NAME_B_STRING_VALUE")
+                if (src == "PV_A" || src == "PV_B")
                 {
                     has_column = true;
                     break;
@@ -474,7 +456,7 @@ pvs:
     EXPECT_TRUE(saw_root_for_column_batch);
 
     // Collect events for each column across all batches
-    std::vector<DataFrame> ampl, stat;
+    std::vector<DataBatch> ampl, stat;
     {
         std::lock_guard<std::mutex> lock(mock_bus->mutex);
         for (const auto& batch : mock_bus->received_events)
@@ -482,11 +464,11 @@ pvs:
             for (const auto& frame : batch.frames)
             {
                 const auto src = frameSource(frame);
-                if (src == "PV_NAME_A_DOUBLE_VALUE")
+                if (src == "PV_A")
                 {
                     ampl.push_back(frame);
                 }
-                if (src == "PV_NAME_B_STRING_VALUE")
+                if (src == "PV_B")
                 {
                     stat.push_back(frame);
                 }
@@ -500,23 +482,28 @@ pvs:
     // Per-row timestamps are shared across columns.
     for (size_t i = 0; i < 3; ++i)
     {
-        ASSERT_TRUE(ampl[i].has_datatimestamps());
-        ASSERT_TRUE(stat[i].has_datatimestamps());
-        ASSERT_GT(ampl[i].datatimestamps().timestamplist().timestamps_size(), 0);
-        ASSERT_GT(stat[i].datatimestamps().timestamplist().timestamps_size(), 0);
-        EXPECT_EQ(ampl[i].datatimestamps().timestamplist().timestamps(0).epochseconds(),
-                  stat[i].datatimestamps().timestamplist().timestamps(0).epochseconds());
-        EXPECT_EQ(ampl[i].datatimestamps().timestamplist().timestamps(0).nanoseconds(),
-                  stat[i].datatimestamps().timestamplist().timestamps(0).nanoseconds());
+        ASSERT_FALSE(ampl[i].timestamps.empty());
+        ASSERT_FALSE(stat[i].timestamps.empty());
+        EXPECT_EQ(ampl[i].timestamps[0].epoch_seconds, stat[i].timestamps[0].epoch_seconds);
+        EXPECT_EQ(ampl[i].timestamps[0].nanoseconds,   stat[i].timestamps[0].nanoseconds);
     }
 
-    ASSERT_GT(ampl[0].doublecolumns_size(), 0);
-    ASSERT_GT(ampl[0].doublecolumns(0).values_size(), 0);
-    EXPECT_DOUBLE_EQ(ampl[0].doublecolumns(0).values(0), 1.0);
+    // PV_A: Float64 column — values are sin(time)-based, just check type and non-empty
+    {
+        const auto* col = epics_typed_pv_test_utils::findDataColumn(ampl[0], "PV_A");
+        ASSERT_NE(col, nullptr);
+        ASSERT_TRUE(std::holds_alternative<std::vector<double>>(col->values));
+        EXPECT_GT(std::get<std::vector<double>>(col->values).size(), 0u);
+    }
 
-    ASSERT_GT(stat[0].stringcolumns_size(), 0);
-    ASSERT_GT(stat[0].stringcolumns(0).values_size(), 0);
-    EXPECT_EQ(stat[0].stringcolumns(0).values(0), "OK");
+    // PV_B: Int32 column (was String in old mock)
+    {
+        const auto* col = epics_typed_pv_test_utils::findDataColumn(stat[0], "PV_B");
+        ASSERT_NE(col, nullptr);
+        ASSERT_TRUE(std::holds_alternative<std::vector<int32_t>>(col->values));
+        EXPECT_GT(std::get<std::vector<int32_t>>(col->values).size(), 0u);
+    }
+
     reader_ptr.reset();
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 }

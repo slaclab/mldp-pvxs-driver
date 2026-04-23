@@ -51,7 +51,7 @@ bool parseToType(std::string_view input, T& value)
         // Use from_chars for numeric types
         const char* first = input.data();
         const char* last = input.data() + input.size();
-        auto res = std::from_chars(first, last, value);
+        auto        res = std::from_chars(first, last, value);
         return res.ec == std::errc() && res.ptr == last;
     }
 }

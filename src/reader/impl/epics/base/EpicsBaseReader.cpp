@@ -36,20 +36,9 @@ std::shared_ptr<ILogger> makeLogger(const std::string& readerName)
     return mldp_pvxs_driver::util::log::newLogger(loggerName);
 }
 
-bool hasTimestampList(const dp::service::common::DataFrame& frame)
+bool hasTimestamps(const DataBatch& batch)
 {
-    return frame.has_datatimestamps() &&
-           frame.datatimestamps().has_timestamplist() &&
-           frame.datatimestamps().timestamplist().timestamps_size() > 0;
-}
-
-void setSingleTimestamp(dp::service::common::DataFrame& frame, uint64_t seconds, uint64_t nanos)
-{
-    auto* ts_list = frame.mutable_datatimestamps()->mutable_timestamplist();
-    ts_list->clear_timestamps();
-    auto* ts = ts_list->add_timestamps();
-    ts->set_epochseconds(seconds);
-    ts->set_nanoseconds(nanos);
+    return !batch.timestamps.empty();
 }
 } // namespace
 
@@ -137,8 +126,8 @@ void EpicsBaseReader::processDefaultMode(const std::string&                     
     IDataBus::EventBatch batch;
     batch.root_source = pvName;
     uint64_t epoch_seconds = 0;
-    uint64_t nanoseconds   = 0;
-    bool     setEpoch      = false;
+    uint64_t nanoseconds = 0;
+    bool     setEpoch = false;
 
     if (epicsValue)
     {
@@ -147,7 +136,7 @@ void EpicsBaseReader::processDefaultMode(const std::string&                     
             if (auto secondsField = timeStamp->getSubField<::epics::pvData::PVScalar>("secondsPastEpoch"))
             {
                 epoch_seconds = secondsField->getAs<uint64_t>();
-                setEpoch      = true;
+                setEpoch = true;
             }
             if (auto nanosField = timeStamp->getSubField<::epics::pvData::PVScalar>("nanoseconds"))
             {
@@ -158,10 +147,10 @@ void EpicsBaseReader::processDefaultMode(const std::string&                     
     if (!setEpoch)
     {
         const auto now = std::chrono::system_clock::now().time_since_epoch();
-        epoch_seconds  = std::chrono::duration_cast<std::chrono::seconds>(now).count();
+        epoch_seconds = std::chrono::duration_cast<std::chrono::seconds>(now).count();
     }
 
-    dp::service::common::DataFrame frame;
+    DataBatch batch_frame;
 
     if (epicsValue)
     {
@@ -182,12 +171,13 @@ void EpicsBaseReader::processDefaultMode(const std::string&                     
                   name_, pvName);
             return;
         }
-        EpicsPVDataConversion::convertPVToProtoValue(*valueField, &frame, pvName);
+        EpicsPVDataConversion::convertPVToDataBatch(*valueField, &batch_frame, pvName);
     }
-    setSingleTimestamp(frame, epoch_seconds, nanoseconds);
+    batch_frame.timestamps.push_back(TimestampEntry{epoch_seconds, nanoseconds});
     batch.tags.push_back(pvName);
-    batch.frames.push_back(std::move(frame));
+    batch.frames.push_back(std::move(batch_frame));
     emitted = 1;
+    batch.reader_name = name();
     bus_->push(std::move(batch));
 }
 
@@ -222,11 +212,11 @@ void EpicsBaseReader::processSlacBsasTableMode(const std::string&               
             *logger_, pvName, epicsValue,
             runtimeCfg ? runtimeCfg->tsSecondsField : "secondsPastEpoch",
             runtimeCfg ? runtimeCfg->tsNanosField : "nanoseconds",
-            [&](std::string colName, std::vector<dp::service::common::DataFrame> frames)
+            [&](std::string colName, std::vector<DataBatch> frames)
             {
                 for (auto& frame : frames)
                 {
-                    if (!hasTimestampList(frame))
+                    if (!hasTimestamps(frame))
                     {
                         errorf(*logger_, "Dropping BSAS frame without timestamps for column {} on reader {}", colName, name_);
                         metric_call(metrics_, [&](auto& m)
@@ -240,6 +230,7 @@ void EpicsBaseReader::processSlacBsasTableMode(const std::string&               
                 ++colsInBatch;
                 if (colBatchSize > 0 && colsInBatch >= colBatchSize)
                 {
+                    tableBatch.reader_name = name();
                     bus_->push(std::move(tableBatch));
                     resetBatch();
                 }
@@ -254,6 +245,7 @@ void EpicsBaseReader::processSlacBsasTableMode(const std::string&               
     }
     else if (!tableBatch.frames.empty())
     {
+        tableBatch.reader_name = name();
         bus_->push(std::move(tableBatch));
     }
 }
@@ -284,7 +276,7 @@ void EpicsBaseReader::processEvent(std::string pvName, ::epics::pvData::PVStruct
         const auto processing_start = std::chrono::steady_clock::now();
 
         const auto* runtimeCfg = runtimeConfigFor(pvName);
-        const auto  mode       = runtimeCfg ? runtimeCfg->mode : PVRuntimeConfig::Mode::Default;
+        const auto  mode = runtimeCfg ? runtimeCfg->mode : PVRuntimeConfig::Mode::Default;
 
         std::size_t emitted = 0;
 
@@ -301,7 +293,7 @@ void EpicsBaseReader::processEvent(std::string pvName, ::epics::pvData::PVStruct
         }
 
         const auto   processing_end = std::chrono::steady_clock::now();
-        const double processing_ms  = std::chrono::duration<double, std::milli>(processing_end - processing_start).count();
+        const double processing_ms = std::chrono::duration<double, std::milli>(processing_end - processing_start).count();
         metric_call(metrics_, [&](auto& m)
                     {
                         m.observeReaderProcessingTimeMs(processing_ms, sourceTag);

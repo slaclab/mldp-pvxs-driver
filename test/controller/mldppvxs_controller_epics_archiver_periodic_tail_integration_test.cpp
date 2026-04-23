@@ -34,7 +34,6 @@ protected:
         ASSERT_GT(server_->port(), 0);
 
         const std::string yaml = std::string(R"(
-controller-thread-pool: 1
 mldp-pool:
   provider-name: test_provider_archiver_tail
   provider-description: "Archiver Tail Integration Test Provider"
@@ -42,6 +41,15 @@ mldp-pool:
   query-url: dp-query:50052
   min-conn: 1
   max-conn: 1
+writer:
+  mldp:
+    - name: mldp_main
+      mldp-pool:
+        provider-name: test_provider_archiver_tail
+        ingestion-url: dp-ingestion:50051
+        query-url: dp-query:50052
+        min-conn: 1
+        max-conn: 1
 reader:
   - epics-archiver:
       - name: archiver_tail_reader_test
@@ -104,7 +112,7 @@ TEST_F(MLDPPVXSControllerEpicsArchiverPeriodicTailIntegrationTest, IngestsPeriod
         std::chrono::seconds(10),
         std::chrono::seconds(120));
     ASSERT_TRUE(result.has_value());
-    const auto  rows = flattenDataValues(result->at("TEST:PV:DOUBLE"));
+    const auto rows = flattenDataValues(result->at("TEST:PV:DOUBLE"));
 
     // We don't assert an exact count because periodic scheduling jitter and backend dedup behavior can vary.
     ASSERT_GT(rows.size(), 0);

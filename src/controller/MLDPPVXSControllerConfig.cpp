@@ -10,13 +10,14 @@
 
 #include "config/Config.h"
 #include <controller/MLDPPVXSControllerConfig.h>
+#include <controller/RouteTable.h>
 #include <reader/ReaderFactory.h>
+#include <writer/WriterConfig.h>
 
 using namespace mldp_pvxs_driver::config;
 using namespace mldp_pvxs_driver::metrics;
 using namespace mldp_pvxs_driver::controller;
-using namespace mldp_pvxs_driver::util::pool;
-using namespace mldp_pvxs_driver::config;
+using namespace mldp_pvxs_driver::writer;
 
 MLDPPVXSControllerConfig::MLDPPVXSControllerConfig() = default;
 
@@ -35,29 +36,9 @@ bool MLDPPVXSControllerConfig::valid() const
     return valid_;
 }
 
-const MLDPGrpcPoolConfig& MLDPPVXSControllerConfig::pool() const
+const std::string& MLDPPVXSControllerConfig::name() const
 {
-    return pool_;
-}
-
-const std::string& MLDPPVXSControllerConfig::providerName() const
-{
-    return pool_.providerName();
-}
-
-int MLDPPVXSControllerConfig::controllerThreadPoolSize() const
-{
-    return controllerThreadPoolSize_;
-}
-
-std::size_t MLDPPVXSControllerConfig::controllerStreamMaxBytes() const
-{
-    return controllerStreamMaxBytes_;
-}
-
-std::chrono::milliseconds MLDPPVXSControllerConfig::controllerStreamMaxAge() const
-{
-    return controllerStreamMaxAge_;
+    return name_;
 }
 
 const std::vector<Config>&
@@ -72,77 +53,84 @@ MLDPPVXSControllerConfig::readerEntries() const
     return readerEntries_;
 }
 
+const std::vector<std::pair<std::string, Config>>&
+MLDPPVXSControllerConfig::writerEntries() const
+{
+    return writerEntries_;
+}
+
 const std::optional<MetricsConfig>& MLDPPVXSControllerConfig::metricsConfig() const
 {
     return metricsConfig_;
 }
 
+const std::vector<RouteTable::RouteEntry>&
+MLDPPVXSControllerConfig::routeEntries() const
+{
+    return routeEntries_;
+}
+
 void MLDPPVXSControllerConfig::parse(const ::mldp_pvxs_driver::config::Config& root)
 {
-    parseThreadPool(root);
-    parsePool(root);
-    parseStreamLimits(root);
+    name_ = root.get(NameKey, "default");
+    parseWriter(root);
     parseReaders(root);
     parseMetrics(root);
+    parseRouting(root);
     valid_ = true;
 }
 
-void MLDPPVXSControllerConfig::parseThreadPool(const ::mldp_pvxs_driver::config::Config& root)
+void MLDPPVXSControllerConfig::parseWriter(const ::mldp_pvxs_driver::config::Config& root)
 {
-    using namespace mldp_pvxs_driver::controller;
-    if (!root.hasChild(ControllerThreadPoolKey))
+    writerEntries_.clear();
+
+    if (!root.hasChild(WriterKey))
     {
-        controllerThreadPoolSize_ = 1;
-        return;
+        throw Error("'writer' block is missing; configure at least one writer under writer.mldp or writer.hdf5");
     }
 
-    const auto threadPoolNodes = root.subConfig(ControllerThreadPoolKey);
-    if (threadPoolNodes.empty())
+    const auto writerNodes = root.subConfig(WriterKey);
+    if (writerNodes.empty())
     {
-        controllerThreadPoolSize_ = 1;
-        return;
+        throw Error("writer block is present but empty");
     }
-
-    const auto& threadPoolNode = threadPoolNodes.front();
-    if (!threadPoolNode.raw().has_val())
-    {
-        throw Error(std::string(ControllerThreadPoolKey) + " must be a scalar");
-    }
-
-    threadPoolNode >> controllerThreadPoolSize_;
-    if (controllerThreadPoolSize_ <= 0)
-    {
-        throw Error(std::string(ControllerThreadPoolKey) + " must be greater than zero");
-    }
-}
-
-void MLDPPVXSControllerConfig::parsePool(const ::mldp_pvxs_driver::config::Config& root)
-{
-    using namespace mldp_pvxs_driver::controller;
-    if (!root.hasChild(MldpPoolKey))
-    {
-        throw Error(makeMissingFieldMessage(MldpPoolKey));
-    }
-
-    const auto poolNodes = root.subConfig(MldpPoolKey);
-    if (poolNodes.empty())
-    {
-        throw Error(makeMissingFieldMessage(MldpPoolKey));
-    }
+    const auto& writerNode = writerNodes.front();
 
     try
     {
-        pool_ = util::pool::MLDPGrpcPoolConfig(poolNodes.front());
+        WriterConfig::validate(writerNode);
     }
-    catch (const util::pool::MLDPGrpcPoolConfig::Error& e)
+    catch (const WriterConfig::Error& e)
     {
         throw Error(e.what());
+    }
+    catch (const std::invalid_argument& e)
+    {
+        throw Error(e.what());
+    }
+
+    // Build one writerEntry per configured instance (sequence items).
+    // The config node passed to the factory is the per-instance map node.
+    if (writerNode.hasChild(WriterMldpKey))
+    {
+        const auto mldpItems = writerNode.subConfig(WriterMldpKey);
+        for (const auto& item : mldpItems)
+        {
+            writerEntries_.push_back({"mldp", item});
+        }
+    }
+    if (writerNode.hasChild(WriterHdf5Key))
+    {
+        const auto hdf5Items = writerNode.subConfig(WriterHdf5Key);
+        for (const auto& item : hdf5Items)
+        {
+            writerEntries_.push_back({"hdf5", item});
+        }
     }
 }
 
 void MLDPPVXSControllerConfig::parseReaders(const ::mldp_pvxs_driver::config::Config& root)
 {
-    using namespace mldp_pvxs_driver::controller;
     readerConfigs_.clear();
     readerEntries_.clear();
 
@@ -202,7 +190,6 @@ void MLDPPVXSControllerConfig::parseReaders(const ::mldp_pvxs_driver::config::Co
 
 void MLDPPVXSControllerConfig::parseMetrics(const ::mldp_pvxs_driver::config::Config& root)
 {
-    using namespace mldp_pvxs_driver::controller;
     metricsConfig_.reset();
     if (!root.hasChild(MetricsKey))
     {
@@ -219,38 +206,69 @@ void MLDPPVXSControllerConfig::parseMetrics(const ::mldp_pvxs_driver::config::Co
     metricsConfig_.emplace(metricsNodes.front());
 }
 
-void MLDPPVXSControllerConfig::parseStreamLimits(const ::mldp_pvxs_driver::config::Config& root)
+void MLDPPVXSControllerConfig::parseRouting(const ::mldp_pvxs_driver::config::Config& root)
 {
-    using namespace mldp_pvxs_driver::controller;
-    if (root.hasChild(ControllerStreamMaxBytesKey))
+    routeEntries_.clear();
+
+    if (!root.hasChild(RoutingKey))
     {
-        const auto nodes = root.subConfig(ControllerStreamMaxBytesKey);
-        if (nodes.empty() || !nodes.front().raw().has_val())
-        {
-            throw Error(std::string(ControllerStreamMaxBytesKey) + " must be a scalar");
-        }
-        int value = 0;
-        nodes.front() >> value;
-        if (value <= 0)
-        {
-            throw Error(std::string(ControllerStreamMaxBytesKey) + " must be greater than zero");
-        }
-        controllerStreamMaxBytes_ = static_cast<std::size_t>(value);
+        return; // no routing = all-to-all
     }
 
-    if (root.hasChild(ControllerStreamMaxAgeMsKey))
+    const auto routingNodes = root.subConfig(RoutingKey);
+    if (routingNodes.empty())
     {
-        const auto nodes = root.subConfig(ControllerStreamMaxAgeMsKey);
-        if (nodes.empty() || !nodes.front().raw().has_val())
+        return;
+    }
+    const auto& routingNode = routingNodes.front();
+    const auto  rawNode     = routingNode.raw();
+
+    if (!rawNode.is_map())
+    {
+        throw Error("routing must be a map");
+    }
+
+    for (const auto& child : rawNode)
+    {
+        if (!child.has_key())
         {
-            throw Error(std::string(ControllerStreamMaxAgeMsKey) + " must be a scalar");
+            throw Error("routing entry must have a key (writer name)");
         }
-        int value = 0;
-        nodes.front() >> value;
-        if (value <= 0)
+
+        std::string writerName;
+        c4::from_chars(child.key(), &writerName);
+
+        if (!routingNode.hasChild(writerName))
         {
-            throw Error(std::string(ControllerStreamMaxAgeMsKey) + " must be greater than zero");
+            throw Error("routing entry '" + writerName + "' not accessible");
         }
-        controllerStreamMaxAge_ = std::chrono::milliseconds(value);
+
+        const auto writerNodes = routingNode.subConfig(writerName);
+        if (writerNodes.empty())
+        {
+            throw Error("routing entry '" + writerName + "' is empty");
+        }
+        const auto& writerCfg = writerNodes.front();
+
+        if (!writerCfg.hasChild("from"))
+        {
+            throw Error("routing entry '" + writerName + "' must have a 'from' sequence");
+        }
+
+        if (!writerCfg.isSequence("from"))
+        {
+            throw Error("routing entry '" + writerName + "': 'from' must be a sequence");
+        }
+
+        std::vector<std::string> fromReaders;
+        const auto               fromNodes = writerCfg.subConfig("from");
+        for (const auto& fromNode : fromNodes)
+        {
+            std::string readerName;
+            fromNode >> readerName;
+            fromReaders.push_back(std::move(readerName));
+        }
+
+        routeEntries_.push_back({writerName, std::move(fromReaders)});
     }
 }

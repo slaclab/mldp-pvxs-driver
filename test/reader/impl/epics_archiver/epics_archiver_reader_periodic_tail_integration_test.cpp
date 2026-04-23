@@ -11,9 +11,9 @@
 #include <gtest/gtest.h>
 
 #include "../../../config/test_config_helpers.h"
+#include "../../../mock/EpicsArchiverTestUtils.h"
 #include "../../../mock/MockArchiverPbHttpServer.h"
 #include "../../../mock/MockDataBus.h"
-#include "../../../mock/EpicsArchiverTestUtils.h"
 
 #include <reader/impl/epics_archiver/EpicsArchiverReader.h>
 #include <util/bus/IDataBus.h>
@@ -33,10 +33,12 @@ namespace {
 using mldp_pvxs_driver::config::makeConfigFromYaml;
 using mldp_pvxs_driver::reader::impl::epics_archiver::EpicsArchiverReader;
 using mldp_pvxs_driver::reader::impl::epics_archiver::MockArchiverPbHttpServer;
-using mldp_pvxs_driver::util::bus::IDataBus;
-using mldp_pvxs_driver::test::mock::waitForMockRequestStartAndCompletion;
-using mldp_pvxs_driver::test::mock::waitForMockRequestStart;
 using mldp_pvxs_driver::test::mock::waitForAtLeastPublishedBatches;
+using mldp_pvxs_driver::test::mock::waitForMockRequestStart;
+using mldp_pvxs_driver::test::mock::waitForMockRequestStartAndCompletion;
+using mldp_pvxs_driver::util::bus::DataBatch;
+using mldp_pvxs_driver::util::bus::DataColumn;
+using mldp_pvxs_driver::util::bus::IDataBus;
 // Backward compatibility alias
 using MockEventBusPush = mldp_pvxs_driver::test::mock::MockDataBus;
 
@@ -280,13 +282,10 @@ TEST(EpicsArchiverReaderPeriodicTailIntegrationTest, PeriodicTailBatchSpansMatch
         total_events += batches[i].frames.size();
         const auto& first_frame = batches[i].frames.front();
         const auto& last_frame = batches[i].frames.back();
-        ASSERT_TRUE(first_frame.has_datatimestamps());
-        ASSERT_TRUE(last_frame.has_datatimestamps());
-        const auto& first_ts = first_frame.datatimestamps().timestamplist().timestamps(0);
-        const auto& last_ts = last_frame.datatimestamps().timestamplist().timestamps(0);
-
-        const uint64_t first_ns = first_ts.epochseconds() * 1'000'000'000ULL + first_ts.nanoseconds();
-        const uint64_t last_ns = last_ts.epochseconds() * 1'000'000'000ULL + last_ts.nanoseconds();
+        ASSERT_FALSE(first_frame.timestamps.empty());
+        ASSERT_FALSE(last_frame.timestamps.empty());
+        const uint64_t first_ns = first_frame.timestamps[0].epoch_seconds * 1'000'000'000ULL + first_frame.timestamps[0].nanoseconds;
+        const uint64_t last_ns  = last_frame.timestamps[0].epoch_seconds * 1'000'000'000ULL + last_frame.timestamps[0].nanoseconds;
         const uint64_t span_ns = last_ns - first_ns;
 
         if (i + 1 < batches.size())

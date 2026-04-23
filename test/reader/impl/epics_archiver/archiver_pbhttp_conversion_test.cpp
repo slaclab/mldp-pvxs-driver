@@ -11,6 +11,7 @@
 #include <reader/impl/epics_archiver/ArchiverPbHttpConversion.h>
 
 #include <EPICSEvent.pb.h>
+#include <util/bus/DataBatch.h>
 #include <util/time/DateTimeUtils.h>
 
 #include <gtest/gtest.h>
@@ -21,7 +22,7 @@
 
 using namespace mldp_pvxs_driver::reader::impl::epics_archiver;
 using namespace mldp_pvxs_driver::util::time;
-using DataFrame = dp::service::common::DataFrame;
+using namespace mldp_pvxs_driver::util::bus;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -30,8 +31,7 @@ using DataFrame = dp::service::common::DataFrame;
 namespace {
 
 /// Build a minimal PayloadInfo header for the given type and year.
-EPICS::PayloadInfo makeHeader(EPICS::PayloadType type, int year = 2024,
-                              const std::string& pvname = "TEST:PV")
+EPICS::PayloadInfo makeHeader(EPICS::PayloadType type, int year = 2024, const std::string& pvname = "TEST:PV")
 {
     EPICS::PayloadInfo hdr;
     hdr.set_type(type);
@@ -43,6 +43,28 @@ EPICS::PayloadInfo makeHeader(EPICS::PayloadType type, int year = 2024,
 uint64_t expectedEpoch(int year, uint32_t secondsintoyear)
 {
     return DateTimeUtils::unixEpochSecondsFromYearAndSecondsIntoYear(year, secondsintoyear);
+}
+
+/// Return a pointer to the first DataColumn with the given name, or nullptr.
+const DataColumn* findColumn(const DataBatch& batch, const std::string& name)
+{
+    for (const auto& col : batch.columns)
+    {
+        if (col.name == name)
+            return &col;
+    }
+    return nullptr;
+}
+
+/// Return a pointer to the first EnumDataColumn with the given name, or nullptr.
+const EnumDataColumn* findEnumColumn(const DataBatch& batch, const std::string& name)
+{
+    for (const auto& col : batch.enum_columns)
+    {
+        if (col.name == name)
+            return &col;
+    }
+    return nullptr;
 }
 
 } // namespace
@@ -61,13 +83,18 @@ TEST(ArchiverPbHttpConversionTest, ScalarString)
     std::string bytes;
     ASSERT_TRUE(msg.SerializeToString(&bytes));
 
-    const auto hdr    = makeHeader(EPICS::SCALAR_STRING, 2024);
+    const auto hdr = makeHeader(EPICS::SCALAR_STRING, 2024);
     const auto parsed = ArchiverPbHttpConversion::parseSample(hdr, bytes);
 
     EXPECT_EQ(parsed.epoch_seconds, expectedEpoch(2024, 100));
     EXPECT_EQ(parsed.nanoseconds, 500u);
-        ASSERT_EQ(parsed.frame.stringcolumns_size(), 1);
-    EXPECT_EQ(parsed.frame.stringcolumns(0).values(0), "hello");
+
+    ASSERT_EQ(parsed.batch.columns.size(), 1u);
+    const auto* col = findColumn(parsed.batch, "TEST:PV");
+    ASSERT_NE(col, nullptr);
+    const auto& vals = std::get<std::vector<std::string>>(col->values);
+    ASSERT_EQ(vals.size(), 1u);
+    EXPECT_EQ(vals[0], "hello");
 }
 
 // ---------------------------------------------------------------------------
@@ -84,13 +111,18 @@ TEST(ArchiverPbHttpConversionTest, ScalarShort)
     std::string bytes;
     ASSERT_TRUE(msg.SerializeToString(&bytes));
 
-    const auto hdr    = makeHeader(EPICS::SCALAR_SHORT, 2023);
+    const auto hdr = makeHeader(EPICS::SCALAR_SHORT, 2023);
     const auto parsed = ArchiverPbHttpConversion::parseSample(hdr, bytes);
 
     EXPECT_EQ(parsed.epoch_seconds, expectedEpoch(2023, 200));
     EXPECT_EQ(parsed.nanoseconds, 0u);
-    ASSERT_EQ(parsed.frame.int32columns_size(), 1);
-    EXPECT_EQ(parsed.frame.int32columns(0).values(0), -42);
+
+    ASSERT_EQ(parsed.batch.columns.size(), 1u);
+    const auto* col = findColumn(parsed.batch, "TEST:PV");
+    ASSERT_NE(col, nullptr);
+    const auto& vals = std::get<std::vector<int32_t>>(col->values);
+    ASSERT_EQ(vals.size(), 1u);
+    EXPECT_EQ(vals[0], -42);
 }
 
 // ---------------------------------------------------------------------------
@@ -107,12 +139,17 @@ TEST(ArchiverPbHttpConversionTest, ScalarFloat)
     std::string bytes;
     ASSERT_TRUE(msg.SerializeToString(&bytes));
 
-    const auto hdr    = makeHeader(EPICS::SCALAR_FLOAT, 2022);
+    const auto hdr = makeHeader(EPICS::SCALAR_FLOAT, 2022);
     const auto parsed = ArchiverPbHttpConversion::parseSample(hdr, bytes);
 
     EXPECT_EQ(parsed.epoch_seconds, expectedEpoch(2022, 300));
-    ASSERT_EQ(parsed.frame.floatcolumns_size(), 1);
-    EXPECT_NEAR(parsed.frame.floatcolumns(0).values(0), 3.14f, 1e-5f);
+
+    ASSERT_EQ(parsed.batch.columns.size(), 1u);
+    const auto* col = findColumn(parsed.batch, "TEST:PV");
+    ASSERT_NE(col, nullptr);
+    const auto& vals = std::get<std::vector<float>>(col->values);
+    ASSERT_EQ(vals.size(), 1u);
+    EXPECT_NEAR(vals[0], 3.14f, 1e-5f);
 }
 
 // ---------------------------------------------------------------------------
@@ -129,11 +166,14 @@ TEST(ArchiverPbHttpConversionTest, ScalarEnum)
     std::string bytes;
     ASSERT_TRUE(msg.SerializeToString(&bytes));
 
-    const auto hdr    = makeHeader(EPICS::SCALAR_ENUM, 2021);
+    const auto hdr = makeHeader(EPICS::SCALAR_ENUM, 2021);
     const auto parsed = ArchiverPbHttpConversion::parseSample(hdr, bytes);
 
-    ASSERT_EQ(parsed.frame.int32columns_size(), 1);
-    EXPECT_EQ(parsed.frame.int32columns(0).values(0), 7);
+    ASSERT_EQ(parsed.batch.enum_columns.size(), 1u);
+    const auto* col = findEnumColumn(parsed.batch, "TEST:PV");
+    ASSERT_NE(col, nullptr);
+    ASSERT_EQ(col->values.size(), 1u);
+    EXPECT_EQ(col->values[0], 7);
 }
 
 // ---------------------------------------------------------------------------
@@ -150,12 +190,17 @@ TEST(ArchiverPbHttpConversionTest, ScalarByte)
     std::string bytes;
     ASSERT_TRUE(msg.SerializeToString(&bytes));
 
-    const auto hdr    = makeHeader(EPICS::SCALAR_BYTE, 2020);
+    const auto hdr = makeHeader(EPICS::SCALAR_BYTE, 2020);
     const auto parsed = ArchiverPbHttpConversion::parseSample(hdr, bytes);
 
-    ASSERT_EQ(parsed.frame.stringcolumns_size(), 1);
-    EXPECT_EQ(parsed.frame.stringcolumns(0).name(), "TEST:PV");
-    EXPECT_EQ(parsed.frame.stringcolumns(0).values(0), std::string("\x01\x02\x03", 3));
+    ASSERT_EQ(parsed.batch.columns.size(), 1u);
+    const auto* col = findColumn(parsed.batch, "TEST:PV");
+    ASSERT_NE(col, nullptr);
+    EXPECT_EQ(col->name, "TEST:PV");
+    const auto& vals = std::get<std::vector<std::vector<uint8_t>>>(col->values);
+    ASSERT_EQ(vals.size(), 1u);
+    const std::vector<uint8_t> expected{0x01, 0x02, 0x03};
+    EXPECT_EQ(vals[0], expected);
 }
 
 // ---------------------------------------------------------------------------
@@ -172,12 +217,17 @@ TEST(ArchiverPbHttpConversionTest, ScalarInt)
     std::string bytes;
     ASSERT_TRUE(msg.SerializeToString(&bytes));
 
-    const auto hdr    = makeHeader(EPICS::SCALAR_INT, 2019);
+    const auto hdr = makeHeader(EPICS::SCALAR_INT, 2019);
     const auto parsed = ArchiverPbHttpConversion::parseSample(hdr, bytes);
 
     EXPECT_EQ(parsed.nanoseconds, 123456789u);
-    ASSERT_EQ(parsed.frame.int32columns_size(), 1);
-    EXPECT_EQ(parsed.frame.int32columns(0).values(0), 0x7FFFFFFF);
+
+    ASSERT_EQ(parsed.batch.columns.size(), 1u);
+    const auto* col = findColumn(parsed.batch, "TEST:PV");
+    ASSERT_NE(col, nullptr);
+    const auto& vals = std::get<std::vector<int32_t>>(col->values);
+    ASSERT_EQ(vals.size(), 1u);
+    EXPECT_EQ(vals[0], 0x7FFFFFFF);
 }
 
 // ---------------------------------------------------------------------------
@@ -194,11 +244,15 @@ TEST(ArchiverPbHttpConversionTest, ScalarDouble)
     std::string bytes;
     ASSERT_TRUE(msg.SerializeToString(&bytes));
 
-    const auto hdr    = makeHeader(EPICS::SCALAR_DOUBLE, 2024);
+    const auto hdr = makeHeader(EPICS::SCALAR_DOUBLE, 2024);
     const auto parsed = ArchiverPbHttpConversion::parseSample(hdr, bytes);
 
-    ASSERT_EQ(parsed.frame.doublecolumns_size(), 1);
-    EXPECT_NEAR(parsed.frame.doublecolumns(0).values(0), 2.718281828, 1e-9);
+    ASSERT_EQ(parsed.batch.columns.size(), 1u);
+    const auto* col = findColumn(parsed.batch, "TEST:PV");
+    ASSERT_NE(col, nullptr);
+    const auto& vals = std::get<std::vector<double>>(col->values);
+    ASSERT_EQ(vals.size(), 1u);
+    EXPECT_NEAR(vals[0], 2.718281828, 1e-9);
 }
 
 // ---------------------------------------------------------------------------
@@ -217,15 +271,17 @@ TEST(ArchiverPbHttpConversionTest, WaveformString)
     std::string bytes;
     ASSERT_TRUE(msg.SerializeToString(&bytes));
 
-    const auto hdr    = makeHeader(EPICS::WAVEFORM_STRING, 2024);
+    const auto hdr = makeHeader(EPICS::WAVEFORM_STRING, 2024);
     const auto parsed = ArchiverPbHttpConversion::parseSample(hdr, bytes);
 
-    ASSERT_EQ(parsed.frame.stringcolumns_size(), 1);
-    const auto& col = parsed.frame.stringcolumns(0);
-    ASSERT_EQ(col.values_size(), 3);
-    EXPECT_EQ(col.values(0), "alpha");
-    EXPECT_EQ(col.values(1), "beta");
-    EXPECT_EQ(col.values(2), "gamma");
+    ASSERT_EQ(parsed.batch.columns.size(), 1u);
+    const auto* col = findColumn(parsed.batch, "TEST:PV");
+    ASSERT_NE(col, nullptr);
+    const auto& vals = std::get<std::vector<std::string>>(col->values);
+    ASSERT_EQ(vals.size(), 3u);
+    EXPECT_EQ(vals[0], "alpha");
+    EXPECT_EQ(vals[1], "beta");
+    EXPECT_EQ(vals[2], "gamma");
 }
 
 // ---------------------------------------------------------------------------
@@ -244,15 +300,18 @@ TEST(ArchiverPbHttpConversionTest, WaveformShort)
     std::string bytes;
     ASSERT_TRUE(msg.SerializeToString(&bytes));
 
-    const auto hdr    = makeHeader(EPICS::WAVEFORM_SHORT, 2024);
+    const auto hdr = makeHeader(EPICS::WAVEFORM_SHORT, 2024);
     const auto parsed = ArchiverPbHttpConversion::parseSample(hdr, bytes);
 
-    ASSERT_EQ(parsed.frame.int32columns_size(), 1);
-    const auto& col = parsed.frame.int32columns(0);
-    ASSERT_EQ(col.values_size(), 3);
-    EXPECT_EQ(col.values(0), 1);
-    EXPECT_EQ(col.values(1), -2);
-    EXPECT_EQ(col.values(2), 3);
+    ASSERT_EQ(parsed.batch.columns.size(), 1u);
+    const auto* col = findColumn(parsed.batch, "TEST:PV");
+    ASSERT_NE(col, nullptr);
+    const auto& rows = std::get<std::vector<std::vector<int32_t>>>(col->values);
+    ASSERT_EQ(rows.size(), 1u);
+    ASSERT_EQ(rows[0].size(), 3u);
+    EXPECT_EQ(rows[0][0], 1);
+    EXPECT_EQ(rows[0][1], -2);
+    EXPECT_EQ(rows[0][2], 3);
 }
 
 // ---------------------------------------------------------------------------
@@ -270,14 +329,17 @@ TEST(ArchiverPbHttpConversionTest, WaveformFloat)
     std::string bytes;
     ASSERT_TRUE(msg.SerializeToString(&bytes));
 
-    const auto hdr    = makeHeader(EPICS::WAVEFORM_FLOAT, 2024);
+    const auto hdr = makeHeader(EPICS::WAVEFORM_FLOAT, 2024);
     const auto parsed = ArchiverPbHttpConversion::parseSample(hdr, bytes);
 
-    ASSERT_EQ(parsed.frame.floatcolumns_size(), 1);
-    const auto& col = parsed.frame.floatcolumns(0);
-    ASSERT_EQ(col.values_size(), 2);
-    EXPECT_NEAR(col.values(0), 1.1f, 1e-5f);
-    EXPECT_NEAR(col.values(1), 2.2f, 1e-5f);
+    ASSERT_EQ(parsed.batch.columns.size(), 1u);
+    const auto* col = findColumn(parsed.batch, "TEST:PV");
+    ASSERT_NE(col, nullptr);
+    const auto& rows = std::get<std::vector<std::vector<float>>>(col->values);
+    ASSERT_EQ(rows.size(), 1u);
+    ASSERT_EQ(rows[0].size(), 2u);
+    EXPECT_NEAR(rows[0][0], 1.1f, 1e-5f);
+    EXPECT_NEAR(rows[0][1], 2.2f, 1e-5f);
 }
 
 // ---------------------------------------------------------------------------
@@ -295,14 +357,15 @@ TEST(ArchiverPbHttpConversionTest, WaveformEnum)
     std::string bytes;
     ASSERT_TRUE(msg.SerializeToString(&bytes));
 
-    const auto hdr    = makeHeader(EPICS::WAVEFORM_ENUM, 2024);
+    const auto hdr = makeHeader(EPICS::WAVEFORM_ENUM, 2024);
     const auto parsed = ArchiverPbHttpConversion::parseSample(hdr, bytes);
 
-    ASSERT_EQ(parsed.frame.int32columns_size(), 1);
-    const auto& col = parsed.frame.int32columns(0);
-    ASSERT_EQ(col.values_size(), 2);
-    EXPECT_EQ(col.values(0), 0);
-    EXPECT_EQ(col.values(1), 3);
+    ASSERT_EQ(parsed.batch.enum_columns.size(), 1u);
+    const auto* col = findEnumColumn(parsed.batch, "TEST:PV");
+    ASSERT_NE(col, nullptr);
+    ASSERT_EQ(col->values.size(), 2u);
+    EXPECT_EQ(col->values[0], 0);
+    EXPECT_EQ(col->values[1], 3);
 }
 
 // ---------------------------------------------------------------------------
@@ -319,13 +382,18 @@ TEST(ArchiverPbHttpConversionTest, WaveformByte)
     std::string bytes;
     ASSERT_TRUE(msg.SerializeToString(&bytes));
 
-    const auto hdr    = makeHeader(EPICS::WAVEFORM_BYTE, 2024);
+    const auto hdr = makeHeader(EPICS::WAVEFORM_BYTE, 2024);
     const auto parsed = ArchiverPbHttpConversion::parseSample(hdr, bytes);
 
     EXPECT_EQ(parsed.nanoseconds, 77u);
-    ASSERT_EQ(parsed.frame.stringcolumns_size(), 1);
-    EXPECT_EQ(parsed.frame.stringcolumns(0).name(), "TEST:PV");
-    EXPECT_EQ(parsed.frame.stringcolumns(0).values(0), std::string("\xDE\xAD\xBE\xEF", 4));
+    ASSERT_EQ(parsed.batch.columns.size(), 1u);
+    const auto* col = findColumn(parsed.batch, "TEST:PV");
+    ASSERT_NE(col, nullptr);
+    EXPECT_EQ(col->name, "TEST:PV");
+    const auto& rows = std::get<std::vector<std::vector<uint8_t>>>(col->values);
+    ASSERT_EQ(rows.size(), 1u);
+    const std::vector<uint8_t> expected{0xDE, 0xAD, 0xBE, 0xEF};
+    EXPECT_EQ(rows[0], expected);
 }
 
 // ---------------------------------------------------------------------------
@@ -344,15 +412,18 @@ TEST(ArchiverPbHttpConversionTest, WaveformInt)
     std::string bytes;
     ASSERT_TRUE(msg.SerializeToString(&bytes));
 
-    const auto hdr    = makeHeader(EPICS::WAVEFORM_INT, 2024);
+    const auto hdr = makeHeader(EPICS::WAVEFORM_INT, 2024);
     const auto parsed = ArchiverPbHttpConversion::parseSample(hdr, bytes);
 
-    ASSERT_EQ(parsed.frame.int32columns_size(), 1);
-    const auto& col = parsed.frame.int32columns(0);
-    ASSERT_EQ(col.values_size(), 3);
-    EXPECT_EQ(col.values(0), 100);
-    EXPECT_EQ(col.values(1), 200);
-    EXPECT_EQ(col.values(2), 300);
+    ASSERT_EQ(parsed.batch.columns.size(), 1u);
+    const auto* col = findColumn(parsed.batch, "TEST:PV");
+    ASSERT_NE(col, nullptr);
+    const auto& rows = std::get<std::vector<std::vector<int32_t>>>(col->values);
+    ASSERT_EQ(rows.size(), 1u);
+    ASSERT_EQ(rows[0].size(), 3u);
+    EXPECT_EQ(rows[0][0], 100);
+    EXPECT_EQ(rows[0][1], 200);
+    EXPECT_EQ(rows[0][2], 300);
 }
 
 // ---------------------------------------------------------------------------
@@ -370,14 +441,17 @@ TEST(ArchiverPbHttpConversionTest, WaveformDouble)
     std::string bytes;
     ASSERT_TRUE(msg.SerializeToString(&bytes));
 
-    const auto hdr    = makeHeader(EPICS::WAVEFORM_DOUBLE, 2024);
+    const auto hdr = makeHeader(EPICS::WAVEFORM_DOUBLE, 2024);
     const auto parsed = ArchiverPbHttpConversion::parseSample(hdr, bytes);
 
-    ASSERT_EQ(parsed.frame.doublecolumns_size(), 1);
-    const auto& col = parsed.frame.doublecolumns(0);
-    ASSERT_EQ(col.values_size(), 2);
-    EXPECT_DOUBLE_EQ(col.values(0), 1.0);
-    EXPECT_DOUBLE_EQ(col.values(1), 2.0);
+    ASSERT_EQ(parsed.batch.columns.size(), 1u);
+    const auto* col = findColumn(parsed.batch, "TEST:PV");
+    ASSERT_NE(col, nullptr);
+    const auto& rows = std::get<std::vector<std::vector<double>>>(col->values);
+    ASSERT_EQ(rows.size(), 1u);
+    ASSERT_EQ(rows[0].size(), 2u);
+    EXPECT_DOUBLE_EQ(rows[0][0], 1.0);
+    EXPECT_DOUBLE_EQ(rows[0][1], 2.0);
 }
 
 // ---------------------------------------------------------------------------
@@ -394,13 +468,18 @@ TEST(ArchiverPbHttpConversionTest, V4GenericBytes)
     std::string bytes;
     ASSERT_TRUE(msg.SerializeToString(&bytes));
 
-    const auto hdr    = makeHeader(EPICS::V4_GENERIC_BYTES, 2024);
+    const auto hdr = makeHeader(EPICS::V4_GENERIC_BYTES, 2024);
     const auto parsed = ArchiverPbHttpConversion::parseSample(hdr, bytes);
 
     EXPECT_EQ(parsed.nanoseconds, 42u);
-    ASSERT_EQ(parsed.frame.stringcolumns_size(), 1);
-    EXPECT_EQ(parsed.frame.stringcolumns(0).name(), "TEST:PV");
-    EXPECT_EQ(parsed.frame.stringcolumns(0).values(0), std::string("\xCA\xFE", 2));
+    ASSERT_EQ(parsed.batch.columns.size(), 1u);
+    const auto* col = findColumn(parsed.batch, "TEST:PV");
+    ASSERT_NE(col, nullptr);
+    EXPECT_EQ(col->name, "TEST:PV");
+    const auto& rows = std::get<std::vector<std::vector<uint8_t>>>(col->values);
+    ASSERT_EQ(rows.size(), 1u);
+    const std::vector<uint8_t> expected{0xCA, 0xFE};
+    EXPECT_EQ(rows[0], expected);
 }
 
 // ---------------------------------------------------------------------------
@@ -419,7 +498,7 @@ TEST(ArchiverPbHttpConversionTest, EpochCalculationForKnownDate)
     std::string bytes;
     ASSERT_TRUE(msg.SerializeToString(&bytes));
 
-    const auto hdr    = makeHeader(EPICS::SCALAR_DOUBLE, 2000);
+    const auto hdr = makeHeader(EPICS::SCALAR_DOUBLE, 2000);
     const auto parsed = ArchiverPbHttpConversion::parseSample(hdr, bytes);
 
     EXPECT_EQ(parsed.epoch_seconds, 946684800ULL);

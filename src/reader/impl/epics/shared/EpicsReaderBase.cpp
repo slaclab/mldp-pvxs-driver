@@ -21,7 +21,12 @@ EpicsReaderBase::EpicsReaderBase(std::shared_ptr<util::bus::IDataBus> bus,
     , logger_(std::move(logger))
     , config_(cfg)
     , name_(config_.name())
-    , reader_pool_(std::make_shared<BS::light_thread_pool>(config_.threadPoolSize()))
+    , reader_pool_(std::make_shared<BS::light_thread_pool>(
+          config_.threadPoolSize(),
+          [n = config_.name()](std::size_t i)
+          {
+              BS::this_thread::set_os_thread_name(n.substr(0, 9) + "-" + std::to_string(i));
+          }))
 {
     for (const auto& pvConfig : config_.pvs())
     {

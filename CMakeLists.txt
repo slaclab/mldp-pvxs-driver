@@ -10,6 +10,7 @@ option(MLDP_PVXS_DRIVER_MAIN "Build MLDP PVXS driver executable" ON)
 option(MLDP_PVXS_DRIVER_TESTS "Build MLDP PVXS driver tests" OFF)
 option(MLDP_PVXS_DRIVER_COVERAGE "Enable code coverage instrumentation" OFF)
 option(MLDP_PVXS_DRIVER_LINK_EPICS_PVXS_STATIC "Link EPICS and PVXS libraries statically (prefer .a over .so)" OFF)
+option(MLDP_PVXS_ENABLE_HDF5 "Build with HDF5 writer support" ON)
 
 # Default to Release build
 if(NOT CMAKE_BUILD_TYPE)
@@ -21,7 +22,6 @@ include(FetchContent)
 set(PROMETHEUS_CPP_VERSION "v1.3.0")
 set(SPDLOG_VERSION "v1.16.0")
 set(ARGPARSE_VERSION "v3.2")
-set(METRIC_GRABBER_VERSION "v0.0.1")
 set(EPICSARCHIVERAP_VERSION "2.2.1")
 set(CPP_HTTPLIB_VERSION "v0.16.3")
 set(DP_GRPC_VERSION "v1.13")
@@ -80,14 +80,6 @@ else()
     unset(ENABLE_TESTING CACHE)
 endif()
 
-# acquiring metric-grabber to enanceh mldp driver with systme metrics
-message(STATUS "Acquiring metric-grabber version ${METRIC_GRABBER_VERSION}...")
-FetchContent_Declare(metric_grabber
-    GIT_REPOSITORY https://github.com/slaclab/metrics-grabber.git
-    GIT_TAG ${METRIC_GRABBER_VERSION}
-    PATCH_COMMAND sed -i -e "/#include <memory>/a #include <vector>" include/metricsgrabber/MetricsCollector.hpp
-)
-FetchContent_MakeAvailable(metric_grabber)
 
 # Acquire epicsarchiverap for EPICSEvent proto
 message(STATUS "Acquiring epicsarchiverap for EPICSEvent.proto...")
@@ -114,6 +106,49 @@ find_package(OpenSSL REQUIRED)
 find_package(gRPC REQUIRED)
 find_package(Threads REQUIRED)
 find_package(CURL REQUIRED)
+
+# ---- HDF5 (optional writer back-end) ----
+if(MLDP_PVXS_ENABLE_HDF5)
+    set(HDF5_VERSION_TAG "hdf5_2_1_0")
+    message(STATUS "Acquiring HDF5 ${HDF5_VERSION_TAG} from GitHub HDFGroup/hdf5...")
+
+    # Disable HDF5's own tests and tools to keep the build lean.
+    # Force static-only so we always get hdf5_cpp-static (not hdf5_cpp-shared).
+    set(BUILD_SHARED_LIBS       OFF CACHE BOOL "" FORCE)
+    set(HDF5_BUILD_TOOLS       OFF CACHE BOOL "" FORCE)
+    set(HDF5_BUILD_EXAMPLES    OFF CACHE BOOL "" FORCE)
+    set(HDF5_BUILD_TESTING     OFF CACHE BOOL "" FORCE)
+    set(BUILD_TESTING          OFF CACHE BOOL "" FORCE)
+    set(HDF5_BUILD_HL_LIB      ON  CACHE BOOL "" FORCE)
+    set(HDF5_BUILD_CPP_LIB     ON  CACHE BOOL "" FORCE)
+    set(HDF5_ENABLE_Z_LIB_SUPPORT ON CACHE BOOL "" FORCE)
+
+    FetchContent_Declare(hdf5
+        GIT_REPOSITORY https://github.com/HDFGroup/hdf5.git
+        GIT_TAG        ${HDF5_VERSION_TAG}
+        GIT_SHALLOW    TRUE
+    )
+    FetchContent_MakeAvailable(hdf5)
+
+    # HDFGroup's CMake (hdf5_2_1_0) names its targets:
+    #   hdf5_cpp-static  (static, always built when HDF5_BUILD_CPP_LIB=ON)
+    #   hdf5_cpp-shared  (shared, only when BUILD_SHARED_LIBS=ON)
+    # We default to static since we force BUILD_SHARED_LIBS=OFF above.
+    if(TARGET hdf5_cpp-shared)
+        set(_MLDP_HDF5_TARGET hdf5_cpp-shared)
+    elseif(TARGET hdf5_cpp-static)
+        set(_MLDP_HDF5_TARGET hdf5_cpp-static)
+    elseif(TARGET hdf5_cpp)
+        set(_MLDP_HDF5_TARGET hdf5_cpp)
+    else()
+        message(FATAL_ERROR "HDF5 FetchContent succeeded but no C++ target (hdf5_cpp-static / hdf5_cpp-shared / hdf5_cpp) was found")
+    endif()
+
+    message(STATUS "HDF5 writer enabled — using target ${_MLDP_HDF5_TARGET}")
+    add_compile_definitions(MLDP_PVXS_HDF5_ENABLED)
+else()
+    message(STATUS "MLDP_PVXS_ENABLE_HDF5=OFF — HDF5 writer excluded")
+endif()
 # The libcurl-devel RPM on Rocky Linux ships a cmake config that embeds the
 # Debian multiarch include path (/usr/include/x86_64-linux-gnu) which does not
 # exist on RPM-based systems.  Strip any such paths from the imported target so
@@ -435,6 +470,7 @@ target_include_directories(lib${PROJECT_NAME}_proto PUBLIC
 # Base library
 add_library(lib${PROJECT_NAME}
     "${CMAKE_CURRENT_SOURCE_DIR}/ext/BS_thread_pool/include/BS_thread_pool.hpp"
+    # ReaderFactory.cpp and WriterFactory.cpp are thin wrappers; Factory.h is header-only (no registry .cpp needed)
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/ReaderFactory.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/util/log/CoutLogger.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/util/http/CurlHttpClient.cpp"
@@ -455,11 +491,25 @@ add_library(lib${PROJECT_NAME}
     "${CMAKE_CURRENT_SOURCE_DIR}/src/pool/MLDPGrpcPoolConfig.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/pool/MLDPGrpcIngestionPool.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/pool/MLDPGrpcQueryPool.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/MLDPQueryClient.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/controller/MLDPPVXSControllerConfig.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/controller/MLDPPVXSController.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/controller/RouteTable.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/WriterConfig.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/WriterFactory.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/mldp/MLDPWriterConfig.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/mldp/MLDPWriter.cpp"
+    $<$<BOOL:${MLDP_PVXS_ENABLE_HDF5}>:
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/hdf5/HDF5WriterConfig.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/hdf5/HDF5FilePool.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/hdf5/HDF5Writer.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/hdf5/HDF5WriterMetrics.cpp"
+    >
     "${CMAKE_CURRENT_SOURCE_DIR}/src/metrics/Metrics.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/metrics/MetricsConfig.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/metrics/MetricsSnapshot.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/metrics/procmon/MetricsCollector.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/metrics/procmon/ProcReader.cpp"
 )
 target_link_libraries(lib${PROJECT_NAME} PUBLIC
     lib${PROJECT_NAME}_proto
@@ -475,11 +525,13 @@ target_link_libraries(lib${PROJECT_NAME} PUBLIC
     prometheus-cpp::pull
     spdlog::spdlog
     CURL::libcurl
-    metricsgrabber
+    $<$<BOOL:${MLDP_PVXS_ENABLE_HDF5}>:${_MLDP_HDF5_TARGET}>
 )
 target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/ext/BS_thread_pool/include")
+target_compile_definitions(lib${PROJECT_NAME} PUBLIC BS_THREAD_POOL_NATIVE_EXTENSIONS)
 target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/ext/rapidyaml/include")
 target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
+target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include/metrics")
 # Ensure the build tree's generated headers (e.g. config.h) are visible to users of the library
 target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_BINARY_DIR}")
 set_target_properties(lib${PROJECT_NAME} PROPERTIES PREFIX "")
@@ -549,13 +601,16 @@ if(MLDP_PVXS_DRIVER_TESTS)
     enable_testing()
     add_executable(${PROJECT_NAME}_test
         "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/sioc.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/Gen1NTablePV.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/config/epics_reader_config_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/config/mldppvxs_controller_config_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/cli/config_printer_test.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/test/controller/mldppvxs_controller_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/controller/mldppvxs_controller_mldp_writer_integration_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/controller/route_table_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/controller/mldppvxs_controller_epics_archiver_periodic_tail_integration_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/controller/route_table_config_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/ryml_single_header_translation_unit.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/test/pool/mldp_grpc_pool_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/writer/mldp/mldp_writer_integration_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics/pvxs/epics_pvxs_reader_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics/base/epics_base_reader_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_archiver/archiver_pbhttp_conversion_test.cpp"
@@ -565,18 +620,31 @@ if(MLDP_PVXS_DRIVER_TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_archiver/epics_archiver_reader_http_integration_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_archiver/epics_archiver_reader_periodic_tail_integration_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/util/http/curl_http_client_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/util/factory/factory_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/metrics/periodic_metrics_dumper_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/metrics/metrics_histogram_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/metrics/system_metrics_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/ConfigPrinter.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/PeriodicMetricsDumper.cpp"
     )
-    target_link_libraries(${PROJECT_NAME}_test PRIVATE gtest_main lib${PROJECT_NAME})
+    # The writer/reader implementations self-register via static initialization (REGISTER_WRITER,
+    # REGISTER_READER).  Without --whole-archive the linker drops those object files and the
+    # factory registrations never fire.
+    if(APPLE)
+        target_link_libraries(${PROJECT_NAME}_test PRIVATE gtest_main
+            -Wl,-force_load $<TARGET_FILE:lib${PROJECT_NAME}>)
+    else()
+        target_link_libraries(${PROJECT_NAME}_test PRIVATE gtest_main
+            -Wl,--whole-archive lib${PROJECT_NAME} -Wl,--no-whole-archive)
+    endif()
     if(TARGET httplib::httplib)
         target_link_libraries(${PROJECT_NAME}_test PRIVATE httplib::httplib)
     elseif(TARGET httplib)
         target_link_libraries(${PROJECT_NAME}_test PRIVATE httplib)
     endif()
+    target_compile_definitions(${PROJECT_NAME}_test PRIVATE
+        MLDP_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/data"
+    )
 
     if(MLDP_PVXS_DRIVER_COVERAGE)
         target_compile_options(${PROJECT_NAME}_test PRIVATE -O0 -g --coverage)
@@ -610,6 +678,102 @@ if(MLDP_PVXS_DRIVER_TESTS)
 
     include(GoogleTest)
     gtest_discover_tests(${PROJECT_NAME}_test)
+
+    if(MLDP_PVXS_ENABLE_HDF5)
+        # HDF5 writer unit and integration tests
+        add_executable(mldp_hdf5_writer_test
+            "${CMAKE_CURRENT_SOURCE_DIR}/test/writer/hdf5/hdf5_writer_config_test.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/test/writer/hdf5/hdf5_file_pool_test.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/test/writer/hdf5/hdf5_writer_test.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/test/writer/hdf5/hdf5_writer_metrics_test.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/test/ryml_single_header_translation_unit.cpp"
+        )
+        target_include_directories(mldp_hdf5_writer_test PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/include"
+            "${CMAKE_CURRENT_SOURCE_DIR}/test"
+            "${CMAKE_CURRENT_BINARY_DIR}"
+        )
+        if(APPLE)
+            target_link_libraries(mldp_hdf5_writer_test PRIVATE gtest_main
+                -Wl,-force_load $<TARGET_FILE:lib${PROJECT_NAME}>)
+        else()
+            target_link_libraries(mldp_hdf5_writer_test PRIVATE gtest_main
+                -Wl,--whole-archive lib${PROJECT_NAME} -Wl,--no-whole-archive)
+        endif()
+        gtest_discover_tests(mldp_hdf5_writer_test PROPERTIES LABELS "hdf5")
+
+        # Controller → HDF5 end-to-end integration tests
+        add_executable(mldp_controller_hdf5_integration_test
+            "${CMAKE_CURRENT_SOURCE_DIR}/test/controller/mldppvxs_controller_hdf5_integration_test.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/sioc.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/Gen1NTablePV.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/test/ryml_single_header_translation_unit.cpp"
+        )
+        target_include_directories(mldp_controller_hdf5_integration_test PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/include"
+            "${CMAKE_CURRENT_SOURCE_DIR}/test"
+            "${CMAKE_CURRENT_BINARY_DIR}"
+        )
+        if(APPLE)
+            target_link_libraries(mldp_controller_hdf5_integration_test PRIVATE gtest_main
+                -Wl,-force_load $<TARGET_FILE:lib${PROJECT_NAME}>)
+        else()
+            target_link_libraries(mldp_controller_hdf5_integration_test PRIVATE gtest_main
+                -Wl,--whole-archive lib${PROJECT_NAME} -Wl,--no-whole-archive)
+        endif()
+        gtest_discover_tests(mldp_controller_hdf5_integration_test
+            PROPERTIES LABELS "hdf5;controller;integration")
+        target_compile_definitions(mldp_controller_hdf5_integration_test PRIVATE
+            MLDP_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/data"
+        )
+    endif()
+endif()
+
+# Mock IOC Server executable (standalone, always built if main is enabled)
+if(MLDP_PVXS_DRIVER_MAIN)
+    add_executable(mock_sioc_server
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/sioc.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/Gen1NTablePV.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/sioc_main.cpp"
+    )
+    target_link_libraries(mock_sioc_server PRIVATE
+        pvxs
+        epics-pvaccess
+        epics-pvaccessca
+        epics-pvdata
+        epics-ca
+        epics-pvaclient
+        epics-com
+        Threads::Threads
+    )
+    target_include_directories(mock_sioc_server PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/mock"
+    )
+    target_compile_definitions(mock_sioc_server PRIVATE
+        MLDP_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/data"
+    )
+endif()
+
+# HDF5 dump tool — inspect driver-produced HDF5 files (head/tail rows, no full load)
+if(MLDP_PVXS_ENABLE_HDF5)
+    add_executable(hdf5_dump
+        "${CMAKE_CURRENT_SOURCE_DIR}/tools/hdf5_dump.cpp"
+    )
+    target_include_directories(hdf5_dump PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+        "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    target_link_libraries(hdf5_dump PRIVATE
+        ${_MLDP_HDF5_TARGET}
+        argparse::argparse
+        spdlog::spdlog
+    )
+    target_compile_definitions(hdf5_dump PRIVATE
+        MLDP_PVXS_HDF5_ENABLED
+    )
+    target_include_directories(hdf5_dump PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/ext/BS_thread_pool/include"
+    )
 endif()
 
 # Driver executable
@@ -678,6 +842,7 @@ install(FILES "${CMAKE_CURRENT_BINARY_DIR}/config.h"
 if(MLDP_PVXS_DRIVER_MAIN)
     install(TARGETS
         ${PROJECT_NAME}
+        mock_sioc_server
         RUNTIME DESTINATION bin
     )
 endif()
