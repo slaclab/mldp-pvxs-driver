@@ -20,13 +20,13 @@ writer:
           pem-root-certs: /etc/certs/ca.crt
 
   # ========== HDF5 Writer (optional, requires MLDP_PVXS_ENABLE_HDF5=ON) ==========
-  # hdf5:
-  #   - name: hdf5_main
-  #     base-path: /data/hdf5
-  #     max-file-age-s: 3600                 # optional; default: 3600
-  #     max-file-size-mb: 512                # optional; default: 512
-  #     flush-interval-ms: 1000              # optional; default: 1000
-  #     compression-level: 0                 # optional; 0-9, default: 0 (no compression)
+  hdf5:
+    - name: hdf5_main
+      base-path: /data/hdf5
+      max-file-age-s: 3600                 # optional; default: 3600
+      max-file-size-mb: 512                # optional; default: 512
+      flush-interval-ms: 1000              # optional; default: 1000
+      compression-level: 0                 # optional; 0-9, default: 0 (no compression)
 
 reader:
   # ========== EPICS PVAccess Reader (Real-time Monitoring via PVXS) ==========
