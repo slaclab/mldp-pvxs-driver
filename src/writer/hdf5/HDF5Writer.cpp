@@ -51,6 +51,10 @@
  *   NEVER hold fileMutex while calling pool methods (acquire / recordWrite),
  *   as pool methods acquire pool mutex_ internally.
  *
+ *   Thread-exclusive maps (no mutex needed):
+ *   - lastTsBatchSeq_ : accessed exclusively from writerThread_.
+ *   - tabularBuffers_ : accessed exclusively from writerThread_.
+ *
  * Why per-entry fileMutex?
  * ------------------------
  * HDF5 (without the thread-safe library build) is NOT thread-safe.  The
@@ -263,6 +267,7 @@ void HDF5Writer::writerLoop()
         // Swapping into a local deque releases queueMutex_ before any I/O,
         // so push() is never blocked by slow HDF5 operations.
         std::deque<QueueEntry> drained;
+        std::size_t depthAtDrain = 0;
         {
             std::unique_lock<std::mutex> lk(queueMutex_);
             queueCv_.wait(lk, [this]
@@ -275,13 +280,14 @@ void HDF5Writer::writerLoop()
                 debugf(*logger_, "HDF5Writer [{}] writer thread exiting — queue drained", config_.name);
                 break;
             }
+            depthAtDrain = queue_.size();
             drained.swap(queue_); // O(1); queue_ is left empty
         }
 
-        // Update queue-depth metric now that we've drained.
+        // Update queue-depth metric with the depth captured before the drain.
         if (writerMetrics_)
         {
-            writerMetrics_->setQueueDepth(static_cast<double>(queue_.size()));
+            writerMetrics_->setQueueDepth(static_cast<double>(depthAtDrain));
         }
 
         if (!pool_)
@@ -332,23 +338,13 @@ void HDF5Writer::writerLoop()
                 }
                 else
                 {
-                    for (const auto& frame : entry.batch.frames)
+                    if (!config_.mergeRootSources)
                     {
-                        if (config_.mergeRootSources)
+                        // Acquire file handle once for all frames in this batch — they all
+                        // share the same root_source and therefore the same file.
+                        auto ev = pool_->acquire(entry.batch.root_source);
+                        for (const auto& frame : entry.batch.frames)
                         {
-                            const auto t0 = std::chrono::steady_clock::now();
-                            appendFrameMerge(entry.batch.root_source, frame, entry.batchSeq);
-                            if (writerMetrics_)
-                            {
-                                const double ms = std::chrono::duration<double, std::milli>(
-                                                      std::chrono::steady_clock::now() - t0)
-                                                      .count();
-                                writerMetrics_->observeWriteLatencyMs(ms);
-                            }
-                        }
-                        else
-                        {
-                            auto           ev = pool_->acquire(entry.batch.root_source);
                             const uint64_t written = static_cast<uint64_t>(
                                 frame.timestamps.size() * frame.columns.size() * sizeof(double));
                             {
@@ -376,6 +372,21 @@ void HDF5Writer::writerLoop()
                                         entry.batch.root_source,
                                         static_cast<double>(frame.timestamps.size()));
                                 }
+                            }
+                        }
+                    }
+                    else
+                    {
+                        for (const auto& frame : entry.batch.frames)
+                        {
+                            const auto t0 = std::chrono::steady_clock::now();
+                            appendFrameMerge(entry.batch.root_source, frame, entry.batchSeq);
+                            if (writerMetrics_)
+                            {
+                                const double ms = std::chrono::duration<double, std::milli>(
+                                                      std::chrono::steady_clock::now() - t0)
+                                                      .count();
+                                writerMetrics_->observeWriteLatencyMs(ms);
                             }
                         }
                     }
@@ -480,14 +491,13 @@ namespace {
 template <typename CType>
 void append1D(H5::DataSet& ds, const H5::DataType& h5type, const CType* data, hsize_t n)
 {
-    hsize_t curDims[1] = {0}, maxDims[1] = {H5S_UNLIMITED};
-    ds.getSpace().getSimpleExtentDims(curDims, maxDims);
-    const hsize_t newSize = curDims[0] + n;
+    hsize_t preDims[1] = {0}, maxDims[1] = {H5S_UNLIMITED};
+    ds.getSpace().getSimpleExtentDims(preDims, maxDims);
+    const hsize_t newSize = preDims[0] + n;
     ds.extend(&newSize);
     H5::DataSpace fspace = ds.getSpace();
-    fspace.getSimpleExtentDims(curDims, maxDims);
-    hsize_t offset[1] = {curDims[0] - n};
-    hsize_t count[1] = {n};
+    hsize_t offset[1] = {preDims[0]};
+    hsize_t count[1]  = {n};
     fspace.selectHyperslab(H5S_SELECT_SET, count, offset);
     H5::DataSpace mspace(1, count);
     ds.write(data, h5type, mspace, fspace);
@@ -497,14 +507,13 @@ void append1D(H5::DataSet& ds, const H5::DataType& h5type, const CType* data, hs
 template <typename CType>
 void append2D(H5::DataSet& ds, const H5::DataType& h5type, const CType* data, hsize_t nSamples, hsize_t arrayLen)
 {
-    hsize_t curDims[2] = {0, arrayLen}, maxDims[2] = {H5S_UNLIMITED, arrayLen};
-    ds.getSpace().getSimpleExtentDims(curDims, maxDims);
-    hsize_t newDims[2] = {curDims[0] + nSamples, arrayLen};
+    hsize_t preDims[2] = {0, arrayLen}, maxDims[2] = {H5S_UNLIMITED, arrayLen};
+    ds.getSpace().getSimpleExtentDims(preDims, maxDims);
+    hsize_t newDims[2] = {preDims[0] + nSamples, arrayLen};
     ds.extend(newDims);
     H5::DataSpace fspace = ds.getSpace();
-    fspace.getSimpleExtentDims(curDims, maxDims);
-    hsize_t offset[2] = {curDims[0] - nSamples, 0};
-    hsize_t count[2] = {nSamples, arrayLen};
+    hsize_t offset[2] = {preDims[0], 0};
+    hsize_t count[2]  = {nSamples, arrayLen};
     fspace.selectHyperslab(H5S_SELECT_SET, count, offset);
     H5::DataSpace mspace(2, count);
     ds.write(data, h5type, mspace, fspace);
@@ -568,6 +577,136 @@ float fillValue<float>()
 
 } // namespace
 
+// ---------------------------------------------------------------------------
+// writeColumnsImpl — shared column-write logic for appendFrame / appendFrameMerge
+// ---------------------------------------------------------------------------
+// EnsureFn1D:  (const std::string& name, const H5::DataType&) -> H5::DataSet
+// EnsureFn2D:  (const std::string& name, const H5::DataType&, hsize_t arrayLen) -> H5::DataSet
+// PostWriteFn: (uint64_t bytes) -> void   — called after each column write with byte count
+
+namespace {
+
+template <typename EnsureFn1D, typename EnsureFn2D, typename PostWriteFn>
+void writeColumnsImpl(const mldp_pvxs_driver::util::bus::DataBatch& batch,
+                      EnsureFn1D&&  ensure1D,
+                      EnsureFn2D&&  ensure2D,
+                      PostWriteFn&& postWrite)
+{
+    using namespace mldp_pvxs_driver::util::bus;
+
+    for (const auto& col : batch.columns)
+    {
+        if (col.name.empty())
+            continue;
+
+        std::visit([&](const auto& vals)
+                   {
+                       using VecT  = std::decay_t<decltype(vals)>;
+                       using ElemT = typename VecT::value_type;
+
+                       if constexpr (std::is_same_v<ElemT, double>   ||
+                                     std::is_same_v<ElemT, float>    ||
+                                     std::is_same_v<ElemT, int64_t>  ||
+                                     std::is_same_v<ElemT, int32_t>)
+                       {
+                           // Scalar 1-D column
+                           const hsize_t n = static_cast<hsize_t>(vals.size());
+                           if (n == 0)
+                               return;
+                           const H5::PredType& h5type = mapNativeType<ElemT>();
+                           auto ds = ensure1D(col.name, h5type);
+                           append1D(ds, h5type, vals.data(), n);
+                           postWrite(static_cast<uint64_t>(n * sizeof(ElemT)));
+                       }
+                       else if constexpr (std::is_same_v<ElemT, bool>)
+                       {
+                           // bool → NATIVE_HBOOL (unsigned int)
+                           const hsize_t n = static_cast<hsize_t>(vals.size());
+                           if (n == 0)
+                               return;
+                           std::vector<unsigned int> buf;
+                           buf.reserve(n);
+                           for (bool v : vals)
+                               buf.push_back(v ? 1u : 0u);
+                           auto ds = ensure1D(col.name, H5::PredType::NATIVE_HBOOL);
+                           append1D(ds, H5::PredType::NATIVE_HBOOL, buf.data(), n);
+                           postWrite(static_cast<uint64_t>(n * sizeof(unsigned int)));
+                       }
+                       else if constexpr (std::is_same_v<ElemT, std::string>)
+                       {
+                           // Variable-length HDF5 strings
+                           const hsize_t n = static_cast<hsize_t>(vals.size());
+                           if (n == 0)
+                               return;
+                           const H5::StrType vlStrType(H5::PredType::C_S1, H5T_VARIABLE);
+                           // Keep local copies so c_str() pointers stay valid
+                           std::vector<std::string> strCopies(vals.begin(), vals.end());
+                           std::vector<const char*> ptrs;
+                           ptrs.reserve(n);
+                           for (const auto& s : strCopies)
+                               ptrs.push_back(s.c_str());
+                           auto ds = ensure1D(col.name, vlStrType);
+                           append1D(ds, vlStrType, ptrs.data(), n);
+                           postWrite(0); // byte count for VL strings is indeterminate
+                       }
+                       else if constexpr (std::is_same_v<ElemT, std::vector<uint8_t>>)
+                       {
+                           // bytes/blob: stored as 2-D uint8 dataset (nSamples × blobLen)
+                           if (vals.empty() || vals[0].empty())
+                               return;
+                           const hsize_t arrayLen  = static_cast<hsize_t>(vals[0].size());
+                           const hsize_t nSamples  = static_cast<hsize_t>(vals.size());
+                           std::vector<uint8_t> flat;
+                           flat.reserve(nSamples * arrayLen);
+                           for (const auto& row : vals)
+                               flat.insert(flat.end(), row.begin(), row.end());
+                           auto ds = ensure2D(col.name, H5::PredType::NATIVE_UINT8, arrayLen);
+                           append2D(ds, H5::PredType::NATIVE_UINT8, flat.data(), nSamples, arrayLen);
+                           postWrite(static_cast<uint64_t>(nSamples * arrayLen));
+                       }
+                       else if constexpr (std::is_same_v<ElemT, std::vector<double>>  ||
+                                          std::is_same_v<ElemT, std::vector<float>>   ||
+                                          std::is_same_v<ElemT, std::vector<int64_t>> ||
+                                          std::is_same_v<ElemT, std::vector<int32_t>>)
+                       {
+                           // Numeric array column → 2-D dataset (nSamples × arrayLen)
+                           using InnerT = typename ElemT::value_type;
+                           if (vals.empty() || vals[0].empty())
+                               return;
+                           const hsize_t arrayLen = static_cast<hsize_t>(vals[0].size());
+                           const hsize_t nSamples = static_cast<hsize_t>(vals.size());
+                           std::vector<InnerT> flat;
+                           flat.reserve(nSamples * arrayLen);
+                           for (const auto& row : vals)
+                               flat.insert(flat.end(), row.begin(), row.end());
+                           const H5::PredType& h5type = mapNativeType<InnerT>();
+                           auto ds = ensure2D(col.name, h5type, arrayLen);
+                           append2D(ds, h5type, flat.data(), nSamples, arrayLen);
+                           postWrite(static_cast<uint64_t>(nSamples * arrayLen * sizeof(InnerT)));
+                       }
+                       else if constexpr (std::is_same_v<ElemT, std::vector<bool>>)
+                       {
+                           // bool array → 2-D NATIVE_HBOOL dataset
+                           if (vals.empty() || vals[0].empty())
+                               return;
+                           const hsize_t arrayLen = static_cast<hsize_t>(vals[0].size());
+                           const hsize_t nSamples = static_cast<hsize_t>(vals.size());
+                           std::vector<unsigned int> flat;
+                           flat.reserve(nSamples * arrayLen);
+                           for (const auto& row : vals)
+                               for (bool v : row)
+                                   flat.push_back(v ? 1u : 0u);
+                           auto ds = ensure2D(col.name, H5::PredType::NATIVE_HBOOL, arrayLen);
+                           append2D(ds, H5::PredType::NATIVE_HBOOL, flat.data(), nSamples, arrayLen);
+                           postWrite(static_cast<uint64_t>(nSamples * arrayLen * sizeof(unsigned int)));
+                       }
+                   },
+                   col.values);
+    }
+}
+
+} // namespace
+
 H5::DataSet HDF5Writer::ensureDataset(H5::H5File&         file,
                                       const std::string&  name,
                                       const H5::DataType& dtype)
@@ -609,15 +748,6 @@ void HDF5Writer::appendFrame(const std::string&          sourceName,
     }
     const std::size_t tsCount = batch.timestamps.size();
 
-    auto ensure1D = [&](const std::string& name, const H5::DataType& dtype)
-    {
-        return ensureDataset(file, name, dtype);
-    };
-    auto ensure2D = [&](const std::string& name, const H5::DataType& dtype, hsize_t arrayLen)
-    {
-        return ensureDataset2D(file, name, dtype, arrayLen);
-    };
-
     // -------------------------------------------------------------------------
     // 1. timestamps dataset — int64 nanoseconds-since-epoch
     // -------------------------------------------------------------------------
@@ -640,116 +770,22 @@ void HDF5Writer::appendFrame(const std::string&          sourceName,
                     static_cast<int64_t>(ts.epoch_seconds) * 1'000'000'000LL +
                     static_cast<int64_t>(ts.nanoseconds));
             }
-            auto ds = ensure1D("timestamps", H5::PredType::NATIVE_INT64);
+            auto ds = ensureDataset(file, "timestamps", H5::PredType::NATIVE_INT64);
             append1D(ds, H5::PredType::NATIVE_INT64, nsVec.data(), static_cast<hsize_t>(tsCount));
             lastTsBatchSeq_[sourceName] = batchSeq;
         }
     }
 
     // -------------------------------------------------------------------------
-    // 2. Scalar and array columns via std::visit on ColumnValues
+    // 2. Scalar and array columns via writeColumnsImpl
     // -------------------------------------------------------------------------
-    for (const auto& col : batch.columns)
-    {
-        if (col.name.empty())
-            continue;
-
-        std::visit([&](const auto& vals)
-                   {
-                       using VecT = std::decay_t<decltype(vals)>;
-                       using ElemT = typename VecT::value_type;
-
-                       if constexpr (std::is_same_v<ElemT, double>   ||
-                                     std::is_same_v<ElemT, float>    ||
-                                     std::is_same_v<ElemT, int64_t>  ||
-                                     std::is_same_v<ElemT, int32_t>)
-                       {
-                           // Scalar 1-D column
-                           const hsize_t n = static_cast<hsize_t>(vals.size());
-                           if (n == 0)
-                               return;
-                           const H5::PredType& h5type = mapNativeType<ElemT>();
-                           auto ds = ensure1D(col.name, h5type);
-                           append1D(ds, h5type, vals.data(), n);
-                       }
-                       else if constexpr (std::is_same_v<ElemT, bool>)
-                       {
-                           // bool → NATIVE_HBOOL (unsigned int)
-                           const hsize_t n = static_cast<hsize_t>(vals.size());
-                           if (n == 0)
-                               return;
-                           std::vector<unsigned int> buf;
-                           buf.reserve(n);
-                           for (bool v : vals)
-                               buf.push_back(v ? 1u : 0u);
-                           auto ds = ensure1D(col.name, H5::PredType::NATIVE_HBOOL);
-                           append1D(ds, H5::PredType::NATIVE_HBOOL, buf.data(), n);
-                       }
-                       else if constexpr (std::is_same_v<ElemT, std::string>)
-                       {
-                           // Variable-length HDF5 strings
-                           const hsize_t n = static_cast<hsize_t>(vals.size());
-                           if (n == 0)
-                               return;
-                           const H5::StrType vlStrType(H5::PredType::C_S1, H5T_VARIABLE);
-                           std::vector<const char*> ptrs;
-                           ptrs.reserve(n);
-                           for (const auto& s : vals)
-                               ptrs.push_back(s.c_str());
-                           auto ds = ensure1D(col.name, vlStrType);
-                           append1D(ds, vlStrType, ptrs.data(), n);
-                       }
-                       else if constexpr (std::is_same_v<ElemT, std::vector<uint8_t>>)
-                       {
-                           // bytes/blob: stored as 2-D uint8 dataset (nSamples × blobLen)
-                           if (vals.empty() || vals[0].empty())
-                               return;
-                           const hsize_t arrayLen  = static_cast<hsize_t>(vals[0].size());
-                           const hsize_t nSamples  = static_cast<hsize_t>(vals.size());
-                           std::vector<uint8_t> flat;
-                           flat.reserve(nSamples * arrayLen);
-                           for (const auto& row : vals)
-                               flat.insert(flat.end(), row.begin(), row.end());
-                           auto ds = ensure2D(col.name, H5::PredType::NATIVE_UINT8, arrayLen);
-                           append2D(ds, H5::PredType::NATIVE_UINT8, flat.data(), nSamples, arrayLen);
-                       }
-                       else if constexpr (std::is_same_v<ElemT, std::vector<double>>  ||
-                                          std::is_same_v<ElemT, std::vector<float>>   ||
-                                          std::is_same_v<ElemT, std::vector<int64_t>> ||
-                                          std::is_same_v<ElemT, std::vector<int32_t>>)
-                       {
-                           // Numeric array column → 2-D dataset (nSamples × arrayLen)
-                           using InnerT = typename ElemT::value_type;
-                           if (vals.empty() || vals[0].empty())
-                               return;
-                           const hsize_t arrayLen = static_cast<hsize_t>(vals[0].size());
-                           const hsize_t nSamples = static_cast<hsize_t>(vals.size());
-                           std::vector<InnerT> flat;
-                           flat.reserve(nSamples * arrayLen);
-                           for (const auto& row : vals)
-                               flat.insert(flat.end(), row.begin(), row.end());
-                           const H5::PredType& h5type = mapNativeType<InnerT>();
-                           auto ds = ensure2D(col.name, h5type, arrayLen);
-                           append2D(ds, h5type, flat.data(), nSamples, arrayLen);
-                       }
-                       else if constexpr (std::is_same_v<ElemT, std::vector<bool>>)
-                       {
-                           // bool array → 2-D NATIVE_HBOOL dataset
-                           if (vals.empty() || vals[0].empty())
-                               return;
-                           const hsize_t arrayLen = static_cast<hsize_t>(vals[0].size());
-                           const hsize_t nSamples = static_cast<hsize_t>(vals.size());
-                           std::vector<unsigned int> flat;
-                           flat.reserve(nSamples * arrayLen);
-                           for (const auto& row : vals)
-                               for (bool v : row)
-                                   flat.push_back(v ? 1u : 0u);
-                           auto ds = ensure2D(col.name, H5::PredType::NATIVE_HBOOL, arrayLen);
-                           append2D(ds, H5::PredType::NATIVE_HBOOL, flat.data(), nSamples, arrayLen);
-                       }
-                   },
-                   col.values);
-    }
+    writeColumnsImpl(batch,
+        [&](const std::string& n, const H5::DataType& t)
+            { return ensureDataset(file, n, t); },
+        [&](const std::string& n, const H5::DataType& t, hsize_t l)
+            { return ensureDataset2D(file, n, t, l); },
+        [](uint64_t) {} // no-op: byte accounting done by pool_->recordWrite in writerLoop
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -832,20 +868,22 @@ void HDF5Writer::accumulateTabularFrame(const std::string&          sourceName,
     }
 
     // If this batch belongs to a new update round (timestamp changed) and we
-    // already have buffered rows, clear the stale data.
+    // already have buffered rows, flush the stale data rather than discarding it.
     if (buf.rowCount > 0 && frameFirstTs != -1 && frameFirstTs != buf.roundFirstTs)
     {
-        buf.columns.clear();
-        if (!buf.schemaFixed)
+        // Flush stale partial round before starting new one — do NOT silently discard.
+        if (config_.mergeRootSources)
         {
-            buf.colIndex.clear();
-            buf.colNames.clear();
-            buf.colTypes.clear();
+            flushTabularBufferMerge(sourceName, buf);
         }
-        buf.tsSeconds.clear();
-        buf.tsNanos.clear();
-        buf.rowCount = 0;
-        buf.roundFirstTs = -1;
+        else
+        {
+            auto ev = pool_->acquire(sourceName);
+            std::lock_guard<std::mutex> fileLk(ev->fileMutex);
+            flushTabularBuffer(sourceName, buf, ev->file);
+        }
+        // flushTabularBuffer resets rowCount, tsSeconds, tsNanos, columns, roundFirstTs.
+        // Fall through to populate timestamps and columns for the new round below.
     }
 
     // Populate timestamps for a new round.
@@ -871,10 +909,21 @@ void HDF5Writer::accumulateTabularFrame(const std::string&          sourceName,
 
         if (buf.schemaFixed && buf.colIndex.find(col.name) == buf.colIndex.end())
         {
-            if (buf.warnedUnknown.insert(col.name).second)
+            if (buf.warnedUnknown.size() < TabularBuffer::kMaxWarnedUnknown &&
+                buf.warnedUnknown.insert(col.name).second)
+            {
                 warnf(*logger_,
                       "HDF5Writer tabular source={} unknown column '{}' after schema lock, skipping",
                       sourceName, col.name);
+            }
+            else if (buf.warnedUnknown.size() == TabularBuffer::kMaxWarnedUnknown &&
+                     buf.warnedUnknown.find("__FULL__") == buf.warnedUnknown.end())
+            {
+                buf.warnedUnknown.insert("__FULL__");
+                warnf(*logger_,
+                      "HDF5Writer tabular source={} warnedUnknown set full ({} entries), suppressing further warnings",
+                      sourceName, TabularBuffer::kMaxWarnedUnknown);
+            }
             continue;
         }
 
@@ -972,10 +1021,22 @@ void HDF5Writer::accumulateTabularFrame(const std::string&          sourceName,
                        else
                        {
                            // Non-scalar types (string, bytes, array) are not supported in tabular path.
-                           if (buf.warnedUnknown.insert(col.name + ":unsupported_type").second)
+                           const std::string key = col.name + ":unsupported_type";
+                           if (buf.warnedUnknown.size() < TabularBuffer::kMaxWarnedUnknown &&
+                               buf.warnedUnknown.insert(key).second)
+                           {
                                warnf(*logger_,
                                      "HDF5Writer tabular source={} column '{}' has unsupported type for tabular path, skipping",
                                      sourceName, col.name);
+                           }
+                           else if (buf.warnedUnknown.size() == TabularBuffer::kMaxWarnedUnknown &&
+                                    buf.warnedUnknown.find("__FULL__") == buf.warnedUnknown.end())
+                           {
+                               buf.warnedUnknown.insert("__FULL__");
+                               warnf(*logger_,
+                                     "HDF5Writer tabular source={} warnedUnknown set full ({} entries), suppressing further warnings",
+                                     sourceName, TabularBuffer::kMaxWarnedUnknown);
+                           }
                        }
                    },
                    col.values);
@@ -1061,6 +1122,7 @@ void HDF5Writer::flushTabularBuffer(const std::string& sourceName,
     buf.tsSeconds.clear();
     buf.tsNanos.clear();
     buf.rowCount = 0;
+    buf.roundFirstTs = -1;
     buf.columns.clear();
     if (buf.schemaFixed)
     {
@@ -1097,7 +1159,9 @@ void HDF5Writer::openMergeFile()
 #endif
     char tsbuf[20];
     std::strftime(tsbuf, sizeof(tsbuf), "%Y%m%dT%H%M%Sz", &utc);
-    const std::string suffix(tsbuf);
+    // Append a monotonic sequence number so rapid rotations within the same
+    // second produce distinct filenames instead of colliding.
+    const std::string suffix = std::string(tsbuf) + "_" + std::to_string(mergeFileSeq_++);
 
     const std::filesystem::path base(config_.basePath);
     std::filesystem::create_directories(base);
@@ -1182,7 +1246,7 @@ void HDF5Writer::rotateMergeFile()
           config_.name, groupsToRecreate.size());
 }
 
-H5::Group HDF5Writer::ensureMergeGroup(const std::string& sourceName)
+void HDF5Writer::ensureMergeGroup(const std::string& sourceName)
 {
     // Caller MUST hold mergeFileMutex_.
     if (mergeOpenGroups_.find(sourceName) == mergeOpenGroups_.end())
@@ -1195,7 +1259,7 @@ H5::Group HDF5Writer::ensureMergeGroup(const std::string& sourceName)
         }
         mergeOpenGroups_.insert(sourceName);
     }
-    return mergeFile_->openGroup(sourceName);
+    // Callers that need the group object should call mergeFile_->openGroup() themselves.
 }
 
 void HDF5Writer::checkMergeRotation()
@@ -1214,7 +1278,14 @@ void HDF5Writer::checkMergeRotation()
                      (sizeLimitBytes > 0 && mergeBytesWritten_ >= sizeLimitBytes);
     }
     if (needRotate)
-        rotateMergeFile();
+    {
+        bool expected = false;
+        if (mergeRotating_.compare_exchange_strong(expected, true))
+        {
+            rotateMergeFile();
+            mergeRotating_.store(false);
+        }
+    }
 }
 
 void HDF5Writer::appendFrameMerge(const std::string&          sourceName,
@@ -1243,15 +1314,6 @@ void HDF5Writer::appendFrameMerge(const std::string&          sourceName,
     ensureMergeGroup(sourceName);
     const std::string groupPrefix = sourceName + "/";
 
-    auto ensure1D = [&](const std::string& name, const H5::DataType& dtype)
-    {
-        return ensureDataset(*mergeFile_, groupPrefix + name, dtype);
-    };
-    auto ensure2D = [&](const std::string& name, const H5::DataType& dtype, hsize_t arrayLen)
-    {
-        return ensureDataset2D(*mergeFile_, groupPrefix + name, dtype, arrayLen);
-    };
-
     // 1. timestamps
     {
         auto it = lastTsBatchSeq_.find(sourceName);
@@ -1265,107 +1327,20 @@ void HDF5Writer::appendFrameMerge(const std::string&          sourceName,
                     static_cast<int64_t>(ts.epoch_seconds) * 1'000'000'000LL +
                     static_cast<int64_t>(ts.nanoseconds));
             }
-            auto ds = ensure1D("timestamps", H5::PredType::NATIVE_INT64);
+            auto ds = ensureDataset(*mergeFile_, groupPrefix + "timestamps", H5::PredType::NATIVE_INT64);
             append1D(ds, H5::PredType::NATIVE_INT64, nsVec.data(), static_cast<hsize_t>(tsCount));
             lastTsBatchSeq_[sourceName] = batchSeq;
         }
     }
 
     // 2. Columns
-    for (const auto& col : batch.columns)
-    {
-        if (col.name.empty())
-            continue;
-
-        std::visit([&](const auto& vals)
-                   {
-                       using VecT  = std::decay_t<decltype(vals)>;
-                       using ElemT = typename VecT::value_type;
-
-                       if constexpr (std::is_same_v<ElemT, double>   ||
-                                     std::is_same_v<ElemT, float>    ||
-                                     std::is_same_v<ElemT, int64_t>  ||
-                                     std::is_same_v<ElemT, int32_t>)
-                       {
-                           const hsize_t n = static_cast<hsize_t>(vals.size());
-                           if (n == 0) return;
-                           const H5::PredType& h5type = mapNativeType<ElemT>();
-                           auto ds = ensure1D(col.name, h5type);
-                           append1D(ds, h5type, vals.data(), n);
-                           mergeBytesWritten_ += static_cast<uint64_t>(n * sizeof(ElemT));
-                       }
-                       else if constexpr (std::is_same_v<ElemT, bool>)
-                       {
-                           const hsize_t n = static_cast<hsize_t>(vals.size());
-                           if (n == 0) return;
-                           std::vector<unsigned int> buf;
-                           buf.reserve(n);
-                           for (bool v : vals)
-                               buf.push_back(v ? 1u : 0u);
-                           auto ds = ensure1D(col.name, H5::PredType::NATIVE_HBOOL);
-                           append1D(ds, H5::PredType::NATIVE_HBOOL, buf.data(), n);
-                           mergeBytesWritten_ += static_cast<uint64_t>(n * sizeof(unsigned int));
-                       }
-                       else if constexpr (std::is_same_v<ElemT, std::string>)
-                       {
-                           const hsize_t n = static_cast<hsize_t>(vals.size());
-                           if (n == 0) return;
-                           const H5::StrType vlStrType(H5::PredType::C_S1, H5T_VARIABLE);
-                           std::vector<const char*> ptrs;
-                           ptrs.reserve(n);
-                           for (const auto& s : vals)
-                               ptrs.push_back(s.c_str());
-                           auto ds = ensure1D(col.name, vlStrType);
-                           append1D(ds, vlStrType, ptrs.data(), n);
-                       }
-                       else if constexpr (std::is_same_v<ElemT, std::vector<uint8_t>>)
-                       {
-                           if (vals.empty() || vals[0].empty()) return;
-                           const hsize_t arrayLen = static_cast<hsize_t>(vals[0].size());
-                           const hsize_t nSamples = static_cast<hsize_t>(vals.size());
-                           std::vector<uint8_t> flat;
-                           flat.reserve(nSamples * arrayLen);
-                           for (const auto& row : vals)
-                               flat.insert(flat.end(), row.begin(), row.end());
-                           auto ds = ensure2D(col.name, H5::PredType::NATIVE_UINT8, arrayLen);
-                           append2D(ds, H5::PredType::NATIVE_UINT8, flat.data(), nSamples, arrayLen);
-                           mergeBytesWritten_ += static_cast<uint64_t>(nSamples * arrayLen);
-                       }
-                       else if constexpr (std::is_same_v<ElemT, std::vector<double>>  ||
-                                          std::is_same_v<ElemT, std::vector<float>>   ||
-                                          std::is_same_v<ElemT, std::vector<int64_t>> ||
-                                          std::is_same_v<ElemT, std::vector<int32_t>>)
-                       {
-                           using InnerT = typename ElemT::value_type;
-                           if (vals.empty() || vals[0].empty()) return;
-                           const hsize_t arrayLen = static_cast<hsize_t>(vals[0].size());
-                           const hsize_t nSamples = static_cast<hsize_t>(vals.size());
-                           std::vector<InnerT> flat;
-                           flat.reserve(nSamples * arrayLen);
-                           for (const auto& row : vals)
-                               flat.insert(flat.end(), row.begin(), row.end());
-                           const H5::PredType& h5type = mapNativeType<InnerT>();
-                           auto ds = ensure2D(col.name, h5type, arrayLen);
-                           append2D(ds, h5type, flat.data(), nSamples, arrayLen);
-                           mergeBytesWritten_ += static_cast<uint64_t>(nSamples * arrayLen * sizeof(InnerT));
-                       }
-                       else if constexpr (std::is_same_v<ElemT, std::vector<bool>>)
-                       {
-                           if (vals.empty() || vals[0].empty()) return;
-                           const hsize_t arrayLen = static_cast<hsize_t>(vals[0].size());
-                           const hsize_t nSamples = static_cast<hsize_t>(vals.size());
-                           std::vector<unsigned int> flat;
-                           flat.reserve(nSamples * arrayLen);
-                           for (const auto& row : vals)
-                               for (bool v : row)
-                                   flat.push_back(v ? 1u : 0u);
-                           auto ds = ensure2D(col.name, H5::PredType::NATIVE_HBOOL, arrayLen);
-                           append2D(ds, H5::PredType::NATIVE_HBOOL, flat.data(), nSamples, arrayLen);
-                           mergeBytesWritten_ += static_cast<uint64_t>(nSamples * arrayLen * sizeof(unsigned int));
-                       }
-                   },
-                   col.values);
-    }
+    writeColumnsImpl(batch,
+        [&](const std::string& n, const H5::DataType& t)
+            { return ensureDataset(*mergeFile_, groupPrefix + n, t); },
+        [&](const std::string& n, const H5::DataType& t, hsize_t l)
+            { return ensureDataset2D(*mergeFile_, groupPrefix + n, t, l); },
+        [&](uint64_t bytes) { mergeBytesWritten_ += bytes; }
+    );
 }
 
 void HDF5Writer::flushTabularBufferMerge(const std::string& sourceName,
@@ -1381,10 +1356,23 @@ void HDF5Writer::flushTabularBufferMerge(const std::string& sourceName,
         return;
     }
 
+    // Capture stats before flush clears the buffer.
+    const std::size_t nRows = buf.rowCount;
+    const std::size_t nCols = buf.colNames.size();
+
     // ensureMergeGroup records the group in mergeOpenGroups_.
     ensureMergeGroup(sourceName);
 
     // flushTabularBuffer already creates /<sourceName>/ group and writes
     // sourceName + "/col" paths — fully compatible with the merge file.
     flushTabularBuffer(sourceName, buf, *mergeFile_);
+
+    // Approximate bytes written: nRows × (nCols × sizeof(double) + 2 × sizeof(int64_t))
+    if (nRows > 0 && nCols > 0)
+    {
+        const uint64_t approxBytes =
+            static_cast<uint64_t>(nRows) *
+            (static_cast<uint64_t>(nCols) * sizeof(double) + 2ULL * sizeof(int64_t));
+        mergeBytesWritten_ += approxBytes;
+    }
 }

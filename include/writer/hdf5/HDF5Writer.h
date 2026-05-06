@@ -236,6 +236,8 @@ private:
         // ---- warned-once sets ----
         std::unordered_set<std::string> warnedMissing;
         std::unordered_set<std::string> warnedUnknown;
+
+        static constexpr std::size_t kMaxWarnedUnknown = 128;
     };
 
     // -----------------------------------------------------------------------
@@ -268,11 +270,14 @@ private:
     std::atomic<bool>       stopping_{false};      ///< Set to true by stop(); read by both threads.
     std::atomic<uint64_t>   nextBatchSeq_{0};      ///< Incremented atomically by push() for each enqueue.
 
-    // Accessed only from writerThread_ — no lock needed.
+    // Accessed exclusively from writerThread_ — no mutex required.
+    // IMPORTANT: Do not access from any other thread without adding synchronisation.
     /// Maps root_source → the batchSeq of the last batch for which timestamps were written.
     /// Prevents duplicate timestamp rows when multiple column batches share one NTTable update.
     std::unordered_map<std::string, uint64_t>      lastTsBatchSeq_;
 
+    // Accessed exclusively from writerThread_ — no mutex required.
+    // IMPORTANT: Do not access from any other thread without adding synchronisation.
     /// Maps root_source → per-source accumulation buffer for multi-column NTTable writes.
     std::unordered_map<std::string, TabularBuffer> tabularBuffers_;
 
@@ -291,6 +296,8 @@ private:
     std::set<std::string>                     mergeOpenGroups_;      ///< Source names whose groups exist in mergeFile_.
     uint64_t                                  mergeBytesWritten_{0}; ///< Bytes written across all sources.
     std::chrono::steady_clock::time_point     mergeFileOpenedAt_;    ///< When mergeFile_ was opened.
+    std::atomic<bool>                         mergeRotating_{false}; ///< CAS guard to prevent concurrent rotateMergeFile() calls.
+    uint64_t                                  mergeFileSeq_{0};      ///< Monotonic counter appended to filename to prevent same-second collisions.
 
     // -----------------------------------------------------------------------
     // Internal methods — all called only from writerThread_
@@ -431,13 +438,13 @@ private:
      * @brief Ensure the HDF5 group `/<sourceName>/` exists in mergeFile_.
      *
      * Creates the group on first call for this source and records it in
-     * mergeOpenGroups_.  Returns the opened group handle.
+     * mergeOpenGroups_.  Callers that need the group handle should call
+     * mergeFile_->openGroup(sourceName) themselves after this returns.
      *
      * @pre mergeFileMutex_ MUST be held by the caller.
      * @param sourceName  Root source identifier (used as group name).
-     * @return Open H5::Group handle for /<sourceName>/.
      */
-    H5::Group ensureMergeGroup(const std::string& sourceName);
+    void ensureMergeGroup(const std::string& sourceName);
 
     /**
      * @brief Check rotation thresholds and rotate if needed.
