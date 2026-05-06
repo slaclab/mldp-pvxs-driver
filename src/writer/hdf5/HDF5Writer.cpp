@@ -24,13 +24,48 @@
  *   └─────────────┘             └──────┬───────┘
  *                                      │ (writerThread_)
  *                               writerLoop() drains entire queue per
- *                               wake-up, calls appendFrame() per frame
+ *                               wake-up, routes to appendFrame() /
+ *                               appendFrameMerge() / tabular path
  *                                      │
  *                               ┌──────▼──────────┐
  *                               │  HDF5FilePool   │  one .hdf5 file per source
- *                               └──────┬──────────┘
+ *                               └──────┬──────────┘      (non-merge mode)
  *                                      │ (flushThread_)
  *                               flushLoop() calls flushAll() periodically
+ *
+ * Two write modes
+ * ---------------
+ * Non-merge mode (default, mergeRootSources=false):
+ *   One HDF5 file per root_source, managed by HDF5FilePool.  Each file is
+ *   rotated independently on age/size threshold.
+ *
+ * Merge mode (mergeRootSources=true):
+ *   All root_sources share a single HDF5 file.  Each source gets its own
+ *   HDF5 group (/<source_name>/).  The file is rotated via rotateMergeFile()
+ *   when age or size threshold is crossed.  Filenames include a UTC timestamp
+ *   plus a monotonic sequence counter to prevent sub-second collision:
+ *     merged_YYYYMMDDTHHMMSSz_<seq>.hdf5
+ *   Files are written to a hidden temp path (prefix ".") and atomically
+ *   renamed on close for crash-safe visibility.
+ *
+ * Two batch routes
+ * ----------------
+ * Non-tabular (columnar) batches:
+ *   appendFrame() / appendFrameMerge() — write one DataBatch directly to
+ *   per-column HDF5 datasets at the file root (non-merge) or under the
+ *   source group (merge).  The per-batch batchSeq deduplicates the shared
+ *   timestamps dataset across split-column NTTable frames.
+ *
+ * Tabular (NTTable) batches (EventBatch::is_tabular == true):
+ *   accumulateTabularFrame() — buffers column data in TabularBuffer until the
+ *   end_of_batch_group marker arrives, then flushTabularBuffer[Merge]() writes
+ *   per-column 1-D datasets under a /<source_name>/ group.  Schema is locked
+ *   on first flush; subsequent rounds must conform (unknown columns warned and
+ *   skipped; missing columns filled with NaN/0).
+ *
+ *   If a new round's first-row timestamp differs from the buffered round's,
+ *   the stale data is flushed before the new round is started — no data is
+ *   silently discarded.
  *
  * Thread model
  * ------------
@@ -42,18 +77,26 @@
  *
  * Locking discipline (must be respected to avoid deadlock):
  *
- *   - queueMutex_     : guards queue_ and stopping_. Held briefly; no HDF5
- *                       calls made while holding it.
- *   - pool mutex_     : internal to HDF5FilePool; guards the source→FileEntry map.
- *   - entry->fileMutex: per-FileEntry; guards the H5::H5File object.
+ *   - queueMutex_      : guards queue_ and stopping_. Held briefly; no HDF5
+ *                        calls made while holding it.
+ *   - pool mutex_      : internal to HDF5FilePool; guards source→FileEntry map.
+ *   - entry->fileMutex : per-FileEntry; guards the H5::H5File object.
+ *   - mergeFileMutex_  : guards mergeFile_, mergeOpenGroups_, mergeBytesWritten_,
+ *                        and mergeFileOpenedAt_. Held during all merge-file I/O.
  *
  *   Lock-order rule: pool mutex_ → entry->fileMutex.
  *   NEVER hold fileMutex while calling pool methods (acquire / recordWrite),
  *   as pool methods acquire pool mutex_ internally.
  *
- *   Thread-exclusive maps (no mutex needed):
- *   - lastTsBatchSeq_ : accessed exclusively from writerThread_.
- *   - tabularBuffers_ : accessed exclusively from writerThread_.
+ *   Thread-exclusive maps (no mutex needed — writerThread_ only):
+ *   - lastTsBatchSeq_ : tracks last batchSeq for which timestamps were written.
+ *   - tabularBuffers_ : per-source accumulation buffers for NTTable writes.
+ *   IMPORTANT: never access these from flushThread_ or caller threads without
+ *   adding explicit synchronisation.
+ *
+ *   Merge-file rotation guard:
+ *   - mergeRotating_ (atomic bool, CAS): prevents concurrent double-rotation
+ *     when checkMergeRotation() is called concurrently (e.g. rapid batches).
  *
  * Why per-entry fileMutex?
  * ------------------------
@@ -67,20 +110,40 @@
  *
  * Queue drain strategy
  * --------------------
- * writerLoop() swaps the entire queue_ into a local deque under queueMutex_,
- * then releases the lock before doing any I/O.  This means:
+ * writerLoop() captures queue_.size() (depthAtDrain) then swaps the entire
+ * queue_ into a local deque under queueMutex_, releasing the lock before any
+ * I/O.  This means:
  *   - push() is never blocked by slow HDF5 writes.
  *   - A single wake-up processes all accumulated batches, catching up quickly
- *     when the writer falls behind (e.g. after the initial dataset creation
- *     overhead on a new file).
+ *     when the writer falls behind (e.g. after dataset creation overhead).
+ *   - The queue-depth metric is set from depthAtDrain (pre-swap), so it
+ *     reflects the actual backlog seen at each drain, not always 0.
  *
- * appendFrame() per-column write pattern
- * ----------------------------------------
+ * pool_->acquire() is hoisted outside the per-frame loop — all frames in one
+ * EventBatch share the same root_source and therefore the same file handle.
+ *
+ * writeColumnsImpl() — shared column-write template
+ * --------------------------------------------------
+ * Both appendFrame() and appendFrameMerge() delegate column I/O to the
+ * writeColumnsImpl<EnsureFn1D, EnsureFn2D, PostWriteFn>() template in the
+ * anonymous namespace.  Callers supply:
+ *   - ensure1D / ensure2D : lambdas that open or create the target dataset
+ *                           in either the per-source file or the merge file.
+ *   - postWrite           : lambda called with the byte count after each
+ *                           column write; used by appendFrameMerge() to
+ *                           update mergeBytesWritten_ for rotation tracking.
+ *
+ * append1D / append2D write pattern
+ * ----------------------------------
  * For every column type the pattern is identical:
  *   1. ensureDataset[2D]() — open existing or create new chunked dataset.
- *   2. getSpace() + extend() — grow the dataset by N new rows.
- *   3. selectHyperslab()    — select only the newly appended rows in file space.
- *   4. write()              — copy data from memory buffer into that slab.
+ *   2. getSpace() → save preDims (pre-extend row count).
+ *   3. extend()            — grow dataset by N new rows.
+ *   4. getSpace() again    — get updated file dataspace.
+ *   5. selectHyperslab()   — select only rows [preDims[0], preDims[0]+N).
+ *   6. write()             — copy from in-memory buffer.
+ * preDims are captured before extend() and used directly as the hyperslab
+ * offset, avoiding a redundant second getSimpleExtentDims() call.
  *
  * Scalar columns  → 1-D dataset shape (N_total_samples,)
  * Array  columns  → 2-D dataset shape (N_total_samples, array_len)
