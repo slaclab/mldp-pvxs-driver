@@ -111,4 +111,89 @@ TEST(RouteTableTest, ManyToMany_OneReaderMultipleWriters) {
     EXPECT_FALSE(rt.accepts("w2", "r2"));
 }
 
+// --- acceptsSource tests ---
+
+// acceptsSource — no patterns, all-to-all → always true
+TEST(RouteTableTest, AcceptsSource_AllToAll_AlwaysTrue) {
+    RouteTable rt; // default = all_to_all
+    EXPECT_TRUE(rt.acceptsSource("any_writer", "SYSTEM:SENSOR:PV1"));
+    EXPECT_TRUE(rt.acceptsSource("any_writer", ""));
+}
+
+// acceptsSource — no patterns on route → all sources pass
+TEST(RouteTableTest, AcceptsSource_NoPatterns_PassAll) {
+    RouteFilterEntry e;
+    e.writer_name = "w1";
+    e.from_readers = {"r1"};
+    RouteTable rt = RouteTable::build({e}, {"r1"}, {"w1"});
+    EXPECT_TRUE(rt.acceptsSource("w1", "SYSTEM:SENSOR:PV1"));
+    EXPECT_TRUE(rt.acceptsSource("w1", "ANYTHING"));
+}
+
+// acceptsSource — include pattern: source matching include → passes
+TEST(RouteTableTest, AcceptsSource_Include_MatchPasses) {
+    RouteFilterEntry e;
+    e.writer_name = "w1";
+    e.from_readers = {"r1"};
+    e.include_patterns = {"SYSTEM:SENSOR:*"};
+    RouteTable rt = RouteTable::build({e}, {"r1"}, {"w1"});
+    EXPECT_TRUE(rt.acceptsSource("w1", "SYSTEM:SENSOR:PV1"));
+    EXPECT_TRUE(rt.acceptsSource("w1", "SYSTEM:SENSOR:PV2"));
+}
+
+// acceptsSource — include pattern: source NOT matching include → dropped
+TEST(RouteTableTest, AcceptsSource_Include_NoMatchDropped) {
+    RouteFilterEntry e;
+    e.writer_name = "w1";
+    e.from_readers = {"r1"};
+    e.include_patterns = {"SYSTEM:SENSOR:*"};
+    RouteTable rt = RouteTable::build({e}, {"r1"}, {"w1"});
+    EXPECT_FALSE(rt.acceptsSource("w1", "OTHER:SOURCE:PV1"));
+    EXPECT_FALSE(rt.acceptsSource("w1", ""));
+}
+
+// acceptsSource — exclude wins over include match
+TEST(RouteTableTest, AcceptsSource_ExcludeWins) {
+    RouteFilterEntry e;
+    e.writer_name = "w1";
+    e.from_readers = {"r1"};
+    e.include_patterns = {"SYSTEM:*"};
+    e.exclude_patterns = {"SYSTEM:TEST:*"};
+    RouteTable rt = RouteTable::build({e}, {"r1"}, {"w1"});
+    EXPECT_TRUE(rt.acceptsSource("w1", "SYSTEM:SENSOR:PV1"));
+    EXPECT_FALSE(rt.acceptsSource("w1", "SYSTEM:TEST:PV1"));
+}
+
+// acceptsSource — exclude only, no include: source matching exclude → dropped
+TEST(RouteTableTest, AcceptsSource_ExcludeOnly_DropMatch) {
+    RouteFilterEntry e;
+    e.writer_name = "w1";
+    e.from_readers = {"r1"};
+    e.exclude_patterns = {"BAD:*"};
+    RouteTable rt = RouteTable::build({e}, {"r1"}, {"w1"});
+    EXPECT_TRUE(rt.acceptsSource("w1", "GOOD:PV1"));
+    EXPECT_FALSE(rt.acceptsSource("w1", "BAD:PV1"));
+}
+
+// acceptsSource — glob ? matches single char
+TEST(RouteTableTest, AcceptsSource_GlobQuestionMark) {
+    RouteFilterEntry e;
+    e.writer_name = "w1";
+    e.from_readers = {"r1"};
+    e.include_patterns = {"SRC:??"};
+    RouteTable rt = RouteTable::build({e}, {"r1"}, {"w1"});
+    EXPECT_TRUE(rt.acceptsSource("w1", "SRC:AB"));
+    EXPECT_FALSE(rt.acceptsSource("w1", "SRC:ABC")); // 3 chars, not 2
+    EXPECT_FALSE(rt.acceptsSource("w1", "SRC:A"));   // 1 char, not 2
+}
+
+// acceptsSource — writer not in routing when routing configured → false
+TEST(RouteTableTest, AcceptsSource_UnknownWriter_ReturnsFalse) {
+    RouteFilterEntry e;
+    e.writer_name = "w1";
+    e.from_readers = {"r1"};
+    RouteTable rt = RouteTable::build({e}, {"r1"}, {"w1"});
+    EXPECT_FALSE(rt.acceptsSource("w2", "SYSTEM:PV1"));
+}
+
 } // namespace mldp_pvxs_driver::controller

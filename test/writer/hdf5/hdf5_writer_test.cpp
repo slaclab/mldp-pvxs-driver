@@ -19,6 +19,7 @@
 
     #include <chrono>
     #include <filesystem>
+    #include <future>
     #include <string>
     #include <thread>
 
@@ -72,6 +73,23 @@ protected:
     }
 
     fs::path tempDir_;
+
+    /// Build a minimal EventBatch for a specific source / column / value.
+    static IDataBus::EventBatch makeBatchForSource(const std::string& source,
+                                                   const std::string& colName,
+                                                   double value)
+    {
+        DataBatch frame;
+        frame.timestamps.push_back({1700000000, 0});
+        DataColumn col;
+        col.name   = colName;
+        col.values = std::vector<double>{value};
+        frame.columns.push_back(std::move(col));
+        IDataBus::EventBatch batch;
+        batch.root_source = source;
+        batch.frames.push_back(std::move(frame));
+        return batch;
+    }
 };
 
 // ---------------------------------------------------------------------------
@@ -1353,17 +1371,373 @@ TEST_F(HDF5WriterTest, NonNTTableBatchUsesColumnarLayout)
         << "Columnar batch must not create compound dataset named after root_source";
 }
 
-TEST_F(HDF5WriterTest, SupportsMultiRootSourceReturnsFalse)
+TEST_F(HDF5WriterTest, SupportsMultiRootSourceReturnsTrue)
 {
     HDF5Writer w(makeConfig());
-    EXPECT_FALSE(w.supports_multi_root_source());
+    EXPECT_TRUE(w.supports_multi_root_source());
 }
 
-TEST_F(HDF5WriterTest, ThrowsWhenMergeRootSourcesEnabledButNotSupported)
+TEST_F(HDF5WriterTest, MergeRootSourcesEnabledDoesNotThrow)
 {
     HDF5WriterConfig cfg = makeConfig();
     cfg.mergeRootSources = true;
-    EXPECT_THROW(HDF5Writer w(std::move(cfg)), HDF5WriterConfig::Error);
+    EXPECT_NO_THROW(HDF5Writer w(std::move(cfg)));
+}
+
+// ---------------------------------------------------------------------------
+// Helpers for merge-mode tests
+// ---------------------------------------------------------------------------
+
+static std::vector<fs::path> findAllH5Files(const fs::path& dir)
+{
+    std::vector<fs::path> result;
+    for (const auto& e : fs::recursive_directory_iterator(dir))
+        if (e.path().extension() == ".hdf5")
+            result.push_back(e.path());
+    return result;
+}
+
+// ---------------------------------------------------------------------------
+// Merge-mode tests
+// ---------------------------------------------------------------------------
+
+/// AC-1: With mergeRootSources=true, each root_source gets its own group and
+///        datasets are stored under "<source>/<column>" — no cross-contamination.
+TEST_F(HDF5WriterTest, MergeGroupCreation)
+{
+    HDF5WriterConfig cfg = makeConfig();
+    cfg.mergeRootSources = true;
+    HDF5Writer w(std::move(cfg));
+    w.start();
+
+    auto b1 = makeBatchForSource("source_a", "VALUE_A", 1.0);
+    auto b2 = makeBatchForSource("source_b", "VALUE_B", 2.0);
+    w.push(b1);
+    w.push(b2);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    w.stop();
+
+    auto files = findAllH5Files(tempDir_);
+    ASSERT_EQ(files.size(), 1u) << "Expected exactly one .hdf5 file in merge mode";
+
+    H5::H5File file(files[0].string(), H5F_ACC_RDONLY);
+
+    // Each source must have its own group
+    ASSERT_TRUE(file.nameExists("source_a"));
+    ASSERT_TRUE(file.nameExists("source_b"));
+
+    // Each column must live under the correct source group
+    ASSERT_TRUE(file.nameExists("source_a/VALUE_A"));
+    ASSERT_TRUE(file.nameExists("source_b/VALUE_B"));
+
+    // No cross-contamination
+    ASSERT_FALSE(file.nameExists("source_a/VALUE_B"));
+    ASSERT_FALSE(file.nameExists("source_b/VALUE_A"));
+}
+
+/// AC-5: End-to-end: multiple batches from two sources produce correctly-sized
+///        datasets under their respective groups.
+TEST_F(HDF5WriterTest, MergeTwoSourcesEndToEnd)
+{
+    HDF5WriterConfig cfg = makeConfig();
+    cfg.mergeRootSources = true;
+    HDF5Writer w(std::move(cfg));
+    w.start();
+
+    // Three batches from source_a
+    for (double v : {10.0, 20.0, 30.0}) {
+        auto b = makeBatchForSource("source_a", "TEMP", v);
+        w.push(b);
+    }
+
+    // Two batches from source_b
+    for (double v : {100.0, 200.0}) {
+        auto b = makeBatchForSource("source_b", "PRESSURE", v);
+        w.push(b);
+    }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    w.stop();
+
+    auto files = findAllH5Files(tempDir_);
+    ASSERT_EQ(files.size(), 1u) << "Expected exactly one .hdf5 file";
+
+    H5::H5File file(files[0].string(), H5F_ACC_RDONLY);
+
+    ASSERT_TRUE(file.nameExists("source_a"));
+    ASSERT_TRUE(file.nameExists("source_a/TEMP"));
+
+    // Read source_a/TEMP and verify row count
+    {
+        H5::DataSet  ds = file.openDataSet("source_a/TEMP");
+        H5::DataSpace sp = ds.getSpace();
+        hsize_t dims[1];
+        sp.getSimpleExtentDims(dims, nullptr);
+        ASSERT_EQ(dims[0], 3u) << "source_a/TEMP should have 3 values";
+        std::vector<double> vals(dims[0]);
+        ds.read(vals.data(), H5::PredType::NATIVE_DOUBLE);
+    }
+
+    ASSERT_TRUE(file.nameExists("source_b"));
+    ASSERT_TRUE(file.nameExists("source_b/PRESSURE"));
+
+    // Read source_b/PRESSURE and verify row count
+    {
+        H5::DataSet  ds = file.openDataSet("source_b/PRESSURE");
+        H5::DataSpace sp = ds.getSpace();
+        hsize_t dims[1];
+        sp.getSimpleExtentDims(dims, nullptr);
+        ASSERT_EQ(dims[0], 2u) << "source_b/PRESSURE should have 2 values";
+        std::vector<double> vals(dims[0]);
+        ds.read(vals.data(), H5::PredType::NATIVE_DOUBLE);
+    }
+}
+
+/// AC-4: With mergeRootSources=false (default), the writer behaves exactly as
+///        before: datasets live at the root level (timestamps, <column>).
+TEST_F(HDF5WriterTest, MergeSingleSourceUnchanged)
+{
+    HDF5WriterConfig cfg = makeConfig();
+    cfg.mergeRootSources = false;
+    HDF5Writer w(std::move(cfg));
+    w.start();
+
+    auto batch = makeValidBatch();  // root_source="TEST:PV", col "VOLTAGE", val 1.23
+    w.push(batch);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    w.stop();
+
+    auto files = findAllH5Files(tempDir_);
+    ASSERT_EQ(files.size(), 1u) << "Expected exactly one .hdf5 file";
+
+    H5::H5File file(files[0].string(), H5F_ACC_RDONLY);
+
+    // Non-merge mode: datasets are at the root, not under a source group
+    EXPECT_TRUE(file.nameExists("timestamps"));
+    EXPECT_TRUE(file.nameExists("VOLTAGE"));
+}
+
+/// AC-3: With mergeRootSources=true, age-based rotation creates a new file
+///        and both groups are present in the second file.
+TEST_F(HDF5WriterTest, MergeRotation)
+{
+    HDF5WriterConfig cfg = makeConfig();
+    cfg.mergeRootSources = true;
+    cfg.maxFileAge       = std::chrono::seconds(1);
+    HDF5Writer w(std::move(cfg));
+    w.start();
+
+    // Write to source_a — this creates the first file
+    auto b1 = makeBatchForSource("source_a", "COL_A", 1.0);
+    w.push(b1);
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+    // Sleep past the 1-second age threshold so the next write triggers rotation
+    std::this_thread::sleep_for(std::chrono::milliseconds(900));
+
+    // Write to both sources — should land in a new (second) file
+    auto b2 = makeBatchForSource("source_a", "COL_A", 2.0);
+    auto b3 = makeBatchForSource("source_b", "COL_B", 3.0);
+    w.push(b2);
+    w.push(b3);
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+    w.stop();
+
+    auto files = findAllH5Files(tempDir_);
+    ASSERT_EQ(files.size(), 2u) << "Expected two .hdf5 files after age rotation";
+
+    // Sort lexicographically to get chronological order (UTC timestamp suffix)
+    std::sort(files.begin(), files.end());
+
+    H5::H5File file2(files[1].string(), H5F_ACC_RDONLY);
+    EXPECT_TRUE(file2.nameExists("source_a"));
+    EXPECT_TRUE(file2.nameExists("source_b"));
+}
+
+/// Single source in merge mode — one group, one dataset, no crash.
+TEST_F(HDF5WriterTest, MergeSingleSourceOnlyOneGroup)
+{
+    HDF5WriterConfig cfg = makeConfig();
+    cfg.mergeRootSources = true;
+    HDF5Writer w(std::move(cfg));
+    w.start();
+
+    for (int i = 0; i < 3; ++i)
+    {
+        auto b = makeBatchForSource("only_source", "SENSOR", static_cast<double>(i));
+        w.push(b);
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    w.stop();
+
+    auto files = findAllH5Files(tempDir_);
+    ASSERT_EQ(files.size(), 1u);
+
+    H5::H5File file(files[0].string(), H5F_ACC_RDONLY);
+    ASSERT_TRUE(file.nameExists("only_source"));
+    ASSERT_TRUE(file.nameExists("only_source/SENSOR"));
+    // No other groups
+    ASSERT_FALSE(file.nameExists("source_b"));
+}
+
+/// Empty batch (no frames) dispatched in merge mode — no crash, no spurious group.
+TEST_F(HDF5WriterTest, MergeEmptyBatchNoSpuriousGroup)
+{
+    HDF5WriterConfig cfg = makeConfig();
+    cfg.mergeRootSources = true;
+    HDF5Writer w(std::move(cfg));
+    w.start();
+
+    // Push an empty batch (no frames)
+    IDataBus::EventBatch emptyBatch;
+    emptyBatch.root_source = "ghost_source";
+    // frames vector intentionally empty — writer should ignore it
+
+    EXPECT_NO_THROW(w.push(emptyBatch));
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    w.stop();
+
+    auto files = findAllH5Files(tempDir_);
+    // May have zero files if nothing was ever flushed — that is fine
+    if (!files.empty())
+    {
+        H5::H5File file(files[0].string(), H5F_ACC_RDONLY);
+        // ghost_source group must NOT exist (no data was written)
+        EXPECT_FALSE(file.nameExists("ghost_source"));
+    }
+}
+
+/// N sources all merge into one file — all groups present.
+TEST_F(HDF5WriterTest, MergeLargeNumberOfSources)
+{
+    constexpr int kNumSources = 10;
+    HDF5WriterConfig cfg = makeConfig();
+    cfg.mergeRootSources = true;
+    HDF5Writer w(std::move(cfg));
+    w.start();
+
+    for (int i = 0; i < kNumSources; ++i)
+    {
+        auto b = makeBatchForSource("source_" + std::to_string(i),
+                                   "VALUE_" + std::to_string(i),
+                                   static_cast<double>(i) * 10.0);
+        w.push(b);
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+    w.stop();
+
+    auto files = findAllH5Files(tempDir_);
+    ASSERT_EQ(files.size(), 1u) << "Expected one merged file";
+
+    H5::H5File file(files[0].string(), H5F_ACC_RDONLY);
+    for (int i = 0; i < kNumSources; ++i)
+    {
+        const std::string group = "source_" + std::to_string(i);
+        const std::string ds    = group + "/VALUE_" + std::to_string(i);
+        EXPECT_TRUE(file.nameExists(group)) << "Group missing: " << group;
+        EXPECT_TRUE(file.nameExists(ds))    << "Dataset missing: " << ds;
+    }
+}
+
+/// Source starts writing after another source already opened the file.
+TEST_F(HDF5WriterTest, MergeSourceAddedAfterFileOpen)
+{
+    HDF5WriterConfig cfg = makeConfig();
+    cfg.mergeRootSources = true;
+    HDF5Writer w(std::move(cfg));
+    w.start();
+
+    // First source writes — opens the merge file
+    auto b1 = makeBatchForSource("early_source", "COL_E", 1.0);
+    w.push(b1);
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    // Second source arrives after file is already open
+    auto b2 = makeBatchForSource("late_source", "COL_L", 2.0);
+    w.push(b2);
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+    w.stop();
+
+    auto files = findAllH5Files(tempDir_);
+    ASSERT_EQ(files.size(), 1u);
+
+    H5::H5File file(files[0].string(), H5F_ACC_RDONLY);
+    EXPECT_TRUE(file.nameExists("early_source"));
+    EXPECT_TRUE(file.nameExists("early_source/COL_E"));
+    EXPECT_TRUE(file.nameExists("late_source"));
+    EXPECT_TRUE(file.nameExists("late_source/COL_L"));
+}
+
+/// Two sources writing concurrently — no deadlock, no corruption, correct group isolation.
+TEST_F(HDF5WriterTest, MergeConcurrentWrites)
+{
+    HDF5WriterConfig cfg = makeConfig();
+    cfg.mergeRootSources = true;
+    HDF5Writer w(std::move(cfg));
+    w.start();
+
+    constexpr int kBatchesPerSource = 20;
+
+    auto writeSource = [&](const std::string& source, const std::string& col)
+    {
+        for (int i = 0; i < kBatchesPerSource; ++i)
+        {
+            auto b = makeBatchForSource(source, col, static_cast<double>(i));
+            w.push(b);
+        }
+    };
+
+    auto f1 = std::async(std::launch::async, writeSource, "src_alpha", "ALPHA_VAL");
+    auto f2 = std::async(std::launch::async, writeSource, "src_beta",  "BETA_VAL");
+    f1.get();
+    f2.get();
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(800));
+    w.stop();
+
+    auto files = findAllH5Files(tempDir_);
+    ASSERT_GE(files.size(), 1u) << "Expected at least one merged file";
+
+    // Open the most recently modified file (or first if only one)
+    std::sort(files.begin(), files.end());
+    H5::H5File file(files.back().string(), H5F_ACC_RDONLY);
+
+    EXPECT_TRUE(file.nameExists("src_alpha"))           << "src_alpha group missing";
+    EXPECT_TRUE(file.nameExists("src_alpha/ALPHA_VAL")) << "src_alpha/ALPHA_VAL missing";
+    EXPECT_TRUE(file.nameExists("src_beta"))            << "src_beta group missing";
+    EXPECT_TRUE(file.nameExists("src_beta/BETA_VAL"))   << "src_beta/BETA_VAL missing";
+
+    // No cross-contamination
+    EXPECT_FALSE(file.nameExists("src_alpha/BETA_VAL"));
+    EXPECT_FALSE(file.nameExists("src_beta/ALPHA_VAL"));
+}
+
+/// merge-root-sources absent in config → defaults to false (non-merge path unchanged).
+TEST_F(HDF5WriterTest, MergeFlagAbsentDefaultsFalse)
+{
+    HDF5WriterConfig cfg = makeConfig(); // mergeRootSources defaults to false
+    EXPECT_FALSE(cfg.mergeRootSources);
+
+    HDF5Writer w(std::move(cfg));
+    w.start();
+    auto batch = makeValidBatch();
+    w.push(batch);
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    w.stop();
+
+    auto files = findAllH5Files(tempDir_);
+    ASSERT_EQ(files.size(), 1u);
+
+    H5::H5File file(files[0].string(), H5F_ACC_RDONLY);
+    // Non-merge: datasets at root level, NOT under a source group
+    EXPECT_TRUE(file.nameExists("timestamps"));
+    EXPECT_TRUE(file.nameExists("VOLTAGE"));
+    // No source group
+    EXPECT_FALSE(file.nameExists("TEST:PV"));
 }
 
 #endif // MLDP_PVXS_HDF5_ENABLED

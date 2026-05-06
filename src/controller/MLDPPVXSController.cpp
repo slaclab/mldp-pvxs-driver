@@ -186,6 +186,9 @@ bool MLDPPVXSController::push(EventBatch batch_values)
         if (!route_table_.accepts(writers_[i]->name(), batch_values.reader_name))
             continue;
 
+        if (!route_table_.acceptsSource(writers_[i]->name(), batch_values.root_source))
+            continue;
+
         // Capture writer pointer and a copy of the batch per task.
         auto*      writerPtr = writers_[i].get();
         EventBatch batchCopy = batch_values; // explicit copy for each task

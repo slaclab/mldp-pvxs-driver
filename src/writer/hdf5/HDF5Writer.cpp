@@ -95,6 +95,7 @@
 #include <util/log/Logger.h>
 
 #include <cstring>
+#include <ctime>
 #include <limits>
 #include <vector>
 
@@ -155,6 +156,11 @@ void HDF5Writer::start()
         pool_->setMetrics(writerMetrics_.get());
     }
 
+    if (config_.mergeRootSources)
+    {
+        openMergeFile();
+    }
+
     writerThread_ = std::thread([this]
                                 {
                                     BS::this_thread::set_os_thread_name("hdf5-writer");
@@ -204,6 +210,10 @@ void HDF5Writer::stop() noexcept
 
     // Close all open HDF5 files after both threads have exited so there is no
     // concurrent access on the pool during shutdown.
+    if (config_.mergeRootSources)
+    {
+        closeMergeFile();
+    }
     if (pool_)
     {
         pool_->closeAll();
@@ -295,10 +305,17 @@ void HDF5Writer::writerLoop()
                     auto        it = tabularBuffers_.find(source);
                     if (it != tabularBuffers_.end() && it->second.rowCount > 0)
                     {
-                        auto                        ev = pool_->acquire(source);
-                        std::lock_guard<std::mutex> fileLk(ev->fileMutex);
                         const auto t0 = std::chrono::steady_clock::now();
-                        flushTabularBuffer(source, it->second, ev->file);
+                        if (config_.mergeRootSources)
+                        {
+                            flushTabularBufferMerge(source, it->second);
+                        }
+                        else
+                        {
+                            auto                        ev = pool_->acquire(source);
+                            std::lock_guard<std::mutex> fileLk(ev->fileMutex);
+                            flushTabularBuffer(source, it->second, ev->file);
+                        }
                         if (writerMetrics_)
                         {
                             const double ms = std::chrono::duration<double, std::milli>(
@@ -317,13 +334,10 @@ void HDF5Writer::writerLoop()
                 {
                     for (const auto& frame : entry.batch.frames)
                     {
-                        auto           ev = pool_->acquire(entry.batch.root_source);
-                        const uint64_t written = static_cast<uint64_t>(
-                            frame.timestamps.size() * frame.columns.size() * sizeof(double));
+                        if (config_.mergeRootSources)
                         {
-                            std::lock_guard<std::mutex> fileLk(ev->fileMutex);
                             const auto t0 = std::chrono::steady_clock::now();
-                            appendFrame(entry.batch.root_source, frame, ev->file, entry.batchSeq);
+                            appendFrameMerge(entry.batch.root_source, frame, entry.batchSeq);
                             if (writerMetrics_)
                             {
                                 const double ms = std::chrono::duration<double, std::milli>(
@@ -332,18 +346,36 @@ void HDF5Writer::writerLoop()
                                 writerMetrics_->observeWriteLatencyMs(ms);
                             }
                         }
-                        tracef(*logger_, "HDF5Writer [{}] source={} wrote ~{} bytes",
-                               config_.name, entry.batch.root_source, written);
-                        if (written > 0)
+                        else
                         {
-                            pool_->recordWrite(entry.batch.root_source, written);
-                            if (writerMetrics_)
+                            auto           ev = pool_->acquire(entry.batch.root_source);
+                            const uint64_t written = static_cast<uint64_t>(
+                                frame.timestamps.size() * frame.columns.size() * sizeof(double));
                             {
-                                writerMetrics_->incrementBytesWritten(entry.batch.root_source,
-                                                                       static_cast<double>(written));
-                                writerMetrics_->incrementRowsWritten(
-                                    entry.batch.root_source,
-                                    static_cast<double>(frame.timestamps.size()));
+                                std::lock_guard<std::mutex> fileLk(ev->fileMutex);
+                                const auto t0 = std::chrono::steady_clock::now();
+                                appendFrame(entry.batch.root_source, frame, ev->file, entry.batchSeq);
+                                if (writerMetrics_)
+                                {
+                                    const double ms = std::chrono::duration<double, std::milli>(
+                                                          std::chrono::steady_clock::now() - t0)
+                                                          .count();
+                                    writerMetrics_->observeWriteLatencyMs(ms);
+                                }
+                            }
+                            tracef(*logger_, "HDF5Writer [{}] source={} wrote ~{} bytes",
+                                   config_.name, entry.batch.root_source, written);
+                            if (written > 0)
+                            {
+                                pool_->recordWrite(entry.batch.root_source, written);
+                                if (writerMetrics_)
+                                {
+                                    writerMetrics_->incrementBytesWritten(entry.batch.root_source,
+                                                                           static_cast<double>(written));
+                                    writerMetrics_->incrementRowsWritten(
+                                        entry.batch.root_source,
+                                        static_cast<double>(frame.timestamps.size()));
+                                }
                             }
                         }
                     }
@@ -391,6 +423,11 @@ void HDF5Writer::flushLoop()
         {
             pool_->flushAll();
         }
+        if (config_.mergeRootSources && mergeFile_)
+        {
+            std::lock_guard<std::mutex> lk(mergeFileMutex_);
+            try { mergeFile_->flush(H5F_SCOPE_GLOBAL); } catch (...) {}
+        }
     }
 
     // One final flush after stopping_ is set to ensure the last batch written
@@ -399,6 +436,11 @@ void HDF5Writer::flushLoop()
     {
         debugf(*logger_, "HDF5Writer [{}] final flush on shutdown", config_.name);
         pool_->flushAll();
+    }
+    if (config_.mergeRootSources && mergeFile_)
+    {
+        std::lock_guard<std::mutex> lk(mergeFileMutex_);
+        try { mergeFile_->flush(H5F_SCOPE_GLOBAL); } catch (...) {}
     }
     debugf(*logger_, "HDF5Writer [{}] flush thread exited", config_.name);
 }
@@ -1036,4 +1078,313 @@ void HDF5Writer::flushTabularBuffer(const std::string& sourceName,
             }
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Merge-mode helpers
+// ---------------------------------------------------------------------------
+
+void HDF5Writer::openMergeFile()
+{
+    // Build a UTC timestamp suffix: YYYYMMDDTHHMMSSz
+    const auto     now = std::chrono::system_clock::now();
+    const std::time_t t = std::chrono::system_clock::to_time_t(now);
+    std::tm utc{};
+#if defined(_WIN32)
+    gmtime_s(&utc, &t);
+#else
+    gmtime_r(&t, &utc);
+#endif
+    char tsbuf[20];
+    std::strftime(tsbuf, sizeof(tsbuf), "%Y%m%dT%H%M%Sz", &utc);
+    const std::string suffix(tsbuf);
+
+    const std::filesystem::path base(config_.basePath);
+    std::filesystem::create_directories(base);
+
+    const std::string stem = "merged";
+    mergePath_      = base / ("." + stem + "_" + suffix + ".hdf5");
+    mergeFinalPath_ = base / (stem + "_" + suffix + ".hdf5");
+
+    std::lock_guard<std::mutex> lk(mergeFileMutex_);
+    mergeFile_ = std::make_unique<H5::H5File>(mergePath_.string(), H5F_ACC_TRUNC);
+    mergeFileOpenedAt_ = std::chrono::steady_clock::now();
+    mergeBytesWritten_ = 0;
+    mergeOpenGroups_.clear();
+    infof(*logger_, "HDF5Writer [{}] merge file opened: {}", config_.name, mergePath_.string());
+}
+
+void HDF5Writer::closeMergeFile() noexcept
+{
+    std::unique_lock<std::mutex> lk(mergeFileMutex_);
+    if (!mergeFile_)
+        return;
+    try
+    {
+        mergeFile_->flush(H5F_SCOPE_GLOBAL);
+        mergeFile_->close();
+        mergeFile_.reset();
+        lk.unlock();
+
+        if (mergePath_ != mergeFinalPath_)
+        {
+            std::error_code ec;
+            std::filesystem::rename(mergePath_, mergeFinalPath_, ec);
+            if (ec)
+                warnf(*logger_, "HDF5Writer [{}] merge file rename failed: {} -> {}: {}",
+                      config_.name, mergePath_.string(), mergeFinalPath_.string(), ec.message());
+            else
+                debugf(*logger_, "HDF5Writer [{}] merge file renamed -> {}",
+                       config_.name, mergeFinalPath_.string());
+            mergePath_ = mergeFinalPath_;
+        }
+    }
+    catch (const H5::Exception& ex)
+    {
+        errorf(*logger_, "HDF5Writer [{}] merge file close HDF5 error: {}",
+               config_.name, ex.getCDetailMsg());
+    }
+    catch (const std::exception& ex)
+    {
+        errorf(*logger_, "HDF5Writer [{}] merge file close failed: {}",
+               config_.name, ex.what());
+    }
+    catch (...)
+    {
+        errorf(*logger_, "HDF5Writer [{}] merge file close failed — unknown exception",
+               config_.name);
+    }
+}
+
+void HDF5Writer::rotateMergeFile()
+{
+    infof(*logger_, "HDF5Writer [{}] rotating merge file", config_.name);
+    // Snapshot groups before closing.
+    std::set<std::string> groupsToRecreate;
+    {
+        std::lock_guard<std::mutex> lk(mergeFileMutex_);
+        groupsToRecreate = mergeOpenGroups_;
+    }
+    closeMergeFile();
+    openMergeFile();
+
+    // Recreate all known source groups in the new file.
+    std::lock_guard<std::mutex> lk(mergeFileMutex_);
+    for (const auto& g : groupsToRecreate)
+    {
+        if (!mergeFile_->nameExists(g))
+        {
+            mergeFile_->createGroup(g);
+            mergeOpenGroups_.insert(g);
+        }
+    }
+    infof(*logger_, "HDF5Writer [{}] merge file rotated, {} groups recreated",
+          config_.name, groupsToRecreate.size());
+}
+
+H5::Group HDF5Writer::ensureMergeGroup(const std::string& sourceName)
+{
+    // Caller MUST hold mergeFileMutex_.
+    if (mergeOpenGroups_.find(sourceName) == mergeOpenGroups_.end())
+    {
+        if (!mergeFile_->nameExists(sourceName))
+        {
+            mergeFile_->createGroup(sourceName);
+            infof(*logger_, "HDF5Writer [{}] merge group created: /{}/",
+                  config_.name, sourceName);
+        }
+        mergeOpenGroups_.insert(sourceName);
+    }
+    return mergeFile_->openGroup(sourceName);
+}
+
+void HDF5Writer::checkMergeRotation()
+{
+    // Called without mergeFileMutex_ held.
+    bool needRotate = false;
+    {
+        std::lock_guard<std::mutex> lk(mergeFileMutex_);
+        if (!mergeFile_)
+            return;
+        const auto     now = std::chrono::steady_clock::now();
+        const auto     age = std::chrono::duration_cast<std::chrono::seconds>(now - mergeFileOpenedAt_);
+        const uint64_t sizeLimitBytes =
+            static_cast<uint64_t>(config_.maxFileSizeMB) * 1024ULL * 1024ULL;
+        needRotate = (age >= config_.maxFileAge) ||
+                     (sizeLimitBytes > 0 && mergeBytesWritten_ >= sizeLimitBytes);
+    }
+    if (needRotate)
+        rotateMergeFile();
+}
+
+void HDF5Writer::appendFrameMerge(const std::string&          sourceName,
+                                  const util::bus::DataBatch& batch,
+                                  uint64_t                    batchSeq)
+{
+    using namespace mldp_pvxs_driver::util::bus;
+
+    if (batch.timestamps.empty())
+    {
+        debugf(*logger_, "HDF5Writer appendFrameMerge source={} — no timestamps, skipping", sourceName);
+        return;
+    }
+
+    checkMergeRotation();
+
+    const std::size_t           tsCount = batch.timestamps.size();
+    std::lock_guard<std::mutex> lk(mergeFileMutex_);
+
+    if (!mergeFile_)
+    {
+        warnf(*logger_, "HDF5Writer [{}] appendFrameMerge — merge file not open, skipping", config_.name);
+        return;
+    }
+
+    ensureMergeGroup(sourceName);
+    const std::string groupPrefix = sourceName + "/";
+
+    auto ensure1D = [&](const std::string& name, const H5::DataType& dtype)
+    {
+        return ensureDataset(*mergeFile_, groupPrefix + name, dtype);
+    };
+    auto ensure2D = [&](const std::string& name, const H5::DataType& dtype, hsize_t arrayLen)
+    {
+        return ensureDataset2D(*mergeFile_, groupPrefix + name, dtype, arrayLen);
+    };
+
+    // 1. timestamps
+    {
+        auto it = lastTsBatchSeq_.find(sourceName);
+        if (it == lastTsBatchSeq_.end() || it->second != batchSeq)
+        {
+            std::vector<int64_t> nsVec;
+            nsVec.reserve(tsCount);
+            for (const auto& ts : batch.timestamps)
+            {
+                nsVec.push_back(
+                    static_cast<int64_t>(ts.epoch_seconds) * 1'000'000'000LL +
+                    static_cast<int64_t>(ts.nanoseconds));
+            }
+            auto ds = ensure1D("timestamps", H5::PredType::NATIVE_INT64);
+            append1D(ds, H5::PredType::NATIVE_INT64, nsVec.data(), static_cast<hsize_t>(tsCount));
+            lastTsBatchSeq_[sourceName] = batchSeq;
+        }
+    }
+
+    // 2. Columns
+    for (const auto& col : batch.columns)
+    {
+        if (col.name.empty())
+            continue;
+
+        std::visit([&](const auto& vals)
+                   {
+                       using VecT  = std::decay_t<decltype(vals)>;
+                       using ElemT = typename VecT::value_type;
+
+                       if constexpr (std::is_same_v<ElemT, double>   ||
+                                     std::is_same_v<ElemT, float>    ||
+                                     std::is_same_v<ElemT, int64_t>  ||
+                                     std::is_same_v<ElemT, int32_t>)
+                       {
+                           const hsize_t n = static_cast<hsize_t>(vals.size());
+                           if (n == 0) return;
+                           const H5::PredType& h5type = mapNativeType<ElemT>();
+                           auto ds = ensure1D(col.name, h5type);
+                           append1D(ds, h5type, vals.data(), n);
+                           mergeBytesWritten_ += static_cast<uint64_t>(n * sizeof(ElemT));
+                       }
+                       else if constexpr (std::is_same_v<ElemT, bool>)
+                       {
+                           const hsize_t n = static_cast<hsize_t>(vals.size());
+                           if (n == 0) return;
+                           std::vector<unsigned int> buf;
+                           buf.reserve(n);
+                           for (bool v : vals)
+                               buf.push_back(v ? 1u : 0u);
+                           auto ds = ensure1D(col.name, H5::PredType::NATIVE_HBOOL);
+                           append1D(ds, H5::PredType::NATIVE_HBOOL, buf.data(), n);
+                           mergeBytesWritten_ += static_cast<uint64_t>(n * sizeof(unsigned int));
+                       }
+                       else if constexpr (std::is_same_v<ElemT, std::string>)
+                       {
+                           const hsize_t n = static_cast<hsize_t>(vals.size());
+                           if (n == 0) return;
+                           const H5::StrType vlStrType(H5::PredType::C_S1, H5T_VARIABLE);
+                           std::vector<const char*> ptrs;
+                           ptrs.reserve(n);
+                           for (const auto& s : vals)
+                               ptrs.push_back(s.c_str());
+                           auto ds = ensure1D(col.name, vlStrType);
+                           append1D(ds, vlStrType, ptrs.data(), n);
+                       }
+                       else if constexpr (std::is_same_v<ElemT, std::vector<uint8_t>>)
+                       {
+                           if (vals.empty() || vals[0].empty()) return;
+                           const hsize_t arrayLen = static_cast<hsize_t>(vals[0].size());
+                           const hsize_t nSamples = static_cast<hsize_t>(vals.size());
+                           std::vector<uint8_t> flat;
+                           flat.reserve(nSamples * arrayLen);
+                           for (const auto& row : vals)
+                               flat.insert(flat.end(), row.begin(), row.end());
+                           auto ds = ensure2D(col.name, H5::PredType::NATIVE_UINT8, arrayLen);
+                           append2D(ds, H5::PredType::NATIVE_UINT8, flat.data(), nSamples, arrayLen);
+                           mergeBytesWritten_ += static_cast<uint64_t>(nSamples * arrayLen);
+                       }
+                       else if constexpr (std::is_same_v<ElemT, std::vector<double>>  ||
+                                          std::is_same_v<ElemT, std::vector<float>>   ||
+                                          std::is_same_v<ElemT, std::vector<int64_t>> ||
+                                          std::is_same_v<ElemT, std::vector<int32_t>>)
+                       {
+                           using InnerT = typename ElemT::value_type;
+                           if (vals.empty() || vals[0].empty()) return;
+                           const hsize_t arrayLen = static_cast<hsize_t>(vals[0].size());
+                           const hsize_t nSamples = static_cast<hsize_t>(vals.size());
+                           std::vector<InnerT> flat;
+                           flat.reserve(nSamples * arrayLen);
+                           for (const auto& row : vals)
+                               flat.insert(flat.end(), row.begin(), row.end());
+                           const H5::PredType& h5type = mapNativeType<InnerT>();
+                           auto ds = ensure2D(col.name, h5type, arrayLen);
+                           append2D(ds, h5type, flat.data(), nSamples, arrayLen);
+                           mergeBytesWritten_ += static_cast<uint64_t>(nSamples * arrayLen * sizeof(InnerT));
+                       }
+                       else if constexpr (std::is_same_v<ElemT, std::vector<bool>>)
+                       {
+                           if (vals.empty() || vals[0].empty()) return;
+                           const hsize_t arrayLen = static_cast<hsize_t>(vals[0].size());
+                           const hsize_t nSamples = static_cast<hsize_t>(vals.size());
+                           std::vector<unsigned int> flat;
+                           flat.reserve(nSamples * arrayLen);
+                           for (const auto& row : vals)
+                               for (bool v : row)
+                                   flat.push_back(v ? 1u : 0u);
+                           auto ds = ensure2D(col.name, H5::PredType::NATIVE_HBOOL, arrayLen);
+                           append2D(ds, H5::PredType::NATIVE_HBOOL, flat.data(), nSamples, arrayLen);
+                           mergeBytesWritten_ += static_cast<uint64_t>(nSamples * arrayLen * sizeof(unsigned int));
+                       }
+                   },
+                   col.values);
+    }
+}
+
+void HDF5Writer::flushTabularBufferMerge(const std::string& sourceName,
+                                         TabularBuffer&     buf)
+{
+    checkMergeRotation();
+
+    std::lock_guard<std::mutex> lk(mergeFileMutex_);
+    if (!mergeFile_)
+    {
+        warnf(*logger_, "HDF5Writer [{}] flushTabularBufferMerge — merge file not open, skipping",
+              config_.name);
+        return;
+    }
+
+    // ensureMergeGroup records the group in mergeOpenGroups_.
+    ensureMergeGroup(sourceName);
+
+    // flushTabularBuffer already creates /<sourceName>/ group and writes
+    // sourceName + "/col" paths — fully compatible with the merge file.
+    flushTabularBuffer(sourceName, buf, *mergeFile_);
 }

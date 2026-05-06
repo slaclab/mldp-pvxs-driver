@@ -92,7 +92,7 @@ public:
     const std::optional<metrics::MetricsConfig>& metricsConfig() const;
 
     /** @return Route entries mapping writer names to their source reader lists. */
-    const std::vector<RouteTable::RouteEntry>& routeEntries() const;
+    const std::vector<RouteFilterEntry>& routeEntries() const;
 
 private:
     void parse(const ::mldp_pvxs_driver::config::Config& root);
@@ -107,7 +107,7 @@ private:
     std::vector<std::pair<std::string, config::Config>> readerEntries_;
     std::vector<std::pair<std::string, config::Config>> writerEntries_;
     std::optional<metrics::MetricsConfig>               metricsConfig_;
-    std::vector<RouteTable::RouteEntry>                  routeEntries_;
+    std::vector<RouteFilterEntry>                  routeEntries_;
 };
 
 } // namespace mldp_pvxs_driver::controller

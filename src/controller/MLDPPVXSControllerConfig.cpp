@@ -64,7 +64,7 @@ const std::optional<MetricsConfig>& MLDPPVXSControllerConfig::metricsConfig() co
     return metricsConfig_;
 }
 
-const std::vector<RouteTable::RouteEntry>&
+const std::vector<RouteFilterEntry>&
 MLDPPVXSControllerConfig::routeEntries() const
 {
     return routeEntries_;
@@ -269,6 +269,37 @@ void MLDPPVXSControllerConfig::parseRouting(const ::mldp_pvxs_driver::config::Co
             fromReaders.push_back(std::move(readerName));
         }
 
-        routeEntries_.push_back({writerName, std::move(fromReaders)});
+        std::vector<std::string> includePatterns;
+        if (writerCfg.hasChild("include"))
+        {
+            if (!writerCfg.isSequence("include"))
+            {
+                throw Error("routing entry '" + writerName + "': 'include' must be a sequence");
+            }
+            for (const auto& node : writerCfg.subConfig("include"))
+            {
+                std::string pat;
+                node >> pat;
+                includePatterns.push_back(std::move(pat));
+            }
+        }
+
+        std::vector<std::string> excludePatterns;
+        if (writerCfg.hasChild("exclude"))
+        {
+            if (!writerCfg.isSequence("exclude"))
+            {
+                throw Error("routing entry '" + writerName + "': 'exclude' must be a sequence");
+            }
+            for (const auto& node : writerCfg.subConfig("exclude"))
+            {
+                std::string pat;
+                node >> pat;
+                excludePatterns.push_back(std::move(pat));
+            }
+        }
+
+        routeEntries_.push_back({writerName, std::move(fromReaders),
+                                  std::move(includePatterns), std::move(excludePatterns)});
     }
 }

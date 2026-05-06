@@ -23,11 +23,14 @@
 #include <util/bus/DataBatch.h>
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <deque>
+#include <filesystem>
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -139,6 +142,18 @@ public:
      * @note Idempotent: calling stop() more than once is safe.
      */
     void stop() noexcept override;
+
+    /**
+     * @brief Advertises merge-mode support.
+     *
+     * When @ref HDF5WriterConfig::mergeRootSources is true the writer opens a
+     * single HDF5 file and places each root-source's datasets under a dedicated
+     * HDF5 group (`/<source_name>/`).
+     */
+    bool supports_multi_root_source() const noexcept override
+    {
+        return true;
+    }
 
 private:
     using EventBatch = util::bus::IDataBus::EventBatch;
@@ -266,6 +281,18 @@ private:
     std::thread flushThread_;  ///< Calls flushAll() periodically via flushLoop().
 
     // -----------------------------------------------------------------------
+    // Merge-mode state (used only when config_.mergeRootSources == true)
+    // -----------------------------------------------------------------------
+
+    std::unique_ptr<H5::H5File>               mergeFile_;            ///< Single open HDF5 file for all sources.
+    std::filesystem::path                     mergePath_;            ///< Hidden temp path while file is open.
+    std::filesystem::path                     mergeFinalPath_;       ///< Final visible path after close.
+    mutable std::mutex                        mergeFileMutex_;       ///< Guards mergeFile_ and group/dataset access.
+    std::set<std::string>                     mergeOpenGroups_;      ///< Source names whose groups exist in mergeFile_.
+    uint64_t                                  mergeBytesWritten_{0}; ///< Bytes written across all sources.
+    std::chrono::steady_clock::time_point     mergeFileOpenedAt_;    ///< When mergeFile_ was opened.
+
+    // -----------------------------------------------------------------------
     // Internal methods — all called only from writerThread_
     // -----------------------------------------------------------------------
 
@@ -379,6 +406,57 @@ private:
     void flushTabularBuffer(const std::string& sourceName,
                             TabularBuffer&     buf,
                             H5::H5File&        file);
+
+    // ---- merge-mode helpers (called only when config_.mergeRootSources == true) ----
+
+    /**
+     * @brief Open a new merge HDF5 file and reset merge state.
+     * @pre mergeFileMutex_ must NOT be held by the caller.
+     */
+    void openMergeFile();
+
+    /**
+     * @brief Flush and close the current merge file, then rename it to its final visible path.
+     * @pre mergeFileMutex_ must NOT be held by the caller.
+     */
+    void closeMergeFile() noexcept;
+
+    /**
+     * @brief Rotate the merge file: close old, open new, recreate all known source groups.
+     * @pre mergeFileMutex_ must NOT be held by the caller.
+     */
+    void rotateMergeFile();
+
+    /**
+     * @brief Ensure the HDF5 group `/<sourceName>/` exists in mergeFile_.
+     *
+     * Creates the group on first call for this source and records it in
+     * mergeOpenGroups_.  Returns the opened group handle.
+     *
+     * @pre mergeFileMutex_ MUST be held by the caller.
+     * @param sourceName  Root source identifier (used as group name).
+     * @return Open H5::Group handle for /<sourceName>/.
+     */
+    H5::Group ensureMergeGroup(const std::string& sourceName);
+
+    /**
+     * @brief Check rotation thresholds and rotate if needed.
+     * @pre mergeFileMutex_ must NOT be held by the caller.
+     */
+    void checkMergeRotation();
+
+    /**
+     * @brief Append one non-tabular DataBatch under the merge file group for @p sourceName.
+     */
+    void appendFrameMerge(const std::string&          sourceName,
+                          const util::bus::DataBatch& batch,
+                          uint64_t                    batchSeq);
+
+    /**
+     * @brief Write buffered tabular rows under the merge file group for @p sourceName.
+     */
+    void flushTabularBufferMerge(const std::string& sourceName,
+                                 TabularBuffer&     buf);
 };
 
 } // namespace mldp_pvxs_driver::writer

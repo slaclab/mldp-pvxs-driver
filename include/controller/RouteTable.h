@@ -17,10 +17,18 @@
 
 namespace mldp_pvxs_driver::controller {
 
+/// Extended route entry carrying optional source-filter patterns.
+struct RouteFilterEntry {
+    std::string              writer_name;
+    std::vector<std::string> from_readers;
+    std::vector<std::string> include_patterns; ///< empty = accept all sources
+    std::vector<std::string> exclude_patterns; ///< empty = exclude none
+};
+
 class RouteTable
 {
 public:
-    /// Route entry: writer_name → list of accepted reader names
+    /// @deprecated Use RouteFilterEntry. Retained for backward compatibility.
     using RouteEntry = std::pair<std::string, std::vector<std::string>>;
 
     RouteTable() = default;
@@ -28,7 +36,7 @@ public:
     /// Build from parsed config. Validates all names exist.
     /// @throws std::runtime_error on unknown reader/writer names.
     static RouteTable build(
-        const std::vector<RouteEntry>& routes,
+        const std::vector<RouteFilterEntry>& routes,
         const std::unordered_set<std::string>& known_readers,
         const std::unordered_set<std::string>& known_writers);
 
@@ -38,6 +46,12 @@ public:
     /// Check if writer should receive batches from given reader. O(1) average.
     bool accepts(const std::string& writer_name,
                  const std::string& reader_name) const noexcept;
+
+    /// Check if writer should receive batches from given root_source.
+    /// Applies include/exclude glob patterns (fnmatch). O(P) where P = pattern count.
+    /// Returns true when no routing configured (all-to-all) or no patterns set.
+    bool acceptsSource(const std::string& writer_name,
+                       const std::string& root_source) const noexcept;
 
     /// Return reader names not mentioned in any route.
     std::vector<std::string> orphanReaders(
@@ -52,6 +66,8 @@ private:
     struct WriterRoute {
         std::unordered_set<std::string> readers;
         bool accept_all{false};
+        std::vector<std::string> include_patterns;
+        std::vector<std::string> exclude_patterns;
     };
     std::unordered_map<std::string, WriterRoute> table_;
     bool all_to_all_{true};
