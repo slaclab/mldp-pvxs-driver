@@ -120,6 +120,12 @@ HDF5Writer::HDF5Writer(HDF5WriterConfig config)
     : config_(std::move(config))
     , logger_(util::log::newLogger("hdf5_writer:" + config_.name))
 {
+    if (config_.mergeRootSources && !supports_multi_root_source())
+    {
+        throw HDF5WriterConfig::Error(
+            "writer.hdf5." + config_.name +
+            ": merge-root-sources=true is not supported by this writer");
+    }
 }
 
 HDF5Writer::~HDF5Writer()

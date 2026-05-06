@@ -220,6 +220,7 @@ writer:
       max-file-size-mb: 512     # optional; default: 512
       flush-interval-ms: 1000   # optional; default: 1000
       compression-level: 0      # optional; 0–9, default: 0 (off)
+      merge-root-sources: false   # optional; default: false — merge mode disabled (see Task 03)
 ```
 
 | Key | Type | Default | Description |
@@ -230,6 +231,7 @@ writer:
 | `max-file-size-mb` | uint64 | `512` | Rotate file after this size (MiB). |
 | `flush-interval-ms` | int | `1000` | How often the flush thread calls `H5File::flush`. |
 | `compression-level` | int | `0` | DEFLATE level 0–9 (0 = no compression). |
+| `merge-root-sources` | bool | `false` | Opt-in merge mode; multiple root-sources share one output file. Throws at startup if `true` (merge not yet implemented). |
 
 ## Lifecycle
 

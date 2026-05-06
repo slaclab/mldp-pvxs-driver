@@ -1353,4 +1353,17 @@ TEST_F(HDF5WriterTest, NonNTTableBatchUsesColumnarLayout)
         << "Columnar batch must not create compound dataset named after root_source";
 }
 
+TEST_F(HDF5WriterTest, SupportsMultiRootSourceReturnsFalse)
+{
+    HDF5Writer w(makeConfig());
+    EXPECT_FALSE(w.supports_multi_root_source());
+}
+
+TEST_F(HDF5WriterTest, ThrowsWhenMergeRootSourcesEnabledButNotSupported)
+{
+    HDF5WriterConfig cfg = makeConfig();
+    cfg.mergeRootSources = true;
+    EXPECT_THROW(HDF5Writer w(std::move(cfg)), HDF5WriterConfig::Error);
+}
+
 #endif // MLDP_PVXS_HDF5_ENABLED

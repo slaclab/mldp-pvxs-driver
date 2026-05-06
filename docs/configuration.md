@@ -97,6 +97,7 @@ writer:
       max-file-size-mb: 512        # optional; default: 512 MiB
       flush-interval-ms: 1000      # optional; default: 1000 ms
       compression-level: 0         # optional; 0–9; default: 0 (no compression)
+      merge-root-sources: false    # optional; default: false (merge disabled until Task 03)
 ```
 
 | Key | Type | Default | Description |
@@ -107,6 +108,7 @@ writer:
 | `max-file-size-mb` | uint64 | `512` | Rotate file after this size in MiB. |
 | `flush-interval-ms` | int | `1000` | Flush thread call interval in milliseconds. |
 | `compression-level` | int | `0` | DEFLATE compression level 0–9 (0 = off). |
+| `merge-root-sources` | bool | `false` | Opt-in merge mode; multiple root-sources share one output file. Throws at startup if `true` (merge not yet implemented). |
 
 → [Full HDF5 Writer Documentation](writers/hdf5-writer.md)
 
