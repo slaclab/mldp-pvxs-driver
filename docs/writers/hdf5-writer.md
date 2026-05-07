@@ -4,26 +4,70 @@
 
 ## Overview
 
-`HDF5Writer` stores incoming event batches as HDF5 datasets on disk. It registers as type `"hdf5"` in the writer factory. Available only when the build option `MLDP_PVXS_HDF5_ENABLED` is set.
+Two HDF5 writer types store incoming event batches as HDF5 datasets on disk. Both are available only when the build option `MLDP_PVXS_HDF5_ENABLED` is set.
+
+| Type | Class | Behaviour |
+|------|-------|-----------|
+| `"hdf5"` | `HDF5WriterPerSource` | One file per `root_source` via `HDF5FilePool` |
+| `"hdf5-merge"` | `HDF5WriterMerge` | All sources share one file; each source gets its own HDF5 group |
 
 ## Internal Architecture
 
+### Class hierarchy
+
+Each concrete class registers itself directly in the writer factory via the `REGISTER_WRITER` macro:
+
 ```
-push() → bounded MPSC deque
-               ↓
-         writerThread
-               ↓
-        appendFrame()  →  HDF5FilePool.acquire(source)
-                                    ↓
-                            H5::H5File (per source)
-                                    ↓
-                       flushThread (periodic flush)
+IWriter
+└── HDF5WriterBase          (abstract — shared queue, threads, tabular buffers)
+      ├── HDF5WriterPerSource   (type "hdf5" — one file per root_source via HDF5FilePool)
+      └── HDF5WriterMerge       (type "hdf5-merge" — all sources share one H5::H5File)
 ```
 
-- **Writer thread**: single thread drains the queue and calls `appendFrame()`.
-- **Flush thread**: calls `HDF5FilePool::flushAll()` every `flush-interval-ms`.
-- **File pool**: `HDF5FilePool` keeps one open `H5::H5File` per `root_source`; rotates on age or size threshold.
+### hdf5 — HDF5WriterPerSource (one file per source)
+
+```
+push() → bounded MPSC deque
+               ↓ (writerThread)
+        writeFrameImpl()  →  HDF5FilePool.acquire(source)
+                                       ↓
+                               H5::H5File (per source)
+                                       ↓
+                      flushThread → doFlushAll() → pool->flushAll()
+```
+
+### hdf5-merge — HDF5WriterMerge (all sources, one file)
+
+```
+push() → bounded MPSC deque
+               ↓ (writerThread)
+        writeFrameImpl()  →  checkMergeRotation()
+                                       ↓
+                              lock mergeFileMutex_
+                                       ↓
+                           single shared H5::H5File
+                           datasets under /<source>/ group
+                                       ↓
+                      flushThread → doFlushAll() → mergeFile_->flush()
+```
+
+### Shared base (HDF5WriterBase)
+
+- **Writer thread**: drains bounded MPSC queue; calls `writeFrameImpl()` (virtual) per frame or `flushTabularBufferImpl()` (virtual) on end-of-batch-group.
+- **Flush thread**: calls `doFlushAll()` (virtual) every `flush-interval-ms`.
+- **Tabular buffers**: `TabularBuffer` per source accumulated entirely in the base; subclass called only at flush.
 - **Back-pressure**: queue capped at `kQueueCapacity` (8192). `push()` returns `false` when full.
+- **Destructor safety**: `~HDF5WriterBase()` does **not** call `stop()` (pure-virtual `doStop()` would be invalid at base-dtor time). Each subclass destructor calls `stop()` while its vtable is still live.
+
+### Pure-virtual hooks
+
+| Hook | Called by | Purpose |
+|------|-----------|---------|
+| `writeFrameImpl(source, frame, batchSeq)` | `writerLoop` | Write one DataBatch frame |
+| `flushTabularBufferImpl(source, buf)` | `writerLoop`, `accumulateTabularFrame` | Write accumulated NTTable rows |
+| `doFlushAll()` | `flushLoop` | Flush open file(s) to disk |
+| `doStart()` | `start()` | Open pool or merge file |
+| `doStop()` | `stop()` | Close pool or merge file after threads join |
 
 ## HDF5 File Layout
 
@@ -209,12 +253,20 @@ In all cases, the old file is fully flushed and closed before the new file is re
 
 ## Configuration
 
-Under `writer.hdf5[i]`:
+Under `writer.hdf5[i]` or `writer.hdf5-merge[i]`:
 
 ```yaml
 writer:
-  hdf5:
+  hdf5:                         # type "hdf5" — HDF5WriterPerSource
     - name: hdf5_local          # required — unique instance name
+      base-path: /data/hdf5     # required — output directory
+      max-file-age-s: 3600      # optional; default: 3600
+      max-file-size-mb: 512     # optional; default: 512
+      flush-interval-ms: 1000   # optional; default: 1000
+      compression-level: 0      # optional; 0–9, default: 0 (off)
+
+  hdf5-merge:                   # type "hdf5-merge" — HDF5WriterMerge
+    - name: hdf5_merged         # required — unique instance name
       base-path: /data/hdf5     # required — output directory
       max-file-age-s: 3600      # optional; default: 3600
       max-file-size-mb: 512     # optional; default: 512
@@ -231,28 +283,199 @@ writer:
 | `flush-interval-ms` | int | `1000` | How often the flush thread calls `H5File::flush`. |
 | `compression-level` | int | `0` | DEFLATE level 0–9 (0 = no compression). |
 
+## hdf5-merge Writer
+
+`HDF5WriterMerge` (YAML key `writer.hdf5-merge`) writes all root-sources into a **single shared HDF5 file**. Each source's datasets live under a dedicated HDF5 group.
+
+### File layout
+
+```
+merged_<YYYYMMDDTHHMMSSz>.hdf5
+├── source_a/
+│   ├── timestamps         int64   [N]
+│   ├── <col_name_0>       …       [N]
+│   └── …
+└── source_b/
+    ├── timestamps         int64   [M]
+    ├── <col_name_0>       …       [M]
+    └── …
+```
+
+Groups are created on the first write for each source and reused for all subsequent writes.
+
+For NTTable (tabular) sources the layout under the group mirrors the standard per-source tabular layout:
+
+```
+merged_<suffix>.hdf5
+└── <source>/
+    ├── secondsPastEpoch   int64   [N_rows]
+    ├── nanoseconds        int64   [N_rows]
+    └── <col_name>         typed   [N_rows]
+```
+
+### Locking model
+
+`HDF5WriterMerge` owns a single `mergeFileMutex_` that guards all access to the shared file handle. Writer and flush threads never touch the merge file concurrently without holding this mutex. Simpler than the per-source `fileMutex` model used in pool mode and sufficient because all writes are serialised through the single writer thread.
+
+### Rotation policy
+
+Rotation is triggered when **any** source's accumulated write causes either threshold to be exceeded:
+
+| Condition | Config key | Default |
+|-----------|-----------|---------|
+| File age ≥ threshold | `max-file-age-s` | 3600 s |
+| Bytes written ≥ threshold | `max-file-size-mb` | 512 MiB |
+
+On rotation:
+1. Current file is flushed, closed, and renamed to its final visible path.
+2. A new file is opened with a fresh UTC timestamp suffix.
+3. All previously seen source groups are immediately recreated in the new file so that subsequent writes from any source can proceed without needing a schema re-discovery.
+
+No data is lost during rotation: write operations call `checkMergeRotation()` before acquiring the file lock, so each write lands entirely in either the old file or the new file.
+
+### Schema-conflict behaviour
+
+If two sources attempt to write a dataset with the same name but different HDF5 types under the same group, the writer logs an error and throws `std::runtime_error`. This is enforced by `ensureDataset()`, which opens the existing dataset and compares its committed type against the requested type.
+
+### Enable hdf5-merge writer
+
+```yaml
+writer:
+  hdf5-merge:
+    - name: hdf5_merged
+      base-path: /data/hdf5
+```
+
+`supports_multi_root_source()` returns `true` on `HDF5WriterMerge`; the constructor guard is satisfied and the writer starts normally.
+
+## Examples
+
+### Single writer, single reader (default)
+
+```yaml
+writer:
+  hdf5:
+    - name: hdf5_local
+      base-path: /data/hdf5
+
+reader:
+  - epics-pvxs:
+      - name: reader_main
+        pvs:
+          - name: LINAC:BPM:01:X
+          - name: LINAC:BPM:01:Y
+```
+
+Output: one file per source in `/data/hdf5/`.
+
+```
+/data/hdf5/
+├── LINAC_BPM_01_X_20260501T120000z.hdf5   # timestamps + LINAC:BPM:01:X datasets
+└── LINAC_BPM_01_Y_20260501T120000z.hdf5   # timestamps + LINAC:BPM:01:Y datasets
+```
+
+---
+
+### Two readers, PV filter routing, single merged file
+
+Two readers each covering a different PV namespace. Only matching sources pass the
+filter. All accepted sources land in one merged HDF5 file — one group per source.
+
+```yaml
+writer:
+  hdf5-merge:
+    - name: hdf5_merged
+      base-path: /data/merged
+
+reader:
+  - epics-pvxs:
+      - name: reader_linac
+        pvs:
+          - name: LINAC:BPM:01:X
+          - name: LINAC:BPM:01:Y
+          - name: LINAC:TEST:01:X   # test PV — excluded below
+
+  - epics-pvxs:
+      - name: reader_gun
+        pvs:
+          - name: GUN:SOLENOID:01:I
+          - name: GUN:SOLENOID:01:V
+
+routing:
+  hdf5_merged:
+    from:
+      - reader_linac
+      - reader_gun
+    include:
+      - "LINAC:BPM:*"      # accept production BPMs only
+      - "GUN:SOLENOID:*"   # accept all gun solenoids
+    exclude:
+      - "LINAC:TEST:*"     # drop test PVs even if matched by include
+```
+
+**Filter logic** (applied per batch, keyed on `root_source`):
+
+| `root_source` | include match | exclude match | Result |
+|---|---|---|---|
+| `LINAC:BPM:01:X` | ✅ `LINAC:BPM:*` | ✗ | **pass → written** |
+| `LINAC:BPM:01:Y` | ✅ `LINAC:BPM:*` | ✗ | **pass → written** |
+| `LINAC:TEST:01:X` | ✅ `LINAC:BPM:*` no / skip | ✅ `LINAC:TEST:*` | **drop** |
+| `GUN:SOLENOID:01:I` | ✅ `GUN:SOLENOID:*` | ✗ | **pass → written** |
+| `GUN:SOLENOID:01:V` | ✅ `GUN:SOLENOID:*` | ✗ | **pass → written** |
+
+Output: one file in `/data/merged/`:
+
+```
+/data/merged/merged_20260501T120000z.hdf5
+├── LINAC:BPM:01:X/
+│   ├── timestamps       int64 [N]
+│   └── LINAC:BPM:01:X   double [N]
+├── LINAC:BPM:01:Y/
+│   ├── timestamps       int64 [N]
+│   └── LINAC:BPM:01:Y   double [N]
+├── GUN:SOLENOID:01:I/
+│   ├── timestamps       int64 [M]
+│   └── GUN:SOLENOID:01:I  double [M]
+└── GUN:SOLENOID:01:V/
+    ├── timestamps       int64 [M]
+    └── GUN:SOLENOID:01:V  double [M]
+```
+
+`LINAC:TEST:01:X` never appears — dropped by the `exclude` filter before reaching the writer.
+
+> **Note:** glob patterns use `fnmatch(3)` — `*` matches `:` in EPICS PV names.
+> Matching is case-sensitive. Patterns with no `include:` block accept all sources.
+
 ## Lifecycle
 
 | Step | What happens |
 |------|-------------|
-| `start()` | Initialises `HDF5FilePool`; spawns writer and flush threads. |
-| `push(batch)` | Enqueues batch; returns `false` if queue is at capacity. |
-| `stop()` | Sets stop flag; joins threads; calls `HDF5FilePool::closeAll()`. |
+| `HDF5WriterPerSource(config)` | Opens `HDF5FilePool`; one file per source. |
+| `HDF5WriterMerge(config)` | Opens single shared merge file. |
+| `start()` | Calls `doStart()` (opens pool / merge file), then spawns writer and flush threads. |
+| `push(batch)` | Enqueues batch under `queueMutex_`; returns `false` if queue at capacity. |
+| `stop()` | Sets `stopping_`; joins both threads; calls `doStop()` (closes files). |
 
 ## Thread-Safety Notes
 
-- `HDF5FilePool` holds its mutex **only** during map lookup / rotation, not during HDF5 I/O.
-- Concurrent I/O on **different** sources requires no contention.
-- `HDF5Writer` itself uses a single writer thread, so `appendFrame()` never races.
+- `HDF5FilePool` holds its mutex **only** during map lookup / rotation, not during HDF5 I/O. Concurrent I/O on different sources requires no contention.
+- In non-merge mode, a per-`FileEntry` `fileMutex` serialises writer thread and flush thread access to the same `H5::H5File`. This is required because HDF5 (without the thread-safe build) is not thread-safe.
+- In merge mode, a single `mergeFileMutex_` serialises all access to the shared file. The writer thread holds it during `appendFrameMerge()` and `flushTabularBufferMerge()`; the flush thread holds it during `mergeFile_->flush()`.
+- `lastTsBatchSeq_` and `tabularBuffers_` are accessed exclusively from the writer thread — no mutex needed.
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `include/writer/hdf5/HDF5Writer.h` | Class definition (guard: `MLDP_PVXS_HDF5_ENABLED`). |
+| `include/writer/hdf5/HDF5WriterBase.h` | Abstract base: shared state, queue/thread logic, pure-virtual hooks. |
+| `include/writer/hdf5/HDF5WriterPerSource.h` | Per-source subclass header; `REGISTER_WRITER("hdf5", …)`. |
+| `include/writer/hdf5/HDF5WriterMerge.h` | Merge subclass header; `REGISTER_WRITER("hdf5-merge", …)`. |
 | `include/writer/hdf5/HDF5WriterConfig.h` | Config struct, YAML keys, `parse()`. |
 | `include/writer/hdf5/HDF5FilePool.h` | Per-source file pool, rotation, flush. |
-| `src/writer/hdf5/HDF5Writer.cpp` | `appendFrame()`, `ensureDataset()`, `ensureDataset2D()`, thread loops. |
+| `src/writer/hdf5/HDF5WriterBase.cpp` | `writerLoop`, `flushLoop`, tabular accumulation, `ensureDataset`, `flushTabularBuffer`. |
+| `src/writer/hdf5/HDF5WriterPerSource.cpp` | `appendFrame`, pool lifecycle, `writeFrameImpl`. |
+| `src/writer/hdf5/HDF5WriterMerge.cpp` | Merge-file helpers, `appendFrameMerge`, rotation. |
+| `src/writer/hdf5/HDF5WriterDetail.h` | Internal shared helpers: `append1D/2D`, `writeColumnsImpl`, `mapNativeType`, `fillValue`. |
 
 ## Build Requirement
 
@@ -301,3 +524,26 @@ mldp_pvxs_driver_hdf5_write_latency_ms_bucket{...}
 `HDF5WriterMetrics` inherits `WriterMetrics → ExtendedMetrics`.
 See [metrics-extension-guide.md](../metrics-extension-guide.md) for the full pattern
 used to create new per-component metric classes.
+
+## Config Migration
+
+If upgrading from a build that used `merge-root-sources: true`:
+
+**Before:**
+```yaml
+writer:
+  hdf5:
+    - name: hdf5_merged
+      base-path: /data/hdf5
+      merge-root-sources: true
+```
+
+**After:**
+```yaml
+writer:
+  hdf5-merge:
+    - name: hdf5_merged
+      base-path: /data/hdf5
+```
+
+Per-source writer configuration is unchanged — `writer.hdf5` still works as before.

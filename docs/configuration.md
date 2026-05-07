@@ -97,6 +97,7 @@ writer:
       max-file-size-mb: 512        # optional; default: 512 MiB
       flush-interval-ms: 1000      # optional; default: 1000 ms
       compression-level: 0         # optional; 0–9; default: 0 (no compression)
+      merge-root-sources: false    # optional; default: false — set true to merge all sources into one file
 ```
 
 | Key | Type | Default | Description |
@@ -107,6 +108,7 @@ writer:
 | `max-file-size-mb` | uint64 | `512` | Rotate file after this size in MiB. |
 | `flush-interval-ms` | int | `1000` | Flush thread call interval in milliseconds. |
 | `compression-level` | int | `0` | DEFLATE compression level 0–9 (0 = off). |
+| `merge-root-sources` | bool | `false` | Opt-in merge mode; all root-sources share one output file with one HDF5 group per source. See [hdf5-writer.md](writers/hdf5-writer.md#merge-mode). |
 
 → [Full HDF5 Writer Documentation](writers/hdf5-writer.md)
 
@@ -243,6 +245,60 @@ routing:
 |-----|------|----------|-------------|
 | `routing` | map | No | Top-level routing block. Each key is a writer instance name. |
 | `routing.<writer>.from` | sequence | Yes (per entry) | Reader names this writer accepts. Use `all` to accept every reader. |
+| `routing.<writer>.include` | sequence | No | Glob patterns for `root_source`; batch is accepted only if at least one pattern matches. Empty or absent = accept all. |
+| `routing.<writer>.exclude` | sequence | No | Glob patterns for `root_source`; batch is dropped if any pattern matches. Applied after `include`. Empty or absent = exclude none. |
+
+### PV Filter Routing (`include` / `exclude`)
+
+Each routing entry can optionally filter batches by their `root_source` field (the PV name that originated the batch) using glob patterns evaluated with `fnmatch(3)`.
+
+**Filter precedence** (applied in order):
+1. **`include`** — if non-empty, the batch must match at least one pattern to proceed. If empty or absent, all batches pass this step.
+2. **`exclude`** — if non-empty, the batch is dropped if it matches any pattern. Applied after `include`, so `exclude` always wins.
+
+**Glob syntax notes:**
+- Patterns follow POSIX `fnmatch(3)` rules (`*` and `?` wildcards are supported).
+- Matching is **case-sensitive**.
+- `FNM_PATHNAME` is **not** set, so `*` matches `:` (the standard EPICS PV separator). For example, `FACET:*` matches `FACET:LI20:XCOR:01`.
+
+**Example — two readers, one merged HDF5 writer with filters:**
+
+```yaml
+reader:
+  - epics-pvxs:
+      - name: bsas_reader
+        pvs:
+          - name: FACET:LI20:XCOR:01
+          - name: FACET:LI20:XCOR:02
+  - epics-archiver:
+      - name: archiver_reader
+        hostname: archiver.example:11200
+        mode: historical_once
+        start-date: "2026-01-01T00:00:00Z"
+        pvs:
+          - name: FACET:LI20:XCOR:01
+          - name: SYS:DIAG:TEMP:01
+
+writer:
+  hdf5:
+    - name: hdf5_facet
+      base-path: /data/hdf5/facet
+      merge-root-sources: true   # all sources in one file, one HDF5 group per source
+
+routing:
+  hdf5_facet:
+    from: [bsas_reader, archiver_reader]
+    include:
+      - "FACET:*"       # only FACET PVs pass through
+    exclude:
+      - "FACET:*:TEMP:*"  # drop any FACET temperature PVs
+```
+
+In this example:
+- `FACET:LI20:XCOR:01` — **passes** (matches `include`, does not match `exclude`).
+- `SYS:DIAG:TEMP:01` — **dropped** (no match in `include`).
+- `FACET:LI20:TEMP:99` — **dropped** (matches `include` but also matches `exclude`; exclude wins).
+- `merge-root-sources: true` causes all accepted sources to be written into a single HDF5 file, with one HDF5 group per `root_source`.
 
 ### Behavior
 
@@ -252,6 +308,10 @@ routing:
 | Writer listed in `routing:` | Writer receives only from its listed readers. |
 | Writer **not** listed in `routing:` | Writer receives **nothing** — a startup warning is logged. |
 | `from: [all]` | Writer accepts batches from any reader. |
+| No `include` / `exclude` | All batches from listed readers are forwarded (backward compatible). |
+| `include` non-empty, `exclude` absent | Only batches whose `root_source` matches an include pattern are forwarded. |
+| `exclude` non-empty, `include` absent | All batches forwarded except those whose `root_source` matches an exclude pattern. |
+| Both `include` and `exclude` non-empty | Batch must match `include` **and** must not match `exclude`. |
 
 ### Startup Validation
 

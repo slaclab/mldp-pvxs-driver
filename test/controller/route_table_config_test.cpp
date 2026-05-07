@@ -51,10 +51,10 @@ routing:
     const auto cfg = makeConfigFromYaml(yaml);
     MLDPPVXSControllerConfig controllerCfg(cfg);
     ASSERT_EQ(1u, controllerCfg.routeEntries().size());
-    EXPECT_EQ("mldp_main", controllerCfg.routeEntries()[0].first);
-    ASSERT_EQ(2u, controllerCfg.routeEntries()[0].second.size());
-    EXPECT_EQ("reader_1", controllerCfg.routeEntries()[0].second[0]);
-    EXPECT_EQ("reader_2", controllerCfg.routeEntries()[0].second[1]);
+    EXPECT_EQ("mldp_main", controllerCfg.routeEntries()[0].writer_name);
+    ASSERT_EQ(2u, controllerCfg.routeEntries()[0].from_readers.size());
+    EXPECT_EQ("reader_1", controllerCfg.routeEntries()[0].from_readers[0]);
+    EXPECT_EQ("reader_2", controllerCfg.routeEntries()[0].from_readers[1]);
 }
 
 // 3. AllKeyword_ParsedAsString
@@ -67,8 +67,8 @@ routing:
     const auto cfg = makeConfigFromYaml(yaml);
     MLDPPVXSControllerConfig controllerCfg(cfg);
     ASSERT_EQ(1u, controllerCfg.routeEntries().size());
-    ASSERT_EQ(1u, controllerCfg.routeEntries()[0].second.size());
-    EXPECT_EQ("all", controllerCfg.routeEntries()[0].second[0]);
+    ASSERT_EQ(1u, controllerCfg.routeEntries()[0].from_readers.size());
+    EXPECT_EQ("all", controllerCfg.routeEntries()[0].from_readers[0]);
 }
 
 // 4. MultipleWriterRoutes_ParsedCorrectly
@@ -83,6 +83,60 @@ routing:
     const auto cfg = makeConfigFromYaml(yaml);
     MLDPPVXSControllerConfig controllerCfg(cfg);
     ASSERT_EQ(2u, controllerCfg.routeEntries().size());
+}
+
+// 5. RoutingConfig_WithIncludePatterns_ParsesCorrectly
+TEST(RouteTableConfigTest, RoutingConfig_WithIncludePatterns_ParsesCorrectly) {
+    const std::string yaml = kBaseYaml + R"(
+routing:
+  mldp_main:
+    from: [reader_1]
+    include:
+      - "SYSTEM:*"
+      - "LINAC:BPM:??"
+)";
+    const auto cfg = makeConfigFromYaml(yaml);
+    MLDPPVXSControllerConfig controllerCfg(cfg);
+    ASSERT_EQ(1u, controllerCfg.routeEntries().size());
+    const auto& entry = controllerCfg.routeEntries()[0];
+    EXPECT_EQ("mldp_main", entry.writer_name);
+    ASSERT_EQ(2u, entry.include_patterns.size());
+    EXPECT_EQ("SYSTEM:*", entry.include_patterns[0]);
+    EXPECT_EQ("LINAC:BPM:??", entry.include_patterns[1]);
+    EXPECT_TRUE(entry.exclude_patterns.empty());
+}
+
+// 6. RoutingConfig_WithExcludePatterns_ParsesCorrectly
+TEST(RouteTableConfigTest, RoutingConfig_WithExcludePatterns_ParsesCorrectly) {
+    const std::string yaml = kBaseYaml + R"(
+routing:
+  mldp_main:
+    from: [reader_1]
+    exclude:
+      - "BAD:*"
+)";
+    const auto cfg = makeConfigFromYaml(yaml);
+    MLDPPVXSControllerConfig controllerCfg(cfg);
+    ASSERT_EQ(1u, controllerCfg.routeEntries().size());
+    const auto& entry = controllerCfg.routeEntries()[0];
+    ASSERT_EQ(1u, entry.exclude_patterns.size());
+    EXPECT_EQ("BAD:*", entry.exclude_patterns[0]);
+    EXPECT_TRUE(entry.include_patterns.empty());
+}
+
+// 7. RoutingConfig_NoIncludeExclude_EmptyPatterns
+TEST(RouteTableConfigTest, RoutingConfig_NoIncludeExclude_EmptyPatterns) {
+    const std::string yaml = kBaseYaml + R"(
+routing:
+  mldp_main:
+    from: [reader_1]
+)";
+    const auto cfg = makeConfigFromYaml(yaml);
+    MLDPPVXSControllerConfig controllerCfg(cfg);
+    ASSERT_EQ(1u, controllerCfg.routeEntries().size());
+    const auto& entry = controllerCfg.routeEntries()[0];
+    EXPECT_TRUE(entry.include_patterns.empty());
+    EXPECT_TRUE(entry.exclude_patterns.empty());
 }
 
 } // namespace mldp_pvxs_driver::controller

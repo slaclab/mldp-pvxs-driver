@@ -22,6 +22,8 @@ inline constexpr char WriterKey[] = "writer";
 inline constexpr char WriterMldpKey[] = "mldp";
 /// YAML key: `writer.hdf5` — sequence of HDF5 writer instances (requires MLDP_PVXS_HDF5_ENABLED).
 inline constexpr char WriterHdf5Key[] = "hdf5";
+/// YAML key: `writer.hdf5-merge` — sequence of HDF5 merge writer instances (requires MLDP_PVXS_HDF5_ENABLED).
+inline constexpr char WriterHdf5MergeKey[] = "hdf5-merge";
 
 /**
  * @brief Validates the top-level `writer:` YAML block structure.

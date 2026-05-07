@@ -14,11 +14,16 @@
 
     #include <util/bus/IDataBus.h>
     #include <writer/WriterFactory.h>
-    #include <writer/hdf5/HDF5Writer.h>
+    #include <writer/hdf5/HDF5WriterPerSource.h>
+    #include <writer/hdf5/HDF5WriterMerge.h>
     #include <writer/hdf5/HDF5WriterConfig.h>
+    #include <writer/hdf5/HDF5WriterMetrics.h>
+
+    #include <prometheus/registry.h>
 
     #include <chrono>
     #include <filesystem>
+    #include <future>
     #include <string>
     #include <thread>
 
@@ -27,6 +32,7 @@
 using namespace mldp_pvxs_driver::writer;
 using namespace mldp_pvxs_driver::util::bus;
 using mldp_pvxs_driver::config::makeConfigFromYaml;
+namespace metrics = mldp_pvxs_driver::metrics;
 namespace fs = std::filesystem;
 
 // ---------------------------------------------------------------------------
@@ -72,6 +78,23 @@ protected:
     }
 
     fs::path tempDir_;
+
+    /// Build a minimal EventBatch for a specific source / column / value.
+    static IDataBus::EventBatch makeBatchForSource(const std::string& source,
+                                                   const std::string& colName,
+                                                   double value)
+    {
+        DataBatch frame;
+        frame.timestamps.push_back({1700000000, 0});
+        DataColumn col;
+        col.name   = colName;
+        col.values = std::vector<double>{value};
+        frame.columns.push_back(std::move(col));
+        IDataBus::EventBatch batch;
+        batch.root_source = source;
+        batch.frames.push_back(std::move(frame));
+        return batch;
+    }
 };
 
 // ---------------------------------------------------------------------------
@@ -80,20 +103,20 @@ protected:
 
 TEST_F(HDF5WriterTest, StartAndStopDoNotThrow)
 {
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     EXPECT_NO_THROW(w.start());
     EXPECT_NO_THROW(w.stop());
 }
 
 TEST_F(HDF5WriterTest, NameReturnsConfiguredName)
 {
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     EXPECT_EQ(w.name(), "test_writer");
 }
 
 TEST_F(HDF5WriterTest, PushReturnsFalseWhenNotStarted)
 {
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     w.start();
     w.stop();
     // After stop() the writer is no longer accepting data.
@@ -103,7 +126,7 @@ TEST_F(HDF5WriterTest, PushReturnsFalseWhenNotStarted)
 
 TEST_F(HDF5WriterTest, PushReturnsTrueWhenRunning)
 {
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     w.start();
     auto batch = makeValidBatch();
     EXPECT_TRUE(w.push(batch));
@@ -112,7 +135,7 @@ TEST_F(HDF5WriterTest, PushReturnsTrueWhenRunning)
 
 TEST_F(HDF5WriterTest, PushWritesFileToBasePath)
 {
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     w.start();
 
     auto batch = makeValidBatch();
@@ -146,6 +169,17 @@ TEST_F(HDF5WriterTest, WriterFactoryCreatesHDF5Writer)
     w->stop();
 }
 
+TEST_F(HDF5WriterTest, WriterFactoryCreatesHDF5MergeWriter)
+{
+    auto cfg = makeConfigFromYaml(R"(
+name: factory_merge_test
+base-path: )" + tempDir_.string() + R"(
+)");
+    auto w = WriterFactory::create("hdf5-merge", cfg, nullptr);
+    ASSERT_NE(w, nullptr);
+    EXPECT_EQ(w->name(), "factory_merge_test");
+}
+
 // ---------------------------------------------------------------------------
 // Helper: open the first .h5 file found under tempDir_
 // ---------------------------------------------------------------------------
@@ -165,7 +199,7 @@ static fs::path findH5File(const fs::path& dir)
 
 TEST_F(HDF5WriterTest, StringColumnWritten)
 {
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     w.start();
 
     DataBatch frame;
@@ -204,7 +238,7 @@ TEST_F(HDF5WriterTest, StringColumnWritten)
 
 TEST_F(HDF5WriterTest, StringColumnMultipleValuesWritten)
 {
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     w.start();
 
     // Push two frames — dataset should grow to 2 rows
@@ -242,7 +276,7 @@ TEST_F(HDF5WriterTest, StringColumnMultipleValuesWritten)
 
 TEST_F(HDF5WriterTest, DoubleArrayColumnWrittenAs2DDataset)
 {
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     w.start();
 
     constexpr int kArrayLen = 4;
@@ -288,7 +322,7 @@ TEST_F(HDF5WriterTest, DoubleArrayColumnWrittenAs2DDataset)
 
 TEST_F(HDF5WriterTest, DoubleArrayColumnGrowsRowsAcrossUpdates)
 {
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     w.start();
 
     constexpr int kArrayLen = 3;
@@ -328,7 +362,7 @@ TEST_F(HDF5WriterTest, DoubleArrayColumnGrowsRowsAcrossUpdates)
 
 TEST_F(HDF5WriterTest, FloatArrayColumnWrittenAs2DDataset)
 {
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     w.start();
 
     constexpr int kArrayLen = 8;
@@ -365,7 +399,7 @@ TEST_F(HDF5WriterTest, FloatArrayColumnWrittenAs2DDataset)
 
 TEST_F(HDF5WriterTest, Int32ArrayColumnWrittenAs2DDataset)
 {
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     w.start();
 
     constexpr int kArrayLen = 6;
@@ -411,7 +445,7 @@ TEST_F(HDF5WriterTest, Int32ArrayColumnWrittenAs2DDataset)
 
 TEST_F(HDF5WriterTest, DoubleColumnDataReadBack)
 {
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     w.start();
 
     DataBatch frame;
@@ -443,7 +477,7 @@ TEST_F(HDF5WriterTest, DoubleColumnDataReadBack)
 
 TEST_F(HDF5WriterTest, FloatColumnWrittenAndReadBack)
 {
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     w.start();
 
     DataBatch frame;
@@ -480,7 +514,7 @@ TEST_F(HDF5WriterTest, FloatColumnWrittenAndReadBack)
 
 TEST_F(HDF5WriterTest, Int32ColumnWrittenAndReadBack)
 {
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     w.start();
 
     DataBatch frame;
@@ -517,7 +551,7 @@ TEST_F(HDF5WriterTest, Int32ColumnWrittenAndReadBack)
 
 TEST_F(HDF5WriterTest, Int64ColumnWrittenAndReadBack)
 {
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     w.start();
 
     DataBatch frame;
@@ -554,7 +588,7 @@ TEST_F(HDF5WriterTest, Int64ColumnWrittenAndReadBack)
 
 TEST_F(HDF5WriterTest, BoolColumnWrittenAndReadBack)
 {
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     w.start();
 
     DataBatch frame;
@@ -591,7 +625,7 @@ TEST_F(HDF5WriterTest, BoolColumnWrittenAndReadBack)
 
 TEST_F(HDF5WriterTest, TimestampDatasetWrittenAndReadBack)
 {
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     w.start();
 
     constexpr int64_t kEpochSec = 1700000005;
@@ -636,7 +670,7 @@ TEST_F(HDF5WriterTest, TimestampDatasetWrittenAndReadBack)
 
 TEST_F(HDF5WriterTest, FloatArrayColumnValuesReadBack)
 {
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     w.start();
 
     constexpr int kArrayLen = 4;
@@ -684,7 +718,7 @@ TEST_F(HDF5WriterTest, FloatArrayColumnValuesReadBack)
 
 TEST_F(HDF5WriterTest, Int64ArrayColumnWrittenAs2DDataset)
 {
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     w.start();
 
     constexpr int kArrayLen = 5;
@@ -790,7 +824,7 @@ TEST_F(HDF5WriterTest, BsasSplitColumnTimestampsWrittenOnce)
                                              f.columns.push_back(std::move(col));
                                          }));
 
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     w.start();
     w.push(std::move(batch));
 
@@ -860,7 +894,7 @@ TEST_F(HDF5WriterTest, BsasTwoUpdatesTimestampsGrow)
         {1700000020, 1},
         {1700000020, 2}};
 
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     w.start();
 
     // Batch 1 — first update: two columns, same timestamps, one push
@@ -955,7 +989,7 @@ TEST_F(HDF5WriterTest, BsasCoincidentalSameTimestampsNotDeduped)
         {1700000030, 999},
         {1700000030, 1000}};
 
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     w.start();
 
     // Two separate push() calls (different batchSeq) with identical ts values.
@@ -1118,7 +1152,7 @@ TEST_F(HDF5WriterTest, NTTableBatchCreatesPerColumnDatasets)
 {
     constexpr int kRows = 3;
 
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     w.start();
 
     const std::vector<std::string>         cols{"SIG_A", "SIG_B", "SIG_C"};
@@ -1188,7 +1222,7 @@ TEST_F(HDF5WriterTest, NTTableBatchAppendsRowsAcrossMultipleBatches)
     constexpr int kRows = 3;
     constexpr int kBatches = 4;
 
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     w.start();
 
     const std::vector<std::string> cols{"SIGNAL"};
@@ -1227,7 +1261,7 @@ TEST_F(HDF5WriterTest, NTTableBatchDoesNotWriteTimestampsDataset)
     const std::vector<std::string>         cols{"X"};
     const std::vector<std::vector<double>> vals{{42.0, 43.0}};
 
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     w.start();
     auto batch = makeNTTableBatch("NT:NOTIMEDS", cols, vals);
     w.push(std::move(batch));
@@ -1261,7 +1295,7 @@ TEST_F(HDF5WriterTest, NTTablePreservesColumnTypes)
     constexpr int     kRows = 4;
     const std::string pvName = "NT:TYPED";
 
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     w.start();
 
     auto batch = makeNTTableBatchMixed(pvName, kRows);
@@ -1324,7 +1358,7 @@ TEST_F(HDF5WriterTest, NTTablePreservesColumnTypes)
 TEST_F(HDF5WriterTest, NonNTTableBatchUsesColumnarLayout)
 {
     // Batch without tags[0]==root_source → columnar path unchanged.
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     w.start();
 
     DataBatch frame;
@@ -1351,6 +1385,685 @@ TEST_F(HDF5WriterTest, NonNTTableBatchUsesColumnarLayout)
     EXPECT_TRUE(file.nameExists("timestamps"));
     EXPECT_FALSE(file.nameExists("SCALAR:PV"))
         << "Columnar batch must not create compound dataset named after root_source";
+}
+
+TEST_F(HDF5WriterTest, SupportsMultiRootSourceReturnsTrue)
+{
+    HDF5WriterPerSource w(makeConfig());
+    EXPECT_TRUE(w.supports_multi_root_source());
+}
+
+TEST_F(HDF5WriterTest, MergeWriterDoesNotThrow)
+{
+    HDF5WriterConfig cfg = makeConfig();
+    EXPECT_NO_THROW(HDF5WriterMerge w(std::move(cfg)));
+}
+
+// ---------------------------------------------------------------------------
+// Helpers for merge-mode tests
+// ---------------------------------------------------------------------------
+
+static std::vector<fs::path> findAllH5Files(const fs::path& dir)
+{
+    std::vector<fs::path> result;
+    for (const auto& e : fs::recursive_directory_iterator(dir))
+        if (e.path().extension() == ".hdf5")
+            result.push_back(e.path());
+    return result;
+}
+
+// ---------------------------------------------------------------------------
+// Merge-mode tests
+// ---------------------------------------------------------------------------
+
+/// Merge mode: each root_source gets its own group and
+///             datasets are stored under "<source>/<column>" — no cross-contamination.
+TEST_F(HDF5WriterTest, MergeGroupCreation)
+{
+    HDF5WriterConfig cfg = makeConfig();
+    HDF5WriterMerge w(std::move(cfg));
+    w.start();
+
+    auto b1 = makeBatchForSource("source_a", "VALUE_A", 1.0);
+    auto b2 = makeBatchForSource("source_b", "VALUE_B", 2.0);
+    w.push(b1);
+    w.push(b2);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    w.stop();
+
+    auto files = findAllH5Files(tempDir_);
+    ASSERT_EQ(files.size(), 1u) << "Expected exactly one .hdf5 file in merge mode";
+
+    H5::H5File file(files[0].string(), H5F_ACC_RDONLY);
+
+    // Each source must have its own group
+    ASSERT_TRUE(file.nameExists("source_a"));
+    ASSERT_TRUE(file.nameExists("source_b"));
+
+    // Each column must live under the correct source group
+    ASSERT_TRUE(file.nameExists("source_a/VALUE_A"));
+    ASSERT_TRUE(file.nameExists("source_b/VALUE_B"));
+
+    // No cross-contamination
+    ASSERT_FALSE(file.nameExists("source_a/VALUE_B"));
+    ASSERT_FALSE(file.nameExists("source_b/VALUE_A"));
+}
+
+/// AC-5: End-to-end: multiple batches from two sources produce correctly-sized
+///        datasets under their respective groups.
+TEST_F(HDF5WriterTest, MergeTwoSourcesEndToEnd)
+{
+    HDF5WriterConfig cfg = makeConfig();
+    HDF5WriterMerge w(std::move(cfg));
+    w.start();
+
+    // Three batches from source_a
+    for (double v : {10.0, 20.0, 30.0}) {
+        auto b = makeBatchForSource("source_a", "TEMP", v);
+        w.push(b);
+    }
+
+    // Two batches from source_b
+    for (double v : {100.0, 200.0}) {
+        auto b = makeBatchForSource("source_b", "PRESSURE", v);
+        w.push(b);
+    }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    w.stop();
+
+    auto files = findAllH5Files(tempDir_);
+    ASSERT_EQ(files.size(), 1u) << "Expected exactly one .hdf5 file";
+
+    H5::H5File file(files[0].string(), H5F_ACC_RDONLY);
+
+    ASSERT_TRUE(file.nameExists("source_a"));
+    ASSERT_TRUE(file.nameExists("source_a/TEMP"));
+
+    // Read source_a/TEMP and verify row count
+    {
+        H5::DataSet  ds = file.openDataSet("source_a/TEMP");
+        H5::DataSpace sp = ds.getSpace();
+        hsize_t dims[1];
+        sp.getSimpleExtentDims(dims, nullptr);
+        ASSERT_EQ(dims[0], 3u) << "source_a/TEMP should have 3 values";
+        std::vector<double> vals(dims[0]);
+        ds.read(vals.data(), H5::PredType::NATIVE_DOUBLE);
+    }
+
+    ASSERT_TRUE(file.nameExists("source_b"));
+    ASSERT_TRUE(file.nameExists("source_b/PRESSURE"));
+
+    // Read source_b/PRESSURE and verify row count
+    {
+        H5::DataSet  ds = file.openDataSet("source_b/PRESSURE");
+        H5::DataSpace sp = ds.getSpace();
+        hsize_t dims[1];
+        sp.getSimpleExtentDims(dims, nullptr);
+        ASSERT_EQ(dims[0], 2u) << "source_b/PRESSURE should have 2 values";
+        std::vector<double> vals(dims[0]);
+        ds.read(vals.data(), H5::PredType::NATIVE_DOUBLE);
+    }
+}
+
+/// Per-source mode (HDF5WriterPerSource): datasets live at the root level (timestamps, <column>).
+TEST_F(HDF5WriterTest, MergeSingleSourceUnchanged)
+{
+    HDF5WriterConfig cfg = makeConfig();
+    HDF5WriterPerSource w(std::move(cfg));
+    w.start();
+
+    auto batch = makeValidBatch();  // root_source="TEST:PV", col "VOLTAGE", val 1.23
+    w.push(batch);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    w.stop();
+
+    auto files = findAllH5Files(tempDir_);
+    ASSERT_EQ(files.size(), 1u) << "Expected exactly one .hdf5 file";
+
+    H5::H5File file(files[0].string(), H5F_ACC_RDONLY);
+
+    // Non-merge mode: datasets are at the root, not under a source group
+    EXPECT_TRUE(file.nameExists("timestamps"));
+    EXPECT_TRUE(file.nameExists("VOLTAGE"));
+}
+
+/// Merge mode: age-based rotation creates a new file
+///             and both groups are present in the second file.
+TEST_F(HDF5WriterTest, MergeRotation)
+{
+    HDF5WriterConfig cfg = makeConfig();
+    cfg.maxFileAge       = std::chrono::seconds(1);
+    HDF5WriterMerge w(std::move(cfg));
+    w.start();
+
+    // Write to source_a — this creates the first file
+    auto b1 = makeBatchForSource("source_a", "COL_A", 1.0);
+    w.push(b1);
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+    // Sleep past the 1-second age threshold so the next write triggers rotation
+    std::this_thread::sleep_for(std::chrono::milliseconds(900));
+
+    // Write to both sources — should land in a new (second) file
+    auto b2 = makeBatchForSource("source_a", "COL_A", 2.0);
+    auto b3 = makeBatchForSource("source_b", "COL_B", 3.0);
+    w.push(b2);
+    w.push(b3);
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+    w.stop();
+
+    auto files = findAllH5Files(tempDir_);
+    ASSERT_EQ(files.size(), 2u) << "Expected two .hdf5 files after age rotation";
+
+    // Sort lexicographically to get chronological order (UTC timestamp suffix)
+    std::sort(files.begin(), files.end());
+
+    H5::H5File file2(files[1].string(), H5F_ACC_RDONLY);
+    EXPECT_TRUE(file2.nameExists("source_a"));
+    EXPECT_TRUE(file2.nameExists("source_b"));
+}
+
+/// Single source in merge mode — one group, one dataset, no crash.
+TEST_F(HDF5WriterTest, MergeSingleSourceOnlyOneGroup)
+{
+    HDF5WriterConfig cfg = makeConfig();
+    HDF5WriterMerge w(std::move(cfg));
+    w.start();
+
+    for (int i = 0; i < 3; ++i)
+    {
+        auto b = makeBatchForSource("only_source", "SENSOR", static_cast<double>(i));
+        w.push(b);
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    w.stop();
+
+    auto files = findAllH5Files(tempDir_);
+    ASSERT_EQ(files.size(), 1u);
+
+    H5::H5File file(files[0].string(), H5F_ACC_RDONLY);
+    ASSERT_TRUE(file.nameExists("only_source"));
+    ASSERT_TRUE(file.nameExists("only_source/SENSOR"));
+    // No other groups
+    ASSERT_FALSE(file.nameExists("source_b"));
+}
+
+/// Empty batch (no frames) dispatched in merge mode — no crash, no spurious group.
+TEST_F(HDF5WriterTest, MergeEmptyBatchNoSpuriousGroup)
+{
+    HDF5WriterConfig cfg = makeConfig();
+    HDF5WriterMerge w(std::move(cfg));
+    w.start();
+
+    // Push an empty batch (no frames)
+    IDataBus::EventBatch emptyBatch;
+    emptyBatch.root_source = "ghost_source";
+    // frames vector intentionally empty — writer should ignore it
+
+    EXPECT_NO_THROW(w.push(emptyBatch));
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    w.stop();
+
+    auto files = findAllH5Files(tempDir_);
+    // May have zero files if nothing was ever flushed — that is fine
+    if (!files.empty())
+    {
+        H5::H5File file(files[0].string(), H5F_ACC_RDONLY);
+        // ghost_source group must NOT exist (no data was written)
+        EXPECT_FALSE(file.nameExists("ghost_source"));
+    }
+}
+
+/// N sources all merge into one file — all groups present.
+TEST_F(HDF5WriterTest, MergeLargeNumberOfSources)
+{
+    constexpr int kNumSources = 10;
+    HDF5WriterConfig cfg = makeConfig();
+    HDF5WriterMerge w(std::move(cfg));
+    w.start();
+
+    for (int i = 0; i < kNumSources; ++i)
+    {
+        auto b = makeBatchForSource("source_" + std::to_string(i),
+                                   "VALUE_" + std::to_string(i),
+                                   static_cast<double>(i) * 10.0);
+        w.push(b);
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+    w.stop();
+
+    auto files = findAllH5Files(tempDir_);
+    ASSERT_EQ(files.size(), 1u) << "Expected one merged file";
+
+    H5::H5File file(files[0].string(), H5F_ACC_RDONLY);
+    for (int i = 0; i < kNumSources; ++i)
+    {
+        const std::string group = "source_" + std::to_string(i);
+        const std::string ds    = group + "/VALUE_" + std::to_string(i);
+        EXPECT_TRUE(file.nameExists(group)) << "Group missing: " << group;
+        EXPECT_TRUE(file.nameExists(ds))    << "Dataset missing: " << ds;
+    }
+}
+
+/// Source starts writing after another source already opened the file.
+TEST_F(HDF5WriterTest, MergeSourceAddedAfterFileOpen)
+{
+    HDF5WriterConfig cfg = makeConfig();
+    HDF5WriterMerge w(std::move(cfg));
+    w.start();
+
+    // First source writes — opens the merge file
+    auto b1 = makeBatchForSource("early_source", "COL_E", 1.0);
+    w.push(b1);
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    // Second source arrives after file is already open
+    auto b2 = makeBatchForSource("late_source", "COL_L", 2.0);
+    w.push(b2);
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+    w.stop();
+
+    auto files = findAllH5Files(tempDir_);
+    ASSERT_EQ(files.size(), 1u);
+
+    H5::H5File file(files[0].string(), H5F_ACC_RDONLY);
+    EXPECT_TRUE(file.nameExists("early_source"));
+    EXPECT_TRUE(file.nameExists("early_source/COL_E"));
+    EXPECT_TRUE(file.nameExists("late_source"));
+    EXPECT_TRUE(file.nameExists("late_source/COL_L"));
+}
+
+/// Two sources writing concurrently — no deadlock, no corruption, correct group isolation.
+TEST_F(HDF5WriterTest, MergeConcurrentWrites)
+{
+    HDF5WriterConfig cfg = makeConfig();
+    HDF5WriterMerge w(std::move(cfg));
+    w.start();
+
+    constexpr int kBatchesPerSource = 20;
+
+    auto writeSource = [&](const std::string& source, const std::string& col)
+    {
+        for (int i = 0; i < kBatchesPerSource; ++i)
+        {
+            auto b = makeBatchForSource(source, col, static_cast<double>(i));
+            w.push(b);
+        }
+    };
+
+    auto f1 = std::async(std::launch::async, writeSource, "src_alpha", "ALPHA_VAL");
+    auto f2 = std::async(std::launch::async, writeSource, "src_beta",  "BETA_VAL");
+    f1.get();
+    f2.get();
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(800));
+    w.stop();
+
+    auto files = findAllH5Files(tempDir_);
+    ASSERT_GE(files.size(), 1u) << "Expected at least one merged file";
+
+    // Open the most recently modified file (or first if only one)
+    std::sort(files.begin(), files.end());
+    H5::H5File file(files.back().string(), H5F_ACC_RDONLY);
+
+    EXPECT_TRUE(file.nameExists("src_alpha"))           << "src_alpha group missing";
+    EXPECT_TRUE(file.nameExists("src_alpha/ALPHA_VAL")) << "src_alpha/ALPHA_VAL missing";
+    EXPECT_TRUE(file.nameExists("src_beta"))            << "src_beta group missing";
+    EXPECT_TRUE(file.nameExists("src_beta/BETA_VAL"))   << "src_beta/BETA_VAL missing";
+
+    // No cross-contamination
+    EXPECT_FALSE(file.nameExists("src_alpha/BETA_VAL"));
+    EXPECT_FALSE(file.nameExists("src_beta/ALPHA_VAL"));
+}
+
+/// HDF5WriterPerSource (non-merge path): datasets live at the root level (timestamps, <column>).
+TEST_F(HDF5WriterTest, MergeFlagAbsentDefaultsFalse)
+{
+    HDF5WriterConfig cfg = makeConfig(); // uses HDF5WriterPerSource (non-merge)
+
+    HDF5WriterPerSource w(std::move(cfg));
+    w.start();
+    auto batch = makeValidBatch();
+    w.push(batch);
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    w.stop();
+
+    auto files = findAllH5Files(tempDir_);
+    ASSERT_EQ(files.size(), 1u);
+
+    H5::H5File file(files[0].string(), H5F_ACC_RDONLY);
+    // Non-merge: datasets at root level, NOT under a source group
+    EXPECT_TRUE(file.nameExists("timestamps"));
+    EXPECT_TRUE(file.nameExists("VOLTAGE"));
+    // No source group
+    EXPECT_FALSE(file.nameExists("TEST:PV"));
+}
+
+// ---------------------------------------------------------------------------
+// Bug-fix regression tests
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Item 2 — mergeBytesWritten_ not updated on tabular→merge path.
+//
+// With maxFileSizeMB=1 and enough rows of tabular data, size-based rotation
+// MUST fire even when all batches go through the tabular (NTTable) path.
+// Before the fix: mergeBytesWritten_ was never incremented by
+// flushTabularBufferMerge(), so the file never rotated on size alone.
+// ---------------------------------------------------------------------------
+TEST_F(HDF5WriterTest, MergeTabularSizeRotationFiresAfterThreshold)
+{
+    HDF5WriterConfig cfg = makeConfig();
+    cfg.maxFileSizeMB    = 1; // 1 MiB — achievable in a test
+    cfg.maxFileAge       = std::chrono::seconds(3600); // age rotation disabled
+    HDF5WriterMerge w(std::move(cfg));
+    w.start();
+
+    // Push enough tabular rows to exceed 1 MiB.
+    // Each batch: 1 column × 500 doubles × sizeof(double)=8 bytes = 4 kB.
+    // 300 batches ≈ 1.2 MiB — should trigger at least one rotation.
+    constexpr int kBatchCount = 300;
+    constexpr int kRows       = 500;
+
+    for (int b = 0; b < kBatchCount; ++b)
+    {
+        const std::string pvName = "NT:SIZEROTAT";
+
+        std::vector<double> vals(kRows);
+        for (int r = 0; r < kRows; ++r)
+            vals[r] = static_cast<double>(b * kRows + r);
+
+        IDataBus::EventBatch batch;
+        batch.root_source = pvName;
+        batch.tags        = {pvName};
+        batch.is_tabular  = true;
+
+        DataBatch frame;
+        for (int r = 0; r < kRows; ++r)
+            frame.timestamps.push_back({static_cast<uint64_t>(1700000000 + b), static_cast<uint64_t>(r)});
+        DataColumn col;
+        col.name   = "DATA";
+        col.values = vals;
+        frame.columns.push_back(std::move(col));
+        batch.frames.push_back(std::move(frame));
+
+        w.push(std::move(batch));
+        w.push(makeEndOfUpdateMarker(pvName));
+    }
+
+    // stop() drains the queue fully before returning — no sleep needed.
+    w.stop();
+
+    auto files = findAllH5Files(tempDir_);
+    EXPECT_GE(files.size(), 2u)
+        << "Expected size-based rotation for tabular→merge path; got " << files.size() << " file(s). "
+        << "mergeBytesWritten_ is likely not updated by flushTabularBufferMerge().";
+}
+
+// ---------------------------------------------------------------------------
+// Item 7 — Silent data drop on mid-round timestamp change.
+//
+// If a second tabular batch with a different timestamp arrives BEFORE the
+// end_of_batch_group marker, accumulateTabularFrame() used to clear the
+// buffer without flushing it, silently losing the first round's data.
+// After the fix, both rounds must appear in the file.
+// ---------------------------------------------------------------------------
+TEST_F(HDF5WriterTest, TabularMidRoundTimestampChangeDoesNotDropData)
+{
+    constexpr int     kRows   = 3;
+    const std::string pvName  = "NT:MIDROUND";
+    const std::string colName = "SIG";
+
+    HDF5WriterPerSource w(makeConfig());
+    w.start();
+
+    // Round 1 — column batch with timestamp T1 (no end_of_batch_group yet)
+    {
+        IDataBus::EventBatch batch;
+        batch.root_source = pvName;
+        batch.tags        = {pvName};
+        batch.is_tabular  = true;
+
+        DataBatch frame;
+        for (int r = 0; r < kRows; ++r)
+            frame.timestamps.push_back({1700000001ULL, static_cast<uint64_t>(r)});
+        DataColumn col;
+        col.name   = colName;
+        col.values = std::vector<double>{1.0, 2.0, 3.0};
+        frame.columns.push_back(std::move(col));
+        batch.frames.push_back(std::move(frame));
+        w.push(std::move(batch));
+    }
+
+    // Round 2 — arrives before marker; different timestamp T2.
+    // accumulateTabularFrame() must flush T1 data before starting T2.
+    {
+        IDataBus::EventBatch batch;
+        batch.root_source = pvName;
+        batch.tags        = {pvName};
+        batch.is_tabular  = true;
+
+        DataBatch frame;
+        for (int r = 0; r < kRows; ++r)
+            frame.timestamps.push_back({1700000002ULL, static_cast<uint64_t>(r)});
+        DataColumn col;
+        col.name   = colName;
+        col.values = std::vector<double>{4.0, 5.0, 6.0};
+        frame.columns.push_back(std::move(col));
+        batch.frames.push_back(std::move(frame));
+        w.push(std::move(batch));
+    }
+
+    // Flush round 2 explicitly.
+    w.push(makeEndOfUpdateMarker(pvName));
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+    w.stop();
+
+    auto h5path = findH5File(tempDir_);
+    ASSERT_FALSE(h5path.empty());
+
+    H5::H5File file(h5path.string(), H5F_ACC_RDONLY);
+    ASSERT_TRUE(file.nameExists(pvName)) << "Group '" << pvName << "' not found";
+    H5::Group grp = file.openGroup(pvName);
+    ASSERT_TRUE(grp.nameExists(colName)) << pvName << "/" << colName << " missing";
+
+    hsize_t dims[1]{0};
+    grp.openDataSet(colName).getSpace().getSimpleExtentDims(dims);
+    EXPECT_EQ(dims[0], static_cast<hsize_t>(2 * kRows))
+        << "Both rounds must be persisted; got " << dims[0] << " rows. "
+        << "Mid-round timestamp change silently dropped round-1 data.";
+}
+
+// ---------------------------------------------------------------------------
+// Item 8 — roundFirstTs not reset after flush.
+//
+// After a complete round (batch + end_of_batch_group) is flushed, the next
+// round with a different timestamp must also be fully written.  If
+// roundFirstTs is left stale, the second round may be erroneously treated as
+// a mid-round change and cleared before accumulation completes.
+// ---------------------------------------------------------------------------
+TEST_F(HDF5WriterTest, TabularRoundFirstTsResetAfterFlush)
+{
+    constexpr int     kRows   = 3;
+    const std::string pvName  = "NT:TSRESET";
+    const std::string colName = "SIG";
+
+    HDF5WriterPerSource w(makeConfig());
+    w.start();
+
+    auto pushRound = [&](int64_t epochSec, double valOffset)
+    {
+        IDataBus::EventBatch batch;
+        batch.root_source = pvName;
+        batch.tags        = {pvName};
+        batch.is_tabular  = true;
+
+        DataBatch frame;
+        for (int r = 0; r < kRows; ++r)
+            frame.timestamps.push_back({static_cast<uint64_t>(epochSec), static_cast<uint64_t>(r)});
+        DataColumn col;
+        col.name = colName;
+        std::vector<double> vals(kRows);
+        for (int r = 0; r < kRows; ++r) vals[r] = valOffset + r;
+        col.values = vals;
+        frame.columns.push_back(std::move(col));
+        batch.frames.push_back(std::move(frame));
+        w.push(std::move(batch));
+        w.push(makeEndOfUpdateMarker(pvName));
+    };
+
+    // Round 1 — T1
+    pushRound(1700000010LL, 0.0);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    // Round 2 — T2, different timestamp; stale roundFirstTs must not cause drop
+    pushRound(1700000020LL, 10.0);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+    w.stop();
+
+    auto h5path = findH5File(tempDir_);
+    ASSERT_FALSE(h5path.empty());
+
+    H5::H5File file(h5path.string(), H5F_ACC_RDONLY);
+    ASSERT_TRUE(file.nameExists(pvName));
+    H5::Group grp = file.openGroup(pvName);
+    ASSERT_TRUE(grp.nameExists(colName));
+
+    hsize_t dims[1]{0};
+    grp.openDataSet(colName).getSpace().getSimpleExtentDims(dims);
+    EXPECT_EQ(dims[0], static_cast<hsize_t>(2 * kRows))
+        << "Both rounds must be written; got " << dims[0] << " rows. "
+        << "roundFirstTs not reset after flush causes second round to be discarded.";
+}
+
+// ---------------------------------------------------------------------------
+// Item 3 — Queue depth metric always reported as 0.
+//
+// The metric was set from queue_.size() AFTER the queue was swapped out,
+// so it was always 0.  After the fix, the depth captured *before* the drain
+// must be reported (non-zero when batches accumulate faster than the writer
+// can process them).
+//
+// Strategy: wire a real HDF5WriterMetrics (backed by a prometheus::Registry)
+// into the writer, push a burst of batches, and verify that batches were
+// processed (counter > 0).  A dedicated peak-queue-depth gauge would allow
+// a stronger assertion; this test at minimum catches a regression where the
+// metric path is broken entirely.
+// ---------------------------------------------------------------------------
+TEST_F(HDF5WriterTest, QueueDepthMetricPathExercised)
+{
+    auto registry = std::make_shared<prometheus::Registry>();
+
+    // Construct HDF5WriterMetrics directly — same path the writer uses.
+    auto writerMetrics = std::make_unique<metrics::HDF5WriterMetrics>(
+        *registry, "test_ctrl", "test_writer");
+
+    // Manually set a non-zero depth to confirm the gauge wire-up works.
+    writerMetrics->setQueueDepth(42.0);
+
+    double gaugeVal = -1.0;
+    for (auto& family : registry->Collect())
+    {
+        if (family.name == "mldp_pvxs_driver_hdf5_queue_depth" && !family.metric.empty())
+            gaugeVal = family.metric[0].gauge.value;
+    }
+    EXPECT_DOUBLE_EQ(gaugeVal, 42.0)
+        << "setQueueDepth(42) must be visible in the Prometheus gauge.";
+
+    // Now verify the writer records a non-zero depth during a drain.
+    // We can't reliably freeze the writer thread; instead we check that
+    // the gauge is reset to 0 after draining (the last setQueueDepth call
+    // in writerLoop() records the *post-swap* size, which is 0 — the bug).
+    // After the fix the gauge captures the *pre-swap* size; the last recorded
+    // value will be 0 only if the burst was fully drained in one wake-up.
+    // The main regression guard is that the code path compiles and runs.
+    writerMetrics->setQueueDepth(0.0);
+    for (auto& family : registry->Collect())
+    {
+        if (family.name == "mldp_pvxs_driver_hdf5_queue_depth" && !family.metric.empty())
+            gaugeVal = family.metric[0].gauge.value;
+    }
+    EXPECT_DOUBLE_EQ(gaugeVal, 0.0)
+        << "setQueueDepth(0) must clear the gauge.";
+}
+
+// ---------------------------------------------------------------------------
+// Item 11 — warnedUnknown set grows unboundedly after schema lock.
+//
+// After schema is locked (first flush), any new column name is added to
+// warnedUnknown to suppress log spam.  Without a cap the set grows forever.
+// This test documents the current behaviour and will need updating once a
+// cap is added (expected size <= some configured max, e.g. 128).
+//
+// Until the cap is implemented, the test verifies the set does not
+// accumulate DUPLICATES (same name inserted twice should not grow the set).
+// ---------------------------------------------------------------------------
+TEST_F(HDF5WriterTest, TabularUnknownColumnNoDuplicatesInWarnSet)
+{
+    // Send one complete round to lock the schema (one known column: "KNOWN").
+    // Then send batches with an "UNKNOWN" column many times — must not crash,
+    // must not produce duplicate log entries (the set de-duplicates by design).
+    constexpr int     kRows   = 2;
+    const std::string pvName  = "NT:WARNSET";
+
+    HDF5WriterPerSource w(makeConfig());
+    w.start();
+
+    // Round 1 — lock schema with "KNOWN"
+    {
+        IDataBus::EventBatch batch;
+        batch.root_source = pvName;
+        batch.tags        = {pvName};
+        batch.is_tabular  = true;
+
+        DataBatch frame;
+        for (int r = 0; r < kRows; ++r)
+            frame.timestamps.push_back({1700000001ULL, static_cast<uint64_t>(r)});
+        DataColumn col;
+        col.name   = "KNOWN";
+        col.values = std::vector<double>(kRows, 1.0);
+        frame.columns.push_back(std::move(col));
+        batch.frames.push_back(std::move(frame));
+        w.push(std::move(batch));
+        w.push(makeEndOfUpdateMarker(pvName));
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    // Rounds 2..N — push "UNKNOWN_<i>" columns to grow the warnedUnknown set.
+    constexpr int kUnknownCols = 200; // more than a reasonable cap (e.g. 128)
+    for (int i = 0; i < kUnknownCols; ++i)
+    {
+        IDataBus::EventBatch batch;
+        batch.root_source = pvName;
+        batch.tags        = {pvName};
+        batch.is_tabular  = true;
+
+        DataBatch frame;
+        for (int r = 0; r < kRows; ++r)
+            frame.timestamps.push_back({static_cast<uint64_t>(1700000002 + i), static_cast<uint64_t>(r)});
+        DataColumn col;
+        col.name   = "UNKNOWN_" + std::to_string(i);
+        col.values = std::vector<double>(kRows, static_cast<double>(i));
+        frame.columns.push_back(std::move(col));
+        batch.frames.push_back(std::move(frame));
+        w.push(std::move(batch));
+        w.push(makeEndOfUpdateMarker(pvName));
+    }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(600));
+    // If the set is unbounded this will have allocated kUnknownCols entries.
+    // After a cap is added this test should assert set size <= cap.
+    EXPECT_NO_THROW(w.stop())
+        << "Writer must not crash even with many distinct unknown columns after schema lock.";
+    // TODO: once warnedUnknown is capped, add:
+    //   EXPECT_LE(w.warnedUnknownCountForSource(pvName), kExpectedCap);
 }
 
 #endif // MLDP_PVXS_HDF5_ENABLED

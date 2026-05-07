@@ -86,6 +86,20 @@ public:
     {
         return true;
     }
+
+    /**
+     * @brief Returns true if this writer supports receiving data from multiple
+     *        root sources simultaneously (merged output).
+     *
+     * Writers that return true must implement merge semantics: all root-sources
+     * routed to this instance are collapsed into a single output container.
+     *
+     * @return false (default) — single-source only; override to advertise multi-source support.
+     */
+    virtual bool supports_multi_root_source() const noexcept
+    {
+        return false;
+    }
 };
 
 /// Convenience alias for unique ownership of a writer.

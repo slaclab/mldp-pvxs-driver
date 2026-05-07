@@ -11,13 +11,14 @@
 #include <controller/RouteTable.h>
 
 #include <algorithm>
+#include <fnmatch.h>
 #include <stdexcept>
 #include <string>
 
 namespace mldp_pvxs_driver::controller {
 
 RouteTable RouteTable::build(
-    const std::vector<RouteEntry>& routes,
+    const std::vector<RouteFilterEntry>& routes,
     const std::unordered_set<std::string>& known_readers,
     const std::unordered_set<std::string>& known_writers)
 {
@@ -27,25 +28,27 @@ RouteTable RouteTable::build(
     }
     rt.all_to_all_ = false;
 
-    for (const auto& [writer_name, reader_names] : routes) {
-        if (!known_writers.contains(writer_name)) {
+    for (const auto& entry : routes) {
+        if (!known_writers.contains(entry.writer_name)) {
             throw std::runtime_error(
-                "Route references unknown writer '" + writer_name + "'");
+                "Route references unknown writer '" + entry.writer_name + "'");
         }
 
         WriterRoute wr;
-        for (const auto& reader : reader_names) {
+        for (const auto& reader : entry.from_readers) {
             if (reader == "all") {
                 wr.accept_all = true;
             } else {
                 if (!known_readers.contains(reader)) {
                     throw std::runtime_error(
-                        "Route for writer '" + writer_name + "' references unknown reader '" + reader + "'");
+                        "Route for writer '" + entry.writer_name + "' references unknown reader '" + reader + "'");
                 }
                 wr.readers.insert(reader);
             }
         }
-        rt.table_.emplace(writer_name, std::move(wr));
+        wr.include_patterns = entry.include_patterns;
+        wr.exclude_patterns = entry.exclude_patterns;
+        rt.table_.emplace(entry.writer_name, std::move(wr));
     }
 
     return rt;
@@ -74,6 +77,26 @@ bool RouteTable::accepts(const std::string& writer_name,
     }
 
     return wr.readers.contains(reader_name);
+}
+
+bool RouteTable::acceptsSource(const std::string& writer_name,
+                                const std::string& root_source) const noexcept
+{
+    if (all_to_all_) return true;
+    auto it = table_.find(writer_name);
+    if (it == table_.end()) return false;
+    const auto& wr = it->second;
+    if (!wr.include_patterns.empty()) {
+        bool hit = false;
+        for (const auto& pat : wr.include_patterns) {
+            if (fnmatch(pat.c_str(), root_source.c_str(), 0) == 0) { hit = true; break; }
+        }
+        if (!hit) return false;
+    }
+    for (const auto& pat : wr.exclude_patterns) {
+        if (fnmatch(pat.c_str(), root_source.c_str(), 0) == 0) return false;
+    }
+    return true;
 }
 
 std::vector<std::string> RouteTable::orphanReaders(

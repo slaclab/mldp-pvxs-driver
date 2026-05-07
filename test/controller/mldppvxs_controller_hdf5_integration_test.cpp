@@ -443,6 +443,65 @@ static std::string buildBsasTableDetailYaml(const std::string& pvName,
            "              tsNanos: nanoseconds\n";
 }
 
+// ---------------------------------------------------------------------------
+// Merge-mode helpers
+// ---------------------------------------------------------------------------
+
+// Wait for a merged HDF5 file (named merged_*.hdf5, not a dotfile) to appear.
+static fs::path waitForMergedH5File(const fs::path& dir,
+                                    std::chrono::milliseconds timeout = std::chrono::milliseconds(5000))
+{
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (std::chrono::steady_clock::now() < deadline)
+    {
+        for (const auto& e : fs::recursive_directory_iterator(dir))
+        {
+            if (e.is_regular_file() && e.path().extension() == ".hdf5")
+            {
+                const std::string fname = e.path().filename().string();
+                if (fname.rfind("merged_", 0) == 0)
+                    return e.path();
+            }
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    return {};
+}
+
+// Build YAML with two readers, routing with include filters, one merge HDF5 writer.
+static std::string buildMergeYaml(const std::string& pv_a,
+                                  const std::string& pv_b,
+                                  const std::string& basePath,
+                                  const std::string& includeA = "",
+                                  const std::string& includeB = "")
+{
+    std::string yaml =
+        "writer:\n"
+        "  hdf5-merge:\n"
+        "    - name: hdf5-merge\n"
+        "      base-path: \"" + basePath + "\"\n"
+        "      flush-interval-ms: 100\n"
+        "reader:\n"
+        "  - epics-pvxs:\n"
+        "      - name: reader-a\n"
+        "        pvs:\n"
+        "          - name: " + pv_a + "\n"
+        "  - epics-pvxs:\n"
+        "      - name: reader-b\n"
+        "        pvs:\n"
+        "          - name: " + pv_b + "\n"
+        "routing:\n"
+        "  hdf5-merge:\n"
+        "    from: [reader-a, reader-b]\n";
+
+    if (!includeA.empty() || !includeB.empty()) {
+        yaml += "    include:\n";
+        if (!includeA.empty()) yaml += "      - \"" + includeA + "\"\n";
+        if (!includeB.empty()) yaml += "      - \"" + includeB + "\"\n";
+    }
+    return yaml;
+}
+
 TEST_F(ControllerHDF5Test, BsasNTTableStructuralCorrectness)
 {
     // ---- 1. Start controller and wait for data --------------------------------
@@ -508,3 +567,103 @@ TEST_F(ControllerHDF5Test, BsasNTTableStructuralCorrectness)
     }
 }
 
+// ---------------------------------------------------------------------------
+// Merge-mode integration tests
+// ---------------------------------------------------------------------------
+
+// E2E: Two readers routed to one merge HDF5 writer.
+// Both PV groups must be present in the merged file.
+TEST_F(ControllerHDF5Test, MergeTwoReadersNoFilterBothGroupsPresent)
+{
+    const auto yaml = buildMergeYaml("test:voltage", "test:counter", outputDir_.string());
+    auto cfg = makeConfigFromYaml(yaml);
+    controller_ = mldp_pvxs_driver::controller::MLDPPVXSController::create(cfg);
+    ASSERT_TRUE(controller_);
+    controller_->start();
+
+    // Wait for activity: at least one of the readers delivers data
+    ASSERT_FALSE(waitForActivity(std::chrono::milliseconds(5000)).empty())
+        << "No activity within 5s";
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+    controller_->stop();
+    controller_.reset();
+
+    const auto h5path = waitForMergedH5File(outputDir_);
+    ASSERT_FALSE(h5path.empty()) << "No merged .hdf5 file found after stop()";
+
+    H5::H5File file(h5path.string(), H5F_ACC_RDONLY);
+    EXPECT_TRUE(file.nameExists("test:voltage"))  << "Group 'test:voltage' missing";
+    EXPECT_TRUE(file.nameExists("test:counter"))  << "Group 'test:counter' missing";
+}
+
+// E2E: Include filter — only the included PV's group appears in the merged file.
+TEST_F(ControllerHDF5Test, MergeTwoReadersIncludeFilterOnlyMatchingGroupPresent)
+{
+    // Only include test:voltage — test:counter batches should be filtered out
+    const auto yaml = buildMergeYaml("test:voltage", "test:counter",
+                                     outputDir_.string(),
+                                     "test:voltage", "" /* no include for counter */);
+    auto cfg = makeConfigFromYaml(yaml);
+    controller_ = mldp_pvxs_driver::controller::MLDPPVXSController::create(cfg);
+    ASSERT_TRUE(controller_);
+    controller_->start();
+
+    ASSERT_FALSE(waitForActivity(std::chrono::milliseconds(5000)).empty())
+        << "No activity within 5s";
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+    controller_->stop();
+    controller_.reset();
+
+    const auto h5path = waitForMergedH5File(outputDir_);
+    ASSERT_FALSE(h5path.empty()) << "No merged .hdf5 file found after stop()";
+
+    H5::H5File file(h5path.string(), H5F_ACC_RDONLY);
+    EXPECT_TRUE(file.nameExists("test:voltage"))   << "Included PV 'test:voltage' group missing";
+    EXPECT_FALSE(file.nameExists("test:counter"))  << "Excluded PV 'test:counter' group should not be present";
+}
+
+// E2E: Both readers included — both groups present with data in correct groups.
+TEST_F(ControllerHDF5Test, MergeTwoReadersFilteredGroupsContainData)
+{
+    const auto yaml = buildMergeYaml("test:voltage", "test:counter",
+                                     outputDir_.string(),
+                                     "test:voltage", "test:counter");
+    auto cfg = makeConfigFromYaml(yaml);
+    controller_ = mldp_pvxs_driver::controller::MLDPPVXSController::create(cfg);
+    ASSERT_TRUE(controller_);
+    controller_->start();
+
+    ASSERT_FALSE(waitForActivity(std::chrono::milliseconds(5000)).empty())
+        << "No activity within 5s";
+    std::this_thread::sleep_for(std::chrono::milliseconds(600));
+
+    controller_->stop();
+    controller_.reset();
+
+    const auto h5path = waitForMergedH5File(outputDir_);
+    ASSERT_FALSE(h5path.empty()) << "No merged .hdf5 file found after stop()";
+
+    H5::H5File file(h5path.string(), H5F_ACC_RDONLY);
+
+    // Both groups present
+    ASSERT_TRUE(file.nameExists("test:voltage")) << "Group 'test:voltage' missing";
+    ASSERT_TRUE(file.nameExists("test:counter")) << "Group 'test:counter' missing";
+
+    // test:voltage group has data (timestamps or the voltage column)
+    auto grpV = file.openGroup("test:voltage");
+    hsize_t numVObjects = 0;
+    H5Gget_num_objs(grpV.getId(), &numVObjects);
+    EXPECT_GT(numVObjects, 0u) << "test:voltage group has no datasets";
+
+    // test:counter group has data
+    auto grpC = file.openGroup("test:counter");
+    hsize_t numCObjects = 0;
+    H5Gget_num_objs(grpC.getId(), &numCObjects);
+    EXPECT_GT(numCObjects, 0u) << "test:counter group has no datasets";
+
+    // No cross-contamination: test:voltage data not under test:counter and vice versa
+    EXPECT_FALSE(file.nameExists("test:voltage/test:counter"));
+    EXPECT_FALSE(file.nameExists("test:counter/test:voltage"));
+}

@@ -15,9 +15,10 @@ The top-level document is the **controller configuration** (`MLDPPVXSControllerC
 | Key | Required | Description |
 |-----|----------|-------------|
 | `name` | no | Controller instance name; used as Prometheus label `controller` (default: `"default"`) |
-| `writer` | **yes (≥1)** | One or more writer instances (`mldp`, `hdf5`). Controller throws at startup if absent or empty. |
+| `writer` | **yes (≥1)** | One or more writer instances (`mldp`, `hdf5`, `hdf5-merge`). Controller throws at startup if absent or empty. |
 | `reader` | **yes (≥1)**  | One or more reader groups (`epics-pvxs`, `epics-base`, `epics-archiver`) |
 | `metrics` | no | Prometheus exporter settings |
+| `routing` | no | Explicit writer→reader routing table with optional per-writer `include`/`exclude` source glob filters. Omit for all-to-all (every writer receives from every reader). |
 
 ```yaml
 name: my_controller                         # optional; default: "default"; scopes Prometheus metrics label 'controller'
@@ -43,10 +44,19 @@ writer:                                     # required — at least one writer i
         #   pem-private-key: /etc/certs/client.key
         #   pem-root-certs: /etc/certs/ca.crt
 
-  # ========== HDF5 Storage Writer (optional; requires -DMLDP_PVXS_HDF5_ENABLED=ON) ==========
+  # ========== HDF5 Per-Source Writer (one file per root_source; requires -DMLDP_PVXS_HDF5_ENABLED=ON) ==========
   hdf5:
     - name: hdf5_local                      # required; unique instance name
       base-path: /data/hdf5                 # required; directory for HDF5 output files
+      max-file-age-s: 3600                  # optional; default: 3600; rotate after N seconds
+      max-file-size-mb: 512                 # optional; default: 512; rotate after N MiB
+      flush-interval-ms: 1000              # optional; default: 1000; flush thread period in ms
+      compression-level: 0                  # optional; default: 0; DEFLATE level 0–9
+
+  # ========== HDF5 Merge Writer (all sources share one file, one group per source; requires -DMLDP_PVXS_HDF5_ENABLED=ON) ==========
+  hdf5-merge:
+    - name: hdf5_merged                     # required; unique instance name
+      base-path: /data/hdf5-merged          # required; directory for HDF5 output files
       max-file-age-s: 3600                  # optional; default: 3600; rotate after N seconds
       max-file-size-mb: 512                 # optional; default: 512; rotate after N MiB
       flush-interval-ms: 1000              # optional; default: 1000; flush thread period in ms
@@ -109,6 +119,19 @@ reader:                                     # optional; list of reader groups to
 metrics:                                    # optional; Prometheus exporter settings
   endpoint: 0.0.0.0:9464                    # required when block is present; bind host:port
   scan-interval-seconds: 1                  # optional; default: 1; system metrics scan interval
+
+routing:                                    # optional; omit for all-to-all (every writer receives from every reader)
+  mldp_main:                                # writer instance name (must match a writer[].name)
+    from:                                   # required; list of reader instance names to route to this writer
+      - pvxs_reader_a
+      - base_reader_a
+  hdf5_local:
+    from:
+      - pvxs_reader_a                       # use "all" as a single entry to accept from every reader
+    include:                                # optional; glob patterns on root_source (PV name); absent = accept all
+      - "SITE:BPM:*"
+    exclude:                                # optional; glob patterns on root_source; applied after include; absent = drop nothing
+      - "SITE:TEST:*"
 ```
 
 ### Supported Writer Types
@@ -116,7 +139,8 @@ metrics:                                    # optional; Prometheus exporter sett
 | Writer Type | Description |
 |-------------|-------------|
 | `mldp` | gRPC ingestion writer — forwards batches to the MLDP ingestion service |
-| `hdf5` | HDF5 storage writer — writes batches to local HDF5 files (build flag required) |
+| `hdf5` | HDF5 per-source writer — one file per root_source (build flag required) |
+| `hdf5-merge` | HDF5 merge writer — all sources share one file, one group per source (build flag required) |
 
 Multiple instances of the same type are supported (each entry in the sequence is independent).
 
@@ -201,10 +225,13 @@ For periodic metrics dumps and manual triggers (Ctrl+P, Ctrl+D, SIGUSR1/SIGQUIT)
 
 ## Architecture
 
+> 🚀 **New to the driver?** Start with the **[User Guide](docs/user-guide.md)** — annotated YAML examples covering every reader, writer, routing, and source-filter scenario. No C++ knowledge required.
+
 This project uses a pipeline-style architecture: PVXS clients feed PV updates into a bounded work queue; the core driver converts and enriches events and dispatches them to the MLDP ingestion service using a connection pool of gRPC channels; reader implementations consume and re-publish or transform events as needed.
 
 ### Documentation
 
+- [**User Guide**](docs/user-guide.md) - Start here: annotated examples for operators and physicists (no C++ required)
 - [Architecture Overview](docs/architecture.md) - System architecture, data flow, and design patterns
 - [Configuration Reference](docs/configuration.md) - Complete YAML schema with all keys, types, and defaults
 - [Reader Types](docs/readers.md) - Available reader implementations (EPICS Base, PVXS, Archiver)
