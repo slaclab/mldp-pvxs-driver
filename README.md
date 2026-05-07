@@ -225,10 +225,13 @@ For periodic metrics dumps and manual triggers (Ctrl+P, Ctrl+D, SIGUSR1/SIGQUIT)
 
 ## Architecture
 
+> 🚀 **New to the driver?** Start with the **[User Guide](docs/user-guide.md)** — annotated YAML examples covering every reader, writer, routing, and source-filter scenario. No C++ knowledge required.
+
 This project uses a pipeline-style architecture: PVXS clients feed PV updates into a bounded work queue; the core driver converts and enriches events and dispatches them to the MLDP ingestion service using a connection pool of gRPC channels; reader implementations consume and re-publish or transform events as needed.
 
 ### Documentation
 
+- [**User Guide**](docs/user-guide.md) - Start here: annotated examples for operators and physicists (no C++ required)
 - [Architecture Overview](docs/architecture.md) - System architecture, data flow, and design patterns
 - [Configuration Reference](docs/configuration.md) - Complete YAML schema with all keys, types, and defaults
 - [Reader Types](docs/readers.md) - Available reader implementations (EPICS Base, PVXS, Archiver)
