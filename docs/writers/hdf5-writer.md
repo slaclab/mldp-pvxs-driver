@@ -4,26 +4,27 @@
 
 ## Overview
 
-`HDF5Writer` stores incoming event batches as HDF5 datasets on disk. It registers as type `"hdf5"` in the writer factory. Available only when the build option `MLDP_PVXS_HDF5_ENABLED` is set.
+Two HDF5 writer types store incoming event batches as HDF5 datasets on disk. Both are available only when the build option `MLDP_PVXS_HDF5_ENABLED` is set.
+
+| Type | Class | Behaviour |
+|------|-------|-----------|
+| `"hdf5"` | `HDF5WriterPerSource` | One file per `root_source` via `HDF5FilePool` |
+| `"hdf5-merge"` | `HDF5WriterMerge` | All sources share one file; each source gets its own HDF5 group |
 
 ## Internal Architecture
 
 ### Class hierarchy
 
-`HDF5Writer` is a **thin factory wrapper**. It selects one of two concrete implementations at construction time based on `merge-root-sources`:
+Each concrete class registers itself directly in the writer factory via the `REGISTER_WRITER` macro:
 
 ```
 IWriter
 └── HDF5WriterBase          (abstract — shared queue, threads, tabular buffers)
-      ├── HDF5WriterPerSource   (non-merge: one file per root_source via HDF5FilePool)
-      └── HDF5WriterMerge       (merge: all sources share one H5::H5File)
-
-HDF5Writer                  (factory wrapper — owns unique_ptr<IWriter> impl_)
+      ├── HDF5WriterPerSource   (type "hdf5" — one file per root_source via HDF5FilePool)
+      └── HDF5WriterMerge       (type "hdf5-merge" — all sources share one H5::H5File)
 ```
 
-`HDF5Writer` delegates every `IWriter` method to `impl_`. The `REGISTER_WRITER("hdf5", HDF5Writer)` registration and both public constructors remain unchanged.
-
-### Non-merge mode (default)
+### hdf5 — HDF5WriterPerSource (one file per source)
 
 ```
 push() → bounded MPSC deque
@@ -35,7 +36,7 @@ push() → bounded MPSC deque
                       flushThread → doFlushAll() → pool->flushAll()
 ```
 
-### Merge mode (`merge-root-sources: true`)
+### hdf5-merge — HDF5WriterMerge (all sources, one file)
 
 ```
 push() → bounded MPSC deque
@@ -252,18 +253,25 @@ In all cases, the old file is fully flushed and closed before the new file is re
 
 ## Configuration
 
-Under `writer.hdf5[i]`:
+Under `writer.hdf5[i]` or `writer.hdf5-merge[i]`:
 
 ```yaml
 writer:
-  hdf5:
+  hdf5:                         # type "hdf5" — HDF5WriterPerSource
     - name: hdf5_local          # required — unique instance name
       base-path: /data/hdf5     # required — output directory
       max-file-age-s: 3600      # optional; default: 3600
       max-file-size-mb: 512     # optional; default: 512
       flush-interval-ms: 1000   # optional; default: 1000
       compression-level: 0      # optional; 0–9, default: 0 (off)
-      merge-root-sources: false   # optional; default: false
+
+  hdf5-merge:                   # type "hdf5-merge" — HDF5WriterMerge
+    - name: hdf5_merged         # required — unique instance name
+      base-path: /data/hdf5     # required — output directory
+      max-file-age-s: 3600      # optional; default: 3600
+      max-file-size-mb: 512     # optional; default: 512
+      flush-interval-ms: 1000   # optional; default: 1000
+      compression-level: 0      # optional; 0–9, default: 0 (off)
 ```
 
 | Key | Type | Default | Description |
@@ -274,11 +282,10 @@ writer:
 | `max-file-size-mb` | uint64 | `512` | Rotate file after this size (MiB). |
 | `flush-interval-ms` | int | `1000` | How often the flush thread calls `H5File::flush`. |
 | `compression-level` | int | `0` | DEFLATE level 0–9 (0 = no compression). |
-| `merge-root-sources` | bool | `false` | Opt-in merge mode; multiple root-sources share one output file. See [Merge Mode](#merge-mode). |
 
-## Merge Mode
+## hdf5-merge Writer
 
-When `merge-root-sources: true`, all root-sources write into a **single shared HDF5 file** instead of one file per source. Each source's datasets live under a dedicated HDF5 group.
+`HDF5WriterMerge` (YAML key `writer.hdf5-merge`) writes all root-sources into a **single shared HDF5 file**. Each source's datasets live under a dedicated HDF5 group.
 
 ### File layout
 
@@ -330,17 +337,16 @@ No data is lost during rotation: write operations call `checkMergeRotation()` be
 
 If two sources attempt to write a dataset with the same name but different HDF5 types under the same group, the writer logs an error and throws `std::runtime_error`. This is enforced by `ensureDataset()`, which opens the existing dataset and compares its committed type against the requested type.
 
-### Enable merge mode
+### Enable hdf5-merge writer
 
 ```yaml
 writer:
-  hdf5:
+  hdf5-merge:
     - name: hdf5_merged
       base-path: /data/hdf5
-      merge-root-sources: true
 ```
 
-`supports_multi_root_source()` returns `true` on `HDF5Writer`; the constructor guard is satisfied and the writer starts normally.
+`supports_multi_root_source()` returns `true` on `HDF5WriterMerge`; the constructor guard is satisfied and the writer starts normally.
 
 ## Examples
 
@@ -377,10 +383,9 @@ filter. All accepted sources land in one merged HDF5 file — one group per sour
 
 ```yaml
 writer:
-  hdf5:
+  hdf5-merge:
     - name: hdf5_merged
       base-path: /data/merged
-      merge-root-sources: true
 
 reader:
   - epics-pvxs:
@@ -445,7 +450,8 @@ Output: one file in `/data/merged/`:
 
 | Step | What happens |
 |------|-------------|
-| `HDF5Writer(config)` | Selects `HDF5WriterPerSource` or `HDF5WriterMerge` based on `mergeRootSources`. |
+| `HDF5WriterPerSource(config)` | Opens `HDF5FilePool`; one file per source. |
+| `HDF5WriterMerge(config)` | Opens single shared merge file. |
 | `start()` | Calls `doStart()` (opens pool / merge file), then spawns writer and flush threads. |
 | `push(batch)` | Enqueues batch under `queueMutex_`; returns `false` if queue at capacity. |
 | `stop()` | Sets `stopping_`; joins both threads; calls `doStop()` (closes files). |
@@ -461,10 +467,9 @@ Output: one file in `/data/merged/`:
 
 | File | Purpose |
 |------|---------|
-| `include/writer/hdf5/HDF5Writer.h` | Thin factory wrapper; `REGISTER_WRITER`. |
 | `include/writer/hdf5/HDF5WriterBase.h` | Abstract base: shared state, queue/thread logic, pure-virtual hooks. |
-| `include/writer/hdf5/HDF5WriterPerSource.h` | Non-merge subclass header. |
-| `include/writer/hdf5/HDF5WriterMerge.h` | Merge subclass header. |
+| `include/writer/hdf5/HDF5WriterPerSource.h` | Per-source subclass header; `REGISTER_WRITER("hdf5", …)`. |
+| `include/writer/hdf5/HDF5WriterMerge.h` | Merge subclass header; `REGISTER_WRITER("hdf5-merge", …)`. |
 | `include/writer/hdf5/HDF5WriterConfig.h` | Config struct, YAML keys, `parse()`. |
 | `include/writer/hdf5/HDF5FilePool.h` | Per-source file pool, rotation, flush. |
 | `src/writer/hdf5/HDF5WriterBase.cpp` | `writerLoop`, `flushLoop`, tabular accumulation, `ensureDataset`, `flushTabularBuffer`. |
@@ -519,3 +524,26 @@ mldp_pvxs_driver_hdf5_write_latency_ms_bucket{...}
 `HDF5WriterMetrics` inherits `WriterMetrics → ExtendedMetrics`.
 See [metrics-extension-guide.md](../metrics-extension-guide.md) for the full pattern
 used to create new per-component metric classes.
+
+## Config Migration
+
+If upgrading from a build that used `merge-root-sources: true`:
+
+**Before:**
+```yaml
+writer:
+  hdf5:
+    - name: hdf5_merged
+      base-path: /data/hdf5
+      merge-root-sources: true
+```
+
+**After:**
+```yaml
+writer:
+  hdf5-merge:
+    - name: hdf5_merged
+      base-path: /data/hdf5
+```
+
+Per-source writer configuration is unchanged — `writer.hdf5` still works as before.

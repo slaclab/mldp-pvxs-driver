@@ -15,7 +15,7 @@ The top-level document is the **controller configuration** (`MLDPPVXSControllerC
 | Key | Required | Description |
 |-----|----------|-------------|
 | `name` | no | Controller instance name; used as Prometheus label `controller` (default: `"default"`) |
-| `writer` | **yes (≥1)** | One or more writer instances (`mldp`, `hdf5`). Controller throws at startup if absent or empty. |
+| `writer` | **yes (≥1)** | One or more writer instances (`mldp`, `hdf5`, `hdf5-merge`). Controller throws at startup if absent or empty. |
 | `reader` | **yes (≥1)**  | One or more reader groups (`epics-pvxs`, `epics-base`, `epics-archiver`) |
 | `metrics` | no | Prometheus exporter settings |
 | `routing` | no | Explicit writer→reader routing table. Omit for all-to-all (every writer receives from every reader). |
@@ -44,10 +44,19 @@ writer:                                     # required — at least one writer i
         #   pem-private-key: /etc/certs/client.key
         #   pem-root-certs: /etc/certs/ca.crt
 
-  # ========== HDF5 Storage Writer (optional; requires -DMLDP_PVXS_HDF5_ENABLED=ON) ==========
+  # ========== HDF5 Per-Source Writer (one file per root_source; requires -DMLDP_PVXS_HDF5_ENABLED=ON) ==========
   hdf5:
     - name: hdf5_local                      # required; unique instance name
       base-path: /data/hdf5                 # required; directory for HDF5 output files
+      max-file-age-s: 3600                  # optional; default: 3600; rotate after N seconds
+      max-file-size-mb: 512                 # optional; default: 512; rotate after N MiB
+      flush-interval-ms: 1000              # optional; default: 1000; flush thread period in ms
+      compression-level: 0                  # optional; default: 0; DEFLATE level 0–9
+
+  # ========== HDF5 Merge Writer (all sources share one file, one group per source; requires -DMLDP_PVXS_HDF5_ENABLED=ON) ==========
+  hdf5-merge:
+    - name: hdf5_merged                     # required; unique instance name
+      base-path: /data/hdf5-merged          # required; directory for HDF5 output files
       max-file-age-s: 3600                  # optional; default: 3600; rotate after N seconds
       max-file-size-mb: 512                 # optional; default: 512; rotate after N MiB
       flush-interval-ms: 1000              # optional; default: 1000; flush thread period in ms
@@ -126,7 +135,8 @@ routing:                                    # optional; omit for all-to-all (eve
 | Writer Type | Description |
 |-------------|-------------|
 | `mldp` | gRPC ingestion writer — forwards batches to the MLDP ingestion service |
-| `hdf5` | HDF5 storage writer — writes batches to local HDF5 files (build flag required) |
+| `hdf5` | HDF5 per-source writer — one file per root_source (build flag required) |
+| `hdf5-merge` | HDF5 merge writer — all sources share one file, one group per source (build flag required) |
 
 Multiple instances of the same type are supported (each entry in the sequence is independent).
 
