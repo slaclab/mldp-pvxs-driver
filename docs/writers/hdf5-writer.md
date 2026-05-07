@@ -8,22 +8,65 @@
 
 ## Internal Architecture
 
+### Class hierarchy
+
+`HDF5Writer` is a **thin factory wrapper**. It selects one of two concrete implementations at construction time based on `merge-root-sources`:
+
 ```
-push() → bounded MPSC deque
-               ↓
-         writerThread
-               ↓
-        appendFrame()  →  HDF5FilePool.acquire(source)
-                                    ↓
-                            H5::H5File (per source)
-                                    ↓
-                       flushThread (periodic flush)
+IWriter
+└── HDF5WriterBase          (abstract — shared queue, threads, tabular buffers)
+      ├── HDF5WriterPerSource   (non-merge: one file per root_source via HDF5FilePool)
+      └── HDF5WriterMerge       (merge: all sources share one H5::H5File)
+
+HDF5Writer                  (factory wrapper — owns unique_ptr<IWriter> impl_)
 ```
 
-- **Writer thread**: single thread drains the queue and calls `appendFrame()`.
-- **Flush thread**: calls `HDF5FilePool::flushAll()` every `flush-interval-ms`.
-- **File pool**: `HDF5FilePool` keeps one open `H5::H5File` per `root_source`; rotates on age or size threshold.
+`HDF5Writer` delegates every `IWriter` method to `impl_`. The `REGISTER_WRITER("hdf5", HDF5Writer)` registration and both public constructors remain unchanged.
+
+### Non-merge mode (default)
+
+```
+push() → bounded MPSC deque
+               ↓ (writerThread)
+        writeFrameImpl()  →  HDF5FilePool.acquire(source)
+                                       ↓
+                               H5::H5File (per source)
+                                       ↓
+                      flushThread → doFlushAll() → pool->flushAll()
+```
+
+### Merge mode (`merge-root-sources: true`)
+
+```
+push() → bounded MPSC deque
+               ↓ (writerThread)
+        writeFrameImpl()  →  checkMergeRotation()
+                                       ↓
+                              lock mergeFileMutex_
+                                       ↓
+                           single shared H5::H5File
+                           datasets under /<source>/ group
+                                       ↓
+                      flushThread → doFlushAll() → mergeFile_->flush()
+```
+
+### Shared base (HDF5WriterBase)
+
+- **Writer thread**: drains bounded MPSC queue; calls `writeFrameImpl()` (virtual) per frame or `flushTabularBufferImpl()` (virtual) on end-of-batch-group.
+- **Flush thread**: calls `doFlushAll()` (virtual) every `flush-interval-ms`.
+- **Tabular buffers**: `TabularBuffer` per source accumulated entirely in the base; subclass called only at flush.
 - **Back-pressure**: queue capped at `kQueueCapacity` (8192). `push()` returns `false` when full.
+- **Destructor safety**: `~HDF5WriterBase()` does **not** call `stop()` (pure-virtual `doStop()` would be invalid at base-dtor time). Each subclass destructor calls `stop()` while its vtable is still live.
+
+### Pure-virtual hooks
+
+| Hook | Called by | Purpose |
+|------|-----------|---------|
+| `writeFrameImpl(source, frame, batchSeq)` | `writerLoop` | Write one DataBatch frame |
+| `flushTabularBufferImpl(source, buf)` | `writerLoop`, `accumulateTabularFrame` | Write accumulated NTTable rows |
+| `doFlushAll()` | `flushLoop` | Flush open file(s) to disk |
+| `doStart()` | `start()` | Open pool or merge file |
+| `doStop()` | `stop()` | Close pool or merge file after threads join |
 
 ## HDF5 File Layout
 
@@ -220,7 +263,7 @@ writer:
       max-file-size-mb: 512     # optional; default: 512
       flush-interval-ms: 1000   # optional; default: 1000
       compression-level: 0      # optional; 0–9, default: 0 (off)
-      merge-root-sources: false   # optional; default: false — merge mode disabled (see Task 03)
+      merge-root-sources: false   # optional; default: false
 ```
 
 | Key | Type | Default | Description |
@@ -265,7 +308,7 @@ merged_<suffix>.hdf5
 
 ### Locking model
 
-A single `std::mutex` (`mergeFileMutex_`) guards all access to the shared file handle. The writer thread and flush thread never touch the merge file concurrently without holding this mutex. This is simpler than the per-source `fileMutex` model used in pool mode and is sufficient because all writes are serialised through the single writer thread anyway.
+`HDF5WriterMerge` owns a single `mergeFileMutex_` that guards all access to the shared file handle. Writer and flush threads never touch the merge file concurrently without holding this mutex. Simpler than the per-source `fileMutex` model used in pool mode and sufficient because all writes are serialised through the single writer thread.
 
 ### Rotation policy
 
@@ -402,24 +445,32 @@ Output: one file in `/data/merged/`:
 
 | Step | What happens |
 |------|-------------|
-| `start()` | Initialises `HDF5FilePool`; spawns writer and flush threads. |
-| `push(batch)` | Enqueues batch; returns `false` if queue is at capacity. |
-| `stop()` | Sets stop flag; joins threads; calls `HDF5FilePool::closeAll()`. |
+| `HDF5Writer(config)` | Selects `HDF5WriterPerSource` or `HDF5WriterMerge` based on `mergeRootSources`. |
+| `start()` | Calls `doStart()` (opens pool / merge file), then spawns writer and flush threads. |
+| `push(batch)` | Enqueues batch under `queueMutex_`; returns `false` if queue at capacity. |
+| `stop()` | Sets `stopping_`; joins both threads; calls `doStop()` (closes files). |
 
 ## Thread-Safety Notes
 
-- `HDF5FilePool` holds its mutex **only** during map lookup / rotation, not during HDF5 I/O.
-- Concurrent I/O on **different** sources requires no contention.
-- `HDF5Writer` itself uses a single writer thread, so `appendFrame()` never races.
+- `HDF5FilePool` holds its mutex **only** during map lookup / rotation, not during HDF5 I/O. Concurrent I/O on different sources requires no contention.
+- In non-merge mode, a per-`FileEntry` `fileMutex` serialises writer thread and flush thread access to the same `H5::H5File`. This is required because HDF5 (without the thread-safe build) is not thread-safe.
+- In merge mode, a single `mergeFileMutex_` serialises all access to the shared file. The writer thread holds it during `appendFrameMerge()` and `flushTabularBufferMerge()`; the flush thread holds it during `mergeFile_->flush()`.
+- `lastTsBatchSeq_` and `tabularBuffers_` are accessed exclusively from the writer thread — no mutex needed.
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `include/writer/hdf5/HDF5Writer.h` | Class definition (guard: `MLDP_PVXS_HDF5_ENABLED`). |
+| `include/writer/hdf5/HDF5Writer.h` | Thin factory wrapper; `REGISTER_WRITER`. |
+| `include/writer/hdf5/HDF5WriterBase.h` | Abstract base: shared state, queue/thread logic, pure-virtual hooks. |
+| `include/writer/hdf5/HDF5WriterPerSource.h` | Non-merge subclass header. |
+| `include/writer/hdf5/HDF5WriterMerge.h` | Merge subclass header. |
 | `include/writer/hdf5/HDF5WriterConfig.h` | Config struct, YAML keys, `parse()`. |
 | `include/writer/hdf5/HDF5FilePool.h` | Per-source file pool, rotation, flush. |
-| `src/writer/hdf5/HDF5Writer.cpp` | `appendFrame()`, `ensureDataset()`, `ensureDataset2D()`, thread loops. |
+| `src/writer/hdf5/HDF5WriterBase.cpp` | `writerLoop`, `flushLoop`, tabular accumulation, `ensureDataset`, `flushTabularBuffer`. |
+| `src/writer/hdf5/HDF5WriterPerSource.cpp` | `appendFrame`, pool lifecycle, `writeFrameImpl`. |
+| `src/writer/hdf5/HDF5WriterMerge.cpp` | Merge-file helpers, `appendFrameMerge`, rotation. |
+| `src/writer/hdf5/HDF5WriterDetail.h` | Internal shared helpers: `append1D/2D`, `writeColumnsImpl`, `mapNativeType`, `fillValue`. |
 
 ## Build Requirement
 
