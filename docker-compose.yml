@@ -9,7 +9,7 @@ services:
       - "27017:27017"
 
   dp-ingestion:
-    image: ghcr.io/slaclab/dp-service:v1.13
+    image: ghcr.io/slaclab/dp-service:rel-1.14.0
     container_name: dp-ingestion
     depends_on:
       - mongodb
@@ -25,7 +25,7 @@ services:
       - "50051:50051"
   
   dp-query:
-    image: ghcr.io/slaclab/dp-service:v1.13
+    image: ghcr.io/slaclab/dp-service:rel-1.14.0
     container_name: dp-query
     depends_on:
       - mongodb
