@@ -20,7 +20,7 @@ flowchart TB
     subgraph ReaderLayer["ABSTRACT READER LAYER — all readers inherit IReader"]
         R1["EpicsBaseReader<br/>(Polling)<br/>Monitor Poller · Thread Pool"]
         R2["EpicsPVXSReader<br/>(Event-Driven)<br/>PVXS Subscriptions"]
-        R3["ArchiverReader<br/>(Future)<br/>Archiver API"]
+        R3["EpicsArchiverReader<br/>(HTTP/Protobuf)<br/>historical_once / periodic_tail"]
         R4["HDF5Reader<br/>(Future)<br/>File Parsing"]
     end
 
@@ -39,11 +39,13 @@ flowchart TB
 
     subgraph WriterLayer["WRITER LAYER — all writers implement IWriter"]
         WR1["MLDPWriter<br/>(gRPC)<br/>Thread Pool · WorkerChannels"]
-        WR2["HDF5Writer<br/>(Disk)<br/>MPSC Queue · Flush Thread"]
+        WR2["HDF5WriterPerSource<br/>(Disk)<br/>MPSC Queue · HDF5FilePool · Flush Thread"]
+        WR3["HDF5WriterMerge<br/>(Disk)<br/>MPSC Queue · Shared H5File · Flush Thread"]
     end
 
     MLDPService["MLDP Ingestion Service<br/>(gRPC Streams)"]
-    HDF5Files["HDF5 Files<br/>(Local Disk)"]
+    HDF5Files["HDF5 Files<br/>(one per source)"]
+    HDF5Merged["HDF5 Merged File<br/>(one file, group per source)"]
 
     DS1 --> R1
     DS1 --> R2
@@ -67,9 +69,11 @@ flowchart TB
 
     WriterFactory --> WR1
     WriterFactory --> WR2
+    WriterFactory --> WR3
 
     WR1 --> MLDPService
     WR2 --> HDF5Files
+    WR3 --> HDF5Merged
 ```
 
 ## Reader Abstraction
@@ -80,7 +84,7 @@ Reader Type      | Status      | Description
 ---------------- | ----------- | ---------------------------------------
 `epics-base`     | Implemented | Polling-based EPICS Channel Access
 `epics-pvxs`     | Implemented | Event-driven EPICS PVAccess (PVXS)
-`epics-archiver` | Future      | Historical data from EPICS Archiver
+`epics-archiver` | Implemented | Historical / tail data from EPICS Archiver Appliance
 `hdf5`           | Future      | Data replay from HDF5 files
 Others           | Future      | Extensible for new data sources
 
@@ -98,10 +102,11 @@ For details on existing readers, see [Reader Types](readers.md). To implement a 
 
 Writers are the **output side** of the pipeline. They consume `IDataBus::EventBatch` objects from worker queues and deliver data to a sink.
 
-Writer Type | Status      | Description
------------ | ----------- | -------------------------------------------
-`mldp`      | Implemented | Streams data to MLDP ingestion service (gRPC)
-`hdf5`      | Implemented | Writes data to rotated HDF5 files on disk
+Writer Type   | Status      | Description
+------------- | ----------- | -------------------------------------------
+`mldp`        | Implemented | Streams data to MLDP ingestion service (gRPC)
+`hdf5`        | Implemented | One rotated HDF5 file per `root_source` on disk
+`hdf5-merge`  | Implemented | All sources in one shared rotating HDF5 file (one group per source)
 
 All writers:
 
@@ -112,27 +117,44 @@ All writers:
 
 ```
 IWriter  (pure abstract)
-├── MLDPWriter  → gRPC → MLDP ingestion service
-└── HDF5Writer  → HDF5 files on local disk
+├── MLDPWriter        → gRPC → MLDP ingestion service
+└── HDF5WriterBase    → HDF5 files on local disk  (abstract)
+      ├── HDF5WriterPerSource   (type "hdf5"       — one file per root_source via HDF5FilePool)
+      └── HDF5WriterMerge       (type "hdf5-merge" — all sources share one rotating H5 file)
 ```
 
 ### MLDPWriter
 
 - Type key: `"mldp"`
-- Owns `MLDPWriter` (connection pool)
+- Owns `MLDPGrpcIngestionPool` (connection pool)
 - N worker threads, each with own `WorkerChannel` (mutex + deque)
-- `push()` distributes frames across workers
+- `push()` distributes frames across workers via round-robin
 - Flushes gRPC stream on `stream-max-bytes` or `stream-max-age-ms`
 
-### HDF5Writer
+### HDF5WriterBase (shared base)
+
+- Requires build flag: `MLDP_PVXS_HDF5_ENABLED`
+- Owns bounded MPSC queue (capacity 8192) drained by dedicated writer thread
+- Dedicated flush thread calls `doFlushAll()` every `flush-interval-ms`
+- Accumulates tabular (NTTable) frames in `TabularBuffer` per source; flushes on `end_of_batch_group`
+- Subclasses implement pure-virtual hooks: `writeFrameImpl`, `flushTabularBufferImpl`, `doFlushAll`, `doStart`, `doStop`
+
+### HDF5WriterPerSource
 
 - Type key: `"hdf5"`
-- Requires build flag: `MLDP_PVXS_HDF5_ENABLED`
 - One HDF5 file per `root_source`, managed by `HDF5FilePool`
-- Bounded MPSC queue (capacity 8192) drained by writer thread
-- Dedicated flush thread calls `HDF5FilePool::flushAll()` every `flush-interval-ms`
-- Files rotate on age (`max-file-age-s`) or size (`max-file-size-mb`)
-- HDF5 layout: `timestamps` dataset (int64, ns-epoch) + one dataset per DataFrame column (unlimited + chunked)
+- Files rotate on age (`max-file-age-s`) or size (`max-file-size-mb`) inside `pool->acquire()`
+- HDF5 layout (columnar): `timestamps` dataset (int64, ns-epoch) + one dataset per column (1-D unlimited + chunked)
+- HDF5 layout (NTTable/BSAS): one group per source with `secondsPastEpoch`, `nanoseconds`, and signal datasets
+
+### HDF5WriterMerge
+
+- Type key: `"hdf5-merge"`
+- All `root_source`s share a single rotating HDF5 file; each source gets its own group `/<source_name>/`
+- `supports_multi_root_source()` returns `true`
+- Single `mergeFileMutex_` serialises all file access (writer thread + flush thread)
+- Rotation triggered when any source pushes the file past age or size threshold; all groups recreated in new file
+- HDF5 layout: `/<source>/timestamps` + `/<source>/<col>` datasets (same types as per-source)
 
 ## Push Model Architecture
 
@@ -338,8 +360,9 @@ flowchart TB
 - `IDataBus` interface decouples readers from controller
 - `MLDPQueryClient` handles out-of-band metadata/data queries instead of `IDataBus`
 - Async event delivery via thread pools
-- Workers dispatch `EventBatch` to registered `IWriter` instances (`MLDPWriter`, `HDF5Writer`)
+- Workers dispatch `EventBatch` to registered `IWriter` instances (`MLDPWriter`, `HDF5WriterPerSource`, `HDF5WriterMerge`)
 - Optional **reader-to-writer routing** selectively dispatches batches based on config — see [Controller Documentation](controller.md#reader-to-writer-routing)
+- Optional **source filtering** per writer via `include`/`exclude` glob patterns on `root_source` — see [Controller Documentation](controller.md#source-filtering)
 
 ## Cross-Cutting Utilities
 
@@ -357,6 +380,62 @@ The driver uses a logging abstraction layer (`util::log`) so library code is not
 HTTP-based readers can use the shared `util/http` transport abstraction instead of managing raw `libcurl` directly. This centralizes TLS defaults, timeouts, header handling, and streaming callback plumbing.
 
 - Detailed documentation: [HTTP Transport Provider](http-provider.md)
+
+## Routing and Source Filtering
+
+By default every reader feeds every writer (**all-to-all**). The optional `routing:` block enables two independent filtering axes:
+
+### Reader-to-Writer Routing
+
+Each writer declares which readers it accepts via `from:`. Use the sentinel `"all"` to accept every reader.
+
+```yaml
+routing:
+  mldp_main:
+    from: [scalar_reader, bsas_reader]  # only these readers feed mldp_main
+  hdf5_bsas:
+    from: [bsas_reader]                 # only bsas_reader feeds hdf5_bsas
+  monitoring:
+    from: [all]                         # every reader feeds monitoring
+```
+
+- Writer absent from `routing:` → receives **nothing** when routing is active.
+- Lookup cost: O(1) per writer per batch (hash map).
+- Route table built once at startup; immutable at runtime — no mutex needed in hot path.
+
+### Source Filtering (include / exclude)
+
+Each routing entry can additionally filter by `root_source` name using `fnmatch(3)` glob patterns:
+
+```yaml
+routing:
+  hdf5_local:
+    from: [pvxs_reader]
+    include:
+      - "LINAC:BPM:*"    # accept only BPM sources
+      - "GUN:SOL:*"      # and gun solenoids
+    exclude:
+      - "LINAC:TEST:*"   # drop test PVs even if matched by include
+```
+
+Filter logic per batch (keyed on `root_source`):
+
+| `include` | `exclude` | Result |
+|---|---|---|
+| absent | absent | all sources pass |
+| present | absent | only sources matching an include glob pass |
+| absent | present | all sources pass except those matching an exclude glob |
+| present | present | sources matching include AND NOT matching exclude pass |
+
+`*` matches `:` in EPICS PV names. Matching is case-sensitive.
+
+### Startup Validation
+
+At startup, the controller:
+1. Rejects unknown writer or reader names in `routing:` with `std::runtime_error`.
+2. Logs warnings for **orphan readers** (not feeding any writer) and **orphan writers** (receiving no data).
+
+> 📖 Full details and examples: [controller.md](controller.md#reader-to-writer-routing)
 
 ## Configuration
 
@@ -377,7 +456,9 @@ reader:           # list of reader instances (by type)
 
 routing:          # optional; selective reader-to-writer dispatch
   writer_name:
-    from: [reader_1, reader_2]
+    from: [reader_1, reader_2]   # reader names; use "all" to accept every reader
+    include: ["SITE:BPM:*"]      # optional; glob patterns on root_source; absent = accept all
+    exclude: ["SITE:TEST:*"]     # optional; glob patterns on root_source; applied after include
 
 metrics:          # optional Prometheus / metrics config
   ...
@@ -421,6 +502,14 @@ writer:
       max-file-size-mb: 512            # rotate at N MiB (default: 512)
       flush-interval-ms: 1000          # flush thread period ms (default: 1000)
       compression-level: 0             # DEFLATE 0–9; 0 = off (default: 0)
+
+  hdf5-merge:                          # requires MLDP_PVXS_HDF5_ENABLED build flag
+    - name: hdf5_merged                # required, unique instance name
+      base-path: /data/hdf5-merged     # required, output directory
+      max-file-age-s: 3600             # rotate after N seconds (default: 3600)
+      max-file-size-mb: 512            # rotate at N MiB (default: 512)
+      flush-interval-ms: 1000          # flush thread period ms (default: 1000)
+      compression-level: 0             # DEFLATE 0–9; 0 = off (default: 0)
 ```
 
 ## Metrics & Observability
@@ -452,3 +541,13 @@ The driver exposes Prometheus metrics for monitoring:
 
 - `mldp_pvxs_driver_pool_connections_in_use`
 - `mldp_pvxs_driver_pool_connections_available`
+
+### HDF5 Writer Metrics
+
+- `mldp_pvxs_driver_hdf5_batches_written_total`
+- `mldp_pvxs_driver_hdf5_rows_written_total` (label: `source`)
+- `mldp_pvxs_driver_hdf5_bytes_written_total` (label: `source`)
+- `mldp_pvxs_driver_hdf5_queue_depth`
+- `mldp_pvxs_driver_hdf5_queue_drops_total`
+- `mldp_pvxs_driver_hdf5_file_rotations_total` (label: `source`)
+- `mldp_pvxs_driver_hdf5_write_latency_ms`

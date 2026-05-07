@@ -18,7 +18,7 @@ The top-level document is the **controller configuration** (`MLDPPVXSControllerC
 | `writer` | **yes (≥1)** | One or more writer instances (`mldp`, `hdf5`, `hdf5-merge`). Controller throws at startup if absent or empty. |
 | `reader` | **yes (≥1)**  | One or more reader groups (`epics-pvxs`, `epics-base`, `epics-archiver`) |
 | `metrics` | no | Prometheus exporter settings |
-| `routing` | no | Explicit writer→reader routing table. Omit for all-to-all (every writer receives from every reader). |
+| `routing` | no | Explicit writer→reader routing table with optional per-writer `include`/`exclude` source glob filters. Omit for all-to-all (every writer receives from every reader). |
 
 ```yaml
 name: my_controller                         # optional; default: "default"; scopes Prometheus metrics label 'controller'
@@ -128,6 +128,10 @@ routing:                                    # optional; omit for all-to-all (eve
   hdf5_local:
     from:
       - pvxs_reader_a                       # use "all" as a single entry to accept from every reader
+    include:                                # optional; glob patterns on root_source (PV name); absent = accept all
+      - "SITE:BPM:*"
+    exclude:                                # optional; glob patterns on root_source; applied after include; absent = drop nothing
+      - "SITE:TEST:*"
 ```
 
 ### Supported Writer Types
