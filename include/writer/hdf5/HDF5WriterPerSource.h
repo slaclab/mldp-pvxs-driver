@@ -12,6 +12,9 @@
 
 #include <writer/hdf5/HDF5WriterBase.h>
 #include <writer/hdf5/HDF5FilePool.h>
+#include <writer/WriterFactory.h>
+#include <config/Config.h>
+#include <metrics/Metrics.h>
 
 #include <memory>
 
@@ -24,7 +27,10 @@ namespace mldp_pvxs_driver::writer {
  */
 class HDF5WriterPerSource final : public HDF5WriterBase
 {
+    REGISTER_WRITER("hdf5", HDF5WriterPerSource)
 public:
+    explicit HDF5WriterPerSource(const config::Config&             node,
+                                  std::shared_ptr<metrics::Metrics> metrics = nullptr);
     explicit HDF5WriterPerSource(HDF5WriterConfig                    config,
                                   std::shared_ptr<metrics::Metrics>   metrics = nullptr);
     ~HDF5WriterPerSource() override;

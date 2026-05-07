@@ -71,6 +71,33 @@ void WriterConfig::validate(const Config& writerNode)
 #endif
     }
 
+    // -- HDF5 merge writer instances --
+    if (writerNode.hasChild(WriterHdf5MergeKey))
+    {
+        if (!writerNode.isSequence(WriterHdf5MergeKey))
+        {
+            throw Error("writer.hdf5-merge must be a sequence of writer instances");
+        }
+#ifndef MLDP_PVXS_HDF5_ENABLED
+        throw Error("writer.hdf5-merge instances are configured but this build was compiled without "
+                    "HDF5 support (MLDP_PVXS_HDF5_ENABLED=OFF)");
+#else
+        const auto mergeItems = writerNode.subConfig(WriterHdf5MergeKey);
+        for (const auto& item : mergeItems)
+        {
+            try
+            {
+                HDF5WriterConfig::parse(item);
+            }
+            catch (const HDF5WriterConfig::Error& e)
+            {
+                throw Error(std::string("writer.hdf5-merge: ") + e.what());
+            }
+        }
+        instanceCount += static_cast<int>(mergeItems.size());
+#endif
+    }
+
     if (instanceCount == 0)
     {
         throw std::invalid_argument("writer config: at least one writer instance must be configured");

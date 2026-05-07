@@ -14,7 +14,8 @@
 
     #include <util/bus/IDataBus.h>
     #include <writer/WriterFactory.h>
-    #include <writer/hdf5/HDF5Writer.h>
+    #include <writer/hdf5/HDF5WriterPerSource.h>
+    #include <writer/hdf5/HDF5WriterMerge.h>
     #include <writer/hdf5/HDF5WriterConfig.h>
     #include <writer/hdf5/HDF5WriterMetrics.h>
 
@@ -102,20 +103,20 @@ protected:
 
 TEST_F(HDF5WriterTest, StartAndStopDoNotThrow)
 {
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     EXPECT_NO_THROW(w.start());
     EXPECT_NO_THROW(w.stop());
 }
 
 TEST_F(HDF5WriterTest, NameReturnsConfiguredName)
 {
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     EXPECT_EQ(w.name(), "test_writer");
 }
 
 TEST_F(HDF5WriterTest, PushReturnsFalseWhenNotStarted)
 {
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     w.start();
     w.stop();
     // After stop() the writer is no longer accepting data.
@@ -125,7 +126,7 @@ TEST_F(HDF5WriterTest, PushReturnsFalseWhenNotStarted)
 
 TEST_F(HDF5WriterTest, PushReturnsTrueWhenRunning)
 {
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     w.start();
     auto batch = makeValidBatch();
     EXPECT_TRUE(w.push(batch));
@@ -134,7 +135,7 @@ TEST_F(HDF5WriterTest, PushReturnsTrueWhenRunning)
 
 TEST_F(HDF5WriterTest, PushWritesFileToBasePath)
 {
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     w.start();
 
     auto batch = makeValidBatch();
@@ -168,6 +169,17 @@ TEST_F(HDF5WriterTest, WriterFactoryCreatesHDF5Writer)
     w->stop();
 }
 
+TEST_F(HDF5WriterTest, WriterFactoryCreatesHDF5MergeWriter)
+{
+    auto cfg = makeConfigFromYaml(R"(
+name: factory_merge_test
+base-path: )" + tempDir_.string() + R"(
+)");
+    auto w = WriterFactory::create("hdf5-merge", cfg, nullptr);
+    ASSERT_NE(w, nullptr);
+    EXPECT_EQ(w->name(), "factory_merge_test");
+}
+
 // ---------------------------------------------------------------------------
 // Helper: open the first .h5 file found under tempDir_
 // ---------------------------------------------------------------------------
@@ -187,7 +199,7 @@ static fs::path findH5File(const fs::path& dir)
 
 TEST_F(HDF5WriterTest, StringColumnWritten)
 {
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     w.start();
 
     DataBatch frame;
@@ -226,7 +238,7 @@ TEST_F(HDF5WriterTest, StringColumnWritten)
 
 TEST_F(HDF5WriterTest, StringColumnMultipleValuesWritten)
 {
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     w.start();
 
     // Push two frames — dataset should grow to 2 rows
@@ -264,7 +276,7 @@ TEST_F(HDF5WriterTest, StringColumnMultipleValuesWritten)
 
 TEST_F(HDF5WriterTest, DoubleArrayColumnWrittenAs2DDataset)
 {
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     w.start();
 
     constexpr int kArrayLen = 4;
@@ -310,7 +322,7 @@ TEST_F(HDF5WriterTest, DoubleArrayColumnWrittenAs2DDataset)
 
 TEST_F(HDF5WriterTest, DoubleArrayColumnGrowsRowsAcrossUpdates)
 {
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     w.start();
 
     constexpr int kArrayLen = 3;
@@ -350,7 +362,7 @@ TEST_F(HDF5WriterTest, DoubleArrayColumnGrowsRowsAcrossUpdates)
 
 TEST_F(HDF5WriterTest, FloatArrayColumnWrittenAs2DDataset)
 {
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     w.start();
 
     constexpr int kArrayLen = 8;
@@ -387,7 +399,7 @@ TEST_F(HDF5WriterTest, FloatArrayColumnWrittenAs2DDataset)
 
 TEST_F(HDF5WriterTest, Int32ArrayColumnWrittenAs2DDataset)
 {
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     w.start();
 
     constexpr int kArrayLen = 6;
@@ -433,7 +445,7 @@ TEST_F(HDF5WriterTest, Int32ArrayColumnWrittenAs2DDataset)
 
 TEST_F(HDF5WriterTest, DoubleColumnDataReadBack)
 {
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     w.start();
 
     DataBatch frame;
@@ -465,7 +477,7 @@ TEST_F(HDF5WriterTest, DoubleColumnDataReadBack)
 
 TEST_F(HDF5WriterTest, FloatColumnWrittenAndReadBack)
 {
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     w.start();
 
     DataBatch frame;
@@ -502,7 +514,7 @@ TEST_F(HDF5WriterTest, FloatColumnWrittenAndReadBack)
 
 TEST_F(HDF5WriterTest, Int32ColumnWrittenAndReadBack)
 {
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     w.start();
 
     DataBatch frame;
@@ -539,7 +551,7 @@ TEST_F(HDF5WriterTest, Int32ColumnWrittenAndReadBack)
 
 TEST_F(HDF5WriterTest, Int64ColumnWrittenAndReadBack)
 {
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     w.start();
 
     DataBatch frame;
@@ -576,7 +588,7 @@ TEST_F(HDF5WriterTest, Int64ColumnWrittenAndReadBack)
 
 TEST_F(HDF5WriterTest, BoolColumnWrittenAndReadBack)
 {
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     w.start();
 
     DataBatch frame;
@@ -613,7 +625,7 @@ TEST_F(HDF5WriterTest, BoolColumnWrittenAndReadBack)
 
 TEST_F(HDF5WriterTest, TimestampDatasetWrittenAndReadBack)
 {
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     w.start();
 
     constexpr int64_t kEpochSec = 1700000005;
@@ -658,7 +670,7 @@ TEST_F(HDF5WriterTest, TimestampDatasetWrittenAndReadBack)
 
 TEST_F(HDF5WriterTest, FloatArrayColumnValuesReadBack)
 {
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     w.start();
 
     constexpr int kArrayLen = 4;
@@ -706,7 +718,7 @@ TEST_F(HDF5WriterTest, FloatArrayColumnValuesReadBack)
 
 TEST_F(HDF5WriterTest, Int64ArrayColumnWrittenAs2DDataset)
 {
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     w.start();
 
     constexpr int kArrayLen = 5;
@@ -812,7 +824,7 @@ TEST_F(HDF5WriterTest, BsasSplitColumnTimestampsWrittenOnce)
                                              f.columns.push_back(std::move(col));
                                          }));
 
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     w.start();
     w.push(std::move(batch));
 
@@ -882,7 +894,7 @@ TEST_F(HDF5WriterTest, BsasTwoUpdatesTimestampsGrow)
         {1700000020, 1},
         {1700000020, 2}};
 
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     w.start();
 
     // Batch 1 — first update: two columns, same timestamps, one push
@@ -977,7 +989,7 @@ TEST_F(HDF5WriterTest, BsasCoincidentalSameTimestampsNotDeduped)
         {1700000030, 999},
         {1700000030, 1000}};
 
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     w.start();
 
     // Two separate push() calls (different batchSeq) with identical ts values.
@@ -1140,7 +1152,7 @@ TEST_F(HDF5WriterTest, NTTableBatchCreatesPerColumnDatasets)
 {
     constexpr int kRows = 3;
 
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     w.start();
 
     const std::vector<std::string>         cols{"SIG_A", "SIG_B", "SIG_C"};
@@ -1210,7 +1222,7 @@ TEST_F(HDF5WriterTest, NTTableBatchAppendsRowsAcrossMultipleBatches)
     constexpr int kRows = 3;
     constexpr int kBatches = 4;
 
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     w.start();
 
     const std::vector<std::string> cols{"SIGNAL"};
@@ -1249,7 +1261,7 @@ TEST_F(HDF5WriterTest, NTTableBatchDoesNotWriteTimestampsDataset)
     const std::vector<std::string>         cols{"X"};
     const std::vector<std::vector<double>> vals{{42.0, 43.0}};
 
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     w.start();
     auto batch = makeNTTableBatch("NT:NOTIMEDS", cols, vals);
     w.push(std::move(batch));
@@ -1283,7 +1295,7 @@ TEST_F(HDF5WriterTest, NTTablePreservesColumnTypes)
     constexpr int     kRows = 4;
     const std::string pvName = "NT:TYPED";
 
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     w.start();
 
     auto batch = makeNTTableBatchMixed(pvName, kRows);
@@ -1346,7 +1358,7 @@ TEST_F(HDF5WriterTest, NTTablePreservesColumnTypes)
 TEST_F(HDF5WriterTest, NonNTTableBatchUsesColumnarLayout)
 {
     // Batch without tags[0]==root_source → columnar path unchanged.
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     w.start();
 
     DataBatch frame;
@@ -1377,15 +1389,14 @@ TEST_F(HDF5WriterTest, NonNTTableBatchUsesColumnarLayout)
 
 TEST_F(HDF5WriterTest, SupportsMultiRootSourceReturnsTrue)
 {
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     EXPECT_TRUE(w.supports_multi_root_source());
 }
 
-TEST_F(HDF5WriterTest, MergeRootSourcesEnabledDoesNotThrow)
+TEST_F(HDF5WriterTest, MergeWriterDoesNotThrow)
 {
     HDF5WriterConfig cfg = makeConfig();
-    cfg.mergeRootSources = true;
-    EXPECT_NO_THROW(HDF5Writer w(std::move(cfg)));
+    EXPECT_NO_THROW(HDF5WriterMerge w(std::move(cfg)));
 }
 
 // ---------------------------------------------------------------------------
@@ -1405,13 +1416,12 @@ static std::vector<fs::path> findAllH5Files(const fs::path& dir)
 // Merge-mode tests
 // ---------------------------------------------------------------------------
 
-/// AC-1: With mergeRootSources=true, each root_source gets its own group and
-///        datasets are stored under "<source>/<column>" — no cross-contamination.
+/// Merge mode: each root_source gets its own group and
+///             datasets are stored under "<source>/<column>" — no cross-contamination.
 TEST_F(HDF5WriterTest, MergeGroupCreation)
 {
     HDF5WriterConfig cfg = makeConfig();
-    cfg.mergeRootSources = true;
-    HDF5Writer w(std::move(cfg));
+    HDF5WriterMerge w(std::move(cfg));
     w.start();
 
     auto b1 = makeBatchForSource("source_a", "VALUE_A", 1.0);
@@ -1445,8 +1455,7 @@ TEST_F(HDF5WriterTest, MergeGroupCreation)
 TEST_F(HDF5WriterTest, MergeTwoSourcesEndToEnd)
 {
     HDF5WriterConfig cfg = makeConfig();
-    cfg.mergeRootSources = true;
-    HDF5Writer w(std::move(cfg));
+    HDF5WriterMerge w(std::move(cfg));
     w.start();
 
     // Three batches from source_a
@@ -1498,13 +1507,11 @@ TEST_F(HDF5WriterTest, MergeTwoSourcesEndToEnd)
     }
 }
 
-/// AC-4: With mergeRootSources=false (default), the writer behaves exactly as
-///        before: datasets live at the root level (timestamps, <column>).
+/// Per-source mode (HDF5WriterPerSource): datasets live at the root level (timestamps, <column>).
 TEST_F(HDF5WriterTest, MergeSingleSourceUnchanged)
 {
     HDF5WriterConfig cfg = makeConfig();
-    cfg.mergeRootSources = false;
-    HDF5Writer w(std::move(cfg));
+    HDF5WriterPerSource w(std::move(cfg));
     w.start();
 
     auto batch = makeValidBatch();  // root_source="TEST:PV", col "VOLTAGE", val 1.23
@@ -1523,14 +1530,13 @@ TEST_F(HDF5WriterTest, MergeSingleSourceUnchanged)
     EXPECT_TRUE(file.nameExists("VOLTAGE"));
 }
 
-/// AC-3: With mergeRootSources=true, age-based rotation creates a new file
-///        and both groups are present in the second file.
+/// Merge mode: age-based rotation creates a new file
+///             and both groups are present in the second file.
 TEST_F(HDF5WriterTest, MergeRotation)
 {
     HDF5WriterConfig cfg = makeConfig();
-    cfg.mergeRootSources = true;
     cfg.maxFileAge       = std::chrono::seconds(1);
-    HDF5Writer w(std::move(cfg));
+    HDF5WriterMerge w(std::move(cfg));
     w.start();
 
     // Write to source_a — this creates the first file
@@ -1565,8 +1571,7 @@ TEST_F(HDF5WriterTest, MergeRotation)
 TEST_F(HDF5WriterTest, MergeSingleSourceOnlyOneGroup)
 {
     HDF5WriterConfig cfg = makeConfig();
-    cfg.mergeRootSources = true;
-    HDF5Writer w(std::move(cfg));
+    HDF5WriterMerge w(std::move(cfg));
     w.start();
 
     for (int i = 0; i < 3; ++i)
@@ -1591,8 +1596,7 @@ TEST_F(HDF5WriterTest, MergeSingleSourceOnlyOneGroup)
 TEST_F(HDF5WriterTest, MergeEmptyBatchNoSpuriousGroup)
 {
     HDF5WriterConfig cfg = makeConfig();
-    cfg.mergeRootSources = true;
-    HDF5Writer w(std::move(cfg));
+    HDF5WriterMerge w(std::move(cfg));
     w.start();
 
     // Push an empty batch (no frames)
@@ -1619,8 +1623,7 @@ TEST_F(HDF5WriterTest, MergeLargeNumberOfSources)
 {
     constexpr int kNumSources = 10;
     HDF5WriterConfig cfg = makeConfig();
-    cfg.mergeRootSources = true;
-    HDF5Writer w(std::move(cfg));
+    HDF5WriterMerge w(std::move(cfg));
     w.start();
 
     for (int i = 0; i < kNumSources; ++i)
@@ -1650,8 +1653,7 @@ TEST_F(HDF5WriterTest, MergeLargeNumberOfSources)
 TEST_F(HDF5WriterTest, MergeSourceAddedAfterFileOpen)
 {
     HDF5WriterConfig cfg = makeConfig();
-    cfg.mergeRootSources = true;
-    HDF5Writer w(std::move(cfg));
+    HDF5WriterMerge w(std::move(cfg));
     w.start();
 
     // First source writes — opens the merge file
@@ -1680,8 +1682,7 @@ TEST_F(HDF5WriterTest, MergeSourceAddedAfterFileOpen)
 TEST_F(HDF5WriterTest, MergeConcurrentWrites)
 {
     HDF5WriterConfig cfg = makeConfig();
-    cfg.mergeRootSources = true;
-    HDF5Writer w(std::move(cfg));
+    HDF5WriterMerge w(std::move(cfg));
     w.start();
 
     constexpr int kBatchesPerSource = 20;
@@ -1720,13 +1721,12 @@ TEST_F(HDF5WriterTest, MergeConcurrentWrites)
     EXPECT_FALSE(file.nameExists("src_beta/ALPHA_VAL"));
 }
 
-/// merge-root-sources absent in config → defaults to false (non-merge path unchanged).
+/// HDF5WriterPerSource (non-merge path): datasets live at the root level (timestamps, <column>).
 TEST_F(HDF5WriterTest, MergeFlagAbsentDefaultsFalse)
 {
-    HDF5WriterConfig cfg = makeConfig(); // mergeRootSources defaults to false
-    EXPECT_FALSE(cfg.mergeRootSources);
+    HDF5WriterConfig cfg = makeConfig(); // uses HDF5WriterPerSource (non-merge)
 
-    HDF5Writer w(std::move(cfg));
+    HDF5WriterPerSource w(std::move(cfg));
     w.start();
     auto batch = makeValidBatch();
     w.push(batch);
@@ -1759,10 +1759,9 @@ TEST_F(HDF5WriterTest, MergeFlagAbsentDefaultsFalse)
 TEST_F(HDF5WriterTest, MergeTabularSizeRotationFiresAfterThreshold)
 {
     HDF5WriterConfig cfg = makeConfig();
-    cfg.mergeRootSources = true;
     cfg.maxFileSizeMB    = 1; // 1 MiB — achievable in a test
     cfg.maxFileAge       = std::chrono::seconds(3600); // age rotation disabled
-    HDF5Writer w(std::move(cfg));
+    HDF5WriterMerge w(std::move(cfg));
     w.start();
 
     // Push enough tabular rows to exceed 1 MiB.
@@ -1820,7 +1819,7 @@ TEST_F(HDF5WriterTest, TabularMidRoundTimestampChangeDoesNotDropData)
     const std::string pvName  = "NT:MIDROUND";
     const std::string colName = "SIG";
 
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     w.start();
 
     // Round 1 — column batch with timestamp T1 (no end_of_batch_group yet)
@@ -1895,7 +1894,7 @@ TEST_F(HDF5WriterTest, TabularRoundFirstTsResetAfterFlush)
     const std::string pvName  = "NT:TSRESET";
     const std::string colName = "SIG";
 
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     w.start();
 
     auto pushRound = [&](int64_t epochSec, double valOffset)
@@ -2014,7 +2013,7 @@ TEST_F(HDF5WriterTest, TabularUnknownColumnNoDuplicatesInWarnSet)
     constexpr int     kRows   = 2;
     const std::string pvName  = "NT:WARNSET";
 
-    HDF5Writer w(makeConfig());
+    HDF5WriterPerSource w(makeConfig());
     w.start();
 
     // Round 1 — lock schema with "KNOWN"

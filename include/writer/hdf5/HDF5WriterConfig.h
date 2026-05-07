@@ -32,8 +32,6 @@ inline constexpr char HDF5MaxFileSizeMBKey[] = "max-file-size-mb";
 inline constexpr char HDF5FlushIntervalMsKey[] = "flush-interval-ms";
 /// YAML key: `writer.hdf5[i].compression-level` — DEFLATE level 0–9 (default: 0 = off).
 inline constexpr char HDF5CompressionKey[] = "compression-level";
-/// YAML key: `writer.hdf5[i].merge-root-sources` — write all root sources into a single shared file when true (default: false).
-inline constexpr char HDF5MergeRootSourcesKey[] = "merge-root-sources";
 
 /**
  * @brief Configuration for the HDF5 file writer.
@@ -75,9 +73,6 @@ struct HDF5WriterConfig
 
     /// YAML key: `writer.hdf5[i].compression-level` — DEFLATE level 0–9 (0 = no compression).  Default: 0.
     int compressionLevel{0};
-
-    /// YAML key: `writer.hdf5[i].merge-root-sources` — when true, all root sources share a single HDF5 file instead of one file per source.  Default: false.
-    bool mergeRootSources{false};
 
     /**
      * @brief Parse the writer.hdf5 YAML sub-node.

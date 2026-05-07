@@ -126,6 +126,18 @@ std::string mldp_pvxs_driver::cli::formatStartupConfig(
                 out << "writer.hdf5[?]: parse error: " << e.what() << "\n";
             }
         }
+        else if (type == "hdf5-merge")
+        {
+            try
+            {
+                const auto hdf5Cfg = writer::HDF5WriterConfig::parse(writerNode);
+                out << "writer.hdf5-merge[" << hdf5Cfg.name << "]: base-path=" << hdf5Cfg.basePath << "\n";
+            }
+            catch (const writer::HDF5WriterConfig::Error& e)
+            {
+                out << "writer.hdf5-merge[?]: parse error: " << e.what() << "\n";
+            }
+        }
     }
 
     if (controllerConfig.metricsConfig().has_value() && controllerConfig.metricsConfig()->valid())

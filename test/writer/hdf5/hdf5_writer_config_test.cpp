@@ -87,24 +87,3 @@ compression-level: 6
 
     EXPECT_EQ(result.compressionLevel, 6);
 }
-
-TEST(HDF5WriterConfigTest, MergeRootSourcesDefaultsFalse)
-{
-    const auto cfg = makeConfigFromYaml(R"(
-name: test_writer
-base-path: /tmp/hdf5
-)");
-    const auto result = HDF5WriterConfig::parse(cfg);
-    EXPECT_FALSE(result.mergeRootSources);
-}
-
-TEST(HDF5WriterConfigTest, ParsesMergeRootSourcesTrue)
-{
-    const auto cfg = makeConfigFromYaml(R"(
-name: test_writer
-base-path: /tmp/hdf5
-merge-root-sources: true
-)");
-    const auto result = HDF5WriterConfig::parse(cfg);
-    EXPECT_TRUE(result.mergeRootSources);
-}

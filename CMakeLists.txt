@@ -505,7 +505,6 @@ add_library(lib${PROJECT_NAME}
         "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/hdf5/HDF5WriterBase.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/hdf5/HDF5WriterPerSource.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/hdf5/HDF5WriterMerge.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/hdf5/HDF5Writer.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/hdf5/HDF5WriterMetrics.cpp"
     >
     "${CMAKE_CURRENT_SOURCE_DIR}/src/metrics/Metrics.cpp"

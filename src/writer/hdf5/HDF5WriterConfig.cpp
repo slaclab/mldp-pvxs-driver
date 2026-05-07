@@ -75,8 +75,5 @@ HDF5WriterConfig HDF5WriterConfig::parse(const Config& node)
         cfg.compressionLevel = val;
     }
 
-    // merge-root-sources
-    cfg.mergeRootSources = node.getBool(HDF5MergeRootSourcesKey, false);
-
     return cfg;
 }

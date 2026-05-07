@@ -477,11 +477,10 @@ static std::string buildMergeYaml(const std::string& pv_a,
 {
     std::string yaml =
         "writer:\n"
-        "  hdf5:\n"
+        "  hdf5-merge:\n"
         "    - name: hdf5-merge\n"
         "      base-path: \"" + basePath + "\"\n"
         "      flush-interval-ms: 100\n"
-        "      merge-root-sources: true\n"
         "reader:\n"
         "  - epics-pvxs:\n"
         "      - name: reader-a\n"

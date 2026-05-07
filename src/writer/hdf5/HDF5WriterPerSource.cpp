@@ -27,6 +27,12 @@ HDF5WriterPerSource::HDF5WriterPerSource(HDF5WriterConfig                  confi
 {
 }
 
+HDF5WriterPerSource::HDF5WriterPerSource(const config::Config&             node,
+                                          std::shared_ptr<metrics::Metrics> metrics)
+    : HDF5WriterPerSource(HDF5WriterConfig::parse(node), std::move(metrics))
+{
+}
+
 HDF5WriterPerSource::~HDF5WriterPerSource()
 {
     if (!stopping_.load())

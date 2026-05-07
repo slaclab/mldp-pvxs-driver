@@ -30,6 +30,12 @@ HDF5WriterMerge::HDF5WriterMerge(HDF5WriterConfig                  config,
 {
 }
 
+HDF5WriterMerge::HDF5WriterMerge(const config::Config&             node,
+                                   std::shared_ptr<metrics::Metrics> metrics)
+    : HDF5WriterMerge(HDF5WriterConfig::parse(node), std::move(metrics))
+{
+}
+
 HDF5WriterMerge::~HDF5WriterMerge()
 {
     if (!stopping_.load())

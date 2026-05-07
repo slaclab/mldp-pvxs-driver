@@ -11,6 +11,9 @@
 #pragma once
 
 #include <writer/hdf5/HDF5WriterBase.h>
+#include <writer/WriterFactory.h>
+#include <config/Config.h>
+#include <metrics/Metrics.h>
 
 #include <H5Cpp.h>
 
@@ -32,7 +35,10 @@ namespace mldp_pvxs_driver::writer {
  */
 class HDF5WriterMerge final : public HDF5WriterBase
 {
+    REGISTER_WRITER("hdf5-merge", HDF5WriterMerge)
 public:
+    explicit HDF5WriterMerge(const config::Config&             node,
+                              std::shared_ptr<metrics::Metrics> metrics = nullptr);
     explicit HDF5WriterMerge(HDF5WriterConfig                    config,
                               std::shared_ptr<metrics::Metrics>   metrics = nullptr);
     ~HDF5WriterMerge() override;
