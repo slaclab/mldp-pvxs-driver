@@ -58,6 +58,18 @@ FetchContent_Declare(argparse
 )
 FetchContent_MakeAvailable(argparse)
 
+# Optional: interactive config wizard (FTXUI TUI)
+option(MLDP_WIZARD "Build interactive config wizard (requires FTXUI)" ON)
+
+if(MLDP_WIZARD)
+    message(STATUS "Acquiring FTXUI for config wizard...")
+    FetchContent_Declare(ftxui
+        GIT_REPOSITORY https://github.com/ArthurSonzogni/FTXUI
+        GIT_TAG        v5.0.0
+    )
+    FetchContent_MakeAvailable(ftxui)
+endif()
+
 # Prometheus-cpp pulls its own GoogleTest dependency when ENABLE_TESTING is set.
 # Temporarily override the cached ENABLE_TESTING option so the dependency does
 # not try to define conflicting gmock targets when added as a subproject.
@@ -681,6 +693,33 @@ if(MLDP_PVXS_DRIVER_TESTS)
     include(GoogleTest)
     gtest_discover_tests(${PROJECT_NAME}_test)
 
+    # Wizard unit tests — link wizard lib directly for access to wizard_internal symbols
+    if(MLDP_WIZARD)
+        add_executable(mldp_pvxs_driver_wizard_test
+            "${CMAKE_CURRENT_SOURCE_DIR}/test/config/wizard_test.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/config/validate.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/test/ryml_single_header_translation_unit.cpp"
+        )
+        target_include_directories(mldp_pvxs_driver_wizard_test
+            PRIVATE
+                "${CMAKE_CURRENT_SOURCE_DIR}/include"
+                "${CMAKE_CURRENT_SOURCE_DIR}/src/config"
+                "${CMAKE_CURRENT_SOURCE_DIR}/test/config"
+                "${CMAKE_CURRENT_SOURCE_DIR}/ext/rapidyaml/include"
+        )
+        target_compile_definitions(mldp_pvxs_driver_wizard_test PRIVATE MLDP_WIZARD_ENABLED)
+        if(APPLE)
+            target_link_libraries(mldp_pvxs_driver_wizard_test
+                PRIVATE gtest_main mldp_pvxs_driver_wizard_lib
+                -Wl,-force_load $<TARGET_FILE:lib${PROJECT_NAME}>)
+        else()
+            target_link_libraries(mldp_pvxs_driver_wizard_test
+                PRIVATE gtest_main mldp_pvxs_driver_wizard_lib
+                -Wl,--whole-archive lib${PROJECT_NAME} -Wl,--no-whole-archive)
+        endif()
+        gtest_discover_tests(mldp_pvxs_driver_wizard_test)
+    endif()
+
     if(MLDP_PVXS_ENABLE_HDF5)
         # HDF5 writer unit and integration tests
         add_executable(mldp_hdf5_writer_test
@@ -784,6 +823,9 @@ if(MLDP_PVXS_DRIVER_MAIN)
         "${CMAKE_CURRENT_SOURCE_DIR}/ext/rapidyaml/include/rapidyaml-0.10.0.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/SpdlogLogger.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/ConfigPrinter.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/config/subcommand.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/config/validate.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/config/template.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/PeriodicMetricsDumper.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/mldp_pvxs_driver_main.cpp"
     )
@@ -804,6 +846,33 @@ if(MLDP_PVXS_DRIVER_MAIN)
         )
     endif()
     target_include_directories(${PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/ext/rapidyaml/include")
+
+    if(MLDP_WIZARD AND MLDP_PVXS_DRIVER_MAIN)
+        add_library(mldp_pvxs_driver_wizard_lib STATIC
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/config/wizard.cpp"
+        )
+        target_link_libraries(mldp_pvxs_driver_wizard_lib
+            PRIVATE
+                lib${PROJECT_NAME}
+                ftxui::screen
+                ftxui::dom
+                ftxui::component
+                argparse::argparse
+        )
+        target_include_directories(mldp_pvxs_driver_wizard_lib
+            PRIVATE
+                "${CMAKE_CURRENT_SOURCE_DIR}/include"
+                "${CMAKE_CURRENT_SOURCE_DIR}/ext/rapidyaml/include"
+        )
+        target_compile_definitions(mldp_pvxs_driver_wizard_lib PRIVATE MLDP_WIZARD_ENABLED)
+        # Link wizard lib into the main executable so `config wizard` works
+        if(APPLE)
+            target_link_libraries(${PROJECT_NAME} PRIVATE mldp_pvxs_driver_wizard_lib)
+        else()
+            target_link_libraries(${PROJECT_NAME} PRIVATE mldp_pvxs_driver_wizard_lib)
+        endif()
+        target_compile_definitions(${PROJECT_NAME} PRIVATE MLDP_WIZARD_ENABLED)
+    endif()
 
     if(MLDP_PVXS_DRIVER_COVERAGE)
         target_compile_options(${PROJECT_NAME} PRIVATE -O0 -g --coverage)

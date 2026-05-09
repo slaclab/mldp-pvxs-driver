@@ -37,6 +37,7 @@
 
 #include <cli/ConfigPrinter.h>
 #include <config/Config.h>
+#include <config/subcommand.h>
 #include <controller/MLDPPVXSController.h>
 #include <metrics/MetricsSnapshot.h>
 #include <mldp_pvxs_driver_version.h>
@@ -267,6 +268,11 @@ int main(int argc, char** argv)
 
     try
     {
+        // Dispatch "config" sub-command before argparse consumes argv.
+        if (argc >= 2 && std::string_view{argv[1]} == "config") {
+            return mldp_pvxs_driver::config::runConfigSubcommand(argc - 1, argv + 1);
+        }
+
         // Parse command line arguments
         program.parse_args(argc, argv);
 
