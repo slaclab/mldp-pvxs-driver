@@ -154,7 +154,7 @@ metrics:
   endpoint: "0.0.0.0:9464"
 ```
 
-> ⚠️ HDF5 support requires the driver to be built with `-DMLDP_PVXS_HDF5_ENABLED=ON`.
+> ⚠️ HDF5 support requires the driver to be built with `-DMLDP_PVXS_ENABLE_HDF5=ON`.
 > Check with your system administrator if unsure.
 
 ---

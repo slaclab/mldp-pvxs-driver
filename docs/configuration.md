@@ -11,7 +11,7 @@ Complete YAML schema reference for the MLDP PVXS Driver. All keys are case-sensi
 ```yaml
 writer:         # required — at least one writer instance
   grpc: [...]
-  hdf5: [...]   # requires MLDP_PVXS_HDF5_ENABLED=ON build flag
+  hdf5: [...]   # requires -DMLDP_PVXS_ENABLE_HDF5=ON build option
 
 reader:         # optional — list of reader groups
   - epics-pvxs: [...]
@@ -84,7 +84,7 @@ mldp-pool:
 
 ### `writer.hdf5[]` — HDF5 Storage Writer
 
-> **Build requirement:** Only available when compiled with `-DMLDP_PVXS_HDF5_ENABLED=ON`.
+> **Build requirement:** Only available when compiled with `-DMLDP_PVXS_ENABLE_HDF5=ON`.
 
 Sequence of HDF5 writer instances. Each instance maintains one open HDF5 file per `root_source`, rotating on age or size thresholds.
 

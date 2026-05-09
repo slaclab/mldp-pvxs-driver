@@ -12,6 +12,20 @@ Reader Type      | Status      | Data Source          | Documentation
 `epics-pvxs`     | Implemented | EPICS Control System | [EpicsPVXSReader](readers/epics-pvxs-reader.md)
 `epics-archiver` | Implemented | EPICS Archiver       | [EpicsArchiverReader](readers/epics-archiver-reader.md)
 
+## Reader Build & Dependency Matrix
+
+Reader Type      | Build Option | Required Libraries / Components | Notes
+---------------- | ------------ | ------------------------------- | -----
+`epics-base`     | none (always built) | EPICS Base (`libCom`, `libca`, `libpvData`, `libpvAccess`, `libpvaClient`, `libpvAccessCA`) | Uses Channel Access polling path.
+`epics-pvxs`     | none (always built) | PVXS (`libpvxs`) + EPICS Base core libs | Uses PVAccess subscriptions.
+`epics-archiver` | none (always built) | libcurl + Protobuf/epicsarchiverap payload types | Uses Archiver PB/HTTP transport.
+
+EPICS/PVXS discovery is controlled by CMake/env variables used at configure time:
+
+- `EPICS_BASE` and `EPICS_HOST_ARCH`
+- `PVXS_BASE`
+- `MLDP_PVXS_DRIVER_LINK_EPICS_PVXS_STATIC` (optional static-link mode)
+
 ## Reader Class Hierarchy
 
 ```mermaid
@@ -136,7 +150,7 @@ EPICS-specific readers (base, pvxs, archiver) share `EpicsReaderBase`:
 #### Thread Pool Management
 
 - Creates and manages `BS::light_thread-pool` for data conversion
-- Configurable via `thread-pool-size` parameter
+- Configurable via `thread-pool` parameter
 - Metrics track queue depth
 
 #### Common Features
@@ -315,6 +329,6 @@ src/reader/
 
 - [Architecture Overview](architecture.md) - System-wide architecture and data flow
 - [Implementing Custom Readers](readers-implementation.md) - Complete guide with examples
-- [Configuration Reference](../config.md) - Full configuration schema
+- [Configuration Reference](configuration.md) - Full configuration schema
 - [SLAC BSAS NTTable Gen 1](readers/slac-bsas-table-gen1.md) - BSAS Gen 1: raw per-pulse sample arrays
 - [SLAC BSAS NTTable Gen 2](readers/slac-bsas-table-gen2.md) - BSAS Gen 2: PID-indexed statistical summaries (planned)

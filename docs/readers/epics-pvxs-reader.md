@@ -9,6 +9,15 @@ File           | Location
 Header         | `include/reader/impl/epics/pvxs/EpicsPVXSReader.h`
 Implementation | `src/reader/impl/epics/pvxs/EpicsPVXSReader.cpp`
 
+## Build Option & Required Libraries
+
+- **Build option:** none (always built)
+- **Required libraries/components:**
+  - PVXS (`libpvxs`)
+  - EPICS Base core libs (`libCom`, `libpvData`, `libpvAccess`, `libpvaClient`, `libpvAccessCA`, `libca`)
+- **Configure-time hints:** `PVXS_BASE`, `EPICS_BASE`, `EPICS_HOST_ARCH`
+- **Optional link mode:** `-DMLDP_PVXS_DRIVER_LINK_EPICS_PVXS_STATIC=ON` for static EPICS/PVXS linking
+
 ## Architecture
 
 ```mermaid
@@ -48,7 +57,7 @@ flowchart TB
 reader:
   - epics-pvxs:
       - name: my_pvxs_reader
-        thread-pool-size: 2           # Conversion thread pool size
+        thread-pool: 2                # Conversion thread pool size
         column-batch-size: 50         # NTTable column batch size
         pvs:
           - name: MY:PV:NAME

@@ -8,9 +8,17 @@ The `EpicsArchiverReader` provides access to historical EPICS data from the EPIC
 
 File           | Location
 -------------- | -------------------------------------------------------
-Header         | `include/reader/impl/epics/EpicsArchiverReader.h`
-Implementation | `src/reader/impl/epics/EpicsArchiverReader.cpp`
-Config         | `include/reader/impl/epics/EpicsArchiverReaderConfig.h`
+Header         | `include/reader/impl/epics_archiver/EpicsArchiverReader.h`
+Implementation | `src/reader/impl/epics_archiver/EpicsArchiverReader.cpp`
+Config         | `include/reader/impl/epics_archiver/EpicsArchiverReaderConfig.h`
+
+## Build Option & Required Libraries
+
+- **Build option:** none (always built)
+- **Required libraries/components:**
+  - libcurl (`CURL::libcurl`) for HTTP transport
+  - Protobuf (`protobuf::libprotobuf`) + epicsarchiverap protobuf payload definitions
+- **Configure-time hints:** standard CMake package discovery for CURL/Protobuf
 
 ## Architecture
 
@@ -60,11 +68,11 @@ flowchart TB
 reader:
   - epics-archiver:
       - name: my_archiver_reader
-        url: "http://archiver-appliance.example.com"
+        hostname: "archiver-appliance.example.com:17668"
         start-date: "2024-01-01T00:00:00Z"  # Required
         end-date: "2024-01-02T00:00:00Z"    # Optional
         batch-duration-sec: 1               # Split events by 1-second windows
-        thread-pool-size: 2                 # Conversion thread pool
+        thread-pool: 2                      # Conversion thread pool
         pvs:
           - name: MY:ARCHIVER:PV
           - name: ANOTHER:HISTORICAL:PV
@@ -86,12 +94,12 @@ reader:
 reader:
   - epics-archiver:
       - name: continuous_archiver
-        url: "http://archiver.example.com"
+        hostname: "archiver.example.com:17668"
         mode: periodic_tail             # Enable continuous polling
         poll-interval-sec: 5            # Poll every 5 seconds
         lookback-sec: 60                # Fetch last 60 seconds each time
         batch-duration-sec: 1
-        thread-pool-size: 2
+        thread-pool: 2
         pvs:
           - name: MY:PV:NAME
 ```
@@ -102,7 +110,7 @@ reader:
 
 Parameter | Type   | Description
 --------- | ------ | ------------------------------------------------------------------
-`url`     | string | Archiver Appliance base URL (e.g., `http://archiver.example.com`)
+`hostname` | string | Archiver Appliance host:port (e.g., `archiver.example.com:11200`)
 `pvs`     | list   | Array of PV names or objects to fetch from archiver
 
 ### One-Shot Mode Parameters
@@ -135,7 +143,7 @@ Parameter             | Type  | Default | Description
 reader:
   - epics-archiver:
       - name: secure_archiver
-        url: "https://archiver.example.com"
+        hostname: "archiver.example.com:17668"
         start-date: "2024-01-01T00:00:00Z"
         connect-timeout-sec: 30         # Connection timeout (default: 30)
         total-timeout-sec: 300          # Total operation timeout (default: 300)
@@ -149,7 +157,7 @@ reader:
 
 - `total-timeout-sec >= connect-timeout-sec` (enforced)
 - All timeout values must be positive (enforced)
-- URL must be valid and accessible
+- Hostname must be valid and reachable
 - At least one PV required
 - Start date required for one-shot mode
 
@@ -206,7 +214,7 @@ EPICS Type         | DataFrame Column Type
 reader:
   - epics-archiver:
       - name: yesterday_backfill
-        url: "http://archiver.example.com"
+        hostname: "archiver.example.com:17668"
         start-date: "2024-01-09T00:00:00Z"
         end-date: "2024-01-10T00:00:00Z"
         pvs:
@@ -219,7 +227,7 @@ reader:
 reader:
   - epics-archiver:
       - name: tail_reader
-        url: "http://archiver.example.com"
+        hostname: "archiver.example.com:17668"
         mode: periodic_tail
         poll-interval-sec: 10
         lookback-sec: 3600            # Keep 1 hour of history per poll
@@ -233,7 +241,7 @@ reader:
 reader:
   - epics-archiver:
       - name: high_freq_archiver
-        url: "http://archiver.example.com"
+        hostname: "archiver.example.com:17668"
         start-date: "2024-01-01T00:00:00Z"
         batch-duration-sec: 0.1       # 100ms batches for high-frequency analysis
         pvs:
