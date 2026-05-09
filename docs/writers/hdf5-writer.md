@@ -1,6 +1,6 @@
 # HDF5 Storage Writer
 
-> **Related:** [Writers Overview](../writers-implementation.md) | [Architecture](../architecture.md)
+> **Related:** [Writers Overview](writers-implementation.md) | [Architecture](../reference/architecture.md)
 
 ## Overview
 
@@ -530,7 +530,7 @@ mldp_pvxs_driver_hdf5_write_latency_ms_bucket{...}
 ### Implementation
 
 `HDF5WriterMetrics` inherits `WriterMetrics → ExtendedMetrics`.
-See [metrics-extension-guide.md](../metrics-extension-guide.md) for the full pattern
+See [metrics-extension-guide.md](../metrics/metrics-extension-guide.md) for the full pattern
 used to create new per-component metric classes.
 
 ## Config Migration

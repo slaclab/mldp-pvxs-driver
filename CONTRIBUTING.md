@@ -8,10 +8,10 @@ For system behavior and feature details, use the topic links below.
 | If you need...                                                                         | Read...                                                          |
 |----------------------------------------------------------------------------------------|------------------------------------------------------------------|
 | Product/runtime overview, configuration, CLI, release artifacts, external dependencies | [README.md](README.md)                                           |
-| Architecture, data flow, threading model, reader abstraction internals                 | [docs/architecture.md](docs/architecture.md)                     |
-| How to configure and use built-in readers (`epics-base`, `epics-pvxs`)                 | [docs/readers.md](docs/readers.md)                               |
-| How to implement a new/custom reader type                                              | [docs/readers-implementation.md](docs/readers-implementation.md) |
-| Metrics export format and runtime metrics dump behavior                                | [docs/metrics-export-guide.md](docs/metrics-export-guide.md)     |
+| Architecture, data flow, threading model, reader abstraction internals                 | [docs/reference/architecture.md](docs/reference/architecture.md)                     |
+| How to configure and use built-in readers (`epics-base`, `epics-pvxs`)                 | [docs/readers/readers.md](docs/readers/readers.md)                               |
+| How to implement a new/custom reader type                                              | [docs/readers/readers-implementation.md](docs/readers/readers-implementation.md) |
+| Metrics export format and runtime metrics dump behavior                                | [docs/metrics/metrics-export-guide.md](docs/metrics/metrics-export-guide.md)     |
 
 ## Local Development Workflow
 
@@ -46,10 +46,10 @@ ctest --test-dir build --output-on-failure
 
 - Add or update tests for behavior changes where feasible.
 - Keep config/schema/API changes explicit in the PR description.
-- If architecture-affecting, reference the relevant section in [docs/architecture.md](docs/architecture.md).
-- If reader behavior/config changes, update [docs/readers.md](docs/readers.md).
-- If adding/extending a reader type, update [docs/readers-implementation.md](docs/readers-implementation.md).
-- If metrics behavior/output changes, update [docs/metrics-export-guide.md](docs/metrics-export-guide.md).
+- If architecture-affecting, reference the relevant section in [docs/reference/architecture.md](docs/reference/architecture.md).
+- If reader behavior/config changes, update [docs/readers/readers.md](docs/readers/readers.md).
+- If adding/extending a reader type, update [docs/readers/readers-implementation.md](docs/readers/readers-implementation.md).
+- If metrics behavior/output changes, update [docs/metrics/metrics-export-guide.md](docs/metrics/metrics-export-guide.md).
 
 ## License Header Workflow
 

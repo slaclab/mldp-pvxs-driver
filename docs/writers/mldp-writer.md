@@ -1,6 +1,6 @@
 # MLDP Ingestion Writer
 
-> **Related:** [Writers Overview](../writers-implementation.md) | [Architecture](../architecture.md) | [MLDP Query Client](../query-client.md)
+> **Related:** [Writers Overview](writers-implementation.md) | [Architecture](../reference/architecture.md) | [MLDP Query Client](../dev/query-client.md)
 
 ## Overview
 

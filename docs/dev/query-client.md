@@ -2,7 +2,7 @@
 
 `MLDPQueryClient` is the standalone client for querying MLDP gRPC for metadata and historical data. It is intentionally separate from `IDataBus`, which is now push-only for ingestion paths.
 
-> **Related:** [Architecture Overview](architecture.md) | [Implementing Custom Writers](writers-implementation.md)
+> **Related:** [Architecture Overview](../reference/architecture.md) | [Implementing Custom Writers](../writers/writers-implementation.md)
 
 ## Overview
 

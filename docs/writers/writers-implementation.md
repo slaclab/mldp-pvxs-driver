@@ -1,6 +1,6 @@
 # Writers — Implementation Guide
 
-> **Related:** [Architecture Overview](architecture.md) | [Reader Implementations](readers-implementation.md) | [MLDP Query Client](query-client.md)
+> **Related:** [Architecture Overview](../reference/architecture.md) | [Reader Implementations](../readers/readers-implementation.md) | [MLDP Query Client](../dev/query-client.md)
 
 ## Overview
 
@@ -90,8 +90,8 @@ writer:
 
 | Type | Doc | Header |
 |------|-----|--------|
-| `mldp` | [MLDP Writer](writers/mldp-writer.md) | `include/writer/mldp/MLDPWriter.h` |
-| `hdf5` | [HDF5 Writer](writers/hdf5-writer.md) | `include/writer/hdf5/HDF5Writer.h` |
+| `mldp` | [MLDP Writer](mldp-writer.md) | `include/writer/mldp/MLDPWriter.h` |
+| `hdf5` | [HDF5 Writer](hdf5-writer.md) | `include/writer/hdf5/HDF5Writer.h` |
 
 ---
 
@@ -190,7 +190,7 @@ Update `WriterConfig::parse()` to recognise `"my-type"` and forward the node to 
 
 ### 5 — Add a doc page
 
-Create `docs/writers/my-type-writer.md` following the pattern in [mldp-writer.md](writers/mldp-writer.md):
+Create `docs/writers/my-type-writer.md` following the pattern in [mldp-writer.md](mldp-writer.md):
 - Overview / architecture diagram
 - Config table with all YAML keys, types, defaults
 - Lifecycle table

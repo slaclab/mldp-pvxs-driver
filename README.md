@@ -20,10 +20,10 @@ The driver consumes one YAML document via `--config` with five top-level section
 
 Use these docs for full details:
 
-- [Configuration Reference](docs/configuration.md) — complete schema, defaults, validation rules
-- [User Guide](docs/user-guide.md) — practical end-to-end YAML examples
-- [Reader Types](docs/readers.md) — reader capabilities + build/dependency matrix
-- [Writers Overview](docs/writers-implementation.md) — writer model and extension points
+- [Configuration Reference](docs/guides/configuration.md) — complete schema, defaults, validation rules
+- [User Guide](docs/guides/user-guide.md) — practical end-to-end YAML examples
+- [Reader Types](docs/readers/readers.md) — reader capabilities + build/dependency matrix
+- [Writers Overview](docs/writers/writers-implementation.md) — writer model and extension points
 
 ## Architecture Summary
 
@@ -34,7 +34,7 @@ The architecture is reader → bus → controller → writer:
 3. Controller partitions and routes batches.
 4. Writers deliver to MLDP gRPC or HDF5 storage.
 
-For detailed diagrams and threading/data-flow internals see [Architecture Overview](docs/architecture.md).
+For detailed diagrams and threading/data-flow internals see [Architecture Overview](docs/reference/architecture.md).
 
 ## Command-line interface
 
@@ -96,29 +96,29 @@ mldp_pvxs_driver [--help] [--version] [--config PATH] [--log-level LEVEL] [--met
 ./mldp_pvxs_driver --version
 ```
 
-For periodic metrics dumps and manual triggers (Ctrl+P, Ctrl+D, SIGUSR1/SIGQUIT), see the [metrics export guide](docs/metrics-export-guide.md).
+For periodic metrics dumps and manual triggers (Ctrl+P, Ctrl+D, SIGUSR1/SIGQUIT), see the [metrics export guide](docs/metrics/metrics-export-guide.md).
 
 ## Architecture
 
-> 🚀 **New to the driver?** Start with the **[User Guide](docs/user-guide.md)** — annotated YAML examples covering every reader, writer, routing, and source-filter scenario. No C++ knowledge required.
+> 🚀 **New to the driver?** Start with the **[User Guide](docs/guides/user-guide.md)** — annotated YAML examples covering every reader, writer, routing, and source-filter scenario. No C++ knowledge required.
 
 Readers collect data from configurable sources, push normalized batches onto a shared bus, and the controller routes them to one or more writers — each writer delivering to a different storage or transport backend.
 
 ### Documentation
 
-- [**User Guide**](docs/user-guide.md) - Start here: annotated examples for operators and physicists (no C++ required)
-- [Architecture Overview](docs/architecture.md) - System architecture, data flow, and design patterns
-- [Configuration Reference](docs/configuration.md) - Complete YAML schema with all keys, types, and defaults
-- [Reader Types](docs/readers.md) - Available reader implementations (EPICS Base, PVXS, Archiver)
-- [Implementing Custom Readers](docs/readers-implementation.md) - Guide to creating new reader types
-- [Writers Overview](docs/writers-implementation.md) - Writer pattern, factory registration, new writer guide
+- [**User Guide**](docs/guides/user-guide.md) - Start here: annotated examples for operators and physicists (no C++ required)
+- [Architecture Overview](docs/reference/architecture.md) - System architecture, data flow, and design patterns
+- [Configuration Reference](docs/guides/configuration.md) - Complete YAML schema with all keys, types, and defaults
+- [Reader Types](docs/readers/readers.md) - Available reader implementations (EPICS Base, PVXS, Archiver)
+- [Implementing Custom Readers](docs/readers/readers-implementation.md) - Guide to creating new reader types
+- [Writers Overview](docs/writers/writers-implementation.md) - Writer pattern, factory registration, new writer guide
 - [MLDP Writer](docs/writers/mldp-writer.md) - gRPC ingestion writer details and configuration
 - [HDF5 Writer](docs/writers/hdf5-writer.md) - HDF5 storage writer details and configuration
-- [MLDP Query Client](docs/query-client.md) - Standalone out-of-band query API
-- [Logging Abstraction Guide](docs/logging.md) - How `util::log` works and custom logger implementation
-- [HTTP Transport Provider](docs/http-provider.md) - Shared `util/http` abstraction for HTTP-based readers
-- [Metrics Export Guide](docs/metrics-export-guide.md) - Prometheus metrics and manual dump triggers
-- [Metrics Extension Guide](docs/metrics-extension-guide.md) - How to add per-component metric classes (`ExtendedMetrics` hierarchy)
+- [MLDP Query Client](docs/dev/query-client.md) - Standalone out-of-band query API
+- [Logging Abstraction Guide](docs/dev/logging.md) - How `util::log` works and custom logger implementation
+- [HTTP Transport Provider](docs/dev/http-provider.md) - Shared `util/http` abstraction for HTTP-based readers
+- [Metrics Export Guide](docs/metrics/metrics-export-guide.md) - Prometheus metrics and manual dump triggers
+- [Metrics Extension Guide](docs/metrics/metrics-extension-guide.md) - How to add per-component metric classes (`ExtendedMetrics` hierarchy)
 
 For developer information and contribution guidelines see [CONTRIBUTING.md](CONTRIBUTING.md).
 

@@ -108,7 +108,7 @@ pvs:
 
 For a full description of the BSAS NTTable structure, field layout, and a
 concrete annotated example see
-[`docs/readers/slac-bsas-table.md`](slac-bsas-table.md).
+[SLAC BSAS NTTable Gen 1](slac-bsas-table-gen1.md) and [Gen 2](slac-bsas-table-gen2.md).
 
 ## Use Cases
 

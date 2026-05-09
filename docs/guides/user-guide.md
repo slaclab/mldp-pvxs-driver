@@ -1,7 +1,7 @@
 # MLDP PVXS Driver — User Guide
 
 > This guide is for **operators and physicists** who want to configure and run the driver.
-> No C++ knowledge required. For internal architecture details see [architecture.md](architecture.md).
+> No C++ knowledge required. For internal architecture details see [architecture.md](../reference/architecture.md).
 
 ---
 
@@ -43,7 +43,7 @@ You can run multiple readers at the same time.
 | `epics-base` | You need **Channel Access (CA)** compatibility with older EPICS systems |
 | `epics-archiver` | You want **historical data** from an Archiver Appliance |
 
-> 📖 Details: [epics-pvxs reader](readers/epics-pvxs-reader.md) · [epics-base reader](readers/epics-base-reader.md) · [archiver reader](readers/epics-archiver-reader.md)
+> 📖 Details: [epics-pvxs reader](../readers/epics-pvxs-reader.md) · [epics-base reader](../readers/epics-base-reader.md) · [archiver reader](../readers/epics-archiver-reader.md)
 
 ### Writer — Where Data Goes
 
@@ -56,7 +56,7 @@ You can run multiple writers simultaneously — every batch goes to all of them.
 | `hdf5` | You want one HDF5 file per PV, stored locally |
 | `hdf5-merge` | You want all PVs in a single rotating HDF5 file |
 
-> 📖 Details: [MLDP writer](writers/mldp-writer.md) · [HDF5 writer](writers/hdf5-writer.md)
+> 📖 Details: [MLDP writer](../writers/mldp-writer.md) · [HDF5 writer](../writers/hdf5-writer.md)
 
 ### Controller — The Glue
 
@@ -357,7 +357,7 @@ routing:
 
 > `*` matches `:` in EPICS PV names. Patterns are case-sensitive.
 
-> 📖 Full details: [controller.md](controller.md#reader-to-writer-routing)
+> 📖 Full details: [controller.md](../reference/controller.md#reader-to-writer-routing)
 
 ---
 
@@ -438,11 +438,11 @@ Need historical data?
 | Topic | Document |
 |---|---|
 | Full YAML schema reference | [configuration.md](configuration.md) |
-| PVXS reader details | [readers/epics-pvxs-reader.md](readers/epics-pvxs-reader.md) |
-| CA reader details | [readers/epics-base-reader.md](readers/epics-base-reader.md) |
-| Archiver reader details | [readers/epics-archiver-reader.md](readers/epics-archiver-reader.md) |
-| MLDP writer details | [writers/mldp-writer.md](writers/mldp-writer.md) |
-| HDF5 writer details | [writers/hdf5-writer.md](writers/hdf5-writer.md) |
-| Routing and source filtering | [controller.md](controller.md#reader-to-writer-routing) |
-| Architecture and internals | [architecture.md](architecture.md) |
-| Metrics and monitoring | [metrics-export-guide.md](metrics-export-guide.md) |
+| PVXS reader details | [readers/epics-pvxs-reader.md](../readers/epics-pvxs-reader.md) |
+| CA reader details | [readers/epics-base-reader.md](../readers/epics-base-reader.md) |
+| Archiver reader details | [readers/epics-archiver-reader.md](../readers/epics-archiver-reader.md) |
+| MLDP writer details | [writers/mldp-writer.md](../writers/mldp-writer.md) |
+| HDF5 writer details | [writers/hdf5-writer.md](../writers/hdf5-writer.md) |
+| Routing and source filtering | [controller.md](../reference/controller.md#reader-to-writer-routing) |
+| Architecture and internals | [architecture.md](../reference/architecture.md) |
+| Metrics and monitoring | [metrics-export-guide.md](../metrics/metrics-export-guide.md) |

@@ -96,7 +96,7 @@ All readers:
 - Are decoupled from writer implementation
 - Are mirrored on the writer side by `WriterFactory` and `REGISTER_WRITER`
 
-For details on existing readers, see [Reader Types](readers.md). To implement a custom reader, see [Implementing Custom Readers](readers-implementation.md).
+For details on existing readers, see [Reader Types](../readers/readers.md). To implement a custom reader, see [Implementing Custom Readers](../readers/readers-implementation.md).
 
 ## Writer Abstraction
 
@@ -364,13 +364,14 @@ flowchart TB
 - Optional **reader-to-writer routing** selectively dispatches batches based on config — see [Controller Documentation](controller.md#reader-to-writer-routing)
 - Optional **source filtering** per writer via `include`/`exclude` glob patterns on `root_source` — see [Controller Documentation](controller.md#source-filtering)
 
+
 ## Cross-Cutting Utilities
 
 ### Logging Abstraction
 
 The driver uses a logging abstraction layer (`util::log`) so library code is not coupled to a specific backend. The executable can install a concrete logger implementation (for example the spdlog-backed adapter).
 
-- Detailed guide: [Logging Abstraction Guide](logging.md)
+- Detailed guide: [Logging Abstraction Guide](../dev/logging.md)
 - Logging interface and helpers: `include/util/log/ILog.h`, `include/util/log/Logger.h`
 - Default/simple logger implementation: `include/util/log/CoutLogger.h`, `src/util/log/CoutLogger.cpp`
 - spdlog adapter used by the executable: `include/SpdlogLogger.h`, `src/cli/SpdlogLogger.cpp`
@@ -379,7 +380,7 @@ The driver uses a logging abstraction layer (`util::log`) so library code is not
 
 HTTP-based readers can use the shared `util/http` transport abstraction instead of managing raw `libcurl` directly. This centralizes TLS defaults, timeouts, header handling, and streaming callback plumbing.
 
-- Detailed documentation: [HTTP Transport Provider](http-provider.md)
+- Detailed documentation: [HTTP Transport Provider](../dev/http-provider.md)
 
 ## Routing and Source Filtering
 
@@ -437,6 +438,7 @@ At startup, the controller:
 
 > 📖 Full details and examples: [controller.md](controller.md#reader-to-writer-routing)
 
+
 ## Configuration
 
 ### Controller Settings
@@ -467,6 +469,7 @@ metrics:          # optional Prometheus / metrics config
 > **Note:** `name` scopes all controller-emitted Prometheus metrics under a `controller` label. Run multiple controller instances with distinct names to avoid metric collisions.
 
 → [Full Controller Documentation](controller.md)
+
 
 ### Reader Settings
 

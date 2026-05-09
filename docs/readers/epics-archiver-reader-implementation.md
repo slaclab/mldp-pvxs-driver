@@ -2,7 +2,7 @@
 
 This guide describes the `EpicsArchiverReader` implementation, which provides historical data retrieval and tail polling from EPICS Archiver Appliance.
 
-> **Related:** [Reader Implementations](../readers-implementation.md) | [Architecture Overview](../architecture.md)
+> **Related:** [Reader Implementations](readers-implementation.md) | [Architecture Overview](../reference/architecture.md)
 
 ## Overview
 
@@ -27,4 +27,4 @@ This guide describes the `EpicsArchiverReader` implementation, which provides hi
 
 ## Configuration
 
-Refer to [Reader Implementations](../readers-implementation.md) for the shared reader configuration pattern.
+Refer to [Reader Implementations](readers-implementation.md) for the shared reader configuration pattern.

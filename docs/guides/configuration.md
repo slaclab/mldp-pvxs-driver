@@ -1,6 +1,6 @@
 # Configuration Reference
 
-> **Related:** [Architecture Overview](architecture.md) | [Controller](controller.md) | [Writers](writers-implementation.md) | [Readers](readers.md) | [Metrics Export](metrics-export-guide.md)
+> **Related:** [Architecture Overview](../reference/architecture.md) | [Controller](../reference/controller.md) | [Writers](../writers/writers-implementation.md) | [Readers](../readers/readers.md) | [Metrics Export](../metrics/metrics-export-guide.md)
 
 Complete YAML schema reference for the MLDP PVXS Driver. All keys are case-sensitive.
 
@@ -78,7 +78,7 @@ mldp-pool:
     pem-root-certs:  /etc/certs/ca.crt       # optional
 ```
 
-→ [Full MLDP Writer Documentation](writers/mldp-writer.md)
+→ [Full MLDP Writer Documentation](../writers/mldp-writer.md)
 
 ---
 
@@ -108,9 +108,9 @@ writer:
 | `max-file-size-mb` | uint64 | `512` | Rotate file after this size in MiB. |
 | `flush-interval-ms` | int | `1000` | Flush thread call interval in milliseconds. |
 | `compression-level` | int | `0` | DEFLATE compression level 0–9 (0 = off). |
-| `merge-root-sources` | bool | `false` | Opt-in merge mode; all root-sources share one output file with one HDF5 group per source. See [hdf5-writer.md](writers/hdf5-writer.md#merge-mode). |
+| `merge-root-sources` | bool | `false` | Opt-in merge mode; all root-sources share one output file with one HDF5 group per source. See [hdf5-writer.md](../writers/hdf5-writer.md#merge-mode). |
 
-→ [Full HDF5 Writer Documentation](writers/hdf5-writer.md)
+→ [Full HDF5 Writer Documentation](../writers/hdf5-writer.md)
 
 ---
 
@@ -165,8 +165,8 @@ Both EPICS readers share the same base config (`EpicsReaderConfig`):
 | `pvs[].option.tsSeconds` | string | `secondsPastEpoch` | NTTable column name carrying seconds timestamp. |
 | `pvs[].option.tsNanos` | string | `nanoseconds` | NTTable column name carrying nanoseconds timestamp. |
 
-→ [EpicsPVXSReader Implementation](readers/epics-pvxs-reader-implementation.md)
-→ [EpicsBaseReader Implementation](readers/epics-base-reader-implementation.md)
+→ [EpicsPVXSReader Implementation](../readers/epics-pvxs-reader-implementation.md)
+→ [EpicsBaseReader Implementation](../readers/epics-base-reader-implementation.md)
 
 ---
 
@@ -221,7 +221,7 @@ Two fetch modes:
 | `tls-verify-host` | bool | `true` | Verify the server hostname against the TLS certificate. |
 | `pvs[].name` | string | — | **Required.** PV name to retrieve from the archiver. |
 
-→ [EpicsArchiverReader Implementation](readers/epics-archiver-reader-implementation.md)
+→ [EpicsArchiverReader Implementation](../readers/epics-archiver-reader-implementation.md)
 
 ---
 
@@ -319,7 +319,7 @@ In this example:
 - Every reader name in `from:` must match a configured reader instance (except `all`). Unknown names cause a startup failure.
 - Orphan warnings are logged for readers/writers not mentioned in any route.
 
-→ [Full Controller Documentation](controller.md#reader-to-writer-routing)
+→ [Full Controller Documentation](../reference/controller.md#reader-to-writer-routing)
 
 ---
 
@@ -340,7 +340,7 @@ metrics:
 
 When `metrics:` is absent the Prometheus exposer is not started.
 
-→ [Metrics Export Guide](metrics-export-guide.md)
+→ [Metrics Export Guide](../metrics/metrics-export-guide.md)
 
 ---
 
@@ -348,6 +348,6 @@ When `metrics:` is absent the Prometheus exposer is not started.
 
 | File | Description |
 |------|-------------|
-| [`docs/examples/config-mldp-only.yaml`](examples/config-mldp-only.yaml) | Minimal single gRPC writer + PVXS reader |
-| [`docs/examples/config-mldp-and-hdf5.yaml`](examples/config-mldp-and-hdf5.yaml) | Dual writer (gRPC + HDF5) |
-| [`docs/examples/config-epics-archiver.yaml`](examples/config-epics-archiver.yaml) | Archiver reader with gRPC writer |
+| [`docs/examples/config-mldp-only.yaml`](../examples/config-mldp-only.yaml) | Minimal single gRPC writer + PVXS reader |
+| [`docs/examples/config-mldp-and-hdf5.yaml`](../examples/config-mldp-and-hdf5.yaml) | Dual writer (gRPC + HDF5) |
+| [`docs/examples/config-epics-archiver.yaml`](../examples/config-epics-archiver.yaml) | Archiver reader with gRPC writer |
