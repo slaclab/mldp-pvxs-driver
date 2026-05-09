@@ -213,6 +213,10 @@ std::vector<ConfigDiagnostic> validateConfig(const Config& cfg)
         // -------------------------------------------------------------------------
         // Reader block
         // -------------------------------------------------------------------------
+        if (!cfg.hasChild("reader")) {
+            err("reader", "missing required block");
+        }
+
         std::set<std::string>    seenReaderNames;
         std::vector<std::string> allReaderNames;
 

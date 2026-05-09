@@ -267,6 +267,10 @@ int runRemove(const EditRemoveOptions& opts)
             std::cerr << "ERROR  reader '" << name << "' not found in " << opts.path << "\n";
             return 1;
         }
+        if (rv.size() <= 1) {
+            std::cerr << "ERROR  cannot remove last reader — config would be invalid\n";
+            return 1;
+        }
         rv.erase(it);
 
         // Clean from_readers lists; warn if entry becomes empty

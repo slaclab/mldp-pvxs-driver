@@ -106,6 +106,8 @@ reader:
   - epics-pvxs:
       - name: pvxs_main
         thread-pool: 2
+      - name: pvxs_extra
+        thread-pool: 1
 
 routing:
   mldp_main:
@@ -313,7 +315,7 @@ TEST(ConfigRemove, RemoveWriterCleansRouting)
         EXPECT_NE("mldp_main", re.writer_name);
 }
 
-TEST(ConfigRemove, RemoveReaderByName)
+TEST(ConfigRemove, RemoveLastReaderFails)
 {
     auto path = writeTempFile(kMldpOnlyYaml);
     EditRemoveOptions opts;
@@ -322,18 +324,11 @@ TEST(ConfigRemove, RemoveReaderByName)
     opts.name      = "pvxs_main";
     opts.no_backup = true;
 
-    // Remove should succeed (config may warn but not fail on missing reader)
-    captureStderr([&]{
-        int rc = runRemove(opts);
-        // validateConfig may emit warnings for no reader, but we only block on errors
-        (void)rc;
-    });
-
-    WizardState st;
-    wizard_internal::loadFromConfig(path, st);
+    int rc = 0;
+    captureStderr([&]{ rc = runRemove(opts); });
     std::filesystem::remove(path);
 
-    EXPECT_TRUE(st.readers.empty());
+    EXPECT_EQ(rc, 1);
 }
 
 TEST(ConfigRemove, RemoveReaderCleansFromLists)

@@ -14,7 +14,7 @@ The driver consumes one YAML document via `--config` with five top-level section
 |-----|----------|---------|
 | `name` | no | Controller instance label (metrics scope) |
 | `writer` | **yes (≥1)** | Output sinks (`mldp`, `hdf5`, `hdf5-merge`) |
-| `reader` | no | Input sources (`epics-pvxs`, `epics-base`, `epics-archiver`) |
+| `reader` | **yes (≥1)** | Input sources (`epics-pvxs`, `epics-base`, `epics-archiver`) |
 | `routing` | no | Reader-to-writer routing and optional source filters |
 | `metrics` | no | Prometheus exporter settings |
 
@@ -102,7 +102,7 @@ For periodic metrics dumps and manual triggers (Ctrl+P, Ctrl+D, SIGUSR1/SIGQUIT)
 
 > 🚀 **New to the driver?** Start with the **[User Guide](docs/user-guide.md)** — annotated YAML examples covering every reader, writer, routing, and source-filter scenario. No C++ knowledge required.
 
-This project uses a pipeline-style architecture: PVXS clients feed PV updates into a bounded work queue; the core driver converts and enriches events and dispatches them to the MLDP ingestion service using a connection pool of gRPC channels; reader implementations consume and re-publish or transform events as needed.
+Readers collect data from configurable sources, push normalized batches onto a shared bus, and the controller routes them to one or more writers — each writer delivering to a different storage or transport backend.
 
 ### Documentation
 
