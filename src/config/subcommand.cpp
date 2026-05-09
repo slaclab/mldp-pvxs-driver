@@ -26,7 +26,16 @@ namespace mldp_pvxs_driver::config {
 int runConfigSubcommand(int argc, char** argv)
 {
     ArgumentParser program("config");
-    program.add_description("Configuration utilities: generate templates, validate files, or run the interactive wizard.");
+    program.add_description(
+        "Configuration utilities.\n"
+        "\n"
+        "Sub-commands:\n"
+        "  wizard    Interactive TUI wizard — generate or amend a config.yaml\n"
+        "  validate  Validate a YAML file and report field-level errors/warnings\n"
+        "  template  Print a ready-to-use YAML template (minimal or full)\n"
+        "  list      Show all writers, readers, routing rules and metrics settings\n"
+        "  add       Add a writer, reader or routing entry to an existing config\n"
+        "  remove    Remove a named writer, reader or routing entry");
 
     // ── template sub-subcommand ───────────────────────────────────────────
     ArgumentParser cmd_template("template");
@@ -49,7 +58,7 @@ int runConfigSubcommand(int argc, char** argv)
 
     // ── wizard sub-subcommand ─────────────────────────────────────────────
     ArgumentParser cmd_wizard("wizard");
-    cmd_wizard.add_description("Interactively generate a configuration file (stub — not yet implemented).");
+    cmd_wizard.add_description("Interactively generate or amend a configuration file using a guided TUI wizard.");
     cmd_wizard.add_argument("--output")
         .help("Path for the generated configuration file")
         .default_value(std::string("config.yaml"))
