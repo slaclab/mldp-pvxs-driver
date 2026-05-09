@@ -57,7 +57,7 @@ flowchart TB
 reader:
   - epics-pvxs:
       - name: my_pvxs_reader
-        thread-pool: 2                # Conversion thread pool size
+        thread-pool: 2                # Event conversion thread pool size
         column-batch-size: 50         # NTTable column batch size
         pvs:
           - name: MY:PV:NAME

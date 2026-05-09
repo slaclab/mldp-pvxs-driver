@@ -68,11 +68,11 @@ flowchart TB
 reader:
   - epics-archiver:
       - name: my_archiver_reader
-        hostname: "archiver-appliance.example.com:17668"
+        hostname: "archiver-appliance.example.com:11200"
         start-date: "2024-01-01T00:00:00Z"  # Required
         end-date: "2024-01-02T00:00:00Z"    # Optional
         batch-duration-sec: 1               # Split events by 1-second windows
-        thread-pool: 2                      # Conversion thread pool
+        thread-pool: 2                      # Event conversion thread pool size
         pvs:
           - name: MY:ARCHIVER:PV
           - name: ANOTHER:HISTORICAL:PV
@@ -94,7 +94,7 @@ reader:
 reader:
   - epics-archiver:
       - name: continuous_archiver
-        hostname: "archiver.example.com:17668"
+        hostname: "archiver.example.com:11200"
         mode: periodic_tail             # Enable continuous polling
         poll-interval-sec: 5            # Poll every 5 seconds
         lookback-sec: 60                # Fetch last 60 seconds each time
@@ -143,7 +143,7 @@ Parameter             | Type  | Default | Description
 reader:
   - epics-archiver:
       - name: secure_archiver
-        hostname: "archiver.example.com:17668"
+        hostname: "archiver.example.com:11200"
         start-date: "2024-01-01T00:00:00Z"
         connect-timeout-sec: 30         # Connection timeout (default: 30)
         total-timeout-sec: 300          # Total operation timeout (default: 300)
@@ -214,7 +214,7 @@ EPICS Type         | DataFrame Column Type
 reader:
   - epics-archiver:
       - name: yesterday_backfill
-        hostname: "archiver.example.com:17668"
+        hostname: "archiver.example.com:11200"
         start-date: "2024-01-09T00:00:00Z"
         end-date: "2024-01-10T00:00:00Z"
         pvs:
@@ -227,7 +227,7 @@ reader:
 reader:
   - epics-archiver:
       - name: tail_reader
-        hostname: "archiver.example.com:17668"
+        hostname: "archiver.example.com:11200"
         mode: periodic_tail
         poll-interval-sec: 10
         lookback-sec: 3600            # Keep 1 hour of history per poll
@@ -241,7 +241,7 @@ reader:
 reader:
   - epics-archiver:
       - name: high_freq_archiver
-        hostname: "archiver.example.com:17668"
+        hostname: "archiver.example.com:11200"
         start-date: "2024-01-01T00:00:00Z"
         batch-duration-sec: 0.1       # 100ms batches for high-frequency analysis
         pvs:

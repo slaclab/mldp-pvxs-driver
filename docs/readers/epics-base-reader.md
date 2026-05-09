@@ -59,7 +59,7 @@ flowchart TB
 reader:
   - epics-base:
       - name: my_base_reader
-        thread-pool: 2               # Conversion thread pool size
+        thread-pool: 2               # Event conversion thread pool size
         monitor-poll-threads: 2      # Number of polling threads
         monitor-poll-interval-ms: 5  # Polling interval in ms
         pvs:
