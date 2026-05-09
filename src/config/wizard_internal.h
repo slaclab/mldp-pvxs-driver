@@ -27,4 +27,16 @@ bool isValidIso8601(const std::string& s);
 bool isPositiveInt(const std::string& s);
 bool isNonNegInt(const std::string& s);
 
+#ifdef MLDP_WIZARD_ENABLED
+// Single-entry interactive add sub-flows (called by `config add` interactive path).
+// Each appends exactly one new entry to st and returns.
+// used_names must be pre-populated with all existing writer/reader names for uniqueness checks.
+void phase2_add_one_writer(WizardState& st);
+void phase3_add_one_reader(WizardState& st);
+// writer_name + writer_type must match an existing writer in st.
+void phase5_add_one_routing_entry(WizardState& st,
+                                  const std::string& writer_name,
+                                  const std::string& writer_type);
+#endif
+
 } // namespace mldp_pvxs_driver::config::wizard_internal

@@ -720,6 +720,33 @@ if(MLDP_PVXS_DRIVER_TESTS)
         gtest_discover_tests(mldp_pvxs_driver_wizard_test)
     endif()
 
+    # Edit sub-command unit tests (list, add, remove) — no FTXUI needed
+    if(MLDP_WIZARD)
+        add_executable(mldp_pvxs_driver_edit_test
+            "${CMAKE_CURRENT_SOURCE_DIR}/test/config/edit_test.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/config/validate.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/config/edit.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/test/ryml_single_header_translation_unit.cpp"
+        )
+        target_include_directories(mldp_pvxs_driver_edit_test
+            PRIVATE
+                "${CMAKE_CURRENT_SOURCE_DIR}/include"
+                "${CMAKE_CURRENT_SOURCE_DIR}/src/config"
+                "${CMAKE_CURRENT_SOURCE_DIR}/test/config"
+                "${CMAKE_CURRENT_SOURCE_DIR}/ext/rapidyaml/include"
+        )
+        if(APPLE)
+            target_link_libraries(mldp_pvxs_driver_edit_test
+                PRIVATE gtest_main mldp_pvxs_driver_wizard_lib
+                -Wl,-force_load $<TARGET_FILE:lib${PROJECT_NAME}>)
+        else()
+            target_link_libraries(mldp_pvxs_driver_edit_test
+                PRIVATE gtest_main mldp_pvxs_driver_wizard_lib
+                -Wl,--whole-archive lib${PROJECT_NAME} -Wl,--no-whole-archive)
+        endif()
+        gtest_discover_tests(mldp_pvxs_driver_edit_test)
+    endif()
+
     if(MLDP_PVXS_ENABLE_HDF5)
         # HDF5 writer unit and integration tests
         add_executable(mldp_hdf5_writer_test
@@ -826,6 +853,7 @@ if(MLDP_PVXS_DRIVER_MAIN)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/config/subcommand.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/config/validate.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/config/template.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/config/edit.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/PeriodicMetricsDumper.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/mldp_pvxs_driver_main.cpp"
     )
@@ -845,11 +873,24 @@ if(MLDP_PVXS_DRIVER_MAIN)
             spdlog::spdlog
         )
     endif()
-    target_include_directories(${PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/ext/rapidyaml/include")
+    target_include_directories(${PROJECT_NAME} PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/ext/rapidyaml/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/config"
+    )
+
+    # edit.cpp needs wizard_internal symbols (generateYaml, loadFromConfig).
+    # When MLDP_WIZARD=ON those come from mldp_pvxs_driver_wizard_lib (linked below).
+    # When MLDP_WIZARD=OFF, compile wizard.cpp directly so the pure functions are available.
+    if(NOT MLDP_WIZARD)
+        target_sources(${PROJECT_NAME} PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/config/wizard.cpp"
+        )
+    endif()
 
     if(MLDP_WIZARD AND MLDP_PVXS_DRIVER_MAIN)
         add_library(mldp_pvxs_driver_wizard_lib STATIC
             "${CMAKE_CURRENT_SOURCE_DIR}/src/config/wizard.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/config/edit_interactive.cpp"
         )
         target_link_libraries(mldp_pvxs_driver_wizard_lib
             PRIVATE
