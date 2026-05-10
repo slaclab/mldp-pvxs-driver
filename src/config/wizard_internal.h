@@ -12,7 +12,9 @@
 #pragma once
 
 #include <config/wizard.h>
+#include <functional>
 #include <string>
+#include <vector>
 
 namespace mldp_pvxs_driver::config::wizard_internal {
 
@@ -40,3 +42,25 @@ void phase5_add_one_routing_entry(WizardState& st,
 #endif
 
 } // namespace mldp_pvxs_driver::config::wizard_internal
+
+#ifdef MLDP_WIZARD_ENABLED
+// Blocking FTXUI prompt helpers — defined in wizard.cpp, in the config namespace.
+namespace mldp_pvxs_driver::config {
+
+std::string promptInput(const std::string& phase_title,
+                        int phase, int total,
+                        const std::string& field_label,
+                        const std::string& def_val,
+                        std::function<std::string(const std::string&)> validator = {});
+bool promptYesNo(const std::string& phase_title,
+                 int phase, int total,
+                 const std::string& question,
+                 bool default_yes);
+int  promptMenu(const std::string& phase_title,
+                int phase, int total,
+                const std::string& question,
+                const std::vector<std::string>& choices,
+                int default_idx = 0);
+
+} // namespace mldp_pvxs_driver::config
+#endif

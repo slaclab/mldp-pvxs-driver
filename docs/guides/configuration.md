@@ -13,7 +13,7 @@ writer:         # required — at least one writer instance
   grpc: [...]
   hdf5: [...]   # requires -DMLDP_PVXS_ENABLE_HDF5=ON build option
 
-reader:         # optional — list of reader groups
+reader:         # required — at least one reader instance
   - epics-pvxs: [...]
   - epics-base: [...]
   - epics-archiver: [...]

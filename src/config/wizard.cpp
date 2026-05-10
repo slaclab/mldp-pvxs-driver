@@ -412,12 +412,12 @@ using namespace wizard_internal;
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Run a single input screen, returns user-entered value (or def on Escape)
-static std::string promptInput(
+std::string promptInput(
     const std::string& phase_title,
     int phase, int total,
     const std::string& field_label,
     const std::string& def_val,
-    std::function<std::string(const std::string&)> validator = {})
+    std::function<std::string(const std::string&)> validator)
 {
     auto screen = ScreenInteractive::TerminalOutput();
     std::string value = def_val;
@@ -447,7 +447,7 @@ static std::string promptInput(
 }
 
 // Run a yes/no screen, returns true=yes
-static bool promptYesNo(
+bool promptYesNo(
     const std::string& phase_title,
     int phase, int total,
     const std::string& question,
@@ -484,12 +484,12 @@ static bool promptYesNo(
 }
 
 // Run a menu-choice screen; returns index 0..choices.size()-1
-static int promptMenu(
+int promptMenu(
     const std::string& phase_title,
     int phase, int total,
     const std::string& question,
     const std::vector<std::string>& choices,
-    int default_idx = 0)
+    int default_idx)
 {
     auto screen = ScreenInteractive::TerminalOutput();
     int  selected = default_idx;

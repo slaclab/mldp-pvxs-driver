@@ -70,49 +70,57 @@ int runAddInteractive(const std::string& path, const std::string& kind,
         return 1;
     }
 
-    if (kind == "writer") {
+    // Resolve kind — prompt via FTXUI when not provided on command line
+    std::string kind_resolved = kind;
+    if (kind_resolved.empty()) {
+        static const std::vector<std::string> kinds = {"writer", "reader", "routing"};
+        int idx = promptMenu("Add Entry", 1, 1,
+                                              "Select entry type to add:", kinds);
+        kind_resolved = kinds[idx];
+    }
+
+    if (kind_resolved == "writer") {
         wizard_internal::phase2_add_one_writer(st);
 
-    } else if (kind == "reader") {
+    } else if (kind_resolved == "reader") {
         wizard_internal::phase3_add_one_reader(st);
 
-    } else if (kind == "routing") {
-        // Ask which writer to configure routing for
+    } else if (kind_resolved == "routing") {
+        // Build writer list for FTXUI menu
         std::vector<std::string> writer_names;
         std::vector<std::string> writer_types;
+        std::vector<std::string> writer_labels;
         for (const auto& w : st.mldp_writers) {
             writer_names.push_back(w.name);
             writer_types.push_back("mldp");
+            writer_labels.push_back(w.name + "  (mldp)");
         }
         for (const auto& w : st.hdf5_writers) {
             writer_names.push_back(w.name);
-            writer_types.push_back(w.is_merge ? "hdf5-merge" : "hdf5");
+            const std::string wtype = w.is_merge ? "hdf5-merge" : "hdf5";
+            writer_types.push_back(wtype);
+            writer_labels.push_back(w.name + "  (" + wtype + ")");
         }
         if (writer_names.empty()) {
             std::cerr << "ERROR  no writers in config — add a writer first\n";
             return 1;
         }
-        std::cout << "Writers available:\n";
-        for (std::size_t i = 0; i < writer_names.size(); ++i)
-            std::cout << "  [" << i << "] " << writer_names[i] << " (" << writer_types[i] << ")\n";
-        std::cout << "Select writer index: ";
-        int idx = 0;
-        std::cin >> idx;
-        if (idx < 0 || static_cast<std::size_t>(idx) >= writer_names.size()) {
-            std::cerr << "ERROR  invalid index\n";
-            return 1;
-        }
-        if (!st.routing_all_to_all) {
-            st.routing_all_to_all = false;
-        } else {
+
+        int idx = promptMenu("Add Routing", 5, 6,
+                                              "Select writer to configure routing for:",
+                                              writer_labels);
+
+        if (st.routing_all_to_all) {
             st.routing_all_to_all = false;
             std::cerr << "WARN   switching from all-to-all to explicit routing; "
                          "writers not listed will receive nothing\n";
+        } else {
+            st.routing_all_to_all = false;
         }
         wizard_internal::phase5_add_one_routing_entry(st, writer_names[idx], writer_types[idx]);
 
     } else {
-        std::cerr << "ERROR  unknown kind '" << kind << "' — use writer, reader, or routing\n";
+        std::cerr << "ERROR  unknown kind '" << kind_resolved << "' — use writer, reader, or routing\n";
         return 1;
     }
 

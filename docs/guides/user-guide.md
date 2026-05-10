@@ -66,6 +66,84 @@ Use the optional `routing:` block to restrict which reader feeds which writer.
 
 ---
 
+## Generating Your Configuration
+
+You have two options: use the **interactive wizard** (recommended for beginners) or write YAML manually.
+
+### Option 1: Interactive Wizard (Easiest)
+
+Run the configuration wizard to build a config file with guided prompts:
+
+```bash
+mldp_pvxs_driver config wizard
+```
+
+The wizard will ask you:
+
+1. What readers to add (PV sources)?
+2. What writers to add (destinations)?
+3. Details for each reader (hostnames, credentials, poll intervals)?
+4. Details for each writer (gRPC URLs, file paths, credentials)?
+5. Any optional routing or metrics settings?
+
+The wizard generates `config.yaml` when done. You can review and edit it manually afterwards.
+
+**To modify an existing config:**
+
+```bash
+mldp_pvxs_driver config wizard --from config.yaml
+```
+
+**To add a single entry to an existing config (interactive):**
+
+```bash
+# Prompts for entry type (writer / reader / routing), then type-specific fields
+mldp_pvxs_driver config add config.yaml
+
+# Skip the kind prompt by passing it directly (PATH always last)
+mldp_pvxs_driver config add writer config.yaml
+mldp_pvxs_driver config add reader config.yaml
+mldp_pvxs_driver config add routing config.yaml
+```
+
+**To remove a named entry:**
+
+```bash
+mldp_pvxs_driver config remove writer config.yaml --name mldp_main
+mldp_pvxs_driver config remove reader config.yaml --name pvxs_live
+```
+
+### Option 2: Start from a Template
+
+If you prefer to hand-edit YAML, start with a template:
+
+```bash
+# Minimal template (MLDP writer + PVXS reader)
+mldp_pvxs_driver config template --minimal > config.yaml
+
+# Full template (both writers and all reader types)
+mldp_pvxs_driver config template --full > config.yaml
+```
+
+Then edit `config.yaml` to fill in your hostnames, URLs, PV names, and credentials.
+
+### Option 3: Validate and Inspect
+
+After creating a config, always validate it before running the driver:
+
+```bash
+# Check for errors and warnings
+mldp_pvxs_driver config validate config.yaml
+
+# See a summary of what will run
+mldp_pvxs_driver config list config.yaml
+
+# Dry-run the startup without starting readers/writers
+mldp_pvxs_driver --config config.yaml --dry-run
+```
+
+---
+
 ## Configuration File Structure
 
 All configuration lives in a single YAML file passed to the driver at startup:
@@ -92,7 +170,141 @@ routing:         # optional — restrict which reader feeds which writer
 
 ---
 
-## Example 1 — Live PVs → MLDP (simplest setup)
+## Routing and Source Filtering
+
+By default, every reader feeds every writer. Use the optional `routing:` block to change this behavior.
+
+### Reader-to-Writer Routing
+
+Each writer lists which readers it accepts under `from:`. Use `"all"` to accept every reader.
+
+```yaml
+routing:
+  mldp_main:
+    from: [pvxs_live, archiver_tail]  # only these readers feed mldp_main
+  hdf5_local:
+    from: [all]                       # every reader feeds hdf5_local
+```
+
+**Behavior:**
+
+- If `routing:` block is **absent**: all readers feed all writers (all-to-all, default).
+- If `routing:` block is **present**: only writers listed in the block receive data. Unlisted writers receive nothing.
+
+> ⚠️ When `routing:` is present, any writer **not** listed receives nothing.
+
+### Source Filtering (include / exclude)
+
+Each routing entry can also filter by PV name using glob patterns. Filters apply per PV name:
+
+```yaml
+routing:
+  mldp_main:
+    from: [pvxs_live]
+    include:
+      - "SITE:BPM:*"    # accept only these PV names
+      - "GUN:SOL:*"
+    exclude:
+      - "SITE:TEST:*"   # always drop test PVs (applied after include)
+```
+
+**Filter matching logic:**
+
+| Scenario | include | exclude | Result |
+|---|---|---|---|
+| No patterns set | — | — | all PVs pass through |
+| Include only | `SITE:BPM:*` | — | only matching PVs pass |
+| Exclude only | — | `SITE:TEST:*` | all PVs pass except matching |
+| Both | `SITE:BPM:*` | `SITE:TEST:*` | PVs matching include AND NOT matching exclude |
+
+**Pattern rules:**
+
+- `*` matches any characters including `:` (EPICS namespace separator).
+- Patterns are **case-sensitive**.
+- If `include:` is absent, all sources are accepted initially (then `exclude:` filters them).
+- If `exclude:` is absent, nothing is dropped by the exclude step.
+
+> 📖 Full details: [controller.md](../reference/controller.md#reader-to-writer-routing)
+
+---
+
+## Key Configuration Parameters
+
+### Reader — `epics-pvxs` and `epics-base`
+
+| Parameter | Required | Default | Description |
+|---|---|---|---|
+| `name` | ✅ | — | Unique name for this reader instance |
+| `pvs` | ✅ | — | List of EPICS PV names to monitor |
+| `thread-pool` | | 2 | Worker threads for data conversion |
+
+### Reader — `epics-archiver`
+
+| Parameter | Required | Default | Description |
+|---|---|---|---|
+| `name` | ✅ | — | Unique name for this reader instance |
+| `hostname` | ✅ | — | Archiver host and port (e.g. `archiver.example.com:11200`) |
+| `mode` | ✅ | — | `historical_once` or `periodic_tail` |
+| `pvs` | ✅ | — | List of PV names to fetch |
+| `start-date` | for `historical_once` | — | ISO 8601 start time |
+| `end-date` | | — | ISO 8601 end time (omit = now) |
+| `poll-interval-sec` | for `periodic_tail` | — | How often to query the Archiver |
+| `lookback-sec` | | = poll-interval | How far back each poll fetches |
+| `connect-timeout-sec` | | 30 | HTTP connection timeout (seconds) |
+| `total-timeout-sec` | | 300 | Total HTTP timeout (0 = no limit) |
+
+### Writer — `mldp`
+
+| Parameter | Required | Default | Description |
+|---|---|---|---|
+| `name` | ✅ | — | Unique name for this writer instance |
+| `mldp-pool.provider-name` | ✅ | — | Provider name registered in MLDP |
+| `mldp-pool.ingestion-url` | ✅ | — | gRPC ingestion service address |
+| `mldp-pool.credentials` | | none | `none`, `ssl`, or TLS certificate map |
+| `thread-pool` | | 1 | Worker threads |
+| `stream-max-bytes` | | 2097152 | Flush gRPC stream at this payload size |
+| `stream-max-age-ms` | | 200 | Flush gRPC stream after this many ms |
+
+### Writer — `hdf5` / `hdf5-merge`
+
+| Parameter | Required | Default | Description |
+|---|---|---|---|
+| `name` | ✅ | — | Unique name for this writer instance |
+| `base-path` | ✅ | — | Directory where HDF5 files are written |
+| `max-file-age-s` | | 3600 | Rotate to a new file every N seconds |
+| `max-file-size-mb` | | 512 | Rotate when file reaches N MiB |
+| `flush-interval-ms` | | 1000 | Flush buffers to disk every N ms |
+| `compression-level` | | 0 | DEFLATE compression level 0–9 (0 = off) |
+
+### Metrics (optional)
+
+```yaml
+metrics:
+  endpoint: "0.0.0.0:9464"      # Prometheus scrape endpoint
+  scan-interval-seconds: 5
+```
+
+---
+
+## Choosing the Right Reader
+
+```
+Need live data?
+├── EPICS system uses PVAccess (PVA)?  → epics-pvxs  ✅ recommended
+└── EPICS system uses Channel Access (CA) only?  → epics-base
+
+Need historical data?
+├── One-time backfill?  → epics-archiver (mode: historical_once)
+└── Continuous near-real-time feed from Archiver?  → epics-archiver (mode: periodic_tail)
+```
+
+---
+
+## Examples
+
+Now that you understand the concepts, parameters, and routing options, here are practical examples.
+
+### Example 1 — Live PVs → MLDP (simplest setup)
 
 Monitor three live EPICS PVs and forward every update to MLDP.
 
@@ -307,129 +519,6 @@ routing:
 | `SITE:BPM:01:X` | ✅ | ✗ | **yes** |
 | `SITE:BPM:01:Y` | ✅ | ✗ | **yes** |
 | `SITE:TEST:01:X` | ✗ | ✅ | **no** |
-
-> `*` matches `:` in EPICS PV names. Patterns are case-sensitive.
-> `include` absent = accept all sources. `exclude` absent = drop nothing.
-
-> If you omit the `routing:` block entirely, every writer receives from every reader.
-
----
-
-## Routing and Source Filtering
-
-### Reader-to-Writer Routing
-
-By default every reader feeds every writer. Add a `routing:` block to change that.
-
-Each writer lists which readers it accepts under `from:`. Use `"all"` to accept every reader.
-
-```yaml
-routing:
-  mldp_main:
-    from: [pvxs_live, archiver_tail]  # only these readers feed mldp_main
-  hdf5_local:
-    from: [all]                       # every reader feeds hdf5_local
-```
-
-> ⚠️ When `routing:` is present, any writer **not** listed receives nothing.
-
-### Source Filtering (include / exclude)
-
-Each routing entry can also filter by PV name using glob patterns:
-
-```yaml
-routing:
-  mldp_main:
-    from: [pvxs_live]
-    include:
-      - "SITE:BPM:*"    # accept only these PV names
-      - "GUN:SOL:*"
-    exclude:
-      - "SITE:TEST:*"   # always drop test PVs (applied after include)
-```
-
-| Scenario | include | exclude | Result |
-|---|---|---|---|
-| No patterns set | — | — | all PVs pass |
-| Include only | `SITE:BPM:*` | — | only matching PVs pass |
-| Exclude only | — | `SITE:TEST:*` | all PVs pass except matching |
-| Both | `SITE:BPM:*` | `SITE:TEST:*` | matching include AND NOT matching exclude |
-
-> `*` matches `:` in EPICS PV names. Patterns are case-sensitive.
-
-> 📖 Full details: [controller.md](../reference/controller.md#reader-to-writer-routing)
-
----
-
-## Key Configuration Parameters
-
-### Reader — `epics-pvxs` and `epics-base`
-
-| Parameter | Required | Default | Description |
-|---|---|---|---|
-| `name` | ✅ | — | Unique name for this reader instance |
-| `pvs` | ✅ | — | List of EPICS PV names to monitor |
-| `thread-pool` | | 2 | Worker threads for data conversion |
-
-### Reader — `epics-archiver`
-
-| Parameter | Required | Default | Description |
-|---|---|---|---|
-| `name` | ✅ | — | Unique name for this reader instance |
-| `hostname` | ✅ | — | Archiver host and port (e.g. `archiver.example.com:11200`) |
-| `mode` | ✅ | — | `historical_once` or `periodic_tail` |
-| `pvs` | ✅ | — | List of PV names to fetch |
-| `start-date` | for `historical_once` | — | ISO 8601 start time |
-| `end-date` | | — | ISO 8601 end time (omit = now) |
-| `poll-interval-sec` | for `periodic_tail` | — | How often to query the Archiver |
-| `lookback-sec` | | = poll-interval | How far back each poll fetches |
-| `connect-timeout-sec` | | 30 | HTTP connection timeout (seconds) |
-| `total-timeout-sec` | | 300 | Total HTTP timeout (0 = no limit) |
-
-### Writer — `mldp`
-
-| Parameter | Required | Default | Description |
-|---|---|---|---|
-| `name` | ✅ | — | Unique name for this writer instance |
-| `mldp-pool.provider-name` | ✅ | — | Provider name registered in MLDP |
-| `mldp-pool.ingestion-url` | ✅ | — | gRPC ingestion service address |
-| `mldp-pool.credentials` | | none | `none`, `ssl`, or TLS certificate map |
-| `thread-pool` | | 1 | Worker threads |
-| `stream-max-bytes` | | 2097152 | Flush gRPC stream at this payload size |
-| `stream-max-age-ms` | | 200 | Flush gRPC stream after this many ms |
-
-### Writer — `hdf5` / `hdf5-merge`
-
-| Parameter | Required | Default | Description |
-|---|---|---|---|
-| `name` | ✅ | — | Unique name for this writer instance |
-| `base-path` | ✅ | — | Directory where HDF5 files are written |
-| `max-file-age-s` | | 3600 | Rotate to a new file every N seconds |
-| `max-file-size-mb` | | 512 | Rotate when file reaches N MiB |
-| `flush-interval-ms` | | 1000 | Flush buffers to disk every N ms |
-| `compression-level` | | 0 | DEFLATE compression level 0–9 (0 = off) |
-
-### Metrics (optional)
-
-```yaml
-metrics:
-  endpoint: "0.0.0.0:9464"      # Prometheus scrape endpoint
-  scan-interval-seconds: 5
-```
-
----
-
-## Choosing the Right Reader
-
-```
-Need live data?
-├── EPICS system uses PVAccess (PVA)?  → epics-pvxs  ✅ recommended
-└── EPICS system uses Channel Access (CA) only?  → epics-base
-
-Need historical data?
-├── One-time backfill?  → epics-archiver (mode: historical_once)
-└── Continuous near-real-time feed from Archiver?  → epics-archiver (mode: periodic_tail)
-```
 
 ---
 

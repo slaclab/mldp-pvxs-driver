@@ -8,6 +8,7 @@ For system behavior and feature details, use the topic links below.
 | If you need...                                                                         | Read...                                                          |
 |----------------------------------------------------------------------------------------|------------------------------------------------------------------|
 | Product/runtime overview, configuration, CLI, release artifacts, external dependencies | [README.md](README.md)                                           |
+| How to generate or manage YAML configs with the wizard                                 | [User Guide — Configuration Generation](docs/guides/user-guide.md) |
 | Architecture, data flow, threading model, reader abstraction internals                 | [docs/reference/architecture.md](docs/reference/architecture.md)                     |
 | How to configure and use built-in readers (`epics-base`, `epics-pvxs`)                 | [docs/readers/readers.md](docs/readers/readers.md)                               |
 | How to implement a new/custom reader type                                              | [docs/readers/readers-implementation.md](docs/readers/readers-implementation.md) |
@@ -50,6 +51,8 @@ ctest --test-dir build --output-on-failure
 - If reader behavior/config changes, update [docs/readers/readers.md](docs/readers/readers.md).
 - If adding/extending a reader type, update [docs/readers/readers-implementation.md](docs/readers/readers-implementation.md).
 - If metrics behavior/output changes, update [docs/metrics/metrics-export-guide.md](docs/metrics/metrics-export-guide.md).
+- If configuration schema changes (new keys, removed keys, changed defaults), update [docs/guides/configuration.md](docs/guides/configuration.md) and validate with `mldp_pvxs_driver config validate`.
+- If adding or removing CLI options for the `config` subcommands, update the relevant `--help` text in [src/config/subcommand.cpp](src/config/subcommand.cpp).
 
 ## License Header Workflow
 

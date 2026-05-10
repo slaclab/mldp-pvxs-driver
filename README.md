@@ -98,6 +98,60 @@ mldp_pvxs_driver [--help] [--version] [--config PATH] [--log-level LEVEL] [--met
 
 For periodic metrics dumps and manual triggers (Ctrl+P, Ctrl+D, SIGUSR1/SIGQUIT), see the [metrics export guide](docs/metrics/metrics-export-guide.md).
 
+## Configuration Management
+
+Instead of writing YAML by hand, use the built-in configuration utilities (run without `--config`):
+
+### Interactive Configuration Wizard
+
+```bash
+# Generate a new config.yaml interactively
+mldp_pvxs_driver config wizard
+
+# Or seed from an existing config and modify it
+mldp_pvxs_driver config wizard --from old-config.yaml --output new-config.yaml
+```
+
+### Configuration Templates
+
+```bash
+# Print minimal template (MLDP writer + PVXS reader)
+mldp_pvxs_driver config template --minimal
+
+# Print full template (both writers, all readers)
+mldp_pvxs_driver config template --full
+```
+
+### Configuration Validation
+
+```bash
+# Validate a YAML file and report field-level errors/warnings
+mldp_pvxs_driver config validate config.yaml
+```
+
+### Configuration Inspection
+
+```bash
+# Show all writers, readers, routing rules, and metrics settings
+mldp_pvxs_driver config list config.yaml
+```
+
+### Configuration Editing
+
+```bash
+# Add a new reader, writer, or routing entry interactively (KIND is optional — prompted when omitted)
+mldp_pvxs_driver config add config.yaml
+mldp_pvxs_driver config add writer config.yaml    # skip kind prompt, go straight to writer type
+mldp_pvxs_driver config add reader config.yaml
+mldp_pvxs_driver config add routing config.yaml
+
+# Remove a named writer, reader, or routing entry
+mldp_pvxs_driver config remove writer config.yaml --name mldp_main
+mldp_pvxs_driver config remove reader config.yaml --name pvxs_live
+```
+
+All `config` subcommands support `--help` for per-command options.
+
 ## Architecture
 
 > 🚀 **New to the driver?** Start with the **[User Guide](docs/guides/user-guide.md)** — annotated YAML examples covering every reader, writer, routing, and source-filter scenario. No C++ knowledge required.

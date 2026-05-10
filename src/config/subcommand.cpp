@@ -82,12 +82,12 @@ int runConfigSubcommand(int argc, char** argv)
     // ── remove sub-subcommand ─────────────────────────────────────────────
     ArgumentParser cmd_remove("remove");
     cmd_remove.add_description("Remove a named writer, reader, or routing entry.");
-    cmd_remove.add_argument("path")
-        .help("Path to the configuration YAML file [default: config.yaml]")
-        .metavar("PATH");
     cmd_remove.add_argument("kind")
         .help("Entry type: writer, reader, or routing")
         .metavar("KIND");
+    cmd_remove.add_argument("path")
+        .help("Path to the configuration YAML file [default: config.yaml]")
+        .metavar("PATH");
     cmd_remove.add_argument("--name")
         .help("Name of the entry to remove")
         .required()
@@ -103,90 +103,15 @@ int runConfigSubcommand(int argc, char** argv)
 
     // ── add sub-subcommand ────────────────────────────────────────────────
     ArgumentParser cmd_add("add");
-    cmd_add.add_description("Add a writer, reader, or routing entry to an existing config.");
+    cmd_add.add_description("Add a writer, reader, or routing entry to an existing config (interactive).");
+    cmd_add.add_argument("kind")
+        .help("Entry type: writer, reader, or routing (optional — prompted when omitted)")
+        .metavar("KIND")
+        .nargs(argparse::nargs_pattern::optional)
+        .default_value(std::string(""));
     cmd_add.add_argument("path")
         .help("Path to the configuration YAML file")
         .metavar("PATH");
-    cmd_add.add_argument("kind")
-        .help("Entry type: writer, reader, or routing")
-        .metavar("KIND");
-    cmd_add.add_argument("--name")
-        .help("Name for the new entry")
-        .default_value(std::string(""))
-        .metavar("NAME");
-    cmd_add.add_argument("--type")
-        .help("Entry type: mldp|hdf5|hdf5-merge (writer) or epics-pvxs|epics-base|epics-archiver (reader)")
-        .default_value(std::string(""))
-        .metavar("TYPE");
-    // writer flags
-    cmd_add.add_argument("--thread-pool")
-        .default_value(std::string("")).metavar("N");
-    cmd_add.add_argument("--ingestion-url")
-        .default_value(std::string("")).metavar("URL");
-    cmd_add.add_argument("--provider-name")
-        .default_value(std::string("")).metavar("NAME");
-    cmd_add.add_argument("--query-url")
-        .default_value(std::string("")).metavar("URL");
-    cmd_add.add_argument("--min-conn")
-        .default_value(std::string("")).metavar("N");
-    cmd_add.add_argument("--max-conn")
-        .default_value(std::string("")).metavar("N");
-    cmd_add.add_argument("--credentials")
-        .default_value(std::string("")).metavar("TYPE");
-    cmd_add.add_argument("--stream-max-bytes")
-        .default_value(std::string("")).metavar("N");
-    cmd_add.add_argument("--stream-max-age-ms")
-        .default_value(std::string("")).metavar("N");
-    // hdf5 flags
-    cmd_add.add_argument("--base-path")
-        .default_value(std::string("")).metavar("PATH");
-    cmd_add.add_argument("--compression-level")
-        .default_value(std::string("")).metavar("N");
-    cmd_add.add_argument("--max-file-age-s")
-        .default_value(std::string("")).metavar("N");
-    cmd_add.add_argument("--max-file-size-mb")
-        .default_value(std::string("")).metavar("N");
-    // reader flags
-    cmd_add.add_argument("--reader-thread-pool")
-        .default_value(std::string("")).metavar("N");
-    cmd_add.add_argument("--column-batch-size")
-        .default_value(std::string("")).metavar("N");
-    cmd_add.add_argument("--pvs")
-        .help("Comma-separated PV names")
-        .default_value(std::string("")).metavar("PVS");
-    cmd_add.add_argument("--hostname")
-        .default_value(std::string("")).metavar("HOST:PORT");
-    cmd_add.add_argument("--mode")
-        .default_value(std::string("")).metavar("MODE");
-    cmd_add.add_argument("--start-date")
-        .default_value(std::string("")).metavar("DATE");
-    cmd_add.add_argument("--end-date")
-        .default_value(std::string("")).metavar("DATE");
-    cmd_add.add_argument("--poll-interval-sec")
-        .default_value(std::string("")).metavar("N");
-    cmd_add.add_argument("--connect-timeout-sec")
-        .default_value(std::string("")).metavar("N");
-    cmd_add.add_argument("--total-timeout-sec")
-        .default_value(std::string("")).metavar("N");
-    // routing flags
-    cmd_add.add_argument("--writer")
-        .default_value(std::string("")).metavar("NAME");
-    cmd_add.add_argument("--from")
-        .default_value(std::string("")).metavar("READERS");
-    cmd_add.add_argument("--include")
-        .help("PV glob pattern to include (repeatable)")
-        .append()
-        .default_value(std::vector<std::string>{})
-        .metavar("GLOB");
-    cmd_add.add_argument("--exclude")
-        .help("PV glob pattern to exclude (repeatable)")
-        .append()
-        .default_value(std::vector<std::string>{})
-        .metavar("GLOB");
-    cmd_add.add_argument("--replace")
-        .help("Replace existing routing entry instead of merging")
-        .default_value(false)
-        .implicit_value(true);
     cmd_add.add_argument("--no-backup")
         .default_value(false).implicit_value(true);
     cmd_add.add_argument("--dry-run")
@@ -318,61 +243,16 @@ int runConfigSubcommand(int argc, char** argv)
     {
         const std::string add_path = cmd_add.get<std::string>("path");
         const std::string add_kind = cmd_add.get<std::string>("kind");
-        const std::string add_name = cmd_add.get<std::string>("--name");
 
 #ifdef MLDP_WIZARD_ENABLED
-        if (add_name.empty())
-        {
-            return runAddInteractive(
-                add_path, add_kind,
-                cmd_add.get<bool>("--no-backup"),
-                cmd_add.get<bool>("--dry-run"));
-        }
+        return runAddInteractive(
+            add_path, add_kind,
+            cmd_add.get<bool>("--no-backup"),
+            cmd_add.get<bool>("--dry-run"));
 #else
-        if (add_name.empty())
-        {
-            std::cerr << "ERROR  --name required for non-interactive add "
-                         "(build without MLDP_WIZARD for interactive support)\n";
-            return 1;
-        }
+        std::cerr << "ERROR  'add' requires interactive mode (build with MLDP_WIZARD=ON)\n";
+        return 1;
 #endif
-
-        EditAddOptions opts;
-        opts.path             = add_path;
-        opts.kind             = add_kind;
-        opts.name             = add_name;
-        opts.type             = cmd_add.get<std::string>("--type");
-        opts.thread_pool      = cmd_add.get<std::string>("--thread-pool");
-        opts.ingestion_url    = cmd_add.get<std::string>("--ingestion-url");
-        opts.provider_name    = cmd_add.get<std::string>("--provider-name");
-        opts.query_url        = cmd_add.get<std::string>("--query-url");
-        opts.min_conn         = cmd_add.get<std::string>("--min-conn");
-        opts.max_conn         = cmd_add.get<std::string>("--max-conn");
-        opts.credentials      = cmd_add.get<std::string>("--credentials");
-        opts.stream_max_bytes = cmd_add.get<std::string>("--stream-max-bytes");
-        opts.stream_max_age_ms = cmd_add.get<std::string>("--stream-max-age-ms");
-        opts.base_path        = cmd_add.get<std::string>("--base-path");
-        opts.compression_level = cmd_add.get<std::string>("--compression-level");
-        opts.max_file_age_s   = cmd_add.get<std::string>("--max-file-age-s");
-        opts.max_file_size_mb = cmd_add.get<std::string>("--max-file-size-mb");
-        opts.reader_thread_pool = cmd_add.get<std::string>("--reader-thread-pool");
-        opts.column_batch_size  = cmd_add.get<std::string>("--column-batch-size");
-        opts.pvs              = cmd_add.get<std::string>("--pvs");
-        opts.hostname         = cmd_add.get<std::string>("--hostname");
-        opts.mode             = cmd_add.get<std::string>("--mode");
-        opts.start_date       = cmd_add.get<std::string>("--start-date");
-        opts.end_date         = cmd_add.get<std::string>("--end-date");
-        opts.poll_interval_sec     = cmd_add.get<std::string>("--poll-interval-sec");
-        opts.connect_timeout_sec   = cmd_add.get<std::string>("--connect-timeout-sec");
-        opts.total_timeout_sec     = cmd_add.get<std::string>("--total-timeout-sec");
-        opts.writer_name      = cmd_add.get<std::string>("--writer");
-        opts.from             = cmd_add.get<std::string>("--from");
-        opts.include_globs    = cmd_add.get<std::vector<std::string>>("--include");
-        opts.exclude_globs    = cmd_add.get<std::vector<std::string>>("--exclude");
-        opts.replace          = cmd_add.get<bool>("--replace");
-        opts.no_backup        = cmd_add.get<bool>("--no-backup");
-        opts.dry_run          = cmd_add.get<bool>("--dry-run");
-        return runAdd(opts);
     }
 
     // No subcommand given — print help.
