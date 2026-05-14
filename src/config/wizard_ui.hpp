@@ -10,12 +10,14 @@
 
 #pragma once
 
-// FTXUI headers
+// FTXUI headers (only included in wizard/FTXUI contexts)
 #include <ftxui/component/component.hpp>
 #include <ftxui/component/component_options.hpp>
 #include <ftxui/component/screen_interactive.hpp>
 #include <ftxui/component/event.hpp>
 #include <ftxui/dom/elements.hpp>
+
+#include "wizard_tree_types.hpp"
 
 #include <functional>
 #include <string>
@@ -25,38 +27,9 @@ namespace mldp_pvxs_driver::config::wizard_ui {
 
 using namespace ftxui;
 
-// ---------------------------------------------------------------------------
-// AppHeader — full-width title bar with app name left, phase info right
-// ---------------------------------------------------------------------------
-inline Element AppHeader(const std::string& title, int phase, int total)
-{
-    return hbox({
-        text("  pvxs-driver config wizard  ") | bold,
-        filler(),
-        text("Phase " + std::to_string(phase) + " of " + std::to_string(total) + "  —  "),
-        text(title) | bold,
-        text("  "),
-    }) | color(Color::White) | bgcolor(Color::Blue);
-}
-
-// ---------------------------------------------------------------------------
-// AppFooter — key-hint bar at bottom of every screen
-// ---------------------------------------------------------------------------
-inline Element AppFooter(const std::string& hint = "")
-{
-    const std::string txt = hint.empty()
-        ? "  [Tab] next field   [Enter] confirm   [Esc] quit without saving  "
-        : "  " + hint + "  ";
-    return dim(text(txt) | inverted);
-}
-
-// ---------------------------------------------------------------------------
-// PhaseHeader — kept for backwards compat; delegates to AppHeader
-// ---------------------------------------------------------------------------
-inline Element PhaseHeader(const std::string& title, int phase, int total)
-{
-    return AppHeader(title, phase, total);
-}
+// Sidebar: Menu with Unicode tree chars, cyan focus highlight
+// selected_index is owned by caller
+Component SidebarPanel(const std::vector<TreeNode>* nodes, int* selected_index);
 
 // ---------------------------------------------------------------------------
 // InputField — single-line input with optional validator
@@ -116,30 +89,6 @@ inline Component MultiSelectList(
                                  reinterpret_cast<bool*>((*selected).data() + i)));
     }
     return Container::Vertical(std::move(boxes));
-}
-
-// ---------------------------------------------------------------------------
-// ConfirmButton — a simple OK button that calls a callback and exits screen
-// ---------------------------------------------------------------------------
-inline Component ConfirmButton(
-    const std::string&    label,
-    std::function<void()> on_confirm,
-    ScreenInteractive*    screen)
-{
-    return Button(label, [=]{ on_confirm(); screen->Exit(); }, ButtonOption::Simple());
-}
-
-// ---------------------------------------------------------------------------
-// YesNoToggle — renders "Yes / No" as two buttons; sets *result to true/false
-// ---------------------------------------------------------------------------
-inline Component YesNoButtons(
-    bool*                 result,
-    std::function<void()> on_done,
-    ScreenInteractive*    screen)
-{
-    auto yes = Button("Yes", [=]{ *result = true;  on_done(); screen->Exit(); });
-    auto no  = Button("No",  [=]{ *result = false; on_done(); screen->Exit(); });
-    return Container::Horizontal({yes, no});
 }
 
 } // namespace mldp_pvxs_driver::config::wizard_ui

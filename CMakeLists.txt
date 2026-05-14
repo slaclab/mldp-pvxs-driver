@@ -697,6 +697,7 @@ if(MLDP_PVXS_DRIVER_TESTS)
     if(MLDP_WIZARD)
         add_executable(mldp_pvxs_driver_wizard_test
             "${CMAKE_CURRENT_SOURCE_DIR}/test/config/wizard_test.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/test/config/wizard_panel_test.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/src/config/validate.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/test/ryml_single_header_translation_unit.cpp"
         )
@@ -890,6 +891,7 @@ if(MLDP_PVXS_DRIVER_MAIN)
     if(MLDP_WIZARD AND MLDP_PVXS_DRIVER_MAIN)
         add_library(mldp_pvxs_driver_wizard_lib STATIC
             "${CMAKE_CURRENT_SOURCE_DIR}/src/config/wizard.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/config/wizard_panel.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/src/config/edit_interactive.cpp"
         )
         target_link_libraries(mldp_pvxs_driver_wizard_lib

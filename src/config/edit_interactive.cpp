@@ -66,106 +66,12 @@ int runAddInteractive(const std::string& path, const std::string& kind,
     try {
         wizard_internal::loadFromConfig(path, st);
     } catch (const std::exception& e) {
-        std::cerr << "ERROR  failed to parse '" << path << "': " << e.what() << "\n";
+        std::cerr << "Error loading config: " << e.what() << "\n";
         return 1;
     }
 
-    g_wizard_quit = false;
-
-    // Resolve kind — prompt via FTXUI when not provided on command line
-    std::string kind_resolved = kind;
-    if (kind_resolved.empty()) {
-        static const std::vector<std::string> kinds = {"writer", "reader", "routing"};
-        int idx = promptMenu("Add Entry", 1, 1,
-                                              "Select entry type to add:", kinds);
-        if (g_wizard_quit) return 0;
-        kind_resolved = kinds[idx];
-    }
-
-    if (kind_resolved == "writer") {
-        wizard_internal::phase2_add_one_writer(st);
-        if (g_wizard_quit) return 0;
-
-    } else if (kind_resolved == "reader") {
-        wizard_internal::phase3_add_one_reader(st);
-        if (g_wizard_quit) return 0;
-
-    } else if (kind_resolved == "routing") {
-        // Build writer list for FTXUI menu
-        std::vector<std::string> writer_names;
-        std::vector<std::string> writer_types;
-        std::vector<std::string> writer_labels;
-        for (const auto& w : st.mldp_writers) {
-            writer_names.push_back(w.name);
-            writer_types.push_back("mldp");
-            writer_labels.push_back(w.name + "  (mldp)");
-        }
-        for (const auto& w : st.hdf5_writers) {
-            writer_names.push_back(w.name);
-            const std::string wtype = w.is_merge ? "hdf5-merge" : "hdf5";
-            writer_types.push_back(wtype);
-            writer_labels.push_back(w.name + "  (" + wtype + ")");
-        }
-        if (writer_names.empty()) {
-            std::cerr << "ERROR  no writers in config — add a writer first\n";
-            return 1;
-        }
-
-        int idx = promptMenu("Add Routing", 5, 6,
-                                              "Select writer to configure routing for:",
-                                              writer_labels);
-        if (g_wizard_quit) return 0;
-
-        if (st.routing_all_to_all) {
-            st.routing_all_to_all = false;
-            std::cerr << "WARN   switching from all-to-all to explicit routing; "
-                         "writers not listed will receive nothing\n";
-        } else {
-            st.routing_all_to_all = false;
-        }
-        wizard_internal::phase5_add_one_routing_entry(st, writer_names[idx], writer_types[idx]);
-        if (g_wizard_quit) return 0;
-
-    } else {
-        std::cerr << "ERROR  unknown kind '" << kind_resolved << "' — use writer, reader, or routing\n";
-        return 1;
-    }
-
-    // Validate
-    const std::string yaml = wizard_internal::generateYaml(st);
-    auto tree = std::make_shared<ryml::Tree>(ryml::parse_in_arena(c4::to_csubstr(yaml)));
-    Config cfg(tree);
-    const auto diags = validateConfig(cfg);
-    bool has_error = false;
-    for (const auto& d : diags) {
-        if (d.severity == ConfigDiagnostic::Severity::ERROR) {
-            std::cerr << "ERROR  " << d.field_path << "  " << d.message << "\n";
-            has_error = true;
-        } else {
-            std::cerr << "WARN   " << d.field_path << "  " << d.message << "\n";
-        }
-    }
-    if (has_error) {
-        std::cerr << "FAIL  result would be invalid — not writing\n";
-        return 1;
-    }
-
-    // Confirm save
-    std::cout << "Save to '" << path << "'? [y/N] ";
-    std::string ans;
-    std::cin >> ans;
-    if (ans != "y" && ans != "Y") {
-        std::cout << "Aborted.\n";
-        return 0;
-    }
-
-    if (!writeConfigInteractive(path, st, dry_run, no_backup)) return 1;
-
-    if (!dry_run) {
-        std::cout << "Saved to " << path << "\n";
-        if (!no_backup) std::cout << "Backup: " << path << ".bak\n";
-    }
-    return 0;
+    // Delegate entirely to the panel wizard; it handles add/save/validate.
+    return runWizard(path, path);
 }
 
 } // namespace mldp_pvxs_driver::config
