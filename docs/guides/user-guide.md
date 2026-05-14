@@ -72,41 +72,59 @@ You have two options: use the **interactive wizard** (recommended for beginners)
 
 ### Option 1: Interactive Wizard (Easiest)
 
-Run the configuration wizard to build a config file with guided prompts:
+Run the configuration wizard to build a config file with a full-screen 3-panel terminal UI:
 
 ```bash
 mldp_pvxs_driver config wizard
 ```
 
-The wizard will ask you:
+The wizard opens a persistent split-panel interface:
 
-1. What readers to add (PV sources)?
-2. What writers to add (destinations)?
-3. Details for each reader (hostnames, credentials, poll intervals)?
-4. Details for each writer (gRPC URLs, file paths, credentials)?
-5. Any optional routing or metrics settings?
+```
+┌─ pvxs-driver config ──────────────────── config.yaml ─ [s]ave [v]alidate [q]uit ─┐
+│ ▶ Controller          │  Basic Settings                  │  thread-pool            │
+│ ▷ Writers             │  Name:         [mldp_main      ] │  Number of worker       │
+│   └ mldp_main  (MLDP) │  Thread Pool:  [4              ] │  threads for ingestion. │
+│ ▷ Readers             │                                  │  Min 1.                 │
+│   └ pvxs_r0    (PVXS) │  MLDP Pool                       │                         │
+│ ▷ Metrics             │  Ingestion URL:[dp-ingest:...  ] │  ✗ Must be positive int │
+│ ▷ Routing             │                                  │                         │
+├───────────────────────┴──────────────────────────────────┴─────────────────────────┤
+│  Writers: 1 │ Readers: 1 │ Metrics: off │ [a]dd [d]del          Valid ✓  config.yaml│
+└─────────────────────────────────────────────────────────────────────────────────────┘
+```
 
-The wizard generates `config.yaml` when done. You can review and edit it manually afterwards.
+**Navigation:**
 
-**To modify an existing config:**
+| Key | Action |
+|---|---|
+| `↑` / `↓` | Move between sections in the sidebar tree |
+| `Tab` | Cycle focus: sidebar → form → help panel |
+| `a` | Add a new writer or reader (type shown in modal) |
+| `d` | Delete the currently selected item (confirmation required) |
+| `s` | Save the config to disk |
+| `v` | Validate the current config |
+| `q` / `Esc` | Quit (prompts if there are unsaved changes) |
+
+The right panel shows contextual help for the field currently being edited.
+The status bar shows a live count of writers/readers and validation state.
+
+**To pre-populate from an existing config:**
 
 ```bash
 mldp_pvxs_driver config wizard --from config.yaml
 ```
 
-**To add a single entry to an existing config (interactive):**
+**To open the wizard focused on adding a new entry:**
 
 ```bash
-# Prompts for entry type (writer / reader / routing), then type-specific fields
+# Opens wizard with add-modal pre-triggered (PATH always last)
 mldp_pvxs_driver config add config.yaml
-
-# Skip the kind prompt by passing it directly (PATH always last)
 mldp_pvxs_driver config add writer config.yaml
 mldp_pvxs_driver config add reader config.yaml
-mldp_pvxs_driver config add routing config.yaml
 ```
 
-**To remove a named entry:**
+**To remove a named entry without the wizard:**
 
 ```bash
 mldp_pvxs_driver config remove writer config.yaml --name mldp_main
