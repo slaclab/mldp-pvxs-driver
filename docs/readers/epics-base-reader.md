@@ -9,6 +9,14 @@ File           | Location
 Header         | `include/reader/impl/epics/base/EpicsBaseReader.h`
 Implementation | `src/reader/impl/epics/base/EpicsBaseReader.cpp`
 
+## Build Option & Required Libraries
+
+- **Build option:** none (always built)
+- **Required libraries/components:**
+  - EPICS Base runtime/dev libs (`libCom`, `libca`, `libpvData`, `libpvAccess`, `libpvaClient`, `libpvAccessCA`)
+- **Configure-time hints:** `EPICS_BASE`, `EPICS_HOST_ARCH`
+- **Optional link mode:** `-DMLDP_PVXS_DRIVER_LINK_EPICS_PVXS_STATIC=ON` for static EPICS/PVXS linking
+
 ## Architecture
 
 ```mermaid
@@ -51,7 +59,7 @@ flowchart TB
 reader:
   - epics-base:
       - name: my_base_reader
-        thread-pool-size: 2          # Conversion thread pool size
+        thread-pool: 2               # Event conversion thread pool size
         monitor-poll-threads: 2      # Number of polling threads
         monitor-poll-interval-ms: 5  # Polling interval in ms
         pvs:
@@ -86,7 +94,7 @@ Conversion is handled by `EpicsPVDataConversion::tryBuildNtTableRowTsBatch()`.
 
 For a full description of the BSAS NTTable structure, field layout, and a
 concrete annotated example see
-[`docs/readers/slac-bsas-table.md`](slac-bsas-table.md).
+[SLAC BSAS NTTable Gen 1](slac-bsas-table-gen1.md) and [Gen 2](slac-bsas-table-gen2.md).
 
 ## Use Cases
 

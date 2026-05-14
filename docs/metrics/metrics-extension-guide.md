@@ -1,6 +1,6 @@
 # Extending Metrics: Per-Component Metric Classes
 
-> **Related:** [Metrics Export Guide](metrics-export-guide.md) | [Architecture](architecture.md)
+> **Related:** [Metrics Export Guide](metrics-export-guide.md) | [Architecture](../reference/architecture.md)
 
 ## Overview
 

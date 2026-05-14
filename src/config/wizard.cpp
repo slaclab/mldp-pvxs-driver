@@ -1,0 +1,1100 @@
+//////////////////////////////////////////////////////////////////////////////
+// This file is part of 'mldp-pvxs-driver'.
+// It is subject to the license terms in the LICENSE.txt file found in the
+// top-level directory of this distribution and at:
+//    https://confluence.slac.stanford.edu/display/ppareg/LICENSE.html.
+// No part of 'mldp-pvxs-driver', including this file,
+// may be copied, modified, propagated, or distributed except according to
+// the terms contained in the LICENSE.txt file.
+//////////////////////////////////////////////////////////////////////////////
+
+#include <config/wizard.h>
+#include "wizard_internal.h"
+#include <config/Config.h>
+
+#include <algorithm>
+#include <fstream>
+#include <iostream>
+#include <regex>
+#include <set>
+#include <sstream>
+#include <string>
+#include <vector>
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pure (no FTXUI) functions — compiled unconditionally so tests can link them
+// ─────────────────────────────────────────────────────────────────────────────
+
+namespace mldp_pvxs_driver::config::wizard_internal {
+
+bool isValidIso8601(const std::string& s)
+{
+    // Accept YYYY-MM-DDTHH:MM:SSZ / +HH:MM / -HH:MM / bare YYYY-MM-DD
+    static const std::regex re(
+        R"(^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}(Z|[+-]\d{2}:\d{2})?)?$)");
+    return std::regex_match(s, re);
+}
+
+bool isPositiveInt(const std::string& s)
+{
+    if (s.empty()) return false;
+    for (char c : s) if (!std::isdigit(static_cast<unsigned char>(c))) return false;
+    return std::stoi(s) > 0;
+}
+
+bool isNonNegInt(const std::string& s)
+{
+    if (s.empty()) return false;
+    for (char c : s) if (!std::isdigit(static_cast<unsigned char>(c))) return false;
+    return true;
+}
+
+static std::string ind(int n) { return std::string(static_cast<std::size_t>(n * 2), ' '); }
+
+std::string generateYaml(const WizardState& st)
+{
+    std::ostringstream o;
+
+    // controller
+    o << "controller:\n";
+    o << ind(1) << "name: " << (st.controller_name.empty() ? "default" : st.controller_name) << "\n\n";
+
+    // writers
+    o << "writer:\n";
+    if (!st.mldp_writers.empty()) {
+        o << ind(1) << "mldp:\n";
+        for (const auto& w : st.mldp_writers) {
+            o << ind(2) << "- name: " << w.name << "\n";
+            o << ind(3) << "thread-pool: " << w.thread_pool << "\n";
+            o << ind(3) << "stream-max-bytes: " << w.stream_max_bytes << "\n";
+            o << ind(3) << "stream-max-age-ms: " << w.stream_max_age_ms << "\n";
+            o << ind(3) << "mldp-pool:\n";
+            o << ind(4) << "provider-name: " << w.provider_name << "\n";
+            if (!w.provider_desc.empty())
+                o << ind(4) << "provider-description: \"" << w.provider_desc << "\"\n";
+            o << ind(4) << "ingestion-url: " << w.ingestion_url << "\n";
+            if (!w.query_url.empty())
+                o << ind(4) << "query-url: " << w.query_url << "\n";
+            o << ind(4) << "min-conn: " << w.min_conn << "\n";
+            o << ind(4) << "max-conn: " << w.max_conn << "\n";
+            if (w.creds_type == "none") {
+                o << ind(4) << "credentials: none\n";
+            } else if (w.creds_type == "ssl") {
+                o << ind(4) << "credentials: ssl\n";
+            } else {
+                // custom-tls
+                o << ind(4) << "credentials:\n";
+                if (!w.pem_cert_chain.empty())
+                    o << ind(5) << "pem-cert-chain: " << w.pem_cert_chain << "\n";
+                if (!w.pem_private_key.empty())
+                    o << ind(5) << "pem-private-key: " << w.pem_private_key << "\n";
+                if (!w.pem_root_certs.empty())
+                    o << ind(5) << "pem-root-certs: " << w.pem_root_certs << "\n";
+            }
+        }
+    }
+    if (!st.hdf5_writers.empty()) {
+        // group by is_merge
+        bool any_hdf5       = false;
+        bool any_hdf5_merge = false;
+        for (const auto& w : st.hdf5_writers) {
+            if (w.is_merge) any_hdf5_merge = true;
+            else            any_hdf5       = true;
+        }
+        auto emitHdf5 = [&](bool merge) {
+            o << ind(1) << (merge ? "hdf5-merge" : "hdf5") << ":\n";
+            for (const auto& w : st.hdf5_writers) {
+                if (w.is_merge != merge) continue;
+                o << ind(2) << "- name: " << w.name << "\n";
+                o << ind(3) << "base-path: " << w.base_path << "\n";
+                o << ind(3) << "max-file-age-s: " << w.max_file_age_s << "\n";
+                o << ind(3) << "max-file-size-mb: " << w.max_file_size_mb << "\n";
+                o << ind(3) << "flush-interval-ms: " << w.flush_interval_ms << "\n";
+                o << ind(3) << "compression-level: " << w.compression_level << "\n";
+            }
+        };
+        if (any_hdf5)       emitHdf5(false);
+        if (any_hdf5_merge) emitHdf5(true);
+    }
+    o << "\n";
+
+    // readers
+    if (!st.readers.empty()) {
+        o << "reader:\n";
+        for (const auto& r : st.readers) {
+            o << ind(1) << "- " << r.reader_type << ":\n";
+            o << ind(3) << "- name: " << r.name << "\n";
+            if (r.reader_type == "epics-pvxs" || r.reader_type == "epics-base") {
+                o << ind(4) << "thread-pool: " << r.thread_pool << "\n";
+                o << ind(4) << "column-batch-size: " << r.column_batch_size << "\n";
+                if (r.reader_type == "epics-base") {
+                    o << ind(4) << "monitor-poll-threads: " << r.monitor_poll_threads << "\n";
+                    o << ind(4) << "monitor-poll-interval-ms: " << r.monitor_poll_interval_ms << "\n";
+                }
+            } else if (r.reader_type == "epics-archiver") {
+                o << ind(4) << "hostname: " << r.hostname << "\n";
+                o << ind(4) << "mode: " << r.mode << "\n";
+                if (r.mode == "historical_once") {
+                    o << ind(4) << "start-date: \"" << r.start_date << "\"\n";
+                    if (!r.end_date.empty())
+                        o << ind(4) << "end-date: \"" << r.end_date << "\"\n";
+                } else {
+                    o << ind(4) << "poll-interval-sec: " << r.poll_interval_sec << "\n";
+                    if (!r.lookback_sec.empty())
+                        o << ind(4) << "lookback-sec: " << r.lookback_sec << "\n";
+                }
+                o << ind(4) << "connect-timeout-sec: " << r.connect_timeout_sec << "\n";
+                o << ind(4) << "total-timeout-sec: " << r.total_timeout_sec << "\n";
+                o << ind(4) << "batch-duration-sec: " << r.batch_duration_sec << "\n";
+                o << ind(4) << "tls-verify-peer: " << r.tls_verify_peer << "\n";
+                o << ind(4) << "tls-verify-host: " << r.tls_verify_host << "\n";
+            }
+            if (!r.pvs.empty()) {
+                o << ind(4) << "pvs:\n";
+                for (const auto& pv : r.pvs) {
+                    if (pv.option_type == "none" || pv.option_type.empty()) {
+                        o << ind(5) << "- name: " << pv.name << "\n";
+                    } else if (pv.option_type == "scalar") {
+                        o << ind(5) << "- name: " << pv.name << "\n";
+                        o << ind(6) << "option: \"" << pv.option_value << "\"\n";
+                    } else if (pv.option_type == "slac-bsas-table") {
+                        o << ind(5) << "- name: " << pv.name << "\n";
+                        o << ind(6) << "option:\n";
+                        o << ind(7) << "type: slac-bsas-table\n";
+                        o << ind(7) << "tsSeconds: " << pv.ts_seconds << "\n";
+                        o << ind(7) << "tsNanos: " << pv.ts_nanos << "\n";
+                    }
+                }
+            }
+        }
+        o << "\n";
+    }
+
+    // metrics
+    if (st.metrics_enabled) {
+        o << "metrics:\n";
+        o << ind(1) << "endpoint: \"" << st.metrics_endpoint << "\"\n";
+        o << ind(1) << "scan-interval-seconds: " << st.metrics_interval << "\n\n";
+    }
+
+    // routing
+    if (!st.routing_all_to_all && !st.routing.empty()) {
+        o << "routing:\n";
+        for (const auto& re : st.routing) {
+            o << ind(1) << re.writer_name << ":\n";
+            if (!re.from_readers.empty()) {
+                o << ind(2) << "from:\n";
+                for (const auto& r : re.from_readers)
+                    o << ind(3) << "- " << r << "\n";
+            }
+            if (!re.include_globs.empty()) {
+                o << ind(2) << "include:\n";
+                for (const auto& g : re.include_globs)
+                    o << ind(3) << "- \"" << g << "\"\n";
+            }
+            if (!re.exclude_globs.empty()) {
+                o << ind(2) << "exclude:\n";
+                for (const auto& g : re.exclude_globs)
+                    o << ind(3) << "- \"" << g << "\"\n";
+            }
+        }
+        o << "\n";
+    }
+
+    return o.str();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// --from amend: load existing YAML into WizardState
+// ─────────────────────────────────────────────────────────────────────────────
+
+void loadFromConfig(const std::string& path, WizardState& st)
+{
+    Config cfg;
+    try {
+        cfg = Config::configFromFile(path);
+    } catch (...) {
+        std::cerr << "Warning: could not parse '" << path << "' for amend mode — starting fresh.\n";
+        return;
+    }
+
+    // controller
+    if (cfg.hasChild("controller")) {
+        auto cv = cfg.subConfig("controller");
+        if (!cv.empty()) st.controller_name = cv[0].get("name", "default");
+    }
+
+    // metrics
+    if (cfg.hasChild("metrics")) {
+        auto mv = cfg.subConfig("metrics");
+        if (!mv.empty()) {
+            const auto& m = mv[0];
+            st.metrics_enabled  = true;
+            st.metrics_endpoint = m.get("endpoint", "0.0.0.0:9464");
+            st.metrics_interval = std::to_string(m.getInt("scan-interval-seconds", 1));
+        }
+    }
+
+    if (!cfg.hasChild("writer")) return;
+    auto writerVec = cfg.subConfig("writer");
+    if (writerVec.empty()) return;
+    const Config& writer = writerVec[0];
+
+    // mldp writers
+    for (const auto& inst : writer.subConfig("mldp")) {
+        MldpWriterConfig w;
+        w.name               = inst.get("name", "");
+        w.thread_pool        = std::to_string(inst.getInt("thread-pool", 1));
+        w.stream_max_bytes   = std::to_string(inst.getInt("stream-max-bytes", 2097152));
+        w.stream_max_age_ms  = std::to_string(inst.getInt("stream-max-age-ms", 200));
+        if (inst.hasChild("mldp-pool")) {
+            auto pv = inst.subConfig("mldp-pool");
+            if (!pv.empty()) {
+                const auto& p = pv[0];
+                w.provider_name = p.get("provider-name", "");
+                w.provider_desc = p.get("provider-description", "");
+                w.ingestion_url = p.get("ingestion-url", "");
+                w.query_url     = p.get("query-url", "");
+                w.min_conn      = std::to_string(p.getInt("min-conn", 1));
+                w.max_conn      = std::to_string(p.getInt("max-conn", 4));
+                std::string cred = p.get("credentials", "ssl");
+                if (cred == "none" || cred == "ssl") {
+                    w.creds_type = cred;
+                } else {
+                    w.creds_type = "custom-tls";
+                }
+            }
+        }
+        st.mldp_writers.push_back(std::move(w));
+    }
+
+    // hdf5 / hdf5-merge writers
+    auto loadHdf5 = [&](const std::string& tag, bool is_merge) {
+        for (const auto& inst : writer.subConfig(tag)) {
+            Hdf5WriterConfig w;
+            w.is_merge          = is_merge;
+            w.name              = inst.get("name", "");
+            w.base_path         = inst.get("base-path", "");
+            w.max_file_age_s    = std::to_string(inst.getInt("max-file-age-s", 3600));
+            w.max_file_size_mb  = std::to_string(inst.getInt("max-file-size-mb", 512));
+            w.flush_interval_ms = std::to_string(inst.getInt("flush-interval-ms", 1000));
+            w.compression_level = std::to_string(inst.getInt("compression-level", 0));
+            st.hdf5_writers.push_back(std::move(w));
+        }
+    };
+    loadHdf5("hdf5", false);
+    loadHdf5("hdf5-merge", true);
+
+    // readers
+    if (!cfg.hasChild("reader")) return;
+    for (const auto& rentry : cfg.subConfig("reader")) {
+        static const std::vector<std::string> rtypes =
+            {"epics-pvxs", "epics-base", "epics-archiver"};
+        for (const auto& rtype : rtypes) {
+            if (!rentry.hasChild(rtype)) continue;
+            for (const auto& inst : rentry.subConfig(rtype)) {
+                EpicsReaderConfig r;
+                r.reader_type        = rtype;
+                r.name               = inst.get("name", "");
+                r.thread_pool        = std::to_string(inst.getInt("thread-pool", 2));
+                r.column_batch_size  = std::to_string(inst.getInt("column-batch-size", 50));
+                if (rtype == "epics-base") {
+                    r.monitor_poll_threads     = std::to_string(inst.getInt("monitor-poll-threads", 2));
+                    r.monitor_poll_interval_ms = std::to_string(inst.getInt("monitor-poll-interval-ms", 5));
+                }
+                if (rtype == "epics-archiver") {
+                    r.hostname            = inst.get("hostname", "");
+                    r.mode                = inst.get("mode", "historical_once");
+                    r.start_date          = inst.get("start-date", "");
+                    r.end_date            = inst.get("end-date", "");
+                    r.poll_interval_sec   = std::to_string(inst.getInt("poll-interval-sec", 0));
+                    r.lookback_sec        = std::to_string(inst.getInt("lookback-sec", 0));
+                    r.connect_timeout_sec = std::to_string(inst.getInt("connect-timeout-sec", 30));
+                    r.total_timeout_sec   = std::to_string(inst.getInt("total-timeout-sec", 300));
+                    r.batch_duration_sec  = std::to_string(inst.getInt("batch-duration-sec", 1));
+                    r.tls_verify_peer     = inst.getBool("tls-verify-peer", true) ? "true" : "false";
+                    r.tls_verify_host     = inst.getBool("tls-verify-host", true) ? "true" : "false";
+                }
+                if (inst.hasChild("pvs")) {
+                    for (const auto& pvNode : inst.subConfig("pvs")) {
+                        PvEntry pv;
+                        pv.name        = pvNode.get("name", "");
+                        pv.option_type = "none";
+                        if (pvNode.hasChild("option")) {
+                            // could be scalar string or map — just treat as scalar for amend
+                            pv.option_type  = "scalar";
+                            pv.option_value = pvNode.get("option", "");
+                        }
+                        if (!pv.name.empty()) r.pvs.push_back(std::move(pv));
+                    }
+                }
+                st.readers.push_back(std::move(r));
+            }
+        }
+    }
+
+    // routing
+    if (!cfg.hasChild("routing")) return;
+    auto rv = cfg.subConfig("routing");
+    if (rv.empty()) return;
+    const Config& routing = rv[0];
+    const auto& rawRouting = routing.raw();
+    if (rawRouting.invalid() || !rawRouting.is_map()) return;
+
+    st.routing_all_to_all = false;
+    for (const auto child : rawRouting.children()) {
+        if (!child.has_key()) continue;
+        const auto keyView = child.key();
+        RoutingEntry re;
+        re.writer_name = std::string{keyView.str, keyView.len};
+
+        if (child.has_child("from")) {
+            auto fromNode = child["from"];
+            if (fromNode.is_seq()) {
+                for (const auto entry : fromNode.children()) {
+                    if (entry.has_val()) {
+                        std::string v;
+                        entry >> v;
+                        re.from_readers.push_back(std::move(v));
+                    }
+                }
+            }
+        }
+        if (child.has_child("include")) {
+            auto incNode = child["include"];
+            if (incNode.is_seq()) {
+                for (const auto entry : incNode.children()) {
+                    if (entry.has_val()) {
+                        std::string v;
+                        entry >> v;
+                        re.include_globs.push_back(std::move(v));
+                    }
+                }
+            }
+        }
+        if (child.has_child("exclude")) {
+            auto excNode = child["exclude"];
+            if (excNode.is_seq()) {
+                for (const auto entry : excNode.children()) {
+                    if (entry.has_val()) {
+                        std::string v;
+                        entry >> v;
+                        re.exclude_globs.push_back(std::move(v));
+                    }
+                }
+            }
+        }
+        st.routing.push_back(std::move(re));
+    }
+}
+
+} // namespace mldp_pvxs_driver::config::wizard_internal
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Interactive phases — require FTXUI
+// ─────────────────────────────────────────────────────────────────────────────
+
+#ifdef MLDP_WIZARD_ENABLED
+
+#include "wizard_ui.hpp"
+#include <ftxui/component/component.hpp>
+#include <ftxui/component/screen_interactive.hpp>
+#include <ftxui/dom/elements.hpp>
+
+namespace mldp_pvxs_driver::config {
+
+using namespace ftxui;
+using namespace wizard_ui;
+using namespace wizard_internal;
+
+// Set to true by any ESC press; checked after each prompt to abort the wizard.
+bool g_wizard_quit = false;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Simple blocking prompt helpers (single-screen interactions)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Run a single input screen, returns user-entered value (or def_val on Escape)
+std::string promptInput(
+    const std::string& phase_title,
+    int phase, int total,
+    const std::string& field_label,
+    const std::string& def_val,
+    std::function<std::string(const std::string&)> validator)
+{
+    auto screen = ScreenInteractive::Fullscreen();
+    std::string value = def_val;
+
+    auto input_field = InputField(field_label, &value, validator);
+
+    auto ok_btn = Button("  OK  ", [&]{ screen.Exit(); }, ButtonOption::Simple());
+    auto layout = Container::Vertical({input_field, ok_btn});
+
+    auto renderer = Renderer(layout, [&]{
+        return vbox({
+            AppHeader(phase_title, phase, total),
+            filler(),
+            vbox({
+                separator(),
+                input_field->Render() | border,
+                separator(),
+                ok_btn->Render() | center,
+                separator(),
+            }) | center,
+            filler(),
+            AppFooter(),
+        });
+    });
+
+    auto wrapped = CatchEvent(renderer, [&](Event ev) -> bool {
+        if (ev == Event::Escape) { g_wizard_quit = true; screen.Exit(); return true; }
+        if (ev == Event::Return) { screen.Exit(); return true; }
+        return false;
+    });
+
+    screen.Loop(wrapped);
+    return value;
+}
+
+// Run a yes/no screen, returns true=yes (false on Escape)
+bool promptYesNo(
+    const std::string& phase_title,
+    int phase, int total,
+    const std::string& question,
+    bool default_yes)
+{
+    auto screen = ScreenInteractive::Fullscreen();
+    bool result = default_yes;
+
+    auto yes_btn = Button("  Yes  ", [&]{ result = true;  screen.Exit(); });
+    auto no_btn  = Button("  No   ", [&]{ result = false; screen.Exit(); });
+    auto btns    = Container::Horizontal({yes_btn, no_btn});
+
+    auto renderer = Renderer(btns, [&]{
+        return vbox({
+            AppHeader(phase_title, phase, total),
+            filler(),
+            vbox({
+                separator(),
+                text("  " + question) | bold,
+                hbox({
+                    text("  Default: "),
+                    text(default_yes ? "Yes" : "No") | color(Color::Yellow),
+                }),
+                separator(),
+                btns->Render() | center,
+                separator(),
+            }) | center,
+            filler(),
+            AppFooter("[Enter] accept default   [Esc] quit"),
+        });
+    });
+
+    auto wrapped = CatchEvent(renderer, [&](Event ev) -> bool {
+        if (ev == Event::Escape) { g_wizard_quit = true; screen.Exit(); return true; }
+        if (ev == Event::Return) { screen.Exit(); return true; }
+        return false;
+    });
+
+    screen.Loop(wrapped);
+    return result;
+}
+
+// Run a menu-choice screen; returns index 0..choices.size()-1 (or 0 on Escape)
+int promptMenu(
+    const std::string& phase_title,
+    int phase, int total,
+    const std::string& question,
+    const std::vector<std::string>& choices,
+    int default_idx)
+{
+    auto screen = ScreenInteractive::Fullscreen();
+    int  selected = default_idx;
+
+    auto menu   = TypeMenu(&choices, &selected);
+    auto ok_btn = Button("  OK  ", [&]{ screen.Exit(); }, ButtonOption::Simple());
+    auto layout = Container::Vertical({menu, ok_btn});
+
+    auto renderer = Renderer(layout, [&]{
+        return vbox({
+            AppHeader(phase_title, phase, total),
+            filler(),
+            vbox({
+                separator(),
+                text("  " + question) | bold,
+                menu->Render() | border,
+                separator(),
+                ok_btn->Render() | center,
+                separator(),
+            }) | center,
+            filler(),
+            AppFooter("[↑↓] select   [Enter] confirm   [Esc] quit"),
+        });
+    });
+
+    auto wrapped = CatchEvent(renderer, [&](Event ev) -> bool {
+        if (ev == Event::Escape) { g_wizard_quit = true; screen.Exit(); return true; }
+        return false;
+    });
+
+    screen.Loop(wrapped);
+    return selected;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase implementations
+// ─────────────────────────────────────────────────────────────────────────────
+
+static void phase1_controller(WizardState& st)
+{
+    st.controller_name = promptInput(
+        "Controller", 1, 6,
+        "Controller name (optional)",
+        st.controller_name.empty() ? "default" : st.controller_name);
+    if (st.controller_name.empty()) st.controller_name = "default";
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Single-entry interactive add helpers — exposed via wizard_internal.h
+// ─────────────────────────────────────────────────────────────────────────────
+
+namespace wizard_internal {
+
+void phase2_add_one_writer(WizardState& st)
+{
+    std::set<std::string> used_names;
+    for (const auto& w : st.mldp_writers)  used_names.insert(w.name);
+    for (const auto& w : st.hdf5_writers)  used_names.insert(w.name);
+
+    auto unique_name_validator = [&](const std::string& v) -> std::string {
+        if (v.empty()) return "name required";
+        if (used_names.count(v)) return "name '" + v + "' already used";
+        return "";
+    };
+
+    static const std::vector<std::string> writer_types = {"mldp", "hdf5", "hdf5-merge"};
+    int type_idx = promptMenu("Add Writer", 2, 6, "Select writer type:", writer_types);
+    if (g_wizard_quit) return;
+
+    if (type_idx == 0) {
+        MldpWriterConfig w;
+        w.name = promptInput("Add Writer", 2, 6, "Writer name",
+            w.name, unique_name_validator);
+        w.thread_pool = promptInput("Add Writer", 2, 6, "thread-pool",
+            w.thread_pool, [](const std::string& v){ return isPositiveInt(v) ? "" : "must be > 0"; });
+        w.stream_max_bytes = promptInput("Add Writer", 2, 6, "stream-max-bytes",
+            w.stream_max_bytes, [](const std::string& v){ return isPositiveInt(v) ? "" : "must be > 0"; });
+        w.stream_max_age_ms = promptInput("Add Writer", 2, 6, "stream-max-age-ms",
+            w.stream_max_age_ms, [](const std::string& v){ return isPositiveInt(v) ? "" : "must be > 0"; });
+        w.provider_name = promptInput("Add Writer", 2, 6, "mldp-pool provider-name",
+            w.provider_name, [](const std::string& v){ return v.empty() ? "required" : ""; });
+        w.provider_desc = promptInput("Add Writer", 2, 6, "mldp-pool provider-description (optional)",
+            w.provider_desc);
+        w.ingestion_url = promptInput("Add Writer", 2, 6, "mldp-pool ingestion-url",
+            w.ingestion_url, [](const std::string& v){ return v.empty() ? "required" : ""; });
+        w.query_url = promptInput("Add Writer", 2, 6, "mldp-pool query-url (optional)",
+            w.query_url);
+        w.min_conn = promptInput("Add Writer", 2, 6, "mldp-pool min-conn",
+            w.min_conn, [](const std::string& v){ return isPositiveInt(v) ? "" : "must be > 0"; });
+        w.max_conn = promptInput("Add Writer", 2, 6, "mldp-pool max-conn",
+            w.max_conn, [&w](const std::string& v){
+                if (!isPositiveInt(v)) return std::string("must be > 0");
+                if (std::stoi(v) < std::stoi(w.min_conn)) return std::string("must be >= min-conn");
+                return std::string("");
+            });
+        static const std::vector<std::string> cred_types = {"ssl", "none", "custom-tls"};
+        int cred_idx = 0;
+        for (int i = 0; i < (int)cred_types.size(); ++i)
+            if (cred_types[i] == w.creds_type) { cred_idx = i; break; }
+        cred_idx = promptMenu("Add Writer", 2, 6, "Credentials type:", cred_types, cred_idx);
+        w.creds_type = cred_types[cred_idx];
+        if (w.creds_type == "custom-tls") {
+            w.pem_cert_chain  = promptInput("Add Writer", 2, 6, "pem-cert-chain path (optional)",  w.pem_cert_chain);
+            w.pem_private_key = promptInput("Add Writer", 2, 6, "pem-private-key path (optional)", w.pem_private_key);
+            w.pem_root_certs  = promptInput("Add Writer", 2, 6, "pem-root-certs path (optional)",  w.pem_root_certs);
+        }
+        st.mldp_writers.push_back(std::move(w));
+
+    } else {
+        Hdf5WriterConfig w;
+        w.is_merge = (type_idx == 2);
+        w.name = promptInput("Add Writer", 2, 6, "Writer name",
+            w.name, unique_name_validator);
+        w.base_path = promptInput("Add Writer", 2, 6, "base-path",
+            w.base_path, [](const std::string& v){ return v.empty() ? "required" : ""; });
+        w.max_file_age_s = promptInput("Add Writer", 2, 6, "max-file-age-s",
+            w.max_file_age_s, [](const std::string& v){ return isPositiveInt(v) ? "" : "must be > 0"; });
+        w.max_file_size_mb = promptInput("Add Writer", 2, 6, "max-file-size-mb",
+            w.max_file_size_mb, [](const std::string& v){ return isPositiveInt(v) ? "" : "must be > 0"; });
+        w.flush_interval_ms = promptInput("Add Writer", 2, 6, "flush-interval-ms",
+            w.flush_interval_ms, [](const std::string& v){ return isPositiveInt(v) ? "" : "must be > 0"; });
+        w.compression_level = promptInput("Add Writer", 2, 6, "compression-level (0-9)",
+            w.compression_level, [](const std::string& v){
+                if (!isNonNegInt(v)) return std::string("must be integer 0-9");
+                int n = std::stoi(v);
+                return (n >= 0 && n <= 9) ? std::string("") : std::string("must be in [0,9]");
+            });
+        st.hdf5_writers.push_back(std::move(w));
+    }
+}
+
+void phase3_add_one_reader(WizardState& st)
+{
+    std::set<std::string> used_names;
+    for (const auto& r : st.readers) used_names.insert(r.name);
+
+    auto unique_name_validator = [&](const std::string& v) -> std::string {
+        if (v.empty()) return "name required";
+        if (used_names.count(v)) return "name '" + v + "' already used";
+        return "";
+    };
+
+    static const std::vector<std::string> reader_types =
+        {"epics-pvxs", "epics-base", "epics-archiver"};
+    int type_idx = promptMenu("Add Reader", 3, 6, "Select reader type:", reader_types);
+    if (g_wizard_quit) return;
+
+    EpicsReaderConfig r;
+    r.reader_type = reader_types[type_idx];
+    r.name = promptInput("Add Reader", 3, 6, "Reader name", r.name, unique_name_validator);
+
+    if (r.reader_type == "epics-pvxs" || r.reader_type == "epics-base") {
+        r.thread_pool = promptInput("Add Reader", 3, 6, "thread-pool",
+            r.thread_pool, [](const std::string& v){ return isPositiveInt(v) ? "" : "must be > 0"; });
+        r.column_batch_size = promptInput("Add Reader", 3, 6, "column-batch-size",
+            r.column_batch_size, [](const std::string& v){ return isPositiveInt(v) ? "" : "must be > 0"; });
+        if (r.reader_type == "epics-base") {
+            r.monitor_poll_threads = promptInput("Add Reader", 3, 6, "monitor-poll-threads",
+                r.monitor_poll_threads, [](const std::string& v){ return isPositiveInt(v) ? "" : "must be > 0"; });
+            r.monitor_poll_interval_ms = promptInput("Add Reader", 3, 6, "monitor-poll-interval-ms",
+                r.monitor_poll_interval_ms, [](const std::string& v){ return isPositiveInt(v) ? "" : "must be > 0"; });
+        }
+    } else {
+        r.hostname = promptInput("Add Reader", 3, 6, "hostname (host:port)",
+            r.hostname, [](const std::string& v){
+                return (v.find(':') != std::string::npos && v.size() > 2) ? "" : "expected host:port";
+            });
+        static const std::vector<std::string> modes = {"historical_once", "periodic_tail"};
+        int mode_idx = (r.mode == "periodic_tail") ? 1 : 0;
+        mode_idx = promptMenu("Add Reader", 3, 6, "Mode:", modes, mode_idx);
+        r.mode = modes[mode_idx];
+        if (r.mode == "historical_once") {
+            r.start_date = promptInput("Add Reader", 3, 6, "start-date (ISO 8601, required)",
+                r.start_date, [](const std::string& v){
+                    return isValidIso8601(v) ? "" : "expected ISO 8601 (e.g. 2026-01-01T00:00:00Z)";
+                });
+            r.end_date = promptInput("Add Reader", 3, 6, "end-date (ISO 8601, optional)",
+                r.end_date, [](const std::string& v){
+                    if (v.empty()) return std::string("");
+                    return isValidIso8601(v) ? std::string("") : std::string("expected ISO 8601");
+                });
+        } else {
+            r.poll_interval_sec = promptInput("Add Reader", 3, 6, "poll-interval-sec (required)",
+                r.poll_interval_sec, [](const std::string& v){ return isPositiveInt(v) ? "" : "must be > 0"; });
+            r.lookback_sec = promptInput("Add Reader", 3, 6, "lookback-sec (default: poll-interval-sec)",
+                r.lookback_sec.empty() ? r.poll_interval_sec : r.lookback_sec);
+        }
+        r.connect_timeout_sec = promptInput("Add Reader", 3, 6, "connect-timeout-sec",
+            r.connect_timeout_sec, [](const std::string& v){ return isPositiveInt(v) ? "" : "must be > 0"; });
+        r.total_timeout_sec = promptInput("Add Reader", 3, 6, "total-timeout-sec (0=infinite)",
+            r.total_timeout_sec, [&r](const std::string& v){
+                if (!isNonNegInt(v)) return std::string("must be non-negative integer");
+                int total = std::stoi(v);
+                int conn  = std::stoi(r.connect_timeout_sec);
+                if (total > 0 && total < conn) return std::string("must be >= connect-timeout-sec");
+                return std::string("");
+            });
+        r.batch_duration_sec = promptInput("Add Reader", 3, 6, "batch-duration-sec",
+            r.batch_duration_sec, [](const std::string& v){ return isPositiveInt(v) ? "" : "must be > 0"; });
+        bool tls_peer = promptYesNo("Add Reader", 3, 6, "tls-verify-peer?", r.tls_verify_peer == "true");
+        bool tls_host = promptYesNo("Add Reader", 3, 6, "tls-verify-host?", r.tls_verify_host == "true");
+        r.tls_verify_peer = tls_peer ? "true" : "false";
+        r.tls_verify_host = tls_host ? "true" : "false";
+    }
+
+    bool add_pvs = promptYesNo("Add Reader", 3, 6, "Add PVs? (optional)", true);
+    if (!g_wizard_quit && add_pvs) {
+        bool add_pv = true;
+        while (add_pv && !g_wizard_quit) {
+            auto screen2 = ScreenInteractive::Fullscreen();
+            std::string pv_input;
+            auto pv_field = InputField("PV name", &pv_input);
+            auto ok_btn   = Button("  Add  ", [&]{ screen2.Exit(); }, ButtonOption::Simple());
+            auto layout2  = Container::Vertical({pv_field, ok_btn});
+            bool bulk_mode = false;
+            int  bulk_count = 0;
+            auto renderer2 = Renderer(layout2, [&]{
+                return vbox({
+                    AppHeader("Add Reader — PV entry", 3, 6),
+                    filler(),
+                    vbox({
+                        separator(),
+                        text("  Reader: " + r.name) | bold,
+                        text("  PVs added so far: " + std::to_string(r.pvs.size())),
+                        separator(),
+                        bulk_mode
+                            ? (text("  [" + std::to_string(bulk_count) + " PVs pasted]") | color(Color::Green))
+                            : (pv_field->Render() | border),
+                        separator(),
+                        ok_btn->Render() | center,
+                        separator(),
+                    }) | center,
+                    filler(),
+                    AppFooter("[Enter] add PV   paste multi-line for bulk   [Esc] quit"),
+                });
+            });
+            auto ev_catcher = CatchEvent(renderer2, [&](Event ev) -> bool {
+                if (ev == Event::Escape) { g_wizard_quit = true; screen2.Exit(); return true; }
+                if (pv_input.find('\n') != std::string::npos && !bulk_mode) {
+                    std::istringstream ss(pv_input);
+                    std::string line;
+                    std::set<std::string> existing;
+                    for (const auto& p : r.pvs) existing.insert(p.name);
+                    bulk_count = 0;
+                    while (std::getline(ss, line)) {
+                        auto b = line.find_first_not_of(" \t\r");
+                        auto e = line.find_last_not_of(" \t\r");
+                        if (b == std::string::npos) continue;
+                        std::string pname = line.substr(b, e - b + 1);
+                        if (pname.empty() || existing.count(pname)) continue;
+                        PvEntry pv; pv.name = pname; pv.option_type = "none";
+                        r.pvs.push_back(pv); existing.insert(pname); ++bulk_count;
+                    }
+                    bulk_mode = true;
+                    pv_input  = "[" + std::to_string(bulk_count) + " PVs pasted]";
+                    if (ev == Event::Return) screen2.Exit();
+                    return true;
+                }
+                if (ev == Event::Return) { screen2.Exit(); return true; }
+                return false;
+            });
+            screen2.Loop(ev_catcher);
+            if (!bulk_mode && !pv_input.empty()) {
+                std::string pname = pv_input;
+                auto b = pname.find_first_not_of(" \t\r\n");
+                auto e = pname.find_last_not_of(" \t\r\n");
+                if (b != std::string::npos) pname = pname.substr(b, e - b + 1);
+                if (!pname.empty()) {
+                    PvEntry pv;
+                    pv.name = pname;
+                    if (r.reader_type != "epics-archiver") {
+                        static const std::vector<std::string> opt_types = {"none", "scalar", "slac-bsas-table"};
+                        int opt_idx = promptMenu("Add Reader", 3, 6, "Option type for PV '" + pname + "':", opt_types);
+                        pv.option_type = opt_types[opt_idx];
+                        if (pv.option_type == "scalar") {
+                            pv.option_value = promptInput("Add Reader", 3, 6, "option value string", "",
+                                [](const std::string& v){ return v.empty() ? "required" : ""; });
+                        } else if (pv.option_type == "slac-bsas-table") {
+                            pv.ts_seconds = promptInput("Add Reader", 3, 6, "tsSeconds field name", "",
+                                [](const std::string& v){ return v.empty() ? "required" : ""; });
+                            pv.ts_nanos   = promptInput("Add Reader", 3, 6, "tsNanos field name", "",
+                                [](const std::string& v){ return v.empty() ? "required" : ""; });
+                        }
+                    } else {
+                        pv.option_type = "none";
+                    }
+                    r.pvs.push_back(std::move(pv));
+                }
+            }
+            if (!g_wizard_quit)
+                add_pv = promptYesNo("Add Reader", 3, 6, "Add another PV?", false);
+        }
+    }
+
+    st.readers.push_back(std::move(r));
+}
+
+void phase5_add_one_routing_entry(WizardState& st,
+                                  const std::string& writer_name,
+                                  const std::string& writer_type)
+{
+    std::vector<std::string> reader_labels;
+    for (const auto& r : st.readers)
+        reader_labels.push_back(r.name + "  (" + r.reader_type + ", " +
+                                 std::to_string(r.pvs.size()) + " PVs)");
+
+    std::vector<int> sel(reader_labels.size(), 0);
+    for (const auto& re : st.routing) {
+        if (re.writer_name != writer_name) continue;
+        for (std::size_t i = 0; i < st.readers.size(); ++i)
+            for (const auto& fr : re.from_readers)
+                if (fr == st.readers[i].name) sel[i] = 1;
+    }
+
+    auto screen = ScreenInteractive::Fullscreen();
+    auto checklist = MultiSelectList(&reader_labels, &sel);
+    auto ok_btn    = Button("  OK  ", [&]{ screen.Exit(); }, ButtonOption::Simple());
+    auto layout    = Container::Vertical({checklist, ok_btn});
+    auto renderer  = Renderer(layout, [&]{
+        return vbox({
+            AppHeader("Add Routing — " + writer_name + " (" + writer_type + ")", 5, 6),
+            filler(),
+            vbox({
+                separator(),
+                text("  Select readers to route to this writer:") | bold,
+                checklist->Render() | border,
+                separator(),
+                ok_btn->Render() | center,
+                separator(),
+            }) | center,
+            filler(),
+            AppFooter("[Space] toggle   [Enter] confirm   [Esc] quit"),
+        });
+    });
+    auto wrapped = CatchEvent(renderer, [&](Event ev) -> bool {
+        if (ev == Event::Escape) { g_wizard_quit = true; screen.Exit(); return true; }
+        return false;
+    });
+    screen.Loop(wrapped);
+
+    RoutingEntry entry;
+    entry.writer_name = writer_name;
+    for (std::size_t i = 0; i < st.readers.size(); ++i)
+        if (sel[i] != 0) entry.from_readers.push_back(st.readers[i].name);
+
+    if (writer_type == "hdf5" || writer_type == "hdf5-merge") {
+        std::set<std::string> suggested;
+        for (std::size_t i = 0; i < st.readers.size(); ++i) {
+            if (!sel[i]) continue;
+            for (const auto& pv : st.readers[i].pvs) {
+                auto pos = pv.name.rfind(':');
+                if (pos != std::string::npos)
+                    suggested.insert(pv.name.substr(0, pos + 1) + "*");
+            }
+        }
+        for (const auto& s : suggested) {
+            bool use = promptYesNo("Add Routing", 5, 6,
+                "Suggested include glob: " + s + " — use?", true);
+            if (use) entry.include_globs.push_back(s);
+        }
+        bool add_include = promptYesNo("Add Routing", 5, 6, "Add custom include glob pattern?", false);
+        while (add_include) {
+            std::string glob = promptInput("Add Routing", 5, 6, "Include glob pattern", "",
+                [](const std::string& v){ return v.empty() ? "pattern cannot be empty" : ""; });
+            if (!glob.empty()) entry.include_globs.push_back(glob);
+            add_include = promptYesNo("Add Routing", 5, 6, "Add another include pattern?", false);
+        }
+        bool add_exclude = promptYesNo("Add Routing", 5, 6, "Add exclude glob pattern?", false);
+        while (add_exclude) {
+            std::string glob = promptInput("Add Routing", 5, 6, "Exclude glob pattern", "",
+                [](const std::string& v){ return v.empty() ? "pattern cannot be empty" : ""; });
+            if (!glob.empty()) entry.exclude_globs.push_back(glob);
+            add_exclude = promptYesNo("Add Routing", 5, 6, "Add another exclude pattern?", false);
+        }
+    }
+
+    st.routing.erase(
+        std::remove_if(st.routing.begin(), st.routing.end(),
+            [&writer_name](const RoutingEntry& e){ return e.writer_name == writer_name; }),
+        st.routing.end());
+    st.routing.push_back(std::move(entry));
+}
+
+} // namespace wizard_internal
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Full-wizard phase loops (call single-entry helpers)
+// ─────────────────────────────────────────────────────────────────────────────
+
+static void phase2_writers(WizardState& st)
+{
+    bool add_another = true;
+    while (add_another && !g_wizard_quit) {
+        wizard_internal::phase2_add_one_writer(st);
+        if (g_wizard_quit) return;
+        bool has_writers = !st.mldp_writers.empty() || !st.hdf5_writers.empty();
+        if (!has_writers) {
+            // silently loop — at least one writer required
+        } else {
+            add_another = promptYesNo("Writers", 2, 6, "Add another writer?", false);
+        }
+    }
+}
+
+static void phase3_readers(WizardState& st)
+{
+    bool add_another = true;
+    while (add_another && !g_wizard_quit) {
+        wizard_internal::phase3_add_one_reader(st);
+        if (g_wizard_quit) return;
+        add_another = promptYesNo("Readers", 3, 6, "Add another reader?", false);
+    }
+}
+
+static void phase4_metrics(WizardState& st)
+{
+    bool enable = promptYesNo("Metrics", 4, 6, "Enable Prometheus metrics endpoint?",
+        st.metrics_enabled);
+    if (g_wizard_quit) return;
+    st.metrics_enabled = enable;
+    if (!enable) return;
+
+    st.metrics_endpoint = promptInput("Metrics", 4, 6, "Bind address",
+        st.metrics_endpoint.empty() ? "0.0.0.0:9464" : st.metrics_endpoint,
+        [](const std::string& v){ return v.empty() ? "required" : ""; });
+    if (g_wizard_quit) return;
+    st.metrics_interval = promptInput("Metrics", 4, 6, "scan-interval-seconds",
+        st.metrics_interval.empty() ? "1" : st.metrics_interval,
+        [](const std::string& v){ return isPositiveInt(v) ? "" : "must be > 0"; });
+}
+
+static void phase5_routing(WizardState& st)
+{
+    bool all_to_all = promptYesNo("Routing", 5, 6,
+        "Use all-to-all routing (every reader → every writer)?",
+        st.routing_all_to_all);
+    if (g_wizard_quit) return;
+    st.routing_all_to_all = all_to_all;
+    if (all_to_all) return;
+
+    for (const auto& w : st.mldp_writers) {
+        if (g_wizard_quit) return;
+        wizard_internal::phase5_add_one_routing_entry(st, w.name, "mldp");
+    }
+    for (const auto& w : st.hdf5_writers) {
+        if (g_wizard_quit) return;
+        wizard_internal::phase5_add_one_routing_entry(st, w.name, w.is_merge ? "hdf5-merge" : "hdf5");
+    }
+}
+
+static int phase6_review_save(WizardState& st, const std::string& output_path)
+{
+    std::string yaml = generateYaml(st);
+
+    // Build summary lines
+    std::vector<std::string> summary;
+    {
+        std::string writers_line = "Writers : ";
+        for (const auto& w : st.mldp_writers)  writers_line += w.name + " (mldp), ";
+        for (const auto& w : st.hdf5_writers)  writers_line += w.name + (w.is_merge ? " (hdf5-merge), " : " (hdf5), ");
+        if (!writers_line.empty() && writers_line.back() == ' ') writers_line.resize(writers_line.size() - 2);
+        summary.push_back(writers_line);
+
+        std::string readers_line = "Readers : ";
+        for (const auto& r : st.readers) {
+            readers_line += r.name + " (" + r.reader_type + ", " +
+                            std::to_string(r.pvs.size()) + " PVs), ";
+        }
+        if (!readers_line.empty() && readers_line.back() == ' ') readers_line.resize(readers_line.size() - 2);
+        summary.push_back(readers_line);
+
+        if (st.metrics_enabled)
+            summary.push_back("Metrics : " + st.metrics_endpoint);
+        else
+            summary.push_back("Metrics : disabled");
+
+        if (st.routing_all_to_all) {
+            summary.push_back("Routing : all-to-all");
+        } else {
+            for (const auto& re : st.routing) {
+                std::string rline = "Routing : " + re.writer_name + " ← ";
+                for (const auto& f : re.from_readers) rline += f + " ";
+                if (!re.include_globs.empty()) {
+                    rline += "[include:";
+                    for (const auto& g : re.include_globs) rline += " " + g;
+                    rline += "]";
+                }
+                summary.push_back(rline);
+            }
+        }
+    }
+
+    // Show summary + YAML in a scrollable review screen
+    auto screen = ScreenInteractive::Fullscreen();
+    bool confirmed = false;
+    std::string save_path = output_path;
+
+    auto save_field   = InputField("Output path", &save_path);
+    auto save_btn     = Button("  [ Save ]  ", [&]{ confirmed = true;  screen.Exit(); }, ButtonOption::Simple());
+    auto discard_btn  = Button("  [ Discard & Exit ]  ", [&]{ confirmed = false; screen.Exit(); }, ButtonOption::Simple());
+    auto btns         = Container::Horizontal({save_btn, discard_btn});
+    auto layout       = Container::Vertical({save_field, btns});
+
+    auto renderer = Renderer(layout, [&]{
+        Elements sum_elems;
+        for (const auto& l : summary)
+            sum_elems.push_back(text("  " + l));
+
+        return vbox({
+            AppHeader("Review & Save", 6, 6),
+            separator(),
+            vbox(std::move(sum_elems)) | border,
+            separator(),
+            text("  Generated YAML:") | bold,
+            paragraph(yaml) | border | flex,
+            separator(),
+            save_field->Render() | border,
+            separator(),
+            hbox({
+                save_btn->Render(),
+                text("    "),
+                discard_btn->Render() | color(Color::Red),
+            }) | center,
+            separator(),
+            AppFooter("[Tab] next field   [Enter] activate button   [Esc] discard & exit"),
+        });
+    });
+
+    auto wrapped = CatchEvent(renderer, [&](Event ev) -> bool {
+        if (ev == Event::Escape) { confirmed = false; screen.Exit(); return true; }
+        return false;
+    });
+
+    screen.Loop(wrapped);
+
+    if (confirmed) {
+        std::ofstream f(save_path);
+        if (!f) {
+            std::cerr << "Error: cannot write to '" << save_path << "'\n";
+            return 1;
+        }
+        f << yaml;
+        f.close();
+        std::cout << "Saved to: " << save_path << "\n";
+    }
+
+    return 0;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Public entry point
+// ─────────────────────────────────────────────────────────────────────────────
+
+int runWizard(const std::string& output_path, const std::string& from_path)
+{
+    g_wizard_quit = false;
+
+    // Clear terminal for a clean full-screen experience
+    std::cout << "\033[2J\033[H" << std::flush;
+
+    WizardState st;
+
+    if (!from_path.empty()) {
+        loadFromConfig(from_path, st);
+    }
+
+    phase1_controller(st);   if (g_wizard_quit) return 0;
+    phase2_writers(st);      if (g_wizard_quit) return 0;
+    phase3_readers(st);      if (g_wizard_quit) return 0;
+    phase4_metrics(st);      if (g_wizard_quit) return 0;
+    phase5_routing(st);      if (g_wizard_quit) return 0;
+    return phase6_review_save(st, output_path.empty() ? "config.yaml" : output_path);
+}
+
+} // namespace mldp_pvxs_driver::config
+
+#else // MLDP_WIZARD_ENABLED
+
+#include <iostream>
+
+namespace mldp_pvxs_driver::config {
+
+int runWizard(const std::string&, const std::string&)
+{
+    std::cerr << "Config wizard not available (build without -DMLDP_WIZARD=ON).\n";
+    return 1;
+}
+
+} // namespace mldp_pvxs_driver::config
+
+#endif // MLDP_WIZARD_ENABLED

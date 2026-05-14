@@ -9,6 +9,15 @@ File           | Location
 Header         | `include/reader/impl/epics/pvxs/EpicsPVXSReader.h`
 Implementation | `src/reader/impl/epics/pvxs/EpicsPVXSReader.cpp`
 
+## Build Option & Required Libraries
+
+- **Build option:** none (always built)
+- **Required libraries/components:**
+  - PVXS (`libpvxs`)
+  - EPICS Base core libs (`libCom`, `libpvData`, `libpvAccess`, `libpvaClient`, `libpvAccessCA`, `libca`)
+- **Configure-time hints:** `PVXS_BASE`, `EPICS_BASE`, `EPICS_HOST_ARCH`
+- **Optional link mode:** `-DMLDP_PVXS_DRIVER_LINK_EPICS_PVXS_STATIC=ON` for static EPICS/PVXS linking
+
 ## Architecture
 
 ```mermaid
@@ -48,7 +57,7 @@ flowchart TB
 reader:
   - epics-pvxs:
       - name: my_pvxs_reader
-        thread-pool-size: 2           # Conversion thread pool size
+        thread-pool: 2                # Event conversion thread pool size
         column-batch-size: 50         # NTTable column batch size
         pvs:
           - name: MY:PV:NAME
@@ -99,7 +108,7 @@ pvs:
 
 For a full description of the BSAS NTTable structure, field layout, and a
 concrete annotated example see
-[`docs/readers/slac-bsas-table.md`](slac-bsas-table.md).
+[SLAC BSAS NTTable Gen 1](slac-bsas-table-gen1.md) and [Gen 2](slac-bsas-table-gen2.md).
 
 ## Use Cases
 

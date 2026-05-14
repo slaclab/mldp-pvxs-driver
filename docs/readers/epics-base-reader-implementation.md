@@ -2,7 +2,7 @@
 
 This guide describes the `EpicsBaseReader` implementation, which provides polling-based EPICS Channel Access monitoring for legacy systems.
 
-> **Related:** [Reader Implementations](../readers-implementation.md) | [Architecture Overview](../architecture.md)
+> **Related:** [Reader Implementations](readers-implementation.md) | [Architecture Overview](../reference/architecture.md)
 
 ## Overview
 
@@ -37,4 +37,4 @@ See:
 
 ## Configuration
 
-Refer to [Reader Implementations](../readers-implementation.md) for the shared reader configuration pattern.
+Refer to [Reader Implementations](readers-implementation.md) for the shared reader configuration pattern.

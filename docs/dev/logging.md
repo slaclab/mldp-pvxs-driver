@@ -380,6 +380,6 @@ For backend adapters:
 
 ## Related Documentation
 
-- [Architecture Overview](architecture.md)
+- [Architecture Overview](../reference/architecture.md)
 - [HTTP Transport Provider](http-provider.md)
-- [Implementing Custom Readers](readers-implementation.md)
+- [Implementing Custom Readers](../readers/readers-implementation.md)

@@ -96,7 +96,7 @@ All readers:
 - Are decoupled from writer implementation
 - Are mirrored on the writer side by `WriterFactory` and `REGISTER_WRITER`
 
-For details on existing readers, see [Reader Types](readers.md). To implement a custom reader, see [Implementing Custom Readers](readers-implementation.md).
+For details on existing readers, see [Reader Types](../readers/readers.md). To implement a custom reader, see [Implementing Custom Readers](../readers/readers-implementation.md).
 
 ## Writer Abstraction
 
@@ -133,7 +133,7 @@ IWriter  (pure abstract)
 
 ### HDF5WriterBase (shared base)
 
-- Requires build flag: `MLDP_PVXS_HDF5_ENABLED`
+- Requires CMake build option: `MLDP_PVXS_ENABLE_HDF5=ON` (which defines `MLDP_PVXS_HDF5_ENABLED`)
 - Owns bounded MPSC queue (capacity 8192) drained by dedicated writer thread
 - Dedicated flush thread calls `doFlushAll()` every `flush-interval-ms`
 - Accumulates tabular (NTTable) frames in `TabularBuffer` per source; flushes on `end_of_batch_group`
@@ -364,13 +364,14 @@ flowchart TB
 - Optional **reader-to-writer routing** selectively dispatches batches based on config — see [Controller Documentation](controller.md#reader-to-writer-routing)
 - Optional **source filtering** per writer via `include`/`exclude` glob patterns on `root_source` — see [Controller Documentation](controller.md#source-filtering)
 
+
 ## Cross-Cutting Utilities
 
 ### Logging Abstraction
 
 The driver uses a logging abstraction layer (`util::log`) so library code is not coupled to a specific backend. The executable can install a concrete logger implementation (for example the spdlog-backed adapter).
 
-- Detailed guide: [Logging Abstraction Guide](logging.md)
+- Detailed guide: [Logging Abstraction Guide](../dev/logging.md)
 - Logging interface and helpers: `include/util/log/ILog.h`, `include/util/log/Logger.h`
 - Default/simple logger implementation: `include/util/log/CoutLogger.h`, `src/util/log/CoutLogger.cpp`
 - spdlog adapter used by the executable: `include/SpdlogLogger.h`, `src/cli/SpdlogLogger.cpp`
@@ -379,7 +380,7 @@ The driver uses a logging abstraction layer (`util::log`) so library code is not
 
 HTTP-based readers can use the shared `util/http` transport abstraction instead of managing raw `libcurl` directly. This centralizes TLS defaults, timeouts, header handling, and streaming callback plumbing.
 
-- Detailed documentation: [HTTP Transport Provider](http-provider.md)
+- Detailed documentation: [HTTP Transport Provider](../dev/http-provider.md)
 
 ## Routing and Source Filtering
 
@@ -437,6 +438,7 @@ At startup, the controller:
 
 > 📖 Full details and examples: [controller.md](controller.md#reader-to-writer-routing)
 
+
 ## Configuration
 
 ### Controller Settings
@@ -468,13 +470,14 @@ metrics:          # optional Prometheus / metrics config
 
 → [Full Controller Documentation](controller.md)
 
+
 ### Reader Settings
 
 ```yaml
 reader:
   - epics-pvxs:
       - name: my_reader
-        thread-pool-size: 2
+        thread-pool: 2
         pvs:
           - name: PV_NAME
 ```
@@ -495,7 +498,7 @@ writer:
         min-conn: 1
         max-conn: 4
 
-  hdf5:                                # requires MLDP_PVXS_HDF5_ENABLED build flag
+  hdf5:                                # requires -DMLDP_PVXS_ENABLE_HDF5=ON build option
     - name: hdf5_local                 # required, unique instance name
       base-path: /data/hdf5            # required, output directory
       max-file-age-s: 3600             # rotate after N seconds (default: 3600)
@@ -503,7 +506,7 @@ writer:
       flush-interval-ms: 1000          # flush thread period ms (default: 1000)
       compression-level: 0             # DEFLATE 0–9; 0 = off (default: 0)
 
-  hdf5-merge:                          # requires MLDP_PVXS_HDF5_ENABLED build flag
+  hdf5-merge:                          # requires -DMLDP_PVXS_ENABLE_HDF5=ON build option
     - name: hdf5_merged                # required, unique instance name
       base-path: /data/hdf5-merged     # required, output directory
       max-file-age-s: 3600             # rotate after N seconds (default: 3600)

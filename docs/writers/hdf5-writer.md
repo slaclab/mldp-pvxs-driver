@@ -1,15 +1,23 @@
 # HDF5 Storage Writer
 
-> **Related:** [Writers Overview](../writers-implementation.md) | [Architecture](../architecture.md)
+> **Related:** [Writers Overview](writers-implementation.md) | [Architecture](../reference/architecture.md)
 
 ## Overview
 
-Two HDF5 writer types store incoming event batches as HDF5 datasets on disk. Both are available only when the build option `MLDP_PVXS_HDF5_ENABLED` is set.
+Two HDF5 writer types store incoming event batches as HDF5 datasets on disk. Both are available only when CMake option `MLDP_PVXS_ENABLE_HDF5=ON` is used.
 
 | Type | Class | Behaviour |
 |------|-------|-----------|
 | `"hdf5"` | `HDF5WriterPerSource` | One file per `root_source` via `HDF5FilePool` |
 | `"hdf5-merge"` | `HDF5WriterMerge` | All sources share one file; each source gets its own HDF5 group |
+
+## Build Option & Required Libraries
+
+- **Build option:** `-DMLDP_PVXS_ENABLE_HDF5=ON`
+- **Compile definition emitted by CMake:** `MLDP_PVXS_HDF5_ENABLED`
+- **Required libraries/components:**
+  - HDF5 C++ library target (`hdf5_cpp-static` / `hdf5_cpp-shared`)
+  - zlib (enabled through HDF5 build flags)
 
 ## Internal Architecture
 
@@ -479,7 +487,7 @@ Output: one file in `/data/merged/`:
 
 ## Build Requirement
 
-HDF5 writer compiles only when `MLDP_PVXS_HDF5_ENABLED` is defined. Pass `-DMLDP_PVXS_HDF5_ENABLED=ON` to CMake. The factory registration (`REGISTER_WRITER`) is inside the same guard, so the type `"hdf5"` is absent from the factory when the option is off.
+HDF5 writer compiles only when `MLDP_PVXS_HDF5_ENABLED` is defined. Enable it via CMake option `-DMLDP_PVXS_ENABLE_HDF5=ON`. The factory registration (`REGISTER_WRITER`) is inside the same guard, so types `"hdf5"` and `"hdf5-merge"` are absent from the factory when the option is off.
 
 ---
 
@@ -522,7 +530,7 @@ mldp_pvxs_driver_hdf5_write_latency_ms_bucket{...}
 ### Implementation
 
 `HDF5WriterMetrics` inherits `WriterMetrics → ExtendedMetrics`.
-See [metrics-extension-guide.md](../metrics-extension-guide.md) for the full pattern
+See [metrics-extension-guide.md](../metrics/metrics-extension-guide.md) for the full pattern
 used to create new per-component metric classes.
 
 ## Config Migration

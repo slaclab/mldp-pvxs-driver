@@ -1,6 +1,6 @@
 # Controller
 
-> **Related:** [Architecture Overview](architecture.md) | [Configuration Reference](configuration.md) | [Readers](readers.md) | [Writers](writers-implementation.md)
+> **Related:** [Architecture Overview](architecture.md) | [Configuration Reference](../guides/configuration.md) | [Readers](../readers/readers.md) | [Writers](../writers/writers-implementation.md)
 
 The **MLDPPVXSController** is the central orchestrator of the MLDP PVXS Driver. It wires readers, writers, the event bus, metrics, and an optional routing table into a single runtime.
 
@@ -209,10 +209,10 @@ metrics:               # optional — Prometheus HTTP endpoint
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `name` | string | `"default"` | Controller instance name. Used as Prometheus label `controller`. |
-| `writer` | map | — | **Required.** Writer instances. See [Configuration Reference](configuration.md#writer-block). |
-| `reader` | sequence | — | **Required.** Reader instances. See [Configuration Reference](configuration.md#reader-block). |
+| `writer` | map | — | **Required.** Writer instances. See [Configuration Reference](../guides/configuration.md#writer-block). |
+| `reader` | sequence | — | **Required.** Reader instances. See [Configuration Reference](../guides/configuration.md#reader-block). |
 | `routing` | map | — | Optional. Selective reader→writer routing. See [Routing](#reader-to-writer-routing) above. |
-| `metrics` | map | — | Optional. Prometheus metrics endpoint. See [Configuration Reference](configuration.md#metrics-block). |
+| `metrics` | map | — | Optional. Prometheus metrics endpoint. See [Configuration Reference](../guides/configuration.md#metrics-block). |
 
 ---
 

@@ -1,10 +1,19 @@
 # MLDP Ingestion Writer
 
-> **Related:** [Writers Overview](../writers-implementation.md) | [Architecture](../architecture.md) | [MLDP Query Client](../query-client.md)
+> **Related:** [Writers Overview](writers-implementation.md) | [Architecture](../reference/architecture.md) | [MLDP Query Client](../dev/query-client.md)
 
 ## Overview
 
 `MLDPWriter` forwards event batches to the MLDP ingestion service over gRPC. It registers as type `"mldp"` in the writer factory.
+
+## Build Option & Required Libraries
+
+- **Build option:** none (always built)
+- **Required libraries/components:**
+  - gRPC (`gRPC::grpc++`)
+  - Protobuf (`protobuf::libprotobuf`)
+  - OpenSSL (`OpenSSL::SSL`, `OpenSSL::Crypto`) for TLS credentials
+  - dp-grpc protobuf definitions (fetched at configure time)
 
 ## Internal Architecture
 

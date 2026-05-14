@@ -58,7 +58,7 @@ When the Prometheus endpoint is configured, the driver collects:
 - `mldp_pvxs_driver_bus_payload_bytes_per_second` - Current throughput
 - `mldp_pvxs_driver_bus_stream_rotations_total` - Stream open/close cycles
 
-**HDF5 writer metrics** (per writer instance; requires `MLDP_PVXS_HDF5_ENABLED`):
+**HDF5 writer metrics** (per writer instance; requires `-DMLDP_PVXS_ENABLE_HDF5=ON`):
 - `mldp_pvxs_driver_hdf5_batches_written_total` — EventBatches written to HDF5 `{controller, writer}`
 - `mldp_pvxs_driver_hdf5_rows_written_total` — Rows (samples) appended per source `{controller, writer, source}`
 - `mldp_pvxs_driver_hdf5_bytes_written_total` — Bytes written per source `{controller, writer, source}`

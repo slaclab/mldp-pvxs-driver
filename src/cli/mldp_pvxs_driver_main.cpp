@@ -37,6 +37,7 @@
 
 #include <cli/ConfigPrinter.h>
 #include <config/Config.h>
+#include <config/subcommand.h>
 #include <controller/MLDPPVXSController.h>
 #include <metrics/MetricsSnapshot.h>
 #include <mldp_pvxs_driver_version.h>
@@ -90,7 +91,19 @@ void restore_terminal()
 // Configure command line argument parser.
 void configure_parameter(ArgumentParser& program)
 {
-    program.add_description("MLDP PVXS Driver - Forwards reader updates (e.g., EPICS PVs) to the MLDP ingestion API. Supports multiple reader implementations.");
+    program.add_description(
+        "MLDP PVXS Driver - Forwards reader updates (e.g., EPICS PVs) to the MLDP ingestion API.\n"
+        "Supports multiple reader implementations.\n"
+        "\n"
+        "Config utilities (run without starting the driver):\n"
+        "  config wizard   [--output PATH] [--from PATH]   Interactive TUI to generate config.yaml\n"
+        "  config validate PATH                             Validate a YAML file and report errors\n"
+        "  config template [--minimal|--full]               Print a YAML template to stdout\n"
+        "  config list     PATH                             Show writers, readers, routing, metrics\n"
+        "  config add      PATH (reader|writer|routing) …   Add an entry to an existing config\n"
+        "  config remove   PATH (reader|writer|routing) --name NAME   Remove a named entry\n"
+        "\n"
+        "  Run 'mldp_pvxs_driver config <sub-command> --help' for per-command options.");
     program.add_argument("-c", "--config")
         .help("Path to configuration YAML file")
         .default_value(std::string("config.yaml"))
@@ -122,16 +135,23 @@ void configure_parameter(ArgumentParser& program)
         .default_value(false)
         .implicit_value(true);
 
-    // add metrics help to epilog
     program.add_epilog(
         R"(Metrics:
+  - Press Ctrl+P in the foreground terminal to dump metrics.
+  - Or send SIGUSR1 / SIGQUIT to request a dump:
+      kill -USR1 <pid>
+      kill -QUIT <pid>
+  - Use --metrics-output to specify a file path for periodic metric dumps
+    (stored in JSON Lines format with configurable interval).
 
-     - Press Ctrl+P in the foreground terminal to dump metrics.
-     - Or send SIGUSR1 / SIGQUIT to request a dump:
-        kill -USR1 <pid>
-        kill -QUIT <pid>
-     - Use --metrics-output to specify a file path for periodic metric dumps
-       (stored in JSON Lines format with configurable interval).
+Examples:
+  mldp_pvxs_driver -c config.yaml --dry-run
+  mldp_pvxs_driver config validate config.yaml
+  mldp_pvxs_driver config template --minimal > config.yaml
+  mldp_pvxs_driver config wizard --output config.yaml
+  mldp_pvxs_driver config list config.yaml
+  mldp_pvxs_driver config add config.yaml reader --type epics-pvxs --name pvxs_extra
+  mldp_pvxs_driver config remove config.yaml writer --name old_writer
     )");
 }
 
@@ -267,6 +287,11 @@ int main(int argc, char** argv)
 
     try
     {
+        // Dispatch "config" sub-command before argparse consumes argv.
+        if (argc >= 2 && std::string_view{argv[1]} == "config") {
+            return mldp_pvxs_driver::config::runConfigSubcommand(argc - 1, argv + 1);
+        }
+
         // Parse command line arguments
         program.parse_args(argc, argv);
 

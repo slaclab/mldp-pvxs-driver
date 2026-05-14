@@ -6,7 +6,7 @@ This guide explains how to implement a custom reader for the MLDP PVXS Driver. R
 
 The driver uses an **abstract Reader pattern** with a factory-based registration system. This allows new data sources to be added without modifying the core ingestion pipeline.
 
-> **Related:** [Architecture Overview](architecture.md) | [Implementing Custom Writers](writers-implementation.md) | [MLDP Query Client](query-client.md)
+> **Related:** [Architecture Overview](../reference/architecture.md) | [Implementing Custom Writers](../writers/writers-implementation.md) | [MLDP Query Client](../dev/query-client.md)
 
 ## Logging Rule
 
@@ -16,7 +16,7 @@ The driver uses an **abstract Reader pattern** with a factory-based registration
 - Create a named logger with `mldp_pvxs_driver::util::log::newLogger(...)` so logs are scoped per reader instance.
 - Keep backend-specific code such as `spdlog` wiring in the executable layer, not in reusable reader implementations.
 
-See [Logging Abstraction Guide](logging.md) for the full model and examples.
+See [Logging Abstraction Guide](../dev/logging.md) for the full model and examples.
 
 ```mermaid
 flowchart LR
@@ -761,10 +761,10 @@ TEST(<Name>ReaderTest, PushesEventsCorrectly) {
 
 ## Related Documentation
 
-- [Architecture Overview](architecture.md) - System architecture and data flow
+- [Architecture Overview](../reference/architecture.md) - System architecture and data flow
 - [Reader Types](readers.md) - Existing reader implementations and comparison
-- [Implementing Custom Writers](writers-implementation.md) - Writer-side mirror of this guide
-- [MLDP Query Client](query-client.md) - Standalone query API for metadata and historical data
-- [EpicsBaseReader Implementation](readers/epics-base-reader-implementation.md) - Polling-based EPICS Channel Access reader
-- [EpicsPVXSReader Implementation](readers/epics-pvxs-reader-implementation.md) - Event-driven PVAccess reader
-- [EpicsArchiverReader Implementation](readers/epics-archiver-reader-implementation.md) - Historical EPICS Archiver reader
+- [Implementing Custom Writers](../writers/writers-implementation.md) - Writer-side mirror of this guide
+- [MLDP Query Client](../dev/query-client.md) - Standalone query API for metadata and historical data
+- [EpicsBaseReader Implementation](epics-base-reader-implementation.md) - Polling-based EPICS Channel Access reader
+- [EpicsPVXSReader Implementation](epics-pvxs-reader-implementation.md) - Event-driven PVAccess reader
+- [EpicsArchiverReader Implementation](epics-archiver-reader-implementation.md) - Historical EPICS Archiver reader
