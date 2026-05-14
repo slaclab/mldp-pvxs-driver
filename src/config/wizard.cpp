@@ -407,11 +407,14 @@ using namespace ftxui;
 using namespace wizard_ui;
 using namespace wizard_internal;
 
+// Set to true by any ESC press; checked after each prompt to abort the wizard.
+bool g_wizard_quit = false;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Simple blocking prompt helpers (single-screen interactions)
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Run a single input screen, returns user-entered value (or def on Escape)
+// Run a single input screen, returns user-entered value (or def_val on Escape)
 std::string promptInput(
     const std::string& phase_title,
     int phase, int total,
@@ -419,25 +422,32 @@ std::string promptInput(
     const std::string& def_val,
     std::function<std::string(const std::string&)> validator)
 {
-    auto screen = ScreenInteractive::TerminalOutput();
+    auto screen = ScreenInteractive::Fullscreen();
     std::string value = def_val;
 
     auto input_field = InputField(field_label, &value, validator);
 
-    auto ok_btn = Button("OK", [&]{ screen.Exit(); }, ButtonOption::Simple());
+    auto ok_btn = Button("  OK  ", [&]{ screen.Exit(); }, ButtonOption::Simple());
     auto layout = Container::Vertical({input_field, ok_btn});
 
     auto renderer = Renderer(layout, [&]{
         return vbox({
-            PhaseHeader(phase_title, phase, total),
-            separator(),
-            input_field->Render() | border,
-            ok_btn->Render(),
+            AppHeader(phase_title, phase, total),
+            filler(),
+            vbox({
+                separator(),
+                input_field->Render() | border,
+                separator(),
+                ok_btn->Render() | center,
+                separator(),
+            }) | center,
+            filler(),
+            AppFooter(),
         });
     });
 
-    // Allow Enter to confirm
     auto wrapped = CatchEvent(renderer, [&](Event ev) -> bool {
+        if (ev == Event::Escape) { g_wizard_quit = true; screen.Exit(); return true; }
         if (ev == Event::Return) { screen.Exit(); return true; }
         return false;
     });
@@ -446,35 +456,42 @@ std::string promptInput(
     return value;
 }
 
-// Run a yes/no screen, returns true=yes
+// Run a yes/no screen, returns true=yes (false on Escape)
 bool promptYesNo(
     const std::string& phase_title,
     int phase, int total,
     const std::string& question,
     bool default_yes)
 {
-    auto screen = ScreenInteractive::TerminalOutput();
+    auto screen = ScreenInteractive::Fullscreen();
     bool result = default_yes;
 
-    auto yes_btn = Button("Yes", [&]{ result = true;  screen.Exit(); });
-    auto no_btn  = Button("No",  [&]{ result = false; screen.Exit(); });
+    auto yes_btn = Button("  Yes  ", [&]{ result = true;  screen.Exit(); });
+    auto no_btn  = Button("  No   ", [&]{ result = false; screen.Exit(); });
     auto btns    = Container::Horizontal({yes_btn, no_btn});
 
     auto renderer = Renderer(btns, [&]{
         return vbox({
-            PhaseHeader(phase_title, phase, total),
-            separator(),
-            text(question) | bold,
-            hbox({
-                text("Default: "), text(default_yes ? "Yes" : "No") | color(Color::Yellow),
-            }),
-            separator(),
-            btns->Render(),
+            AppHeader(phase_title, phase, total),
+            filler(),
+            vbox({
+                separator(),
+                text("  " + question) | bold,
+                hbox({
+                    text("  Default: "),
+                    text(default_yes ? "Yes" : "No") | color(Color::Yellow),
+                }),
+                separator(),
+                btns->Render() | center,
+                separator(),
+            }) | center,
+            filler(),
+            AppFooter("[Enter] accept default   [Esc] quit"),
         });
     });
 
-    // Allow Enter to accept default
     auto wrapped = CatchEvent(renderer, [&](Event ev) -> bool {
+        if (ev == Event::Escape) { g_wizard_quit = true; screen.Exit(); return true; }
         if (ev == Event::Return) { screen.Exit(); return true; }
         return false;
     });
@@ -483,7 +500,7 @@ bool promptYesNo(
     return result;
 }
 
-// Run a menu-choice screen; returns index 0..choices.size()-1
+// Run a menu-choice screen; returns index 0..choices.size()-1 (or 0 on Escape)
 int promptMenu(
     const std::string& phase_title,
     int phase, int total,
@@ -491,24 +508,36 @@ int promptMenu(
     const std::vector<std::string>& choices,
     int default_idx)
 {
-    auto screen = ScreenInteractive::TerminalOutput();
+    auto screen = ScreenInteractive::Fullscreen();
     int  selected = default_idx;
 
     auto menu   = TypeMenu(&choices, &selected);
-    auto ok_btn = Button("OK", [&]{ screen.Exit(); }, ButtonOption::Simple());
+    auto ok_btn = Button("  OK  ", [&]{ screen.Exit(); }, ButtonOption::Simple());
     auto layout = Container::Vertical({menu, ok_btn});
 
     auto renderer = Renderer(layout, [&]{
         return vbox({
-            PhaseHeader(phase_title, phase, total),
-            separator(),
-            text(question) | bold,
-            menu->Render() | border,
-            ok_btn->Render(),
+            AppHeader(phase_title, phase, total),
+            filler(),
+            vbox({
+                separator(),
+                text("  " + question) | bold,
+                menu->Render() | border,
+                separator(),
+                ok_btn->Render() | center,
+                separator(),
+            }) | center,
+            filler(),
+            AppFooter("[↑↓] select   [Enter] confirm   [Esc] quit"),
         });
     });
 
-    screen.Loop(renderer);
+    auto wrapped = CatchEvent(renderer, [&](Event ev) -> bool {
+        if (ev == Event::Escape) { g_wizard_quit = true; screen.Exit(); return true; }
+        return false;
+    });
+
+    screen.Loop(wrapped);
     return selected;
 }
 
@@ -545,6 +574,7 @@ void phase2_add_one_writer(WizardState& st)
 
     static const std::vector<std::string> writer_types = {"mldp", "hdf5", "hdf5-merge"};
     int type_idx = promptMenu("Add Writer", 2, 6, "Select writer type:", writer_types);
+    if (g_wizard_quit) return;
 
     if (type_idx == 0) {
         MldpWriterConfig w;
@@ -584,7 +614,6 @@ void phase2_add_one_writer(WizardState& st)
             w.pem_root_certs  = promptInput("Add Writer", 2, 6, "pem-root-certs path (optional)",  w.pem_root_certs);
         }
         st.mldp_writers.push_back(std::move(w));
-        std::cout << "[Added: mldp \"" << st.mldp_writers.back().name << "\"]\n";
 
     } else {
         Hdf5WriterConfig w;
@@ -605,9 +634,7 @@ void phase2_add_one_writer(WizardState& st)
                 int n = std::stoi(v);
                 return (n >= 0 && n <= 9) ? std::string("") : std::string("must be in [0,9]");
             });
-        std::string type_str = w.is_merge ? "hdf5-merge" : "hdf5";
         st.hdf5_writers.push_back(std::move(w));
-        std::cout << "[Added: " << type_str << " \"" << st.hdf5_writers.back().name << "\"]\n";
     }
 }
 
@@ -625,6 +652,7 @@ void phase3_add_one_reader(WizardState& st)
     static const std::vector<std::string> reader_types =
         {"epics-pvxs", "epics-base", "epics-archiver"};
     int type_idx = promptMenu("Add Reader", 3, 6, "Select reader type:", reader_types);
+    if (g_wizard_quit) return;
 
     EpicsReaderConfig r;
     r.reader_type = reader_types[type_idx];
@@ -685,30 +713,38 @@ void phase3_add_one_reader(WizardState& st)
     }
 
     bool add_pvs = promptYesNo("Add Reader", 3, 6, "Add PVs? (optional)", true);
-    if (add_pvs) {
+    if (!g_wizard_quit && add_pvs) {
         bool add_pv = true;
-        while (add_pv) {
-            auto screen2 = ScreenInteractive::TerminalOutput();
+        while (add_pv && !g_wizard_quit) {
+            auto screen2 = ScreenInteractive::Fullscreen();
             std::string pv_input;
             auto pv_field = InputField("PV name", &pv_input);
-            auto ok_btn   = Button("Add", [&]{ screen2.Exit(); }, ButtonOption::Simple());
+            auto ok_btn   = Button("  Add  ", [&]{ screen2.Exit(); }, ButtonOption::Simple());
             auto layout2  = Container::Vertical({pv_field, ok_btn});
             bool bulk_mode = false;
             int  bulk_count = 0;
             auto renderer2 = Renderer(layout2, [&]{
                 return vbox({
-                    PhaseHeader("Add Reader — PV entry", 3, 6),
-                    separator(),
-                    text("Reader: " + r.name) | bold,
-                    text("PVs added so far: " + std::to_string(r.pvs.size())),
-                    separator(),
-                    bulk_mode
-                        ? text("[" + std::to_string(bulk_count) + " PVs pasted]") | color(Color::Green)
-                        : pv_field->Render() | border,
-                    ok_btn->Render(),
+                    AppHeader("Add Reader — PV entry", 3, 6),
+                    filler(),
+                    vbox({
+                        separator(),
+                        text("  Reader: " + r.name) | bold,
+                        text("  PVs added so far: " + std::to_string(r.pvs.size())),
+                        separator(),
+                        bulk_mode
+                            ? (text("  [" + std::to_string(bulk_count) + " PVs pasted]") | color(Color::Green))
+                            : (pv_field->Render() | border),
+                        separator(),
+                        ok_btn->Render() | center,
+                        separator(),
+                    }) | center,
+                    filler(),
+                    AppFooter("[Enter] add PV   paste multi-line for bulk   [Esc] quit"),
                 });
             });
             auto ev_catcher = CatchEvent(renderer2, [&](Event ev) -> bool {
+                if (ev == Event::Escape) { g_wizard_quit = true; screen2.Exit(); return true; }
                 if (pv_input.find('\n') != std::string::npos && !bulk_mode) {
                     std::istringstream ss(pv_input);
                     std::string line;
@@ -760,14 +796,12 @@ void phase3_add_one_reader(WizardState& st)
                     r.pvs.push_back(std::move(pv));
                 }
             }
-            add_pv = promptYesNo("Add Reader", 3, 6, "Add another PV?", false);
+            if (!g_wizard_quit)
+                add_pv = promptYesNo("Add Reader", 3, 6, "Add another PV?", false);
         }
     }
 
     st.readers.push_back(std::move(r));
-    const auto& added = st.readers.back();
-    std::cout << "[Added: " << added.reader_type << " \"" << added.name
-              << "\" — " << added.pvs.size() << " PVs]\n";
 }
 
 void phase5_add_one_routing_entry(WizardState& st,
@@ -787,20 +821,31 @@ void phase5_add_one_routing_entry(WizardState& st,
                 if (fr == st.readers[i].name) sel[i] = 1;
     }
 
-    auto screen = ScreenInteractive::TerminalOutput();
+    auto screen = ScreenInteractive::Fullscreen();
     auto checklist = MultiSelectList(&reader_labels, &sel);
-    auto ok_btn    = Button("OK", [&]{ screen.Exit(); }, ButtonOption::Simple());
+    auto ok_btn    = Button("  OK  ", [&]{ screen.Exit(); }, ButtonOption::Simple());
     auto layout    = Container::Vertical({checklist, ok_btn});
     auto renderer  = Renderer(layout, [&]{
         return vbox({
-            PhaseHeader("Add Routing — " + writer_name + " (" + writer_type + ")", 5, 6),
-            separator(),
-            text("Select readers to route to this writer:") | bold,
-            checklist->Render() | border,
-            ok_btn->Render(),
+            AppHeader("Add Routing — " + writer_name + " (" + writer_type + ")", 5, 6),
+            filler(),
+            vbox({
+                separator(),
+                text("  Select readers to route to this writer:") | bold,
+                checklist->Render() | border,
+                separator(),
+                ok_btn->Render() | center,
+                separator(),
+            }) | center,
+            filler(),
+            AppFooter("[Space] toggle   [Enter] confirm   [Esc] quit"),
         });
     });
-    screen.Loop(renderer);
+    auto wrapped = CatchEvent(renderer, [&](Event ev) -> bool {
+        if (ev == Event::Escape) { g_wizard_quit = true; screen.Exit(); return true; }
+        return false;
+    });
+    screen.Loop(wrapped);
 
     RoutingEntry entry;
     entry.writer_name = writer_name;
@@ -854,11 +899,12 @@ void phase5_add_one_routing_entry(WizardState& st,
 static void phase2_writers(WizardState& st)
 {
     bool add_another = true;
-    while (add_another) {
+    while (add_another && !g_wizard_quit) {
         wizard_internal::phase2_add_one_writer(st);
+        if (g_wizard_quit) return;
         bool has_writers = !st.mldp_writers.empty() || !st.hdf5_writers.empty();
         if (!has_writers) {
-            std::cout << "At least one writer required — adding another.\n";
+            // silently loop — at least one writer required
         } else {
             add_another = promptYesNo("Writers", 2, 6, "Add another writer?", false);
         }
@@ -868,8 +914,9 @@ static void phase2_writers(WizardState& st)
 static void phase3_readers(WizardState& st)
 {
     bool add_another = true;
-    while (add_another) {
+    while (add_another && !g_wizard_quit) {
         wizard_internal::phase3_add_one_reader(st);
+        if (g_wizard_quit) return;
         add_another = promptYesNo("Readers", 3, 6, "Add another reader?", false);
     }
 }
@@ -878,12 +925,14 @@ static void phase4_metrics(WizardState& st)
 {
     bool enable = promptYesNo("Metrics", 4, 6, "Enable Prometheus metrics endpoint?",
         st.metrics_enabled);
+    if (g_wizard_quit) return;
     st.metrics_enabled = enable;
     if (!enable) return;
 
     st.metrics_endpoint = promptInput("Metrics", 4, 6, "Bind address",
         st.metrics_endpoint.empty() ? "0.0.0.0:9464" : st.metrics_endpoint,
         [](const std::string& v){ return v.empty() ? "required" : ""; });
+    if (g_wizard_quit) return;
     st.metrics_interval = promptInput("Metrics", 4, 6, "scan-interval-seconds",
         st.metrics_interval.empty() ? "1" : st.metrics_interval,
         [](const std::string& v){ return isPositiveInt(v) ? "" : "must be > 0"; });
@@ -894,13 +943,18 @@ static void phase5_routing(WizardState& st)
     bool all_to_all = promptYesNo("Routing", 5, 6,
         "Use all-to-all routing (every reader → every writer)?",
         st.routing_all_to_all);
+    if (g_wizard_quit) return;
     st.routing_all_to_all = all_to_all;
     if (all_to_all) return;
 
-    for (const auto& w : st.mldp_writers)
+    for (const auto& w : st.mldp_writers) {
+        if (g_wizard_quit) return;
         wizard_internal::phase5_add_one_routing_entry(st, w.name, "mldp");
-    for (const auto& w : st.hdf5_writers)
+    }
+    for (const auto& w : st.hdf5_writers) {
+        if (g_wizard_quit) return;
         wizard_internal::phase5_add_one_routing_entry(st, w.name, w.is_merge ? "hdf5-merge" : "hdf5");
+    }
 }
 
 static int phase6_review_save(WizardState& st, const std::string& output_path)
@@ -946,34 +1000,47 @@ static int phase6_review_save(WizardState& st, const std::string& output_path)
     }
 
     // Show summary + YAML in a scrollable review screen
-    auto screen = ScreenInteractive::TerminalOutput();
+    auto screen = ScreenInteractive::Fullscreen();
     bool confirmed = false;
     std::string save_path = output_path;
 
-    auto save_field = InputField("Output path", &save_path);
-    auto ok_btn     = Button("Save", [&]{ confirmed = true;  screen.Exit(); }, ButtonOption::Simple());
-    auto skip_btn   = Button("Skip", [&]{ confirmed = false; screen.Exit(); }, ButtonOption::Simple());
-    auto btns       = Container::Horizontal({ok_btn, skip_btn});
-    auto layout     = Container::Vertical({save_field, btns});
+    auto save_field   = InputField("Output path", &save_path);
+    auto save_btn     = Button("  [ Save ]  ", [&]{ confirmed = true;  screen.Exit(); }, ButtonOption::Simple());
+    auto discard_btn  = Button("  [ Discard & Exit ]  ", [&]{ confirmed = false; screen.Exit(); }, ButtonOption::Simple());
+    auto btns         = Container::Horizontal({save_btn, discard_btn});
+    auto layout       = Container::Vertical({save_field, btns});
 
     auto renderer = Renderer(layout, [&]{
         Elements sum_elems;
-        for (const auto& l : summary) sum_elems.push_back(text(l));
+        for (const auto& l : summary)
+            sum_elems.push_back(text("  " + l));
 
         return vbox({
-            PhaseHeader("Review & Save", 6, 6),
+            AppHeader("Review & Save", 6, 6),
             separator(),
             vbox(std::move(sum_elems)) | border,
             separator(),
-            text("Generated YAML:") | bold,
-            text(yaml) | border,
+            text("  Generated YAML:") | bold,
+            paragraph(yaml) | border | flex,
             separator(),
-            save_field->Render(),
-            hbox({ok_btn->Render(), text("  "), skip_btn->Render()}),
+            save_field->Render() | border,
+            separator(),
+            hbox({
+                save_btn->Render(),
+                text("    "),
+                discard_btn->Render() | color(Color::Red),
+            }) | center,
+            separator(),
+            AppFooter("[Tab] next field   [Enter] activate button   [Esc] discard & exit"),
         });
     });
 
-    screen.Loop(renderer);
+    auto wrapped = CatchEvent(renderer, [&](Event ev) -> bool {
+        if (ev == Event::Escape) { confirmed = false; screen.Exit(); return true; }
+        return false;
+    });
+
+    screen.Loop(wrapped);
 
     if (confirmed) {
         std::ofstream f(save_path);
@@ -984,9 +1051,6 @@ static int phase6_review_save(WizardState& st, const std::string& output_path)
         f << yaml;
         f.close();
         std::cout << "Saved to: " << save_path << "\n";
-    } else {
-        // Still print YAML to stdout
-        std::cout << yaml;
     }
 
     return 0;
@@ -998,18 +1062,22 @@ static int phase6_review_save(WizardState& st, const std::string& output_path)
 
 int runWizard(const std::string& output_path, const std::string& from_path)
 {
+    g_wizard_quit = false;
+
+    // Clear terminal for a clean full-screen experience
+    std::cout << "\033[2J\033[H" << std::flush;
+
     WizardState st;
 
     if (!from_path.empty()) {
-        std::cout << "Loading existing config from '" << from_path << "' for amend...\n";
         loadFromConfig(from_path, st);
     }
 
-    phase1_controller(st);
-    phase2_writers(st);
-    phase3_readers(st);
-    phase4_metrics(st);
-    phase5_routing(st);
+    phase1_controller(st);   if (g_wizard_quit) return 0;
+    phase2_writers(st);      if (g_wizard_quit) return 0;
+    phase3_readers(st);      if (g_wizard_quit) return 0;
+    phase4_metrics(st);      if (g_wizard_quit) return 0;
+    phase5_routing(st);      if (g_wizard_quit) return 0;
     return phase6_review_save(st, output_path.empty() ? "config.yaml" : output_path);
 }
 

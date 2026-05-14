@@ -70,20 +70,25 @@ int runAddInteractive(const std::string& path, const std::string& kind,
         return 1;
     }
 
+    g_wizard_quit = false;
+
     // Resolve kind — prompt via FTXUI when not provided on command line
     std::string kind_resolved = kind;
     if (kind_resolved.empty()) {
         static const std::vector<std::string> kinds = {"writer", "reader", "routing"};
         int idx = promptMenu("Add Entry", 1, 1,
                                               "Select entry type to add:", kinds);
+        if (g_wizard_quit) return 0;
         kind_resolved = kinds[idx];
     }
 
     if (kind_resolved == "writer") {
         wizard_internal::phase2_add_one_writer(st);
+        if (g_wizard_quit) return 0;
 
     } else if (kind_resolved == "reader") {
         wizard_internal::phase3_add_one_reader(st);
+        if (g_wizard_quit) return 0;
 
     } else if (kind_resolved == "routing") {
         // Build writer list for FTXUI menu
@@ -109,6 +114,7 @@ int runAddInteractive(const std::string& path, const std::string& kind,
         int idx = promptMenu("Add Routing", 5, 6,
                                               "Select writer to configure routing for:",
                                               writer_labels);
+        if (g_wizard_quit) return 0;
 
         if (st.routing_all_to_all) {
             st.routing_all_to_all = false;
@@ -118,6 +124,7 @@ int runAddInteractive(const std::string& path, const std::string& kind,
             st.routing_all_to_all = false;
         }
         wizard_internal::phase5_add_one_routing_entry(st, writer_names[idx], writer_types[idx]);
+        if (g_wizard_quit) return 0;
 
     } else {
         std::cerr << "ERROR  unknown kind '" << kind_resolved << "' — use writer, reader, or routing\n";

@@ -47,6 +47,9 @@ void phase5_add_one_routing_entry(WizardState& st,
 // Blocking FTXUI prompt helpers — defined in wizard.cpp, in the config namespace.
 namespace mldp_pvxs_driver::config {
 
+// Set to true by ESC in any prompt; callers should check and return early.
+extern bool g_wizard_quit;
+
 std::string promptInput(const std::string& phase_title,
                         int phase, int total,
                         const std::string& field_label,

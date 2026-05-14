@@ -1,0 +1,59 @@
+# Demo: PVXS reader → HDF5 simple writer + HDF5 merger writer
+#
+# One epics-pvxs reader feeds two HDF5 writers:
+#   hdf5_simple  — one-file-per-writer, no merging
+#   hdf5_merged  — merger mode, combines streams into a single dataset
+#
+# Routing section wires each writer to specific PV subsets.
+# Requires build flag: -DMLDP_PVXS_HDF5_ENABLED=ON
+
+writer:
+  hdf5:
+    - name: hdf5_simple
+      base-path: /data/hdf5/simple
+      max-file-age-s: 3600        # rotate every hour
+      max-file-size-mb: 256       # rotate at 256 MiB
+      flush-interval-ms: 500      # flush buffers every 500 ms
+      compression-level: 1        # light DEFLATE compression
+
+  hdf5-merge:
+    - name: hdf5_merged
+      base-path: /data/hdf5/merged
+      max-file-age-s: 7200        # rotate every 2 hours
+      max-file-size-mb: 1024      # rotate at 1 GiB
+      flush-interval-ms: 1000     # flush buffers every second
+      compression-level: 6        # stronger compression for merged dataset
+
+reader:
+  - epics-pvxs:
+      - name: pvxs_main
+        thread-pool: 4
+        column-batch-size: 512
+        pvs:
+          - name: DEMO:SYS:TEMPERATURE
+          - name: DEMO:SYS:PRESSURE
+          - name: DEMO:SYS:FLOW_RATE
+          - name: DEMO:SYS:BEAM_CURRENT
+          - name: DEMO:SYS:BEAM_ENERGY
+
+metrics:
+  endpoint: "0.0.0.0:9464"
+  scan-interval-seconds: 5
+
+# Explicit routing: each writer receives a distinct PV subset.
+# Remove this section to use all-to-all routing instead.
+routing:
+  hdf5_simple:
+    from:
+      - pvxs_main
+    include:
+      - "DEMO:SYS:TEMPERATURE"
+      - "DEMO:SYS:PRESSURE"
+      - "DEMO:SYS:FLOW_RATE"
+
+  hdf5_merged:
+    from:
+      - pvxs_main
+    include:
+      - "DEMO:SYS:BEAM_CURRENT"
+      - "DEMO:SYS:BEAM_ENERGY"

@@ -26,16 +26,36 @@ namespace mldp_pvxs_driver::config::wizard_ui {
 using namespace ftxui;
 
 // ---------------------------------------------------------------------------
-// PhaseHeader — non-interactive banner showing "Phase N of M — title"
+// AppHeader — full-width title bar with app name left, phase info right
+// ---------------------------------------------------------------------------
+inline Element AppHeader(const std::string& title, int phase, int total)
+{
+    return hbox({
+        text("  pvxs-driver config wizard  ") | bold,
+        filler(),
+        text("Phase " + std::to_string(phase) + " of " + std::to_string(total) + "  —  "),
+        text(title) | bold,
+        text("  "),
+    }) | color(Color::White) | bgcolor(Color::Blue);
+}
+
+// ---------------------------------------------------------------------------
+// AppFooter — key-hint bar at bottom of every screen
+// ---------------------------------------------------------------------------
+inline Element AppFooter(const std::string& hint = "")
+{
+    const std::string txt = hint.empty()
+        ? "  [Tab] next field   [Enter] confirm   [Esc] quit without saving  "
+        : "  " + hint + "  ";
+    return dim(text(txt) | inverted);
+}
+
+// ---------------------------------------------------------------------------
+// PhaseHeader — kept for backwards compat; delegates to AppHeader
 // ---------------------------------------------------------------------------
 inline Element PhaseHeader(const std::string& title, int phase, int total)
 {
-    return hbox({
-        text(" Phase " + std::to_string(phase) + " of " + std::to_string(total)),
-        text(" — "),
-        text(title) | bold,
-        text(" "),
-    }) | inverted;
+    return AppHeader(title, phase, total);
 }
 
 // ---------------------------------------------------------------------------
@@ -67,11 +87,18 @@ inline Component InputField(
 }
 
 // ---------------------------------------------------------------------------
-// TypeMenu — vertical arrow-key menu for type selection
+// TypeMenu — vertical arrow-key menu with styled focus highlight
 // ---------------------------------------------------------------------------
 inline Component TypeMenu(const std::vector<std::string>* choices, int* selected)
 {
-    return Menu(choices, selected, MenuOption::Vertical());
+    auto opt = MenuOption::Vertical();
+    opt.entries_option.transform = [](const EntryState& s) -> Element {
+        auto e = text((s.focused ? "  > " : "    ") + s.label);
+        if (s.focused) return e | bold | color(Color::Cyan);
+        if (s.active)  return e | bold;
+        return e | color(Color::GrayLight);
+    };
+    return Menu(choices, selected, opt);
 }
 
 // ---------------------------------------------------------------------------
