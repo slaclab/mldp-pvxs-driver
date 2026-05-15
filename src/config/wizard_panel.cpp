@@ -147,20 +147,22 @@ Component SidebarPanel(const std::vector<TreeNode>* nodes, int* selected_index) 
     for (auto& n : *nodes) labels->push_back(n.label);
 
     MenuOption opt;
-    opt.entries_option.transform = [nodes, labels](EntryState es) -> Element {
-        // Sync labels from nodes each render (ensures add/delete reflects)
-        if (labels->size() != nodes->size()) {
-            labels->resize(nodes->size());
-            for (size_t i = 0; i < nodes->size(); ++i)
-                (*labels)[i] = (*nodes)[i].label;
-        }
+    opt.entries_option.transform = [](EntryState es) -> Element {
         Element e = text(es.label);
         if (es.focused) e = e | bgcolor(Color::Cyan) | color(Color::Black);
         else if (es.active) e = e | bgcolor(Color::Blue) | color(Color::White);
         return e;
     };
 
-    return Menu(labels.get(), selected_index, opt);
+    auto menu = Menu(labels.get(), selected_index, opt);
+    // Sync labels BEFORE Menu::Render() — never inside the transform, which is
+    // called mid-loop over entries; resizing there corrupts Menu's boxes_ vector.
+    return Renderer(menu, [menu, labels, nodes] {
+        labels->resize(nodes->size());
+        for (size_t i = 0; i < nodes->size(); ++i)
+            (*labels)[i] = (*nodes)[i].label;
+        return menu->Render();
+    });
 }
 
 } // namespace wizard_ui
@@ -345,10 +347,7 @@ static Component MakeHdf5WriterForm(Hdf5WriterConfig* cfg, PanelAppState* state)
         [](const std::string& s){ return isNonNegInt(s) ? "" : "Must be non-negative int"; },
         [on_change]{ on_change("compression_level"); });
 
-    std::string merge_label = "Is Merge";
-    auto f_merge  = Checkbox(&merge_label, &cfg->is_merge);
-
-    auto form = Container::Vertical({f_name, f_path, f_age, f_size, f_flush, f_comp, f_merge});
+    auto form = Container::Vertical({f_name, f_path, f_age, f_size, f_flush, f_comp});
 
     return Renderer(form, [form] {
         return vbox({
@@ -440,10 +439,8 @@ static Component MakeEpicsReaderForm(EpicsReaderConfig* cfg, PanelAppState* stat
     // tls booleans stored as shared_ptr
     auto tls_peer = std::make_shared<bool>(cfg->tls_verify_peer == "true");
     auto tls_host = std::make_shared<bool>(cfg->tls_verify_host == "true");
-    std::string peer_lbl = "TLS Verify Peer";
-    std::string host_lbl = "TLS Verify Host";
-    auto f_tpeer  = Checkbox(&peer_lbl, tls_peer.get());
-    auto f_thost  = Checkbox(&host_lbl, tls_host.get());
+    auto f_tpeer  = Checkbox("TLS Verify Peer", tls_peer.get());
+    auto f_thost  = Checkbox("TLS Verify Host", tls_host.get());
     auto tls_sync = Renderer(Container::Vertical({f_tpeer, f_thost}),
         [f_tpeer, f_thost, tls_peer, tls_host, cfg, on_change] {
             cfg->tls_verify_peer = *tls_peer ? "true" : "false";
@@ -456,13 +453,6 @@ static Component MakeEpicsReaderForm(EpicsReaderConfig* cfg, PanelAppState* stat
         f_cto, f_tto, f_bds, tls_sync,
     });
     auto arch_maybe = Maybe(arch_fields, [rtype_idx]{ return *rtype_idx == 2; });
-
-    // Reader type menu sync
-    auto rtype_menu = TypeMenu(&reader_choices, rtype_idx.get());
-    auto rtype_sync = Renderer(rtype_menu, [rtype_menu, rtype_idx, cfg] {
-        cfg->reader_type = reader_choices[*rtype_idx];
-        return rtype_menu->Render();
-    });
 
     // ── PV list ──────────────────────────────────────────────────────────────
     auto pv_sel   = std::make_shared<int>(0);
@@ -522,7 +512,7 @@ static Component MakeEpicsReaderForm(EpicsReaderConfig* cfg, PanelAppState* stat
     });
 
     auto form = Container::Vertical({
-        f_name, rtype_sync, f_tp, f_cbs,
+        f_name, f_tp, f_cbs,
         base_maybe, arch_maybe,
         pv_renderer,
     });
@@ -531,7 +521,7 @@ static Component MakeEpicsReaderForm(EpicsReaderConfig* cfg, PanelAppState* stat
         return vbox({
             text("  EPICS Reader Settings") | bold | underlined,
             f_name->Render(),
-            rtype_sync->Render(),
+            hbox({text("  Type: "), text(cfg->reader_type) | bold}),
             f_tp->Render(),
             f_cbs->Render(),
             base_maybe->Render(),
@@ -549,8 +539,7 @@ static Component MakeMetricsForm(WizardState* w, PanelAppState* state) {
         state->focused_field = field;
     };
 
-    std::string enabled_lbl = "Enable Metrics";
-    auto f_enabled  = Checkbox(&enabled_lbl, &w->metrics_enabled);
+    auto f_enabled  = Checkbox("Enable Metrics", &w->metrics_enabled);
 
     auto f_endpoint = InputField("Endpoint",        &w->metrics_endpoint,
         [](const std::string& s){ return s.empty() ? "Must not be empty" : ""; },
@@ -573,8 +562,7 @@ static Component MakeMetricsForm(WizardState* w, PanelAppState* state) {
 }
 
 static Component MakeRoutingForm(WizardState* w, PanelAppState* state) {
-    std::string all_lbl = "All-to-All Routing";
-    auto f_all = Checkbox(&all_lbl, &w->routing_all_to_all);
+    auto f_all = Checkbox("All-to-All Routing", &w->routing_all_to_all);
 
     auto manual_info = Renderer([w] {
         Elements lines;
@@ -669,9 +657,11 @@ int runWizard(const std::string& output_path, const std::string& from_path) {
                 return ctrl_form;
             case TreeNodeKind::WriterGroup:
             case TreeNodeKind::ReaderGroup:
-            case TreeNodeKind::MetricsGroup:
-            case TreeNodeKind::RoutingGroup:
                 return empty_group;
+            case TreeNodeKind::MetricsGroup:
+                return metrics_form;
+            case TreeNodeKind::RoutingGroup:
+                return routing_form;
             case TreeNodeKind::Writer:
                 if (node.type_tag == "MLDP" &&
                     node.data_index >= 0 &&
@@ -705,7 +695,10 @@ int runWizard(const std::string& output_path, const std::string& from_path) {
             auto f = getter_();
             return f ? f->OnEvent(ev) : false;
         }
-        bool Focusable() const override { return true; }
+        bool Focusable() const override {
+            auto f = getter_();
+            return f && f->Focusable();
+        }
     private:
         std::function<Component()> getter_;
     };
@@ -734,11 +727,137 @@ int runWizard(const std::string& output_path, const std::string& from_path) {
         }) | flex;
     });
 
-    // ── Global key handler ────────────────────────────────────────────────────
-    auto app = CatchEvent(root_renderer, [&](Event ev) -> bool {
-        // Suppress shortcuts when form panel has focus (panel 1)
-        if (state.active_panel == 1) return false;
+    auto app = root_renderer;
 
+    // ── Add modal ────────────────────────────────────────────────────────────
+    auto add_modal = Renderer([&] {
+        auto& t = state.tree;
+        bool on_reader = !t.empty() && (t[state.tree_sel].kind == TreeNodeKind::ReaderGroup ||
+                          t[state.tree_sel].kind == TreeNodeKind::Reader);
+        Elements opts;
+        if (on_reader) {
+            opts.push_back(text(" [p] epics-pvxs "));
+            opts.push_back(text(" [b] epics-base "));
+            opts.push_back(text(" [a] epics-archiver "));
+        } else {
+            opts.push_back(text(" [m] MLDP Writer "));
+            opts.push_back(text(" [h] HDF5 Writer "));
+            opts.push_back(text(" [g] HDF5-merge Writer "));
+        }
+        opts.push_back(separator());
+        opts.push_back(text(" [Esc] cancel ") | dim);
+        return vbox(std::move(opts)) | border | size(WIDTH, EQUAL, 36);
+    });
+
+    auto delete_modal = Renderer([&] {
+        return vbox({
+            text(" Delete item? ") | bold | center,
+            separator(),
+            text(" [y] Yes   [n] No ") | center,
+        }) | border | size(WIDTH, EQUAL, 28);
+    });
+
+    auto quit_modal = Renderer([&] {
+        return vbox({
+            text(" Unsaved changes — quit anyway? ") | bold | center,
+            separator(),
+            text(" [y] Yes   [n] No ") | center,
+        }) | border | size(WIDTH, EQUAL, 38);
+    });
+
+    auto with_modals = Modal(Modal(Modal(app,
+        add_modal,    &state.show_add_modal),
+        delete_modal, &state.show_delete_modal),
+        quit_modal,   &state.show_quit_modal);
+
+    auto final_app = CatchEvent(with_modals, [&](Event ev) -> bool {
+        // === Add modal ===
+        if (state.show_add_modal) {
+            auto& t = state.tree;
+            bool on_reader = !t.empty() &&
+                (t[state.tree_sel].kind == TreeNodeKind::ReaderGroup ||
+                 t[state.tree_sel].kind == TreeNodeKind::Reader);
+            if (ev == Event::Escape) { state.show_add_modal = false; return true; }
+            if (!on_reader) {
+                if (ev == Event::Character('m')) {
+                    MldpWriterConfig c; c.name = "mldp_" + std::to_string(state.wizard.mldp_writers.size());
+                    state.wizard.mldp_writers.push_back(c);
+                    state.tree = BuildTree(state.wizard);
+                    state.tree_sel = std::min(state.tree_sel + 1, (int)state.tree.size()-1);
+                    state.dirty = true; state.show_add_modal = false;
+                    rebuildForms(); return true;
+                }
+                if (ev == Event::Character('h') || ev == Event::Character('g')) {
+                    Hdf5WriterConfig c;
+                    c.name = "hdf5_" + std::to_string(state.wizard.hdf5_writers.size());
+                    c.is_merge = (ev == Event::Character('g'));
+                    state.wizard.hdf5_writers.push_back(c);
+                    state.tree = BuildTree(state.wizard);
+                    state.dirty = true; state.show_add_modal = false;
+                    rebuildForms(); return true;
+                }
+            } else {
+                if (ev == Event::Character('p') || ev == Event::Character('b') || ev == Event::Character('a')) {
+                    EpicsReaderConfig c;
+                    c.name = "reader_" + std::to_string(state.wizard.readers.size());
+                    if (ev == Event::Character('p')) c.reader_type = "epics-pvxs";
+                    else if (ev == Event::Character('b')) c.reader_type = "epics-base";
+                    else c.reader_type = "epics-archiver";
+                    state.wizard.readers.push_back(c);
+                    state.tree = BuildTree(state.wizard);
+                    state.dirty = true; state.show_add_modal = false;
+                    rebuildForms(); return true;
+                }
+            }
+            return false;
+        }
+        // === Delete modal ===
+        if (state.show_delete_modal) {
+            if (ev == Event::Character('y')) {
+                auto& t = state.tree;
+                if (!t.empty()) {
+                    auto& node = t[state.tree_sel];
+                    int idx = node.data_index;
+                    if (node.kind == TreeNodeKind::Writer && node.type_tag == "MLDP" &&
+                        idx >= 0 && idx < (int)state.wizard.mldp_writers.size()) {
+                        state.wizard.mldp_writers.erase(state.wizard.mldp_writers.begin() + idx);
+                        state.dirty = true;
+                    } else if (node.kind == TreeNodeKind::Writer && node.type_tag != "MLDP" &&
+                               idx >= 0 && idx < (int)state.wizard.hdf5_writers.size()) {
+                        state.wizard.hdf5_writers.erase(state.wizard.hdf5_writers.begin() + idx);
+                        state.dirty = true;
+                    } else if (node.kind == TreeNodeKind::Reader &&
+                               idx >= 0 && idx < (int)state.wizard.readers.size()) {
+                        state.wizard.readers.erase(state.wizard.readers.begin() + idx);
+                        state.dirty = true;
+                    }
+                    state.tree = BuildTree(state.wizard);
+                    state.tree_sel = std::max(0, std::min(state.tree_sel, (int)state.tree.size()-1));
+                    rebuildForms();
+                }
+                state.show_delete_modal = false; return true;
+            }
+            if (ev == Event::Character('n') || ev == Event::Escape) {
+                state.show_delete_modal = false; return true;
+            }
+            return false;
+        }
+        // === Quit modal ===
+        if (state.show_quit_modal) {
+            if (ev == Event::Character('y')) { screen.Exit(); return true; }
+            if (ev == Event::Character('n') || ev == Event::Escape) {
+                state.show_quit_modal = false; return true;
+            }
+            return false;
+        }
+        // Tab navigates fields within the form; Left/Right arrows switch panes.
+        if (ev == Event::Tab || ev == Event::TabReverse) {
+            if (state.active_panel == 1)
+                return form_container->OnEvent(ev);
+            return false;
+        }
+        // === Global shortcuts (no modal active) ===
+        if (state.active_panel == 1) return false;
         if (ev == Event::Character('s')) {
             std::string yaml = wizard_internal::generateYaml(state.wizard);
             std::ofstream f(state.output_path);
@@ -748,7 +867,6 @@ int runWizard(const std::string& output_path, const std::string& from_path) {
         }
         if (ev == Event::Character('v')) {
             std::string yaml = wizard_internal::generateYaml(state.wizard);
-            // validateConfig requires a Config object — write to a temp file and load
             std::string tmp = state.output_path + ".~validate_tmp";
             {
                 std::ofstream tf(tmp);
@@ -773,14 +891,8 @@ int runWizard(const std::string& output_path, const std::string& from_path) {
             }
             return true;
         }
-        if (ev == Event::Character('a')) {
-            state.show_add_modal = true;
-            return true;
-        }
-        if (ev == Event::Character('d')) {
-            state.show_delete_modal = true;
-            return true;
-        }
+        if (ev == Event::Character('a')) { state.show_add_modal = true; return true; }
+        if (ev == Event::Character('d')) { state.show_delete_modal = true; return true; }
         if (ev == Event::Character('q') || ev == Event::Escape) {
             if (state.dirty) state.show_quit_modal = true;
             else screen.Exit();
@@ -788,128 +900,7 @@ int runWizard(const std::string& output_path, const std::string& from_path) {
         }
         return false;
     });
-
-    // ── Add modal ────────────────────────────────────────────────────────────
-    auto add_modal = Renderer([&] {
-        auto& t = state.tree;
-        bool on_reader = !t.empty() && (t[state.tree_sel].kind == TreeNodeKind::ReaderGroup ||
-                          t[state.tree_sel].kind == TreeNodeKind::Reader);
-        Elements opts;
-        if (on_reader) {
-            opts.push_back(text(" [p] epics-pvxs "));
-            opts.push_back(text(" [b] epics-base "));
-            opts.push_back(text(" [a] epics-archiver "));
-        } else {
-            opts.push_back(text(" [m] MLDP Writer "));
-            opts.push_back(text(" [h] HDF5 Writer "));
-            opts.push_back(text(" [g] HDF5-merge Writer "));
-        }
-        opts.push_back(separator());
-        opts.push_back(text(" [Esc] cancel ") | dim);
-        return vbox(std::move(opts)) | border | size(WIDTH, EQUAL, 36);
-    });
-    add_modal = CatchEvent(add_modal, [&](Event ev) {
-        auto& t = state.tree;
-        bool on_reader = !t.empty() && (t[state.tree_sel].kind == TreeNodeKind::ReaderGroup ||
-                          t[state.tree_sel].kind == TreeNodeKind::Reader);
-        if (ev == Event::Escape) { state.show_add_modal = false; return true; }
-        if (!on_reader) {
-            if (ev == Event::Character('m')) {
-                MldpWriterConfig c; c.name = "mldp_" + std::to_string(state.wizard.mldp_writers.size());
-                state.wizard.mldp_writers.push_back(c);
-                state.tree = BuildTree(state.wizard);
-                state.tree_sel = std::min(state.tree_sel + 1, (int)state.tree.size()-1);
-                state.dirty = true; state.show_add_modal = false;
-                rebuildForms();
-                return true;
-            }
-            if (ev == Event::Character('h') || ev == Event::Character('g')) {
-                Hdf5WriterConfig c;
-                c.name = "hdf5_" + std::to_string(state.wizard.hdf5_writers.size());
-                c.is_merge = (ev == Event::Character('g'));
-                state.wizard.hdf5_writers.push_back(c);
-                state.tree = BuildTree(state.wizard);
-                state.dirty = true; state.show_add_modal = false;
-                rebuildForms();
-                return true;
-            }
-        } else {
-            if (ev == Event::Character('p') || ev == Event::Character('b') || ev == Event::Character('a')) {
-                EpicsReaderConfig c;
-                c.name = "reader_" + std::to_string(state.wizard.readers.size());
-                if (ev == Event::Character('p')) c.reader_type = "epics-pvxs";
-                else if (ev == Event::Character('b')) c.reader_type = "epics-base";
-                else c.reader_type = "epics-archiver";
-                state.wizard.readers.push_back(c);
-                state.tree = BuildTree(state.wizard);
-                state.dirty = true; state.show_add_modal = false;
-                rebuildForms();
-                return true;
-            }
-        }
-        return false;
-    });
-
-    auto delete_modal = Renderer([&] {
-        return vbox({
-            text(" Delete item? ") | bold | center,
-            separator(),
-            text(" [y] Yes   [n] No ") | center,
-        }) | border | size(WIDTH, EQUAL, 28);
-    });
-    delete_modal = CatchEvent(delete_modal, [&](Event ev) {
-        if (ev == Event::Character('y')) {
-            auto& t = state.tree;
-            if (!t.empty()) {
-                auto& node = t[state.tree_sel];
-                int idx = node.data_index;
-                if (node.kind == TreeNodeKind::Writer && node.type_tag == "MLDP" &&
-                    idx >= 0 && idx < (int)state.wizard.mldp_writers.size()) {
-                    state.wizard.mldp_writers.erase(state.wizard.mldp_writers.begin() + idx);
-                    state.dirty = true;
-                } else if (node.kind == TreeNodeKind::Writer && node.type_tag != "MLDP" &&
-                           idx >= 0 && idx < (int)state.wizard.hdf5_writers.size()) {
-                    state.wizard.hdf5_writers.erase(state.wizard.hdf5_writers.begin() + idx);
-                    state.dirty = true;
-                } else if (node.kind == TreeNodeKind::Reader &&
-                           idx >= 0 && idx < (int)state.wizard.readers.size()) {
-                    state.wizard.readers.erase(state.wizard.readers.begin() + idx);
-                    state.dirty = true;
-                }
-                state.tree = BuildTree(state.wizard);
-                state.tree_sel = std::max(0, std::min(state.tree_sel, (int)state.tree.size()-1));
-                rebuildForms();
-            }
-            state.show_delete_modal = false;
-            return true;
-        }
-        if (ev == Event::Character('n') || ev == Event::Escape) {
-            state.show_delete_modal = false; return true;
-        }
-        return false;
-    });
-
-    auto quit_modal = Renderer([&] {
-        return vbox({
-            text(" Unsaved changes — quit anyway? ") | bold | center,
-            separator(),
-            text(" [y] Yes   [n] No ") | center,
-        }) | border | size(WIDTH, EQUAL, 38);
-    });
-    quit_modal = CatchEvent(quit_modal, [&](Event ev) {
-        if (ev == Event::Character('y')) { screen.Exit(); return true; }
-        if (ev == Event::Character('n') || ev == Event::Escape) {
-            state.show_quit_modal = false; return true;
-        }
-        return false;
-    });
-
-    auto with_modals = Modal(Modal(Modal(app,
-        add_modal,    &state.show_add_modal),
-        delete_modal, &state.show_delete_modal),
-        quit_modal,   &state.show_quit_modal);
-
-    screen.Loop(with_modals);
+    screen.Loop(final_app);
     return 0;
 }
 

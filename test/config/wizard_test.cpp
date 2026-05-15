@@ -544,6 +544,154 @@ TEST(WizardLoadFromConfig, GracefulOnMissingFile)
     EXPECT_TRUE(st.readers.empty());
 }
 
+TEST(WizardGenerateYaml, MultipleWritersAndReaders)
+{
+    WizardState st;
+    st.controller_name = "multi_ctrl";
+
+    MldpWriterConfig w0; w0.name = "mldp_0"; w0.provider_name = "p0"; w0.ingestion_url = "grpc://h:50051";
+    MldpWriterConfig w1; w1.name = "mldp_1"; w1.provider_name = "p1"; w1.ingestion_url = "grpc://h:50052";
+    st.mldp_writers = {w0, w1};
+
+    Hdf5WriterConfig hw; hw.name = "hdf5_0"; hw.base_path = "/data";
+    st.hdf5_writers = {hw};
+
+    EpicsReaderConfig r0; r0.name = "pvxs_0"; r0.reader_type = "epics-pvxs";
+    EpicsReaderConfig r1; r1.name = "base_0"; r1.reader_type = "epics-base";
+    st.readers = {r0, r1};
+
+    auto yaml = generateYaml(st);
+    EXPECT_NE(std::string::npos, yaml.find("name: mldp_0"));
+    EXPECT_NE(std::string::npos, yaml.find("name: mldp_1"));
+    EXPECT_NE(std::string::npos, yaml.find("name: hdf5_0"));
+    EXPECT_NE(std::string::npos, yaml.find("name: pvxs_0"));
+    EXPECT_NE(std::string::npos, yaml.find("name: base_0"));
+
+    auto diags = validateYamlString(yaml);
+    EXPECT_EQ(0, countErrors(diags)) << yaml;
+}
+
+TEST(WizardGenerateYaml, EpicsBaseReader)
+{
+    WizardState st;
+    st.controller_name = "default";
+
+    MldpWriterConfig w; w.name = "mldp_0"; w.provider_name = "p"; w.ingestion_url = "grpc://h:50051";
+    st.mldp_writers = {w};
+
+    EpicsReaderConfig r;
+    r.name                    = "base_reader";
+    r.reader_type             = "epics-base";
+    r.monitor_poll_threads    = "4";
+    r.monitor_poll_interval_ms = "10";
+    st.readers = {r};
+
+    auto yaml = generateYaml(st);
+    EXPECT_NE(std::string::npos, yaml.find("epics-base:"));
+    auto diags = validateYamlString(yaml);
+    EXPECT_EQ(0, countErrors(diags)) << yaml;
+}
+
+TEST(WizardRoundTrip, MultipleWritersAndReadersPassValidation)
+{
+    WizardState st;
+    st.controller_name = "multi";
+
+    MldpWriterConfig w0; w0.name = "mldp_0"; w0.provider_name = "p0"; w0.ingestion_url = "grpc://h:50051";
+    MldpWriterConfig w1; w1.name = "mldp_1"; w1.provider_name = "p1"; w1.ingestion_url = "grpc://h:50052";
+    st.mldp_writers = {w0, w1};
+
+    Hdf5WriterConfig hw; hw.name = "hdf5_0"; hw.base_path = "/data";
+    Hdf5WriterConfig hm; hm.name = "hdf5_merge"; hm.base_path = "/merge"; hm.is_merge = true;
+    st.hdf5_writers = {hw, hm};
+
+    EpicsReaderConfig r0; r0.name = "pvxs_0"; r0.reader_type = "epics-pvxs";
+    EpicsReaderConfig r1; r1.name = "base_0"; r1.reader_type = "epics-base";
+    st.readers = {r0, r1};
+
+    auto yaml = generateYaml(st);
+    auto diags = validateYamlString(yaml);
+    EXPECT_EQ(0, countErrors(diags)) << yaml;
+}
+
+TEST(WizardRoundTrip, Hdf5MergePassesValidation)
+{
+    WizardState st;
+    st.controller_name = "default";
+
+    Hdf5WriterConfig hm; hm.name = "hdf5_m"; hm.base_path = "/data/merge"; hm.is_merge = true;
+    st.hdf5_writers = {hm};
+
+    EpicsReaderConfig r; r.name = "pvxs_r"; r.reader_type = "epics-pvxs";
+    st.readers = {r};
+
+    auto yaml = generateYaml(st);
+    EXPECT_NE(std::string::npos, yaml.find("hdf5-merge:"));
+    auto diags = validateYamlString(yaml);
+    EXPECT_EQ(0, countErrors(diags)) << yaml;
+}
+
+TEST(WizardLoadFromConfig, RoundTripHdf5Merge)
+{
+    WizardState st;
+    st.controller_name = "default";
+
+    Hdf5WriterConfig hm;
+    hm.name              = "merge_writer";
+    hm.base_path         = "/data/merge";
+    hm.compression_level = "6";
+    hm.is_merge          = true;
+    st.hdf5_writers = {hm};
+
+    EpicsReaderConfig r; r.name = "pvxs_r"; r.reader_type = "epics-pvxs";
+    st.readers = {r};
+
+    std::string yaml = generateYaml(st);
+    std::string path = writeTmpYaml(yaml);
+
+    WizardState loaded;
+    loadFromConfig(path, loaded);
+
+    ASSERT_EQ(1u, loaded.hdf5_writers.size());
+    EXPECT_EQ("merge_writer", loaded.hdf5_writers[0].name);
+    EXPECT_EQ("/data/merge",  loaded.hdf5_writers[0].base_path);
+    EXPECT_TRUE(loaded.hdf5_writers[0].is_merge);
+
+    auto diags = validateYamlString(generateYaml(loaded));
+    EXPECT_EQ(0, countErrors(diags));
+}
+
+TEST(WizardLoadFromConfig, RoundTripMultiplePvsWithOptions)
+{
+    auto st = makeMinimalState();
+
+    PvEntry pv1; pv1.name = "SITE:A"; pv1.option_type = "none";
+    PvEntry pv2; pv2.name = "SITE:B"; pv2.option_type = "scalar"; pv2.option_value = "chan://b";
+    PvEntry pv3;
+    pv3.name        = "SITE:C";
+    pv3.option_type = "slac-bsas-table";
+    pv3.ts_seconds  = "secondsPastEpoch";
+    pv3.ts_nanos    = "nanoseconds";
+    st.readers[0].pvs = {pv1, pv2, pv3};
+
+    std::string yaml = generateYaml(st);
+    std::string path = writeTmpYaml(yaml);
+
+    WizardState loaded;
+    loadFromConfig(path, loaded);
+
+    ASSERT_EQ(1u, loaded.readers.size());
+    ASSERT_EQ(3u, loaded.readers[0].pvs.size());
+    EXPECT_EQ("SITE:A", loaded.readers[0].pvs[0].name);
+    EXPECT_EQ("none",   loaded.readers[0].pvs[0].option_type);
+    EXPECT_EQ("SITE:B", loaded.readers[0].pvs[1].name);
+    EXPECT_EQ("scalar", loaded.readers[0].pvs[1].option_type);
+    EXPECT_EQ("chan://b", loaded.readers[0].pvs[1].option_value);
+    EXPECT_EQ("SITE:C",              loaded.readers[0].pvs[2].name);
+    EXPECT_EQ("slac-bsas-table",     loaded.readers[0].pvs[2].option_type);
+    EXPECT_EQ("secondsPastEpoch",    loaded.readers[0].pvs[2].ts_seconds);
+}
+
 TEST(WizardLoadFromConfig, RoundTripPvsPreserved)
 {
     auto st = makeMinimalState();

@@ -321,9 +321,16 @@ void loadFromConfig(const std::string& path, WizardState& st)
                         pv.name        = pvNode.get("name", "");
                         pv.option_type = "none";
                         if (pvNode.hasChild("option")) {
-                            // could be scalar string or map — just treat as scalar for amend
-                            pv.option_type  = "scalar";
-                            pv.option_value = pvNode.get("option", "");
+                            auto optVec = pvNode.subConfig("option");
+                            if (!optVec.empty() && optVec[0].raw().is_map() &&
+                                optVec[0].hasChild("type")) {
+                                pv.option_type = optVec[0].get("type", "none");
+                                pv.ts_seconds  = optVec[0].get("tsSeconds", "");
+                                pv.ts_nanos    = optVec[0].get("tsNanos", "");
+                            } else {
+                                pv.option_type  = "scalar";
+                                pv.option_value = pvNode.get("option", "");
+                            }
                         }
                         if (!pv.name.empty()) r.pvs.push_back(std::move(pv));
                     }
