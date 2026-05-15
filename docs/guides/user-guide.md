@@ -98,15 +98,26 @@ The wizard opens a persistent split-panel interface:
 
 | Key | Action |
 |---|---|
-| `↑` / `↓` | Move between sections in the sidebar tree |
-| `Tab` | Cycle focus: sidebar → form → help panel |
-| `a` | Add a new writer or reader (type shown in modal) |
+| `↑` / `↓` | Move between items in the sidebar (left pane) |
+| `→` | Enter the form pane for the selected item |
+| `←` | Return to the sidebar from the form pane |
+| `Tab` / `Shift+Tab` | Move to the next / previous field within the form |
+| `a` | Add a new writer or reader (type chosen in pop-up modal) |
 | `d` | Delete the currently selected item (confirmation required) |
 | `s` | Save the config to disk |
 | `v` | Validate the current config |
 | `q` / `Esc` | Quit (prompts if there are unsaved changes) |
 
-The right panel shows contextual help for the field currently being edited.
+**Mouse support:** the wizard is fully mouse-aware. You can click on any sidebar
+item to select it, click on a form field to focus it, toggle checkboxes with a
+click, and scroll long forms with the scroll wheel.
+
+The right panel shows **contextual help** that updates automatically:
+- **Sidebar focused** — describes the selected tree item (Writers group, MLDP Writer,
+  EPICS reader, Metrics, etc.)
+- **Form focused** — shows documentation for the field that currently has focus;
+  updates as you Tab between fields without requiring you to type anything.
+
 The status bar shows a live count of writers/readers and validation state.
 
 **To pre-populate from an existing config:**
@@ -114,6 +125,10 @@ The status bar shows a live count of writers/readers and validation state.
 ```bash
 mldp_pvxs_driver config wizard --from config.yaml
 ```
+
+> **Note:** the writer type (MLDP, HDF5, HDF5-merge) and reader type
+> (epics-pvxs, epics-base, epics-archiver) are chosen in the add modal and
+> cannot be changed afterwards. Delete the entry and add a new one to change type.
 
 **To open the wizard focused on adding a new entry:**
 
