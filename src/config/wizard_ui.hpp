@@ -39,7 +39,8 @@ inline Component InputField(
     const std::string&                           label,
     std::string*                                 value,
     std::function<std::string(const std::string&)> validator = {},
-    std::function<void()>                        on_change  = {})
+    std::function<void()>                        on_change  = {},
+    std::function<void()>                        on_focus   = {})
 {
     auto opt = InputOption::Default();
     opt.multiline  = false;
@@ -47,8 +48,12 @@ inline Component InputField(
 
     auto input = Input(value, label, opt);
 
-    // Wrap in Renderer that shows label + field + optional error
-    return Renderer(input, [=]() -> Element {
+    // self_ref lets the render lambda call Focused() on this specific Renderer.
+    // ComponentBase::Focused() returns true when parent_->ActiveChild() == this,
+    // which is set by Container::Vertical when this field is the active child.
+    auto self_ref = std::make_shared<Component>();
+    auto result = Renderer(input, [=]() -> Element {
+        if (on_focus && *self_ref && (*self_ref)->Focused()) on_focus();
         std::string err = validator ? validator(*value) : "";
         Element field = input->Render();
         if (!err.empty()) {
@@ -57,6 +62,8 @@ inline Component InputField(
         }
         return hbox({text(label + ": "), field});
     });
+    *self_ref = result;
+    return result;
 }
 
 // ---------------------------------------------------------------------------

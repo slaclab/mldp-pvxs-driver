@@ -138,6 +138,39 @@ std::string GetHelpText(TreeNodeKind kind, const std::string& field) {
     return "";
 }
 
+static std::string GetNodeHelp(const TreeNode& node) {
+    switch (node.kind) {
+        case TreeNodeKind::Controller:
+            return "Controller\nGlobal settings for\nthe pvxs-driver instance.";
+        case TreeNodeKind::WriterGroup:
+            return "Writers group\nPress [a] to add\nMLDP or HDF5 writer.";
+        case TreeNodeKind::ReaderGroup:
+            return "Readers group\nPress [a] to add\nEPICS reader.";
+        case TreeNodeKind::Writer:
+            if (node.type_tag == "MLDP")
+                return "MLDP Writer\nSends data to MLDP\ngRPC ingestion endpoint.";
+            if (node.type_tag == "HDF5")
+                return "HDF5 Writer\nWrites data to\nlocal HDF5 files.";
+            if (node.type_tag == "HDF5-merge")
+                return "HDF5-merge Writer\nMerges streams from\nmultiple readers.";
+            break;
+        case TreeNodeKind::Reader:
+            if (node.type_tag == "epics-pvxs")
+                return "EPICS pvxs reader\nMonitors PVs via\nChannel Access (pvxs).";
+            if (node.type_tag == "epics-base")
+                return "EPICS base reader\nPolls PVs using\nepics-base library.";
+            if (node.type_tag == "epics-archiver")
+                return "Archiver reader\nQueries the EPICS\nArchiver Appliance.";
+            break;
+        case TreeNodeKind::MetricsGroup:
+            return "Metrics\nConfigure Prometheus\nmetrics endpoint.";
+        case TreeNodeKind::RoutingGroup:
+            return "Routing\nDefine which readers\nfeed which writers.";
+        default: break;
+    }
+    return "";
+}
+
 // ─── SidebarPanel ─────────────────────────────────────────────────────────────
 
 namespace wizard_ui {
@@ -215,10 +248,14 @@ static Component MakeControllerForm(WizardState* w, PanelAppState* state) {
         state->dirty = true;
         state->focused_field = field;
     };
+    auto on_focus_fn = [state](const std::string& field) {
+        return [state, field]{ state->focused_field = field; };
+    };
 
     auto name_field = InputField("Name", &w->controller_name,
         [](const std::string& s) { return s.empty() ? "Must not be empty" : ""; },
-        [on_change]{ on_change("name"); });
+        [on_change]{ on_change("name"); },
+        on_focus_fn("name"));
 
     auto form = Container::Vertical({name_field});
 
@@ -237,40 +274,53 @@ static Component MakeMldpWriterForm(MldpWriterConfig* cfg, PanelAppState* state)
         state->dirty = true;
         state->focused_field = field;
     };
+    auto on_focus_fn = [state](const std::string& field) {
+        return [state, field]{ state->focused_field = field; };
+    };
 
     // Basic Settings
     auto f_name   = InputField("Name",              &cfg->name,
         [](const std::string& s){ return s.empty() ? "Must not be empty" : ""; },
-        [on_change]{ on_change("name"); });
+        [on_change]{ on_change("name"); },
+        on_focus_fn("name"));
     auto f_tp     = InputField("Thread Pool",       &cfg->thread_pool,
         [](const std::string& s){ return isPositiveInt(s) ? "" : "Must be positive int"; },
-        [on_change]{ on_change("thread_pool"); });
+        [on_change]{ on_change("thread_pool"); },
+        on_focus_fn("thread_pool"));
     auto f_smb    = InputField("Stream Max Bytes",  &cfg->stream_max_bytes,
         [](const std::string& s){ return isPositiveInt(s) ? "" : "Must be positive int"; },
-        [on_change]{ on_change("stream_max_bytes"); });
+        [on_change]{ on_change("stream_max_bytes"); },
+        on_focus_fn("stream_max_bytes"));
     auto f_sma    = InputField("Stream Max Age ms", &cfg->stream_max_age_ms,
         [](const std::string& s){ return isPositiveInt(s) ? "" : "Must be positive int"; },
-        [on_change]{ on_change("stream_max_age_ms"); });
+        [on_change]{ on_change("stream_max_age_ms"); },
+        on_focus_fn("stream_max_age_ms"));
 
     // MLDP Pool
     auto f_pname  = InputField("Provider Name",     &cfg->provider_name,
         [](const std::string& s){ return s.empty() ? "Must not be empty" : ""; },
-        [on_change]{ on_change("provider_name"); });
+        [on_change]{ on_change("provider_name"); },
+        on_focus_fn("provider_name"));
     auto f_pdesc  = InputField("Provider Desc",     &cfg->provider_desc,
         [](const std::string&){ return ""; },
-        [on_change]{ on_change("provider_desc"); });
+        [on_change]{ on_change("provider_desc"); },
+        on_focus_fn("provider_desc"));
     auto f_iurl   = InputField("Ingestion URL",     &cfg->ingestion_url,
         [](const std::string& s){ return s.empty() ? "Must not be empty" : ""; },
-        [on_change]{ on_change("ingestion_url"); });
+        [on_change]{ on_change("ingestion_url"); },
+        on_focus_fn("ingestion_url"));
     auto f_qurl   = InputField("Query URL",         &cfg->query_url,
         [](const std::string&){ return ""; },
-        [on_change]{ on_change("query_url"); });
+        [on_change]{ on_change("query_url"); },
+        on_focus_fn("query_url"));
     auto f_minc   = InputField("Min Connections",   &cfg->min_conn,
         [](const std::string& s){ return isPositiveInt(s) ? "" : "Must be positive int"; },
-        [on_change]{ on_change("min_conn"); });
+        [on_change]{ on_change("min_conn"); },
+        on_focus_fn("min_conn"));
     auto f_maxc   = InputField("Max Connections",   &cfg->max_conn,
         [](const std::string& s){ return isPositiveInt(s) ? "" : "Must be positive int"; },
-        [on_change]{ on_change("max_conn"); });
+        [on_change]{ on_change("max_conn"); },
+        on_focus_fn("max_conn"));
 
     // Credentials — TypeMenu index kept alive via shared_ptr
     static std::vector<std::string> creds_choices = {"none", "ssl", "custom-tls"};
@@ -281,13 +331,16 @@ static Component MakeMldpWriterForm(MldpWriterConfig* cfg, PanelAppState* state)
 
     auto f_cert   = InputField("PEM Cert Chain",    &cfg->pem_cert_chain,
         [](const std::string&){ return ""; },
-        [on_change]{ on_change("pem_cert_chain"); });
+        [on_change]{ on_change("pem_cert_chain"); },
+        on_focus_fn("pem_cert_chain"));
     auto f_pkey   = InputField("PEM Private Key",   &cfg->pem_private_key,
         [](const std::string&){ return ""; },
-        [on_change]{ on_change("pem_private_key"); });
+        [on_change]{ on_change("pem_private_key"); },
+        on_focus_fn("pem_private_key"));
     auto f_root   = InputField("PEM Root Certs",    &cfg->pem_root_certs,
         [](const std::string&){ return ""; },
-        [on_change]{ on_change("pem_root_certs"); });
+        [on_change]{ on_change("pem_root_certs"); },
+        on_focus_fn("pem_root_certs"));
 
     auto tls_fields = Container::Vertical({f_cert, f_pkey, f_root});
     auto tls_maybe  = Maybe(tls_fields, [creds_idx]{ return *creds_idx == 2; });
@@ -327,25 +380,34 @@ static Component MakeHdf5WriterForm(Hdf5WriterConfig* cfg, PanelAppState* state)
         state->dirty = true;
         state->focused_field = field;
     };
+    auto on_focus_fn = [state](const std::string& field) {
+        return [state, field]{ state->focused_field = field; };
+    };
 
     auto f_name   = InputField("Name",                &cfg->name,
         [](const std::string& s){ return s.empty() ? "Must not be empty" : ""; },
-        [on_change]{ on_change("name"); });
+        [on_change]{ on_change("name"); },
+        on_focus_fn("name"));
     auto f_path   = InputField("Base Path",           &cfg->base_path,
         [](const std::string& s){ return s.empty() ? "Must not be empty" : ""; },
-        [on_change]{ on_change("base_path"); });
+        [on_change]{ on_change("base_path"); },
+        on_focus_fn("base_path"));
     auto f_age    = InputField("Max File Age (s)",    &cfg->max_file_age_s,
         [](const std::string& s){ return isPositiveInt(s) ? "" : "Must be positive int"; },
-        [on_change]{ on_change("max_file_age_s"); });
+        [on_change]{ on_change("max_file_age_s"); },
+        on_focus_fn("max_file_age_s"));
     auto f_size   = InputField("Max File Size (MB)",  &cfg->max_file_size_mb,
         [](const std::string& s){ return isPositiveInt(s) ? "" : "Must be positive int"; },
-        [on_change]{ on_change("max_file_size_mb"); });
+        [on_change]{ on_change("max_file_size_mb"); },
+        on_focus_fn("max_file_size_mb"));
     auto f_flush  = InputField("Flush Interval (ms)", &cfg->flush_interval_ms,
         [](const std::string& s){ return isPositiveInt(s) ? "" : "Must be positive int"; },
-        [on_change]{ on_change("flush_interval_ms"); });
+        [on_change]{ on_change("flush_interval_ms"); },
+        on_focus_fn("flush_interval_ms"));
     auto f_comp   = InputField("Compression Level",   &cfg->compression_level,
         [](const std::string& s){ return isNonNegInt(s) ? "" : "Must be non-negative int"; },
-        [on_change]{ on_change("compression_level"); });
+        [on_change]{ on_change("compression_level"); },
+        on_focus_fn("compression_level"));
 
     auto form = Container::Vertical({f_name, f_path, f_age, f_size, f_flush, f_comp});
 
@@ -364,8 +426,11 @@ static Component MakeEpicsReaderForm(EpicsReaderConfig* cfg, PanelAppState* stat
         state->dirty = true;
         state->focused_field = field;
     };
+    auto on_focus_fn = [state](const std::string& field) {
+        return [state, field]{ state->focused_field = field; };
+    };
 
-    // Reader type menu
+    // Reader type index (controls conditional fields visibility; type is fixed at creation)
     static std::vector<std::string> reader_choices = {"epics-pvxs", "epics-base", "epics-archiver"};
     auto rtype_idx = std::make_shared<int>(0);
     for (int i = 0; i < static_cast<int>(reader_choices.size()); ++i)
@@ -373,28 +438,34 @@ static Component MakeEpicsReaderForm(EpicsReaderConfig* cfg, PanelAppState* stat
 
     auto f_name   = InputField("Name",                &cfg->name,
         [](const std::string& s){ return s.empty() ? "Must not be empty" : ""; },
-        [on_change]{ on_change("name"); });
+        [on_change]{ on_change("name"); },
+        on_focus_fn("name"));
     auto f_tp     = InputField("Thread Pool",         &cfg->thread_pool,
         [](const std::string& s){ return isPositiveInt(s) ? "" : "Must be positive int"; },
-        [on_change]{ on_change("thread_pool"); });
+        [on_change]{ on_change("thread_pool"); },
+        on_focus_fn("thread_pool"));
     auto f_cbs    = InputField("Column Batch Size",   &cfg->column_batch_size,
         [](const std::string& s){ return isPositiveInt(s) ? "" : "Must be positive int"; },
-        [on_change]{ on_change("column_batch_size"); });
+        [on_change]{ on_change("column_batch_size"); },
+        on_focus_fn("column_batch_size"));
 
     // epics-base only fields
     auto f_mpt    = InputField("Monitor Poll Threads",   &cfg->monitor_poll_threads,
         [](const std::string& s){ return isPositiveInt(s) ? "" : "Must be positive int"; },
-        [on_change]{ on_change("monitor_poll_threads"); });
+        [on_change]{ on_change("monitor_poll_threads"); },
+        on_focus_fn("monitor_poll_threads"));
     auto f_mpi    = InputField("Monitor Poll Interval ms", &cfg->monitor_poll_interval_ms,
         [](const std::string& s){ return isPositiveInt(s) ? "" : "Must be positive int"; },
-        [on_change]{ on_change("monitor_poll_interval_ms"); });
+        [on_change]{ on_change("monitor_poll_interval_ms"); },
+        on_focus_fn("monitor_poll_interval_ms"));
     auto base_fields = Container::Vertical({f_mpt, f_mpi});
     auto base_maybe  = Maybe(base_fields, [rtype_idx]{ return *rtype_idx == 1; });
 
     // epics-archiver only fields
     auto f_host   = InputField("Hostname",           &cfg->hostname,
         [](const std::string& s){ return s.empty() ? "Must not be empty" : ""; },
-        [on_change]{ on_change("hostname"); });
+        [on_change]{ on_change("hostname"); },
+        on_focus_fn("hostname"));
 
     static std::vector<std::string> mode_choices = {"historical_once", "historical_monitor", "poll_monitor"};
     auto mode_idx = std::make_shared<int>(0);
@@ -408,33 +479,40 @@ static Component MakeEpicsReaderForm(EpicsReaderConfig* cfg, PanelAppState* stat
 
     auto f_sd     = InputField("Start Date",         &cfg->start_date,
         [](const std::string& s){ return (!s.empty() && !isValidIso8601(s)) ? "Invalid ISO8601" : ""; },
-        [on_change]{ on_change("start_date"); });
+        [on_change]{ on_change("start_date"); },
+        on_focus_fn("start_date"));
     auto f_ed     = InputField("End Date",           &cfg->end_date,
         [](const std::string& s){ return (!s.empty() && !isValidIso8601(s)) ? "Invalid ISO8601" : ""; },
-        [on_change]{ on_change("end_date"); });
+        [on_change]{ on_change("end_date"); },
+        on_focus_fn("end_date"));
     auto date_fields = Container::Vertical({f_sd, f_ed});
     auto date_maybe  = Maybe(date_fields,
         [mode_idx]{ return *mode_idx == 0 || *mode_idx == 1; });
 
     auto f_poll   = InputField("Poll Interval (s)",  &cfg->poll_interval_sec,
         [](const std::string& s){ return (!s.empty() && !isPositiveInt(s)) ? "Must be positive int" : ""; },
-        [on_change]{ on_change("poll_interval_sec"); });
+        [on_change]{ on_change("poll_interval_sec"); },
+        on_focus_fn("poll_interval_sec"));
     auto poll_maybe = Maybe(f_poll, [mode_idx]{ return *mode_idx == 2; });
 
     auto f_look   = InputField("Lookback (s)",       &cfg->lookback_sec,
         [](const std::string& s){ return (!s.empty() && !isPositiveInt(s)) ? "Must be positive int" : ""; },
-        [on_change]{ on_change("lookback_sec"); });
+        [on_change]{ on_change("lookback_sec"); },
+        on_focus_fn("lookback_sec"));
     auto look_maybe = Maybe(f_look, [mode_idx]{ return *mode_idx == 1 || *mode_idx == 2; });
 
     auto f_cto    = InputField("Connect Timeout (s)", &cfg->connect_timeout_sec,
         [](const std::string& s){ return isPositiveInt(s) ? "" : "Must be positive int"; },
-        [on_change]{ on_change("connect_timeout_sec"); });
+        [on_change]{ on_change("connect_timeout_sec"); },
+        on_focus_fn("connect_timeout_sec"));
     auto f_tto    = InputField("Total Timeout (s)",   &cfg->total_timeout_sec,
         [](const std::string& s){ return isPositiveInt(s) ? "" : "Must be positive int"; },
-        [on_change]{ on_change("total_timeout_sec"); });
+        [on_change]{ on_change("total_timeout_sec"); },
+        on_focus_fn("total_timeout_sec"));
     auto f_bds    = InputField("Batch Duration (s)",  &cfg->batch_duration_sec,
         [](const std::string& s){ return isPositiveInt(s) ? "" : "Must be positive int"; },
-        [on_change]{ on_change("batch_duration_sec"); });
+        [on_change]{ on_change("batch_duration_sec"); },
+        on_focus_fn("batch_duration_sec"));
 
     // tls booleans stored as shared_ptr
     auto tls_peer = std::make_shared<bool>(cfg->tls_verify_peer == "true");
@@ -538,15 +616,20 @@ static Component MakeMetricsForm(WizardState* w, PanelAppState* state) {
         state->dirty = true;
         state->focused_field = field;
     };
+    auto on_focus_fn = [state](const std::string& field) {
+        return [state, field]{ state->focused_field = field; };
+    };
 
     auto f_enabled  = Checkbox("Enable Metrics", &w->metrics_enabled);
 
     auto f_endpoint = InputField("Endpoint",        &w->metrics_endpoint,
         [](const std::string& s){ return s.empty() ? "Must not be empty" : ""; },
-        [on_change]{ on_change("endpoint"); });
+        [on_change]{ on_change("endpoint"); },
+        on_focus_fn("endpoint"));
     auto f_interval = InputField("Interval (s)",    &w->metrics_interval,
         [](const std::string& s){ return isPositiveInt(s) ? "" : "Must be positive int"; },
-        [on_change]{ on_change("interval"); });
+        [on_change]{ on_change("interval"); },
+        on_focus_fn("interval"));
 
     auto detail = Container::Vertical({f_endpoint, f_interval});
     auto detail_maybe = Maybe(detail, [w]{ return w->metrics_enabled; });
@@ -590,10 +673,15 @@ static Component MakeRoutingForm(WizardState* w, PanelAppState* state) {
 
 static Component MakeHelpPanel(PanelAppState* state) {
     return Renderer([state] {
-        std::string txt = GetHelpText(
-            state->tree.empty() ? TreeNodeKind::Controller
-                                : state->tree[state->tree_sel].kind,
-            state->focused_field);
+        std::string txt;
+        if (state->active_panel == 0 && !state->tree.empty()) {
+            txt = GetNodeHelp(state->tree[state->tree_sel]);
+        } else {
+            txt = GetHelpText(
+                state->tree.empty() ? TreeNodeKind::Controller
+                                    : state->tree[state->tree_sel].kind,
+                state->focused_field);
+        }
         Elements lines;
         std::string seg;
         for (char c : txt) {
