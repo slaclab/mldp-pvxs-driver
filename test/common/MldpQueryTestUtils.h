@@ -5,151 +5,164 @@
 #include <query.grpc.pb.h>
 
 #include <chrono>
+#include <numeric>
 #include <optional>
 #include <string>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
+#include <variant>
 #include <vector>
 
 namespace mldp_pvxs_driver::testutil {
 
-inline void appendDataValuesToRows(const dp::service::common::DataValues&       src,
-                                   std::vector<dp::service::common::DataValue>* rows)
+/// Typed result for one DataValues bucket (one column from one DataBucket).
+struct ColumnResult
 {
-    if (!rows)
-    {
-        return;
-    }
+    std::string name;               ///< Column name from the proto message.
+    std::string provenance_source;  ///< metadata.provenance.source, empty if unset.
 
-    auto pushRow = [&](const dp::service::common::DataValue& v)
-    {
-        rows->push_back(v);
-    };
+    using Values = std::variant<
+        std::vector<double>,
+        std::vector<float>,
+        std::vector<int32_t>,
+        std::vector<int64_t>,
+        std::vector<bool>,
+        std::vector<std::string>,
+        std::vector<std::vector<double>>,
+        std::vector<std::vector<float>>,
+        std::vector<std::vector<int32_t>>,
+        std::vector<std::vector<int64_t>>,
+        std::vector<std::vector<bool>>
+    >;
+    Values values;
+};
 
+/// Extract a ColumnResult from a DataValues oneof.
+/// Handles: kDoubleColumn, kFloatColumn, kInt32Column, kInt64Column, kBoolColumn,
+/// kStringColumn, kDoubleArrayColumn, kFloatArrayColumn, kInt32ArrayColumn,
+/// kInt64ArrayColumn, kBoolArrayColumn.
+inline ColumnResult extractColumn(const dp::service::common::DataValues& src)
+{
     using DV = dp::service::common::DataValues;
-    auto pushArrayRow = [&](const auto& values, auto setScalar)
-    {
-        auto& row = rows->emplace_back();
-        auto* out = row.mutable_arrayvalue();
-        for (const auto& v : values)
-        {
-            auto* cell = out->add_datavalues();
-            setScalar(cell, v);
-        }
-    };
+
+    ColumnResult result;
 
     switch (src.values_case())
     {
-    case DV::kDataColumn:
-        for (const auto& v : src.datacolumn().datavalues())
+    case DV::kDoubleColumn:
         {
-            pushRow(v);
-        }
-        break;
-    case DV::kSerializedDataColumn:
-        {
-            dp::service::common::DataColumn parsed;
-            if (parsed.ParseFromString(src.serializeddatacolumn().payload()))
-            {
-                for (const auto& v : parsed.datavalues())
-                {
-                    pushRow(v);
-                }
-            }
+            const auto& col = src.doublecolumn();
+            result.name = col.name();
+            result.provenance_source = col.metadata().provenance().source();
+            result.values = std::vector<double>(col.values().begin(), col.values().end());
             break;
         }
-    case DV::kDoubleColumn:
-        for (double v : src.doublecolumn().values())
-        {
-            auto& row = rows->emplace_back();
-            row.set_doublevalue(v);
-        }
-        break;
     case DV::kFloatColumn:
-        for (float v : src.floatcolumn().values())
         {
-            auto& row = rows->emplace_back();
-            row.set_floatvalue(v);
+            const auto& col = src.floatcolumn();
+            result.name = col.name();
+            result.provenance_source = col.metadata().provenance().source();
+            result.values = std::vector<float>(col.values().begin(), col.values().end());
+            break;
         }
-        break;
     case DV::kInt32Column:
-        for (int32_t v : src.int32column().values())
         {
-            auto& row = rows->emplace_back();
-            row.set_intvalue(v);
+            const auto& col = src.int32column();
+            result.name = col.name();
+            result.provenance_source = col.metadata().provenance().source();
+            result.values = std::vector<int32_t>(col.values().begin(), col.values().end());
+            break;
         }
-        break;
     case DV::kInt64Column:
-        for (int64_t v : src.int64column().values())
         {
-            auto& row = rows->emplace_back();
-            row.set_longvalue(v);
+            const auto& col = src.int64column();
+            result.name = col.name();
+            result.provenance_source = col.metadata().provenance().source();
+            result.values = std::vector<int64_t>(col.values().begin(), col.values().end());
+            break;
         }
-        break;
     case DV::kBoolColumn:
-        for (bool v : src.boolcolumn().values())
         {
-            auto& row = rows->emplace_back();
-            row.set_booleanvalue(v);
+            const auto& col = src.boolcolumn();
+            result.name = col.name();
+            result.provenance_source = col.metadata().provenance().source();
+            result.values = std::vector<bool>(col.values().begin(), col.values().end());
+            break;
         }
-        break;
     case DV::kStringColumn:
-        for (const auto& v : src.stringcolumn().values())
         {
-            auto& row = rows->emplace_back();
-            row.set_stringvalue(v);
+            const auto& col = src.stringcolumn();
+            result.name = col.name();
+            result.provenance_source = col.metadata().provenance().source();
+            result.values = std::vector<std::string>(col.values().begin(), col.values().end());
+            break;
         }
-        break;
     case DV::kDoubleArrayColumn:
-        pushArrayRow(src.doublearraycolumn().values(),
-                     [](auto* cell, double v)
-                     {
-                         cell->set_doublevalue(v);
-                     });
-        break;
+        {
+            // Flat repeated values — wrap as a single inner vector per bucket.
+            const auto& col = src.doublearraycolumn();
+            result.name = col.name();
+            result.provenance_source = col.metadata().provenance().source();
+            std::vector<double> inner(col.values().begin(), col.values().end());
+            result.values = std::vector<std::vector<double>>{std::move(inner)};
+            break;
+        }
     case DV::kFloatArrayColumn:
-        pushArrayRow(src.floatarraycolumn().values(),
-                     [](auto* cell, float v)
-                     {
-                         cell->set_floatvalue(v);
-                     });
-        break;
+        {
+            const auto& col = src.floatarraycolumn();
+            result.name = col.name();
+            result.provenance_source = col.metadata().provenance().source();
+            std::vector<float> inner(col.values().begin(), col.values().end());
+            result.values = std::vector<std::vector<float>>{std::move(inner)};
+            break;
+        }
     case DV::kInt32ArrayColumn:
-        pushArrayRow(src.int32arraycolumn().values(),
-                     [](auto* cell, int32_t v)
-                     {
-                         cell->set_intvalue(v);
-                     });
-        break;
+        {
+            const auto& col = src.int32arraycolumn();
+            result.name = col.name();
+            result.provenance_source = col.metadata().provenance().source();
+            std::vector<int32_t> inner(col.values().begin(), col.values().end());
+            result.values = std::vector<std::vector<int32_t>>{std::move(inner)};
+            break;
+        }
     case DV::kInt64ArrayColumn:
-        pushArrayRow(src.int64arraycolumn().values(),
-                     [](auto* cell, int64_t v)
-                     {
-                         cell->set_longvalue(v);
-                     });
-        break;
+        {
+            const auto& col = src.int64arraycolumn();
+            result.name = col.name();
+            result.provenance_source = col.metadata().provenance().source();
+            std::vector<int64_t> inner(col.values().begin(), col.values().end());
+            result.values = std::vector<std::vector<int64_t>>{std::move(inner)};
+            break;
+        }
     case DV::kBoolArrayColumn:
-        pushArrayRow(src.boolarraycolumn().values(),
-                     [](auto* cell, bool v)
-                     {
-                         cell->set_booleanvalue(v);
-                     });
-        break;
+        {
+            const auto& col = src.boolarraycolumn();
+            result.name = col.name();
+            result.provenance_source = col.metadata().provenance().source();
+            std::vector<bool> inner(col.values().begin(), col.values().end());
+            result.values = std::vector<std::vector<bool>>{std::move(inner)};
+            break;
+        }
     default:
+        result.values = std::vector<double>{};
         break;
     }
+
+    return result;
 }
 
-inline std::vector<dp::service::common::DataValue> flattenDataValues(
+/// Flatten all DataValues buckets into a vector of ColumnResult (one per bucket).
+inline std::vector<ColumnResult> flattenColumns(
     const std::vector<dp::service::common::DataValues>& buckets)
 {
-    std::vector<dp::service::common::DataValue> rows;
+    std::vector<ColumnResult> cols;
+    cols.reserve(buckets.size());
     for (const auto& bucket : buckets)
     {
-        appendDataValuesToRows(bucket, &rows);
+        cols.push_back(extractColumn(bucket));
     }
-    return rows;
+    return cols;
 }
 
 inline std::optional<std::unordered_map<std::string, std::vector<dp::service::common::DataValues>>> queryAndCollectColumns(

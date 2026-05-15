@@ -116,7 +116,7 @@ private:
                       dp::service::ingestion::IngestDataRequest& request,
                       std::size_t&                               acceptedEvents,
                       std::size_t&                               payloadBytes);
-    static dp::service::common::DataFrame toDataFrame(const util::bus::DataBatch& batch);
+    static dp::service::common::DataFrame toDataFrame(const util::bus::DataBatch& batch, const std::string& rootSource);
     void updateQueueDepthMetric();
 };
 

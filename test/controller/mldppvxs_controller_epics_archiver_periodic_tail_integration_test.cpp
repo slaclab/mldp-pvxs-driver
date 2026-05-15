@@ -16,7 +16,6 @@
 using namespace mldp_pvxs_driver::controller;
 using namespace mldp_pvxs_driver::testutil;
 
-using dp::service::common::DataValue;
 using mldp_pvxs_driver::config::makeConfigFromYaml;
 using mldp_pvxs_driver::reader::impl::epics_archiver::MockArchiverPbHttpServer;
 
@@ -112,11 +111,21 @@ TEST_F(MLDPPVXSControllerEpicsArchiverPeriodicTailIntegrationTest, IngestsPeriod
         std::chrono::seconds(10),
         std::chrono::seconds(120));
     ASSERT_TRUE(result.has_value());
-    const auto rows = flattenDataValues(result->at("TEST:PV:DOUBLE"));
+    const auto cols = flattenColumns(result->at("TEST:PV:DOUBLE"));
 
     // We don't assert an exact count because periodic scheduling jitter and backend dedup behavior can vary.
-    ASSERT_GT(rows.size(), 0);
-    EXPECT_EQ(rows[0].value_case(), DataValue::kDoubleValue);
+    ASSERT_GT(cols.size(), 0u);
+    ASSERT_TRUE(std::holds_alternative<std::vector<double>>(cols[0].values));
+
+    // Count total samples across all buckets for metric comparison.
+    const std::size_t total_samples = std::accumulate(
+        cols.begin(), cols.end(), std::size_t{0},
+        [](std::size_t acc, const ColumnResult& c)
+        {
+            if (std::holds_alternative<std::vector<double>>(c.values))
+                return acc + std::get<std::vector<double>>(c.values).size();
+            return acc;
+        });
 
     // Verify that reader metrics were recorded correctly during data ingestion
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
@@ -129,7 +138,7 @@ TEST_F(MLDPPVXSControllerEpicsArchiverPeriodicTailIntegrationTest, IngestsPeriod
                                                            "TEST:PV:DOUBLE");
     EXPECT_GT(events_received, 0.0) << "Reader should have recorded events received from archiver";
     // Events received should be at least as many as the data values we got
-    EXPECT_GE(events_received, static_cast<double>(rows.size()))
+    EXPECT_GE(events_received, static_cast<double>(total_samples))
         << "Metrics events_received should match or exceed ingested data values";
 
     // Verify reader events published metric

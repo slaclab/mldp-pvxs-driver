@@ -28,7 +28,6 @@
 
 using namespace mldp_pvxs_driver::util::pool;
 using namespace mldp_pvxs_driver::testutil;
-using dp::service::common::DataValue;
 using dp::service::common::Structure;
 using mldp_pvxs_driver::config::makeConfigFromYaml;
 using mldp_pvxs_driver::controller::MLDPPVXSController;
@@ -51,49 +50,17 @@ constexpr auto kSubscribeTimeout = std::chrono::seconds(10);
 
 std::optional<int64_t> firstIntegerValue(const dp::service::common::DataValues& values)
 {
-    using DV = dp::service::common::DataValues;
-
-    auto fromDataValue = [](const dp::service::common::DataValue& v) -> std::optional<int64_t>
+    using namespace mldp_pvxs_driver::testutil;
+    const auto col = extractColumn(values);
+    if (std::holds_alternative<std::vector<int32_t>>(col.values))
     {
-        switch (v.value_case())
-        {
-        case dp::service::common::DataValue::kIntValue: return static_cast<int64_t>(v.intvalue());
-        case dp::service::common::DataValue::kLongValue: return static_cast<int64_t>(v.longvalue());
-        default: return std::nullopt;
-        }
-    };
-
-    switch (values.values_case())
+        const auto& v = std::get<std::vector<int32_t>>(col.values);
+        if (!v.empty()) return static_cast<int64_t>(v[0]);
+    }
+    else if (std::holds_alternative<std::vector<int64_t>>(col.values))
     {
-    case DV::kDataColumn:
-        if (values.datacolumn().datavalues_size() > 0)
-        {
-            return fromDataValue(values.datacolumn().datavalues(0));
-        }
-        break;
-    case DV::kSerializedDataColumn:
-        {
-            dp::service::common::DataColumn parsed;
-            if (parsed.ParseFromString(values.serializeddatacolumn().payload()) && parsed.datavalues_size() > 0)
-            {
-                return fromDataValue(parsed.datavalues(0));
-            }
-            break;
-        }
-    case DV::kInt32Column:
-        if (values.int32column().values_size() > 0)
-        {
-            return static_cast<int64_t>(values.int32column().values(0));
-        }
-        break;
-    case DV::kInt64Column:
-        if (values.int64column().values_size() > 0)
-        {
-            return static_cast<int64_t>(values.int64column().values(0));
-        }
-        break;
-    default:
-        break;
+        const auto& v = std::get<std::vector<int64_t>>(col.values);
+        if (!v.empty()) return v[0];
     }
     return std::nullopt;
 }
@@ -302,10 +269,9 @@ TEST(MLDPWriterPoolTest, UpdatesMetricsWhenConnectionsMove)
         request.set_providerid(providerId);
         request.set_clientrequestid("req_123");
         auto* frame = request.mutable_ingestiondataframe();
-        auto* column = frame->add_datacolumns();
+        auto* column = frame->add_int32columns();
         column->set_name("pv1");
-        auto* value = column->add_datavalues();
-        value->set_intvalue(42);
+        column->add_values(42);
 
         auto*      timestamps = frame->mutable_datatimestamps();
         auto*      timestampList = timestamps->mutable_timestamplist();
@@ -336,11 +302,21 @@ TEST_F(MLDPWriterIntegrationTest, QueryCounterPV)
     ASSERT_TRUE(result.has_value());
 
     const auto& buckets = result->at("test:counter");
-    const auto  rows = flattenDataValues(buckets);
-    ASSERT_GT(rows.size(), 0);
-    const auto& value = rows[0];
-    EXPECT_EQ(value.value_case(), DataValue::kIntValue);
-    EXPECT_GT(value.intvalue(), 0);
+    const auto  cols = flattenColumns(buckets);
+    ASSERT_GT(cols.size(), 0);
+    const auto& col = cols[0];
+    EXPECT_TRUE(std::holds_alternative<std::vector<int32_t>>(col.values) ||
+                std::holds_alternative<std::vector<int64_t>>(col.values));
+    if (std::holds_alternative<std::vector<int32_t>>(col.values))
+    {
+        ASSERT_FALSE(std::get<std::vector<int32_t>>(col.values).empty());
+        EXPECT_GT(std::get<std::vector<int32_t>>(col.values)[0], 0);
+    }
+    else
+    {
+        ASSERT_FALSE(std::get<std::vector<int64_t>>(col.values).empty());
+        EXPECT_GT(std::get<std::vector<int64_t>>(col.values)[0], 0LL);
+    }
 }
 
 TEST_F(MLDPWriterIntegrationTest, QueryVoltagePV)
@@ -351,12 +327,14 @@ TEST_F(MLDPWriterIntegrationTest, QueryVoltagePV)
     ASSERT_TRUE(result.has_value());
 
     const auto& buckets = result->at("test:voltage");
-    const auto  rows = flattenDataValues(buckets);
-    ASSERT_GT(rows.size(), 0);
-    const auto& value = rows[0];
-    EXPECT_EQ(value.value_case(), DataValue::kDoubleValue);
-    EXPECT_GE(value.doublevalue(), 0.4);
-    EXPECT_LE(value.doublevalue(), 2.6);
+    const auto  cols = flattenColumns(buckets);
+    ASSERT_GT(cols.size(), 0);
+    const auto& col = cols[0];
+    ASSERT_TRUE(std::holds_alternative<std::vector<double>>(col.values));
+    const auto& vals = std::get<std::vector<double>>(col.values);
+    ASSERT_FALSE(vals.empty());
+    EXPECT_GE(vals[0], 0.4);
+    EXPECT_LE(vals[0], 2.6);
 }
 
 TEST_F(MLDPWriterIntegrationTest, QueryStatusPV)
@@ -367,11 +345,13 @@ TEST_F(MLDPWriterIntegrationTest, QueryStatusPV)
     ASSERT_TRUE(result.has_value());
 
     const auto& buckets = result->at("test:status");
-    const auto  rows = flattenDataValues(buckets);
-    ASSERT_GT(rows.size(), 0);
-    const auto& value = rows[0];
-    EXPECT_EQ(value.value_case(), DataValue::kStringValue);
-    const auto& status = value.stringvalue();
+    const auto  cols = flattenColumns(buckets);
+    ASSERT_GT(cols.size(), 0);
+    const auto& col = cols[0];
+    ASSERT_TRUE(std::holds_alternative<std::vector<std::string>>(col.values));
+    const auto& vals = std::get<std::vector<std::string>>(col.values);
+    ASSERT_FALSE(vals.empty());
+    const auto& status = vals[0];
     EXPECT_TRUE(status == "OK" || status == "WARNING" || status == "FAULT");
 }
 
@@ -383,18 +363,18 @@ TEST_F(MLDPWriterIntegrationTest, QueryWaveformPV)
     ASSERT_TRUE(result.has_value());
 
     const auto& buckets = result->at("test:waveform");
-    const auto  rows = flattenDataValues(buckets);
-    ASSERT_GT(rows.size(), 0);
-    const auto& value = rows[0];
-    ASSERT_TRUE(value.has_arrayvalue());
-
-    const auto& arrayValues = value.arrayvalue().datavalues();
-    EXPECT_EQ(arrayValues.size(), 256);
-    for (const auto& entry : arrayValues)
+    const auto  cols = flattenColumns(buckets);
+    ASSERT_GT(cols.size(), 0);
+    const auto& col = cols[0];
+    ASSERT_TRUE(std::holds_alternative<std::vector<std::vector<double>>>(col.values));
+    const auto& outer = std::get<std::vector<std::vector<double>>>(col.values);
+    ASSERT_FALSE(outer.empty());
+    const auto& inner = outer[0];
+    EXPECT_EQ(inner.size(), 256u);
+    for (const auto& entry : inner)
     {
-        EXPECT_EQ(entry.value_case(), DataValue::kDoubleValue);
-        EXPECT_GE(entry.doublevalue(), 0.4);
-        EXPECT_LE(entry.doublevalue(), 2.6);
+        EXPECT_GE(entry, 0.4);
+        EXPECT_LE(entry, 2.6);
     }
 }
 
@@ -460,32 +440,31 @@ TEST_F(MLDPWriterIntegrationTest, QueryBsasTablePV)
     const auto resultA = queryAndCollectColumns({"PV_A"}, kSubscribeTimeout);
     ASSERT_TRUE(resultA.has_value()) << "PV_A not found in dp-service";
 
-    const auto doubleRows = flattenDataValues(resultA->at("PV_A"));
-    ASSERT_GE(doubleRows.size(), 3);
-    EXPECT_EQ(doubleRows[0].value_case(), DataValue::kDoubleValue);
-    EXPECT_EQ(doubleRows[1].value_case(), DataValue::kDoubleValue);
-    EXPECT_EQ(doubleRows[2].value_case(), DataValue::kDoubleValue);
+    const auto colsA = flattenColumns(resultA->at("PV_A"));
+    ASSERT_GE(colsA.size(), 1u);
+    ASSERT_TRUE(std::holds_alternative<std::vector<double>>(colsA[0].values));
+    EXPECT_GE(std::get<std::vector<double>>(colsA[0].values).size(), 3u);
+    EXPECT_EQ(colsA[0].provenance_source, "test:bsas_table");
 
     // PV_B: Int32 column
     const auto resultB = queryAndCollectColumns({"PV_B"}, kSubscribeTimeout);
     ASSERT_TRUE(resultB.has_value()) << "PV_B not found in dp-service";
 
-    const auto intRows = flattenDataValues(resultB->at("PV_B"));
-    ASSERT_GE(intRows.size(), 3);
-    EXPECT_EQ(intRows[0].value_case(), DataValue::kIntValue);
-    EXPECT_EQ(intRows[1].value_case(), DataValue::kIntValue);
-    EXPECT_EQ(intRows[2].value_case(), DataValue::kIntValue);
+    const auto colsB = flattenColumns(resultB->at("PV_B"));
+    ASSERT_GE(colsB.size(), 1u);
+    ASSERT_TRUE(std::holds_alternative<std::vector<int32_t>>(colsB[0].values));
+    EXPECT_GE(std::get<std::vector<int32_t>>(colsB[0].values).size(), 3u);
+    EXPECT_EQ(colsB[0].provenance_source, "test:bsas_table");
 
-    // PV_C: Float32 column (arrives as floatValue or doubleValue depending on server)
+    // PV_C: Float32 column (arrives as floatColumn or doubleColumn depending on server)
     const auto resultC = queryAndCollectColumns({"PV_C"}, kSubscribeTimeout);
     ASSERT_TRUE(resultC.has_value()) << "PV_C not found in dp-service";
 
-    const auto floatRows = flattenDataValues(resultC->at("PV_C"));
-    ASSERT_GE(floatRows.size(), 3);
-    for (const auto& v : floatRows)
-    {
-        EXPECT_TRUE(v.value_case() == DataValue::kFloatValue || v.value_case() == DataValue::kDoubleValue);
-    }
+    const auto colsC = flattenColumns(resultC->at("PV_C"));
+    ASSERT_GE(colsC.size(), 1u);
+    EXPECT_TRUE(std::holds_alternative<std::vector<float>>(colsC[0].values) ||
+                std::holds_alternative<std::vector<double>>(colsC[0].values));
+    EXPECT_EQ(colsC[0].provenance_source, "test:bsas_table");
 }
 
 TEST_F(MLDPWriterIntegrationTest, CharacterizesDuplicateIngestBehaviorForSameSample)
@@ -506,10 +485,9 @@ TEST_F(MLDPWriterIntegrationTest, CharacterizesDuplicateIngestBehaviorForSameSam
         request.set_clientrequestid(std::move(client_request_id));
 
         auto* frame = request.mutable_ingestiondataframe();
-        auto* column = frame->add_datacolumns();
+        auto* column = frame->add_int32columns();
         column->set_name(pvName);
-        auto* value = column->add_datavalues();
-        value->set_intvalue(42);
+        column->add_values(42);
 
         auto* timestamps = frame->mutable_datatimestamps();
         auto* list = timestamps->mutable_timestamplist();
@@ -539,17 +517,19 @@ TEST_F(MLDPWriterIntegrationTest, CharacterizesDuplicateIngestBehaviorForSameSam
 
     const auto result = queryAndCollectColumns({pvName}, std::chrono::seconds(10));
     ASSERT_TRUE(result.has_value());
-    const auto rows = flattenDataValues(result->at(pvName));
+    const auto cols = flattenColumns(result->at(pvName));
 
     // Characterization test: some MLDP deployments deduplicate identical samples,
     // while others store both rows. This test records the current behavior while
     // still ensuring the query path returns the inserted sample value.
-    ASSERT_GE(rows.size(), 1);
-    ASSERT_LE(rows.size(), 2);
-    for (const auto& v : rows)
+    ASSERT_GE(cols.size(), 1u);
+    ASSERT_TRUE(std::holds_alternative<std::vector<int32_t>>(cols[0].values));
+    const auto& vals = std::get<std::vector<int32_t>>(cols[0].values);
+    ASSERT_GE(vals.size(), 1u);
+    ASSERT_LE(vals.size(), 2u);
+    for (const auto& v : vals)
     {
-        EXPECT_EQ(v.value_case(), DataValue::kIntValue);
-        EXPECT_EQ(v.intvalue(), 42);
+        EXPECT_EQ(v, 42);
     }
 }
 
@@ -573,10 +553,9 @@ TEST_F(MLDPWriterIntegrationTest, QueryClientReturnsMetadataAndDataForInsertedPV
     request.set_providerid(provider_id);
     request.set_clientrequestid("query_api_probe_req");
     auto* frame = request.mutable_ingestiondataframe();
-    auto* column = frame->add_datacolumns();
+    auto* column = frame->add_int32columns();
     column->set_name(pv_name);
-    auto* value = column->add_datavalues();
-    value->set_intvalue(expected_value);
+    column->add_values(expected_value);
     auto* timestamps = frame->mutable_datatimestamps();
     auto* list = timestamps->mutable_timestamplist();
     auto* ts = list->add_timestamps();
@@ -671,9 +650,9 @@ TEST_F(MLDPWriterIntegrationTest, QueryClientReturnsAllRequestedInsertedPVs)
         request.set_providerid(provider_id);
         request.set_clientrequestid(request_id);
         auto* frame = request.mutable_ingestiondataframe();
-        auto* column = frame->add_datacolumns();
+        auto* column = frame->add_int32columns();
         column->set_name(pv_name);
-        column->add_datavalues()->set_intvalue(value_int);
+        column->add_values(value_int);
         auto* ts = frame->mutable_datatimestamps()->mutable_timestamplist()->add_timestamps();
         ts->set_epochseconds(ts_sec);
         ts->set_nanoseconds(static_cast<uint32_t>(ts_ns));

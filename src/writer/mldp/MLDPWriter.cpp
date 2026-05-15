@@ -461,7 +461,7 @@ void MLDPWriter::workerLoop(std::size_t workerIndex)
 // toDataFrame — convert DataBatch → protobuf DataFrame
 // ---------------------------------------------------------------------------
 
-dp::service::common::DataFrame MLDPWriter::toDataFrame(const util::bus::DataBatch& batch)
+dp::service::common::DataFrame MLDPWriter::toDataFrame(const util::bus::DataBatch& batch, const std::string& rootSource)
 {
     dp::service::common::DataFrame df;
 
@@ -488,42 +488,49 @@ dp::service::common::DataFrame MLDPWriter::toDataFrame(const util::bus::DataBatc
                 {
                     auto* c = df.add_doublecolumns();
                     c->set_name(col.name);
+                    c->mutable_metadata()->mutable_provenance()->set_source(rootSource);
                     for (auto v : vec) { c->add_values(v); }
                 }
                 else if constexpr (std::is_same_v<T, std::vector<float>>)
                 {
                     auto* c = df.add_floatcolumns();
                     c->set_name(col.name);
+                    c->mutable_metadata()->mutable_provenance()->set_source(rootSource);
                     for (auto v : vec) { c->add_values(v); }
                 }
                 else if constexpr (std::is_same_v<T, std::vector<int64_t>>)
                 {
                     auto* c = df.add_int64columns();
                     c->set_name(col.name);
+                    c->mutable_metadata()->mutable_provenance()->set_source(rootSource);
                     for (auto v : vec) { c->add_values(v); }
                 }
                 else if constexpr (std::is_same_v<T, std::vector<int32_t>>)
                 {
                     auto* c = df.add_int32columns();
                     c->set_name(col.name);
+                    c->mutable_metadata()->mutable_provenance()->set_source(rootSource);
                     for (auto v : vec) { c->add_values(v); }
                 }
                 else if constexpr (std::is_same_v<T, std::vector<bool>>)
                 {
                     auto* c = df.add_boolcolumns();
                     c->set_name(col.name);
+                    c->mutable_metadata()->mutable_provenance()->set_source(rootSource);
                     for (auto v : vec) { c->add_values(v); }
                 }
                 else if constexpr (std::is_same_v<T, std::vector<std::string>>)
                 {
                     auto* c = df.add_stringcolumns();
                     c->set_name(col.name);
+                    c->mutable_metadata()->mutable_provenance()->set_source(rootSource);
                     for (const auto& v : vec) { c->add_values(v); }
                 }
                 else if constexpr (std::is_same_v<T, std::vector<std::vector<uint8_t>>>)
                 {
                     auto* c = df.add_structcolumns();
                     c->set_name(col.name);
+                    c->mutable_metadata()->mutable_provenance()->set_source(rootSource);
                     c->set_schemaid("");
                     for (const auto& blob : vec)
                     {
@@ -534,6 +541,7 @@ dp::service::common::DataFrame MLDPWriter::toDataFrame(const util::bus::DataBatc
                 {
                     auto* c = df.add_doublearraycolumns();
                     c->set_name(col.name);
+                    c->mutable_metadata()->mutable_provenance()->set_source(rootSource);
                     for (const auto& arr : vec)
                     {
                         for (auto v : arr) { c->add_values(v); }
@@ -548,6 +556,7 @@ dp::service::common::DataFrame MLDPWriter::toDataFrame(const util::bus::DataBatc
                 {
                     auto* c = df.add_floatarraycolumns();
                     c->set_name(col.name);
+                    c->mutable_metadata()->mutable_provenance()->set_source(rootSource);
                     for (const auto& arr : vec)
                     {
                         for (auto v : arr) { c->add_values(v); }
@@ -562,6 +571,7 @@ dp::service::common::DataFrame MLDPWriter::toDataFrame(const util::bus::DataBatc
                 {
                     auto* c = df.add_int64arraycolumns();
                     c->set_name(col.name);
+                    c->mutable_metadata()->mutable_provenance()->set_source(rootSource);
                     for (const auto& arr : vec)
                     {
                         for (auto v : arr) { c->add_values(v); }
@@ -576,6 +586,7 @@ dp::service::common::DataFrame MLDPWriter::toDataFrame(const util::bus::DataBatc
                 {
                     auto* c = df.add_int32arraycolumns();
                     c->set_name(col.name);
+                    c->mutable_metadata()->mutable_provenance()->set_source(rootSource);
                     for (const auto& arr : vec)
                     {
                         for (auto v : arr) { c->add_values(v); }
@@ -590,6 +601,7 @@ dp::service::common::DataFrame MLDPWriter::toDataFrame(const util::bus::DataBatc
                 {
                     auto* c = df.add_boolarraycolumns();
                     c->set_name(col.name);
+                    c->mutable_metadata()->mutable_provenance()->set_source(rootSource);
                     for (const auto& arr : vec)
                     {
                         for (auto v : arr) { c->add_values(v); }
@@ -609,6 +621,7 @@ dp::service::common::DataFrame MLDPWriter::toDataFrame(const util::bus::DataBatc
     {
         auto* c = df.add_enumcolumns();
         c->set_name(ecol.name);
+        c->mutable_metadata()->mutable_provenance()->set_source(rootSource);
         c->set_enumid(ecol.enum_id);
         for (auto v : ecol.values) { c->add_values(v); }
     }
@@ -630,7 +643,7 @@ bool MLDPWriter::buildRequest(const std::string&                         sourceN
     request.set_providerid(providerId_);
     request.set_clientrequestid(requestId);
 
-    auto  dataFrame  = toDataFrame(batch);
+    auto  dataFrame  = toDataFrame(batch, sourceName);
     auto* dataFrame_ptr = request.mutable_ingestiondataframe();
     *dataFrame_ptr = std::move(dataFrame);
 

@@ -110,6 +110,9 @@ public:
     std::atomic<int> request_count{0};
     std::atomic<int> stream_close_count{0};
 
+    std::vector<dp::service::ingestion::IngestDataRequest> captured_requests;
+    std::mutex                                             captured_mutex;
+
     grpc::Status registerProvider(grpc::ServerContext*,
                                   const dp::service::ingestion::RegisterProviderRequest* request,
                                   dp::service::ingestion::RegisterProviderResponse*      response) override
@@ -130,6 +133,10 @@ public:
         while (reader->Read(&request))
         {
             request_count.fetch_add(1, std::memory_order_relaxed);
+            {
+                std::lock_guard<std::mutex> lock(captured_mutex);
+                captured_requests.push_back(request);
+            }
         }
         stream_close_count.fetch_add(1, std::memory_order_relaxed);
         return grpc::Status::OK;
@@ -249,6 +256,115 @@ TEST(MLDPPVXSControllerTest, BsasNtTableRowTsAggregatesPushAndBandwidthMetrics)
     EXPECT_GE(queue_depth, 0.0);
 
     ASSERT_NO_THROW(controller->stop(););
+}
+
+TEST(MLDPPVXSControllerTest, BsasNtTableColumnsHaveProvenanceSourceSetToRootSource)
+{
+    TestIngestionService service;
+    grpc::ServerBuilder  builder;
+    int                  port = 0;
+    builder.AddListeningPort("127.0.0.1:0", grpc::InsecureServerCredentials(), &port);
+    builder.RegisterService(&service);
+    std::unique_ptr<grpc::Server> server(builder.BuildAndStart());
+    ASSERT_TRUE(server);
+    ASSERT_GT(port, 0);
+
+    std::ostringstream yaml;
+    yaml << "mldp-pool:\n"
+         << "  provider-name: test_provider\n"
+         << "  provider-description: \"Test Provider\"\n"
+         << "  ingestion-url: 127.0.0.1:" << port << "\n"
+         << "  query-url: localhost:" << port << "\n"
+         << "  min-conn: 1\n"
+         << "  max-conn: 1\n"
+         << "writer:\n"
+         << "  mldp:\n"
+         << "    - name: mldp_main\n"
+         << "      mldp-pool:\n"
+         << "        provider-name: test_provider\n"
+         << "        ingestion-url: 127.0.0.1:" << port << "\n"
+         << "        query-url: localhost:" << port << "\n"
+         << "        min-conn: 1\n"
+         << "        max-conn: 1\n"
+         << "reader:\n"
+         << "  - epics-pvxs:\n"
+         << "      - name: epics_reader_1\n"
+         << "        pvs:\n"
+         << "          - name: test:bsas_table\n"
+         << "            option:\n"
+         << "              type: slac-bsas-table\n";
+
+    const auto config = makeConfigFromYaml(yaml.str());
+    ASSERT_TRUE(config.valid());
+
+    auto controller = MLDPPVXSController::create(config);
+    ASSERT_TRUE(controller);
+    controller->start();
+
+    IDataBus::EventBatch batch;
+    batch.root_source  = "test:bsas_table";
+    batch.is_tabular   = true;
+    batch.tags         = {};
+    DataBatch frame;
+    frame.timestamps.push_back({1000000000, 0});
+    DataColumn col;
+    col.name   = "signal";
+    col.values = std::vector<double>{3.14};
+    frame.columns.push_back(std::move(col));
+    batch.frames.push_back(std::move(frame));
+
+    ASSERT_TRUE(controller->push(std::move(batch)));
+    ASSERT_TRUE(waitForCount(service.request_count, 1, std::chrono::milliseconds(5000)));
+
+    std::vector<dp::service::ingestion::IngestDataRequest> captured;
+    {
+        std::lock_guard<std::mutex> lock(service.captured_mutex);
+        captured = service.captured_requests;
+    }
+    ASSERT_FALSE(captured.empty()) << "No IngestDataRequest was captured";
+
+    for (const auto& req : captured)
+    {
+        const auto& df = req.ingestiondataframe();
+        for (int i = 0; i < df.doublecolumns_size(); ++i)
+        {
+            EXPECT_EQ(df.doublecolumns(i).metadata().provenance().source(), "test:bsas_table")
+                << "doublecolumns[" << i << "] provenance.source mismatch";
+        }
+        for (int i = 0; i < df.floatcolumns_size(); ++i)
+        {
+            EXPECT_EQ(df.floatcolumns(i).metadata().provenance().source(), "test:bsas_table")
+                << "floatcolumns[" << i << "] provenance.source mismatch";
+        }
+        for (int i = 0; i < df.int64columns_size(); ++i)
+        {
+            EXPECT_EQ(df.int64columns(i).metadata().provenance().source(), "test:bsas_table")
+                << "int64columns[" << i << "] provenance.source mismatch";
+        }
+        for (int i = 0; i < df.int32columns_size(); ++i)
+        {
+            EXPECT_EQ(df.int32columns(i).metadata().provenance().source(), "test:bsas_table")
+                << "int32columns[" << i << "] provenance.source mismatch";
+        }
+        for (int i = 0; i < df.boolcolumns_size(); ++i)
+        {
+            EXPECT_EQ(df.boolcolumns(i).metadata().provenance().source(), "test:bsas_table")
+                << "boolcolumns[" << i << "] provenance.source mismatch";
+        }
+        for (int i = 0; i < df.stringcolumns_size(); ++i)
+        {
+            EXPECT_EQ(df.stringcolumns(i).metadata().provenance().source(), "test:bsas_table")
+                << "stringcolumns[" << i << "] provenance.source mismatch";
+        }
+        for (int i = 0; i < df.enumcolumns_size(); ++i)
+        {
+            EXPECT_EQ(df.enumcolumns(i).metadata().provenance().source(), "test:bsas_table")
+                << "enumcolumns[" << i << "] provenance.source mismatch";
+        }
+    }
+
+    controller->stop();
+    server->Shutdown();
 }
 
 TEST(MLDPPVXSControllerTest, EpicsCounterEmitsSingleReaderMetric)
