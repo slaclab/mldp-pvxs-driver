@@ -141,7 +141,7 @@ MLDPQueryClient::querySourcesInfo(const std::set<std::string>& source_names)
             return infos;
         }
 
-        dp::service::query::QueryPvMetadataRequest request;
+        dp::service::query::QueryPvStatsRequest request;
         auto*                                      pv_name_list = request.mutable_pvnamelist();
         pv_name_list->mutable_pvnames()->Reserve(static_cast<int>(source_names.size()));
         for (const auto& source : source_names)
@@ -153,9 +153,9 @@ MLDPQueryClient::querySourcesInfo(const std::set<std::string>& source_names)
             return infos;
 
         grpc::ClientContext                         context;
-        dp::service::query::QueryPvMetadataResponse response;
+        dp::service::query::QueryPvStatsResponse response;
         context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(5));
-        const auto status = query_stub->queryPvMetadata(&context, request, &response);
+        const auto status = query_stub->queryPvStats(&context, request, &response);
 
         if (!status.ok())
         {
@@ -164,12 +164,12 @@ MLDPQueryClient::querySourcesInfo(const std::set<std::string>& source_names)
                 status.error_message().find("Method not found") != std::string::npos;
             if (!metadata_rpc_missing)
             {
-                errorf(*logger_, "queryPvMetadata RPC failed: {}", status.error_message());
+                errorf(*logger_, "queryPvStats RPC failed: {}", status.error_message());
                 return infos;
             }
 
             warnf(*logger_,
-                  "queryPvMetadata unavailable ({}). Falling back to queryData-derived timestamps.",
+                  "queryPvStats unavailable ({}). Falling back to queryData-derived timestamps.",
                   status.error_message());
 
             dp::service::query::QueryDataRequest data_request;
@@ -265,14 +265,14 @@ MLDPQueryClient::querySourcesInfo(const std::set<std::string>& source_names)
 
         if (response.has_exceptionalresult())
         {
-            errorf(*logger_, "queryPvMetadata returned exceptional result: {}",
+            errorf(*logger_, "queryPvStats returned exceptional result: {}",
                    response.exceptionalresult().message());
             return infos;
         }
-        if (!response.has_metadataresult())
+        if (!response.has_statsresult())
             return infos;
 
-        const auto& pv_infos = response.metadataresult().pvinfos();
+        const auto& pv_infos = response.statsresult().pvstats();
         infos.reserve(static_cast<std::size_t>(pv_infos.size()));
         for (const auto& pv_info : pv_infos)
         {
