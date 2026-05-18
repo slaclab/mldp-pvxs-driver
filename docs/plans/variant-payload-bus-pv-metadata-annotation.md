@@ -285,6 +285,7 @@ struct MLDPAnnotationWriterConfig {
     std::string name;
     util::pool::MLDPGrpcAnnotationPoolConfig poolConfig;
     int deadlineSeconds{10};
+    int threadPool{2};
 
     static MLDPAnnotationWriterConfig parse(const config::Config& node);
 };
@@ -295,9 +296,10 @@ struct MLDPAnnotationWriterConfig {
 writer:
   mldp-annotation:
     - name: annotation_writer
+      thread-pool: 2          # worker threads; set max-conn >= thread-pool to avoid starvation
       mldp-annotation-pool:
         annotation-url: "localhost:50052"
-        min-conn: 1
+        min-conn: 2           # >= thread-pool
         max-conn: 4
         credentials: none
       deadline-seconds: 10
@@ -313,28 +315,78 @@ public:
     explicit MLDPAnnotationWriter(const config::Config& root,
                                   std::shared_ptr<metrics::Metrics> metrics = nullptr);
     std::string name() const override;
-    void start() override;
+    void start() override;   // launches threadPool worker threads
     bool push(EventBatch batch) noexcept override;
     void stop() noexcept override;
     bool acceptsPayload(const BatchPayload& p) const noexcept override {
         return std::holds_alternative<SourceMetadataPayload>(p);
     }
 private:
+    struct WorkItem {
+        std::string         source_name;
+        SourceMetadataEntry entry;
+    };
+
+    void workerLoop();
     void saveSourceMetadata(const std::string& sourceName, const SourceMetadataEntry& entry);
+
     MLDPAnnotationWriterConfig              config_;
     std::shared_ptr<MLDPGrpcAnnotationPool> pool_;
+
+    std::queue<WorkItem>      work_queue_;
+    std::mutex                queue_mutex_;
+    std::condition_variable   queue_cv_;
+    std::vector<std::thread>  workers_;
+    std::atomic<bool>         stop_{false};
 };
 ```
 
-**`push()` logic:**
+**`start()` logic:**
+```cpp
+void MLDPAnnotationWriter::start() {
+    pool_ = MLDPGrpcAnnotationPool::create(config_.poolConfig, metrics_);
+    workers_.reserve(config_.threadPool);
+    for (int i = 0; i < config_.threadPool; ++i)
+        workers_.emplace_back([this] { workerLoop(); });
+}
+```
+
+**`stop()` logic:**
+```cpp
+void MLDPAnnotationWriter::stop() noexcept {
+    stop_.store(true);
+    queue_cv_.notify_all();
+    for (auto& t : workers_) if (t.joinable()) t.join();
+}
+```
+
+**`push()` logic — enqueues work items, does not block:**
 ```cpp
 bool MLDPAnnotationWriter::push(EventBatch batch) noexcept {
     if (!std::holds_alternative<SourceMetadataPayload>(batch.payload)) return true;
     const auto& meta = std::get<SourceMetadataPayload>(batch.payload);
-    for (const auto& [sourceName, entry] : meta) {
-        saveSourceMetadata(sourceName, entry);
+    {
+        std::lock_guard lock(queue_mutex_);
+        for (const auto& [sourceName, entry] : meta)
+            work_queue_.push({sourceName, entry});
     }
+    queue_cv_.notify_all();
     return true;
+}
+```
+
+**`workerLoop()` — each thread pulls items and calls one RPC per pool connection:**
+```cpp
+void MLDPAnnotationWriter::workerLoop() {
+    while (true) {
+        std::unique_lock lock(queue_mutex_);
+        queue_cv_.wait(lock, [this] { return stop_ || !work_queue_.empty(); });
+        if (work_queue_.empty()) return;  // stop_ set, queue drained
+        auto item = std::move(work_queue_.front());
+        work_queue_.pop();
+        lock.unlock();
+        saveSourceMetadata(item.source_name, item.entry);
+    }
 }
 ```
 
@@ -388,9 +440,10 @@ writer:
 
   mldp-annotation:
     - name: annotation_writer
+      thread-pool: 2
       mldp-annotation-pool:
         annotation-url: "localhost:50052"
-        min-conn: 1
+        min-conn: 2
         max-conn: 4
         credentials: none
       deadline-seconds: 10
