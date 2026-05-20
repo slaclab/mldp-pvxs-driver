@@ -28,6 +28,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace mldp_pvxs_driver::writer {
@@ -84,9 +85,9 @@ private:
     /// Smallest unit of queued work: one frame + shared batch metadata.
     struct QueueItem
     {
-        std::string                                     root_source;
-        std::shared_ptr<const std::vector<std::string>> tags;
-        util::bus::DataBatch                            frame;
+        std::string                                                          root_source;
+        std::shared_ptr<const std::unordered_map<std::string, std::string>> tags;
+        util::bus::DataBatch                                                 frame;
     };
 
     /// Per-worker channel: each worker has its own deque.

@@ -1068,7 +1068,7 @@ static IDataBus::EventBatch makeNTTableBatch(
 {
     IDataBus::EventBatch batch;
     batch.root_source = pvName;
-    batch.tags = {pvName};
+    batch.metadata = {{"source", pvName}};
     batch.is_tabular = true;
 
     const int nRows = static_cast<int>(colValues.empty() ? 0 : colValues[0].size());
@@ -1102,7 +1102,7 @@ static IDataBus::EventBatch makeNTTableBatchMixed(
 {
     IDataBus::EventBatch batch;
     batch.root_source = pvName;
-    batch.tags = {pvName};
+    batch.metadata = {{"source", pvName}};
     batch.is_tabular = true;
 
     // Frame 1: double column "DBL_COL"
@@ -1142,7 +1142,7 @@ static IDataBus::EventBatch makeEndOfUpdateMarker(const std::string& pvName)
 {
     IDataBus::EventBatch marker;
     marker.root_source = pvName;
-    marker.tags.push_back(pvName);
+    marker.metadata["source"] = pvName;
     marker.is_tabular = true;
     marker.end_of_batch_group = true;
     return marker;
@@ -1780,7 +1780,7 @@ TEST_F(HDF5WriterTest, MergeTabularSizeRotationFiresAfterThreshold)
 
         IDataBus::EventBatch batch;
         batch.root_source = pvName;
-        batch.tags        = {pvName};
+        batch.metadata    = {{"source", pvName}};
         batch.is_tabular  = true;
 
         DataBatch frame;
@@ -1826,7 +1826,7 @@ TEST_F(HDF5WriterTest, TabularMidRoundTimestampChangeDoesNotDropData)
     {
         IDataBus::EventBatch batch;
         batch.root_source = pvName;
-        batch.tags        = {pvName};
+        batch.metadata    = {{"source", pvName}};
         batch.is_tabular  = true;
 
         DataBatch frame;
@@ -1845,7 +1845,7 @@ TEST_F(HDF5WriterTest, TabularMidRoundTimestampChangeDoesNotDropData)
     {
         IDataBus::EventBatch batch;
         batch.root_source = pvName;
-        batch.tags        = {pvName};
+        batch.metadata    = {{"source", pvName}};
         batch.is_tabular  = true;
 
         DataBatch frame;
@@ -1901,7 +1901,7 @@ TEST_F(HDF5WriterTest, TabularRoundFirstTsResetAfterFlush)
     {
         IDataBus::EventBatch batch;
         batch.root_source = pvName;
-        batch.tags        = {pvName};
+        batch.metadata    = {{"source", pvName}};
         batch.is_tabular  = true;
 
         DataBatch frame;
@@ -2020,7 +2020,7 @@ TEST_F(HDF5WriterTest, TabularUnknownColumnNoDuplicatesInWarnSet)
     {
         IDataBus::EventBatch batch;
         batch.root_source = pvName;
-        batch.tags        = {pvName};
+        batch.metadata    = {{"source", pvName}};
         batch.is_tabular  = true;
 
         DataBatch frame;
@@ -2042,7 +2042,7 @@ TEST_F(HDF5WriterTest, TabularUnknownColumnNoDuplicatesInWarnSet)
     {
         IDataBus::EventBatch batch;
         batch.root_source = pvName;
-        batch.tags        = {pvName};
+        batch.metadata    = {{"source", pvName}};
         batch.is_tabular  = true;
 
         DataBatch frame;

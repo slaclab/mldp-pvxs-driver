@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace mldp_pvxs_driver::util::bus {
@@ -25,18 +26,18 @@ namespace mldp_pvxs_driver::util::bus {
 /**
  * @brief Container describing a batch of events to ingest.
  *
- * Tags provide additional metadata that should accompany the entire batch,
- * while @ref values holds the individual payloads grouped by their signal name.
+ * Metadata provides key/value annotations that accompany the entire batch,
+ * while @ref frames holds the individual payloads grouped by their signal name.
  */
 struct EventBatchStruct
 {
     /// Identity of the producing reader (set by reader before push).
-    std::string                                 reader_name;
-    std::string                                 root_source;                 ///< Root PV identifier used for batch-level metrics/correlation.
-    std::vector<std::string>                    tags;                        ///< Optional metadata attached to the batch.
-    std::vector<util::bus::DataBatch>            frames;                      ///< One DataBatch per ingestion payload; each batch must include timestamps.
-    bool                                        end_of_batch_group{false};   ///< Flush sentinel. Signals that all column batches for one logical row-synchronized group have been emitted. Writers should flush any accumulated tabular state when this is true.
-    bool                                        is_tabular{false};           ///< True when this batch carries column frames for a multi-column, row-synchronized table. Writers that support tabular layout accumulate column batches before flushing.
+    std::string                                              reader_name;
+    std::string                                              root_source;                 ///< Root PV identifier used for batch-level metrics/correlation.
+    std::unordered_map<std::string, std::string>             metadata;                    ///< Key/value metadata annotations attached to the batch (e.g. "source" -> PV name).
+    std::vector<util::bus::DataBatch>                        frames;                      ///< One DataBatch per ingestion payload; each batch must include timestamps.
+    bool                                                     end_of_batch_group{false};   ///< Flush sentinel. Signals that all column batches for one logical row-synchronized group have been emitted. Writers should flush any accumulated tabular state when this is true.
+    bool                                                     is_tabular{false};           ///< True when this batch carries column frames for a multi-column, row-synchronized table. Writers that support tabular layout accumulate column batches before flushing.
 };
 
 /**
@@ -105,8 +106,8 @@ public:
      * Each entry in @p batch_values.frames represents one ingestion payload.
      * Implementations may forward all entries in a single call to the back-end
      * to minimize network round-trips.
-     * When @p batch_values.tags is empty, implementations may add their own
-     * default tags before forwarding the batch.
+     * When @p batch_values.metadata is empty, implementations may add their own
+     * default metadata before forwarding the batch.
      *
      * @param batch_values Aggregated batch describing tags and payloads. Each
      *                     payload is shared with the bus implementation.

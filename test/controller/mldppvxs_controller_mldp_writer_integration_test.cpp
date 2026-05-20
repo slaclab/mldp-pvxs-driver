@@ -304,7 +304,7 @@ TEST(MLDPPVXSControllerTest, BsasNtTableColumnsHaveProvenanceSourceSetToRootSour
     IDataBus::EventBatch batch;
     batch.root_source  = "test:bsas_table";
     batch.is_tabular   = true;
-    batch.tags         = {};
+    batch.metadata     = {};
     DataBatch frame;
     frame.timestamps.push_back({1000000000, 0});
     DataColumn col;
@@ -457,7 +457,7 @@ TEST(MLDPPVXSControllerTest, IdleStreamRotationStartsNewStreamAfterMaxAge)
 
     IDataBus::EventBatch batch;
     batch.root_source = "test-root";
-    batch.tags = {"test"};
+    batch.metadata = {{"source", "test"}};
     DataBatch frame1;
     frame1.timestamps.push_back({1, 0});
     DataColumn col1;
@@ -474,7 +474,7 @@ TEST(MLDPPVXSControllerTest, IdleStreamRotationStartsNewStreamAfterMaxAge)
 
     IDataBus::EventBatch batch2;
     batch2.root_source = "test-root";
-    batch2.tags = {"test"};
+    batch2.metadata = {{"source", "test"}};
     DataBatch frame2;
     frame2.timestamps.push_back({2, 0});
     DataColumn col2;

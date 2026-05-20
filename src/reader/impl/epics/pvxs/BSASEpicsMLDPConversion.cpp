@@ -269,9 +269,9 @@ bool BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch(mldp_pvxs_driver::util::
                                                         IDataBus::EventBatch*                 outBatch,
                                                         size_t&                               outEmitted)
 {
-    outBatch->tags.clear();
+    outBatch->metadata.clear();
     outBatch->frames.clear();
-    outBatch->tags.push_back(tablePvName);
+    outBatch->metadata["source"] = tablePvName;
     return tryBuildNtTableRowTsBatch(log, tablePvName, epicsValue, tsSecondsField, tsNanosField,
                                      [&](std::string colName, std::vector<DataBatch> batches)
                                      {

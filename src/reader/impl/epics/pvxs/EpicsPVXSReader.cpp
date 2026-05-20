@@ -172,7 +172,7 @@ void EpicsPVXSReader::processDefaultMode(const std::string& pvName, const pvxs::
 
     IDataBus::EventBatch eventBatch;
     eventBatch.root_source = pvName;
-    eventBatch.tags.push_back(pvName);
+    eventBatch.metadata["source"] = pvName;
     eventBatch.frames.push_back(std::move(batch));
     emitted = 1;
     eventBatch.reader_name = name();
@@ -197,7 +197,7 @@ void EpicsPVXSReader::processSlacBsasTableMode(const std::string&     pvName,
 
     IDataBus::EventBatch tableBatch;
     tableBatch.root_source = pvName;
-    tableBatch.tags.push_back(pvName);
+    tableBatch.metadata["source"] = pvName;
     tableBatch.is_tabular = true;
     std::size_t colsInBatch = 0;
 
@@ -205,7 +205,7 @@ void EpicsPVXSReader::processSlacBsasTableMode(const std::string&     pvName,
     {
         tableBatch = IDataBus::EventBatch{};
         tableBatch.root_source = pvName;
-        tableBatch.tags.push_back(pvName);
+        tableBatch.metadata["source"] = pvName;
         tableBatch.is_tabular = true;
         colsInBatch = 0;
     };
@@ -252,7 +252,7 @@ void EpicsPVXSReader::processSlacBsasTableMode(const std::string&     pvName,
     // know all column batches have been emitted and can flush accumulated state.
     IDataBus::EventBatch markerBatch;
     markerBatch.root_source = pvName;
-    markerBatch.tags.push_back(pvName);
+    markerBatch.metadata["source"] = pvName;
     markerBatch.is_tabular = true;
     markerBatch.end_of_batch_group = true;
     markerBatch.reader_name = name();

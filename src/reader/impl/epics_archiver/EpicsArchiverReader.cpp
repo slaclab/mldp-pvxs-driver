@@ -327,7 +327,7 @@ void EpicsArchiverReader::flushChunk(PbChunkState& state)
 
         IDataBus::EventBatch batch;
         batch.root_source = pv.empty() ? name_ : pv;
-        batch.tags.push_back(batch.root_source);
+        batch.metadata["source"] = batch.root_source;
         for (auto& frame : state.events)
         {
             if (!hasTimestamps(frame))

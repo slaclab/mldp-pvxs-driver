@@ -174,7 +174,7 @@ void EpicsBaseReader::processDefaultMode(const std::string&                     
         EpicsPVDataConversion::convertPVToDataBatch(*valueField, &batch_frame, pvName);
     }
     batch_frame.timestamps.push_back(TimestampEntry{epoch_seconds, nanoseconds});
-    batch.tags.push_back(pvName);
+    batch.metadata["source"] = pvName;
     batch.frames.push_back(std::move(batch_frame));
     emitted = 1;
     batch.reader_name = name();
@@ -197,14 +197,14 @@ void EpicsBaseReader::processSlacBsasTableMode(const std::string&               
 
     IDataBus::EventBatch tableBatch;
     tableBatch.root_source = pvName;
-    tableBatch.tags.push_back(pvName);
+    tableBatch.metadata["source"] = pvName;
     std::size_t colsInBatch = 0;
 
     auto resetBatch = [&tableBatch, &pvName, &colsInBatch]()
     {
         tableBatch = IDataBus::EventBatch{};
         tableBatch.root_source = pvName;
-        tableBatch.tags.push_back(pvName);
+        tableBatch.metadata["source"] = pvName;
         colsInBatch = 0;
     };
 

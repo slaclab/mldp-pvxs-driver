@@ -175,7 +175,7 @@ bool MLDPWriter::push(util::bus::IDataBus::EventBatch batch) noexcept
         return false;
     }
 
-    auto tags = std::make_shared<const std::vector<std::string>>(batch.tags);
+    auto tags = std::make_shared<const std::unordered_map<std::string, std::string>>(batch.metadata);
     bool enqueued = false;
     for (auto& frame : batch.frames)
     {
