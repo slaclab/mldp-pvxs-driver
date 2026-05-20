@@ -111,13 +111,16 @@ private:
     std::atomic<bool>                                                 running_{false};
 
     void workerLoop(std::size_t workerIndex);
-    bool buildRequest(const std::string&                         sourceName,
-                      const util::bus::DataBatch&                batch,
-                      const std::string&                         requestId,
-                      dp::service::ingestion::IngestDataRequest& request,
-                      std::size_t&                               acceptedEvents,
-                      std::size_t&                               payloadBytes);
-    static dp::service::common::DataFrame toDataFrame(const util::bus::DataBatch& batch, const std::string& rootSource);
+    bool buildRequest(const std::string&                                              sourceName,
+                      const util::bus::DataBatch&                                     batch,
+                      const std::string&                                              requestId,
+                      dp::service::ingestion::IngestDataRequest&                      request,
+                      std::size_t&                                                    acceptedEvents,
+                      std::size_t&                                                    payloadBytes,
+                      const std::unordered_map<std::string, std::string>*             metadata = nullptr);
+    static dp::service::common::DataFrame toDataFrame(const util::bus::DataBatch&                         batch,
+                                                      const std::string&                                  rootSource,
+                                                      const std::unordered_map<std::string, std::string>* metadata = nullptr);
     void updateQueueDepthMetric();
 };
 
