@@ -88,6 +88,22 @@ public:
      */
     const std::vector<std::pair<std::string, config::Config>>& writerEntries() const;
 
+    /**
+     * @brief Parsed queryable entries from the @c queryable: YAML sequence.
+     */
+    struct QueryableEntry {
+        std::string    type;
+        config::Config cfg;
+    };
+
+    /**
+     * @return Queryable entries as (type, config-node) pairs.
+     *
+     * Each element is a queryable type identifier (e.g. "mldp") paired with
+     * the YAML node that @ref QueryableFactory::prepare should receive.
+     */
+    const std::vector<QueryableEntry>& queryableEntries() const { return queryable_entries_; }
+
     /** @return Optional metrics configuration when the YAML provides it. */
     const std::optional<metrics::MetricsConfig>& metricsConfig() const;
 
@@ -100,6 +116,7 @@ private:
     void parseReaders(const ::mldp_pvxs_driver::config::Config& root);
     void parseMetrics(const ::mldp_pvxs_driver::config::Config& root);
     void parseRouting(const ::mldp_pvxs_driver::config::Config& root);
+    void parseQueryables(const ::mldp_pvxs_driver::config::Config& root);
 
     bool                                                valid_ = false;
     std::string                                         name_{"default"};
@@ -107,7 +124,8 @@ private:
     std::vector<std::pair<std::string, config::Config>> readerEntries_;
     std::vector<std::pair<std::string, config::Config>> writerEntries_;
     std::optional<metrics::MetricsConfig>               metricsConfig_;
-    std::vector<RouteFilterEntry>                  routeEntries_;
+    std::vector<RouteFilterEntry>                       routeEntries_;
+    std::vector<QueryableEntry>                         queryable_entries_;
 };
 
 } // namespace mldp_pvxs_driver::controller

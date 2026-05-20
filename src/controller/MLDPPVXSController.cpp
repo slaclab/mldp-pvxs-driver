@@ -12,11 +12,15 @@
 #include <controller/MLDPPVXSController.h>
 #include <future>
 #include <memory>
+#include <query/QueryableFactory.h>
+#include <query/impl/mldp/MLDPQueryClient.h>
 #include <reader/ReaderFactory.h>
 #include <util/StringFormat.h>
 #include <writer/WriterFactory.h>
 
+#include <functional>
 #include <stdexcept>
+#include <unordered_map>
 
 using namespace mldp_pvxs_driver::metrics;
 using namespace mldp_pvxs_driver::controller;
@@ -31,6 +35,32 @@ namespace {
 std::shared_ptr<mldp_pvxs_driver::util::log::ILogger> makeControllerLogger(const std::string& name)
 {
     return mldp_pvxs_driver::util::log::newLogger("controller." + name);
+}
+
+static void prepareQueryables(const MLDPPVXSControllerConfig&           cfg,
+                               std::shared_ptr<mldp_pvxs_driver::metrics::Metrics> metrics)
+{
+    using namespace mldp_pvxs_driver::query;
+    using namespace mldp_pvxs_driver::query::impl::mldp;
+
+    using PrepFn = std::function<void(const mldp_pvxs_driver::config::Config&,
+                                      std::shared_ptr<mldp_pvxs_driver::metrics::Metrics>)>;
+    static const std::unordered_map<std::string, PrepFn> kDispatch = {
+        {"mldp",
+         [](const mldp_pvxs_driver::config::Config& c,
+            std::shared_ptr<mldp_pvxs_driver::metrics::Metrics> m) {
+             QueryableFactory::instance().prepare<MLDPQueryClient>(c, std::move(m));
+         }},
+    };
+    for (const auto& entry : cfg.queryableEntries())
+    {
+        auto it = kDispatch.find(entry.type);
+        if (it == kDispatch.end())
+        {
+            throw std::runtime_error("Unknown queryable type: " + entry.type);
+        }
+        it->second(entry.cfg, metrics);
+    }
 }
 } // namespace
 
@@ -78,6 +108,9 @@ void MLDPPVXSController::start()
 
     running_.store(true);
     infof(*logger_, "Controller is starting");
+
+    // Register queryable factories before any worker thread runs.
+    prepareQueryables(config_, metrics_);
 
     // Resize the fan-out thread pool to match the number of writer instances.
     const std::size_t numWriters = config_.writerEntries().size();
