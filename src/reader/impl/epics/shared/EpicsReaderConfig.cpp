@@ -11,6 +11,7 @@
 #include <reader/impl/epics/shared/EpicsReaderConfig.h>
 
 #include <algorithm>
+#include <map>
 #include <utility>
 
 using namespace mldp_pvxs_driver::config;
@@ -181,6 +182,14 @@ void EpicsReaderConfig::parse(const Config& readerEntry)
         throw Error("backend is not supported; choose epics-pvxs or epics-base reader type");
     }
 
+    // Parse optional reader-level static metadata
+    if (readerEntry.hasChild(kMetadataKey))
+    {
+        std::map<std::string, std::string> m;
+        readerEntry.subConfig(kMetadataKey).front() >> m;
+        static_metadata_.insert(m.begin(), m.end());
+    }
+
     if (!readerEntry.hasChild(PvsKey))
     {
         return;
@@ -257,7 +266,14 @@ void EpicsReaderConfig::parse(const Config& readerEntry)
             }
         }
 
-        pvs_.push_back({std::move(pvName), std::move(option), optionConfig, nttableRowTs});
+        std::unordered_map<std::string, std::string> pvMetadata;
+        if (pvNode.hasChild(kMetadataKey))
+        {
+            std::map<std::string, std::string> m;
+            pvNode.subConfig(kMetadataKey).front() >> m;
+            pvMetadata.insert(m.begin(), m.end());
+        }
+        pvs_.push_back({std::move(pvName), std::move(option), optionConfig, nttableRowTs, std::move(pvMetadata)});
         pvNames_.push_back(pvs_.back().name);
     }
 

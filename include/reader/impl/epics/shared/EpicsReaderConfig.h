@@ -25,6 +25,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace mldp_pvxs_driver::reader::impl::epics {
@@ -38,6 +39,8 @@ inline constexpr char BackendKey[] = "backend";
 inline constexpr char PvsKey[] = "pvs";
 inline constexpr char PvNameKey[] = "name";
 inline constexpr char PvOptionKey[] = "option";
+
+static constexpr auto kMetadataKey = "metadata";
 inline constexpr char OptionTypeKey[] = "type";
 inline constexpr char TsSecondsKey[] = "tsSeconds";
 inline constexpr char TsNanosKey[] = "tsNanos";
@@ -95,10 +98,11 @@ public:
             std::string tsNanosField = "nanoseconds";
         };
 
-        std::string                               name;         ///< Fully qualified PV name to monitor.
-        std::string                               option;       ///< Backend-specific connection option (may be empty).
-        std::optional<config::Config>             optionConfig; ///< Optional raw subtree for future extensions.
-        std::optional<NTTableRowTimestampOptions> nttableRowTs; ///< Parsed options when `type: slac-bsas-table` is selected.
+        std::string                                          name;         ///< Fully qualified PV name to monitor.
+        std::string                                          option;       ///< Backend-specific connection option (may be empty).
+        std::optional<config::Config>                        optionConfig; ///< Optional raw subtree for future extensions.
+        std::optional<NTTableRowTimestampOptions>            nttableRowTs; ///< Parsed options when `type: slac-bsas-table` is selected.
+        std::unordered_map<std::string, std::string>         metadata;     ///< Per-PV static metadata key-value pairs.
     };
 
     EpicsReaderConfig();
@@ -145,18 +149,26 @@ public:
      */
     const std::vector<std::string>& pvNames() const;
 
+    /**
+     * @brief Get the reader-level static metadata key-value pairs.
+     *
+     * @return Map of metadata keys to values as configured in YAML.
+     */
+    const std::unordered_map<std::string, std::string>& staticMetadata() const { return static_metadata_; }
+
 private:
     /** @brief Populate the typed fields from the raw YAML node. */
     void parse(const ::mldp_pvxs_driver::config::Config& readerEntry);
 
-    bool                     valid_ = false;
-    std::string              name_;
-    unsigned int             thread_pool_size_{2};
-    std::size_t              column_batch_size_{50};
-    unsigned int             monitor_poll_threads_{2};
-    unsigned int             monitor_poll_interval_ms_{5};
-    std::vector<PVConfig>    pvs_;
-    std::vector<std::string> pvNames_;
+    bool                                         valid_ = false;
+    std::string                                  name_;
+    unsigned int                                 thread_pool_size_{2};
+    std::size_t                                  column_batch_size_{50};
+    unsigned int                                 monitor_poll_threads_{2};
+    unsigned int                                 monitor_poll_interval_ms_{5};
+    std::vector<PVConfig>                        pvs_;
+    std::vector<std::string>                     pvNames_;
+    std::unordered_map<std::string, std::string> static_metadata_; ///< Reader-level static metadata.
 };
 
 } // namespace mldp_pvxs_driver::reader::impl::epics
