@@ -695,6 +695,25 @@ if(MLDP_PVXS_DRIVER_TESTS)
     include(GoogleTest)
     gtest_discover_tests(${PROJECT_NAME}_test)
 
+    # QueryableFactory unit tests
+    add_executable(queryable_factory_test
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/query/queryable_factory_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/ryml_single_header_translation_unit.cpp"
+    )
+    target_include_directories(queryable_factory_test PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test"
+        "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    if(APPLE)
+        target_link_libraries(queryable_factory_test PRIVATE gtest_main
+            -Wl,-force_load $<TARGET_FILE:lib${PROJECT_NAME}>)
+    else()
+        target_link_libraries(queryable_factory_test PRIVATE gtest_main
+            -Wl,--whole-archive lib${PROJECT_NAME} -Wl,--no-whole-archive)
+    endif()
+    gtest_discover_tests(queryable_factory_test)
+
     # Wizard unit tests — link wizard lib directly for access to wizard_internal symbols
     if(MLDP_WIZARD)
         add_executable(mldp_pvxs_driver_wizard_test
