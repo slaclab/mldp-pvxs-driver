@@ -7,6 +7,7 @@
 #include <pool/MLDPGrpcPool.h>
 #include <query.grpc.pb.h>
 #include <query/IQueryable.h>
+#include <query/QueryableFactory.h>
 #include <query/impl/mldp/MLDPQueryClient.h>
 
 #include "../../common/MldpQueryTestUtils.h"
@@ -29,8 +30,11 @@
 using namespace mldp_pvxs_driver::util::pool;
 using namespace mldp_pvxs_driver::testutil;
 using dp::service::common::Structure;
+using mldp_pvxs_driver::config::Config;
 using mldp_pvxs_driver::config::makeConfigFromYaml;
 using mldp_pvxs_driver::controller::MLDPPVXSController;
+using mldp_pvxs_driver::query::QueryableFactory;
+using mldp_pvxs_driver::query::impl::mldp::MLDPQueryClient;
 
 static MLDPGrpcPoolConfig make_pool_config(int min_conn, int max_conn, std::string_view test_provider_id = "test_provider", std::string_view description = "test_provider_desc")
 {
@@ -42,6 +46,21 @@ static MLDPGrpcPoolConfig make_pool_config(int min_conn, int max_conn, std::stri
          << "min-conn: " << min_conn << "\n"
          << "max-conn: " << max_conn << "\n";
     return MLDPGrpcPoolConfig(makeConfigFromYaml(yaml.str()));
+}
+
+static Config make_pool_config_as_config(int                min_conn,
+                                         int                max_conn,
+                                         const std::string& provider_name,
+                                         const std::string& provider_desc)
+{
+    std::ostringstream yaml;
+    yaml << "provider-name: " << provider_name << "\n"
+         << "provider-description: " << provider_desc << "\n"
+         << "ingestion-url: dp-ingestion:50051\n"
+         << "query-url: dp-query:50052\n"
+         << "min-conn: " << min_conn << "\n"
+         << "max-conn: " << max_conn << "\n";
+    return makeConfigFromYaml(yaml.str());
 }
 
 namespace {
@@ -71,10 +90,14 @@ protected:
     static void SetUpTestSuite()
     {
         pvServer_ = std::make_unique<PVServer>();
+        QueryableFactory::instance().reset();
+        QueryableFactory::instance().prepare<MLDPQueryClient>(
+            make_pool_config_as_config(1, 1, "query_api_probe_provider", "query api probe provider"));
     }
 
     static void TearDownTestSuite()
     {
+        QueryableFactory::instance().reset();
         pvServer_.reset();
     }
 
@@ -574,8 +597,7 @@ TEST_F(MLDPWriterIntegrationTest, QueryClientReturnsMetadataAndDataForInsertedPV
         ASSERT_FALSE(response.has_exceptionalresult());
     }
 
-    std::shared_ptr<mldp_pvxs_driver::query::IQueryable> queryClient =
-        std::make_shared<mldp_pvxs_driver::query::impl::mldp::MLDPQueryClient>(make_pool_config(1, 1, "query_api_probe_provider", "query api probe provider"));
+    auto queryClient = QueryableFactory::instance().create<MLDPQueryClient>();
     const std::set<std::string> sources{pv_name};
 
     const auto                                                       metadata_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
@@ -671,8 +693,8 @@ TEST_F(MLDPWriterIntegrationTest, QueryClientReturnsAllRequestedInsertedPVs)
     ingest_one(pv_a, value_a, "query_data_multi_req_a");
     ingest_one(pv_b, value_b, "query_data_multi_req_b");
 
-    std::shared_ptr<mldp_pvxs_driver::query::IQueryable> queryClient =
-        std::make_shared<mldp_pvxs_driver::query::impl::mldp::MLDPQueryClient>(make_pool_config(1, 1, "query_data_multi_probe_provider", "query data multi probe provider"));
+    auto queryClient = std::make_unique<MLDPQueryClient>(
+        make_pool_config(1, 1, "query_data_multi_probe_provider", "query data multi probe provider"));
     const std::set<std::string> sources{pv_a, pv_b};
 
     mldp_pvxs_driver::util::bus::QuerySourcesDataOptions options;

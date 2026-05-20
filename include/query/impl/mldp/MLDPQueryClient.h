@@ -11,6 +11,7 @@
 #pragma once
 
 #include <common.pb.h>
+#include <config/Config.h>
 #include <metrics/Metrics.h>
 #include <pool/MLDPGrpcPoolConfig.h>
 #include <pool/MLDPGrpcQueryPool.h>
@@ -55,6 +56,17 @@ public:
     explicit MLDPQueryClient(const util::pool::MLDPGrpcPoolConfig& poolConfig,
                              std::shared_ptr<metrics::Metrics>     metrics = nullptr);
 
+    /**
+     * @brief Construct from a Config tree; delegates to the pool-config ctor.
+     *
+     * Required by QueryableFactory::prepare<MLDPQueryClient>(cfg).
+     *
+     * @param cfg     Root config containing pool parameters.
+     * @param metrics Optional shared metrics collector.
+     */
+    explicit MLDPQueryClient(const config::Config&             cfg,
+                             std::shared_ptr<metrics::Metrics> metrics = nullptr);
+
     ~MLDPQueryClient() override = default;
 
     // Non-copyable, movable
@@ -74,7 +86,7 @@ public:
      * @return Metadata rows for the sources known to the backend.
      */
     std::vector<util::bus::IDataBus::SourceInfo>
-    querySourcesInfo(const std::set<std::string>& source_names) override;
+    querySourcesInfo(const std::set<std::string>& source_names);
 
     /**
      * @brief Query MLDP data values for sources over a relative time window.
@@ -89,7 +101,7 @@ public:
      */
     std::optional<std::unordered_map<std::string, std::vector<dp::service::common::DataValues>>>
     querySourcesData(const std::set<std::string>&              source_names,
-                     const util::bus::QuerySourcesDataOptions& options = {}) override;
+                     const util::bus::QuerySourcesDataOptions& options = {});
 
 private:
     std::shared_ptr<util::log::ILogger>                     logger_;
