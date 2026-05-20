@@ -174,7 +174,18 @@ void EpicsBaseReader::processDefaultMode(const std::string&                     
         EpicsPVDataConversion::convertPVToDataBatch(*valueField, &batch_frame, pvName);
     }
     batch_frame.timestamps.push_back(TimestampEntry{epoch_seconds, nanoseconds});
-    batch.metadata["source"] = pvName;
+    // Build merged metadata: reader-level base, PV-level overrides
+    auto merged = config_.staticMetadata();
+    for (const auto& pv_cfg : config_.pvs())
+    {
+        if (pv_cfg.name == pvName)
+        {
+            for (auto& [k, v] : pv_cfg.metadata)
+                merged[k] = v;
+            break;
+        }
+    }
+    batch.metadata = std::move(merged);
     batch.frames.push_back(std::move(batch_frame));
     emitted = 1;
     batch.reader_name = name();
@@ -195,16 +206,28 @@ void EpicsBaseReader::processSlacBsasTableMode(const std::string&               
     const prometheus::Labels sourceTag{{"source", pvName}};
     const std::size_t        colBatchSize = config_.columnBatchSize();
 
+    // Build merged metadata: reader-level base, PV-level overrides
+    auto merged_meta = config_.staticMetadata();
+    for (const auto& pv_cfg : config_.pvs())
+    {
+        if (pv_cfg.name == pvName)
+        {
+            for (auto& [k, v] : pv_cfg.metadata)
+                merged_meta[k] = v;
+            break;
+        }
+    }
+
     IDataBus::EventBatch tableBatch;
     tableBatch.root_source = pvName;
-    tableBatch.metadata["source"] = pvName;
+    tableBatch.metadata = merged_meta;
     std::size_t colsInBatch = 0;
 
-    auto resetBatch = [&tableBatch, &pvName, &colsInBatch]()
+    auto resetBatch = [&tableBatch, &pvName, &colsInBatch, merged_meta]()
     {
         tableBatch = IDataBus::EventBatch{};
         tableBatch.root_source = pvName;
-        tableBatch.metadata["source"] = pvName;
+        tableBatch.metadata = merged_meta;
         colsInBatch = 0;
     };
 

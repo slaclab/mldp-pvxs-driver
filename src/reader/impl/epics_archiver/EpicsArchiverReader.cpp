@@ -327,7 +327,18 @@ void EpicsArchiverReader::flushChunk(PbChunkState& state)
 
         IDataBus::EventBatch batch;
         batch.root_source = pv.empty() ? name_ : pv;
-        batch.metadata["source"] = batch.root_source;
+        // Build merged metadata: reader-level base, PV-level overrides
+        auto merged = config_.staticMetadata();
+        for (const auto& pv_cfg : config_.pvs())
+        {
+            if (pv_cfg.name == pv)
+            {
+                for (auto& [k, v] : pv_cfg.metadata)
+                    merged[k] = v;
+                break;
+            }
+        }
+        batch.metadata = std::move(merged);
         for (auto& frame : state.events)
         {
             if (!hasTimestamps(frame))
