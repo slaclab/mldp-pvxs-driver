@@ -427,6 +427,7 @@ set(PROTO_FILES
     ${DP_GRPC_PROTO_PATH}/common.proto
     ${DP_GRPC_PROTO_PATH}/query.proto
     ${DP_GRPC_PROTO_PATH}/ingestion.proto
+    ${DP_GRPC_PROTO_PATH}/annotation.proto
     ${EPICSARCHIVERAP_PROTO_PATH}/EPICSEvent.proto
 )
 
@@ -503,6 +504,7 @@ add_library(lib${PROJECT_NAME}
     "${CMAKE_CURRENT_SOURCE_DIR}/src/pool/MLDPGrpcPoolConfig.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/pool/MLDPGrpcIngestionPool.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/pool/MLDPGrpcQueryPool.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/pool/MLDPGrpcAnnotationPool.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/MLDPQueryClient.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/controller/MLDPPVXSControllerConfig.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/controller/MLDPPVXSController.cpp"
