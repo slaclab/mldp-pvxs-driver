@@ -13,6 +13,7 @@
 #include <common.pb.h>
 #include <util/bus/IDataBus.h>
 
+#include <memory>
 #include <optional>
 #include <set>
 #include <string>
@@ -47,5 +48,7 @@ public:
     querySourcesData(const std::set<std::string>&              source_names,
                      const util::bus::QuerySourcesDataOptions& options = {}) = 0;
 };
+
+using IQueryableUPtr = std::unique_ptr<IQueryable>;
 
 } // namespace mldp_pvxs_driver::query
