@@ -509,3 +509,56 @@ pvs:
     reader_ptr.reset();
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 }
+
+// Verify reader-level metadata and per-PV metadata overrides are merged into EventBatch.metadata.
+// Reader config uses YAML key "metadata" for both reader-level and per-PV blocks.
+// Per-PV keys win over reader-level keys on conflict.
+TEST_F(EpicsBaseReaderTest, StaticAndPerPvMetadataMergedIntoEventBatch)
+{
+    const std::string yaml = R"(
+name: epics_meta_reader
+metadata:
+  facility: lcls
+  subsystem: bpms
+pvs:
+  - name: test:counter
+    metadata:
+      signal_type: scalar
+      subsystem: override_bpms
+)";
+    const auto cfg    = makeConfigFromYaml(yaml);
+    auto       reader = mldp_pvxs_driver::reader::ReaderFactory::create("epics-base", mock_bus, cfg);
+    ASSERT_NE(reader, nullptr);
+
+    const int max_wait_ms = 5000;
+    int       waited_ms   = 0;
+    while (mock_bus->event_count() == 0 && waited_ms < max_wait_ms)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        waited_ms += 100;
+    }
+    ASSERT_GT(mock_bus->event_count(), 0u) << "No events received within timeout";
+
+    // All batches for test:counter must carry the merged metadata map.
+    std::lock_guard<std::mutex> lock(mock_bus->mutex);
+    bool found = false;
+    for (const auto& batch : mock_bus->received_events)
+    {
+        if (batch.root_source != "test:counter")
+            continue;
+        found = true;
+        // Reader-level key not overridden by per-PV.
+        EXPECT_EQ(batch.metadata.count("facility"), 1u);
+        EXPECT_EQ(batch.metadata.at("facility"), "lcls");
+        // Per-PV key not present at reader level.
+        EXPECT_EQ(batch.metadata.count("signal_type"), 1u);
+        EXPECT_EQ(batch.metadata.at("signal_type"), "scalar");
+        // Per-PV key overrides reader-level key with same name.
+        EXPECT_EQ(batch.metadata.count("subsystem"), 1u);
+        EXPECT_EQ(batch.metadata.at("subsystem"), "override_bpms");
+    }
+    EXPECT_TRUE(found) << "No batch with root_source=test:counter received";
+
+    reader.reset();
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+}

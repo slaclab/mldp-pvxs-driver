@@ -386,4 +386,61 @@ TEST(EpicsArchiverReaderHttpIntegrationTest, DestructorAbortsOngoingLongDownload
     EXPECT_FALSE(*server.lastResponseSuccess());
 }
 
+// Verify reader-level metadata and per-PV metadata overrides are merged into EventBatch.metadata.
+// Reader config uses YAML key "metadata" for both reader-level and per-PV blocks.
+// Per-PV keys win over reader-level keys on conflict.
+TEST(EpicsArchiverReaderHttpIntegrationTest, StaticAndPerPvMetadataMergedIntoEventBatch)
+{
+    MockArchiverPbHttpServer::GenerationConfig gen_cfg;
+    gen_cfg.min_events_per_second = 4;
+    gen_cfg.max_events_per_second = 4;
+    gen_cfg.open_ended_duration_sec = 1;
+    MockArchiverPbHttpServer server(gen_cfg);
+    server.start();
+    ASSERT_GT(server.port(), 0);
+
+    auto bus = std::make_shared<MockEventBusPush>();
+
+    const std::string yaml = std::string(R"(
+        name: archiver-meta-test
+        hostname: ")") + server.baseUrl() +
+                             R"("
+        start-date: "2026-02-25T08:00:00.000Z"
+        metadata:
+          facility: lcls
+          subsystem: bpms
+        pvs:
+          - name: "TEST:PV:DOUBLE"
+            metadata:
+              signal_type: scalar
+              subsystem: override_bpms
+    )";
+
+    auto reader_cfg = makeConfigFromYaml(yaml);
+    auto reader     = std::make_unique<EpicsArchiverReader>(bus, nullptr, reader_cfg);
+    ASSERT_TRUE(waitForMockRequestStartAndCompletion(server, std::chrono::seconds(2)));
+
+    const auto batches = bus->snapshot();
+    ASSERT_FALSE(batches.empty());
+
+    // Verify metadata on the batch for TEST:PV:DOUBLE.
+    bool found = false;
+    for (const auto& batch : batches)
+    {
+        if (batch.root_source != "TEST:PV:DOUBLE")
+            continue;
+        found = true;
+        // Reader-level key not overridden by per-PV.
+        EXPECT_EQ(batch.metadata.count("facility"), 1u);
+        EXPECT_EQ(batch.metadata.at("facility"), "lcls");
+        // Per-PV key not present at reader level.
+        EXPECT_EQ(batch.metadata.count("signal_type"), 1u);
+        EXPECT_EQ(batch.metadata.at("signal_type"), "scalar");
+        // Per-PV key overrides reader-level key with same name.
+        EXPECT_EQ(batch.metadata.count("subsystem"), 1u);
+        EXPECT_EQ(batch.metadata.at("subsystem"), "override_bpms");
+    }
+    EXPECT_TRUE(found) << "No batch with root_source=TEST:PV:DOUBLE received";
+}
+
 } // namespace

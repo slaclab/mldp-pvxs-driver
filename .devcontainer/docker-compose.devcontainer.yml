@@ -21,6 +21,7 @@ services:
     depends_on:
       - mongodb
       - dp-ingestion
+      - dp-annotation
 
 networks:
   default:

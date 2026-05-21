@@ -2,6 +2,11 @@
 
 #include <controller/MLDPPVXSController.h>
 #include <grpcpp/grpcpp.h>
+#include <grpcpp/security/server_credentials.h>
+#include <grpcpp/server.h>
+#include <grpcpp/server_builder.h>
+#include <grpcpp/server_context.h>
+#include <ingestion.grpc.pb.h>
 #include <metrics/Metrics.h>
 #include <metrics/MetricsConfig.h>
 #include <pool/MLDPGrpcPool.h>
@@ -9,6 +14,7 @@
 #include <query/IQueryable.h>
 #include <query/QueryableFactory.h>
 #include <query/impl/mldp/MLDPQueryClient.h>
+#include <writer/WriterFactory.h>
 
 #include "../../common/MldpQueryTestUtils.h"
 #include "../../config/test_config_helpers.h"
@@ -722,4 +728,185 @@ TEST_F(MLDPWriterIntegrationTest, QueryClientReturnsAllRequestedInsertedPVs)
     ASSERT_TRUE(first_int_b.has_value());
     EXPECT_EQ(first_int_a.value(), value_a);
     EXPECT_EQ(first_int_b.value(), value_b);
+}
+
+// ---------------------------------------------------------------------------
+// Helpers for standalone MLDPWriter unit tests (no controller)
+// ---------------------------------------------------------------------------
+
+namespace {
+
+class WriterTestIngestionService final
+    : public dp::service::ingestion::DpIngestionService::Service
+{
+public:
+    std::atomic<int>                                        request_count{0};
+    std::vector<dp::service::ingestion::IngestDataRequest> captured_requests;
+    std::mutex                                             captured_mutex;
+
+    grpc::Status registerProvider(
+        grpc::ServerContext*,
+        const dp::service::ingestion::RegisterProviderRequest*,
+        dp::service::ingestion::RegisterProviderResponse* response) override
+    {
+        auto* result = response->mutable_registrationresult();
+        result->set_providerid("writer-test-provider-id");
+        result->set_providername("writer-test-provider");
+        result->set_isnewprovider(true);
+        return grpc::Status::OK;
+    }
+
+    grpc::Status ingestDataStream(
+        grpc::ServerContext*,
+        grpc::ServerReader<dp::service::ingestion::IngestDataRequest>* reader,
+        dp::service::ingestion::IngestDataStreamResponse*) override
+    {
+        dp::service::ingestion::IngestDataRequest request;
+        while (reader->Read(&request))
+        {
+            request_count.fetch_add(1, std::memory_order_relaxed);
+            std::lock_guard<std::mutex> lock(captured_mutex);
+            captured_requests.push_back(request);
+        }
+        return grpc::Status::OK;
+    }
+};
+
+bool writerWaitForCount(std::atomic<int>& counter, int target, std::chrono::milliseconds timeout)
+{
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (std::chrono::steady_clock::now() < deadline)
+    {
+        if (counter.load(std::memory_order_relaxed) >= target)
+            return true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    return counter.load(std::memory_order_relaxed) >= target;
+}
+
+} // namespace
+
+// ---------------------------------------------------------------------------
+// AcceptsOnlyTimeSeriesPayload
+// Verify acceptsPayload() type-dispatch without requiring a live server.
+// ---------------------------------------------------------------------------
+
+TEST(MLDPWriterTest, AcceptsOnlyTimeSeriesPayload)
+{
+    // acceptsPayload() is a pure std::holds_alternative check — no network needed.
+    static constexpr std::string_view kYaml = R"(
+name: mldp_accepts_test
+mldp-pool:
+  provider-name: test-provider
+  ingestion-url: 127.0.0.1:50051
+  query-url: 127.0.0.1:50052
+  min-conn: 1
+  max-conn: 1
+)";
+
+    const auto cfg = makeConfigFromYaml(std::string(kYaml));
+    ASSERT_TRUE(cfg.valid());
+
+    auto writer = mldp_pvxs_driver::writer::WriterFactory::create("mldp", cfg, nullptr);
+    ASSERT_TRUE(writer);
+
+    using namespace mldp_pvxs_driver::util::bus;
+    EXPECT_TRUE(writer->acceptsPayload(TimeSeriesPayload{}));
+    EXPECT_FALSE(writer->acceptsPayload(SourceMetadataPayload{}));
+    EXPECT_FALSE(writer->acceptsPayload(ConfigurationPayload{}));
+    EXPECT_FALSE(writer->acceptsPayload(ConfigurationActivationPayload{}));
+}
+
+// ---------------------------------------------------------------------------
+// BatchMetadataAppearsAsColumnAttributes
+// Verify batch.metadata flows through MLDPWriter into gRPC column attributes.
+// Tests the writer directly (no controller) to isolate MLDPWriter conversion.
+// ---------------------------------------------------------------------------
+
+TEST(MLDPWriterTest, BatchMetadataAppearsAsColumnAttributes)
+{
+    WriterTestIngestionService service;
+    grpc::ServerBuilder        builder;
+    int                        port = 0;
+    builder.AddListeningPort("127.0.0.1:0", grpc::InsecureServerCredentials(), &port);
+    builder.RegisterService(&service);
+    std::unique_ptr<grpc::Server> server(builder.BuildAndStart());
+    ASSERT_TRUE(server);
+    ASSERT_GT(port, 0);
+
+    std::ostringstream yaml;
+    yaml << "name: mldp_meta_test\n"
+         << "mldp-pool:\n"
+         << "  provider-name: meta-test-provider\n"
+         << "  ingestion-url: 127.0.0.1:" << port << "\n"
+         << "  query-url: localhost:" << port << "\n"
+         << "  min-conn: 1\n"
+         << "  max-conn: 1\n";
+
+    const auto cfg = makeConfigFromYaml(yaml.str());
+    ASSERT_TRUE(cfg.valid());
+
+    auto writer = mldp_pvxs_driver::writer::WriterFactory::create("mldp", cfg, nullptr);
+    ASSERT_TRUE(writer);
+    ASSERT_NO_THROW(writer->start());
+
+    using namespace mldp_pvxs_driver::util::bus;
+
+    IDataBus::EventBatch batch;
+    batch.root_source = "test:meta:signal";
+    batch.metadata    = {{"facility", "lcls"}, {"signal_type", "scalar"}};
+
+    DataBatch  frame;
+    frame.timestamps.push_back({1000000000, 0});
+    DataColumn col;
+    col.name   = "value";
+    col.values = std::vector<double>{42.0};
+    frame.columns.push_back(std::move(col));
+
+    TimeSeriesPayload ts;
+    ts.frames.push_back(std::move(frame));
+    batch.payload = std::move(ts);
+
+    ASSERT_TRUE(writer->push(std::move(batch)));
+    ASSERT_TRUE(writerWaitForCount(service.request_count, 1, std::chrono::milliseconds(5000)));
+
+    std::vector<dp::service::ingestion::IngestDataRequest> captured;
+    {
+        std::lock_guard<std::mutex> lock(service.captured_mutex);
+        captured = service.captured_requests;
+    }
+    ASSERT_FALSE(captured.empty()) << "No IngestDataRequest captured from MLDPWriter";
+
+    const auto hasAttr = [](const google::protobuf::RepeatedPtrField<dp::service::common::Attribute>& attrs,
+                             const std::string& key,
+                             const std::string& value) -> bool
+    {
+        for (const auto& a : attrs)
+        {
+            if (a.name() == key && a.value() == value)
+                return true;
+        }
+        return false;
+    };
+
+    bool checked = false;
+    for (const auto& req : captured)
+    {
+        const auto& df = req.ingestiondataframe();
+        for (int i = 0; i < df.doublecolumns_size(); ++i)
+        {
+            const auto& attrs = df.doublecolumns(i).metadata().attributes();
+            EXPECT_TRUE(hasAttr(attrs, "facility",    "lcls"))
+                << "doublecolumns[" << i << "] missing facility attribute";
+            EXPECT_TRUE(hasAttr(attrs, "signal_type", "scalar"))
+                << "doublecolumns[" << i << "] missing signal_type attribute";
+            EXPECT_EQ(df.doublecolumns(i).metadata().provenance().source(), "test:meta:signal")
+                << "doublecolumns[" << i << "] provenance.source mismatch";
+            checked = true;
+        }
+    }
+    EXPECT_TRUE(checked) << "No double columns found in captured requests to verify";
+
+    writer->stop();
+    server->Shutdown();
 }

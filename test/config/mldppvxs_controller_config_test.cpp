@@ -383,4 +383,5 @@ reader: []
     EXPECT_THROW(static_cast<void>(MLDPPVXSControllerConfig(cfg)), MLDPPVXSControllerConfig::Error);
 }
 
+
 } // namespace mldp_pvxs_driver::controller

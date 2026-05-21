@@ -10,6 +10,8 @@
 
 #include <writer/WriterConfig.h>
 #include <writer/mldp/MLDPWriterConfig.h>
+#include <writer/mldp_annotation/MLDPAnnotationWriterConfig.h>
+#include <writer/mldp_configuration/MLDPConfigurationWriterConfig.h>
 
 #ifdef MLDP_PVXS_HDF5_ENABLED
 #include <writer/hdf5/HDF5WriterConfig.h>
@@ -96,6 +98,50 @@ void WriterConfig::validate(const Config& writerNode)
         }
         instanceCount += static_cast<int>(mergeItems.size());
 #endif
+    }
+
+    // -- MLDP annotation writer instances --
+    if (writerNode.hasChild(WriterMldpAnnotationKey))
+    {
+        if (!writerNode.isSequence(WriterMldpAnnotationKey))
+        {
+            throw Error("writer.mldp-annotation must be a sequence of writer instances");
+        }
+        const auto items = writerNode.subConfig(WriterMldpAnnotationKey);
+        for (const auto& item : items)
+        {
+            try
+            {
+                MLDPAnnotationWriterConfig::parse(item);
+            }
+            catch (const std::runtime_error& e)
+            {
+                throw Error(std::string("writer.mldp-annotation: ") + e.what());
+            }
+        }
+        instanceCount += static_cast<int>(items.size());
+    }
+
+    // -- MLDP configuration writer instances --
+    if (writerNode.hasChild(WriterMldpConfigurationKey))
+    {
+        if (!writerNode.isSequence(WriterMldpConfigurationKey))
+        {
+            throw Error("writer.mldp-configuration must be a sequence of writer instances");
+        }
+        const auto items = writerNode.subConfig(WriterMldpConfigurationKey);
+        for (const auto& item : items)
+        {
+            try
+            {
+                MLDPConfigurationWriterConfig::parse(item);
+            }
+            catch (const std::runtime_error& e)
+            {
+                throw Error(std::string("writer.mldp-configuration: ") + e.what());
+            }
+        }
+        instanceCount += static_cast<int>(items.size());
     }
 
     if (instanceCount == 0)

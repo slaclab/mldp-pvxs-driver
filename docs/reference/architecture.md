@@ -12,7 +12,7 @@ The driver implements an **abstract Reader pattern** that allows plugging in dif
 flowchart TB
     subgraph DataSources["DATA SOURCES"]
         DS1["EPICS Control System<br/>(PVs/Process Variables)"]
-        DS2["EPICS Archiver<br/>(Future)"]
+        DS2["EPICS Archiver<br/>"]
         DS3["HDF5 Files<br/>(Future)"]
         DS4["Others<br/>(Future)"]
     end
@@ -34,6 +34,8 @@ flowchart TB
             WN["Worker N<br/>Queue"]
         end
     end
+
+    QueryableFactory["QueryableFactory<br/>(Out-of-Band Query Registry)<br/>now: startup · tests<br/>future: algorithms / decision engines"]
 
     WriterFactory["WriterFactory<br/>(Static Registration)"]
 
@@ -62,9 +64,12 @@ flowchart TB
     R4 --> IDataBus
 
     IDataBus --> HashPart
+    IDataBus ~~~ QueryableFactory
     HashPart --> W0
     HashPart --> W1
     HashPart --> WN
+
+    Controller -. prepareQueryables .-> QueryableFactory
 
     W0 --> WriterFactory
     W1 --> WriterFactory
@@ -201,12 +206,16 @@ Each `EventBatchStruct` also carries:
 
 ### QueryableFactory
 
-`QueryableFactory` (singleton) is a type-keyed registry for query clients. It is separate from `IDataBus` (which is push-only) and supports out-of-band metadata and data queries.
+`QueryableFactory` (singleton) is a type-keyed registry for query clients. It is separate from `IDataBus` (which is push-only) and supports out-of-band metadata and data queries. It sits alongside the controller (see diagram) as an independent access point — not part of the push pipeline.
 
 - **Prepare at startup** (in `MLDPPVXSController::start()`): `prepareQueryables()` iterates `queryable:` config entries and calls `QueryableFactory::instance().prepare<T>(cfg, metrics)` for each known type.
 - **Create at runtime**: any component calls `QueryableFactory::instance().create<MLDPQueryClient>()` to get a fresh client; the factory constructs it from the stored config closure.
 - **Supported types**: `MLDPQueryClient` (type key `"mldp"`), `MLDPAnnotationQueryClient` (type key `"mldp-annotation"`).
 - Thread-safe: uses a `std::shared_mutex` on the internal creators map.
+
+**Current use**: startup initialization and test fixtures that need to issue ad-hoc queries (e.g. verify ingested data, fetch annotation metadata) without going through `IDataBus`.
+
+**Future use**: the factory is positioned as the query interface for decision-making components — for example algorithms that inspect historical data or existing annotations to decide what to ingest, generate derived signals, or trigger additional processing. Because `QueryableFactory` is decoupled from the push path, these consumers can be added without touching the reader/writer pipeline.
 
 → [Query Client Documentation](../dev/query-client.md)
 
