@@ -41,6 +41,7 @@ using mldp_pvxs_driver::util::bus::DataColumn;
 using mldp_pvxs_driver::util::bus::IDataBus;
 // Backward compatibility alias
 using MockEventBusPush = mldp_pvxs_driver::test::mock::MockDataBus;
+using mldp_pvxs_driver::util::bus::asTimeSeries;
 
 // Helper: get first DataColumn with a vector<double> from a DataBatch.
 auto findDoubleCol   = [](const DataBatch& b, std::size_t idx) -> const DataColumn& { return b.columns.at(idx); };
@@ -84,14 +85,14 @@ TEST(EpicsArchiverReaderHttpIntegrationTest, FetchesPbHttpStreamAndPublishesBusE
 
     const auto batches = bus->snapshot();
     ASSERT_EQ(batches.size(), 1u);
-    ASSERT_EQ(batches[0].frames.size(), 4u);
+    ASSERT_EQ(asTimeSeries(batches[0]).frames.size(), 4u);
     EXPECT_EQ(batches[0].root_source, "TEST:PV:DOUBLE");
 
     uint64_t prev_epoch = 0;
     uint64_t prev_nano = 0;
-    for (size_t i = 0; i < batches[0].frames.size(); ++i)
+    for (size_t i = 0; i < asTimeSeries(batches[0]).frames.size(); ++i)
     {
-        const auto& frame = batches[0].frames[i];
+        const auto& frame = asTimeSeries(batches[0]).frames[i];
         ASSERT_FALSE(frame.columns.empty());
         const auto& col     = findDoubleCol(frame, 0);
         const auto& doubles = getDoubles(col);
@@ -225,9 +226,9 @@ TEST(EpicsArchiverReaderHttpIntegrationTest, FetchesMixedTypedPvSetUsingPvSuffix
     ASSERT_TRUE(batches_by_source.count(pv_bytes));
 
     const auto* string_batch = batches_by_source.at(pv_string);
-    ASSERT_FALSE(string_batch->frames.empty());
+    ASSERT_FALSE(asTimeSeries(*string_batch).frames.empty());
     {
-        const auto& col = string_batch->frames[0].columns.at(0);
+        const auto& col = asTimeSeries(*string_batch).frames[0].columns.at(0);
         EXPECT_EQ(col.name, pv_string);
         const auto& sv = getStrings(col);
         ASSERT_FALSE(sv.empty());
@@ -235,17 +236,17 @@ TEST(EpicsArchiverReaderHttpIntegrationTest, FetchesMixedTypedPvSetUsingPvSuffix
     }
 
     const auto* int_batch = batches_by_source.at(pv_int);
-    ASSERT_FALSE(int_batch->frames.empty());
+    ASSERT_FALSE(asTimeSeries(*int_batch).frames.empty());
     {
-        const auto& col = int_batch->frames[0].columns.at(0);
+        const auto& col = asTimeSeries(*int_batch).frames[0].columns.at(0);
         EXPECT_EQ(col.name, pv_int);
         EXPECT_NO_THROW(getInt32s(col));
     }
 
     const auto* waveform_batch = batches_by_source.at(pv_waveform);
-    ASSERT_FALSE(waveform_batch->frames.empty());
+    ASSERT_FALSE(asTimeSeries(*waveform_batch).frames.empty());
     {
-        const auto& col     = waveform_batch->frames[0].columns.at(0);
+        const auto& col     = asTimeSeries(*waveform_batch).frames[0].columns.at(0);
         const auto& arrays  = getDoubleArrays(col);
         EXPECT_EQ(col.name, pv_waveform);
         ASSERT_FALSE(arrays.empty());
@@ -253,9 +254,9 @@ TEST(EpicsArchiverReaderHttpIntegrationTest, FetchesMixedTypedPvSetUsingPvSuffix
     }
 
     const auto* bytes_batch = batches_by_source.at(pv_bytes);
-    ASSERT_FALSE(bytes_batch->frames.empty());
+    ASSERT_FALSE(asTimeSeries(*bytes_batch).frames.empty());
     {
-        const auto& col   = bytes_batch->frames[0].columns.at(0);
+        const auto& col   = asTimeSeries(*bytes_batch).frames[0].columns.at(0);
         EXPECT_EQ(col.name, pv_bytes);
         const auto& blobs = getBlobs(col);
         ASSERT_FALSE(blobs.empty());
@@ -310,9 +311,9 @@ TEST(EpicsArchiverReaderHttpIntegrationTest, SplitsPublishedBatchesByHistoricalS
 
     for (const auto& batch : batches)
     {
-        ASSERT_FALSE(batch.frames.empty());
-        const auto& first_frame = batch.frames.front();
-        const auto& last_frame = batch.frames.back();
+        ASSERT_FALSE(asTimeSeries(batch).frames.empty());
+        const auto& first_frame = asTimeSeries(batch).frames.front();
+        const auto& last_frame = asTimeSeries(batch).frames.back();
         ASSERT_FALSE(first_frame.timestamps.empty());
         ASSERT_FALSE(last_frame.timestamps.empty());
         const auto first_epoch_s = first_frame.timestamps[0].epoch_seconds;
@@ -324,7 +325,7 @@ TEST(EpicsArchiverReaderHttpIntegrationTest, SplitsPublishedBatchesByHistoricalS
         const uint64_t last_ns  = last_epoch_s * 1'000'000'000ULL + last_nano_s;
         EXPECT_LE(last_ns - first_ns, 1'000'000'000ULL);
 
-        for (const auto& frame : batch.frames)
+        for (const auto& frame : asTimeSeries(batch).frames)
         {
             ASSERT_FALSE(frame.timestamps.empty());
             total_events++;

@@ -64,7 +64,7 @@ writer:
 | Step | What happens |
 |------|-------------|
 | `start()` | Registers provider with MLDP service; spawns worker threads. |
-| `push(batch)` | Fans out `DataFrames` across worker channels; returns `false` on overflow. |
+| `push(batch)` | Extracts `TimeSeriesPayload` frames; fans out across worker channels via round-robin; returns `false` on overflow. Batch `metadata` map is forwarded to `buildRequest()` and stamped on each `ColumnProvenance.source` label in the gRPC request. |
 | `stop()` | Sets shutdown flag on all channels; drains queues; joins thread pool. |
 
 ## Key Files

@@ -26,6 +26,7 @@ using mldp_pvxs_driver::config::makeConfigFromYaml;
 using mldp_pvxs_driver::util::bus::IDataBus;
 using mldp_pvxs_driver::util::bus::DataBatch;
 using mldp_pvxs_driver::util::bus::DataColumn;
+using mldp_pvxs_driver::util::bus::TimeSeriesPayload;
 
 namespace {
 
@@ -303,7 +304,6 @@ TEST(MLDPPVXSControllerTest, BsasNtTableColumnsHaveProvenanceSourceSetToRootSour
 
     IDataBus::EventBatch batch;
     batch.root_source  = "test:bsas_table";
-    batch.is_tabular   = true;
     batch.metadata     = {};
     DataBatch frame;
     frame.timestamps.push_back({1000000000, 0});
@@ -311,7 +311,8 @@ TEST(MLDPPVXSControllerTest, BsasNtTableColumnsHaveProvenanceSourceSetToRootSour
     col.name   = "signal";
     col.values = std::vector<double>{3.14};
     frame.columns.push_back(std::move(col));
-    batch.frames.push_back(std::move(frame));
+    batch.payload = TimeSeriesPayload{.is_tabular = true};
+    std::get<TimeSeriesPayload>(batch.payload).frames.push_back(std::move(frame));
 
     ASSERT_TRUE(controller->push(std::move(batch)));
     ASSERT_TRUE(waitForCount(service.request_count, 1, std::chrono::milliseconds(5000)));
@@ -464,7 +465,8 @@ TEST(MLDPPVXSControllerTest, IdleStreamRotationStartsNewStreamAfterMaxAge)
     col1.name   = "value";
     col1.values = std::vector<int32_t>{1};
     frame1.columns.push_back(std::move(col1));
-    batch.frames.push_back(std::move(frame1));
+    batch.payload = TimeSeriesPayload{};
+    std::get<TimeSeriesPayload>(batch.payload).frames.push_back(std::move(frame1));
 
     ASSERT_TRUE(controller->push(std::move(batch)));
     ASSERT_TRUE(waitForCount(service.stream_count, 1, std::chrono::milliseconds(1000)));
@@ -481,11 +483,112 @@ TEST(MLDPPVXSControllerTest, IdleStreamRotationStartsNewStreamAfterMaxAge)
     col2.name   = "value";
     col2.values = std::vector<int32_t>{2};
     frame2.columns.push_back(std::move(col2));
-    batch2.frames.push_back(std::move(frame2));
+    batch2.payload = TimeSeriesPayload{};
+    std::get<TimeSeriesPayload>(batch2.payload).frames.push_back(std::move(frame2));
 
     ASSERT_TRUE(controller->push(std::move(batch2)));
     ASSERT_TRUE(waitForCount(service.stream_count, 2, std::chrono::milliseconds(1000)));
     ASSERT_TRUE(waitForCount(service.request_count, 2, std::chrono::milliseconds(1000)));
+
+    controller->stop();
+    server->Shutdown();
+}
+
+// Verify that metadata set on an EventBatch flows end-to-end through the controller and
+// MLDPWriter into the gRPC IngestDataRequest as per-column ColumnMetadata attributes.
+// The test pushes a batch with metadata directly to the controller (bypassing the reader)
+// to isolate the MLDPWriter path. A companion reader-level test lives in
+// epics_pvxs_reader_test.cpp (StaticAndPerPvMetadataMergedIntoEventBatch).
+TEST(MLDPPVXSControllerTest, BatchMetadataAppearsAsGrpcColumnAttributes)
+{
+    TestIngestionService service;
+    grpc::ServerBuilder  builder;
+    int                  port = 0;
+    builder.AddListeningPort("127.0.0.1:0", grpc::InsecureServerCredentials(), &port);
+    builder.RegisterService(&service);
+    std::unique_ptr<grpc::Server> server(builder.BuildAndStart());
+    ASSERT_TRUE(server);
+    ASSERT_GT(port, 0);
+
+    std::ostringstream yaml;
+    yaml << "writer:\n"
+         << "  mldp:\n"
+         << "    - name: mldp_main\n"
+         << "      mldp-pool:\n"
+         << "        provider-name: test_provider\n"
+         << "        ingestion-url: 127.0.0.1:" << port << "\n"
+         << "        query-url: localhost:" << port << "\n"
+         << "        min-conn: 1\n"
+         << "        max-conn: 1\n"
+         << "reader:\n"
+         << "  - epics-pvxs:\n"
+         << "      - name: epics_reader_1\n"
+         << "        pvs:\n"
+         << "          - name: test:counter\n";
+
+    const auto config = makeConfigFromYaml(yaml.str());
+    ASSERT_TRUE(config.valid());
+
+    auto controller = MLDPPVXSController::create(config);
+    ASSERT_TRUE(controller);
+    controller->start();
+
+    // Build a batch carrying reader-merged metadata (facility + signal_type).
+    IDataBus::EventBatch batch;
+    batch.root_source = "test:counter";
+    batch.metadata    = {{"facility", "lcls"}, {"signal_type", "scalar"}};
+
+    DataBatch frame;
+    frame.timestamps.push_back({1000000000, 0});
+    DataColumn col;
+    col.name   = "value";
+    col.values = std::vector<double>{42.0};
+    frame.columns.push_back(std::move(col));
+
+    TimeSeriesPayload ts;
+    ts.frames.push_back(std::move(frame));
+    batch.payload = std::move(ts);
+
+    ASSERT_TRUE(controller->push(std::move(batch)));
+    ASSERT_TRUE(waitForCount(service.request_count, 1, std::chrono::milliseconds(5000)));
+
+    std::vector<dp::service::ingestion::IngestDataRequest> captured;
+    {
+        std::lock_guard<std::mutex> lock(service.captured_mutex);
+        captured = service.captured_requests;
+    }
+    ASSERT_FALSE(captured.empty()) << "No IngestDataRequest captured";
+
+    // Helper: return true when the attribute list contains the expected key/value pair.
+    const auto hasAttr = [](const google::protobuf::RepeatedPtrField<dp::service::common::Attribute>& attrs,
+                             const std::string& key,
+                             const std::string& value) -> bool
+    {
+        for (const auto& a : attrs)
+        {
+            if (a.name() == key && a.value() == value)
+                return true;
+        }
+        return false;
+    };
+
+    bool checked = false;
+    for (const auto& req : captured)
+    {
+        const auto& df = req.ingestiondataframe();
+        for (int i = 0; i < df.doublecolumns_size(); ++i)
+        {
+            const auto& attrs = df.doublecolumns(i).metadata().attributes();
+            EXPECT_TRUE(hasAttr(attrs, "facility",    "lcls"))
+                << "doublecolumns[" << i << "] missing facility attribute";
+            EXPECT_TRUE(hasAttr(attrs, "signal_type", "scalar"))
+                << "doublecolumns[" << i << "] missing signal_type attribute";
+            // Provenance source is set from root_source, independent of metadata.
+            EXPECT_EQ(df.doublecolumns(i).metadata().provenance().source(), "test:counter");
+            checked = true;
+        }
+    }
+    EXPECT_TRUE(checked) << "No double columns found in captured requests to verify";
 
     controller->stop();
     server->Shutdown();

@@ -184,9 +184,11 @@ void EpicsPVXSReader::processDefaultMode(const std::string& pvName, const pvxs::
         }
     }
     eventBatch.metadata = std::move(merged);
-    eventBatch.frames.push_back(std::move(batch));
-    emitted = 1;
     eventBatch.reader_name = name();
+    eventBatch.payload = TimeSeriesPayload{
+        .frames = {std::move(batch)},
+    };
+    emitted = 1;
     bus_->push(std::move(eventBatch));
 }
 
@@ -221,7 +223,7 @@ void EpicsPVXSReader::processSlacBsasTableMode(const std::string&     pvName,
     IDataBus::EventBatch tableBatch;
     tableBatch.root_source = pvName;
     tableBatch.metadata = merged_meta;
-    tableBatch.is_tabular = true;
+    tableBatch.payload = TimeSeriesPayload{.is_tabular = true};
     std::size_t colsInBatch = 0;
 
     auto resetBatch = [&tableBatch, &pvName, &colsInBatch, merged_meta]()
@@ -229,7 +231,7 @@ void EpicsPVXSReader::processSlacBsasTableMode(const std::string&     pvName,
         tableBatch = IDataBus::EventBatch{};
         tableBatch.root_source = pvName;
         tableBatch.metadata = merged_meta;
-        tableBatch.is_tabular = true;
+        tableBatch.payload = TimeSeriesPayload{.is_tabular = true};
         colsInBatch = 0;
     };
 
@@ -248,7 +250,7 @@ void EpicsPVXSReader::processSlacBsasTableMode(const std::string&     pvName,
                             sourceTag);
                         continue;
                     }
-                    tableBatch.frames.push_back(std::move(b));
+                    std::get<TimeSeriesPayload>(tableBatch.payload).frames.push_back(std::move(b));
                 }
                 ++colsInBatch;
                 if (colBatchSize > 0 && colsInBatch >= colBatchSize)
@@ -265,7 +267,7 @@ void EpicsPVXSReader::processSlacBsasTableMode(const std::string&     pvName,
             util::format_string("Error converting PV {} to MLDP SLAC BSAS table batch on reader {}.", pvName, name_),
             sourceTag);
     }
-    else if (!tableBatch.frames.empty())
+    else if (!std::get<TimeSeriesPayload>(tableBatch.payload).frames.empty())
     {
         tableBatch.reader_name = name();
         bus_->push(std::move(tableBatch));
@@ -276,9 +278,11 @@ void EpicsPVXSReader::processSlacBsasTableMode(const std::string&     pvName,
     IDataBus::EventBatch markerBatch;
     markerBatch.root_source = pvName;
     markerBatch.metadata = merged_meta;
-    markerBatch.is_tabular = true;
-    markerBatch.end_of_batch_group = true;
     markerBatch.reader_name = name();
+    markerBatch.payload = TimeSeriesPayload{
+        .end_of_batch_group = true,
+        .is_tabular = true,
+    };
     bus_->push(std::move(markerBatch));
 }
 

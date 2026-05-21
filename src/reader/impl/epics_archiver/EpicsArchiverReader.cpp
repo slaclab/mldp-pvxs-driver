@@ -339,6 +339,7 @@ void EpicsArchiverReader::flushChunk(PbChunkState& state)
             }
         }
         batch.metadata = std::move(merged);
+        TimeSeriesPayload ts_payload;
         for (auto& frame : state.events)
         {
             if (!hasTimestamps(frame))
@@ -350,10 +351,11 @@ void EpicsArchiverReader::flushChunk(PbChunkState& state)
                             });
                 continue;
             }
-            batch.frames.push_back(std::move(frame));
+            ts_payload.frames.push_back(std::move(frame));
         }
-        if (!batch.frames.empty())
+        if (!ts_payload.frames.empty())
         {
+            batch.payload = std::move(ts_payload);
             batch.reader_name = name();
             bus_->push(std::move(batch));
         }

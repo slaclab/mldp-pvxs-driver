@@ -186,9 +186,11 @@ void EpicsBaseReader::processDefaultMode(const std::string&                     
         }
     }
     batch.metadata = std::move(merged);
-    batch.frames.push_back(std::move(batch_frame));
-    emitted = 1;
     batch.reader_name = name();
+    batch.payload = TimeSeriesPayload{
+        .frames = {std::move(batch_frame)},
+    };
+    emitted = 1;
     bus_->push(std::move(batch));
 }
 
@@ -248,7 +250,7 @@ void EpicsBaseReader::processSlacBsasTableMode(const std::string&               
                                     });
                         continue;
                     }
-                    tableBatch.frames.push_back(std::move(frame));
+                    std::get<TimeSeriesPayload>(tableBatch.payload).frames.push_back(std::move(frame));
                 }
                 ++colsInBatch;
                 if (colBatchSize > 0 && colsInBatch >= colBatchSize)
@@ -266,7 +268,7 @@ void EpicsBaseReader::processSlacBsasTableMode(const std::string&               
                         m.incrementReaderErrors(1.0, sourceTag);
                     });
     }
-    else if (!tableBatch.frames.empty())
+    else if (!std::get<TimeSeriesPayload>(tableBatch.payload).frames.empty())
     {
         tableBatch.reader_name = name();
         bus_->push(std::move(tableBatch));

@@ -270,14 +270,16 @@ bool BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch(mldp_pvxs_driver::util::
                                                         size_t&                               outEmitted)
 {
     outBatch->metadata.clear();
-    outBatch->frames.clear();
     outBatch->metadata["source"] = tablePvName;
+    outBatch->payload = TimeSeriesPayload{.is_tabular = true};
+    auto& ts = std::get<TimeSeriesPayload>(outBatch->payload);
+    ts.frames.clear();
     return tryBuildNtTableRowTsBatch(log, tablePvName, epicsValue, tsSecondsField, tsNanosField,
                                      [&](std::string colName, std::vector<DataBatch> batches)
                                      {
                                          (void)colName;
                                          for (auto& b : batches)
-                                             outBatch->frames.push_back(std::move(b));
+                                             ts.frames.push_back(std::move(b));
                                      },
                                      outEmitted);
 }

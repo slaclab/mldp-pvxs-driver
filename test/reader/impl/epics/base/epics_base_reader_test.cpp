@@ -27,6 +27,7 @@ using mldp_pvxs_driver::util::bus::DataBatch;
 using mldp_pvxs_driver::util::bus::DataColumn;
 using mldp_pvxs_driver::util::bus::TimestampEntry;
 using namespace mldp_pvxs_driver::reader::impl::epics;
+using mldp_pvxs_driver::util::bus::asTimeSeries;
 
 // Concrete mock implementation of IDataBus for testing
 class MockEventBusPush : public IDataBus
@@ -48,7 +49,7 @@ public:
         std::lock_guard<std::mutex> lock(mutex);
         if (metrics_)
         {
-            const size_t             total_values = batch.frames.size();
+            const size_t             total_values = asTimeSeries(batch).frames.size();
             const auto               source = batch.root_source.empty() ? std::string("unknown") : batch.root_source;
             const prometheus::Labels tags{{"source", source}};
             metrics_->incrementBusPushes(static_cast<double>(total_values), tags);
@@ -72,7 +73,7 @@ public:
         size_t                      total = 0;
         for (const auto& batch : received_events)
         {
-            total += batch.frames.size();
+            total += asTimeSeries(batch).frames.size();
         }
         return total;
     }
@@ -106,11 +107,11 @@ public:
             return nullptr;
         }
         const auto& batch = received_events.back();
-        if (batch.frames.empty())
+        if (asTimeSeries(batch).frames.empty())
         {
             return nullptr;
         }
-        return &batch.frames.front();
+        return &asTimeSeries(batch).frames.front();
     }
 
     // Method to clear events
@@ -146,7 +147,8 @@ const DataBatch* findLatestDataFrameForSource(const MockEventBusPush& bus, const
     std::lock_guard<std::mutex> lock(bus.mutex);
     for (auto it = bus.received_events.rbegin(); it != bus.received_events.rend(); ++it)
     {
-        for (auto fit = it->frames.rbegin(); fit != it->frames.rend(); ++fit)
+        const auto& frames = asTimeSeries(*it).frames;
+        for (auto fit = frames.rbegin(); fit != frames.rend(); ++fit)
         {
             const auto src = frameSource(*fit);
             if (src.has_value() && *src == source)
@@ -164,7 +166,7 @@ size_t countEventsForSource(const MockEventBusPush& bus, const std::string& sour
     size_t                      total = 0;
     for (const auto& batch : bus.received_events)
     {
-        for (const auto& frame : batch.frames)
+        for (const auto& frame : asTimeSeries(batch).frames)
         {
             const auto src = frameSource(frame);
             if (src.has_value() && *src == source)
@@ -350,7 +352,7 @@ TEST_F(EpicsBaseReaderTest, SimulatedPVsProduceEventsAndExpectedTypes)
             std::lock_guard<std::mutex> lock(mock_bus->mutex);
             for (const auto& batch : mock_bus->received_events)
             {
-                for (const auto& frame : batch.frames)
+                for (const auto& frame : asTimeSeries(batch).frames)
                 {
                     const auto src = frameSource(frame);
                     if (!src.has_value())
@@ -437,7 +439,7 @@ pvs:
         for (const auto& batch : mock_bus->received_events)
         {
             bool has_column = false;
-            for (const auto& frame : batch.frames)
+            for (const auto& frame : asTimeSeries(batch).frames)
             {
                 const auto src = frameSource(frame);
                 if (src == "PV_A" || src == "PV_B")
@@ -461,7 +463,7 @@ pvs:
         std::lock_guard<std::mutex> lock(mock_bus->mutex);
         for (const auto& batch : mock_bus->received_events)
         {
-            for (const auto& frame : batch.frames)
+            for (const auto& frame : asTimeSeries(batch).frames)
             {
                 const auto src = frameSource(frame);
                 if (src == "PV_A")

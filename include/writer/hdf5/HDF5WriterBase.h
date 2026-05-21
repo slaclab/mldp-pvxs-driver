@@ -145,6 +145,11 @@ public:
     void        stop() noexcept override;
     bool        supports_multi_root_source() const noexcept override { return true; }
 
+    bool acceptsPayload(const util::bus::BatchPayload& payload) const noexcept override
+    {
+        return std::holds_alternative<util::bus::TimeSeriesPayload>(payload);
+    }
+
 protected:
     explicit HDF5WriterBase(HDF5WriterConfig                    config,
                             std::shared_ptr<metrics::Metrics>   metrics = nullptr);

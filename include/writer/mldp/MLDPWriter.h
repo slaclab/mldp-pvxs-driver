@@ -74,6 +74,11 @@ public:
     void stop() noexcept override;
     bool isHealthy() const noexcept override;
 
+    bool acceptsPayload(const util::bus::BatchPayload& payload) const noexcept override
+    {
+        return std::holds_alternative<util::bus::TimeSeriesPayload>(payload);
+    }
+
     /**
      * @brief Provider ID obtained after registration with the MLDP service.
      *

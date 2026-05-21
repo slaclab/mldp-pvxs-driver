@@ -154,7 +154,12 @@ void HDF5WriterBase::writerLoop()
         {
             try
             {
-                if (entry.batch.end_of_batch_group)
+                if (!util::bus::isTimeSeries(entry.batch))
+                {
+                    continue;
+                }
+                const auto& ts = util::bus::asTimeSeries(entry.batch);
+                if (ts.end_of_batch_group)
                 {
                     const auto& source = entry.batch.root_source;
                     auto        it = tabularBuffers_.find(source);
@@ -171,13 +176,13 @@ void HDF5WriterBase::writerLoop()
                         }
                     }
                 }
-                else if (isTabularBatch(entry.batch))
+                else if (ts.is_tabular)
                 {
                     processTabularBatch(entry);
                 }
                 else
                 {
-                    for (const auto& frame : entry.batch.frames)
+                    for (const auto& frame : ts.frames)
                     {
                         const auto t0 = std::chrono::steady_clock::now();
                         writeFrameImpl(entry.batch.root_source, frame, entry.batchSeq);
@@ -285,7 +290,7 @@ H5::DataSet HDF5WriterBase::ensureDataset2D(H5::H5File&         file,
 
 bool HDF5WriterBase::isTabularBatch(const util::bus::IDataBus::EventBatch& batch)
 {
-    return batch.is_tabular;
+    return util::bus::isTimeSeries(batch) && util::bus::asTimeSeries(batch).is_tabular;
 }
 
 // ---------------------------------------------------------------------------
@@ -299,7 +304,7 @@ void HDF5WriterBase::processTabularBatch(const QueueEntry& entry)
     // Capture metadata from the first batch that carries non-empty metadata.
     if (buf.pendingMetadata.empty() && !entry.batch.metadata.empty())
         buf.pendingMetadata = entry.batch.metadata;
-    for (const auto& frame : entry.batch.frames)
+    for (const auto& frame : util::bus::asTimeSeries(entry.batch).frames)
         accumulateTabularFrame(source, frame, buf);
 }
 

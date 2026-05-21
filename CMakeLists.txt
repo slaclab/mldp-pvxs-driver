@@ -158,6 +158,9 @@ if(MLDP_PVXS_ENABLE_HDF5)
 
     message(STATUS "HDF5 writer enabled — using target ${_MLDP_HDF5_TARGET}")
     add_compile_definitions(MLDP_PVXS_HDF5_ENABLED)
+    # Suppress a false-positive -Walloc-size-larger-than in HDF5's own C++ sources
+    # (H5Location.cpp new char[actual_name_len] with a range the analyser over-estimates).
+    target_compile_options(${_MLDP_HDF5_TARGET} PRIVATE -Wno-alloc-size-larger-than)
 else()
     message(STATUS "MLDP_PVXS_ENABLE_HDF5=OFF — HDF5 writer excluded")
 endif()
@@ -514,6 +517,10 @@ add_library(lib${PROJECT_NAME}
     "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/WriterFactory.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/mldp/MLDPWriterConfig.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/mldp/MLDPWriter.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/mldp_annotation/MLDPAnnotationWriterConfig.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/mldp_annotation/MLDPAnnotationWriter.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/mldp_configuration/MLDPConfigurationWriterConfig.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/mldp_configuration/MLDPConfigurationWriter.cpp"
     $<$<BOOL:${MLDP_PVXS_ENABLE_HDF5}>:
         "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/hdf5/HDF5WriterConfig.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/hdf5/HDF5FilePool.cpp"

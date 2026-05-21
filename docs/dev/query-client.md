@@ -1,76 +1,124 @@
-# MLDP Query Client
+# Query Clients
 
-`MLDPQueryClient` is the standalone client for querying MLDP gRPC for metadata and historical data. It is intentionally separate from `IDataBus`, which is now push-only for ingestion paths.
+The driver provides out-of-band query clients for inspecting MLDP metadata and data. These are intentionally separate from `IDataBus`, which is push-only for ingestion.
 
-> **Related:** [Architecture Overview](../reference/architecture.md) | [Implementing Custom Writers](../writers/writers-implementation.md)
+> **Related:** [Architecture Overview](../reference/architecture.md) | [Configuration Reference](../guides/configuration.md#queryable-block) | [Writers Overview](../writers/writers-implementation.md)
 
-## Overview
+---
 
-`MLDPQueryClient` provides the query-side API used by tests, diagnostics, and tools that need to inspect MLDP data without participating in the reader-to-writer pipeline.
+## QueryableFactory
 
-It lives in `include/query/impl/mldp/MLDPQueryClient.h` and implements the `IQueryable` interface.
+`QueryableFactory` is a singleton registry that decouples client creation from configuration. Clients are prepared once at startup; components create fresh instances on demand.
 
-## Constructor
+### Lifecycle
 
-The client is constructed with:
-
-- `MLDPGrpcPoolConfig`
-- optional `std::shared_ptr<metrics::Metrics>`
+1. **Startup** — `MLDPPVXSController::start()` calls `prepareQueryables()`, which iterates the `queryable:` config block and calls `QueryableFactory::instance().prepare<T>(cfg, metrics)` for each known type.
+2. **Runtime** — any component calls `QueryableFactory::instance().create<T>()` to get a `unique_ptr<T>` constructed from the stored config closure.
 
 ```cpp
-MLDPQueryClient client(pool_config);
+// Startup (inside controller):
+QueryableFactory::instance().prepare<MLDPQueryClient>(cfg, metrics);
+
+// Runtime (in a reader or test):
+auto client = QueryableFactory::instance().create<MLDPQueryClient>();
+auto infos = client->querySourcesInfo({"MY:PV"});
 ```
 
-The constructor initializes the underlying query pool immediately.
+### Supported types
 
-## Query APIs
+| Type key (YAML) | Class | Header |
+|---|---|---|
+| `mldp` | `MLDPQueryClient` | `include/query/impl/mldp/MLDPQueryClient.h` |
+| `mldp-annotation` | `MLDPAnnotationQueryClient` | `include/query/impl/mldp/MLDPAnnotationQueryClient.h` |
 
-### `querySourcesInfo(source_names)`
+`QueryableFactory::isPrepared<T>()` returns `true` when the type has been registered. Calling `create<T>()` on an unprepared type throws `std::runtime_error`.
+
+### IQueryable interface
+
+All query clients implement `IQueryable` (`include/query/IQueryable.h`). The interface is intentionally small so alternate backends can be injected in tests.
+
+---
+
+## MLDPQueryClient
+
+Queries source metadata and historical data from the MLDP gRPC backend.
+
+### Configuration
+
+Prepared under `queryable.mldp`:
+
+```yaml
+queryable:
+  mldp:
+    mldp-pool:
+      ingestion-url: grpc://ingest:50051
+      query-url:     grpc://query:50052
+      min-conn: 1
+      max-conn: 2
+```
+
+### Query APIs
+
+#### `querySourcesInfo(source_names)`
 
 Returns `std::vector<util::bus::IDataBus::SourceInfo>`.
 
-- Accepts a `std::set<std::string>` of source names.
-- Queries MLDP metadata for each source.
-- Prefers the `queryPvMetadata` RPC and falls back to `queryData` when needed.
+- Accepts `std::set<std::string>` of source names.
+- Calls `queryPvMetadata` RPC (falls back to `queryData` when needed).
 
-### `querySourcesData(source_names, options)`
+#### `querySourcesData(source_names, options)`
 
 Returns `std::optional<std::unordered_map<std::string, std::vector<dp::service::common::DataValues>>>`.
 
-- Accepts a `std::set<std::string>` of source names.
-- Accepts `util::bus::QuerySourcesDataOptions` for timeout and window tuning.
-- Returns `std::nullopt` when transport or protocol failure prevents a result.
+- Accepts `std::set<std::string>` source names and `util::bus::QuerySourcesDataOptions` (timeout, window).
+- Returns `std::nullopt` on transport or protocol failure.
 
-## Why It Is Separate from `IDataBus`
-
-`IDataBus` is the ingestion-side push interface for readers and controllers.
-
-`MLDPQueryClient` serves a different purpose:
-
-- it performs out-of-band, on-demand queries
-- it does not participate in the main push path
-- it is useful for diagnostics, tests, and inspection tools
-
-Keeping query traffic out of the bus keeps the ingestion path simpler and makes the bus implementation push-only.
-
-## Example Usage
-
-The best reference is `test/writer/grpc/mldp_grpc_writer_integration_test.cpp`, which exercises both metadata and data queries against a live MLDP backend.
-
-Typical usage looks like this:
+### Example
 
 ```cpp
-MLDPQueryClient client(pool_config, metrics);
+auto client = QueryableFactory::instance().create<MLDPQueryClient>();
 
 std::set<std::string> sources = {"MY:PV"};
-auto infos = client.querySourcesInfo(sources);
+auto infos = client->querySourcesInfo(sources);
 
 util::bus::QuerySourcesDataOptions options;
-auto data = client.querySourcesData(sources, options);
+auto data = client->querySourcesData(sources, options);
 ```
 
-## Implementation Notes
+---
 
-- `MLDPQueryClient` is the canonical production query implementation.
-- The interface is intentionally small so alternate backends can be injected later if needed.
-- The query pool is separate from the ingestion pool so query traffic and write traffic can be managed independently.
+## MLDPAnnotationQueryClient
+
+Queries source metadata from the MLDP `DpAnnotationService` gRPC backend.
+
+### Configuration
+
+Prepared under `queryable.mldp-annotation`:
+
+```yaml
+queryable:
+  mldp-annotation:
+    mldp-annotation-pool:
+      annotation-url: grpc://annotation-host:50053
+      min-conn: 1
+      max-conn: 2
+```
+
+### Example
+
+```cpp
+auto client = QueryableFactory::instance().create<MLDPAnnotationQueryClient>();
+// use client->queryPvMetadata(…) or other IQueryable methods
+```
+
+---
+
+## Why Separate from IDataBus
+
+`IDataBus` is the push interface for readers. Query clients serve a different purpose:
+
+- out-of-band, on-demand queries (diagnostics, tests, inspection tools)
+- do not participate in the main push path
+- can be created independently of the ingestion pipeline
+
+Keeping query traffic out of the bus keeps the ingestion path push-only and free of two-way gRPC state.

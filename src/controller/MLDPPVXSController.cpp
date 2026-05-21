@@ -198,10 +198,14 @@ bool MLDPPVXSController::push(EventBatch batch_values)
         return false;
     }
 
-    if (batch_values.frames.empty() && !batch_values.end_of_batch_group)
+    if (isTimeSeries(batch_values))
     {
-        warnf(*logger_, "Received empty batch for root source {}, skipping push.", batch_values.root_source);
-        return false;
+        const auto& ts = asTimeSeries(batch_values);
+        if (ts.frames.empty() && !ts.end_of_batch_group)
+        {
+            warnf(*logger_, "Received empty batch for root source {}, skipping push.", batch_values.root_source);
+            return false;
+        }
     }
 
     if (!route_table_.isAllToAll() && batch_values.reader_name.empty())
@@ -226,6 +230,9 @@ bool MLDPPVXSController::push(EventBatch batch_values)
             continue;
 
         if (!route_table_.acceptsSource(writers_[i]->name(), batch_values.root_source))
+            continue;
+
+        if (!writers_[i]->acceptsPayload(batch_values.payload))
             continue;
 
         // Capture writer pointer and a copy of the batch per task.

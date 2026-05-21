@@ -88,6 +88,23 @@ public:
     }
 
     /**
+     * @brief Returns true if this writer can consume the given payload type.
+     *
+     * Default returns true (accepts all payload types) to preserve backward
+     * compatibility with writers that do not override this method.
+     * Writers that only handle specific payload types should override and
+     * return false for unsupported alternatives to prevent silent data corruption
+     * when routing is misconfigured.
+     *
+     * @param payload The BatchPayload variant from the incoming EventBatch.
+     * @return true if push() should be called; false to skip this writer.
+     */
+    virtual bool acceptsPayload(const util::bus::BatchPayload& payload) const noexcept
+    {
+        return true;
+    }
+
+    /**
      * @brief Returns true if this writer supports receiving data from multiple
      *        root sources simultaneously (merged output).
      *

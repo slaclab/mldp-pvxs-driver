@@ -162,20 +162,25 @@ bool MLDPWriter::push(util::bus::IDataBus::EventBatch batch) noexcept
     {
         return false;
     }
-    if (batch.end_of_batch_group)
+    if (!util::bus::isTimeSeries(batch))
+    {
+        return true;
+    }
+    auto& ts_mut = std::get<util::bus::TimeSeriesPayload>(batch.payload);
+    if (ts_mut.end_of_batch_group)
     {
         // Marker-only batch emitted by readers to signal end of one NTTable
         // update round.  Nothing to forward to gRPC — skip silently.
         return true;
     }
-    if (batch.root_source.empty() || batch.frames.empty())
+    if (batch.root_source.empty() || ts_mut.frames.empty())
     {
         return false;
     }
 
     auto metadata = std::make_shared<const std::unordered_map<std::string, std::string>>(batch.metadata);
     bool enqueued = false;
-    for (auto& frame : batch.frames)
+    for (auto& frame : ts_mut.frames)
     {
         if (frame.timestamps.empty())
         {
