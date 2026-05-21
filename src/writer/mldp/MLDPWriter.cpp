@@ -20,9 +20,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
-#include <ranges>
 #include <stdexcept>
-#include <thread>
 
 using namespace mldp_pvxs_driver::writer;
 using namespace mldp_pvxs_driver::util::log;
