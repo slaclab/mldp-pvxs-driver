@@ -35,7 +35,6 @@
 
 using namespace mldp_pvxs_driver::util::pool;
 using namespace mldp_pvxs_driver::testutil;
-using dp::service::common::Structure;
 using mldp_pvxs_driver::config::Config;
 using mldp_pvxs_driver::config::makeConfigFromYaml;
 using mldp_pvxs_driver::controller::MLDPPVXSController;

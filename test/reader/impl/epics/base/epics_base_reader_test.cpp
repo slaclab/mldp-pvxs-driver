@@ -24,8 +24,6 @@
 using mldp_pvxs_driver::config::makeConfigFromYaml;
 using mldp_pvxs_driver::util::bus::IDataBus;
 using mldp_pvxs_driver::util::bus::DataBatch;
-using mldp_pvxs_driver::util::bus::DataColumn;
-using mldp_pvxs_driver::util::bus::TimestampEntry;
 using namespace mldp_pvxs_driver::reader::impl::epics;
 using mldp_pvxs_driver::util::bus::asTimeSeries;
 

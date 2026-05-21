@@ -32,7 +32,6 @@
 
 using mldp_pvxs_driver::config::makeConfigFromYaml;
 using mldp_pvxs_driver::util::bus::BatchPayload;
-using mldp_pvxs_driver::util::bus::BusTimestamp;
 using mldp_pvxs_driver::util::bus::ConfigurationActivationPayload;
 using mldp_pvxs_driver::util::bus::ConfigurationPayload;
 using mldp_pvxs_driver::util::bus::IDataBus;

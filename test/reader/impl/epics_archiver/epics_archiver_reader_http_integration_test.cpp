@@ -18,14 +18,12 @@
 #include <reader/impl/epics_archiver/EpicsArchiverReader.h>
 #include <util/bus/IDataBus.h>
 
-#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <map>
 #include <memory>
 #include <set>
 #include <string>
-#include <variant>
 #include <vector>
 
 namespace {

@@ -12,7 +12,6 @@
 
 #include <gtest/gtest.h>
 #include <config/wizard.h>
-#include "wizard_internal.h"
 #include "wizard_tree_types.hpp"
 
 namespace mldp_pvxs_driver::config {
