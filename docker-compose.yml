@@ -45,6 +45,22 @@ services:
         - "com.ospreydcs.dp.service.query.server.QueryGrpcServer"
     ports:
       - "50052:50052"
-      
+
+  dp-annotation:
+    image: ghcr.io/slaclab/dp-service:rel-1.14.0
+    container_name: dp-annotation
+    depends_on:
+      - mongodb
+    entrypoint:
+      - "java"
+    environment:
+      - DP_MONGO_DB_URI=mongodb://admin:admin@mongodb:27017/dp?authSource=admin
+    command:
+      - "-cp"
+      - "/app/app.jar"
+      - "com.ospreydcs.dp.service.annotation.server.AnnotationGrpcServer"
+    ports:
+      - "50053:50053"
+
 volumes:
   kafka-data:

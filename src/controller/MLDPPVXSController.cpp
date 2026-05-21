@@ -12,11 +12,16 @@
 #include <controller/MLDPPVXSController.h>
 #include <future>
 #include <memory>
+#include <query/QueryableFactory.h>
+#include <query/impl/mldp/MLDPAnnotationQueryClient.h>
+#include <query/impl/mldp/MLDPQueryClient.h>
 #include <reader/ReaderFactory.h>
 #include <util/StringFormat.h>
 #include <writer/WriterFactory.h>
 
+#include <functional>
 #include <stdexcept>
+#include <unordered_map>
 
 using namespace mldp_pvxs_driver::metrics;
 using namespace mldp_pvxs_driver::controller;
@@ -31,6 +36,37 @@ namespace {
 std::shared_ptr<mldp_pvxs_driver::util::log::ILogger> makeControllerLogger(const std::string& name)
 {
     return mldp_pvxs_driver::util::log::newLogger("controller." + name);
+}
+
+static void prepareQueryables(const MLDPPVXSControllerConfig&           cfg,
+                               std::shared_ptr<mldp_pvxs_driver::metrics::Metrics> metrics)
+{
+    using namespace mldp_pvxs_driver::query;
+    using namespace mldp_pvxs_driver::query::impl::mldp;
+
+    using PrepFn = std::function<void(const mldp_pvxs_driver::config::Config&,
+                                      std::shared_ptr<mldp_pvxs_driver::metrics::Metrics>)>;
+    static const std::unordered_map<std::string, PrepFn> kDispatch = {
+        {"mldp",
+         [](const mldp_pvxs_driver::config::Config& c,
+            std::shared_ptr<mldp_pvxs_driver::metrics::Metrics> m) {
+             QueryableFactory::instance().prepare<MLDPQueryClient>(c, std::move(m));
+         }},
+        {"mldp-annotation",
+         [](const mldp_pvxs_driver::config::Config& c,
+            std::shared_ptr<mldp_pvxs_driver::metrics::Metrics> m) {
+             QueryableFactory::instance().prepare<MLDPAnnotationQueryClient>(c, std::move(m));
+         }},
+    };
+    for (const auto& entry : cfg.queryableEntries())
+    {
+        auto it = kDispatch.find(entry.type);
+        if (it == kDispatch.end())
+        {
+            throw std::runtime_error("Unknown queryable type: " + entry.type);
+        }
+        it->second(entry.cfg, metrics);
+    }
 }
 } // namespace
 
@@ -78,6 +114,9 @@ void MLDPPVXSController::start()
 
     running_.store(true);
     infof(*logger_, "Controller is starting");
+
+    // Register queryable factories before any worker thread runs.
+    prepareQueryables(config_, metrics_);
 
     // Resize the fan-out thread pool to match the number of writer instances.
     const std::size_t numWriters = config_.writerEntries().size();
@@ -159,10 +198,14 @@ bool MLDPPVXSController::push(EventBatch batch_values)
         return false;
     }
 
-    if (batch_values.frames.empty() && !batch_values.end_of_batch_group)
+    if (isTimeSeries(batch_values))
     {
-        warnf(*logger_, "Received empty batch for root source {}, skipping push.", batch_values.root_source);
-        return false;
+        const auto& ts = asTimeSeries(batch_values);
+        if (ts.frames.empty() && !ts.end_of_batch_group)
+        {
+            warnf(*logger_, "Received empty batch for root source {}, skipping push.", batch_values.root_source);
+            return false;
+        }
     }
 
     if (!route_table_.isAllToAll() && batch_values.reader_name.empty())
@@ -187,6 +230,9 @@ bool MLDPPVXSController::push(EventBatch batch_values)
             continue;
 
         if (!route_table_.acceptsSource(writers_[i]->name(), batch_values.root_source))
+            continue;
+
+        if (!writers_[i]->acceptsPayload(batch_values.payload))
             continue;
 
         // Capture writer pointer and a copy of the batch per task.

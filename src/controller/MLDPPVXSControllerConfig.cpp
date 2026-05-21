@@ -19,6 +19,8 @@ using namespace mldp_pvxs_driver::metrics;
 using namespace mldp_pvxs_driver::controller;
 using namespace mldp_pvxs_driver::writer;
 
+static constexpr auto QueryableKey = "queryable";
+
 MLDPPVXSControllerConfig::MLDPPVXSControllerConfig() = default;
 
 MLDPPVXSControllerConfig::MLDPPVXSControllerConfig(const ::mldp_pvxs_driver::config::Config& root)
@@ -77,6 +79,7 @@ void MLDPPVXSControllerConfig::parse(const ::mldp_pvxs_driver::config::Config& r
     parseReaders(root);
     parseMetrics(root);
     parseRouting(root);
+    parseQueryables(root);
     valid_ = true;
 }
 
@@ -133,6 +136,22 @@ void MLDPPVXSControllerConfig::parseWriter(const ::mldp_pvxs_driver::config::Con
         for (const auto& item : hdf5MergeItems)
         {
             writerEntries_.push_back({"hdf5-merge", item});
+        }
+    }
+    if (writerNode.hasChild(WriterMldpAnnotationKey))
+    {
+        const auto items = writerNode.subConfig(WriterMldpAnnotationKey);
+        for (const auto& item : items)
+        {
+            writerEntries_.push_back({"mldp-annotation", item});
+        }
+    }
+    if (writerNode.hasChild(WriterMldpConfigurationKey))
+    {
+        const auto items = writerNode.subConfig(WriterMldpConfigurationKey);
+        for (const auto& item : items)
+        {
+            writerEntries_.push_back({"mldp-configuration", item});
         }
     }
 }
@@ -309,5 +328,30 @@ void MLDPPVXSControllerConfig::parseRouting(const ::mldp_pvxs_driver::config::Co
 
         routeEntries_.push_back({writerName, std::move(fromReaders),
                                   std::move(includePatterns), std::move(excludePatterns)});
+    }
+}
+
+void MLDPPVXSControllerConfig::parseQueryables(const ::mldp_pvxs_driver::config::Config& root)
+{
+    queryable_entries_.clear();
+
+    if (!root.hasChild(QueryableKey))
+    {
+        return;
+    }
+
+    if (!root.isSequence(QueryableKey))
+    {
+        throw Error("queryable must be a sequence");
+    }
+
+    for (const auto& node : root.subConfig(QueryableKey))
+    {
+        const auto type = node.get("type", "");
+        if (type.empty())
+        {
+            throw Error("queryable entry missing 'type' field");
+        }
+        queryable_entries_.push_back({type, node});
     }
 }

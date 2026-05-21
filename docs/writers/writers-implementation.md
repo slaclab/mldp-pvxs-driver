@@ -19,8 +19,13 @@ public:
     virtual bool push(util::bus::IDataBus::EventBatch batch) noexcept = 0;
     virtual void stop() noexcept = 0;
     virtual bool isHealthy() const noexcept { return true; }
+    /// Returns true when this writer handles the given payload variant.
+    /// Default: always true (writer accepts all payload types).
+    virtual bool acceptsPayload(const util::bus::BatchPayload& p) const noexcept { return true; }
 };
 ```
+
+`acceptsPayload()` lets the controller skip delivering a batch to writers that only handle specific payload types. For example `MLDPAnnotationWriter` returns `true` only for `SourceMetadataPayload`, while `MLDPConfigurationWriter` returns `true` only for `ConfigurationPayload` and `ConfigurationActivationPayload`.
 
 ### Lifecycle
 
@@ -88,10 +93,12 @@ writer:
 
 ## Existing Writers
 
-| Type | Doc | Header |
-|------|-----|--------|
-| `mldp` | [MLDP Writer](mldp-writer.md) | `include/writer/mldp/MLDPWriter.h` |
-| `hdf5` | [HDF5 Writer](hdf5-writer.md) | `include/writer/hdf5/HDF5Writer.h` |
+| Type | Doc | Header | Payload |
+|------|-----|--------|---------|
+| `mldp` | [MLDP Writer](mldp-writer.md) | `include/writer/mldp/MLDPWriter.h` | `TimeSeriesPayload` |
+| `hdf5` | [HDF5 Writer](hdf5-writer.md) | `include/writer/hdf5/HDF5Writer.h` | `TimeSeriesPayload` |
+| `mldp-annotation` | [MLDP Annotation Writer](mldp-annotation-writer.md) | `include/writer/mldp_annotation/MLDPAnnotationWriter.h` | `SourceMetadataPayload` |
+| `mldp-configuration` | [MLDP Configuration Writer](mldp-configuration-writer.md) | `include/writer/mldp_configuration/MLDPConfigurationWriter.h` | `ConfigurationPayload`, `ConfigurationActivationPayload` |
 
 ---
 

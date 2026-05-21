@@ -27,6 +27,7 @@ using mldp_pvxs_driver::util::bus::DataBatch;
 using mldp_pvxs_driver::util::bus::DataColumn;
 using mldp_pvxs_driver::util::bus::TimestampEntry;
 using namespace mldp_pvxs_driver::reader::impl::epics;
+using mldp_pvxs_driver::util::bus::asTimeSeries;
 
 // Concrete mock implementation of IDataBus for testing
 class MockEventBusPush : public IDataBus
@@ -48,7 +49,7 @@ public:
         std::lock_guard<std::mutex> lock(mutex);
         if (metrics_)
         {
-            const size_t             total_values = batch.frames.size();
+            const size_t             total_values = asTimeSeries(batch).frames.size();
             const auto               source = batch.root_source.empty() ? std::string("unknown") : batch.root_source;
             const prometheus::Labels tags{{"source", source}};
             metrics_->incrementBusPushes(static_cast<double>(total_values), tags);
@@ -72,7 +73,7 @@ public:
         size_t                      total = 0;
         for (const auto& batch : received_events)
         {
-            total += batch.frames.size();
+            total += asTimeSeries(batch).frames.size();
         }
         return total;
     }
@@ -106,11 +107,11 @@ public:
             return nullptr;
         }
         const auto& batch = received_events.back();
-        if (batch.frames.empty())
+        if (asTimeSeries(batch).frames.empty())
         {
             return nullptr;
         }
-        return &batch.frames.front();
+        return &asTimeSeries(batch).frames.front();
     }
 
     // Method to clear events
@@ -146,7 +147,8 @@ const DataBatch* findLatestDataFrameForSource(const MockEventBusPush& bus, const
     std::lock_guard<std::mutex> lock(bus.mutex);
     for (auto it = bus.received_events.rbegin(); it != bus.received_events.rend(); ++it)
     {
-        for (auto fit = it->frames.rbegin(); fit != it->frames.rend(); ++fit)
+        const auto& frames = asTimeSeries(*it).frames;
+        for (auto fit = frames.rbegin(); fit != frames.rend(); ++fit)
         {
             const auto src = frameSource(*fit);
             if (src.has_value() && *src == source)
@@ -164,7 +166,7 @@ size_t countEventsForSource(const MockEventBusPush& bus, const std::string& sour
     size_t                      total = 0;
     for (const auto& batch : bus.received_events)
     {
-        for (const auto& frame : batch.frames)
+        for (const auto& frame : asTimeSeries(batch).frames)
         {
             const auto src = frameSource(frame);
             if (src.has_value() && *src == source)
@@ -350,7 +352,7 @@ TEST_F(EpicsBaseReaderTest, SimulatedPVsProduceEventsAndExpectedTypes)
             std::lock_guard<std::mutex> lock(mock_bus->mutex);
             for (const auto& batch : mock_bus->received_events)
             {
-                for (const auto& frame : batch.frames)
+                for (const auto& frame : asTimeSeries(batch).frames)
                 {
                     const auto src = frameSource(frame);
                     if (!src.has_value())
@@ -437,7 +439,7 @@ pvs:
         for (const auto& batch : mock_bus->received_events)
         {
             bool has_column = false;
-            for (const auto& frame : batch.frames)
+            for (const auto& frame : asTimeSeries(batch).frames)
             {
                 const auto src = frameSource(frame);
                 if (src == "PV_A" || src == "PV_B")
@@ -461,7 +463,7 @@ pvs:
         std::lock_guard<std::mutex> lock(mock_bus->mutex);
         for (const auto& batch : mock_bus->received_events)
         {
-            for (const auto& frame : batch.frames)
+            for (const auto& frame : asTimeSeries(batch).frames)
             {
                 const auto src = frameSource(frame);
                 if (src == "PV_A")
@@ -505,5 +507,58 @@ pvs:
     }
 
     reader_ptr.reset();
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+}
+
+// Verify reader-level metadata and per-PV metadata overrides are merged into EventBatch.metadata.
+// Reader config uses YAML key "metadata" for both reader-level and per-PV blocks.
+// Per-PV keys win over reader-level keys on conflict.
+TEST_F(EpicsBaseReaderTest, StaticAndPerPvMetadataMergedIntoEventBatch)
+{
+    const std::string yaml = R"(
+name: epics_meta_reader
+metadata:
+  facility: lcls
+  subsystem: bpms
+pvs:
+  - name: test:counter
+    metadata:
+      signal_type: scalar
+      subsystem: override_bpms
+)";
+    const auto cfg    = makeConfigFromYaml(yaml);
+    auto       reader = mldp_pvxs_driver::reader::ReaderFactory::create("epics-base", mock_bus, cfg);
+    ASSERT_NE(reader, nullptr);
+
+    const int max_wait_ms = 5000;
+    int       waited_ms   = 0;
+    while (mock_bus->event_count() == 0 && waited_ms < max_wait_ms)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        waited_ms += 100;
+    }
+    ASSERT_GT(mock_bus->event_count(), 0u) << "No events received within timeout";
+
+    // All batches for test:counter must carry the merged metadata map.
+    std::lock_guard<std::mutex> lock(mock_bus->mutex);
+    bool found = false;
+    for (const auto& batch : mock_bus->received_events)
+    {
+        if (batch.root_source != "test:counter")
+            continue;
+        found = true;
+        // Reader-level key not overridden by per-PV.
+        EXPECT_EQ(batch.metadata.count("facility"), 1u);
+        EXPECT_EQ(batch.metadata.at("facility"), "lcls");
+        // Per-PV key not present at reader level.
+        EXPECT_EQ(batch.metadata.count("signal_type"), 1u);
+        EXPECT_EQ(batch.metadata.at("signal_type"), "scalar");
+        // Per-PV key overrides reader-level key with same name.
+        EXPECT_EQ(batch.metadata.count("subsystem"), 1u);
+        EXPECT_EQ(batch.metadata.at("subsystem"), "override_bpms");
+    }
+    EXPECT_TRUE(found) << "No batch with root_source=test:counter received";
+
+    reader.reset();
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 }

@@ -327,7 +327,19 @@ void EpicsArchiverReader::flushChunk(PbChunkState& state)
 
         IDataBus::EventBatch batch;
         batch.root_source = pv.empty() ? name_ : pv;
-        batch.tags.push_back(batch.root_source);
+        // Build merged metadata: reader-level base, PV-level overrides
+        auto merged = config_.staticMetadata();
+        for (const auto& pv_cfg : config_.pvs())
+        {
+            if (pv_cfg.name == pv)
+            {
+                for (auto& [k, v] : pv_cfg.metadata)
+                    merged[k] = v;
+                break;
+            }
+        }
+        batch.metadata = std::move(merged);
+        TimeSeriesPayload ts_payload;
         for (auto& frame : state.events)
         {
             if (!hasTimestamps(frame))
@@ -339,10 +351,11 @@ void EpicsArchiverReader::flushChunk(PbChunkState& state)
                             });
                 continue;
             }
-            batch.frames.push_back(std::move(frame));
+            ts_payload.frames.push_back(std::move(frame));
         }
-        if (!batch.frames.empty())
+        if (!ts_payload.frames.empty())
         {
+            batch.payload = std::move(ts_payload);
             batch.reader_name = name();
             bus_->push(std::move(batch));
         }

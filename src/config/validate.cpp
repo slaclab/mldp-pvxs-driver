@@ -406,7 +406,7 @@ std::vector<ConfigDiagnostic> validateConfig(const Config& cfg)
                 // through Config.h we access it via raw().
 
                 const auto& rawRouting = routing.raw();
-                if (rawRouting.valid() && rawRouting.is_map()) {
+                if (rawRouting.readable() && rawRouting.is_map()) {
                     for (const auto child : rawRouting.children()) {
                         if (!child.has_key()) continue;
 

@@ -712,4 +712,211 @@ TEST(WizardLoadFromConfig, RoundTripPvsPreserved)
     EXPECT_EQ("SITE:B:PV", loaded.readers[0].pvs[1].name);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Queryable block
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST(WizardGenerateYaml, QueryableMldpEmitted)
+{
+    auto st = makeMinimalState();
+    st.queryable.mldp.enabled       = true;
+    st.queryable.mldp.ingestion_url = "grpc://ingest:50051";
+    st.queryable.mldp.query_url     = "grpc://query:50052";
+    st.queryable.mldp.min_conn      = "1";
+    st.queryable.mldp.max_conn      = "2";
+
+    auto yaml = generateYaml(st);
+    EXPECT_NE(std::string::npos, yaml.find("queryable:"));
+    EXPECT_NE(std::string::npos, yaml.find("mldp:"));
+    EXPECT_NE(std::string::npos, yaml.find("mldp-pool:"));
+    EXPECT_NE(std::string::npos, yaml.find("ingestion-url: grpc://ingest:50051"));
+    EXPECT_NE(std::string::npos, yaml.find("query-url: grpc://query:50052"));
+    EXPECT_NE(std::string::npos, yaml.find("min-conn: 1"));
+    EXPECT_NE(std::string::npos, yaml.find("max-conn: 2"));
+}
+
+TEST(WizardGenerateYaml, QueryableAnnotationEmitted)
+{
+    auto st = makeMinimalState();
+    st.queryable.mldp_annotation.enabled        = true;
+    st.queryable.mldp_annotation.annotation_url = "grpc://annotation:50053";
+    st.queryable.mldp_annotation.min_conn       = "1";
+    st.queryable.mldp_annotation.max_conn       = "3";
+
+    auto yaml = generateYaml(st);
+    EXPECT_NE(std::string::npos, yaml.find("queryable:"));
+    EXPECT_NE(std::string::npos, yaml.find("mldp-annotation:"));
+    EXPECT_NE(std::string::npos, yaml.find("mldp-annotation-pool:"));
+    EXPECT_NE(std::string::npos, yaml.find("annotation-url: grpc://annotation:50053"));
+    EXPECT_NE(std::string::npos, yaml.find("max-conn: 3"));
+}
+
+TEST(WizardGenerateYaml, QueryableOmittedWhenDisabled)
+{
+    auto st   = makeMinimalState();
+    auto yaml = generateYaml(st);
+    EXPECT_EQ(std::string::npos, yaml.find("queryable:"));
+}
+
+TEST(WizardLoadFromConfig, RoundTripQueryableMldp)
+{
+    auto st = makeMinimalState();
+    st.queryable.mldp.enabled       = true;
+    st.queryable.mldp.ingestion_url = "grpc://ingest:50051";
+    st.queryable.mldp.query_url     = "grpc://query:50052";
+    st.queryable.mldp.min_conn      = "2";
+    st.queryable.mldp.max_conn      = "4";
+
+    std::string yaml = generateYaml(st);
+    std::string path = writeTmpYaml(yaml);
+
+    WizardState loaded;
+    loadFromConfig(path, loaded);
+
+    EXPECT_TRUE(loaded.queryable.mldp.enabled);
+    EXPECT_EQ("grpc://ingest:50051", loaded.queryable.mldp.ingestion_url);
+    EXPECT_EQ("grpc://query:50052",  loaded.queryable.mldp.query_url);
+    EXPECT_EQ("2",                   loaded.queryable.mldp.min_conn);
+    EXPECT_EQ("4",                   loaded.queryable.mldp.max_conn);
+    EXPECT_FALSE(loaded.queryable.mldp_annotation.enabled);
+}
+
+TEST(WizardLoadFromConfig, RoundTripQueryableAnnotation)
+{
+    auto st = makeMinimalState();
+    st.queryable.mldp_annotation.enabled        = true;
+    st.queryable.mldp_annotation.annotation_url = "grpc://ann:50053";
+    st.queryable.mldp_annotation.min_conn       = "1";
+    st.queryable.mldp_annotation.max_conn       = "3";
+
+    std::string yaml = generateYaml(st);
+    std::string path = writeTmpYaml(yaml);
+
+    WizardState loaded;
+    loadFromConfig(path, loaded);
+
+    EXPECT_FALSE(loaded.queryable.mldp.enabled);
+    EXPECT_TRUE(loaded.queryable.mldp_annotation.enabled);
+    EXPECT_EQ("grpc://ann:50053", loaded.queryable.mldp_annotation.annotation_url);
+    EXPECT_EQ("1",                loaded.queryable.mldp_annotation.min_conn);
+    EXPECT_EQ("3",                loaded.queryable.mldp_annotation.max_conn);
+}
+
+TEST(WizardLoadFromConfig, RoundTripBothQueryables)
+{
+    auto st = makeMinimalState();
+    st.queryable.mldp.enabled               = true;
+    st.queryable.mldp.ingestion_url         = "grpc://ingest:50051";
+    st.queryable.mldp.query_url             = "grpc://query:50052";
+    st.queryable.mldp.min_conn              = "1";
+    st.queryable.mldp.max_conn              = "2";
+    st.queryable.mldp_annotation.enabled        = true;
+    st.queryable.mldp_annotation.annotation_url = "grpc://ann:50053";
+    st.queryable.mldp_annotation.min_conn       = "1";
+    st.queryable.mldp_annotation.max_conn       = "2";
+
+    std::string yaml = generateYaml(st);
+    std::string path = writeTmpYaml(yaml);
+
+    WizardState loaded;
+    loadFromConfig(path, loaded);
+
+    EXPECT_TRUE(loaded.queryable.mldp.enabled);
+    EXPECT_TRUE(loaded.queryable.mldp_annotation.enabled);
+    EXPECT_EQ("grpc://ingest:50051",  loaded.queryable.mldp.ingestion_url);
+    EXPECT_EQ("grpc://ann:50053",     loaded.queryable.mldp_annotation.annotation_url);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Reader static-metadata + per-PV metadata
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST(WizardGenerateYaml, ReaderStaticMetadataEmitted)
+{
+    auto st = makeMinimalState();
+    st.readers[0].static_metadata = {{"facility", "lcls"}, {"subsystem", "bpms"}};
+
+    auto yaml = generateYaml(st);
+    EXPECT_NE(std::string::npos, yaml.find("static-metadata:"));
+    EXPECT_NE(std::string::npos, yaml.find("facility: lcls"));
+    EXPECT_NE(std::string::npos, yaml.find("subsystem: bpms"));
+}
+
+TEST(WizardGenerateYaml, ReaderStaticMetadataOmittedWhenEmpty)
+{
+    auto st   = makeMinimalState();
+    auto yaml = generateYaml(st);
+    EXPECT_EQ(std::string::npos, yaml.find("static-metadata:"));
+}
+
+TEST(WizardGenerateYaml, PvMetadataEmitted)
+{
+    auto st = makeMinimalState();
+    PvEntry pv;
+    pv.name        = "SITE:SYS:PV";
+    pv.option_type = "none";
+    pv.metadata    = {{"signal_type", "scalar"}, {"units", "mm"}};
+    st.readers[0].pvs.push_back(pv);
+
+    auto yaml = generateYaml(st);
+    EXPECT_NE(std::string::npos, yaml.find("metadata:"));
+    EXPECT_NE(std::string::npos, yaml.find("signal_type: scalar"));
+    EXPECT_NE(std::string::npos, yaml.find("units: mm"));
+}
+
+TEST(WizardLoadFromConfig, RoundTripReaderStaticMetadata)
+{
+    auto st = makeMinimalState();
+    st.readers[0].static_metadata = {{"facility", "lcls"}, {"subsystem", "bpms"}};
+
+    PvEntry pv;
+    pv.name        = "SITE:PV";
+    pv.option_type = "none";
+    pv.metadata    = {{"signal_type", "waveform"}};
+    st.readers[0].pvs.push_back(pv);
+
+    std::string yaml = generateYaml(st);
+    std::string path = writeTmpYaml(yaml);
+
+    WizardState loaded;
+    loadFromConfig(path, loaded);
+
+    ASSERT_EQ(1u, loaded.readers.size());
+    ASSERT_EQ(2u, loaded.readers[0].static_metadata.size());
+    EXPECT_EQ("facility",  loaded.readers[0].static_metadata[0].first);
+    EXPECT_EQ("lcls",      loaded.readers[0].static_metadata[0].second);
+    EXPECT_EQ("subsystem", loaded.readers[0].static_metadata[1].first);
+    EXPECT_EQ("bpms",      loaded.readers[0].static_metadata[1].second);
+
+    ASSERT_EQ(1u, loaded.readers[0].pvs.size());
+    ASSERT_EQ(1u, loaded.readers[0].pvs[0].metadata.size());
+    EXPECT_EQ("signal_type", loaded.readers[0].pvs[0].metadata[0].first);
+    EXPECT_EQ("waveform",    loaded.readers[0].pvs[0].metadata[0].second);
+}
+
+TEST(WizardLoadFromConfig, RoundTripPvMetadataMultiple)
+{
+    auto st = makeMinimalState();
+    PvEntry pv1;
+    pv1.name        = "SITE:A";
+    pv1.option_type = "none";
+    pv1.metadata    = {{"k1", "v1"}, {"k2", "v2"}};
+    PvEntry pv2;
+    pv2.name        = "SITE:B";
+    pv2.option_type = "none";
+    st.readers[0].pvs = {pv1, pv2};
+
+    std::string yaml = generateYaml(st);
+    std::string path = writeTmpYaml(yaml);
+
+    WizardState loaded;
+    loadFromConfig(path, loaded);
+
+    ASSERT_EQ(2u, loaded.readers[0].pvs.size());
+    ASSERT_EQ(2u, loaded.readers[0].pvs[0].metadata.size());
+    EXPECT_EQ("k1", loaded.readers[0].pvs[0].metadata[0].first);
+    EXPECT_EQ("v1", loaded.readers[0].pvs[0].metadata[0].second);
+    EXPECT_EQ(0u,   loaded.readers[0].pvs[1].metadata.size());
+}
+
 } // namespace mldp_pvxs_driver::config

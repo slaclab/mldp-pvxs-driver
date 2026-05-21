@@ -31,13 +31,14 @@ using namespace mldp_pvxs_driver::config::wizard_ui;
 TEST(WizardPanelBuildTree, ControllerOnly) {
     WizardState w;
     auto tree = BuildTree(w);
-    // Expect exactly: Controller, WriterGroup, ReaderGroup, MetricsGroup, RoutingGroup
-    ASSERT_EQ(tree.size(), 5u);
+    // Expect: Controller, WriterGroup, ReaderGroup, QueryableGroup, MetricsGroup, RoutingGroup
+    ASSERT_EQ(tree.size(), 6u);
     EXPECT_EQ(tree[0].kind, TreeNodeKind::Controller);
     EXPECT_EQ(tree[1].kind, TreeNodeKind::WriterGroup);
     EXPECT_EQ(tree[2].kind, TreeNodeKind::ReaderGroup);
-    EXPECT_EQ(tree[3].kind, TreeNodeKind::MetricsGroup);
-    EXPECT_EQ(tree[4].kind, TreeNodeKind::RoutingGroup);
+    EXPECT_EQ(tree[3].kind, TreeNodeKind::QueryableGroup);
+    EXPECT_EQ(tree[4].kind, TreeNodeKind::MetricsGroup);
+    EXPECT_EQ(tree[5].kind, TreeNodeKind::RoutingGroup);
     // All group nodes should have data_index == -1
     for (auto& n : tree) EXPECT_EQ(n.data_index, -1);
 }
@@ -58,8 +59,8 @@ TEST(WizardPanelBuildTree, WithEntries) {
     auto tree = BuildTree(w);
 
     // Expected layout: Controller, WriterGroup, MLDP@0, MLDP@1, HDF5@0,
-    //                  ReaderGroup, Reader@0, Reader@1, MetricsGroup, RoutingGroup
-    ASSERT_EQ(tree.size(), 10u);
+    //                  ReaderGroup, Reader@0, Reader@1, QueryableGroup, MetricsGroup, RoutingGroup
+    ASSERT_EQ(tree.size(), 11u);
 
     EXPECT_EQ(tree[0].kind, TreeNodeKind::Controller);
     EXPECT_EQ(tree[1].kind, TreeNodeKind::WriterGroup);
@@ -84,8 +85,9 @@ TEST(WizardPanelBuildTree, WithEntries) {
     EXPECT_EQ(tree[7].kind, TreeNodeKind::Reader);
     EXPECT_EQ(tree[7].data_index, 1);
 
-    EXPECT_EQ(tree[8].kind, TreeNodeKind::MetricsGroup);
-    EXPECT_EQ(tree[9].kind, TreeNodeKind::RoutingGroup);
+    EXPECT_EQ(tree[8].kind,  TreeNodeKind::QueryableGroup);
+    EXPECT_EQ(tree[9].kind,  TreeNodeKind::MetricsGroup);
+    EXPECT_EQ(tree[10].kind, TreeNodeKind::RoutingGroup);
 }
 
 // ── BuildTreeAfterDelete ─────────────────────────────────────────────────────
@@ -100,8 +102,8 @@ TEST(WizardPanelBuildTree, AfterDelete) {
     w.mldp_writers.erase(w.mldp_writers.begin() + 1);
     auto tree = BuildTree(w);
 
-    // Controller, WriterGroup, Writer@0, ReaderGroup, MetricsGroup, RoutingGroup
-    ASSERT_EQ(tree.size(), 6u);
+    // Controller, WriterGroup, Writer@0, ReaderGroup, QueryableGroup, MetricsGroup, RoutingGroup
+    ASSERT_EQ(tree.size(), 7u);
     EXPECT_EQ(tree[2].kind, TreeNodeKind::Writer);
     EXPECT_EQ(tree[2].data_index, 0);
     // data_index 1 should NOT appear anywhere
@@ -120,8 +122,8 @@ TEST(WizardPanelBuildTree, Hdf5MergeTypeTag) {
     w.hdf5_writers = {hm, hp};
 
     auto tree = BuildTree(w);
-    // Controller, WriterGroup, merge@0, plain@1, ReaderGroup, MetricsGroup, RoutingGroup
-    ASSERT_EQ(7u, tree.size());
+    // Controller, WriterGroup, merge@0, plain@1, ReaderGroup, QueryableGroup, MetricsGroup, RoutingGroup
+    ASSERT_EQ(8u, tree.size());
     EXPECT_EQ(tree[2].type_tag, "HDF5-merge");
     EXPECT_EQ(tree[3].type_tag, "HDF5");
     EXPECT_EQ(tree[2].data_index, 0);
@@ -152,8 +154,8 @@ TEST(WizardPanelBuildTree, LastReaderUsesCornerChar) {
     w.readers = {r0, r1};
 
     auto tree = BuildTree(w);
-    // Controller, WriterGroup, ReaderGroup, Reader@0, Reader@1, MetricsGroup, RoutingGroup
-    ASSERT_EQ(7u, tree.size());
+    // Controller, WriterGroup, ReaderGroup, Reader@0, Reader@1, QueryableGroup, MetricsGroup, RoutingGroup
+    ASSERT_EQ(8u, tree.size());
     EXPECT_NE(std::string::npos, tree[4].label.find("└"))
         << "Last reader label should use └";
     EXPECT_EQ(std::string::npos, tree[3].label.find("└"))
@@ -173,8 +175,8 @@ TEST(WizardPanelBuildTree, IndicesAfterAddAndDelete) {
     w.mldp_writers.erase(w.mldp_writers.begin() + 1);
     auto tree = BuildTree(w);
 
-    // Controller, WriterGroup, Writer@0, Writer@1, ReaderGroup, MetricsGroup, RoutingGroup
-    ASSERT_EQ(7u, tree.size());
+    // Controller, WriterGroup, Writer@0, Writer@1, ReaderGroup, QueryableGroup, MetricsGroup, RoutingGroup
+    ASSERT_EQ(8u, tree.size());
     EXPECT_EQ(tree[2].data_index, 0);
     EXPECT_EQ(tree[3].data_index, 1);
     // No stale index 2 or higher

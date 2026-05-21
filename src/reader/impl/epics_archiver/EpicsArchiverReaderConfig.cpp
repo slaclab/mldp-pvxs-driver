@@ -12,6 +12,8 @@
 
 #include <config/Config.h>
 
+#include <map>
+
 using namespace mldp_pvxs_driver::config;
 using namespace mldp_pvxs_driver::reader::impl::epics_archiver;
 
@@ -289,6 +291,14 @@ void EpicsArchiverReaderConfig::parse(const Config& readerEntry)
         throw Error("tls-verify-host=true requires tls-verify-peer=true");
     }
 
+    // Parse optional reader-level static metadata
+    if (readerEntry.hasChild(kMetadataKey))
+    {
+        std::map<std::string, std::string> m;
+        readerEntry.subConfig(kMetadataKey).front() >> m;
+        static_metadata_.insert(m.begin(), m.end());
+    }
+
     // Parse PVs
     if (!readerEntry.hasChild(PvsKey))
     {
@@ -338,7 +348,14 @@ void EpicsArchiverReaderConfig::parse(const Config& readerEntry)
             throw Error("pvs[].name must not be empty");
         }
 
-        pvs_.push_back({std::move(pvName)});
+        PVConfig pv{std::move(pvName), {}};
+        if (pvNode.hasChild(kMetadataKey))
+        {
+            std::map<std::string, std::string> m;
+            pvNode.subConfig(kMetadataKey).front() >> m;
+            pv.metadata.insert(m.begin(), m.end());
+        }
+        pvs_.push_back(std::move(pv));
         pvNames_.push_back(pvs_.back().name);
     }
 

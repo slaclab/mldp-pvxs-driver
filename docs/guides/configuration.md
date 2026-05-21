@@ -10,8 +10,10 @@ Complete YAML schema reference for the MLDP PVXS Driver. All keys are case-sensi
 
 ```yaml
 writer:         # required — at least one writer instance
-  grpc: [...]
-  hdf5: [...]   # requires -DMLDP_PVXS_ENABLE_HDF5=ON build option
+  mldp: [...]
+  hdf5: [...]              # requires -DMLDP_PVXS_ENABLE_HDF5=ON build option
+  mldp-annotation: [...]   # persists PV metadata via annotation service
+  mldp-configuration: [...] # persists configuration objects via annotation service
 
 reader:         # required — at least one reader instance
   - epics-pvxs: [...]
@@ -21,6 +23,10 @@ reader:         # required — at least one reader instance
 routing:        # optional — selective reader-to-writer dispatch
   writer_name:
     from: [reader_1, reader_2]
+
+queryable:      # optional — query client configuration
+  mldp: [...]
+  mldp-annotation: [...]
 
 metrics:        # optional — Prometheus HTTP endpoint
   endpoint: "0.0.0.0:9464"
@@ -114,6 +120,64 @@ writer:
 
 ---
 
+### `writer.mldp-annotation[]` — MLDP Annotation Writer
+
+Sequence of annotation writer instances. Each element persists `SourceMetadataPayload` batches to the `DpAnnotationService` gRPC endpoint via `savePvMetadata` RPCs.
+
+```yaml
+writer:
+  mldp-annotation:
+    - name: annotation_main         # required — unique instance name
+      thread-pool: 2                # optional; default: 2
+      deadline-seconds: 10          # optional; default: 10
+      mldp-annotation-pool:         # required
+        annotation-url: grpc://annotation-host:50053  # required
+        min-conn: 1                 # optional; default: 1
+        max-conn: 4                 # optional; default: 4
+```
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `name` | string | — | **Required.** Unique writer instance name. |
+| `thread-pool` | int | `2` | Worker threads for concurrent annotation RPCs. |
+| `deadline-seconds` | int | `10` | Per-RPC deadline in seconds. |
+| `mldp-annotation-pool.annotation-url` | string | — | **Required.** gRPC endpoint for the annotation service. |
+| `mldp-annotation-pool.min-conn` | int | `1` | Minimum open connections in the pool. |
+| `mldp-annotation-pool.max-conn` | int | `4` | Maximum open connections in the pool. |
+
+→ [Full MLDP Annotation Writer Documentation](../writers/mldp-annotation-writer.md)
+
+---
+
+### `writer.mldp-configuration[]` — MLDP Configuration Writer
+
+Sequence of configuration writer instances. Each element persists `ConfigurationPayload` and `ConfigurationActivationPayload` batches to the annotation gRPC endpoint via `saveConfiguration` / `saveConfigurationActivation` RPCs.
+
+```yaml
+writer:
+  mldp-configuration:
+    - name: cfg_writer              # required — unique instance name
+      thread-pool: 2                # optional; default: 2
+      deadline-seconds: 10          # optional; default: 10
+      mldp-annotation-pool:         # required
+        annotation-url: grpc://annotation-host:50053  # required
+        min-conn: 1                 # optional; default: 1
+        max-conn: 4                 # optional; default: 4
+```
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `name` | string | — | **Required.** Unique writer instance name. |
+| `thread-pool` | int | `2` | Worker threads for concurrent annotation RPCs. |
+| `deadline-seconds` | int | `10` | Per-RPC deadline in seconds. |
+| `mldp-annotation-pool.annotation-url` | string | — | **Required.** gRPC endpoint for the annotation service. |
+| `mldp-annotation-pool.min-conn` | int | `1` | Minimum open connections in the pool. |
+| `mldp-annotation-pool.max-conn` | int | `4` | Maximum open connections in the pool. |
+
+→ [Full MLDP Configuration Writer Documentation](../writers/mldp-configuration-writer.md)
+
+---
+
 ## `reader:` Block
 
 Optional top-level sequence. Each list entry is a map with exactly one key: the reader type name. The value is a sequence of reader instances of that type.
@@ -144,8 +208,13 @@ Both EPICS readers share the same base config (`EpicsReaderConfig`):
       column-batch-size: 50        # optional; default: 50
       monitor-poll-threads: 2      # optional; default: 2 (epics-base only)
       monitor-poll-interval-ms: 5  # optional; default: 5 ms (epics-base only)
+      static-metadata:             # optional — reader-level key/value metadata
+        facility: lcls
+        subsystem: bpms
       pvs:
         - name: MY:PV:1
+          metadata:                # optional — per-PV overrides (merged over static-metadata)
+            signal_type: scalar
         - name: MY:NTTABLE:PV
           option:
             type: slac-bsas-table
@@ -160,10 +229,14 @@ Both EPICS readers share the same base config (`EpicsReaderConfig`):
 | `column-batch-size` | size_t | `50` | Max columns per `EventBatch` push for NTTable row-ts batches. `0` = unlimited. |
 | `monitor-poll-threads` | int | `2` | Monitor queue polling threads *(epics-base only)*. |
 | `monitor-poll-interval-ms` | int | `5` | Poll interval when monitor queue is idle *(epics-base only)*. |
+| `static-metadata` | map | `{}` | Reader-level key/value metadata stamped on every `EventBatch.metadata`. |
 | `pvs[].name` | string | — | **Required.** Fully qualified PV name. |
+| `pvs[].metadata` | map | `{}` | Per-PV metadata key/value pairs. Merged over `static-metadata`; PV-level keys win on conflict. |
 | `pvs[].option.type` | string | — | `slac-bsas-table` activates SLAC BSAS NTTable row-timestamp handling. |
 | `pvs[].option.tsSeconds` | string | `secondsPastEpoch` | NTTable column name carrying seconds timestamp. |
 | `pvs[].option.tsNanos` | string | `nanoseconds` | NTTable column name carrying nanoseconds timestamp. |
+
+**Metadata merge semantics**: `EventBatch.metadata` = `static-metadata` merged with the matching PV's `metadata` block. Per-PV keys override reader-level keys on conflict. The merged map is forwarded to writers and stamped as `ColumnProvenance.source` labels in gRPC ingestion requests.
 
 → [EpicsPVXSReader Implementation](../readers/epics-pvxs-reader-implementation.md)
 → [EpicsBaseReader Implementation](../readers/epics-base-reader-implementation.md)
@@ -193,8 +266,12 @@ Two fetch modes:
       batch-duration-sec: 1            # optional; default: 1
       tls-verify-peer: true            # optional; default: true
       tls-verify-host: true            # optional; default: true
+      static-metadata:                 # optional — reader-level key/value metadata
+        source: archiver
       pvs:
         - name: SLAC:GUNB:ELEC:LTU1:630:EPICS_PV
+          metadata:                    # optional — per-PV overrides
+            signal_type: waveform
 
     - name: archiver_tail              # required
       hostname: archiver.example:11200 # required
@@ -219,9 +296,41 @@ Two fetch modes:
 | `lookback-sec` | long | poll-interval-sec | Tail lookback window (seconds). Must be ≤ `poll-interval-sec`. |
 | `tls-verify-peer` | bool | `true` | Verify the server TLS certificate chain. |
 | `tls-verify-host` | bool | `true` | Verify the server hostname against the TLS certificate. |
+| `static-metadata` | map | `{}` | Reader-level key/value metadata stamped on every `EventBatch.metadata`. |
 | `pvs[].name` | string | — | **Required.** PV name to retrieve from the archiver. |
+| `pvs[].metadata` | map | `{}` | Per-PV metadata key/value pairs. Merged over `static-metadata`. |
 
 → [EpicsArchiverReader Implementation](../readers/epics-archiver-reader-implementation.md)
+
+---
+
+## `queryable:` Block
+
+Optional. Configures query client factories used by the driver for out-of-band metadata and data inspection. Each entry registers a client type with `QueryableFactory` at startup. Components that need a query client call `QueryableFactory::instance().create<T>()` at runtime.
+
+```yaml
+queryable:
+  mldp:
+    mldp-pool:
+      ingestion-url: grpc://ingest:50051
+      query-url:     grpc://query:50052
+      min-conn: 1
+      max-conn: 2
+  mldp-annotation:
+    mldp-annotation-pool:
+      annotation-url: grpc://annotation-host:50053
+      min-conn: 1
+      max-conn: 2
+```
+
+| Type key | Client class | Description |
+|----------|-------------|-------------|
+| `mldp` | `MLDPQueryClient` | Query source metadata and historical data from MLDP. |
+| `mldp-annotation` | `MLDPAnnotationQueryClient` | Query annotation service metadata. |
+
+> **Note:** `queryable:` is optional. When absent, no query clients are registered. Writers and readers that require a query client will fail at runtime if the corresponding type was not prepared.
+
+→ [Query Client Documentation](../dev/query-client.md)
 
 ---
 

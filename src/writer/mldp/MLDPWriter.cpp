@@ -20,9 +20,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
-#include <ranges>
 #include <stdexcept>
-#include <thread>
 
 using namespace mldp_pvxs_driver::writer;
 using namespace mldp_pvxs_driver::util::log;
@@ -164,20 +162,25 @@ bool MLDPWriter::push(util::bus::IDataBus::EventBatch batch) noexcept
     {
         return false;
     }
-    if (batch.end_of_batch_group)
+    if (!util::bus::isTimeSeries(batch))
+    {
+        return true;
+    }
+    auto& ts_mut = std::get<util::bus::TimeSeriesPayload>(batch.payload);
+    if (ts_mut.end_of_batch_group)
     {
         // Marker-only batch emitted by readers to signal end of one NTTable
         // update round.  Nothing to forward to gRPC — skip silently.
         return true;
     }
-    if (batch.root_source.empty() || batch.frames.empty())
+    if (batch.root_source.empty() || ts_mut.frames.empty())
     {
         return false;
     }
 
-    auto tags = std::make_shared<const std::vector<std::string>>(batch.tags);
+    auto metadata = std::make_shared<const std::unordered_map<std::string, std::string>>(batch.metadata);
     bool enqueued = false;
-    for (auto& frame : batch.frames)
+    for (auto& frame : ts_mut.frames)
     {
         if (frame.timestamps.empty())
         {
@@ -188,7 +191,7 @@ bool MLDPWriter::push(util::bus::IDataBus::EventBatch batch) noexcept
             continue;
         }
         const auto idx = nextChannel_.fetch_add(1, std::memory_order_relaxed) % channels_.size();
-        QueueItem  item{batch.root_source, tags, std::move(frame)};
+        QueueItem  item{batch.root_source, metadata, std::move(frame)};
         {
             std::lock_guard lk(channels_[idx]->mutex);
             channels_[idx]->items.push_back(std::move(item));
@@ -390,7 +393,8 @@ void MLDPWriter::workerLoop(std::size_t workerIndex)
             item.root_source, requestCounter++);
 
         if (!buildRequest(item.root_source, item.frame, requestId,
-                          *request, acceptedEvents, payloadBytes))
+                          *request, acceptedEvents, payloadBytes,
+                          item.metadata.get()))
         {
             continue;
         }
@@ -461,9 +465,24 @@ void MLDPWriter::workerLoop(std::size_t workerIndex)
 // toDataFrame — convert DataBatch → protobuf DataFrame
 // ---------------------------------------------------------------------------
 
-dp::service::common::DataFrame MLDPWriter::toDataFrame(const util::bus::DataBatch& batch, const std::string& rootSource)
+dp::service::common::DataFrame MLDPWriter::toDataFrame(const util::bus::DataBatch&                         batch,
+                                                      const std::string&                                  rootSource,
+                                                      const std::unordered_map<std::string, std::string>* metadata)
 {
     dp::service::common::DataFrame df;
+
+    const auto apply_metadata = [&](auto* c)
+    {
+        if (metadata)
+        {
+            for (const auto& [k, v] : *metadata)
+            {
+                auto* attr = c->mutable_metadata()->add_attributes();
+                attr->set_name(k);
+                attr->set_value(v);
+            }
+        }
+    };
 
     // Timestamps
     {
@@ -489,6 +508,7 @@ dp::service::common::DataFrame MLDPWriter::toDataFrame(const util::bus::DataBatc
                     auto* c = df.add_doublecolumns();
                     c->set_name(col.name);
                     c->mutable_metadata()->mutable_provenance()->set_source(rootSource);
+                    apply_metadata(c);
                     for (auto v : vec) { c->add_values(v); }
                 }
                 else if constexpr (std::is_same_v<T, std::vector<float>>)
@@ -496,6 +516,7 @@ dp::service::common::DataFrame MLDPWriter::toDataFrame(const util::bus::DataBatc
                     auto* c = df.add_floatcolumns();
                     c->set_name(col.name);
                     c->mutable_metadata()->mutable_provenance()->set_source(rootSource);
+                    apply_metadata(c);
                     for (auto v : vec) { c->add_values(v); }
                 }
                 else if constexpr (std::is_same_v<T, std::vector<int64_t>>)
@@ -503,6 +524,7 @@ dp::service::common::DataFrame MLDPWriter::toDataFrame(const util::bus::DataBatc
                     auto* c = df.add_int64columns();
                     c->set_name(col.name);
                     c->mutable_metadata()->mutable_provenance()->set_source(rootSource);
+                    apply_metadata(c);
                     for (auto v : vec) { c->add_values(v); }
                 }
                 else if constexpr (std::is_same_v<T, std::vector<int32_t>>)
@@ -510,6 +532,7 @@ dp::service::common::DataFrame MLDPWriter::toDataFrame(const util::bus::DataBatc
                     auto* c = df.add_int32columns();
                     c->set_name(col.name);
                     c->mutable_metadata()->mutable_provenance()->set_source(rootSource);
+                    apply_metadata(c);
                     for (auto v : vec) { c->add_values(v); }
                 }
                 else if constexpr (std::is_same_v<T, std::vector<bool>>)
@@ -517,6 +540,7 @@ dp::service::common::DataFrame MLDPWriter::toDataFrame(const util::bus::DataBatc
                     auto* c = df.add_boolcolumns();
                     c->set_name(col.name);
                     c->mutable_metadata()->mutable_provenance()->set_source(rootSource);
+                    apply_metadata(c);
                     for (auto v : vec) { c->add_values(v); }
                 }
                 else if constexpr (std::is_same_v<T, std::vector<std::string>>)
@@ -524,6 +548,7 @@ dp::service::common::DataFrame MLDPWriter::toDataFrame(const util::bus::DataBatc
                     auto* c = df.add_stringcolumns();
                     c->set_name(col.name);
                     c->mutable_metadata()->mutable_provenance()->set_source(rootSource);
+                    apply_metadata(c);
                     for (const auto& v : vec) { c->add_values(v); }
                 }
                 else if constexpr (std::is_same_v<T, std::vector<std::vector<uint8_t>>>)
@@ -531,6 +556,7 @@ dp::service::common::DataFrame MLDPWriter::toDataFrame(const util::bus::DataBatc
                     auto* c = df.add_structcolumns();
                     c->set_name(col.name);
                     c->mutable_metadata()->mutable_provenance()->set_source(rootSource);
+                    apply_metadata(c);
                     c->set_schemaid("");
                     for (const auto& blob : vec)
                     {
@@ -542,6 +568,7 @@ dp::service::common::DataFrame MLDPWriter::toDataFrame(const util::bus::DataBatc
                     auto* c = df.add_doublearraycolumns();
                     c->set_name(col.name);
                     c->mutable_metadata()->mutable_provenance()->set_source(rootSource);
+                    apply_metadata(c);
                     for (const auto& arr : vec)
                     {
                         for (auto v : arr) { c->add_values(v); }
@@ -557,6 +584,7 @@ dp::service::common::DataFrame MLDPWriter::toDataFrame(const util::bus::DataBatc
                     auto* c = df.add_floatarraycolumns();
                     c->set_name(col.name);
                     c->mutable_metadata()->mutable_provenance()->set_source(rootSource);
+                    apply_metadata(c);
                     for (const auto& arr : vec)
                     {
                         for (auto v : arr) { c->add_values(v); }
@@ -572,6 +600,7 @@ dp::service::common::DataFrame MLDPWriter::toDataFrame(const util::bus::DataBatc
                     auto* c = df.add_int64arraycolumns();
                     c->set_name(col.name);
                     c->mutable_metadata()->mutable_provenance()->set_source(rootSource);
+                    apply_metadata(c);
                     for (const auto& arr : vec)
                     {
                         for (auto v : arr) { c->add_values(v); }
@@ -587,6 +616,7 @@ dp::service::common::DataFrame MLDPWriter::toDataFrame(const util::bus::DataBatc
                     auto* c = df.add_int32arraycolumns();
                     c->set_name(col.name);
                     c->mutable_metadata()->mutable_provenance()->set_source(rootSource);
+                    apply_metadata(c);
                     for (const auto& arr : vec)
                     {
                         for (auto v : arr) { c->add_values(v); }
@@ -602,6 +632,7 @@ dp::service::common::DataFrame MLDPWriter::toDataFrame(const util::bus::DataBatc
                     auto* c = df.add_boolarraycolumns();
                     c->set_name(col.name);
                     c->mutable_metadata()->mutable_provenance()->set_source(rootSource);
+                    apply_metadata(c);
                     for (const auto& arr : vec)
                     {
                         for (auto v : arr) { c->add_values(v); }
@@ -622,6 +653,7 @@ dp::service::common::DataFrame MLDPWriter::toDataFrame(const util::bus::DataBatc
         auto* c = df.add_enumcolumns();
         c->set_name(ecol.name);
         c->mutable_metadata()->mutable_provenance()->set_source(rootSource);
+        apply_metadata(c);
         c->set_enumid(ecol.enum_id);
         for (auto v : ecol.values) { c->add_values(v); }
     }
@@ -633,17 +665,18 @@ dp::service::common::DataFrame MLDPWriter::toDataFrame(const util::bus::DataBatc
 // buildRequest — identical to original MLDPPVXSController::buildRequest
 // ---------------------------------------------------------------------------
 
-bool MLDPWriter::buildRequest(const std::string&                         sourceName,
-                              const util::bus::DataBatch&                batch,
-                              const std::string&                         requestId,
-                              dp::service::ingestion::IngestDataRequest& request,
-                              std::size_t&                               acceptedEvents,
-                              std::size_t&                               payloadBytes)
+bool MLDPWriter::buildRequest(const std::string&                                              sourceName,
+                              const util::bus::DataBatch&                                     batch,
+                              const std::string&                                              requestId,
+                              dp::service::ingestion::IngestDataRequest&                      request,
+                              std::size_t&                                                    acceptedEvents,
+                              std::size_t&                                                    payloadBytes,
+                              const std::unordered_map<std::string, std::string>*             metadata)
 {
     request.set_providerid(providerId_);
     request.set_clientrequestid(requestId);
 
-    auto  dataFrame  = toDataFrame(batch, sourceName);
+    auto  dataFrame  = toDataFrame(batch, sourceName, metadata);
     auto* dataFrame_ptr = request.mutable_ingestiondataframe();
     *dataFrame_ptr = std::move(dataFrame);
 

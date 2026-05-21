@@ -12,7 +12,7 @@ The driver implements an **abstract Reader pattern** that allows plugging in dif
 flowchart TB
     subgraph DataSources["DATA SOURCES"]
         DS1["EPICS Control System<br/>(PVs/Process Variables)"]
-        DS2["EPICS Archiver<br/>(Future)"]
+        DS2["EPICS Archiver<br/>"]
         DS3["HDF5 Files<br/>(Future)"]
         DS4["Others<br/>(Future)"]
     end
@@ -35,17 +35,22 @@ flowchart TB
         end
     end
 
+    QueryableFactory["QueryableFactory<br/>(Out-of-Band Query Registry)<br/>now: startup · tests<br/>future: algorithms / decision engines"]
+
     WriterFactory["WriterFactory<br/>(Static Registration)"]
 
     subgraph WriterLayer["WRITER LAYER — all writers implement IWriter"]
         WR1["MLDPWriter<br/>(gRPC)<br/>Thread Pool · WorkerChannels"]
         WR2["HDF5WriterPerSource<br/>(Disk)<br/>MPSC Queue · HDF5FilePool · Flush Thread"]
         WR3["HDF5WriterMerge<br/>(Disk)<br/>MPSC Queue · Shared H5File · Flush Thread"]
+        WR4["MLDPAnnotationWriter<br/>(gRPC)<br/>Work Queue · Thread Pool"]
+        WR5["MLDPConfigurationWriter<br/>(gRPC)<br/>Work Queue · Thread Pool"]
     end
 
     MLDPService["MLDP Ingestion Service<br/>(gRPC Streams)"]
     HDF5Files["HDF5 Files<br/>(one per source)"]
     HDF5Merged["HDF5 Merged File<br/>(one file, group per source)"]
+    AnnotationService["DpAnnotationService<br/>(gRPC)"]
 
     DS1 --> R1
     DS1 --> R2
@@ -59,9 +64,12 @@ flowchart TB
     R4 --> IDataBus
 
     IDataBus --> HashPart
+    IDataBus ~~~ QueryableFactory
     HashPart --> W0
     HashPart --> W1
     HashPart --> WN
+
+    Controller -. prepareQueryables .-> QueryableFactory
 
     W0 --> WriterFactory
     W1 --> WriterFactory
@@ -70,10 +78,14 @@ flowchart TB
     WriterFactory --> WR1
     WriterFactory --> WR2
     WriterFactory --> WR3
+    WriterFactory --> WR4
+    WriterFactory --> WR5
 
     WR1 --> MLDPService
     WR2 --> HDF5Files
     WR3 --> HDF5Merged
+    WR4 --> AnnotationService
+    WR5 --> AnnotationService
 ```
 
 ## Reader Abstraction
@@ -102,11 +114,13 @@ For details on existing readers, see [Reader Types](../readers/readers.md). To i
 
 Writers are the **output side** of the pipeline. They consume `IDataBus::EventBatch` objects from worker queues and deliver data to a sink.
 
-Writer Type   | Status      | Description
-------------- | ----------- | -------------------------------------------
-`mldp`        | Implemented | Streams data to MLDP ingestion service (gRPC)
-`hdf5`        | Implemented | One rotated HDF5 file per `root_source` on disk
-`hdf5-merge`  | Implemented | All sources in one shared rotating HDF5 file (one group per source)
+Writer Type          | Status      | Payload accepted                              | Description
+-------------------- | ----------- | --------------------------------------------- | -------------------------------------------
+`mldp`               | Implemented | `TimeSeriesPayload`                           | Streams data to MLDP ingestion service (gRPC)
+`hdf5`               | Implemented | `TimeSeriesPayload`                           | One rotated HDF5 file per `root_source` on disk
+`hdf5-merge`         | Implemented | `TimeSeriesPayload`                           | All sources in one shared rotating HDF5 file (one group per source)
+`mldp-annotation`    | Implemented | `SourceMetadataPayload`                       | Persists PV source metadata via annotation gRPC service
+`mldp-configuration` | Implemented | `ConfigurationPayload`, `ConfigurationActivationPayload` | Persists configuration objects and activation windows via annotation gRPC service
 
 All writers:
 
@@ -117,11 +131,29 @@ All writers:
 
 ```
 IWriter  (pure abstract)
-├── MLDPWriter        → gRPC → MLDP ingestion service
-└── HDF5WriterBase    → HDF5 files on local disk  (abstract)
+├── MLDPWriter              (type "mldp")               → gRPC → MLDP ingestion service
+├── MLDPAnnotationWriter    (type "mldp-annotation")    → gRPC → DpAnnotationService.savePvMetadata
+├── MLDPConfigurationWriter (type "mldp-configuration") → gRPC → DpAnnotationService.saveConfiguration / saveConfigurationActivation
+└── HDF5WriterBase          → HDF5 files on local disk  (abstract)
       ├── HDF5WriterPerSource   (type "hdf5"       — one file per root_source via HDF5FilePool)
       └── HDF5WriterMerge       (type "hdf5-merge" — all sources share one rotating H5 file)
 ```
+
+### EventBatch Payload Variants
+
+`EventBatchStruct` carries a `BatchPayload` variant (`std::variant<…>`) that determines which writer types process it.  Use the free helpers in `IDataBus.h` to inspect the active alternative:
+
+| Payload type | Helper | Accepted by |
+|---|---|---|
+| `TimeSeriesPayload` | `isTimeSeries(b)` / `asTimeSeries(b)` | `MLDPWriter`, `HDF5WriterPerSource`, `HDF5WriterMerge` |
+| `SourceMetadataPayload` | `isSourceMetadata(b)` / `asSourceMetadata(b)` | `MLDPAnnotationWriter` |
+| `ConfigurationPayload` | `isConfiguration(b)` / `asConfiguration(b)` | `MLDPConfigurationWriter` |
+| `ConfigurationActivationPayload` | `isConfigurationActivation(b)` / `asConfigurationActivation(b)` | `MLDPConfigurationWriter` |
+
+Each `EventBatchStruct` also carries:
+- `reader_name` — identity of the producing reader (used for routing decisions).
+- `root_source` — primary PV/signal name for metrics and hash partitioning.
+- `metadata` — `unordered_map<string,string>` key/value annotations merged from reader `static-metadata` and per-PV `metadata` config.  Forwarded as `ColumnProvenance.source` labels in gRPC ingestion requests.
 
 ### MLDPWriter
 
@@ -155,6 +187,37 @@ IWriter  (pure abstract)
 - Single `mergeFileMutex_` serialises all file access (writer thread + flush thread)
 - Rotation triggered when any source pushes the file past age or size threshold; all groups recreated in new file
 - HDF5 layout: `/<source>/timestamps` + `/<source>/<col>` datasets (same types as per-source)
+
+### MLDPAnnotationWriter
+
+- Type key: `"mldp-annotation"`
+- Accepts only `SourceMetadataPayload` batches (`acceptsPayload()` filters others).
+- Expands each `{source → SourceMetadataEntry}` map entry into an individual work item.
+- N worker threads (configurable `thread-pool`) drain the queue via `savePvMetadata` RPC.
+- Connection pool: `MLDPGrpcAnnotationPool` backed by `annotation-url`.
+
+### MLDPConfigurationWriter
+
+- Type key: `"mldp-configuration"`
+- Accepts `ConfigurationPayload` and `ConfigurationActivationPayload` batches.
+- Dispatches to `saveConfiguration` or `saveConfigurationActivation` RPC based on the active variant.
+- Same threading model as `MLDPAnnotationWriter` (work queue + N workers).
+- Shares `MLDPGrpcAnnotationPool` connection pool type with annotation writer.
+
+### QueryableFactory
+
+`QueryableFactory` (singleton) is a type-keyed registry for query clients. It is separate from `IDataBus` (which is push-only) and supports out-of-band metadata and data queries. It sits alongside the controller (see diagram) as an independent access point — not part of the push pipeline.
+
+- **Prepare at startup** (in `MLDPPVXSController::start()`): `prepareQueryables()` iterates `queryable:` config entries and calls `QueryableFactory::instance().prepare<T>(cfg, metrics)` for each known type.
+- **Create at runtime**: any component calls `QueryableFactory::instance().create<MLDPQueryClient>()` to get a fresh client; the factory constructs it from the stored config closure.
+- **Supported types**: `MLDPQueryClient` (type key `"mldp"`), `MLDPAnnotationQueryClient` (type key `"mldp-annotation"`).
+- Thread-safe: uses a `std::shared_mutex` on the internal creators map.
+
+**Current use**: startup initialization and test fixtures that need to issue ad-hoc queries (e.g. verify ingested data, fetch annotation metadata) without going through `IDataBus`.
+
+**Future use**: the factory is positioned as the query interface for decision-making components — for example algorithms that inspect historical data or existing annotations to decide what to ingest, generate derived signals, or trigger additional processing. Because `QueryableFactory` is decoupled from the push path, these consumers can be added without touching the reader/writer pipeline.
+
+→ [Query Client Documentation](../dev/query-client.md)
 
 ## Push Model Architecture
 
@@ -513,6 +576,24 @@ writer:
       max-file-size-mb: 512            # rotate at N MiB (default: 512)
       flush-interval-ms: 1000          # flush thread period ms (default: 1000)
       compression-level: 0             # DEFLATE 0–9; 0 = off (default: 0)
+
+  mldp-annotation:
+    - name: annotation_main
+      thread-pool: 2
+      deadline-seconds: 10
+      mldp-annotation-pool:
+        annotation-url: grpc://annotation-host:50053
+        min-conn: 1
+        max-conn: 4
+
+  mldp-configuration:
+    - name: cfg_writer
+      thread-pool: 2
+      deadline-seconds: 10
+      mldp-annotation-pool:
+        annotation-url: grpc://annotation-host:50053
+        min-conn: 1
+        max-conn: 4
 ```
 
 ## Metrics & Observability

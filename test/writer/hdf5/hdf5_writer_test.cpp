@@ -73,7 +73,8 @@ protected:
         frame.columns.push_back(std::move(col));
         IDataBus::EventBatch batch;
         batch.root_source = "TEST:PV";
-        batch.frames.push_back(std::move(frame));
+        batch.payload = TimeSeriesPayload{};
+        std::get<TimeSeriesPayload>(batch.payload).frames.push_back(std::move(frame));
         return batch;
     }
 
@@ -92,7 +93,8 @@ protected:
         frame.columns.push_back(std::move(col));
         IDataBus::EventBatch batch;
         batch.root_source = source;
-        batch.frames.push_back(std::move(frame));
+        batch.payload = TimeSeriesPayload{};
+        std::get<TimeSeriesPayload>(batch.payload).frames.push_back(std::move(frame));
         return batch;
     }
 };
@@ -210,7 +212,8 @@ TEST_F(HDF5WriterTest, StringColumnWritten)
     frame.columns.push_back(std::move(col));
     IDataBus::EventBatch batch;
     batch.root_source = "TEST:STRING";
-    batch.frames.push_back(std::move(frame));
+    batch.payload = TimeSeriesPayload{};
+    std::get<TimeSeriesPayload>(batch.payload).frames.push_back(std::move(frame));
     w.push(batch);
 
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
@@ -252,7 +255,8 @@ TEST_F(HDF5WriterTest, StringColumnMultipleValuesWritten)
         frame.columns.push_back(std::move(col));
         IDataBus::EventBatch batch;
         batch.root_source = "TEST:STRPV";
-        batch.frames.push_back(std::move(frame));
+        batch.payload = TimeSeriesPayload{};
+        std::get<TimeSeriesPayload>(batch.payload).frames.push_back(std::move(frame));
         w.push(batch);
     }
 
@@ -294,7 +298,8 @@ TEST_F(HDF5WriterTest, DoubleArrayColumnWrittenAs2DDataset)
     frame.columns.push_back(std::move(col));
     IDataBus::EventBatch batch;
     batch.root_source = "TEST:WAVE";
-    batch.frames.push_back(std::move(frame));
+    batch.payload = TimeSeriesPayload{};
+    std::get<TimeSeriesPayload>(batch.payload).frames.push_back(std::move(frame));
     w.push(batch);
 
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
@@ -341,7 +346,8 @@ TEST_F(HDF5WriterTest, DoubleArrayColumnGrowsRowsAcrossUpdates)
         frame.columns.push_back(std::move(col));
         IDataBus::EventBatch batch;
         batch.root_source = "TEST:WAVEGROW";
-        batch.frames.push_back(std::move(frame));
+        batch.payload = TimeSeriesPayload{};
+        std::get<TimeSeriesPayload>(batch.payload).frames.push_back(std::move(frame));
         w.push(batch);
     }
 
@@ -378,7 +384,8 @@ TEST_F(HDF5WriterTest, FloatArrayColumnWrittenAs2DDataset)
     frame.columns.push_back(std::move(col));
     IDataBus::EventBatch batch;
     batch.root_source = "TEST:FWAVE";
-    batch.frames.push_back(std::move(frame));
+    batch.payload = TimeSeriesPayload{};
+    std::get<TimeSeriesPayload>(batch.payload).frames.push_back(std::move(frame));
     w.push(batch);
 
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
@@ -415,7 +422,8 @@ TEST_F(HDF5WriterTest, Int32ArrayColumnWrittenAs2DDataset)
     frame.columns.push_back(std::move(col));
     IDataBus::EventBatch batch;
     batch.root_source = "TEST:IWAVE";
-    batch.frames.push_back(std::move(frame));
+    batch.payload = TimeSeriesPayload{};
+    std::get<TimeSeriesPayload>(batch.payload).frames.push_back(std::move(frame));
     w.push(batch);
 
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
@@ -457,7 +465,8 @@ TEST_F(HDF5WriterTest, DoubleColumnDataReadBack)
 
     IDataBus::EventBatch batch;
     batch.root_source = "TEST:DBLREADBACK";
-    batch.frames.push_back(std::move(frame));
+    batch.payload = TimeSeriesPayload{};
+    std::get<TimeSeriesPayload>(batch.payload).frames.push_back(std::move(frame));
     w.push(batch);
 
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
@@ -489,7 +498,8 @@ TEST_F(HDF5WriterTest, FloatColumnWrittenAndReadBack)
 
     IDataBus::EventBatch batch;
     batch.root_source = "TEST:FLTREADBACK";
-    batch.frames.push_back(std::move(frame));
+    batch.payload = TimeSeriesPayload{};
+    std::get<TimeSeriesPayload>(batch.payload).frames.push_back(std::move(frame));
     w.push(batch);
 
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
@@ -526,7 +536,8 @@ TEST_F(HDF5WriterTest, Int32ColumnWrittenAndReadBack)
 
     IDataBus::EventBatch batch;
     batch.root_source = "TEST:I32READBACK";
-    batch.frames.push_back(std::move(frame));
+    batch.payload = TimeSeriesPayload{};
+    std::get<TimeSeriesPayload>(batch.payload).frames.push_back(std::move(frame));
     w.push(batch);
 
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
@@ -563,7 +574,8 @@ TEST_F(HDF5WriterTest, Int64ColumnWrittenAndReadBack)
 
     IDataBus::EventBatch batch;
     batch.root_source = "TEST:I64READBACK";
-    batch.frames.push_back(std::move(frame));
+    batch.payload = TimeSeriesPayload{};
+    std::get<TimeSeriesPayload>(batch.payload).frames.push_back(std::move(frame));
     w.push(batch);
 
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
@@ -600,7 +612,8 @@ TEST_F(HDF5WriterTest, BoolColumnWrittenAndReadBack)
 
     IDataBus::EventBatch batch;
     batch.root_source = "TEST:BOOLREADBACK";
-    batch.frames.push_back(std::move(frame));
+    batch.payload = TimeSeriesPayload{};
+    std::get<TimeSeriesPayload>(batch.payload).frames.push_back(std::move(frame));
     w.push(batch);
 
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
@@ -640,7 +653,8 @@ TEST_F(HDF5WriterTest, TimestampDatasetWrittenAndReadBack)
 
     IDataBus::EventBatch batch;
     batch.root_source = "TEST:TSREADBACK";
-    batch.frames.push_back(std::move(frame));
+    batch.payload = TimeSeriesPayload{};
+    std::get<TimeSeriesPayload>(batch.payload).frames.push_back(std::move(frame));
     w.push(batch);
 
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
@@ -687,7 +701,8 @@ TEST_F(HDF5WriterTest, FloatArrayColumnValuesReadBack)
 
     IDataBus::EventBatch batch;
     batch.root_source = "TEST:FWAVEVALS";
-    batch.frames.push_back(std::move(frame));
+    batch.payload = TimeSeriesPayload{};
+    std::get<TimeSeriesPayload>(batch.payload).frames.push_back(std::move(frame));
     w.push(batch);
 
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
@@ -735,7 +750,8 @@ TEST_F(HDF5WriterTest, Int64ArrayColumnWrittenAs2DDataset)
 
     IDataBus::EventBatch batch;
     batch.root_source = "TEST:I64WAVE";
-    batch.frames.push_back(std::move(frame));
+    batch.payload = TimeSeriesPayload{};
+    std::get<TimeSeriesPayload>(batch.payload).frames.push_back(std::move(frame));
     w.push(batch);
 
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
@@ -801,22 +817,23 @@ TEST_F(HDF5WriterTest, BsasSplitColumnTimestampsWrittenOnce)
     // This is exactly how the NTTable reader splits columns.
     IDataBus::EventBatch batch;
     batch.root_source = kSource;
+    batch.payload = TimeSeriesPayload{};
 
-    batch.frames.push_back(makeBsasFrame(ts, [](DataBatch& f)
+    std::get<TimeSeriesPayload>(batch.payload).frames.push_back(makeBsasFrame(ts, [](DataBatch& f)
                                          {
                                              DataColumn col;
                                              col.name   = "PV_A";
                                              col.values = std::vector<double>{1.0, 2.0, 3.0};
                                              f.columns.push_back(std::move(col));
                                          }));
-    batch.frames.push_back(makeBsasFrame(ts, [](DataBatch& f)
+    std::get<TimeSeriesPayload>(batch.payload).frames.push_back(makeBsasFrame(ts, [](DataBatch& f)
                                          {
                                              DataColumn col;
                                              col.name   = "PV_B";
                                              col.values = std::vector<int32_t>{10, 11, 12};
                                              f.columns.push_back(std::move(col));
                                          }));
-    batch.frames.push_back(makeBsasFrame(ts, [](DataBatch& f)
+    std::get<TimeSeriesPayload>(batch.payload).frames.push_back(makeBsasFrame(ts, [](DataBatch& f)
                                          {
                                              DataColumn col;
                                              col.name   = "PV_C";
@@ -901,7 +918,8 @@ TEST_F(HDF5WriterTest, BsasTwoUpdatesTimestampsGrow)
     {
         IDataBus::EventBatch batch;
         batch.root_source = kSource;
-        batch.frames.push_back(makeBsasFrame(ts1, [kRows](DataBatch& f)
+        batch.payload = TimeSeriesPayload{};
+        std::get<TimeSeriesPayload>(batch.payload).frames.push_back(makeBsasFrame(ts1, [kRows](DataBatch& f)
                                              {
                                                  DataColumn col;
                                                  col.name = "PV_A";
@@ -910,7 +928,7 @@ TEST_F(HDF5WriterTest, BsasTwoUpdatesTimestampsGrow)
                                                  col.values = std::move(v);
                                                  f.columns.push_back(std::move(col));
                                              }));
-        batch.frames.push_back(makeBsasFrame(ts1, [kRows](DataBatch& f)
+        std::get<TimeSeriesPayload>(batch.payload).frames.push_back(makeBsasFrame(ts1, [kRows](DataBatch& f)
                                              {
                                                  DataColumn col;
                                                  col.name = "PV_B";
@@ -926,7 +944,8 @@ TEST_F(HDF5WriterTest, BsasTwoUpdatesTimestampsGrow)
     {
         IDataBus::EventBatch batch;
         batch.root_source = kSource;
-        batch.frames.push_back(makeBsasFrame(ts2, [kRows](DataBatch& f)
+        batch.payload = TimeSeriesPayload{};
+        std::get<TimeSeriesPayload>(batch.payload).frames.push_back(makeBsasFrame(ts2, [kRows](DataBatch& f)
                                              {
                                                  DataColumn col;
                                                  col.name = "PV_A";
@@ -935,7 +954,7 @@ TEST_F(HDF5WriterTest, BsasTwoUpdatesTimestampsGrow)
                                                  col.values = std::move(v);
                                                  f.columns.push_back(std::move(col));
                                              }));
-        batch.frames.push_back(makeBsasFrame(ts2, [kRows](DataBatch& f)
+        std::get<TimeSeriesPayload>(batch.payload).frames.push_back(makeBsasFrame(ts2, [kRows](DataBatch& f)
                                              {
                                                  DataColumn col;
                                                  col.name = "PV_B";
@@ -997,7 +1016,8 @@ TEST_F(HDF5WriterTest, BsasCoincidentalSameTimestampsNotDeduped)
     {
         IDataBus::EventBatch batch;
         batch.root_source = kSource;
-        batch.frames.push_back(makeBsasFrame(sameTs, [kRows](DataBatch& f)
+        batch.payload = TimeSeriesPayload{};
+        std::get<TimeSeriesPayload>(batch.payload).frames.push_back(makeBsasFrame(sameTs, [kRows](DataBatch& f)
                                              {
                                                  DataColumn col;
                                                  col.name = "PV_A";
@@ -1009,7 +1029,8 @@ TEST_F(HDF5WriterTest, BsasCoincidentalSameTimestampsNotDeduped)
     {
         IDataBus::EventBatch batch;
         batch.root_source = kSource;
-        batch.frames.push_back(makeBsasFrame(sameTs, [kRows](DataBatch& f)
+        batch.payload = TimeSeriesPayload{};
+        std::get<TimeSeriesPayload>(batch.payload).frames.push_back(makeBsasFrame(sameTs, [kRows](DataBatch& f)
                                              {
                                                  DataColumn col;
                                                  col.name = "PV_B";
@@ -1068,8 +1089,8 @@ static IDataBus::EventBatch makeNTTableBatch(
 {
     IDataBus::EventBatch batch;
     batch.root_source = pvName;
-    batch.tags = {pvName};
-    batch.is_tabular = true;
+    batch.metadata = {{"source", pvName}};
+    batch.payload = TimeSeriesPayload{.is_tabular = true};
 
     const int nRows = static_cast<int>(colValues.empty() ? 0 : colValues[0].size());
 
@@ -1086,7 +1107,7 @@ static IDataBus::EventBatch makeNTTableBatch(
         col.values = colValues[ci]; // std::vector<double> directly
         frame.columns.push_back(std::move(col));
 
-        batch.frames.push_back(std::move(frame));
+        std::get<TimeSeriesPayload>(batch.payload).frames.push_back(std::move(frame));
     }
 
     return batch;
@@ -1102,8 +1123,8 @@ static IDataBus::EventBatch makeNTTableBatchMixed(
 {
     IDataBus::EventBatch batch;
     batch.root_source = pvName;
-    batch.tags = {pvName};
-    batch.is_tabular = true;
+    batch.metadata = {{"source", pvName}};
+    batch.payload = TimeSeriesPayload{.is_tabular = true};
 
     // Frame 1: double column "DBL_COL"
     {
@@ -1116,7 +1137,7 @@ static IDataBus::EventBatch makeNTTableBatchMixed(
         for (int r = 0; r < nRows; ++r) v[r] = static_cast<double>(r) * 1.5;
         col.values = std::move(v);
         frame.columns.push_back(std::move(col));
-        batch.frames.push_back(std::move(frame));
+        std::get<TimeSeriesPayload>(batch.payload).frames.push_back(std::move(frame));
     }
 
     // Frame 2: int32 column "INT_COL"
@@ -1130,7 +1151,7 @@ static IDataBus::EventBatch makeNTTableBatchMixed(
         for (int r = 0; r < nRows; ++r) v[r] = r * 10;
         col.values = std::move(v);
         frame.columns.push_back(std::move(col));
-        batch.frames.push_back(std::move(frame));
+        std::get<TimeSeriesPayload>(batch.payload).frames.push_back(std::move(frame));
     }
 
     return batch;
@@ -1142,10 +1163,115 @@ static IDataBus::EventBatch makeEndOfUpdateMarker(const std::string& pvName)
 {
     IDataBus::EventBatch marker;
     marker.root_source = pvName;
-    marker.tags.push_back(pvName);
-    marker.is_tabular = true;
-    marker.end_of_batch_group = true;
+    marker.metadata["source"] = pvName;
+    marker.payload = TimeSeriesPayload{.end_of_batch_group = true, .is_tabular = true};
     return marker;
+}
+
+// ---------------------------------------------------------------------------
+// Metadata attribute tests (todo-05)
+// ---------------------------------------------------------------------------
+
+TEST_F(HDF5WriterTest, BatchMetadataWrittenAsHDF5GroupAttributes)
+{
+    // Verify that batch.metadata key/value pairs are written as string
+    // attributes on the HDF5 group for the source on first group creation.
+    HDF5WriterPerSource w(makeConfig());
+    w.start();
+
+    IDataBus::EventBatch batch = makeNTTableBatch(
+        "META:PV", {"VALUE"}, {{42.0}});
+    batch.metadata = {{"facility", "SLAC"}, {"device_type", "BPM"}};
+
+    w.push(batch);
+    w.push(makeEndOfUpdateMarker("META:PV"));
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    w.stop();
+
+    auto h5path = findH5File(tempDir_);
+    ASSERT_FALSE(h5path.empty());
+
+    H5::H5File  file(h5path.string(), H5F_ACC_RDONLY);
+    ASSERT_TRUE(file.nameExists("META:PV"));
+    H5::Group   grp = file.openGroup("META:PV");
+
+    // facility attribute
+    ASSERT_GT(grp.getNumAttrs(), 0);
+    H5::Attribute   attrFacility = grp.openAttribute("facility");
+    std::string     valFacility;
+    H5::StrType     vlStr(H5::PredType::C_S1, H5T_VARIABLE);
+    attrFacility.read(vlStr, valFacility);
+    EXPECT_EQ(valFacility, "SLAC");
+
+    // device_type attribute
+    H5::Attribute   attrDevice = grp.openAttribute("device_type");
+    std::string     valDevice;
+    attrDevice.read(vlStr, valDevice);
+    EXPECT_EQ(valDevice, "BPM");
+}
+
+TEST_F(HDF5WriterTest, BatchMetadataWrittenOnlyOnFirstGroupCreation)
+{
+    // Second batch with different metadata must NOT overwrite attributes
+    // written from the first batch.
+    HDF5WriterPerSource w(makeConfig());
+    w.start();
+
+    // First batch: metadata says env=prod
+    IDataBus::EventBatch batch1 = makeNTTableBatch(
+        "META:ONCE", {"VALUE"}, {{1.0}});
+    batch1.metadata = {{"env", "prod"}};
+    w.push(batch1);
+    w.push(makeEndOfUpdateMarker("META:ONCE"));
+
+    // Second batch: metadata says env=dev  (should be ignored)
+    IDataBus::EventBatch batch2 = makeNTTableBatch(
+        "META:ONCE", {"VALUE"}, {{2.0}});
+    batch2.metadata = {{"env", "dev"}};
+    w.push(batch2);
+    w.push(makeEndOfUpdateMarker("META:ONCE"));
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    w.stop();
+
+    auto h5path = findH5File(tempDir_);
+    ASSERT_FALSE(h5path.empty());
+
+    H5::H5File  file(h5path.string(), H5F_ACC_RDONLY);
+    ASSERT_TRUE(file.nameExists("META:ONCE"));
+    H5::Group   grp = file.openGroup("META:ONCE");
+
+    H5::Attribute   attrEnv = grp.openAttribute("env");
+    std::string     valEnv;
+    H5::StrType     vlStr(H5::PredType::C_S1, H5T_VARIABLE);
+    attrEnv.read(vlStr, valEnv);
+    EXPECT_EQ(valEnv, "prod");  // first batch value preserved
+}
+
+TEST_F(HDF5WriterTest, BatchMetadataEmptyProducesNoAttributes)
+{
+    // Batch with no metadata must not create any user attributes on the group.
+    HDF5WriterPerSource w(makeConfig());
+    w.start();
+
+    IDataBus::EventBatch batch = makeNTTableBatch(
+        "META:EMPTY", {"VALUE"}, {{7.0}});
+    batch.metadata.clear();
+
+    w.push(batch);
+    w.push(makeEndOfUpdateMarker("META:EMPTY"));
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    w.stop();
+
+    auto h5path = findH5File(tempDir_);
+    ASSERT_FALSE(h5path.empty());
+
+    H5::H5File  file(h5path.string(), H5F_ACC_RDONLY);
+    ASSERT_TRUE(file.nameExists("META:EMPTY"));
+    H5::Group   grp = file.openGroup("META:EMPTY");
+    EXPECT_EQ(grp.getNumAttrs(), 0);
 }
 
 TEST_F(HDF5WriterTest, NTTableBatchCreatesPerColumnDatasets)
@@ -1370,7 +1496,8 @@ TEST_F(HDF5WriterTest, NonNTTableBatchUsesColumnarLayout)
     IDataBus::EventBatch batch;
     batch.root_source = "SCALAR:PV";
     // No tags — or tags != root_source → columnar.
-    batch.frames.push_back(std::move(frame));
+    batch.payload = TimeSeriesPayload{};
+    std::get<TimeSeriesPayload>(batch.payload).frames.push_back(std::move(frame));
     w.push(std::move(batch));
 
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
@@ -1780,8 +1907,8 @@ TEST_F(HDF5WriterTest, MergeTabularSizeRotationFiresAfterThreshold)
 
         IDataBus::EventBatch batch;
         batch.root_source = pvName;
-        batch.tags        = {pvName};
-        batch.is_tabular  = true;
+        batch.metadata    = {{"source", pvName}};
+        batch.payload     = TimeSeriesPayload{.is_tabular = true};
 
         DataBatch frame;
         for (int r = 0; r < kRows; ++r)
@@ -1790,7 +1917,7 @@ TEST_F(HDF5WriterTest, MergeTabularSizeRotationFiresAfterThreshold)
         col.name   = "DATA";
         col.values = vals;
         frame.columns.push_back(std::move(col));
-        batch.frames.push_back(std::move(frame));
+        std::get<TimeSeriesPayload>(batch.payload).frames.push_back(std::move(frame));
 
         w.push(std::move(batch));
         w.push(makeEndOfUpdateMarker(pvName));
@@ -1826,8 +1953,8 @@ TEST_F(HDF5WriterTest, TabularMidRoundTimestampChangeDoesNotDropData)
     {
         IDataBus::EventBatch batch;
         batch.root_source = pvName;
-        batch.tags        = {pvName};
-        batch.is_tabular  = true;
+        batch.metadata    = {{"source", pvName}};
+        batch.payload     = TimeSeriesPayload{.is_tabular = true};
 
         DataBatch frame;
         for (int r = 0; r < kRows; ++r)
@@ -1836,7 +1963,7 @@ TEST_F(HDF5WriterTest, TabularMidRoundTimestampChangeDoesNotDropData)
         col.name   = colName;
         col.values = std::vector<double>{1.0, 2.0, 3.0};
         frame.columns.push_back(std::move(col));
-        batch.frames.push_back(std::move(frame));
+        std::get<TimeSeriesPayload>(batch.payload).frames.push_back(std::move(frame));
         w.push(std::move(batch));
     }
 
@@ -1845,8 +1972,8 @@ TEST_F(HDF5WriterTest, TabularMidRoundTimestampChangeDoesNotDropData)
     {
         IDataBus::EventBatch batch;
         batch.root_source = pvName;
-        batch.tags        = {pvName};
-        batch.is_tabular  = true;
+        batch.metadata    = {{"source", pvName}};
+        batch.payload     = TimeSeriesPayload{.is_tabular = true};
 
         DataBatch frame;
         for (int r = 0; r < kRows; ++r)
@@ -1855,7 +1982,7 @@ TEST_F(HDF5WriterTest, TabularMidRoundTimestampChangeDoesNotDropData)
         col.name   = colName;
         col.values = std::vector<double>{4.0, 5.0, 6.0};
         frame.columns.push_back(std::move(col));
-        batch.frames.push_back(std::move(frame));
+        std::get<TimeSeriesPayload>(batch.payload).frames.push_back(std::move(frame));
         w.push(std::move(batch));
     }
 
@@ -1901,8 +2028,8 @@ TEST_F(HDF5WriterTest, TabularRoundFirstTsResetAfterFlush)
     {
         IDataBus::EventBatch batch;
         batch.root_source = pvName;
-        batch.tags        = {pvName};
-        batch.is_tabular  = true;
+        batch.metadata    = {{"source", pvName}};
+        batch.payload     = TimeSeriesPayload{.is_tabular = true};
 
         DataBatch frame;
         for (int r = 0; r < kRows; ++r)
@@ -1913,7 +2040,7 @@ TEST_F(HDF5WriterTest, TabularRoundFirstTsResetAfterFlush)
         for (int r = 0; r < kRows; ++r) vals[r] = valOffset + r;
         col.values = vals;
         frame.columns.push_back(std::move(col));
-        batch.frames.push_back(std::move(frame));
+        std::get<TimeSeriesPayload>(batch.payload).frames.push_back(std::move(frame));
         w.push(std::move(batch));
         w.push(makeEndOfUpdateMarker(pvName));
     };
@@ -2020,8 +2147,8 @@ TEST_F(HDF5WriterTest, TabularUnknownColumnNoDuplicatesInWarnSet)
     {
         IDataBus::EventBatch batch;
         batch.root_source = pvName;
-        batch.tags        = {pvName};
-        batch.is_tabular  = true;
+        batch.metadata    = {{"source", pvName}};
+        batch.payload     = TimeSeriesPayload{.is_tabular = true};
 
         DataBatch frame;
         for (int r = 0; r < kRows; ++r)
@@ -2030,7 +2157,7 @@ TEST_F(HDF5WriterTest, TabularUnknownColumnNoDuplicatesInWarnSet)
         col.name   = "KNOWN";
         col.values = std::vector<double>(kRows, 1.0);
         frame.columns.push_back(std::move(col));
-        batch.frames.push_back(std::move(frame));
+        std::get<TimeSeriesPayload>(batch.payload).frames.push_back(std::move(frame));
         w.push(std::move(batch));
         w.push(makeEndOfUpdateMarker(pvName));
     }
@@ -2042,8 +2169,8 @@ TEST_F(HDF5WriterTest, TabularUnknownColumnNoDuplicatesInWarnSet)
     {
         IDataBus::EventBatch batch;
         batch.root_source = pvName;
-        batch.tags        = {pvName};
-        batch.is_tabular  = true;
+        batch.metadata    = {{"source", pvName}};
+        batch.payload     = TimeSeriesPayload{.is_tabular = true};
 
         DataBatch frame;
         for (int r = 0; r < kRows; ++r)
@@ -2052,7 +2179,7 @@ TEST_F(HDF5WriterTest, TabularUnknownColumnNoDuplicatesInWarnSet)
         col.name   = "UNKNOWN_" + std::to_string(i);
         col.values = std::vector<double>(kRows, static_cast<double>(i));
         frame.columns.push_back(std::move(col));
-        batch.frames.push_back(std::move(frame));
+        std::get<TimeSeriesPayload>(batch.payload).frames.push_back(std::move(frame));
         w.push(std::move(batch));
         w.push(makeEndOfUpdateMarker(pvName));
     }

@@ -94,6 +94,9 @@ protected:
         std::unordered_set<std::string> warnedMissing;
         std::unordered_set<std::string> warnedUnknown;
 
+        // ---- metadata (captured from first batch for this source) ----
+        std::unordered_map<std::string, std::string> pendingMetadata;
+
         static constexpr std::size_t kMaxWarnedUnknown = 128;
     };
 
@@ -126,6 +129,7 @@ protected:
     // Accessed exclusively from writerThread_ — no mutex required
     std::unordered_map<std::string, uint64_t>      lastTsBatchSeq_;
     std::unordered_map<std::string, TabularBuffer> tabularBuffers_;
+    std::unordered_set<std::string>                seen_groups_;   ///< Sources whose HDF5 group has had metadata attributes written.
 
     std::thread writerThread_;
     std::thread flushThread_;
@@ -140,6 +144,11 @@ public:
     bool        push(util::bus::IDataBus::EventBatch batch) noexcept override;
     void        stop() noexcept override;
     bool        supports_multi_root_source() const noexcept override { return true; }
+
+    bool acceptsPayload(const util::bus::BatchPayload& payload) const noexcept override
+    {
+        return std::holds_alternative<util::bus::TimeSeriesPayload>(payload);
+    }
 
 protected:
     explicit HDF5WriterBase(HDF5WriterConfig                    config,

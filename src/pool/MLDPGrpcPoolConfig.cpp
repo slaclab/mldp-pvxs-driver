@@ -43,6 +43,11 @@ const std::string& MLDPGrpcPoolConfig::queryUrl() const
     return query_url_;
 }
 
+const std::string& MLDPGrpcPoolConfig::annotationUrl() const
+{
+    return annotation_url_;
+}
+
 const std::string& MLDPGrpcPoolConfig::providerDescription() const
 {
     return provider_description_;
@@ -111,6 +116,8 @@ void MLDPGrpcPoolConfig::parse(const config::Config& root)
     {
         throw Error(std::string("mldp-pool.") + QueryUrlKey + " must not be equal to ingestion-url");
     }
+
+    annotation_url_ = root.get(AnnotationUrlKey, "");
 
     if (!root.hasChild(MinConnKey))
     {

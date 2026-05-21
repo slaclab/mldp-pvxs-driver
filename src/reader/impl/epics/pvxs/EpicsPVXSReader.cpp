@@ -172,10 +172,23 @@ void EpicsPVXSReader::processDefaultMode(const std::string& pvName, const pvxs::
 
     IDataBus::EventBatch eventBatch;
     eventBatch.root_source = pvName;
-    eventBatch.tags.push_back(pvName);
-    eventBatch.frames.push_back(std::move(batch));
-    emitted = 1;
+    // Build merged metadata: reader-level base, PV-level overrides
+    auto merged = config_.staticMetadata();
+    for (const auto& pv_cfg : config_.pvs())
+    {
+        if (pv_cfg.name == pvName)
+        {
+            for (auto& [k, v] : pv_cfg.metadata)
+                merged[k] = v;
+            break;
+        }
+    }
+    eventBatch.metadata = std::move(merged);
     eventBatch.reader_name = name();
+    eventBatch.payload = TimeSeriesPayload{
+        .frames = {std::move(batch)},
+    };
+    emitted = 1;
     bus_->push(std::move(eventBatch));
 }
 
@@ -195,18 +208,30 @@ void EpicsPVXSReader::processSlacBsasTableMode(const std::string&     pvName,
     const prometheus::Labels sourceTag{{"source", pvName}};
     const std::size_t        colBatchSize = config_.columnBatchSize();
 
+    // Build merged metadata: reader-level base, PV-level overrides
+    auto merged_meta = config_.staticMetadata();
+    for (const auto& pv_cfg : config_.pvs())
+    {
+        if (pv_cfg.name == pvName)
+        {
+            for (auto& [k, v] : pv_cfg.metadata)
+                merged_meta[k] = v;
+            break;
+        }
+    }
+
     IDataBus::EventBatch tableBatch;
     tableBatch.root_source = pvName;
-    tableBatch.tags.push_back(pvName);
-    tableBatch.is_tabular = true;
+    tableBatch.metadata = merged_meta;
+    tableBatch.payload = TimeSeriesPayload{.is_tabular = true};
     std::size_t colsInBatch = 0;
 
-    auto resetBatch = [&tableBatch, &pvName, &colsInBatch]()
+    auto resetBatch = [&tableBatch, &pvName, &colsInBatch, merged_meta]()
     {
         tableBatch = IDataBus::EventBatch{};
         tableBatch.root_source = pvName;
-        tableBatch.tags.push_back(pvName);
-        tableBatch.is_tabular = true;
+        tableBatch.metadata = merged_meta;
+        tableBatch.payload = TimeSeriesPayload{.is_tabular = true};
         colsInBatch = 0;
     };
 
@@ -225,7 +250,7 @@ void EpicsPVXSReader::processSlacBsasTableMode(const std::string&     pvName,
                             sourceTag);
                         continue;
                     }
-                    tableBatch.frames.push_back(std::move(b));
+                    std::get<TimeSeriesPayload>(tableBatch.payload).frames.push_back(std::move(b));
                 }
                 ++colsInBatch;
                 if (colBatchSize > 0 && colsInBatch >= colBatchSize)
@@ -242,7 +267,7 @@ void EpicsPVXSReader::processSlacBsasTableMode(const std::string&     pvName,
             util::format_string("Error converting PV {} to MLDP SLAC BSAS table batch on reader {}.", pvName, name_),
             sourceTag);
     }
-    else if (!tableBatch.frames.empty())
+    else if (!std::get<TimeSeriesPayload>(tableBatch.payload).frames.empty())
     {
         tableBatch.reader_name = name();
         bus_->push(std::move(tableBatch));
@@ -252,10 +277,12 @@ void EpicsPVXSReader::processSlacBsasTableMode(const std::string&     pvName,
     // know all column batches have been emitted and can flush accumulated state.
     IDataBus::EventBatch markerBatch;
     markerBatch.root_source = pvName;
-    markerBatch.tags.push_back(pvName);
-    markerBatch.is_tabular = true;
-    markerBatch.end_of_batch_group = true;
+    markerBatch.metadata = merged_meta;
     markerBatch.reader_name = name();
+    markerBatch.payload = TimeSeriesPayload{
+        .end_of_batch_group = true,
+        .is_tabular = true,
+    };
     bus_->push(std::move(markerBatch));
 }
 

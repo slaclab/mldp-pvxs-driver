@@ -115,6 +115,12 @@ MLDPQueryClient::MLDPQueryClient(const util::pool::MLDPGrpcPoolConfig& poolConfi
 {
 }
 
+MLDPQueryClient::MLDPQueryClient(const config::Config&             cfg,
+                                 std::shared_ptr<metrics::Metrics> m)
+    : MLDPQueryClient(util::pool::MLDPGrpcPoolConfig(cfg), std::move(m))
+{
+}
+
 // ---------------------------------------------------------------------------
 // querySourcesInfo
 // ---------------------------------------------------------------------------

@@ -10,6 +10,7 @@
 
 #pragma once
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace mldp_pvxs_driver::config {
@@ -20,6 +21,8 @@ struct PvEntry {
     std::string option_value;  // for scalar
     std::string ts_seconds;    // for slac-bsas-table
     std::string ts_nanos;      // for slac-bsas-table
+    // ordered key-value pairs emitted as metadata: block under this PV
+    std::vector<std::pair<std::string,std::string>> metadata;
 };
 
 struct MldpWriterConfig {
@@ -69,6 +72,8 @@ struct EpicsReaderConfig {
     std::string batch_duration_sec  = "1";
     std::string tls_verify_peer     = "true";
     std::string tls_verify_host     = "true";
+    // ordered key-value pairs emitted as static-metadata: block under this reader
+    std::vector<std::pair<std::string,std::string>> static_metadata;
     std::vector<PvEntry> pvs;
 };
 
@@ -77,6 +82,27 @@ struct RoutingEntry {
     std::vector<std::string> from_readers;   // empty = all
     std::vector<std::string> include_globs;
     std::vector<std::string> exclude_globs;
+};
+
+// Queryable pool configs — emitted under queryable: block
+struct QueryableMldpConfig {
+    bool        enabled         = false;
+    std::string ingestion_url;
+    std::string query_url;
+    std::string min_conn        = "1";
+    std::string max_conn        = "2";
+};
+
+struct QueryableAnnotationConfig {
+    bool        enabled         = false;
+    std::string annotation_url;
+    std::string min_conn        = "1";
+    std::string max_conn        = "2";
+};
+
+struct QueryableState {
+    QueryableMldpConfig       mldp;
+    QueryableAnnotationConfig mldp_annotation;
 };
 
 struct WizardState {
@@ -94,6 +120,8 @@ struct WizardState {
     // Phase 5
     bool routing_all_to_all = true;
     std::vector<RoutingEntry> routing;
+    // Queryable pool configuration (optional)
+    QueryableState queryable;
 };
 
 int runWizard(const std::string& output_path, const std::string& from_path);

@@ -174,10 +174,23 @@ void EpicsBaseReader::processDefaultMode(const std::string&                     
         EpicsPVDataConversion::convertPVToDataBatch(*valueField, &batch_frame, pvName);
     }
     batch_frame.timestamps.push_back(TimestampEntry{epoch_seconds, nanoseconds});
-    batch.tags.push_back(pvName);
-    batch.frames.push_back(std::move(batch_frame));
-    emitted = 1;
+    // Build merged metadata: reader-level base, PV-level overrides
+    auto merged = config_.staticMetadata();
+    for (const auto& pv_cfg : config_.pvs())
+    {
+        if (pv_cfg.name == pvName)
+        {
+            for (auto& [k, v] : pv_cfg.metadata)
+                merged[k] = v;
+            break;
+        }
+    }
+    batch.metadata = std::move(merged);
     batch.reader_name = name();
+    batch.payload = TimeSeriesPayload{
+        .frames = {std::move(batch_frame)},
+    };
+    emitted = 1;
     bus_->push(std::move(batch));
 }
 
@@ -195,16 +208,28 @@ void EpicsBaseReader::processSlacBsasTableMode(const std::string&               
     const prometheus::Labels sourceTag{{"source", pvName}};
     const std::size_t        colBatchSize = config_.columnBatchSize();
 
+    // Build merged metadata: reader-level base, PV-level overrides
+    auto merged_meta = config_.staticMetadata();
+    for (const auto& pv_cfg : config_.pvs())
+    {
+        if (pv_cfg.name == pvName)
+        {
+            for (auto& [k, v] : pv_cfg.metadata)
+                merged_meta[k] = v;
+            break;
+        }
+    }
+
     IDataBus::EventBatch tableBatch;
     tableBatch.root_source = pvName;
-    tableBatch.tags.push_back(pvName);
+    tableBatch.metadata = merged_meta;
     std::size_t colsInBatch = 0;
 
-    auto resetBatch = [&tableBatch, &pvName, &colsInBatch]()
+    auto resetBatch = [&tableBatch, &pvName, &colsInBatch, merged_meta]()
     {
         tableBatch = IDataBus::EventBatch{};
         tableBatch.root_source = pvName;
-        tableBatch.tags.push_back(pvName);
+        tableBatch.metadata = merged_meta;
         colsInBatch = 0;
     };
 
@@ -225,7 +250,7 @@ void EpicsBaseReader::processSlacBsasTableMode(const std::string&               
                                     });
                         continue;
                     }
-                    tableBatch.frames.push_back(std::move(frame));
+                    std::get<TimeSeriesPayload>(tableBatch.payload).frames.push_back(std::move(frame));
                 }
                 ++colsInBatch;
                 if (colBatchSize > 0 && colsInBatch >= colBatchSize)
@@ -243,7 +268,7 @@ void EpicsBaseReader::processSlacBsasTableMode(const std::string&               
                         m.incrementReaderErrors(1.0, sourceTag);
                     });
     }
-    else if (!tableBatch.frames.empty())
+    else if (!std::get<TimeSeriesPayload>(tableBatch.payload).frames.empty())
     {
         tableBatch.reader_name = name();
         bus_->push(std::move(tableBatch));

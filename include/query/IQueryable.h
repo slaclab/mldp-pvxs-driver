@@ -10,42 +10,17 @@
 
 #pragma once
 
-#include <common.pb.h>
-#include <util/bus/IDataBus.h>
-
-#include <optional>
-#include <set>
-#include <string>
-#include <unordered_map>
-#include <vector>
+#include <memory>
 
 namespace mldp_pvxs_driver::query {
 
-/**
- * @brief Pure interface for MLDP query operations.
- *
- * Allows alternative backends (mock, REST, archiver-based) to be injected
- * without touching consumers.  `MLDPQueryClient` is the canonical production
- * implementation.
- */
+// Factory marker only. Use QueryableFactory::create<T>() for concrete access.
 class IQueryable
 {
 public:
     virtual ~IQueryable() = default;
-
-    /**
-     * @brief Query metadata for a set of source identifiers.
-     */
-    virtual std::vector<util::bus::IDataBus::SourceInfo>
-    querySourcesInfo(const std::set<std::string>& source_names) = 0;
-
-    /**
-     * @brief Query data values for sources over a relative time window.
-     */
-    virtual std::optional<
-        std::unordered_map<std::string, std::vector<dp::service::common::DataValues>>>
-    querySourcesData(const std::set<std::string>&              source_names,
-                     const util::bus::QuerySourcesDataOptions& options = {}) = 0;
 };
+
+using IQueryableUPtr = std::unique_ptr<IQueryable>;
 
 } // namespace mldp_pvxs_driver::query

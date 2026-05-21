@@ -22,6 +22,7 @@ inline constexpr char ProviderNameKey[] = "provider-name";
 inline constexpr char ProviderDescriptionKey[] = "provider-description";
 inline constexpr char IngestionUrlKey[] = "ingestion-url";
 inline constexpr char QueryUrlKey[] = "query-url";
+inline constexpr char AnnotationUrlKey[] = "annotation-url";
 inline constexpr char MinConnKey[] = "min-conn";
 inline constexpr char MaxConnKey[] = "max-conn";
 inline constexpr char CredentialsKey[] = "credentials";
@@ -102,6 +103,7 @@ public:
     const std::string& providerDescription() const;
     const std::string& ingestionUrl() const;
     const std::string& queryUrl() const;
+    const std::string& annotationUrl() const;
     int                minConnections() const;
     int                maxConnections() const;
     const Credentials& credentials() const;
@@ -115,6 +117,7 @@ private:
     std::string provider_description_;
     std::string ingestion_url_;
     std::string query_url_;
+    std::string annotation_url_;
     int         min_conn_ = 0;
     int         max_conn_ = 0;
     Credentials credentials_;

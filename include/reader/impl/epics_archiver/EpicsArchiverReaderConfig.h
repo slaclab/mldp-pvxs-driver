@@ -25,6 +25,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace mldp_pvxs_driver::reader::impl::epics_archiver {
@@ -45,6 +46,8 @@ inline constexpr char TlsVerifyPeerKey[] = "tls-verify-peer";
 inline constexpr char TlsVerifyHostKey[] = "tls-verify-host";
 inline constexpr char PvsKey[] = "pvs";
 inline constexpr char PvNameKey[] = "name";
+
+static constexpr auto kMetadataKey = "metadata";
 
 /**
  * @brief Configuration parser for EPICS Archiver Appliance reader.
@@ -106,7 +109,8 @@ public:
      */
     struct PVConfig
     {
-        std::string name; ///< PV name to retrieve from archiver.
+        std::string                                    name;     ///< PV name to retrieve from archiver.
+        std::unordered_map<std::string, std::string>   metadata; ///< Per-PV static metadata key-value pairs.
     };
 
     /**
@@ -231,6 +235,13 @@ public:
      */
     bool tlsVerifyHost() const;
 
+    /**
+     * @brief Get the reader-level static metadata key-value pairs.
+     *
+     * @return Map of metadata keys to values as configured in YAML.
+     */
+    const std::unordered_map<std::string, std::string>& staticMetadata() const { return static_metadata_; }
+
 private:
     /**
      * @brief Populate the typed fields from the raw YAML node.
@@ -253,8 +264,9 @@ private:
     long                       batch_duration_sec_ = 1L;   ///< Max historical sample-time span per output batch.
     long                       poll_interval_sec_ = 0L;    ///< Periodic tail poll interval (seconds).
     long                       lookback_sec_ = 0L;         ///< Periodic tail lookback window (seconds).
-    bool                       tls_verify_peer_ = true;    ///< Verify TLS certificate chain.
-    bool                       tls_verify_host_ = true;    ///< Verify TLS host name.
+    bool                                         tls_verify_peer_ = true;    ///< Verify TLS certificate chain.
+    bool                                         tls_verify_host_ = true;    ///< Verify TLS host name.
+    std::unordered_map<std::string, std::string> static_metadata_;            ///< Reader-level static metadata.
 };
 
 } // namespace mldp_pvxs_driver::reader::impl::epics_archiver

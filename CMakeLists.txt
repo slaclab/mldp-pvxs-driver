@@ -158,6 +158,9 @@ if(MLDP_PVXS_ENABLE_HDF5)
 
     message(STATUS "HDF5 writer enabled — using target ${_MLDP_HDF5_TARGET}")
     add_compile_definitions(MLDP_PVXS_HDF5_ENABLED)
+    # Suppress a false-positive -Walloc-size-larger-than in HDF5's own C++ sources
+    # (H5Location.cpp new char[actual_name_len] with a range the analyser over-estimates).
+    target_compile_options(${_MLDP_HDF5_TARGET} PRIVATE -Wno-alloc-size-larger-than)
 else()
     message(STATUS "MLDP_PVXS_ENABLE_HDF5=OFF — HDF5 writer excluded")
 endif()
@@ -427,6 +430,7 @@ set(PROTO_FILES
     ${DP_GRPC_PROTO_PATH}/common.proto
     ${DP_GRPC_PROTO_PATH}/query.proto
     ${DP_GRPC_PROTO_PATH}/ingestion.proto
+    ${DP_GRPC_PROTO_PATH}/annotation.proto
     ${EPICSARCHIVERAP_PROTO_PATH}/EPICSEvent.proto
 )
 
@@ -503,7 +507,9 @@ add_library(lib${PROJECT_NAME}
     "${CMAKE_CURRENT_SOURCE_DIR}/src/pool/MLDPGrpcPoolConfig.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/pool/MLDPGrpcIngestionPool.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/pool/MLDPGrpcQueryPool.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/pool/MLDPGrpcAnnotationPool.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/MLDPQueryClient.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/MLDPAnnotationQueryClient.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/controller/MLDPPVXSControllerConfig.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/controller/MLDPPVXSController.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/controller/RouteTable.cpp"
@@ -511,6 +517,10 @@ add_library(lib${PROJECT_NAME}
     "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/WriterFactory.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/mldp/MLDPWriterConfig.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/mldp/MLDPWriter.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/mldp_annotation/MLDPAnnotationWriterConfig.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/mldp_annotation/MLDPAnnotationWriter.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/mldp_configuration/MLDPConfigurationWriterConfig.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/mldp_configuration/MLDPConfigurationWriter.cpp"
     $<$<BOOL:${MLDP_PVXS_ENABLE_HDF5}>:
         "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/hdf5/HDF5WriterConfig.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/hdf5/HDF5FilePool.cpp"
@@ -625,6 +635,8 @@ if(MLDP_PVXS_DRIVER_TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/test/controller/route_table_config_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/ryml_single_header_translation_unit.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/writer/mldp/mldp_writer_integration_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/writer/mldp_annotation/mldp_annotation_writer_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/writer/mldp_configuration/mldp_configuration_writer_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics/pvxs/epics_pvxs_reader_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics/base/epics_base_reader_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_archiver/archiver_pbhttp_conversion_test.cpp"
@@ -692,6 +704,44 @@ if(MLDP_PVXS_DRIVER_TESTS)
 
     include(GoogleTest)
     gtest_discover_tests(${PROJECT_NAME}_test)
+
+    # QueryableFactory unit tests
+    add_executable(queryable_factory_test
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/query/queryable_factory_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/ryml_single_header_translation_unit.cpp"
+    )
+    target_include_directories(queryable_factory_test PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test"
+        "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    if(APPLE)
+        target_link_libraries(queryable_factory_test PRIVATE gtest_main
+            -Wl,-force_load $<TARGET_FILE:lib${PROJECT_NAME}>)
+    else()
+        target_link_libraries(queryable_factory_test PRIVATE gtest_main
+            -Wl,--whole-archive lib${PROJECT_NAME} -Wl,--no-whole-archive)
+    endif()
+    gtest_discover_tests(queryable_factory_test)
+
+    # MLDPAnnotationQueryClient integration tests
+    add_executable(mldp_annotation_query_client_test
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/query/mldp_annotation_query_client_integration_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/ryml_single_header_translation_unit.cpp"
+    )
+    target_include_directories(mldp_annotation_query_client_test PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test"
+        "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    if(APPLE)
+        target_link_libraries(mldp_annotation_query_client_test PRIVATE gtest_main
+            -Wl,-force_load $<TARGET_FILE:lib${PROJECT_NAME}>)
+    else()
+        target_link_libraries(mldp_annotation_query_client_test PRIVATE gtest_main
+            -Wl,--whole-archive lib${PROJECT_NAME} -Wl,--no-whole-archive)
+    endif()
+    gtest_discover_tests(mldp_annotation_query_client_test)
 
     # Wizard unit tests — link wizard lib directly for access to wizard_internal symbols
     if(MLDP_WIZARD)

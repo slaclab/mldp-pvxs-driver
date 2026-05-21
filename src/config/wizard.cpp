@@ -149,6 +149,11 @@ std::string generateYaml(const WizardState& st)
                 o << ind(4) << "tls-verify-peer: " << r.tls_verify_peer << "\n";
                 o << ind(4) << "tls-verify-host: " << r.tls_verify_host << "\n";
             }
+            if (!r.static_metadata.empty()) {
+                o << ind(4) << "static-metadata:\n";
+                for (const auto& [k, v] : r.static_metadata)
+                    o << ind(5) << k << ": " << v << "\n";
+            }
             if (!r.pvs.empty()) {
                 o << ind(4) << "pvs:\n";
                 for (const auto& pv : r.pvs) {
@@ -164,6 +169,11 @@ std::string generateYaml(const WizardState& st)
                         o << ind(7) << "tsSeconds: " << pv.ts_seconds << "\n";
                         o << ind(7) << "tsNanos: " << pv.ts_nanos << "\n";
                     }
+                    if (!pv.metadata.empty()) {
+                        o << ind(6) << "metadata:\n";
+                        for (const auto& [k, v] : pv.metadata)
+                            o << ind(7) << k << ": " << v << "\n";
+                    }
                 }
             }
         }
@@ -175,6 +185,28 @@ std::string generateYaml(const WizardState& st)
         o << "metrics:\n";
         o << ind(1) << "endpoint: \"" << st.metrics_endpoint << "\"\n";
         o << ind(1) << "scan-interval-seconds: " << st.metrics_interval << "\n\n";
+    }
+
+    // queryable
+    if (st.queryable.mldp.enabled || st.queryable.mldp_annotation.enabled) {
+        o << "queryable:\n";
+        if (st.queryable.mldp.enabled) {
+            o << ind(1) << "mldp:\n";
+            o << ind(2) << "mldp-pool:\n";
+            o << ind(3) << "ingestion-url: " << st.queryable.mldp.ingestion_url << "\n";
+            if (!st.queryable.mldp.query_url.empty())
+                o << ind(3) << "query-url: " << st.queryable.mldp.query_url << "\n";
+            o << ind(3) << "min-conn: " << st.queryable.mldp.min_conn << "\n";
+            o << ind(3) << "max-conn: " << st.queryable.mldp.max_conn << "\n";
+        }
+        if (st.queryable.mldp_annotation.enabled) {
+            o << ind(1) << "mldp-annotation:\n";
+            o << ind(2) << "mldp-annotation-pool:\n";
+            o << ind(3) << "annotation-url: " << st.queryable.mldp_annotation.annotation_url << "\n";
+            o << ind(3) << "min-conn: " << st.queryable.mldp_annotation.min_conn << "\n";
+            o << ind(3) << "max-conn: " << st.queryable.mldp_annotation.max_conn << "\n";
+        }
+        o << "\n";
     }
 
     // routing
@@ -232,6 +264,41 @@ void loadFromConfig(const std::string& path, WizardState& st)
             st.metrics_enabled  = true;
             st.metrics_endpoint = m.get("endpoint", "0.0.0.0:9464");
             st.metrics_interval = std::to_string(m.getInt("scan-interval-seconds", 1));
+        }
+    }
+
+    // queryable
+    if (cfg.hasChild("queryable")) {
+        auto qv = cfg.subConfig("queryable");
+        if (!qv.empty()) {
+            const auto& q = qv[0];
+            if (q.hasChild("mldp")) {
+                auto mv = q.subConfig("mldp");
+                if (!mv.empty() && mv[0].hasChild("mldp-pool")) {
+                    auto pv = mv[0].subConfig("mldp-pool");
+                    if (!pv.empty()) {
+                        const auto& p = pv[0];
+                        st.queryable.mldp.enabled       = true;
+                        st.queryable.mldp.ingestion_url = p.get("ingestion-url", "");
+                        st.queryable.mldp.query_url     = p.get("query-url", "");
+                        st.queryable.mldp.min_conn      = std::to_string(p.getInt("min-conn", 1));
+                        st.queryable.mldp.max_conn      = std::to_string(p.getInt("max-conn", 2));
+                    }
+                }
+            }
+            if (q.hasChild("mldp-annotation")) {
+                auto mv = q.subConfig("mldp-annotation");
+                if (!mv.empty() && mv[0].hasChild("mldp-annotation-pool")) {
+                    auto pv = mv[0].subConfig("mldp-annotation-pool");
+                    if (!pv.empty()) {
+                        const auto& p = pv[0];
+                        st.queryable.mldp_annotation.enabled        = true;
+                        st.queryable.mldp_annotation.annotation_url = p.get("annotation-url", "");
+                        st.queryable.mldp_annotation.min_conn       = std::to_string(p.getInt("min-conn", 1));
+                        st.queryable.mldp_annotation.max_conn       = std::to_string(p.getInt("max-conn", 2));
+                    }
+                }
+            }
         }
     }
 
@@ -315,6 +382,23 @@ void loadFromConfig(const std::string& path, WizardState& st)
                     r.tls_verify_peer     = inst.getBool("tls-verify-peer", true) ? "true" : "false";
                     r.tls_verify_host     = inst.getBool("tls-verify-host", true) ? "true" : "false";
                 }
+                // reader-level static-metadata
+                if (inst.hasChild("static-metadata")) {
+                    auto mv = inst.subConfig("static-metadata");
+                    if (!mv.empty()) {
+                        const auto& raw = mv[0].raw();
+                        if (!raw.invalid() && raw.is_map()) {
+                            for (const auto child : raw.children()) {
+                                if (child.has_key() && child.has_val()) {
+                                    std::string k{child.key().str, child.key().len};
+                                    std::string v;
+                                    child >> v;
+                                    r.static_metadata.emplace_back(k, v);
+                                }
+                            }
+                        }
+                    }
+                }
                 if (inst.hasChild("pvs")) {
                     for (const auto& pvNode : inst.subConfig("pvs")) {
                         PvEntry pv;
@@ -330,6 +414,23 @@ void loadFromConfig(const std::string& path, WizardState& st)
                             } else {
                                 pv.option_type  = "scalar";
                                 pv.option_value = pvNode.get("option", "");
+                            }
+                        }
+                        // per-PV metadata
+                        if (pvNode.hasChild("metadata")) {
+                            auto mv = pvNode.subConfig("metadata");
+                            if (!mv.empty()) {
+                                const auto& raw = mv[0].raw();
+                                if (!raw.invalid() && raw.is_map()) {
+                                    for (const auto child : raw.children()) {
+                                        if (child.has_key() && child.has_val()) {
+                                            std::string k{child.key().str, child.key().len};
+                                            std::string v;
+                                            child >> v;
+                                            pv.metadata.emplace_back(k, v);
+                                        }
+                                    }
+                                }
                             }
                         }
                         if (!pv.name.empty()) r.pvs.push_back(std::move(pv));

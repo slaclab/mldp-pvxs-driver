@@ -41,6 +41,7 @@ using mldp_pvxs_driver::util::bus::DataColumn;
 using mldp_pvxs_driver::util::bus::IDataBus;
 // Backward compatibility alias
 using MockEventBusPush = mldp_pvxs_driver::test::mock::MockDataBus;
+using mldp_pvxs_driver::util::bus::asTimeSeries;
 
 /// Parses ISO 8601 UTC timestamp string with millisecond precision to Unix epoch milliseconds.
 ///
@@ -278,10 +279,10 @@ TEST(EpicsArchiverReaderPeriodicTailIntegrationTest, PeriodicTailBatchSpansMatch
     size_t total_events = 0u;
     for (size_t i = 0; i < batches.size(); ++i)
     {
-        ASSERT_FALSE(batches[i].frames.empty());
-        total_events += batches[i].frames.size();
-        const auto& first_frame = batches[i].frames.front();
-        const auto& last_frame = batches[i].frames.back();
+        ASSERT_FALSE(asTimeSeries(batches[i]).frames.empty());
+        total_events += asTimeSeries(batches[i]).frames.size();
+        const auto& first_frame = asTimeSeries(batches[i]).frames.front();
+        const auto& last_frame = asTimeSeries(batches[i]).frames.back();
         ASSERT_FALSE(first_frame.timestamps.empty());
         ASSERT_FALSE(last_frame.timestamps.empty());
         const uint64_t first_ns = first_frame.timestamps[0].epoch_seconds * 1'000'000'000ULL + first_frame.timestamps[0].nanoseconds;

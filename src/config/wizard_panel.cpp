@@ -86,6 +86,7 @@ std::vector<TreeNode> BuildTree(const WizardState& w) {
         nodes.push_back({TreeNodeKind::Reader, lbl, tag, i});
     }
 
+    nodes.push_back({TreeNodeKind::QueryableGroup, "Queryable", "", -1});
     nodes.push_back({TreeNodeKind::MetricsGroup, "Metrics", "", -1});
     nodes.push_back({TreeNodeKind::RoutingGroup, "Routing", "", -1});
 
@@ -162,6 +163,8 @@ static std::string GetNodeHelp(const TreeNode& node) {
             if (node.type_tag == "epics-archiver")
                 return "Archiver reader\nQueries the EPICS\nArchiver Appliance.";
             break;
+        case TreeNodeKind::QueryableGroup:
+            return "Queryable\nConfigure query client\npools (MLDP, Annotation).";
         case TreeNodeKind::MetricsGroup:
             return "Metrics\nConfigure Prometheus\nmetrics endpoint.";
         case TreeNodeKind::RoutingGroup:
@@ -532,6 +535,63 @@ static Component MakeEpicsReaderForm(EpicsReaderConfig* cfg, PanelAppState* stat
     });
     auto arch_maybe = Maybe(arch_fields, [rtype_idx]{ return *rtype_idx == 2; });
 
+    // ── Reader static-metadata editor ────────────────────────────────────────
+    auto meta_key_new = std::make_shared<std::string>();
+    auto meta_val_new = std::make_shared<std::string>();
+    auto meta_sel     = std::make_shared<int>(0);
+
+    auto meta_labels = std::make_shared<std::vector<std::string>>();
+    auto rebuild_meta_labels = [cfg, meta_labels] {
+        meta_labels->clear();
+        for (auto& [k, v] : cfg->static_metadata)
+            meta_labels->push_back(k + " = " + v);
+        if (meta_labels->empty()) meta_labels->push_back("(no metadata)");
+    };
+    rebuild_meta_labels();
+
+    auto meta_menu = Menu(meta_labels.get(), meta_sel.get());
+    auto meta_menu_event = CatchEvent(meta_menu,
+        [cfg, meta_sel, meta_labels, rebuild_meta_labels, state](Event ev) {
+        if (ev == Event::Character('d') && !cfg->static_metadata.empty()) {
+            int i = *meta_sel;
+            if (i >= 0 && i < static_cast<int>(cfg->static_metadata.size())) {
+                cfg->static_metadata.erase(cfg->static_metadata.begin() + i);
+                rebuild_meta_labels();
+                if (*meta_sel >= static_cast<int>(cfg->static_metadata.size()))
+                    *meta_sel = std::max(0, static_cast<int>(cfg->static_metadata.size()) - 1);
+                state->dirty = true;
+            }
+            return true;
+        }
+        return false;
+    });
+
+    InputOption meta_opt;
+    auto f_meta_key = Input(meta_key_new.get(), "key",   meta_opt);
+    auto f_meta_val = Input(meta_val_new.get(), "value", meta_opt);
+    auto btn_meta_add = Button("Add", [cfg, meta_key_new, meta_val_new,
+                                        meta_labels, rebuild_meta_labels, state] {
+        if (!meta_key_new->empty()) {
+            cfg->static_metadata.emplace_back(*meta_key_new, *meta_val_new);
+            rebuild_meta_labels();
+            meta_key_new->clear();
+            meta_val_new->clear();
+            state->dirty = true;
+        }
+    });
+    auto meta_add_row  = Container::Horizontal({f_meta_key, f_meta_val, btn_meta_add});
+    auto meta_section  = Container::Vertical({meta_menu_event, meta_add_row});
+    auto meta_renderer = Renderer(meta_section,
+        [meta_menu_event, meta_add_row, f_meta_key, f_meta_val, btn_meta_add] {
+        return vbox({
+            text("  Static Metadata  (d=delete)") | bold | underlined,
+            meta_menu_event->Render() | frame | size(HEIGHT, LESS_THAN, 5),
+            hbox({text("Key: "), f_meta_key->Render(),
+                  text("  Val: "), f_meta_val->Render(),
+                  text(" "), btn_meta_add->Render()}),
+        });
+    });
+
     // ── PV list ──────────────────────────────────────────────────────────────
     auto pv_sel   = std::make_shared<int>(0);
     auto pv_new   = std::make_shared<std::string>();
@@ -592,20 +652,91 @@ static Component MakeEpicsReaderForm(EpicsReaderConfig* cfg, PanelAppState* stat
     auto form = Container::Vertical({
         f_name, f_tp, f_cbs,
         base_maybe, arch_maybe,
+        meta_renderer,
         pv_renderer,
     });
 
     return Renderer(form, [=] {
+        Elements elems;
+        elems.push_back(text("  EPICS Reader Settings") | bold | underlined);
+        elems.push_back(f_name->Render());
+        elems.push_back(hbox({text("  Type: "), text(cfg->reader_type) | bold}));
+        elems.push_back(f_tp->Render());
+        elems.push_back(f_cbs->Render());
+        elems.push_back(base_maybe->Render());
+        elems.push_back(arch_maybe->Render());
+        elems.push_back(separator());
+        elems.push_back(meta_renderer->Render());
+        elems.push_back(separator());
+        elems.push_back(pv_renderer->Render());
+        return vbox(std::move(elems)) | yframe;
+    });
+}
+
+static Component MakeQueryableForm(WizardState* w, PanelAppState* state) {
+    using namespace wizard_internal;
+    auto on_change = [state](const std::string& field) {
+        state->dirty = true;
+        state->focused_field = field;
+    };
+    auto on_focus_fn = [state](const std::string& field) {
+        return [state, field]{ state->focused_field = field; };
+    };
+
+    // MLDP queryable
+    auto f_mldp_en   = Checkbox("Enable MLDP Query Client", &w->queryable.mldp.enabled);
+    auto f_mldp_iurl = InputField("Ingestion URL",  &w->queryable.mldp.ingestion_url,
+        [](const std::string& s){ return s.empty() ? "Must not be empty" : ""; },
+        [on_change]{ on_change("mldp_ingestion_url"); },
+        on_focus_fn("mldp_ingestion_url"));
+    auto f_mldp_qurl = InputField("Query URL",      &w->queryable.mldp.query_url,
+        [](const std::string&){ return ""; },
+        [on_change]{ on_change("mldp_query_url"); },
+        on_focus_fn("mldp_query_url"));
+    auto f_mldp_minc = InputField("Min Connections", &w->queryable.mldp.min_conn,
+        [](const std::string& s){ return isPositiveInt(s) ? "" : "Must be positive int"; },
+        [on_change]{ on_change("mldp_min_conn"); },
+        on_focus_fn("mldp_min_conn"));
+    auto f_mldp_maxc = InputField("Max Connections", &w->queryable.mldp.max_conn,
+        [](const std::string& s){ return isPositiveInt(s) ? "" : "Must be positive int"; },
+        [on_change]{ on_change("mldp_max_conn"); },
+        on_focus_fn("mldp_max_conn"));
+    auto mldp_detail = Container::Vertical({f_mldp_iurl, f_mldp_qurl, f_mldp_minc, f_mldp_maxc});
+    auto mldp_maybe  = Maybe(mldp_detail, [w]{ return w->queryable.mldp.enabled; });
+
+    // Annotation queryable
+    auto f_ann_en   = Checkbox("Enable Annotation Query Client", &w->queryable.mldp_annotation.enabled);
+    auto f_ann_aurl = InputField("Annotation URL",  &w->queryable.mldp_annotation.annotation_url,
+        [](const std::string& s){ return s.empty() ? "Must not be empty" : ""; },
+        [on_change]{ on_change("ann_annotation_url"); },
+        on_focus_fn("ann_annotation_url"));
+    auto f_ann_minc = InputField("Min Connections", &w->queryable.mldp_annotation.min_conn,
+        [](const std::string& s){ return isPositiveInt(s) ? "" : "Must be positive int"; },
+        [on_change]{ on_change("ann_min_conn"); },
+        on_focus_fn("ann_min_conn"));
+    auto f_ann_maxc = InputField("Max Connections", &w->queryable.mldp_annotation.max_conn,
+        [](const std::string& s){ return isPositiveInt(s) ? "" : "Must be positive int"; },
+        [on_change]{ on_change("ann_max_conn"); },
+        on_focus_fn("ann_max_conn"));
+    auto ann_detail = Container::Vertical({f_ann_aurl, f_ann_minc, f_ann_maxc});
+    auto ann_maybe  = Maybe(ann_detail, [w]{ return w->queryable.mldp_annotation.enabled; });
+
+    auto form = Container::Vertical({
+        f_mldp_en, mldp_maybe,
+        f_ann_en, ann_maybe,
+    });
+
+    return Renderer(form, [=] {
         return vbox({
-            text("  EPICS Reader Settings") | bold | underlined,
-            f_name->Render(),
-            hbox({text("  Type: "), text(cfg->reader_type) | bold}),
-            f_tp->Render(),
-            f_cbs->Render(),
-            base_maybe->Render(),
-            arch_maybe->Render(),
+            text("  Queryable Settings") | bold | underlined,
             separator(),
-            pv_renderer->Render(),
+            text("  MLDP Query Client") | bold,
+            f_mldp_en->Render(),
+            mldp_maybe->Render(),
+            separator(),
+            text("  Annotation Query Client") | bold,
+            f_ann_en->Render(),
+            ann_maybe->Render(),
         }) | yframe;
     });
 }
@@ -713,9 +844,10 @@ int runWizard(const std::string& output_path, const std::string& from_path) {
     auto sidebar = SidebarPanel(&state.tree, &state.tree_sel);
 
     // ── Form dispatcher (stacked Maybe components) ────────────────────────
-    auto ctrl_form    = MakeControllerForm(&state.wizard, &state);
-    auto metrics_form = MakeMetricsForm(&state.wizard, &state);
-    auto routing_form = MakeRoutingForm(&state.wizard, &state);
+    auto ctrl_form      = MakeControllerForm(&state.wizard, &state);
+    auto queryable_form = MakeQueryableForm(&state.wizard, &state);
+    auto metrics_form   = MakeMetricsForm(&state.wizard, &state);
+    auto routing_form   = MakeRoutingForm(&state.wizard, &state);
 
     // MLDP writer forms — one per slot (rebuilt on tree change for now)
     std::vector<Component> mldp_forms, hdf5_forms, reader_forms;
@@ -746,6 +878,8 @@ int runWizard(const std::string& output_path, const std::string& from_path) {
             case TreeNodeKind::WriterGroup:
             case TreeNodeKind::ReaderGroup:
                 return empty_group;
+            case TreeNodeKind::QueryableGroup:
+                return queryable_form;
             case TreeNodeKind::MetricsGroup:
                 return metrics_form;
             case TreeNodeKind::RoutingGroup:
