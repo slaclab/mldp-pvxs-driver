@@ -86,7 +86,7 @@ private:
     struct QueueItem
     {
         std::string                                                          root_source;
-        std::shared_ptr<const std::unordered_map<std::string, std::string>> tags;
+        std::shared_ptr<const std::unordered_map<std::string, std::string>> metadata;
         util::bus::DataBatch                                                 frame;
     };
 

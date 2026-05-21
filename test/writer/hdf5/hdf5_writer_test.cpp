@@ -1148,6 +1148,112 @@ static IDataBus::EventBatch makeEndOfUpdateMarker(const std::string& pvName)
     return marker;
 }
 
+// ---------------------------------------------------------------------------
+// Metadata attribute tests (todo-05)
+// ---------------------------------------------------------------------------
+
+TEST_F(HDF5WriterTest, BatchMetadataWrittenAsHDF5GroupAttributes)
+{
+    // Verify that batch.metadata key/value pairs are written as string
+    // attributes on the HDF5 group for the source on first group creation.
+    HDF5WriterPerSource w(makeConfig());
+    w.start();
+
+    IDataBus::EventBatch batch = makeNTTableBatch(
+        "META:PV", {"VALUE"}, {{42.0}});
+    batch.metadata = {{"facility", "SLAC"}, {"device_type", "BPM"}};
+
+    w.push(batch);
+    w.push(makeEndOfUpdateMarker("META:PV"));
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    w.stop();
+
+    auto h5path = findH5File(tempDir_);
+    ASSERT_FALSE(h5path.empty());
+
+    H5::H5File  file(h5path.string(), H5F_ACC_RDONLY);
+    ASSERT_TRUE(file.nameExists("META:PV"));
+    H5::Group   grp = file.openGroup("META:PV");
+
+    // facility attribute
+    ASSERT_GT(grp.getNumAttrs(), 0);
+    H5::Attribute   attrFacility = grp.openAttribute("facility");
+    std::string     valFacility;
+    H5::StrType     vlStr(H5::PredType::C_S1, H5T_VARIABLE);
+    attrFacility.read(vlStr, valFacility);
+    EXPECT_EQ(valFacility, "SLAC");
+
+    // device_type attribute
+    H5::Attribute   attrDevice = grp.openAttribute("device_type");
+    std::string     valDevice;
+    attrDevice.read(vlStr, valDevice);
+    EXPECT_EQ(valDevice, "BPM");
+}
+
+TEST_F(HDF5WriterTest, BatchMetadataWrittenOnlyOnFirstGroupCreation)
+{
+    // Second batch with different metadata must NOT overwrite attributes
+    // written from the first batch.
+    HDF5WriterPerSource w(makeConfig());
+    w.start();
+
+    // First batch: metadata says env=prod
+    IDataBus::EventBatch batch1 = makeNTTableBatch(
+        "META:ONCE", {"VALUE"}, {{1.0}});
+    batch1.metadata = {{"env", "prod"}};
+    w.push(batch1);
+    w.push(makeEndOfUpdateMarker("META:ONCE"));
+
+    // Second batch: metadata says env=dev  (should be ignored)
+    IDataBus::EventBatch batch2 = makeNTTableBatch(
+        "META:ONCE", {"VALUE"}, {{2.0}});
+    batch2.metadata = {{"env", "dev"}};
+    w.push(batch2);
+    w.push(makeEndOfUpdateMarker("META:ONCE"));
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    w.stop();
+
+    auto h5path = findH5File(tempDir_);
+    ASSERT_FALSE(h5path.empty());
+
+    H5::H5File  file(h5path.string(), H5F_ACC_RDONLY);
+    ASSERT_TRUE(file.nameExists("META:ONCE"));
+    H5::Group   grp = file.openGroup("META:ONCE");
+
+    H5::Attribute   attrEnv = grp.openAttribute("env");
+    std::string     valEnv;
+    H5::StrType     vlStr(H5::PredType::C_S1, H5T_VARIABLE);
+    attrEnv.read(vlStr, valEnv);
+    EXPECT_EQ(valEnv, "prod");  // first batch value preserved
+}
+
+TEST_F(HDF5WriterTest, BatchMetadataEmptyProducesNoAttributes)
+{
+    // Batch with no metadata must not create any user attributes on the group.
+    HDF5WriterPerSource w(makeConfig());
+    w.start();
+
+    IDataBus::EventBatch batch = makeNTTableBatch(
+        "META:EMPTY", {"VALUE"}, {{7.0}});
+    batch.metadata.clear();
+
+    w.push(batch);
+    w.push(makeEndOfUpdateMarker("META:EMPTY"));
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    w.stop();
+
+    auto h5path = findH5File(tempDir_);
+    ASSERT_FALSE(h5path.empty());
+
+    H5::H5File  file(h5path.string(), H5F_ACC_RDONLY);
+    ASSERT_TRUE(file.nameExists("META:EMPTY"));
+    H5::Group   grp = file.openGroup("META:EMPTY");
+    EXPECT_EQ(grp.getNumAttrs(), 0);
+}
+
 TEST_F(HDF5WriterTest, NTTableBatchCreatesPerColumnDatasets)
 {
     constexpr int kRows = 3;

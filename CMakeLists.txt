@@ -506,6 +506,7 @@ add_library(lib${PROJECT_NAME}
     "${CMAKE_CURRENT_SOURCE_DIR}/src/pool/MLDPGrpcQueryPool.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/pool/MLDPGrpcAnnotationPool.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/MLDPQueryClient.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/MLDPAnnotationQueryClient.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/controller/MLDPPVXSControllerConfig.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/controller/MLDPPVXSController.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/controller/RouteTable.cpp"
@@ -713,6 +714,25 @@ if(MLDP_PVXS_DRIVER_TESTS)
             -Wl,--whole-archive lib${PROJECT_NAME} -Wl,--no-whole-archive)
     endif()
     gtest_discover_tests(queryable_factory_test)
+
+    # MLDPAnnotationQueryClient integration tests
+    add_executable(mldp_annotation_query_client_test
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/query/mldp_annotation_query_client_integration_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/ryml_single_header_translation_unit.cpp"
+    )
+    target_include_directories(mldp_annotation_query_client_test PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test"
+        "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    if(APPLE)
+        target_link_libraries(mldp_annotation_query_client_test PRIVATE gtest_main
+            -Wl,-force_load $<TARGET_FILE:lib${PROJECT_NAME}>)
+    else()
+        target_link_libraries(mldp_annotation_query_client_test PRIVATE gtest_main
+            -Wl,--whole-archive lib${PROJECT_NAME} -Wl,--no-whole-archive)
+    endif()
+    gtest_discover_tests(mldp_annotation_query_client_test)
 
     # Wizard unit tests — link wizard lib directly for access to wizard_internal symbols
     if(MLDP_WIZARD)

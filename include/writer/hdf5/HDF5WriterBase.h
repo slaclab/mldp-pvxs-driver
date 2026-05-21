@@ -94,6 +94,9 @@ protected:
         std::unordered_set<std::string> warnedMissing;
         std::unordered_set<std::string> warnedUnknown;
 
+        // ---- metadata (captured from first batch for this source) ----
+        std::unordered_map<std::string, std::string> pendingMetadata;
+
         static constexpr std::size_t kMaxWarnedUnknown = 128;
     };
 
@@ -126,6 +129,7 @@ protected:
     // Accessed exclusively from writerThread_ — no mutex required
     std::unordered_map<std::string, uint64_t>      lastTsBatchSeq_;
     std::unordered_map<std::string, TabularBuffer> tabularBuffers_;
+    std::unordered_set<std::string>                seen_groups_;   ///< Sources whose HDF5 group has had metadata attributes written.
 
     std::thread writerThread_;
     std::thread flushThread_;

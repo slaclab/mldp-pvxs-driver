@@ -175,7 +175,7 @@ bool MLDPWriter::push(util::bus::IDataBus::EventBatch batch) noexcept
         return false;
     }
 
-    auto tags = std::make_shared<const std::unordered_map<std::string, std::string>>(batch.metadata);
+    auto metadata = std::make_shared<const std::unordered_map<std::string, std::string>>(batch.metadata);
     bool enqueued = false;
     for (auto& frame : batch.frames)
     {
@@ -188,7 +188,7 @@ bool MLDPWriter::push(util::bus::IDataBus::EventBatch batch) noexcept
             continue;
         }
         const auto idx = nextChannel_.fetch_add(1, std::memory_order_relaxed) % channels_.size();
-        QueueItem  item{batch.root_source, tags, std::move(frame)};
+        QueueItem  item{batch.root_source, metadata, std::move(frame)};
         {
             std::lock_guard lk(channels_[idx]->mutex);
             channels_[idx]->items.push_back(std::move(item));
@@ -391,7 +391,7 @@ void MLDPWriter::workerLoop(std::size_t workerIndex)
 
         if (!buildRequest(item.root_source, item.frame, requestId,
                           *request, acceptedEvents, payloadBytes,
-                          item.tags.get()))
+                          item.metadata.get()))
         {
             continue;
         }

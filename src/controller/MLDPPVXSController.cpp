@@ -13,6 +13,7 @@
 #include <future>
 #include <memory>
 #include <query/QueryableFactory.h>
+#include <query/impl/mldp/MLDPAnnotationQueryClient.h>
 #include <query/impl/mldp/MLDPQueryClient.h>
 #include <reader/ReaderFactory.h>
 #include <util/StringFormat.h>
@@ -50,6 +51,11 @@ static void prepareQueryables(const MLDPPVXSControllerConfig&           cfg,
          [](const mldp_pvxs_driver::config::Config& c,
             std::shared_ptr<mldp_pvxs_driver::metrics::Metrics> m) {
              QueryableFactory::instance().prepare<MLDPQueryClient>(c, std::move(m));
+         }},
+        {"mldp-annotation",
+         [](const mldp_pvxs_driver::config::Config& c,
+            std::shared_ptr<mldp_pvxs_driver::metrics::Metrics> m) {
+             QueryableFactory::instance().prepare<MLDPAnnotationQueryClient>(c, std::move(m));
          }},
     };
     for (const auto& entry : cfg.queryableEntries())

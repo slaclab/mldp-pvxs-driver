@@ -296,6 +296,9 @@ void HDF5WriterBase::processTabularBatch(const QueueEntry& entry)
 {
     const auto& source = entry.batch.root_source;
     auto&       buf    = tabularBuffers_[source];
+    // Capture metadata from the first batch that carries non-empty metadata.
+    if (buf.pendingMetadata.empty() && !entry.batch.metadata.empty())
+        buf.pendingMetadata = entry.batch.metadata;
     for (const auto& frame : entry.batch.frames)
         accumulateTabularFrame(source, frame, buf);
 }
@@ -474,6 +477,21 @@ void HDF5WriterBase::flushTabularBuffer(const std::string& sourceName,
 
     if (!file.nameExists(sourceName))
         file.createGroup(sourceName);
+
+    // Write metadata as string attributes the first time this source group is seen.
+    if (seen_groups_.insert(sourceName).second && !buf.pendingMetadata.empty())
+    {
+        H5::Group           grp      = file.openGroup(sourceName);
+        const H5::StrType   vlStrType(H5::PredType::C_S1, H5T_VARIABLE);
+        const H5::DataSpace scalar(H5S_SCALAR);
+        for (const auto& [k, v] : buf.pendingMetadata)
+        {
+            H5::Attribute attr = grp.createAttribute(k, vlStrType, scalar);
+            attr.write(vlStrType, v);
+        }
+        tracef(*logger_, "HDF5Writer tabular source={} wrote {} metadata attributes",
+               sourceName, buf.pendingMetadata.size());
+    }
 
     const std::string secPath  = sourceName + "/secondsPastEpoch";
     const std::string nanoPath = sourceName + "/nanoseconds";
