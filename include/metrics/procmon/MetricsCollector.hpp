@@ -1,7 +1,7 @@
 #pragma once
 
-#include "MetricsSnapshot.hpp"
 #include "MetricsHandler.hpp"
+#include "MetricsSnapshot.hpp"
 #include "Result.hpp"
 #include <memory>
 #include <vector>
@@ -15,7 +15,8 @@ namespace procmon {
  * them to registered handlers. It provides a clean interface for
  * host programs to collect process metrics.
  */
-class MetricsCollector {
+class MetricsCollector
+{
 public:
     /**
      * @brief Construct a collector for a specific process
@@ -42,7 +43,10 @@ public:
      * @brief Get the monitored process ID
      * @return Process ID
      */
-    [[nodiscard]] pid_t get_pid() const noexcept { return pid_; }
+    [[nodiscard]] pid_t get_pid() const noexcept
+    {
+        return pid_;
+    }
 
     /**
      * @brief Check if the monitored process exists
@@ -51,7 +55,7 @@ public:
     [[nodiscard]] bool is_process_alive() const;
 
 private:
-    pid_t pid_;
+    pid_t                                        pid_;
     std::vector<std::shared_ptr<MetricsHandler>> handlers_;
 
     /**

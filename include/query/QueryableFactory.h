@@ -9,9 +9,9 @@
 //////////////////////////////////////////////////////////////////////////////
 
 #pragma once
-#include <query/IQueryable.h>
 #include <config/Config.h>
 #include <metrics/Metrics.h>
+#include <query/IQueryable.h>
 
 #include <functional>
 #include <memory>
@@ -22,23 +22,26 @@
 
 namespace mldp_pvxs_driver::query {
 
-class QueryableFactory {
+class QueryableFactory
+{
 public:
-    static QueryableFactory& instance() {
+    static QueryableFactory& instance()
+    {
         static QueryableFactory inst;
         return inst;
     }
 
     // Startup: bind type T to its config. Must complete before any create<T>() call.
     template <typename T>
-    void prepare(const config::Config& cfg,
+    void prepare(const config::Config&             cfg,
                  std::shared_ptr<metrics::Metrics> metrics = nullptr)
     {
         std::unique_lock lock(mutex_);
         creators_[std::type_index(typeid(T))] =
-            [cfg, metrics]() -> IQueryableUPtr {
-                return std::make_unique<T>(cfg, metrics);
-            };
+            [cfg, metrics]() -> IQueryableUPtr
+        {
+            return std::make_unique<T>(cfg, metrics);
+        };
     }
 
     // Runtime: create instance of T. Returns unique_ptr<T> directly.
@@ -49,7 +52,7 @@ public:
         std::function<IQueryableUPtr()> creator;
         {
             std::shared_lock lock(mutex_);
-            auto it = creators_.find(std::type_index(typeid(T)));
+            auto             it = creators_.find(std::type_index(typeid(T)));
             if (it == creators_.end())
                 throw std::runtime_error(
                     std::string("QueryableFactory: type not prepared: ") + typeid(T).name());
@@ -59,20 +62,22 @@ public:
     }
 
     template <typename T>
-    bool isPrepared() const {
+    bool isPrepared() const
+    {
         std::shared_lock lock(mutex_);
         return creators_.count(std::type_index(typeid(T))) > 0;
     }
 
     // Test helper: clear all registered creators.
-    void reset() {
+    void reset()
+    {
         std::unique_lock lock(mutex_);
         creators_.clear();
     }
 
 private:
     QueryableFactory() = default;
-    mutable std::shared_mutex mutex_;
+    mutable std::shared_mutex                                            mutex_;
     std::unordered_map<std::type_index, std::function<IQueryableUPtr()>> creators_;
 };
 

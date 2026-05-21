@@ -156,7 +156,8 @@ metrics:
 
 std::string_view getConfigTemplate(TemplateKind kind)
 {
-    switch (kind) {
+    switch (kind)
+    {
     case TemplateKind::MldpOnly:
         return kMldpOnly;
     case TemplateKind::MldpAndHdf5:

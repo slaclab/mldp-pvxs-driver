@@ -36,7 +36,8 @@ namespace mldp_pvxs_driver::util::factory {
  * @tparam CtorArgs   Argument types forwarded to the concrete type's constructor.
  */
 template <typename Derived, typename ProductT, typename... CtorArgs>
-class Factory {
+class Factory
+{
 public:
     /// Owning pointer to a newly created product instance.
     using UPtr = std::unique_ptr<ProductT>;
@@ -56,7 +57,8 @@ public:
      * @param name  Unique string key that identifies the concrete type.
      * @param fn    Factory callable; must return a non-null UPtr.
      */
-    static void registerType(const std::string& name, CreatorFn fn) {
+    static void registerType(const std::string& name, CreatorFn fn)
+    {
         registry()[name] = std::move(fn);
     }
 
@@ -68,10 +70,12 @@ public:
      * @return      Owning pointer to the newly created product.
      * @throws std::runtime_error if @p name is not registered.
      */
-    static UPtr create(const std::string& name, CtorArgs... args) {
+    static UPtr create(const std::string& name, CtorArgs... args)
+    {
         auto& reg = registry();
-        auto it   = reg.find(name);
-        if (it == reg.end()) {
+        auto  it = reg.find(name);
+        if (it == reg.end())
+        {
             throw std::runtime_error(
                 "Unknown " + std::string(Derived::kTypeName) + " type: " + name);
         }
@@ -83,11 +87,13 @@ public:
      *
      * @return Vector of registered type name strings (order unspecified).
      */
-    static std::vector<std::string> registeredTypes() {
-        auto& reg = registry();
+    static std::vector<std::string> registeredTypes()
+    {
+        auto&                    reg = registry();
         std::vector<std::string> types;
         types.reserve(reg.size());
-        for (const auto& [k, v] : reg) {
+        for (const auto& [k, v] : reg)
+        {
             types.push_back(k);
         }
         return types;
@@ -96,7 +102,8 @@ public:
 private:
     /// Meyers-singleton registry shared by all calls within a given Derived+ProductT
     /// instantiation.
-    static std::unordered_map<std::string, CreatorFn>& registry() {
+    static std::unordered_map<std::string, CreatorFn>& registry()
+    {
         static std::unordered_map<std::string, CreatorFn> instance;
         return instance;
     }
@@ -119,7 +126,8 @@ private:
  * @tparam ConcreteT  The concrete product type to register.
  */
 template <typename FactoryT, typename ConcreteT>
-class FactoryRegistrator {
+class FactoryRegistrator
+{
 public:
     /**
      * @brief Registers ConcreteT under @p name in FactoryT's registry.
@@ -127,14 +135,16 @@ public:
      * @param name  The key under which ConcreteT will be retrievable via
      *              FactoryT::create().
      */
-    explicit FactoryRegistrator(const char* name) {
+    explicit FactoryRegistrator(const char* name)
+    {
         FactoryT::registerType(
             name,
-            [](auto&&... args) -> typename FactoryT::UPtr {
+            [](auto&&... args) -> typename FactoryT::UPtr
+            {
                 return std::make_unique<ConcreteT>(
                     std::forward<decltype(args)>(args)...);
             });
     }
 };
 
-}  // namespace mldp_pvxs_driver::util::factory
+} // namespace mldp_pvxs_driver::util::factory

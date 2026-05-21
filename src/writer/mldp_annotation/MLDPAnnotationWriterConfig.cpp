@@ -25,7 +25,7 @@ MLDPAnnotationWriterConfig MLDPAnnotationWriterConfig::parse(const config::Confi
         throw std::runtime_error("MLDPAnnotationWriterConfig: 'name' is required");
     }
 
-    cfg.threadPool      = node.getInt("thread-pool", 2);
+    cfg.threadPool = node.getInt("thread-pool", 2);
     cfg.deadlineSeconds = node.getInt("deadline-seconds", 10);
 
     if (!node.hasChild("mldp-annotation-pool"))

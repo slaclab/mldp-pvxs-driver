@@ -15,11 +15,10 @@
 #include <metrics/Metrics.h>
 #include <pool/MLDPGrpcPoolConfig.h>
 #include <pool/MLDPGrpcQueryPool.h>
+#include <query/IQueryable.h>
 #include <util/bus/IDataBus.h>
 #include <util/log/Logger.h>
-#include <query/IQueryable.h>
 
-#include <chrono>
 #include <memory>
 #include <optional>
 #include <set>

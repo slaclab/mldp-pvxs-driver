@@ -16,11 +16,16 @@
 
 namespace mldp_pvxs_driver::config {
 
-struct ConfigDiagnostic {
-    enum class Severity { ERROR, WARN };
+struct ConfigDiagnostic
+{
+    enum class Severity
+    {
+        ERROR,
+        WARN
+    };
     Severity    severity;
-    std::string field_path;   // e.g. "writer.mldp[0].mldp-pool.ingestion-url"
-    std::string message;      // human-readable description
+    std::string field_path; // e.g. "writer.mldp[0].mldp-pool.ingestion-url"
+    std::string message;    // human-readable description
 };
 
 /**

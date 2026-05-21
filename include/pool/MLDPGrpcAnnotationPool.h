@@ -35,8 +35,8 @@ namespace mldp_pvxs_driver::util::pool {
  */
 struct MLDPGrpcAnnotationObject
 {
-    std::shared_ptr<grpc::Channel>                                        channel;
-    std::unique_ptr<dp::service::annotation::DpAnnotationService::Stub>  stub;
+    std::shared_ptr<grpc::Channel>                                      channel;
+    std::unique_ptr<dp::service::annotation::DpAnnotationService::Stub> stub;
 
     MLDPGrpcAnnotationObject() = default;
     explicit MLDPGrpcAnnotationObject(std::shared_ptr<grpc::Channel> ch);
@@ -52,8 +52,8 @@ struct MLDPGrpcAnnotationObject
  * for enable_shared_from_this).
  */
 class MLDPGrpcAnnotationPool
-    : public IObjectPool<MLDPGrpcAnnotationObject>
-    , public std::enable_shared_from_this<MLDPGrpcAnnotationPool>
+    : public IObjectPool<MLDPGrpcAnnotationObject>,
+      public std::enable_shared_from_this<MLDPGrpcAnnotationPool>
 {
 public:
     using MLDPGrpcAnnotationPoolShrdPtr = std::shared_ptr<MLDPGrpcAnnotationPool>;
@@ -88,9 +88,9 @@ private:
 
     MLDPGrpcAnnotationPool(const MLDPGrpcPoolConfig&         config,
                            std::shared_ptr<metrics::Metrics> metrics);
-    std::size_t                              availableCountLocked() const;
-    void                                     updateMetricsLocked() const;
-    void                                     updateMetrics() const;
+    std::size_t                               availableCountLocked() const;
+    void                                      updateMetricsLocked() const;
+    void                                      updateMetrics() const;
     std::shared_ptr<MLDPGrpcAnnotationObject> createChannel();
 };
 

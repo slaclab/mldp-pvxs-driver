@@ -18,28 +18,36 @@
 namespace mldp_pvxs_driver::controller {
 
 RouteTable RouteTable::build(
-    const std::vector<RouteFilterEntry>& routes,
+    const std::vector<RouteFilterEntry>&   routes,
     const std::unordered_set<std::string>& known_readers,
     const std::unordered_set<std::string>& known_writers)
 {
     RouteTable rt;
-    if (routes.empty()) {
-        return rt;  // default-constructed = all_to_all_=true
+    if (routes.empty())
+    {
+        return rt; // default-constructed = all_to_all_=true
     }
     rt.all_to_all_ = false;
 
-    for (const auto& entry : routes) {
-        if (!known_writers.contains(entry.writer_name)) {
+    for (const auto& entry : routes)
+    {
+        if (!known_writers.contains(entry.writer_name))
+        {
             throw std::runtime_error(
                 "Route references unknown writer '" + entry.writer_name + "'");
         }
 
         WriterRoute wr;
-        for (const auto& reader : entry.from_readers) {
-            if (reader == "all") {
+        for (const auto& reader : entry.from_readers)
+        {
+            if (reader == "all")
+            {
                 wr.accept_all = true;
-            } else {
-                if (!known_readers.contains(reader)) {
+            }
+            else
+            {
+                if (!known_readers.contains(reader))
+                {
                     throw std::runtime_error(
                         "Route for writer '" + entry.writer_name + "' references unknown reader '" + reader + "'");
                 }
@@ -62,17 +70,20 @@ bool RouteTable::isAllToAll() const noexcept
 bool RouteTable::accepts(const std::string& writer_name,
                          const std::string& reader_name) const noexcept
 {
-    if (all_to_all_) {
+    if (all_to_all_)
+    {
         return true;
     }
 
     auto it = table_.find(writer_name);
-    if (it == table_.end()) {
+    if (it == table_.end())
+    {
         return false;
     }
 
     const auto& wr = it->second;
-    if (wr.accept_all) {
+    if (wr.accept_all)
+    {
         return true;
     }
 
@@ -80,21 +91,32 @@ bool RouteTable::accepts(const std::string& writer_name,
 }
 
 bool RouteTable::acceptsSource(const std::string& writer_name,
-                                const std::string& root_source) const noexcept
+                               const std::string& root_source) const noexcept
 {
-    if (all_to_all_) return true;
+    if (all_to_all_)
+        return true;
     auto it = table_.find(writer_name);
-    if (it == table_.end()) return false;
+    if (it == table_.end())
+        return false;
     const auto& wr = it->second;
-    if (!wr.include_patterns.empty()) {
+    if (!wr.include_patterns.empty())
+    {
         bool hit = false;
-        for (const auto& pat : wr.include_patterns) {
-            if (fnmatch(pat.c_str(), root_source.c_str(), 0) == 0) { hit = true; break; }
+        for (const auto& pat : wr.include_patterns)
+        {
+            if (fnmatch(pat.c_str(), root_source.c_str(), 0) == 0)
+            {
+                hit = true;
+                break;
+            }
         }
-        if (!hit) return false;
+        if (!hit)
+            return false;
     }
-    for (const auto& pat : wr.exclude_patterns) {
-        if (fnmatch(pat.c_str(), root_source.c_str(), 0) == 0) return false;
+    for (const auto& pat : wr.exclude_patterns)
+    {
+        if (fnmatch(pat.c_str(), root_source.c_str(), 0) == 0)
+            return false;
     }
     return true;
 }
@@ -102,20 +124,25 @@ bool RouteTable::acceptsSource(const std::string& writer_name,
 std::vector<std::string> RouteTable::orphanReaders(
     const std::unordered_set<std::string>& known_readers) const
 {
-    if (all_to_all_) {
+    if (all_to_all_)
+    {
         return {}; // all-to-all: no orphans by definition
     }
     std::unordered_set<std::string> mentioned;
-    for (const auto& [_, wr] : table_) {
-        if (wr.accept_all) {
+    for (const auto& [_, wr] : table_)
+    {
+        if (wr.accept_all)
+        {
             return {}; // accept_all means all readers are effectively mentioned
         }
         mentioned.insert(wr.readers.begin(), wr.readers.end());
     }
 
     std::vector<std::string> orphans;
-    for (const auto& reader : known_readers) {
-        if (!mentioned.contains(reader)) {
+    for (const auto& reader : known_readers)
+    {
+        if (!mentioned.contains(reader))
+        {
             orphans.push_back(reader);
         }
     }
@@ -126,12 +153,15 @@ std::vector<std::string> RouteTable::orphanReaders(
 std::vector<std::string> RouteTable::orphanWriters(
     const std::unordered_set<std::string>& known_writers) const
 {
-    if (all_to_all_) {
+    if (all_to_all_)
+    {
         return {}; // all-to-all: no orphans by definition
     }
     std::vector<std::string> orphans;
-    for (const auto& writer : known_writers) {
-        if (!table_.contains(writer)) {
+    for (const auto& writer : known_writers)
+    {
+        if (!table_.contains(writer))
+        {
             orphans.push_back(writer);
         }
     }

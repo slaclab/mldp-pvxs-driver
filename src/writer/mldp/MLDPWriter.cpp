@@ -466,8 +466,8 @@ void MLDPWriter::workerLoop(std::size_t workerIndex)
 // ---------------------------------------------------------------------------
 
 dp::service::common::DataFrame MLDPWriter::toDataFrame(const util::bus::DataBatch&                         batch,
-                                                      const std::string&                                  rootSource,
-                                                      const std::unordered_map<std::string, std::string>* metadata)
+                                                       const std::string&                                  rootSource,
+                                                       const std::unordered_map<std::string, std::string>* metadata)
 {
     dp::service::common::DataFrame df;
 
@@ -509,7 +509,10 @@ dp::service::common::DataFrame MLDPWriter::toDataFrame(const util::bus::DataBatc
                     c->set_name(col.name);
                     c->mutable_metadata()->mutable_provenance()->set_source(rootSource);
                     apply_metadata(c);
-                    for (auto v : vec) { c->add_values(v); }
+                    for (auto v : vec)
+                    {
+                        c->add_values(v);
+                    }
                 }
                 else if constexpr (std::is_same_v<T, std::vector<float>>)
                 {
@@ -517,7 +520,10 @@ dp::service::common::DataFrame MLDPWriter::toDataFrame(const util::bus::DataBatc
                     c->set_name(col.name);
                     c->mutable_metadata()->mutable_provenance()->set_source(rootSource);
                     apply_metadata(c);
-                    for (auto v : vec) { c->add_values(v); }
+                    for (auto v : vec)
+                    {
+                        c->add_values(v);
+                    }
                 }
                 else if constexpr (std::is_same_v<T, std::vector<int64_t>>)
                 {
@@ -525,7 +531,10 @@ dp::service::common::DataFrame MLDPWriter::toDataFrame(const util::bus::DataBatc
                     c->set_name(col.name);
                     c->mutable_metadata()->mutable_provenance()->set_source(rootSource);
                     apply_metadata(c);
-                    for (auto v : vec) { c->add_values(v); }
+                    for (auto v : vec)
+                    {
+                        c->add_values(v);
+                    }
                 }
                 else if constexpr (std::is_same_v<T, std::vector<int32_t>>)
                 {
@@ -533,7 +542,10 @@ dp::service::common::DataFrame MLDPWriter::toDataFrame(const util::bus::DataBatc
                     c->set_name(col.name);
                     c->mutable_metadata()->mutable_provenance()->set_source(rootSource);
                     apply_metadata(c);
-                    for (auto v : vec) { c->add_values(v); }
+                    for (auto v : vec)
+                    {
+                        c->add_values(v);
+                    }
                 }
                 else if constexpr (std::is_same_v<T, std::vector<bool>>)
                 {
@@ -541,7 +553,10 @@ dp::service::common::DataFrame MLDPWriter::toDataFrame(const util::bus::DataBatc
                     c->set_name(col.name);
                     c->mutable_metadata()->mutable_provenance()->set_source(rootSource);
                     apply_metadata(c);
-                    for (auto v : vec) { c->add_values(v); }
+                    for (auto v : vec)
+                    {
+                        c->add_values(v);
+                    }
                 }
                 else if constexpr (std::is_same_v<T, std::vector<std::string>>)
                 {
@@ -549,7 +564,10 @@ dp::service::common::DataFrame MLDPWriter::toDataFrame(const util::bus::DataBatc
                     c->set_name(col.name);
                     c->mutable_metadata()->mutable_provenance()->set_source(rootSource);
                     apply_metadata(c);
-                    for (const auto& v : vec) { c->add_values(v); }
+                    for (const auto& v : vec)
+                    {
+                        c->add_values(v);
+                    }
                 }
                 else if constexpr (std::is_same_v<T, std::vector<std::vector<uint8_t>>>)
                 {
@@ -571,12 +589,18 @@ dp::service::common::DataFrame MLDPWriter::toDataFrame(const util::bus::DataBatc
                     apply_metadata(c);
                     for (const auto& arr : vec)
                     {
-                        for (auto v : arr) { c->add_values(v); }
+                        for (auto v : arr)
+                        {
+                            c->add_values(v);
+                        }
                     }
                     auto it = batch.array_dims.find(col.name);
                     if (it != batch.array_dims.end())
                     {
-                        for (auto d : it->second.dims) { c->mutable_dimensions()->add_dims(d); }
+                        for (auto d : it->second.dims)
+                        {
+                            c->mutable_dimensions()->add_dims(d);
+                        }
                     }
                 }
                 else if constexpr (std::is_same_v<T, std::vector<std::vector<float>>>)
@@ -587,12 +611,18 @@ dp::service::common::DataFrame MLDPWriter::toDataFrame(const util::bus::DataBatc
                     apply_metadata(c);
                     for (const auto& arr : vec)
                     {
-                        for (auto v : arr) { c->add_values(v); }
+                        for (auto v : arr)
+                        {
+                            c->add_values(v);
+                        }
                     }
                     auto it = batch.array_dims.find(col.name);
                     if (it != batch.array_dims.end())
                     {
-                        for (auto d : it->second.dims) { c->mutable_dimensions()->add_dims(d); }
+                        for (auto d : it->second.dims)
+                        {
+                            c->mutable_dimensions()->add_dims(d);
+                        }
                     }
                 }
                 else if constexpr (std::is_same_v<T, std::vector<std::vector<int64_t>>>)
@@ -603,12 +633,18 @@ dp::service::common::DataFrame MLDPWriter::toDataFrame(const util::bus::DataBatc
                     apply_metadata(c);
                     for (const auto& arr : vec)
                     {
-                        for (auto v : arr) { c->add_values(v); }
+                        for (auto v : arr)
+                        {
+                            c->add_values(v);
+                        }
                     }
                     auto it = batch.array_dims.find(col.name);
                     if (it != batch.array_dims.end())
                     {
-                        for (auto d : it->second.dims) { c->mutable_dimensions()->add_dims(d); }
+                        for (auto d : it->second.dims)
+                        {
+                            c->mutable_dimensions()->add_dims(d);
+                        }
                     }
                 }
                 else if constexpr (std::is_same_v<T, std::vector<std::vector<int32_t>>>)
@@ -619,12 +655,18 @@ dp::service::common::DataFrame MLDPWriter::toDataFrame(const util::bus::DataBatc
                     apply_metadata(c);
                     for (const auto& arr : vec)
                     {
-                        for (auto v : arr) { c->add_values(v); }
+                        for (auto v : arr)
+                        {
+                            c->add_values(v);
+                        }
                     }
                     auto it = batch.array_dims.find(col.name);
                     if (it != batch.array_dims.end())
                     {
-                        for (auto d : it->second.dims) { c->mutable_dimensions()->add_dims(d); }
+                        for (auto d : it->second.dims)
+                        {
+                            c->mutable_dimensions()->add_dims(d);
+                        }
                     }
                 }
                 else if constexpr (std::is_same_v<T, std::vector<std::vector<bool>>>)
@@ -635,12 +677,18 @@ dp::service::common::DataFrame MLDPWriter::toDataFrame(const util::bus::DataBatc
                     apply_metadata(c);
                     for (const auto& arr : vec)
                     {
-                        for (auto v : arr) { c->add_values(v); }
+                        for (auto v : arr)
+                        {
+                            c->add_values(v);
+                        }
                     }
                     auto it = batch.array_dims.find(col.name);
                     if (it != batch.array_dims.end())
                     {
-                        for (auto d : it->second.dims) { c->mutable_dimensions()->add_dims(d); }
+                        for (auto d : it->second.dims)
+                        {
+                            c->mutable_dimensions()->add_dims(d);
+                        }
                     }
                 }
             },
@@ -655,7 +703,10 @@ dp::service::common::DataFrame MLDPWriter::toDataFrame(const util::bus::DataBatc
         c->mutable_metadata()->mutable_provenance()->set_source(rootSource);
         apply_metadata(c);
         c->set_enumid(ecol.enum_id);
-        for (auto v : ecol.values) { c->add_values(v); }
+        for (auto v : ecol.values)
+        {
+            c->add_values(v);
+        }
     }
 
     return df;
@@ -665,18 +716,18 @@ dp::service::common::DataFrame MLDPWriter::toDataFrame(const util::bus::DataBatc
 // buildRequest — identical to original MLDPPVXSController::buildRequest
 // ---------------------------------------------------------------------------
 
-bool MLDPWriter::buildRequest(const std::string&                                              sourceName,
-                              const util::bus::DataBatch&                                     batch,
-                              const std::string&                                              requestId,
-                              dp::service::ingestion::IngestDataRequest&                      request,
-                              std::size_t&                                                    acceptedEvents,
-                              std::size_t&                                                    payloadBytes,
-                              const std::unordered_map<std::string, std::string>*             metadata)
+bool MLDPWriter::buildRequest(const std::string&                                  sourceName,
+                              const util::bus::DataBatch&                         batch,
+                              const std::string&                                  requestId,
+                              dp::service::ingestion::IngestDataRequest&          request,
+                              std::size_t&                                        acceptedEvents,
+                              std::size_t&                                        payloadBytes,
+                              const std::unordered_map<std::string, std::string>* metadata)
 {
     request.set_providerid(providerId_);
     request.set_clientrequestid(requestId);
 
-    auto  dataFrame  = toDataFrame(batch, sourceName, metadata);
+    auto  dataFrame = toDataFrame(batch, sourceName, metadata);
     auto* dataFrame_ptr = request.mutable_ingestiondataframe();
     *dataFrame_ptr = std::move(dataFrame);
 

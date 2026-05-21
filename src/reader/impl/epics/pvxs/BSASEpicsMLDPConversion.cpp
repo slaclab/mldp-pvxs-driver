@@ -95,9 +95,9 @@ std::optional<UIntArrayView> asUIntArrayView(const pvxs::Value& value)
 /// Result of converting a single NTTable column to DataBatch payload(s).
 struct ColumnResult
 {
-    std::string                    name;
-    std::vector<DataBatch>         events; ///< At most one element (all rows packed).
-    size_t                         emitted{0};
+    std::string            name;
+    std::vector<DataBatch> events; ///< At most one element (all rows packed).
+    size_t                 emitted{0};
 };
 
 /// Fill per-row timestamps into a DataBatch's timestamps vector.
@@ -153,7 +153,7 @@ ColumnResult convertColumn(const pvxs::Value&           columns,
         }
 
         DataColumn dc;
-        dc.name   = colName;
+        dc.name = colName;
         dc.values = std::move(vals);
         batch.columns.push_back(std::move(dc));
 
@@ -162,7 +162,10 @@ ColumnResult convertColumn(const pvxs::Value&           columns,
     };
 
     // Identity cast helper.
-    const auto identity = [](auto v) { return v; };
+    const auto identity = [](auto v)
+    {
+        return v;
+    };
 
     switch (colCode)
     {
@@ -184,12 +187,18 @@ ColumnResult convertColumn(const pvxs::Value&           columns,
     case pvxs::TypeCode::UInt16A:
     case pvxs::TypeCode::UInt32A:
         emitTypedColumn.template operator()<uint32_t, int32_t>(
-            [](uint32_t v) { return static_cast<int32_t>(v); });
+            [](uint32_t v)
+            {
+                return static_cast<int32_t>(v);
+            });
         break;
 
     case pvxs::TypeCode::UInt64A:
         emitTypedColumn.template operator()<uint64_t, int64_t>(
-            [](uint64_t v) { return static_cast<int64_t>(v); });
+            [](uint64_t v)
+            {
+                return static_cast<int64_t>(v);
+            });
         break;
 
     case pvxs::TypeCode::Float32A:
@@ -210,8 +219,8 @@ ColumnResult convertColumn(const pvxs::Value&           columns,
                 fillTimestamps(batch, n, tsSeconds, tsNanos);
 
                 std::vector<std::string> vals(arr.begin(), arr.begin() + static_cast<ptrdiff_t>(n));
-                DataColumn dc;
-                dc.name   = colName;
+                DataColumn               dc;
+                dc.name = colName;
                 dc.values = std::move(vals);
                 batch.columns.push_back(std::move(dc));
 
@@ -274,8 +283,7 @@ bool BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch(mldp_pvxs_driver::util::
     outBatch->payload = TimeSeriesPayload{.is_tabular = true};
     auto& ts = std::get<TimeSeriesPayload>(outBatch->payload);
     ts.frames.clear();
-    return tryBuildNtTableRowTsBatch(log, tablePvName, epicsValue, tsSecondsField, tsNanosField,
-                                     [&](std::string colName, std::vector<DataBatch> batches)
+    return tryBuildNtTableRowTsBatch(log, tablePvName, epicsValue, tsSecondsField, tsNanosField, [&](std::string colName, std::vector<DataBatch> batches)
                                      {
                                          (void)colName;
                                          for (auto& b : batches)

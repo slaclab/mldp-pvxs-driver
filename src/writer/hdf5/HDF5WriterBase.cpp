@@ -8,14 +8,13 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
-#include <writer/hdf5/HDF5WriterBase.h>
 #include "HDF5WriterDetail.h"
+#include <writer/hdf5/HDF5WriterBase.h>
 
 #include <BS_thread_pool.hpp>
-#include <writer/hdf5/HDF5WriterMetrics.h>
 #include <util/log/Logger.h>
+#include <writer/hdf5/HDF5WriterMetrics.h>
 
-#include <limits>
 #include <vector>
 
 using namespace mldp_pvxs_driver::util::log;
@@ -26,8 +25,8 @@ using namespace mldp_pvxs_driver::writer::hdf5_detail;
 // Construction / destruction
 // ---------------------------------------------------------------------------
 
-HDF5WriterBase::HDF5WriterBase(HDF5WriterConfig                    config,
-                                std::shared_ptr<metrics::Metrics>   metrics)
+HDF5WriterBase::HDF5WriterBase(HDF5WriterConfig                  config,
+                               std::shared_ptr<metrics::Metrics> metrics)
     : config_(std::move(config))
     , logger_(util::log::newLogger("hdf5_writer:" + config_.name))
 {
@@ -87,11 +86,23 @@ void HDF5WriterBase::stop() noexcept
 
     if (writerThread_.joinable())
     {
-        try { writerThread_.join(); } catch (...) {}
+        try
+        {
+            writerThread_.join();
+        }
+        catch (...)
+        {
+        }
     }
     if (flushThread_.joinable())
     {
-        try { flushThread_.join(); } catch (...) {}
+        try
+        {
+            flushThread_.join();
+        }
+        catch (...)
+        {
+        }
     }
 
     doStop();
@@ -134,10 +145,13 @@ void HDF5WriterBase::writerLoop()
     while (true)
     {
         std::deque<QueueEntry> drained;
-        std::size_t depthAtDrain = 0;
+        std::size_t            depthAtDrain = 0;
         {
             std::unique_lock<std::mutex> lk(queueMutex_);
-            queueCv_.wait(lk, [this] { return !queue_.empty() || stopping_.load(); });
+            queueCv_.wait(lk, [this]
+                          {
+                              return !queue_.empty() || stopping_.load();
+                          });
             if (queue_.empty())
             {
                 debugf(*logger_, "HDF5Writer [{}] writer thread exiting — queue drained", config_.name);
@@ -170,7 +184,8 @@ void HDF5WriterBase::writerLoop()
                         if (writerMetrics_)
                         {
                             const double ms = std::chrono::duration<double, std::milli>(
-                                                  std::chrono::steady_clock::now() - t0).count();
+                                                  std::chrono::steady_clock::now() - t0)
+                                                  .count();
                             writerMetrics_->observeWriteLatencyMs(ms);
                             writerMetrics_->incrementBatchesWritten();
                         }
@@ -189,7 +204,8 @@ void HDF5WriterBase::writerLoop()
                         if (writerMetrics_)
                         {
                             const double ms = std::chrono::duration<double, std::milli>(
-                                                  std::chrono::steady_clock::now() - t0).count();
+                                                  std::chrono::steady_clock::now() - t0)
+                                                  .count();
                             writerMetrics_->observeWriteLatencyMs(ms);
                         }
                     }
@@ -242,15 +258,15 @@ void HDF5WriterBase::flushLoop()
 // ---------------------------------------------------------------------------
 
 H5::DataSet HDF5WriterBase::ensureDataset(H5::H5File&         file,
-                                           const std::string&  name,
-                                           const H5::DataType& dtype)
+                                          const std::string&  name,
+                                          const H5::DataType& dtype)
 {
     if (file.nameExists(name))
         return file.openDataSet(name);
 
     tracef(*logger_, "HDF5Writer ensureDataset '{}' — creating new chunked dataset (chunk={})", name, kChunkSize);
-    hsize_t dims[1]    = {0};
-    hsize_t maxDims[1] = {H5S_UNLIMITED};
+    hsize_t       dims[1] = {0};
+    hsize_t       maxDims[1] = {H5S_UNLIMITED};
     H5::DataSpace space(1, dims, maxDims);
 
     hsize_t               chunkDims[1] = {kChunkSize};
@@ -263,16 +279,16 @@ H5::DataSet HDF5WriterBase::ensureDataset(H5::H5File&         file,
 }
 
 H5::DataSet HDF5WriterBase::ensureDataset2D(H5::H5File&         file,
-                                             const std::string&  name,
-                                             const H5::DataType& dtype,
-                                             hsize_t             arrayLen)
+                                            const std::string&  name,
+                                            const H5::DataType& dtype,
+                                            hsize_t             arrayLen)
 {
     if (file.nameExists(name))
         return file.openDataSet(name);
 
     tracef(*logger_, "HDF5Writer ensureDataset2D '{}' — creating new 2D chunked dataset (arrayLen={}, chunk={})", name, arrayLen, kChunkSize);
-    hsize_t dims[2]    = {0, arrayLen};
-    hsize_t maxDims[2] = {H5S_UNLIMITED, arrayLen};
+    hsize_t       dims[2] = {0, arrayLen};
+    hsize_t       maxDims[2] = {H5S_UNLIMITED, arrayLen};
     H5::DataSpace space(2, dims, maxDims);
 
     hsize_t               chunkDims[2] = {kChunkSize, arrayLen};
@@ -300,7 +316,7 @@ bool HDF5WriterBase::isTabularBatch(const util::bus::IDataBus::EventBatch& batch
 void HDF5WriterBase::processTabularBatch(const QueueEntry& entry)
 {
     const auto& source = entry.batch.root_source;
-    auto&       buf    = tabularBuffers_[source];
+    auto&       buf = tabularBuffers_[source];
     // Capture metadata from the first batch that carries non-empty metadata.
     if (buf.pendingMetadata.empty() && !entry.batch.metadata.empty())
         buf.pendingMetadata = entry.batch.metadata;
@@ -309,8 +325,8 @@ void HDF5WriterBase::processTabularBatch(const QueueEntry& entry)
 }
 
 void HDF5WriterBase::accumulateTabularFrame(const std::string&          sourceName,
-                                             const util::bus::DataBatch& batch,
-                                             TabularBuffer&              buf)
+                                            const util::bus::DataBatch& batch,
+                                            TabularBuffer&              buf)
 {
     using namespace mldp_pvxs_driver::util::bus;
 
@@ -335,13 +351,14 @@ void HDF5WriterBase::accumulateTabularFrame(const std::string&          sourceNa
             buf.tsSeconds.push_back(static_cast<int64_t>(ts.epoch_seconds));
             buf.tsNanos.push_back(static_cast<int64_t>(ts.nanoseconds));
         }
-        buf.rowCount     = n;
+        buf.rowCount = n;
         buf.roundFirstTs = frameFirstTs;
     }
 
     for (const auto& col : batch.columns)
     {
-        if (col.name.empty()) continue;
+        if (col.name.empty())
+            continue;
 
         if (buf.schemaFixed && buf.colIndex.find(col.name) == buf.colIndex.end())
         {
@@ -365,10 +382,11 @@ void HDF5WriterBase::accumulateTabularFrame(const std::string&          sourceNa
 
         std::visit([&](const auto& vals)
                    {
-                       using VecT  = std::decay_t<decltype(vals)>;
+                       using VecT = std::decay_t<decltype(vals)>;
                        using ElemT = typename VecT::value_type;
                        const std::size_t n = vals.size();
-                       if (n == 0) return;
+                       if (n == 0)
+                           return;
 
                        if constexpr (std::is_same_v<ElemT, double>)
                        {
@@ -380,8 +398,10 @@ void HDF5WriterBase::accumulateTabularFrame(const std::string&          sourceNa
                                buf.columns.emplace_back(std::vector<double>{});
                            }
                            auto& vec = std::get<std::vector<double>>(buf.columns[buf.colIndex.at(col.name)]);
-                           while (vec.size() + n < buf.rowCount) vec.push_back(fillValue<double>());
-                           for (const auto& v : vals) vec.push_back(v);
+                           while (vec.size() + n < buf.rowCount)
+                               vec.push_back(fillValue<double>());
+                           for (const auto& v : vals)
+                               vec.push_back(v);
                        }
                        else if constexpr (std::is_same_v<ElemT, float>)
                        {
@@ -393,8 +413,10 @@ void HDF5WriterBase::accumulateTabularFrame(const std::string&          sourceNa
                                buf.columns.emplace_back(std::vector<float>{});
                            }
                            auto& vec = std::get<std::vector<float>>(buf.columns[buf.colIndex.at(col.name)]);
-                           while (vec.size() + n < buf.rowCount) vec.push_back(fillValue<float>());
-                           for (const auto& v : vals) vec.push_back(v);
+                           while (vec.size() + n < buf.rowCount)
+                               vec.push_back(fillValue<float>());
+                           for (const auto& v : vals)
+                               vec.push_back(v);
                        }
                        else if constexpr (std::is_same_v<ElemT, int32_t>)
                        {
@@ -406,8 +428,10 @@ void HDF5WriterBase::accumulateTabularFrame(const std::string&          sourceNa
                                buf.columns.emplace_back(std::vector<int32_t>{});
                            }
                            auto& vec = std::get<std::vector<int32_t>>(buf.columns[buf.colIndex.at(col.name)]);
-                           while (vec.size() + n < buf.rowCount) vec.push_back(fillValue<int32_t>());
-                           for (const auto& v : vals) vec.push_back(v);
+                           while (vec.size() + n < buf.rowCount)
+                               vec.push_back(fillValue<int32_t>());
+                           for (const auto& v : vals)
+                               vec.push_back(v);
                        }
                        else if constexpr (std::is_same_v<ElemT, int64_t>)
                        {
@@ -419,8 +443,10 @@ void HDF5WriterBase::accumulateTabularFrame(const std::string&          sourceNa
                                buf.columns.emplace_back(std::vector<int64_t>{});
                            }
                            auto& vec = std::get<std::vector<int64_t>>(buf.columns[buf.colIndex.at(col.name)]);
-                           while (vec.size() + n < buf.rowCount) vec.push_back(fillValue<int64_t>());
-                           for (const auto& v : vals) vec.push_back(v);
+                           while (vec.size() + n < buf.rowCount)
+                               vec.push_back(fillValue<int64_t>());
+                           for (const auto& v : vals)
+                               vec.push_back(v);
                        }
                        else if constexpr (std::is_same_v<ElemT, bool>)
                        {
@@ -432,8 +458,10 @@ void HDF5WriterBase::accumulateTabularFrame(const std::string&          sourceNa
                                buf.columns.emplace_back(std::vector<uint8_t>{});
                            }
                            auto& vec = std::get<std::vector<uint8_t>>(buf.columns[buf.colIndex.at(col.name)]);
-                           while (vec.size() + n < buf.rowCount) vec.push_back(fillValue<uint8_t>());
-                           for (bool v : vals) vec.push_back(static_cast<uint8_t>(v ? 1 : 0));
+                           while (vec.size() + n < buf.rowCount)
+                               vec.push_back(fillValue<uint8_t>());
+                           for (bool v : vals)
+                               vec.push_back(static_cast<uint8_t>(v ? 1 : 0));
                        }
                        else
                        {
@@ -464,11 +492,12 @@ void HDF5WriterBase::accumulateTabularFrame(const std::string&          sourceNa
 // ---------------------------------------------------------------------------
 
 void HDF5WriterBase::flushTabularBuffer(const std::string& sourceName,
-                                         TabularBuffer&     buf,
-                                         H5::H5File&        file)
+                                        TabularBuffer&     buf,
+                                        H5::H5File&        file)
 {
     const std::size_t nRows = buf.rowCount;
-    if (nRows == 0) return;
+    if (nRows == 0)
+        return;
 
     if (!buf.schemaFixed)
     {
@@ -478,7 +507,11 @@ void HDF5WriterBase::flushTabularBuffer(const std::string& sourceName,
     }
 
     const std::size_t nCols = buf.colNames.size();
-    if (nCols == 0) { buf.rowCount = 0; return; }
+    if (nCols == 0)
+    {
+        buf.rowCount = 0;
+        return;
+    }
 
     if (!file.nameExists(sourceName))
         file.createGroup(sourceName);
@@ -486,7 +519,7 @@ void HDF5WriterBase::flushTabularBuffer(const std::string& sourceName,
     // Write metadata as string attributes the first time this source group is seen.
     if (seen_groups_.insert(sourceName).second && !buf.pendingMetadata.empty())
     {
-        H5::Group           grp      = file.openGroup(sourceName);
+        H5::Group           grp = file.openGroup(sourceName);
         const H5::StrType   vlStrType(H5::PredType::C_S1, H5T_VARIABLE);
         const H5::DataSpace scalar(H5S_SCALAR);
         for (const auto& [k, v] : buf.pendingMetadata)
@@ -498,7 +531,7 @@ void HDF5WriterBase::flushTabularBuffer(const std::string& sourceName,
                sourceName, buf.pendingMetadata.size());
     }
 
-    const std::string secPath  = sourceName + "/secondsPastEpoch";
+    const std::string secPath = sourceName + "/secondsPastEpoch";
     const std::string nanoPath = sourceName + "/nanoseconds";
 
     buf.tsSeconds.resize(nRows, 0LL);
@@ -519,9 +552,10 @@ void HDF5WriterBase::flushTabularBuffer(const std::string& sourceName,
         std::visit([&](auto& vec)
                    {
                        using T = typename std::decay_t<decltype(vec)>::value_type;
-                       while (vec.size() < nRows) vec.push_back(fillValue<T>());
+                       while (vec.size() < nRows)
+                           vec.push_back(fillValue<T>());
                        const H5::PredType& h5t = mapNativeType<T>();
-                       H5::DataSet         ds  = ensureDataset(file, dsPath, h5t);
+                       H5::DataSet         ds = ensureDataset(file, dsPath, h5t);
                        append1D(ds, h5t, vec.data(), static_cast<hsize_t>(nRows));
                    },
                    buf.columns[i]);
@@ -532,7 +566,7 @@ void HDF5WriterBase::flushTabularBuffer(const std::string& sourceName,
 
     buf.tsSeconds.clear();
     buf.tsNanos.clear();
-    buf.rowCount     = 0;
+    buf.rowCount = 0;
     buf.roundFirstTs = -1;
     buf.columns.clear();
     if (buf.schemaFixed)
@@ -542,11 +576,11 @@ void HDF5WriterBase::flushTabularBuffer(const std::string& sourceName,
         {
             switch (buf.colTypes.at(buf.colNames[i]))
             {
-            case FieldType::Float64: buf.columns[i] = std::vector<double>{};  break;
-            case FieldType::Float32: buf.columns[i] = std::vector<float>{};   break;
-            case FieldType::Int32:   buf.columns[i] = std::vector<int32_t>{}; break;
-            case FieldType::Int64:   buf.columns[i] = std::vector<int64_t>{}; break;
-            case FieldType::Bool:    buf.columns[i] = std::vector<uint8_t>{}; break;
+            case FieldType::Float64: buf.columns[i] = std::vector<double>{}; break;
+            case FieldType::Float32: buf.columns[i] = std::vector<float>{}; break;
+            case FieldType::Int32: buf.columns[i] = std::vector<int32_t>{}; break;
+            case FieldType::Int64: buf.columns[i] = std::vector<int64_t>{}; break;
+            case FieldType::Bool: buf.columns[i] = std::vector<uint8_t>{}; break;
             }
         }
     }

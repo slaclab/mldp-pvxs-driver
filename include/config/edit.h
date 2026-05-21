@@ -14,16 +14,18 @@
 
 namespace mldp_pvxs_driver::config {
 
-struct EditListOptions {
+struct EditListOptions
+{
     std::string path = "config.yaml";
 };
 
-struct EditRemoveOptions {
-    std::string path       = "config.yaml";
-    std::string kind;       // "writer", "reader", "routing"
+struct EditRemoveOptions
+{
+    std::string path = "config.yaml";
+    std::string kind; // "writer", "reader", "routing"
     std::string name;
-    bool        no_backup  = false;
-    bool        dry_run    = false;
+    bool        no_backup = false;
+    bool        dry_run = false;
 };
 
 int runList(const EditListOptions& opts);
@@ -31,8 +33,7 @@ int runRemove(const EditRemoveOptions& opts);
 
 #ifdef MLDP_WIZARD_ENABLED
 // Interactive add path — launches FTXUI sub-flow for the given kind.
-int runAddInteractive(const std::string& path, const std::string& kind,
-                      bool no_backup, bool dry_run);
+int runAddInteractive(const std::string& path, const std::string& kind, bool no_backup, bool dry_run);
 #endif
 
 } // namespace mldp_pvxs_driver::config

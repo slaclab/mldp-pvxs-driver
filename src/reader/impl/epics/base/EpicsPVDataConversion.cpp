@@ -78,9 +78,9 @@ void setScalarValue(DataBatch* batch, const T& value, const std::string& name)
 // ---------------------------------------------------------------------------
 
 template <typename T>
-void setArrayValues(DataBatch*                                              batch,
-                    const ::epics::pvData::shared_vector<const T>&         values,
-                    const std::string&                                      name)
+void setArrayValues(DataBatch*                                     batch,
+                    const ::epics::pvData::shared_vector<const T>& values,
+                    const std::string&                             name)
 {
     DataColumn col;
     col.name = name;
@@ -541,7 +541,7 @@ void EpicsPVDataConversion::convertPVToDataBatch(const ::epics::pvData::PVField&
     std::ostringstream oss;
     pvField.dumpValue(oss);
     DataColumn col;
-    col.name   = columnName;
+    col.name = columnName;
     col.values = std::vector<std::string>{oss.str()};
     batch->columns.push_back(std::move(col));
 }
@@ -559,8 +559,7 @@ bool EpicsPVDataConversion::tryBuildNtTableRowTsBatch(mldp_pvxs_driver::util::lo
     outBatch->payload = TimeSeriesPayload{.is_tabular = true};
     auto& ts = std::get<TimeSeriesPayload>(outBatch->payload);
     ts.frames.clear();
-    return tryBuildNtTableRowTsBatch(log, tablePvName, epicsValue, tsSecondsField, tsNanosField,
-                                     [&](std::string colName, std::vector<DataBatch> batches)
+    return tryBuildNtTableRowTsBatch(log, tablePvName, epicsValue, tsSecondsField, tsNanosField, [&](std::string colName, std::vector<DataBatch> batches)
                                      {
                                          (void)colName;
                                          for (auto& b : batches)

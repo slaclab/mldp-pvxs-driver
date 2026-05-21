@@ -17,7 +17,8 @@
 
 namespace mldp_pvxs_driver::config::wizard_ui {
 
-enum class TreeNodeKind {
+enum class TreeNodeKind
+{
     Controller,
     WriterGroup,
     Writer,
@@ -28,14 +29,16 @@ enum class TreeNodeKind {
     RoutingGroup
 };
 
-struct TreeNode {
+struct TreeNode
+{
     TreeNodeKind kind;
-    std::string  label;       // display text
-    std::string  type_tag;    // "MLDP", "HDF5", "PVXS", "Base", "Arch", ""
-    int          data_index;  // index into respective WizardState vector (-1 for group nodes)
+    std::string  label;      // display text
+    std::string  type_tag;   // "MLDP", "HDF5", "PVXS", "Base", "Arch", ""
+    int          data_index; // index into respective WizardState vector (-1 for group nodes)
 };
 
-inline bool isGroupNode(TreeNodeKind k) {
+inline bool isGroupNode(TreeNodeKind k)
+{
     return k == TreeNodeKind::WriterGroup ||
            k == TreeNodeKind::ReaderGroup ||
            k == TreeNodeKind::QueryableGroup ||

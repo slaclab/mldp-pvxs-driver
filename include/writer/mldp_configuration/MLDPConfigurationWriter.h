@@ -67,8 +67,7 @@ public:
 
     bool acceptsPayload(const util::bus::BatchPayload& p) const noexcept override
     {
-        return std::holds_alternative<util::bus::ConfigurationPayload>(p)
-            || std::holds_alternative<util::bus::ConfigurationActivationPayload>(p);
+        return std::holds_alternative<util::bus::ConfigurationPayload>(p) || std::holds_alternative<util::bus::ConfigurationActivationPayload>(p);
     }
 
 private:

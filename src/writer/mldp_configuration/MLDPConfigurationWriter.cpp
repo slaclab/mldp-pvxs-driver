@@ -16,7 +16,6 @@
 
 #include <algorithm>
 #include <chrono>
-#include <stdexcept>
 
 using namespace mldp_pvxs_driver::writer;
 using namespace mldp_pvxs_driver::util::log;
@@ -41,7 +40,7 @@ overloaded(Ts...) -> overloaded<Ts...>;
 // ---------------------------------------------------------------------------
 
 MLDPConfigurationWriter::MLDPConfigurationWriter(const config::Config&             root,
-                                                  std::shared_ptr<metrics::Metrics> metrics)
+                                                 std::shared_ptr<metrics::Metrics> metrics)
     : config_(MLDPConfigurationWriterConfig::parse(root))
     , metrics_(std::move(metrics))
     , logger_(newLogger("configuration_writer:" + config_.name))
@@ -76,7 +75,10 @@ void MLDPConfigurationWriter::start()
     workers_.reserve(static_cast<std::size_t>(count));
     for (int i = 0; i < count; ++i)
     {
-        workers_.emplace_back([this] { workerLoop(); });
+        workers_.emplace_back([this]
+                              {
+                                  workerLoop();
+                              });
     }
     infof(*logger_, "MLDPConfigurationWriter '{}' started ({} workers)",
           config_.name, count);
@@ -129,7 +131,10 @@ void MLDPConfigurationWriter::workerLoop()
     while (true)
     {
         std::unique_lock<std::mutex> lock(queue_mutex_);
-        queue_cv_.wait(lock, [this] { return stop_.load() || !work_queue_.empty(); });
+        queue_cv_.wait(lock, [this]
+                       {
+                           return stop_.load() || !work_queue_.empty();
+                       });
 
         if (work_queue_.empty())
         {
@@ -141,11 +146,14 @@ void MLDPConfigurationWriter::workerLoop()
         work_queue_.pop();
         lock.unlock();
 
-        std::visit(overloaded{
-                       [this](const ConfigurationPayload& cfg) { doSaveConfiguration(cfg); },
-                       [this](const ConfigurationActivationPayload& act) {
-                           doSaveConfigurationActivation(act);
-                       }},
+        std::visit(overloaded{[this](const ConfigurationPayload& cfg)
+                              {
+                                  doSaveConfiguration(cfg);
+                              },
+                              [this](const ConfigurationActivationPayload& act)
+                              {
+                                  doSaveConfigurationActivation(act);
+                              }},
                    item.data);
     }
 }
@@ -186,9 +194,8 @@ void MLDPConfigurationWriter::doSaveConfiguration(const ConfigurationPayload& cf
         }
 
         dp::service::annotation::SaveConfigurationResponse resp;
-        grpc::ClientContext                                 ctx;
-        ctx.set_deadline(std::chrono::system_clock::now()
-                         + std::chrono::seconds(config_.deadlineSeconds));
+        grpc::ClientContext                                ctx;
+        ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(config_.deadlineSeconds));
 
         const auto status = handle->stub->saveConfiguration(&ctx, req, &resp);
         if (!status.ok())
@@ -255,9 +262,8 @@ void MLDPConfigurationWriter::doSaveConfigurationActivation(
         }
 
         dp::service::annotation::SaveConfigurationActivationResponse resp;
-        grpc::ClientContext                                           ctx;
-        ctx.set_deadline(std::chrono::system_clock::now()
-                         + std::chrono::seconds(config_.deadlineSeconds));
+        grpc::ClientContext                                          ctx;
+        ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(config_.deadlineSeconds));
 
         const auto status = handle->stub->saveConfigurationActivation(&ctx, req, &resp);
         if (!status.ok())

@@ -13,8 +13,8 @@
 // FTXUI headers (only included in wizard/FTXUI contexts)
 #include <ftxui/component/component.hpp>
 #include <ftxui/component/component_options.hpp>
-#include <ftxui/component/screen_interactive.hpp>
 #include <ftxui/component/event.hpp>
+#include <ftxui/component/screen_interactive.hpp>
 #include <ftxui/dom/elements.hpp>
 
 #include "wizard_tree_types.hpp"
@@ -36,15 +36,15 @@ Component SidebarPanel(const std::vector<TreeNode>* nodes, int* selected_index);
 // validator returns "" if valid, else error message
 // ---------------------------------------------------------------------------
 inline Component InputField(
-    const std::string&                           label,
-    std::string*                                 value,
+    const std::string&                             label,
+    std::string*                                   value,
     std::function<std::string(const std::string&)> validator = {},
-    std::function<void()>                        on_change  = {},
-    std::function<void()>                        on_focus   = {})
+    std::function<void()>                          on_change = {},
+    std::function<void()>                          on_focus = {})
 {
     auto opt = InputOption::Default();
-    opt.multiline  = false;
-    opt.on_change  = on_change ? on_change : []{};
+    opt.multiline = false;
+    opt.on_change = on_change ? on_change : [] {};
 
     auto input = Input(value, label, opt);
 
@@ -52,16 +52,19 @@ inline Component InputField(
     // ComponentBase::Focused() returns true when parent_->ActiveChild() == this,
     // which is set by Container::Vertical when this field is the active child.
     auto self_ref = std::make_shared<Component>();
-    auto result = Renderer(input, [=]() -> Element {
-        if (on_focus && *self_ref && (*self_ref)->Focused()) on_focus();
-        std::string err = validator ? validator(*value) : "";
-        Element field = input->Render();
-        if (!err.empty()) {
-            field = field | color(Color::Red);
-            return vbox({ hbox({text(label + ": "), field}), text("  ✗ " + err) | color(Color::Red) });
-        }
-        return hbox({text(label + ": "), field});
-    });
+    auto result = Renderer(input, [=]() -> Element
+                           {
+                               if (on_focus && *self_ref && (*self_ref)->Focused())
+                                   on_focus();
+                               std::string err = validator ? validator(*value) : "";
+                               Element     field = input->Render();
+                               if (!err.empty())
+                               {
+                                   field = field | color(Color::Red);
+                                   return vbox({hbox({text(label + ": "), field}), text("  ✗ " + err) | color(Color::Red)});
+                               }
+                               return hbox({text(label + ": "), field});
+                           });
     *self_ref = result;
     return result;
 }
@@ -72,10 +75,13 @@ inline Component InputField(
 inline Component TypeMenu(const std::vector<std::string>* choices, int* selected)
 {
     auto opt = MenuOption::Vertical();
-    opt.entries_option.transform = [](const EntryState& s) -> Element {
+    opt.entries_option.transform = [](const EntryState& s) -> Element
+    {
         auto e = text((s.focused ? "  > " : "    ") + s.label);
-        if (s.focused) return e | bold | color(Color::Cyan);
-        if (s.active)  return e | bold;
+        if (s.focused)
+            return e | bold | color(Color::Cyan);
+        if (s.active)
+            return e | bold;
         return e | color(Color::GrayLight);
     };
     return Menu(choices, selected, opt);
@@ -91,7 +97,8 @@ inline Component MultiSelectList(
     std::vector<int>*               selected)
 {
     Components boxes;
-    for (std::size_t i = 0; i < items->size(); ++i) {
+    for (std::size_t i = 0; i < items->size(); ++i)
+    {
         boxes.push_back(Checkbox(&(*items)[i],
                                  reinterpret_cast<bool*>((*selected).data() + i)));
     }

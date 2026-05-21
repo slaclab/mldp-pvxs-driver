@@ -98,11 +98,11 @@ public:
             std::string tsNanosField = "nanoseconds";
         };
 
-        std::string                                          name;         ///< Fully qualified PV name to monitor.
-        std::string                                          option;       ///< Backend-specific connection option (may be empty).
-        std::optional<config::Config>                        optionConfig; ///< Optional raw subtree for future extensions.
-        std::optional<NTTableRowTimestampOptions>            nttableRowTs; ///< Parsed options when `type: slac-bsas-table` is selected.
-        std::unordered_map<std::string, std::string>         metadata;     ///< Per-PV static metadata key-value pairs.
+        std::string                                  name;         ///< Fully qualified PV name to monitor.
+        std::string                                  option;       ///< Backend-specific connection option (may be empty).
+        std::optional<config::Config>                optionConfig; ///< Optional raw subtree for future extensions.
+        std::optional<NTTableRowTimestampOptions>    nttableRowTs; ///< Parsed options when `type: slac-bsas-table` is selected.
+        std::unordered_map<std::string, std::string> metadata;     ///< Per-PV static metadata key-value pairs.
     };
 
     EpicsReaderConfig();
@@ -154,7 +154,10 @@ public:
      *
      * @return Map of metadata keys to values as configured in YAML.
      */
-    const std::unordered_map<std::string, std::string>& staticMetadata() const { return static_metadata_; }
+    const std::unordered_map<std::string, std::string>& staticMetadata() const
+    {
+        return static_metadata_;
+    }
 
 private:
     /** @brief Populate the typed fields from the raw YAML node. */

@@ -148,7 +148,7 @@ MLDPQueryClient::querySourcesInfo(const std::set<std::string>& source_names)
         }
 
         dp::service::query::QueryPvStatsRequest request;
-        auto*                                      pv_name_list = request.mutable_pvnamelist();
+        auto*                                   pv_name_list = request.mutable_pvnamelist();
         pv_name_list->mutable_pvnames()->Reserve(static_cast<int>(source_names.size()));
         for (const auto& source : source_names)
         {
@@ -158,7 +158,7 @@ MLDPQueryClient::querySourcesInfo(const std::set<std::string>& source_names)
         if (pv_name_list->pvnames().empty())
             return infos;
 
-        grpc::ClientContext                         context;
+        grpc::ClientContext                      context;
         dp::service::query::QueryPvStatsResponse response;
         context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(5));
         const auto status = query_stub->queryPvStats(&context, request, &response);

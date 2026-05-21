@@ -38,8 +38,8 @@ std::shared_ptr<mldp_pvxs_driver::util::log::ILogger> makeControllerLogger(const
     return mldp_pvxs_driver::util::log::newLogger("controller." + name);
 }
 
-static void prepareQueryables(const MLDPPVXSControllerConfig&           cfg,
-                               std::shared_ptr<mldp_pvxs_driver::metrics::Metrics> metrics)
+static void prepareQueryables(const MLDPPVXSControllerConfig&                     cfg,
+                              std::shared_ptr<mldp_pvxs_driver::metrics::Metrics> metrics)
 {
     using namespace mldp_pvxs_driver::query;
     using namespace mldp_pvxs_driver::query::impl::mldp;
@@ -48,13 +48,15 @@ static void prepareQueryables(const MLDPPVXSControllerConfig&           cfg,
                                       std::shared_ptr<mldp_pvxs_driver::metrics::Metrics>)>;
     static const std::unordered_map<std::string, PrepFn> kDispatch = {
         {"mldp",
-         [](const mldp_pvxs_driver::config::Config& c,
-            std::shared_ptr<mldp_pvxs_driver::metrics::Metrics> m) {
+         [](const mldp_pvxs_driver::config::Config&             c,
+            std::shared_ptr<mldp_pvxs_driver::metrics::Metrics> m)
+         {
              QueryableFactory::instance().prepare<MLDPQueryClient>(c, std::move(m));
          }},
         {"mldp-annotation",
-         [](const mldp_pvxs_driver::config::Config& c,
-            std::shared_ptr<mldp_pvxs_driver::metrics::Metrics> m) {
+         [](const mldp_pvxs_driver::config::Config&             c,
+            std::shared_ptr<mldp_pvxs_driver::metrics::Metrics> m)
+         {
              QueryableFactory::instance().prepare<MLDPAnnotationQueryClient>(c, std::move(m));
          }},
     };
@@ -147,10 +149,12 @@ void MLDPPVXSController::start()
     // -- Build route table from config --
     {
         std::unordered_set<std::string> known_writers;
-        for (const auto& w : writers_) known_writers.insert(w->name());
+        for (const auto& w : writers_)
+            known_writers.insert(w->name());
 
         std::unordered_set<std::string> known_readers;
-        for (const auto& r : readers_) known_readers.insert(r->name());
+        for (const auto& r : readers_)
+            known_readers.insert(r->name());
 
         route_table_ = RouteTable::build(config_.routeEntries(), known_readers, known_writers);
 
@@ -220,7 +224,7 @@ bool MLDPPVXSController::push(EventBatch batch_values)
     const std::size_t n = writers_.size();
 
     std::vector<std::future<bool>> futures;
-    std::vector<std::size_t>        writer_indices; // track which writer each future corresponds to
+    std::vector<std::size_t>       writer_indices; // track which writer each future corresponds to
     futures.reserve(n);
     writer_indices.reserve(n);
 

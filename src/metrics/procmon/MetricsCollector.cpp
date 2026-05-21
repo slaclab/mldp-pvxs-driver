@@ -15,76 +15,94 @@
 
 namespace procmon {
 
-MetricsCollector::MetricsCollector(pid_t pid) : pid_(pid) {}
+MetricsCollector::MetricsCollector(pid_t pid)
+    : pid_(pid) {}
 
-void MetricsCollector::register_handler(std::shared_ptr<MetricsHandler> handler) {
-    if (handler) {
+void MetricsCollector::register_handler(std::shared_ptr<MetricsHandler> handler)
+{
+    if (handler)
+    {
         handlers_.push_back(handler);
     }
 }
 
-bool MetricsCollector::is_process_alive() const {
+bool MetricsCollector::is_process_alive() const
+{
     return ProcReader::process_exists(pid_);
 }
 
-Result<MetricsSnapshot> MetricsCollector::collect() {
+Result<MetricsSnapshot> MetricsCollector::collect()
+{
     // Check if process exists
-    if (!is_process_alive()) {
+    if (!is_process_alive())
+    {
         std::string error = "Process " + std::to_string(pid_) + " does not exist";
         notify_error(error);
         return Result<MetricsSnapshot>::error(error);
     }
-    
+
     // Create snapshot with timestamp
     MetricsSnapshot snapshot;
     snapshot.pid = pid_;
     snapshot.timestamp = std::chrono::system_clock::now();
-    
+
     // Read comm first (used by stat as well)
     auto comm_result = ProcReader::read_comm(pid_);
-    if (comm_result) {
+    if (comm_result)
+    {
         snapshot.comm = *comm_result;
     }
-    
+
     // Read stat file
-    if (auto result = ProcReader::read_stat(pid_, snapshot); !result) {
+    if (auto result = ProcReader::read_stat(pid_, snapshot); !result)
+    {
         notify_error(result.error());
         return Result<MetricsSnapshot>::error(result.error());
     }
-    
+
     // Read status file
-    if (auto result = ProcReader::read_status(pid_, snapshot); !result) {
+    if (auto result = ProcReader::read_status(pid_, snapshot); !result)
+    {
         notify_error(result.error());
         return Result<MetricsSnapshot>::error(result.error());
     }
-    
+
     // Read I/O stats (may fail due to permissions, non-critical)
     ProcReader::read_io(pid_, snapshot);
-    
+
     // Count file descriptors (may fail due to permissions, non-critical)
-    if (auto fd_count = ProcReader::count_fds(pid_); fd_count) {
+    if (auto fd_count = ProcReader::count_fds(pid_); fd_count)
+    {
         snapshot.num_fds = *fd_count;
-    } else {
+    }
+    else
+    {
         snapshot.num_fds = std::nullopt;
     }
-    
+
     // Notify handlers
     notify_handlers(snapshot);
-    
+
     return snapshot;
 }
 
-void MetricsCollector::notify_handlers(const MetricsSnapshot& snapshot) {
-    for (const auto& handler : handlers_) {
-        if (handler) {
+void MetricsCollector::notify_handlers(const MetricsSnapshot& snapshot)
+{
+    for (const auto& handler : handlers_)
+    {
+        if (handler)
+        {
             handler->onMetricsSnapshot(snapshot);
         }
     }
 }
 
-void MetricsCollector::notify_error(const std::string& error_message) {
-    for (const auto& handler : handlers_) {
-        if (handler) {
+void MetricsCollector::notify_error(const std::string& error_message)
+{
+    for (const auto& handler : handlers_)
+    {
+        if (handler)
+        {
             handler->onError(error_message);
         }
     }

@@ -78,19 +78,19 @@ struct ArrayDims
  * |  11   | `std::vector<std::vector<bool>>`   | bool array        |
  */
 using ColumnValues = std::variant<
-    std::vector<double>,                 // 0 — scalar double
-    std::vector<float>,                  // 1 — scalar float
-    std::vector<int64_t>,                // 2 — scalar int64
-    std::vector<int32_t>,                // 3 — scalar int32
-    std::vector<bool>,                   // 4 — scalar bool
-    std::vector<std::string>,            // 5 — scalar string
-    std::vector<std::vector<uint8_t>>,   // 6 — bytes / struct / image blob
-    std::vector<std::vector<double>>,    // 7 — double array column
-    std::vector<std::vector<float>>,     // 8 — float array column
-    std::vector<std::vector<int64_t>>,   // 9 — int64 array column
-    std::vector<std::vector<int32_t>>,   // 10 — int32 array column
-    std::vector<std::vector<bool>>       // 11 — bool array column
->;
+    std::vector<double>,               // 0 — scalar double
+    std::vector<float>,                // 1 — scalar float
+    std::vector<int64_t>,              // 2 — scalar int64
+    std::vector<int32_t>,              // 3 — scalar int32
+    std::vector<bool>,                 // 4 — scalar bool
+    std::vector<std::string>,          // 5 — scalar string
+    std::vector<std::vector<uint8_t>>, // 6 — bytes / struct / image blob
+    std::vector<std::vector<double>>,  // 7 — double array column
+    std::vector<std::vector<float>>,   // 8 — float array column
+    std::vector<std::vector<int64_t>>, // 9 — int64 array column
+    std::vector<std::vector<int32_t>>, // 10 — int32 array column
+    std::vector<std::vector<bool>>     // 11 — bool array column
+    >;
 
 /**
  * @brief Named column of homogeneous typed samples.

@@ -13,7 +13,6 @@
 #include <util/bus/IDataBus.h>
 
 #include <memory>
-#include <stdexcept>
 #include <string>
 
 namespace mldp_pvxs_driver::writer {

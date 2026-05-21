@@ -72,9 +72,9 @@ public:
      * @pre @p batch must point to a valid, initialized DataBatch.
      * @post On return, @p batch contains at least one additional DataColumn.
      */
-    static void convertPVToDataBatch(const pvxs::Value&        pvValue,
-                                     util::bus::DataBatch*     batch,
-                                     const std::string&        columnName = "value");
+    static void convertPVToDataBatch(const pvxs::Value&    pvValue,
+                                     util::bus::DataBatch* batch,
+                                     const std::string&    columnName = "value");
 };
 
 } // namespace mldp_pvxs_driver::reader::impl::epics

@@ -166,8 +166,8 @@ private:
     std::shared_ptr<BS::light_thread_pool>                thread_pool_; ///< Shared worker pool.
     std::shared_ptr<metrics::Metrics>                     metrics_;     ///< Shared metrics collector/exposer.
     std::atomic<bool>                                     running_{false};
-    std::vector<reader::ReaderUPtr>                       readers_; ///< Owned reader instances.
-    std::vector<writer::IWriterUPtr>                      writers_; ///< Fan-out writer instances.
+    std::vector<reader::ReaderUPtr>                       readers_;     ///< Owned reader instances.
+    std::vector<writer::IWriterUPtr>                      writers_;     ///< Fan-out writer instances.
     RouteTable                                            route_table_; ///< Selective reader→writer dispatch.
 
     explicit MLDPPVXSController(const config::Config& config);

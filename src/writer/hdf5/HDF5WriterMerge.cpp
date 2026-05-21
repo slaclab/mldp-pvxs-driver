@@ -8,8 +8,8 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
-#include <writer/hdf5/HDF5WriterMerge.h>
 #include "HDF5WriterDetail.h"
+#include <writer/hdf5/HDF5WriterMerge.h>
 
 #include <util/log/Logger.h>
 
@@ -25,13 +25,13 @@ using namespace mldp_pvxs_driver::writer::hdf5_detail;
 // ---------------------------------------------------------------------------
 
 HDF5WriterMerge::HDF5WriterMerge(HDF5WriterConfig                  config,
-                                   std::shared_ptr<metrics::Metrics> metrics)
+                                 std::shared_ptr<metrics::Metrics> metrics)
     : HDF5WriterBase(std::move(config), std::move(metrics))
 {
 }
 
 HDF5WriterMerge::HDF5WriterMerge(const config::Config&             node,
-                                   std::shared_ptr<metrics::Metrics> metrics)
+                                 std::shared_ptr<metrics::Metrics> metrics)
     : HDF5WriterMerge(HDF5WriterConfig::parse(node), std::move(metrics))
 {
 }
@@ -61,7 +61,13 @@ void HDF5WriterMerge::doFlushAll() noexcept
     if (mergeFile_)
     {
         std::lock_guard<std::mutex> lk(mergeFileMutex_);
-        try { mergeFile_->flush(H5F_SCOPE_GLOBAL); } catch (...) {}
+        try
+        {
+            mergeFile_->flush(H5F_SCOPE_GLOBAL);
+        }
+        catch (...)
+        {
+        }
     }
 }
 
@@ -70,14 +76,14 @@ void HDF5WriterMerge::doFlushAll() noexcept
 // ---------------------------------------------------------------------------
 
 void HDF5WriterMerge::writeFrameImpl(const std::string&          source,
-                                      const util::bus::DataBatch& frame,
-                                      uint64_t                    batchSeq)
+                                     const util::bus::DataBatch& frame,
+                                     uint64_t                    batchSeq)
 {
     appendFrameMerge(source, frame, batchSeq);
 }
 
 void HDF5WriterMerge::flushTabularBufferImpl(const std::string& source,
-                                              TabularBuffer&     buf)
+                                             TabularBuffer&     buf)
 {
     flushTabularBufferMerge(source, buf);
 }
@@ -89,8 +95,8 @@ void HDF5WriterMerge::flushTabularBufferImpl(const std::string& source,
 void HDF5WriterMerge::openMergeFile()
 {
     const auto        now = std::chrono::system_clock::now();
-    const std::time_t t   = std::chrono::system_clock::to_time_t(now);
-    std::tm utc{};
+    const std::time_t t = std::chrono::system_clock::to_time_t(now);
+    std::tm           utc{};
 #if defined(_WIN32)
     gmtime_s(&utc, &t);
 #else
@@ -104,7 +110,7 @@ void HDF5WriterMerge::openMergeFile()
     std::filesystem::create_directories(base);
 
     const std::string stem = "merged";
-    mergePath_      = base / ("." + stem + "_" + suffix + ".hdf5");
+    mergePath_ = base / ("." + stem + "_" + suffix + ".hdf5");
     mergeFinalPath_ = base / (stem + "_" + suffix + ".hdf5");
 
     std::lock_guard<std::mutex> lk(mergeFileMutex_);
@@ -118,7 +124,8 @@ void HDF5WriterMerge::openMergeFile()
 void HDF5WriterMerge::closeMergeFile() noexcept
 {
     std::unique_lock<std::mutex> lk(mergeFileMutex_);
-    if (!mergeFile_) return;
+    if (!mergeFile_)
+        return;
     try
     {
         mergeFile_->flush(H5F_SCOPE_GLOBAL);
@@ -200,7 +207,8 @@ void HDF5WriterMerge::checkMergeRotation()
     bool needRotate = false;
     {
         std::lock_guard<std::mutex> lk(mergeFileMutex_);
-        if (!mergeFile_) return;
+        if (!mergeFile_)
+            return;
         const auto     now = std::chrono::steady_clock::now();
         const auto     age = std::chrono::duration_cast<std::chrono::seconds>(now - mergeFileOpenedAt_);
         const uint64_t sizeLimitBytes =
@@ -224,8 +232,8 @@ void HDF5WriterMerge::checkMergeRotation()
 // ---------------------------------------------------------------------------
 
 void HDF5WriterMerge::appendFrameMerge(const std::string&          sourceName,
-                                        const util::bus::DataBatch& batch,
-                                        uint64_t                    batchSeq)
+                                       const util::bus::DataBatch& batch,
+                                       uint64_t                    batchSeq)
 {
     if (batch.timestamps.empty())
     {
@@ -267,13 +275,18 @@ void HDF5WriterMerge::appendFrameMerge(const std::string&          sourceName,
     }
 
     // 2. Columns
-    writeColumnsImpl(batch,
-        [&](const std::string& n, const H5::DataType& t)
-            { return ensureDataset(*mergeFile_, groupPrefix + n, t); },
-        [&](const std::string& n, const H5::DataType& t, hsize_t l)
-            { return ensureDataset2D(*mergeFile_, groupPrefix + n, t, l); },
-        [&](uint64_t bytes) { mergeBytesWritten_ += bytes; }
-    );
+    writeColumnsImpl(batch, [&](const std::string& n, const H5::DataType& t)
+                     {
+                         return ensureDataset(*mergeFile_, groupPrefix + n, t);
+                     },
+                     [&](const std::string& n, const H5::DataType& t, hsize_t l)
+                     {
+                         return ensureDataset2D(*mergeFile_, groupPrefix + n, t, l);
+                     },
+                     [&](uint64_t bytes)
+                     {
+                         mergeBytesWritten_ += bytes;
+                     });
 }
 
 // ---------------------------------------------------------------------------
@@ -281,7 +294,7 @@ void HDF5WriterMerge::appendFrameMerge(const std::string&          sourceName,
 // ---------------------------------------------------------------------------
 
 void HDF5WriterMerge::flushTabularBufferMerge(const std::string& sourceName,
-                                               TabularBuffer&     buf)
+                                              TabularBuffer&     buf)
 {
     checkMergeRotation();
 

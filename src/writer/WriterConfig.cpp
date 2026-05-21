@@ -14,7 +14,7 @@
 #include <writer/mldp_configuration/MLDPConfigurationWriterConfig.h>
 
 #ifdef MLDP_PVXS_HDF5_ENABLED
-#include <writer/hdf5/HDF5WriterConfig.h>
+    #include <writer/hdf5/HDF5WriterConfig.h>
 #endif
 
 using namespace mldp_pvxs_driver::writer;
@@ -54,8 +54,7 @@ void WriterConfig::validate(const Config& writerNode)
             throw Error("writer.hdf5 must be a sequence of writer instances");
         }
 #ifndef MLDP_PVXS_HDF5_ENABLED
-        throw Error("writer.hdf5 instances are configured but this build was compiled without "
-                    "HDF5 support (MLDP_PVXS_ENABLE_HDF5=OFF)");
+        throw Error("writer.hdf5 instances are configured but this build was compiled without " "HDF5 support (MLDP_PVXS_ENABLE_HDF5=OFF)");
 #else
         const auto items = writerNode.subConfig(WriterHdf5Key);
         for (const auto& item : items)
@@ -81,8 +80,7 @@ void WriterConfig::validate(const Config& writerNode)
             throw Error("writer.hdf5-merge must be a sequence of writer instances");
         }
 #ifndef MLDP_PVXS_HDF5_ENABLED
-        throw Error("writer.hdf5-merge instances are configured but this build was compiled without "
-                    "HDF5 support (MLDP_PVXS_HDF5_ENABLED=OFF)");
+        throw Error("writer.hdf5-merge instances are configured but this build was compiled without " "HDF5 support (MLDP_PVXS_HDF5_ENABLED=OFF)");
 #else
         const auto mergeItems = writerNode.subConfig(WriterHdf5MergeKey);
         for (const auto& item : mergeItems)

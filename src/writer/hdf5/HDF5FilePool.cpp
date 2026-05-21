@@ -10,8 +10,8 @@
 
 #include <writer/hdf5/HDF5FilePool.h>
 
-#include <writer/hdf5/HDF5WriterMetrics.h>
 #include <util/log/Logger.h>
+#include <writer/hdf5/HDF5WriterMetrics.h>
 
 #include <chrono>
 #include <ctime>
@@ -55,15 +55,15 @@ std::string HDF5FilePool::nowUtcFileSuffix()
 }
 
 static std::filesystem::path tempFilePath(const std::filesystem::path& basePath,
-                                          const std::string& sourceName,
-                                          const std::string& suffix)
+                                          const std::string&           sourceName,
+                                          const std::string&           suffix)
 {
     return basePath / ("." + HDF5FilePool::safeName(sourceName) + "_" + suffix + ".hdf5");
 }
 
 static std::filesystem::path finalFilePath(const std::filesystem::path& basePath,
-                                           const std::string& sourceName,
-                                           const std::string& suffix)
+                                           const std::string&           sourceName,
+                                           const std::string&           suffix)
 {
     return basePath / (HDF5FilePool::safeName(sourceName) + "_" + suffix + ".hdf5");
 }

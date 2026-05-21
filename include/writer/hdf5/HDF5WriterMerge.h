@@ -10,10 +10,10 @@
 
 #pragma once
 
-#include <writer/hdf5/HDF5WriterBase.h>
-#include <writer/WriterFactory.h>
 #include <config/Config.h>
 #include <metrics/Metrics.h>
+#include <writer/WriterFactory.h>
+#include <writer/hdf5/HDF5WriterBase.h>
 
 #include <H5Cpp.h>
 
@@ -38,33 +38,33 @@ class HDF5WriterMerge final : public HDF5WriterBase
     REGISTER_WRITER("hdf5-merge", HDF5WriterMerge)
 public:
     explicit HDF5WriterMerge(const config::Config&             node,
-                              std::shared_ptr<metrics::Metrics> metrics = nullptr);
-    explicit HDF5WriterMerge(HDF5WriterConfig                    config,
-                              std::shared_ptr<metrics::Metrics>   metrics = nullptr);
+                             std::shared_ptr<metrics::Metrics> metrics = nullptr);
+    explicit HDF5WriterMerge(HDF5WriterConfig                  config,
+                             std::shared_ptr<metrics::Metrics> metrics = nullptr);
     ~HDF5WriterMerge() override;
 
 protected:
     void writeFrameImpl(const std::string&          source,
-                         const util::bus::DataBatch& frame,
-                         uint64_t                    batchSeq) override;
+                        const util::bus::DataBatch& frame,
+                        uint64_t                    batchSeq) override;
 
     void flushTabularBufferImpl(const std::string& source,
-                                 TabularBuffer&     buf) override;
+                                TabularBuffer&     buf) override;
 
     void doFlushAll() noexcept override;
     void doStart() override;
     void doStop() noexcept override;
 
 private:
-    std::unique_ptr<H5::H5File>            mergeFile_;
-    std::filesystem::path                  mergePath_;
-    std::filesystem::path                  mergeFinalPath_;
-    mutable std::mutex                     mergeFileMutex_;
-    std::set<std::string>                  mergeOpenGroups_;
-    uint64_t                               mergeBytesWritten_{0};
-    std::chrono::steady_clock::time_point  mergeFileOpenedAt_;
-    std::atomic<bool>                      mergeRotating_{false};
-    uint64_t                               mergeFileSeq_{0};
+    std::unique_ptr<H5::H5File>           mergeFile_;
+    std::filesystem::path                 mergePath_;
+    std::filesystem::path                 mergeFinalPath_;
+    mutable std::mutex                    mergeFileMutex_;
+    std::set<std::string>                 mergeOpenGroups_;
+    uint64_t                              mergeBytesWritten_{0};
+    std::chrono::steady_clock::time_point mergeFileOpenedAt_;
+    std::atomic<bool>                     mergeRotating_{false};
+    uint64_t                              mergeFileSeq_{0};
 
     void openMergeFile();
     void closeMergeFile() noexcept;
@@ -72,10 +72,10 @@ private:
     void ensureMergeGroup(const std::string& sourceName); // caller MUST hold mergeFileMutex_
     void checkMergeRotation();
     void appendFrameMerge(const std::string&          sourceName,
-                           const util::bus::DataBatch& batch,
-                           uint64_t                    batchSeq);
+                          const util::bus::DataBatch& batch,
+                          uint64_t                    batchSeq);
     void flushTabularBufferMerge(const std::string& sourceName,
-                                  TabularBuffer&     buf);
+                                 TabularBuffer&     buf);
 };
 
 } // namespace mldp_pvxs_driver::writer

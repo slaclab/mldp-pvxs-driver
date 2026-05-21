@@ -21,8 +21,8 @@
 
 namespace mldp_pvxs_driver::controller {
 
-inline constexpr char NameKey[]    = "name";
-inline constexpr char ReaderKey[]  = "reader";
+inline constexpr char NameKey[] = "name";
+inline constexpr char ReaderKey[] = "reader";
 inline constexpr char MetricsKey[] = "metrics";
 inline constexpr char RoutingKey[] = "routing";
 
@@ -91,7 +91,8 @@ public:
     /**
      * @brief Parsed queryable entries from the @c queryable: YAML sequence.
      */
-    struct QueryableEntry {
+    struct QueryableEntry
+    {
         std::string    type;
         config::Config cfg;
     };
@@ -102,7 +103,10 @@ public:
      * Each element is a queryable type identifier (e.g. "mldp") paired with
      * the YAML node that @ref QueryableFactory::prepare should receive.
      */
-    const std::vector<QueryableEntry>& queryableEntries() const { return queryable_entries_; }
+    const std::vector<QueryableEntry>& queryableEntries() const
+    {
+        return queryable_entries_;
+    }
 
     /** @return Optional metrics configuration when the YAML provides it. */
     const std::optional<metrics::MetricsConfig>& metricsConfig() const;

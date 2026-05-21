@@ -57,12 +57,12 @@ MLDPAnnotationQueryClient::getPvMetadata(const std::string& pvNameOrAlias)
 {
     try
     {
-        auto                                         handle = pool_->acquire();
-        grpc::ClientContext                          ctx;
+        auto                                          handle = pool_->acquire();
+        grpc::ClientContext                           ctx;
         dp::service::annotation::GetPvMetadataRequest req;
         req.set_pvnameoralias(pvNameOrAlias);
         dp::service::annotation::GetPvMetadataResponse resp;
-        const auto status = handle->stub->getPvMetadata(&ctx, req, &resp);
+        const auto                                     status = handle->stub->getPvMetadata(&ctx, req, &resp);
         if (!status.ok())
         {
             errorf(*logger_, "getPvMetadata failed: {}", status.error_message());
@@ -92,10 +92,10 @@ MLDPAnnotationQueryClient::queryPvMetadata(
 {
     try
     {
-        auto                                           handle = pool_->acquire();
-        grpc::ClientContext                            ctx;
+        auto                                             handle = pool_->acquire();
+        grpc::ClientContext                              ctx;
         dp::service::annotation::QueryPvMetadataResponse resp;
-        const auto status = handle->stub->queryPvMetadata(&ctx, request, &resp);
+        const auto                                       status = handle->stub->queryPvMetadata(&ctx, request, &resp);
         if (!status.ok())
         {
             errorf(*logger_, "queryPvMetadata failed: {}", status.error_message());
@@ -103,7 +103,7 @@ MLDPAnnotationQueryClient::queryPvMetadata(
         }
         if (!resp.has_pvmetadataresult())
             return {{}, {}};
-        const auto& result = resp.pvmetadataresult();
+        const auto&                                  result = resp.pvmetadataresult();
         std::vector<dp::service::common::PvMetadata> records;
         records.reserve(static_cast<std::size_t>(result.pvmetadata_size()));
         for (const auto& m : result.pvmetadata())
@@ -126,12 +126,12 @@ MLDPAnnotationQueryClient::getConfiguration(const std::string& configurationName
 {
     try
     {
-        auto                                           handle = pool_->acquire();
-        grpc::ClientContext                            ctx;
+        auto                                             handle = pool_->acquire();
+        grpc::ClientContext                              ctx;
         dp::service::annotation::GetConfigurationRequest req;
         req.set_configurationname(configurationName);
         dp::service::annotation::GetConfigurationResponse resp;
-        const auto status = handle->stub->getConfiguration(&ctx, req, &resp);
+        const auto                                        status = handle->stub->getConfiguration(&ctx, req, &resp);
         if (!status.ok())
         {
             errorf(*logger_, "getConfiguration failed: {}", status.error_message());
@@ -161,10 +161,10 @@ MLDPAnnotationQueryClient::queryConfigurations(
 {
     try
     {
-        auto                                              handle = pool_->acquire();
-        grpc::ClientContext                               ctx;
+        auto                                                 handle = pool_->acquire();
+        grpc::ClientContext                                  ctx;
         dp::service::annotation::QueryConfigurationsResponse resp;
-        const auto status = handle->stub->queryConfigurations(&ctx, request, &resp);
+        const auto                                           status = handle->stub->queryConfigurations(&ctx, request, &resp);
         if (!status.ok())
         {
             errorf(*logger_, "queryConfigurations failed: {}", status.error_message());
@@ -172,7 +172,7 @@ MLDPAnnotationQueryClient::queryConfigurations(
         }
         if (!resp.has_queryconfigurationsresult())
             return {{}, {}};
-        const auto& result = resp.queryconfigurationsresult();
+        const auto&                                     result = resp.queryconfigurationsresult();
         std::vector<dp::service::common::Configuration> records;
         records.reserve(static_cast<std::size_t>(result.configurations_size()));
         for (const auto& c : result.configurations())
@@ -196,10 +196,10 @@ MLDPAnnotationQueryClient::getConfigurationActivation(
 {
     try
     {
-        auto                                                    handle = pool_->acquire();
-        grpc::ClientContext                                     ctx;
+        auto                                                        handle = pool_->acquire();
+        grpc::ClientContext                                         ctx;
         dp::service::annotation::GetConfigurationActivationResponse resp;
-        const auto status = handle->stub->getConfigurationActivation(&ctx, request, &resp);
+        const auto                                                  status = handle->stub->getConfigurationActivation(&ctx, request, &resp);
         if (!status.ok())
         {
             errorf(*logger_, "getConfigurationActivation failed: {}", status.error_message());
@@ -229,10 +229,10 @@ MLDPAnnotationQueryClient::queryConfigurationActivations(
 {
     try
     {
-        auto                                                        handle = pool_->acquire();
-        grpc::ClientContext                                         ctx;
+        auto                                                           handle = pool_->acquire();
+        grpc::ClientContext                                            ctx;
         dp::service::annotation::QueryConfigurationActivationsResponse resp;
-        const auto status =
+        const auto                                                     status =
             handle->stub->queryConfigurationActivations(&ctx, request, &resp);
         if (!status.ok())
         {
@@ -241,7 +241,7 @@ MLDPAnnotationQueryClient::queryConfigurationActivations(
         }
         if (!resp.has_queryconfigurationactivationsresult())
             return {{}, {}};
-        const auto& result = resp.queryconfigurationactivationsresult();
+        const auto&                                               result = resp.queryconfigurationactivationsresult();
         std::vector<dp::service::common::ConfigurationActivation> records;
         records.reserve(static_cast<std::size_t>(result.configurationactivations_size()));
         for (const auto& ca : result.configurationactivations())
@@ -265,12 +265,12 @@ MLDPAnnotationQueryClient::getActiveConfigurations(
 {
     try
     {
-        auto                                                  handle = pool_->acquire();
-        grpc::ClientContext                                   ctx;
+        auto                                                    handle = pool_->acquire();
+        grpc::ClientContext                                     ctx;
         dp::service::annotation::GetActiveConfigurationsRequest req;
         *req.mutable_timestamp() = at;
         dp::service::annotation::GetActiveConfigurationsResponse resp;
-        const auto status = handle->stub->getActiveConfigurations(&ctx, req, &resp);
+        const auto                                               status = handle->stub->getActiveConfigurations(&ctx, req, &resp);
         if (!status.ok())
         {
             errorf(*logger_, "getActiveConfigurations failed: {}", status.error_message());
@@ -278,7 +278,7 @@ MLDPAnnotationQueryClient::getActiveConfigurations(
         }
         if (!resp.has_getactiveconfigurationsresult())
             return {};
-        const auto& result = resp.getactiveconfigurationsresult();
+        const auto&                                               result = resp.getactiveconfigurationsresult();
         std::vector<dp::service::common::ConfigurationActivation> records;
         records.reserve(
             static_cast<std::size_t>(result.configurationactivations_size()));

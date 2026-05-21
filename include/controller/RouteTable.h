@@ -18,7 +18,8 @@
 namespace mldp_pvxs_driver::controller {
 
 /// Extended route entry carrying optional source-filter patterns.
-struct RouteFilterEntry {
+struct RouteFilterEntry
+{
     std::string              writer_name;
     std::vector<std::string> from_readers;
     std::vector<std::string> include_patterns; ///< empty = accept all sources
@@ -36,7 +37,7 @@ public:
     /// Build from parsed config. Validates all names exist.
     /// @throws std::runtime_error on unknown reader/writer names.
     static RouteTable build(
-        const std::vector<RouteFilterEntry>& routes,
+        const std::vector<RouteFilterEntry>&   routes,
         const std::unordered_set<std::string>& known_readers,
         const std::unordered_set<std::string>& known_writers);
 
@@ -63,14 +64,16 @@ public:
 
 private:
     /// writer_name → set of accepted reader names. "all" sentinel stored as special empty set with all_accept flag.
-    struct WriterRoute {
+    struct WriterRoute
+    {
         std::unordered_set<std::string> readers;
-        bool accept_all{false};
-        std::vector<std::string> include_patterns;
-        std::vector<std::string> exclude_patterns;
+        bool                            accept_all{false};
+        std::vector<std::string>        include_patterns;
+        std::vector<std::string>        exclude_patterns;
     };
+
     std::unordered_map<std::string, WriterRoute> table_;
-    bool all_to_all_{true};
+    bool                                         all_to_all_{true};
 };
 
 } // namespace mldp_pvxs_driver::controller

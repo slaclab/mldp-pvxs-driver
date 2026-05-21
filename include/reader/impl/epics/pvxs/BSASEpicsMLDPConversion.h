@@ -66,8 +66,8 @@ public:
      * @param colName The name of the column being emitted.
      * @param batches Vector of DataBatch payloads (one per column, all rows packed).
      */
-    using ColumnEmitFn = std::function<void(std::string                            colName,
-                                            std::vector<util::bus::DataBatch>      batches)>;
+    using ColumnEmitFn = std::function<void(std::string                       colName,
+                                            std::vector<util::bus::DataBatch> batches)>;
 
     /**
      * @brief Convert an NTTable with row timestamps to an EventBatch.

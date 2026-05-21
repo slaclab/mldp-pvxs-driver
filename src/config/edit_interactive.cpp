@@ -10,17 +10,17 @@
 
 #ifdef MLDP_WIZARD_ENABLED
 
-#include <config/edit.h>
-#include <config/Config.h>
-#include <config/validate.h>
-#include <config/wizard.h>
-#include "wizard_internal.h"
+    #include "wizard_internal.h"
+    #include <config/Config.h>
+    #include <config/edit.h>
+    #include <config/validate.h>
+    #include <config/wizard.h>
 
-#include <algorithm>
-#include <filesystem>
-#include <fstream>
-#include <iostream>
-#include <string>
+    #include <algorithm>
+    #include <filesystem>
+    #include <fstream>
+    #include <iostream>
+    #include <string>
 
 namespace mldp_pvxs_driver::config {
 
@@ -30,42 +30,64 @@ namespace mldp_pvxs_driver::config {
 static bool probeFileInteractive(const std::string& path)
 {
     std::ifstream f{path};
-    if (!f) { std::cerr << "ERROR  cannot open '" << path << "'\n"; return false; }
+    if (!f)
+    {
+        std::cerr << "ERROR  cannot open '" << path << "'\n";
+        return false;
+    }
     f.seekg(0, std::ios::end);
-    if (f.tellg() == 0) { std::cerr << "ERROR  '" << path << "' is empty\n"; return false; }
+    if (f.tellg() == 0)
+    {
+        std::cerr << "ERROR  '" << path << "' is empty\n";
+        return false;
+    }
     return true;
 }
 
-static bool writeConfigInteractive(const std::string& path, const WizardState& st,
-                                   bool dry_run, bool no_backup)
+static bool writeConfigInteractive(const std::string& path, const WizardState& st, bool dry_run, bool no_backup)
 {
     const std::string yaml = wizard_internal::generateYaml(st);
-    if (dry_run) { std::cout << yaml; return true; }
-    if (!no_backup) {
-        try {
+    if (dry_run)
+    {
+        std::cout << yaml;
+        return true;
+    }
+    if (!no_backup)
+    {
+        try
+        {
             std::filesystem::copy_file(path, path + ".bak",
-                std::filesystem::copy_options::overwrite_existing);
-        } catch (const std::exception& e) {
+                                       std::filesystem::copy_options::overwrite_existing);
+        }
+        catch (const std::exception& e)
+        {
             std::cerr << "WARN   backup failed: " << e.what() << "\n";
         }
     }
     std::ofstream out{path};
-    if (!out) { std::cerr << "ERROR  cannot write '" << path << "'\n"; return false; }
+    if (!out)
+    {
+        std::cerr << "ERROR  cannot write '" << path << "'\n";
+        return false;
+    }
     out << yaml;
     return true;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-int runAddInteractive(const std::string& path, const std::string& kind,
-                      bool no_backup, bool dry_run)
+int runAddInteractive(const std::string& path, const std::string& kind, bool no_backup, bool dry_run)
 {
-    if (!probeFileInteractive(path)) return 1;
+    if (!probeFileInteractive(path))
+        return 1;
 
     WizardState st;
-    try {
+    try
+    {
         wizard_internal::loadFromConfig(path, st);
-    } catch (const std::exception& e) {
+    }
+    catch (const std::exception& e)
+    {
         std::cerr << "Error loading config: " << e.what() << "\n";
         return 1;
     }

@@ -8,8 +8,8 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
-#include <writer/hdf5/HDF5WriterPerSource.h>
 #include "HDF5WriterDetail.h"
+#include <writer/hdf5/HDF5WriterPerSource.h>
 
 #include <util/log/Logger.h>
 
@@ -22,13 +22,13 @@ using namespace mldp_pvxs_driver::writer::hdf5_detail;
 // ---------------------------------------------------------------------------
 
 HDF5WriterPerSource::HDF5WriterPerSource(HDF5WriterConfig                  config,
-                                          std::shared_ptr<metrics::Metrics> metrics)
+                                         std::shared_ptr<metrics::Metrics> metrics)
     : HDF5WriterBase(std::move(config), std::move(metrics))
 {
 }
 
 HDF5WriterPerSource::HDF5WriterPerSource(const config::Config&             node,
-                                          std::shared_ptr<metrics::Metrics> metrics)
+                                         std::shared_ptr<metrics::Metrics> metrics)
     : HDF5WriterPerSource(HDF5WriterConfig::parse(node), std::move(metrics))
 {
 }
@@ -70,8 +70,8 @@ void HDF5WriterPerSource::doFlushAll() noexcept
 // ---------------------------------------------------------------------------
 
 void HDF5WriterPerSource::writeFrameImpl(const std::string&          source,
-                                          const util::bus::DataBatch& frame,
-                                          uint64_t                    batchSeq)
+                                         const util::bus::DataBatch& frame,
+                                         uint64_t                    batchSeq)
 {
     auto ev = pool_->acquire(source);
 
@@ -101,9 +101,9 @@ void HDF5WriterPerSource::writeFrameImpl(const std::string&          source,
 // ---------------------------------------------------------------------------
 
 void HDF5WriterPerSource::flushTabularBufferImpl(const std::string& source,
-                                                  TabularBuffer&     buf)
+                                                 TabularBuffer&     buf)
 {
-    auto ev = pool_->acquire(source);
+    auto                        ev = pool_->acquire(source);
     std::lock_guard<std::mutex> fileLk(ev->fileMutex);
     flushTabularBuffer(source, buf, ev->file);
 }
@@ -113,9 +113,9 @@ void HDF5WriterPerSource::flushTabularBufferImpl(const std::string& source,
 // ---------------------------------------------------------------------------
 
 void HDF5WriterPerSource::appendFrame(const std::string&          sourceName,
-                                       const util::bus::DataBatch& batch,
-                                       H5::H5File&                 file,
-                                       uint64_t                    batchSeq)
+                                      const util::bus::DataBatch& batch,
+                                      H5::H5File&                 file,
+                                      uint64_t                    batchSeq)
 {
     if (batch.timestamps.empty())
     {
@@ -130,8 +130,7 @@ void HDF5WriterPerSource::appendFrame(const std::string&          sourceName,
         if (it != lastTsBatchSeq_.end() && it->second == batchSeq)
         {
             tracef(*logger_,
-                   "HDF5Writer appendFrame source={} batchSeq={} — "
-                   "timestamps already written (split-column frame), skipping",
+                   "HDF5Writer appendFrame source={} batchSeq={} — " "timestamps already written (split-column frame), skipping",
                    sourceName, batchSeq);
         }
         else
@@ -151,11 +150,14 @@ void HDF5WriterPerSource::appendFrame(const std::string&          sourceName,
     }
 
     // 2. Scalar and array columns via writeColumnsImpl
-    writeColumnsImpl(batch,
-        [&](const std::string& n, const H5::DataType& t)
-            { return ensureDataset(file, n, t); },
-        [&](const std::string& n, const H5::DataType& t, hsize_t l)
-            { return ensureDataset2D(file, n, t, l); },
-        [](uint64_t) {} // byte accounting done by pool_->recordWrite in writeFrameImpl
+    writeColumnsImpl(batch, [&](const std::string& n, const H5::DataType& t)
+                     {
+                         return ensureDataset(file, n, t);
+                     },
+                     [&](const std::string& n, const H5::DataType& t, hsize_t l)
+                     {
+                         return ensureDataset2D(file, n, t, l);
+                     },
+                     [](uint64_t) {} // byte accounting done by pool_->recordWrite in writeFrameImpl
     );
 }

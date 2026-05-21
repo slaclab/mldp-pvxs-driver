@@ -67,10 +67,10 @@ public:
     ~MLDPAnnotationQueryClient() override = default;
 
     // Non-copyable, movable
-    MLDPAnnotationQueryClient(const MLDPAnnotationQueryClient&)            = delete;
+    MLDPAnnotationQueryClient(const MLDPAnnotationQueryClient&) = delete;
     MLDPAnnotationQueryClient& operator=(const MLDPAnnotationQueryClient&) = delete;
-    MLDPAnnotationQueryClient(MLDPAnnotationQueryClient&&)                 = default;
-    MLDPAnnotationQueryClient& operator=(MLDPAnnotationQueryClient&&)      = default;
+    MLDPAnnotationQueryClient(MLDPAnnotationQueryClient&&) = default;
+    MLDPAnnotationQueryClient& operator=(MLDPAnnotationQueryClient&&) = default;
 
     // -----------------------------------------------------------------------
     // PV metadata
@@ -152,8 +152,8 @@ public:
     getActiveConfigurations(const dp::service::common::Timestamp& at);
 
 private:
-    std::shared_ptr<util::log::ILogger>                                   logger_;
-    util::pool::MLDPGrpcAnnotationPool::MLDPGrpcAnnotationPoolShrdPtr     pool_;
+    std::shared_ptr<util::log::ILogger>                               logger_;
+    util::pool::MLDPGrpcAnnotationPool::MLDPGrpcAnnotationPoolShrdPtr pool_;
 };
 
 } // namespace mldp_pvxs_driver::query::impl::mldp

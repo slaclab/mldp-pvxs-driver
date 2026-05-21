@@ -15,7 +15,6 @@
 #include <util/log/Logger.h>
 
 #include <chrono>
-#include <stdexcept>
 
 using namespace mldp_pvxs_driver::writer;
 using namespace mldp_pvxs_driver::util::log;
@@ -62,7 +61,10 @@ void MLDPAnnotationWriter::start()
     workers_.reserve(static_cast<std::size_t>(count));
     for (int i = 0; i < count; ++i)
     {
-        workers_.emplace_back([this] { workerLoop(); });
+        workers_.emplace_back([this]
+                              {
+                                  workerLoop();
+                              });
     }
 
     infof(*logger_, "MLDPAnnotationWriter '{}' started ({} workers)",
@@ -116,7 +118,10 @@ void MLDPAnnotationWriter::workerLoop()
     while (true)
     {
         std::unique_lock<std::mutex> lock(queue_mutex_);
-        queue_cv_.wait(lock, [this] { return stop_.load() || !work_queue_.empty(); });
+        queue_cv_.wait(lock, [this]
+                       {
+                           return stop_.load() || !work_queue_.empty();
+                       });
 
         if (work_queue_.empty())
         {
@@ -136,8 +141,8 @@ void MLDPAnnotationWriter::workerLoop()
 // saveSourceMetadata
 // ---------------------------------------------------------------------------
 
-void MLDPAnnotationWriter::saveSourceMetadata(const std::string&            sourceName,
-                                               const SourceMetadataEntry&    entry)
+void MLDPAnnotationWriter::saveSourceMetadata(const std::string&         sourceName,
+                                              const SourceMetadataEntry& entry)
 {
     try
     {
@@ -180,7 +185,7 @@ void MLDPAnnotationWriter::saveSourceMetadata(const std::string&            sour
         }
 
         dp::service::annotation::SavePvMetadataResponse resp;
-        grpc::ClientContext                              ctx;
+        grpc::ClientContext                             ctx;
         ctx.set_deadline(std::chrono::system_clock::now() +
                          std::chrono::seconds(config_.deadlineSeconds));
 

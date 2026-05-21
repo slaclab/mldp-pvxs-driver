@@ -10,20 +10,28 @@
 
 #pragma once
 #include <query/IQueryable.h>
-#include <memory>
 
 namespace mldp_pvxs_driver::query {
 
-class QueryableHolder {
+class QueryableHolder
+{
 public:
     QueryableHolder() = default;
-    explicit QueryableHolder(IQueryableUPtr impl) : impl_(std::move(impl)) {}
 
-    bool valid() const { return impl_ != nullptr; }
+    explicit QueryableHolder(IQueryableUPtr impl)
+        : impl_(std::move(impl)) {}
+
+    bool valid() const
+    {
+        return impl_ != nullptr;
+    }
 
     // Returns T* if stored impl is-a T, else nullptr. Never throws.
     template <typename T>
-    T* as() const { return dynamic_cast<T*>(impl_.get()); }
+    T* as() const
+    {
+        return dynamic_cast<T*>(impl_.get());
+    }
 
 private:
     IQueryableUPtr impl_;

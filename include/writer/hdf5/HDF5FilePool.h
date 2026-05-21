@@ -141,9 +141,9 @@ public:
     static std::string safeName(const std::string& source);
 
 private:
-    const HDF5WriterConfig                                      config_;   ///< Immutable pool configuration.
-    mutable std::mutex                                          mutex_;    ///< Guards entries_ map (lookup, insert, rotate).
-    std::unordered_map<std::string, std::shared_ptr<FileEntry>> entries_;  ///< sourceName → open FileEntry.
+    const HDF5WriterConfig                                      config_;           ///< Immutable pool configuration.
+    mutable std::mutex                                          mutex_;            ///< Guards entries_ map (lookup, insert, rotate).
+    std::unordered_map<std::string, std::shared_ptr<FileEntry>> entries_;          ///< sourceName → open FileEntry.
     metrics::HDF5WriterMetrics*                                 metrics_{nullptr}; ///< Non-owning; may be null.
 
     /**

@@ -55,7 +55,7 @@ void EpicsMLDPConversion::convertPVToDataBatch(const pvxs::Value& pvValue,
     const auto appendScalarColumn = [&](ColumnValues values)
     {
         DataColumn col;
-        col.name   = columnName;
+        col.name = columnName;
         col.values = std::move(values);
         batch->columns.push_back(std::move(col));
     };
@@ -65,7 +65,7 @@ void EpicsMLDPConversion::convertPVToDataBatch(const pvxs::Value& pvValue,
     const auto appendArrayColumn = [&](ColumnValues values, uint32_t size)
     {
         DataColumn col;
-        col.name   = columnName;
+        col.name = columnName;
         col.values = std::move(values);
         batch->columns.push_back(std::move(col));
         batch->array_dims[columnName] = ArrayDims{{size}};
@@ -115,9 +115,9 @@ void EpicsMLDPConversion::convertPVToDataBatch(const pvxs::Value& pvValue,
     // inner-vector. Dims are recorded in array_dims.
     case pvxs::TypeCode::BoolA:
         {
-            const auto arr = pvValue.as<pvxs::shared_array<const bool>>();
+            const auto        arr = pvValue.as<pvxs::shared_array<const bool>>();
             std::vector<bool> inner(arr.begin(), arr.end());
-            const auto sz = static_cast<uint32_t>(inner.size());
+            const auto        sz = static_cast<uint32_t>(inner.size());
             appendArrayColumn(std::vector<std::vector<bool>>{std::move(inner)}, sz);
             return;
         }
@@ -126,18 +126,18 @@ void EpicsMLDPConversion::convertPVToDataBatch(const pvxs::Value& pvValue,
     case pvxs::TypeCode::Int16A:
     case pvxs::TypeCode::Int32A:
         {
-            const auto arr = pvValue.as<pvxs::shared_array<const int32_t>>();
+            const auto           arr = pvValue.as<pvxs::shared_array<const int32_t>>();
             std::vector<int32_t> inner(arr.begin(), arr.end());
-            const auto sz = static_cast<uint32_t>(inner.size());
+            const auto           sz = static_cast<uint32_t>(inner.size());
             appendArrayColumn(std::vector<std::vector<int32_t>>{std::move(inner)}, sz);
             return;
         }
 
     case pvxs::TypeCode::Int64A:
         {
-            const auto arr = pvValue.as<pvxs::shared_array<const int64_t>>();
+            const auto           arr = pvValue.as<pvxs::shared_array<const int64_t>>();
             std::vector<int64_t> inner(arr.begin(), arr.end());
-            const auto sz = static_cast<uint32_t>(inner.size());
+            const auto           sz = static_cast<uint32_t>(inner.size());
             appendArrayColumn(std::vector<std::vector<int64_t>>{std::move(inner)}, sz);
             return;
         }
@@ -146,7 +146,7 @@ void EpicsMLDPConversion::convertPVToDataBatch(const pvxs::Value& pvValue,
     case pvxs::TypeCode::UInt16A:
     case pvxs::TypeCode::UInt32A:
         {
-            const auto arr = pvValue.as<pvxs::shared_array<const uint32_t>>();
+            const auto           arr = pvValue.as<pvxs::shared_array<const uint32_t>>();
             std::vector<int32_t> inner;
             inner.reserve(arr.size());
             for (const auto& v : arr)
@@ -158,7 +158,7 @@ void EpicsMLDPConversion::convertPVToDataBatch(const pvxs::Value& pvValue,
 
     case pvxs::TypeCode::UInt64A:
         {
-            const auto arr = pvValue.as<pvxs::shared_array<const uint64_t>>();
+            const auto           arr = pvValue.as<pvxs::shared_array<const uint64_t>>();
             std::vector<int64_t> inner;
             inner.reserve(arr.size());
             for (const auto& v : arr)
@@ -170,18 +170,18 @@ void EpicsMLDPConversion::convertPVToDataBatch(const pvxs::Value& pvValue,
 
     case pvxs::TypeCode::Float32A:
         {
-            const auto arr = pvValue.as<pvxs::shared_array<const float>>();
+            const auto         arr = pvValue.as<pvxs::shared_array<const float>>();
             std::vector<float> inner(arr.begin(), arr.end());
-            const auto sz = static_cast<uint32_t>(inner.size());
+            const auto         sz = static_cast<uint32_t>(inner.size());
             appendArrayColumn(std::vector<std::vector<float>>{std::move(inner)}, sz);
             return;
         }
 
     case pvxs::TypeCode::Float64A:
         {
-            const auto arr = pvValue.as<pvxs::shared_array<const double>>();
+            const auto          arr = pvValue.as<pvxs::shared_array<const double>>();
             std::vector<double> inner(arr.begin(), arr.end());
-            const auto sz = static_cast<uint32_t>(inner.size());
+            const auto          sz = static_cast<uint32_t>(inner.size());
             appendArrayColumn(std::vector<std::vector<double>>{std::move(inner)}, sz);
             return;
         }
@@ -189,11 +189,11 @@ void EpicsMLDPConversion::convertPVToDataBatch(const pvxs::Value& pvValue,
     case pvxs::TypeCode::StringA:
         {
             // StringA is stored as std::vector<std::string> (index 5) with dims.
-            const auto arr = pvValue.as<pvxs::shared_array<const std::string>>();
+            const auto               arr = pvValue.as<pvxs::shared_array<const std::string>>();
             std::vector<std::string> vals(arr.begin(), arr.end());
-            const auto sz = static_cast<uint32_t>(vals.size());
-            DataColumn col;
-            col.name   = columnName;
+            const auto               sz = static_cast<uint32_t>(vals.size());
+            DataColumn               col;
+            col.name = columnName;
             col.values = std::move(vals);
             batch->columns.push_back(std::move(col));
             batch->array_dims[columnName] = ArrayDims{{sz}};

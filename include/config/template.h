@@ -13,7 +13,8 @@
 
 namespace mldp_pvxs_driver::config {
 
-enum class TemplateKind {
+enum class TemplateKind
+{
     MldpOnly,      // minimal: one mldp writer + one epics-pvxs reader
     MldpAndHdf5,   // full: mldp + hdf5 writers + pvxs + base readers
     EpicsArchiver, // archiver: historical + periodic_tail modes

@@ -33,7 +33,7 @@ ParsedSample makeBaseSample(const EPICS::PayloadInfo& header,
 {
     ParsedSample s;
     s.epoch_seconds = DateTimeUtils::unixEpochSecondsFromYearAndSecondsIntoYear(header.year(), secondsintoyear);
-    s.nanoseconds   = nano;
+    s.nanoseconds = nano;
     s.batch.timestamps.push_back(TimestampEntry{s.epoch_seconds, static_cast<uint64_t>(s.nanoseconds)});
     return s;
 }
@@ -87,11 +87,9 @@ ParsedSample parseBlob(const EPICS::PayloadInfo& header,
 
     const std::string& raw = msg.val();
     DataColumn         col;
-    col.name   = header.pvname();
-    col.values = std::vector<std::vector<uint8_t>>{{
-        reinterpret_cast<const uint8_t*>(raw.data()),
-        reinterpret_cast<const uint8_t*>(raw.data()) + raw.size()
-    }};
+    col.name = header.pvname();
+    col.values = std::vector<std::vector<uint8_t>>{{reinterpret_cast<const uint8_t*>(raw.data()),
+                                                    reinterpret_cast<const uint8_t*>(raw.data()) + raw.size()}};
     s.batch.columns.push_back(std::move(col));
     return s;
 }
@@ -105,7 +103,7 @@ ParsedSample ArchiverPbHttpConversion::parseSample(const EPICS::PayloadInfo& hea
 {
     switch (header.type())
     {
-    // ---- Scalars -----------------------------------------------------------
+        // ---- Scalars -----------------------------------------------------------
 
     case EPICS::SCALAR_STRING:
         return parseScalar<EPICS::ScalarString>(
@@ -113,7 +111,7 @@ ParsedSample ArchiverPbHttpConversion::parseSample(const EPICS::PayloadInfo& hea
             [](DataBatch& batch, const std::string& name, const std::string& v)
             {
                 DataColumn col;
-                col.name   = name;
+                col.name = name;
                 col.values = std::vector<std::string>{v};
                 batch.columns.push_back(std::move(col));
             });
@@ -124,7 +122,7 @@ ParsedSample ArchiverPbHttpConversion::parseSample(const EPICS::PayloadInfo& hea
             [](DataBatch& batch, const std::string& name, int32_t v)
             {
                 DataColumn col;
-                col.name   = name;
+                col.name = name;
                 col.values = std::vector<int32_t>{v};
                 batch.columns.push_back(std::move(col));
             });
@@ -135,7 +133,7 @@ ParsedSample ArchiverPbHttpConversion::parseSample(const EPICS::PayloadInfo& hea
             [](DataBatch& batch, const std::string& name, float v)
             {
                 DataColumn col;
-                col.name   = name;
+                col.name = name;
                 col.values = std::vector<float>{v};
                 batch.columns.push_back(std::move(col));
             });
@@ -146,8 +144,8 @@ ParsedSample ArchiverPbHttpConversion::parseSample(const EPICS::PayloadInfo& hea
             [](DataBatch& batch, const std::string& name, int32_t v)
             {
                 EnumDataColumn col;
-                col.name    = name;
-                col.values  = std::vector<int32_t>{v};
+                col.name = name;
+                col.values = std::vector<int32_t>{v};
                 col.enum_id = "epics:enum";
                 batch.enum_columns.push_back(std::move(col));
             });
@@ -161,7 +159,7 @@ ParsedSample ArchiverPbHttpConversion::parseSample(const EPICS::PayloadInfo& hea
             [](DataBatch& batch, const std::string& name, int32_t v)
             {
                 DataColumn col;
-                col.name   = name;
+                col.name = name;
                 col.values = std::vector<int32_t>{v};
                 batch.columns.push_back(std::move(col));
             });
@@ -172,12 +170,12 @@ ParsedSample ArchiverPbHttpConversion::parseSample(const EPICS::PayloadInfo& hea
             [](DataBatch& batch, const std::string& name, double v)
             {
                 DataColumn col;
-                col.name   = name;
+                col.name = name;
                 col.values = std::vector<double>{v};
                 batch.columns.push_back(std::move(col));
             });
 
-    // ---- Waveforms ---------------------------------------------------------
+        // ---- Waveforms ---------------------------------------------------------
 
     case EPICS::WAVEFORM_STRING:
         return parseWaveform<EPICS::VectorString>(
@@ -185,7 +183,7 @@ ParsedSample ArchiverPbHttpConversion::parseSample(const EPICS::PayloadInfo& hea
             [](DataBatch& batch, const std::string& name, const auto& vals)
             {
                 DataColumn col;
-                col.name   = name;
+                col.name = name;
                 col.values = std::vector<std::string>(vals.begin(), vals.end());
                 batch.columns.push_back(std::move(col));
             });
@@ -196,7 +194,7 @@ ParsedSample ArchiverPbHttpConversion::parseSample(const EPICS::PayloadInfo& hea
             [](DataBatch& batch, const std::string& name, const auto& vals)
             {
                 DataColumn col;
-                col.name   = name;
+                col.name = name;
                 col.values = std::vector<std::vector<int32_t>>{
                     std::vector<int32_t>(vals.begin(), vals.end())};
                 const uint32_t sz = static_cast<uint32_t>(vals.size());
@@ -210,7 +208,7 @@ ParsedSample ArchiverPbHttpConversion::parseSample(const EPICS::PayloadInfo& hea
             [](DataBatch& batch, const std::string& name, const auto& vals)
             {
                 DataColumn col;
-                col.name   = name;
+                col.name = name;
                 col.values = std::vector<std::vector<float>>{
                     std::vector<float>(vals.begin(), vals.end())};
                 const uint32_t sz = static_cast<uint32_t>(vals.size());
@@ -224,8 +222,8 @@ ParsedSample ArchiverPbHttpConversion::parseSample(const EPICS::PayloadInfo& hea
             [](DataBatch& batch, const std::string& name, const auto& vals)
             {
                 EnumDataColumn col;
-                col.name    = name;
-                col.values  = std::vector<int32_t>(vals.begin(), vals.end());
+                col.name = name;
+                col.values = std::vector<int32_t>(vals.begin(), vals.end());
                 col.enum_id = "epics:enum";
                 batch.enum_columns.push_back(std::move(col));
             });
@@ -239,7 +237,7 @@ ParsedSample ArchiverPbHttpConversion::parseSample(const EPICS::PayloadInfo& hea
             [](DataBatch& batch, const std::string& name, const auto& vals)
             {
                 DataColumn col;
-                col.name   = name;
+                col.name = name;
                 col.values = std::vector<std::vector<int32_t>>{
                     std::vector<int32_t>(vals.begin(), vals.end())};
                 const uint32_t sz = static_cast<uint32_t>(vals.size());
@@ -253,7 +251,7 @@ ParsedSample ArchiverPbHttpConversion::parseSample(const EPICS::PayloadInfo& hea
             [](DataBatch& batch, const std::string& name, const auto& vals)
             {
                 DataColumn col;
-                col.name   = name;
+                col.name = name;
                 col.values = std::vector<std::vector<double>>{
                     std::vector<double>(vals.begin(), vals.end())};
                 const uint32_t sz = static_cast<uint32_t>(vals.size());

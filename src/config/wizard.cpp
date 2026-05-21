@@ -8,15 +8,12 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
-#include <config/wizard.h>
 #include "wizard_internal.h"
 #include <config/Config.h>
+#include <config/wizard.h>
 
-#include <algorithm>
-#include <fstream>
 #include <iostream>
 #include <regex>
-#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -37,19 +34,28 @@ bool isValidIso8601(const std::string& s)
 
 bool isPositiveInt(const std::string& s)
 {
-    if (s.empty()) return false;
-    for (char c : s) if (!std::isdigit(static_cast<unsigned char>(c))) return false;
+    if (s.empty())
+        return false;
+    for (char c : s)
+        if (!std::isdigit(static_cast<unsigned char>(c)))
+            return false;
     return std::stoi(s) > 0;
 }
 
 bool isNonNegInt(const std::string& s)
 {
-    if (s.empty()) return false;
-    for (char c : s) if (!std::isdigit(static_cast<unsigned char>(c))) return false;
+    if (s.empty())
+        return false;
+    for (char c : s)
+        if (!std::isdigit(static_cast<unsigned char>(c)))
+            return false;
     return true;
 }
 
-static std::string ind(int n) { return std::string(static_cast<std::size_t>(n * 2), ' '); }
+static std::string ind(int n)
+{
+    return std::string(static_cast<std::size_t>(n * 2), ' ');
+}
 
 std::string generateYaml(const WizardState& st)
 {
@@ -61,9 +67,11 @@ std::string generateYaml(const WizardState& st)
 
     // writers
     o << "writer:\n";
-    if (!st.mldp_writers.empty()) {
+    if (!st.mldp_writers.empty())
+    {
         o << ind(1) << "mldp:\n";
-        for (const auto& w : st.mldp_writers) {
+        for (const auto& w : st.mldp_writers)
+        {
             o << ind(2) << "- name: " << w.name << "\n";
             o << ind(3) << "thread-pool: " << w.thread_pool << "\n";
             o << ind(3) << "stream-max-bytes: " << w.stream_max_bytes << "\n";
@@ -77,11 +85,16 @@ std::string generateYaml(const WizardState& st)
                 o << ind(4) << "query-url: " << w.query_url << "\n";
             o << ind(4) << "min-conn: " << w.min_conn << "\n";
             o << ind(4) << "max-conn: " << w.max_conn << "\n";
-            if (w.creds_type == "none") {
+            if (w.creds_type == "none")
+            {
                 o << ind(4) << "credentials: none\n";
-            } else if (w.creds_type == "ssl") {
+            }
+            else if (w.creds_type == "ssl")
+            {
                 o << ind(4) << "credentials: ssl\n";
-            } else {
+            }
+            else
+            {
                 // custom-tls
                 o << ind(4) << "credentials:\n";
                 if (!w.pem_cert_chain.empty())
@@ -93,18 +106,25 @@ std::string generateYaml(const WizardState& st)
             }
         }
     }
-    if (!st.hdf5_writers.empty()) {
+    if (!st.hdf5_writers.empty())
+    {
         // group by is_merge
-        bool any_hdf5       = false;
+        bool any_hdf5 = false;
         bool any_hdf5_merge = false;
-        for (const auto& w : st.hdf5_writers) {
-            if (w.is_merge) any_hdf5_merge = true;
-            else            any_hdf5       = true;
+        for (const auto& w : st.hdf5_writers)
+        {
+            if (w.is_merge)
+                any_hdf5_merge = true;
+            else
+                any_hdf5 = true;
         }
-        auto emitHdf5 = [&](bool merge) {
+        auto emitHdf5 = [&](bool merge)
+        {
             o << ind(1) << (merge ? "hdf5-merge" : "hdf5") << ":\n";
-            for (const auto& w : st.hdf5_writers) {
-                if (w.is_merge != merge) continue;
+            for (const auto& w : st.hdf5_writers)
+            {
+                if (w.is_merge != merge)
+                    continue;
                 o << ind(2) << "- name: " << w.name << "\n";
                 o << ind(3) << "base-path: " << w.base_path << "\n";
                 o << ind(3) << "max-file-age-s: " << w.max_file_age_s << "\n";
@@ -113,32 +133,43 @@ std::string generateYaml(const WizardState& st)
                 o << ind(3) << "compression-level: " << w.compression_level << "\n";
             }
         };
-        if (any_hdf5)       emitHdf5(false);
-        if (any_hdf5_merge) emitHdf5(true);
+        if (any_hdf5)
+            emitHdf5(false);
+        if (any_hdf5_merge)
+            emitHdf5(true);
     }
     o << "\n";
 
     // readers
-    if (!st.readers.empty()) {
+    if (!st.readers.empty())
+    {
         o << "reader:\n";
-        for (const auto& r : st.readers) {
+        for (const auto& r : st.readers)
+        {
             o << ind(1) << "- " << r.reader_type << ":\n";
             o << ind(3) << "- name: " << r.name << "\n";
-            if (r.reader_type == "epics-pvxs" || r.reader_type == "epics-base") {
+            if (r.reader_type == "epics-pvxs" || r.reader_type == "epics-base")
+            {
                 o << ind(4) << "thread-pool: " << r.thread_pool << "\n";
                 o << ind(4) << "column-batch-size: " << r.column_batch_size << "\n";
-                if (r.reader_type == "epics-base") {
+                if (r.reader_type == "epics-base")
+                {
                     o << ind(4) << "monitor-poll-threads: " << r.monitor_poll_threads << "\n";
                     o << ind(4) << "monitor-poll-interval-ms: " << r.monitor_poll_interval_ms << "\n";
                 }
-            } else if (r.reader_type == "epics-archiver") {
+            }
+            else if (r.reader_type == "epics-archiver")
+            {
                 o << ind(4) << "hostname: " << r.hostname << "\n";
                 o << ind(4) << "mode: " << r.mode << "\n";
-                if (r.mode == "historical_once") {
+                if (r.mode == "historical_once")
+                {
                     o << ind(4) << "start-date: \"" << r.start_date << "\"\n";
                     if (!r.end_date.empty())
                         o << ind(4) << "end-date: \"" << r.end_date << "\"\n";
-                } else {
+                }
+                else
+                {
                     o << ind(4) << "poll-interval-sec: " << r.poll_interval_sec << "\n";
                     if (!r.lookback_sec.empty())
                         o << ind(4) << "lookback-sec: " << r.lookback_sec << "\n";
@@ -149,27 +180,36 @@ std::string generateYaml(const WizardState& st)
                 o << ind(4) << "tls-verify-peer: " << r.tls_verify_peer << "\n";
                 o << ind(4) << "tls-verify-host: " << r.tls_verify_host << "\n";
             }
-            if (!r.static_metadata.empty()) {
+            if (!r.static_metadata.empty())
+            {
                 o << ind(4) << "static-metadata:\n";
                 for (const auto& [k, v] : r.static_metadata)
                     o << ind(5) << k << ": " << v << "\n";
             }
-            if (!r.pvs.empty()) {
+            if (!r.pvs.empty())
+            {
                 o << ind(4) << "pvs:\n";
-                for (const auto& pv : r.pvs) {
-                    if (pv.option_type == "none" || pv.option_type.empty()) {
+                for (const auto& pv : r.pvs)
+                {
+                    if (pv.option_type == "none" || pv.option_type.empty())
+                    {
                         o << ind(5) << "- name: " << pv.name << "\n";
-                    } else if (pv.option_type == "scalar") {
+                    }
+                    else if (pv.option_type == "scalar")
+                    {
                         o << ind(5) << "- name: " << pv.name << "\n";
                         o << ind(6) << "option: \"" << pv.option_value << "\"\n";
-                    } else if (pv.option_type == "slac-bsas-table") {
+                    }
+                    else if (pv.option_type == "slac-bsas-table")
+                    {
                         o << ind(5) << "- name: " << pv.name << "\n";
                         o << ind(6) << "option:\n";
                         o << ind(7) << "type: slac-bsas-table\n";
                         o << ind(7) << "tsSeconds: " << pv.ts_seconds << "\n";
                         o << ind(7) << "tsNanos: " << pv.ts_nanos << "\n";
                     }
-                    if (!pv.metadata.empty()) {
+                    if (!pv.metadata.empty())
+                    {
                         o << ind(6) << "metadata:\n";
                         for (const auto& [k, v] : pv.metadata)
                             o << ind(7) << k << ": " << v << "\n";
@@ -181,16 +221,19 @@ std::string generateYaml(const WizardState& st)
     }
 
     // metrics
-    if (st.metrics_enabled) {
+    if (st.metrics_enabled)
+    {
         o << "metrics:\n";
         o << ind(1) << "endpoint: \"" << st.metrics_endpoint << "\"\n";
         o << ind(1) << "scan-interval-seconds: " << st.metrics_interval << "\n\n";
     }
 
     // queryable
-    if (st.queryable.mldp.enabled || st.queryable.mldp_annotation.enabled) {
+    if (st.queryable.mldp.enabled || st.queryable.mldp_annotation.enabled)
+    {
         o << "queryable:\n";
-        if (st.queryable.mldp.enabled) {
+        if (st.queryable.mldp.enabled)
+        {
             o << ind(1) << "mldp:\n";
             o << ind(2) << "mldp-pool:\n";
             o << ind(3) << "ingestion-url: " << st.queryable.mldp.ingestion_url << "\n";
@@ -199,7 +242,8 @@ std::string generateYaml(const WizardState& st)
             o << ind(3) << "min-conn: " << st.queryable.mldp.min_conn << "\n";
             o << ind(3) << "max-conn: " << st.queryable.mldp.max_conn << "\n";
         }
-        if (st.queryable.mldp_annotation.enabled) {
+        if (st.queryable.mldp_annotation.enabled)
+        {
             o << ind(1) << "mldp-annotation:\n";
             o << ind(2) << "mldp-annotation-pool:\n";
             o << ind(3) << "annotation-url: " << st.queryable.mldp_annotation.annotation_url << "\n";
@@ -210,21 +254,26 @@ std::string generateYaml(const WizardState& st)
     }
 
     // routing
-    if (!st.routing_all_to_all && !st.routing.empty()) {
+    if (!st.routing_all_to_all && !st.routing.empty())
+    {
         o << "routing:\n";
-        for (const auto& re : st.routing) {
+        for (const auto& re : st.routing)
+        {
             o << ind(1) << re.writer_name << ":\n";
-            if (!re.from_readers.empty()) {
+            if (!re.from_readers.empty())
+            {
                 o << ind(2) << "from:\n";
                 for (const auto& r : re.from_readers)
                     o << ind(3) << "- " << r << "\n";
             }
-            if (!re.include_globs.empty()) {
+            if (!re.include_globs.empty())
+            {
                 o << ind(2) << "include:\n";
                 for (const auto& g : re.include_globs)
                     o << ind(3) << "- \"" << g << "\"\n";
             }
-            if (!re.exclude_globs.empty()) {
+            if (!re.exclude_globs.empty())
+            {
                 o << ind(2) << "exclude:\n";
                 for (const auto& g : re.exclude_globs)
                     o << ind(3) << "- \"" << g << "\"\n";
@@ -243,91 +292,114 @@ std::string generateYaml(const WizardState& st)
 void loadFromConfig(const std::string& path, WizardState& st)
 {
     Config cfg;
-    try {
+    try
+    {
         cfg = Config::configFromFile(path);
-    } catch (...) {
+    }
+    catch (...)
+    {
         std::cerr << "Warning: could not parse '" << path << "' for amend mode — starting fresh.\n";
         return;
     }
 
     // controller
-    if (cfg.hasChild("controller")) {
+    if (cfg.hasChild("controller"))
+    {
         auto cv = cfg.subConfig("controller");
-        if (!cv.empty()) st.controller_name = cv[0].get("name", "default");
+        if (!cv.empty())
+            st.controller_name = cv[0].get("name", "default");
     }
 
     // metrics
-    if (cfg.hasChild("metrics")) {
+    if (cfg.hasChild("metrics"))
+    {
         auto mv = cfg.subConfig("metrics");
-        if (!mv.empty()) {
+        if (!mv.empty())
+        {
             const auto& m = mv[0];
-            st.metrics_enabled  = true;
+            st.metrics_enabled = true;
             st.metrics_endpoint = m.get("endpoint", "0.0.0.0:9464");
             st.metrics_interval = std::to_string(m.getInt("scan-interval-seconds", 1));
         }
     }
 
     // queryable
-    if (cfg.hasChild("queryable")) {
+    if (cfg.hasChild("queryable"))
+    {
         auto qv = cfg.subConfig("queryable");
-        if (!qv.empty()) {
+        if (!qv.empty())
+        {
             const auto& q = qv[0];
-            if (q.hasChild("mldp")) {
+            if (q.hasChild("mldp"))
+            {
                 auto mv = q.subConfig("mldp");
-                if (!mv.empty() && mv[0].hasChild("mldp-pool")) {
+                if (!mv.empty() && mv[0].hasChild("mldp-pool"))
+                {
                     auto pv = mv[0].subConfig("mldp-pool");
-                    if (!pv.empty()) {
+                    if (!pv.empty())
+                    {
                         const auto& p = pv[0];
-                        st.queryable.mldp.enabled       = true;
+                        st.queryable.mldp.enabled = true;
                         st.queryable.mldp.ingestion_url = p.get("ingestion-url", "");
-                        st.queryable.mldp.query_url     = p.get("query-url", "");
-                        st.queryable.mldp.min_conn      = std::to_string(p.getInt("min-conn", 1));
-                        st.queryable.mldp.max_conn      = std::to_string(p.getInt("max-conn", 2));
+                        st.queryable.mldp.query_url = p.get("query-url", "");
+                        st.queryable.mldp.min_conn = std::to_string(p.getInt("min-conn", 1));
+                        st.queryable.mldp.max_conn = std::to_string(p.getInt("max-conn", 2));
                     }
                 }
             }
-            if (q.hasChild("mldp-annotation")) {
+            if (q.hasChild("mldp-annotation"))
+            {
                 auto mv = q.subConfig("mldp-annotation");
-                if (!mv.empty() && mv[0].hasChild("mldp-annotation-pool")) {
+                if (!mv.empty() && mv[0].hasChild("mldp-annotation-pool"))
+                {
                     auto pv = mv[0].subConfig("mldp-annotation-pool");
-                    if (!pv.empty()) {
+                    if (!pv.empty())
+                    {
                         const auto& p = pv[0];
-                        st.queryable.mldp_annotation.enabled        = true;
+                        st.queryable.mldp_annotation.enabled = true;
                         st.queryable.mldp_annotation.annotation_url = p.get("annotation-url", "");
-                        st.queryable.mldp_annotation.min_conn       = std::to_string(p.getInt("min-conn", 1));
-                        st.queryable.mldp_annotation.max_conn       = std::to_string(p.getInt("max-conn", 2));
+                        st.queryable.mldp_annotation.min_conn = std::to_string(p.getInt("min-conn", 1));
+                        st.queryable.mldp_annotation.max_conn = std::to_string(p.getInt("max-conn", 2));
                     }
                 }
             }
         }
     }
 
-    if (!cfg.hasChild("writer")) return;
+    if (!cfg.hasChild("writer"))
+        return;
     auto writerVec = cfg.subConfig("writer");
-    if (writerVec.empty()) return;
+    if (writerVec.empty())
+        return;
     const Config& writer = writerVec[0];
 
     // mldp writers
-    for (const auto& inst : writer.subConfig("mldp")) {
+    for (const auto& inst : writer.subConfig("mldp"))
+    {
         MldpWriterConfig w;
-        w.name               = inst.get("name", "");
-        w.thread_pool        = std::to_string(inst.getInt("thread-pool", 1));
-        w.stream_max_bytes   = std::to_string(inst.getInt("stream-max-bytes", 2097152));
-        w.stream_max_age_ms  = std::to_string(inst.getInt("stream-max-age-ms", 200));
-        if (inst.hasChild("mldp-pool")) {
+        w.name = inst.get("name", "");
+        w.thread_pool = std::to_string(inst.getInt("thread-pool", 1));
+        w.stream_max_bytes = std::to_string(inst.getInt("stream-max-bytes", 2097152));
+        w.stream_max_age_ms = std::to_string(inst.getInt("stream-max-age-ms", 200));
+        if (inst.hasChild("mldp-pool"))
+        {
             auto pv = inst.subConfig("mldp-pool");
-            if (!pv.empty()) {
+            if (!pv.empty())
+            {
                 const auto& p = pv[0];
                 w.provider_name = p.get("provider-name", "");
                 w.provider_desc = p.get("provider-description", "");
                 w.ingestion_url = p.get("ingestion-url", "");
-                w.query_url     = p.get("query-url", "");
-                w.min_conn      = std::to_string(p.getInt("min-conn", 1));
-                w.max_conn      = std::to_string(p.getInt("max-conn", 4));
+                w.query_url = p.get("query-url", "");
+                w.min_conn = std::to_string(p.getInt("min-conn", 1));
+                w.max_conn = std::to_string(p.getInt("max-conn", 4));
                 std::string cred = p.get("credentials", "ssl");
-                if (cred == "none" || cred == "ssl") {
+                if (cred == "none" || cred == "ssl")
+                {
                     w.creds_type = cred;
-                } else {
+                }
+                else
+                {
                     w.creds_type = "custom-tls";
                 }
             }
@@ -336,14 +408,16 @@ void loadFromConfig(const std::string& path, WizardState& st)
     }
 
     // hdf5 / hdf5-merge writers
-    auto loadHdf5 = [&](const std::string& tag, bool is_merge) {
-        for (const auto& inst : writer.subConfig(tag)) {
+    auto loadHdf5 = [&](const std::string& tag, bool is_merge)
+    {
+        for (const auto& inst : writer.subConfig(tag))
+        {
             Hdf5WriterConfig w;
-            w.is_merge          = is_merge;
-            w.name              = inst.get("name", "");
-            w.base_path         = inst.get("base-path", "");
-            w.max_file_age_s    = std::to_string(inst.getInt("max-file-age-s", 3600));
-            w.max_file_size_mb  = std::to_string(inst.getInt("max-file-size-mb", 512));
+            w.is_merge = is_merge;
+            w.name = inst.get("name", "");
+            w.base_path = inst.get("base-path", "");
+            w.max_file_age_s = std::to_string(inst.getInt("max-file-age-s", 3600));
+            w.max_file_size_mb = std::to_string(inst.getInt("max-file-size-mb", 512));
             w.flush_interval_ms = std::to_string(inst.getInt("flush-interval-ms", 1000));
             w.compression_level = std::to_string(inst.getInt("compression-level", 0));
             st.hdf5_writers.push_back(std::move(w));
@@ -353,43 +427,55 @@ void loadFromConfig(const std::string& path, WizardState& st)
     loadHdf5("hdf5-merge", true);
 
     // readers
-    if (!cfg.hasChild("reader")) return;
-    for (const auto& rentry : cfg.subConfig("reader")) {
+    if (!cfg.hasChild("reader"))
+        return;
+    for (const auto& rentry : cfg.subConfig("reader"))
+    {
         static const std::vector<std::string> rtypes =
             {"epics-pvxs", "epics-base", "epics-archiver"};
-        for (const auto& rtype : rtypes) {
-            if (!rentry.hasChild(rtype)) continue;
-            for (const auto& inst : rentry.subConfig(rtype)) {
+        for (const auto& rtype : rtypes)
+        {
+            if (!rentry.hasChild(rtype))
+                continue;
+            for (const auto& inst : rentry.subConfig(rtype))
+            {
                 EpicsReaderConfig r;
-                r.reader_type        = rtype;
-                r.name               = inst.get("name", "");
-                r.thread_pool        = std::to_string(inst.getInt("thread-pool", 2));
-                r.column_batch_size  = std::to_string(inst.getInt("column-batch-size", 50));
-                if (rtype == "epics-base") {
-                    r.monitor_poll_threads     = std::to_string(inst.getInt("monitor-poll-threads", 2));
+                r.reader_type = rtype;
+                r.name = inst.get("name", "");
+                r.thread_pool = std::to_string(inst.getInt("thread-pool", 2));
+                r.column_batch_size = std::to_string(inst.getInt("column-batch-size", 50));
+                if (rtype == "epics-base")
+                {
+                    r.monitor_poll_threads = std::to_string(inst.getInt("monitor-poll-threads", 2));
                     r.monitor_poll_interval_ms = std::to_string(inst.getInt("monitor-poll-interval-ms", 5));
                 }
-                if (rtype == "epics-archiver") {
-                    r.hostname            = inst.get("hostname", "");
-                    r.mode                = inst.get("mode", "historical_once");
-                    r.start_date          = inst.get("start-date", "");
-                    r.end_date            = inst.get("end-date", "");
-                    r.poll_interval_sec   = std::to_string(inst.getInt("poll-interval-sec", 0));
-                    r.lookback_sec        = std::to_string(inst.getInt("lookback-sec", 0));
+                if (rtype == "epics-archiver")
+                {
+                    r.hostname = inst.get("hostname", "");
+                    r.mode = inst.get("mode", "historical_once");
+                    r.start_date = inst.get("start-date", "");
+                    r.end_date = inst.get("end-date", "");
+                    r.poll_interval_sec = std::to_string(inst.getInt("poll-interval-sec", 0));
+                    r.lookback_sec = std::to_string(inst.getInt("lookback-sec", 0));
                     r.connect_timeout_sec = std::to_string(inst.getInt("connect-timeout-sec", 30));
-                    r.total_timeout_sec   = std::to_string(inst.getInt("total-timeout-sec", 300));
-                    r.batch_duration_sec  = std::to_string(inst.getInt("batch-duration-sec", 1));
-                    r.tls_verify_peer     = inst.getBool("tls-verify-peer", true) ? "true" : "false";
-                    r.tls_verify_host     = inst.getBool("tls-verify-host", true) ? "true" : "false";
+                    r.total_timeout_sec = std::to_string(inst.getInt("total-timeout-sec", 300));
+                    r.batch_duration_sec = std::to_string(inst.getInt("batch-duration-sec", 1));
+                    r.tls_verify_peer = inst.getBool("tls-verify-peer", true) ? "true" : "false";
+                    r.tls_verify_host = inst.getBool("tls-verify-host", true) ? "true" : "false";
                 }
                 // reader-level static-metadata
-                if (inst.hasChild("static-metadata")) {
+                if (inst.hasChild("static-metadata"))
+                {
                     auto mv = inst.subConfig("static-metadata");
-                    if (!mv.empty()) {
+                    if (!mv.empty())
+                    {
                         const auto& raw = mv[0].raw();
-                        if (!raw.invalid() && raw.is_map()) {
-                            for (const auto child : raw.children()) {
-                                if (child.has_key() && child.has_val()) {
+                        if (!raw.invalid() && raw.is_map())
+                        {
+                            for (const auto child : raw.children())
+                            {
+                                if (child.has_key() && child.has_val())
+                                {
                                     std::string k{child.key().str, child.key().len};
                                     std::string v;
                                     child >> v;
@@ -399,31 +485,42 @@ void loadFromConfig(const std::string& path, WizardState& st)
                         }
                     }
                 }
-                if (inst.hasChild("pvs")) {
-                    for (const auto& pvNode : inst.subConfig("pvs")) {
+                if (inst.hasChild("pvs"))
+                {
+                    for (const auto& pvNode : inst.subConfig("pvs"))
+                    {
                         PvEntry pv;
-                        pv.name        = pvNode.get("name", "");
+                        pv.name = pvNode.get("name", "");
                         pv.option_type = "none";
-                        if (pvNode.hasChild("option")) {
+                        if (pvNode.hasChild("option"))
+                        {
                             auto optVec = pvNode.subConfig("option");
                             if (!optVec.empty() && optVec[0].raw().is_map() &&
-                                optVec[0].hasChild("type")) {
+                                optVec[0].hasChild("type"))
+                            {
                                 pv.option_type = optVec[0].get("type", "none");
-                                pv.ts_seconds  = optVec[0].get("tsSeconds", "");
-                                pv.ts_nanos    = optVec[0].get("tsNanos", "");
-                            } else {
-                                pv.option_type  = "scalar";
+                                pv.ts_seconds = optVec[0].get("tsSeconds", "");
+                                pv.ts_nanos = optVec[0].get("tsNanos", "");
+                            }
+                            else
+                            {
+                                pv.option_type = "scalar";
                                 pv.option_value = pvNode.get("option", "");
                             }
                         }
                         // per-PV metadata
-                        if (pvNode.hasChild("metadata")) {
+                        if (pvNode.hasChild("metadata"))
+                        {
                             auto mv = pvNode.subConfig("metadata");
-                            if (!mv.empty()) {
+                            if (!mv.empty())
+                            {
                                 const auto& raw = mv[0].raw();
-                                if (!raw.invalid() && raw.is_map()) {
-                                    for (const auto child : raw.children()) {
-                                        if (child.has_key() && child.has_val()) {
+                                if (!raw.invalid() && raw.is_map())
+                                {
+                                    for (const auto child : raw.children())
+                                    {
+                                        if (child.has_key() && child.has_val())
+                                        {
                                             std::string k{child.key().str, child.key().len};
                                             std::string v;
                                             child >> v;
@@ -433,7 +530,8 @@ void loadFromConfig(const std::string& path, WizardState& st)
                                 }
                             }
                         }
-                        if (!pv.name.empty()) r.pvs.push_back(std::move(pv));
+                        if (!pv.name.empty())
+                            r.pvs.push_back(std::move(pv));
                     }
                 }
                 st.readers.push_back(std::move(r));
@@ -442,25 +540,34 @@ void loadFromConfig(const std::string& path, WizardState& st)
     }
 
     // routing
-    if (!cfg.hasChild("routing")) return;
+    if (!cfg.hasChild("routing"))
+        return;
     auto rv = cfg.subConfig("routing");
-    if (rv.empty()) return;
+    if (rv.empty())
+        return;
     const Config& routing = rv[0];
-    const auto& rawRouting = routing.raw();
-    if (rawRouting.invalid() || !rawRouting.is_map()) return;
+    const auto&   rawRouting = routing.raw();
+    if (rawRouting.invalid() || !rawRouting.is_map())
+        return;
 
     st.routing_all_to_all = false;
-    for (const auto child : rawRouting.children()) {
-        if (!child.has_key()) continue;
-        const auto keyView = child.key();
+    for (const auto child : rawRouting.children())
+    {
+        if (!child.has_key())
+            continue;
+        const auto   keyView = child.key();
         RoutingEntry re;
         re.writer_name = std::string{keyView.str, keyView.len};
 
-        if (child.has_child("from")) {
+        if (child.has_child("from"))
+        {
             auto fromNode = child["from"];
-            if (fromNode.is_seq()) {
-                for (const auto entry : fromNode.children()) {
-                    if (entry.has_val()) {
+            if (fromNode.is_seq())
+            {
+                for (const auto entry : fromNode.children())
+                {
+                    if (entry.has_val())
+                    {
                         std::string v;
                         entry >> v;
                         re.from_readers.push_back(std::move(v));
@@ -468,11 +575,15 @@ void loadFromConfig(const std::string& path, WizardState& st)
                 }
             }
         }
-        if (child.has_child("include")) {
+        if (child.has_child("include"))
+        {
             auto incNode = child["include"];
-            if (incNode.is_seq()) {
-                for (const auto entry : incNode.children()) {
-                    if (entry.has_val()) {
+            if (incNode.is_seq())
+            {
+                for (const auto entry : incNode.children())
+                {
+                    if (entry.has_val())
+                    {
                         std::string v;
                         entry >> v;
                         re.include_globs.push_back(std::move(v));
@@ -480,11 +591,15 @@ void loadFromConfig(const std::string& path, WizardState& st)
                 }
             }
         }
-        if (child.has_child("exclude")) {
+        if (child.has_child("exclude"))
+        {
             auto excNode = child["exclude"];
-            if (excNode.is_seq()) {
-                for (const auto entry : excNode.children()) {
-                    if (entry.has_val()) {
+            if (excNode.is_seq())
+            {
+                for (const auto entry : excNode.children())
+                {
+                    if (entry.has_val())
+                    {
                         std::string v;
                         entry >> v;
                         re.exclude_globs.push_back(std::move(v));

@@ -18,8 +18,7 @@
 namespace {
 
 prometheus::Family<prometheus::Counter>&
-makeCounterFamily(prometheus::Registry& registry, std::string name, std::string help,
-                  const prometheus::Labels& constant_labels = {})
+makeCounterFamily(prometheus::Registry& registry, std::string name, std::string help, const prometheus::Labels& constant_labels = {})
 {
     return prometheus::BuildCounter()
         .Name(std::move(name))
@@ -29,8 +28,7 @@ makeCounterFamily(prometheus::Registry& registry, std::string name, std::string 
 }
 
 prometheus::Family<prometheus::Gauge>&
-makeGaugeFamily(prometheus::Registry& registry, std::string name, std::string help,
-                const prometheus::Labels& constant_labels = {})
+makeGaugeFamily(prometheus::Registry& registry, std::string name, std::string help, const prometheus::Labels& constant_labels = {})
 {
     return prometheus::BuildGauge()
         .Name(std::move(name))
@@ -40,8 +38,7 @@ makeGaugeFamily(prometheus::Registry& registry, std::string name, std::string he
 }
 
 prometheus::Family<prometheus::Histogram>&
-makeHistogramFamily(prometheus::Registry& registry, std::string name, std::string help,
-                    const prometheus::Labels& constant_labels = {})
+makeHistogramFamily(prometheus::Registry& registry, std::string name, std::string help, const prometheus::Labels& constant_labels = {})
 {
     return prometheus::BuildHistogram()
         .Name(std::move(name))
@@ -62,54 +59,54 @@ Metrics::Metrics(const MetricsConfig& config, std::string controller_name)
 {
     const prometheus::Labels clabels{{"controller", controller_name_}};
     // Reader metrics
-    reader_events_family_             = &makeCounterFamily(*registry_, "mldp_pvxs_driver_reader_events_total", "Total events processed by readers.", clabels);
-    reader_events_received_family_    = &makeCounterFamily(*registry_, "mldp_pvxs_driver_reader_events_received_total", "Total raw EPICS updates received from subscriptions before processing.", clabels);
-    reader_errors_family_             = &makeCounterFamily(*registry_, "mldp_pvxs_driver_reader_errors_total", "Total reader failures observed when pulling data.", clabels);
+    reader_events_family_ = &makeCounterFamily(*registry_, "mldp_pvxs_driver_reader_events_total", "Total events processed by readers.", clabels);
+    reader_events_received_family_ = &makeCounterFamily(*registry_, "mldp_pvxs_driver_reader_events_received_total", "Total raw EPICS updates received from subscriptions before processing.", clabels);
+    reader_errors_family_ = &makeCounterFamily(*registry_, "mldp_pvxs_driver_reader_errors_total", "Total reader failures observed when pulling data.", clabels);
     reader_processing_time_ms_buckets_ = {0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 25.0, 50.0, 100.0, 250.0, 500.0, 1000.0, 2500.0, 5000.0};
     reader_processing_time_ms_family_ = &makeHistogramFamily(*registry_, "mldp_pvxs_driver_reader_processing_time_ms", "Time spent converting EPICS PV updates to MLDP protobuf payloads (milliseconds).", clabels);
-    reader_queue_depth_family_        = &makeGaugeFamily(*registry_, "mldp_pvxs_driver_reader_queue_depth", "Number of PV updates queued in the reader work queue awaiting processing.", clabels);
-    reader_pool_queue_depth_family_   = &makeGaugeFamily(*registry_, "mldp_pvxs_driver_reader_pool_queue_depth", "Number of conversion tasks queued in the reader thread pool awaiting processing.", clabels);
+    reader_queue_depth_family_ = &makeGaugeFamily(*registry_, "mldp_pvxs_driver_reader_queue_depth", "Number of PV updates queued in the reader work queue awaiting processing.", clabels);
+    reader_pool_queue_depth_family_ = &makeGaugeFamily(*registry_, "mldp_pvxs_driver_reader_pool_queue_depth", "Number of conversion tasks queued in the reader thread pool awaiting processing.", clabels);
     // Pool metrics
-    pool_connections_in_use_family_   = &makeGaugeFamily(*registry_, "mldp_pvxs_driver_pool_connections_in_use", "Number of MLDP gRPC connections currently in use.", clabels);
-    pool_connections_available_family_= &makeGaugeFamily(*registry_, "mldp_pvxs_driver_pool_connections_available", "Idle MLDP gRPC connections ready for use.", clabels);
+    pool_connections_in_use_family_ = &makeGaugeFamily(*registry_, "mldp_pvxs_driver_pool_connections_in_use", "Number of MLDP gRPC connections currently in use.", clabels);
+    pool_connections_available_family_ = &makeGaugeFamily(*registry_, "mldp_pvxs_driver_pool_connections_available", "Idle MLDP gRPC connections ready for use.", clabels);
     // Controller metrics
-    controller_send_time_buckets_     = {0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0};
-    controller_send_time_family_      = &makeHistogramFamily(*registry_, "mldp_pvxs_driver_controller_send_time_seconds", "Time spent sending event batches to MLDP (seconds).", clabels);
-    controller_queue_depth_family_    = &makeGaugeFamily(*registry_, "mldp_pvxs_driver_controller_queue_depth", "Number of queued controller tasks waiting to send batches.", clabels);
+    controller_send_time_buckets_ = {0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0};
+    controller_send_time_family_ = &makeHistogramFamily(*registry_, "mldp_pvxs_driver_controller_send_time_seconds", "Time spent sending event batches to MLDP (seconds).", clabels);
+    controller_queue_depth_family_ = &makeGaugeFamily(*registry_, "mldp_pvxs_driver_controller_queue_depth", "Number of queued controller tasks waiting to send batches.", clabels);
     controller_channel_queue_depth_family_ = &makeGaugeFamily(*registry_, "mldp_pvxs_driver_controller_channel_queue_depth", "Number of items queued in each per-worker channel.", clabels);
     // Bus metrics
-    bus_push_family_                  = &makeCounterFamily(*registry_, "mldp_pvxs_driver_bus_push_total", "Number of events pushed onto the bus.", clabels);
-    bus_failure_family_               = &makeCounterFamily(*registry_, "mldp_pvxs_driver_bus_failure_total", "Number of bus push failures reported by the MLDP gRPC API.", clabels);
-    bus_payload_bytes_family_         = &makeCounterFamily(*registry_, "mldp_pvxs_driver_bus_payload_bytes_total", "Total protobuf payload bytes written to the MLDP ingestion stream.", clabels);
+    bus_push_family_ = &makeCounterFamily(*registry_, "mldp_pvxs_driver_bus_push_total", "Number of events pushed onto the bus.", clabels);
+    bus_failure_family_ = &makeCounterFamily(*registry_, "mldp_pvxs_driver_bus_failure_total", "Number of bus push failures reported by the MLDP gRPC API.", clabels);
+    bus_payload_bytes_family_ = &makeCounterFamily(*registry_, "mldp_pvxs_driver_bus_payload_bytes_total", "Total protobuf payload bytes written to the MLDP ingestion stream.", clabels);
     bus_payload_bytes_per_second_family_ = &makeGaugeFamily(*registry_, "mldp_pvxs_driver_bus_payload_bytes_per_second", "Bytes/second for the most recent successful ingestion batch.", clabels);
-    bus_stream_rotations_family_      = &makeCounterFamily(*registry_, "mldp_pvxs_driver_bus_stream_rotations_total", "Number of gRPC ingestion stream open/close cycles by reason.", clabels);
+    bus_stream_rotations_family_ = &makeCounterFamily(*registry_, "mldp_pvxs_driver_bus_stream_rotations_total", "Number of gRPC ingestion stream open/close cycles by reason.", clabels);
     // System CPU metrics
-    process_cpu_user_ticks_family_    = &makeCounterFamily(*registry_, "mldp_pvxs_driver_process_cpu_user_ticks_total", "Total user CPU time in clock ticks.", clabels);
-    process_cpu_system_ticks_family_  = &makeCounterFamily(*registry_, "mldp_pvxs_driver_process_cpu_system_ticks_total", "Total system CPU time in clock ticks.", clabels);
-    process_cpu_children_user_ticks_family_   = &makeCounterFamily(*registry_, "mldp_pvxs_driver_process_cpu_children_user_ticks_total", "Total children user CPU time in clock ticks.", clabels);
+    process_cpu_user_ticks_family_ = &makeCounterFamily(*registry_, "mldp_pvxs_driver_process_cpu_user_ticks_total", "Total user CPU time in clock ticks.", clabels);
+    process_cpu_system_ticks_family_ = &makeCounterFamily(*registry_, "mldp_pvxs_driver_process_cpu_system_ticks_total", "Total system CPU time in clock ticks.", clabels);
+    process_cpu_children_user_ticks_family_ = &makeCounterFamily(*registry_, "mldp_pvxs_driver_process_cpu_children_user_ticks_total", "Total children user CPU time in clock ticks.", clabels);
     process_cpu_children_system_ticks_family_ = &makeCounterFamily(*registry_, "mldp_pvxs_driver_process_cpu_children_system_ticks_total", "Total children system CPU time in clock ticks.", clabels);
     // System memory metrics
-    process_memory_virtual_bytes_family_      = &makeGaugeFamily(*registry_, "mldp_pvxs_driver_process_memory_virtual_bytes", "Current virtual memory size in bytes.", clabels);
-    process_memory_rss_bytes_family_          = &makeGaugeFamily(*registry_, "mldp_pvxs_driver_process_memory_rss_bytes", "Current resident set size in bytes.", clabels);
+    process_memory_virtual_bytes_family_ = &makeGaugeFamily(*registry_, "mldp_pvxs_driver_process_memory_virtual_bytes", "Current virtual memory size in bytes.", clabels);
+    process_memory_rss_bytes_family_ = &makeGaugeFamily(*registry_, "mldp_pvxs_driver_process_memory_rss_bytes", "Current resident set size in bytes.", clabels);
     process_memory_virtual_peak_bytes_family_ = &makeGaugeFamily(*registry_, "mldp_pvxs_driver_process_memory_virtual_peak_bytes", "Peak virtual memory size in bytes.", clabels);
-    process_memory_rss_anon_bytes_family_     = &makeGaugeFamily(*registry_, "mldp_pvxs_driver_process_memory_rss_anon_bytes", "Anonymous RSS in bytes.", clabels);
-    process_memory_rss_file_bytes_family_     = &makeGaugeFamily(*registry_, "mldp_pvxs_driver_process_memory_rss_file_bytes", "File-backed RSS in bytes.", clabels);
-    process_memory_rss_shmem_bytes_family_    = &makeGaugeFamily(*registry_, "mldp_pvxs_driver_process_memory_rss_shmem_bytes", "Shared memory RSS in bytes.", clabels);
-    process_memory_rss_total_bytes_family_    = &makeGaugeFamily(*registry_, "mldp_pvxs_driver_process_memory_rss_total_bytes", "Total RSS (anon + file + shmem) in bytes.", clabels);
+    process_memory_rss_anon_bytes_family_ = &makeGaugeFamily(*registry_, "mldp_pvxs_driver_process_memory_rss_anon_bytes", "Anonymous RSS in bytes.", clabels);
+    process_memory_rss_file_bytes_family_ = &makeGaugeFamily(*registry_, "mldp_pvxs_driver_process_memory_rss_file_bytes", "File-backed RSS in bytes.", clabels);
+    process_memory_rss_shmem_bytes_family_ = &makeGaugeFamily(*registry_, "mldp_pvxs_driver_process_memory_rss_shmem_bytes", "Shared memory RSS in bytes.", clabels);
+    process_memory_rss_total_bytes_family_ = &makeGaugeFamily(*registry_, "mldp_pvxs_driver_process_memory_rss_total_bytes", "Total RSS (anon + file + shmem) in bytes.", clabels);
     // System I/O metrics
-    process_io_read_bytes_family_             = &makeCounterFamily(*registry_, "mldp_pvxs_driver_process_io_read_bytes_total", "Total bytes read from storage.", clabels);
-    process_io_write_bytes_family_            = &makeCounterFamily(*registry_, "mldp_pvxs_driver_process_io_write_bytes_total", "Total bytes written to storage.", clabels);
-    process_io_cancelled_write_bytes_family_  = &makeCounterFamily(*registry_, "mldp_pvxs_driver_process_io_cancelled_write_bytes_total", "Total bytes cancelled before write.", clabels);
+    process_io_read_bytes_family_ = &makeCounterFamily(*registry_, "mldp_pvxs_driver_process_io_read_bytes_total", "Total bytes read from storage.", clabels);
+    process_io_write_bytes_family_ = &makeCounterFamily(*registry_, "mldp_pvxs_driver_process_io_write_bytes_total", "Total bytes written to storage.", clabels);
+    process_io_cancelled_write_bytes_family_ = &makeCounterFamily(*registry_, "mldp_pvxs_driver_process_io_cancelled_write_bytes_total", "Total bytes cancelled before write.", clabels);
     // System context switch metrics
-    process_context_switches_voluntary_family_   = &makeCounterFamily(*registry_, "mldp_pvxs_driver_process_context_switches_voluntary_total", "Total voluntary context switches.", clabels);
+    process_context_switches_voluntary_family_ = &makeCounterFamily(*registry_, "mldp_pvxs_driver_process_context_switches_voluntary_total", "Total voluntary context switches.", clabels);
     process_context_switches_involuntary_family_ = &makeCounterFamily(*registry_, "mldp_pvxs_driver_process_context_switches_involuntary_total", "Total involuntary context switches.", clabels);
     // System file descriptor metrics
-    process_fds_open_family_    = &makeGaugeFamily(*registry_, "mldp_pvxs_driver_process_fds_open", "Number of open file descriptors.", clabels);
+    process_fds_open_family_ = &makeGaugeFamily(*registry_, "mldp_pvxs_driver_process_fds_open", "Number of open file descriptors.", clabels);
     // System thread metrics
-    process_threads_family_     = &makeGaugeFamily(*registry_, "mldp_pvxs_driver_process_threads", "Number of threads.", clabels);
+    process_threads_family_ = &makeGaugeFamily(*registry_, "mldp_pvxs_driver_process_threads", "Number of threads.", clabels);
     // Process info metrics
-    process_priority_family_    = &makeGaugeFamily(*registry_, "mldp_pvxs_driver_process_priority", "Process priority.", clabels);
-    process_nice_family_        = &makeGaugeFamily(*registry_, "mldp_pvxs_driver_process_nice", "Nice value.", clabels);
+    process_priority_family_ = &makeGaugeFamily(*registry_, "mldp_pvxs_driver_process_priority", "Process priority.", clabels);
+    process_nice_family_ = &makeGaugeFamily(*registry_, "mldp_pvxs_driver_process_nice", "Nice value.", clabels);
 
     if (config_.valid() && !config_.endpoint().empty())
     {

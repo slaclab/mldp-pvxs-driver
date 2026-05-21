@@ -29,15 +29,7 @@ int runConfigSubcommand(int argc, char** argv)
 {
     ArgumentParser program("config");
     program.add_description(
-        "Configuration utilities.\n"
-        "\n"
-        "Sub-commands:\n"
-        "  wizard    Interactive TUI wizard — generate or amend a config.yaml\n"
-        "  validate  Validate a YAML file and report field-level errors/warnings\n"
-        "  template  Print a ready-to-use YAML template (minimal or full)\n"
-        "  list      Show all writers, readers, routing rules and metrics settings\n"
-        "  add       Add a writer, reader or routing entry to an existing config\n"
-        "  remove    Remove a named writer, reader or routing entry");
+        "Configuration utilities.\n" "\n" "Sub-commands:\n" "  wizard    Interactive TUI wizard — generate or amend a config.yaml\n" "  validate  Validate a YAML file and report field-level errors/warnings\n" "  template  Print a ready-to-use YAML template (minimal or full)\n" "  list      Show all writers, readers, routing rules and metrics settings\n" "  add       Add a writer, reader or routing entry to an existing config\n" "  remove    Remove a named writer, reader or routing entry");
 
     // ── template sub-subcommand ───────────────────────────────────────────
     ArgumentParser cmd_template("template");
@@ -113,9 +105,11 @@ int runConfigSubcommand(int argc, char** argv)
         .help("Path to the configuration YAML file")
         .metavar("PATH");
     cmd_add.add_argument("--no-backup")
-        .default_value(false).implicit_value(true);
+        .default_value(false)
+        .implicit_value(true);
     cmd_add.add_argument("--dry-run")
-        .default_value(false).implicit_value(true);
+        .default_value(false)
+        .implicit_value(true);
 
     program.add_subparser(cmd_template);
     program.add_subparser(cmd_validate);
@@ -139,7 +133,7 @@ int runConfigSubcommand(int argc, char** argv)
 
     if (program.is_subcommand_used("template"))
     {
-        const bool full    = cmd_template.get<bool>("--full");
+        const bool full = cmd_template.get<bool>("--full");
         const bool minimal = cmd_template.get<bool>("--minimal");
 
         TemplateKind kind = TemplateKind::MldpOnly; // default
@@ -160,12 +154,14 @@ int runConfigSubcommand(int argc, char** argv)
         // which aborts (assert) on a completely empty YAML document.
         {
             std::ifstream probe{path};
-            if (!probe) {
+            if (!probe)
+            {
                 std::cerr << "ERROR  " << path << "  cannot open file\n";
                 return 1;
             }
             probe.seekg(0, std::ios::end);
-            if (probe.tellg() == 0) {
+            if (probe.tellg() == 0)
+            {
                 std::cout << "ERROR  <root>  file is empty — no YAML content\n";
                 std::cout << "FAIL  " << path << " — 1 errors, 0 warnings\n";
                 return 1;
@@ -186,7 +182,7 @@ int runConfigSubcommand(int argc, char** argv)
         const auto diagnostics = validateConfig(cfg);
 
         int error_count = 0;
-        int warn_count  = 0;
+        int warn_count = 0;
 
         for (const auto& diag : diagnostics)
         {
@@ -217,7 +213,7 @@ int runConfigSubcommand(int argc, char** argv)
     if (program.is_subcommand_used("wizard"))
     {
         const std::string output = cmd_wizard.get<std::string>("--output");
-        const std::string from   = cmd_wizard.get<std::string>("--from");
+        const std::string from = cmd_wizard.get<std::string>("--from");
         return runWizard(output, from);
     }
 
@@ -231,11 +227,11 @@ int runConfigSubcommand(int argc, char** argv)
     if (program.is_subcommand_used("remove"))
     {
         EditRemoveOptions opts;
-        opts.path      = cmd_remove.get<std::string>("path");
-        opts.kind      = cmd_remove.get<std::string>("kind");
-        opts.name      = cmd_remove.get<std::string>("--name");
+        opts.path = cmd_remove.get<std::string>("path");
+        opts.kind = cmd_remove.get<std::string>("kind");
+        opts.name = cmd_remove.get<std::string>("--name");
         opts.no_backup = cmd_remove.get<bool>("--no-backup");
-        opts.dry_run   = cmd_remove.get<bool>("--dry-run");
+        opts.dry_run = cmd_remove.get<bool>("--dry-run");
         return runRemove(opts);
     }
 

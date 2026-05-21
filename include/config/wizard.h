@@ -15,97 +15,106 @@
 
 namespace mldp_pvxs_driver::config {
 
-struct PvEntry {
+struct PvEntry
+{
     std::string name;
-    std::string option_type;   // "none", "scalar", "slac-bsas-table"
-    std::string option_value;  // for scalar
-    std::string ts_seconds;    // for slac-bsas-table
-    std::string ts_nanos;      // for slac-bsas-table
+    std::string option_type;  // "none", "scalar", "slac-bsas-table"
+    std::string option_value; // for scalar
+    std::string ts_seconds;   // for slac-bsas-table
+    std::string ts_nanos;     // for slac-bsas-table
     // ordered key-value pairs emitted as metadata: block under this PV
-    std::vector<std::pair<std::string,std::string>> metadata;
+    std::vector<std::pair<std::string, std::string>> metadata;
 };
 
-struct MldpWriterConfig {
+struct MldpWriterConfig
+{
     std::string name;
-    std::string thread_pool        = "1";
-    std::string stream_max_bytes   = "2097152";
-    std::string stream_max_age_ms  = "200";
+    std::string thread_pool = "1";
+    std::string stream_max_bytes = "2097152";
+    std::string stream_max_age_ms = "200";
     std::string provider_name;
     std::string provider_desc;
     std::string ingestion_url;
     std::string query_url;
-    std::string min_conn           = "1";
-    std::string max_conn           = "4";
-    std::string creds_type         = "ssl"; // "none","ssl","custom-tls"
+    std::string min_conn = "1";
+    std::string max_conn = "4";
+    std::string creds_type = "ssl"; // "none","ssl","custom-tls"
     std::string pem_cert_chain;
     std::string pem_private_key;
     std::string pem_root_certs;
 };
 
-struct Hdf5WriterConfig {
+struct Hdf5WriterConfig
+{
     std::string name;
     std::string base_path;
-    std::string max_file_age_s     = "3600";
-    std::string max_file_size_mb   = "512";
-    std::string flush_interval_ms  = "1000";
-    std::string compression_level  = "0";
-    bool        is_merge           = false;
+    std::string max_file_age_s = "3600";
+    std::string max_file_size_mb = "512";
+    std::string flush_interval_ms = "1000";
+    std::string compression_level = "0";
+    bool        is_merge = false;
 };
 
-struct EpicsReaderConfig {
+struct EpicsReaderConfig
+{
     std::string name;
-    std::string reader_type;       // "epics-pvxs","epics-base","epics-archiver"
-    std::string thread_pool        = "2";
-    std::string column_batch_size  = "50";
+    std::string reader_type; // "epics-pvxs","epics-base","epics-archiver"
+    std::string thread_pool = "2";
+    std::string column_batch_size = "50";
     // epics-base only
-    std::string monitor_poll_threads       = "2";
-    std::string monitor_poll_interval_ms   = "5";
+    std::string monitor_poll_threads = "2";
+    std::string monitor_poll_interval_ms = "5";
     // epics-archiver only
     std::string hostname;
-    std::string mode               = "historical_once";
+    std::string mode = "historical_once";
     std::string start_date;
     std::string end_date;
     std::string poll_interval_sec;
     std::string lookback_sec;
     std::string connect_timeout_sec = "30";
-    std::string total_timeout_sec   = "300";
-    std::string batch_duration_sec  = "1";
-    std::string tls_verify_peer     = "true";
-    std::string tls_verify_host     = "true";
+    std::string total_timeout_sec = "300";
+    std::string batch_duration_sec = "1";
+    std::string tls_verify_peer = "true";
+    std::string tls_verify_host = "true";
     // ordered key-value pairs emitted as static-metadata: block under this reader
-    std::vector<std::pair<std::string,std::string>> static_metadata;
-    std::vector<PvEntry> pvs;
+    std::vector<std::pair<std::string, std::string>> static_metadata;
+    std::vector<PvEntry>                             pvs;
 };
 
-struct RoutingEntry {
-    std::string writer_name;
-    std::vector<std::string> from_readers;   // empty = all
+struct RoutingEntry
+{
+    std::string              writer_name;
+    std::vector<std::string> from_readers; // empty = all
     std::vector<std::string> include_globs;
     std::vector<std::string> exclude_globs;
 };
 
 // Queryable pool configs — emitted under queryable: block
-struct QueryableMldpConfig {
-    bool        enabled         = false;
+struct QueryableMldpConfig
+{
+    bool        enabled = false;
     std::string ingestion_url;
     std::string query_url;
-    std::string min_conn        = "1";
-    std::string max_conn        = "2";
+    std::string min_conn = "1";
+    std::string max_conn = "2";
 };
 
-struct QueryableAnnotationConfig {
-    bool        enabled         = false;
+struct QueryableAnnotationConfig
+{
+    bool        enabled = false;
     std::string annotation_url;
-    std::string min_conn        = "1";
-    std::string max_conn        = "2";
+    std::string min_conn = "1";
+    std::string max_conn = "2";
 };
 
-struct QueryableState {
+struct QueryableState
+{
     QueryableMldpConfig       mldp;
     QueryableAnnotationConfig mldp_annotation;
 };
 
-struct WizardState {
+struct WizardState
+{
     // Phase 1
     std::string controller_name = "default";
     // Phase 2
@@ -114,11 +123,11 @@ struct WizardState {
     // Phase 3
     std::vector<EpicsReaderConfig> readers;
     // Phase 4
-    bool        metrics_enabled   = false;
-    std::string metrics_endpoint  = "0.0.0.0:9464";
-    std::string metrics_interval  = "1";
+    bool        metrics_enabled = false;
+    std::string metrics_endpoint = "0.0.0.0:9464";
+    std::string metrics_interval = "1";
     // Phase 5
-    bool routing_all_to_all = true;
+    bool                      routing_all_to_all = true;
     std::vector<RoutingEntry> routing;
     // Queryable pool configuration (optional)
     QueryableState queryable;

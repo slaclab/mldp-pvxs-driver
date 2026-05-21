@@ -248,7 +248,7 @@ void MLDPPVXSControllerConfig::parseRouting(const ::mldp_pvxs_driver::config::Co
         return;
     }
     const auto& routingNode = routingNodes.front();
-    const auto  rawNode     = routingNode.raw();
+    const auto  rawNode = routingNode.raw();
 
     if (!rawNode.is_map())
     {
@@ -327,7 +327,7 @@ void MLDPPVXSControllerConfig::parseRouting(const ::mldp_pvxs_driver::config::Co
         }
 
         routeEntries_.push_back({writerName, std::move(fromReaders),
-                                  std::move(includePatterns), std::move(excludePatterns)});
+                                 std::move(includePatterns), std::move(excludePatterns)});
     }
 }
 

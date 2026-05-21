@@ -88,12 +88,12 @@ private:
     std::shared_ptr<util::log::ILogger>                 logger_;
     std::shared_ptr<util::pool::MLDPGrpcAnnotationPool> pool_;
 
-    std::queue<WorkItem>        work_queue_;
-    std::mutex                  queue_mutex_;
-    std::condition_variable     queue_cv_;
-    std::vector<std::thread>    workers_;
-    std::atomic<bool>           stop_{false};
-    std::atomic<bool>           running_{false};
+    std::queue<WorkItem>     work_queue_;
+    std::mutex               queue_mutex_;
+    std::condition_variable  queue_cv_;
+    std::vector<std::thread> workers_;
+    std::atomic<bool>        stop_{false};
+    std::atomic<bool>        running_{false};
 };
 
 } // namespace mldp_pvxs_driver::writer

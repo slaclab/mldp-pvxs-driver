@@ -20,10 +20,8 @@
 #include <util/bus/DataBatch.h>
 
 #include <atomic>
-#include <chrono>
 #include <condition_variable>
 #include <deque>
-#include <limits>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -78,7 +76,7 @@ protected:
             std::vector<float>,
             std::vector<int32_t>,
             std::vector<int64_t>,
-            std::vector<uint8_t>  // bool stored as uint8
+            std::vector<uint8_t> // bool stored as uint8
             >;
 
         std::vector<ColumnData>                    columns;
@@ -105,7 +103,7 @@ protected:
      */
     struct QueueEntry
     {
-        uint64_t                    batchSeq;
+        uint64_t                        batchSeq;
         util::bus::IDataBus::EventBatch batch;
     };
 
@@ -115,21 +113,21 @@ protected:
     // Protected shared state — accessible to subclasses
     // -----------------------------------------------------------------------
 
-    HDF5WriterConfig                              config_;
-    std::shared_ptr<util::log::ILogger>           logger_;
-    std::unique_ptr<metrics::HDF5WriterMetrics>   writerMetrics_;
+    HDF5WriterConfig                            config_;
+    std::shared_ptr<util::log::ILogger>         logger_;
+    std::unique_ptr<metrics::HDF5WriterMetrics> writerMetrics_;
 
     // Queue — shared between caller threads and writerThread_
-    std::mutex                                    queueMutex_;
-    std::condition_variable                       queueCv_;
-    std::deque<QueueEntry>                        queue_;
-    std::atomic<bool>                             stopping_{false};
-    std::atomic<uint64_t>                         nextBatchSeq_{0};
+    std::mutex              queueMutex_;
+    std::condition_variable queueCv_;
+    std::deque<QueueEntry>  queue_;
+    std::atomic<bool>       stopping_{false};
+    std::atomic<uint64_t>   nextBatchSeq_{0};
 
     // Accessed exclusively from writerThread_ — no mutex required
     std::unordered_map<std::string, uint64_t>      lastTsBatchSeq_;
     std::unordered_map<std::string, TabularBuffer> tabularBuffers_;
-    std::unordered_set<std::string>                seen_groups_;   ///< Sources whose HDF5 group has had metadata attributes written.
+    std::unordered_set<std::string>                seen_groups_; ///< Sources whose HDF5 group has had metadata attributes written.
 
     std::thread writerThread_;
     std::thread flushThread_;
@@ -139,11 +137,19 @@ public:
     // IWriter interface — non-virtual implementations
     // -----------------------------------------------------------------------
 
-    std::string name() const override { return config_.name; }
-    void        start() override;
-    bool        push(util::bus::IDataBus::EventBatch batch) noexcept override;
-    void        stop() noexcept override;
-    bool        supports_multi_root_source() const noexcept override { return true; }
+    std::string name() const override
+    {
+        return config_.name;
+    }
+
+    void start() override;
+    bool push(util::bus::IDataBus::EventBatch batch) noexcept override;
+    void stop() noexcept override;
+
+    bool supports_multi_root_source() const noexcept override
+    {
+        return true;
+    }
 
     bool acceptsPayload(const util::bus::BatchPayload& payload) const noexcept override
     {
@@ -151,8 +157,8 @@ public:
     }
 
 protected:
-    explicit HDF5WriterBase(HDF5WriterConfig                    config,
-                            std::shared_ptr<metrics::Metrics>   metrics = nullptr);
+    explicit HDF5WriterBase(HDF5WriterConfig                  config,
+                            std::shared_ptr<metrics::Metrics> metrics = nullptr);
     ~HDF5WriterBase() override;
 
     // -----------------------------------------------------------------------
@@ -160,9 +166,9 @@ protected:
     // -----------------------------------------------------------------------
 
     /// Write one DataBatch frame; subclass handles file acquisition and byte metrics.
-    virtual void writeFrameImpl(const std::string&              source,
-                                const util::bus::DataBatch&     frame,
-                                uint64_t                        batchSeq) = 0;
+    virtual void writeFrameImpl(const std::string&          source,
+                                const util::bus::DataBatch& frame,
+                                uint64_t                    batchSeq) = 0;
 
     /// Flush the accumulated tabular buffer for one source.
     virtual void flushTabularBufferImpl(const std::string& source,

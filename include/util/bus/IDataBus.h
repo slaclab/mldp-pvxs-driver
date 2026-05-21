@@ -13,12 +13,12 @@
  */
 
 #pragma once
-#include <util/bus/DataBatch.h>
 #include <chrono>
 #include <cstdint>
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <util/bus/DataBatch.h>
 #include <variant>
 #include <vector>
 
@@ -122,35 +122,50 @@ struct EventBatchStruct
 ///@{
 
 /// Returns true when @p b carries a TimeSeriesPayload.
-inline bool isTimeSeries(const EventBatchStruct& b) {
+inline bool isTimeSeries(const EventBatchStruct& b)
+{
     return std::holds_alternative<TimeSeriesPayload>(b.payload);
 }
+
 /// Returns true when @p b carries a SourceMetadataPayload.
-inline bool isSourceMetadata(const EventBatchStruct& b) {
+inline bool isSourceMetadata(const EventBatchStruct& b)
+{
     return std::holds_alternative<SourceMetadataPayload>(b.payload);
 }
+
 /// Returns true when @p b carries a ConfigurationPayload.
-inline bool isConfiguration(const EventBatchStruct& b) {
+inline bool isConfiguration(const EventBatchStruct& b)
+{
     return std::holds_alternative<ConfigurationPayload>(b.payload);
 }
+
 /// Returns true when @p b carries a ConfigurationActivationPayload.
-inline bool isConfigurationActivation(const EventBatchStruct& b) {
+inline bool isConfigurationActivation(const EventBatchStruct& b)
+{
     return std::holds_alternative<ConfigurationActivationPayload>(b.payload);
 }
+
 /// Returns the TimeSeriesPayload; throws std::bad_variant_access if not the active alternative.
-inline const TimeSeriesPayload& asTimeSeries(const EventBatchStruct& b) {
+inline const TimeSeriesPayload& asTimeSeries(const EventBatchStruct& b)
+{
     return std::get<TimeSeriesPayload>(b.payload);
 }
+
 /// Returns the SourceMetadataPayload; throws std::bad_variant_access if not the active alternative.
-inline const SourceMetadataPayload& asSourceMetadata(const EventBatchStruct& b) {
+inline const SourceMetadataPayload& asSourceMetadata(const EventBatchStruct& b)
+{
     return std::get<SourceMetadataPayload>(b.payload);
 }
+
 /// Returns the ConfigurationPayload; throws std::bad_variant_access if not the active alternative.
-inline const ConfigurationPayload& asConfiguration(const EventBatchStruct& b) {
+inline const ConfigurationPayload& asConfiguration(const EventBatchStruct& b)
+{
     return std::get<ConfigurationPayload>(b.payload);
 }
+
 /// Returns the ConfigurationActivationPayload; throws std::bad_variant_access if not the active alternative.
-inline const ConfigurationActivationPayload& asConfigurationActivation(const EventBatchStruct& b) {
+inline const ConfigurationActivationPayload& asConfigurationActivation(const EventBatchStruct& b)
+{
     return std::get<ConfigurationActivationPayload>(b.payload);
 }
 

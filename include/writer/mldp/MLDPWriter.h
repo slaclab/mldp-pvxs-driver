@@ -90,9 +90,9 @@ private:
     /// Smallest unit of queued work: one frame + shared batch metadata.
     struct QueueItem
     {
-        std::string                                                          root_source;
+        std::string                                                         root_source;
         std::shared_ptr<const std::unordered_map<std::string, std::string>> metadata;
-        util::bus::DataBatch                                                 frame;
+        util::bus::DataBatch                                                frame;
     };
 
     /// Per-worker channel: each worker has its own deque.
@@ -115,18 +115,18 @@ private:
     std::atomic<std::size_t>                                          queuedItems_{0};
     std::atomic<bool>                                                 running_{false};
 
-    void workerLoop(std::size_t workerIndex);
-    bool buildRequest(const std::string&                                              sourceName,
-                      const util::bus::DataBatch&                                     batch,
-                      const std::string&                                              requestId,
-                      dp::service::ingestion::IngestDataRequest&                      request,
-                      std::size_t&                                                    acceptedEvents,
-                      std::size_t&                                                    payloadBytes,
-                      const std::unordered_map<std::string, std::string>*             metadata = nullptr);
+    void                                  workerLoop(std::size_t workerIndex);
+    bool                                  buildRequest(const std::string&                                  sourceName,
+                                                       const util::bus::DataBatch&                         batch,
+                                                       const std::string&                                  requestId,
+                                                       dp::service::ingestion::IngestDataRequest&          request,
+                                                       std::size_t&                                        acceptedEvents,
+                                                       std::size_t&                                        payloadBytes,
+                                                       const std::unordered_map<std::string, std::string>* metadata = nullptr);
     static dp::service::common::DataFrame toDataFrame(const util::bus::DataBatch&                         batch,
                                                       const std::string&                                  rootSource,
                                                       const std::unordered_map<std::string, std::string>* metadata = nullptr);
-    void updateQueueDepthMetric();
+    void                                  updateQueueDepthMetric();
 };
 
 } // namespace mldp_pvxs_driver::writer
