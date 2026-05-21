@@ -23,6 +23,7 @@ enum class TreeNodeKind {
     Writer,
     ReaderGroup,
     Reader,
+    QueryableGroup,
     MetricsGroup,
     RoutingGroup
 };
@@ -37,6 +38,7 @@ struct TreeNode {
 inline bool isGroupNode(TreeNodeKind k) {
     return k == TreeNodeKind::WriterGroup ||
            k == TreeNodeKind::ReaderGroup ||
+           k == TreeNodeKind::QueryableGroup ||
            k == TreeNodeKind::MetricsGroup ||
            k == TreeNodeKind::RoutingGroup;
 }
