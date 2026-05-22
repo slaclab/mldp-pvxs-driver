@@ -53,7 +53,7 @@ static void prepareQueryables(const MLDPPVXSControllerConfig&                   
          {
              QueryableFactory::instance().prepare<MLDPQueryClient>(c, std::move(m));
          }},
-        {"mldp-annotation",
+        {"mldp-pv-metadata",
          [](const mldp_pvxs_driver::config::Config&             c,
             std::shared_ptr<mldp_pvxs_driver::metrics::Metrics> m)
          {

@@ -17,7 +17,7 @@
 #include <grpcpp/server_context.h>
 #include <util/bus/IDataBus.h>
 #include <writer/WriterFactory.h>
-#include <writer/mldp_annotation/MLDPAnnotationWriter.h>
+#include <writer/mldp_pv_metadata/MLDPPVMetadataWriter.h>
 
 #include <atomic>
 #include <chrono>
@@ -96,7 +96,7 @@ std::string makeWriterYaml(const std::string& annotation_addr,
     yaml << "name: annotation_test\n"
          << "thread-pool: 1\n"
          << "deadline-seconds: 5\n"
-         << "mldp-annotation-pool:\n"
+         << "mldp-pv-metadata-pool:\n"
          << "  provider-name: test-provider\n"
          << "  ingestion-url: " << ingestion_addr << "\n"
          << "  query-url: "     << query_addr     << "\n"
@@ -110,13 +110,13 @@ std::string makeWriterYaml(const std::string& annotation_addr,
 // Tests
 // ---------------------------------------------------------------------------
 
-// 1. WriterFactory recognises the "mldp-annotation" type and returns non-null.
-TEST(MLDPAnnotationWriterTest, WriterFactoryCreatesAnnotationWriter)
+// 1. WriterFactory recognises the "mldp-pv-metadata" type and returns non-null.
+TEST(MLDPPVMetadataWriterTest, WriterFactoryCreatesAnnotationWriter)
 {
     // No real server is needed — we only test factory registration.
     const auto cfg = makeConfigFromYaml(
         "name: annotation_test\n"
-        "mldp-annotation-pool:\n"
+        "mldp-pv-metadata-pool:\n"
         "  provider-name: test-provider\n"
         "  ingestion-url: 127.0.0.1:50051\n"
         "  query-url: 127.0.0.1:50052\n"
@@ -124,16 +124,16 @@ TEST(MLDPAnnotationWriterTest, WriterFactoryCreatesAnnotationWriter)
         "  min-conn: 1\n"
         "  max-conn: 1\n");
 
-    auto writer = WriterFactory::create("mldp-annotation", cfg, nullptr);
+    auto writer = WriterFactory::create("mldp-pv-metadata", cfg, nullptr);
     ASSERT_NE(writer, nullptr);
 }
 
 // 2. acceptsPayload returns true only for SourceMetadataPayload.
-TEST(MLDPAnnotationWriterTest, AcceptsOnlySourceMetadataPayload)
+TEST(MLDPPVMetadataWriterTest, AcceptsOnlySourceMetadataPayload)
 {
     const auto cfg = makeConfigFromYaml(
         "name: annotation_test\n"
-        "mldp-annotation-pool:\n"
+        "mldp-pv-metadata-pool:\n"
         "  provider-name: test-provider\n"
         "  ingestion-url: 127.0.0.1:50051\n"
         "  query-url: 127.0.0.1:50052\n"
@@ -141,7 +141,7 @@ TEST(MLDPAnnotationWriterTest, AcceptsOnlySourceMetadataPayload)
         "  min-conn: 1\n"
         "  max-conn: 1\n");
 
-    auto writer = WriterFactory::create("mldp-annotation", cfg, nullptr);
+    auto writer = WriterFactory::create("mldp-pv-metadata", cfg, nullptr);
     ASSERT_NE(writer, nullptr);
 
     ASSERT_TRUE(writer->acceptsPayload(SourceMetadataPayload{}));
@@ -151,7 +151,7 @@ TEST(MLDPAnnotationWriterTest, AcceptsOnlySourceMetadataPayload)
 }
 
 // 3. Pushing a SourceMetadataPayload causes savePvMetadata to be called on the server.
-TEST(MLDPAnnotationWriterTest, PushSourceMetadataCallsSavePvMetadata)
+TEST(MLDPPVMetadataWriterTest, PushSourceMetadataCallsSavePvMetadata)
 {
     TestAnnotationService service;
     grpc::ServerBuilder   builder;
@@ -168,7 +168,7 @@ TEST(MLDPAnnotationWriterTest, PushSourceMetadataCallsSavePvMetadata)
     const std::string query_addr      = "127.0.0.1:" + std::to_string(port + 2);
 
     const auto cfg = makeConfigFromYaml(makeWriterYaml(annotation_addr, ingestion_addr, query_addr));
-    auto       writer = WriterFactory::create("mldp-annotation", cfg, nullptr);
+    auto       writer = WriterFactory::create("mldp-pv-metadata", cfg, nullptr);
     ASSERT_NE(writer, nullptr);
 
     ASSERT_NO_THROW(writer->start());
@@ -201,7 +201,7 @@ TEST(MLDPAnnotationWriterTest, PushSourceMetadataCallsSavePvMetadata)
 }
 
 // 4. Pushing a non-metadata payload does not invoke savePvMetadata.
-TEST(MLDPAnnotationWriterTest, PushNonMetadataPayloadIsIgnored)
+TEST(MLDPPVMetadataWriterTest, PushNonMetadataPayloadIsIgnored)
 {
     TestAnnotationService service;
     grpc::ServerBuilder   builder;
@@ -217,7 +217,7 @@ TEST(MLDPAnnotationWriterTest, PushNonMetadataPayloadIsIgnored)
     const std::string query_addr2     = "127.0.0.1:" + std::to_string(port + 2);
 
     const auto cfg = makeConfigFromYaml(makeWriterYaml(annotation_addr, ingestion_addr2, query_addr2));
-    auto       writer = WriterFactory::create("mldp-annotation", cfg, nullptr);
+    auto       writer = WriterFactory::create("mldp-pv-metadata", cfg, nullptr);
     ASSERT_NE(writer, nullptr);
 
     ASSERT_NO_THROW(writer->start());
@@ -239,14 +239,14 @@ TEST(MLDPAnnotationWriterTest, PushNonMetadataPayloadIsIgnored)
 }
 
 // 5. Constructing and operating against an unreachable endpoint does not throw.
-TEST(MLDPAnnotationWriterTest, GracefulOnUnreachableEndpoint)
+TEST(MLDPPVMetadataWriterTest, GracefulOnUnreachableEndpoint)
 {
     // Port 19999 is expected to have nothing listening.
     const auto cfg = makeConfigFromYaml(
         "name: annotation_test\n"
         "thread-pool: 1\n"
         "deadline-seconds: 1\n"
-        "mldp-annotation-pool:\n"
+        "mldp-pv-metadata-pool:\n"
         "  provider-name: test-provider\n"
         "  ingestion-url: 127.0.0.1:19998\n"
         "  query-url: 127.0.0.1:19997\n"
@@ -254,7 +254,7 @@ TEST(MLDPAnnotationWriterTest, GracefulOnUnreachableEndpoint)
         "  min-conn: 1\n"
         "  max-conn: 1\n");
 
-    auto writer = WriterFactory::create("mldp-annotation", cfg, nullptr);
+    auto writer = WriterFactory::create("mldp-pv-metadata", cfg, nullptr);
     ASSERT_NE(writer, nullptr);
 
     EXPECT_NO_THROW(writer->start());
@@ -277,11 +277,11 @@ TEST(MLDPAnnotationWriterTest, GracefulOnUnreachableEndpoint)
 }
 
 // 6. start() followed by stop() without any pushes completes without errors.
-TEST(MLDPAnnotationWriterTest, StartStopLifecycle)
+TEST(MLDPPVMetadataWriterTest, StartStopLifecycle)
 {
     const auto cfg = makeConfigFromYaml(
         "name: annotation_test\n"
-        "mldp-annotation-pool:\n"
+        "mldp-pv-metadata-pool:\n"
         "  provider-name: test-provider\n"
         "  ingestion-url: 127.0.0.1:50051\n"
         "  query-url: 127.0.0.1:50052\n"
@@ -289,7 +289,7 @@ TEST(MLDPAnnotationWriterTest, StartStopLifecycle)
         "  min-conn: 1\n"
         "  max-conn: 1\n");
 
-    auto writer = WriterFactory::create("mldp-annotation", cfg, nullptr);
+    auto writer = WriterFactory::create("mldp-pv-metadata", cfg, nullptr);
     ASSERT_NE(writer, nullptr);
 
     ASSERT_NO_THROW(writer->start());

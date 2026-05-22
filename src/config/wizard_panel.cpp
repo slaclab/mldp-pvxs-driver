@@ -1026,8 +1026,8 @@ static Component MakeQueryableForm(WizardState* w, PanelAppState* state)
                             });
 
     // Annotation queryable
-    auto f_ann_en = Checkbox("Enable Annotation Query Client", &w->queryable.mldp_annotation.enabled);
-    auto f_ann_aurl = InputField("Annotation URL", &w->queryable.mldp_annotation.annotation_url, [](const std::string& s)
+    auto f_ann_en = Checkbox("Enable Annotation Query Client", &w->queryable.mldp_pv_metadata.enabled);
+    auto f_ann_aurl = InputField("Annotation URL", &w->queryable.mldp_pv_metadata.annotation_url, [](const std::string& s)
                                  {
                                      return s.empty() ? "Must not be empty" : "";
                                  },
@@ -1036,7 +1036,7 @@ static Component MakeQueryableForm(WizardState* w, PanelAppState* state)
                                      on_change("ann_annotation_url");
                                  },
                                  on_focus_fn("ann_annotation_url"));
-    auto f_ann_minc = InputField("Min Connections", &w->queryable.mldp_annotation.min_conn, [](const std::string& s)
+    auto f_ann_minc = InputField("Min Connections", &w->queryable.mldp_pv_metadata.min_conn, [](const std::string& s)
                                  {
                                      return isPositiveInt(s) ? "" : "Must be positive int";
                                  },
@@ -1045,7 +1045,7 @@ static Component MakeQueryableForm(WizardState* w, PanelAppState* state)
                                      on_change("ann_min_conn");
                                  },
                                  on_focus_fn("ann_min_conn"));
-    auto f_ann_maxc = InputField("Max Connections", &w->queryable.mldp_annotation.max_conn, [](const std::string& s)
+    auto f_ann_maxc = InputField("Max Connections", &w->queryable.mldp_pv_metadata.max_conn, [](const std::string& s)
                                  {
                                      return isPositiveInt(s) ? "" : "Must be positive int";
                                  },
@@ -1057,7 +1057,7 @@ static Component MakeQueryableForm(WizardState* w, PanelAppState* state)
     auto ann_detail = Container::Vertical({f_ann_aurl, f_ann_minc, f_ann_maxc});
     auto ann_maybe = Maybe(ann_detail, [w]
                            {
-                               return w->queryable.mldp_annotation.enabled;
+                               return w->queryable.mldp_pv_metadata.enabled;
                            });
 
     auto form = Container::Vertical({

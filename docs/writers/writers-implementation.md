@@ -25,7 +25,7 @@ public:
 };
 ```
 
-`acceptsPayload()` lets the controller skip delivering a batch to writers that only handle specific payload types. For example `MLDPAnnotationWriter` returns `true` only for `SourceMetadataPayload`, while `MLDPConfigurationWriter` returns `true` only for `ConfigurationPayload` and `ConfigurationActivationPayload`.
+`acceptsPayload()` lets the controller skip delivering a batch to writers that only handle specific payload types. For example `MLDPPVMetadataWriter` returns `true` only for `SourceMetadataPayload`, while `MLDPConfigurationWriter` returns `true` only for `ConfigurationPayload` and `ConfigurationActivationPayload`.
 
 ### Lifecycle
 
@@ -97,7 +97,7 @@ writer:
 |------|-----|--------|---------|
 | `mldp` | [MLDP Writer](mldp-writer.md) | `include/writer/mldp/MLDPWriter.h` | `TimeSeriesPayload` |
 | `hdf5` | [HDF5 Writer](hdf5-writer.md) | `include/writer/hdf5/HDF5Writer.h` | `TimeSeriesPayload` |
-| `mldp-annotation` | [MLDP Annotation Writer](mldp-annotation-writer.md) | `include/writer/mldp_annotation/MLDPAnnotationWriter.h` | `SourceMetadataPayload` |
+| `mldp-pv-metadata` | [MLDP PV Metadata Writer](mldp-pv-metadata-writer.md) | `include/writer/mldp_pv_metadata/MLDPPVMetadataWriter.h` | `SourceMetadataPayload` |
 | `mldp-configuration` | [MLDP Configuration Writer](mldp-configuration-writer.md) | `include/writer/mldp_configuration/MLDPConfigurationWriter.h` | `ConfigurationPayload`, `ConfigurationActivationPayload` |
 
 ---

@@ -8,36 +8,36 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
-#include <writer/mldp_annotation/MLDPAnnotationWriterConfig.h>
+#include <writer/mldp_pv_metadata/MLDPPVMetadataWriterConfig.h>
 
 #include <stdexcept>
 
 using namespace mldp_pvxs_driver::writer;
 using namespace mldp_pvxs_driver::util::pool;
 
-MLDPAnnotationWriterConfig MLDPAnnotationWriterConfig::parse(const config::Config& node)
+MLDPPVMetadataWriterConfig MLDPPVMetadataWriterConfig::parse(const config::Config& node)
 {
-    MLDPAnnotationWriterConfig cfg;
+    MLDPPVMetadataWriterConfig cfg;
 
     cfg.name = node.get("name", "");
     if (cfg.name.empty())
     {
-        throw std::runtime_error("MLDPAnnotationWriterConfig: 'name' is required");
+        throw std::runtime_error("MLDPPVMetadataWriterConfig: 'name' is required");
     }
 
     cfg.threadPool = node.getInt("thread-pool", 2);
     cfg.deadlineSeconds = node.getInt("deadline-seconds", 10);
 
-    if (!node.hasChild("mldp-annotation-pool"))
+    if (!node.hasChild("mldp-pv-metadata-pool"))
     {
         throw std::runtime_error(
-            "MLDPAnnotationWriterConfig: 'mldp-annotation-pool' block is required");
+            "MLDPPVMetadataWriterConfig: 'mldp-pv-metadata-pool' block is required");
     }
-    const auto poolNodes = node.subConfig("mldp-annotation-pool");
+    const auto poolNodes = node.subConfig("mldp-pv-metadata-pool");
     if (poolNodes.empty())
     {
         throw std::runtime_error(
-            "MLDPAnnotationWriterConfig: 'mldp-annotation-pool' block is empty");
+            "MLDPPVMetadataWriterConfig: 'mldp-pv-metadata-pool' block is empty");
     }
     cfg.poolConfig = MLDPGrpcPoolConfig(poolNodes.front());
 

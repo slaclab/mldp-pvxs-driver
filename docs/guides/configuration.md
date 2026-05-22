@@ -12,7 +12,7 @@ Complete YAML schema reference for the MLDP PVXS Driver. All keys are case-sensi
 writer:         # required — at least one writer instance
   mldp: [...]
   hdf5: [...]              # requires -DMLDP_PVXS_ENABLE_HDF5=ON build option
-  mldp-annotation: [...]   # persists PV metadata via annotation service
+  mldp-pv-metadata: [...]  # persists PV metadata via annotation service
   mldp-configuration: [...] # persists configuration objects via annotation service
 
 reader:         # required — at least one reader instance
@@ -120,17 +120,17 @@ writer:
 
 ---
 
-### `writer.mldp-annotation[]` — MLDP Annotation Writer
+### `writer.mldp-pv-metadata[]` — MLDP PV Metadata Writer
 
-Sequence of annotation writer instances. Each element persists `SourceMetadataPayload` batches to the `DpAnnotationService` gRPC endpoint via `savePvMetadata` RPCs.
+Sequence of PV metadata writer instances. Each element persists `SourceMetadataPayload` batches to the `DpAnnotationService` gRPC endpoint via `savePvMetadata` RPCs.
 
 ```yaml
 writer:
-  mldp-annotation:
-    - name: annotation_main         # required — unique instance name
+  mldp-pv-metadata:
+    - name: pv_metadata_main        # required — unique instance name
       thread-pool: 2                # optional; default: 2
       deadline-seconds: 10          # optional; default: 10
-      mldp-annotation-pool:         # required
+      mldp-pv-metadata-pool:        # required
         annotation-url: grpc://annotation-host:50053  # required
         min-conn: 1                 # optional; default: 1
         max-conn: 4                 # optional; default: 4
@@ -141,11 +141,11 @@ writer:
 | `name` | string | — | **Required.** Unique writer instance name. |
 | `thread-pool` | int | `2` | Worker threads for concurrent annotation RPCs. |
 | `deadline-seconds` | int | `10` | Per-RPC deadline in seconds. |
-| `mldp-annotation-pool.annotation-url` | string | — | **Required.** gRPC endpoint for the annotation service. |
-| `mldp-annotation-pool.min-conn` | int | `1` | Minimum open connections in the pool. |
-| `mldp-annotation-pool.max-conn` | int | `4` | Maximum open connections in the pool. |
+| `mldp-pv-metadata-pool.annotation-url` | string | — | **Required.** gRPC endpoint for the annotation service. |
+| `mldp-pv-metadata-pool.min-conn` | int | `1` | Minimum open connections in the pool. |
+| `mldp-pv-metadata-pool.max-conn` | int | `4` | Maximum open connections in the pool. |
 
-→ [Full MLDP Annotation Writer Documentation](../writers/mldp-annotation-writer.md)
+→ [Full MLDP PV Metadata Writer Documentation](../writers/mldp-pv-metadata-writer.md)
 
 ---
 

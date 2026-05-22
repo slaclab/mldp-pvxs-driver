@@ -99,7 +99,7 @@ struct QueryableMldpConfig
     std::string max_conn = "2";
 };
 
-struct QueryableAnnotationConfig
+struct QueryablePVMetadataConfig
 {
     bool        enabled = false;
     std::string annotation_url;
@@ -110,7 +110,7 @@ struct QueryableAnnotationConfig
 struct QueryableState
 {
     QueryableMldpConfig       mldp;
-    QueryableAnnotationConfig mldp_annotation;
+    QueryablePVMetadataConfig mldp_pv_metadata;
 };
 
 struct WizardState

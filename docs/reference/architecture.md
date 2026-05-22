@@ -43,7 +43,7 @@ flowchart TB
         WR1["MLDPWriter<br/>(gRPC)<br/>Thread Pool · WorkerChannels"]
         WR2["HDF5WriterPerSource<br/>(Disk)<br/>MPSC Queue · HDF5FilePool · Flush Thread"]
         WR3["HDF5WriterMerge<br/>(Disk)<br/>MPSC Queue · Shared H5File · Flush Thread"]
-        WR4["MLDPAnnotationWriter<br/>(gRPC)<br/>Work Queue · Thread Pool"]
+        WR4["MLDPPVMetadataWriter<br/>(gRPC)<br/>Work Queue · Thread Pool"]
         WR5["MLDPConfigurationWriter<br/>(gRPC)<br/>Work Queue · Thread Pool"]
     end
 
@@ -132,7 +132,7 @@ All writers:
 ```
 IWriter  (pure abstract)
 ├── MLDPWriter              (type "mldp")               → gRPC → MLDP ingestion service
-├── MLDPAnnotationWriter    (type "mldp-annotation")    → gRPC → DpAnnotationService.savePvMetadata
+├── MLDPPVMetadataWriter    (type "mldp-pv-metadata")   → gRPC → DpAnnotationService.savePvMetadata
 ├── MLDPConfigurationWriter (type "mldp-configuration") → gRPC → DpAnnotationService.saveConfiguration / saveConfigurationActivation
 └── HDF5WriterBase          → HDF5 files on local disk  (abstract)
       ├── HDF5WriterPerSource   (type "hdf5"       — one file per root_source via HDF5FilePool)
@@ -146,7 +146,7 @@ IWriter  (pure abstract)
 | Payload type | Helper | Accepted by |
 |---|---|---|
 | `TimeSeriesPayload` | `isTimeSeries(b)` / `asTimeSeries(b)` | `MLDPWriter`, `HDF5WriterPerSource`, `HDF5WriterMerge` |
-| `SourceMetadataPayload` | `isSourceMetadata(b)` / `asSourceMetadata(b)` | `MLDPAnnotationWriter` |
+| `SourceMetadataPayload` | `isSourceMetadata(b)` / `asSourceMetadata(b)` | `MLDPPVMetadataWriter` |
 | `ConfigurationPayload` | `isConfiguration(b)` / `asConfiguration(b)` | `MLDPConfigurationWriter` |
 | `ConfigurationActivationPayload` | `isConfigurationActivation(b)` / `asConfigurationActivation(b)` | `MLDPConfigurationWriter` |
 
@@ -188,9 +188,9 @@ Each `EventBatchStruct` also carries:
 - Rotation triggered when any source pushes the file past age or size threshold; all groups recreated in new file
 - HDF5 layout: `/<source>/timestamps` + `/<source>/<col>` datasets (same types as per-source)
 
-### MLDPAnnotationWriter
+### MLDPPVMetadataWriter
 
-- Type key: `"mldp-annotation"`
+- Type key: `"mldp-pv-metadata"`
 - Accepts only `SourceMetadataPayload` batches (`acceptsPayload()` filters others).
 - Expands each `{source → SourceMetadataEntry}` map entry into an individual work item.
 - N worker threads (configurable `thread-pool`) drain the queue via `savePvMetadata` RPC.
@@ -201,7 +201,7 @@ Each `EventBatchStruct` also carries:
 - Type key: `"mldp-configuration"`
 - Accepts `ConfigurationPayload` and `ConfigurationActivationPayload` batches.
 - Dispatches to `saveConfiguration` or `saveConfigurationActivation` RPC based on the active variant.
-- Same threading model as `MLDPAnnotationWriter` (work queue + N workers).
+- Same threading model as `MLDPPVMetadataWriter` (work queue + N workers).
 - Shares `MLDPGrpcAnnotationPool` connection pool type with annotation writer.
 
 ### QueryableFactory
@@ -577,11 +577,11 @@ writer:
       flush-interval-ms: 1000          # flush thread period ms (default: 1000)
       compression-level: 0             # DEFLATE 0–9; 0 = off (default: 0)
 
-  mldp-annotation:
-    - name: annotation_main
+  mldp-pv-metadata:
+    - name: pv_metadata_main
       thread-pool: 2
       deadline-seconds: 10
-      mldp-annotation-pool:
+      mldp-pv-metadata-pool:
         annotation-url: grpc://annotation-host:50053
         min-conn: 1
         max-conn: 4

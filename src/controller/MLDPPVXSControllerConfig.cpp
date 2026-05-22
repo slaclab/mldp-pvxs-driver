@@ -138,12 +138,12 @@ void MLDPPVXSControllerConfig::parseWriter(const ::mldp_pvxs_driver::config::Con
             writerEntries_.push_back({"hdf5-merge", item});
         }
     }
-    if (writerNode.hasChild(WriterMldpAnnotationKey))
+    if (writerNode.hasChild(WriterMldpPVMetadataKey))
     {
-        const auto items = writerNode.subConfig(WriterMldpAnnotationKey);
+        const auto items = writerNode.subConfig(WriterMldpPVMetadataKey);
         for (const auto& item : items)
         {
-            writerEntries_.push_back({"mldp-annotation", item});
+            writerEntries_.push_back({"mldp-pv-metadata", item});
         }
     }
     if (writerNode.hasChild(WriterMldpConfigurationKey))

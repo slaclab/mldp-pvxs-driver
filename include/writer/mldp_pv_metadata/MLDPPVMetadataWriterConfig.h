@@ -18,24 +18,24 @@
 namespace mldp_pvxs_driver::writer {
 
 /**
- * @brief Configuration for the MLDP annotation writer.
+ * @brief Configuration for the MLDP PV metadata writer.
  *
- * Parsed from the YAML block that configures one annotation writer instance.
+ * Parsed from the YAML block that configures one PV metadata writer instance.
  *
  * YAML mapping:
  * @code{.yaml}
  * writer:
- *   mldp-annotation:
- *     - name: annotation_main
+ *   mldp-pv-metadata:
+ *     - name: pv_metadata_main
  *       thread-pool: 2              # optional; default: 2
  *       deadline-seconds: 10        # optional; default: 10
- *       mldp-annotation-pool:
+ *       mldp-pv-metadata-pool:
  *         annotation-url: …
  *         min-conn: 1
  *         max-conn: 4
  * @endcode
  */
-struct MLDPAnnotationWriterConfig
+struct MLDPPVMetadataWriterConfig
 {
     /// Unique instance name. Required.
     std::string name;
@@ -54,7 +54,7 @@ struct MLDPAnnotationWriterConfig
      *
      * @throws std::runtime_error on missing required fields.
      */
-    static MLDPAnnotationWriterConfig parse(const config::Config& node);
+    static MLDPPVMetadataWriterConfig parse(const config::Config& node);
 };
 
 } // namespace mldp_pvxs_driver::writer

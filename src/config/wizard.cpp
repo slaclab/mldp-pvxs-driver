@@ -229,7 +229,7 @@ std::string generateYaml(const WizardState& st)
     }
 
     // queryable
-    if (st.queryable.mldp.enabled || st.queryable.mldp_annotation.enabled)
+    if (st.queryable.mldp.enabled || st.queryable.mldp_pv_metadata.enabled)
     {
         o << "queryable:\n";
         if (st.queryable.mldp.enabled)
@@ -242,13 +242,13 @@ std::string generateYaml(const WizardState& st)
             o << ind(3) << "min-conn: " << st.queryable.mldp.min_conn << "\n";
             o << ind(3) << "max-conn: " << st.queryable.mldp.max_conn << "\n";
         }
-        if (st.queryable.mldp_annotation.enabled)
+        if (st.queryable.mldp_pv_metadata.enabled)
         {
-            o << ind(1) << "mldp-annotation:\n";
-            o << ind(2) << "mldp-annotation-pool:\n";
-            o << ind(3) << "annotation-url: " << st.queryable.mldp_annotation.annotation_url << "\n";
-            o << ind(3) << "min-conn: " << st.queryable.mldp_annotation.min_conn << "\n";
-            o << ind(3) << "max-conn: " << st.queryable.mldp_annotation.max_conn << "\n";
+            o << ind(1) << "mldp-pv-metadata:\n";
+            o << ind(2) << "mldp-pv-metadata-pool:\n";
+            o << ind(3) << "annotation-url: " << st.queryable.mldp_pv_metadata.annotation_url << "\n";
+            o << ind(3) << "min-conn: " << st.queryable.mldp_pv_metadata.min_conn << "\n";
+            o << ind(3) << "max-conn: " << st.queryable.mldp_pv_metadata.max_conn << "\n";
         }
         o << "\n";
     }
@@ -347,19 +347,19 @@ void loadFromConfig(const std::string& path, WizardState& st)
                     }
                 }
             }
-            if (q.hasChild("mldp-annotation"))
+            if (q.hasChild("mldp-pv-metadata"))
             {
-                auto mv = q.subConfig("mldp-annotation");
-                if (!mv.empty() && mv[0].hasChild("mldp-annotation-pool"))
+                auto mv = q.subConfig("mldp-pv-metadata");
+                if (!mv.empty() && mv[0].hasChild("mldp-pv-metadata-pool"))
                 {
-                    auto pv = mv[0].subConfig("mldp-annotation-pool");
+                    auto pv = mv[0].subConfig("mldp-pv-metadata-pool");
                     if (!pv.empty())
                     {
                         const auto& p = pv[0];
-                        st.queryable.mldp_annotation.enabled = true;
-                        st.queryable.mldp_annotation.annotation_url = p.get("annotation-url", "");
-                        st.queryable.mldp_annotation.min_conn = std::to_string(p.getInt("min-conn", 1));
-                        st.queryable.mldp_annotation.max_conn = std::to_string(p.getInt("max-conn", 2));
+                        st.queryable.mldp_pv_metadata.enabled = true;
+                        st.queryable.mldp_pv_metadata.annotation_url = p.get("annotation-url", "");
+                        st.queryable.mldp_pv_metadata.min_conn = std::to_string(p.getInt("min-conn", 1));
+                        st.queryable.mldp_pv_metadata.max_conn = std::to_string(p.getInt("max-conn", 2));
                     }
                 }
             }

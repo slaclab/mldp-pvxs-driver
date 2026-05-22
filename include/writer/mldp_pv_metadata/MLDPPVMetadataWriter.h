@@ -15,7 +15,7 @@
 #include <util/log/Logger.h>
 #include <writer/IWriter.h>
 #include <writer/WriterFactory.h>
-#include <writer/mldp_annotation/MLDPAnnotationWriterConfig.h>
+#include <writer/mldp_pv_metadata/MLDPPVMetadataWriterConfig.h>
 
 #include <atomic>
 #include <condition_variable>
@@ -33,7 +33,7 @@ class Metrics;
 namespace mldp_pvxs_driver::writer {
 
 /**
- * @brief Annotation writer that persists PV metadata via the DpAnnotationService gRPC API.
+ * @brief PV metadata writer that persists PV metadata via the DpAnnotationService gRPC API.
  *
  * Accepts @ref util::bus::SourceMetadataPayload batches, fans each source-entry
  * pair into an internal work queue, and drains the queue with a configurable
@@ -42,9 +42,9 @@ namespace mldp_pvxs_driver::writer {
  *
  * Lifecycle contract: construct → @ref start → @ref push … → @ref stop.
  */
-class MLDPAnnotationWriter final : public IWriter
+class MLDPPVMetadataWriter final : public IWriter
 {
-    REGISTER_WRITER("mldp-annotation", MLDPAnnotationWriter)
+    REGISTER_WRITER("mldp-pv-metadata", MLDPPVMetadataWriter)
 
 public:
     /**
@@ -52,10 +52,10 @@ public:
      *
      * Called by the @ref WriterFactory registry.
      */
-    explicit MLDPAnnotationWriter(const config::Config&             root,
+    explicit MLDPPVMetadataWriter(const config::Config&             root,
                                   std::shared_ptr<metrics::Metrics> metrics = nullptr);
 
-    ~MLDPAnnotationWriter() override;
+    ~MLDPPVMetadataWriter() override;
 
     std::string name() const override
     {
@@ -83,7 +83,7 @@ private:
     void saveSourceMetadata(const std::string&                    sourceName,
                             const util::bus::SourceMetadataEntry& entry);
 
-    MLDPAnnotationWriterConfig                          config_;
+    MLDPPVMetadataWriterConfig                          config_;
     std::shared_ptr<metrics::Metrics>                   metrics_;
     std::shared_ptr<util::log::ILogger>                 logger_;
     std::shared_ptr<util::pool::MLDPGrpcAnnotationPool> pool_;

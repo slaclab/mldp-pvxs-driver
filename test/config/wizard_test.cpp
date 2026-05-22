@@ -735,18 +735,18 @@ TEST(WizardGenerateYaml, QueryableMldpEmitted)
     EXPECT_NE(std::string::npos, yaml.find("max-conn: 2"));
 }
 
-TEST(WizardGenerateYaml, QueryableAnnotationEmitted)
+TEST(WizardGenerateYaml, QueryablePVMetadataEmitted)
 {
     auto st = makeMinimalState();
-    st.queryable.mldp_annotation.enabled        = true;
-    st.queryable.mldp_annotation.annotation_url = "grpc://annotation:50053";
-    st.queryable.mldp_annotation.min_conn       = "1";
-    st.queryable.mldp_annotation.max_conn       = "3";
+    st.queryable.mldp_pv_metadata.enabled        = true;
+    st.queryable.mldp_pv_metadata.annotation_url = "grpc://annotation:50053";
+    st.queryable.mldp_pv_metadata.min_conn       = "1";
+    st.queryable.mldp_pv_metadata.max_conn       = "3";
 
     auto yaml = generateYaml(st);
     EXPECT_NE(std::string::npos, yaml.find("queryable:"));
-    EXPECT_NE(std::string::npos, yaml.find("mldp-annotation:"));
-    EXPECT_NE(std::string::npos, yaml.find("mldp-annotation-pool:"));
+    EXPECT_NE(std::string::npos, yaml.find("mldp-pv-metadata:"));
+    EXPECT_NE(std::string::npos, yaml.find("mldp-pv-metadata-pool:"));
     EXPECT_NE(std::string::npos, yaml.find("annotation-url: grpc://annotation:50053"));
     EXPECT_NE(std::string::npos, yaml.find("max-conn: 3"));
 }
@@ -778,16 +778,16 @@ TEST(WizardLoadFromConfig, RoundTripQueryableMldp)
     EXPECT_EQ("grpc://query:50052",  loaded.queryable.mldp.query_url);
     EXPECT_EQ("2",                   loaded.queryable.mldp.min_conn);
     EXPECT_EQ("4",                   loaded.queryable.mldp.max_conn);
-    EXPECT_FALSE(loaded.queryable.mldp_annotation.enabled);
+    EXPECT_FALSE(loaded.queryable.mldp_pv_metadata.enabled);
 }
 
-TEST(WizardLoadFromConfig, RoundTripQueryableAnnotation)
+TEST(WizardLoadFromConfig, RoundTripQueryablePVMetadata)
 {
     auto st = makeMinimalState();
-    st.queryable.mldp_annotation.enabled        = true;
-    st.queryable.mldp_annotation.annotation_url = "grpc://ann:50053";
-    st.queryable.mldp_annotation.min_conn       = "1";
-    st.queryable.mldp_annotation.max_conn       = "3";
+    st.queryable.mldp_pv_metadata.enabled        = true;
+    st.queryable.mldp_pv_metadata.annotation_url = "grpc://ann:50053";
+    st.queryable.mldp_pv_metadata.min_conn       = "1";
+    st.queryable.mldp_pv_metadata.max_conn       = "3";
 
     std::string yaml = generateYaml(st);
     std::string path = writeTmpYaml(yaml);
@@ -796,10 +796,10 @@ TEST(WizardLoadFromConfig, RoundTripQueryableAnnotation)
     loadFromConfig(path, loaded);
 
     EXPECT_FALSE(loaded.queryable.mldp.enabled);
-    EXPECT_TRUE(loaded.queryable.mldp_annotation.enabled);
-    EXPECT_EQ("grpc://ann:50053", loaded.queryable.mldp_annotation.annotation_url);
-    EXPECT_EQ("1",                loaded.queryable.mldp_annotation.min_conn);
-    EXPECT_EQ("3",                loaded.queryable.mldp_annotation.max_conn);
+    EXPECT_TRUE(loaded.queryable.mldp_pv_metadata.enabled);
+    EXPECT_EQ("grpc://ann:50053", loaded.queryable.mldp_pv_metadata.annotation_url);
+    EXPECT_EQ("1",                loaded.queryable.mldp_pv_metadata.min_conn);
+    EXPECT_EQ("3",                loaded.queryable.mldp_pv_metadata.max_conn);
 }
 
 TEST(WizardLoadFromConfig, RoundTripBothQueryables)
@@ -810,10 +810,10 @@ TEST(WizardLoadFromConfig, RoundTripBothQueryables)
     st.queryable.mldp.query_url             = "grpc://query:50052";
     st.queryable.mldp.min_conn              = "1";
     st.queryable.mldp.max_conn              = "2";
-    st.queryable.mldp_annotation.enabled        = true;
-    st.queryable.mldp_annotation.annotation_url = "grpc://ann:50053";
-    st.queryable.mldp_annotation.min_conn       = "1";
-    st.queryable.mldp_annotation.max_conn       = "2";
+    st.queryable.mldp_pv_metadata.enabled        = true;
+    st.queryable.mldp_pv_metadata.annotation_url = "grpc://ann:50053";
+    st.queryable.mldp_pv_metadata.min_conn       = "1";
+    st.queryable.mldp_pv_metadata.max_conn       = "2";
 
     std::string yaml = generateYaml(st);
     std::string path = writeTmpYaml(yaml);
@@ -822,9 +822,9 @@ TEST(WizardLoadFromConfig, RoundTripBothQueryables)
     loadFromConfig(path, loaded);
 
     EXPECT_TRUE(loaded.queryable.mldp.enabled);
-    EXPECT_TRUE(loaded.queryable.mldp_annotation.enabled);
+    EXPECT_TRUE(loaded.queryable.mldp_pv_metadata.enabled);
     EXPECT_EQ("grpc://ingest:50051",  loaded.queryable.mldp.ingestion_url);
-    EXPECT_EQ("grpc://ann:50053",     loaded.queryable.mldp_annotation.annotation_url);
+    EXPECT_EQ("grpc://ann:50053",     loaded.queryable.mldp_pv_metadata.annotation_url);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

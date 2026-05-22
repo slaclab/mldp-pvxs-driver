@@ -8,7 +8,7 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
-#include <writer/mldp_annotation/MLDPAnnotationWriter.h>
+#include <writer/mldp_pv_metadata/MLDPPVMetadataWriter.h>
 
 #include <annotation.grpc.pb.h>
 #include <grpcpp/grpcpp.h>
@@ -25,15 +25,15 @@ using namespace mldp_pvxs_driver::util::pool;
 // Construction / destruction
 // ---------------------------------------------------------------------------
 
-MLDPAnnotationWriter::MLDPAnnotationWriter(const config::Config&             root,
+MLDPPVMetadataWriter::MLDPPVMetadataWriter(const config::Config&             root,
                                            std::shared_ptr<metrics::Metrics> metrics)
-    : config_(MLDPAnnotationWriterConfig::parse(root))
+    : config_(MLDPPVMetadataWriterConfig::parse(root))
     , metrics_(std::move(metrics))
-    , logger_(newLogger("annotation_writer:" + config_.name))
+    , logger_(newLogger("pv_metadata_writer:" + config_.name))
 {
 }
 
-MLDPAnnotationWriter::~MLDPAnnotationWriter()
+MLDPPVMetadataWriter::~MLDPPVMetadataWriter()
 {
     if (running_.load())
     {
@@ -45,11 +45,11 @@ MLDPAnnotationWriter::~MLDPAnnotationWriter()
 // IWriter lifecycle
 // ---------------------------------------------------------------------------
 
-void MLDPAnnotationWriter::start()
+void MLDPPVMetadataWriter::start()
 {
     if (running_.load())
     {
-        warnf(*logger_, "MLDPAnnotationWriter '{}' already started", config_.name);
+        warnf(*logger_, "MLDPPVMetadataWriter '{}' already started", config_.name);
         return;
     }
 
@@ -67,11 +67,11 @@ void MLDPAnnotationWriter::start()
                               });
     }
 
-    infof(*logger_, "MLDPAnnotationWriter '{}' started ({} workers)",
+    infof(*logger_, "MLDPPVMetadataWriter '{}' started ({} workers)",
           config_.name, count);
 }
 
-void MLDPAnnotationWriter::stop() noexcept
+void MLDPPVMetadataWriter::stop() noexcept
 {
     stop_.store(true);
     queue_cv_.notify_all();
@@ -84,14 +84,14 @@ void MLDPAnnotationWriter::stop() noexcept
     }
     workers_.clear();
     running_.store(false);
-    infof(*logger_, "MLDPAnnotationWriter '{}' stopped", config_.name);
+    infof(*logger_, "MLDPPVMetadataWriter '{}' stopped", config_.name);
 }
 
 // ---------------------------------------------------------------------------
 // push
 // ---------------------------------------------------------------------------
 
-bool MLDPAnnotationWriter::push(IDataBus::EventBatch batch) noexcept
+bool MLDPPVMetadataWriter::push(IDataBus::EventBatch batch) noexcept
 {
     const auto* meta = std::get_if<SourceMetadataPayload>(&batch.payload);
     if (!meta)
@@ -113,7 +113,7 @@ bool MLDPAnnotationWriter::push(IDataBus::EventBatch batch) noexcept
 // workerLoop
 // ---------------------------------------------------------------------------
 
-void MLDPAnnotationWriter::workerLoop()
+void MLDPPVMetadataWriter::workerLoop()
 {
     while (true)
     {
@@ -141,7 +141,7 @@ void MLDPAnnotationWriter::workerLoop()
 // saveSourceMetadata
 // ---------------------------------------------------------------------------
 
-void MLDPAnnotationWriter::saveSourceMetadata(const std::string&         sourceName,
+void MLDPPVMetadataWriter::saveSourceMetadata(const std::string&         sourceName,
                                               const SourceMetadataEntry& entry)
 {
     try
@@ -193,7 +193,7 @@ void MLDPAnnotationWriter::saveSourceMetadata(const std::string&         sourceN
         if (!status.ok())
         {
             errorf(*logger_,
-                   "MLDPAnnotationWriter savePvMetadata '{}': gRPC error {}: {}",
+                   "MLDPPVMetadataWriter savePvMetadata '{}': gRPC error {}: {}",
                    sourceName,
                    static_cast<int>(status.error_code()),
                    status.error_message());
@@ -202,7 +202,7 @@ void MLDPAnnotationWriter::saveSourceMetadata(const std::string&         sourceN
     catch (const std::exception& ex)
     {
         errorf(*logger_,
-               "MLDPAnnotationWriter saveSourceMetadata '{}' exception: {}",
+               "MLDPPVMetadataWriter saveSourceMetadata '{}' exception: {}",
                sourceName, ex.what());
     }
 }

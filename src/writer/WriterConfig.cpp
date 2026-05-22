@@ -10,7 +10,7 @@
 
 #include <writer/WriterConfig.h>
 #include <writer/mldp/MLDPWriterConfig.h>
-#include <writer/mldp_annotation/MLDPAnnotationWriterConfig.h>
+#include <writer/mldp_pv_metadata/MLDPPVMetadataWriterConfig.h>
 #include <writer/mldp_configuration/MLDPConfigurationWriterConfig.h>
 
 #ifdef MLDP_PVXS_HDF5_ENABLED
@@ -98,23 +98,23 @@ void WriterConfig::validate(const Config& writerNode)
 #endif
     }
 
-    // -- MLDP annotation writer instances --
-    if (writerNode.hasChild(WriterMldpAnnotationKey))
+    // -- MLDP PV metadata writer instances --
+    if (writerNode.hasChild(WriterMldpPVMetadataKey))
     {
-        if (!writerNode.isSequence(WriterMldpAnnotationKey))
+        if (!writerNode.isSequence(WriterMldpPVMetadataKey))
         {
-            throw Error("writer.mldp-annotation must be a sequence of writer instances");
+            throw Error("writer.mldp-pv-metadata must be a sequence of writer instances");
         }
-        const auto items = writerNode.subConfig(WriterMldpAnnotationKey);
+        const auto items = writerNode.subConfig(WriterMldpPVMetadataKey);
         for (const auto& item : items)
         {
             try
             {
-                MLDPAnnotationWriterConfig::parse(item);
+                MLDPPVMetadataWriterConfig::parse(item);
             }
             catch (const std::runtime_error& e)
             {
-                throw Error(std::string("writer.mldp-annotation: ") + e.what());
+                throw Error(std::string("writer.mldp-pv-metadata: ") + e.what());
             }
         }
         instanceCount += static_cast<int>(items.size());
