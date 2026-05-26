@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html xmlns:mso="urn:schemas-microsoft-com:office:office" xmlns:msdt="uuid:C2F41010-65B3-11d1-A29F-00AA00C14882">
+<head>
+<meta charset="ISO-8859-1">
+<title>The directory service</title>
+
+<!--[if gte mso 9]><xml>
+<mso:CustomDocumentProperties>
+<mso:Project msdt:dt="string">Management</mso:Project>
+<mso:Application msdt:dt="string">Common</mso:Application>
+<mso:Document_x0020_Type msdt:dt="string">Programmer Guide</mso:Document_x0020_Type>
+<mso:Subsystem msdt:dt="string">Common</mso:Subsystem>
+<mso:display_urn_x003a_schemas-microsoft-com_x003a_office_x003a_office_x0023_Editor msdt:dt="string">Shankar, Murali</mso:display_urn_x003a_schemas-microsoft-com_x003a_office_x003a_office_x0023_Editor>
+<mso:display_urn_x003a_schemas-microsoft-com_x003a_office_x003a_office_x0023_Author msdt:dt="string">Shankar, Murali</mso:display_urn_x003a_schemas-microsoft-com_x003a_office_x003a_office_x0023_Author>
+<mso:URL msdt:dt="string"></mso:URL>
+</mso:CustomDocumentProperties>
+</xml><![endif]-->
+</head>
+<body>
+
+<h1>Directory Service</h1>
+<section>
+<h2>Summary</h2>
+The directory service ("DS") is a EPICS V4 data service that provides the names of PVs, devices, model elements, and other associated information about the components of the accelerator, to users and applications software.
+This information is obtained from multiple places.
+<ol>
+<li>The list of of PV's is obtained from <code>${IOC_DATA}/**/iocInfo/IOC.pvlist</code></li>
+<li>The list of devices, model elements etc is obtained from the MAD export files located in <code>/afs/slac/www/grp/ad/model/output/<i>lcls</i>/latest/opt</code>. Please see the requirements doc for more details.
+</li>
+<li>
+User defined tags are obtained by parsing files in <code>${IOC_DATA}/../ds_tags</code> ending with the extension <code>.tag</code>.
+The inital part of the file name is the name of the tag; the file contains a list of PV names. PV names can be regexes.
+The # character can be used to add comments to tag files; these lines are ignored.
+For example, this tag file defines the names for the tag <code>MikeZ</code>
+<pre>
+<code>
+cat ${IOC_DATA}/../ds_tags/MikeZ.tag
+#Sample list of tags for Mike Z
+#One can use a pattern like so
+SIOC:SYS0:ML01:AO%9
+#Or an absolute list of PV's like so - this was generated using eget -t -s ds -a tag=LI22 -a name=KLYS:%:STATSUMY
+KLYS:LI22:11:FOCUS:STATSUMY
+KLYS:LI22:11:STATSUMY
+KLYS:LI22:21:FOCUS:STATSUMY
+KLYS:LI22:21:STATSUMY
+...
+</code>
+</pre>
+</li>
+</ol>
+Information from all of these sources is combined and indexed in the memory of the directory service and served thru a V4 API.
+For example, <code>eget -s ds -a tag=QM15</code> gets all the PV's in the element <code>QM15</code>.
+<code>eget -s ds -a elementname=QM15 -a name=%:STATSUMY</code> gets all the PV's in the element <code>QM15</code> matching the name <code>%:STATSUMY</code>.
+<pre>
+<code>
+$ eget -s ds -a tag=QM15
+                      name
+   QUAD:LI21:335:STATMSGDP
+   QUAD:LI21:335:STATMSGFP
+   QUAD:LI21:335:STATMSGSV
+    QUAD:LI21:335:STATSUMY
+  QUAD:LI21:335:STATSUMYFP
+      QUAD:LI21:335:TEMPDP
+      QUAD:LI21:335:TEMPFP
+      QUAD:LI21:335:TEMPSV
+
+$ eget -s ds -a elementname=QM15 -a name=%:STATSUMY
+                    name
+  QUAD:LI21:335:STATSUMY
+</code>
+</pre>
+The directory service monitors these sources of information for any changes; detecting changes using the last modification timestamp. 
+
+</section>
+<section>
+<h2>Major components</h2>
+The DS is a self-contained Java V4 application; it lives within a standard V4 container.
+The source repository (GIT) is located here - <code>/afs/slac/g/cd/swe/git/repos/high_level_apps/directory_service.git</code>
+<ol>
+<li><code>DSMain</code> is the main launcher and instantiates the V4 framework, a DSContainer object and the service implementation.</li>
+<li><code>DSContainer</code> maintains all the information used by the directory service. All the others populate and use the information in the DSContainer.
+It is possible to switch the entire DSContainer object in a thread-safe fashion; there is an out-of-band command that does this today (this may be removed in the future). 
+</li>
+<li><code>DSServiceImpl</code> implements the V4 service API using the specified DSContainer.</li>
+<li>The <code>DSContainer</code> has an instance each of 
+<ol>
+<li><code>GatherIOCPVListFiles</code> - This periodically walks <code>${IOC_DATA}</code> and maintains a list of <code>**/iocInfo/IOC.pvlist</code> files.</li>
+<li><code>IOCPVListWatcher</code> - This periodically checks the last modified times of the files identified by <code>GatherIOCPVListFiles</code> and kicks of changes to the list of PV names.</li>
+<li><code>IOC2PVNames</code> - This manages the mapping between the specific <code>IOC.pvlist</code> and the PVNames that this contains.</li>
+<li><code>PVNames</code> - This indexes and manages the global list of PV names. All name queries are executed against the information here using the <code>findMatchingPVNames</code> method.</li>
+<li><code>TagsFromDeck</code> - This loads tag information from the MAD deck export and user defined tags and manages the mapping between tags/element names/device names etc and PV names.</li>
+</ol>
+</li>
+</ol> 
+The directory service API is complex and allows the user to match between a wide variety of name types(<code>DSNameType</code>). For example, we support the ability to get PV names given any combination of the element name/device name/line name/tag and so on.
+Navigation from each name type to another name type is implemented as an <code>ExecutionPlan</code>.
+The set of <code>ExecutionPlan</code>'s in the system is registered in the <code>ExecutionPlans</code>.
+When we get a query for names, we
+<ol>
+<li>Determine the destination name type</li>
+<li>Gather a list of source name types and arguments</li>
+<li>For each source name type, we determine the <code>ExecutionPlan</code> that can determine matching names from that source name type to the destination name type.</li>
+<li>The final result is the set intersection of all the matching names determined in the previous step.</li>
+</ol>  
+</section>
+
+<section>
+<h2>Deployment</h2>
+The DS is a crammable high-level app and thus lives in <code>${PHYSICS_TOP}</code>. 
+Per cram standards, it is fully self contained.
+To build, please use <code>ant</code>. To run the unit tests, please use <code>ant test</code>.
+In LCLS production, it typically takes about 1-2 minutes to start up (as it loads up all the information on startup).
+Most name matching queries seem to finish within a few milliseconds.
+The locations of all the various sources of information and the polling periods are all configurable using environment variables.  
+</section>
+
+</body>
+</html>
