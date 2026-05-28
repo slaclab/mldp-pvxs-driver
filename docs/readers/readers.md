@@ -6,19 +6,21 @@ The MLDP PVXS Driver uses an **abstract Reader pattern** to support multiple dat
 
 ## Supported Reader Types
 
-Reader Type      | Status      | Data Source          | Documentation
----------------- | ----------- | -------------------- | ---------------------------------------------------------
-`epics-base`     | Implemented | EPICS Control System | [EpicsBaseReader](epics-base-reader.md)
-`epics-pvxs`     | Implemented | EPICS Control System | [EpicsPVXSReader](epics-pvxs-reader.md)
-`epics-archiver` | Implemented | EPICS Archiver       | [EpicsArchiverReader](epics-archiver-reader.md)
+Reader Type           | Status      | Data Source                     | Documentation
+--------------------- | ----------- | ------------------------------- | ---------------------------------------------------------
+`epics-base`          | Implemented | EPICS Control System            | [EpicsBaseReader](epics-base-reader.md)
+`epics-pvxs`          | Implemented | EPICS Control System            | [EpicsPVXSReader](epics-pvxs-reader.md)
+`epics-archiver`      | Implemented | EPICS Archiver                  | [EpicsArchiverReader](epics-archiver-reader.md)
+`epics-ds-metadata`   | Implemented | EPICS Directory Service (PVA RPC) | [EpicsDSMetadataReader](epics-ds-metadata-reader.md)
 
 ## Reader Build & Dependency Matrix
 
-Reader Type      | Build Option | Required Libraries / Components | Notes
----------------- | ------------ | ------------------------------- | -----
-`epics-base`     | none (always built) | EPICS Base (`libCom`, `libca`, `libpvData`, `libpvAccess`, `libpvaClient`, `libpvAccessCA`) | Uses Channel Access polling path.
-`epics-pvxs`     | none (always built) | PVXS (`libpvxs`) + EPICS Base core libs | Uses PVAccess subscriptions.
-`epics-archiver` | none (always built) | libcurl + Protobuf/epicsarchiverap payload types | Uses Archiver PB/HTTP transport.
+Reader Type           | Build Option        | Required Libraries / Components | Notes
+--------------------- | ------------------- | ------------------------------- | -----
+`epics-base`          | none (always built) | EPICS Base (`libCom`, `libca`, `libpvData`, `libpvAccess`, `libpvaClient`, `libpvAccessCA`) | Uses Channel Access polling path.
+`epics-pvxs`          | none (always built) | PVXS (`libpvxs`) + EPICS Base core libs | Uses PVAccess subscriptions.
+`epics-archiver`      | none (always built) | libcurl + Protobuf/epicsarchiverap payload types | Uses Archiver PB/HTTP transport.
+`epics-ds-metadata`   | none (always built) | PVXS (`libpvxs`) + EPICS Base core libs | RPC-based PV metadata fetch; no PV list needed.
 
 EPICS/PVXS discovery is controlled by CMake/env variables used at configure time:
 
@@ -58,8 +60,14 @@ classDiagram
         epics-archiver
     }
 
+    class EpicsDSMetadataReader {
+        RPC Metadata Fetch
+        epics-ds-metadata
+    }
+
     Reader <|-- EpicsReaderBase
     Reader <|-- EpicsArchiverReader
+    Reader <|-- EpicsDSMetadataReader
     EpicsReaderBase <|-- EpicsBaseReader
     EpicsReaderBase <|-- EpicsPVXSReader
 ```
@@ -99,6 +107,16 @@ Historical data retrieval and continuous tail polling from EPICS Archiver Applia
 
 → [Full Documentation: EpicsArchiverReader](epics-archiver-reader.md)
 → [Implementation Guide](epics-archiver-reader-implementation.md)
+
+### EpicsDSMetadataReader
+
+PV metadata fetcher using EPICS Directory Service via PVA RPC.
+
+- **Mode**: One-shot RPC or periodic rescan
+- **Best For**: Populating the MLDP annotation service with PV metadata
+- **Key Feature**: No PV list required — the DS query pattern returns all known PVs; optional tag extraction from NTTable column
+
+→ [Full Documentation: EpicsDSMetadataReader](epics-ds-metadata-reader.md)
 
 ## Architecture Overview
 
@@ -179,6 +197,9 @@ REGISTER_READER("epics-pvxs", EpicsPVXSReader)
 
 // In EpicsArchiverReader.h
 REGISTER_READER("epics-archiver", EpicsArchiverReader)
+
+// In EpicsDSMetadataReader.h
+REGISTER_READER("epics-ds-metadata", EpicsDSMetadataReader)
 ```
 
 The `ReaderFactory` creates readers dynamically from configuration:
@@ -299,9 +320,12 @@ include/reader/
         │   ├── EpicsPVXSReader.h
         │   ├── EpicsMLDPConversion.h
         │   └── BSASEpicsMLDPConversion.h
-        └── epics_archiver/
-            ├── EpicsArchiverReader.h
-            └── EpicsArchiverReaderConfig.h
+        ├── epics_archiver/
+        │   ├── EpicsArchiverReader.h
+        │   └── EpicsArchiverReaderConfig.h
+        └── epics_ds/
+            ├── EpicsDSMetadataReader.h
+            └── EpicsDSMetadataReaderConfig.h
 
 src/reader/
 ├── Reader.cpp
@@ -319,9 +343,12 @@ src/reader/
     │       ├── EpicsPVXSReader.cpp
     │       ├── EpicsMLDPConversion.cpp
     │       └── BSASEpicsMLDPConversion.cpp
-    └── epics_archiver/
-        ├── EpicsArchiverReader.cpp
-        └── EpicsArchiverReaderConfig.cpp
+    ├── epics_archiver/
+    │   ├── EpicsArchiverReader.cpp
+    │   └── EpicsArchiverReaderConfig.cpp
+    └── epics_ds/
+        ├── EpicsDSMetadataReader.cpp
+        └── EpicsDSMetadataReaderConfig.cpp
 ```
 
 ---

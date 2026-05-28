@@ -11,6 +11,7 @@
 #include <pool/IObjectPool.h>
 #include <pool/IPoolHandle.h>
 #include <pool/MLDPGrpcAnnotationPool.h>
+#include <pool/MLDPGrpcAnnotationPoolConfig.h>
 
 #include <metrics/Metrics.h>
 #include <util/log/Logger.h>
@@ -39,24 +40,18 @@ MLDPGrpcAnnotationObject::MLDPGrpcAnnotationObject(std::shared_ptr<grpc::Channel
 {
 }
 
-MLDPGrpcAnnotationPool::MLDPGrpcAnnotationPool(const MLDPGrpcPoolConfig&         config,
+MLDPGrpcAnnotationPool::MLDPGrpcAnnotationPool(const MLDPGrpcAnnotationPoolConfig& config,
                                                std::shared_ptr<metrics::Metrics> metrics)
     : logger_(makeMLDPGRPCAnnotationLogger())
     , config_(config)
     , metrics_(std::move(metrics))
 {
     if (!config.valid())
-    {
         throw std::invalid_argument("MLDPGrpcAnnotationPool: configuration is invalid");
-    }
     if (config_.annotationUrl().empty())
-    {
         throw std::invalid_argument("MLDPGrpcAnnotationPool: annotation-url must not be empty");
-    }
     if (config_.minConnections() == 0 || config_.minConnections() > config_.maxConnections())
-    {
         throw std::invalid_argument("MLDPGrpcAnnotationPool: invalid min/max size");
-    }
 
     items_.reserve(config_.maxConnections());
     for (std::size_t i = 0; i < config_.minConnections(); ++i)
@@ -69,7 +64,14 @@ MLDPGrpcAnnotationPool::MLDPGrpcAnnotationPool(const MLDPGrpcPoolConfig&        
 }
 
 MLDPGrpcAnnotationPool::MLDPGrpcAnnotationPoolShrdPtr
-MLDPGrpcAnnotationPool::create(const MLDPGrpcPoolConfig&         config,
+MLDPGrpcAnnotationPool::create(const MLDPGrpcPoolConfig& config,
+                               std::shared_ptr<metrics::Metrics> metrics)
+{
+    return create(MLDPGrpcAnnotationPoolConfig(config), std::move(metrics));
+}
+
+MLDPGrpcAnnotationPool::MLDPGrpcAnnotationPoolShrdPtr
+MLDPGrpcAnnotationPool::create(const MLDPGrpcAnnotationPoolConfig& config,
                                std::shared_ptr<metrics::Metrics> metrics)
 {
     return std::shared_ptr<MLDPGrpcAnnotationPool>(new MLDPGrpcAnnotationPool(config, std::move(metrics)));

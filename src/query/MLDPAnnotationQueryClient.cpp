@@ -10,6 +10,7 @@
 
 #include <query/impl/mldp/MLDPAnnotationQueryClient.h>
 
+#include <pool/MLDPGrpcAnnotationPoolConfig.h>
 #include <util/log/Logger.h>
 
 #include <annotation.grpc.pb.h>
@@ -36,6 +37,14 @@ std::shared_ptr<mldp_pvxs_driver::util::log::ILogger> makeAnnotationQueryClientL
 MLDPAnnotationQueryClient::MLDPAnnotationQueryClient(
     const util::pool::MLDPGrpcPoolConfig& poolConfig,
     std::shared_ptr<metrics::Metrics>     metrics)
+    : logger_(makeAnnotationQueryClientLogger())
+    , pool_(MLDPGrpcAnnotationPool::create(poolConfig, std::move(metrics)))
+{
+}
+
+MLDPAnnotationQueryClient::MLDPAnnotationQueryClient(
+    const util::pool::MLDPGrpcAnnotationPoolConfig& poolConfig,
+    std::shared_ptr<metrics::Metrics>               metrics)
     : logger_(makeAnnotationQueryClientLogger())
     , pool_(MLDPGrpcAnnotationPool::create(poolConfig, std::move(metrics)))
 {

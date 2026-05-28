@@ -2,7 +2,9 @@
 
 ## Context
 
-New reader class that queries the EPICS Directory Service (`ds`) via a single pvAccessCPP `ChannelRPC` call, parses the returned `NTTable`, and pushes `SourceMetadataPayload` records onto the `IDataBus`. This implements the fetch side described in `review-pv-metadata-fetcher.md` as a proper driver reader (not a standalone CLI), so the metadata flows through the existing writer pipeline to the MLDP annotation service.
+New reader class that queries the EPICS Directory Service (`ds`) via a single **pvxs** `client::Context::rpc()` call, parses the returned `NTTable`, and pushes `SourceMetadataPayload` records onto the `IDataBus`. This implements the fetch side as a proper driver reader (not a standalone CLI), so the metadata flows through the existing writer pipeline to the MLDP annotation service.
+
+The codebase uses **pvxs** exclusively (`pvxs::client::Context`, `pvxs::server::Server`) — the old pvAccessCPP API (`ChannelProviderRegistry`, `ChannelRPC`, `ChannelRPCRequester`) is **not used** anywhere in this project and must not appear in this reader.
 
 ---
 
@@ -37,9 +39,14 @@ include/reader/impl/epics_ds/
 src/reader/impl/epics_ds/
   EpicsDSMetadataReaderConfig.cpp
   EpicsDSMetadataReader.cpp
+test/mock/
+  MockDSServer.h
+  MockDSServer.cpp
 test/reader/impl/epics_ds/
   epics_ds_metadata_reader_config_test.cpp
   epics_ds_metadata_reader_test.cpp
+test/controller/
+  mldppvxs_controller_ds_metadata_integration_test.cpp
 ```
 
 ---
@@ -92,118 +99,297 @@ EpicsDSMetadataReader(std::shared_ptr<util::bus::IDataBus> bus,
 ```
 
 ### Members
+
 | Member | Type | Purpose |
 |---|---|---|
 | `config_` | `EpicsDSMetadataReaderConfig` | parsed config |
 | `logger_` | `shared_ptr<ILogger>` | logging |
-| `worker_thread_` | `std::thread` | single-shot fetch |
+| `pva_context_` | `pvxs::client::Context` | pvxs RPC client (RAII) |
+| `worker_thread_` | `std::thread` | fetch loop |
 | `running_` | `atomic<bool>` | lifecycle flag |
+| `worker_cv_` | `std::condition_variable` | interruptible sleep between scans |
+| `worker_mutex_` | `std::mutex` | guards `worker_cv_` |
 | `worker_error_` | `exception_ptr` | diagnostics |
 
 ### Lifecycle
-- Constructor: parses config, starts worker thread
-- Destructor: sets `running_ = false`, signals `worker_cv_`, joins thread
+- Constructor: parses config, builds `pva_context_`, starts worker thread
+- Destructor: sets `running_ = false`, signals `worker_cv_`, joins thread; `pva_context_` destroyed by RAII
 - `name()`: returns `config_.name()`
-
-### Members (additions)
-| Member | Type | Purpose |
-|---|---|---|
-| `worker_cv_` | `std::condition_variable` | interruptible sleep between scans |
-| `worker_mutex_` | `std::mutex` | guards `worker_cv_` |
 
 ### Worker thread (`runWorker()`)
 
+Uses pvxs synchronous RPC — no callback class needed.
+
 ```
-ClientFactory::start()
+pva_context_ = pvxs::client::Config::fromEnv().build()
 
 do:
-  provider = ChannelProviderRegistry::clients()->getProvider("pva")
-  channel = provider->createChannel(config_.service(), DefaultChannelRequester::build(), PRIORITY_DEFAULT)
+  // Build NTURI argument
+  Value arg = TypeDef(TypeCode::Struct, "epics:nt/NTURI:1.0", {
+      Member(TypeCode::String, "scheme"),
+      Member(TypeCode::String, "path"),
+      Member(TypeCode::Struct, "query", {
+          Member(TypeCode::String, "name"),
+      }),
+  }).create();
+  arg["scheme"]      = "pva";
+  arg["path"]        = config_.service();
+  arg["query.name"]  = config_.query();
 
-  Build NTURI:
-    uri["scheme"] = "pva"
-    uri["path"]   = config_.service()
-    uri["query"]["name"] = config_.query()
+  // Synchronous RPC (throws pvxs::Timeout or pvxs::RemoteError on failure)
+  try:
+    Value result = pva_context_.rpc(config_.service(), arg)
+                                .timeout(std::chrono::duration<double>(config_.timeoutSec()))
+                                .exec()
+                                ->wait(std::chrono::duration<double>(config_.timeoutSec()));
 
-  pvRequest = CreateRequest::create()->createRequest("")
-  req = make_shared<RpcRequester>()
-  rpc = channel->createChannelRPC(req, pvRequest)
-
-  if req->waitConnect(timeout):
-    rpc->lastRequest()
-    rpc->request(uri)
-    req->waitDone(timeout)
-    if req->response():
-      payload = parseNTTable(req->response())
-      bus_->push(EventBatchStruct{ config_.name(), "", {}, payload })
-
-  channel->destroy()
-  epicsThreadSleep(0.1)
+    payload = parseNTTable(result)
+    bus_->push(EventBatchStruct{ .reader_name=config_.name(), .root_source="", .metadata={}, .payload=payload })
+  catch (std::exception& e):
+    log error; continue
 
   if config_.rescanIntervalSec() <= 0.0: break   // single-shot
 
-  // interruptible sleep: wakes early if running_ set to false
+  // interruptible sleep: wakes early when running_ → false
   unique_lock lk(worker_mutex_)
   worker_cv_.wait_for(lk, chrono::duration<double>(config_.rescanIntervalSec()),
                       [&]{ return !running_.load(); })
 
 while running_.load()
-
-ClientFactory::stop()
 ```
 
-`rescan-interval-sec: 0` (default) → single fetch then exit.  
-`rescan-interval-sec: N` → fetch, sleep N seconds (interruptible), fetch again until destructor sets `running_ = false` and signals `worker_cv_`.
-
-### RpcRequester inner class
-
-Implements `ChannelRPCRequester`. Two `epics::pvData::Event` semaphores gate connect and response.
-
-| Callback | Action |
-|---|---|
-| `channelRPCConnect(status, rpc)` | `m_connected = status.isSuccess()`, signal `m_connEvent` |
-| `requestDone(status, rpc, response)` | store `m_response`, `m_done = status.isSuccess()`, signal `m_doneEvent` |
-
-Public: `waitConnect(double timeout) → bool`, `waitDone(double timeout) → bool`, `response() → PVStructure::shared_pointer`
+`rescan-interval-sec: 0` (default) → single fetch then exit.
+`rescan-interval-sec: N` → fetch, sleep N seconds (interruptible), repeat until destructor signals.
 
 ### NTTable → SourceMetadataPayload parsing (`parseNTTable`)
 
-Fully dynamic — no column names hardcoded. Based on `review-pv-metadata-fetcher.md` parsing idiom (lines 219–255).
+Fully dynamic — no column names hardcoded. Uses pvxs `Value` API (same library used everywhere else in this project).
 
 ```cpp
-// 1. Get labels array
-PVStringArrayPtr labelsField = result->getSubField<PVStringArray>("labels");
-PVStringArray::const_svector labels; labelsField->get(labels);
+SourceMetadataPayload parseNTTable(const pvxs::Value& result) {
+    // 1. labels
+    auto labels = result["labels"].as<pvxs::shared_array<const std::string>>();
+    const size_t ncols = labels.size();
 
-// 2. Get value sub-structure fields (one PVScalarArray per column)
-PVStructurePtr valueStruct = result->getSubField<PVStructure>("value");
-PVFieldPtrArray fields = valueStruct->getPVFields();
-size_t nrows = (fields.empty() ? 0 : fields[0]->getLength());
+    // 2. Locate configured columns by scanning labels
+    size_t srcIdx  = 0;              // source-name-column; fallback col 0, warn if not found
+    size_t tagsIdx = SIZE_MAX;       // tags-column; SIZE_MAX = disabled / not found
 
-// 3. Locate configured columns by scanning labels
-size_t srcIdx  = 0;     // source-name-column; fallback to col 0, warn if not found
-size_t tagsIdx = npos;  // tags-column; npos = disabled / not found
+    for (size_t i = 0; i < ncols; ++i) {
+        if (labels[i] == config_.sourceNameColumn()) srcIdx  = i;
+        if (!config_.tagsColumn().empty() && labels[i] == config_.tagsColumn()) tagsIdx = i;
+    }
+    // warn if sourceNameColumn not found (srcIdx stays 0)
 
-for (size_t i = 0; i < labels.size(); ++i) {
-    if (labels[i] == config_.sourceNameColumn()) srcIdx  = i;
-    if (!config_.tagsColumn().empty() && labels[i] == config_.tagsColumn()) tagsIdx = i;
+    // 3. Extract each column as shared_array<const std::string>
+    //    Field name in value struct == labels[i] (pvxs uses the label string as field name)
+    //    For non-string columns use columnAsString() helper (see below)
+
+    // 4. For each row r:
+    //    key  = colData[srcIdx][r]
+    //    if tagsIdx != SIZE_MAX:
+    //        entry.tags = split(colData[tagsIdx][r], ',')  // trim whitespace, skip empty tokens
+    //    for each column i where i != srcIdx AND i != tagsIdx:
+    //        entry.attributes[std::string(labels[i])] = colData[i][r]
+    //    payload[key] = entry
 }
-// warn if sourceNameColumn not matched by name (srcIdx stays 0)
-
-// 4. For each row r:
-//    key = stringValue(fields[srcIdx], r)
-//    if tagsIdx != npos:
-//        entry.tags = split(stringValue(fields[tagsIdx], r), ',')  // trim whitespace, skip empty tokens
-//    for each column i where i != srcIdx AND i != tagsIdx:
-//        entry.attributes[labels[i]] = stringValue(fields[i], r)
-//    payload[key] = entry
 ```
 
-`stringValue(field, r)` helper:
-- If `field->getScalarArray()->getElementType() == pvString`: cast to `PVStringArray`, `get(sv)`, return `sv[r]`
-- Otherwise: `col->dumpValue(oss, r)`, return `oss.str()`
+`columnAsString(pvxs::Value col, size_t r)` helper:
+- Attempt `col.as<pvxs::shared_array<const std::string>>()[r]` — works for `TypeCode::String` columns
+- On type mismatch (`std::exception`): extract element via `col[r]`, stream via `std::ostringstream << val`, return string
 
-Only `srcIdx` and `tagsIdx` columns are treated specially. Every other column → `attributes[label] = value`. No other column names are interpreted.
+All columns in `ds-mock-data.jsonl` are strings, so the fallback path is only needed for future schema changes.
+
+---
+
+## MockDSServer
+
+pvxs RPC server that answers requests on a configurable channel name (default `"ds"`) by returning an NTTable built from `ds-mock-data.jsonl`. Enables unit and integration tests without a live DS instance.
+
+Supports **runtime mutation** of individual rows so tests can verify that updated or new metadata propagates end-to-end through the reader → bus → writer pipeline on subsequent scans.
+
+Pattern: mirrors `test/mock/sioc.cpp` (uses `pvxs::server::Server`, `pvxs::server::SharedPV`).
+
+### New files
+```
+test/mock/MockDSServer.h
+test/mock/MockDSServer.cpp
+```
+
+### Column schema (all `TypeCode::String`)
+`channelName`, `hostName`, `iocName`, `owner`, `pvStatus`, `recordType`, `recordDesc`, `archived`, `archiveRate`, `tags`
+
+### Row type alias
+```cpp
+using DsRow = std::unordered_map<std::string, std::string>;
+```
+
+### Interface
+```cpp
+class MockDSServer {
+public:
+    // channel: pvAccess channel name served (default "ds")
+    // jsonlPath: path to ds-mock-data.jsonl; empty = use 30-row built-in dataset
+    explicit MockDSServer(std::string channel = "ds",
+                          std::string jsonlPath = "");
+    ~MockDSServer();  // stops server
+
+    std::string channelName() const;
+
+    // ── Mutation API (thread-safe; effective on next RPC call) ──────────────
+
+    // Update one attribute of an existing row identified by channelName.
+    // No-op (and logs warning) if channelName not found.
+    // Example: updateAttribute("BPMS:IN20:221:X", "pvStatus", "Inactive")
+    void updateAttribute(const std::string& channelName,
+                         const std::string& column,
+                         const std::string& value);
+
+    // Replace the entire tags string for an existing row.
+    // Example: updateTags("BPMS:IN20:221:X", "physics,bpm,fast,survey,new-tag")
+    void updateTags(const std::string& channelName,
+                    const std::string& tags);
+
+    // Append a brand-new row (new PV) to the dataset.
+    // Subsequent RPC responses will include this row.
+    void addRow(DsRow row);
+
+    // Remove a row by channelName. Subsequent RPC responses will omit it.
+    // No-op if not found.
+    void removeRow(const std::string& channelName);
+
+    // Replace the entire dataset atomically.
+    void setRows(std::vector<DsRow> rows);
+
+    // Return a snapshot of current rows (for test assertions).
+    std::vector<DsRow> rows() const;
+
+    // Return current row count.
+    size_t rowCount() const;
+
+private:
+    void loadRows(const std::string& jsonlPath);
+    pvxs::Value buildNTTableResponse() const;  // caller holds m_mutex
+
+    std::string          m_channel;
+    pvxs::server::Server m_server;
+
+    mutable std::mutex       m_mutex;  // guards m_rows
+    std::vector<DsRow>       m_rows;
+
+    static constexpr std::array<const char*, 10> kColumns = {
+        "channelName","hostName","iocName","owner","pvStatus",
+        "recordType","recordDesc","archived","archiveRate","tags"
+    };
+};
+```
+
+### NTTable structure (built per-response, not cached)
+```cpp
+pvxs::Value MockDSServer::buildNTTableResponse() const {
+    // called under m_mutex
+    nt::NTTable builder;
+    for (const char* col : kColumns)
+        builder.add_column(TypeCode::String, col);
+    pvxs::Value val = builder.build().create();
+
+    // populate labels
+    pvxs::shared_array<std::string> labels(kColumns.size());
+    for (size_t i = 0; i < kColumns.size(); ++i) labels[i] = kColumns[i];
+    val["labels"] = labels.freeze();
+
+    // populate each column array from m_rows
+    for (const char* col : kColumns) {
+        pvxs::shared_array<std::string> colArr(m_rows.size());
+        for (size_t r = 0; r < m_rows.size(); ++r) {
+            auto it = m_rows[r].find(col);
+            colArr[r] = (it != m_rows[r].end()) ? it->second : "";
+        }
+        val[std::string("value.") + col] = colArr.freeze();
+    }
+    return val;
+}
+```
+
+Building per-response (not caching) ensures mutations applied between scans are immediately visible without any cache invalidation logic.
+
+### RPC handler
+```cpp
+m_server = pvxs::server::Config::fromEnv().build();
+auto rpcPV = pvxs::server::SharedPV::buildMailbox();
+rpcPV.onRPC([this](pvxs::server::SharedPV&,
+                   std::unique_ptr<pvxs::server::ExecOp>&& op,
+                   pvxs::Value&&) {
+    std::lock_guard<std::mutex> lk(m_mutex);
+    op->reply(buildNTTableResponse());
+});
+m_server.addPV(m_channel, rpcPV);
+m_server.start();
+```
+
+### Built-in dataset
+When `jsonlPath` is empty, `MockDSServer` uses the 30 rows from `ds-mock-data.jsonl` as a static `std::string_view` constant so tests have zero filesystem dependency.
+
+---
+
+## Controller Integration Test
+
+**New file:** `test/controller/mldppvxs_controller_ds_metadata_integration_test.cpp`
+
+Pattern: mirrors `mldppvxs_controller_mldp_writer_integration_test.cpp`.
+
+### Test cases
+
+**`DsMetadataReaderPushesPayloadToBus`**
+- Start `MockDSServer` on channel `"test:ds"`
+- Build config: `reader.type: epics-ds-metadata`, `service: "test:ds"`, `rescan-interval-sec: 0`, `tags-column: tags`
+- Inject `MockDataBus` directly (no writer config needed)
+- Construct `EpicsDSMetadataReader(bus, nullptr, cfg)`; wait up to 5 s for `bus->snapshot()` size ≥ 1
+- Assert `isSourceMetadata(batch)` == true
+- Assert `asSourceMetadata(batch).size()` == 30
+- Assert `payload.at("VPIO:IN20:111:PRES").attributes.at("hostName")` == `"cpu-li20-vac1"`
+- Assert `payload.at("BPMS:IN20:221:X").tags.value()` contains `"physics"` and `"bpm"`
+
+**`DsMetadataFlowsToMLDPPVMetadataWriter`** (end-to-end with mock gRPC annotation service)
+- Start `MockDSServer` + mock gRPC `DpAnnotationService` (capture `savePvMetadata` calls)
+- Build YAML with reader (`epics-ds-metadata`, service `"test:ds"`) + writer (`mldp-pv-metadata`)
+- Create and start `MLDPPVXSController`; wait for gRPC calls (up to 10 s)
+- Assert each `channelName` from mock data appears in a `savePvMetadata` call
+- Assert attributes `hostName`, `owner`, `recordType` forwarded correctly
+- Assert `tags` list non-empty for rows with tags
+
+**`DsMetadataRescanPeriodicRefetch`**
+- Configure `rescan-interval-sec: 0.2`
+- Use `MockDataBus`; wait for `snapshot().size() >= 2`
+- Assert each push is a full 30-row `SourceMetadataPayload`
+
+**`DsMetadataUpdatedAttributeReflectedOnRescan`**
+- Configure `rescan-interval-sec: 0.2`; use `MockDataBus`
+- Wait for first push; assert `payload.at("BPMS:IN20:221:X").attributes.at("pvStatus")` == `"Active"`
+- Call `mockServer.updateAttribute("BPMS:IN20:221:X", "pvStatus", "Inactive")`
+- Wait for second push; assert same key now has `"pvStatus"` == `"Inactive"`
+- Verifies attribute changes in DS are picked up by the periodic reader and forwarded to bus
+
+**`DsMetadataNewRowAppearsOnRescan`**
+- Configure `rescan-interval-sec: 0.2`; use `MockDataBus`
+- Wait for first push; assert payload size == 30; assert `payload.count("NEW:PV:TEST:X")` == 0
+- Call `mockServer.addRow({{"channelName","NEW:PV:TEST:X"},{"hostName","cpu-test"},{"owner","test"},{"pvStatus","Active"},{"recordType","ai"},{"recordDesc","New test PV"},{"archived","false"},{"archiveRate","0"},{"tags","test"}})`
+- Wait for second push; assert payload size == 31; assert `payload.count("NEW:PV:TEST:X")` == 1
+- Verifies that a newly registered PV appears in MLDP on the next scan
+
+**`DsMetadataRemovedRowAbsentOnRescan`**
+- Configure `rescan-interval-sec: 0.2`; use `MockDataBus`
+- Wait for first push; assert `payload.count("VPIO:IN20:111:PRES")` == 1
+- Call `mockServer.removeRow("VPIO:IN20:111:PRES")`
+- Wait for second push; assert payload size == 29; assert `payload.count("VPIO:IN20:111:PRES")` == 0
+- Verifies decommissioned PVs no longer appear in subsequent metadata batches
+
+**`DsMetadataTagsUpdateReflectedOnRescan`**
+- Configure `rescan-interval-sec: 0.2`; use `MockDataBus`
+- Wait for first push; assert `payload.at("BPMS:IN20:221:X").tags` contains `{"physics","bpm","fast","survey"}`
+- Call `mockServer.updateTags("BPMS:IN20:221:X", "physics,bpm,fast,survey,golden")`
+- Wait for second push; assert tags for same key now contains `"golden"` in addition to prior tags
 
 ---
 
@@ -217,26 +403,27 @@ Add to `lib${PROJECT_NAME}` sources block after line 505:
 
 Add to test sources block after line 647:
 ```cmake
+"${CMAKE_CURRENT_SOURCE_DIR}/test/mock/MockDSServer.cpp"
 "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_ds/epics_ds_metadata_reader_config_test.cpp"
 "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_ds/epics_ds_metadata_reader_test.cpp"
+"${CMAKE_CURRENT_SOURCE_DIR}/test/controller/mldppvxs_controller_ds_metadata_integration_test.cpp"
 ```
 
-No new link-library entries needed — `epics-pvaccess` and `epics-pvdata` already linked to `lib${PROJECT_NAME}` (CMakeLists.txt line 538–542).
+No new link-library entries needed — `pvxs` is already linked to `lib${PROJECT_NAME}`.
 
 ---
 
 ## Dependencies
 
 Already present in the build:
-- `epics-pvaccess` — `ChannelProvider`, `Channel`, `ChannelRPC`, `ChannelRPCRequester`, `ClientFactory`, `DefaultChannelRequester`, `CreateRequest`
-- `epics-pvdata` — `PVStructure`, `PVString`, `PVStringArray`, `PVScalarArray`, `getFieldCreate()`, `getPVDataCreate()`, `Event`
+- `pvxs` — `pvxs::client::Context`, `pvxs::Value`, `pvxs::shared_array`, `pvxs::nt::NTTable`, `pvxs::server::Server`, `pvxs::server::SharedPV`
 
-Headers (per `review-pv-metadata-fetcher.md:88`):
+Headers:
 ```cpp
-#include <pv/pvAccess.h>
-#include <pv/pvData.h>
-#include <pv/lock.h>
-#include <pv/event.h>
+#include <pvxs/client.h>   // client::Context, rpc()
+#include <pvxs/data.h>     // Value, TypeDef, Member, shared_array
+#include <pvxs/nt.h>       // nt::NTTable (mock server only)
+#include <pvxs/server.h>   // server::Server, SharedPV (mock server only)
 ```
 
 ---
@@ -245,18 +432,23 @@ Headers (per `review-pv-metadata-fetcher.md:88`):
 
 | File | Change |
 |---|---|
-| `CMakeLists.txt` | +2 src entries, +2 test entries |
+| `CMakeLists.txt` | +2 src entries, +4 test/mock entries |
 | `include/reader/impl/epics_ds/EpicsDSMetadataReaderConfig.h` | new |
 | `src/reader/impl/epics_ds/EpicsDSMetadataReaderConfig.cpp` | new |
 | `include/reader/impl/epics_ds/EpicsDSMetadataReader.h` | new |
 | `src/reader/impl/epics_ds/EpicsDSMetadataReader.cpp` | new |
+| `test/mock/MockDSServer.h` | new |
+| `test/mock/MockDSServer.cpp` | new |
 | `test/reader/impl/epics_ds/epics_ds_metadata_reader_config_test.cpp` | new |
 | `test/reader/impl/epics_ds/epics_ds_metadata_reader_test.cpp` | new |
+| `test/controller/mldppvxs_controller_ds_metadata_integration_test.cpp` | new |
 
 ---
 
 ## Verification
 
 1. Config tests: defaults, required-field error, YAML round-trip
-2. Reader unit test: mock `IDataBus`, inject pre-built `PVStructure` NTTable, verify `push()` receives correct `SourceMetadataPayload`
-3. Integration smoke: connect to live `ds` instance, confirm payload keys match PV names and attributes contain expected columns
+2. Reader unit test: inject `MockDSServer`, use `MockDataBus`, verify `push()` receives correct `SourceMetadataPayload`
+3. Controller integration test — static path: `DsMetadataReaderPushesPayloadToBus`, `DsMetadataFlowsToMLDPPVMetadataWriter`
+4. Controller integration test — mutation path: all five mutation test cases (attribute update, new row, remove row, tags update, periodic refetch)
+5. Manual smoke: point at live `ds` instance, confirm payload keys match PV names and attributes contain expected columns

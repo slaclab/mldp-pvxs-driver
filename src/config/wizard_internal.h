@@ -28,5 +28,7 @@ void loadFromConfig(const std::string& path, WizardState& st);
 bool isValidIso8601(const std::string& s);
 bool isPositiveInt(const std::string& s);
 bool isNonNegInt(const std::string& s);
+bool isPositiveDouble(const std::string& s);
+bool isNonNegDouble(const std::string& s);
 
 } // namespace mldp_pvxs_driver::config::wizard_internal

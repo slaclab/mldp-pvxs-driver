@@ -12,6 +12,7 @@
 
 #include <annotation.grpc.pb.h>
 #include <grpcpp/grpcpp.h>
+#include <pool/MLDPGrpcAnnotationPoolConfig.h>
 #include <util/log/Logger.h>
 
 #include <algorithm>
