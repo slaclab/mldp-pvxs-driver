@@ -12,6 +12,7 @@
 
 #include <pool/IObjectPool.h>
 #include <pool/IPoolHandle.h>
+#include <pool/MLDPGrpcAnnotationPoolConfig.h>
 #include <pool/MLDPGrpcPoolConfig.h>
 #include <util/log/Logger.h>
 
@@ -59,6 +60,10 @@ public:
     using MLDPGrpcAnnotationPoolShrdPtr = std::shared_ptr<MLDPGrpcAnnotationPool>;
     using ObjectShrdPtr = typename IObjectPool<MLDPGrpcAnnotationObject>::ObjectShrdPtr;
 
+    static MLDPGrpcAnnotationPoolShrdPtr create(const MLDPGrpcAnnotationPoolConfig& config,
+                                                std::shared_ptr<metrics::Metrics>   metrics = nullptr);
+
+    /** Convenience overload for callers that hold a full MLDPGrpcPoolConfig. */
     static MLDPGrpcAnnotationPoolShrdPtr create(const MLDPGrpcPoolConfig&         config,
                                                 std::shared_ptr<metrics::Metrics> metrics = nullptr);
 
@@ -75,7 +80,7 @@ private:
     };
 
     std::shared_ptr<mldp_pvxs_driver::util::log::ILogger> logger_;
-    const MLDPGrpcPoolConfig                              config_;
+    const MLDPGrpcAnnotationPoolConfig                    config_;
     mutable std::mutex                                    mutex_;
     std::condition_variable                               cv_;
     std::vector<Item>                                     items_;
@@ -86,8 +91,8 @@ private:
     MLDPGrpcAnnotationPool(const MLDPGrpcAnnotationPool&) = delete;
     MLDPGrpcAnnotationPool& operator=(const MLDPGrpcAnnotationPool&) = delete;
 
-    MLDPGrpcAnnotationPool(const MLDPGrpcPoolConfig&         config,
-                           std::shared_ptr<metrics::Metrics> metrics);
+    MLDPGrpcAnnotationPool(const MLDPGrpcAnnotationPoolConfig& config,
+                           std::shared_ptr<metrics::Metrics>   metrics);
     std::size_t                               availableCountLocked() const;
     void                                      updateMetricsLocked() const;
     void                                      updateMetrics() const;

@@ -16,8 +16,6 @@
 using namespace mldp_pvxs_driver::config;
 using namespace mldp_pvxs_driver::util::pool;
 
-MLDPGrpcPoolConfig::MLDPGrpcPoolConfig() = default;
-
 MLDPGrpcPoolConfig::MLDPGrpcPoolConfig(const config::Config& root)
 {
     parse(root);

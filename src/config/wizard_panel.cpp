@@ -127,6 +127,18 @@ static const std::map<std::pair<TreeNodeKind, std::string>, std::string> kHelpMa
      "thread-pool\nWorker threads for\nEPICS monitoring."},
     {{TreeNodeKind::Reader, "hostname"},
      "hostname\nArchiver appliance\nhostname or IP."},
+    {{TreeNodeKind::Reader, "ds_service"},
+     "service\nPVA service name for\nDS RPC call."},
+    {{TreeNodeKind::Reader, "ds_query"},
+     "query\nQuery pattern in NTURI\nquery.name field (% = all)."},
+    {{TreeNodeKind::Reader, "ds_timeout_sec"},
+     "timeout-sec\nRPC timeout in seconds.\nMust be > 0."},
+    {{TreeNodeKind::Reader, "ds_source_name_col"},
+     "source-name-column\nNTTable column holding\nthe PV/source name."},
+    {{TreeNodeKind::Reader, "ds_tags_col"},
+     "tags-column\nNTTable column for\ncomma-separated tags."},
+    {{TreeNodeKind::Reader, "ds_rescan_interval_sec"},
+     "rescan-interval-sec\nSeconds between re-fetches.\n0 = run once at startup."},
     {{TreeNodeKind::MetricsGroup, "enabled"},
      "metrics enabled\nExpose Prometheus\nmetrics endpoint."},
     {{TreeNodeKind::MetricsGroup, "endpoint"},
@@ -172,6 +184,8 @@ static std::string GetNodeHelp(const TreeNode& node)
             return "EPICS base reader\nPolls PVs using\nepics-base library.";
         if (node.type_tag == "epics-archiver")
             return "Archiver reader\nQueries the EPICS\nArchiver Appliance.";
+        if (node.type_tag == "epics-ds-metadata")
+            return "DS-Metadata reader\nFetches PV metadata\nvia Directory Service RPC.";
         break;
     case TreeNodeKind::QueryableGroup:
         return "Queryable\nConfigure query client\npools (MLDP, Annotation).";
@@ -609,7 +623,7 @@ static Component MakeEpicsReaderForm(EpicsReaderConfig* cfg, PanelAppState* stat
     };
 
     // Reader type index (controls conditional fields visibility; type is fixed at creation)
-    static std::vector<std::string> reader_choices = {"epics-pvxs", "epics-base", "epics-archiver"};
+    static std::vector<std::string> reader_choices = {"epics-pvxs", "epics-base", "epics-archiver", "epics-ds-metadata"};
     auto                            rtype_idx = std::make_shared<int>(0);
     for (int i = 0; i < static_cast<int>(reader_choices.size()); ++i)
         if (reader_choices[i] == cfg->reader_type)
@@ -807,6 +821,26 @@ static Component MakeEpicsReaderForm(EpicsReaderConfig* cfg, PanelAppState* stat
                                 return *rtype_idx == 2;
                             });
 
+    // ── epics-ds-metadata fields ──────────────────────────────────────────────
+    auto f_ds_svc = InputField("Service", &cfg->ds_service, [](const std::string&) { return ""; },
+                               [on_change] { on_change("ds_service"); }, on_focus_fn("ds_service"));
+    auto f_ds_qry = InputField("Query", &cfg->ds_query, [](const std::string&) { return ""; },
+                               [on_change] { on_change("ds_query"); }, on_focus_fn("ds_query"));
+    auto f_ds_tmo = InputField("Timeout (sec)", &cfg->ds_timeout_sec,
+                               [](const std::string& s) { return isPositiveDouble(s) ? "" : "Must be > 0"; },
+                               [on_change] { on_change("ds_timeout_sec"); }, on_focus_fn("ds_timeout_sec"));
+    auto f_ds_snc = InputField("Source-Name Column", &cfg->ds_source_name_col,
+                               [](const std::string&) { return ""; },
+                               [on_change] { on_change("ds_source_name_col"); }, on_focus_fn("ds_source_name_col"));
+    auto f_ds_tag = InputField("Tags Column (optional)", &cfg->ds_tags_col,
+                               [](const std::string&) { return ""; },
+                               [on_change] { on_change("ds_tags_col"); }, on_focus_fn("ds_tags_col"));
+    auto f_ds_rsc = InputField("Rescan Interval (sec)", &cfg->ds_rescan_interval_sec,
+                               [](const std::string& s) { return isNonNegDouble(s) ? "" : "Must be >= 0"; },
+                               [on_change] { on_change("ds_rescan_interval_sec"); }, on_focus_fn("ds_rescan_interval_sec"));
+    auto ds_fields = Container::Vertical({f_ds_svc, f_ds_qry, f_ds_tmo, f_ds_snc, f_ds_tag, f_ds_rsc});
+    auto ds_maybe  = Maybe(ds_fields, [rtype_idx] { return *rtype_idx == 3; });
+
     // ── Reader static-metadata editor ────────────────────────────────────────
     auto meta_key_new = std::make_shared<std::string>();
     auto meta_val_new = std::make_shared<std::string>();
@@ -943,6 +977,7 @@ static Component MakeEpicsReaderForm(EpicsReaderConfig* cfg, PanelAppState* stat
         f_cbs,
         base_maybe,
         arch_maybe,
+        ds_maybe,
         meta_renderer,
         pv_renderer,
     });
@@ -957,6 +992,7 @@ static Component MakeEpicsReaderForm(EpicsReaderConfig* cfg, PanelAppState* stat
                         elems.push_back(f_cbs->Render());
                         elems.push_back(base_maybe->Render());
                         elems.push_back(arch_maybe->Render());
+                        elems.push_back(ds_maybe->Render());
                         elems.push_back(separator());
                         elems.push_back(meta_renderer->Render());
                         elems.push_back(separator());
@@ -1454,7 +1490,7 @@ int runWizard(const std::string& output_path, const std::string& from_path)
                                         }
                                         else
                                         {
-                                            if (ev == Event::Character('p') || ev == Event::Character('b') || ev == Event::Character('a'))
+                                            if (ev == Event::Character('p') || ev == Event::Character('b') || ev == Event::Character('a') || ev == Event::Character('d'))
                                             {
                                                 EpicsReaderConfig c;
                                                 c.name = "reader_" + std::to_string(state.wizard.readers.size());
@@ -1462,8 +1498,10 @@ int runWizard(const std::string& output_path, const std::string& from_path)
                                                     c.reader_type = "epics-pvxs";
                                                 else if (ev == Event::Character('b'))
                                                     c.reader_type = "epics-base";
-                                                else
+                                                else if (ev == Event::Character('a'))
                                                     c.reader_type = "epics-archiver";
+                                                else
+                                                    c.reader_type = "epics-ds-metadata";
                                                 state.wizard.readers.push_back(c);
                                                 state.tree = BuildTree(state.wizard);
                                                 state.dirty = true;

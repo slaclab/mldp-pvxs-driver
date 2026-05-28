@@ -76,6 +76,13 @@ struct EpicsReaderConfig
     std::string batch_duration_sec = "1";
     std::string tls_verify_peer = "true";
     std::string tls_verify_host = "true";
+    // epics-ds-metadata only
+    std::string ds_service             = "ds";
+    std::string ds_query               = "%";
+    std::string ds_timeout_sec         = "5.0";
+    std::string ds_source_name_col     = "channelName";
+    std::string ds_tags_col;
+    std::string ds_rescan_interval_sec = "0.0";
     // ordered key-value pairs emitted as static-metadata: block under this reader
     std::vector<std::pair<std::string, std::string>> static_metadata;
     std::vector<PvEntry>                             pvs;

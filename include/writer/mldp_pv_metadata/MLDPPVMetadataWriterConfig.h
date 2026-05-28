@@ -11,7 +11,7 @@
 #pragma once
 
 #include <config/Config.h>
-#include <pool/MLDPGrpcPoolConfig.h>
+#include <pool/MLDPGrpcAnnotationPoolConfig.h>
 
 #include <string>
 
@@ -41,7 +41,7 @@ struct MLDPPVMetadataWriterConfig
     std::string name;
 
     /// Pool configuration for the DpAnnotationService endpoint.
-    util::pool::MLDPGrpcPoolConfig poolConfig;
+    util::pool::MLDPGrpcAnnotationPoolConfig poolConfig;
 
     /// Per-RPC deadline in seconds.  Default: 10.
     int deadlineSeconds{10};

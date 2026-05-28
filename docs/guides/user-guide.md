@@ -42,8 +42,9 @@ You can run multiple readers at the same time.
 | `epics-pvxs` | You want **live PV monitoring** (recommended for new deployments) |
 | `epics-base` | You need **Channel Access (CA)** compatibility with older EPICS systems |
 | `epics-archiver` | You want **historical data** from an Archiver Appliance |
+| `epics-ds-metadata` | You want to fetch **PV metadata** (names, tags) from an EPICS Directory Service and persist it to MLDP |
 
-> 📖 Details: [epics-pvxs reader](../readers/epics-pvxs-reader.md) · [epics-base reader](../readers/epics-base-reader.md) · [archiver reader](../readers/epics-archiver-reader.md)
+> 📖 Details: [epics-pvxs reader](../readers/epics-pvxs-reader.md) · [epics-base reader](../readers/epics-base-reader.md) · [archiver reader](../readers/epics-archiver-reader.md) · [epics-ds-metadata reader](../readers/epics-ds-metadata-reader.md)
 
 ### Writer — Where Data Goes
 
@@ -286,6 +287,18 @@ routing:
 | `connect-timeout-sec` | | 30 | HTTP connection timeout (seconds) |
 | `total-timeout-sec` | | 300 | Total HTTP timeout (0 = no limit) |
 
+### Reader — `epics-ds-metadata`
+
+| Parameter | Required | Default | Description |
+|---|---|---|---|
+| `name` | ✅ | — | Unique name for this reader instance |
+| `service` | | `ds` | PVA service name to call via RPC |
+| `query` | | `%` | Query pattern for the NTURI request |
+| `timeout-sec` | | `5.0` | RPC call timeout in seconds |
+| `source-name-column` | | `channelName` | NTTable column carrying the PV / source name |
+| `tags-column` | | *(empty)* | NTTable column for comma-separated tags; empty = disabled |
+| `rescan-interval-sec` | | `0.0` | Rescan interval; `0` = fetch once then stop |
+
 ### Writer — `mldp`
 
 | Parameter | Required | Default | Description |
@@ -329,6 +342,9 @@ Need live data?
 Need historical data?
 ├── One-time backfill?  → epics-archiver (mode: historical_once)
 └── Continuous near-real-time feed from Archiver?  → epics-archiver (mode: periodic_tail)
+
+Need to populate MLDP with PV metadata (names, tags) from a Directory Service?
+└── epics-ds-metadata  (pair with mldp-pv-metadata writer)
 ```
 
 ---
@@ -563,6 +579,7 @@ routing:
 | PVXS reader details | [readers/epics-pvxs-reader.md](../readers/epics-pvxs-reader.md) |
 | CA reader details | [readers/epics-base-reader.md](../readers/epics-base-reader.md) |
 | Archiver reader details | [readers/epics-archiver-reader.md](../readers/epics-archiver-reader.md) |
+| DS metadata reader details | [readers/epics-ds-metadata-reader.md](../readers/epics-ds-metadata-reader.md) |
 | MLDP writer details | [writers/mldp-writer.md](../writers/mldp-writer.md) |
 | HDF5 writer details | [writers/hdf5-writer.md](../writers/hdf5-writer.md) |
 | Routing and source filtering | [controller.md](../reference/controller.md#reader-to-writer-routing) |

@@ -21,25 +21,19 @@ MLDPPVMetadataWriterConfig MLDPPVMetadataWriterConfig::parse(const config::Confi
 
     cfg.name = node.get("name", "");
     if (cfg.name.empty())
-    {
         throw std::runtime_error("MLDPPVMetadataWriterConfig: 'name' is required");
-    }
 
-    cfg.threadPool = node.getInt("thread-pool", 2);
-    cfg.deadlineSeconds = node.getInt("deadline-seconds", 10);
+    cfg.threadPool       = node.getInt("thread-pool", 2);
+    cfg.deadlineSeconds  = node.getInt("deadline-seconds", 10);
 
     if (!node.hasChild("mldp-pv-metadata-pool"))
-    {
         throw std::runtime_error(
             "MLDPPVMetadataWriterConfig: 'mldp-pv-metadata-pool' block is required");
-    }
     const auto poolNodes = node.subConfig("mldp-pv-metadata-pool");
     if (poolNodes.empty())
-    {
         throw std::runtime_error(
             "MLDPPVMetadataWriterConfig: 'mldp-pv-metadata-pool' block is empty");
-    }
-    cfg.poolConfig = MLDPGrpcPoolConfig(poolNodes.front());
+    cfg.poolConfig = MLDPGrpcAnnotationPoolConfig(poolNodes.front());
 
     return cfg;
 }

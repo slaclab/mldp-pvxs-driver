@@ -52,6 +52,30 @@ bool isNonNegInt(const std::string& s)
     return true;
 }
 
+bool isPositiveDouble(const std::string& s)
+{
+    try
+    {
+        return std::stod(s) > 0.0;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+
+bool isNonNegDouble(const std::string& s)
+{
+    try
+    {
+        return std::stod(s) >= 0.0;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+
 static std::string ind(int n)
 {
     return std::string(static_cast<std::size_t>(n * 2), ' ');
@@ -179,6 +203,16 @@ std::string generateYaml(const WizardState& st)
                 o << ind(4) << "batch-duration-sec: " << r.batch_duration_sec << "\n";
                 o << ind(4) << "tls-verify-peer: " << r.tls_verify_peer << "\n";
                 o << ind(4) << "tls-verify-host: " << r.tls_verify_host << "\n";
+            }
+            else if (r.reader_type == "epics-ds-metadata")
+            {
+                o << ind(4) << "service: "             << r.ds_service             << "\n";
+                o << ind(4) << "query: "               << r.ds_query               << "\n";
+                o << ind(4) << "timeout-sec: "         << r.ds_timeout_sec         << "\n";
+                o << ind(4) << "source-name-column: "  << r.ds_source_name_col     << "\n";
+                if (!r.ds_tags_col.empty())
+                    o << ind(4) << "tags-column: "     << r.ds_tags_col            << "\n";
+                o << ind(4) << "rescan-interval-sec: " << r.ds_rescan_interval_sec << "\n";
             }
             if (!r.static_metadata.empty())
             {
@@ -432,7 +466,7 @@ void loadFromConfig(const std::string& path, WizardState& st)
     for (const auto& rentry : cfg.subConfig("reader"))
     {
         static const std::vector<std::string> rtypes =
-            {"epics-pvxs", "epics-base", "epics-archiver"};
+            {"epics-pvxs", "epics-base", "epics-archiver", "epics-ds-metadata"};
         for (const auto& rtype : rtypes)
         {
             if (!rentry.hasChild(rtype))
@@ -462,6 +496,15 @@ void loadFromConfig(const std::string& path, WizardState& st)
                     r.batch_duration_sec = std::to_string(inst.getInt("batch-duration-sec", 1));
                     r.tls_verify_peer = inst.getBool("tls-verify-peer", true) ? "true" : "false";
                     r.tls_verify_host = inst.getBool("tls-verify-host", true) ? "true" : "false";
+                }
+                if (rtype == "epics-ds-metadata")
+                {
+                    r.ds_service           = inst.get("service",            "ds");
+                    r.ds_query             = inst.get("query",              "%");
+                    r.ds_timeout_sec       = std::to_string(inst.getDouble("timeout-sec",         5.0));
+                    r.ds_source_name_col   = inst.get("source-name-column", "channelName");
+                    r.ds_tags_col          = inst.get("tags-column",        "");
+                    r.ds_rescan_interval_sec = std::to_string(inst.getDouble("rescan-interval-sec", 0.0));
                 }
                 // reader-level static-metadata
                 if (inst.hasChild("static-metadata"))

@@ -14,6 +14,7 @@
 #include <config/Config.h>
 #include <metrics/Metrics.h>
 #include <pool/MLDPGrpcAnnotationPool.h>
+#include <pool/MLDPGrpcAnnotationPoolConfig.h>
 #include <pool/MLDPGrpcPoolConfig.h>
 #include <query/IQueryable.h>
 #include <util/log/Logger.h>
@@ -51,6 +52,15 @@ public:
     explicit MLDPAnnotationQueryClient(
         const util::pool::MLDPGrpcPoolConfig& poolConfig,
         std::shared_ptr<metrics::Metrics>     metrics = nullptr);
+
+    /**
+     * @brief Construct directly from an annotation-only pool config.
+     *
+     * Use this when only the annotation endpoint is relevant (no ingestion/query URLs needed).
+     */
+    explicit MLDPAnnotationQueryClient(
+        const util::pool::MLDPGrpcAnnotationPoolConfig& poolConfig,
+        std::shared_ptr<metrics::Metrics>               metrics = nullptr);
 
     /**
      * @brief Construct from a Config tree; delegates to the pool-config ctor.

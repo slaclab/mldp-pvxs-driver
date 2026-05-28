@@ -19,6 +19,7 @@ reader:         # required — at least one reader instance
   - epics-pvxs: [...]
   - epics-base: [...]
   - epics-archiver: [...]
+  - epics-ds-metadata: [...]  # fetch PV metadata via EPICS Directory Service RPC
 
 routing:        # optional — selective reader-to-writer dispatch
   writer_name:
@@ -301,6 +302,43 @@ Two fetch modes:
 | `pvs[].metadata` | map | `{}` | Per-PV metadata key/value pairs. Merged over `static-metadata`. |
 
 → [EpicsArchiverReader Implementation](../readers/epics-archiver-reader-implementation.md)
+
+---
+
+### `epics-ds-metadata` Reader {#epics-ds-metadata-reader}
+
+Fetches PV metadata from an EPICS Directory Service endpoint via PVA RPC and publishes
+a `SourceMetadataPayload` onto the bus. Pair with an `mldp-pv-metadata` writer to
+persist the metadata to the MLDP annotation service.
+
+```yaml
+- epics-ds-metadata:
+    - name: ds_metadata                # required
+      service: ds                      # optional; default: "ds"
+      query: "%"                       # optional; default: "%"
+      timeout-sec: 5.0                 # optional; default: 5.0
+      source-name-column: channelName  # optional; default: "channelName"
+      tags-column: tags                # optional; default: "" (disabled)
+      rescan-interval-sec: 300.0       # optional; default: 0.0 (run once)
+```
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `name` | string | — | **Required.** Unique reader instance name. |
+| `service` | string | `"ds"` | PVA service name to call via RPC. |
+| `query` | string | `"%"` | Query pattern sent in the NTURI `query.name` field. |
+| `timeout-sec` | double | `5.0` | RPC call timeout in seconds. Must be positive. |
+| `source-name-column` | string | `"channelName"` | NTTable column carrying the PV / source name. |
+| `tags-column` | string | `""` | NTTable column for comma-separated tags. Empty = disabled. |
+| `rescan-interval-sec` | double | `0.0` | Repeat fetch interval in seconds. `0` = run once. |
+
+**Validation rules:**
+
+- `name` is required and must be non-empty.
+- `timeout-sec` must be strictly positive.
+- `rescan-interval-sec` must be `>= 0`.
+
+→ [EpicsDSMetadataReader Documentation](../readers/epics-ds-metadata-reader.md)
 
 ---
 

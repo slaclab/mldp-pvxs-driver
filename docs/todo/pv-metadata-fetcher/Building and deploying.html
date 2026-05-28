@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html xmlns:mso="urn:schemas-microsoft-com:office:office" xmlns:msdt="uuid:C2F41010-65B3-11d1-A29F-00AA00C14882">
+<head>
+<meta charset="UTF-8">
+<title>Instructions for building and deploying the directory service.</title>
+<style type="text/css">
+body {
+	width: 8.5in;
+}
+
+span.command {
+	color: blue;
+	font-weight: bold;
+}
+
+</style>
+
+<!--[if gte mso 9]><xml>
+<mso:CustomDocumentProperties>
+<mso:Project msdt:dt="string">Management</mso:Project>
+<mso:Application msdt:dt="string">Common</mso:Application>
+<mso:Document_x0020_Type msdt:dt="string">Programmer Guide</mso:Document_x0020_Type>
+<mso:Subsystem msdt:dt="string">Common</mso:Subsystem>
+<mso:display_urn_x003a_schemas-microsoft-com_x003a_office_x003a_office_x0023_Editor msdt:dt="string">Shankar, Murali</mso:display_urn_x003a_schemas-microsoft-com_x003a_office_x003a_office_x0023_Editor>
+<mso:display_urn_x003a_schemas-microsoft-com_x003a_office_x003a_office_x0023_Author msdt:dt="string">Shankar, Murali</mso:display_urn_x003a_schemas-microsoft-com_x003a_office_x003a_office_x0023_Author>
+<mso:URL msdt:dt="string"></mso:URL>
+</mso:CustomDocumentProperties>
+</xml><![endif]-->
+</head>
+<body>
+
+<h3>Instructions for building and deploying the directory service</h3>
+
+<section>
+<h4>Checking out the DS</h4>
+<div>
+The directory service uses Git as its version control and the repository is here - <code>/afs/slac/g/cd/swe/git/repos/high_level_apps/directory_service.git</code>.
+You can use <code>eco</code> to check out the DS; it's project name is <code>directory_service</code>
+<pre>
+<code>[mshankar@lcls-dev2 myworkspace]$ <span class="command">eco</span>   
+Enter name of module/package to checkout: directory_service
+Enter name of tag or [RETURN] to use HEAD>
+Using MAIN_TRUNK. The name of the directory will be MAIN_TRUNK.
+....</code>
+</pre>
+To check out a tagged release, specify the tag as part of eco.
+</div>
+</section>
+
+<section>
+<h4>Building the DS</h4>
+<div>
+The DS uses <code>ant</code> requires a 1.8 JDK or later to build.
+</div>
+<pre><code>[mshankar@lcls-dev2 MAIN_TRUNK]$ java -version
+java version "1.8.0_60"
+Java(TM) SE Runtime Environment (build 1.8.0_60-b27)
+Java HotSpot(TM) Server VM (build 25.60-b23, mixed mode)
+[mshankar@lcls-dev2 MAIN_TRUNK]$ <span class="command">ant</span>
+Buildfile: build.xml
+...
+[mshankar@lcls-dev2 MAIN_TRUNK]$ ls jar/simpleDS.jar 
+jar/simpleDS.jar
+</code></pre>
+
+Use <code>ant test</code> to run the unit tests.
+</section>
+
+<section>
+<h4>Deploying/upgrading the DS</h4>
+<div>
+The DS uses <code>cram</code> to upgrade/deploy and is a cram HLA package; the instructions for upgrade/deploy are similar to any other HLA package. 
+<pre><code>[mshankar@lcls-dev2 V_0_0_18]$ <span class="command">cram ls</span>
+Current version on facility: LCLS  => V_0_0_17
+Current version on facility: SPEAR  => None
+Current version on facility: FACET  => None
+Current version on facility: TestFac  => None
+Current version on facility: Dev  => V_0_0_17
+[mshankar@lcls-dev2 V_0_0_18] <span class="command">cram push</span>
+...
+[mshankar@lcls-dev2 V_0_0_18] <span class="command">cram upgrade -f Dev V_0_0_18</span>
+</code></pre>
+</div>
+</section>
+
+<section>
+<h4>Restarting the DS</h4>
+<div>The DS has standard <code>/etc/init.d</code> scripts to stop/start/restart. 
+It uses Apache Commons Daemon to run as a service. 
+<pre><code>[laci@lcls-dev1 ~]$ <span class="command">ps -fade | grep jsvc | grep directory</span> 
+laci     18003     1  0 Jan06 ?        00:00:00 jsvc.exec ... edu.stanford.slac.simpleDS.DSMain
+laci     18004 18003  0 Jan06 ?        02:52:31 jsvc.exec ... edu.stanford.slac.simpleDS.DSMain</code></pre>
+</div>
+</section>
+
+<section>
+<h4>Logs</h4>
+<div>
+Logs for the DS are in the ${PHYSICS_DATA}/logs folder.
+</div>
+<pre><code>[mshankar@lcls-dev2 MAIN_TRUNK]$ <span class="command">ls -la ${PHYSICS_DATA}/log/lcls-dev1_directory_service.log</span>
+-rw-rw-r-- 1 laci lcls 17245 Jan 25 10:18 /nfs/slac/g/lcls/physics/log/lcls-dev1_directory_service.log
+</code></pre>
+</section>
+
+</body>
+</html>

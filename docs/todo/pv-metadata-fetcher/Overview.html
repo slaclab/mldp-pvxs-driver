@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html xmlns:mso="urn:schemas-microsoft-com:office:office" xmlns:msdt="uuid:C2F41010-65B3-11d1-A29F-00AA00C14882">
+<head>
+<meta charset="ISO-8859-1">
+<title>The directory service</title>
+<style type="text/css">
+
+body {
+	width: 8.5in;
+}
+
+pre {
+	background: #efefef;
+	padding: 1.0em;
+}
+
+span.devicename { 
+	color: navy;
+	font-weight: bold;
+	font-family: monospace;
+}
+
+span.elementname { 
+	color: maroon;
+	font-weight: bold;
+	font-family: monospace;
+}
+
+span.devicetype { 
+	color: indigo;
+	font-weight: bold;
+	font-family: monospace;
+}
+
+span.SUML { 
+	color: firebrick;
+	font-weight: bold;
+	font-family: monospace;
+}
+
+span.Z { 
+	color: darkslateblue;
+	font-weight: bold;
+	font-family: monospace;
+}
+
+span.linename { 
+	color: darkgreen;
+	font-weight: bold;
+	font-family: monospace;
+}
+
+div.sample {
+	padding: 0.5em;
+}
+
+
+table.inputoutput { 
+	border-collapse: collapse;
+	margin: 1.0em 0.55em;
+}
+
+
+table.inputoutput th, td {
+	border: thin solid black;
+	padding: 0.25em;
+}
+
+table.inputoutput th {
+	text-align: left;
+	background: Bisque;
+	font-weight: bold;
+}
+
+table.inputoutput tbody tr:nth-child(2n+1) {
+	background: PapayaWhip;
+}
+
+#timedelay { 
+	border-collapse: collapse;
+	margin: 1.0em 0.55em;
+}
+#timedelay  th, td {
+	border: thin solid black;
+	padding: 0.25em;
+}
+
+#timedelay th {
+	text-align: left;
+	background: bisque;
+}
+
+#timedelay tbody tr:nth-child(2n) {
+	background: PapayaWhip;
+}
+
+li {
+	padding-top: 0.20em;
+}
+
+span.argument {
+	font-weight: bold;
+	color: blue; 
+}
+
+div.namingconvention {
+	margin: 0.5em 1.0em;
+}
+
+span.dtype {
+	color: mediumblue;
+}
+
+span.area {
+	color: firebrick;
+}
+
+span.posn {
+	color: darkgreen;
+}
+
+span.attr {
+	color: coral;
+}
+
+div.crop {
+	height: 375px;
+    overflow: hidden;
+}
+
+div.crop img {
+    margin: -50px 0 0 0;
+}
+
+@media print {
+    div.pagebreak {page-break-after: always;}
+}
+
+</style>
+
+<!--[if gte mso 9]><xml>
+<mso:CustomDocumentProperties>
+<mso:Project msdt:dt="string">Management</mso:Project>
+<mso:Application msdt:dt="string">Common</mso:Application>
+<mso:Document_x0020_Type msdt:dt="string">Programmer Guide</mso:Document_x0020_Type>
+<mso:Subsystem msdt:dt="string">Common</mso:Subsystem>
+<mso:display_urn_x003a_schemas-microsoft-com_x003a_office_x003a_office_x0023_Editor msdt:dt="string">Shankar, Murali</mso:display_urn_x003a_schemas-microsoft-com_x003a_office_x003a_office_x0023_Editor>
+<mso:display_urn_x003a_schemas-microsoft-com_x003a_office_x003a_office_x0023_Author msdt:dt="string">Shankar, Murali</mso:display_urn_x003a_schemas-microsoft-com_x003a_office_x003a_office_x0023_Author>
+<mso:URL msdt:dt="string"></mso:URL>
+</mso:CustomDocumentProperties>
+</xml><![endif]-->
+</head>
+<body>
+
+<h1>Directory Service Overview</h1>
+<section>
+<div>
+<h4>Summary</h4>
+The directory service ("DS") is a EPICS V4 data service that provides the names of PVs, devices, model elements, and other associated information about the components of the accelerator, to users and applications software.
+You use the DS just like you'd use any other V4 service.
+<pre>
+<code>
+[softegr@lcls-builder mshankar]$ eget -s ds -a name=BPMS:LI21:%:X
+             name
+  BPMS:LI21:131:X
+  BPMS:LI21:161:X
+  BPMS:LI21:201:X
+  BPMS:LI21:233:X
+...</code>
+</pre>
+</div>
+
+<div>
+<h4>Data sources</h4>
+The DS integrates information from multiple sources.
+<div class="crop">
+<img src="Data_Sources/Slide1.png"/>
+</div>
+ 
+<ul>
+<li>The list of of PV's is obtained from <code>${IOC_DATA}/<i>iocName</i>/iocInfo/IOC.pvlist</code>.
+<ul>
+<li>IOC's using the standard startup commands typically use a command similar to  
+<code>iocshCmd("dbl '' RTYP > ${IOC_DATA}/${IOC}/iocInfo/IOC.pvlist")</code> to dump a list of their PV's into a file called <code>IOC.pvlist</code>.</li>
+<li>For example, the IOC <code>sioc-bsy0-tm01</code> will dump its list of PVs into <code>${IOC_DATA}/sioc-bsy0-tm01/iocInfo/IOC.pvlist</code>.</li>
+<li>The DS monitors all files matching the path <code>${IOC_DATA}/<i>**</i>/iocInfo/IOC.pvlist</code> and uses this to build a list of all PV's in the accelerator.</li>
+<li>Many V4 services also export their accelerator specific PV's using a similar mechanism. 
+For example, the <code>optics</code> service adds it's <code>TWISS</code> V4 PV's to the DS by dumping its PV list to <code>${IOC_DATA}/../ds_tags/otherNames/optics_channels.xdb</code>. 
+</li>
+</ul>
+<div class="pagebreak"></div>
+</li>
+<li>Greg White's team exports the MAD deck periodically into files located in the folder <code>/afs/slac/www/grp/ad/model/output/<i>lcls</i>/latest/opt</code>
+<ul>
+<li>The files <code>GSPEC_lines.dat, LCLS_lines.dat and SPEC_lines.dat</code> contain information that map
+<code>deviceName</code>'s to other information.</li>
+<li>Every line in these these files contains a device name, an element name, a device type, a SUML, a Z and a list of line names.
+For example,
+<div class="sample"> 
+<code><span class="devicename">YCOR:DMP1:298</span> <span class="elementname">YCUE2</span> <span class="devicetype">VKIC</span> <span class="SUML">1703.767399</span> <span class="Z">3718.423772</span> <span class="linename">LCLS BSYLTU UNDEXIT UNDCL GIRD33 QBLK33</span></code></div> translates to
+where 
+<ol>
+<li><code><span class="devicename">YCOR:DMP1:298</span></code> is the device name.</li>
+<li><code><span class="elementname">YCUE2</span></code> is the element name.</li>
+<li><code><span class="devicetype">VKIC</span></code> is the device type.</li>
+<li><code><span class="SUML">1703.767399</span></code> is the SUML.</li>
+<li><code><span class="Z">3718.423772</span></code> is the Z.</li>
+<li><code>and the rest <span class="linename">LCLS BSYLTU UNDEXIT UNDCL GIRD33 QBLK33</span></code> are line names.</li>
+</ol>
+</li>
+<li>PV's &quot;belong&quot; to a device if the PV name starts with the device name.
+<ul>
+<li>For example, using the previous line, all PV's that start with the string <span class="devicename">YCOR:DMP1:298</span> belong to the device <span class="devicename">YCOR:DMP1:298</span> and hence are associated with the element name <span class="elementname"><code>YCUE2</code></span> and the line names <span class="linename"><code>UNDEXIT</code></span>....</li>
+</ul>
+</li>
+<li>
+The DS considers devices, elements and lines as &quot;tags&quot; and associates every PV with many tags.
+You can then search of PV's that are associated with a tag. 
+</li>
+</ul>
+<li>In addition to the tags from the MAD deck, you can define your own tags that map to channel names and devices.
+The DS looks for user defined tags in files with the <code>.tag</code> suffix in <code>${IOC_DATA}/../ds_tags</code>.
+For example, here's a tag definition file for a tag called <code>mMisc</code>.
+<pre><code>[mshankar@lcls-dev2 ~]$ cat ${IOC_DATA}/../ds_tags/mMisc.tag
+# Match names using a pattern
+BPMS:%:X
+# Match names using absolute names
+VPIO:UND1:1010:LEFF
+# Specify using device names
+devicename=QUAD:IN20:831
+devicename=XCOR:IN20:491</code></pre> 
+A tag file is a list of name patterns. 
+<ul>
+<li>You can add comments by prefixing the line using a <code>#</code> character.</li>
+<li>You can add all names that match a PV name pattern using a name pattern.
+For example, the pattern <code>BPMS:%:X</code> add's all <code>BPM X</code>'s.</li>
+<li>Absolute names without a pattern can be added as well.</li>
+<li>You can add all PV names that &quot;belong&quot; to a device by using a <code>devicename</code> argument. 
+For example, <code>devicename=QUAD:IN20:831</code> adds all PV's &quot;belong&quot;ing to the device <code>QUAD:IN20:831</code>.</li>
+</ul>
+</li>
+</ul>
+</div>
+
+<div>
+<h4>Examples</h4>
+<ul>
+<li>
+The most common usecase for the DS is to find names that match a pattern.
+Here's all the <code>BDES</code>'s in the accelerator.
+<pre><code>[softegr@lcls-builder mshankar]$ eget -t -s ds -a name=%:BDES
+BEND:DMP1:400:BDES
+BEND:DMP1:410:BDES
+BEND:DMP1:420:BDES
+...</code></pre>
+<div class="pagebreak"></div>
+</li>
+<li>
+The DS has special names for PV names and the tags that are imported from the MAD deck and elsewhere.
+<table class="inputoutput">    
+<tr><th>Attribute</th><th>DS Argument name</th><th>Example</th></tr>
+<tr><td>PVs</td><td>name or channelname</td><td>QUAD:LI21:335:BDES</td></tr>
+<tr><td>Device Name</td><td>dname or devicename</td><td>QUAD:LI21:335</td></tr>
+<tr><td>Element Name</td><td>ename or elementname</td><td>QM15</td></tr>
+<tr><td>Line</td><td>lname or linename</td><td>L2</td></tr>
+<tr><td>Element Type</td><td>etype or elementtype</td><td>QUAD, HKIC etc</td></tr>
+<tr><td>Z</td><td>z</td><td>34.34535</td></tr>
+<tr><td>IOC</td><td>ioc</td><td>SIOC:NEH1:WA01</td></tr>
+</table>             
+</li>
+<li>
+Thus, you can get the PV's that &quot;belong&quot; to a device
+<pre><code>[softegr@lcls-builder mshankar]$ eget -t -s ds -a dname=BPMS:LI21:131
+BPMS:LI21:131:ACCESS
+BPMS:LI21:131:ACTL
+BPMS:LI21:131:AODL
+BPMS:LI21:131:ASIM
+BPMS:LI21:131:ASUB_LKUOFFSET
+...</code></pre>
+</li>
+<li>
+You can also determine which elements are driven by a device by using the <span class="argument"><code>show</code></span> argument.
+<pre><code>[softegr@lcls-builder mshankar]$ eget -t -s ds -a <span class="argument">dname</span>=KLYS:LI21:61 -a <span class="argument">show=ename</span>
+K21_6B
+K21_6C
+K21_6D</code></pre>
+</li>
+<li>By default, if you don't specify the <span class="argument"><code>show</code></span> argument, the DS show's PV names. That is, the default value for the <code>show</code> argument is <span class="argument"><code>name</code></span>.
+</li>
+<li>
+<code>cainfo</code> often does not tell you which IOC is hosting a PV.
+You can use the DS to quickly find this.
+<pre><code>[softegr@lcls-builder mshankar]$ eget -t -s ds -a name=WATR:NEH1:950:RETURN_TEMP -a show=ioc
+SIOC:NEH1:WA01
+</code></pre>
+You can do some shell script magic to find the IOC engineers for all <code>TEMP</code>'s in the system.
+<pre><code>[softegr@lcls-builder mshankar]$ eget -t -s ds -a name="%:TEMP" -a show=ioc \ 
+| sed 's/.*/\0:CONTACT/' | grep -v -e '^:CONTACT' | xargs caget 
+IOC:IN20:TM01:CONTACT          Sonya Hoobler (sonya)
+IOC:LI20:CV01:CONTACT          Kristi Luchini (luchini)
+IOC:LI21:CV01:CONTACT          Kristi Luchini (luchini)
+...</code></pre> 
+<div class="pagebreak"></div>
+</li>
+<li>
+You can search for names using your custom tag's.
+<pre><code>eget -t -s ds -a tag=mMisc
+BPMS:IN20:221:X
+BPMS:IN20:235:X
+...
+QUAD:IN20:831:ACCESS
+QUAD:IN20:831:BACT
+...
+QUAD:IN20:831:Z
+VPIO:UND1:1010:LEFF
+...
+XCOR:IN20:491:ACCESS
+XCOR:IN20:491:BACT
+...</code></pre>
+</li>
+<li>You can combine tags and names in various ways. For example, you can find all the devices in the line <code>GUNBXG</code> using
+
+<pre><code>[softegr@lcls-builder mshankar]$ eget -t -s ds -a <span class="argument">lname</span>=GUNBXG -a <span class="argument">show=dname</span>
+BPMS:IN20:221
+CATH:IN20:111
+FARC:IN20:212
+MIRR:IN20:181</code></pre>
+</li>
+<li>You can combine search terms; for example, you can find all <code>QUAD BDES</code>'s in the line <code>GUNBXG</code> using 
+<pre><code>[softegr@lcls-builder mshankar]$ eget -t -s ds -a lname=GUNBXG -a name="QUAD:%:BDES"
+QUAD:IN20:121:BDES
+QUAD:IN20:122:BDES</code></pre>
+In this case, the query translates to <code>lname=GUNBXG</code> AND <code>name="QUAD:%:BDES"</code>.
+</li>
+<li>
+The DS has limited support for OR's. For example,
+<pre><code>[softegr@lcls-builder mshankar]$ eget -t -s ds -a lname=GUNBXG,GSPEC -a name="QUAD:%:BDES"
+QUAD:IN20:121:BDES
+QUAD:IN20:122:BDES
+QUAD:IN20:811:BDES
+QUAD:IN20:831:BDES</code></pre>
+translates to (<code>lname=GUNBXG</code> OR <code>lname=GSPEC</code>) AND <code>name="QUAD:%:BDES"</code>
+</li>
+<li>By default, the DS sorts the names alphabetically. 
+However, you can sort by other parameters.
+For example, here's the <code>BPM X's</code> sorted by location in the accelerator (the Z index).
+<pre><code>[softegr@lcls-builder mshankar]$ eget -t -s ds -a name=BPMS:%:X -a <span class="argument">sort=z</span>
+BPMS:IN20:821:X
+BPMS:IN20:221:X
+...
+BPMS:LI21:901:X
+BPMS:LI22:201:X
+BPMS:LI22:301:X
+BPMS:LI22:401:X
+...</code></pre>
+</li>
+<li>
+There are many more ways you can use the DS. You can get online help using
+<pre><code>eget -s ds -a help</code></pre>
+This also includes some sample Python code that can be used as a starting point for Python applications.
+</li>
+</ul>
+</div>
+<div class="pagebreak"></div>
+</section>
+<section>
+<h4>Latency</h4>
+The DS does not immediately reflect the changes to IOC files, MAD exports, user tags and other sources of information.
+There is a time delay negotiated with the systems team to avoid stressing the file system.
+This can be changed if it proves to be too cumbersome.
+<ul>
+<li>Changes to existing <code>IOC.pvlist</code> files after IOC reboots should typically be reflected in the DS within 2-5 minutes.</li>
+<li>Changes to user defined tags and MAD deck exports should typically be reflected in the DS within 5-10 minutes.</li>
+<li>Brand new <code>IOC.pvlist</code> files should typically be reflected in the DS within 30-60 minutes.</li>
+</ul>
+<table id="timedelay">
+<thead><tr><th>Source of change</th><th>Reflected in DS within</th></tr></thead>
+<tbody>
+<tr><td>Existing IOC.pvlist</td><td>2-5 minutes</td></tr>
+<tr><td>Updated MAD deck export</td><td>5-10 minutes</td></tr>
+<tr><td>New or updated user defined tag</td><td>5-10 minutes</td></tr>
+<tr><td>New IOC.pvlist</td><td>30-60 minutes</td></tr>
+</tbody>
+</table>
+</section>
+<section>
+<h4>Optimizing DS queries</h4>
+<div>
+The accelerator facilities at SLAC use a well-defined <a href="https://confluence.slac.stanford.edu/display/LCLSControls/LCLS+Naming+Conventions">naming</a> scheme for EPICS PV's.
+This naming scheme has the following structure
+<div class="namingconvention"><span class="dtype">DeviceType</span> : <span class="area">Area</span> : <span class="posn">Position</span> : <span class="attr">Attribute</span></div>
+For example, the PV name <code>QUAD:LI21:131:BDES</code> can be broken into these components 
+<div class="namingconvention"><span class="dtype">QUAD</span> : <span class="area">LI21</span> : <span class="posn">131</span> : <span class="attr">BDES</span></div>
+Thus, the PV <code>QUAD:LI21:131:BDES</code> refers to a <span class="dtype">Quadrupole Magnet</span> in the sector <span class="area">LI21</span> for the device in position <span class="posn">131</span> and specifies the <span class="attr">desired B field</span> for this quad.
+</div>
+<div>
+The DS leverages this naming scheme to optimize name searches. 
+For example, the search <pre><code>eget -t -s ds -a name=QUAD%BDES</code></pre> is a search for all PV names that have the string <code>QUAD</code> as the prefix and the string <code>BDES</code> as the suffix.
+This search involves matching against a larger set of PV names and can take 100's of milliseconds. 
+However, the similar search <pre><code>eget -t -s ds -a name=QUAD:%:BDES</code></pre> is a search for all <span class="attr">desired B field</span>'s in <span class="dtype">Quadrupole Magnet</span>'s.
+This search only involves matching against <span class="attr">desired B field</span> PV's in <span class="dtype">Quadrupole Magnet</span>'s.
+This is a much smaller set and therefore the search completes in less than a couple of milliseconds.  
+</div>
+<div>
+In general, to get the best results from the DS, try making your searches as specific as possible. Don't forget those colon's. 
+</div> 
+
+
+</section>
+
+<section>
+<h4>Documentation</h4>
+You can get online help for the DS using <code>eget -s ds -a help</code>.
+The documentation for the DS is part of the source located on AFS at <code>/afs/slac/g/cd/swe/git/repos/slac/names/directory_service.git</code>.
+A copy of these documents is also available on SLAC Sharepoint at
+<code>Controls Documents in SharePoint</code> --&gt; <code>High Level Applications</code> --&gt; <code>Directory Service</code>.
+
+</section>
+</body>
+</html>

@@ -1,0 +1,604 @@
+<!DOCTYPE html>
+<html xmlns:mso="urn:schemas-microsoft-com:office:office" xmlns:msdt="uuid:C2F41010-65B3-11d1-A29F-00AA00C14882">
+<head>
+<meta charset="ISO-8859-1">
+<title>Requirements for the DS</title>
+<style type="text/css">
+
+body { 
+	width: 11in;
+	margin: 0.25in;
+	font-size: large;
+}
+
+span.devicename { 
+	color: navy;
+	font-weight: bold;
+	font-family: monospace;
+}
+
+span.elementname { 
+	color: maroon;
+	font-weight: bold;
+	font-family: monospace;
+}
+
+span.devicetype { 
+	color: indigo;
+	font-weight: bold;
+	font-family: monospace;
+}
+
+span.SUML { 
+	color: firebrick;
+	font-weight: bold;
+	font-family: monospace;
+}
+
+span.Z { 
+	color: darkslateblue;
+	font-weight: bold;
+	font-family: monospace;
+}
+
+span.linename { 
+	color: darkgreen;
+	font-weight: bold;
+	font-family: monospace;
+}
+
+table.inputoutput { 
+	border-collapse: collapse;
+}
+
+
+table.inputoutput th, td {
+	border: thin solid black;
+	padding: 0.25em;
+}
+
+table.inputoutput th {
+	text-align: left;
+	background: Bisque;
+	font-weight: bold;
+}
+
+table.inputoutput tbody tr:nth-child(2n+1) {
+	background: PapayaWhip;
+}
+
+div.usecase::before { 
+	content: "Use Case\21D2";
+	color: navy;
+	font-weight: bold;
+}
+
+div.example { 
+
+}
+
+div.example pre {
+	padding: 0.25em; 
+	background: lightgray;
+}
+
+span.inputoutput {
+	color: indigo;
+}
+
+
+</style>
+
+<!--[if gte mso 9]><xml>
+<mso:CustomDocumentProperties>
+<mso:Project msdt:dt="string">Management</mso:Project>
+<mso:Application msdt:dt="string">Common</mso:Application>
+<mso:Document_x0020_Type msdt:dt="string">Programmer Guide</mso:Document_x0020_Type>
+<mso:Subsystem msdt:dt="string">Common</mso:Subsystem>
+<mso:display_urn_x003a_schemas-microsoft-com_x003a_office_x003a_office_x0023_Editor msdt:dt="string">Shankar, Murali</mso:display_urn_x003a_schemas-microsoft-com_x003a_office_x003a_office_x0023_Editor>
+<mso:display_urn_x003a_schemas-microsoft-com_x003a_office_x003a_office_x0023_Author msdt:dt="string">Shankar, Murali</mso:display_urn_x003a_schemas-microsoft-com_x003a_office_x003a_office_x0023_Author>
+<mso:URL msdt:dt="string"></mso:URL>
+</mso:CustomDocumentProperties>
+</xml><![endif]-->
+</head>
+<body>
+
+
+<section>
+<h1>Requirements for the directory service</h1>
+
+<div class="author">
+Greg White, Murali Shankar, SLAC,
+Version 1.0 22-Jan-2015.
+</div>
+
+
+<h4>Abstract</h4>
+<div>
+The "Directory Service" is a computer software data service that provides
+the names of Process Variables (PVs), devices, model elements, and 
+other associated information about the components of the accelerator, to 
+users and applications software. 
+</div>
+
+<div>
+Requirements for the directory service are given, motivated by usage examples. <span class="glossary">Requirements are indicated with a "*", like this line.</span>
+<ol>
+<li>It's assumed that the EPICS Channel Finder will be used "under the covers" for IOC CA PV names.</li> 
+<li>However, the requirements are given both without reference to EPICS Channel Finder, and also where appropriate illustrated with how the requirement might be satisfied by an EPICS V4 service on top of Channel Finder.</li>
+</ol>
+</div>
+
+
+<h4>Users</h4>
+<div>The Directory Service (DS) will be used by end-user physics applications
+software in the SLAC control system, such as Matlab GUIs, and by operators and
+physicists. For instance, for finding lists of names of PVs matching some
+criteria, like all the BPMs in the L2 linac. </div>
+<div>Such lists are used to construct Z-plots and other beamline oriented functions.</div>
+
+<h4>Summary</h4>
+<div>
+The following table summarizes the named things we want the directory service 
+to search and return. Those marked "Input Arg" = 'yes' are those a user should
+be able to provide (either fully qualified, or as a search pattern) and the
+"Output" are those we want the directory service to return based on the input
+arguments.</div>
+
+<h4>Phase 1</h4> 
+<table class="inputoutput">    
+<tr><th>Attribute</th><th>DS Argument name</th><th>Example</th><th>Input Arg</th><th>Output</th></tr>
+<tr><td>Channel Name</td><td>channelname or name</td><td>QUAD:LI21:335:BDES</td><td>yes</td><td>yes</td></tr>
+<tr><td>Device Name</td><td>devicename or dname</td><td>QUAD:LI21:335</td><td>yes</td><td>yes</td></tr>
+<tr><td>Element Name</td><td>elementname or ename</td><td>QM15</td><td>yes</td><td>yes</td></tr>
+<tr><td>Line</td><td>linename or lname</td><td>L2</td><td>yes</td><td>no</td></tr>
+<tr><td>Element Type</td><td>elementtype or etype</td><td>QUAD, HKIC etc</td><td>yes</td><td>yes</td></tr>
+<tr><td>Z</td><td>z</td><td>34.34535</td><td>no</td><td>yes</td></tr>
+<tr><td>Ordinal</td><td>ordinal or ord</td><td>344</td><td>no</td><td>yes</td></tr>
+</table>             
+
+<h4>PHASE 2</h4> 
+<table class="inputoutput">    
+<tr><th>Attribute</th><th>DS Argument name</th><th>Example</th><th>Input Arg</th><th>Output</th></tr>
+<tr><td>Engineering Name</td><td>engineeringname or engname</td><td>??</td><td>yes</td><td>yes</td></tr>
+<tr><td>Line</td><td>linename or lname</td><td>L2</td><td>yes</td><td>yes (1)</td></tr>
+<tr><td>Hardware Status</td><td>hardwarestatus or hsta  {active, inactive, planned, ...}</td><td>??</td><td>yes</td><td> yes (2)</td></tr>
+</table>
+
+<ol>
+<li>Note change from no to yes in phase 2. To draw Z plots, you'd like to know the 
+hierarchy of lines. i.e., what lines are contained in a line.</li>
+<li>The Hardware status would list the long term standing of an element of the 
+controls system, both before, during and after it's active status in the beamline.
+The precise list of values and their semantics is TBD, but would be something like
+<code>{planned, installed, wired, powered, active, inactive, decommissioned}</code>.</li> 
+</ol>
+
+<div>
+So, what's the difference between this doc and what we've got in the prototype ds?
+<ol>
+<li>Easy intuitive ability to output element names. From Murali's first examples (Nov 6 below), you can get the element name as part of getting the list of all tags, but we need a way for physicists and easy coding that makes it easy to just get the element name</li>
+<li>Easy intuitive ability to output device names (not PV names). From Murali's first examples (Nov 6 below), you can get device names (egs 1,2 &amp; 3) but it's not clear to me what he did to get that! Maybe can fix this by just more examples using "show" arg.</li>
+<li>Input element type (needs support from MAD publishing system)</li>
+<li> Output Z and ordinal (needs support from MAD publishing system)</li>
+</ol>
+</div>
+
+<h4>Questions</h4>
+<ol>
+<li>Do we want SUML as well as Z? </li>
+<li>Do we want "S for display" as well as Z?</li>
+<li>Cells and girder information?</li>
+<li>Do we want to mark some PVs as the primary READBACK or the primary SETPOINT? eg QUAD:LI21:335:BACT, BPMS:IN20:425:X etc. This would support pvManager, CSS displays etc. See "Primary PV of device" below.</li>
+<li>Do we want line begin and ending Z to support nice displays?</li>
+<li>How shall we maintain completeness and validity of element names and device names? See "Validation" below</li>
+<li>Do we want DS to be able to tell us the IOC of a PV? cainfo would give that if the IOC were up, but if the IOC is down, you may want ds to help in diagnosis</li>
+<li>Do we want DS to know the fields of records?</li>
+</ol>
+
+
+<h3>Functional use cases and requirements</h3>
+
+<h4>Name type translation : element name - device name - PV names.</h4> 
+<ol>
+<li>* The DS MUST be able to help a user or application translate back and forth between element name, device name, and PV names.</li>
+<li>If engineering names also are relevant, then be able to translate those too.</li>
+</ol>
+
+<div class="usecase">IOC engineer wants to know what device and hence PVs are implied when a
+physicist says they want to change some element. That is, need a way to get devices and pvs of elements.</div>
+<div class="usecase">Operations want to know what devices are implied when Cryo engineer quotes engineering name.</div>
+
+<div class="example"><span class="inputoutput">Input elementname: qm15 ; output: devicename</span>
+<pre><code>eget -s ds -a tag=QM15 -a show=devicename
+QUAD:LI21:335
+</code></pre>
+</div>
+
+
+<div class="example"><span class="inputoutput">Input elementname: qm15 ; output: channelname</span>
+<pre><code>
+eget -s ds -a tag=QM15     
+QUAD:LI21:335:ABORT
+QUAD:LI21:335:ACCESS
+QUAD:LI21:335:ALLFUNCGO
+QUAD:LI21:335:BACT
+QUAD:LI21:335:BACTFO
+QUAD:LI21:335:BACTLIMITS
+...
+</code></pre>
+</div>
+
+
+<div class="example"><span class="inputoutput">Input engineeringname:CR342-423 ; output:elementname</span>
+<pre><code>
+eget -s ds -a tag=CR342-423 -a show=elementname
+CAVL015
+</code></pre>
+</div>
+
+
+<div class="usecase">An IOC engineer wants to know all the PVs of a device:</div>
+<div class="example"><span class="inputoutput">Input dname:WIRE:LI21:301 ; output:name</span>
+<pre><code>
+eget -s ds -a name=WIRE:LI21:301:%
+WIRE:LI21:301:ALPHA_X
+WIRE:LI21:301:ALPHA_Y
+WIRE:LI21:301:BETA_X
+WIRE:LI21:301:BETA_Y
+WIRE:LI21:301:BLEN
+[truncated]
+</code></pre>
+</div>
+
+
+<div class="usecase">A physicist wants to know the X PV names of a wire they know by element name</div>
+<div class="example"><span class="inputoutput">Input ename=WS01,name=%X% output=name</span>
+<pre><code>
+eget -s ds -a tag=WS01 -a name=%X%
+WIRE:LI21:301:ALPHA_X
+WIRE:LI21:301:BETA_X
+WIRE:LI21:301:BMAG_X
+WIRE:LI21:301:CALTEXT
+WIRE:LI21:301:DALPHA_X
+WIRE:LI21:301:DBETA_X
+[truncated]
+</code></pre>
+</div>
+
+Notes:
+<ul>
+<li>* The default output SHOULD be the channel name. That is, these two should be the same; see above example
+<ul>
+<li><code>eget -s ds -a elementname=QM15 -a show=channelname</code></li>
+<li><code>eget -s ds -a elementname=QM15</code></li>
+</ul>
+</li>
+
+<li>* Abbreviations for property names <code>elementname</code>, <code>devicename</code> and <code>channelname</code> SHOULD be supported. Suggest those in summary table above.
+[Q: I believe presently "name" implies channel name and is the default. But is it possible to get the device name or element name instead of channel name?]</li>
+  
+<li>* Case sensitivity: Input property values SHOULD not be case sensitive. The
+  following should be fine and give expected output:
+
+<div class="example"><span class="inputoutput">Input elementname: qm15 ; output: devicename</span>
+<pre><code>
+  eget -s ds -a tag=qm15 -a show=devicename
+  QUAD:LI21:335
+</code></pre>
+</div>
+
+</li>
+
+<li>* MUST be able to sort by Z.</li>
+</ul>
+
+<h4>Display Groups</h4>
+<div>
+* There MUST be a facility to get the names (element names, device names, or channel names) in some given area of the machine.
+</div>  
+
+<div class="usecase">Operator or Physicist or APP wants to know which PV's are in 21-7 klystron structure:</div>
+<div>* The default output MUST be pvname. so this UC is satisfied by simply:</div>
+<div class="example">
+<pre><code>
+$ eget -s ds -a tag=K21_7 
+BPMS:LI21:801:XL2L0LTOL
+BPMS:LI21:801:XL2L0EV
+BPMS:LI21:801:X:L2L0LFAN
+KLYS:LI21:71:EMEASURED
+BPMS:LI21:801:STA_ALHSV
+</code></pre>
+</div>
+
+<div class="usecase">Operator or Physicist or APP wants to know which DEVICE NAMES are in the K21_7 klystron structure:</div>
+<div class="example">
+<pre><code>
+$ eget -s ds -a tag=K21_7 -a show=devicename
+BPMS:LI21:801
+KLYS:LI21:71
+XCOR:LI21:702
+QUAD:LI21:801
+YCOR:LI21:703
+</code></pre>
+</div>
+<h4>Pattern Matching</h4>
+<div>* The device name input MUST support pattern matching.   At least simple wildcard pattern matching MUST be supported; full regex MAY be supported.</div>
+ 
+<div class="usecase">Orbit Display GUI wants to know which BPMs DEVICES are in the Laser heater:</div>
+<div>Using the pattern matching capability:</div>
+<div class="example"><span class="inputoutput">Input line:LSRHTR name=BPMS:% ; output:devicename</span>
+<pre><code>
+eget -s ds -a tag=LSRHTR -a name=BPMS:% -a show=devicename
+BPMS:IN20:511
+BPMS:IN20:525
+BPMS:IN20:581
+BPMS:IN20:631
+BPMS:IN20:651
+[truncated]
+</code></pre>
+* The PV name input MUST support pattern matching
+</div>
+
+<div class="example">
+<pre><code>
+$ eget -t -s ds -a name=BPMS:LI21:%:STATSUMY
+BPMS:LI21:301:STATSUMY
+BPMS:LI21:161:STATSUMY
+BPMS:LI21:315:STATSUMY
+BPMS:LI21:501:STATSUMY
+BPMS:LI21:401:STATSUMY
+[truncated]
+</code></pre>
+</div>
+
+<div class="usecase">Orbit Display GUI wants to know which BPMs CHANNEL NAMES, matching BPMS:%:X are in DL1</div>
+<div  class="example"><span class="inputoutput">Input line:DL1 name=BPMS:%:X ; output=name</span>
+<pre><code>
+$ eget -s ds -a tag=DL1 -a name=BPMS:%:X
+BPMS:IN20:425:X
+BPMS:IN20:511:X
+BPMS:IN20:525:X
+BPMS:IN20:581:X
+BPMS:IN20:631:X
+BPMS:IN20:651:X
+BPMS:IN20:731:X
+BPMS:IN20:771:X
+BPMS:IN20:781:X
+</code></pre>
+* MUST be able to search by element type:
+</div>
+
+<div  class="example"><span class="inputoutput">Input line:LSRHTR etype=MONI ; output:devicename</span>
+<pre><code>eget -s ds -a tag=LSRHTR,MONI -a show=devicename
+BPMS:IN20:511
+BPMS:IN20:525
+BPMS:IN20:581
+BPMS:IN20:631
+BPMS:IN20:651
+[truncated]
+</code></pre>
+</div>
+ 
+<div  class="usecase">A physicist wants to know which wire scanner ELEMENTS are in DL1:</div>
+<div  class="example">
+<pre><code>eget -t -s ds -a tag=DL1 -a name=WIRE:% -a show=elementname
+WS01
+WS02
+WS03
+WS04
+</code></pre>
+</div>
+
+
+<div>Multiple tags and/or names can be specified using a comma as a separator. In this
+case, we use OR's for the same field and AND's between fields. For example:</div>
+
+<div class="example">
+<pre><code>
+$ eget -t -s ds -a tag=K21_7,K22_7 -a name=%:STATSUMY
+returns names for either of the tags K21_7 and K22_7 that match the GLOB %:STATSUMY.
+</code></pre>
+</div>
+
+<div class="example">
+<pre><code>
+$ eget -t -s ds -a tag="K21_7,K22_7" -a name=%:STATSUMY
+YCOR:LI22:703:STATSUMY
+BPMS:LI21:801:STATSUMY
+KLYS:LI21:71:STATSUMY
+XCOR:LI21:702:STATSUMY
+QUAD:LI21:801:STATSUMY
+KLYS:LI22:71:STATSUMY
+BPMS:LI22:801:STATSUMY
+QUAD:LI22:801:STATSUMY
+YCOR:LI21:703:STATSUMY
+XCOR:LI22:702:STATSUMY
+</code></pre>
+</div>
+
+
+<h4>User defined lists</h4>
+The DS should support the ability to easily create and maintain new named lists of devices.
+For example, a user may want to make a list called <code>Mike's Devices</code> which includes, for example, <code>BPMS:UND1:1690:X, BPMS:IN20:631:Y and PATT:SYS1:1:NSEC</code>.
+Then, the user should be able to get this list using the tag=<code>Mike's Devices</code>, like so
+<div class="example"> 
+<pre><code>
+$ eget -t -s ds -a tag="Mike's Devices"
+BPMS:UND1:1690:X
+BPMS:IN20:631:Y
+PATT:SYS1:1:NSEC
+</code></pre>
+</div>
+
+
+<h4>Systematics</h4>
+The following are to do with requirements of for how the system is implemented
+rather that what it does for a user. User requirements are described above.
+
+<ol>
+<li>IOC engineer adds new IOC record for added device.</li>
+<li>IOC changes IOC record name for device moved in beamline, per naming convention.</li>
+<li>Physicist adds new device to model online model - causing new device in MACHINE_MODELS</li>
+<li>Physicist adds new device to model online model - causing new device in MACHINE_MODELS</li>
+<li>Physicist (eg MDW) adds new device to offline MAD deck, and Andrea uploads to Oracle - causing new element and device in LCLS_ELEMENTS</li>
+<li>Physicist wants simple way to talk to an element through its common PVs.</li>
+<li>End user PV aliasing. DS names db should be designed and maintained with a
+view that it may be used to source EPICS PV aliasing, possibly in the gateway.
+So a physicist wouldn't need to know the device name. Eg, In the future, using information
+in the DS, we should have a small suite of user level commands and API that are be able to 
+understand request to get value of, say, QM15:BDES. Eg
+ 
+<pre><code>
+  $ eget QM15:BDES
+  12.233133
+</code></pre>
+</li>
+</ol>
+
+
+<h5>Systematic requirements</h5>
+<ol>
+<li>
+* Maintain a "current" list of names
+<ol><li>PV names from from EPICS IOC's. Per Ernest, we can make an assumption that ${IOC_DATA}/*/iocInfo/IOC.pvlist will give
+us a list of valid PV's. The DS MUST be able to learn the existence of a new CA PV immediately (seconds or a
+few minutes) after its introduction. [SUC1, SUC2]
+</li>
+<li>PV names from EPICS v4 servers and pvdatabases.
+<ol>  
+<li>So far, there are only 3 v4 server PV names (optics, rdb, testservice). However,
+in future these systems will be changed so the PV name is not the name of the service
+(like "optics") but the name of quantities they serve (like YCOR:LI22:703:TWISS).
+That means many more PVs, and that means we need some way to harvest those names into
+the DS.</li>
+<li>Let's leave that for phase 2 though. It may be that the names will also be harvested
+from a file, or it may be that the DS can use the EPICS V4 facility for finding all
+the PVs offered by an online EPICS server by asking the server directly.</li>
+</ol>
+</li>
+</ol>
+</li>
+<li>* Maintain a "current" list of lines, element names, types and Z, from the MAD deck. The device name, element name and line information, should be harvested periodically from the "latest" directory of MAD optics.
+<ol>
+<li> 
+Per Greg, these are exported into a folder, for example, <code>/afs/slac/www/grp/ad/model/output/lcls/latest/opt</code> into three files.
+<ol>
+<li>GSPEC_lines.dat</li>
+<li>LCLS_lines.dat</li>
+<li>SPEC_lines.dat</li>
+</ol>
+</li>
+<li>Every line in these these files contains a device name, an element name, a device type, a SUML, a Z and a list of line names.
+For example, 
+<pre><code><span class="devicename">YCOR:DMP1:298</span> <span class="elementname">YCUE2</span> <span class="devicetype">VKIC</span> <span class="SUML">1703.767399</span> <span class="Z">3718.423772</span> <span class="linename">LCLS BSYLTU UNDEXIT UNDCL GIRD33 QBLK33 CHICANE  LIN22</span></code></pre> translates to
+where 
+<ol>
+<li><code><span class="devicename">YCOR:DMP1:298</span></code> is the device name.</li>
+<li><code><span class="elementname">YCUE2</span></code> is the element name.</li>
+<li><code><span class="devicetype">VKIC</span></code> is the device type.</li>
+<li><code><span class="SUML">1703.767399</span></code> is the SUML.</li>
+<li><code><span class="Z">3718.423772</span></code> is the Z.</li>
+<li><code>and the rest <span class="linename">LCLS BSYLTU UNDEXIT UNDCL GIRD33 QBLK33 CHICANE  LIN22</span></code> are line names.</li>
+</ol>
+</li>
+<li>We match PV's belonging to a device by using the device name as the prefix of the PV name.
+For example, all PV's that start with the string <code>YCOR:DMP1:298</code> belong to the device <code>YCOR:DMP1:298</code> and hence are associated with the element name <span class="elementname"><code>YCUE2</code></span> and the line names <span class="linename"><code>UNDEXIT</code></span>....
+</li>
+<li>The same device can drive more than one element. For example, 
+<pre><code><span class="devicename">KLYS:LI21:61</span> <span class="elementname">K21_6B</span> ... <span class="linename">L2</span>
+<span class="devicename">KLYS:LI21:61</span> <span class="elementname">K21_6C</span> ... <span class="linename">L2</span>
+<span class="devicename">KLYS:LI21:61</span> <span class="elementname">K21_6D</span> ... <span class="linename">L2</span></code></pre>
+the device <span class="devicename">KLYS:LI21:61</span> drives the three elements <span class="elementname">K21_6B, K21_6C, K21_6D</span>.
+</li>
+</ol>
+</li>
+<li>*Validation and completeness
+In the past keeping the names system (AIDA aidalist), up to date with respect to Oracle 
+LCLS_INFRASTRUCTURE, the model system, and MAD decks, has been very labor intensive.
+<ul>
+<li>How to fix that? First, bypass the requirement for veracity and up-to-dateness of
+Oracle LCLS_INFRASTRUCTURE with respect to device names. That would mean applications
+would work whether  LCLS_INFRASTRUCTURE had been updated with device names or not.
+Instead, applications would use the directory service. It would source the association 
+of device names to element names from elementdevices.dat [1].</li> 
+<li>To verify completeness, I can write a script that
+checks whether all elements of "control system type" have an assigned device name in 
+elementdevices.dat. That check could be made in mad2dot.awk [2] at the block beginning 
+"if ( name in elementdevNamem )".</li> 
+<li>It would be run by the MAD publication process. It would refuse to install files to 
+/grp/ad/model/output/lcls/ unless the check passed.</li>
+<li>In this way, the mad deck publishing process [3] can be used to ensure that whenever
+a new MAD deck is published for use, every element that should have an assigned device
+name has one.</li>
+</ul>
+</li>
+<li>*Up-to-dateness - Data MUST be up-to-date with respect to the input sources above by at-most a "few minutes,"
+say 5 minutes. Therefore, if an IOC gets rebooted, we pick up the changes within 5 minutes. 
+The duration of the "few minutes" window should be configurable in some way.
+</li>
+<li>Data will be returned as an EPICS V4 NTTable.
+<pre><code>$ eget -N -s mds -a tag=K23_7 -a name=%:STATSUMY
+epics:nt/NTTable:1.0
+string[] labels [name]
+structure value
+string[] name 
+  [XCOR:LI23:702:STATSUMY,BPMS:LI23:801:STATSUMY,KLYS:LI23:71:STATSUMY,YCOR:LI23:703:STATSUMY
+</code></pre>
+</li>
+<li>Performance.
+Matching list SHOULD be returned in &lt; ~0.5 s (mean first access time). 
+</li>
+</ol>
+
+
+<h4>Future</h4>
+
+<h5>Primary PV of device</h5>
+<div class="usecase">An engineer who doesn't know the naming convention of PVs at SLAC
+wants to know the setpoint and readback values of a given quadrupole:
+They may want to use tags like "setpoint" and "readback" to determine which
+PVs are of interest.</div>
+
+<div>For example, query the Directory Service to tell us the readback PV of QUAD:LI21:335:</div>
+<pre><code>eget -s ds -a devicename=QUAD:LI21:335 -a handle=readback
+QUAD:LI21:335:BACT
+</code></pre>
+
+<div>Using the element to device name translation (above) and primary readback/
+setpoint support, then the most elegant and simple end user interface is possible.</div>
+<div>For examples: get the value of QM15:</div>
+<pre><code>eget qm15
+34.34535
+</code></pre>
+
+or to put to qm15:
+<pre><code>
+eput qm15 3.45
+</code></pre>
+
+<h4>Other systems</h4>
+To support these requirements, other systems must be modified:
+<ol>
+<li>mad2awk.dat modified to check that all control system elements have an assigned device in 
+      elementdevices.dat [1]</li>
+<li>mad2awk.dat must be modified so that the lines files it emits (LCLS_lines.dat etc) include
+      also MAD element type (MONI, QUAD, HKIC etc) and Z. Possibly also suml</li>
+<li>V4 EPICS servers (non-pvDatabase) will need to publish their PV lists somewhere so the DS
+      can harvest them. </li>
+</ol>
+   
+
+
+
+<h5>References</h5>
+<ol>
+<li>http://www.slac.stanford.edu/cgi-wrap/cvsweb/optics/script/elementdevices.dat?cvsroot=LCLS</li>
+<li>mad2dot.awk, http://www.slac.stanford.edu/cgi-wrap/cvsweb/optics/script/mad2dot.awk?cvsroot=LCLS</li>
+<li>README of mad deck publishing process - http://www.slac.stanford.edu/cgi-wrap/cvsweb/optics/etc/lattice/lcls/README?cvsroot=LCLS</li>
+</ol>
+
+</section>
+
+</body>
+</html>

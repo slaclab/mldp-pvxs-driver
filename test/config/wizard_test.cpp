@@ -919,4 +919,193 @@ TEST(WizardLoadFromConfig, RoundTripPvMetadataMultiple)
     EXPECT_EQ(0u,   loaded.readers[0].pvs[1].metadata.size());
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Validators — double variants
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST(WizardValidators, IsPositiveDouble)
+{
+    EXPECT_TRUE(isPositiveDouble("1"));
+    EXPECT_TRUE(isPositiveDouble("0.1"));
+    EXPECT_TRUE(isPositiveDouble("5.0"));
+    EXPECT_TRUE(isPositiveDouble("1e3"));
+    EXPECT_FALSE(isPositiveDouble("0"));
+    EXPECT_FALSE(isPositiveDouble("0.0"));
+    EXPECT_FALSE(isPositiveDouble("-1.0"));
+    EXPECT_FALSE(isPositiveDouble(""));
+    EXPECT_FALSE(isPositiveDouble("abc"));
+}
+
+TEST(WizardValidators, IsNonNegDouble)
+{
+    EXPECT_TRUE(isNonNegDouble("0"));
+    EXPECT_TRUE(isNonNegDouble("0.0"));
+    EXPECT_TRUE(isNonNegDouble("5.0"));
+    EXPECT_FALSE(isNonNegDouble("-0.1"));
+    EXPECT_FALSE(isNonNegDouble("-1"));
+    EXPECT_FALSE(isNonNegDouble(""));
+    EXPECT_FALSE(isNonNegDouble("abc"));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// epics-ds-metadata reader — generateYaml
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST(WizardGenerateYaml, DsMetadataReaderDefaultFields)
+{
+    auto st = makeMinimalState();
+
+    EpicsReaderConfig ds;
+    ds.name        = "ds_reader";
+    ds.reader_type = "epics-ds-metadata";
+    // use all defaults
+    st.readers.push_back(ds);
+
+    auto yaml = generateYaml(st);
+    EXPECT_NE(std::string::npos, yaml.find("epics-ds-metadata:"));
+    EXPECT_NE(std::string::npos, yaml.find("service: ds"));
+    EXPECT_NE(std::string::npos, yaml.find("query: %"));
+    EXPECT_NE(std::string::npos, yaml.find("timeout-sec: 5.0"));
+    EXPECT_NE(std::string::npos, yaml.find("source-name-column: channelName"));
+    EXPECT_NE(std::string::npos, yaml.find("rescan-interval-sec: 0.0"));
+    // tags-column omitted when empty
+    EXPECT_EQ(std::string::npos, yaml.find("tags-column:"));
+}
+
+TEST(WizardGenerateYaml, DsMetadataReaderTagsColumnEmitted)
+{
+    auto st = makeMinimalState();
+
+    EpicsReaderConfig ds;
+    ds.name           = "ds_with_tags";
+    ds.reader_type    = "epics-ds-metadata";
+    ds.ds_tags_col    = "tags";
+    ds.ds_timeout_sec = "10.0";
+    st.readers.push_back(ds);
+
+    auto yaml = generateYaml(st);
+    EXPECT_NE(std::string::npos, yaml.find("tags-column: tags"));
+    EXPECT_NE(std::string::npos, yaml.find("timeout-sec: 10.0"));
+}
+
+TEST(WizardGenerateYaml, DsMetadataReaderCustomService)
+{
+    auto st = makeMinimalState();
+
+    EpicsReaderConfig ds;
+    ds.name               = "ds_custom";
+    ds.reader_type        = "epics-ds-metadata";
+    ds.ds_service         = "my_ds_service";
+    ds.ds_query           = "BPMS:%";
+    ds.ds_rescan_interval_sec = "60.0";
+    st.readers.push_back(ds);
+
+    auto yaml = generateYaml(st);
+    EXPECT_NE(std::string::npos, yaml.find("service: my_ds_service"));
+    EXPECT_NE(std::string::npos, yaml.find("query: BPMS:%"));
+    EXPECT_NE(std::string::npos, yaml.find("rescan-interval-sec: 60.0"));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// epics-ds-metadata reader — round-trip through validation
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST(WizardRoundTrip, DsMetadataReaderPassesValidation)
+{
+    auto st = makeMinimalState();
+
+    EpicsReaderConfig ds;
+    ds.name        = "ds_rt";
+    ds.reader_type = "epics-ds-metadata";
+    ds.ds_service  = "ds";
+    ds.ds_query    = "%";
+    st.readers.push_back(ds);
+
+    auto yaml = generateYaml(st);
+    auto diags = validateYamlString(yaml);
+    EXPECT_EQ(0, countErrors(diags)) << yaml;
+}
+
+TEST(WizardRoundTrip, DsMetadataReaderWithTagsPassesValidation)
+{
+    auto st = makeMinimalState();
+
+    EpicsReaderConfig ds;
+    ds.name                   = "ds_tags_rt";
+    ds.reader_type            = "epics-ds-metadata";
+    ds.ds_service             = "ds";
+    ds.ds_tags_col            = "tags";
+    ds.ds_rescan_interval_sec = "30.0";
+    st.readers.push_back(ds);
+
+    auto yaml = generateYaml(st);
+    auto diags = validateYamlString(yaml);
+    EXPECT_EQ(0, countErrors(diags)) << yaml;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// epics-ds-metadata reader — loadFromConfig round-trip
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST(WizardLoadFromConfig, RoundTripDsMetadataReader)
+{
+    auto st = makeMinimalState();
+
+    EpicsReaderConfig ds;
+    ds.name                   = "ds_load";
+    ds.reader_type            = "epics-ds-metadata";
+    ds.ds_service             = "my_svc";
+    ds.ds_query               = "BPMS:%";
+    ds.ds_timeout_sec         = "8.5";
+    ds.ds_source_name_col     = "pvName";
+    ds.ds_tags_col            = "tags";
+    ds.ds_rescan_interval_sec = "45.0";
+    st.readers.push_back(ds);
+
+    std::string yaml = generateYaml(st);
+    std::string path = writeTmpYaml(yaml);
+
+    WizardState loaded;
+    loadFromConfig(path, loaded);
+
+    ASSERT_EQ(2u, loaded.readers.size());
+    const auto& r = loaded.readers[1];
+    EXPECT_EQ("epics-ds-metadata", r.reader_type);
+    EXPECT_EQ("ds_load",           r.name);
+    EXPECT_EQ("my_svc",            r.ds_service);
+    EXPECT_EQ("BPMS:%",            r.ds_query);
+    EXPECT_EQ("pvName",            r.ds_source_name_col);
+    EXPECT_EQ("tags",              r.ds_tags_col);
+    // floats may differ in string form (8.5 vs 8.500000); just check round-trip value
+    EXPECT_NEAR(8.5,  std::stod(r.ds_timeout_sec),         1e-6);
+    EXPECT_NEAR(45.0, std::stod(r.ds_rescan_interval_sec), 1e-6);
+
+    // YAML regenerated from loaded state must still pass validation
+    auto regenYaml = generateYaml(loaded);
+    auto diags     = validateYamlString(regenYaml);
+    EXPECT_EQ(0, countErrors(diags)) << regenYaml;
+}
+
+TEST(WizardLoadFromConfig, RoundTripDsMetadataReaderTagsOmittedWhenEmpty)
+{
+    auto st = makeMinimalState();
+
+    EpicsReaderConfig ds;
+    ds.name        = "ds_notags";
+    ds.reader_type = "epics-ds-metadata";
+    // ds_tags_col left empty (default)
+    st.readers.push_back(ds);
+
+    std::string yaml = generateYaml(st);
+    // tags-column must not appear
+    EXPECT_EQ(std::string::npos, yaml.find("tags-column:"));
+
+    std::string path = writeTmpYaml(yaml);
+    WizardState loaded;
+    loadFromConfig(path, loaded);
+
+    ASSERT_EQ(2u, loaded.readers.size());
+    EXPECT_EQ("", loaded.readers[1].ds_tags_col);
+}
+
 } // namespace mldp_pvxs_driver::config
