@@ -9,13 +9,14 @@
 //////////////////////////////////////////////////////////////////////////////
 
 /**
- * End-to-end tests: EpicsDSMetadataReader → IDataBus → MLDPPVMetadataWriter → gRPC
+ * End-to-end tests: MLDPPVXSController (epics-ds-metadata reader +
+ *     mldp-pv-metadata writer) → TestAnnotationSvc (fake gRPC)
  *
  * Each test spins up:
  *   - MockDSServer     : fake EPICS Directory Service (PVXS RPC)
  *   - TestAnnotationSvc: in-process fake DpAnnotationService gRPC server
- *   - EpicsDSMetadataReader wired to a forwarding bus backed by the writer
- *   - MLDPPVMetadataWriter pushing RPCs to TestAnnotationSvc
+ *   - MLDPPVXSController wiring the epics-ds-metadata reader to the
+ *     mldp-pv-metadata writer via the full controller pipeline
  *
  * TEST 3 additionally constructs an MLDPAnnotationQueryClient pointing at the
  * same in-process server and calls getPvMetadata() to verify the saved record
@@ -30,11 +31,8 @@
 #include <grpcpp/server_builder.h>
 #include <grpcpp/server_context.h>
 
+#include <controller/MLDPPVXSController.h>
 #include <query/impl/mldp/MLDPAnnotationQueryClient.h>
-#include <reader/impl/epics_ds/EpicsDSMetadataReader.h>
-#include <util/bus/IDataBus.h>
-#include <writer/WriterFactory.h>
-#include <writer/mldp_pv_metadata/MLDPPVMetadataWriter.h>
 #include <pool/MLDPGrpcAnnotationPoolConfig.h>
 
 #include <atomic>
@@ -50,12 +48,9 @@
 #include "../mock/MockDSServer.h"
 
 using mldp_pvxs_driver::config::makeConfigFromYaml;
+using mldp_pvxs_driver::controller::MLDPPVXSController;
 using mldp_pvxs_driver::query::impl::mldp::MLDPAnnotationQueryClient;
-using mldp_pvxs_driver::reader::impl::epics_ds::EpicsDSMetadataReader;
 using mldp_pvxs_driver::test::mock::MockDSServer;
-using mldp_pvxs_driver::util::bus::IDataBus;
-using mldp_pvxs_driver::writer::IWriter;
-using mldp_pvxs_driver::writer::WriterFactory;
 
 namespace {
 
@@ -99,7 +94,6 @@ public:
         return grpc::Status::OK;
     }
 
-    // snapshot access for direct assertions
     std::unordered_map<std::string, dp::service::common::PvMetadata> snapshot() const
     {
         std::lock_guard<std::mutex> lock(mu_);
@@ -107,26 +101,8 @@ public:
     }
 
 private:
-    mutable std::mutex                                                    mu_;
-    std::unordered_map<std::string, dp::service::common::PvMetadata>     saved_;
-};
-
-// ---------------------------------------------------------------------------
-// Forwarding bus: passes every EventBatch to a writer unchanged.
-// ---------------------------------------------------------------------------
-
-class WriterBus final : public IDataBus
-{
-public:
-    explicit WriterBus(std::shared_ptr<IWriter> w) : writer_(std::move(w)) {}
-
-    bool push(EventBatch batch) override
-    {
-        return writer_->push(std::move(batch));
-    }
-
-private:
-    std::shared_ptr<IWriter> writer_;
+    mutable std::mutex                                                 mu_;
+    std::unordered_map<std::string, dp::service::common::PvMetadata>  saved_;
 };
 
 // ---------------------------------------------------------------------------
@@ -145,28 +121,28 @@ bool waitForCount(std::atomic<int>& counter, int target, std::chrono::millisecon
     return counter.load(std::memory_order_relaxed) >= target;
 }
 
-std::string makeWriterYaml(const std::string& annotation_url)
+std::string makeControllerYaml(const std::string& annotation_url,
+                                const std::string& ds_service,
+                                const std::string& reader_name)
 {
     std::ostringstream ss;
-    ss << "name: ds_metadata_writer_test\n"
-       << "thread-pool: 2\n"
-       << "deadline-seconds: 5\n"
-       << "mldp-pv-metadata-pool:\n"
-       << "  annotation-url: " << annotation_url << "\n"
-       << "  min-conn: 1\n"
-       << "  max-conn: 2\n";
-    return ss.str();
-}
-
-std::string makeReaderYaml(const std::string& service, const std::string& name)
-{
-    std::ostringstream ss;
-    ss << "name: " << name << "\n"
-       << "service: " << service << "\n"
-       << "timeout-sec: 5.0\n"
-       << "source-name-column: channelName\n"
-       << "tags-column: tags\n"
-       << "rescan-interval-sec: 0.0\n";
+    ss << "writer:\n"
+       << "  mldp-pv-metadata:\n"
+       << "    - name: ds-metadata-writer-test\n"
+       << "      thread-pool: 2\n"
+       << "      deadline-seconds: 5\n"
+       << "      mldp-pv-metadata-pool:\n"
+       << "        annotation-url: " << annotation_url << "\n"
+       << "        min-conn: 1\n"
+       << "        max-conn: 2\n"
+       << "reader:\n"
+       << "  - epics-ds-metadata:\n"
+       << "      - name: " << reader_name << "\n"
+       << "        service: " << ds_service << "\n"
+       << "        timeout-sec: 5.0\n"
+       << "        source-name-column: channelName\n"
+       << "        tags-column: tags\n"
+       << "        rescan-interval-sec: 0.0\n";
     return ss.str();
 }
 
@@ -177,9 +153,10 @@ std::string makeReaderYaml(const std::string& service, const std::string& name)
 class DsMetadataWriterTest : public ::testing::Test
 {
 protected:
-    TestAnnotationSvc svc_;
-    int               port_ = 0;
-    std::unique_ptr<grpc::Server> grpc_server_;
+    TestAnnotationSvc                   svc_;
+    int                                 port_ = 0;
+    std::unique_ptr<grpc::Server>       grpc_server_;
+    std::shared_ptr<MLDPPVXSController> controller_;
 
     void SetUp() override
     {
@@ -195,6 +172,8 @@ protected:
 
     void TearDown() override
     {
+        if (controller_)
+            controller_->stop();
         if (grpc_server_)
             grpc_server_->Shutdown();
     }
@@ -202,6 +181,13 @@ protected:
     std::string annotationUrl() const
     {
         return "127.0.0.1:" + std::to_string(port_);
+    }
+
+    void startController(const std::string& ds_service, const std::string& reader_name)
+    {
+        controller_ = MLDPPVXSController::create(
+            makeConfigFromYaml(makeControllerYaml(annotationUrl(), ds_service, reader_name)));
+        controller_->start();
     }
 };
 
@@ -215,19 +201,10 @@ TEST_F(DsMetadataWriterTest, ReaderPushesAllRowsToAnnotationService)
 {
     MockDSServer mock_ds("test:ds-wr1");
 
-    const auto writer_cfg = makeConfigFromYaml(makeWriterYaml(annotationUrl()));
-    std::shared_ptr<IWriter> writer(WriterFactory::create("mldp-pv-metadata", writer_cfg, nullptr));
-    ASSERT_NE(writer, nullptr);
-    ASSERT_NO_THROW(writer->start());
-
-    auto bus = std::make_shared<WriterBus>(writer);
-    EpicsDSMetadataReader reader(bus, nullptr,
-        makeConfigFromYaml(makeReaderYaml("test:ds-wr1", "wr1-reader")));
+    ASSERT_NO_THROW(startController("test:ds-wr1", "wr1-reader"));
 
     ASSERT_TRUE(waitForCount(svc_.save_count, 30, std::chrono::milliseconds(8000)))
         << "Expected >= 30 savePvMetadata calls, got " << svc_.save_count.load();
-
-    writer->stop();
 }
 
 // ---------------------------------------------------------------------------
@@ -238,14 +215,7 @@ TEST_F(DsMetadataWriterTest, PvMetadataAttributesForwardedCorrectly)
 {
     MockDSServer mock_ds("test:ds-wr2");
 
-    const auto writer_cfg = makeConfigFromYaml(makeWriterYaml(annotationUrl()));
-    std::shared_ptr<IWriter> writer(WriterFactory::create("mldp-pv-metadata", writer_cfg, nullptr));
-    ASSERT_NE(writer, nullptr);
-    ASSERT_NO_THROW(writer->start());
-
-    auto bus = std::make_shared<WriterBus>(writer);
-    EpicsDSMetadataReader reader(bus, nullptr,
-        makeConfigFromYaml(makeReaderYaml("test:ds-wr2", "wr2-reader")));
+    ASSERT_NO_THROW(startController("test:ds-wr2", "wr2-reader"));
 
     ASSERT_TRUE(waitForCount(svc_.save_count, 30, std::chrono::milliseconds(8000)));
 
@@ -263,8 +233,6 @@ TEST_F(DsMetadataWriterTest, PvMetadataAttributesForwardedCorrectly)
     }
     EXPECT_TRUE(found_owner)
         << "Expected attribute owner=diagnostics in saved PvMetadata for BPMS:IN20:221:X";
-
-    writer->stop();
 }
 
 // ---------------------------------------------------------------------------
@@ -276,19 +244,10 @@ TEST_F(DsMetadataWriterTest, QueryClientRetrievesSavedPvMetadata)
 {
     MockDSServer mock_ds("test:ds-wr3");
 
-    const auto writer_cfg = makeConfigFromYaml(makeWriterYaml(annotationUrl()));
-    std::shared_ptr<IWriter> writer(WriterFactory::create("mldp-pv-metadata", writer_cfg, nullptr));
-    ASSERT_NE(writer, nullptr);
-    ASSERT_NO_THROW(writer->start());
+    ASSERT_NO_THROW(startController("test:ds-wr3", "wr3-reader"));
 
-    auto bus = std::make_shared<WriterBus>(writer);
-    EpicsDSMetadataReader reader(bus, nullptr,
-        makeConfigFromYaml(makeReaderYaml("test:ds-wr3", "wr3-reader")));
-
-    // Wait until the writer has persisted the record we want to query.
     ASSERT_TRUE(waitForCount(svc_.save_count, 30, std::chrono::milliseconds(8000)));
 
-    // Build query client with annotation-only config pointing at the same fake server.
     mldp_pvxs_driver::util::pool::MLDPGrpcAnnotationPoolConfig acfg(
         makeConfigFromYaml(
             "annotation-url: " + annotationUrl() + "\n"
@@ -311,6 +270,4 @@ TEST_F(DsMetadataWriterTest, QueryClientRetrievesSavedPvMetadata)
     }
     EXPECT_TRUE(found_hostname)
         << "Expected attribute hostName=cpu-li20-vac1 in queried PvMetadata";
-
-    writer->stop();
 }

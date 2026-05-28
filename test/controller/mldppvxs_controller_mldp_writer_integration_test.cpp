@@ -31,13 +31,6 @@ using mldp_pvxs_driver::util::bus::TimeSeriesPayload;
 namespace {
 
 constexpr std::string_view kMinimalControllerConfig = R"(
-mldp-pool:
-  provider-name: test_provider
-  provider-description: "Test Provider"
-  ingestion-url: dp-ingestion:50051
-  query-url: dp-query:50052
-  min-conn: 1
-  max-conn: 1
 writer:
   mldp:
     - name: mldp_main
@@ -55,13 +48,6 @@ reader:
 )";
 
 constexpr std::string_view kEpicsControllerConfig = R"(
-mldp-pool:
-  provider-name: test_provider
-  provider-description: "Test Provider"
-  ingestion-url: dp-ingestion:50051
-  query-url: dp-query:50052
-  min-conn: 1
-  max-conn: 1
 writer:
   mldp:
     - name: mldp_main
@@ -79,13 +65,6 @@ reader:
 )";
 
 constexpr std::string_view kBsasNtTableRowTsControllerConfig = R"(
-mldp-pool:
-  provider-name: test_provider
-  provider-description: "Test Provider"
-  ingestion-url: dp-ingestion:50051
-  query-url: dp-query:50052
-  min-conn: 1
-  max-conn: 1
 writer:
   mldp:
     - name: mldp_main
@@ -271,14 +250,7 @@ TEST(MLDPPVXSControllerTest, BsasNtTableColumnsHaveProvenanceSourceSetToRootSour
     ASSERT_GT(port, 0);
 
     std::ostringstream yaml;
-    yaml << "mldp-pool:\n"
-         << "  provider-name: test_provider\n"
-         << "  provider-description: \"Test Provider\"\n"
-         << "  ingestion-url: 127.0.0.1:" << port << "\n"
-         << "  query-url: localhost:" << port << "\n"
-         << "  min-conn: 1\n"
-         << "  max-conn: 1\n"
-         << "writer:\n"
+    yaml << "writer:\n"
          << "  mldp:\n"
          << "    - name: mldp_main\n"
          << "      mldp-pool:\n"
@@ -426,14 +398,7 @@ TEST(MLDPPVXSControllerTest, IdleStreamRotationStartsNewStreamAfterMaxAge)
     ASSERT_GT(port, 0);
 
     std::ostringstream yaml;
-    yaml << "mldp-pool:\n"
-         << "  provider-name: test_provider\n"
-         << "  provider-description: \"Test Provider\"\n"
-         << "  ingestion-url: 127.0.0.1:" << port << "\n"
-         << "  query-url: localhost:" << port << "\n"
-         << "  min-conn: 1\n"
-         << "  max-conn: 1\n"
-         << "writer:\n"
+    yaml << "writer:\n"
          << "  mldp:\n"
          << "    - name: mldp_main\n"
          << "      stream-max-age-ms: 150\n"
