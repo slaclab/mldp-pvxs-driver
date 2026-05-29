@@ -94,7 +94,7 @@ void EpicsDSMetadataReader::runWorker()
             arg["scheme"]     = "pva";
             arg["path"]       = config_.service();
             arg["query.name"] = config_.query();
-            arg["query.show"] = "ioc,dname";
+            arg["query.show"] = "ioc";
 
             const double timeoutSec = config_.timeoutSec();
 
