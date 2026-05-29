@@ -21,7 +21,6 @@ Config         | `include/reader/impl/slac_calendar/SlacCalendarReaderConfig.h`
 - **Required libraries/components:**
   - libcurl (HTTP client)
   - nlohmann/json (JSON parsing)
-  - libxml2 (HTML inner-text extraction for `details` field)
 
 ## Architecture
 
@@ -163,8 +162,8 @@ Both batches carry `root_source = reader_name` and `reader_name = reader_name`.
 ## Key Features
 
 - **Multi-experiment**: Fetches multiple experiment calendars in a single scan pass.
-- **HTML detail extraction**: Strips HTML tags from the `details` field using libxml2 so
-  only the plain URL is stored as an attribute.
+- **HTML detail extraction**: Strips HTML tags from the `details` field using a plain
+  character-scan loop — no external library dependency.
 - **Timezone-aware timestamps**: Parses ISO 8601 timestamps with numeric timezone offsets
   and converts to epoch seconds.
 - **Periodic rescan**: Interruptible sleep; no busy-wait.

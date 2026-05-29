@@ -22,7 +22,7 @@ Reader Type           | Build Option        | Required Libraries / Components | 
 `epics-pvxs`          | none (always built) | PVXS (`libpvxs`) + EPICS Base core libs | Uses PVAccess subscriptions.
 `epics-archiver`      | none (always built) | libcurl + Protobuf/epicsarchiverap payload types | Uses Archiver PB/HTTP transport.
 `epics-ds-metadata`   | none (always built) | PVXS (`libpvxs`) + EPICS Base core libs | RPC-based PV metadata fetch; no PV list needed.
-`slac-calendar`       | none (always built) | libcurl + nlohmann/json + libxml2 | Fetches beamline schedule events; publishes configuration + activation payloads.
+`slac-calendar`       | none (always built) | libcurl + nlohmann/json | Fetches beamline schedule events; publishes configuration + activation payloads.
 
 EPICS/PVXS discovery is controlled by CMake/env variables used at configure time:
 
