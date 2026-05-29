@@ -996,15 +996,19 @@ if(MLDP_PVXS_DRIVER_MAIN)
     endif()
 endif()
 
-find_package(Doxygen REQUIRED)
-set(DOXYGEN_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/docs")
-doxygen_add_docs(
-    docs
-    ${PROJECT_SOURCE_DIR}/include
-    ${PROJECT_SOURCE_DIR}/src
-    HTML_OUTPUT html
-    COMMENT "Generating documentation"
-)
+find_package(Doxygen QUIET)
+if(Doxygen_FOUND)
+    set(DOXYGEN_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/docs")
+    doxygen_add_docs(
+        docs
+        ${PROJECT_SOURCE_DIR}/include
+        ${PROJECT_SOURCE_DIR}/src
+        HTML_OUTPUT html
+        COMMENT "Generating documentation"
+    )
+else()
+    message(STATUS "Doxygen not found — 'docs' target disabled")
+endif()
 
 # Installation
 install(TARGETS lib${PROJECT_NAME}_proto
