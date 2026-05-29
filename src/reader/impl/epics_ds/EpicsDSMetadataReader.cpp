@@ -86,6 +86,7 @@ void EpicsDSMetadataReader::runWorker()
                                     Member(TypeCode::Struct, "query",
                                            {
                                                Member(TypeCode::String, "name"),
+                                                Member(TypeCode::String, "show")
                                            }),
                                 })
                             .create();
@@ -93,6 +94,7 @@ void EpicsDSMetadataReader::runWorker()
             arg["scheme"]     = "pva";
             arg["path"]       = config_.service();
             arg["query.name"] = config_.query();
+            arg["query.show"] = "ioc,dname";
 
             const double timeoutSec = config_.timeoutSec();
 
