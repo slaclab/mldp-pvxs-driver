@@ -126,7 +126,6 @@ find_package(OpenSSL REQUIRED)
 find_package(gRPC REQUIRED)
 find_package(Threads REQUIRED)
 find_package(CURL REQUIRED)
-find_package(LibXml2 REQUIRED)
 
 # ---- HDF5 (optional writer back-end) ----
 if(MLDP_PVXS_ENABLE_HDF5)
@@ -564,7 +563,6 @@ target_link_libraries(lib${PROJECT_NAME} PUBLIC
     spdlog::spdlog
     CURL::libcurl
     nlohmann_json::nlohmann_json
-    LibXml2::LibXml2
     $<$<BOOL:${MLDP_PVXS_ENABLE_HDF5}>:${_MLDP_HDF5_TARGET}>
 )
 target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/ext/BS_thread_pool/include")

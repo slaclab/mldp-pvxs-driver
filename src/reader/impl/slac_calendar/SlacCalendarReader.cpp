@@ -12,13 +12,9 @@
 
 #include <util/log/Logger.h>
 
-#include <libxml/HTMLparser.h>
-#include <libxml/tree.h>
-
 #include <chrono>
 #include <cstdio>
 #include <ctime>
-#include <functional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -340,32 +336,22 @@ std::string SlacCalendarReader::extractHtmlInnerText(const std::string& html)
     if (html.empty())
         return "";
 
-    htmlDocPtr doc = htmlReadMemory(html.c_str(),
-                                   static_cast<int>(html.size()),
-                                   nullptr,
-                                   nullptr,
-                                   HTML_PARSE_NOERROR | HTML_PARSE_NOWARNING | HTML_PARSE_NOBLANKS);
-    if (!doc)
-        return html;
-
     std::string result;
-    std::function<void(xmlNodePtr)> walk = [&](xmlNodePtr node) {
-        if (!node)
-            return;
-        if (node->type == XML_TEXT_NODE && node->content)
-        {
-            std::string text(reinterpret_cast<const char*>(node->content));
-            const auto  start = text.find_first_not_of(" \t\r\n");
-            const auto  end   = text.find_last_not_of(" \t\r\n");
-            if (start != std::string::npos)
-                result += text.substr(start, end - start + 1);
-        }
-        for (xmlNodePtr child = node->children; child; child = child->next)
-            walk(child);
-    };
-    walk(xmlDocGetRootElement(doc));
-    xmlFreeDoc(doc);
-    return result;
+    bool        in_tag = false;
+    for (const char c : html)
+    {
+        if (c == '<')       { in_tag = true;  continue; }
+        if (c == '>')       { in_tag = false; continue; }
+        if (in_tag)         continue;
+        if (c == '&')       continue; // skip entity openers (rare in URLs)
+        result += c;
+    }
+
+    const auto start = result.find_first_not_of(" \t\r\n");
+    if (start == std::string::npos)
+        return "";
+    const auto end = result.find_last_not_of(" \t\r\n");
+    return result.substr(start, end - start + 1);
 }
 
 } // namespace mldp_pvxs_driver::reader::impl::slac_calendar
