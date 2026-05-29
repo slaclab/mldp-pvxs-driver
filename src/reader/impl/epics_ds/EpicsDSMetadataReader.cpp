@@ -183,9 +183,18 @@ EpicsDSMetadataReader::parseNTTable(const pvxs::Value& result) const
 
     if (!srcFound)
     {
+        std::string colList;
+        for (size_t i = 0; i < ncols; ++i)
+        {
+            if (i) colList += ", ";
+            colList += labels[i];
+        }
         util::log::warnf(*logger_,
-                         "parseNTTable: source-name-column '{}' not found, using column 0",
-                         config_.sourceNameColumn());
+                         "parseNTTable: source-name-column '{}' not found, using column 0. "
+                         "Received columns ({}): [{}]",
+                         config_.sourceNameColumn(),
+                         ncols,
+                         colList);
     }
 
     // Extract all column arrays as string vectors
