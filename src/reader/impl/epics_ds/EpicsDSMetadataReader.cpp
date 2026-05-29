@@ -100,6 +100,12 @@ void EpicsDSMetadataReader::runWorker()
                                .exec()
                                ->wait(timeoutSec);
 
+            {
+                std::ostringstream oss;
+                oss << result;
+                util::log::debugf(*logger_, "DS RPC raw response:\n{}", oss.str());
+            }
+
             auto payload = parseNTTable(result);
 
             util::bus::IDataBus::EventBatch batch;
