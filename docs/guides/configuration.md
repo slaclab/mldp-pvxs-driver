@@ -20,6 +20,7 @@ reader:         # required — at least one reader instance
   - epics-base: [...]
   - epics-archiver: [...]
   - epics-ds-metadata: [...]  # fetch PV metadata via EPICS Directory Service RPC
+  - slac-calendar: [...]      # fetch beamline schedule events from SLAC calendar HTTP API
 
 routing:        # optional — selective reader-to-writer dispatch
   writer_name:
@@ -339,6 +340,48 @@ persist the metadata to the MLDP annotation service.
 - `rescan-interval-sec` must be `>= 0`.
 
 → [EpicsDSMetadataReader Documentation](../readers/epics-ds-metadata-reader.md)
+
+---
+
+### `slac-calendar` Reader {#slac-calendar-reader}
+
+Fetches beamline experiment schedule events from the SLAC calendar HTTP API and publishes
+`ConfigurationPayload` + `ConfigurationActivationPayload` pairs onto the bus. Pair with an
+`mldp-configuration` writer to persist schedule data to the MLDP annotation service.
+
+```yaml
+- slac-calendar:
+    - name: cal_reader                  # required
+      base-url: https://calendar.slac.stanford.edu  # required
+      experiments:                      # required
+        - lcls
+        - facet
+      lookahead-days: 30                # required — must be > 0
+      lookback-days: 1                  # optional; default: 1
+      rescan-interval-sec: 3600.0       # optional; default: 0.0 (run once)
+      connect-timeout-sec: 30           # optional; default: 30
+      total-timeout-sec: 60             # optional; default: 60
+      tls-verify-peer: true             # optional; default: true
+      tls-verify-host: true             # optional; default: true
+      event-limit: 1000                 # optional; default: 1000
+```
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `name` | string | — | **Required.** Unique reader instance name. |
+| `base-url` | string | — | **Required.** Base URL of the SLAC calendar API (no trailing slash). |
+| `experiments` | sequence | — | **Required.** Experiment names to fetch (e.g. `lcls`, `facet`). |
+| `lookahead-days` | int | — | **Required.** Days into the future to include. Must be > 0. |
+| `lookback-days` | int | `1` | Days into the past to include. Must be >= 0. |
+| `start-date` | string | — | First-run start override (`YYYY-MM-DD`). Used only on the first fetch. |
+| `rescan-interval-sec` | double | `0.0` | Repeat fetch interval in seconds. `0` = run once. |
+| `connect-timeout-sec` | int | `30` | HTTP connection timeout (seconds). |
+| `total-timeout-sec` | int | `60` | HTTP total request timeout. Must be >= `connect-timeout-sec`. |
+| `tls-verify-peer` | bool | `true` | Verify TLS peer certificate. |
+| `tls-verify-host` | bool | `true` | Verify TLS hostname against certificate. |
+| `event-limit` | int | `1000` | Maximum events per API request. |
+
+→ [SlacCalendarReader Documentation](../readers/slac-calendar-reader.md)
 
 ---
 

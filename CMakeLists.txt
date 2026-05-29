@@ -109,6 +109,14 @@ FetchContent_Declare(dp_grpc
 )
 FetchContent_MakeAvailable(dp_grpc)
 
+# Acquire nlohmann/json for JSON parsing in SlacCalendarReader
+FetchContent_Declare(nlohmann_json
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG        v3.11.3
+    GIT_SHALLOW    TRUE)
+set(JSON_BuildTests OFF CACHE BOOL "" FORCE)
+set(JSON_Install OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(nlohmann_json)
 
 # Find required packages
 find_package(Protobuf REQUIRED)
@@ -118,6 +126,7 @@ find_package(OpenSSL REQUIRED)
 find_package(gRPC REQUIRED)
 find_package(Threads REQUIRED)
 find_package(CURL REQUIRED)
+find_package(LibXml2 REQUIRED)
 
 # ---- HDF5 (optional writer back-end) ----
 if(MLDP_PVXS_ENABLE_HDF5)
@@ -506,6 +515,8 @@ add_library(lib${PROJECT_NAME}
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics_archiver/EpicsArchiverReaderConfig.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics_ds/EpicsDSMetadataReader.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics_ds/EpicsDSMetadataReaderConfig.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/slac_calendar/SlacCalendarReader.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/slac_calendar/SlacCalendarReaderConfig.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/pool/MLDPGrpcPoolConfig.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/pool/MLDPGrpcIngestionPool.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/pool/MLDPGrpcQueryPool.cpp"
@@ -552,6 +563,8 @@ target_link_libraries(lib${PROJECT_NAME} PUBLIC
     prometheus-cpp::pull
     spdlog::spdlog
     CURL::libcurl
+    nlohmann_json::nlohmann_json
+    LibXml2::LibXml2
     $<$<BOOL:${MLDP_PVXS_ENABLE_HDF5}>:${_MLDP_HDF5_TARGET}>
 )
 target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/ext/BS_thread_pool/include")
@@ -651,8 +664,12 @@ if(MLDP_PVXS_DRIVER_TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/MockDSServer.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_ds/epics_ds_metadata_reader_config_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_ds/epics_ds_metadata_reader_test.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/test/controller/mldppvxs_controller_ds_metadata_integration_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_ds/epics_ds_metadata_reader_integration_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/controller/mldppvxs_controller_ds_metadata_writer_integration_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/MockCalendarHttpServer.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/slac_calendar/slac_calendar_reader_config_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/slac_calendar/slac_calendar_reader_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/controller/mldppvxs_controller_slac_calendar_integration_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/util/http/curl_http_client_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/util/factory/factory_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/metrics/periodic_metrics_dumper_test.cpp"

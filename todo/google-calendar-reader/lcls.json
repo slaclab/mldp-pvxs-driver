@@ -1,0 +1,106 @@
+[
+    {
+        "url": "https://www.google.com/calendar/event?eid=MXVkb3QzazI2NGc1NmU4cjBrZTBsZHFuMXQgbHQ4YXNrZmo3a2l2bnNma2kxZGdjNjNpZnNAZw",
+        "program_name": "CXI 1013443 Bain",
+        "description": "Deliver to CXI",
+        "note": "13.213 GeV, 80 pC (fast charge change)",
+        "calendar": "NC-CXI",
+        "details": "<a href=\"https://www.google.com/url?q=https://pswww.slac.stanford.edu/questionnaire_slac/proposal_questionnaire/run26/1013443/%23xray&amp;sa=D&amp;source=calendar&amp;usd=2&amp;usg=AOvVaw1bEQbTrv1D0OxhC2U3zl9o\" target=\"_blank\">https://pswww.slac.stanford.edu/questionnaire_slac/proposal_questionnaire/run26/1013443/#xray</a>",
+        "start": "2026-05-28T06:00:00-07:00",
+        "end": "2026-05-28T18:00:00-07:00",
+        "tags": null,
+        "poc": "Minitti",
+        "config": "15 keV",
+        "hutch": {
+            "name": "CXI",
+            "color": "#a00000",
+            "line": "HXR",
+            "text_color": "white"
+        },
+        "machine": "NC"
+    },
+    {
+        "url": "https://www.google.com/calendar/event?eid=NTZiOWU5YmpwazU2b3Rzb2picDZnMDlzcnYgcWJiZXUyNjQ2MThnYWg3bDI4a3FpcTg0cjhAZw",
+        "program_name": "qRIXS 1016304 Coslovich",
+        "description": "Deliver to qRIXS",
+        "note": "10 GeV, 80 pC (fast charge change)",
+        "calendar": "NC-qRIXS",
+        "details": "<a href=\"https://www.google.com/url?q=https://pswww.slac.stanford.edu/questionnaire_slac/proposal_questionnaire/run26/1016304/%23xray&amp;sa=D&amp;source=calendar&amp;usd=2&amp;usg=AOvVaw3DBJDgfJNT79t2UK-PjC3_\" target=\"_blank\">https://pswww.slac.stanford.edu/questionnaire_slac/proposal_questionnaire/run26/1016304/#xray</a>",
+        "start": "2026-05-28T07:00:00-07:00",
+        "end": "2026-05-28T18:00:00-07:00",
+        "tags": [
+            "2nd"
+        ],
+        "poc": "Shen",
+        "config": "711 eV, 10 Hz",
+        "hutch": {
+            "name": "qRIXS",
+            "color": "#b46313",
+            "line": "SXR",
+            "text_color": "white"
+        },
+        "machine": "NC"
+    },
+    {
+        "url": "https://www.google.com/calendar/event?eid=Nmk5N2YyZmR2YTR1OGFwaWQ1dDNia3Y0djYgNnNyNDE0bmVoYnVnbjJrNjdlZnE3MW1wcGdAZw",
+        "program_name": "XPP 1015801 Ihme",
+        "description": "Deliver to XPP",
+        "note": "10.515 GeV",
+        "calendar": "NC-XPP",
+        "details": "<a href=\"https://www.google.com/url?q=https://pswww.slac.stanford.edu/questionnaire_slac/proposal_questionnaire/run26/1015801/%23xray&amp;sa=D&amp;source=calendar&amp;usd=2&amp;usg=AOvVaw2256l2kwO_jVD3t4rPHXWg\" target=\"_blank\">https://pswww.slac.stanford.edu/questionnaire_slac/proposal_questionnaire/run26/1015801/#xray</a>",
+        "start": "2026-05-28T18:00:00-07:00",
+        "end": "2026-05-29T06:00:00-07:00",
+        "tags": null,
+        "poc": "Li H.",
+        "config": "9.5 or 9.8 keV Seeded",
+        "hutch": {
+            "name": "XPP",
+            "color": "#00a53e",
+            "line": "HXR",
+            "text_color": "white"
+        },
+        "machine": "NC"
+    },
+    {
+        "url": "https://www.google.com/calendar/event?eid=MzZoNzF0cG9zdjRtb3NvNHVhbG1nZG9sZGsgbHQ4YXNrZmo3a2l2bnNma2kxZGdjNjNpZnNAZw",
+        "program_name": "CXI 1013443 Bain",
+        "description": "Deliver to CXI",
+        "note": "13.213 GeV, 80 pC (fast charge change)",
+        "calendar": "NC-CXI",
+        "details": "<a href=\"https://www.google.com/url?q=https://pswww.slac.stanford.edu/questionnaire_slac/proposal_questionnaire/run26/1013443/%23xray&amp;sa=D&amp;source=calendar&amp;usd=2&amp;usg=AOvVaw1bEQbTrv1D0OxhC2U3zl9o\" target=\"_blank\">https://pswww.slac.stanford.edu/questionnaire_slac/proposal_questionnaire/run26/1013443/#xray</a>",
+        "start": "2026-05-29T06:00:00-07:00",
+        "end": "2026-05-29T18:00:00-07:00",
+        "tags": null,
+        "poc": "Minitti",
+        "config": "15 keV",
+        "hutch": {
+            "name": "CXI",
+            "color": "#a00000",
+            "line": "HXR",
+            "text_color": "white"
+        },
+        "machine": "NC"
+    },
+    {
+        "url": "https://www.google.com/calendar/event?eid=NXUzbDVhMHZtbjBjbG00Mzg5M2Vsa3JrNWUgcWJiZXUyNjQ2MThnYWg3bDI4a3FpcTg0cjhAZw",
+        "program_name": "qRIXS 1016304 Coslovich",
+        "description": "Deliver to qRIXS",
+        "note": "10 GeV, 80 pC (fast charge change)",
+        "calendar": "NC-qRIXS",
+        "details": "<a href=\"https://www.google.com/url?q=https://pswww.slac.stanford.edu/questionnaire_slac/proposal_questionnaire/run26/1016304/%23xray&amp;sa=D&amp;source=calendar&amp;usd=2&amp;usg=AOvVaw3DBJDgfJNT79t2UK-PjC3_\" target=\"_blank\">https://pswww.slac.stanford.edu/questionnaire_slac/proposal_questionnaire/run26/1016304/#xray</a>",
+        "start": "2026-05-29T07:00:00-07:00",
+        "end": "2026-05-29T18:00:00-07:00",
+        "tags": [
+            "2nd"
+        ],
+        "poc": "Shen",
+        "config": "711 eV, 10 Hz",
+        "hutch": {
+            "name": "qRIXS",
+            "color": "#b46313",
+            "line": "SXR",
+            "text_color": "white"
+        },
+        "machine": "NC"
+    }
+]

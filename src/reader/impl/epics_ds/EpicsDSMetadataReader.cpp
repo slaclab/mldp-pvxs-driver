@@ -104,7 +104,7 @@ void EpicsDSMetadataReader::runWorker()
 
             util::bus::IDataBus::EventBatch batch;
             batch.reader_name = config_.name();
-            batch.root_source = "";
+            batch.root_source = config_.name();
             batch.payload     = std::move(payload);
             bus_->push(std::move(batch));
         }

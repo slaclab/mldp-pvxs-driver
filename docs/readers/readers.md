@@ -12,6 +12,7 @@ Reader Type           | Status      | Data Source                     | Document
 `epics-pvxs`          | Implemented | EPICS Control System            | [EpicsPVXSReader](epics-pvxs-reader.md)
 `epics-archiver`      | Implemented | EPICS Archiver                  | [EpicsArchiverReader](epics-archiver-reader.md)
 `epics-ds-metadata`   | Implemented | EPICS Directory Service (PVA RPC) | [EpicsDSMetadataReader](epics-ds-metadata-reader.md)
+`slac-calendar`       | Implemented | SLAC Calendar HTTP API          | [SlacCalendarReader](slac-calendar-reader.md)
 
 ## Reader Build & Dependency Matrix
 
@@ -21,6 +22,7 @@ Reader Type           | Build Option        | Required Libraries / Components | 
 `epics-pvxs`          | none (always built) | PVXS (`libpvxs`) + EPICS Base core libs | Uses PVAccess subscriptions.
 `epics-archiver`      | none (always built) | libcurl + Protobuf/epicsarchiverap payload types | Uses Archiver PB/HTTP transport.
 `epics-ds-metadata`   | none (always built) | PVXS (`libpvxs`) + EPICS Base core libs | RPC-based PV metadata fetch; no PV list needed.
+`slac-calendar`       | none (always built) | libcurl + nlohmann/json + libxml2 | Fetches beamline schedule events; publishes configuration + activation payloads.
 
 EPICS/PVXS discovery is controlled by CMake/env variables used at configure time:
 
@@ -65,9 +67,15 @@ classDiagram
         epics-ds-metadata
     }
 
+    class SlacCalendarReader {
+        HTTP Calendar Fetch
+        slac-calendar
+    }
+
     Reader <|-- EpicsReaderBase
     Reader <|-- EpicsArchiverReader
     Reader <|-- EpicsDSMetadataReader
+    Reader <|-- SlacCalendarReader
     EpicsReaderBase <|-- EpicsBaseReader
     EpicsReaderBase <|-- EpicsPVXSReader
 ```
@@ -117,6 +125,16 @@ PV metadata fetcher using EPICS Directory Service via PVA RPC.
 - **Key Feature**: No PV list required — the DS query pattern returns all known PVs; optional tag extraction from NTTable column
 
 → [Full Documentation: EpicsDSMetadataReader](epics-ds-metadata-reader.md)
+
+### SlacCalendarReader
+
+Beamline experiment schedule fetcher using the SLAC calendar HTTP API.
+
+- **Mode**: One-shot HTTP fetch or periodic rescan
+- **Best For**: Ingesting beamline experiment schedules into the MLDP annotation service
+- **Key Feature**: Each event produces a `ConfigurationPayload` + `ConfigurationActivationPayload` pair; multi-experiment support in a single reader instance
+
+→ [Full Documentation: SlacCalendarReader](slac-calendar-reader.md)
 
 ## Architecture Overview
 
@@ -200,6 +218,9 @@ REGISTER_READER("epics-archiver", EpicsArchiverReader)
 
 // In EpicsDSMetadataReader.h
 REGISTER_READER("epics-ds-metadata", EpicsDSMetadataReader)
+
+// In SlacCalendarReader.h
+REGISTER_READER("slac-calendar", SlacCalendarReader)
 ```
 
 The `ReaderFactory` creates readers dynamically from configuration:
@@ -323,9 +344,12 @@ include/reader/
         ├── epics_archiver/
         │   ├── EpicsArchiverReader.h
         │   └── EpicsArchiverReaderConfig.h
-        └── epics_ds/
-            ├── EpicsDSMetadataReader.h
-            └── EpicsDSMetadataReaderConfig.h
+        ├── epics_ds/
+        │   ├── EpicsDSMetadataReader.h
+        │   └── EpicsDSMetadataReaderConfig.h
+        └── slac_calendar/
+            ├── SlacCalendarReader.h
+            └── SlacCalendarReaderConfig.h
 
 src/reader/
 ├── Reader.cpp
@@ -346,9 +370,12 @@ src/reader/
     ├── epics_archiver/
     │   ├── EpicsArchiverReader.cpp
     │   └── EpicsArchiverReaderConfig.cpp
-    └── epics_ds/
-        ├── EpicsDSMetadataReader.cpp
-        └── EpicsDSMetadataReaderConfig.cpp
+    ├── epics_ds/
+    │   ├── EpicsDSMetadataReader.cpp
+    │   └── EpicsDSMetadataReaderConfig.cpp
+    └── slac_calendar/
+        ├── SlacCalendarReader.cpp
+        └── SlacCalendarReaderConfig.cpp
 ```
 
 ---

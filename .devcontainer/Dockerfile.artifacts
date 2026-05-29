@@ -73,6 +73,7 @@ RUN dnf update -y && \
       libcurl-minimal \
       libgcc \
       libstdc++ \
+      libxml2 \
       readline \
       ncurses-libs && \
     dnf clean all && \

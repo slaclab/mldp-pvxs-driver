@@ -197,6 +197,8 @@ reader:                # required — at least one reader instance
   - epics-pvxs: [...]
   - epics-base: [...]
   - epics-archiver: [...]
+  - epics-ds-metadata: [...]
+  - slac-calendar: [...]
 
 routing:               # optional — selective reader→writer dispatch
   writer_name:

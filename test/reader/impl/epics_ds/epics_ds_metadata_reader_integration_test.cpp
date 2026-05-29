@@ -11,9 +11,9 @@
 #include <gtest/gtest.h>
 #include <reader/impl/epics_ds/EpicsDSMetadataReader.h>
 #include <util/bus/IDataBus.h>
-#include "../config/test_config_helpers.h"
-#include "../mock/MockDataBus.h"
-#include "../mock/MockDSServer.h"
+#include "../../../config/test_config_helpers.h"
+#include "../../../mock/MockDataBus.h"
+#include "../../../mock/MockDSServer.h"
 
 #include <algorithm>
 #include <chrono>
