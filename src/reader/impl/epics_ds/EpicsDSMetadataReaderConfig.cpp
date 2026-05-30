@@ -18,6 +18,7 @@ static constexpr auto kQueryKey             = "query";
 static constexpr auto kTimeoutSecKey        = "timeout-sec";
 static constexpr auto kSourceNameColumnKey  = "source-name-column";
 static constexpr auto kTagsColumnKey        = "tags-column";
+static constexpr auto kShowColumnsKey       = "show-columns";
 static constexpr auto kRescanIntervalSecKey = "rescan-interval-sec";
 
 EpicsDSMetadataReaderConfig::EpicsDSMetadataReaderConfig(const config::Config& cfg)
@@ -38,6 +39,7 @@ void EpicsDSMetadataReaderConfig::parse(const config::Config& cfg)
     timeout_sec_         = cfg.getDouble(kTimeoutSecKey, 5.0);
     source_name_column_  = cfg.get(kSourceNameColumnKey, "channelName");
     tags_column_         = cfg.get(kTagsColumnKey, "");
+    show_columns_        = cfg.get(kShowColumnsKey, "");
     rescan_interval_sec_ = cfg.getDouble(kRescanIntervalSecKey, 0.0);
 
     if (timeout_sec_ <= 0.0)

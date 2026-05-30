@@ -78,21 +78,39 @@ void EpicsDSMetadataReader::runWorker()
     {
         try
         {
-            // Build NTURI argument struct
-            Value arg = TypeDef(TypeCode::Struct, "epics:nt/NTURI:1.0",
-                                {
-                                    Member(TypeCode::String, "scheme"),
-                                    Member(TypeCode::String, "path"),
-                                    Member(TypeCode::Struct, "query",
-                                           {
-                                               Member(TypeCode::String, "name"),
-                                           }),
-                                })
-                            .create();
+            // Build NTURI argument struct.
+            // Add optional "show" query field when show-columns is configured,
+            // equivalent to: pvcall -s <service> -a name=<query> -a show=<columns>
+            const bool hasShow = !config_.showColumns().empty();
+
+            TypeDef queryDef = hasShow
+                ? TypeDef(TypeCode::Struct, "epics:nt/NTURI:1.0",
+                          {
+                              Member(TypeCode::String, "scheme"),
+                              Member(TypeCode::String, "path"),
+                              Member(TypeCode::Struct, "query",
+                                     {
+                                         Member(TypeCode::String, "name"),
+                                         Member(TypeCode::String, "show"),
+                                     }),
+                          })
+                : TypeDef(TypeCode::Struct, "epics:nt/NTURI:1.0",
+                          {
+                              Member(TypeCode::String, "scheme"),
+                              Member(TypeCode::String, "path"),
+                              Member(TypeCode::Struct, "query",
+                                     {
+                                         Member(TypeCode::String, "name"),
+                                     }),
+                          });
+
+            Value arg = queryDef.create();
 
             arg["scheme"]     = "pva";
             arg["path"]       = config_.service();
             arg["query.name"] = config_.query();
+            if (hasShow)
+                arg["query.show"] = config_.showColumns();
 
             const double timeoutSec = config_.timeoutSec();
 

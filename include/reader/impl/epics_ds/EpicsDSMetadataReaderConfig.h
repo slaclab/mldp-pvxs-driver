@@ -97,6 +97,13 @@ public:
     std::string tagsColumn() const noexcept { return tags_column_; }
 
     /**
+     * @brief Comma-separated list of columns to request via the `show` query parameter.
+     *        Empty string means no `show` parameter is sent (server returns all columns).
+     *        Example: "name,elementname,hostName"
+     */
+    std::string showColumns() const noexcept { return show_columns_; }
+
+    /**
      * @brief Interval between periodic re-fetches in seconds (default: 0.0 = run once).
      */
     double rescanIntervalSec() const noexcept { return rescan_interval_sec_; }
@@ -111,6 +118,7 @@ private:
     double      timeout_sec_{5.0};
     std::string source_name_column_{"channelName"};
     std::string tags_column_;
+    std::string show_columns_;
     double      rescan_interval_sec_{0.0};
 };
 
