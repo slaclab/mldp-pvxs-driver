@@ -19,7 +19,9 @@ static constexpr auto kTimeoutSecKey        = "timeout-sec";
 static constexpr auto kSourceNameColumnKey  = "source-name-column";
 static constexpr auto kTagsColumnKey        = "tags-column";
 static constexpr auto kShowColumnsKey       = "show-columns";
-static constexpr auto kRescanIntervalSecKey = "rescan-interval-sec";
+static constexpr auto kRescanIntervalSecKey  = "rescan-interval-sec";
+static constexpr auto kWorkerThreadCountKey  = "worker-thread-count";
+static constexpr auto kMaxQueueDepthKey      = "max-queue-depth";
 
 EpicsDSMetadataReaderConfig::EpicsDSMetadataReaderConfig(const config::Config& cfg)
 {
@@ -42,12 +44,20 @@ void EpicsDSMetadataReaderConfig::parse(const config::Config& cfg)
     show_columns_        = cfg.get(kShowColumnsKey, "");
     rescan_interval_sec_ = cfg.getDouble(kRescanIntervalSecKey, 0.0);
 
+    const int wtc = cfg.getInt(kWorkerThreadCountKey, 1);
+    const int mqd = cfg.getInt(kMaxQueueDepthKey, 16);
+
     if (timeout_sec_ <= 0.0)
         throw Error("epics-ds-metadata reader: 'timeout-sec' must be positive");
     if (rescan_interval_sec_ < 0.0)
         throw Error("epics-ds-metadata reader: 'rescan-interval-sec' must be >= 0");
+    if (wtc < 1 || wtc > 64)
+        throw Error("epics-ds-metadata reader: 'worker-thread-count' must be 1..64");
+    if (mqd < 1 || mqd > 1024)
+        throw Error("epics-ds-metadata reader: 'max-queue-depth' must be 1..1024");
 
-    valid_ = true;
+    worker_thread_count_ = static_cast<std::size_t>(wtc);
+    max_queue_depth_     = static_cast<std::size_t>(mqd);
 }
 
 } // namespace mldp_pvxs_driver::reader::impl::epics_ds

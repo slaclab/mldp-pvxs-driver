@@ -15,22 +15,20 @@
 #include <pvxs/client.h>
 #include <pvxs/data.h>
 
-#include <algorithm>
 #include <chrono>
 #include <cstddef>
+#include <optional>
 #include <sstream>
-#include <stdexcept>
 #include <string>
 #include <vector>
 
 using namespace pvxs;
 
-namespace mldp_pvxs_driver::reader::impl::epics_ds {
+using namespace mldp_pvxs_driver::reader::impl::epics_ds;
+using namespace mldp_pvxs_driver::util::bus;
 
 namespace {
 
-/// Split a comma-separated string into tokens, trimming whitespace and
-/// skipping empty tokens.
 std::vector<std::string> splitTags(const std::string& s)
 {
     std::vector<std::string> result;
@@ -48,6 +46,49 @@ std::vector<std::string> splitTags(const std::string& s)
 
 } // namespace
 
+// ---------------------------------------------------------------------------
+// RpcResultQueue
+// ---------------------------------------------------------------------------
+
+bool EpicsDSMetadataReader::RpcResultQueue::push(pvxs::Value item, std::stop_token st)
+{
+    std::unique_lock lk(mu_);
+    not_full_.wait(lk, st, [this] {
+        return closed_ || queue_.size() < max_depth_;
+    });
+    if (closed_) return false;
+    queue_.push(std::move(item));
+    not_empty_.notify_one();
+    return true;
+}
+
+std::optional<pvxs::Value> EpicsDSMetadataReader::RpcResultQueue::pop(std::stop_token st)
+{
+    std::unique_lock lk(mu_);
+    not_empty_.wait(lk, st, [this] {
+        return closed_ || !queue_.empty();
+    });
+    if (queue_.empty()) return std::nullopt;
+    auto val = std::move(queue_.front());
+    queue_.pop();
+    not_full_.notify_one();
+    return val;
+}
+
+void EpicsDSMetadataReader::RpcResultQueue::close()
+{
+    {
+        std::lock_guard lk(mu_);
+        closed_ = true;
+    }
+    not_full_.notify_all();
+    not_empty_.notify_all();
+}
+
+// ---------------------------------------------------------------------------
+// EpicsDSMetadataReader
+// ---------------------------------------------------------------------------
+
 EpicsDSMetadataReader::EpicsDSMetadataReader(
     std::shared_ptr<util::bus::IDataBus> bus,
     std::shared_ptr<metrics::Metrics>    metrics,
@@ -57,66 +98,87 @@ EpicsDSMetadataReader::EpicsDSMetadataReader(
     , logger_(util::log::newLogger("reader:epics-ds-metadata:" + config_.name()))
     , pva_context_(pvxs::client::Config::fromEnv().build())
 {
-    running_ = true;
-    worker_thread_ = std::thread([this] { runWorker(); });
+    const auto n = config_.workerThreadCount();
+    if (n == 1) {
+        // Single-thread: dispatch inline — no queue, no extra threads.
+        dispatch_fn_ = [this](pvxs::Value v, std::stop_token) {
+            processResult(std::move(v));
+            return true;
+        };
+    } else {
+        // Multi-thread: dispatch pushes to bounded queue; N-1 consumers drain it.
+        result_queue_.emplace(config_.maxQueueDepth());
+        dispatch_fn_ = [this](pvxs::Value v, std::stop_token st) {
+            return result_queue_->push(std::move(v), st);
+        };
+        consumer_threads_.reserve(n - 1);
+        for (std::size_t i = 0; i < n - 1; ++i)
+            consumer_threads_.emplace_back([this](std::stop_token st) { runConsumer(st); });
+    }
+    worker_thread_ = std::jthread([this](std::stop_token st) { runWorker(st); });
 }
 
 EpicsDSMetadataReader::~EpicsDSMetadataReader()
 {
-    {
-        std::lock_guard<std::mutex> lk(worker_mutex_);
-        running_ = false;
-    }
-    worker_cv_.notify_all();
-    if (worker_thread_.joinable())
-        worker_thread_.join();
+    worker_thread_.request_stop();
+    worker_thread_.join();
+    if (result_queue_)
+        result_queue_->close();
+    // consumer_threads_ jthread destructors join automatically
 }
 
-void EpicsDSMetadataReader::runWorker()
+pvxs::Value EpicsDSMetadataReader::buildNTURI() const
 {
-    do
-    {
-        try
-        {
-            // Build NTURI argument struct.
-            // Add optional "show" query field when show-columns is configured,
-            // equivalent to: pvcall -s <service> -a name=<query> -a show=<columns>
-            const bool hasShow = !config_.showColumns().empty();
+    const bool hasShow = !config_.showColumns().empty();
 
-            TypeDef queryDef = hasShow
-                ? TypeDef(TypeCode::Struct, "epics:nt/NTURI:1.0",
-                          {
-                              Member(TypeCode::String, "scheme"),
-                              Member(TypeCode::String, "path"),
-                              Member(TypeCode::Struct, "query",
-                                     {
-                                         Member(TypeCode::String, "name"),
-                                         Member(TypeCode::String, "show"),
-                                     }),
-                          })
-                : TypeDef(TypeCode::Struct, "epics:nt/NTURI:1.0",
-                          {
-                              Member(TypeCode::String, "scheme"),
-                              Member(TypeCode::String, "path"),
-                              Member(TypeCode::Struct, "query",
-                                     {
-                                         Member(TypeCode::String, "name"),
-                                     }),
-                          });
+    TypeDef queryDef = hasShow
+        ? TypeDef(TypeCode::Struct, "epics:nt/NTURI:1.0",
+                  {
+                      Member(TypeCode::String, "scheme"),
+                      Member(TypeCode::String, "path"),
+                      Member(TypeCode::Struct, "query",
+                             {
+                                 Member(TypeCode::String, "name"),
+                                 Member(TypeCode::String, "show"),
+                             }),
+                  })
+        : TypeDef(TypeCode::Struct, "epics:nt/NTURI:1.0",
+                  {
+                      Member(TypeCode::String, "scheme"),
+                      Member(TypeCode::String, "path"),
+                      Member(TypeCode::Struct, "query",
+                             {
+                                 Member(TypeCode::String, "name"),
+                             }),
+                  });
 
-            Value arg = queryDef.create();
+    Value arg = queryDef.create();
+    arg["scheme"]     = "pva";
+    arg["path"]       = config_.service();
+    arg["query.name"] = config_.query();
+    if (hasShow)
+        arg["query.show"] = config_.showColumns();
 
-            arg["scheme"]     = "pva";
-            arg["path"]       = config_.service();
-            arg["query.name"] = config_.query();
-            if (hasShow)
-                arg["query.show"] = config_.showColumns();
+    return arg;
+}
 
-            const double timeoutSec = config_.timeoutSec();
+void EpicsDSMetadataReader::processResult(pvxs::Value result)
+{
+    auto payload = parseNTTable(result);
+    bus_->push(IDataBus::EventBatch{
+        .reader_name = config_.name(),
+        .root_source = config_.name(),
+        .payload     = std::move(payload),
+    });
+}
 
-            Value result = pva_context_.rpc(config_.service(), arg)
+void EpicsDSMetadataReader::runWorker(std::stop_token st)
+{
+    while (!st.stop_requested()) {
+        try {
+            Value result = pva_context_.rpc(config_.service(), buildNTURI())
                                .exec()
-                               ->wait(timeoutSec);
+                               ->wait(config_.timeoutSec());
 
             {
                 std::ostringstream oss;
@@ -124,38 +186,52 @@ void EpicsDSMetadataReader::runWorker()
                 util::log::debugf(*logger_, "DS RPC raw response:\n{}", oss.str());
             }
 
-            auto payload = parseNTTable(result);
-
-            util::bus::IDataBus::EventBatch batch;
-            batch.reader_name = config_.name();
-            batch.root_source = config_.name();
-            batch.payload     = std::move(payload);
-            bus_->push(std::move(batch));
+            // dispatch_fn_ returns false if the worker should stop (e.g. if the queue is closed)
+            // the implementation of dispatch_fn_ depends on the number of threads configured: 
+            // in single-thread mode it processes inline and always returns true; 
+            // in multi-thread mode it pushes to the queue and returns false if the queue is closed.
+            if (!dispatch_fn_(std::move(result), st))
+                break;
         }
-        catch (const std::exception& e)
-        {
+        catch (const std::exception& e) {
             util::log::errorf(*logger_,
                               "EpicsDSMetadataReader '{}' RPC failed: {}",
-                              config_.name(),
-                              e.what());
+                              config_.name(), e.what());
         }
 
         if (config_.rescanIntervalSec() <= 0.0)
             break;
 
-        // Interruptible sleep until the next rescan or destruction
-        std::unique_lock<std::mutex> lk(worker_mutex_);
-        worker_cv_.wait_for(lk,
-                            std::chrono::duration<double>(config_.rescanIntervalSec()),
-                            [this] { return !running_.load(); });
-
-    } while (running_.load());
+        std::unique_lock lk(sleep_mutex_);
+        sleep_cv_.wait_for(lk,
+                           std::chrono::duration<double>(config_.rescanIntervalSec()),
+                           [&st] { return st.stop_requested(); });
+    }
 }
 
-util::bus::SourceMetadataPayload
+bool EpicsDSMetadataReader::queueResult(pvxs::Value result, std::stop_token st)
+{
+    return result_queue_->push(std::move(result), st);
+}
+
+void EpicsDSMetadataReader::runConsumer(std::stop_token st)
+{
+    while (auto item = result_queue_->pop(st)) {
+        try {
+            processResult(std::move(*item));
+        }
+        catch (const std::exception& e) {
+            util::log::errorf(*logger_,
+                              "EpicsDSMetadataReader '{}' consumer failed: {}",
+                              config_.name(), e.what());
+        }
+    }
+}
+
+SourceMetadataPayload
 EpicsDSMetadataReader::parseNTTable(const pvxs::Value& result) const
 {
-    util::bus::SourceMetadataPayload payload;
+    SourceMetadataPayload payload;
 
     const auto labelsVal = result["labels"];
     if (!labelsVal.valid())
@@ -173,22 +249,20 @@ EpicsDSMetadataReader::parseNTTable(const pvxs::Value& result) const
     if (!valueStruct.valid())
         return payload;
 
-    // Determine row count from the first column
     size_t nrows = 0;
     {
         const auto firstCol = valueStruct[std::string(labels[0])];
         if (firstCol.valid())
         {
             const auto arr = firstCol.as<shared_array<const std::string>>();
-            nrows          = arr.size();
+            nrows = arr.size();
         }
     }
     if (nrows == 0)
         return payload;
 
-    // Locate special column indices
-    size_t srcIdx   = 0;
-    size_t tagsIdx  = SIZE_MAX;
+    size_t srcIdx  = 0;
+    std::optional<std::size_t> tagsIdx;
     bool   srcFound = false;
 
     for (size_t i = 0; i < ncols; ++i)
@@ -208,10 +282,12 @@ EpicsDSMetadataReader::parseNTTable(const pvxs::Value& result) const
     if (!srcFound)
     {
         std::string colList;
-        for (size_t i = 0; i < ncols; ++i)
+        bool first = true;
+        for (const auto& label : labels)
         {
-            if (i) colList += ", ";
-            colList += labels[i];
+            if (!first) colList += ", ";
+            colList += std::string(label);
+            first = false;
         }
         util::log::warnf(*logger_,
                          "parseNTTable: source-name-column '{}' not found, using column 0. "
@@ -221,7 +297,6 @@ EpicsDSMetadataReader::parseNTTable(const pvxs::Value& result) const
                          colList);
     }
 
-    // Extract all column arrays as string vectors
     std::vector<std::vector<std::string>> colData(ncols);
     for (size_t i = 0; i < ncols; ++i)
     {
@@ -240,15 +315,12 @@ EpicsDSMetadataReader::parseNTTable(const pvxs::Value& result) const
         }
         catch (const std::exception&)
         {
-            // Non-string column: leave as empty strings
             colData[i].resize(nrows);
         }
-        // Pad to nrows if the column is shorter
         while (colData[i].size() < nrows)
             colData[i].emplace_back();
     }
 
-    // Build the payload map
     for (size_t r = 0; r < nrows; ++r)
     {
         const std::string key = (srcIdx < ncols) ? colData[srcIdx][r] : "";
@@ -257,16 +329,16 @@ EpicsDSMetadataReader::parseNTTable(const pvxs::Value& result) const
 
         util::bus::SourceMetadataEntry entry;
 
-        if (tagsIdx != SIZE_MAX && tagsIdx < ncols)
+        if (tagsIdx.has_value() && *tagsIdx < ncols)
         {
-            auto tagVec = splitTags(colData[tagsIdx][r]);
+            auto tagVec = splitTags(colData[*tagsIdx][r]);
             if (!tagVec.empty())
                 entry.tags = std::move(tagVec);
         }
 
         for (size_t i = 0; i < ncols; ++i)
         {
-            if (i == srcIdx || i == tagsIdx)
+            if (i == srcIdx || (tagsIdx.has_value() && i == *tagsIdx))
                 continue;
             entry.attributes[std::string(labels[i])] = colData[i][r];
         }
@@ -276,5 +348,3 @@ EpicsDSMetadataReader::parseNTTable(const pvxs::Value& result) const
 
     return payload;
 }
-
-} // namespace mldp_pvxs_driver::reader::impl::epics_ds

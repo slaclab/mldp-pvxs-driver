@@ -40,6 +40,8 @@ namespace mldp_pvxs_driver::reader::impl::epics_ds {
  *     source-name-column: channelName
  *     tags-column: tags
  *     rescan-interval-sec: 300.0
+ *     worker-thread-count: 4
+ *     max-queue-depth: 16
  * @endcode
  */
 class EpicsDSMetadataReaderConfig
@@ -62,24 +64,19 @@ public:
     explicit EpicsDSMetadataReaderConfig(const config::Config& cfg);
 
     /**
-     * @brief Whether the configuration parsed successfully.
-     */
-    bool valid() const noexcept { return valid_; }
-
-    /**
      * @brief Reader instance name (required, non-empty).
      */
-    std::string name() const noexcept { return name_; }
+    const std::string& name() const noexcept { return name_; }
 
     /**
      * @brief PVA service name to call via RPC (default: "ds").
      */
-    std::string service() const noexcept { return service_; }
+    const std::string& service() const noexcept { return service_; }
 
     /**
      * @brief Query pattern sent in the NTURI query.name field (default: "%").
      */
-    std::string query() const noexcept { return query_; }
+    const std::string& query() const noexcept { return query_; }
 
     /**
      * @brief RPC call timeout in seconds (default: 5.0, must be positive).
@@ -89,29 +86,38 @@ public:
     /**
      * @brief NTTable column name that holds the PV/source name (default: "channelName").
      */
-    std::string sourceNameColumn() const noexcept { return source_name_column_; }
+    const std::string& sourceNameColumn() const noexcept { return source_name_column_; }
 
     /**
      * @brief NTTable column name that holds comma-separated tags (default: "", disabled).
      */
-    std::string tagsColumn() const noexcept { return tags_column_; }
+    const std::string& tagsColumn() const noexcept { return tags_column_; }
 
     /**
      * @brief Comma-separated list of columns to request via the `show` query parameter.
      *        Empty string means no `show` parameter is sent (server returns all columns).
      *        Example: "name,elementname,hostName"
      */
-    std::string showColumns() const noexcept { return show_columns_; }
+    const std::string& showColumns() const noexcept { return show_columns_; }
 
     /**
      * @brief Interval between periodic re-fetches in seconds (default: 0.0 = run once).
      */
     double rescanIntervalSec() const noexcept { return rescan_interval_sec_; }
 
+    /**
+     * @brief Total thread count: 1 = single-thread mode; N>1 = 1 producer + (N-1) consumers.
+     */
+    std::size_t workerThreadCount() const noexcept { return worker_thread_count_; }
+
+    /**
+     * @brief Bounded queue depth for producer/consumer mode (ignored when workerThreadCount()==1).
+     */
+    std::size_t maxQueueDepth() const noexcept { return max_queue_depth_; }
+
 private:
     void parse(const config::Config& cfg);
 
-    bool        valid_{false};
     std::string name_;
     std::string service_{"ds"};
     std::string query_{"%"};
@@ -120,6 +126,8 @@ private:
     std::string tags_column_;
     std::string show_columns_;
     double      rescan_interval_sec_{0.0};
+    std::size_t worker_thread_count_{1};
+    std::size_t max_queue_depth_{16};
 };
 
 } // namespace mldp_pvxs_driver::reader::impl::epics_ds

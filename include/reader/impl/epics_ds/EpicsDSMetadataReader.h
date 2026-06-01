@@ -15,6 +15,8 @@
  * Issues an NTURI RPC call to a PVA Directory Service endpoint and publishes
  * the resulting NTTable as a SourceMetadataPayload on the driver bus.
  * Supports optional periodic re-fetch via rescan-interval-sec.
+ * Supports configurable thread count: worker-thread-count=1 runs inline (single
+ * jthread); worker-thread-count=N>1 uses 1 producer + (N-1) consumer jthreads.
  */
 
 #pragma once
@@ -29,12 +31,16 @@
 #include <pvxs/client.h>
 #include <pvxs/data.h>
 
-#include <atomic>
 #include <condition_variable>
+#include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
+#include <queue>
+#include <stop_token>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace mldp_pvxs_driver::metrics {
 class Metrics;
@@ -51,6 +57,10 @@ namespace mldp_pvxs_driver::reader::impl::epics_ds {
  * resulting SourceMetadataPayload via the bus.  When rescan-interval-sec > 0
  * the fetch is repeated at that interval until the reader is destroyed.
  *
+ * When worker-thread-count=1 (default) the entire fetch/parse/push cycle runs
+ * in a single jthread.  When worker-thread-count=N>1, one producer jthread
+ * issues RPC calls and N-1 consumer jthreads parse and push results.
+ *
  * Configuration example:
  * @code{.yaml}
  * readers:
@@ -62,6 +72,8 @@ namespace mldp_pvxs_driver::reader::impl::epics_ds {
  *     source-name-column: channelName
  *     tags-column: tags
  *     rescan-interval-sec: 300.0
+ *     worker-thread-count: 1
+ *     max-queue-depth: 16
  * @endcode
  */
 class EpicsDSMetadataReader final : public reader::Reader
@@ -72,9 +84,9 @@ public:
     /**
      * @brief Construct and start the reader.
      *
-     * @param bus    Event bus for publishing SourceMetadataPayload batches.
+     * @param bus     Event bus for publishing SourceMetadataPayload batches.
      * @param metrics Metrics collector (may be null).
-     * @param cfg    Reader configuration node.
+     * @param cfg     Reader configuration node.
      * @throws EpicsDSMetadataReaderConfig::Error if configuration is invalid.
      */
     EpicsDSMetadataReader(std::shared_ptr<util::bus::IDataBus> bus,
@@ -83,29 +95,81 @@ public:
 
     ~EpicsDSMetadataReader() override;
 
+    EpicsDSMetadataReader(const EpicsDSMetadataReader&)            = delete;
+    EpicsDSMetadataReader& operator=(const EpicsDSMetadataReader&) = delete;
+    EpicsDSMetadataReader(EpicsDSMetadataReader&&)                 = delete;
+    EpicsDSMetadataReader& operator=(EpicsDSMetadataReader&&)      = delete;
+
     std::string name() const override { return config_.name(); }
 
 private:
     /**
-     * @brief Worker thread body: fetch, parse, push, then sleep or exit.
+     * @brief Bounded concurrent queue for pvxs::Value RPC results.
+     *
+     * Used only in producer/consumer mode (worker-thread-count > 1).
+     * std::condition_variable_any is required for the C++20 stop_token-aware
+     * wait overload.
      */
-    void runWorker();
+    class RpcResultQueue {
+    public:
+        explicit RpcResultQueue(std::size_t max_depth) : max_depth_(max_depth) {}
+
+        /** Producer: enqueue item. Returns false if queue was closed. */
+        bool push(pvxs::Value item, std::stop_token st);
+
+        /** Consumer: dequeue item. Returns nullopt when closed and empty. */
+        std::optional<pvxs::Value> pop(std::stop_token st);
+
+        /** Signal shutdown; unblocks all waiters. */
+        void close();
+
+    private:
+        std::size_t             max_depth_;
+        std::queue<pvxs::Value> queue_;
+        std::mutex              mu_;
+        std::condition_variable_any not_full_;
+        std::condition_variable_any not_empty_;
+        bool                    closed_{false};
+    };
+
+    /**
+     * Single worker loop: fetch RPC, then call dispatch_fn_ with the result.
+     * dispatch_fn_ is set at construction — points to processResult (N=1)
+     * or queueResult (N>1). No code duplication between modes.
+     */
+    void runWorker(std::stop_token st);
+
+    /** Consumer/consumer mode: pop from result_queue_, parse, push to bus. */
+    void runConsumer(std::stop_token st);
+
+    /** Parse + bus push. dispatch_fn_ target in single-thread mode. */
+    void processResult(pvxs::Value result);
+
+    /** Enqueue into result_queue_. dispatch_fn_ target in multi-thread mode. */
+    bool queueResult(pvxs::Value result, std::stop_token st);
+
+    /** Build the NTURI pvxs::Value from config. */
+    pvxs::Value buildNTURI() const;
 
     /**
      * @brief Parse an NTTable PVXS Value into a SourceMetadataPayload.
-     *
-     * @param result PVXS Value returned by the RPC call.
-     * @return Map of source name to metadata entry.
      */
     util::bus::SourceMetadataPayload parseNTTable(const pvxs::Value& result) const;
 
+    // Member declaration order governs RAII destruction (reverse order).
+    // worker_thread_ declared last → destroyed first.
     EpicsDSMetadataReaderConfig         config_;
     std::shared_ptr<util::log::ILogger> logger_;
     pvxs::client::Context               pva_context_;
-    std::thread                         worker_thread_;
-    std::atomic<bool>                   running_{false};
-    std::condition_variable             worker_cv_;
-    std::mutex                          worker_mutex_;
+    std::optional<RpcResultQueue>       result_queue_;    // present only when N > 1
+    // dispatch_fn_: set once at construction; called by runWorker after each RPC.
+    // N=1: calls processResult directly.
+    // N>1: calls queueResult (push to result_queue_).
+    std::function<bool(pvxs::Value, std::stop_token)> dispatch_fn_;
+    std::condition_variable_any         sleep_cv_;        // interruptible sleep
+    std::mutex                          sleep_mutex_;
+    std::vector<std::jthread>           consumer_threads_; // empty in single-thread mode
+    std::jthread                        worker_thread_;   // single producer thread
 };
 
 } // namespace mldp_pvxs_driver::reader::impl::epics_ds

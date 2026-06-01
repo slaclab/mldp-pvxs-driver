@@ -37,7 +37,6 @@ name: test-reader
 
     EpicsDSMetadataReaderConfig config(cfg);
 
-    EXPECT_TRUE(config.valid());
     EXPECT_EQ(config.name(), "test-reader");
     EXPECT_EQ(config.service(), "ds");
     EXPECT_EQ(config.query(), "%");
@@ -62,7 +61,6 @@ rescan-interval-sec: 300.0
 
     EpicsDSMetadataReaderConfig config(cfg);
 
-    EXPECT_TRUE(config.valid());
     EXPECT_EQ(config.name(), "my-ds-reader");
     EXPECT_EQ(config.service(), "my-ds");
     EXPECT_EQ(config.query(), "BPMS:*");
@@ -126,7 +124,6 @@ rescan-interval-sec: 0.0
 
     EpicsDSMetadataReaderConfig config(cfg);
 
-    EXPECT_TRUE(config.valid());
     EXPECT_DOUBLE_EQ(config.rescanIntervalSec(), 0.0);
 }
 
@@ -144,6 +141,4 @@ rescan-interval-sec: 60.0
 )yaml");
 
     EpicsDSMetadataReaderConfig config(cfg);
-
-    EXPECT_TRUE(config.valid());
 }
