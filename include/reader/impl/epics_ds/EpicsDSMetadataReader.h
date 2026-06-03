@@ -79,10 +79,10 @@ namespace mldp_pvxs_driver::reader::impl::epics_ds {
  *   | rescan-interval-sec   | double | `0.0`          | Re-fetch period; 0 = run once |
  *   | worker-thread-count   | int    | `1`            | 1 = inline; N>1 = 1 producer + (N-1) consumers |
  *   | max-queue-depth       | int    | `16`           | Bounded queue size (producer/consumer mode only) |
- *   | pvs                   | list   | `[]`           | Per-PV enrichment entries (each requires `name`) |
+ *   | pvs                   | list   | (required)     | Per-PV enrichment entries; at least one entry required |
  *   | pvs[].name            | string | (required)     | Exact PV name to enrich |
  *   | pvs[].metadata        | map    | `{}`           | Static key/value attributes merged into the entry |
- *   | pv-show-columns       | string | see note       | Comma-separated DS `show=` values for PV-list mode (default: `dname,ename,etype,lname,ioc,scheme,z`) |
+ *   | pv-show-columns       | string | `dname,ename,etype,lname,ioc,scheme,z` | Comma-separated DS `show=` columns for PV-list mode; empty string reverts to default |
  *
  * @code{.yaml}
  * readers:
