@@ -8,6 +8,14 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
+/**
+ * @file   EpicsDSMetadataReader.cpp
+ * @brief  Implementation of EpicsDSMetadataReader.
+ * @author SLAC MLDP Team
+ * @date   2025-01-01
+ * @copyright Copyright (c) 2025 SLAC National Accelerator Laboratory
+ */
+
 #include <reader/impl/epics_ds/EpicsDSMetadataReader.h>
 
 #include <util/log/Logger.h>
@@ -20,6 +28,7 @@
 #include <optional>
 #include <sstream>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 using namespace pvxs;
@@ -172,6 +181,95 @@ void EpicsDSMetadataReader::processResult(pvxs::Value result)
     });
 }
 
+pvxs::Value EpicsDSMetadataReader::buildNTURIForPV(const std::string& pvName,
+                                                   const std::string& showCol) const
+{
+    TypeDef queryDef(TypeCode::Struct, "epics:nt/NTURI:1.0",
+                     {
+                         Member(TypeCode::String, "scheme"),
+                         Member(TypeCode::String, "path"),
+                         Member(TypeCode::Struct, "query",
+                                {
+                                    Member(TypeCode::String, "name"),
+                                    Member(TypeCode::String, "show"),
+                                }),
+                     });
+
+    Value arg = queryDef.create();
+    arg["scheme"]     = "pva";
+    arg["path"]       = config_.service();
+    arg["query.name"] = pvName;
+    arg["query.show"] = showCol;
+    return arg;
+}
+
+std::unordered_map<std::string, std::string>
+EpicsDSMetadataReader::queryPVAttributes(const EpicsDSMetadataReaderConfig::PVEntry& pv)
+{
+    std::unordered_map<std::string, std::string> attributes;
+    for (const auto& col : config_.pvShowColumns())
+        attributes[col] = "";
+
+    for (const auto& showCol : config_.pvShowColumns())
+    {
+        try
+        {
+            const Value result = pva_context_.rpc(config_.service(), buildNTURIForPV(pv.name, showCol))
+                                     .exec()
+                                     ->wait(config_.timeoutSec());
+
+            const auto labelsVal = result["labels"];
+            const auto valueStruct = result["value"];
+            if (!labelsVal.valid() || !valueStruct.valid())
+                continue;
+
+            const auto labels = labelsVal.as<shared_array<const std::string>>();
+            if (labels.empty())
+                continue;
+
+            const auto column = valueStruct[std::string(labels[0])];
+            if (!column.valid())
+                continue;
+
+            const auto values = column.as<shared_array<const std::string>>();
+            if (values.empty())
+                continue;
+
+            attributes[showCol] = std::string(values[0]);
+        }
+        catch (const std::exception& e)
+        {
+            util::log::errorf(*logger_,
+                              "EpicsDSMetadataReader '{}' PV-list RPC failed for '{}' show='{}': {}",
+                              config_.name(), pv.name, showCol, e.what());
+        }
+    }
+
+    return attributes;
+}
+
+void EpicsDSMetadataReader::runPVListSweep()
+{
+    for (const auto& pv : config_.pvs())
+    {
+        auto attributes = queryPVAttributes(pv);
+        for (const auto& [key, value] : pv.metadata)
+            attributes[key] = value;
+
+        util::bus::SourceMetadataEntry entry;
+        entry.attributes = std::move(attributes);
+
+        SourceMetadataPayload payload;
+        payload.emplace(pv.name, std::move(entry));
+
+        bus_->push(IDataBus::EventBatch{
+            .reader_name = config_.name(),
+            .root_source = pv.name,
+            .payload     = std::move(payload),
+        });
+    }
+}
+
 void EpicsDSMetadataReader::runWorker(std::stop_token st)
 {
     while (!st.stop_requested()) {
@@ -192,6 +290,9 @@ void EpicsDSMetadataReader::runWorker(std::stop_token st)
             // in multi-thread mode it pushes to the queue and returns false if the queue is closed.
             if (!dispatch_fn_(std::move(result), st))
                 break;
+
+            if (!config_.pvs().empty())
+                runPVListSweep();
         }
         catch (const std::exception& e) {
             util::log::errorf(*logger_,

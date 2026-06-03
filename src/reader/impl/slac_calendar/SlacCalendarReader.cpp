@@ -8,6 +8,14 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
+/**
+ * @file   SlacCalendarReader.cpp
+ * @brief  Implementation of SlacCalendarReader.
+ * @author SLAC MLDP Team
+ * @date   2025-01-01
+ * @copyright Copyright (c) 2025 SLAC National Accelerator Laboratory
+ */
+
 #include <reader/impl/slac_calendar/SlacCalendarReader.h>
 
 #include <util/log/Logger.h>
@@ -15,7 +23,6 @@
 #include <chrono>
 #include <cstdio>
 #include <ctime>
-#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
