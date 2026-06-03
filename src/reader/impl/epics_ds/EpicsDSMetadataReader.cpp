@@ -18,6 +18,7 @@
 
 #include <reader/impl/epics_ds/EpicsDSMetadataReader.h>
 
+#include <thread>
 #include <util/log/Logger.h>
 
 #include <pvxs/client.h>
@@ -129,10 +130,16 @@ EpicsDSMetadataReader::EpicsDSMetadataReader(
 
 EpicsDSMetadataReader::~EpicsDSMetadataReader()
 {
+    util::log::tracef(*logger_, "~EpicsDSMetadataReader '{}' [tid={}]: requesting stop on worker thread", config_.name(), std::this_thread::get_id());
     worker_thread_.request_stop();
     worker_thread_.join();
+    util::log::tracef(*logger_, "~EpicsDSMetadataReader '{}' [tid={}]: worker thread joined", config_.name(), std::this_thread::get_id());
     if (result_queue_)
+    {
+        util::log::tracef(*logger_, "~EpicsDSMetadataReader '{}' [tid={}]: closing result queue", config_.name(), std::this_thread::get_id());
         result_queue_->close();
+    }
+    util::log::tracef(*logger_, "~EpicsDSMetadataReader '{}' [tid={}]: done (consumer jthreads joining)", config_.name(), std::this_thread::get_id());
     // consumer_threads_ jthread destructors join automatically
 }
 

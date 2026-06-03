@@ -98,7 +98,9 @@ void HDF5WriterBase::stop() noexcept
     {
         try
         {
+            tracef(*logger_, "HDF5Writer [{}] [tid={}] joining flush thread", config_.name, std::this_thread::get_id());
             flushThread_.join();
+            tracef(*logger_, "HDF5Writer [{}] [tid={}] flush thread joined", config_.name, std::this_thread::get_id());
         }
         catch (...)
         {
@@ -244,6 +246,9 @@ void HDF5WriterBase::flushLoop()
 
     while (!stopping_.load())
     {
+        tracef(*logger_, "HDF5Writer [{}] flush thread [tid={}] sleeping {}ms", config_.name,
+               std::this_thread::get_id(),
+               std::chrono::duration_cast<std::chrono::milliseconds>(config_.flushInterval).count());
         std::this_thread::sleep_for(config_.flushInterval);
         doFlushAll();
     }

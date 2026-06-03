@@ -11,6 +11,7 @@
 #include <metrics/Metrics.h>
 #include <procmon/ProcMon.hpp>
 #include <util/log/Logger.h>
+#include <thread>
 
 #include <unistd.h>
 #include <utility>
@@ -120,7 +121,9 @@ Metrics::Metrics(const MetricsConfig& config, std::string controller_name)
 
 Metrics::~Metrics()
 {
+    tracef("~Metrics [tid={}]: stopping system metrics collection", std::this_thread::get_id());
     stopSystemMetricsCollection();
+    tracef("~Metrics [tid={}]: done", std::this_thread::get_id());
 }
 
 void Metrics::startSystemMetricsCollection()
@@ -137,10 +140,12 @@ void Metrics::startSystemMetricsCollection()
 void Metrics::stopSystemMetricsCollection()
 {
     stop_system_metrics_.store(true);
+    tracef("Metrics::stopSystemMetricsCollection [tid={}]: joining system_metrics_thread", std::this_thread::get_id());
     if (system_metrics_thread_.joinable())
     {
         system_metrics_thread_.join();
     }
+    tracef("Metrics::stopSystemMetricsCollection [tid={}]: joined", std::this_thread::get_id());
 }
 
 void Metrics::collectSystemMetricsLoop()

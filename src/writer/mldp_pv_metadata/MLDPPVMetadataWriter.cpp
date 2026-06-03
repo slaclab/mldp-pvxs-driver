@@ -16,6 +16,7 @@
 #include <util/log/Logger.h>
 
 #include <chrono>
+#include <thread>
 
 using namespace mldp_pvxs_driver::writer;
 using namespace mldp_pvxs_driver::util::log;
@@ -74,13 +75,16 @@ void MLDPPVMetadataWriter::start()
 
 void MLDPPVMetadataWriter::stop() noexcept
 {
+    tracef(*logger_, "MLDPPVMetadataWriter '{}' [tid={}]: signaling {} workers to stop", config_.name, std::this_thread::get_id(), workers_.size());
     stop_.store(true);
     queue_cv_.notify_all();
-    for (auto& t : workers_)
+    for (std::size_t i = 0; i < workers_.size(); ++i)
     {
-        if (t.joinable())
+        if (workers_[i].joinable())
         {
-            t.join();
+            tracef(*logger_, "MLDPPVMetadataWriter '{}' [tid={}]: joining worker {}", config_.name, std::this_thread::get_id(), i);
+            workers_[i].join();
+            tracef(*logger_, "MLDPPVMetadataWriter '{}' [tid={}]: worker {} joined", config_.name, std::this_thread::get_id(), i);
         }
     }
     workers_.clear();

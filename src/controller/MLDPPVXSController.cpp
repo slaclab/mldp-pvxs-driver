@@ -11,6 +11,7 @@
 #include "util/log/Logger.h"
 #include <controller/MLDPPVXSController.h>
 #include <future>
+#include <thread>
 #include <memory>
 #include <query/QueryableFactory.h>
 #include <query/impl/mldp/MLDPAnnotationQueryClient.h>
@@ -92,8 +93,11 @@ MLDPPVXSController::~MLDPPVXSController()
     {
         stop();
     }
+    tracef(*logger_, "~MLDPPVXSController [tid={}]: resetting thread_pool", std::this_thread::get_id());
     thread_pool_.reset();
+    tracef(*logger_, "~MLDPPVXSController [tid={}]: resetting metrics", std::this_thread::get_id());
     metrics_.reset();
+    tracef(*logger_, "~MLDPPVXSController [tid={}]: done", std::this_thread::get_id());
 }
 
 void MLDPPVXSController::start()
