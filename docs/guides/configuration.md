@@ -325,7 +325,7 @@ persist the metadata to the MLDP annotation service.
       worker-thread-count: 2                  # optional; default: 1
       max-queue-depth: 16                     # optional; default: 16
       pv-show-columns: "dname,ename,etype"    # optional; default: dname,ename,etype,lname,ioc,scheme,z
-      pvs:                                    # optional; default: [] (no per-PV sweep)
+      pvs:                                    # required; must contain at least one entry
         - name: BPMS:LI20:2445:X
           metadata:
             system: bpm
@@ -341,18 +341,20 @@ persist the metadata to the MLDP annotation service.
 | `tags-column` | string | `""` | NTTable column for comma-separated tags. Empty = disabled. |
 | `show-columns` | string | `""` | Comma-separated columns passed as `show=` in the wildcard NTURI query. Empty = server returns all columns. |
 | `rescan-interval-sec` | double | `0.0` | Repeat fetch interval in seconds. `0` = run once. |
-| `worker-thread-count` | int | `1` | `1` = single-thread inline; `N > 1` = 1 producer + N-1 consumers. |
-| `max-queue-depth` | int | `16` | Bounded queue depth in producer/consumer mode. Ignored when `worker-thread-count` is `1`. |
-| `pvs` | list | `[]` | Per-PV enrichment entries for targeted DS lookups. Each entry requires `name`; `metadata` map is optional. |
-| `pv-show-columns` | string | `"dname,ename,etype,lname,ioc,scheme,z"` | DS `show=` columns fetched per PV in PV-list mode. |
+| `worker-thread-count` | int | `1` | `1` = single-thread inline; `N > 1` = 1 producer + N-1 consumers. Range: `1..64`. |
+| `max-queue-depth` | int | `16` | Bounded queue depth in producer/consumer mode. Ignored when `worker-thread-count` is `1`. Range: `1..1024`. |
+| `pvs` | list | — | **Required.** Per-PV enrichment entries for targeted DS lookups. Must contain at least one entry. Each entry requires `name`; `metadata` map is optional. |
+| `pv-show-columns` | string | `"dname,ename,etype,lname,ioc,scheme,z"` | DS `show=` columns fetched per PV in PV-list mode. Duplicate values are rejected. |
 
 **Validation rules:**
 
 - `name` is required and must be non-empty.
 - `timeout-sec` must be strictly positive.
 - `rescan-interval-sec` must be `>= 0`.
-- `worker-thread-count` must be `>= 1`.
-- `max-queue-depth` must be `>= 1`.
+- `worker-thread-count` must be in range `1..64`.
+- `max-queue-depth` must be in range `1..1024`.
+- `pvs` is required and must contain at least one entry.
+- `pv-show-columns` must not contain duplicate column names.
 
 → [EpicsDSMetadataReader Documentation](../readers/epics-ds-metadata-reader.md)
 

@@ -21,7 +21,7 @@ Reader Type           | Build Option        | Required Libraries / Components | 
 `epics-base`          | none (always built) | EPICS Base (`libCom`, `libca`, `libpvData`, `libpvAccess`, `libpvaClient`, `libpvAccessCA`) | Uses Channel Access polling path.
 `epics-pvxs`          | none (always built) | PVXS (`libpvxs`) + EPICS Base core libs | Uses PVAccess subscriptions.
 `epics-archiver`      | none (always built) | libcurl + Protobuf/epicsarchiverap payload types | Uses Archiver PB/HTTP transport.
-`epics-ds-metadata`   | none (always built) | PVXS (`libpvxs`) + EPICS Base core libs | RPC-based PV metadata fetch; no PV list needed.
+`epics-ds-metadata`   | none (always built) | PVXS (`libpvxs`) + EPICS Base core libs | RPC-based PV metadata fetch; `pvs` list required (at least one entry).
 `slac-calendar`       | none (always built) | libcurl + nlohmann/json | Fetches beamline schedule events; publishes configuration + activation payloads.
 
 EPICS/PVXS discovery is controlled by CMake/env variables used at configure time:
@@ -122,7 +122,7 @@ PV metadata fetcher using EPICS Directory Service via PVA RPC.
 
 - **Mode**: One-shot RPC or periodic rescan
 - **Best For**: Populating the MLDP annotation service with PV metadata
-- **Key Feature**: No PV list required — the DS query pattern returns all known PVs; optional tag extraction from NTTable column
+- **Key Feature**: `pvs` list is required (at least one entry); DS wildcard query returns all known PVs, then per-PV sweep enriches each listed entry; optional tag extraction from NTTable column
 
 → [Full Documentation: EpicsDSMetadataReader](epics-ds-metadata-reader.md)
 
