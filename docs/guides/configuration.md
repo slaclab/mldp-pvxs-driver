@@ -314,13 +314,21 @@ persist the metadata to the MLDP annotation service.
 
 ```yaml
 - epics-ds-metadata:
-    - name: ds_metadata                # required
-      service: ds                      # optional; default: "ds"
-      query: "%"                       # optional; default: "%"
-      timeout-sec: 5.0                 # optional; default: 5.0
-      source-name-column: channelName  # optional; default: "channelName"
-      tags-column: tags                # optional; default: "" (disabled)
-      rescan-interval-sec: 300.0       # optional; default: 0.0 (run once)
+    - name: ds_metadata                       # required
+      service: ds                             # optional; default: "ds"
+      query: "%"                              # optional; default: "%"
+      timeout-sec: 5.0                        # optional; default: 5.0
+      source-name-column: channelName         # optional; default: "channelName"
+      tags-column: tags                       # optional; default: "" (disabled)
+      show-columns: "channelName,hostName"    # optional; default: "" (all columns)
+      rescan-interval-sec: 300.0              # optional; default: 0.0 (run once)
+      worker-thread-count: 2                  # optional; default: 1
+      max-queue-depth: 16                     # optional; default: 16
+      pv-show-columns: "dname,ename,etype"    # optional; default: dname,ename,etype,lname,ioc,scheme,z
+      pvs:                                    # optional; default: [] (no per-PV sweep)
+        - name: BPMS:LI20:2445:X
+          metadata:
+            system: bpm
 ```
 
 | Key | Type | Default | Description |
@@ -331,13 +339,20 @@ persist the metadata to the MLDP annotation service.
 | `timeout-sec` | double | `5.0` | RPC call timeout in seconds. Must be positive. |
 | `source-name-column` | string | `"channelName"` | NTTable column carrying the PV / source name. |
 | `tags-column` | string | `""` | NTTable column for comma-separated tags. Empty = disabled. |
+| `show-columns` | string | `""` | Comma-separated columns passed as `show=` in the wildcard NTURI query. Empty = server returns all columns. |
 | `rescan-interval-sec` | double | `0.0` | Repeat fetch interval in seconds. `0` = run once. |
+| `worker-thread-count` | int | `1` | `1` = single-thread inline; `N > 1` = 1 producer + N-1 consumers. |
+| `max-queue-depth` | int | `16` | Bounded queue depth in producer/consumer mode. Ignored when `worker-thread-count` is `1`. |
+| `pvs` | list | `[]` | Per-PV enrichment entries for targeted DS lookups. Each entry requires `name`; `metadata` map is optional. |
+| `pv-show-columns` | string | `"dname,ename,etype,lname,ioc,scheme,z"` | DS `show=` columns fetched per PV in PV-list mode. |
 
 **Validation rules:**
 
 - `name` is required and must be non-empty.
 - `timeout-sec` must be strictly positive.
 - `rescan-interval-sec` must be `>= 0`.
+- `worker-thread-count` must be `>= 1`.
+- `max-queue-depth` must be `>= 1`.
 
 → [EpicsDSMetadataReader Documentation](../readers/epics-ds-metadata-reader.md)
 
