@@ -127,8 +127,10 @@ private:
     void stopSystemMetricsCollection();
     void collectSystemMetricsLoop();
 
-    std::atomic<bool> stop_system_metrics_{false};
-    std::thread       system_metrics_thread_;
+    std::atomic<bool>       stop_system_metrics_{false};
+    std::condition_variable stop_metrics_cv_;
+    std::mutex              stop_metrics_mutex_;
+    std::thread             system_metrics_thread_;
 
     // CPU metrics (counters - values accumulate over time)
     prometheus::Family<prometheus::Counter>* process_cpu_user_ticks_family_{nullptr};

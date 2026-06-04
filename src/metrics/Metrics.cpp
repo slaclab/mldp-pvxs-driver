@@ -140,6 +140,7 @@ void Metrics::startSystemMetricsCollection()
 void Metrics::stopSystemMetricsCollection()
 {
     stop_system_metrics_.store(true);
+    stop_metrics_cv_.notify_all();
     tracef("Metrics::stopSystemMetricsCollection [tid={}]: joining system_metrics_thread", std::this_thread::get_id());
     if (system_metrics_thread_.joinable())
     {
@@ -263,8 +264,11 @@ void Metrics::collectSystemMetricsLoop()
             }
         }
 
-        // Sleep for configured scan interval
-        std::this_thread::sleep_for(std::chrono::seconds(config_.scanIntervalSeconds()));
+        // Sleep for configured scan interval, wake early on stop
+        std::unique_lock<std::mutex> lk(stop_metrics_mutex_);
+        stop_metrics_cv_.wait_for(lk,
+                                  std::chrono::seconds(config_.scanIntervalSeconds()),
+                                  [this] { return stop_system_metrics_.load(); });
     }
 }
 
