@@ -266,10 +266,13 @@ EpicsDSMetadataReader::queryPVAttributes(const EpicsDSMetadataReaderConfig::PVEn
     return attributes;
 }
 
-void EpicsDSMetadataReader::runPVListSweep()
+void EpicsDSMetadataReader::runPVListSweep(std::stop_token st) noexcept
 {
     for (const auto& pv : config_.pvs())
     {
+        if (st.stop_requested())
+            return;
+
         auto attributes = queryPVAttributes(pv);
         for (const auto& [key, value] : pv.metadata)
             attributes[key] = value;
@@ -310,7 +313,7 @@ void EpicsDSMetadataReader::runWorker(std::stop_token st)
                 break;
 
             if (!config_.pvs().empty())
-                runPVListSweep();
+                runPVListSweep(st);
         }
         catch (const pvxs::client::Interrupted&) {
             break;

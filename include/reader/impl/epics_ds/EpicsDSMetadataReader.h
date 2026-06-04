@@ -190,7 +190,7 @@ private:
     queryPVAttributes(const EpicsDSMetadataReaderConfig::PVEntry& pv);
 
     /** Run targeted per-PV enrichment sweep and publish one batch per PV. */
-    void runPVListSweep();
+    void runPVListSweep(std::stop_token st) noexcept;
 
     /**
      * @brief Parse an NTTable PVXS Value into a SourceMetadataPayload.
