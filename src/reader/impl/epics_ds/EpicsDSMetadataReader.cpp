@@ -209,28 +209,51 @@ EpicsDSMetadataReader::queryPVAttributes(const EpicsDSMetadataReaderConfig::PVEn
     {
         try
         {
+            util::log::debugf(*logger_,
+                              "EpicsDSMetadataReader '{}' querying PV '{}' show='{}'",
+                              config_.name(), pv.name, showCol);
+
             const Value result = pva_context_.rpc(config_.service(), buildNTURIForPV(pv.name, showCol))
                                      .exec()
                                      ->wait(config_.timeoutSec());
 
             const auto labelsVal = result["labels"];
             const auto valueStruct = result["value"];
-            if (!labelsVal.valid() || !valueStruct.valid())
+            if (!labelsVal.valid() || !valueStruct.valid()) {
+                util::log::debugf(*logger_,
+                                  "EpicsDSMetadataReader '{}' PV '{}' show='{}': no labels/value in response",
+                                  config_.name(), pv.name, showCol);
                 continue;
+            }
 
             const auto labels = labelsVal.as<shared_array<const std::string>>();
-            if (labels.empty())
+            if (labels.empty()) {
+                util::log::debugf(*logger_,
+                                  "EpicsDSMetadataReader '{}' PV '{}' show='{}': empty labels",
+                                  config_.name(), pv.name, showCol);
                 continue;
+            }
 
             const auto column = valueStruct[std::string(labels[0])];
-            if (!column.valid())
+            if (!column.valid()) {
+                util::log::debugf(*logger_,
+                                  "EpicsDSMetadataReader '{}' PV '{}' show='{}': column '{}' not found",
+                                  config_.name(), pv.name, showCol, labels[0]);
                 continue;
+            }
 
             const auto values = column.as<shared_array<const std::string>>();
-            if (values.empty())
+            if (values.empty()) {
+                util::log::debugf(*logger_,
+                                  "EpicsDSMetadataReader '{}' PV '{}' show='{}': column '{}' empty",
+                                  config_.name(), pv.name, showCol, labels[0]);
                 continue;
+            }
 
             attributes[showCol] = std::string(values[0]);
+            util::log::debugf(*logger_,
+                              "EpicsDSMetadataReader '{}' PV '{}' show='{}': got '{}'",
+                              config_.name(), pv.name, showCol, values[0]);
         }
         catch (const std::exception& e)
         {
