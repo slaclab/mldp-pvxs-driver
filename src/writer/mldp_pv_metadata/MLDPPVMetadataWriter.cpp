@@ -101,6 +101,8 @@ bool MLDPPVMetadataWriter::push(IDataBus::EventBatch batch) noexcept
     const auto* meta = std::get_if<SourceMetadataPayload>(&batch.payload);
     if (!meta)
     {
+        tracef(*logger_, "MLDPPVMetadataWriter '{}' discarding non-metadata payload from '{}'",
+               config_.name, batch.reader_name);
         return true;
     }
     {
@@ -122,6 +124,8 @@ bool MLDPPVMetadataWriter::push(IDataBus::EventBatch batch) noexcept
 
 void MLDPPVMetadataWriter::workerLoop()
 {
+    tracef(*logger_, "MLDPPVMetadataWriter '{}' worker started [tid={}]",
+           config_.name, std::this_thread::get_id());
     while (true)
     {
         std::unique_lock<std::mutex> lock(queue_mutex_);
@@ -132,7 +136,8 @@ void MLDPPVMetadataWriter::workerLoop()
 
         if (work_queue_.empty())
         {
-            // stop_ was set and queue is empty — exit
+            tracef(*logger_, "MLDPPVMetadataWriter '{}' worker exiting (stop requested, queue empty) [tid={}]",
+                   config_.name, std::this_thread::get_id());
             return;
         }
 
@@ -140,6 +145,9 @@ void MLDPPVMetadataWriter::workerLoop()
         work_queue_.pop();
         lock.unlock();
 
+        tracef(*logger_, "MLDPPVMetadataWriter '{}' worker saving '{}' ({} attrs) [tid={}]",
+               config_.name, item.source_name, item.entry.attributes.size(),
+               std::this_thread::get_id());
         saveSourceMetadata(item.source_name, item.entry);
     }
 }
