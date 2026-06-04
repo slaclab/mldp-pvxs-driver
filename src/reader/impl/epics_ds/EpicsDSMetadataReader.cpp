@@ -145,34 +145,22 @@ EpicsDSMetadataReader::~EpicsDSMetadataReader()
 
 pvxs::Value EpicsDSMetadataReader::buildNTURI() const
 {
-    const bool hasShow = !config_.showColumns().empty();
-
-    TypeDef queryDef = hasShow
-        ? TypeDef(TypeCode::Struct, "epics:nt/NTURI:1.0",
-                  {
-                      Member(TypeCode::String, "scheme"),
-                      Member(TypeCode::String, "path"),
-                      Member(TypeCode::Struct, "query",
-                             {
-                                 Member(TypeCode::String, "name"),
-                                 Member(TypeCode::String, "show"),
-                             }),
-                  })
-        : TypeDef(TypeCode::Struct, "epics:nt/NTURI:1.0",
-                  {
-                      Member(TypeCode::String, "scheme"),
-                      Member(TypeCode::String, "path"),
-                      Member(TypeCode::Struct, "query",
-                             {
-                                 Member(TypeCode::String, "name"),
-                             }),
-                  });
+    TypeDef queryDef(TypeCode::Struct, "epics:nt/NTURI:1.0",
+                     {
+                         Member(TypeCode::String, "scheme"),
+                         Member(TypeCode::String, "path"),
+                         Member(TypeCode::Struct, "query",
+                                {
+                                    Member(TypeCode::String, "name"),
+                                    Member(TypeCode::String, "show"),
+                                }),
+                     });
 
     Value arg = queryDef.create();
     arg["scheme"]     = "pva";
     arg["path"]       = config_.service();
     arg["query.name"] = config_.query();
-    if (hasShow)
+    if (!config_.showColumns().empty())
         arg["query.show"] = config_.showColumns();
 
     return arg;
@@ -281,9 +269,9 @@ void EpicsDSMetadataReader::runWorker(std::stop_token st)
 {
     while (!st.stop_requested()) {
         try {
-            Value result = pva_context_.rpc(config_.service(), buildNTURI())
-                               .exec()
-                               ->wait(config_.timeoutSec());
+            auto op = pva_context_.rpc(config_.service(), buildNTURI()).exec();
+            std::stop_callback cancel_on_stop{st, [&op] { op->interrupt(); }};
+            Value result = op->wait(config_.timeoutSec());
 
             {
                 std::ostringstream oss;
@@ -292,14 +280,17 @@ void EpicsDSMetadataReader::runWorker(std::stop_token st)
             }
 
             // dispatch_fn_ returns false if the worker should stop (e.g. if the queue is closed)
-            // the implementation of dispatch_fn_ depends on the number of threads configured: 
-            // in single-thread mode it processes inline and always returns true; 
+            // the implementation of dispatch_fn_ depends on the number of threads configured:
+            // in single-thread mode it processes inline and always returns true;
             // in multi-thread mode it pushes to the queue and returns false if the queue is closed.
             if (!dispatch_fn_(std::move(result), st))
                 break;
 
             if (!config_.pvs().empty())
                 runPVListSweep();
+        }
+        catch (const pvxs::client::Interrupted&) {
+            break;
         }
         catch (const std::exception& e) {
             util::log::errorf(*logger_,
