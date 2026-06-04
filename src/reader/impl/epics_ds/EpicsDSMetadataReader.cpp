@@ -240,7 +240,7 @@ EpicsDSMetadataReader::queryPVAttributes(const EpicsDSMetadataReaderConfig::PVEn
         }
     }
 
-    if (logger_->shouldLog(util::log::Level::debug))
+    if (logger_->shouldLog(util::log::Level::Debug))
     {
         std::ostringstream summary;
         summary << "EpicsDSMetadataReader '" << config_.name()
