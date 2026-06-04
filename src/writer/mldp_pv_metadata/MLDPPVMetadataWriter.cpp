@@ -107,6 +107,8 @@ bool MLDPPVMetadataWriter::push(IDataBus::EventBatch batch) noexcept
         std::lock_guard<std::mutex> lock(queue_mutex_);
         for (const auto& [sourceName, entry] : *meta)
         {
+            tracef(*logger_, "MLDPPVMetadataWriter '{}' enqueuing '{}' ({} attrs)",
+                   config_.name, sourceName, entry.attributes.size());
             work_queue_.push({sourceName, entry});
         }
     }
