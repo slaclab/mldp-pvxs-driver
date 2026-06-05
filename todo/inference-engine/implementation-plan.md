@@ -29,9 +29,9 @@ name — indistinguishable to downstream writers from any real reader output.
 | `AlignedSnapshot` | plain struct | Payload passed to `IAlgorithm::compute()`: map of `root_source -> DataBatch` + `reference_time`. |
 | `AlgorithmOutput` | plain struct | One virtual source emission: `{ string output_source; BatchPayload payload; }`. C++ algorithms fill the variant directly. Script bridges use language-specific `mldp` namespace to emit typed payloads. |
 | `IAlgorithm` | pure interface | `configure()` reads algorithm-specific config (incl. output source names). `outputSources()` declares output names after configure. `compute()` returns `vector<AlgorithmOutput>`. |
-| `IChannelProcessor` | pure interface (extends `IWriter`) | Adds `outputReaderName()` / `outputSourceNames()` (plural) to the writer interface so the controller can wire virtual routes. |
+| `IChannelProcessor` | pure interface (extends `IWriter`) | Adds `outputReaderName()` / `outputSourceNames()` / `inputSourceNames()` to the writer interface so the controller can wire virtual routes. |
 | `InputBuffer` | concrete class | Per-source slot storage, tracks freshness, implements alignment + trigger snapshot logic. |
-| `ChannelProcessor` | concrete class (owns `IAlgorithm`) | All infrastructure: `acceptsSource`, `acceptsPayload`, `push`, `fireCompute`, interval worker thread, bus re-injection. |
+| `ChannelProcessor` | concrete class (owns `IAlgorithm`) | All infrastructure: `acceptsPayload`, `push` (reads `ts->root_source_name`), `fireCompute`, interval worker thread, bus re-injection. Source filtering via route table. |
 | `ChannelProcessorFactory` | static factory | Maps type string -> `ProcessorFactory`; returns `vector<IChannelProcessorUPtr>` (all types, incl. script bulk-loaders). Provides `REGISTER_ALGORITHM` macro. |
 | `LinearTransformAlgorithm` | `IAlgorithm` impl | `result = sum(coeff[j] * source[j]) + bias`. No state. |
 | `MovingAverageAlgorithm` | `IAlgorithm` impl | Sliding window mean over last N values. Stateful (`std::deque`). |
@@ -52,12 +52,13 @@ name — indistinguishable to downstream writers from any real reader output.
 |   + start() : bool                 + outputReaderName() : string                                 |
 |   + stop() : bool                  + outputSourceNames() : vector<string>                        |
 |   + push(EventBatch) : bool          <- plural: algorithm may emit N virtual sources             |
-|   + acceptsSource(string) : bool                                                                 |
 |   + acceptsPayload(BatchPayload) : bool  <<interface>>                                           |
+|   + supports_multi_root_source()   IAlgorithm                                                    |
+|     : bool                         -------------------------                                     |
 |                                          IAlgorithm                                              |
 |                                          -------------------------                               |
 |          ^                               + configure(Config)                                     |
-|          | extends                        + outputSources() : vector<string>                      |
+|          | extends (IWriter)              + outputSources() : vector<string>                      |
 |          |                                 <- declared after configure(), algorithm-owned          |
 |                                          + compute(AlignedSnapshot)                               |
 |                                            -> vector<AlgorithmOutput>                             |
@@ -73,8 +74,8 @@ name — indistinguishable to downstream writers from any real reader output.
 |   |  - running_ : atomic<bool>           |                                                       |
 |   |  ----------------------------------- |                                                       |
 |   |  + push(EventBatch)                  |                                                       |
-|   |  + acceptsSource(string)             |                                                       |
 |   |  + acceptsPayload(BatchPayload)      |                                                       |
+|   |  + supports_multi_root_source()      |                                                       |
 |   |  + fireCompute()           [priv]    |                                                       |
 |   |  + runIntervalWorker()     [priv]    |                                                       |
 |   +--------------------------------------+                                                       |
@@ -150,7 +151,7 @@ These are all the same pattern: **fan-in from real sources -> compute -> fan-out
  +---------------+     +-----------------------------------------------------------+
  |  Real Reader  |     |                  ChannelProcessor                          |
  |  (produces    |---->|  BASE INFRASTRUCTURE (shared, all algorithm types):        |
- |   EventBatch) |     |    acceptsSource()  -- filters to configured sources       |
+ |   EventBatch) |     |    RouteTable::acceptsSource() -- filters by input sources  |
  +---------------+     |    acceptsPayload() -- TimeSeriesPayload only              |
                        |    InputBuffer     -- per-source slot + freshness           |
                        |    alignment + trigger policies                             |
@@ -224,9 +225,9 @@ Every algorithm implementation gets these **for free** — none of these need to
 |---|---|
 | Parse `sources:` list from config | `MLDPChannelProcessorConfig` |
 | Parse `alignment` / `trigger` / `trigger-interval-sec` | `MLDPChannelProcessorConfig` |
-| `IWriter::acceptsSource(root_source)` — returns true iff `root_source in sources_` | `ChannelProcessor` base |
+| Source routing — `RouteTable::acceptsSource(writer_name, root_source_name)` — populated from `inputSourceNames()` at startup | Controller + `RouteTable` |
 | `IWriter::acceptsPayload(payload)` — returns true for `TimeSeriesPayload` only | `ChannelProcessor` base |
-| `IWriter::push(EventBatch)` — ingests into `InputBuffer`, fires trigger | `ChannelProcessor` base |
+| `IWriter::push(EventBatch)` — reads `ts->root_source_name`, ingests into `InputBuffer`, fires trigger | `ChannelProcessor` base |
 | `InputBuffer` — per-source slot, alignment policy | `ChannelProcessor` base |
 | Trigger logic — `any-update` / `all-updated` / `interval` worker thread | `ChannelProcessor` base |
 | Loop over `vector<AlgorithmOutput>`, emit one `bus_->push()` per entry | `ChannelProcessor` base |
@@ -372,9 +373,11 @@ namespace mldp_pvxs_driver::processor {
 // One virtual-PV emission from compute().  C++ algorithms fill payload directly.
 // Script bridges build payload from language-specific mldp.* tagged objects.
 struct AlgorithmOutput {
-    std::string             output_source;  // virtual PV root_source — named by algorithm
-    util::bus::BatchPayload payload;        // TimeSeriesPayload | SourceMetadataPayload |
-                                            // ConfigurationPayload | ConfigurationActivationPayload
+    std::string             output_source;  // virtual PV identity — set as root_source_name inside payload
+    util::bus::BatchPayload payload;        // TimeSeriesPayload        (.root_source_name = output_source)
+                                            // SourceMetadataPayload    (.root_source_name = output_source)
+                                            // ConfigurationPayload     (.root_source_name = output_source)
+                                            // ConfigurationActivationPayload (.configuration_name = output_source)
 };
 
 class IAlgorithm {
@@ -402,6 +405,16 @@ using IAlgorithmUPtr = std::unique_ptr<IAlgorithm>;
 
 } // namespace
 ```
+
+> **Payload identity rule** (post-refactor): `EventBatchStruct` has no `root_source` field.
+> Each payload variant carries its own identity:
+> - `TimeSeriesPayload::root_source_name`
+> - `SourceMetadataPayload::root_source_name`  ← named struct (not a map alias)
+> - `ConfigurationPayload::root_source_name`
+> - `ConfigurationActivationPayload::configuration_name`
+>
+> `fireCompute()` must set the identity field inside each payload before calling `bus_->push()`.
+> `getRootSourceName(batch)` helper (in `IDataBus.h`) extracts identity from any variant.
 
 ### 3. `AlignedSnapshot` — what `IAlgorithm::compute()` receives
 
@@ -462,10 +475,18 @@ public:
     virtual const std::string&              outputReaderName()  const noexcept = 0;
     // All root_sources this processor may emit — delegated from IAlgorithm::outputSources()
     virtual std::vector<std::string>        outputSourceNames() const noexcept = 0;
+    // All input root_sources this processor consumes — used by controller for route wiring
+    virtual const std::vector<std::string>& inputSourceNames()  const noexcept = 0;
 };
 
 using IChannelProcessorUPtr = std::unique_ptr<IChannelProcessor>;
 ```
+
+> **Note**: `IWriter` has no `acceptsSource(string)` method. Source filtering at the bus level
+> is done by `RouteTable::acceptsSource(writer_name, root_source)`. The controller registers
+> each `ChannelProcessor` as a writer; the route table handles input-source routing.
+> `inputSourceNames()` is exposed so the controller can populate the route table entries for
+> each processor at startup.
 
 ### 6. `ChannelProcessor` — base implementation (all infrastructure lives here)
 
@@ -484,16 +505,16 @@ public:
 
     // IWriter — all implemented here, never in algorithm
     std::string name()         const override { return config_.name(); }
-    bool        start()        noexcept override;
-    bool        stop()         noexcept override;
-    bool        push(const util::bus::EventBatch&) noexcept override;
-    bool        acceptsPayload(const util::bus::BatchPayload&) const override;
-    bool        acceptsSource(const std::string& root_source)  const override;
-    bool        supports_multi_root_source() const override { return true; }
+    void        start()        override;
+    void        stop()         noexcept override;
+    bool        push(util::bus::IDataBus::EventBatch) noexcept override;
+    bool        acceptsPayload(const util::bus::BatchPayload&) const noexcept override;
+    bool        supports_multi_root_source() const noexcept override { return true; }
 
     // IChannelProcessor
-    const std::string&       outputReaderName()  const noexcept override { return config_.name(); }
-    std::vector<std::string> outputSourceNames() const noexcept override { return algorithm_->outputSources(); }
+    const std::string&              outputReaderName()  const noexcept override { return config_.name(); }
+    std::vector<std::string>        outputSourceNames() const noexcept override { return algorithm_->outputSources(); }
+    const std::vector<std::string>& inputSourceNames()  const noexcept override { return config_.sources(); }
 
 private:
     void fireCompute();          // called by push() or interval worker
@@ -511,27 +532,24 @@ private:
 };
 ```
 
-**`acceptsSource()` impl**:
-```cpp
-bool ChannelProcessor::acceptsSource(const std::string& root_source) const {
-    const auto& srcs = config_.sources();
-    return std::find(srcs.begin(), srcs.end(), root_source) != srcs.end();
-}
-```
-
 **`acceptsPayload()` impl**:
 ```cpp
-bool ChannelProcessor::acceptsPayload(const util::bus::BatchPayload& p) const {
+bool ChannelProcessor::acceptsPayload(const util::bus::BatchPayload& p) const noexcept {
     return std::holds_alternative<util::bus::TimeSeriesPayload>(p);
 }
 ```
 
+> **Note**: There is no `acceptsSource()` on `IWriter`. Source filtering is handled upstream by
+> `RouteTable::acceptsSource(writer_name, root_source)`. The controller populates route table
+> entries for each processor's `inputSourceNames()` at startup so only matching batches arrive.
+
 **`push()` impl**:
 ```cpp
-bool ChannelProcessor::push(const util::bus::EventBatch& batch) noexcept {
+bool ChannelProcessor::push(util::bus::IDataBus::EventBatch batch) noexcept {
     const auto* ts = std::get_if<util::bus::TimeSeriesPayload>(&batch.payload);
     if (!ts) return true;
-    buffer_.ingest(batch.root_source, *ts);
+    // Identity is now on the payload, not the EventBatchStruct
+    buffer_.ingest(ts->root_source_name, *ts);
     if (config_.trigger() != TriggerPolicy::Interval) {
         if (auto snap = buffer_.trySnapshot(config_.trigger())) {
             fireCompute(*snap);
@@ -774,21 +792,32 @@ Base emits **one `bus_->push()`** per entry, passing `ao.payload` through unchan
 
 EventBatchStruct {
     reader_name  = config_.name()           // processor name — appears as "reader" in routes
-    root_source  = ao.output_source         // <- algorithm-owned virtual PV name
+    // NOTE: no root_source field — identity is carried inside the payload variant
     metadata     = {
         "processor_type":  algorithm_->algorithmType(),
         "processor_name":  config_.name(),
         "source_0": sources[0], "source_1": sources[1], ...
     }
     payload      = ao.payload               // <- full BatchPayload variant from algorithm/bridge
+                                            //    e.g. TimeSeriesPayload.root_source_name = ao.output_source
 }
 ```
+
+Identity of the virtual PV is set **inside the payload**, not on `EventBatchStruct`:
+- `TimeSeriesPayload.root_source_name`       = `ao.output_source`
+- `SourceMetadataPayload.root_source_name`   = `ao.output_source`
+- `ConfigurationPayload.root_source_name`    = `ao.output_source`
+- `ConfigurationActivationPayload.configuration_name` = `ao.output_source`
+
+`getRootSourceName(batch)` helper in `IDataBus.h` extracts identity from any payload variant.
 
 C++ algorithm example — `LinearTransformAlgorithm::compute()`:
 ```cpp
 return {{ output_source_, util::bus::TimeSeriesPayload{
-    { DataBatch{ {snapshot.reference_time}, {{output_column_, {result}}} } },
-    /*is_tabular=*/true, /*end_of_batch_group=*/true
+    .root_source_name = output_source_,
+    .frames = { DataBatch{ {snapshot.reference_time}, {{output_column_, {result}}} } },
+    .is_tabular = true,
+    .end_of_batch_group = true
 }}};
 ```
 
@@ -817,17 +846,23 @@ for (auto& [type, cfg] : controller_config_.processorEntries()) {
 for (auto& p : processors_) p->start();
 
 // In push() dispatch loop — processors treated as writers:
-// (existing writer dispatch already calls acceptsSource() + acceptsPayload())
+// Route table uses RouteTable::acceptsSource(name, getRootSourceName(batch))
+// and acceptsPayload() — same path as regular writers.
 // processors_ included alongside writers_ in the fan-out loop
 ```
 
-No route table changes needed.  Processors register under `name()` as writers.
+Processors register under `name()` as writers in the route table.
 Processor output re-enters bus with `reader_name = processor->name()`, naturally routed
 to downstream writers by the existing route table.
 
-**No circular route risk**: `acceptsSource()` checks only `config_.sources()` (input PVs).
-Algorithm output names are never in that list — route table matches `reader_name -> writers`
-so a processor's own virtual-PV outputs can never route back to itself.
+Route table wiring at startup must also register each processor's `inputSourceNames()` so that
+`RouteTable::acceptsSource(processor->name(), root_source)` correctly filters incoming batches
+to only the configured source PVs.
+
+**No circular route risk**: route table `acceptsSource` checks only `config_.sources()` (input PVs).
+Algorithm output names (`outputSourceNames()`) are emitted under `reader_name = processor->name()` —
+route table matches `reader_name -> writers`, so a processor's own virtual-PV outputs can never
+route back to itself as a writer input.
 
 ---
 
@@ -885,7 +920,7 @@ Script processor files listed in their respective plans:
 5. `IChannelProcessor` interface
 6. `ChannelProcessorFactory` + `REGISTER_ALGORITHM` macro
 7. `InputBuffer` (`latest-value` + `all-updated` only) + unit tests
-8. `ChannelProcessor` base class (`acceptsSource`, `acceptsPayload`, `push`, `fireCompute`, `start`/`stop`)
+8. `ChannelProcessor` base class (`acceptsPayload`, `push` using `ts->root_source_name`, `fireCompute`, `start`/`stop`)
 9. `MLDPPVXSControllerConfig::processorEntries()` + controller `processors_` wiring
 10. `LinearTransformAlgorithm` (validates full pipeline end-to-end)
 11. Integration test: real reader -> `linear-transform` processor -> metadata writer
