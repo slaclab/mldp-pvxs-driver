@@ -8,6 +8,11 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
+/**
+ * @file AlgorithmOutput.h
+ * @brief Value type describing one algorithm-produced output payload.
+ */
+
 #pragma once
 
 #include <string>
@@ -16,16 +21,18 @@
 
 namespace mldp_pvxs_driver::processor {
 
-// One virtual-PV emission from IAlgorithm::compute().
-// output_source must be set as the identity field inside payload:
-//   TimeSeriesPayload.root_source_name = output_source
-//   SourceMetadataPayload.root_source_name = output_source
-//   ConfigurationPayload.root_source_name = output_source
-//   ConfigurationActivationPayload.configuration_name = output_source
+/**
+ * @struct AlgorithmOutput
+ * @brief One virtual-PV emission returned by an algorithm computation.
+ * @details
+ * The @ref output_source value must also be copied into the identity field of
+ * the emitted payload variant so downstream bus consumers can associate the
+ * payload with the generated virtual source.
+ */
 struct AlgorithmOutput
 {
-    std::string             output_source;
-    util::bus::BatchPayload payload;
+    std::string             output_source; ///< Generated source name for this output payload.
+    util::bus::BatchPayload payload;       ///< Bus payload to publish for @ref output_source.
 };
 
 } // namespace mldp_pvxs_driver::processor

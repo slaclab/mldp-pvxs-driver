@@ -8,15 +8,24 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
+/**
+ * @file TriggerPolicy.h
+ * @brief Supported policies for deciding when to emit a snapshot.
+ */
+
 #pragma once
 
 namespace mldp_pvxs_driver::processor {
 
+/**
+ * @enum TriggerPolicy
+ * @brief Defines when buffered input is eligible to produce a snapshot.
+ */
 enum class TriggerPolicy
 {
-    AnyUpdate,
-    AllUpdated,
-    Interval,
+    AnyUpdate, ///< Emit whenever any required source has produced data.
+    AllUpdated, ///< Emit only after every required source is freshly updated.
+    Interval, ///< Emit on a periodic timer using the latest buffered values.
 };
 
 } // namespace mldp_pvxs_driver::processor

@@ -8,6 +8,11 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
+/**
+ * @file AlignedSnapshot.h
+ * @brief Snapshot of source batches aligned for one algorithm invocation.
+ */
+
 #pragma once
 
 #include <string>
@@ -17,10 +22,14 @@
 
 namespace mldp_pvxs_driver::processor {
 
+/**
+ * @struct AlignedSnapshot
+ * @brief Collection of source batches selected for a single compute step.
+ */
 struct AlignedSnapshot
 {
-    std::unordered_map<std::string, util::bus::DataBatch> channels;
-    util::bus::BusTimestamp                               reference_time;
+    std::unordered_map<std::string, util::bus::DataBatch> channels;       ///< Latest batch per required source.
+    util::bus::BusTimestamp                               reference_time; ///< Alignment reference timestamp for the snapshot.
 };
 
 } // namespace mldp_pvxs_driver::processor

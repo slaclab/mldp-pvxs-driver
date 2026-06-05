@@ -501,6 +501,8 @@ add_library(lib${PROJECT_NAME}
     "${CMAKE_CURRENT_SOURCE_DIR}/src/util/http/HttpUrlUtils.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/util/time/DateTimeUtils.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/config/Config.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/processor/InputBuffer.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/processor/MLDPChannelProcessorConfig.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/shared/EpicsReaderBase.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/pvxs/EpicsPVXSReader.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/base/EpicsBaseReader.cpp"
@@ -673,6 +675,8 @@ if(MLDP_PVXS_DRIVER_TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/test/metrics/periodic_metrics_dumper_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/metrics/metrics_histogram_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/metrics/system_metrics_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/processor/InputBufferTest.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/processor/MLDPChannelProcessorConfigTest.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/ConfigPrinter.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/PeriodicMetricsDumper.cpp"
     )
