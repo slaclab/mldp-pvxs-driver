@@ -918,13 +918,20 @@ Script processor files listed in their respective plans:
 
 ## Open Questions
 
-| # | Question | Impact |
-|---|---|---|
-| 1 | Should emitted `EventBatch` carry a `SourceMetadataPayload` push before `TimeSeriesPayload`? Downstream writers may expect metadata before time-series for a new source. | Phase 1 |
-| 2 | Should `output-source` shadowing a real reader's `root_source` be a hard error (config throw) or a warning? | Phase 1 config validation |
-| 3 | Can a processor feed another processor (chain)? Route table allows it; circular chain detection needed. | Phase 5 |
-| 4 | Multi-controller: if two controllers share one bus, processor output is visible to both controllers' writers. Single-controller assumption safe? | Architecture |
-| 5 | `MovingAverageAlgorithm` accumulates state across calls — should `stop()`/`start()` clear the window? | Phase 3 |
+No open questions — all resolved.
+
+**Resolved**: Script authors already know all PV metadata — no automatic `SourceMetadataPayload` injection needed.
+Scripts emit `mldp.source_metadata()` explicitly when they want downstream writers to receive units/description.
+
+**Resolved**: `output-source` shadowing a real reader's `root_source` is a **hard error** (throw at config validation).
+Script processors may only emit virtual source names — colliding with a real reader `root_source` is always a configuration mistake.
+
+**Resolved**: Processor chaining is **allowed** — a virtual PV emitted by one processor may be listed in another processor's `sources:`.
+Circular chains (processor A feeds B feeds A) must be detected at startup and throw a hard error.
+
+**Resolved**: Single-controller assumption is safe — CLI always creates exactly one controller per process.
+
+**Resolved**: `MovingAverageAlgorithm::stop()` clears the sliding window. Fresh start on each `start()` cycle.
 
 ---
 
