@@ -140,8 +140,7 @@ struct EnumDataColumn
  * batch.columns.push_back(std::move(col));
  *
  * IDataBus::EventBatch ev;
- * ev.root_source = "sensor:temperature";
- * ev.frames.push_back(std::move(batch));
+ * ev.payload = TimeSeriesPayload{.root_source_name = "sensor:temperature", .frames = {std::move(batch)}};
  * bus->push(std::move(ev));
  * ```
  */

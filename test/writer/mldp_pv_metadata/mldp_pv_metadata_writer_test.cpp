@@ -178,11 +178,11 @@ TEST(MLDPPVMetadataWriterTest, PushSourceMetadataCallsSavePvMetadata)
     entry.attributes  = {{"key1", "val1"}};
 
     SourceMetadataPayload meta_payload;
-    meta_payload["MY:PV"] = std::move(entry);
+    meta_payload.root_source_name = "MY:PV";
+    meta_payload.sources["MY:PV"] = std::move(entry);
 
     IDataBus::EventBatch batch;
     batch.reader_name = "test_reader";
-    batch.root_source = "MY:PV";
     batch.payload     = std::move(meta_payload);
 
     EXPECT_TRUE(writer->push(std::move(batch)));
@@ -224,8 +224,7 @@ TEST(MLDPPVMetadataWriterTest, PushNonMetadataPayloadIsIgnored)
 
     IDataBus::EventBatch batch;
     batch.reader_name = "test_reader";
-    batch.root_source = "SOME:PV";
-    batch.payload     = TimeSeriesPayload{};
+    batch.payload     = TimeSeriesPayload{.root_source_name = "SOME:PV"};
 
     const bool result = writer->push(std::move(batch));
     EXPECT_TRUE(result);
@@ -263,11 +262,11 @@ TEST(MLDPPVMetadataWriterTest, GracefulOnUnreachableEndpoint)
     entry.description = std::string("unreachable test pv");
 
     SourceMetadataPayload meta_payload;
-    meta_payload["UNREACHABLE:PV"] = std::move(entry);
+    meta_payload.root_source_name       = "UNREACHABLE:PV";
+    meta_payload.sources["UNREACHABLE:PV"] = std::move(entry);
 
     IDataBus::EventBatch batch;
     batch.reader_name = "test_reader";
-    batch.root_source = "UNREACHABLE:PV";
     batch.payload     = std::move(meta_payload);
 
     // push must not throw even if the RPC will eventually fail

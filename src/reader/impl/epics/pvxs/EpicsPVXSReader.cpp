@@ -171,7 +171,6 @@ void EpicsPVXSReader::processDefaultMode(const std::string& pvName, const pvxs::
     EpicsMLDPConversion::convertPVToDataBatch(valueField, &batch, pvName);
 
     IDataBus::EventBatch eventBatch;
-    eventBatch.root_source = pvName;
     // Build merged metadata: reader-level base, PV-level overrides
     auto merged = config_.staticMetadata();
     for (const auto& pv_cfg : config_.pvs())
@@ -186,7 +185,8 @@ void EpicsPVXSReader::processDefaultMode(const std::string& pvName, const pvxs::
     eventBatch.metadata = std::move(merged);
     eventBatch.reader_name = name();
     eventBatch.payload = TimeSeriesPayload{
-        .frames = {std::move(batch)},
+        .root_source_name = pvName,
+        .frames           = {std::move(batch)},
     };
     emitted = 1;
     bus_->push(std::move(eventBatch));
@@ -221,17 +221,15 @@ void EpicsPVXSReader::processSlacBsasTableMode(const std::string&     pvName,
     }
 
     IDataBus::EventBatch tableBatch;
-    tableBatch.root_source = pvName;
     tableBatch.metadata = merged_meta;
-    tableBatch.payload = TimeSeriesPayload{.is_tabular = true};
+    tableBatch.payload = TimeSeriesPayload{.root_source_name = pvName, .is_tabular = true};
     std::size_t colsInBatch = 0;
 
     auto resetBatch = [&tableBatch, &pvName, &colsInBatch, merged_meta]()
     {
         tableBatch = IDataBus::EventBatch{};
-        tableBatch.root_source = pvName;
         tableBatch.metadata = merged_meta;
-        tableBatch.payload = TimeSeriesPayload{.is_tabular = true};
+        tableBatch.payload = TimeSeriesPayload{.root_source_name = pvName, .is_tabular = true};
         colsInBatch = 0;
     };
 
@@ -276,12 +274,12 @@ void EpicsPVXSReader::processSlacBsasTableMode(const std::string&     pvName,
     // Signal end of this NTTable update round so downstream writers (e.g. HDF5)
     // know all column batches have been emitted and can flush accumulated state.
     IDataBus::EventBatch markerBatch;
-    markerBatch.root_source = pvName;
     markerBatch.metadata = merged_meta;
     markerBatch.reader_name = name();
     markerBatch.payload = TimeSeriesPayload{
+        .root_source_name   = pvName,
         .end_of_batch_group = true,
-        .is_tabular = true,
+        .is_tabular         = true,
     };
     bus_->push(std::move(markerBatch));
 }

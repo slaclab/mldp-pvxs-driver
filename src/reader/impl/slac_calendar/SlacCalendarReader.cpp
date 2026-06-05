@@ -148,6 +148,7 @@ void SlacCalendarReader::pushEvent(const nlohmann::json& ev, const std::string& 
 {
     // --- ConfigurationPayload ---
     ConfigurationPayload cfg_payload;
+    cfg_payload.root_source_name    = config_.name();
     cfg_payload.configuration_name = ev["program_name"].get<std::string>();
     cfg_payload.category           = ev["calendar"].get<std::string>();
 
@@ -200,7 +201,6 @@ void SlacCalendarReader::pushEvent(const nlohmann::json& ev, const std::string& 
     {
         IDataBus::EventBatch b;
         b.reader_name = config_.name();
-        b.root_source = config_.name();
         b.payload     = std::move(cfg_payload);
         bus_->push(std::move(b));
     }
@@ -227,7 +227,6 @@ void SlacCalendarReader::pushEvent(const nlohmann::json& ev, const std::string& 
     {
         IDataBus::EventBatch b;
         b.reader_name = config_.name();
-        b.root_source = config_.name();
         b.payload     = std::move(act_payload);
         bus_->push(std::move(b));
     }

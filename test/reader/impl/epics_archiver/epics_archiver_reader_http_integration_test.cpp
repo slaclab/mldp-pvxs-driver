@@ -40,6 +40,7 @@ using mldp_pvxs_driver::util::bus::IDataBus;
 // Backward compatibility alias
 using MockEventBusPush = mldp_pvxs_driver::test::mock::MockDataBus;
 using mldp_pvxs_driver::util::bus::asTimeSeries;
+using mldp_pvxs_driver::util::bus::getRootSourceName;
 
 // Helper: get first DataColumn with a vector<double> from a DataBatch.
 auto findDoubleCol   = [](const DataBatch& b, std::size_t idx) -> const DataColumn& { return b.columns.at(idx); };
@@ -84,7 +85,7 @@ TEST(EpicsArchiverReaderHttpIntegrationTest, FetchesPbHttpStreamAndPublishesBusE
     const auto batches = bus->snapshot();
     ASSERT_EQ(batches.size(), 1u);
     ASSERT_EQ(asTimeSeries(batches[0]).frames.size(), 4u);
-    EXPECT_EQ(batches[0].root_source, "TEST:PV:DOUBLE");
+    EXPECT_EQ(getRootSourceName(batches[0]), "TEST:PV:DOUBLE");
 
     uint64_t prev_epoch = 0;
     uint64_t prev_nano = 0;
@@ -215,7 +216,7 @@ TEST(EpicsArchiverReaderHttpIntegrationTest, FetchesMixedTypedPvSetUsingPvSuffix
     std::map<std::string, const IDataBus::EventBatch*> batches_by_source;
     for (const auto& batch : batches)
     {
-        batches_by_source.emplace(batch.root_source, &batch);
+        batches_by_source.emplace(getRootSourceName(batch), &batch);
     }
 
     ASSERT_TRUE(batches_by_source.count(pv_string));
@@ -425,7 +426,7 @@ TEST(EpicsArchiverReaderHttpIntegrationTest, StaticAndPerPvMetadataMergedIntoEve
     bool found = false;
     for (const auto& batch : batches)
     {
-        if (batch.root_source != "TEST:PV:DOUBLE")
+        if (getRootSourceName(batch) != "TEST:PV:DOUBLE")
             continue;
         found = true;
         // Reader-level key not overridden by per-PV.

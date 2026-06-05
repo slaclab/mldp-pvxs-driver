@@ -142,7 +142,9 @@ std::string makeControllerYaml(const std::string& annotation_url,
        << "        timeout-sec: 5.0\n"
        << "        source-name-column: channelName\n"
        << "        tags-column: tags\n"
-       << "        rescan-interval-sec: 0.0\n";
+       << "        rescan-interval-sec: 0.0\n"
+       << "        pvs:\n"
+       << "          - name: BPMS:IN20:221:TMIT\n";
     return ss.str();
 }
 

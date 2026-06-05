@@ -169,9 +169,9 @@ pvxs::Value EpicsDSMetadataReader::buildNTURI() const
 void EpicsDSMetadataReader::processResult(pvxs::Value result)
 {
     auto payload = parseNTTable(result);
+    payload.root_source_name = config_.name();
     bus_->push(IDataBus::EventBatch{
         .reader_name = config_.name(),
-        .root_source = config_.name(),
         .payload     = std::move(payload),
     });
 }
@@ -272,11 +272,11 @@ void EpicsDSMetadataReader::runPVListSweep(std::stop_token st) noexcept
         entry.attributes = std::move(attributes);
 
         SourceMetadataPayload payload;
-        payload.emplace(pv.name, std::move(entry));
+        payload.root_source_name = pv.name;
+        payload.sources.emplace(pv.name, std::move(entry));
 
         bus_->push(IDataBus::EventBatch{
             .reader_name = config_.name(),
-            .root_source = pv.name,
             .payload     = std::move(payload),
         });
     }
@@ -459,7 +459,7 @@ EpicsDSMetadataReader::parseNTTable(const pvxs::Value& result) const
             entry.attributes[std::string(labels[i])] = colData[i][r];
         }
 
-        payload[key] = std::move(entry);
+        payload.sources[key] = std::move(entry);
     }
 
     return payload;

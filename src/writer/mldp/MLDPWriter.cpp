@@ -173,7 +173,8 @@ bool MLDPWriter::push(util::bus::IDataBus::EventBatch batch) noexcept
         // update round.  Nothing to forward to gRPC — skip silently.
         return true;
     }
-    if (batch.root_source.empty() || ts_mut.frames.empty())
+    const std::string rootSourceName = ts_mut.root_source_name;
+    if (rootSourceName.empty() || ts_mut.frames.empty())
     {
         return false;
     }
@@ -186,12 +187,12 @@ bool MLDPWriter::push(util::bus::IDataBus::EventBatch batch) noexcept
         {
             metric_call(metrics_, [&](auto& m)
                         {
-                            m.incrementBusFailures(1.0, {{"source", batch.root_source}});
+                            m.incrementBusFailures(1.0, {{"source", rootSourceName}});
                         });
             continue;
         }
         const auto idx = nextChannel_.fetch_add(1, std::memory_order_relaxed) % channels_.size();
-        QueueItem  item{batch.root_source, metadata, std::move(frame)};
+        QueueItem  item{rootSourceName, metadata, std::move(frame)};
         {
             std::lock_guard lk(channels_[idx]->mutex);
             channels_[idx]->items.push_back(std::move(item));

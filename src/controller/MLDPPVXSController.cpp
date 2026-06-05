@@ -200,7 +200,9 @@ bool MLDPPVXSController::push(EventBatch batch_values)
         return false;
     }
 
-    if (batch_values.root_source.empty())
+    const std::string rootSource = getRootSourceName(batch_values);
+
+    if (rootSource.empty())
     {
         warnf(*logger_, "Received batch with empty root source, skipping push.");
         return false;
@@ -211,20 +213,18 @@ bool MLDPPVXSController::push(EventBatch batch_values)
         const auto& ts = asTimeSeries(batch_values);
         if (ts.frames.empty() && !ts.end_of_batch_group)
         {
-            warnf(*logger_, "Received empty batch for root source {}, skipping push.", batch_values.root_source);
+            warnf(*logger_, "Received empty batch for root source {}, skipping push.", rootSource);
             return false;
         }
     }
 
     if (!route_table_.isAllToAll() && batch_values.reader_name.empty())
     {
-        warnf(*logger_, "Batch from source '{}' has empty reader_name — routing may drop it", batch_values.root_source);
+        warnf(*logger_, "Batch from source '{}' has empty reader_name — routing may drop it", rootSource);
     }
 
     // Parallel fan-out: submit one task per writer to the thread pool so all
-    // writers run concurrently.  Every writer receives its own copy of the
-    // batch;
-    const std::string rootSource = batch_values.root_source;
+    // writers run concurrently.  Every writer receives its own copy of the batch.
     const std::size_t n = writers_.size();
 
     std::vector<std::future<bool>> futures;
@@ -237,7 +237,7 @@ bool MLDPPVXSController::push(EventBatch batch_values)
         if (!route_table_.accepts(writers_[i]->name(), batch_values.reader_name))
             continue;
 
-        if (!route_table_.acceptsSource(writers_[i]->name(), batch_values.root_source))
+        if (!route_table_.acceptsSource(writers_[i]->name(), rootSource))
             continue;
 
         if (!writers_[i]->acceptsPayload(batch_values.payload))
