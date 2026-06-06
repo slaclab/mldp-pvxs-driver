@@ -681,7 +681,7 @@ if(MLDP_PVXS_DRIVER_TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/test/processor/ChannelProcessorTest.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/processor/InputBufferTest.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/processor/LinearTransformAlgorithmTest.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/processor/impl/LinearTransformAlgorithm.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/algorithms/LinearTransformAlgorithm.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/processor/MLDPChannelProcessorConfigTest.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/ConfigPrinter.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/PeriodicMetricsDumper.cpp"
@@ -701,6 +701,7 @@ if(MLDP_PVXS_DRIVER_TESTS)
     elseif(TARGET httplib)
         target_link_libraries(${PROJECT_NAME}_test PRIVATE httplib)
     endif()
+    target_include_directories(${PROJECT_NAME}_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/test")
     target_compile_definitions(${PROJECT_NAME}_test PRIVATE
         MLDP_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/data"
     )

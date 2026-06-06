@@ -8,7 +8,7 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
-#include <processor/impl/LinearTransformAlgorithm.h>
+#include <mock/algorithms/LinearTransformAlgorithm.h>
 
 #include <processor/ChannelProcessorFactory.h>
 

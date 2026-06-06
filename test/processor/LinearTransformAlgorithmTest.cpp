@@ -10,7 +10,7 @@
 
 #include <gtest/gtest.h>
 
-#include <processor/impl/LinearTransformAlgorithm.h>
+#include <mock/algorithms/LinearTransformAlgorithm.h>
 
 #include "../config/test_config_helpers.h"
 

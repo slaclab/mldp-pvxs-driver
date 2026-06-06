@@ -2,6 +2,7 @@ CompileFlags:
   CompilationDatabase: build
   Add:
     - -I/workspace/include
+    - -I/workspace/test
     - -I/workspace/ext/BS_thread_pool/include
     - -I/workspace/ext/rapidyaml/include
     - -I/workspace/build
