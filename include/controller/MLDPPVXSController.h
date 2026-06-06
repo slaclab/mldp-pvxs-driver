@@ -164,7 +164,8 @@ public:
 private:
     MLDPPVXSControllerConfig                              config_;      ///< Typed controller configuration.
     std::shared_ptr<mldp_pvxs_driver::util::log::ILogger> logger_;      ///< Logger instance for controller logging.
-    std::shared_ptr<BS::light_thread_pool>                thread_pool_; ///< Shared worker pool.
+    std::shared_ptr<BS::light_thread_pool>                 thread_pool_;       ///< Writer fan-out pool.
+    std::vector<std::shared_ptr<BS::light_thread_pool>>   processor_pools_;   ///< One dedicated 1-thread pool per processor (each algorithm runs isolated).
     std::shared_ptr<metrics::Metrics>                     metrics_;     ///< Shared metrics collector/exposer.
     std::atomic<bool>                                     running_{false};
     std::vector<reader::ReaderUPtr>                       readers_;     ///< Owned reader instances.

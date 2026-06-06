@@ -95,6 +95,7 @@ MLDPPVXSController::~MLDPPVXSController()
         stop();
     }
     tracef(*logger_, "~MLDPPVXSController [tid={}]: resetting thread_pool", std::this_thread::get_id());
+    processor_pools_.clear();
     thread_pool_.reset();
     tracef(*logger_, "~MLDPPVXSController [tid={}]: resetting metrics", std::this_thread::get_id());
     metrics_.reset();
@@ -142,9 +143,23 @@ void MLDPPVXSController::start()
         writers_.push_back(std::move(w));
     }
 
+    // Each processor gets its own dedicated 1-thread pool so algorithms run isolated
+    // and independently. Separate from thread_pool_ (writer fan-out) to prevent
+    // deadlock: processor tasks call bus_->push() which submits to thread_pool_ and
+    // blocks waiting for futures — sharing a pool would deadlock.
+    std::size_t proc_idx = 0;
     for (const auto& [type, processorNode] : config_.processorEntries())
     {
-        auto batch = processor::ChannelProcessorFactory::create(type, processorNode, shared_from_this(), metrics_);
+        auto pool = std::make_shared<BS::light_thread_pool>(
+            1,
+            [proc_idx](std::size_t)
+            {
+                BS::this_thread::set_os_thread_name("proc-" + std::to_string(proc_idx));
+            });
+        processor_pools_.push_back(pool);
+        ++proc_idx;
+
+        auto batch = processor::ChannelProcessorFactory::create(type, processorNode, shared_from_this(), metrics_, std::move(pool));
         processors_.insert(processors_.end(),
                            std::make_move_iterator(batch.begin()),
                            std::make_move_iterator(batch.end()));

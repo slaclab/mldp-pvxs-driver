@@ -16,6 +16,7 @@
 
 #include "../config/test_config_helpers.h"
 
+#include <algorithm>
 #include <chrono>
 #include <memory>
 #include <mutex>
@@ -179,17 +180,21 @@ TEST(MLDPPVXSControllerProcessorIntegrationTest, ProcessorOutputReachesWriter)
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
     while (std::chrono::steady_clock::now() < deadline)
     {
-        std::lock_guard<std::mutex> lk(mldp_pvxs_driver::writer::TestCaptureWriter::mutex_);
-        if (!mldp_pvxs_driver::writer::TestCaptureWriter::received_sources.empty())
-            break;
+        {
+            std::lock_guard<std::mutex> lk(mldp_pvxs_driver::writer::TestCaptureWriter::mutex_);
+            const auto& src = mldp_pvxs_driver::writer::TestCaptureWriter::received_sources;
+            if (std::find(src.begin(), src.end(), "VIRTUAL:LINEAR:OUT") != src.end())
+                break;
+        }
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
 
     {
         std::lock_guard<std::mutex> lk(mldp_pvxs_driver::writer::TestCaptureWriter::mutex_);
-        ASSERT_FALSE(mldp_pvxs_driver::writer::TestCaptureWriter::received_sources.empty());
-        EXPECT_EQ(mldp_pvxs_driver::writer::TestCaptureWriter::received_sources.front(),
-                  "VIRTUAL:LINEAR:OUT");
+        const auto& sources = mldp_pvxs_driver::writer::TestCaptureWriter::received_sources;
+        ASSERT_FALSE(sources.empty());
+        EXPECT_NE(std::find(sources.begin(), sources.end(), "VIRTUAL:LINEAR:OUT"), sources.end())
+            << "Expected VIRTUAL:LINEAR:OUT in received sources";
     }
 
     controller->stop();

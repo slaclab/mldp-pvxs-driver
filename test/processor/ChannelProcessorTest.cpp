@@ -123,10 +123,16 @@ public:
     }
 };
 
+std::shared_ptr<BS::light_thread_pool> makePool()
+{
+    return std::make_shared<BS::light_thread_pool>(1);
+}
+
 } // namespace
 
 TEST(ChannelProcessorTest, AnyUpdatePushCausesCompute)
 {
+    auto pool = makePool();
     auto bus = std::make_shared<CaptureBus>();
     auto algorithm = std::make_unique<StubAlgorithm>();
     auto* algorithm_ptr = algorithm.get();
@@ -134,7 +140,8 @@ TEST(ChannelProcessorTest, AnyUpdatePushCausesCompute)
     ChannelProcessor processor(MLDPChannelProcessorConfig(makeProcessorConfig()),
                                std::move(algorithm),
                                bus,
-                               nullptr);
+                               nullptr,
+                               pool);
     processor.start();
 
     EventBatchStruct batch;
@@ -142,24 +149,28 @@ TEST(ChannelProcessorTest, AnyUpdatePushCausesCompute)
     batch.payload = makeTimeSeriesPayload("SRC:A");
 
     EXPECT_TRUE(processor.push(std::move(batch)));
+    pool->wait();
     EXPECT_EQ(algorithm_ptr->call_count, 1);
     ASSERT_EQ(bus->batches.size(), 1u);
 }
 
 TEST(ChannelProcessorTest, AnyUpdateOutputReaderName)
 {
+    auto pool = makePool();
     auto bus = std::make_shared<CaptureBus>();
     auto algorithm = std::make_unique<StubAlgorithm>();
 
     ChannelProcessor processor(MLDPChannelProcessorConfig(makeProcessorConfig()),
                                std::move(algorithm),
                                bus,
-                               nullptr);
+                               nullptr,
+                               pool);
     processor.start();
 
     EventBatchStruct batch;
     batch.payload = makeTimeSeriesPayload("SRC:A");
     ASSERT_TRUE(processor.push(std::move(batch)));
+    pool->wait();
 
     ASSERT_EQ(bus->batches.size(), 1u);
     EXPECT_EQ(bus->batches.front().reader_name, "test-proc");
@@ -167,18 +178,21 @@ TEST(ChannelProcessorTest, AnyUpdateOutputReaderName)
 
 TEST(ChannelProcessorTest, AnyUpdateOutputPayloadType)
 {
+    auto pool = makePool();
     auto bus = std::make_shared<CaptureBus>();
     auto algorithm = std::make_unique<StubAlgorithm>();
 
     ChannelProcessor processor(MLDPChannelProcessorConfig(makeProcessorConfig()),
                                std::move(algorithm),
                                bus,
-                               nullptr);
+                               nullptr,
+                               pool);
     processor.start();
 
     EventBatchStruct batch;
     batch.payload = makeTimeSeriesPayload("SRC:A");
     ASSERT_TRUE(processor.push(std::move(batch)));
+    pool->wait();
 
     ASSERT_EQ(bus->batches.size(), 1u);
     ASSERT_TRUE(std::holds_alternative<TimeSeriesPayload>(bus->batches.front().payload));
@@ -188,6 +202,7 @@ TEST(ChannelProcessorTest, AnyUpdateOutputPayloadType)
 
 TEST(ChannelProcessorTest, NonTSPayloadAcceptedNoCompute)
 {
+    auto pool = makePool();
     auto bus = std::make_shared<CaptureBus>();
     auto algorithm = std::make_unique<StubAlgorithm>();
     auto* algorithm_ptr = algorithm.get();
@@ -195,19 +210,22 @@ TEST(ChannelProcessorTest, NonTSPayloadAcceptedNoCompute)
     ChannelProcessor processor(MLDPChannelProcessorConfig(makeProcessorConfig()),
                                std::move(algorithm),
                                bus,
-                               nullptr);
+                               nullptr,
+                               pool);
     processor.start();
 
     EventBatchStruct batch;
     batch.payload = SourceMetadataPayload{.root_source_name = "SRC:A"};
 
     EXPECT_TRUE(processor.push(std::move(batch)));
+    pool->wait();
     EXPECT_EQ(algorithm_ptr->call_count, 0);
     EXPECT_TRUE(bus->batches.empty());
 }
 
 TEST(ChannelProcessorTest, AllUpdatedNoComputeUntilBothFresh)
 {
+    auto pool = makePool();
     auto bus = std::make_shared<CaptureBus>();
     auto algorithm = std::make_unique<StubAlgorithm>();
     auto* algorithm_ptr = algorithm.get();
@@ -216,18 +234,21 @@ TEST(ChannelProcessorTest, AllUpdatedNoComputeUntilBothFresh)
         MLDPChannelProcessorConfig(makeProcessorConfig("all-updated", "  - SRC:B\n")),
         std::move(algorithm),
         bus,
-        nullptr);
+        nullptr,
+        pool);
     processor.start();
 
     EventBatchStruct batch;
     batch.payload = makeTimeSeriesPayload("SRC:A");
 
     EXPECT_TRUE(processor.push(std::move(batch)));
+    pool->wait();
     EXPECT_EQ(algorithm_ptr->call_count, 0);
 }
 
 TEST(ChannelProcessorTest, AllUpdatedComputeAfterBothFresh)
 {
+    auto pool = makePool();
     auto bus = std::make_shared<CaptureBus>();
     auto algorithm = std::make_unique<StubAlgorithm>();
     auto* algorithm_ptr = algorithm.get();
@@ -236,7 +257,8 @@ TEST(ChannelProcessorTest, AllUpdatedComputeAfterBothFresh)
         MLDPChannelProcessorConfig(makeProcessorConfig("all-updated", "  - SRC:B\n")),
         std::move(algorithm),
         bus,
-        nullptr);
+        nullptr,
+        pool);
     processor.start();
 
     EventBatchStruct batch_a;
@@ -246,12 +268,14 @@ TEST(ChannelProcessorTest, AllUpdatedComputeAfterBothFresh)
 
     ASSERT_TRUE(processor.push(std::move(batch_a)));
     ASSERT_TRUE(processor.push(std::move(batch_b)));
+    pool->wait();
     EXPECT_EQ(algorithm_ptr->call_count, 1);
     ASSERT_EQ(bus->batches.size(), 1u);
 }
 
 TEST(ChannelProcessorTest, AllUpdatedFlagsResetAfterCompute)
 {
+    auto pool = makePool();
     auto bus = std::make_shared<CaptureBus>();
     auto algorithm = std::make_unique<StubAlgorithm>();
     auto* algorithm_ptr = algorithm.get();
@@ -260,7 +284,8 @@ TEST(ChannelProcessorTest, AllUpdatedFlagsResetAfterCompute)
         MLDPChannelProcessorConfig(makeProcessorConfig("all-updated", "  - SRC:B\n")),
         std::move(algorithm),
         bus,
-        nullptr);
+        nullptr,
+        pool);
     processor.start();
 
     EventBatchStruct batch_a1;
@@ -272,35 +297,46 @@ TEST(ChannelProcessorTest, AllUpdatedFlagsResetAfterCompute)
 
     ASSERT_TRUE(processor.push(std::move(batch_a1)));
     ASSERT_TRUE(processor.push(std::move(batch_b)));
+    pool->wait();
     ASSERT_TRUE(processor.push(std::move(batch_a2)));
+    pool->wait();
 
     EXPECT_EQ(algorithm_ptr->call_count, 1);
 }
 
 TEST(ChannelProcessorTest, StoppedProcessorPushReturnsFalse)
 {
+    auto pool = makePool();
     auto bus = std::make_shared<CaptureBus>();
     auto algorithm = std::make_unique<StubAlgorithm>();
+    auto* algorithm_ptr = algorithm.get();
 
     ChannelProcessor processor(MLDPChannelProcessorConfig(makeProcessorConfig()),
                                std::move(algorithm),
                                bus,
-                               nullptr);
+                               nullptr,
+                               pool);
 
+    // push before start: task is enqueued but running_=false so it silently returns
     EventBatchStruct batch_before_start;
     batch_before_start.payload = makeTimeSeriesPayload("SRC:A");
-    EXPECT_FALSE(processor.push(std::move(batch_before_start)));
+    EXPECT_TRUE(processor.push(std::move(batch_before_start)));
+    pool->wait();
+    EXPECT_EQ(algorithm_ptr->call_count, 0);
 
     processor.start();
     processor.stop();
 
     EventBatchStruct batch_after_stop;
     batch_after_stop.payload = makeTimeSeriesPayload("SRC:A");
-    EXPECT_FALSE(processor.push(std::move(batch_after_stop)));
+    EXPECT_TRUE(processor.push(std::move(batch_after_stop)));
+    pool->wait();
+    EXPECT_EQ(algorithm_ptr->call_count, 0);
 }
 
 TEST(ChannelProcessorTest, MultipleOutputsAllPushed)
 {
+    auto pool = makePool();
     auto bus = std::make_shared<CaptureBus>();
     auto algorithm = std::make_unique<StubAlgorithm>();
     algorithm->configured_outputs = {"VIRTUAL:ONE", "VIRTUAL:TWO"};
@@ -308,13 +344,15 @@ TEST(ChannelProcessorTest, MultipleOutputsAllPushed)
     ChannelProcessor processor(MLDPChannelProcessorConfig(makeProcessorConfig()),
                                std::move(algorithm),
                                bus,
-                               nullptr);
+                               nullptr,
+                               pool);
     processor.start();
 
     EventBatchStruct batch;
     batch.payload = makeTimeSeriesPayload("SRC:A");
 
     ASSERT_TRUE(processor.push(std::move(batch)));
+    pool->wait();
     ASSERT_EQ(bus->batches.size(), 2u);
     EXPECT_EQ(std::get<TimeSeriesPayload>(bus->batches[0].payload).root_source_name,
               "VIRTUAL:ONE");
@@ -324,18 +362,41 @@ TEST(ChannelProcessorTest, MultipleOutputsAllPushed)
 
 TEST(ChannelProcessorTest, ComputeExceptionIsSwallowed)
 {
+    auto pool = makePool();
     auto bus = std::make_shared<CaptureBus>();
     auto algorithm = std::make_unique<ThrowingAlgorithm>();
 
     ChannelProcessor processor(MLDPChannelProcessorConfig(makeProcessorConfig()),
                                std::move(algorithm),
                                bus,
-                               nullptr);
+                               nullptr,
+                               pool);
     processor.start();
 
     EventBatchStruct batch;
     batch.payload = makeTimeSeriesPayload("SRC:A");
 
     EXPECT_TRUE(processor.push(std::move(batch)));
+    pool->wait();
     EXPECT_TRUE(bus->batches.empty());
+}
+
+TEST(ChannelProcessorTest, StopDrainsInFlightTask)
+{
+    // Verify stop() waits for in-flight tasks: push then immediately stop must not crash.
+    auto pool = makePool();
+    auto bus = std::make_shared<CaptureBus>();
+    auto algorithm = std::make_unique<StubAlgorithm>();
+
+    ChannelProcessor processor(MLDPChannelProcessorConfig(makeProcessorConfig()),
+                               std::move(algorithm),
+                               bus,
+                               nullptr,
+                               pool);
+    processor.start();
+
+    EventBatchStruct batch;
+    batch.payload = makeTimeSeriesPayload("SRC:A");
+    processor.push(std::move(batch));
+    processor.stop(); // must not crash or use-after-free
 }

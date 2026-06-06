@@ -15,6 +15,7 @@
 
 #pragma once
 
+#include <BS_thread_pool.hpp>
 #include <config/Config.h>
 #include <metrics/Metrics.h>
 #include <processor/ChannelProcessor.h>
@@ -45,17 +46,19 @@ public:
         std::vector<IChannelProcessorUPtr>(
             const config::Config&,
             std::shared_ptr<util::bus::IDataBus>,
-            std::shared_ptr<metrics::Metrics>)>;
+            std::shared_ptr<metrics::Metrics>,
+            std::shared_ptr<BS::light_thread_pool>)>;
 
     /**
      * @brief Construct processors for the requested type.
      * @throws std::runtime_error when the type is unknown.
      */
     static std::vector<IChannelProcessorUPtr> create(
-        const std::string&                   type,
-        const config::Config&                cfg,
-        std::shared_ptr<util::bus::IDataBus> bus,
-        std::shared_ptr<metrics::Metrics>    metrics = nullptr);
+        const std::string&                      type,
+        const config::Config&                   cfg,
+        std::shared_ptr<util::bus::IDataBus>    bus,
+        std::shared_ptr<metrics::Metrics>       metrics     = nullptr,
+        std::shared_ptr<BS::light_thread_pool>  thread_pool = nullptr);
 
     /**
      * @brief Register or replace the factory for one processor type.
@@ -69,23 +72,25 @@ private:
 
 } // namespace mldp_pvxs_driver::processor
 
-#define REGISTER_ALGORITHM(TYPE_STRING, CLASSNAME)                                             \
-    static bool reg_##CLASSNAME =                                                               \
-        ::mldp_pvxs_driver::processor::ChannelProcessorFactory::registerType(                   \
-            TYPE_STRING,                                                                        \
-            [](const ::mldp_pvxs_driver::config::Config&                cfg,                    \
-               std::shared_ptr<::mldp_pvxs_driver::util::bus::IDataBus> bus,                   \
-               std::shared_ptr<::mldp_pvxs_driver::metrics::Metrics>    metrics)               \
-                -> std::vector<::mldp_pvxs_driver::processor::IChannelProcessorUPtr>           \
-            {                                                                                   \
-                auto algorithm = std::make_unique<CLASSNAME>();                                 \
-                algorithm->configure(cfg);                                                      \
-                std::vector<::mldp_pvxs_driver::processor::IChannelProcessorUPtr> processors;  \
-                processors.push_back(                                                           \
-                    std::make_unique<::mldp_pvxs_driver::processor::ChannelProcessor>(          \
-                        ::mldp_pvxs_driver::processor::MLDPChannelProcessorConfig(cfg),         \
-                        std::move(algorithm),                                                   \
-                        std::move(bus),                                                         \
-                        std::move(metrics)));                                                   \
-                return processors;                                                              \
+#define REGISTER_ALGORITHM(TYPE_STRING, CLASSNAME)                                                    \
+    static bool reg_##CLASSNAME =                                                                      \
+        ::mldp_pvxs_driver::processor::ChannelProcessorFactory::registerType(                          \
+            TYPE_STRING,                                                                               \
+            [](const ::mldp_pvxs_driver::config::Config&                cfg,                           \
+               std::shared_ptr<::mldp_pvxs_driver::util::bus::IDataBus> bus,                          \
+               std::shared_ptr<::mldp_pvxs_driver::metrics::Metrics>    metrics,                      \
+               std::shared_ptr<BS::light_thread_pool>                   thread_pool)                   \
+                -> std::vector<::mldp_pvxs_driver::processor::IChannelProcessorUPtr>                  \
+            {                                                                                          \
+                auto algorithm = std::make_unique<CLASSNAME>();                                        \
+                algorithm->configure(cfg);                                                             \
+                std::vector<::mldp_pvxs_driver::processor::IChannelProcessorUPtr> processors;         \
+                processors.push_back(                                                                  \
+                    std::make_unique<::mldp_pvxs_driver::processor::ChannelProcessor>(                 \
+                        ::mldp_pvxs_driver::processor::MLDPChannelProcessorConfig(cfg),                \
+                        std::move(algorithm),                                                          \
+                        std::move(bus),                                                                \
+                        std::move(metrics),                                                            \
+                        std::move(thread_pool)));                                                      \
+                return processors;                                                                     \
             })

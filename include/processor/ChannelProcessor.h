@@ -15,6 +15,7 @@
 
 #pragma once
 
+#include <BS_thread_pool.hpp>
 #include <metrics/Metrics.h>
 #include <processor/IAlgorithm.h>
 #include <processor/IChannelProcessor.h>
@@ -24,7 +25,9 @@
 #include <util/log/ILog.h>
 
 #include <atomic>
+#include <condition_variable>
 #include <memory>
+#include <mutex>
 #include <string>
 
 namespace mldp_pvxs_driver::processor {
@@ -36,10 +39,11 @@ namespace mldp_pvxs_driver::processor {
 class ChannelProcessor final : public IChannelProcessor
 {
 public:
-    ChannelProcessor(MLDPChannelProcessorConfig            config,
-                     IAlgorithmUPtr                        algorithm,
-                     std::shared_ptr<util::bus::IDataBus>  bus,
-                     std::shared_ptr<metrics::Metrics>     metrics);
+    ChannelProcessor(MLDPChannelProcessorConfig                config,
+                     IAlgorithmUPtr                          algorithm,
+                     std::shared_ptr<util::bus::IDataBus>    bus,
+                     std::shared_ptr<metrics::Metrics>       metrics,
+                     std::shared_ptr<BS::light_thread_pool>  thread_pool);
     ~ChannelProcessor() override;
 
     std::string name() const override;
@@ -55,14 +59,19 @@ public:
 
 private:
     void fireCompute(const AlignedSnapshot& snapshot) noexcept;
+    void processTask(util::bus::IDataBus::EventBatch batch) noexcept;
 
-    MLDPChannelProcessorConfig            config_;
-    IAlgorithmUPtr                        algorithm_;
-    std::shared_ptr<util::bus::IDataBus>  bus_;
-    std::shared_ptr<metrics::Metrics>     metrics_;
-    std::shared_ptr<util::log::ILogger>   logger_;
-    InputBuffer                           buffer_;
-    std::atomic<bool>                     running_{false};
+    MLDPChannelProcessorConfig              config_;
+    IAlgorithmUPtr                          algorithm_;
+    std::shared_ptr<util::bus::IDataBus>    bus_;
+    std::shared_ptr<metrics::Metrics>       metrics_;
+    std::shared_ptr<util::log::ILogger>     logger_;
+    std::shared_ptr<BS::light_thread_pool>  thread_pool_;
+    InputBuffer                             buffer_;
+    std::atomic<bool>                       running_{false};
+    std::atomic<int>                        pending_tasks_{0};
+    std::mutex                              drain_mutex_;
+    std::condition_variable                 drain_cv_;
 };
 
 } // namespace mldp_pvxs_driver::processor

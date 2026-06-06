@@ -10,6 +10,7 @@
 
 #include <processor/ChannelProcessorFactory.h>
 
+#include <BS_thread_pool.hpp>
 #include <stdexcept>
 #include <unordered_map>
 
@@ -28,13 +29,14 @@ Registry& registry()
 } // namespace
 
 std::vector<IChannelProcessorUPtr> ChannelProcessorFactory::create(
-    const std::string&                   type,
-    const config::Config&                cfg,
-    std::shared_ptr<util::bus::IDataBus> bus,
-    std::shared_ptr<metrics::Metrics>    metrics)
+    const std::string&                      type,
+    const config::Config&                   cfg,
+    std::shared_ptr<util::bus::IDataBus>    bus,
+    std::shared_ptr<metrics::Metrics>       metrics,
+    std::shared_ptr<BS::light_thread_pool>  thread_pool)
 {
     auto& factory = lookup(type);
-    return factory(cfg, std::move(bus), std::move(metrics));
+    return factory(cfg, std::move(bus), std::move(metrics), std::move(thread_pool));
 }
 
 bool ChannelProcessorFactory::registerType(const std::string& type, ProcessorFactory factory)

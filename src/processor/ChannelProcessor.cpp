@@ -27,15 +27,17 @@ std::shared_ptr<util::log::ILogger> makeProcessorLogger(const std::string& name)
 
 } // namespace
 
-ChannelProcessor::ChannelProcessor(MLDPChannelProcessorConfig            config,
-                                   IAlgorithmUPtr                        algorithm,
-                                   std::shared_ptr<util::bus::IDataBus>  bus,
-                                   std::shared_ptr<metrics::Metrics>     metrics)
+ChannelProcessor::ChannelProcessor(MLDPChannelProcessorConfig               config,
+                                   IAlgorithmUPtr                           algorithm,
+                                   std::shared_ptr<util::bus::IDataBus>     bus,
+                                   std::shared_ptr<metrics::Metrics>        metrics,
+                                   std::shared_ptr<BS::light_thread_pool>   thread_pool)
     : config_(std::move(config))
     , algorithm_(std::move(algorithm))
     , bus_(std::move(bus))
     , metrics_(std::move(metrics))
     , logger_(makeProcessorLogger(config_.name()))
+    , thread_pool_(std::move(thread_pool))
     , buffer_(config_.sources(), config_.alignment())
 {
 }
@@ -68,38 +70,49 @@ void ChannelProcessor::stop() noexcept
         return;
     }
 
+    {
+        std::unique_lock<std::mutex> lock(drain_mutex_);
+        drain_cv_.wait(lock, [this] {
+            return pending_tasks_.load(std::memory_order_acquire) == 0;
+        });
+    }
+
     buffer_.clear();
     util::log::infof(*logger_, "ChannelProcessor '{}' stopped", config_.name());
 }
 
 bool ChannelProcessor::push(util::bus::IDataBus::EventBatch batch) noexcept
 {
-    if (!running_.load(std::memory_order_relaxed))
-    {
-        return false;
-    }
+    ++pending_tasks_;
+    thread_pool_->detach_task(
+        [this, b = std::move(batch)]() mutable
+        {
+            if (running_.load(std::memory_order_relaxed) &&
+                std::holds_alternative<util::bus::TimeSeriesPayload>(b.payload))
+            {
+                processTask(std::move(b));
+            }
+            if (--pending_tasks_ == 0)
+                drain_cv_.notify_all();
+        });
+    return true;
+}
 
-    const auto* time_series = std::get_if<util::bus::TimeSeriesPayload>(&batch.payload);
-    if (!time_series)
-    {
-        return true;
-    }
+void ChannelProcessor::processTask(util::bus::IDataBus::EventBatch batch) noexcept
+{
+    const auto& ts = std::get<util::bus::TimeSeriesPayload>(batch.payload);
 
-    buffer_.ingest(time_series->root_source_name, *time_series);
+    buffer_.ingest(ts.root_source_name, ts);
+
     if (config_.trigger() == TriggerPolicy::Interval)
-    {
-        return true;
-    }
+        return;
 
     auto snapshot = buffer_.trySnapshot(config_.trigger());
     if (!snapshot.has_value())
-    {
-        return true;
-    }
+        return;
 
     buffer_.resetFreshFlags();
     fireCompute(*snapshot);
-    return true;
 }
 
 bool ChannelProcessor::acceptsPayload(const util::bus::BatchPayload& payload) const noexcept
