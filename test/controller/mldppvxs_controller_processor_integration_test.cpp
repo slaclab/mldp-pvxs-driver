@@ -16,7 +16,6 @@
 
 #include "../config/test_config_helpers.h"
 
-#include <atomic>
 #include <chrono>
 #include <memory>
 #include <mutex>
@@ -25,7 +24,6 @@
 #include <utility>
 #include <vector>
 
-using mldp_pvxs_driver::config::Config;
 using mldp_pvxs_driver::config::makeConfigFromYaml;
 using mldp_pvxs_driver::controller::MLDPPVXSController;
 using mldp_pvxs_driver::util::bus::DataBatch;
