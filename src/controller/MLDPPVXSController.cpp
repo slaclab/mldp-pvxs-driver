@@ -10,6 +10,7 @@
 
 #include "util/log/Logger.h"
 #include <controller/MLDPPVXSController.h>
+#include <processor/ChannelProcessorFactory.h>
 #include <future>
 #include <thread>
 #include <memory>
@@ -141,6 +142,18 @@ void MLDPPVXSController::start()
         writers_.push_back(std::move(w));
     }
 
+    for (const auto& [type, processorNode] : config_.processorEntries())
+    {
+        auto batch = processor::ChannelProcessorFactory::create(type, processorNode, shared_from_this(), metrics_);
+        processors_.insert(processors_.end(),
+                           std::make_move_iterator(batch.begin()),
+                           std::make_move_iterator(batch.end()));
+    }
+    for (auto& processor : processors_)
+    {
+        processor->start();
+    }
+
     // -- Readers --
     infof(*logger_, "Starting readers");
     for (const auto& entry : config_.readerEntries())
@@ -155,10 +168,14 @@ void MLDPPVXSController::start()
         std::unordered_set<std::string> known_writers;
         for (const auto& w : writers_)
             known_writers.insert(w->name());
+        for (const auto& p : processors_)
+            known_writers.insert(p->name());
 
         std::unordered_set<std::string> known_readers;
         for (const auto& r : readers_)
             known_readers.insert(r->name());
+        for (const auto& p : processors_)
+            known_readers.insert(p->outputReaderName());
 
         route_table_ = RouteTable::build(config_.routeEntries(), known_readers, known_writers);
 
@@ -183,6 +200,12 @@ void MLDPPVXSController::stop()
     running_.store(false);
 
     readers_.clear();
+
+    for (auto& processor : processors_)
+    {
+        processor->stop();
+    }
+    processors_.clear();
 
     for (auto& w : writers_)
     {
@@ -223,12 +246,40 @@ bool MLDPPVXSController::push(EventBatch batch_values)
         warnf(*logger_, "Batch from source '{}' has empty reader_name — routing may drop it", rootSource);
     }
 
-    // Parallel fan-out: submit one task per writer to the thread pool so all
-    // writers run concurrently.  Every writer receives its own copy of the batch.
+    // Processors are called inline — they are noexcept, fast (ingest + snapshot),
+    // and their fireCompute() calls bus_->push() recursively on the calling thread.
+    // Submitting them to the thread pool would cause deadlock when a pool thread
+    // re-enters push() and tries to wait on another pool task.
+    //
+    // Skip processor fan-out for batches emitted by processors themselves
+    // (reader_name matches a processor's outputReaderName) to prevent infinite recursion.
+    const bool from_processor = std::any_of(
+        processors_.begin(), processors_.end(),
+        [&](const auto& p) { return p->outputReaderName() == batch_values.reader_name; });
+
+    if (!from_processor)
+    {
+        for (std::size_t i = 0; i < processors_.size(); ++i)
+        {
+            if (!route_table_.accepts(processors_[i]->name(), batch_values.reader_name))
+                continue;
+
+            if (!route_table_.acceptsSource(processors_[i]->name(), rootSource))
+                continue;
+
+            if (!processors_[i]->acceptsPayload(batch_values.payload))
+                continue;
+
+            EventBatch batchCopy = batch_values;
+            processors_[i]->push(std::move(batchCopy));
+        }
+    }
+
+    // Parallel fan-out to writers via thread pool.
     const std::size_t n = writers_.size();
 
     std::vector<std::future<bool>> futures;
-    std::vector<std::size_t>       writer_indices; // track which writer each future corresponds to
+    std::vector<std::size_t>       writer_indices;
     futures.reserve(n);
     writer_indices.reserve(n);
 
@@ -243,9 +294,8 @@ bool MLDPPVXSController::push(EventBatch batch_values)
         if (!writers_[i]->acceptsPayload(batch_values.payload))
             continue;
 
-        // Capture writer pointer and a copy of the batch per task.
         auto*      writerPtr = writers_[i].get();
-        EventBatch batchCopy = batch_values; // explicit copy for each task
+        EventBatch batchCopy = batch_values;
         futures.push_back(
             thread_pool_->submit_task([writerPtr, b = std::move(batchCopy)]() mutable -> bool
                                       {

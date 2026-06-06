@@ -32,7 +32,8 @@ class HDF5FilePoolTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        tempDir_ = std::filesystem::temp_directory_path() / "hdf5_file_pool_test_hdf5pool";
+        const auto* info = ::testing::UnitTest::GetInstance()->current_test_info();
+        tempDir_ = std::filesystem::temp_directory_path() / ("hdf5_pool_" + std::string(info->test_case_name()) + "_" + std::string(info->name()));
         std::filesystem::create_directories(tempDir_);
     }
 

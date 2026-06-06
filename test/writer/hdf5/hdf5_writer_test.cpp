@@ -44,7 +44,8 @@ class HDF5WriterTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        tempDir_ = fs::temp_directory_path() / "hdf5_writer_test";
+        const auto* info = ::testing::UnitTest::GetInstance()->current_test_info();
+        tempDir_ = fs::temp_directory_path() / ("hdf5_writer_test_" + std::string(info->test_case_name()) + "_" + std::string(info->name()));
         fs::create_directories(tempDir_);
     }
 

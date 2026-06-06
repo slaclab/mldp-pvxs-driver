@@ -15,6 +15,7 @@
 #include <controller/MLDPPVXSControllerConfig.h>
 #include <controller/RouteTable.h>
 #include <metrics/Metrics.h>
+#include <processor/IChannelProcessor.h>
 #include <reader/IReader.h>
 #include <util/bus/IDataBus.h>
 #include <util/log/Logger.h>
@@ -168,6 +169,7 @@ private:
     std::atomic<bool>                                     running_{false};
     std::vector<reader::ReaderUPtr>                       readers_;     ///< Owned reader instances.
     std::vector<writer::IWriterUPtr>                      writers_;     ///< Fan-out writer instances.
+    std::vector<processor::IChannelProcessorUPtr>         processors_;  ///< In-process virtual channel processors.
     RouteTable                                            route_table_; ///< Selective reader→writer dispatch.
 
     explicit MLDPPVXSController(const config::Config& config);

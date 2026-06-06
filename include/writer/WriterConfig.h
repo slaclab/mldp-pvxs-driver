@@ -18,16 +18,6 @@ namespace mldp_pvxs_driver::writer {
 
 /// YAML key: top-level `writer` block.
 inline constexpr char WriterKey[] = "writer";
-/// YAML key: `writer.mldp` — sequence of MLDP ingestion writer instances.
-inline constexpr char WriterMldpKey[] = "mldp";
-/// YAML key: `writer.hdf5` — sequence of HDF5 writer instances (requires MLDP_PVXS_HDF5_ENABLED).
-inline constexpr char WriterHdf5Key[] = "hdf5";
-/// YAML key: `writer.hdf5-merge` — sequence of HDF5 merge writer instances (requires MLDP_PVXS_HDF5_ENABLED).
-inline constexpr char WriterHdf5MergeKey[] = "hdf5-merge";
-/// YAML key: `writer.mldp-pv-metadata` — sequence of MLDP PV metadata writer instances.
-inline constexpr char WriterMldpPVMetadataKey[] = "mldp-pv-metadata";
-/// YAML key: `writer.mldp-configuration` — sequence of MLDP configuration writer instances.
-inline constexpr char WriterMldpConfigurationKey[] = "mldp-configuration";
 
 /**
  * @brief Validates the top-level `writer:` YAML block structure.

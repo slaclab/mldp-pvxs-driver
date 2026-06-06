@@ -230,6 +230,26 @@ reader: []
     EXPECT_EQ("https://mldp-query.example:50052", pool.queryUrl());
 }
 
+TEST(MLDPPVXSControllerConfigTest, ProcessorEntriesEmptyWhenProcessorsAbsent)
+{
+    const std::string yaml = R"(
+writer:
+  mldp:
+    - name: mldp_main
+      thread-pool: 1
+      mldp-pool:
+        provider-name: pvxs_provider
+        ingestion-url: https://mldp-ingestion.example:50051
+        query-url: https://mldp-query.example:50052
+        min-conn: 1
+        max-conn: 2
+reader: []
+)";
+
+    MLDPPVXSControllerConfig controllerCfg(makeConfigFromYaml(yaml));
+    EXPECT_TRUE(controllerCfg.processorEntries().empty());
+}
+
 TEST(MLDPPVXSControllerConfigTest, ThrowsWhenProviderNameMissing)
 {
     const std::string yaml = R"(
