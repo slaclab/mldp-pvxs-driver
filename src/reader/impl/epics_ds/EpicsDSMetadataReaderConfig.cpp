@@ -4,7 +4,7 @@
 // top-level directory of this distribution and at:
 //    https://confluence.slac.stanford.edu/display/ppareg/LICENSE.html.
 // No part of 'mldp-pvxs-driver', including this file,
-// may be copied, modified, propagated, or distributed except according toØ
+// may be copied, modified, propagated, or distributed except according to
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
