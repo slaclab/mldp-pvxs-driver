@@ -11,6 +11,7 @@ option(MLDP_PVXS_DRIVER_TESTS "Build MLDP PVXS driver tests" OFF)
 option(MLDP_PVXS_DRIVER_COVERAGE "Enable code coverage instrumentation" OFF)
 option(MLDP_PVXS_DRIVER_LINK_EPICS_PVXS_STATIC "Link EPICS and PVXS libraries statically (prefer .a over .so)" OFF)
 option(MLDP_PVXS_ENABLE_HDF5 "Build with HDF5 writer support" ON)
+option(BUILD_ECHO_PROCESSOR "Build echo pass-through processor (test/debug only)" ON)
 
 # Default to Release build
 if(NOT CMAKE_BUILD_TYPE)
@@ -552,6 +553,13 @@ add_library(lib${PROJECT_NAME}
     "${CMAKE_CURRENT_SOURCE_DIR}/src/metrics/procmon/MetricsCollector.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/metrics/procmon/ProcReader.cpp"
 )
+
+if(BUILD_ECHO_PROCESSOR)
+    target_sources(lib${PROJECT_NAME} PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/processor/impl/EchoAlgorithm.cpp")
+    target_compile_definitions(lib${PROJECT_NAME} PRIVATE BUILD_ECHO_PROCESSOR=1)
+endif()
+
 target_link_libraries(lib${PROJECT_NAME} PUBLIC
     lib${PROJECT_NAME}_proto
     Threads::Threads
@@ -705,6 +713,12 @@ if(MLDP_PVXS_DRIVER_TESTS)
     target_compile_definitions(${PROJECT_NAME}_test PRIVATE
         MLDP_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/data"
     )
+
+    if(BUILD_ECHO_PROCESSOR)
+        target_sources(${PROJECT_NAME}_test PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/test/processor/EchoAlgorithmTest.cpp")
+        target_compile_definitions(${PROJECT_NAME}_test PRIVATE BUILD_ECHO_PROCESSOR=1)
+    endif()
 
     if(MLDP_PVXS_DRIVER_COVERAGE)
         target_compile_options(${PROJECT_NAME}_test PRIVATE -O0 -g --coverage)

@@ -65,6 +65,21 @@ hdf5:
       settings:
         MLDP_PVXS_ENABLE_HDF5: OFF
 
+echoProcessor:
+  default: off
+  description: "Echo processor support"
+  choices:
+    on:
+      short: Echo ON
+      long: Build with the optional EchoAlgorithm processor and gated tests
+      settings:
+        BUILD_ECHO_PROCESSOR: ON
+    off:
+      short: Echo OFF
+      long: Build without the optional EchoAlgorithm processor
+      settings:
+        BUILD_ECHO_PROCESSOR: OFF
+
 verboseMakefile:
   default: off
   description: "Verbose Makefile output"
