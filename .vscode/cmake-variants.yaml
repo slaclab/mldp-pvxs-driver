@@ -80,6 +80,21 @@ echoProcessor:
       settings:
         BUILD_ECHO_PROCESSOR: OFF
 
+pythonProcessor:
+  default: on
+  description: "Python processor support"
+  choices:
+    on:
+      short: Python ON
+      long: Build with the optional PythonAlgorithm loader and gated tests
+      settings:
+        BUILD_PYTHON_PROCESSOR: ON
+    off:
+      short: Python OFF
+      long: Build without the optional PythonAlgorithm loader
+      settings:
+        BUILD_PYTHON_PROCESSOR: OFF
+
 verboseMakefile:
   default: off
   description: "Verbose Makefile output"

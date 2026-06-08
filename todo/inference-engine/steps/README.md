@@ -14,8 +14,8 @@ Steps must be executed in order unless marked independent.
 | 07 | [step-07-moving-average-algorithm.md](./step-07-moving-average-algorithm.md) | MovingAverageAlgorithm + IAlgorithm::reset() | 01–06 | MovingAverageAlgorithmTest (8 cases) | completed |
 | 08 | [step-08-interval-trigger.md](./step-08-interval-trigger.md) | Interval trigger worker thread in ChannelProcessor | 01–07 | ChannelProcessorIntervalTest (5 cases) |
 | 09 | [step-09-interpolate-alignment.md](./step-09-interpolate-alignment.md) | Interpolate alignment policy in InputBuffer | 03 (independent of 06–08) | 7 new InputBuffer tests |
-| 10 | [step-10-echo-algorithm.md](./step-10-echo-algorithm.md) | EchoAlgorithm (BUILD_ECHO_PROCESSOR=ON, optional) | 01–06 | EchoAlgorithmTest (4 cases, gated) |
-| 11 | [step-11-python-processor.md](./step-11-python-processor.md) | PythonAlgorithm + PythonScriptDirectoryLoader (BUILD_PYTHON_PROCESSOR=ON) | 01–06 | PythonAlgorithmTest (8) + PythonScriptDirectoryLoaderTest (5), gated |
+| 10 | [step-10-echo-algorithm.md](./step-10-echo-algorithm.md) | EchoAlgorithm (BUILD_ECHO_PROCESSOR=ON, optional) | 01–06 | EchoAlgorithmTest (4 cases, gated) | completed |
+| 11 | [step-11-python-processor.md](./step-11-python-processor.md) | PythonAlgorithm + PythonScriptDirectoryLoader (BUILD_PYTHON_PROCESSOR=ON) | 01–06 | PythonAlgorithmTest (8) + PythonScriptDirectoryLoaderTest (5), gated | completed |
 | 12 | [step-12-hardening.md](./step-12-hardening.md) | Metrics, back-pressure, output-source collision check, cycle detection | 01–11 | various (see step) |
 
 ## Lua Processor

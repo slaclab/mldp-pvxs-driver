@@ -66,6 +66,13 @@ public:
      * @return Stable algorithm type identifier.
      */
     virtual std::string algorithmType() const noexcept = 0;
+
+    /**
+     * @brief Reset any algorithm-maintained runtime state between processing windows.
+     * @details
+     * Stateless algorithms can keep the default no-op implementation.
+     */
+    virtual void reset() noexcept {}
 };
 
 using IAlgorithmUPtr = std::unique_ptr<IAlgorithm>;
