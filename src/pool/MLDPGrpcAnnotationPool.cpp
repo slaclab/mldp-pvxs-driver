@@ -54,12 +54,7 @@ MLDPGrpcAnnotationPool::MLDPGrpcAnnotationPool(const MLDPGrpcAnnotationPoolConfi
         throw std::invalid_argument("MLDPGrpcAnnotationPool: invalid min/max size");
 
     items_.reserve(config_.maxConnections());
-    for (std::size_t i = 0; i < config_.minConnections(); ++i)
-    {
-        items_.push_back({createChannel(), false});
-    }
-
-    current_size_ = config_.minConnections();
+    current_size_ = 0;  // channels created lazily on first acquire()
     updateMetrics();
 }
 
