@@ -26,6 +26,10 @@ routing:        # optional — selective reader-to-writer dispatch
   writer_name:
     from: [reader_1, reader_2]
 
+processors:     # optional — algorithm-backed virtual channel processors (requires BUILD_PYTHON_PROCESSOR=ON for python-processor)
+  - type: python-processor
+    script-dir: /opt/processors
+
 queryable:      # optional — query client configuration
   mldp: [...]
   mldp-annotation: [...]
@@ -314,13 +318,21 @@ persist the metadata to the MLDP annotation service.
 
 ```yaml
 - epics-ds-metadata:
-    - name: ds_metadata                # required
-      service: ds                      # optional; default: "ds"
-      query: "%"                       # optional; default: "%"
-      timeout-sec: 5.0                 # optional; default: 5.0
-      source-name-column: channelName  # optional; default: "channelName"
-      tags-column: tags                # optional; default: "" (disabled)
-      rescan-interval-sec: 300.0       # optional; default: 0.0 (run once)
+    - name: ds_metadata                       # required
+      service: ds                             # optional; default: "ds"
+      query: "%"                              # optional; default: "%"
+      timeout-sec: 5.0                        # optional; default: 5.0
+      source-name-column: channelName         # optional; default: "channelName"
+      tags-column: tags                       # optional; default: "" (disabled)
+      show-columns: "channelName,hostName"    # optional; default: "" (all columns)
+      rescan-interval-sec: 300.0              # optional; default: 0.0 (run once)
+      worker-thread-count: 2                  # optional; default: 1
+      max-queue-depth: 16                     # optional; default: 16
+      pv-show-columns: "dname,ename,etype"    # optional; default: dname,ename,etype,lname,ioc,scheme,z
+      pvs:                                    # required; must contain at least one entry
+        - name: BPMS:LI20:2445:X
+          metadata:
+            system: bpm
 ```
 
 | Key | Type | Default | Description |
@@ -331,13 +343,22 @@ persist the metadata to the MLDP annotation service.
 | `timeout-sec` | double | `5.0` | RPC call timeout in seconds. Must be positive. |
 | `source-name-column` | string | `"channelName"` | NTTable column carrying the PV / source name. |
 | `tags-column` | string | `""` | NTTable column for comma-separated tags. Empty = disabled. |
+| `show-columns` | string | `""` | Comma-separated columns passed as `show=` in the wildcard NTURI query. Empty = server returns all columns. |
 | `rescan-interval-sec` | double | `0.0` | Repeat fetch interval in seconds. `0` = run once. |
+| `worker-thread-count` | int | `1` | `1` = single-thread inline; `N > 1` = 1 producer + N-1 consumers. Range: `1..64`. |
+| `max-queue-depth` | int | `16` | Bounded queue depth in producer/consumer mode. Ignored when `worker-thread-count` is `1`. Range: `1..1024`. |
+| `pvs` | list | — | **Required.** Per-PV enrichment entries for targeted DS lookups. Must contain at least one entry. Each entry requires `name`; `metadata` map is optional. |
+| `pv-show-columns` | string | `"dname,ename,etype,lname,ioc,scheme,z"` | DS `show=` columns fetched per PV in PV-list mode. Duplicate values are rejected. |
 
 **Validation rules:**
 
 - `name` is required and must be non-empty.
 - `timeout-sec` must be strictly positive.
 - `rescan-interval-sec` must be `>= 0`.
+- `worker-thread-count` must be in range `1..64`.
+- `max-queue-depth` must be in range `1..1024`.
+- `pvs` is required and must contain at least one entry.
+- `pv-show-columns` must not contain duplicate column names.
 
 → [EpicsDSMetadataReader Documentation](../readers/epics-ds-metadata-reader.md)
 
@@ -510,6 +531,93 @@ In this example:
 - Orphan warnings are logged for readers/writers not mentioned in any route.
 
 → [Full Controller Documentation](../reference/controller.md#reader-to-writer-routing)
+
+---
+
+## `processors:` Block {#processors-block}
+
+Optional. Declares channel processors — algorithm-backed virtual channel engines that consume real source batches, run a compute function, and publish virtual output sources back onto the bus. Each entry requires a `type:` key that selects the processor factory.
+
+Processors integrate with the `routing:` system the same way writers do: they appear as named targets in `routing:` to control which readers feed them, and their virtual output sources can be used as `from:` origins to feed downstream writers.
+
+> **Build requirement:** `python-processor` requires `-DBUILD_PYTHON_PROCESSOR=ON` (CMake default: ON). When disabled the type is not registered and startup fails if any entry uses it.
+
+```yaml
+processors:
+  - type: python-processor
+    script-dir: /opt/scripts/processors
+```
+
+### `processors[].type: python-processor`
+
+Scans `script-dir` for `.py` files and creates one `ChannelProcessor` per valid script. Invalid or mis-configured scripts are skipped with a warning — they do not abort the load.
+
+```yaml
+processors:
+  - type: python-processor
+    script-dir: /opt/scripts/processors   # required
+```
+
+| Key | Type | Required | Description |
+|-----|------|----------|-------------|
+| `type` | string | Yes | `"python-processor"` |
+| `script-dir` | string | Yes | Path to directory containing `.py` processor scripts. |
+
+Each Python script must export:
+
+| Symbol | Type | Description |
+|--------|------|-------------|
+| `config` | `dict` | Processor metadata. Must contain `name`, `sources`, and `output_source` or `output_sources`. |
+| `compute` | callable | Algorithm entry point. Receives a `dict` snapshot and returns one or more `mldp` payload objects. |
+
+**Minimal script:**
+
+```python
+import mldp
+
+config = {
+    "name": "my-processor",
+    "sources": ["SRC:A"],
+    "alignment": "latest-value",
+    "trigger": "any-update",
+    "output_source": "VIRTUAL:MY:OUT",
+}
+
+def compute(snapshot):
+    value = snapshot.get("SRC:A", 0.0)
+    return mldp.timeseries("VIRTUAL:MY:OUT", {"value": value * 2.0})
+```
+
+**`config` keys:**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `name` | string | — | **Required.** Processor instance name. |
+| `sources` | list[str] | — | **Required.** Input source names consumed by this processor. |
+| `alignment` | string | `latest-value` | `latest-value` or `interpolate`. |
+| `trigger` | string | `any-update` | `any-update`, `all-updated`, or `interval`. |
+| `trigger-interval-sec` | float | — | **Required when `trigger` is `interval`.** Fire interval in seconds. |
+| `max-buffer-depth` | int | `0` | Maximum samples retained per input source. `0` = unlimited; when the depth is exceeded, oldest samples are dropped before the next compute. |
+| `output_source` | string | — | Single virtual output source (convenience alias for `output_sources: [name]`). |
+| `output_sources` | list[str] | — | One or more virtual output source names emitted by `compute()`. |
+
+**Wiring with routing:**
+
+```yaml
+processors:
+  - type: python-processor
+    script-dir: /opt/scripts/processors
+
+routing:
+  my-processor:              # processor name matches script config["name"]
+    from: [pvxs_reader]
+    include:
+      - "SRC:*"
+  mldp_main:
+    from: [my-processor]     # processor's virtual output feeds the writer
+```
+
+→ [Full Python Processor Documentation](../processors/python-processor.md)
 
 ---
 

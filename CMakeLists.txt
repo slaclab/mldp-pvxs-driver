@@ -11,6 +11,8 @@ option(MLDP_PVXS_DRIVER_TESTS "Build MLDP PVXS driver tests" OFF)
 option(MLDP_PVXS_DRIVER_COVERAGE "Enable code coverage instrumentation" OFF)
 option(MLDP_PVXS_DRIVER_LINK_EPICS_PVXS_STATIC "Link EPICS and PVXS libraries statically (prefer .a over .so)" OFF)
 option(MLDP_PVXS_ENABLE_HDF5 "Build with HDF5 writer support" ON)
+option(BUILD_ECHO_PROCESSOR "Build echo pass-through processor (test/debug only)" ON)
+option(BUILD_PYTHON_PROCESSOR "Build Python script processor (requires CPython 3.x)" ON)
 
 # Default to Release build
 if(NOT CMAKE_BUILD_TYPE)
@@ -501,6 +503,10 @@ add_library(lib${PROJECT_NAME}
     "${CMAKE_CURRENT_SOURCE_DIR}/src/util/http/HttpUrlUtils.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/util/time/DateTimeUtils.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/config/Config.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/processor/ChannelProcessorFactory.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/processor/ChannelProcessor.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/processor/InputBuffer.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/processor/MLDPChannelProcessorConfig.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/shared/EpicsReaderBase.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/pvxs/EpicsPVXSReader.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/base/EpicsBaseReader.cpp"
@@ -548,6 +554,22 @@ add_library(lib${PROJECT_NAME}
     "${CMAKE_CURRENT_SOURCE_DIR}/src/metrics/procmon/MetricsCollector.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/metrics/procmon/ProcReader.cpp"
 )
+
+if(BUILD_ECHO_PROCESSOR)
+    target_sources(lib${PROJECT_NAME} PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/processor/impl/EchoAlgorithm.cpp")
+    target_compile_definitions(lib${PROJECT_NAME} PRIVATE BUILD_ECHO_PROCESSOR=1)
+endif()
+
+if(BUILD_PYTHON_PROCESSOR)
+    find_package(Python3 REQUIRED COMPONENTS Development)
+    target_sources(lib${PROJECT_NAME} PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/processor/PythonScriptDirectoryLoader.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/processor/impl/PythonAlgorithm.cpp")
+    target_link_libraries(lib${PROJECT_NAME} PRIVATE Python3::Python)
+    target_compile_definitions(lib${PROJECT_NAME} PRIVATE BUILD_PYTHON_PROCESSOR=1)
+endif()
+
 target_link_libraries(lib${PROJECT_NAME} PUBLIC
     lib${PROJECT_NAME}_proto
     Threads::Threads
@@ -664,6 +686,7 @@ if(MLDP_PVXS_DRIVER_TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_ds/epics_ds_metadata_reader_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_ds/epics_ds_metadata_reader_integration_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/controller/mldppvxs_controller_ds_metadata_writer_integration_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/controller/mldppvxs_controller_processor_integration_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/MockCalendarHttpServer.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/slac_calendar/slac_calendar_reader_config_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/slac_calendar/slac_calendar_reader_test.cpp"
@@ -673,6 +696,11 @@ if(MLDP_PVXS_DRIVER_TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/test/metrics/periodic_metrics_dumper_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/metrics/metrics_histogram_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/metrics/system_metrics_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/processor/ChannelProcessorTest.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/processor/InputBufferTest.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/processor/LinearTransformAlgorithmTest.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/algorithms/LinearTransformAlgorithm.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/processor/MLDPChannelProcessorConfigTest.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/ConfigPrinter.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/PeriodicMetricsDumper.cpp"
     )
@@ -691,9 +719,24 @@ if(MLDP_PVXS_DRIVER_TESTS)
     elseif(TARGET httplib)
         target_link_libraries(${PROJECT_NAME}_test PRIVATE httplib)
     endif()
+    target_include_directories(${PROJECT_NAME}_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/test")
     target_compile_definitions(${PROJECT_NAME}_test PRIVATE
         MLDP_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/data"
     )
+
+    if(BUILD_ECHO_PROCESSOR)
+        target_sources(${PROJECT_NAME}_test PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/test/processor/EchoAlgorithmTest.cpp")
+        target_compile_definitions(${PROJECT_NAME}_test PRIVATE BUILD_ECHO_PROCESSOR=1)
+    endif()
+
+    if(BUILD_PYTHON_PROCESSOR)
+        target_sources(${PROJECT_NAME}_test PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/test/processor/PythonAlgorithmTest.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/test/processor/PythonScriptDirectoryLoaderTest.cpp")
+        target_compile_definitions(${PROJECT_NAME}_test PRIVATE BUILD_PYTHON_PROCESSOR=1)
+        target_link_libraries(${PROJECT_NAME}_test PRIVATE Python3::Python)
+    endif()
 
     if(MLDP_PVXS_DRIVER_COVERAGE)
         target_compile_options(${PROJECT_NAME}_test PRIVATE -O0 -g --coverage)

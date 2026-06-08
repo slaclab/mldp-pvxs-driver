@@ -24,6 +24,7 @@ using mldp_pvxs_driver::reader::impl::epics_ds::EpicsDSMetadataReader;
 using mldp_pvxs_driver::test::mock::DsRow;
 using mldp_pvxs_driver::test::mock::MockDataBus;
 using mldp_pvxs_driver::test::mock::MockDSServer;
+using mldp_pvxs_driver::util::bus::IDataBus;
 using mldp_pvxs_driver::util::bus::asSourceMetadata;
 using mldp_pvxs_driver::util::bus::isSourceMetadata;
 
@@ -43,6 +44,18 @@ static bool waitForMinBatches(const std::shared_ptr<MockDataBus>& bus,
     return bus->snapshot().size() >= minCount;
 }
 
+// Global scan batches have >1 source; per-PV batches have exactly 1.
+static const IDataBus::EventBatch* lastGlobalBatch(
+    const std::vector<IDataBus::EventBatch>& batches)
+{
+    for (auto it = batches.rbegin(); it != batches.rend(); ++it)
+    {
+        if (isSourceMetadata(*it) && asSourceMetadata(*it).sources.size() > 1)
+            return &*it;
+    }
+    return nullptr;
+}
+
 } // namespace
 
 // TEST 1 — reader pushes at least one batch with the expected payload size and
@@ -59,6 +72,8 @@ timeout-sec: 5.0
 source-name-column: channelName
 tags-column: tags
 rescan-interval-sec: 0.0
+pvs:
+  - name: VPIO:IN20:111:PRES
 )");
 
     EpicsDSMetadataReader reader(bus, nullptr, cfg);
@@ -72,9 +87,9 @@ rescan-interval-sec: 0.0
     ASSERT_TRUE(isSourceMetadata(batch));
 
     const auto& payload = asSourceMetadata(batch);
-    EXPECT_EQ(payload.size(), 30u);
-    ASSERT_EQ(payload.count("VPIO:IN20:111:PRES"), 1u);
-    EXPECT_EQ(payload.at("VPIO:IN20:111:PRES").attributes.at("hostName"), "cpu-li20-vac1");
+    EXPECT_EQ(payload.sources.size(), 30u);
+    ASSERT_EQ(payload.sources.count("VPIO:IN20:111:PRES"), 1u);
+    EXPECT_EQ(payload.sources.at("VPIO:IN20:111:PRES").attributes.at("hostName"), "cpu-li20-vac1");
 }
 
 // TEST 2 — attributes map contains the correct values and excludes the
@@ -91,6 +106,8 @@ timeout-sec: 5.0
 source-name-column: channelName
 tags-column: tags
 rescan-interval-sec: 0.0
+pvs:
+  - name: BPMS:IN20:221:X
 )");
 
     EpicsDSMetadataReader reader(bus, nullptr, cfg);
@@ -99,9 +116,9 @@ rescan-interval-sec: 0.0
 
     const auto  snapped = bus->snapshot();
     const auto& payload = asSourceMetadata(snapped.front());
-    ASSERT_EQ(payload.count("BPMS:IN20:221:X"), 1u);
+    ASSERT_EQ(payload.sources.count("BPMS:IN20:221:X"), 1u);
 
-    const auto& entry = payload.at("BPMS:IN20:221:X");
+    const auto& entry = payload.sources.at("BPMS:IN20:221:X");
     EXPECT_EQ(entry.attributes.at("owner"),      "diagnostics");
     EXPECT_EQ(entry.attributes.at("recordType"), "ai");
     EXPECT_EQ(entry.attributes.at("pvStatus"),   "Active");
@@ -125,6 +142,9 @@ timeout-sec: 5.0
 source-name-column: channelName
 tags-column: tags
 rescan-interval-sec: 0.0
+pvs:
+  - name: BPMS:IN20:221:X
+  - name: BPMS:IN20:221:TMIT
 )");
 
     EpicsDSMetadataReader reader(bus, nullptr, cfg);
@@ -135,8 +155,8 @@ rescan-interval-sec: 0.0
     const auto& payload = asSourceMetadata(snapped.front());
 
     // BPMS:IN20:221:X mock tags: physics,bpm,fast,survey
-    ASSERT_EQ(payload.count("BPMS:IN20:221:X"), 1u);
-    const auto& entryX = payload.at("BPMS:IN20:221:X");
+    ASSERT_EQ(payload.sources.count("BPMS:IN20:221:X"), 1u);
+    const auto& entryX = payload.sources.at("BPMS:IN20:221:X");
     ASSERT_TRUE(entryX.tags.has_value());
     const auto& tagsX = entryX.tags.value();
     EXPECT_NE(std::find(tagsX.begin(), tagsX.end(), "physics"), tagsX.end());
@@ -145,8 +165,8 @@ rescan-interval-sec: 0.0
     EXPECT_NE(std::find(tagsX.begin(), tagsX.end(), "survey"),  tagsX.end());
 
     // BPMS:IN20:221:TMIT mock tags: physics,bpm,fast  (no survey)
-    ASSERT_EQ(payload.count("BPMS:IN20:221:TMIT"), 1u);
-    const auto& entryTmit = payload.at("BPMS:IN20:221:TMIT");
+    ASSERT_EQ(payload.sources.count("BPMS:IN20:221:TMIT"), 1u);
+    const auto& entryTmit = payload.sources.at("BPMS:IN20:221:TMIT");
     ASSERT_TRUE(entryTmit.tags.has_value());
     const auto& tagsTmit = entryTmit.tags.value();
     EXPECT_NE(std::find(tagsTmit.begin(), tagsTmit.end(), "physics"), tagsTmit.end());
@@ -169,19 +189,23 @@ timeout-sec: 5.0
 source-name-column: channelName
 tags-column: tags
 rescan-interval-sec: 0.2
+pvs:
+  - name: BPMS:IN20:221:X
 )");
 
     EpicsDSMetadataReader reader(bus, nullptr, cfg);
 
-    ASSERT_TRUE(waitForMinBatches(bus, 2, std::chrono::milliseconds(5000)));
+    ASSERT_TRUE(waitForMinBatches(bus, 4, std::chrono::milliseconds(5000)));
 
     const auto batches = bus->snapshot();
-    ASSERT_GE(batches.size(), 2u);
+    ASSERT_GE(batches.size(), 4u);
 
     for (const auto& batch : batches)
     {
         ASSERT_TRUE(isSourceMetadata(batch));
-        EXPECT_EQ(asSourceMetadata(batch).size(), 30u);
+        const auto& p = asSourceMetadata(batch);
+        if (p.sources.size() == 1u) continue; // per-PV batch
+        EXPECT_EQ(p.sources.size(), 30u);
     }
 }
 
@@ -199,6 +223,8 @@ timeout-sec: 5.0
 source-name-column: channelName
 tags-column: tags
 rescan-interval-sec: 0.2
+pvs:
+  - name: BPMS:IN20:221:X
 )");
 
     EpicsDSMetadataReader reader(bus, nullptr, cfg);
@@ -208,18 +234,20 @@ rescan-interval-sec: 0.2
     {
         const auto  snapped = bus->snapshot();
         const auto& payload = asSourceMetadata(snapped.front());
-        ASSERT_EQ(payload.count("BPMS:IN20:221:X"), 1u);
-        EXPECT_EQ(payload.at("BPMS:IN20:221:X").attributes.at("pvStatus"), "Active");
+        ASSERT_EQ(payload.sources.count("BPMS:IN20:221:X"), 1u);
+        EXPECT_EQ(payload.sources.at("BPMS:IN20:221:X").attributes.at("pvStatus"), "Active");
     }
 
     mockServer.updateAttribute("BPMS:IN20:221:X", "pvStatus", "Inactive");
 
-    ASSERT_TRUE(waitForMinBatches(bus, 2, std::chrono::milliseconds(5000)));
+    ASSERT_TRUE(waitForMinBatches(bus, 4, std::chrono::milliseconds(5000)));
 
-    const auto  snapped2 = bus->snapshot();
-    const auto& payload  = asSourceMetadata(snapped2.back());
-    ASSERT_EQ(payload.count("BPMS:IN20:221:X"), 1u);
-    EXPECT_EQ(payload.at("BPMS:IN20:221:X").attributes.at("pvStatus"), "Inactive");
+    const auto  snapped2    = bus->snapshot();
+    const auto* globalBatch = lastGlobalBatch(snapped2);
+    ASSERT_NE(globalBatch, nullptr);
+    const auto& payload = asSourceMetadata(*globalBatch);
+    ASSERT_EQ(payload.sources.count("BPMS:IN20:221:X"), 1u);
+    EXPECT_EQ(payload.sources.at("BPMS:IN20:221:X").attributes.at("pvStatus"), "Inactive");
 }
 
 // TEST 6 — a row added between scans appears in the subsequent batch.
@@ -235,6 +263,8 @@ timeout-sec: 5.0
 source-name-column: channelName
 tags-column: tags
 rescan-interval-sec: 0.2
+pvs:
+  - name: BPMS:IN20:221:X
 )");
 
     EpicsDSMetadataReader reader(bus, nullptr, cfg);
@@ -244,8 +274,8 @@ rescan-interval-sec: 0.2
     {
         const auto  snapped = bus->snapshot();
         const auto& payload = asSourceMetadata(snapped.front());
-        EXPECT_EQ(payload.count("NEW:PV:TEST:X"), 0u);
-        EXPECT_EQ(payload.size(), 30u);
+        EXPECT_EQ(payload.sources.count("NEW:PV:TEST:X"), 0u);
+        EXPECT_EQ(payload.sources.size(), 30u);
     }
 
     mockServer.addRow({{"channelName", "NEW:PV:TEST:X"},
@@ -258,12 +288,14 @@ rescan-interval-sec: 0.2
                        {"archiveRate", "0"},
                        {"tags",        "test"}});
 
-    ASSERT_TRUE(waitForMinBatches(bus, 2, std::chrono::milliseconds(5000)));
+    ASSERT_TRUE(waitForMinBatches(bus, 4, std::chrono::milliseconds(5000)));
 
-    const auto  snapped2 = bus->snapshot();
-    const auto& payload  = asSourceMetadata(snapped2.back());
-    EXPECT_EQ(payload.count("NEW:PV:TEST:X"), 1u);
-    EXPECT_EQ(payload.size(), 31u);
+    const auto  snapped2    = bus->snapshot();
+    const auto* globalBatch = lastGlobalBatch(snapped2);
+    ASSERT_NE(globalBatch, nullptr);
+    const auto& payload = asSourceMetadata(*globalBatch);
+    EXPECT_EQ(payload.sources.count("NEW:PV:TEST:X"), 1u);
+    EXPECT_EQ(payload.sources.size(), 31u);
 }
 
 // TEST 7 — a row removed between scans is absent from the subsequent batch.
@@ -279,6 +311,8 @@ timeout-sec: 5.0
 source-name-column: channelName
 tags-column: tags
 rescan-interval-sec: 0.2
+pvs:
+  - name: BPMS:IN20:221:X
 )");
 
     EpicsDSMetadataReader reader(bus, nullptr, cfg);
@@ -288,18 +322,20 @@ rescan-interval-sec: 0.2
     {
         const auto  snapped = bus->snapshot();
         const auto& payload = asSourceMetadata(snapped.front());
-        EXPECT_EQ(payload.count("VPIO:IN20:111:PRES"), 1u);
-        EXPECT_EQ(payload.size(), 30u);
+        EXPECT_EQ(payload.sources.count("VPIO:IN20:111:PRES"), 1u);
+        EXPECT_EQ(payload.sources.size(), 30u);
     }
 
     mockServer.removeRow("VPIO:IN20:111:PRES");
 
-    ASSERT_TRUE(waitForMinBatches(bus, 2, std::chrono::milliseconds(5000)));
+    ASSERT_TRUE(waitForMinBatches(bus, 4, std::chrono::milliseconds(5000)));
 
-    const auto  snapped2 = bus->snapshot();
-    const auto& payload  = asSourceMetadata(snapped2.back());
-    EXPECT_EQ(payload.count("VPIO:IN20:111:PRES"), 0u);
-    EXPECT_EQ(payload.size(), 29u);
+    const auto  snapped2    = bus->snapshot();
+    const auto* globalBatch = lastGlobalBatch(snapped2);
+    ASSERT_NE(globalBatch, nullptr);
+    const auto& payload = asSourceMetadata(*globalBatch);
+    EXPECT_EQ(payload.sources.count("VPIO:IN20:111:PRES"), 0u);
+    EXPECT_EQ(payload.sources.size(), 29u);
 }
 
 // TEST 8 — a tags update made between scans is reflected in the subsequent
@@ -316,6 +352,8 @@ timeout-sec: 5.0
 source-name-column: channelName
 tags-column: tags
 rescan-interval-sec: 0.2
+pvs:
+  - name: BPMS:IN20:221:X
 )");
 
     EpicsDSMetadataReader reader(bus, nullptr, cfg);
@@ -325,8 +363,8 @@ rescan-interval-sec: 0.2
     {
         const auto  snapped = bus->snapshot();
         const auto& payload = asSourceMetadata(snapped.front());
-        ASSERT_EQ(payload.count("BPMS:IN20:221:X"), 1u);
-        const auto& entry = payload.at("BPMS:IN20:221:X");
+        ASSERT_EQ(payload.sources.count("BPMS:IN20:221:X"), 1u);
+        const auto& entry = payload.sources.at("BPMS:IN20:221:X");
         ASSERT_TRUE(entry.tags.has_value());
         const auto& tags = entry.tags.value();
         EXPECT_NE(std::find(tags.begin(), tags.end(), "physics"), tags.end());
@@ -336,12 +374,14 @@ rescan-interval-sec: 0.2
 
     mockServer.updateTags("BPMS:IN20:221:X", "physics,bpm,fast,survey,golden");
 
-    ASSERT_TRUE(waitForMinBatches(bus, 2, std::chrono::milliseconds(5000)));
+    ASSERT_TRUE(waitForMinBatches(bus, 4, std::chrono::milliseconds(5000)));
 
-    const auto  snapped2 = bus->snapshot();
-    const auto& payload  = asSourceMetadata(snapped2.back());
-    ASSERT_EQ(payload.count("BPMS:IN20:221:X"), 1u);
-    const auto& entry = payload.at("BPMS:IN20:221:X");
+    const auto  snapped2    = bus->snapshot();
+    const auto* globalBatch = lastGlobalBatch(snapped2);
+    ASSERT_NE(globalBatch, nullptr);
+    const auto& payload = asSourceMetadata(*globalBatch);
+    ASSERT_EQ(payload.sources.count("BPMS:IN20:221:X"), 1u);
+    const auto& entry = payload.sources.at("BPMS:IN20:221:X");
     ASSERT_TRUE(entry.tags.has_value());
     const auto& tags = entry.tags.value();
     EXPECT_NE(std::find(tags.begin(), tags.end(), "golden"), tags.end());

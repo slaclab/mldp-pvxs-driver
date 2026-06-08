@@ -11,81 +11,83 @@ The driver implements an **abstract Reader pattern** that allows plugging in dif
 ```mermaid
 flowchart TB
     subgraph DataSources["DATA SOURCES"]
-        DS1["EPICS Control System<br/>(PVs/Process Variables)"]
-        DS2["EPICS Archiver<br/>"]
-        DS3["HDF5 Files<br/>(Future)"]
-        DS4["Others<br/>(Future)"]
+        direction LR
+        DS1["EPICS Control System<br/>(PVs / Process Variables)"]
+        DS2["EPICS Archiver"]
+        DS3["HDF5 Files (Future)"]
+        DS4["Others (Future)"]
     end
 
-    subgraph ReaderLayer["ABSTRACT READER LAYER — all readers inherit IReader"]
-        R1["EpicsBaseReader<br/>(Polling)<br/>Monitor Poller · Thread Pool"]
-        R2["EpicsPVXSReader<br/>(Event-Driven)<br/>PVXS Subscriptions"]
-        R3["EpicsArchiverReader<br/>(HTTP/Protobuf)<br/>historical_once / periodic_tail"]
-        R4["HDF5Reader<br/>(Future)<br/>File Parsing"]
+    subgraph ReaderLayer["READER LAYER — implements IReader"]
+        direction LR
+        R1["EpicsBaseReader<br/>Polling · Monitor Poller · Thread Pool"]
+        R2["EpicsPVXSReader<br/>Event-Driven · PVXS Subscriptions"]
+        R3["EpicsArchiverReader<br/>HTTP/Protobuf · historical_once / periodic_tail"]
+        R4["HDF5Reader (Future)"]
     end
 
-    IDataBus["IDataBus<br/>(Push Interface)"]
-
-    subgraph Controller["MLDPPVXSController"]
-        HashPart["Hash-Based Partitioning<br/>(Source Affinity)"]
-        subgraph Workers["Worker Queues"]
-            W0["Worker 0<br/>Queue"]
-            W1["Worker 1<br/>Queue"]
-            WN["Worker N<br/>Queue"]
-        end
-    end
-
-    QueryableFactory["QueryableFactory<br/>(Out-of-Band Query Registry)<br/>now: startup · tests<br/>future: algorithms / decision engines"]
-
+    IDataBus(["IDataBus<br/>(Push Interface)"])
+    QueryableFactory["QueryableFactory<br/>(Out-of-Band Query Registry)"]
     WriterFactory["WriterFactory<br/>(Static Registration)"]
 
-    subgraph WriterLayer["WRITER LAYER — all writers implement IWriter"]
-        WR1["MLDPWriter<br/>(gRPC)<br/>Thread Pool · WorkerChannels"]
-        WR2["HDF5WriterPerSource<br/>(Disk)<br/>MPSC Queue · HDF5FilePool · Flush Thread"]
-        WR3["HDF5WriterMerge<br/>(Disk)<br/>MPSC Queue · Shared H5File · Flush Thread"]
-        WR4["MLDPPVMetadataWriter<br/>(gRPC)<br/>Work Queue · Thread Pool"]
-        WR5["MLDPConfigurationWriter<br/>(gRPC)<br/>Work Queue · Thread Pool"]
+    subgraph Controller["MLDPPVXSController"]
+        direction TB
+        HashPart["Hash-Based Partitioning<br/>(Source Affinity)"]
+        subgraph Workers["Worker Queues"]
+            direction LR
+            W0["Worker 0"] ~~~ W1["Worker 1"] ~~~ WN["Worker N"]
+        end
+        HashPart --> W0
+        HashPart --> W1
+        HashPart --> WN
     end
 
-    MLDPService["MLDP Ingestion Service<br/>(gRPC Streams)"]
-    HDF5Files["HDF5 Files<br/>(one per source)"]
-    HDF5Merged["HDF5 Merged File<br/>(one file, group per source)"]
-    AnnotationService["DpAnnotationService<br/>(gRPC)"]
+    subgraph ProcessorLayer["CHANNEL PROCESSOR LAYER — IWriter · emits virtual sources"]
+        direction TB
+        WR6["ChannelProcessor<br/>InputBuffer · TriggerPolicy · AlignmentPolicy"]
+        IAlgo(["IAlgorithm<br/>«interface»"])
+        PA["PythonAlgorithm<br/>(python-processor)"]
+        WR6 --> IAlgo
+        PA -. implements .-> IAlgo
+    end
 
-    DS1 --> R1
-    DS1 --> R2
+    subgraph WriterLayer["WRITER LAYER — implements IWriter"]
+        direction LR
+        WR1["MLDPWriter<br/>gRPC · Thread Pool · WorkerChannels"]
+        WR2["HDF5WriterPerSource<br/>Disk · MPSC Queue · HDF5FilePool"]
+        WR3["HDF5WriterMerge<br/>Disk · MPSC Queue · Shared H5File"]
+        WR4["MLDPPVMetadataWriter<br/>gRPC · Work Queue"]
+        WR5["MLDPConfigurationWriter<br/>gRPC · Work Queue"]
+    end
+
+    subgraph Sinks["EXTERNAL SINKS"]
+        direction LR
+        MLDPService["MLDP Ingestion Service<br/>gRPC Streams"]
+        HDF5Files["HDF5 Files<br/>one per source"]
+        HDF5Merged["HDF5 Merged File<br/>one file, group per source"]
+        AnnotationService["DpAnnotationService<br/>gRPC"]
+    end
+
+    DS1 --> R1 & R2
     DS2 --> R3
-    DS3 --> R4
-    DS4 --> R4
+    DS3 & DS4 --> R4
 
-    R1 --> IDataBus
-    R2 --> IDataBus
-    R3 --> IDataBus
-    R4 --> IDataBus
+    R1 & R2 & R3 & R4 --> IDataBus
 
     IDataBus --> HashPart
     IDataBus ~~~ QueryableFactory
-    HashPart --> W0
-    HashPart --> W1
-    HashPart --> WN
-
     Controller -. prepareQueryables .-> QueryableFactory
 
-    W0 --> WriterFactory
-    W1 --> WriterFactory
-    WN --> WriterFactory
+    W0 & W1 & WN --> WriterFactory
+    WriterFactory --> WR6
+    WriterFactory --> WR1 & WR2 & WR3 & WR4 & WR5
 
-    WriterFactory --> WR1
-    WriterFactory --> WR2
-    WriterFactory --> WR3
-    WriterFactory --> WR4
-    WriterFactory --> WR5
+    WR6 -."virtual outputs".-> IDataBus
 
     WR1 --> MLDPService
     WR2 --> HDF5Files
     WR3 --> HDF5Merged
-    WR4 --> AnnotationService
-    WR5 --> AnnotationService
+    WR4 & WR5 --> AnnotationService
 ```
 
 ## Reader Abstraction
@@ -218,6 +220,46 @@ Each `EventBatchStruct` also carries:
 **Future use**: the factory is positioned as the query interface for decision-making components — for example algorithms that inspect historical data or existing annotations to decide what to ingest, generate derived signals, or trigger additional processing. Because `QueryableFactory` is decoupled from the push path, these consumers can be added without touching the reader/writer pipeline.
 
 → [Query Client Documentation](../dev/query-client.md)
+
+## Channel Processor Layer
+
+Channel processors are **writer-compatible algorithm engines** that consume input source batches, run an algorithm, and publish virtual output sources back onto `IDataBus`. They implement `IWriter` so the controller routes real-source batches to them via the existing `routing:` mechanism; their algorithm outputs are re-injected into the bus as new `EventBatch` entries and flow through the normal writer pipeline from there.
+
+```
+IChannelProcessor  (extends IWriter)
+└── ChannelProcessor  (runtime — owns InputBuffer + IAlgorithm)
+      ├── AlignmentPolicy: latest-value | interpolate
+      └── TriggerPolicy:   any-update | all-updated | interval
+```
+
+### Key Types
+
+| Class | Role |
+|---|---|
+| `IAlgorithm` | Pure-virtual compute interface: `configure()`, `compute(AlignedSnapshot)`, `outputSources()`, `reset()` |
+| `ChannelProcessor` | Concrete runtime — buffers source batches, aligns them, fires `IAlgorithm::compute()` on each trigger, pushes outputs back onto `IDataBus` |
+| `ChannelProcessorFactory` | Keyed registry (parallel to `WriterFactory`) — processor types register at static-init time |
+| `InputBuffer` | Accumulates per-source `DataBatch` entries and produces `AlignedSnapshot` on trigger |
+
+### Built-in Processor Types
+
+| Type key | Algorithm class | Build gate | Description |
+|---|---|---|---|
+| `linear-transform` | `LinearTransformAlgorithm` | always | `y = scale * x + bias` per source column |
+| `python-processor` | `PythonAlgorithm` (one per script) | `BUILD_PYTHON_PROCESSOR=ON` | Bulk-loads `.py` scripts from a directory; each valid script becomes one `ChannelProcessor` |
+
+### Configuration
+
+Processors are declared under the top-level `processors:` sequence in the controller YAML. Each entry has a `type:` key that selects the factory plus standard processor keys (`name`, `sources`, `alignment`, `trigger`) used by all types:
+
+```yaml
+processors:
+  - type: python-processor
+    script-dir: /opt/scripts/my-processors    # required for python-processor
+```
+
+→ [Python Processor Documentation](../processors/python-processor.md)
+→ [Full `processors:` YAML Reference](../guides/configuration.md#processors-block)
 
 ## Push Model Architecture
 
@@ -620,6 +662,12 @@ The driver exposes Prometheus metrics for monitoring:
 - `mldp_pvxs_driver_controller_send_time_seconds`
 - `mldp_pvxs_driver_controller_queue_depth`
 - `mldp_pvxs_driver_controller_channel_queue_depth`
+
+### Processor Metrics
+
+- `mldp_pvxs_driver_processor_compute_latency_us` (Histogram, label: `processor`) — `compute()` duration in microseconds
+- `mldp_pvxs_driver_processor_fire_total` (Counter, label: `processor`) — successful compute firings
+- `mldp_pvxs_driver_processor_buffer_depth` (Gauge, label: `processor`) — retained sample depth across buffered input sources
 
 ### Pool Metrics
 

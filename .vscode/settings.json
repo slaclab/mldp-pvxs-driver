@@ -2,6 +2,17 @@
     "cmake.buildDirectory": "${workspaceFolder}/build",
     "cmake.configureOnOpen": false,
     "cmake.useCMakePresets": "never",
+    "clangd.arguments": [
+        "--compile-commands-dir=${workspaceFolder}/build"
+    ],
+    "C_Cpp.default.compileCommands": "${workspaceFolder}/build/compile_commands.json",
+    "C_Cpp.default.includePath": [
+        "${workspaceFolder}/include",
+        "${workspaceFolder}/ext/BS_thread_pool/include",
+        "${workspaceFolder}/ext/rapidyaml/include",
+        "${workspaceFolder}/build",
+        "${workspaceFolder}/build/proto"
+    ],
     "chat.tools.terminal.autoApprove": {
         "ninja": true,
         "./bin/mldp_pvxs_driver_test": true

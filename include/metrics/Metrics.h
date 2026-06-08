@@ -11,7 +11,9 @@
 #pragma once
 
 #include <atomic>
+#include <condition_variable>
 #include <memory>
+#include <mutex>
 #include <thread>
 
 #include <prometheus/counter.h>
@@ -81,6 +83,11 @@ public:
     void setControllerQueueDepth(double value, prometheus::Labels tags = {});
     void setControllerChannelQueueDepth(double value, prometheus::Labels tags = {});
 
+    // Processor metrics --------------------------------------------------
+    void observeProcessorComputeLatencyUs(double value, prometheus::Labels tags = {});
+    void incrementProcessorFireCount(double value = 1.0, prometheus::Labels tags = {});
+    void setProcessorBufferDepth(double value, prometheus::Labels tags = {});
+
     // Bus metrics ---------------------------------------------------------
     void   incrementBusPushes(double value = 1.0, prometheus::Labels tags = {});
     void   incrementBusFailures(double value = 1.0, prometheus::Labels tags = {});
@@ -114,6 +121,11 @@ private:
     prometheus::Family<prometheus::Gauge>*     controller_queue_depth_family_{nullptr};
     prometheus::Family<prometheus::Gauge>*     controller_channel_queue_depth_family_{nullptr};
 
+    prometheus::Histogram::BucketBoundaries    processor_compute_latency_us_buckets_;
+    prometheus::Family<prometheus::Histogram>* processor_compute_latency_us_family_{nullptr};
+    prometheus::Family<prometheus::Counter>*   processor_fire_count_family_{nullptr};
+    prometheus::Family<prometheus::Gauge>*     processor_buffer_depth_family_{nullptr};
+
     prometheus::Family<prometheus::Counter>* bus_push_family_{nullptr};
     prometheus::Family<prometheus::Counter>* bus_failure_family_{nullptr};
     prometheus::Family<prometheus::Counter>* bus_payload_bytes_family_{nullptr};
@@ -127,8 +139,10 @@ private:
     void stopSystemMetricsCollection();
     void collectSystemMetricsLoop();
 
-    std::atomic<bool> stop_system_metrics_{false};
-    std::thread       system_metrics_thread_;
+    std::atomic<bool>       stop_system_metrics_{false};
+    std::condition_variable stop_metrics_cv_;
+    std::mutex              stop_metrics_mutex_;
+    std::thread             system_metrics_thread_;
 
     // CPU metrics (counters - values accumulate over time)
     prometheus::Family<prometheus::Counter>* process_cpu_user_ticks_family_{nullptr};

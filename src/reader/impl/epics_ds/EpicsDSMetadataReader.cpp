@@ -8,8 +8,17 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
+/**
+ * @file   EpicsDSMetadataReader.cpp
+ * @brief  Implementation of EpicsDSMetadataReader.
+ * @author SLAC MLDP Team
+ * @date   2025-01-01
+ * @copyright Copyright (c) 2025 SLAC National Accelerator Laboratory
+ */
+
 #include <reader/impl/epics_ds/EpicsDSMetadataReader.h>
 
+#include <thread>
 #include <util/log/Logger.h>
 
 #include <pvxs/client.h>
@@ -20,6 +29,7 @@
 #include <optional>
 #include <sstream>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 using namespace pvxs;
@@ -120,43 +130,37 @@ EpicsDSMetadataReader::EpicsDSMetadataReader(
 
 EpicsDSMetadataReader::~EpicsDSMetadataReader()
 {
+    util::log::tracef(*logger_, "~EpicsDSMetadataReader '{}' [tid={}]: requesting stop on worker thread", config_.name(), std::this_thread::get_id());
     worker_thread_.request_stop();
     worker_thread_.join();
+    util::log::tracef(*logger_, "~EpicsDSMetadataReader '{}' [tid={}]: worker thread joined", config_.name(), std::this_thread::get_id());
     if (result_queue_)
+    {
+        util::log::tracef(*logger_, "~EpicsDSMetadataReader '{}' [tid={}]: closing result queue", config_.name(), std::this_thread::get_id());
         result_queue_->close();
+    }
+    util::log::tracef(*logger_, "~EpicsDSMetadataReader '{}' [tid={}]: done (consumer jthreads joining)", config_.name(), std::this_thread::get_id());
     // consumer_threads_ jthread destructors join automatically
 }
 
 pvxs::Value EpicsDSMetadataReader::buildNTURI() const
 {
-    const bool hasShow = !config_.showColumns().empty();
-
-    TypeDef queryDef = hasShow
-        ? TypeDef(TypeCode::Struct, "epics:nt/NTURI:1.0",
-                  {
-                      Member(TypeCode::String, "scheme"),
-                      Member(TypeCode::String, "path"),
-                      Member(TypeCode::Struct, "query",
-                             {
-                                 Member(TypeCode::String, "name"),
-                                 Member(TypeCode::String, "show"),
-                             }),
-                  })
-        : TypeDef(TypeCode::Struct, "epics:nt/NTURI:1.0",
-                  {
-                      Member(TypeCode::String, "scheme"),
-                      Member(TypeCode::String, "path"),
-                      Member(TypeCode::Struct, "query",
-                             {
-                                 Member(TypeCode::String, "name"),
-                             }),
-                  });
+    TypeDef queryDef(TypeCode::Struct, "epics:nt/NTURI:1.0",
+                     {
+                         Member(TypeCode::String, "scheme"),
+                         Member(TypeCode::String, "path"),
+                         Member(TypeCode::Struct, "query",
+                                {
+                                    Member(TypeCode::String, "name"),
+                                    Member(TypeCode::String, "show"),
+                                }),
+                     });
 
     Value arg = queryDef.create();
     arg["scheme"]     = "pva";
     arg["path"]       = config_.service();
     arg["query.name"] = config_.query();
-    if (hasShow)
+    if (!config_.showColumns().empty())
         arg["query.show"] = config_.showColumns();
 
     return arg;
@@ -165,20 +169,126 @@ pvxs::Value EpicsDSMetadataReader::buildNTURI() const
 void EpicsDSMetadataReader::processResult(pvxs::Value result)
 {
     auto payload = parseNTTable(result);
+    payload.root_source_name = config_.name();
     bus_->push(IDataBus::EventBatch{
         .reader_name = config_.name(),
-        .root_source = config_.name(),
         .payload     = std::move(payload),
     });
+}
+
+pvxs::Value EpicsDSMetadataReader::buildNTURIForPV(const std::string& pvName,
+                                                   const std::string& showCol) const
+{
+    TypeDef queryDef(TypeCode::Struct, "epics:nt/NTURI:1.0",
+                     {
+                         Member(TypeCode::String, "scheme"),
+                         Member(TypeCode::String, "path"),
+                         Member(TypeCode::Struct, "query",
+                                {
+                                    Member(TypeCode::String, "name"),
+                                    Member(TypeCode::String, "show"),
+                                }),
+                     });
+
+    Value arg = queryDef.create();
+    arg["scheme"]     = "pva";
+    arg["path"]       = config_.service();
+    arg["query.name"] = pvName;
+    arg["query.show"] = showCol;
+    return arg;
+}
+
+std::unordered_map<std::string, std::string>
+EpicsDSMetadataReader::queryPVAttributes(const EpicsDSMetadataReaderConfig::PVEntry& pv)
+{
+    std::unordered_map<std::string, std::string> attributes;
+    for (const auto& col : config_.pvShowColumns())
+        attributes[col] = "";
+
+    for (const auto& showCol : config_.pvShowColumns())
+    {
+        try
+        {
+            const Value result = pva_context_.rpc(config_.service(), buildNTURIForPV(pv.name, showCol))
+                                     .exec()
+                                     ->wait(config_.timeoutSec());
+
+            const auto labelsVal   = result["labels"];
+            const auto valueStruct = result["value"];
+            if (!labelsVal.valid() || !valueStruct.valid())
+                continue;
+
+            const auto labels = labelsVal.as<shared_array<const std::string>>();
+            if (labels.empty())
+                continue;
+
+            const auto column = valueStruct[std::string(labels[0])];
+            if (!column.valid())
+                continue;
+
+            const auto values = column.as<shared_array<const std::string>>();
+            if (values.empty())
+                continue;
+
+            attributes[showCol] = std::string(values[0]);
+        }
+        catch (const std::exception& e)
+        {
+            util::log::errorf(*logger_,
+                              "EpicsDSMetadataReader '{}' PV-list RPC failed for '{}' show='{}': {}",
+                              config_.name(), pv.name, showCol, e.what());
+        }
+    }
+
+    if (logger_->shouldLog(util::log::Level::Debug))
+    {
+        std::ostringstream summary;
+        summary << "EpicsDSMetadataReader '" << config_.name()
+                << "' PV '" << pv.name << "' attributes:";
+        for (const auto& col : config_.pvShowColumns())
+        {
+            const auto it = attributes.find(col);
+            summary << ' ' << col << '='
+                    << (it != attributes.end() && !it->second.empty() ? it->second : "<missing>");
+        }
+        util::log::debugf(*logger_, "{}", summary.str());
+    }
+
+    return attributes;
+}
+
+void EpicsDSMetadataReader::runPVListSweep(std::stop_token st) noexcept
+{
+    for (const auto& pv : config_.pvs())
+    {
+        if (st.stop_requested())
+            return;
+
+        auto attributes = queryPVAttributes(pv);
+        for (const auto& [key, value] : pv.metadata)
+            attributes[key] = value;
+
+        util::bus::SourceMetadataEntry entry;
+        entry.attributes = std::move(attributes);
+
+        SourceMetadataPayload payload;
+        payload.root_source_name = pv.name;
+        payload.sources.emplace(pv.name, std::move(entry));
+
+        bus_->push(IDataBus::EventBatch{
+            .reader_name = config_.name(),
+            .payload     = std::move(payload),
+        });
+    }
 }
 
 void EpicsDSMetadataReader::runWorker(std::stop_token st)
 {
     while (!st.stop_requested()) {
         try {
-            Value result = pva_context_.rpc(config_.service(), buildNTURI())
-                               .exec()
-                               ->wait(config_.timeoutSec());
+            auto op = pva_context_.rpc(config_.service(), buildNTURI()).exec();
+            std::stop_callback cancel_on_stop{st, [&op] { op->interrupt(); }};
+            Value result = op->wait(config_.timeoutSec());
 
             {
                 std::ostringstream oss;
@@ -187,11 +297,17 @@ void EpicsDSMetadataReader::runWorker(std::stop_token st)
             }
 
             // dispatch_fn_ returns false if the worker should stop (e.g. if the queue is closed)
-            // the implementation of dispatch_fn_ depends on the number of threads configured: 
-            // in single-thread mode it processes inline and always returns true; 
+            // the implementation of dispatch_fn_ depends on the number of threads configured:
+            // in single-thread mode it processes inline and always returns true;
             // in multi-thread mode it pushes to the queue and returns false if the queue is closed.
             if (!dispatch_fn_(std::move(result), st))
                 break;
+
+            if (!config_.pvs().empty())
+                runPVListSweep(st);
+        }
+        catch (const pvxs::client::Interrupted&) {
+            break;
         }
         catch (const std::exception& e) {
             util::log::errorf(*logger_,
@@ -343,7 +459,7 @@ EpicsDSMetadataReader::parseNTTable(const pvxs::Value& result) const
             entry.attributes[std::string(labels[i])] = colData[i][r];
         }
 
-        payload[key] = std::move(entry);
+        payload.sources[key] = std::move(entry);
     }
 
     return payload;

@@ -8,6 +8,13 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
+/**
+ * @file   epics_ds_metadata_reader_test.cpp
+ * @brief  Integration tests for EpicsDSMetadataReader against MockDSServer.
+ * @author SLAC MLDP Team
+ * @date   2025-01-01
+ * @copyright Copyright (c) 2025 SLAC National Accelerator Laboratory
+ */
 #include <gtest/gtest.h>
 
 #include <reader/impl/epics_ds/EpicsDSMetadataReader.h>
@@ -70,14 +77,17 @@ timeout-sec: 5.0
 source-name-column: channelName
 tags-column: tags
 rescan-interval-sec: 0.0
+pvs:
+  - name: VPIO:IN20:111:PRES
+  - name: BPMS:IN20:221:X
 )yaml");
 
         reader = std::make_unique<EpicsDSMetadataReader>(bus, nullptr, cfg);
 
-        ASSERT_TRUE(waitForSnapshot(bus, 1, std::chrono::milliseconds(5000)));
+        ASSERT_TRUE(waitForSnapshot(bus, 3, std::chrono::milliseconds(5000)));
 
         snapshot = bus->snapshot();
-        ASSERT_EQ(snapshot.size(), 1u);
+        ASSERT_EQ(snapshot.size(), 3u);
 
         payload = &asSourceMetadata(snapshot[0]);
     }
@@ -95,18 +105,18 @@ rescan-interval-sec: 0.0
 
 // Verifies the reader pushes exactly one batch in single-shot mode and the
 // payload contains all 30 rows from the built-in MockDSServer dataset.
-TEST_F(EpicsDSMetadataReaderTest, SingleShotPushesSingleBatch)
+TEST_F(EpicsDSMetadataReaderTest, SingleShotPushesBatches)
 {
-    EXPECT_EQ(snapshot.size(), 1u);
+    EXPECT_EQ(snapshot.size(), 3u);
     ASSERT_TRUE(isSourceMetadata(snapshot[0]));
-    EXPECT_EQ(payload->size(), 30u);
+    EXPECT_EQ(payload->sources.size(), 30u);
 }
 
 // Verifies that attribute values for a known row match the built-in dataset.
 TEST_F(EpicsDSMetadataReaderTest, PayloadContainsCorrectAttributes)
 {
-    ASSERT_TRUE(payload->count("VPIO:IN20:111:PRES") > 0);
-    const auto& entry = payload->at("VPIO:IN20:111:PRES");
+    ASSERT_TRUE(payload->sources.count("VPIO:IN20:111:PRES") > 0);
+    const auto& entry = payload->sources.at("VPIO:IN20:111:PRES");
     EXPECT_EQ(entry.attributes.at("hostName"), "cpu-li20-vac1");
     EXPECT_EQ(entry.attributes.at("owner"), "vacuum");
 }
@@ -115,8 +125,8 @@ TEST_F(EpicsDSMetadataReaderTest, PayloadContainsCorrectAttributes)
 // the expected tags for a known row.
 TEST_F(EpicsDSMetadataReaderTest, TagsColumnParsedCorrectly)
 {
-    ASSERT_TRUE(payload->count("BPMS:IN20:221:X") > 0);
-    const auto& entry = payload->at("BPMS:IN20:221:X");
+    ASSERT_TRUE(payload->sources.count("BPMS:IN20:221:X") > 0);
+    const auto& entry = payload->sources.at("BPMS:IN20:221:X");
     ASSERT_TRUE(entry.tags.has_value());
 
     const auto& tags = entry.tags.value();
@@ -127,15 +137,150 @@ TEST_F(EpicsDSMetadataReaderTest, TagsColumnParsedCorrectly)
 // Verifies that the source-name column is not duplicated inside attributes.
 TEST_F(EpicsDSMetadataReaderTest, ChannelNameNotInAttributes)
 {
-    ASSERT_TRUE(payload->count("BPMS:IN20:221:X") > 0);
-    const auto& entry = payload->at("BPMS:IN20:221:X");
+    ASSERT_TRUE(payload->sources.count("BPMS:IN20:221:X") > 0);
+    const auto& entry = payload->sources.at("BPMS:IN20:221:X");
     EXPECT_EQ(entry.attributes.count("channelName"), 0u);
 }
 
 // Verifies that the tags column is not duplicated inside attributes.
 TEST_F(EpicsDSMetadataReaderTest, TagsColumnNotInAttributes)
 {
-    ASSERT_TRUE(payload->count("BPMS:IN20:221:X") > 0);
-    const auto& entry = payload->at("BPMS:IN20:221:X");
+    ASSERT_TRUE(payload->sources.count("BPMS:IN20:221:X") > 0);
+    const auto& entry = payload->sources.at("BPMS:IN20:221:X");
     EXPECT_EQ(entry.attributes.count("tags"), 0u);
+}
+
+TEST(EpicsDSMetadataReaderPVListTest, EmitsPerPVEntriesWithMergedAttributes)
+{
+    auto mockServer = std::make_unique<MockDSServer>("test:ds:pv-list");
+    auto bus        = std::make_shared<MockDataBus>();
+
+    auto cfg = makeConfigFromYaml(R"yaml(
+name: pv-list-reader
+service: test:ds:pv-list
+query: "%"
+timeout-sec: 5.0
+source-name-column: channelName
+tags-column: tags
+rescan-interval-sec: 0.0
+pvs:
+  - name: BPMS:IN20:221:X
+    metadata:
+      system: bpm
+  - name: DOES:NOT:EXIST
+    metadata:
+      source: static
+pv-show-columns: "hostName,iocName"
+)yaml");
+
+    auto reader = std::make_unique<EpicsDSMetadataReader>(bus, nullptr, cfg);
+    ASSERT_TRUE(waitForSnapshot(bus, 3, std::chrono::milliseconds(5000)));
+
+    const auto snapshot = bus->snapshot();
+    ASSERT_EQ(snapshot.size(), 3u);
+
+    ASSERT_TRUE(isSourceMetadata(snapshot[1]));
+    const auto& knownPayload = asSourceMetadata(snapshot[1]);
+    ASSERT_EQ(knownPayload.sources.size(), 1u);
+    ASSERT_TRUE(knownPayload.sources.count("BPMS:IN20:221:X") > 0);
+    const auto& known = knownPayload.sources.at("BPMS:IN20:221:X");
+    EXPECT_EQ(known.attributes.at("system"), "bpm");
+    EXPECT_EQ(known.attributes.at("hostName"), "cpu-in20-bpm1");
+    EXPECT_EQ(known.attributes.at("iocName"), "ioc-in20-bpm1");
+
+    ASSERT_TRUE(isSourceMetadata(snapshot[2]));
+    const auto& missingPayload = asSourceMetadata(snapshot[2]);
+    ASSERT_EQ(missingPayload.sources.size(), 1u);
+    ASSERT_TRUE(missingPayload.sources.count("DOES:NOT:EXIST") > 0);
+    const auto& missing = missingPayload.sources.at("DOES:NOT:EXIST");
+    ASSERT_EQ(missing.attributes.size(), 3u);
+    EXPECT_EQ(missing.attributes.at("source"), "static");
+    EXPECT_EQ(missing.attributes.at("hostName"), "");
+    EXPECT_EQ(missing.attributes.at("iocName"), "");
+
+    (void)reader;
+    (void)mockServer;
+}
+
+TEST(EpicsDSMetadataReaderPVListTest, UsesDefaultPVShowColumnsWhenOmitted)
+{
+    auto mockServer = std::make_unique<MockDSServer>("test:ds:pv-default-show");
+    auto bus        = std::make_shared<MockDataBus>();
+
+    auto cfg = makeConfigFromYaml(R"yaml(
+name: pv-default-show-reader
+service: test:ds:pv-default-show
+query: "%"
+timeout-sec: 5.0
+source-name-column: channelName
+tags-column: tags
+rescan-interval-sec: 0.0
+pvs:
+  - name: BPMS:IN20:221:X
+)yaml");
+
+    auto reader = std::make_unique<EpicsDSMetadataReader>(bus, nullptr, cfg);
+    ASSERT_TRUE(waitForSnapshot(bus, 2, std::chrono::milliseconds(5000)));
+
+    const auto snapshot = bus->snapshot();
+    ASSERT_EQ(snapshot.size(), 2u);
+    ASSERT_TRUE(isSourceMetadata(snapshot[1]));
+
+    const auto& payload = asSourceMetadata(snapshot[1]);
+    ASSERT_EQ(payload.sources.size(), 1u);
+    ASSERT_TRUE(payload.sources.count("BPMS:IN20:221:X") > 0);
+
+    const auto& entry = payload.sources.at("BPMS:IN20:221:X");
+    EXPECT_EQ(entry.attributes.at("dname"), "");
+    EXPECT_EQ(entry.attributes.at("ename"), "");
+    EXPECT_EQ(entry.attributes.at("etype"), "");
+    EXPECT_EQ(entry.attributes.at("lname"), "");
+    EXPECT_EQ(entry.attributes.at("ioc"), "");
+    EXPECT_EQ(entry.attributes.at("scheme"), "");
+    EXPECT_EQ(entry.attributes.at("z"), "");
+
+    (void)reader;
+    (void)mockServer;
+}
+
+TEST(EpicsDSMetadataReaderPVListTest, UsesDefaultPVShowColumnsWhenBlank)
+{
+    auto mockServer = std::make_unique<MockDSServer>("test:ds:pv-blank-show");
+    auto bus        = std::make_shared<MockDataBus>();
+
+    auto cfg = makeConfigFromYaml(R"yaml(
+name: pv-blank-show-reader
+service: test:ds:pv-blank-show
+query: "%"
+timeout-sec: 5.0
+source-name-column: channelName
+tags-column: tags
+rescan-interval-sec: 0.0
+pvs:
+  - name: BPMS:IN20:221:X
+pv-show-columns: "   "
+)yaml");
+
+    auto reader = std::make_unique<EpicsDSMetadataReader>(bus, nullptr, cfg);
+    ASSERT_TRUE(waitForSnapshot(bus, 2, std::chrono::milliseconds(5000)));
+
+    const auto snapshot = bus->snapshot();
+    ASSERT_EQ(snapshot.size(), 2u);
+    ASSERT_TRUE(isSourceMetadata(snapshot[1]));
+
+    const auto& payload = asSourceMetadata(snapshot[1]);
+    ASSERT_EQ(payload.sources.size(), 1u);
+    ASSERT_TRUE(payload.sources.count("BPMS:IN20:221:X") > 0);
+
+    const auto& entry = payload.sources.at("BPMS:IN20:221:X");
+    EXPECT_EQ(entry.attributes.at("dname"), "");
+    EXPECT_EQ(entry.attributes.at("ename"), "");
+    EXPECT_EQ(entry.attributes.at("etype"), "");
+    EXPECT_EQ(entry.attributes.at("lname"), "");
+    EXPECT_EQ(entry.attributes.at("ioc"), "");
+    EXPECT_EQ(entry.attributes.at("scheme"), "");
+    EXPECT_EQ(entry.attributes.at("z"), "");
+
+    (void)reader;
+    (void)mockServer;
 }

@@ -21,7 +21,7 @@
 	],
 
 	// Use 'postCreateCommand' to run commands after the container is created.
-	// "postCreateCommand": "uname -a",
+	"postCreateCommand": "python3 --version && cmake -S /workspace -B /workspace/build -DMLDP_PVXS_DRIVER_TESTS=ON -DBUILD_PYTHON_PROCESSOR=ON || true",
 
 	// Configure tool-specific properties.
 	"customizations": {

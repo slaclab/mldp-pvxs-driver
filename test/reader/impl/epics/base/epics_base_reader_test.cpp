@@ -26,6 +26,7 @@ using mldp_pvxs_driver::util::bus::IDataBus;
 using mldp_pvxs_driver::util::bus::DataBatch;
 using namespace mldp_pvxs_driver::reader::impl::epics;
 using mldp_pvxs_driver::util::bus::asTimeSeries;
+using mldp_pvxs_driver::util::bus::getRootSourceName;
 
 // Concrete mock implementation of IDataBus for testing
 class MockEventBusPush : public IDataBus
@@ -48,7 +49,7 @@ public:
         if (metrics_)
         {
             const size_t             total_values = asTimeSeries(batch).frames.size();
-            const auto               source = batch.root_source.empty() ? std::string("unknown") : batch.root_source;
+            const auto               source = getRootSourceName(batch).empty() ? std::string("unknown") : getRootSourceName(batch);
             const prometheus::Labels tags{{"source", source}};
             metrics_->incrementBusPushes(static_cast<double>(total_values), tags);
             metrics_->incrementBusPayloadBytes(0.0, tags);
@@ -446,7 +447,7 @@ pvs:
                     break;
                 }
             }
-            if (has_column && batch.root_source == "test:bsas_table")
+            if (has_column && getRootSourceName(batch) == "test:bsas_table")
             {
                 saw_root_for_column_batch = true;
                 break;
@@ -542,7 +543,7 @@ pvs:
     bool found = false;
     for (const auto& batch : mock_bus->received_events)
     {
-        if (batch.root_source != "test:counter")
+        if (getRootSourceName(batch) != "test:counter")
             continue;
         found = true;
         // Reader-level key not overridden by per-PV.

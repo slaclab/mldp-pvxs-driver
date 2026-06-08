@@ -32,6 +32,7 @@ namespace mldp_pvxs_driver::util::bus {
  */
 struct TimeSeriesPayload
 {
+    std::string                       root_source_name;          ///< Primary PV/signal identifier for this batch (used for routing and metrics).
     std::vector<util::bus::DataBatch> frames;                    ///< One DataBatch per ingestion payload; each batch must include timestamps.
     bool                              end_of_batch_group{false}; ///< Flush sentinel. Signals that all column batches for one logical row-synchronized group have been emitted. Writers should flush any accumulated tabular state when this is true.
     bool                              is_tabular{false};         ///< True when this batch carries column frames for a multi-column, row-synchronized table. Writers that support tabular layout accumulate column batches before flushing.
@@ -51,8 +52,14 @@ struct SourceMetadataEntry
     std::optional<std::string>                   modified_by; ///< Identity of last modifier.
 };
 
-/// Map of source name to its metadata record; used as the SourceMetadata payload type.
-using SourceMetadataPayload = std::unordered_map<std::string, SourceMetadataEntry>;
+/**
+ * @brief Payload carrying per-source metadata records.
+ */
+struct SourceMetadataPayload
+{
+    std::string                                          root_source_name; ///< Primary identity of this metadata batch (e.g. the queried PV or reader name).
+    std::unordered_map<std::string, SourceMetadataEntry> sources;          ///< Map of source name to its metadata record.
+};
 
 /**
  * @brief Nanosecond-resolution timestamp used inside bus payloads.
@@ -68,6 +75,7 @@ struct BusTimestamp
  */
 struct ConfigurationPayload
 {
+    std::string                                  root_source_name;          ///< Primary identity of this configuration batch (e.g. the reader or calendar name).
     std::string                                  configuration_name;        ///< Unique name of the configuration.
     std::string                                  category;                  ///< Logical category/grouping.
     std::optional<std::string>                   description;               ///< Human-readable description.
@@ -113,7 +121,6 @@ struct EventBatchStruct
 {
     /// Identity of the producing reader (set by reader before push).
     std::string                                  reader_name;
-    std::string                                  root_source; ///< Root PV identifier used for batch-level metrics/correlation.
     std::unordered_map<std::string, std::string> metadata;    ///< Key/value metadata annotations attached to the batch (e.g. "source" -> PV name).
     BatchPayload                                 payload;     ///< Variant payload; inspect with isTimeSeries() / asTimeSeries() helpers etc.
 };
@@ -167,6 +174,26 @@ inline const ConfigurationPayload& asConfiguration(const EventBatchStruct& b)
 inline const ConfigurationActivationPayload& asConfigurationActivation(const EventBatchStruct& b)
 {
     return std::get<ConfigurationActivationPayload>(b.payload);
+}
+
+/**
+ * @brief Returns the canonical identity string for any payload type.
+ *
+ * TimeSeriesPayload, SourceMetadataPayload, ConfigurationPayload → root_source_name.
+ * ConfigurationActivationPayload → configuration_name (its natural primary key).
+ * Returns an empty string if the payload holds no active alternative.
+ */
+inline std::string getRootSourceName(const EventBatchStruct& b)
+{
+    if (const auto* p = std::get_if<TimeSeriesPayload>(&b.payload))
+        return p->root_source_name;
+    if (const auto* p = std::get_if<SourceMetadataPayload>(&b.payload))
+        return p->root_source_name;
+    if (const auto* p = std::get_if<ConfigurationPayload>(&b.payload))
+        return p->root_source_name;
+    if (const auto* p = std::get_if<ConfigurationActivationPayload>(&b.payload))
+        return p->configuration_name;
+    return {};
 }
 
 ///@}

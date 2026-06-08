@@ -98,7 +98,9 @@ void HDF5WriterBase::stop() noexcept
     {
         try
         {
+            tracef(*logger_, "HDF5Writer [{}] [tid={}] joining flush thread", config_.name, std::this_thread::get_id());
             flushThread_.join();
+            tracef(*logger_, "HDF5Writer [{}] [tid={}] flush thread joined", config_.name, std::this_thread::get_id());
         }
         catch (...)
         {
@@ -175,7 +177,7 @@ void HDF5WriterBase::writerLoop()
                 const auto& ts = util::bus::asTimeSeries(entry.batch);
                 if (ts.end_of_batch_group)
                 {
-                    const auto& source = entry.batch.root_source;
+                    const auto& source = ts.root_source_name;
                     auto        it = tabularBuffers_.find(source);
                     if (it != tabularBuffers_.end() && it->second.rowCount > 0)
                     {
@@ -200,7 +202,7 @@ void HDF5WriterBase::writerLoop()
                     for (const auto& frame : ts.frames)
                     {
                         const auto t0 = std::chrono::steady_clock::now();
-                        writeFrameImpl(entry.batch.root_source, frame, entry.batchSeq);
+                        writeFrameImpl(ts.root_source_name, frame, entry.batchSeq);
                         if (writerMetrics_)
                         {
                             const double ms = std::chrono::duration<double, std::milli>(
@@ -216,17 +218,17 @@ void HDF5WriterBase::writerLoop()
             catch (const H5::Exception& ex)
             {
                 errorf(*logger_, "HDF5Writer [{}] source={} write HDF5 error: {}",
-                       config_.name, entry.batch.root_source, ex.getCDetailMsg());
+                       config_.name, util::bus::getRootSourceName(entry.batch), ex.getCDetailMsg());
             }
             catch (const std::exception& ex)
             {
                 errorf(*logger_, "HDF5Writer [{}] source={} write failed: {}",
-                       config_.name, entry.batch.root_source, ex.what());
+                       config_.name, util::bus::getRootSourceName(entry.batch), ex.what());
             }
             catch (...)
             {
                 errorf(*logger_, "HDF5Writer [{}] source={} write failed — unknown exception",
-                       config_.name, entry.batch.root_source);
+                       config_.name, util::bus::getRootSourceName(entry.batch));
             }
         }
     }
@@ -244,6 +246,9 @@ void HDF5WriterBase::flushLoop()
 
     while (!stopping_.load())
     {
+        tracef(*logger_, "HDF5Writer [{}] flush thread [tid={}] sleeping {}ms", config_.name,
+               std::this_thread::get_id(),
+               std::chrono::duration_cast<std::chrono::milliseconds>(config_.flushInterval).count());
         std::this_thread::sleep_for(config_.flushInterval);
         doFlushAll();
     }
@@ -315,7 +320,7 @@ bool HDF5WriterBase::isTabularBatch(const util::bus::IDataBus::EventBatch& batch
 
 void HDF5WriterBase::processTabularBatch(const QueueEntry& entry)
 {
-    const auto& source = entry.batch.root_source;
+    const auto& source = util::bus::asTimeSeries(entry.batch).root_source_name;
     auto&       buf = tabularBuffers_[source];
     // Capture metadata from the first batch that carries non-empty metadata.
     if (buf.pendingMetadata.empty() && !entry.batch.metadata.empty())

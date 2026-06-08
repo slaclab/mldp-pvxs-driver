@@ -13,6 +13,7 @@
 #include <controller/RouteTable.h>
 #include <reader/ReaderFactory.h>
 #include <writer/WriterConfig.h>
+#include <writer/WriterFactory.h>
 
 using namespace mldp_pvxs_driver::config;
 using namespace mldp_pvxs_driver::metrics;
@@ -61,6 +62,12 @@ MLDPPVXSControllerConfig::writerEntries() const
     return writerEntries_;
 }
 
+const std::vector<std::pair<std::string, Config>>&
+MLDPPVXSControllerConfig::processorEntries() const
+{
+    return processorEntries_;
+}
+
 const std::optional<MetricsConfig>& MLDPPVXSControllerConfig::metricsConfig() const
 {
     return metricsConfig_;
@@ -77,6 +84,7 @@ void MLDPPVXSControllerConfig::parse(const ::mldp_pvxs_driver::config::Config& r
     name_ = root.get(NameKey, "default");
     parseWriter(root);
     parseReaders(root);
+    parseProcessors(root);
     parseMetrics(root);
     parseRouting(root);
     parseQueryables(root);
@@ -89,7 +97,7 @@ void MLDPPVXSControllerConfig::parseWriter(const ::mldp_pvxs_driver::config::Con
 
     if (!root.hasChild(WriterKey))
     {
-        throw Error("'writer' block is missing; configure at least one writer under writer.mldp, writer.hdf5, or writer.hdf5-merge");
+        throw Error("'writer' block is missing; configure at least one writer under writer.<type>");
     }
 
     const auto writerNodes = root.subConfig(WriterKey);
@@ -112,46 +120,15 @@ void MLDPPVXSControllerConfig::parseWriter(const ::mldp_pvxs_driver::config::Con
         throw Error(e.what());
     }
 
-    // Build one writerEntry per configured instance (sequence items).
-    // The config node passed to the factory is the per-instance map node.
-    if (writerNode.hasChild(WriterMldpKey))
+    for (const auto& typeName : WriterFactory::registeredTypes())
     {
-        const auto mldpItems = writerNode.subConfig(WriterMldpKey);
-        for (const auto& item : mldpItems)
-        {
-            writerEntries_.push_back({"mldp", item});
-        }
-    }
-    if (writerNode.hasChild(WriterHdf5Key))
-    {
-        const auto hdf5Items = writerNode.subConfig(WriterHdf5Key);
-        for (const auto& item : hdf5Items)
-        {
-            writerEntries_.push_back({"hdf5", item});
-        }
-    }
-    if (writerNode.hasChild(WriterHdf5MergeKey))
-    {
-        const auto hdf5MergeItems = writerNode.subConfig(WriterHdf5MergeKey);
-        for (const auto& item : hdf5MergeItems)
-        {
-            writerEntries_.push_back({"hdf5-merge", item});
-        }
-    }
-    if (writerNode.hasChild(WriterMldpPVMetadataKey))
-    {
-        const auto items = writerNode.subConfig(WriterMldpPVMetadataKey);
+        if (!writerNode.hasChild(typeName))
+            continue;
+
+        const auto items = writerNode.subConfig(typeName);
         for (const auto& item : items)
         {
-            writerEntries_.push_back({"mldp-pv-metadata", item});
-        }
-    }
-    if (writerNode.hasChild(WriterMldpConfigurationKey))
-    {
-        const auto items = writerNode.subConfig(WriterMldpConfigurationKey);
-        for (const auto& item : items)
-        {
-            writerEntries_.push_back({"mldp-configuration", item});
+            writerEntries_.push_back({typeName, item});
         }
     }
 }
@@ -212,6 +189,31 @@ void MLDPPVXSControllerConfig::parseReaders(const ::mldp_pvxs_driver::config::Co
             }
             throw Error("reader entry does not specify a registered type (expected " + available + ")");
         }
+    }
+}
+
+void MLDPPVXSControllerConfig::parseProcessors(const ::mldp_pvxs_driver::config::Config& root)
+{
+    processorEntries_.clear();
+
+    if (!root.hasChild("processors"))
+    {
+        return;
+    }
+
+    if (!root.isSequence("processors"))
+    {
+        throw Error("processors must be a sequence");
+    }
+
+    for (const auto& processorNode : root.subConfig("processors"))
+    {
+        const auto type = processorNode.get("type", "");
+        if (type.empty())
+        {
+            throw Error("processor entry missing 'type' field");
+        }
+        processorEntries_.push_back({type, processorNode});
     }
 }
 

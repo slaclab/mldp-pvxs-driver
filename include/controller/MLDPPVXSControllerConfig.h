@@ -89,6 +89,11 @@ public:
     const std::vector<std::pair<std::string, config::Config>>& writerEntries() const;
 
     /**
+     * @return Processor entries as (type, config-node) pairs.
+     */
+    const std::vector<std::pair<std::string, config::Config>>& processorEntries() const;
+
+    /**
      * @brief Parsed queryable entries from the @c queryable: YAML sequence.
      */
     struct QueryableEntry
@@ -118,6 +123,7 @@ private:
     void parse(const ::mldp_pvxs_driver::config::Config& root);
     void parseWriter(const ::mldp_pvxs_driver::config::Config& root);
     void parseReaders(const ::mldp_pvxs_driver::config::Config& root);
+    void parseProcessors(const ::mldp_pvxs_driver::config::Config& root);
     void parseMetrics(const ::mldp_pvxs_driver::config::Config& root);
     void parseRouting(const ::mldp_pvxs_driver::config::Config& root);
     void parseQueryables(const ::mldp_pvxs_driver::config::Config& root);
@@ -127,6 +133,7 @@ private:
     std::vector<config::Config>                         readerConfigs_;
     std::vector<std::pair<std::string, config::Config>> readerEntries_;
     std::vector<std::pair<std::string, config::Config>> writerEntries_;
+    std::vector<std::pair<std::string, config::Config>> processorEntries_;
     std::optional<metrics::MetricsConfig>               metricsConfig_;
     std::vector<RouteFilterEntry>                       routeEntries_;
     std::vector<QueryableEntry>                         queryable_entries_;

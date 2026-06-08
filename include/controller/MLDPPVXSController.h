@@ -15,6 +15,7 @@
 #include <controller/MLDPPVXSControllerConfig.h>
 #include <controller/RouteTable.h>
 #include <metrics/Metrics.h>
+#include <processor/IChannelProcessor.h>
 #include <reader/IReader.h>
 #include <util/bus/IDataBus.h>
 #include <util/log/Logger.h>
@@ -163,11 +164,13 @@ public:
 private:
     MLDPPVXSControllerConfig                              config_;      ///< Typed controller configuration.
     std::shared_ptr<mldp_pvxs_driver::util::log::ILogger> logger_;      ///< Logger instance for controller logging.
-    std::shared_ptr<BS::light_thread_pool>                thread_pool_; ///< Shared worker pool.
+    std::shared_ptr<BS::light_thread_pool>                 thread_pool_;       ///< Writer fan-out pool.
+    std::vector<std::shared_ptr<BS::light_thread_pool>>   processor_pools_;   ///< One dedicated 1-thread pool per processor (each algorithm runs isolated).
     std::shared_ptr<metrics::Metrics>                     metrics_;     ///< Shared metrics collector/exposer.
     std::atomic<bool>                                     running_{false};
     std::vector<reader::ReaderUPtr>                       readers_;     ///< Owned reader instances.
     std::vector<writer::IWriterUPtr>                      writers_;     ///< Fan-out writer instances.
+    std::vector<processor::IChannelProcessorUPtr>         processors_;  ///< In-process virtual channel processors.
     RouteTable                                            route_table_; ///< Selective reader→writer dispatch.
 
     explicit MLDPPVXSController(const config::Config& config);

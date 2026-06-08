@@ -8,6 +8,13 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
+/**
+ * @file   MockDSServer.cpp
+ * @brief  Implementation of MockDSServer.
+ * @author SLAC MLDP Team
+ * @date   2025-01-01
+ * @copyright Copyright (c) 2025 SLAC National Accelerator Laboratory
+ */
 #include "MockDSServer.h"
 
 #include <pvxs/nt.h>
@@ -71,10 +78,21 @@ MockDSServer::MockDSServer(std::string channel, std::string jsonlPath)
     auto rpcPV = server::SharedPV::buildMailbox();
     rpcPV.onRPC([this](server::SharedPV&,
                        std::unique_ptr<server::ExecOp>&& op,
-                       pvxs::Value&&)
+                       pvxs::Value&&                     arg)
                 {
+                    std::string nameFilter = "%";
+                    std::string showCol;
+                    if (arg.valid())
+                    {
+                        auto nameField = arg["query.name"];
+                        if (nameField.valid())
+                            nameFilter = nameField.as<std::string>();
+                        auto showField = arg["query.show"];
+                        if (showField.valid())
+                            showCol = showField.as<std::string>();
+                    }
                     std::lock_guard<std::mutex> lk(m_mutex);
-                    op->reply(buildNTTableResponse());
+                    op->reply(buildNTTableResponse(nameFilter, showCol));
                 });
 
     m_server.addPV(m_channel, rpcPV);
@@ -110,27 +128,54 @@ void MockDSServer::loadRows(const std::string& dataDir)
     m_rows = parseJsonl(buf.str());
 }
 
-pvxs::Value MockDSServer::buildNTTableResponse() const
+pvxs::Value MockDSServer::buildNTTableResponse(const std::string& nameFilter,
+                                               const std::string& showCol) const
 {
+    // Filter rows
+    std::vector<const DsRow*> filtered;
+    for (const auto& row : m_rows)
+    {
+        if (nameFilter.empty() || nameFilter == "%")
+        {
+            filtered.push_back(&row);
+        }
+        else
+        {
+            auto it = row.find("channelName");
+            if (it != row.end() && it->second == nameFilter)
+                filtered.push_back(&row);
+        }
+    }
+
+    // Determine columns to emit
+    std::vector<std::string> cols;
+    if (!showCol.empty())
+    {
+        cols.push_back(showCol);
+    }
+    else
+    {
+        for (const char* c : kColumns)
+            cols.emplace_back(c);
+    }
+
     nt::NTTable builder;
-    for (const char* col : kColumns)
-        builder.add_column(TypeCode::String, col);
+    for (const auto& col : cols)
+        builder.add_column(TypeCode::String, col.c_str());
     pvxs::Value val = builder.build().create();
 
-    // labels
-    shared_array<std::string> labels(kColumns.size());
-    for (size_t i = 0; i < kColumns.size(); ++i)
-        labels[i] = kColumns[i];
+    shared_array<std::string> labels(cols.size());
+    for (size_t i = 0; i < cols.size(); ++i)
+        labels[i] = cols[i];
     val["labels"] = labels.freeze();
 
-    // column data
-    for (const char* col : kColumns)
+    for (const auto& col : cols)
     {
-        shared_array<std::string> colArr(m_rows.size());
-        for (size_t r = 0; r < m_rows.size(); ++r)
+        shared_array<std::string> colArr(filtered.size());
+        for (size_t r = 0; r < filtered.size(); ++r)
         {
-            auto it   = m_rows[r].find(col);
-            colArr[r] = (it != m_rows[r].end()) ? it->second : "";
+            auto it   = filtered[r]->find(col);
+            colArr[r] = (it != filtered[r]->end()) ? it->second : "";
         }
         val[std::string("value.") + col] = colArr.freeze();
     }

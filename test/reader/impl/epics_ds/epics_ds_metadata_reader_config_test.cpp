@@ -8,6 +8,13 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
+/**
+ * @file   epics_ds_metadata_reader_config_test.cpp
+ * @brief  Unit tests for EpicsDSMetadataReaderConfig parsing and validation.
+ * @author SLAC MLDP Team
+ * @date   2025-01-01
+ * @copyright Copyright (c) 2025 SLAC National Accelerator Laboratory
+ */
 #include <gtest/gtest.h>
 
 #include <string>
@@ -28,11 +35,13 @@ class EpicsDSMetadataReaderConfigTest : public ::testing::Test
 {
 };
 
-// Verifies that a minimal config (only the required name field) yields all expected defaults.
+// Verifies that a config with the required PV-list fields yields the remaining defaults.
 TEST_F(EpicsDSMetadataReaderConfigTest, DefaultValues)
 {
     auto cfg = makeConfigFromYaml(R"yaml(
 name: test-reader
+pvs:
+  - name: BPMS:LI20:2445:X
 )yaml");
 
     EpicsDSMetadataReaderConfig config(cfg);
@@ -43,7 +52,40 @@ name: test-reader
     EXPECT_DOUBLE_EQ(config.timeoutSec(), 5.0);
     EXPECT_EQ(config.sourceNameColumn(), "channelName");
     EXPECT_EQ(config.tagsColumn(), "");
+    ASSERT_EQ(config.pvs().size(), 1u);
+    EXPECT_EQ(config.pvs()[0].name, "BPMS:LI20:2445:X");
+    const std::vector<std::string> expected{"dname", "ename", "etype", "lname", "ioc", "scheme", "z"};
+    EXPECT_EQ(config.pvShowColumns(), expected);
     EXPECT_DOUBLE_EQ(config.rescanIntervalSec(), 0.0);
+}
+
+TEST_F(EpicsDSMetadataReaderConfigTest, MissingPVShowColumnsUsesDefaultList)
+{
+    auto cfg = makeConfigFromYaml(R"yaml(
+name: test-reader
+pvs:
+  - name: BPMS:LI20:2445:X
+)yaml");
+
+    EpicsDSMetadataReaderConfig config(cfg);
+
+    const std::vector<std::string> expected{"dname", "ename", "etype", "lname", "ioc", "scheme", "z"};
+    EXPECT_EQ(config.pvShowColumns(), expected);
+}
+
+TEST_F(EpicsDSMetadataReaderConfigTest, EmptyPVShowColumnsUsesDefaultList)
+{
+    auto cfg = makeConfigFromYaml(R"yaml(
+name: test-reader
+pvs:
+  - name: BPMS:LI20:2445:X
+pv-show-columns: "   "
+)yaml");
+
+    EpicsDSMetadataReaderConfig config(cfg);
+
+    const std::vector<std::string> expected{"dname", "ename", "etype", "lname", "ioc", "scheme", "z"};
+    EXPECT_EQ(config.pvShowColumns(), expected);
 }
 
 // Verifies that all explicitly set fields are parsed correctly.
@@ -57,6 +99,9 @@ timeout-sec: 10.0
 source-name-column: pvName
 tags-column: labels
 rescan-interval-sec: 300.0
+pvs:
+  - name: BPMS:LI20:2445:X
+pv-show-columns: "pvName,labels"
 )yaml");
 
     EpicsDSMetadataReaderConfig config(cfg);
@@ -67,6 +112,8 @@ rescan-interval-sec: 300.0
     EXPECT_DOUBLE_EQ(config.timeoutSec(), 10.0);
     EXPECT_EQ(config.sourceNameColumn(), "pvName");
     EXPECT_EQ(config.tagsColumn(), "labels");
+    ASSERT_EQ(config.pvs().size(), 1u);
+    EXPECT_EQ(config.pvShowColumns().size(), 2u);
     EXPECT_DOUBLE_EQ(config.rescanIntervalSec(), 300.0);
 }
 
@@ -87,6 +134,9 @@ TEST_F(EpicsDSMetadataReaderConfigTest, EmptyNameThrows)
     auto cfg = makeConfigFromYaml(R"yaml(
 name: ""
 service: my-ds
+pvs:
+  - name: BPMS:LI20:2445:X
+pv-show-columns: "dname"
 )yaml");
 
     EXPECT_THROW(EpicsDSMetadataReaderConfig config(cfg), EpicsDSMetadataReaderConfig::Error);
@@ -98,6 +148,9 @@ TEST_F(EpicsDSMetadataReaderConfigTest, NegativeTimeoutThrows)
     auto cfg = makeConfigFromYaml(R"yaml(
 name: test-reader
 timeout-sec: -1.0
+pvs:
+  - name: BPMS:LI20:2445:X
+pv-show-columns: "dname"
 )yaml");
 
     EXPECT_THROW(EpicsDSMetadataReaderConfig config(cfg), EpicsDSMetadataReaderConfig::Error);
@@ -109,6 +162,9 @@ TEST_F(EpicsDSMetadataReaderConfigTest, NegativeRescanThrows)
     auto cfg = makeConfigFromYaml(R"yaml(
 name: test-reader
 rescan-interval-sec: -5.0
+pvs:
+  - name: BPMS:LI20:2445:X
+pv-show-columns: "dname"
 )yaml");
 
     EXPECT_THROW(EpicsDSMetadataReaderConfig config(cfg), EpicsDSMetadataReaderConfig::Error);
@@ -120,6 +176,9 @@ TEST_F(EpicsDSMetadataReaderConfigTest, ZeroRescanAllowed)
     auto cfg = makeConfigFromYaml(R"yaml(
 name: test-reader
 rescan-interval-sec: 0.0
+pvs:
+  - name: BPMS:LI20:2445:X
+pv-show-columns: "dname"
 )yaml");
 
     EpicsDSMetadataReaderConfig config(cfg);
@@ -138,7 +197,83 @@ timeout-sec: 5.0
 source-name-column: channelName
 tags-column: tags
 rescan-interval-sec: 60.0
+pvs:
+  - name: BPMS:LI20:2445:X
+pv-show-columns: "dname"
 )yaml");
 
     EpicsDSMetadataReaderConfig config(cfg);
+}
+
+TEST_F(EpicsDSMetadataReaderConfigTest, ParsesPVListAndShowColumns)
+{
+    auto cfg = makeConfigFromYaml(R"yaml(
+name: pv-list-reader
+pvs:
+  - name: BPMS:LI20:2445:X
+    metadata:
+      system: bpm
+      area: li20
+  - name: QUAD:LI21:221:BACT
+pv-show-columns: "dname, ename, ioc"
+)yaml");
+
+    EpicsDSMetadataReaderConfig config(cfg);
+
+    ASSERT_EQ(config.pvs().size(), 2u);
+    EXPECT_EQ(config.pvs()[0].name, "BPMS:LI20:2445:X");
+    EXPECT_EQ(config.pvs()[0].metadata.at("system"), "bpm");
+    EXPECT_EQ(config.pvs()[0].metadata.at("area"), "li20");
+    EXPECT_EQ(config.pvs()[1].name, "QUAD:LI21:221:BACT");
+    EXPECT_TRUE(config.pvs()[1].metadata.empty());
+
+    ASSERT_EQ(config.pvShowColumns().size(), 3u);
+    EXPECT_EQ(config.pvShowColumns()[0], "dname");
+    EXPECT_EQ(config.pvShowColumns()[1], "ename");
+    EXPECT_EQ(config.pvShowColumns()[2], "ioc");
+}
+
+TEST_F(EpicsDSMetadataReaderConfigTest, EmptyPVNameThrows)
+{
+    auto cfg = makeConfigFromYaml(R"yaml(
+name: test-reader
+pvs:
+  - name: ""
+pv-show-columns: "dname"
+)yaml");
+
+    EXPECT_THROW(EpicsDSMetadataReaderConfig config(cfg), EpicsDSMetadataReaderConfig::Error);
+}
+
+TEST_F(EpicsDSMetadataReaderConfigTest, MissingPVsThrows)
+{
+    auto cfg = makeConfigFromYaml(R"yaml(
+name: test-reader
+pv-show-columns: "dname"
+)yaml");
+
+    EXPECT_THROW(EpicsDSMetadataReaderConfig config(cfg), EpicsDSMetadataReaderConfig::Error);
+}
+
+TEST_F(EpicsDSMetadataReaderConfigTest, EmptyPVsThrows)
+{
+    auto cfg = makeConfigFromYaml(R"yaml(
+name: test-reader
+pvs: []
+pv-show-columns: "dname"
+)yaml");
+
+    EXPECT_THROW(EpicsDSMetadataReaderConfig config(cfg), EpicsDSMetadataReaderConfig::Error);
+}
+
+TEST_F(EpicsDSMetadataReaderConfigTest, InvalidPVShowColumnThrows)
+{
+    auto cfg = makeConfigFromYaml(R"yaml(
+name: test-reader
+pvs:
+  - name: BPMS:LI20:2445:X
+pv-show-columns: "hostName,hostName"
+)yaml");
+
+    EXPECT_THROW(EpicsDSMetadataReaderConfig config(cfg), EpicsDSMetadataReaderConfig::Error);
 }

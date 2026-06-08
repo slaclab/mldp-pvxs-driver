@@ -142,7 +142,9 @@ std::string makeControllerYaml(const std::string& annotation_url,
        << "        timeout-sec: 5.0\n"
        << "        source-name-column: channelName\n"
        << "        tags-column: tags\n"
-       << "        rescan-interval-sec: 0.0\n";
+       << "        rescan-interval-sec: 0.0\n"
+       << "        pvs:\n"
+       << "          - name: BPMS:IN20:221:TMIT\n";
     return ss.str();
 }
 
@@ -270,4 +272,31 @@ TEST_F(DsMetadataWriterTest, QueryClientRetrievesSavedPvMetadata)
     }
     EXPECT_TRUE(found_hostname)
         << "Expected attribute hostName=cpu-li20-vac1 in queried PvMetadata";
+}
+
+// ---------------------------------------------------------------------------
+// TEST 4 — controller stops cleanly without hanging (shutdown test)
+// ---------------------------------------------------------------------------
+
+TEST_F(DsMetadataWriterTest, ControllerStopsCleanlyWithinDeadline)
+{
+    MockDSServer mock_ds("test:ds-wr4");
+
+    ASSERT_NO_THROW(startController("test:ds-wr4", "wr4-reader"));
+
+    // Wait for at least one RPC cycle to confirm the reader is running
+    ASSERT_TRUE(waitForCount(svc_.save_count, 1, std::chrono::milliseconds(8000)))
+        << "Reader never produced any saves — cannot verify clean shutdown";
+
+    // stop() must return within 3 seconds; if the worker is stuck in wait()
+    // the interrupt() fix ensures it unblocks immediately
+    const auto t0 = std::chrono::steady_clock::now();
+    ASSERT_NO_THROW(controller_->stop());
+    controller_.reset();
+    const auto elapsed = std::chrono::steady_clock::now() - t0;
+
+    EXPECT_LT(elapsed, std::chrono::seconds(3))
+        << "controller->stop() took "
+        << std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count()
+        << "ms — worker likely blocked in RPC wait()";
 }

@@ -16,6 +16,7 @@
 #include <util/log/Logger.h>
 
 #include <chrono>
+#include <thread>
 
 using namespace mldp_pvxs_driver::writer;
 using namespace mldp_pvxs_driver::util::log;
@@ -74,13 +75,16 @@ void MLDPPVMetadataWriter::start()
 
 void MLDPPVMetadataWriter::stop() noexcept
 {
+    tracef(*logger_, "MLDPPVMetadataWriter '{}' [tid={}]: signaling {} workers to stop", config_.name, std::this_thread::get_id(), workers_.size());
     stop_.store(true);
     queue_cv_.notify_all();
-    for (auto& t : workers_)
+    for (std::size_t i = 0; i < workers_.size(); ++i)
     {
-        if (t.joinable())
+        if (workers_[i].joinable())
         {
-            t.join();
+            tracef(*logger_, "MLDPPVMetadataWriter '{}' [tid={}]: joining worker {}", config_.name, std::this_thread::get_id(), i);
+            workers_[i].join();
+            tracef(*logger_, "MLDPPVMetadataWriter '{}' [tid={}]: worker {} joined", config_.name, std::this_thread::get_id(), i);
         }
     }
     workers_.clear();
@@ -97,12 +101,16 @@ bool MLDPPVMetadataWriter::push(IDataBus::EventBatch batch) noexcept
     const auto* meta = std::get_if<SourceMetadataPayload>(&batch.payload);
     if (!meta)
     {
+        tracef(*logger_, "MLDPPVMetadataWriter '{}' discarding non-metadata payload from '{}'",
+               config_.name, batch.reader_name);
         return true;
     }
     {
         std::lock_guard<std::mutex> lock(queue_mutex_);
-        for (const auto& [sourceName, entry] : *meta)
+        for (const auto& [sourceName, entry] : meta->sources)
         {
+            tracef(*logger_, "MLDPPVMetadataWriter '{}' enqueuing '{}' ({} attrs)",
+                   config_.name, sourceName, entry.attributes.size());
             work_queue_.push({sourceName, entry});
         }
     }
@@ -116,6 +124,8 @@ bool MLDPPVMetadataWriter::push(IDataBus::EventBatch batch) noexcept
 
 void MLDPPVMetadataWriter::workerLoop()
 {
+    tracef(*logger_, "MLDPPVMetadataWriter '{}' worker started [tid={}]",
+           config_.name, std::this_thread::get_id());
     while (true)
     {
         std::unique_lock<std::mutex> lock(queue_mutex_);
@@ -126,7 +136,8 @@ void MLDPPVMetadataWriter::workerLoop()
 
         if (work_queue_.empty())
         {
-            // stop_ was set and queue is empty — exit
+            tracef(*logger_, "MLDPPVMetadataWriter '{}' worker exiting (stop requested, queue empty) [tid={}]",
+                   config_.name, std::this_thread::get_id());
             return;
         }
 
@@ -134,6 +145,9 @@ void MLDPPVMetadataWriter::workerLoop()
         work_queue_.pop();
         lock.unlock();
 
+        tracef(*logger_, "MLDPPVMetadataWriter '{}' worker saving '{}' ({} attrs) [tid={}]",
+               config_.name, item.source_name, item.entry.attributes.size(),
+               std::this_thread::get_id());
         saveSourceMetadata(item.source_name, item.entry);
     }
 }

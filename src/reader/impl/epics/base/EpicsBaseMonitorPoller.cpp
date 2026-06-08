@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <thread>
 
 using namespace mldp_pvxs_driver::reader::impl::epics;
 
@@ -73,15 +74,23 @@ EpicsBaseMonitorPoller::EpicsBaseMonitorPoller(const std::vector<std::string>&  
 
 EpicsBaseMonitorPoller::~EpicsBaseMonitorPoller()
 {
+    if (logger_)
+        tracef(*logger_, "~EpicsBaseMonitorPoller [tid={}]: stopping {} poller threads", std::this_thread::get_id(), poller_threads_.size());
     running_ = false;
-    for (auto& t : poller_threads_)
+    for (std::size_t i = 0; i < poller_threads_.size(); ++i)
     {
-        if (t.joinable())
+        if (poller_threads_[i].joinable())
         {
-            t.join();
+            if (logger_)
+                tracef(*logger_, "~EpicsBaseMonitorPoller [tid={}]: joining poller thread {}", std::this_thread::get_id(), i);
+            poller_threads_[i].join();
+            if (logger_)
+                tracef(*logger_, "~EpicsBaseMonitorPoller [tid={}]: poller thread {} joined", std::this_thread::get_id(), i);
         }
     }
     poller_threads_.clear();
+    if (logger_)
+        tracef(*logger_, "~EpicsBaseMonitorPoller [tid={}]: done", std::this_thread::get_id());
 }
 
 EpicsBaseMonitorPoller::ProviderSelection EpicsBaseMonitorPoller::resolveProviderForPv(

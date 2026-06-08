@@ -31,9 +31,12 @@ The **MLDPPVXSController** is the central orchestrator of the MLDP PVXS Driver. 
 1. Validate that at least one writer and one reader are configured.
 2. Resize the fan-out thread pool to match the number of writer instances.
 3. Build writers via `WriterFactory` and call `start()` on each.
-4. Build readers via `ReaderFactory` — readers begin pushing events immediately.
-5. Build the **route table** from the optional `routing:` config block.
-6. Log warnings for any orphan readers (not feeding any writer) or orphan writers (not receiving from any reader).
+4. Build and start processors via `ChannelProcessorFactory`.
+5. Validate that no processor output source name collides with a configured reader name — throws `std::runtime_error` on collision.
+6. Validate the processor dependency graph is acyclic (DFS) — throws `std::runtime_error` if a cycle is detected.
+7. Build readers via `ReaderFactory` — readers begin pushing events immediately.
+8. Build the **route table** from the optional `routing:` config block.
+9. Log warnings for any orphan readers (not feeding any writer) or orphan writers (not receiving from any reader).
 
 ### `stop()`
 

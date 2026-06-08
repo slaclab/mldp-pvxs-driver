@@ -9,8 +9,11 @@
 //////////////////////////////////////////////////////////////////////////////
 
 /**
- * @file EpicsDSMetadataReader.h
- * @brief PVXS RPC-based reader that fetches PV metadata from an EPICS Directory Service.
+ * @file   EpicsDSMetadataReader.h
+ * @brief  PVXS RPC-based reader that fetches PV metadata from an EPICS Directory Service.
+ * @author SLAC MLDP Team
+ * @date   2025-01-01
+ * @copyright Copyright (c) 2025 SLAC National Accelerator Laboratory
  *
  * Issues an NTURI RPC call to a PVA Directory Service endpoint and publishes
  * the resulting NTTable as a SourceMetadataPayload on the driver bus.
@@ -40,6 +43,7 @@
 #include <stop_token>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 namespace mldp_pvxs_driver::metrics {
@@ -49,19 +53,37 @@ class Metrics;
 namespace mldp_pvxs_driver::reader::impl::epics_ds {
 
 /**
- * @brief Reader that queries an EPICS Directory Service via PVA RPC and
- *        publishes PV metadata onto the bus as SourceMetadataPayload.
+ * @class  EpicsDSMetadataReader
+ * @brief  Reader that queries an EPICS Directory Service via PVA RPC and
+ *         publishes PV metadata onto the bus as SourceMetadataPayload.
+ * @details
+ *   Constructs an NTURI request, executes an RPC call against the configured
+ *   service name, parses the NTTable response, and pushes the resulting
+ *   SourceMetadataPayload via the bus.  When @c rescan-interval-sec > 0 the
+ *   fetch repeats at that interval until the reader is destroyed.
  *
- * The reader constructs an NTURI request, executes an RPC call against the
- * configured service name, parses the NTTable response, and pushes the
- * resulting SourceMetadataPayload via the bus.  When rescan-interval-sec > 0
- * the fetch is repeated at that interval until the reader is destroyed.
+ *   When @c worker-thread-count=1 (default) the entire fetch/parse/push cycle
+ *   runs in a single jthread.  When @c worker-thread-count=N>1, one producer
+ *   jthread issues RPC calls and N-1 consumer jthreads parse and push results.
  *
- * When worker-thread-count=1 (default) the entire fetch/parse/push cycle runs
- * in a single jthread.  When worker-thread-count=N>1, one producer jthread
- * issues RPC calls and N-1 consumer jthreads parse and push results.
+ *   Supported configuration keys:
+ *   | Key                   | Type   | Default        | Description |
+ *   |-----------------------|--------|----------------|-------------|
+ *   | name                  | string | (required)     | Reader instance name |
+ *   | service               | string | `ds`           | PVA channel to call via RPC |
+ *   | query                 | string | `%`            | NTURI query.name wildcard |
+ *   | timeout-sec           | double | `5.0`          | RPC call timeout (must be > 0) |
+ *   | source-name-column    | string | `channelName`  | NTTable column holding PV name |
+ *   | tags-column           | string | `""`           | NTTable column holding tags (disabled when empty) |
+ *   | show-columns          | string | `""`           | Comma-separated DS columns for `show=` param (all columns when empty) |
+ *   | rescan-interval-sec   | double | `0.0`          | Re-fetch period; 0 = run once |
+ *   | worker-thread-count   | int    | `1`            | 1 = inline; N>1 = 1 producer + (N-1) consumers |
+ *   | max-queue-depth       | int    | `16`           | Bounded queue size (producer/consumer mode only) |
+ *   | pvs                   | list   | (required)     | Per-PV enrichment entries; at least one entry required |
+ *   | pvs[].name            | string | (required)     | Exact PV name to enrich |
+ *   | pvs[].metadata        | map    | `{}`           | Static key/value attributes merged into the entry |
+ *   | pv-show-columns       | string | `dname,ename,etype,lname,ioc,scheme,z` | Comma-separated DS `show=` columns for PV-list mode; empty string reverts to default |
  *
- * Configuration example:
  * @code{.yaml}
  * readers:
  *   - type: epics-ds-metadata
@@ -71,9 +93,17 @@ namespace mldp_pvxs_driver::reader::impl::epics_ds {
  *     timeout-sec: 5.0
  *     source-name-column: channelName
  *     tags-column: tags
+ *     show-columns: "channelName,hostName,iocName"
  *     rescan-interval-sec: 300.0
- *     worker-thread-count: 1
+ *     worker-thread-count: 4
  *     max-queue-depth: 16
+ *     pvs:
+ *       - name: BPMS:LI20:2445:X
+ *         metadata:
+ *           system: bpm
+ *           area: li20
+ *       - name: QUAD:LI21:221:BACT
+ *     pv-show-columns: "dname,ename,etype,lname,ioc,scheme,z"
  * @endcode
  */
 class EpicsDSMetadataReader final : public reader::Reader
@@ -150,6 +180,17 @@ private:
 
     /** Build the NTURI pvxs::Value from config. */
     pvxs::Value buildNTURI() const;
+
+    /** Build an NTURI for one exact PV and one DS `show=` column. */
+    pvxs::Value buildNTURIForPV(const std::string& pvName,
+                                const std::string& showCol) const;
+
+    /** Query and merge DS attributes for one configured PV. */
+    std::unordered_map<std::string, std::string>
+    queryPVAttributes(const EpicsDSMetadataReaderConfig::PVEntry& pv);
+
+    /** Run targeted per-PV enrichment sweep and publish one batch per PV. */
+    void runPVListSweep(std::stop_token st) noexcept;
 
     /**
      * @brief Parse an NTTable PVXS Value into a SourceMetadataPayload.

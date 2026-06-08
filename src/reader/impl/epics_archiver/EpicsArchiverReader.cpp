@@ -326,7 +326,6 @@ void EpicsArchiverReader::flushChunk(PbChunkState& state)
         const auto               flush_start = std::chrono::steady_clock::now();
 
         IDataBus::EventBatch batch;
-        batch.root_source = pv.empty() ? name_ : pv;
         // Build merged metadata: reader-level base, PV-level overrides
         auto merged = config_.staticMetadata();
         for (const auto& pv_cfg : config_.pvs())
@@ -339,12 +338,14 @@ void EpicsArchiverReader::flushChunk(PbChunkState& state)
             }
         }
         batch.metadata = std::move(merged);
+        const std::string root_name = pv.empty() ? name_ : pv;
         TimeSeriesPayload ts_payload;
+        ts_payload.root_source_name = root_name;
         for (auto& frame : state.events)
         {
             if (!hasTimestamps(frame))
             {
-                errorf(*logger_, "Dropping archiver batch without timestamps for root source {}", batch.root_source);
+                errorf(*logger_, "Dropping archiver batch without timestamps for root source {}", root_name);
                 metric_call(metrics_, [&](auto& m)
                             {
                                 m.incrementReaderErrors(1.0, source_tag);

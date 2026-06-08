@@ -10,7 +10,9 @@
 
 #include "util/log/Logger.h"
 #include <controller/MLDPPVXSController.h>
+#include <processor/ChannelProcessorFactory.h>
 #include <future>
+#include <thread>
 #include <memory>
 #include <query/QueryableFactory.h>
 #include <query/impl/mldp/MLDPAnnotationQueryClient.h>
@@ -20,7 +22,10 @@
 #include <writer/WriterFactory.h>
 
 #include <functional>
+#include <algorithm>
+#include <sstream>
 #include <stdexcept>
+#include <unordered_set>
 #include <unordered_map>
 
 using namespace mldp_pvxs_driver::metrics;
@@ -70,6 +75,121 @@ static void prepareQueryables(const MLDPPVXSControllerConfig&                   
         it->second(entry.cfg, metrics);
     }
 }
+
+void validateProcessorOutputSourceCollisions(
+    const std::unordered_set<std::string>& reader_names,
+    const std::vector<mldp_pvxs_driver::processor::IChannelProcessorUPtr>& processors)
+{
+    for (const auto& processor : processors)
+    {
+        for (const auto& output_source : processor->outputSourceNames())
+        {
+            if (reader_names.find(output_source) != reader_names.end())
+            {
+                throw std::runtime_error("Controller: processor output source '" + output_source +
+                                         "' collides with reader name");
+            }
+        }
+    }
+}
+
+std::string describeCycle(const std::vector<std::string>& stack, const std::string& name)
+{
+    auto it = std::find(stack.begin(), stack.end(), name);
+    if (it == stack.end())
+    {
+        return name;
+    }
+
+    std::ostringstream cycle;
+    for (auto current = it; current != stack.end(); ++current)
+    {
+        if (current != it)
+        {
+            cycle << " -> ";
+        }
+        cycle << *current;
+    }
+    cycle << " -> " << name;
+    return cycle.str();
+}
+
+void validateProcessorGraphAcyclic(
+    const std::vector<mldp_pvxs_driver::processor::IChannelProcessorUPtr>& processors)
+{
+    std::unordered_map<std::string, std::vector<std::string>> graph;
+    std::unordered_map<std::string, std::unordered_set<std::string>> outputs_by_processor;
+
+    for (const auto& processor : processors)
+    {
+        const auto output_sources = processor->outputSourceNames();
+        outputs_by_processor.emplace(processor->name(),
+                                     std::unordered_set<std::string>(output_sources.begin(),
+                                                                     output_sources.end()));
+        graph.emplace(processor->name(), std::vector<std::string>{});
+    }
+
+    for (const auto& producer : processors)
+    {
+        const auto& producer_outputs = outputs_by_processor.at(producer->name());
+        for (const auto& consumer : processors)
+        {
+            if (producer->name() == consumer->name())
+            {
+                continue;
+            }
+
+            const auto& inputs = consumer->inputSourceNames();
+            const auto depends_on_producer = std::any_of(
+                inputs.begin(), inputs.end(),
+                [&](const std::string& input) { return producer_outputs.find(input) != producer_outputs.end(); });
+            if (depends_on_producer)
+            {
+                graph[producer->name()].push_back(consumer->name());
+            }
+        }
+    }
+
+    enum class VisitState
+    {
+        NotVisited,
+        Visiting,
+        Visited,
+    };
+
+    std::unordered_map<std::string, VisitState> state;
+    std::vector<std::string> stack;
+
+    std::function<void(const std::string&)> dfs = [&](const std::string& node)
+    {
+        state[node] = VisitState::Visiting;
+        stack.push_back(node);
+
+        for (const auto& next : graph[node])
+        {
+            if (state[next] == VisitState::Visiting)
+            {
+                throw std::runtime_error("Controller: processor cycle detected: " + describeCycle(stack, next));
+            }
+            if (state[next] == VisitState::Visited)
+            {
+                continue;
+            }
+            dfs(next);
+        }
+
+        stack.pop_back();
+        state[node] = VisitState::Visited;
+    };
+
+    for (const auto& processor : processors)
+    {
+        if (state[processor->name()] == VisitState::NotVisited)
+        {
+            dfs(processor->name());
+        }
+    }
+}
 } // namespace
 
 std::shared_ptr<MLDPPVXSController> MLDPPVXSController::create(const config::Config& config)
@@ -92,8 +212,12 @@ MLDPPVXSController::~MLDPPVXSController()
     {
         stop();
     }
+    tracef(*logger_, "~MLDPPVXSController [tid={}]: resetting thread_pool", std::this_thread::get_id());
+    processor_pools_.clear();
     thread_pool_.reset();
+    tracef(*logger_, "~MLDPPVXSController [tid={}]: resetting metrics", std::this_thread::get_id());
     metrics_.reset();
+    tracef(*logger_, "~MLDPPVXSController [tid={}]: done", std::this_thread::get_id());
 }
 
 void MLDPPVXSController::start()
@@ -137,6 +261,40 @@ void MLDPPVXSController::start()
         writers_.push_back(std::move(w));
     }
 
+    // Each processor gets its own dedicated 1-thread pool so algorithms run isolated
+    // and independently. Separate from thread_pool_ (writer fan-out) to prevent
+    // deadlock: processor tasks call bus_->push() which submits to thread_pool_ and
+    // blocks waiting for futures — sharing a pool would deadlock.
+    std::size_t proc_idx = 0;
+    for (const auto& [type, processorNode] : config_.processorEntries())
+    {
+        auto pool = std::make_shared<BS::light_thread_pool>(
+            1,
+            [proc_idx](std::size_t)
+            {
+                BS::this_thread::set_os_thread_name("proc-" + std::to_string(proc_idx));
+            });
+        processor_pools_.push_back(pool);
+        ++proc_idx;
+
+        auto batch = processor::ChannelProcessorFactory::create(type, processorNode, shared_from_this(), metrics_, std::move(pool));
+        processors_.insert(processors_.end(),
+                           std::make_move_iterator(batch.begin()),
+                           std::make_move_iterator(batch.end()));
+    }
+    for (auto& processor : processors_)
+    {
+        processor->start();
+    }
+
+    {
+        std::unordered_set<std::string> reader_name_set;
+        for (const auto& entry : config_.readerEntries())
+            reader_name_set.insert(entry.second.get("name", ""));
+        validateProcessorOutputSourceCollisions(reader_name_set, processors_);
+    }
+    validateProcessorGraphAcyclic(processors_);
+
     // -- Readers --
     infof(*logger_, "Starting readers");
     for (const auto& entry : config_.readerEntries())
@@ -146,15 +304,20 @@ void MLDPPVXSController::start()
         auto        reader = ReaderFactory::create(type, shared_from_this(), readerConfig, metrics_);
         readers_.push_back(std::move(reader));
     }
+
     // -- Build route table from config --
     {
         std::unordered_set<std::string> known_writers;
         for (const auto& w : writers_)
             known_writers.insert(w->name());
+        for (const auto& p : processors_)
+            known_writers.insert(p->name());
 
         std::unordered_set<std::string> known_readers;
         for (const auto& r : readers_)
             known_readers.insert(r->name());
+        for (const auto& p : processors_)
+            known_readers.insert(p->outputReaderName());
 
         route_table_ = RouteTable::build(config_.routeEntries(), known_readers, known_writers);
 
@@ -180,6 +343,12 @@ void MLDPPVXSController::stop()
 
     readers_.clear();
 
+    for (auto& processor : processors_)
+    {
+        processor->stop();
+    }
+    processors_.clear();
+
     for (auto& w : writers_)
     {
         w->stop();
@@ -196,7 +365,9 @@ bool MLDPPVXSController::push(EventBatch batch_values)
         return false;
     }
 
-    if (batch_values.root_source.empty())
+    const std::string rootSource = getRootSourceName(batch_values);
+
+    if (rootSource.empty())
     {
         warnf(*logger_, "Received batch with empty root source, skipping push.");
         return false;
@@ -207,24 +378,50 @@ bool MLDPPVXSController::push(EventBatch batch_values)
         const auto& ts = asTimeSeries(batch_values);
         if (ts.frames.empty() && !ts.end_of_batch_group)
         {
-            warnf(*logger_, "Received empty batch for root source {}, skipping push.", batch_values.root_source);
+            warnf(*logger_, "Received empty batch for root source {}, skipping push.", rootSource);
             return false;
         }
     }
 
     if (!route_table_.isAllToAll() && batch_values.reader_name.empty())
     {
-        warnf(*logger_, "Batch from source '{}' has empty reader_name — routing may drop it", batch_values.root_source);
+        warnf(*logger_, "Batch from source '{}' has empty reader_name — routing may drop it", rootSource);
     }
 
-    // Parallel fan-out: submit one task per writer to the thread pool so all
-    // writers run concurrently.  Every writer receives its own copy of the
-    // batch;
-    const std::string rootSource = batch_values.root_source;
+    // Processors are called inline — they are noexcept, fast (ingest + snapshot),
+    // and their fireCompute() calls bus_->push() recursively on the calling thread.
+    // Submitting them to the thread pool would cause deadlock when a pool thread
+    // re-enters push() and tries to wait on another pool task.
+    //
+    // Skip processor fan-out for batches emitted by processors themselves
+    // (reader_name matches a processor's outputReaderName) to prevent infinite recursion.
+    const bool from_processor = std::any_of(
+        processors_.begin(), processors_.end(),
+        [&](const auto& p) { return p->outputReaderName() == batch_values.reader_name; });
+
+    if (!from_processor)
+    {
+        for (std::size_t i = 0; i < processors_.size(); ++i)
+        {
+            if (!route_table_.accepts(processors_[i]->name(), batch_values.reader_name))
+                continue;
+
+            if (!route_table_.acceptsSource(processors_[i]->name(), rootSource))
+                continue;
+
+            if (!processors_[i]->acceptsPayload(batch_values.payload))
+                continue;
+
+            EventBatch batchCopy = batch_values;
+            processors_[i]->push(std::move(batchCopy));
+        }
+    }
+
+    // Parallel fan-out to writers via thread pool.
     const std::size_t n = writers_.size();
 
     std::vector<std::future<bool>> futures;
-    std::vector<std::size_t>       writer_indices; // track which writer each future corresponds to
+    std::vector<std::size_t>       writer_indices;
     futures.reserve(n);
     writer_indices.reserve(n);
 
@@ -233,15 +430,14 @@ bool MLDPPVXSController::push(EventBatch batch_values)
         if (!route_table_.accepts(writers_[i]->name(), batch_values.reader_name))
             continue;
 
-        if (!route_table_.acceptsSource(writers_[i]->name(), batch_values.root_source))
+        if (!route_table_.acceptsSource(writers_[i]->name(), rootSource))
             continue;
 
         if (!writers_[i]->acceptsPayload(batch_values.payload))
             continue;
 
-        // Capture writer pointer and a copy of the batch per task.
         auto*      writerPtr = writers_[i].get();
-        EventBatch batchCopy = batch_values; // explicit copy for each task
+        EventBatch batchCopy = batch_values;
         futures.push_back(
             thread_pool_->submit_task([writerPtr, b = std::move(batchCopy)]() mutable -> bool
                                       {

@@ -275,7 +275,6 @@ TEST(MLDPPVXSControllerTest, BsasNtTableColumnsHaveProvenanceSourceSetToRootSour
     controller->start();
 
     IDataBus::EventBatch batch;
-    batch.root_source  = "test:bsas_table";
     batch.metadata     = {};
     DataBatch frame;
     frame.timestamps.push_back({1000000000, 0});
@@ -283,7 +282,7 @@ TEST(MLDPPVXSControllerTest, BsasNtTableColumnsHaveProvenanceSourceSetToRootSour
     col.name   = "signal";
     col.values = std::vector<double>{3.14};
     frame.columns.push_back(std::move(col));
-    batch.payload = TimeSeriesPayload{.is_tabular = true};
+    batch.payload = TimeSeriesPayload{.root_source_name = "test:bsas_table", .is_tabular = true};
     std::get<TimeSeriesPayload>(batch.payload).frames.push_back(std::move(frame));
 
     ASSERT_TRUE(controller->push(std::move(batch)));
@@ -422,7 +421,6 @@ TEST(MLDPPVXSControllerTest, IdleStreamRotationStartsNewStreamAfterMaxAge)
     controller->start();
 
     IDataBus::EventBatch batch;
-    batch.root_source = "test-root";
     batch.metadata = {{"source", "test"}};
     DataBatch frame1;
     frame1.timestamps.push_back({1, 0});
@@ -430,7 +428,7 @@ TEST(MLDPPVXSControllerTest, IdleStreamRotationStartsNewStreamAfterMaxAge)
     col1.name   = "value";
     col1.values = std::vector<int32_t>{1};
     frame1.columns.push_back(std::move(col1));
-    batch.payload = TimeSeriesPayload{};
+    batch.payload = TimeSeriesPayload{.root_source_name = "test-root"};
     std::get<TimeSeriesPayload>(batch.payload).frames.push_back(std::move(frame1));
 
     ASSERT_TRUE(controller->push(std::move(batch)));
@@ -440,7 +438,6 @@ TEST(MLDPPVXSControllerTest, IdleStreamRotationStartsNewStreamAfterMaxAge)
     ASSERT_TRUE(waitForCount(service.stream_close_count, 1, std::chrono::milliseconds(1000)));
 
     IDataBus::EventBatch batch2;
-    batch2.root_source = "test-root";
     batch2.metadata = {{"source", "test"}};
     DataBatch frame2;
     frame2.timestamps.push_back({2, 0});
@@ -448,7 +445,7 @@ TEST(MLDPPVXSControllerTest, IdleStreamRotationStartsNewStreamAfterMaxAge)
     col2.name   = "value";
     col2.values = std::vector<int32_t>{2};
     frame2.columns.push_back(std::move(col2));
-    batch2.payload = TimeSeriesPayload{};
+    batch2.payload = TimeSeriesPayload{.root_source_name = "test-root"};
     std::get<TimeSeriesPayload>(batch2.payload).frames.push_back(std::move(frame2));
 
     ASSERT_TRUE(controller->push(std::move(batch2)));
@@ -500,7 +497,6 @@ TEST(MLDPPVXSControllerTest, BatchMetadataAppearsAsGrpcColumnAttributes)
 
     // Build a batch carrying reader-merged metadata (facility + signal_type).
     IDataBus::EventBatch batch;
-    batch.root_source = "test:counter";
     batch.metadata    = {{"facility", "lcls"}, {"signal_type", "scalar"}};
 
     DataBatch frame;
@@ -511,6 +507,7 @@ TEST(MLDPPVXSControllerTest, BatchMetadataAppearsAsGrpcColumnAttributes)
     frame.columns.push_back(std::move(col));
 
     TimeSeriesPayload ts;
+    ts.root_source_name = "test:counter";
     ts.frames.push_back(std::move(frame));
     batch.payload = std::move(ts);
 

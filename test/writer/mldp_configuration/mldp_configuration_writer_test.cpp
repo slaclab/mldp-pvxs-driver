@@ -176,11 +176,11 @@ TEST(MLDPConfigurationWriterTest, PushConfigurationPayloadCallsSaveConfiguration
     ASSERT_NO_THROW(writer->start());
 
     ConfigurationPayload payload;
+    payload.root_source_name   = "test-root";
     payload.configuration_name = "MY_CONFIG";
     payload.category           = "beam_params";
 
     IDataBus::EventBatch batch;
-    batch.root_source = "test-root";
     batch.payload     = std::move(payload);
 
     ASSERT_TRUE(writer->push(std::move(batch)));
@@ -227,7 +227,6 @@ TEST(MLDPConfigurationWriterTest,
     payload.start_time.nanoseconds   = 0;
 
     IDataBus::EventBatch batch;
-    batch.root_source = "test-root";
     batch.payload     = std::move(payload);
 
     ASSERT_TRUE(writer->push(std::move(batch)));
@@ -270,8 +269,7 @@ TEST(MLDPConfigurationWriterTest, PushNonConfigurationPayloadIsIgnored)
     ASSERT_NO_THROW(writer->start());
 
     IDataBus::EventBatch batch;
-    batch.root_source = "test-root";
-    batch.payload     = TimeSeriesPayload{};
+    batch.payload     = TimeSeriesPayload{.root_source_name = "test-root"};
 
     EXPECT_TRUE(writer->push(std::move(batch)));
 
@@ -296,11 +294,11 @@ TEST(MLDPConfigurationWriterTest, GracefulOnUnreachableEndpoint)
     ASSERT_NO_THROW(writer->start());
 
     ConfigurationPayload payload;
+    payload.root_source_name   = "test-root";
     payload.configuration_name = "UNREACHABLE_CONFIG";
     payload.category           = "test";
 
     IDataBus::EventBatch batch;
-    batch.root_source = "test-root";
     batch.payload     = std::move(payload);
 
     EXPECT_NO_THROW(writer->push(std::move(batch)));

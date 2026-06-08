@@ -11,6 +11,7 @@
 #include <metrics/Metrics.h>
 #include <procmon/ProcMon.hpp>
 #include <util/log/Logger.h>
+#include <thread>
 
 #include <unistd.h>
 #include <utility>
@@ -74,6 +75,10 @@ Metrics::Metrics(const MetricsConfig& config, std::string controller_name)
     controller_send_time_family_ = &makeHistogramFamily(*registry_, "mldp_pvxs_driver_controller_send_time_seconds", "Time spent sending event batches to MLDP (seconds).", clabels);
     controller_queue_depth_family_ = &makeGaugeFamily(*registry_, "mldp_pvxs_driver_controller_queue_depth", "Number of queued controller tasks waiting to send batches.", clabels);
     controller_channel_queue_depth_family_ = &makeGaugeFamily(*registry_, "mldp_pvxs_driver_controller_channel_queue_depth", "Number of items queued in each per-worker channel.", clabels);
+    processor_compute_latency_us_buckets_ = {1.0, 5.0, 10.0, 25.0, 50.0, 100.0, 250.0, 500.0, 1000.0, 2500.0, 5000.0, 10000.0, 25000.0, 50000.0, 100000.0};
+    processor_compute_latency_us_family_ = &makeHistogramFamily(*registry_, "mldp_pvxs_driver_processor_compute_latency_us", "Time spent computing processor outputs (microseconds).", clabels);
+    processor_fire_count_family_ = &makeCounterFamily(*registry_, "mldp_pvxs_driver_processor_fire_total", "Number of successful processor compute firings.", clabels);
+    processor_buffer_depth_family_ = &makeGaugeFamily(*registry_, "mldp_pvxs_driver_processor_buffer_depth", "Buffered sample depth retained per processor source snapshot input.", clabels);
     // Bus metrics
     bus_push_family_ = &makeCounterFamily(*registry_, "mldp_pvxs_driver_bus_push_total", "Number of events pushed onto the bus.", clabels);
     bus_failure_family_ = &makeCounterFamily(*registry_, "mldp_pvxs_driver_bus_failure_total", "Number of bus push failures reported by the MLDP gRPC API.", clabels);
@@ -120,7 +125,9 @@ Metrics::Metrics(const MetricsConfig& config, std::string controller_name)
 
 Metrics::~Metrics()
 {
+    tracef("~Metrics [tid={}]: stopping system metrics collection", std::this_thread::get_id());
     stopSystemMetricsCollection();
+    tracef("~Metrics [tid={}]: done", std::this_thread::get_id());
 }
 
 void Metrics::startSystemMetricsCollection()
@@ -137,10 +144,13 @@ void Metrics::startSystemMetricsCollection()
 void Metrics::stopSystemMetricsCollection()
 {
     stop_system_metrics_.store(true);
+    stop_metrics_cv_.notify_all();
+    tracef("Metrics::stopSystemMetricsCollection [tid={}]: joining system_metrics_thread", std::this_thread::get_id());
     if (system_metrics_thread_.joinable())
     {
         system_metrics_thread_.join();
     }
+    tracef("Metrics::stopSystemMetricsCollection [tid={}]: joined", std::this_thread::get_id());
 }
 
 void Metrics::collectSystemMetricsLoop()
@@ -258,8 +268,11 @@ void Metrics::collectSystemMetricsLoop()
             }
         }
 
-        // Sleep for configured scan interval
-        std::this_thread::sleep_for(std::chrono::seconds(config_.scanIntervalSeconds()));
+        // Sleep for configured scan interval, wake early on stop
+        std::unique_lock<std::mutex> lk(stop_metrics_mutex_);
+        stop_metrics_cv_.wait_for(lk,
+                                  std::chrono::seconds(config_.scanIntervalSeconds()),
+                                  [this] { return stop_system_metrics_.load(); });
     }
 }
 
@@ -343,6 +356,21 @@ void Metrics::setControllerQueueDepth(double value, prometheus::Labels tags)
 void Metrics::setControllerChannelQueueDepth(double value, prometheus::Labels tags)
 {
     controller_channel_queue_depth_family_->Add(std::move(tags)).Set(value);
+}
+
+void Metrics::observeProcessorComputeLatencyUs(double value, prometheus::Labels tags)
+{
+    processor_compute_latency_us_family_->Add(std::move(tags), processor_compute_latency_us_buckets_).Observe(value);
+}
+
+void Metrics::incrementProcessorFireCount(double value, prometheus::Labels tags)
+{
+    processor_fire_count_family_->Add(std::move(tags)).Increment(value);
+}
+
+void Metrics::setProcessorBufferDepth(double value, prometheus::Labels tags)
+{
+    processor_buffer_depth_family_->Add(std::move(tags)).Set(value);
 }
 
 void Metrics::incrementBusPushes(double value, prometheus::Labels tags)

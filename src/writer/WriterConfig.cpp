@@ -9,6 +9,7 @@
 //////////////////////////////////////////////////////////////////////////////
 
 #include <writer/WriterConfig.h>
+#include <writer/WriterFactory.h>
 #include <writer/mldp/MLDPWriterConfig.h>
 #include <writer/mldp_pv_metadata/MLDPPVMetadataWriterConfig.h>
 #include <writer/mldp_configuration/MLDPConfigurationWriterConfig.h>
@@ -17,128 +18,82 @@
     #include <writer/hdf5/HDF5WriterConfig.h>
 #endif
 
+#include <functional>
+#include <unordered_map>
+
 using namespace mldp_pvxs_driver::writer;
 using namespace mldp_pvxs_driver::config;
+
+namespace {
+
+// Per-type deep validators for types that need it. Types absent from this map
+// (e.g. test writers registered at runtime) skip deep validation.
+using ValidatorFn = std::function<void(const Config&)>;
+
+const std::unordered_map<std::string, ValidatorFn>& deepValidators()
+{
+    static const std::unordered_map<std::string, ValidatorFn> kValidators = {
+        {"mldp",
+         [](const Config& item) {
+             try { MLDPWriterConfig::parse(item); }
+             catch (const MLDPWriterConfig::Error& e) { throw WriterConfig::Error(std::string("writer.mldp: ") + e.what()); }
+         }},
+        {"mldp-pv-metadata",
+         [](const Config& item) {
+             try { MLDPPVMetadataWriterConfig::parse(item); }
+             catch (const std::runtime_error& e) { throw WriterConfig::Error(std::string("writer.mldp-pv-metadata: ") + e.what()); }
+         }},
+        {"mldp-configuration",
+         [](const Config& item) {
+             try { MLDPConfigurationWriterConfig::parse(item); }
+             catch (const std::runtime_error& e) { throw WriterConfig::Error(std::string("writer.mldp-configuration: ") + e.what()); }
+         }},
+#ifdef MLDP_PVXS_HDF5_ENABLED
+        {"hdf5",
+         [](const Config& item) {
+             try { HDF5WriterConfig::parse(item); }
+             catch (const HDF5WriterConfig::Error& e) { throw WriterConfig::Error(std::string("writer.hdf5: ") + e.what()); }
+         }},
+        {"hdf5-merge",
+         [](const Config& item) {
+             try { HDF5WriterConfig::parse(item); }
+             catch (const HDF5WriterConfig::Error& e) { throw WriterConfig::Error(std::string("writer.hdf5-merge: ") + e.what()); }
+         }},
+#else
+        {"hdf5",
+         [](const Config&) { throw WriterConfig::Error("writer.hdf5 configured but HDF5 support not compiled in (MLDP_PVXS_ENABLE_HDF5=OFF)"); }},
+        {"hdf5-merge",
+         [](const Config&) { throw WriterConfig::Error("writer.hdf5-merge configured but HDF5 support not compiled in (MLDP_PVXS_HDF5_ENABLED=OFF)"); }},
+#endif
+    };
+    return kValidators;
+}
+
+} // namespace
 
 void WriterConfig::validate(const Config& writerNode)
 {
     int instanceCount = 0;
 
-    // -- MLDP writer instances — parse each to catch per-instance errors --
-    if (writerNode.hasChild(WriterMldpKey))
+    for (const auto& typeName : WriterFactory::registeredTypes())
     {
-        if (!writerNode.isSequence(WriterMldpKey))
-        {
-            throw Error("writer.mldp must be a sequence of writer instances");
-        }
-        const auto items = writerNode.subConfig(WriterMldpKey);
-        for (const auto& item : items)
-        {
-            try
-            {
-                MLDPWriterConfig::parse(item);
-            }
-            catch (const MLDPWriterConfig::Error& e)
-            {
-                throw Error(std::string("writer.mldp: ") + e.what());
-            }
-        }
-        instanceCount += static_cast<int>(items.size());
-    }
+        if (!writerNode.hasChild(typeName))
+            continue;
 
-    // -- HDF5 writer instances --
-    if (writerNode.hasChild(WriterHdf5Key))
-    {
-        if (!writerNode.isSequence(WriterHdf5Key))
+        if (!writerNode.isSequence(typeName))
         {
-            throw Error("writer.hdf5 must be a sequence of writer instances");
+            throw Error("writer." + typeName + " must be a sequence of writer instances");
         }
-#ifndef MLDP_PVXS_HDF5_ENABLED
-        throw Error("writer.hdf5 instances are configured but this build was compiled without " "HDF5 support (MLDP_PVXS_ENABLE_HDF5=OFF)");
-#else
-        const auto items = writerNode.subConfig(WriterHdf5Key);
-        for (const auto& item : items)
-        {
-            try
-            {
-                HDF5WriterConfig::parse(item);
-            }
-            catch (const HDF5WriterConfig::Error& e)
-            {
-                throw Error(std::string("writer.hdf5: ") + e.what());
-            }
-        }
-        instanceCount += static_cast<int>(items.size());
-#endif
-    }
 
-    // -- HDF5 merge writer instances --
-    if (writerNode.hasChild(WriterHdf5MergeKey))
-    {
-        if (!writerNode.isSequence(WriterHdf5MergeKey))
+        const auto items = writerNode.subConfig(typeName);
+        const auto& validators = deepValidators();
+        auto it = validators.find(typeName);
+        if (it != validators.end())
         {
-            throw Error("writer.hdf5-merge must be a sequence of writer instances");
+            for (const auto& item : items)
+                it->second(item);
         }
-#ifndef MLDP_PVXS_HDF5_ENABLED
-        throw Error("writer.hdf5-merge instances are configured but this build was compiled without " "HDF5 support (MLDP_PVXS_HDF5_ENABLED=OFF)");
-#else
-        const auto mergeItems = writerNode.subConfig(WriterHdf5MergeKey);
-        for (const auto& item : mergeItems)
-        {
-            try
-            {
-                HDF5WriterConfig::parse(item);
-            }
-            catch (const HDF5WriterConfig::Error& e)
-            {
-                throw Error(std::string("writer.hdf5-merge: ") + e.what());
-            }
-        }
-        instanceCount += static_cast<int>(mergeItems.size());
-#endif
-    }
 
-    // -- MLDP PV metadata writer instances --
-    if (writerNode.hasChild(WriterMldpPVMetadataKey))
-    {
-        if (!writerNode.isSequence(WriterMldpPVMetadataKey))
-        {
-            throw Error("writer.mldp-pv-metadata must be a sequence of writer instances");
-        }
-        const auto items = writerNode.subConfig(WriterMldpPVMetadataKey);
-        for (const auto& item : items)
-        {
-            try
-            {
-                MLDPPVMetadataWriterConfig::parse(item);
-            }
-            catch (const std::runtime_error& e)
-            {
-                throw Error(std::string("writer.mldp-pv-metadata: ") + e.what());
-            }
-        }
-        instanceCount += static_cast<int>(items.size());
-    }
-
-    // -- MLDP configuration writer instances --
-    if (writerNode.hasChild(WriterMldpConfigurationKey))
-    {
-        if (!writerNode.isSequence(WriterMldpConfigurationKey))
-        {
-            throw Error("writer.mldp-configuration must be a sequence of writer instances");
-        }
-        const auto items = writerNode.subConfig(WriterMldpConfigurationKey);
-        for (const auto& item : items)
-        {
-            try
-            {
-                MLDPConfigurationWriterConfig::parse(item);
-            }
-            catch (const std::runtime_error& e)
-            {
-                throw Error(std::string("writer.mldp-configuration: ") + e.what());
-            }
-        }
         instanceCount += static_cast<int>(items.size());
     }
 

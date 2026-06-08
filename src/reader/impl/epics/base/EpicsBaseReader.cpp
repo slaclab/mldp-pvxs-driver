@@ -124,7 +124,6 @@ void EpicsBaseReader::processDefaultMode(const std::string&                     
                                          std::size_t&                           emitted)
 {
     IDataBus::EventBatch batch;
-    batch.root_source = pvName;
     uint64_t epoch_seconds = 0;
     uint64_t nanoseconds = 0;
     bool     setEpoch = false;
@@ -188,7 +187,8 @@ void EpicsBaseReader::processDefaultMode(const std::string&                     
     batch.metadata = std::move(merged);
     batch.reader_name = name();
     batch.payload = TimeSeriesPayload{
-        .frames = {std::move(batch_frame)},
+        .root_source_name = pvName,
+        .frames           = {std::move(batch_frame)},
     };
     emitted = 1;
     bus_->push(std::move(batch));
@@ -221,15 +221,15 @@ void EpicsBaseReader::processSlacBsasTableMode(const std::string&               
     }
 
     IDataBus::EventBatch tableBatch;
-    tableBatch.root_source = pvName;
     tableBatch.metadata = merged_meta;
+    tableBatch.payload  = TimeSeriesPayload{.root_source_name = pvName, .is_tabular = true};
     std::size_t colsInBatch = 0;
 
     auto resetBatch = [&tableBatch, &pvName, &colsInBatch, merged_meta]()
     {
         tableBatch = IDataBus::EventBatch{};
-        tableBatch.root_source = pvName;
         tableBatch.metadata = merged_meta;
+        tableBatch.payload  = TimeSeriesPayload{.root_source_name = pvName, .is_tabular = true};
         colsInBatch = 0;
     };
 

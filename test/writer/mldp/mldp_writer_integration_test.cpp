@@ -852,7 +852,6 @@ TEST(MLDPWriterTest, BatchMetadataAppearsAsColumnAttributes)
     using namespace mldp_pvxs_driver::util::bus;
 
     IDataBus::EventBatch batch;
-    batch.root_source = "test:meta:signal";
     batch.metadata    = {{"facility", "lcls"}, {"signal_type", "scalar"}};
 
     DataBatch  frame;
@@ -863,6 +862,7 @@ TEST(MLDPWriterTest, BatchMetadataAppearsAsColumnAttributes)
     frame.columns.push_back(std::move(col));
 
     TimeSeriesPayload ts;
+    ts.root_source_name = "test:meta:signal";
     ts.frames.push_back(std::move(frame));
     batch.payload = std::move(ts);
 
