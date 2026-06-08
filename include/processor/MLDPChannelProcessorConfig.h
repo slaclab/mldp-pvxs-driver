@@ -70,12 +70,16 @@ public:
      */
     double triggerIntervalSec() const noexcept;
 
+    /** @brief Get the maximum retained buffer depth per source; zero means unlimited. */
+    std::size_t maxBufferDepth() const noexcept;
+
 private:
     std::string              name_;                  ///< Unique processor instance name.
     std::vector<std::string> sources_;               ///< Required source names consumed by the processor.
     AlignmentPolicy          alignment_{AlignmentPolicy::LatestValue}; ///< Snapshot alignment policy.
     TriggerPolicy            trigger_{TriggerPolicy::AnyUpdate}; ///< Snapshot trigger policy.
     double                   trigger_interval_sec_{0.0}; ///< Trigger period in seconds for interval mode.
+    std::size_t              max_buffer_depth_{0}; ///< Maximum retained samples per input source; zero means unlimited.
 };
 
 } // namespace mldp_pvxs_driver::processor

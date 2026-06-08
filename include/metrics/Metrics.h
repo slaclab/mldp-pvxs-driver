@@ -83,6 +83,11 @@ public:
     void setControllerQueueDepth(double value, prometheus::Labels tags = {});
     void setControllerChannelQueueDepth(double value, prometheus::Labels tags = {});
 
+    // Processor metrics --------------------------------------------------
+    void observeProcessorComputeLatencyUs(double value, prometheus::Labels tags = {});
+    void incrementProcessorFireCount(double value = 1.0, prometheus::Labels tags = {});
+    void setProcessorBufferDepth(double value, prometheus::Labels tags = {});
+
     // Bus metrics ---------------------------------------------------------
     void   incrementBusPushes(double value = 1.0, prometheus::Labels tags = {});
     void   incrementBusFailures(double value = 1.0, prometheus::Labels tags = {});
@@ -115,6 +120,11 @@ private:
     prometheus::Family<prometheus::Histogram>* controller_send_time_family_{nullptr};
     prometheus::Family<prometheus::Gauge>*     controller_queue_depth_family_{nullptr};
     prometheus::Family<prometheus::Gauge>*     controller_channel_queue_depth_family_{nullptr};
+
+    prometheus::Histogram::BucketBoundaries    processor_compute_latency_us_buckets_;
+    prometheus::Family<prometheus::Histogram>* processor_compute_latency_us_family_{nullptr};
+    prometheus::Family<prometheus::Counter>*   processor_fire_count_family_{nullptr};
+    prometheus::Family<prometheus::Gauge>*     processor_buffer_depth_family_{nullptr};
 
     prometheus::Family<prometheus::Counter>* bus_push_family_{nullptr};
     prometheus::Family<prometheus::Counter>* bus_failure_family_{nullptr};

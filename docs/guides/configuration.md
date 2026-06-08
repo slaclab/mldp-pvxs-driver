@@ -597,6 +597,7 @@ def compute(snapshot):
 | `alignment` | string | `latest-value` | `latest-value` or `interpolate`. |
 | `trigger` | string | `any-update` | `any-update`, `all-updated`, or `interval`. |
 | `trigger-interval-sec` | float | — | **Required when `trigger` is `interval`.** Fire interval in seconds. |
+| `max-buffer-depth` | int | `0` | Maximum samples retained per input source. `0` = unlimited; when the depth is exceeded, oldest samples are dropped before the next compute. |
 | `output_source` | string | — | Single virtual output source (convenience alias for `output_sources: [name]`). |
 | `output_sources` | list[str] | — | One or more virtual output source names emitted by `compute()`. |
 

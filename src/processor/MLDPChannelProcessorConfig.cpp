@@ -19,6 +19,7 @@ constexpr auto kSourcesKey = "sources";
 constexpr auto kAlignmentKey = "alignment";
 constexpr auto kTriggerKey = "trigger";
 constexpr auto kTriggerIntervalSecKey = "trigger-interval-sec";
+constexpr auto kMaxBufferDepthKey = "max-buffer-depth";
 
 AlignmentPolicy parseAlignment(const config::Config& cfg)
 {
@@ -108,6 +109,13 @@ MLDPChannelProcessorConfig::MLDPChannelProcessorConfig(const config::Config& cfg
     alignment_ = parseAlignment(cfg);
     trigger_ = parseTrigger(cfg);
 
+    const int max_buffer_depth = cfg.getInt(kMaxBufferDepthKey, 0);
+    if (max_buffer_depth < 0)
+    {
+        throw Error("processor: 'max-buffer-depth' must be >= 0");
+    }
+    max_buffer_depth_ = static_cast<std::size_t>(max_buffer_depth);
+
     if (trigger_ == TriggerPolicy::Interval)
     {
         if (!cfg.hasChild(kTriggerIntervalSecKey))
@@ -145,6 +153,11 @@ TriggerPolicy MLDPChannelProcessorConfig::trigger() const noexcept
 double MLDPChannelProcessorConfig::triggerIntervalSec() const noexcept
 {
     return trigger_interval_sec_;
+}
+
+std::size_t MLDPChannelProcessorConfig::maxBufferDepth() const noexcept
+{
+    return max_buffer_depth_;
 }
 
 } // namespace mldp_pvxs_driver::processor

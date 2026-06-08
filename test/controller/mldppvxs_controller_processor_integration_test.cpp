@@ -159,6 +159,144 @@ routing:
 )yaml";
 }
 
+std::string makeCollisionYaml()
+{
+    return R"yaml(
+name: controller-test
+writer:
+  test-capture:
+    - name: capture-writer
+reader:
+  - test-push:
+      - name: VIRTUAL:LINEAR:OUT
+        source: SRC:A
+        value: 4.5
+processors:
+  - type: linear-transform
+    name: linear-proc
+    sources:
+      - SRC:A
+    alignment: latest-value
+    trigger: any-update
+    output-source: VIRTUAL:LINEAR:OUT
+    coefficients:
+      - 1.0
+    bias: 0.0
+    output-column: val
+routing:
+  linear-proc:
+    from: [VIRTUAL:LINEAR:OUT]
+    include:
+      - SRC:A
+  capture-writer:
+    from: [linear-proc]
+    include:
+      - VIRTUAL:LINEAR:OUT
+)yaml";
+}
+
+std::string makeAcyclicChainYaml()
+{
+    return R"yaml(
+name: controller-test
+writer:
+  test-capture:
+    - name: capture-writer
+reader:
+  - test-push:
+      - name: test-reader
+        source: SRC:A
+        value: 4.5
+processors:
+  - type: linear-transform
+    name: proc-a
+    sources:
+      - SRC:A
+    alignment: latest-value
+    trigger: any-update
+    output-source: VIRTUAL:A
+    coefficients:
+      - 1.0
+    bias: 0.0
+    output-column: val
+  - type: linear-transform
+    name: proc-b
+    sources:
+      - VIRTUAL:A
+    alignment: latest-value
+    trigger: any-update
+    output-source: VIRTUAL:B
+    coefficients:
+      - 1.0
+    bias: 1.0
+    output-column: val
+routing:
+  proc-a:
+    from: [test-reader]
+    include:
+      - SRC:A
+  proc-b:
+    from: [proc-a]
+    include:
+      - VIRTUAL:A
+  capture-writer:
+    from: [proc-b]
+    include:
+      - VIRTUAL:B
+)yaml";
+}
+
+std::string makeCyclicChainYaml()
+{
+    return R"yaml(
+name: controller-test
+writer:
+  test-capture:
+    - name: capture-writer
+reader:
+  - test-push:
+      - name: test-reader
+        source: SRC:SEED
+        value: 4.5
+processors:
+  - type: linear-transform
+    name: proc-a
+    sources:
+      - VIRTUAL:B
+    alignment: latest-value
+    trigger: any-update
+    output-source: VIRTUAL:A
+    coefficients:
+      - 1.0
+    bias: 0.0
+    output-column: val
+  - type: linear-transform
+    name: proc-b
+    sources:
+      - VIRTUAL:A
+    alignment: latest-value
+    trigger: any-update
+    output-source: VIRTUAL:B
+    coefficients:
+      - 1.0
+    bias: 1.0
+    output-column: val
+routing:
+  proc-a:
+    from: [proc-b]
+    include:
+      - VIRTUAL:B
+  proc-b:
+    from: [proc-a]
+    include:
+      - VIRTUAL:A
+  capture-writer:
+    from: [proc-b]
+    include:
+      - VIRTUAL:B
+)yaml";
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -198,4 +336,23 @@ TEST(MLDPPVXSControllerProcessorIntegrationTest, ProcessorOutputReachesWriter)
     }
 
     controller->stop();
+}
+
+TEST(MLDPPVXSControllerProcessorIntegrationTest, OutputSourceCollidesWithReaderNameThrows)
+{
+    auto controller = MLDPPVXSController::create(makeConfigFromYaml(makeCollisionYaml()));
+    EXPECT_THROW(controller->start(), std::runtime_error);
+}
+
+TEST(MLDPPVXSControllerProcessorIntegrationTest, ProcessorChainNoCycleOk)
+{
+    auto controller = MLDPPVXSController::create(makeConfigFromYaml(makeAcyclicChainYaml()));
+    EXPECT_NO_THROW(controller->start());
+    controller->stop();
+}
+
+TEST(MLDPPVXSControllerProcessorIntegrationTest, ProcessorChainCycleThrows)
+{
+    auto controller = MLDPPVXSController::create(makeConfigFromYaml(makeCyclicChainYaml()));
+    EXPECT_THROW(controller->start(), std::runtime_error);
 }

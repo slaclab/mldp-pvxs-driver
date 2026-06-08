@@ -47,6 +47,7 @@ TEST(MLDPChannelProcessorConfigTest, ParsesMinimalValid)
     EXPECT_EQ(config.alignment(), AlignmentPolicy::LatestValue);
     EXPECT_EQ(config.trigger(), TriggerPolicy::AnyUpdate);
     EXPECT_DOUBLE_EQ(config.triggerIntervalSec(), 0.0);
+    EXPECT_EQ(config.maxBufferDepth(), 0u);
 }
 
 TEST(MLDPChannelProcessorConfigTest, ParsesAllAlignment)
@@ -195,4 +196,29 @@ output-sources:
     EXPECT_EQ(config.name(), "p");
     ASSERT_EQ(config.sources().size(), 1u);
     EXPECT_EQ(config.sources()[0], "s1");
+}
+
+TEST(MLDPChannelProcessorConfigTest, ParsesMaxBufferDepth)
+{
+    const auto cfg = makeConfigFromYaml(R"yaml(
+name: p
+sources:
+  - s1
+max-buffer-depth: 42
+)yaml");
+
+    MLDPChannelProcessorConfig config(cfg);
+    EXPECT_EQ(config.maxBufferDepth(), 42u);
+}
+
+TEST(MLDPChannelProcessorConfigTest, NegativeMaxBufferDepthThrows)
+{
+    const auto cfg = makeConfigFromYaml(R"yaml(
+name: p
+sources:
+  - s1
+max-buffer-depth: -1
+)yaml");
+
+    EXPECT_THROW(MLDPChannelProcessorConfig config(cfg), MLDPChannelProcessorConfig::Error);
 }

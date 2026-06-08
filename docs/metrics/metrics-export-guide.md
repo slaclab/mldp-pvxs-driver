@@ -51,6 +51,11 @@ When the Prometheus endpoint is configured, the driver collects:
 - `mldp_pvxs_driver_controller_queue_depth` - Queued tasks
 - `mldp_pvxs_driver_controller_channel_queue_depth` - Per-worker channel queue depth
 
+**Processor metrics** (per processor instance; label: `processor`):
+- `mldp_pvxs_driver_processor_compute_latency_us` - Histogram of `compute()` duration (microseconds)
+- `mldp_pvxs_driver_processor_fire_total` - Total successful processor compute firings
+- `mldp_pvxs_driver_processor_buffer_depth` - Current retained sample depth across buffered input sources
+
 **Bus metrics**:
 - `mldp_pvxs_driver_bus_push_total` - Events pushed to bus
 - `mldp_pvxs_driver_bus_failure_total` - Push failures

@@ -161,3 +161,40 @@ TEST(InputBufferTest, ReferenceTimeIsMax)
     EXPECT_EQ(snapshot->reference_time.epoch_seconds, 100u);
     EXPECT_EQ(snapshot->reference_time.nanoseconds, 20u);
 }
+
+TEST(InputBufferTest, BackPressureDropsOldest)
+{
+    InputBuffer buffer({"pv:a"}, AlignmentPolicy::AllUpdated, 2);
+    buffer.ingest("pv:a", makePayload({makeFrame(10, 1, 1.0)}));
+    buffer.ingest("pv:a", makePayload({makeFrame(11, 1, 2.0)}));
+    buffer.ingest("pv:a", makePayload({makeFrame(12, 1, 3.0)}));
+
+    const auto snapshot = buffer.trySnapshot(TriggerPolicy::AnyUpdate);
+    ASSERT_TRUE(snapshot.has_value());
+    const auto& batch = snapshot->channels.at("pv:a");
+    ASSERT_EQ(batch.timestamps.size(), 2u);
+    EXPECT_EQ(batch.timestamps[0].epoch_seconds, 11u);
+    EXPECT_EQ(batch.timestamps[1].epoch_seconds, 12u);
+    const auto& values = std::get<std::vector<double>>(batch.columns.at(0).values);
+    ASSERT_EQ(values.size(), 2u);
+    EXPECT_DOUBLE_EQ(values[0], 2.0);
+    EXPECT_DOUBLE_EQ(values[1], 3.0);
+}
+
+TEST(InputBufferTest, BackPressureUnlimited)
+{
+    InputBuffer buffer({"pv:a"}, AlignmentPolicy::AllUpdated, 0);
+    for (std::size_t i = 0; i < 100; ++i)
+    {
+        buffer.ingest("pv:a", makePayload({makeFrame(100 + i, 0, static_cast<double>(i))}));
+    }
+
+    const auto snapshot = buffer.trySnapshot(TriggerPolicy::AnyUpdate);
+    ASSERT_TRUE(snapshot.has_value());
+    const auto& batch = snapshot->channels.at("pv:a");
+    EXPECT_EQ(batch.timestamps.size(), 100u);
+    const auto& values = std::get<std::vector<double>>(batch.columns.at(0).values);
+    ASSERT_EQ(values.size(), 100u);
+    EXPECT_DOUBLE_EQ(values.front(), 0.0);
+    EXPECT_DOUBLE_EQ(values.back(), 99.0);
+}

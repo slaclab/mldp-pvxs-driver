@@ -663,6 +663,12 @@ The driver exposes Prometheus metrics for monitoring:
 - `mldp_pvxs_driver_controller_queue_depth`
 - `mldp_pvxs_driver_controller_channel_queue_depth`
 
+### Processor Metrics
+
+- `mldp_pvxs_driver_processor_compute_latency_us` (Histogram, label: `processor`) — `compute()` duration in microseconds
+- `mldp_pvxs_driver_processor_fire_total` (Counter, label: `processor`) — successful compute firings
+- `mldp_pvxs_driver_processor_buffer_depth` (Gauge, label: `processor`) — retained sample depth across buffered input sources
+
 ### Pool Metrics
 
 - `mldp_pvxs_driver_pool_connections_in_use`

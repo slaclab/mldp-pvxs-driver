@@ -45,7 +45,8 @@ public:
      * @param[in] policy Alignment strategy used when retaining source batches.
      */
     explicit InputBuffer(const std::vector<std::string>& source_names,
-                         AlignmentPolicy                 policy);
+                         AlignmentPolicy                 policy,
+                         std::size_t                     max_depth = 0);
 
     /**
      * @brief Ingest a time-series payload for one source.
@@ -68,12 +69,19 @@ public:
     /** @brief Remove all buffered source data and freshness state. */
     void clear();
 
+    /** @brief Return the deepest retained timestamp count across buffered sources. */
+    std::size_t bufferDepth() const noexcept;
+
+    /** @brief Return the retained timestamp count for one buffered source. */
+    std::size_t bufferDepthForSource(const std::string& root_source_name) const noexcept;
+
 private:
     std::unordered_map<std::string, util::bus::DataBatch> slots_;                  ///< Latest buffered batch per source.
     std::unordered_set<std::string>                       fresh_;                  ///< Sources updated since the last freshness reset.
     std::unordered_set<std::string>                       required_source_lookup_; ///< Fast lookup set for accepted source names.
     std::vector<std::string>                              required_sources_;       ///< Ordered required source list for trigger checks.
     AlignmentPolicy                                       alignment_;              ///< Alignment mode used when buffering payloads.
+    std::size_t                                           max_depth_{0};           ///< Maximum retained samples per source; zero means unlimited.
 };
 
 } // namespace mldp_pvxs_driver::processor

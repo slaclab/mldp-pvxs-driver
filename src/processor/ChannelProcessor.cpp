@@ -12,6 +12,7 @@
 
 #include <util/log/Logger.h>
 
+#include <chrono>
 #include <exception>
 #include <utility>
 #include <variant>
@@ -19,6 +20,11 @@
 namespace mldp_pvxs_driver::processor {
 
 namespace {
+
+prometheus::Labels processorMetricLabels(const std::string& name)
+{
+    return {{"processor", name}};
+}
 
 std::shared_ptr<util::log::ILogger> makeProcessorLogger(const std::string& name)
 {
@@ -38,7 +44,7 @@ ChannelProcessor::ChannelProcessor(MLDPChannelProcessorConfig               conf
     , metrics_(std::move(metrics))
     , logger_(makeProcessorLogger(config_.name()))
     , thread_pool_(std::move(thread_pool))
-    , buffer_(config_.sources(), config_.alignment())
+    , buffer_(config_.sources(), config_.alignment(), config_.maxBufferDepth())
 {
 }
 
@@ -143,6 +149,7 @@ const std::vector<std::string>& ChannelProcessor::inputSourceNames() const noexc
 void ChannelProcessor::fireCompute(const AlignedSnapshot& snapshot) noexcept
 {
     std::vector<AlgorithmOutput> outputs;
+    const auto compute_started_at = std::chrono::steady_clock::now();
     try
     {
         outputs = algorithm_->compute(snapshot);
@@ -157,6 +164,15 @@ void ChannelProcessor::fireCompute(const AlignedSnapshot& snapshot) noexcept
         util::log::warnf(*logger_, "ChannelProcessor '{}' compute failed with unknown exception", config_.name());
         return;
     }
+    const auto compute_finished_at = std::chrono::steady_clock::now();
+    metrics::metric_call(metrics_, [&](metrics::Metrics& metrics)
+    {
+        const auto labels = processorMetricLabels(config_.name());
+        const auto duration_us = std::chrono::duration<double, std::micro>(compute_finished_at - compute_started_at).count();
+        metrics.observeProcessorComputeLatencyUs(duration_us, labels);
+        metrics.incrementProcessorFireCount(1.0, labels);
+        metrics.setProcessorBufferDepth(static_cast<double>(buffer_.bufferDepth()), labels);
+    });
 
     for (auto& output : outputs)
     {

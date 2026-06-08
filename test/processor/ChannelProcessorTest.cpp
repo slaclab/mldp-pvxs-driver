@@ -10,9 +10,11 @@
 
 #include <gtest/gtest.h>
 
+#include <metrics/MetricsConfig.h>
 #include <processor/ChannelProcessor.h>
 
 #include "../config/test_config_helpers.h"
+#include "../common/MldpMetricsTestUtils.h"
 
 #include <memory>
 #include <stdexcept>
@@ -30,6 +32,7 @@ using mldp_pvxs_driver::processor::MLDPChannelProcessorConfig;
 using mldp_pvxs_driver::util::bus::EventBatchStruct;
 using mldp_pvxs_driver::util::bus::SourceMetadataPayload;
 using mldp_pvxs_driver::util::bus::TimeSeriesPayload;
+using mldp_pvxs_driver::testutil::serializeMetricsText;
 
 namespace {
 
@@ -399,4 +402,33 @@ TEST(ChannelProcessorTest, StopDrainsInFlightTask)
     batch.payload = makeTimeSeriesPayload("SRC:A");
     processor.push(std::move(batch));
     processor.stop(); // must not crash or use-after-free
+}
+
+TEST(ChannelProcessorTest, SuccessfulComputeIncrementsProcessorMetrics)
+{
+    auto pool = makePool();
+    auto bus = std::make_shared<CaptureBus>();
+    auto algorithm = std::make_unique<StubAlgorithm>();
+    auto metrics = std::make_shared<mldp_pvxs_driver::metrics::Metrics>(
+        mldp_pvxs_driver::metrics::MetricsConfig{}, "test-controller");
+
+    ChannelProcessor processor(MLDPChannelProcessorConfig(makeProcessorConfig()),
+                               std::move(algorithm),
+                               bus,
+                               metrics,
+                               pool);
+    processor.start();
+
+    EventBatchStruct batch;
+    batch.payload = makeTimeSeriesPayload("SRC:A");
+    ASSERT_TRUE(processor.push(std::move(batch)));
+    pool->wait();
+
+    const auto text = serializeMetricsText(*metrics);
+    EXPECT_NE(text.find("mldp_pvxs_driver_processor_fire_total{controller=\"test-controller\",processor=\"test-proc\"} 1"),
+              std::string::npos);
+    EXPECT_NE(text.find("mldp_pvxs_driver_processor_buffer_depth{controller=\"test-controller\",processor=\"test-proc\"} 1"),
+              std::string::npos);
+    EXPECT_NE(text.find("mldp_pvxs_driver_processor_compute_latency_us_count{controller=\"test-controller\",processor=\"test-proc\"} 1"),
+              std::string::npos);
 }

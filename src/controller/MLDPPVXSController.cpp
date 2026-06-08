@@ -22,7 +22,10 @@
 #include <writer/WriterFactory.h>
 
 #include <functional>
+#include <algorithm>
+#include <sstream>
 #include <stdexcept>
+#include <unordered_set>
 #include <unordered_map>
 
 using namespace mldp_pvxs_driver::metrics;
@@ -70,6 +73,121 @@ static void prepareQueryables(const MLDPPVXSControllerConfig&                   
             throw std::runtime_error("Unknown queryable type: " + entry.type);
         }
         it->second(entry.cfg, metrics);
+    }
+}
+
+void validateProcessorOutputSourceCollisions(
+    const std::unordered_set<std::string>& reader_names,
+    const std::vector<mldp_pvxs_driver::processor::IChannelProcessorUPtr>& processors)
+{
+    for (const auto& processor : processors)
+    {
+        for (const auto& output_source : processor->outputSourceNames())
+        {
+            if (reader_names.find(output_source) != reader_names.end())
+            {
+                throw std::runtime_error("Controller: processor output source '" + output_source +
+                                         "' collides with reader name");
+            }
+        }
+    }
+}
+
+std::string describeCycle(const std::vector<std::string>& stack, const std::string& name)
+{
+    auto it = std::find(stack.begin(), stack.end(), name);
+    if (it == stack.end())
+    {
+        return name;
+    }
+
+    std::ostringstream cycle;
+    for (auto current = it; current != stack.end(); ++current)
+    {
+        if (current != it)
+        {
+            cycle << " -> ";
+        }
+        cycle << *current;
+    }
+    cycle << " -> " << name;
+    return cycle.str();
+}
+
+void validateProcessorGraphAcyclic(
+    const std::vector<mldp_pvxs_driver::processor::IChannelProcessorUPtr>& processors)
+{
+    std::unordered_map<std::string, std::vector<std::string>> graph;
+    std::unordered_map<std::string, std::unordered_set<std::string>> outputs_by_processor;
+
+    for (const auto& processor : processors)
+    {
+        const auto output_sources = processor->outputSourceNames();
+        outputs_by_processor.emplace(processor->name(),
+                                     std::unordered_set<std::string>(output_sources.begin(),
+                                                                     output_sources.end()));
+        graph.emplace(processor->name(), std::vector<std::string>{});
+    }
+
+    for (const auto& producer : processors)
+    {
+        const auto& producer_outputs = outputs_by_processor.at(producer->name());
+        for (const auto& consumer : processors)
+        {
+            if (producer->name() == consumer->name())
+            {
+                continue;
+            }
+
+            const auto& inputs = consumer->inputSourceNames();
+            const auto depends_on_producer = std::any_of(
+                inputs.begin(), inputs.end(),
+                [&](const std::string& input) { return producer_outputs.find(input) != producer_outputs.end(); });
+            if (depends_on_producer)
+            {
+                graph[producer->name()].push_back(consumer->name());
+            }
+        }
+    }
+
+    enum class VisitState
+    {
+        NotVisited,
+        Visiting,
+        Visited,
+    };
+
+    std::unordered_map<std::string, VisitState> state;
+    std::vector<std::string> stack;
+
+    std::function<void(const std::string&)> dfs = [&](const std::string& node)
+    {
+        state[node] = VisitState::Visiting;
+        stack.push_back(node);
+
+        for (const auto& next : graph[node])
+        {
+            if (state[next] == VisitState::Visiting)
+            {
+                throw std::runtime_error("Controller: processor cycle detected: " + describeCycle(stack, next));
+            }
+            if (state[next] == VisitState::Visited)
+            {
+                continue;
+            }
+            dfs(next);
+        }
+
+        stack.pop_back();
+        state[node] = VisitState::Visited;
+    };
+
+    for (const auto& processor : processors)
+    {
+        if (state[processor->name()] == VisitState::NotVisited)
+        {
+            dfs(processor->name());
+        }
     }
 }
 } // namespace
@@ -169,6 +287,14 @@ void MLDPPVXSController::start()
         processor->start();
     }
 
+    {
+        std::unordered_set<std::string> reader_name_set;
+        for (const auto& entry : config_.readerEntries())
+            reader_name_set.insert(entry.second.get("name", ""));
+        validateProcessorOutputSourceCollisions(reader_name_set, processors_);
+    }
+    validateProcessorGraphAcyclic(processors_);
+
     // -- Readers --
     infof(*logger_, "Starting readers");
     for (const auto& entry : config_.readerEntries())
@@ -178,6 +304,7 @@ void MLDPPVXSController::start()
         auto        reader = ReaderFactory::create(type, shared_from_this(), readerConfig, metrics_);
         readers_.push_back(std::move(reader));
     }
+
     // -- Build route table from config --
     {
         std::unordered_set<std::string> known_writers;
