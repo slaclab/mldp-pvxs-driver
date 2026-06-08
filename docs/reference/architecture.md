@@ -11,83 +11,83 @@ The driver implements an **abstract Reader pattern** that allows plugging in dif
 ```mermaid
 flowchart TB
     subgraph DataSources["DATA SOURCES"]
-        DS1["EPICS Control System<br/>(PVs/Process Variables)"]
-        DS2["EPICS Archiver<br/>"]
-        DS3["HDF5 Files<br/>(Future)"]
-        DS4["Others<br/>(Future)"]
+        direction LR
+        DS1["EPICS Control System<br/>(PVs / Process Variables)"]
+        DS2["EPICS Archiver"]
+        DS3["HDF5 Files (Future)"]
+        DS4["Others (Future)"]
     end
 
-    subgraph ReaderLayer["ABSTRACT READER LAYER — all readers inherit IReader"]
-        R1["EpicsBaseReader<br/>(Polling)<br/>Monitor Poller · Thread Pool"]
-        R2["EpicsPVXSReader<br/>(Event-Driven)<br/>PVXS Subscriptions"]
-        R3["EpicsArchiverReader<br/>(HTTP/Protobuf)<br/>historical_once / periodic_tail"]
-        R4["HDF5Reader<br/>(Future)<br/>File Parsing"]
+    subgraph ReaderLayer["READER LAYER — implements IReader"]
+        direction LR
+        R1["EpicsBaseReader<br/>Polling · Monitor Poller · Thread Pool"]
+        R2["EpicsPVXSReader<br/>Event-Driven · PVXS Subscriptions"]
+        R3["EpicsArchiverReader<br/>HTTP/Protobuf · historical_once / periodic_tail"]
+        R4["HDF5Reader (Future)"]
     end
 
-    IDataBus["IDataBus<br/>(Push Interface)"]
-
-    subgraph Controller["MLDPPVXSController"]
-        HashPart["Hash-Based Partitioning<br/>(Source Affinity)"]
-        subgraph Workers["Worker Queues"]
-            W0["Worker 0<br/>Queue"]
-            W1["Worker 1<br/>Queue"]
-            WN["Worker N<br/>Queue"]
-        end
-    end
-
-    QueryableFactory["QueryableFactory<br/>(Out-of-Band Query Registry)<br/>now: startup · tests<br/>future: algorithms / decision engines"]
-
+    IDataBus(["IDataBus<br/>(Push Interface)"])
+    QueryableFactory["QueryableFactory<br/>(Out-of-Band Query Registry)"]
     WriterFactory["WriterFactory<br/>(Static Registration)"]
 
-    subgraph WriterLayer["WRITER LAYER — all writers implement IWriter"]
-        WR1["MLDPWriter<br/>(gRPC)<br/>Thread Pool · WorkerChannels"]
-        WR2["HDF5WriterPerSource<br/>(Disk)<br/>MPSC Queue · HDF5FilePool · Flush Thread"]
-        WR3["HDF5WriterMerge<br/>(Disk)<br/>MPSC Queue · Shared H5File · Flush Thread"]
-        WR4["MLDPPVMetadataWriter<br/>(gRPC)<br/>Work Queue · Thread Pool"]
-        WR5["MLDPConfigurationWriter<br/>(gRPC)<br/>Work Queue · Thread Pool"]
-        WR6["ChannelProcessor<br/>(virtual outputs)<br/>IAlgorithm · InputBuffer · PythonScriptDirectoryLoader"]
+    subgraph Controller["MLDPPVXSController"]
+        direction TB
+        HashPart["Hash-Based Partitioning<br/>(Source Affinity)"]
+        subgraph Workers["Worker Queues"]
+            direction LR
+            W0["Worker 0"] ~~~ W1["Worker 1"] ~~~ WN["Worker N"]
+        end
+        HashPart --> W0
+        HashPart --> W1
+        HashPart --> WN
     end
 
-    MLDPService["MLDP Ingestion Service<br/>(gRPC Streams)"]
-    HDF5Files["HDF5 Files<br/>(one per source)"]
-    HDF5Merged["HDF5 Merged File<br/>(one file, group per source)"]
-    AnnotationService["DpAnnotationService<br/>(gRPC)"]
+    subgraph ProcessorLayer["CHANNEL PROCESSOR LAYER — IWriter · emits virtual sources"]
+        direction TB
+        WR6["ChannelProcessor<br/>InputBuffer · TriggerPolicy · AlignmentPolicy"]
+        IAlgo(["IAlgorithm<br/>«interface»"])
+        PA["PythonAlgorithm<br/>(python-processor)"]
+        WR6 --> IAlgo
+        PA -. implements .-> IAlgo
+    end
 
-    DS1 --> R1
-    DS1 --> R2
+    subgraph WriterLayer["WRITER LAYER — implements IWriter"]
+        direction LR
+        WR1["MLDPWriter<br/>gRPC · Thread Pool · WorkerChannels"]
+        WR2["HDF5WriterPerSource<br/>Disk · MPSC Queue · HDF5FilePool"]
+        WR3["HDF5WriterMerge<br/>Disk · MPSC Queue · Shared H5File"]
+        WR4["MLDPPVMetadataWriter<br/>gRPC · Work Queue"]
+        WR5["MLDPConfigurationWriter<br/>gRPC · Work Queue"]
+    end
+
+    subgraph Sinks["EXTERNAL SINKS"]
+        direction LR
+        MLDPService["MLDP Ingestion Service<br/>gRPC Streams"]
+        HDF5Files["HDF5 Files<br/>one per source"]
+        HDF5Merged["HDF5 Merged File<br/>one file, group per source"]
+        AnnotationService["DpAnnotationService<br/>gRPC"]
+    end
+
+    DS1 --> R1 & R2
     DS2 --> R3
-    DS3 --> R4
-    DS4 --> R4
+    DS3 & DS4 --> R4
 
-    R1 --> IDataBus
-    R2 --> IDataBus
-    R3 --> IDataBus
-    R4 --> IDataBus
+    R1 & R2 & R3 & R4 --> IDataBus
 
     IDataBus --> HashPart
     IDataBus ~~~ QueryableFactory
-    HashPart --> W0
-    HashPart --> W1
-    HashPart --> WN
-
     Controller -. prepareQueryables .-> QueryableFactory
 
-    W0 --> WriterFactory
-    W1 --> WriterFactory
-    WN --> WriterFactory
+    W0 & W1 & WN --> WriterFactory
+    WriterFactory --> WR6
+    WriterFactory --> WR1 & WR2 & WR3 & WR4 & WR5
 
-    WriterFactory --> WR1
-    WriterFactory --> WR2
-    WriterFactory --> WR3
-    WriterFactory --> WR4
-    WriterFactory --> WR5
+    WR6 -."virtual outputs".-> IDataBus
 
     WR1 --> MLDPService
     WR2 --> HDF5Files
     WR3 --> HDF5Merged
-    WR4 --> AnnotationService
-    WR5 --> AnnotationService
-    WR6 --> IDataBus
+    WR4 & WR5 --> AnnotationService
 ```
 
 ## Reader Abstraction
