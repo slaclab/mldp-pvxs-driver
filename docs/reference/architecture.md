@@ -45,6 +45,7 @@ flowchart TB
         WR3["HDF5WriterMerge<br/>(Disk)<br/>MPSC Queue · Shared H5File · Flush Thread"]
         WR4["MLDPPVMetadataWriter<br/>(gRPC)<br/>Work Queue · Thread Pool"]
         WR5["MLDPConfigurationWriter<br/>(gRPC)<br/>Work Queue · Thread Pool"]
+        WR6["ChannelProcessor<br/>(virtual outputs)<br/>IAlgorithm · InputBuffer · PythonScriptDirectoryLoader"]
     end
 
     MLDPService["MLDP Ingestion Service<br/>(gRPC Streams)"]
@@ -86,6 +87,7 @@ flowchart TB
     WR3 --> HDF5Merged
     WR4 --> AnnotationService
     WR5 --> AnnotationService
+    WR6 --> IDataBus
 ```
 
 ## Reader Abstraction
@@ -218,6 +220,46 @@ Each `EventBatchStruct` also carries:
 **Future use**: the factory is positioned as the query interface for decision-making components — for example algorithms that inspect historical data or existing annotations to decide what to ingest, generate derived signals, or trigger additional processing. Because `QueryableFactory` is decoupled from the push path, these consumers can be added without touching the reader/writer pipeline.
 
 → [Query Client Documentation](../dev/query-client.md)
+
+## Channel Processor Layer
+
+Channel processors are **writer-compatible algorithm engines** that consume input source batches, run an algorithm, and publish virtual output sources back onto `IDataBus`. They implement `IWriter` so the controller routes real-source batches to them via the existing `routing:` mechanism; their algorithm outputs are re-injected into the bus as new `EventBatch` entries and flow through the normal writer pipeline from there.
+
+```
+IChannelProcessor  (extends IWriter)
+└── ChannelProcessor  (runtime — owns InputBuffer + IAlgorithm)
+      ├── AlignmentPolicy: latest-value | interpolate
+      └── TriggerPolicy:   any-update | all-updated | interval
+```
+
+### Key Types
+
+| Class | Role |
+|---|---|
+| `IAlgorithm` | Pure-virtual compute interface: `configure()`, `compute(AlignedSnapshot)`, `outputSources()`, `reset()` |
+| `ChannelProcessor` | Concrete runtime — buffers source batches, aligns them, fires `IAlgorithm::compute()` on each trigger, pushes outputs back onto `IDataBus` |
+| `ChannelProcessorFactory` | Keyed registry (parallel to `WriterFactory`) — processor types register at static-init time |
+| `InputBuffer` | Accumulates per-source `DataBatch` entries and produces `AlignedSnapshot` on trigger |
+
+### Built-in Processor Types
+
+| Type key | Algorithm class | Build gate | Description |
+|---|---|---|---|
+| `linear-transform` | `LinearTransformAlgorithm` | always | `y = scale * x + bias` per source column |
+| `python-processor` | `PythonAlgorithm` (one per script) | `BUILD_PYTHON_PROCESSOR=ON` | Bulk-loads `.py` scripts from a directory; each valid script becomes one `ChannelProcessor` |
+
+### Configuration
+
+Processors are declared under the top-level `processors:` sequence in the controller YAML. Each entry has a `type:` key that selects the factory plus standard processor keys (`name`, `sources`, `alignment`, `trigger`) used by all types:
+
+```yaml
+processors:
+  - type: python-processor
+    script-dir: /opt/scripts/my-processors    # required for python-processor
+```
+
+→ [Python Processor Documentation](../processors/python-processor.md)
+→ [Full `processors:` YAML Reference](../guides/configuration.md#processors-block)
 
 ## Push Model Architecture
 

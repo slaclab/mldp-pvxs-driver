@@ -26,6 +26,10 @@ routing:        # optional — selective reader-to-writer dispatch
   writer_name:
     from: [reader_1, reader_2]
 
+processors:     # optional — algorithm-backed virtual channel processors (requires BUILD_PYTHON_PROCESSOR=ON for python-processor)
+  - type: python-processor
+    script-dir: /opt/processors
+
 queryable:      # optional — query client configuration
   mldp: [...]
   mldp-annotation: [...]
@@ -527,6 +531,92 @@ In this example:
 - Orphan warnings are logged for readers/writers not mentioned in any route.
 
 → [Full Controller Documentation](../reference/controller.md#reader-to-writer-routing)
+
+---
+
+## `processors:` Block {#processors-block}
+
+Optional. Declares channel processors — algorithm-backed virtual channel engines that consume real source batches, run a compute function, and publish virtual output sources back onto the bus. Each entry requires a `type:` key that selects the processor factory.
+
+Processors integrate with the `routing:` system the same way writers do: they appear as named targets in `routing:` to control which readers feed them, and their virtual output sources can be used as `from:` origins to feed downstream writers.
+
+> **Build requirement:** `python-processor` requires `-DBUILD_PYTHON_PROCESSOR=ON` (CMake default: ON). When disabled the type is not registered and startup fails if any entry uses it.
+
+```yaml
+processors:
+  - type: python-processor
+    script-dir: /opt/scripts/processors
+```
+
+### `processors[].type: python-processor`
+
+Scans `script-dir` for `.py` files and creates one `ChannelProcessor` per valid script. Invalid or mis-configured scripts are skipped with a warning — they do not abort the load.
+
+```yaml
+processors:
+  - type: python-processor
+    script-dir: /opt/scripts/processors   # required
+```
+
+| Key | Type | Required | Description |
+|-----|------|----------|-------------|
+| `type` | string | Yes | `"python-processor"` |
+| `script-dir` | string | Yes | Path to directory containing `.py` processor scripts. |
+
+Each Python script must export:
+
+| Symbol | Type | Description |
+|--------|------|-------------|
+| `config` | `dict` | Processor metadata. Must contain `name`, `sources`, and `output_source` or `output_sources`. |
+| `compute` | callable | Algorithm entry point. Receives a `dict` snapshot and returns one or more `mldp` payload objects. |
+
+**Minimal script:**
+
+```python
+import mldp
+
+config = {
+    "name": "my-processor",
+    "sources": ["SRC:A"],
+    "alignment": "latest-value",
+    "trigger": "any-update",
+    "output_source": "VIRTUAL:MY:OUT",
+}
+
+def compute(snapshot):
+    value = snapshot.get("SRC:A", 0.0)
+    return mldp.timeseries("VIRTUAL:MY:OUT", {"value": value * 2.0})
+```
+
+**`config` keys:**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `name` | string | — | **Required.** Processor instance name. |
+| `sources` | list[str] | — | **Required.** Input source names consumed by this processor. |
+| `alignment` | string | `latest-value` | `latest-value` or `interpolate`. |
+| `trigger` | string | `any-update` | `any-update`, `all-updated`, or `interval`. |
+| `trigger-interval-sec` | float | — | **Required when `trigger` is `interval`.** Fire interval in seconds. |
+| `output_source` | string | — | Single virtual output source (convenience alias for `output_sources: [name]`). |
+| `output_sources` | list[str] | — | One or more virtual output source names emitted by `compute()`. |
+
+**Wiring with routing:**
+
+```yaml
+processors:
+  - type: python-processor
+    script-dir: /opt/scripts/processors
+
+routing:
+  my-processor:              # processor name matches script config["name"]
+    from: [pvxs_reader]
+    include:
+      - "SRC:*"
+  mldp_main:
+    from: [my-processor]     # processor's virtual output feeds the writer
+```
+
+→ [Full Python Processor Documentation](../processors/python-processor.md)
 
 ---
 
