@@ -60,7 +60,6 @@ writer:
         provider-name: pvxs_provider           # required
         provider-description: "My provider"    # optional
         ingestion-url: grpc://ingest:50051      # required
-        query-url:     grpc://query:50052       # optional; defaults to ingestion-url
         min-conn: 1                            # optional; default: 1
         max-conn: 4                            # optional; default: 4
         credentials: ssl                       # optional; "none" or "ssl" or map
@@ -75,7 +74,6 @@ writer:
 | `mldp-pool.provider-name` | string | — | **Required.** Provider name registered with the MLDP service. |
 | `mldp-pool.provider-description` | string | `""` | Human-readable provider description. |
 | `mldp-pool.ingestion-url` | string | — | **Required.** gRPC endpoint for data ingestion. |
-| `mldp-pool.query-url` | string | ingestion-url | gRPC endpoint for query operations. |
 | `mldp-pool.min-conn` | int | `1` | Minimum open connections in the pool. |
 | `mldp-pool.max-conn` | int | `4` | Maximum open connections in the pool. |
 | `mldp-pool.credentials` | string\|map | `"none"` | `"none"` (insecure), `"ssl"` (system TLS), or a map with `pem-cert-chain`, `pem-private-key`, `pem-root-certs` file paths. |
@@ -415,7 +413,7 @@ queryable:
   mldp:
     mldp-pool:
       ingestion-url: grpc://ingest:50051
-      query-url:     grpc://query:50052
+      query-url:     grpc://query:50052   # required here — used by MLDPQueryClient
       min-conn: 1
       max-conn: 2
   mldp-annotation:

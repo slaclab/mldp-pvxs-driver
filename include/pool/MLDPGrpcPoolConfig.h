@@ -33,7 +33,8 @@ inline constexpr char PemRootCertsKey[]        = "pem-root-certs";
 /**
  * @brief Typed view of the MLDP gRPC pool configuration (ingestion + query + annotation).
  *
- * Requires provider-name, ingestion-url, query-url, min-conn, max-conn.
+ * Requires provider-name, ingestion-url, min-conn, max-conn.
+ * query-url is optional (not used by the ingestion writer).
  * annotation-url and credentials are optional.
  *
  * Subclasses (e.g. MLDPGrpcAnnotationPoolConfig) may call the protected

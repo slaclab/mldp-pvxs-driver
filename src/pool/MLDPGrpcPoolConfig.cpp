@@ -101,16 +101,10 @@ void MLDPGrpcPoolConfig::parse(const config::Config& root)
     {
         throw Error(std::string("mldp-pool.") + IngestionUrlKey + " must not be empty");
     }
-    if (!root.hasChild(QueryUrlKey))
-    {
-        throw Error(makeMissingFieldMessage(QueryUrlKey));
-    }
-    query_url_ = root.get(QueryUrlKey);
-    if (query_url_.empty())
-    {
-        throw Error(std::string("mldp-pool.") + QueryUrlKey + " must not be empty");
-    }
-    if (query_url_ == ingestion_url_)
+    // query-url is optional: the ingestion writer does not use the query service.
+    // Required only when a query/annotation pool is constructed from this config.
+    query_url_ = root.get(QueryUrlKey, "");
+    if (!query_url_.empty() && query_url_ == ingestion_url_)
     {
         throw Error(std::string("mldp-pool.") + QueryUrlKey + " must not be equal to ingestion-url");
     }

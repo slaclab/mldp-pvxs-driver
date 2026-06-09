@@ -11,7 +11,7 @@ writer:
         provider-name: pvxs_provider
         provider-description: "PVXS aggregate provider"   # optional
         ingestion-url: dp-ingestion:50051
-        query-url: dp-query:50052
+        query-url: dp-query:50052          # optional; not used by ingestion writer
         min-conn: 1
         max-conn: 4
         credentials:                         # optional; omit for insecure (no TLS)

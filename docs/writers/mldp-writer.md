@@ -46,7 +46,7 @@ writer:
       mldp-pool:
         provider-name: pvxs_provider
         ingestion-url: grpc://ingest-host:50051
-        query-url:     grpc://query-host:50052
+        # query-url:   grpc://query-host:50052   # optional; not used by ingestion writer
         min-conn: 1
         max-conn: 4
 ```

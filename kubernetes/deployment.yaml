@@ -1,0 +1,93 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mldp-pvxs-driver
+  namespace: mldp-pvxs
+  labels:
+    app.kubernetes.io/name: mldp-pvxs-driver
+spec:
+  replicas: 1
+  # Recreate: stop old pod before starting new one — ensures true single instance
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mldp-pvxs-driver
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mldp-pvxs-driver
+      annotations:
+        # Prometheus pod discovery — no Service needed
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9464"
+        prometheus.io/path: "/metrics"
+        # Force rollout when ConfigMap changes:
+        # kubectl get cm mldp-pvxs-driver-config -o yaml | sha256sum
+        config/checksum: "update-me-on-config-change"
+    spec:
+      terminationGracePeriodSeconds: 30
+
+      containers:
+        - name: driver
+          # Replace tag with actual release (e.g. v0.2.5)
+          image: ghcr.io/slaclab/mldp-pvxs-driver:latest
+          imagePullPolicy: Always
+
+          args:
+            - "--config"
+            - "/etc/mldp-pvxs/config.yaml"
+
+          ports:
+            - name: metrics
+              containerPort: 9464
+              protocol: TCP
+
+          volumeMounts:
+            - name: config
+              mountPath: /etc/mldp-pvxs
+              readOnly: true
+            # Uncomment for TLS certs
+            # - name: tls-certs
+            #   mountPath: /etc/certs
+            #   readOnly: true
+
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+
+          livenessProbe:
+            exec:
+              command: ["pgrep", "-x", "mldp-pvxs-driver"]
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            failureThreshold: 3
+
+          readinessProbe:
+            httpGet:
+              path: /metrics
+              port: metrics
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+
+          env:
+            - name: EPICS_CA_ADDR_LIST
+              value: ""          # set your CA broadcast/unicast list
+            - name: EPICS_CA_AUTO_ADDR_LIST
+              value: "YES"
+            # - name: EPICS_PVA_ADDR_LIST
+            #   value: ""
+
+      volumes:
+        - name: config
+          configMap:
+            name: mldp-pvxs-driver-config
+        # Uncomment for TLS certs stored in a Secret
+        # - name: tls-certs
+        #   secret:
+        #     secretName: mldp-pvxs-tls

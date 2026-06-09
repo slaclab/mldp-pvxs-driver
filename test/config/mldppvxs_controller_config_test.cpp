@@ -202,7 +202,7 @@ reader:
     EXPECT_EQ("epics_2", epicsReader1.name());
 }
 
-TEST(MLDPPVXSControllerConfigTest, ParsesOptionalQueryUrl)
+TEST(MLDPPVXSControllerConfigTest, ParsesWithQueryUrl)
 {
     const std::string yaml = R"(
 writer:
@@ -224,10 +224,37 @@ reader: []
 
     ASSERT_TRUE(controllerCfg.valid());
     ASSERT_EQ(1u, controllerCfg.writerEntries().size());
-    const auto mldpCfg = MLDPWriterConfig::parse(controllerCfg.writerEntries()[0].second);
-    const auto& pool = mldpCfg.poolConfig;
+    const auto  mldpCfg = MLDPWriterConfig::parse(controllerCfg.writerEntries()[0].second);
+    const auto& pool    = mldpCfg.poolConfig;
     EXPECT_EQ("https://mldp-ingestion.example:50051", pool.ingestionUrl());
     EXPECT_EQ("https://mldp-query.example:50052", pool.queryUrl());
+}
+
+TEST(MLDPPVXSControllerConfigTest, ParsesWithoutQueryUrl)
+{
+    // query-url is optional — ingestion writer does not use the query service.
+    const std::string yaml = R"(
+writer:
+  mldp:
+    - name: mldp_main
+      thread-pool: 1
+      mldp-pool:
+        provider-name: pvxs_provider
+        ingestion-url: https://mldp-ingestion.example:50051
+        min-conn: 1
+        max-conn: 2
+reader: []
+)";
+
+    const auto               cfg = makeConfigFromYaml(yaml);
+    MLDPPVXSControllerConfig controllerCfg(cfg);
+
+    ASSERT_TRUE(controllerCfg.valid());
+    ASSERT_EQ(1u, controllerCfg.writerEntries().size());
+    const auto  mldpCfg = MLDPWriterConfig::parse(controllerCfg.writerEntries()[0].second);
+    const auto& pool    = mldpCfg.poolConfig;
+    EXPECT_EQ("https://mldp-ingestion.example:50051", pool.ingestionUrl());
+    EXPECT_TRUE(pool.queryUrl().empty());
 }
 
 TEST(MLDPPVXSControllerConfigTest, ProcessorEntriesEmptyWhenProcessorsAbsent)

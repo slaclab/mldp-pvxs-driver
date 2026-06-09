@@ -162,7 +162,11 @@ std::shared_ptr<MLDPGrpcObject> MLDPGrpcIngestionePool::createChannel()
     }
 
     auto ingestion_channel = grpc::CreateChannel(config_.ingestionUrl(), creds);
-    auto query_channel = grpc::CreateChannel(config_.queryUrl(), creds);
+    std::shared_ptr<grpc::Channel> query_channel;
+    if (!config_.queryUrl().empty())
+    {
+        query_channel = grpc::CreateChannel(config_.queryUrl(), creds);
+    }
     auto object = std::make_shared<MLDPGrpcObject>(ingestion_channel, query_channel);
     return object;
 }

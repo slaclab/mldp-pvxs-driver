@@ -14,3 +14,5 @@ Testing/
 .claude
 PROCESS_LOG*.md
 data/hdf5/
+!kubernetes/configmap.yaml
+!docs/examples/config*

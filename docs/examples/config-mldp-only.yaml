@@ -1,0 +1,32 @@
+# Minimal configuration: single gRPC writer + EpicsPVXS reader
+#
+# Use this as a starting point for production deployments that forward
+# live EPICS PV data to an MLDP ingestion service over gRPC.
+
+writer:
+  mldp:
+    - name: mldp_main
+      thread-pool: 2
+      stream-max-bytes: 2097152   # 2 MiB; flush stream when payload exceeds this
+      stream-max-age-ms: 200      # flush stream after 200 ms regardless of size
+      mldp-pool:
+        provider-name: pvxs_provider
+        provider-description: "PVXS live data provider"
+        ingestion-url: grpc://mldp-ingest.example.com:50051
+        # query-url:   grpc://mldp-query.example.com:50052   # optional; not used by ingestion writer
+        min-conn: 1
+        max-conn: 4
+        credentials: ssl          # use system TLS trust store
+
+reader:
+  - epics-pvxs:
+      - name: pvxs_main
+        thread-pool: 4
+        pvs:
+          - name: SITE:SYS:PRESSURE
+          - name: SITE:SYS:TEMPERATURE
+          - name: SITE:SYS:BEAM_CURRENT
+
+metrics:
+  endpoint: "0.0.0.0:9464"
+  scan-interval-seconds: 5
