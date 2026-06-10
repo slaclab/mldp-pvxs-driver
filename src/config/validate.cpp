@@ -276,14 +276,16 @@ std::vector<ConfigDiagnostic> validateConfig(const Config& cfg)
         std::vector<std::string> allReaderNames;
 
         auto readerSequence = cfg.subConfig("reader");
-        for (std::size_t N = 0; N < readerSequence.size(); ++N)
+        if (readerSequence.empty())
         {
-            const Config& readerEntry = readerSequence[N];
-            std::string   readerPfx = "reader[" + std::to_string(N) + "]";
+            err("reader", "block is present but empty");
+        }
+        else
+        {
+            const Config&     readerEntry = readerSequence.front();
+            const std::string readerPfx   = "reader";
 
-            // Each entry is a map whose keys are reader-type names.
-            // We check for known types: epics-pvxs, epics-base, epics-archiver.
-
+            // Check known types: epics-pvxs, epics-base, epics-archiver.
             auto validateEpicsMonitor = [&](const std::vector<Config>& instances,
                                             const std::string&         rtype)
             {
@@ -440,7 +442,7 @@ std::vector<ConfigDiagnostic> validateConfig(const Config& cfg)
                     }
                 }
             }
-        }
+        } // end else (reader block not empty)
 
         // -------------------------------------------------------------------------
         // Metrics block (optional)

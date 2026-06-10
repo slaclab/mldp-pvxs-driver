@@ -38,13 +38,13 @@ writer:
         credentials: ssl          # use system TLS trust store
 
 reader:
-  - epics-pvxs:
-      - name: pvxs_main
-        thread-pool: 4
-        pvs:
-          - name: SITE:SYS:PRESSURE
-          - name: SITE:SYS:TEMPERATURE
-          - name: SITE:SYS:BEAM_CURRENT
+  epics-pvxs:
+    - name: pvxs_main
+      thread-pool: 4
+      pvs:
+        - name: SITE:SYS:PRESSURE
+        - name: SITE:SYS:TEMPERATURE
+        - name: SITE:SYS:BEAM_CURRENT
 
 metrics:
   endpoint: "0.0.0.0:9464"
@@ -78,21 +78,21 @@ writer:
       compression-level: 1      # light DEFLATE compression
 
 reader:
-  - epics-pvxs:
-      - name: pvxs_live
-        thread-pool: 4
-        pvs:
-          - name: SITE:SYS:PRESSURE
-          - name: SITE:SYS:TEMPERATURE
+  epics-pvxs:
+    - name: pvxs_live
+      thread-pool: 4
+      pvs:
+        - name: SITE:SYS:PRESSURE
+        - name: SITE:SYS:TEMPERATURE
 
-  - epics-base:
-      - name: base_legacy
-        thread-pool: 2
-        monitor-poll-threads: 2
-        monitor-poll-interval-ms: 5
-        pvs:
-          - name: LEGACY:CA:PV:1
-          - name: LEGACY:CA:PV:2
+  epics-base:
+    - name: base_legacy
+      thread-pool: 2
+      monitor-poll-threads: 2
+      monitor-poll-interval-ms: 5
+      pvs:
+        - name: LEGACY:CA:PV:1
+        - name: LEGACY:CA:PV:2
 
 metrics:
   endpoint: "0.0.0.0:9464"
@@ -118,34 +118,33 @@ writer:
 
 reader:
   # --- One-shot historical pull ---
-  - epics-archiver:
-      - name: archiver_historical
-        hostname: archiver.example.com:11200
-        mode: historical_once
-        start-date: "2026-01-01T00:00:00Z"
-        end-date:   "2026-01-02T00:00:00Z"
-        connect-timeout-sec: 30
-        total-timeout-sec: 600    # 10 minutes for large windows
-        batch-duration-sec: 1     # split output into 1-second batches
-        tls-verify-peer: true
-        tls-verify-host: true
-        pvs:
-          - name: SLAC:GUNB:ELEC:LTU1:630:EPICS_PV
-          - name: FACET:DL1:SBEN:1:BDES
-          - name: SITE:SYS:BEAM_ENERGY
+  epics-archiver:
+    - name: archiver_historical
+      hostname: archiver.example.com:11200
+      mode: historical_once
+      start-date: "2026-01-01T00:00:00Z"
+      end-date:   "2026-01-02T00:00:00Z"
+      connect-timeout-sec: 30
+      total-timeout-sec: 600    # 10 minutes for large windows
+      batch-duration-sec: 1     # split output into 1-second batches
+      tls-verify-peer: true
+      tls-verify-host: true
+      pvs:
+        - name: SLAC:GUNB:ELEC:LTU1:630:EPICS_PV
+        - name: FACET:DL1:SBEN:1:BDES
+        - name: SITE:SYS:BEAM_ENERGY
 
-  # --- Continuous tail polling ---
-  - epics-archiver:
-      - name: archiver_tail
-        hostname: archiver.example.com:11200
-        mode: periodic_tail
-        poll-interval-sec: 10     # query archiver every 10 seconds
-        lookback-sec: 10          # request last 10 seconds of data each poll
-        connect-timeout-sec: 30
-        total-timeout-sec: 0      # infinite — allow long-running streaming sessions
-        batch-duration-sec: 1
-        pvs:
-          - name: FACET:DL1:SBEN:1:BDES
+    # --- Continuous tail polling ---
+    - name: archiver_tail
+      hostname: archiver.example.com:11200
+      mode: periodic_tail
+      poll-interval-sec: 10     # query archiver every 10 seconds
+      lookback-sec: 10          # request last 10 seconds of data each poll
+      connect-timeout-sec: 30
+      total-timeout-sec: 0      # infinite — allow long-running streaming sessions
+      batch-duration-sec: 1
+      pvs:
+        - name: FACET:DL1:SBEN:1:BDES
 
 metrics:
   endpoint: "0.0.0.0:9464"

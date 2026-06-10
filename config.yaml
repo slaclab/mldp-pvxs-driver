@@ -32,35 +32,35 @@ reader:
   # ========== EPICS PVAccess Reader (Real-time Monitoring via PVXS) ==========
   # Type: epics-pvxs
   # Purpose: Real-time monitoring of EPICS PVs via PVXS (PVAccess)
-  - epics-pvxs:
-      - name: pvxs_reader_a
-        thread-pool: 1                        # optional; default: 1 (thread pool size)
-        column-batch-size: 50                 # optional; default: 50 (max PVs per batch)
-        monitor-poll-threads: 2               # optional; default: 2 (polling threads)
-        monitor-poll-interval-ms: 5           # optional; default: 5 (poll interval in ms)
-        pvs:
-          - name: "PV:NAME:1"
-          - name: "PV:NAME:2"
-            option: "VALUE"                   # optional; scalar monitor option
-          - name: "TABLE:PV"
-            option:                           # optional; map-based option for NT Table
-              type: "slac-bsas-table"         # special handling for BSAS table rows
-              tsSeconds: "secondsFieldName"   # field containing seconds timestamp
-              tsNanos: "nanosFieldName"       # field containing nanos timestamp
+  epics-pvxs:
+    - name: pvxs_reader_a
+      thread-pool: 1                        # optional; default: 1 (thread pool size)
+      column-batch-size: 50                 # optional; default: 50 (max PVs per batch)
+      monitor-poll-threads: 2               # optional; default: 2 (polling threads)
+      monitor-poll-interval-ms: 5           # optional; default: 5 (poll interval in ms)
+      pvs:
+        - name: "PV:NAME:1"
+        - name: "PV:NAME:2"
+          option: "VALUE"                   # optional; scalar monitor option
+        - name: "TABLE:PV"
+          option:                           # optional; map-based option for NT Table
+            type: "slac-bsas-table"         # special handling for BSAS table rows
+            tsSeconds: "secondsFieldName"   # field containing seconds timestamp
+            tsNanos: "nanosFieldName"       # field containing nanos timestamp
 
   # ========== EPICS Base Reader (Real-time Monitoring via Channel Access) ==========
   # Type: epics-base
   # Purpose: Real-time monitoring of EPICS PVs via Channel Access (CA)
-  - epics-base:
-      - name: base_reader_a
-        thread-pool: 1                        # optional; default: 1 (thread pool size)
-        column-batch-size: 50                 # optional; default: 50 (max PVs per batch)
-        monitor-poll-threads: 2               # optional; default: 2 (polling threads)
-        monitor-poll-interval-ms: 5           # optional; default: 5 (poll interval in ms)
-        pvs:
-          - name: "PV:NAME:1"
-          - name: "PV:NAME:2"
-            option: "VALUE"                   # optional; scalar monitor option
+  epics-base:
+    - name: base_reader_a
+      thread-pool: 1                        # optional; default: 1 (thread pool size)
+      column-batch-size: 50                 # optional; default: 50 (max PVs per batch)
+      monitor-poll-threads: 2               # optional; default: 2 (polling threads)
+      monitor-poll-interval-ms: 5           # optional; default: 5 (poll interval in ms)
+      pvs:
+        - name: "PV:NAME:1"
+        - name: "PV:NAME:2"
+          option: "VALUE"                   # optional; scalar monitor option
 
   # ========== EPICS Archiver Reader (Historical Data Retrieval) ==========
   # Type: epics-archiver
@@ -68,28 +68,28 @@ reader:
   # Modes:
   #   - historical_once (default): one-shot fetch using start-date[/end-date]
   #   - periodic_tail: wake up every poll-interval-sec and fetch [now-lookback-sec, now]
-  - epics-archiver:
-      - name: archiver_reader_a
-        hostname: "archiver.example.com:11200"
-        mode: "historical_once"              # optional; default mode
-        start-date: "2026-01-01T00:00:00Z"
-        end-date: "2026-01-31T23:59:59Z"     # optional; omit for open-ended reads
-        tls-verify-peer: true                 # optional; default: true (verify cert chain)
-        tls-verify-host: true                 # optional; default: true (verify hostname)
-        connect-timeout-sec: 30               # optional; default: 30 seconds
-        total-timeout-sec: 300                # optional; default: 300 seconds (0 = infinite)
-        pvs:
-          - name: "SYSTEM:SENSOR:TEMPERATURE:MAIN"
-          - name: "SYSTEM:ACTUATOR:PRESSURE:OUTLET"
+  epics-archiver:
+    - name: archiver_reader_a
+      hostname: "archiver.example.com:11200"
+      mode: "historical_once"              # optional; default mode
+      start-date: "2026-01-01T00:00:00Z"
+      end-date: "2026-01-31T23:59:59Z"     # optional; omit for open-ended reads
+      tls-verify-peer: true                 # optional; default: true (verify cert chain)
+      tls-verify-host: true                 # optional; default: true (verify hostname)
+      connect-timeout-sec: 30               # optional; default: 30 seconds
+      total-timeout-sec: 300                # optional; default: 300 seconds (0 = infinite)
+      pvs:
+        - name: "SYSTEM:SENSOR:TEMPERATURE:MAIN"
+        - name: "SYSTEM:ACTUATOR:PRESSURE:OUTLET"
 
-      - name: archiver_reader_tail_polling
-        hostname: "archiver.example.com:11200"
-        mode: "periodic_tail"
-        poll-interval-sec: 5                  # required; wakeup interval
-        lookback-sec: 5                       # optional; defaults to poll-interval-sec
-        batch-duration-sec: 1                 # optional; split batches by historical sample-time span
-        pvs:
-          - name: "SYSTEM:SENSOR:TEMPERATURE:MAIN"
+    - name: archiver_reader_tail_polling
+      hostname: "archiver.example.com:11200"
+      mode: "periodic_tail"
+      poll-interval-sec: 5                  # required; wakeup interval
+      lookback-sec: 5                       # optional; defaults to poll-interval-sec
+      batch-duration-sec: 1                 # optional; split batches by historical sample-time span
+      pvs:
+        - name: "SYSTEM:SENSOR:TEMPERATURE:MAIN"
 
 metrics:                                 # optional; omit to disable Prometheus endpoint
   endpoint: 0.0.0.0:9464

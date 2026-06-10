@@ -43,15 +43,15 @@ writer:
         min-conn: 1
         max-conn: 1
 reader:
-  - epics-archiver:
-      - name: archiver_tail_reader_test
-        hostname: ")") + server_->baseUrl() +
+  epics-archiver:
+    - name: archiver_tail_reader_test
+      hostname: ")") + server_->baseUrl() +
                                  R"("
-        mode: "periodic_tail"
-        poll-interval-sec: 1
-        batch-duration-sec: 2
-        pvs:
-          - name: "TEST:PV:DOUBLE"
+      mode: "periodic_tail"
+      poll-interval-sec: 1
+      batch-duration-sec: 2
+      pvs:
+        - name: "TEST:PV:DOUBLE"
 )";
 
         const auto config = makeConfigFromYaml(yaml);

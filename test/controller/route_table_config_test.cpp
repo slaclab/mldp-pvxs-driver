@@ -28,10 +28,10 @@ writer:
         min-conn: 1
         max-conn: 4
 reader:
-  - epics-pvxs:
-      - name: reader_1
-        pvs:
-          - name: pv1
+  epics-pvxs:
+    - name: reader_1
+      pvs:
+        - name: pv1
 )";
 
 // 1. NoRoutingConfig_EmptyEntries — backward compatible

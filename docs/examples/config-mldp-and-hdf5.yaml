@@ -25,21 +25,21 @@ writer:
       compression-level: 1      # light DEFLATE compression
 
 reader:
-  - epics-pvxs:
-      - name: pvxs_live
-        thread-pool: 4
-        pvs:
-          - name: SITE:SYS:PRESSURE
-          - name: SITE:SYS:TEMPERATURE
+  epics-pvxs:
+    - name: pvxs_live
+      thread-pool: 4
+      pvs:
+        - name: SITE:SYS:PRESSURE
+        - name: SITE:SYS:TEMPERATURE
 
-  - epics-base:
-      - name: base_legacy
-        thread-pool: 2
-        monitor-poll-threads: 2
-        monitor-poll-interval-ms: 5
-        pvs:
-          - name: LEGACY:CA:PV:1
-          - name: LEGACY:CA:PV:2
+  epics-base:
+    - name: base_legacy
+      thread-pool: 2
+      monitor-poll-threads: 2
+      monitor-poll-interval-ms: 5
+      pvs:
+        - name: LEGACY:CA:PV:1
+        - name: LEGACY:CA:PV:2
 
 metrics:
   endpoint: "0.0.0.0:9464"

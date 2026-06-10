@@ -19,13 +19,13 @@ writer:
         credentials: ssl          # use system TLS trust store
 
 reader:
-  - epics-pvxs:
-      - name: pvxs_main
-        thread-pool: 4
-        pvs:
-          - name: SITE:SYS:PRESSURE
-          - name: SITE:SYS:TEMPERATURE
-          - name: SITE:SYS:BEAM_CURRENT
+  epics-pvxs:
+    - name: pvxs_main
+      thread-pool: 4
+      pvs:
+        - name: SITE:SYS:PRESSURE
+        - name: SITE:SYS:TEMPERATURE
+        - name: SITE:SYS:BEAM_CURRENT
 
 metrics:
   endpoint: "0.0.0.0:9464"

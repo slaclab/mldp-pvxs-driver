@@ -41,10 +41,10 @@ writer:
         min-conn: 1
         max-conn: 1
 reader:
-  - epics-pvxs:
-      - name: epics_reader_1
-        pvs:
-          - name: test:counter
+  epics-pvxs:
+    - name: epics_reader_1
+      pvs:
+        - name: test:counter
 )";
 
 constexpr std::string_view kEpicsControllerConfig = R"(
@@ -58,10 +58,10 @@ writer:
         min-conn: 1
         max-conn: 1
 reader:
-  - epics-pvxs:
-      - name: epics_reader_1
-        pvs:
-          - name: test:counter
+  epics-pvxs:
+    - name: epics_reader_1
+      pvs:
+        - name: test:counter
 )";
 
 constexpr std::string_view kBsasNtTableRowTsControllerConfig = R"(
@@ -75,12 +75,12 @@ writer:
         min-conn: 1
         max-conn: 1
 reader:
-  - epics-pvxs:
-      - name: epics_reader_1
-        pvs:
-          - name: test:bsas_table
-            option:
-              type: slac-bsas-table
+  epics-pvxs:
+    - name: epics_reader_1
+      pvs:
+        - name: test:bsas_table
+          option:
+            type: slac-bsas-table
 )";
 
 class TestIngestionService final : public dp::service::ingestion::DpIngestionService::Service

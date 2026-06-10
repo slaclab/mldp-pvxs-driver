@@ -25,20 +25,20 @@ writer:
         min-conn: 1
         max-conn: 4
 reader:
-  - epics-pvxs:
-      - name: epics_live
-        pvs:
-          - name: SYS:PV:ONE
-          - name: SYS:PV:TWO
-          - name: SYS:PV:THREE
-          - name: SYS:PV:FOUR
-  - epics-archiver:
-      - name: arch_tail
-        hostname: https://archiver.example:17668
-        mode: periodic_tail
-        poll-interval-sec: 5
-        pvs:
-          - name: ARCH:PV:ONE
+  epics-pvxs:
+    - name: epics_live
+      pvs:
+        - name: SYS:PV:ONE
+        - name: SYS:PV:TWO
+        - name: SYS:PV:THREE
+        - name: SYS:PV:FOUR
+  epics-archiver:
+    - name: arch_tail
+      hostname: https://archiver.example:17668
+      mode: periodic_tail
+      poll-interval-sec: 5
+      pvs:
+        - name: ARCH:PV:ONE
 metrics:
   endpoint: 0.0.0.0:9464
   scan-interval-seconds: 3

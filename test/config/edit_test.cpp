@@ -47,12 +47,12 @@ writer:
         credentials: ssl
 
 reader:
-  - epics-pvxs:
-      - name: pvxs_main
-        thread-pool: 4
-        pvs:
-          - name: SITE:SYS:PRESSURE
-          - name: SITE:SYS:TEMPERATURE
+  epics-pvxs:
+    - name: pvxs_main
+      thread-pool: 4
+      pvs:
+        - name: SITE:SYS:PRESSURE
+        - name: SITE:SYS:TEMPERATURE
 )yaml";
 
 const std::string kTwoWritersYaml = R"yaml(
@@ -80,9 +80,9 @@ writer:
       compression-level: 0
 
 reader:
-  - epics-pvxs:
-      - name: pvxs_main
-        thread-pool: 2
+  epics-pvxs:
+    - name: pvxs_main
+      thread-pool: 2
 )yaml";
 
 const std::string kWithRoutingYaml = R"yaml(
@@ -103,11 +103,11 @@ writer:
         credentials: ssl
 
 reader:
-  - epics-pvxs:
-      - name: pvxs_main
-        thread-pool: 2
-      - name: pvxs_extra
-        thread-pool: 1
+  epics-pvxs:
+    - name: pvxs_main
+      thread-pool: 2
+    - name: pvxs_extra
+      thread-pool: 1
 
 routing:
   mldp_main:
@@ -135,9 +135,9 @@ writer:
         credentials: ssl
 
 reader:
-  - epics-pvxs:
-      - name: pvxs_main
-        thread-pool: 2
+  epics-pvxs:
+    - name: pvxs_main
+      thread-pool: 2
 
 metrics:
   endpoint: "0.0.0.0:9464"

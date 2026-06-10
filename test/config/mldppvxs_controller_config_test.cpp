@@ -32,12 +32,12 @@ writer:
         min-conn: 1
         max-conn: 4
 reader:
-  - epics-pvxs:
-      - name: epics_1
-        pvs:
-          - name: pv1
-            option: chan://one
-          - name: pv2
+  epics-pvxs:
+    - name: epics_1
+      pvs:
+        - name: pv1
+          option: chan://one
+        - name: pv2
 metrics:
   endpoint: 0.0.0.0:9464
 )";
@@ -176,13 +176,13 @@ writer:
         min-conn: 2
         max-conn: 2
 reader:
-  - epics-pvxs:
-      - name: epics_1
-        pvs:
-          - name: pv1
-      - name: epics_2
-        pvs:
-          - name: pv2
+  epics-pvxs:
+    - name: epics_1
+      pvs:
+        - name: pv1
+    - name: epics_2
+      pvs:
+        - name: pv2
 )";
 
     const auto               cfg = makeConfigFromYaml(yaml);
@@ -343,26 +343,7 @@ reader: []
     EXPECT_THROW(static_cast<void>(MLDPPVXSControllerConfig(cfg)), MLDPPVXSControllerConfig::Error);
 }
 
-TEST(MLDPPVXSControllerConfigTest, ThrowsWhenReaderIsNotSequence)
-{
-    const std::string yaml = R"(
-writer:
-  mldp:
-    - name: mldp_main
-      thread-pool: 1
-      mldp-pool:
-        provider-name: pvxs_provider
-        ingestion-url: https://mldp.example
-        min-conn: 1
-        max-conn: 1
-reader: invalid
-)";
-
-    const auto cfg = makeConfigFromYaml(yaml);
-    EXPECT_THROW(static_cast<void>(MLDPPVXSControllerConfig(cfg)), MLDPPVXSControllerConfig::Error);
-}
-
-TEST(MLDPPVXSControllerConfigTest, ThrowsForUnsupportedReaderType)
+TEST(MLDPPVXSControllerConfigTest, ThrowsWhenReaderTypeIsNotSequence)
 {
     const std::string yaml = R"(
 writer:
@@ -375,12 +356,33 @@ writer:
         min-conn: 1
         max-conn: 1
 reader:
-  - foo:
-      - bar
+  epics-pvxs: not_a_sequence
 )";
 
     const auto cfg = makeConfigFromYaml(yaml);
     EXPECT_THROW(static_cast<void>(MLDPPVXSControllerConfig(cfg)), MLDPPVXSControllerConfig::Error);
+}
+
+TEST(MLDPPVXSControllerConfigTest, UnknownReaderTypeIsIgnored)
+{
+    const std::string yaml = R"(
+writer:
+  mldp:
+    - name: mldp_main
+      thread-pool: 1
+      mldp-pool:
+        provider-name: pvxs_provider
+        ingestion-url: https://mldp.example
+        min-conn: 1
+        max-conn: 1
+reader:
+  foo:
+    - bar
+)";
+
+    const auto               cfg = makeConfigFromYaml(yaml);
+    MLDPPVXSControllerConfig controllerCfg(cfg);
+    EXPECT_TRUE(controllerCfg.readerEntries().empty());
 }
 
 TEST(MLDPPVXSControllerConfigTest, ThrowsWhenWriterBlockMissing)

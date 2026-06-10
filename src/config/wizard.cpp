@@ -164,89 +164,94 @@ std::string generateYaml(const WizardState& st)
     }
     o << "\n";
 
-    // readers
+    // readers — group by type, emit map-key format matching writer section
     if (!st.readers.empty())
     {
         o << "reader:\n";
+        std::string lastType;
         for (const auto& r : st.readers)
         {
-            o << ind(1) << "- " << r.reader_type << ":\n";
-            o << ind(3) << "- name: " << r.name << "\n";
+            if (r.reader_type != lastType)
+            {
+                o << ind(1) << r.reader_type << ":\n";
+                lastType = r.reader_type;
+            }
+            o << ind(2) << "- name: " << r.name << "\n";
             if (r.reader_type == "epics-pvxs" || r.reader_type == "epics-base")
             {
-                o << ind(4) << "thread-pool: " << r.thread_pool << "\n";
-                o << ind(4) << "column-batch-size: " << r.column_batch_size << "\n";
+                o << ind(3) << "thread-pool: " << r.thread_pool << "\n";
+                o << ind(3) << "column-batch-size: " << r.column_batch_size << "\n";
                 if (r.reader_type == "epics-base")
                 {
-                    o << ind(4) << "monitor-poll-threads: " << r.monitor_poll_threads << "\n";
-                    o << ind(4) << "monitor-poll-interval-ms: " << r.monitor_poll_interval_ms << "\n";
+                    o << ind(3) << "monitor-poll-threads: " << r.monitor_poll_threads << "\n";
+                    o << ind(3) << "monitor-poll-interval-ms: " << r.monitor_poll_interval_ms << "\n";
                 }
             }
             else if (r.reader_type == "epics-archiver")
             {
-                o << ind(4) << "hostname: " << r.hostname << "\n";
-                o << ind(4) << "mode: " << r.mode << "\n";
+                o << ind(3) << "hostname: " << r.hostname << "\n";
+                o << ind(3) << "mode: " << r.mode << "\n";
                 if (r.mode == "historical_once")
                 {
-                    o << ind(4) << "start-date: \"" << r.start_date << "\"\n";
+                    o << ind(3) << "start-date: \"" << r.start_date << "\"\n";
                     if (!r.end_date.empty())
-                        o << ind(4) << "end-date: \"" << r.end_date << "\"\n";
+                        o << ind(3) << "end-date: \"" << r.end_date << "\"\n";
                 }
                 else
                 {
-                    o << ind(4) << "poll-interval-sec: " << r.poll_interval_sec << "\n";
+                    o << ind(3) << "poll-interval-sec: " << r.poll_interval_sec << "\n";
                     if (!r.lookback_sec.empty())
-                        o << ind(4) << "lookback-sec: " << r.lookback_sec << "\n";
+                        o << ind(3) << "lookback-sec: " << r.lookback_sec << "\n";
                 }
-                o << ind(4) << "connect-timeout-sec: " << r.connect_timeout_sec << "\n";
-                o << ind(4) << "total-timeout-sec: " << r.total_timeout_sec << "\n";
-                o << ind(4) << "batch-duration-sec: " << r.batch_duration_sec << "\n";
-                o << ind(4) << "tls-verify-peer: " << r.tls_verify_peer << "\n";
-                o << ind(4) << "tls-verify-host: " << r.tls_verify_host << "\n";
+                o << ind(3) << "connect-timeout-sec: " << r.connect_timeout_sec << "\n";
+                o << ind(3) << "total-timeout-sec: " << r.total_timeout_sec << "\n";
+                o << ind(3) << "batch-duration-sec: " << r.batch_duration_sec << "\n";
+                o << ind(3) << "tls-verify-peer: " << r.tls_verify_peer << "\n";
+                o << ind(3) << "tls-verify-host: " << r.tls_verify_host << "\n";
             }
             else if (r.reader_type == "epics-ds-metadata")
             {
-                o << ind(4) << "service: "             << r.ds_service             << "\n";
-                o << ind(4) << "query: "               << r.ds_query               << "\n";
-                o << ind(4) << "timeout-sec: "         << r.ds_timeout_sec         << "\n";
-                o << ind(4) << "source-name-column: "  << r.ds_source_name_col     << "\n";
+                o << ind(3) << "service: "             << r.ds_service             << "\n";
+                o << ind(3) << "query: "               << r.ds_query               << "\n";
+                o << ind(3) << "timeout-sec: "         << r.ds_timeout_sec         << "\n";
+                o << ind(3) << "source-name-column: "  << r.ds_source_name_col     << "\n";
                 if (!r.ds_tags_col.empty())
-                    o << ind(4) << "tags-column: "     << r.ds_tags_col            << "\n";
-                o << ind(4) << "rescan-interval-sec: " << r.ds_rescan_interval_sec << "\n";
+                    o << ind(3) << "tags-column: "     << r.ds_tags_col            << "\n";
+                o << ind(3) << "rescan-interval-sec: " << r.ds_rescan_interval_sec << "\n";
             }
             if (!r.static_metadata.empty())
             {
-                o << ind(4) << "static-metadata:\n";
+                o << ind(3) << "static-metadata:\n";
                 for (const auto& [k, v] : r.static_metadata)
-                    o << ind(5) << k << ": " << v << "\n";
+                    o << ind(4) << k << ": " << v << "\n";
             }
             if (!r.pvs.empty())
             {
-                o << ind(4) << "pvs:\n";
+                o << ind(3) << "pvs:\n";
                 for (const auto& pv : r.pvs)
                 {
                     if (pv.option_type == "none" || pv.option_type.empty())
                     {
-                        o << ind(5) << "- name: " << pv.name << "\n";
+                        o << ind(4) << "- name: " << pv.name << "\n";
                     }
                     else if (pv.option_type == "scalar")
                     {
-                        o << ind(5) << "- name: " << pv.name << "\n";
-                        o << ind(6) << "option: \"" << pv.option_value << "\"\n";
+                        o << ind(4) << "- name: " << pv.name << "\n";
+                        o << ind(5) << "option: \"" << pv.option_value << "\"\n";
                     }
                     else if (pv.option_type == "slac-bsas-table")
                     {
-                        o << ind(5) << "- name: " << pv.name << "\n";
-                        o << ind(6) << "option:\n";
-                        o << ind(7) << "type: slac-bsas-table\n";
-                        o << ind(7) << "tsSeconds: " << pv.ts_seconds << "\n";
-                        o << ind(7) << "tsNanos: " << pv.ts_nanos << "\n";
+                        o << ind(4) << "- name: " << pv.name << "\n";
+                        o << ind(5) << "option:\n";
+                        o << ind(6) << "type: slac-bsas-table\n";
+                        o << ind(6) << "tsSeconds: " << pv.ts_seconds << "\n";
+                        o << ind(6) << "tsNanos: " << pv.ts_nanos << "\n";
                     }
                     if (!pv.metadata.empty())
                     {
-                        o << ind(6) << "metadata:\n";
+                        o << ind(5) << "metadata:\n";
                         for (const auto& [k, v] : pv.metadata)
-                            o << ind(7) << k << ": " << v << "\n";
+                            o << ind(6) << k << ": " << v << "\n";
                     }
                 }
             }

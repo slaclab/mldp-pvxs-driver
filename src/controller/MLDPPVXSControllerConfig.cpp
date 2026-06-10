@@ -143,51 +143,30 @@ void MLDPPVXSControllerConfig::parseReaders(const ::mldp_pvxs_driver::config::Co
         return;
     }
 
-    if (!root.isSequence(ReaderKey))
+    const auto readerNodes = root.subConfig(ReaderKey);
+    if (readerNodes.empty())
     {
-        throw Error("reader must be a sequence");
+        return;
     }
 
-    const auto registeredTypes = mldp_pvxs_driver::reader::ReaderFactory::registeredTypes();
+    const auto& readerNode     = readerNodes.front();
+    const auto  registeredTypes = mldp_pvxs_driver::reader::ReaderFactory::registeredTypes();
 
-    const auto readerBlocks = root.subConfig(ReaderKey);
-    for (const auto& readerBlock : readerBlocks)
+    for (const auto& typeName : registeredTypes)
     {
-        if (!readerBlock.raw().is_map())
+        if (!readerNode.hasChild(typeName))
+            continue;
+
+        if (!readerNode.isSequence(typeName))
         {
-            throw Error("Each entry in reader must be a map");
+            throw Error("reader." + typeName + " must be a sequence");
         }
 
-        bool handledType = false;
-
-        for (const auto& typeName : registeredTypes)
+        const auto nodes = readerNode.subConfig(typeName);
+        for (const auto& node : nodes)
         {
-            if (readerBlock.hasChild(typeName))
-            {
-                handledType = true;
-                if (!readerBlock.isSequence(typeName))
-                {
-                    throw Error("reader[]." + typeName + " must be a sequence");
-                }
-                const auto nodes = readerBlock.subConfig(typeName);
-                for (const auto& node : nodes)
-                {
-                    readerConfigs_.push_back(node);
-                    readerEntries_.push_back({typeName, node});
-                }
-            }
-        }
-
-        if (!handledType)
-        {
-            std::string available;
-            for (size_t i = 0; i < registeredTypes.size(); ++i)
-            {
-                if (i > 0)
-                    available += ", ";
-                available += "'" + registeredTypes[i] + "'";
-            }
-            throw Error("reader entry does not specify a registered type (expected " + available + ")");
+            readerConfigs_.push_back(node);
+            readerEntries_.push_back({typeName, node});
         }
     }
 }

@@ -25,16 +25,16 @@ writer:
       compression-level: 6        # stronger compression for merged dataset
 
 reader:
-  - epics-pvxs:
-      - name: pvxs_main
-        thread-pool: 4
-        column-batch-size: 512
-        pvs:
-          - name: DEMO:SYS:TEMPERATURE
-          - name: DEMO:SYS:PRESSURE
-          - name: DEMO:SYS:FLOW_RATE
-          - name: DEMO:SYS:BEAM_CURRENT
-          - name: DEMO:SYS:BEAM_ENERGY
+  epics-pvxs:
+    - name: pvxs_main
+      thread-pool: 4
+      column-batch-size: 512
+      pvs:
+        - name: DEMO:SYS:TEMPERATURE
+        - name: DEMO:SYS:PRESSURE
+        - name: DEMO:SYS:FLOW_RATE
+        - name: DEMO:SYS:BEAM_CURRENT
+        - name: DEMO:SYS:BEAM_ENERGY
 
 metrics:
   endpoint: "0.0.0.0:9464"
