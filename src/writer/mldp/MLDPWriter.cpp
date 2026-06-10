@@ -391,7 +391,7 @@ void MLDPWriter::workerLoop(std::size_t workerIndex)
         std::size_t payloadBytes = 0;
         const auto  requestId = mldp_pvxs_driver::util::format_string(
             "pv_stream_{}_{}_{}", streamStart.time_since_epoch().count(),
-            item.root_source, requestCounter++);
+            item.root_source, requestCounter);
 
         if (!buildRequest(item.root_source, item.frame, requestId,
                           *request, acceptedEvents, payloadBytes,
@@ -422,6 +422,7 @@ void MLDPWriter::workerLoop(std::size_t workerIndex)
             continue;
         }
 
+        ++requestCounter;
         streamPayloadBytes += payloadBytes;
         if (acceptedEvents > 0)
         {
