@@ -13,7 +13,7 @@ on:
         default: ""
         type: string
       publish_version:
-        description: "Version selector (e.g. release-0.2.3, release-v0.2.3, 0.2.3, or v0.2.3)."
+        description: "Version selector (e.g. release-0.2.3, release-v0.2.3, develop-0.2.5, 0.2.3, or v0.2.3)."
         required: false
         default: ""
         type: string
@@ -90,11 +90,13 @@ jobs:
           raw="${{ inputs.publish_version }}"
           if [[ "$raw" =~ ^release-v?([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
             version="${BASH_REMATCH[1]}-rc.${GITHUB_RUN_NUMBER}"
+          elif [[ "$raw" =~ ^develop-v?([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            version="${BASH_REMATCH[1]}-dev.${GITHUB_RUN_NUMBER}"
           elif [[ "$raw" =~ ^v?([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
             version="${BASH_REMATCH[1]}"
           else
             echo "Unsupported publish_version: '$raw'" >&2
-            echo "Expected release-X.Y.Z, release-vX.Y.Z, X.Y.Z, or vX.Y.Z" >&2
+            echo "Expected release-X.Y.Z, release-vX.Y.Z, develop-X.Y.Z, develop-vX.Y.Z, X.Y.Z, or vX.Y.Z" >&2
             exit 1
           fi
           version="${version#v}"
