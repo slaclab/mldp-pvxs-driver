@@ -192,9 +192,12 @@ jobs:
           id=$(docker create mldp-pvxs-driver-artifacts:latest)
           docker cp "$id:/opt/local/bin/mldp_pvxs_driver" ./mldp_pvxs_driver-rockylinux-9.3-epics-${{ env.EPICS_VERSION }}
           docker rm "$id"
+          echo "${{ steps.artifact.outputs.image }}" > ./image-reference.txt
 
       - name: Upload driver binary artifact
         uses: actions/upload-artifact@v6
         with:
           name: driver-binary
-          path: ./mldp_pvxs_driver-rockylinux-9.3-epics-${{ env.EPICS_VERSION }}
+          path: |
+            ./mldp_pvxs_driver-rockylinux-9.3-epics-${{ env.EPICS_VERSION }}
+            ./image-reference.txt
