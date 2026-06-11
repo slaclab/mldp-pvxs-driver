@@ -68,19 +68,19 @@ namespace mldp_pvxs_driver::controller {
  *   gauge showing the number of conversion tasks queued in the reader thread
  *   pool awaiting processing.
  *
- * Bus metrics:
- * - <tt>mldp_pvxs_driver_bus_payload_bytes_total</tt>:
+ * Writer metrics:
+ * - <tt>mldp_pvxs_driver_writer_payload_bytes_total</tt>:
  *   incremented for each successful gRPC <tt>Write()</tt> by the protobuf
  *   payload size (<tt>request.ByteSizeLong()</tt>). This is payload-only and
  *   does not include gRPC/HTTP2/TLS overhead.
- * - <tt>mldp_pvxs_driver_bus_payload_bytes_per_second</tt>:
+ * - <tt>mldp_pvxs_driver_writer_payload_bytes_per_second</tt>:
  *   gauge set after a successful batch finishes, computed as
  *   <tt>payload_bytes_in_batch / elapsed_seconds</tt> for each source.
- * - <tt>mldp_pvxs_driver_bus_push_total</tt>:
+ * - <tt>mldp_pvxs_driver_writer_push_total</tt>:
  *   incremented by the number of accepted events written for each source.
- * - <tt>mldp_pvxs_driver_bus_failure_total</tt>:
+ * - <tt>mldp_pvxs_driver_writer_failure_total</tt>:
  *   incremented when a streaming write/finish operation fails.
- * - <tt>mldp_pvxs_driver_bus_stream_rotations_total</tt>:
+ * - <tt>mldp_pvxs_driver_writer_stream_rotations_total</tt>:
  *   incremented each time a gRPC ingestion stream is closed, labeled with
  *   <tt>reason</tt> (idle, max_bytes, max_age, write_failed, shutdown,
  *   threshold).

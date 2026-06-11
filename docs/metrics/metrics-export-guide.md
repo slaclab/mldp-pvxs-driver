@@ -56,12 +56,12 @@ When the Prometheus endpoint is configured, the driver collects:
 - `mldp_pvxs_driver_processor_fire_total` - Total successful processor compute firings
 - `mldp_pvxs_driver_processor_buffer_depth` - Current retained sample depth across buffered input sources
 
-**Bus metrics**:
-- `mldp_pvxs_driver_bus_push_total` - Events pushed to bus
-- `mldp_pvxs_driver_bus_failure_total` - Push failures
-- `mldp_pvxs_driver_bus_payload_bytes_total` - Total protobuf bytes sent
-- `mldp_pvxs_driver_bus_payload_bytes_per_second` - Current throughput
-- `mldp_pvxs_driver_bus_stream_rotations_total` - Stream open/close cycles
+**Writer metrics**:
+- `mldp_pvxs_driver_writer_push_total` - Events/requests pushed by MLDP writers
+- `mldp_pvxs_driver_writer_failure_total` - Push/write failures
+- `mldp_pvxs_driver_writer_payload_bytes_total` - Total protobuf bytes sent
+- `mldp_pvxs_driver_writer_payload_bytes_per_second` - Current throughput
+- `mldp_pvxs_driver_writer_stream_rotations_total` - Stream open/close cycles
 
 **HDF5 writer metrics** (per writer instance; requires `-DMLDP_PVXS_ENABLE_HDF5=ON`):
 - `mldp_pvxs_driver_hdf5_batches_written_total` — EventBatches written to HDF5 `{controller, writer}`
@@ -141,7 +141,7 @@ Each line is a complete JSON object:
   "timestamp_ms": 1704623456123,
   "timestamp_iso": "2024-01-07T15:30:56Z",
   "metrics": {
-    "mldp_pvxs_driver_bus_push_total": [
+    "mldp_pvxs_driver_writer_push_total": [
       {
         "source": "QUAD:IN20:361:BACT",
         "value": 42

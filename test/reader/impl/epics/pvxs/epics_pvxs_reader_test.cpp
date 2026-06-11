@@ -51,9 +51,9 @@ public:
             const size_t             total_values = asTimeSeries(batch).frames.size();
             const auto               source = getRootSourceName(batch).empty() ? std::string("unknown") : getRootSourceName(batch);
             const prometheus::Labels tags{{"source", source}};
-            metrics_->incrementBusPushes(static_cast<double>(total_values), tags);
-            metrics_->incrementBusPayloadBytes(0.0, tags);
-            metrics_->setBusPayloadBytesPerSecond(0.0, tags);
+            metrics_->incrementWriterPushes(static_cast<double>(total_values), tags);
+            metrics_->incrementWriterPayloadBytes(0.0, tags);
+            metrics_->setWriterPayloadBytesPerSecond(0.0, tags);
         }
         received_events.push_back(std::move(batch));
         return true;

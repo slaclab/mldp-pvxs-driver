@@ -96,18 +96,16 @@ public:
     void incrementProcessorComputeErrors(double value = 1.0, prometheus::Labels tags = {});
     void incrementProcessorSnapshotMisses(double value = 1.0, prometheus::Labels tags = {});
 
-    // Bus metrics ---------------------------------------------------------
-    void   incrementBusPushes(double value = 1.0, prometheus::Labels tags = {});
-    void   incrementBusFailures(double value = 1.0, prometheus::Labels tags = {});
-    void   incrementBusPayloadBytes(double value, prometheus::Labels tags = {});
-    void   setBusPayloadBytesPerSecond(double value, prometheus::Labels tags = {});
-    void   incrementBusStreamRotations(double value = 1.0, prometheus::Labels tags = {});
-    double busPushTotal(prometheus::Labels tags = {}) const;
-    double busFailuresTotal(prometheus::Labels tags = {}) const;
-    double busPayloadBytesTotal(prometheus::Labels tags = {}) const;
-    double busPayloadBytesPerSecond(prometheus::Labels tags = {}) const;
-
     // Writer metrics ---------------------------------------------------------
+    void   incrementWriterPushes(double value = 1.0, prometheus::Labels tags = {});
+    void   incrementWriterFailures(double value = 1.0, prometheus::Labels tags = {});
+    void   incrementWriterPayloadBytes(double value, prometheus::Labels tags = {});
+    void   setWriterPayloadBytesPerSecond(double value, prometheus::Labels tags = {});
+    void   incrementWriterStreamRotations(double value = 1.0, prometheus::Labels tags = {});
+    double writerPushTotal(prometheus::Labels tags = {}) const;
+    double writerFailuresTotal(prometheus::Labels tags = {}) const;
+    double writerPayloadBytesTotal(prometheus::Labels tags = {}) const;
+    double writerPayloadBytesPerSecond(prometheus::Labels tags = {}) const;
     void   incrementWriterDataBytesTotal(double value, prometheus::Labels tags = {});
     void   setWriterDataBytesPerSecond(double value, prometheus::Labels tags = {});
     double writerDataBytesTotal(prometheus::Labels tags = {}) const;
@@ -144,11 +142,11 @@ private:
     prometheus::Family<prometheus::Counter>*   processor_compute_errors_family_{nullptr};
     prometheus::Family<prometheus::Counter>*   processor_snapshot_misses_family_{nullptr};
 
-    prometheus::Family<prometheus::Counter>* bus_push_family_{nullptr};
-    prometheus::Family<prometheus::Counter>* bus_failure_family_{nullptr};
-    prometheus::Family<prometheus::Counter>* bus_payload_bytes_family_{nullptr};
-    prometheus::Family<prometheus::Gauge>*   bus_payload_bytes_per_second_family_{nullptr};
-    prometheus::Family<prometheus::Counter>* bus_stream_rotations_family_{nullptr};
+    prometheus::Family<prometheus::Counter>* writer_push_family_{nullptr};
+    prometheus::Family<prometheus::Counter>* writer_failure_family_{nullptr};
+    prometheus::Family<prometheus::Counter>* writer_payload_bytes_family_{nullptr};
+    prometheus::Family<prometheus::Gauge>*   writer_payload_bytes_per_second_family_{nullptr};
+    prometheus::Family<prometheus::Counter>* writer_stream_rotations_family_{nullptr};
 
     prometheus::Family<prometheus::Counter>* writer_data_bytes_family_{nullptr};
     prometheus::Family<prometheus::Gauge>*   writer_data_bytes_per_second_family_{nullptr};

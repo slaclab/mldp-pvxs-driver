@@ -10,6 +10,7 @@
 
 #include <writer/mldp_configuration/MLDPConfigurationWriter.h>
 
+#include <metrics/Metrics.h>
 #include <annotation.grpc.pb.h>
 #include <grpcpp/grpcpp.h>
 #include <pool/MLDPGrpcAnnotationPoolConfig.h>
@@ -22,6 +23,7 @@ using namespace mldp_pvxs_driver::writer;
 using namespace mldp_pvxs_driver::util::log;
 using namespace mldp_pvxs_driver::util::bus;
 using namespace mldp_pvxs_driver::util::pool;
+using namespace mldp_pvxs_driver::metrics;
 
 namespace {
 
@@ -206,13 +208,23 @@ void MLDPConfigurationWriter::doSaveConfiguration(const ConfigurationPayload& cf
                    cfg.configuration_name,
                    static_cast<int>(status.error_code()),
                    status.error_message());
+            metric_call(metrics_, [&](auto& m) {
+                m.incrementWriterFailures(1.0, {{"writer", config_.name}});
+            });
+            return;
         }
+        metric_call(metrics_, [&](auto& m) {
+            m.incrementWriterPushes(1.0, {{"writer", config_.name}});
+        });
     }
     catch (const std::exception& ex)
     {
         errorf(*logger_,
                "MLDPConfigurationWriter saveConfiguration '{}' exception: {}",
                cfg.configuration_name, ex.what());
+        metric_call(metrics_, [&](auto& m) {
+            m.incrementWriterFailures(1.0, {{"writer", config_.name}});
+        });
     }
 }
 
@@ -274,12 +286,22 @@ void MLDPConfigurationWriter::doSaveConfigurationActivation(
                    act.configuration_name,
                    static_cast<int>(status.error_code()),
                    status.error_message());
+            metric_call(metrics_, [&](auto& m) {
+                m.incrementWriterFailures(1.0, {{"writer", config_.name}});
+            });
+            return;
         }
+        metric_call(metrics_, [&](auto& m) {
+            m.incrementWriterPushes(1.0, {{"writer", config_.name}});
+        });
     }
     catch (const std::exception& ex)
     {
         errorf(*logger_,
                "MLDPConfigurationWriter saveConfigurationActivation '{}' exception: {}",
                act.configuration_name, ex.what());
+        metric_call(metrics_, [&](auto& m) {
+            m.incrementWriterFailures(1.0, {{"writer", config_.name}});
+        });
     }
 }

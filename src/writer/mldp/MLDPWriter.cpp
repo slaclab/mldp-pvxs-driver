@@ -187,7 +187,7 @@ bool MLDPWriter::push(util::bus::IDataBus::EventBatch batch) noexcept
         {
             metric_call(metrics_, [&](auto& m)
                         {
-                            m.incrementBusFailures(1.0, {{"source", rootSourceName}});
+                            m.incrementWriterFailures(1.0, {{"writer", config_.name}, {"source", rootSourceName}});
                         });
             continue;
         }
@@ -259,7 +259,7 @@ void MLDPWriter::workerLoop(std::size_t workerIndex)
                        reason, response.exceptionalresult().message());
                 metric_call(metrics_, [&](auto& m)
                             {
-                                m.incrementBusFailures(1.0, {{"source", "unknown"}});
+                                m.incrementWriterFailures(1.0, {{"writer", config_.name}, {"source", "unknown"}});
                             });
             }
         }
@@ -268,12 +268,12 @@ void MLDPWriter::workerLoop(std::size_t workerIndex)
             errorf(*logger_, "Ingestion stream finished with error ({}): {}", reason, status.error_message());
             metric_call(metrics_, [&](auto& m)
                         {
-                            m.incrementBusFailures(1.0, {{"source", "unknown"}});
+                            m.incrementWriterFailures(1.0, {{"writer", config_.name}, {"source", "unknown"}});
                         });
         }
         metric_call(metrics_, [&](auto& m)
                     {
-                        m.incrementBusStreamRotations(1.0, {{"reason", reason}});
+                        m.incrementWriterStreamRotations(1.0, {{"writer", config_.name}, {"reason", reason}});
                     });
         writer.reset();
         handle.reset();
@@ -299,7 +299,7 @@ void MLDPWriter::workerLoop(std::size_t workerIndex)
                 errorf(*logger_, "Failed to open ingestion stream");
                 metric_call(metrics_, [&](auto& m)
                             {
-                                m.incrementBusFailures(1.0, {{"source", "unknown"}});
+                                m.incrementWriterFailures(1.0, {{"writer", config_.name}, {"source", "unknown"}});
                             });
                 handle.reset();
                 context.reset();
@@ -314,7 +314,7 @@ void MLDPWriter::workerLoop(std::size_t workerIndex)
             errorf(*logger_, "Failed to acquire ingestion stream: {}", ex.what());
             metric_call(metrics_, [&](auto& m)
                         {
-                            m.incrementBusFailures(1.0, {{"source", "unknown"}});
+                            m.incrementWriterFailures(1.0, {{"writer", config_.name}, {"source", "unknown"}});
                         });
             handle.reset();
             writer.reset();
@@ -421,7 +421,7 @@ void MLDPWriter::workerLoop(std::size_t workerIndex)
             errorf(*logger_, "Failed to write source {} to ingestion stream", item.root_source);
             metric_call(metrics_, [&](auto& m)
                         {
-                            m.incrementBusFailures(1.0, {{"source", item.root_source}});
+                            m.incrementWriterFailures(1.0, {{"writer", config_.name}, {"source", item.root_source}});
                         });
             close_stream("write failed");
             continue;
@@ -433,8 +433,8 @@ void MLDPWriter::workerLoop(std::size_t workerIndex)
         {
             metric_call(metrics_, [&](auto& m)
                         {
-                            m.incrementBusPushes(static_cast<double>(acceptedEvents),
-                                                 {{"source", item.root_source}});
+                            m.incrementWriterPushes(static_cast<double>(acceptedEvents),
+                                                  {{"writer", config_.name}, {"source", item.root_source}});
                         });
         }
         const auto   elapsed = std::chrono::steady_clock::now() - itemStart;
@@ -443,14 +443,14 @@ void MLDPWriter::workerLoop(std::size_t workerIndex)
         if (payloadBytes > 0)
         {
             metric_call(metrics_, [&](auto& m) {
-                m.incrementBusPayloadBytes(static_cast<double>(payloadBytes),
-                                           {{"source", item.root_source}});
+                m.incrementWriterPayloadBytes(static_cast<double>(payloadBytes),
+                                              {{"writer", config_.name}, {"source", item.root_source}});
             });
             if (ms > 0.0)
             {
                 const double bps = (static_cast<double>(payloadBytes) * 1000.0) / ms;
                 metric_call(metrics_, [&](auto& m) {
-                    m.setBusPayloadBytesPerSecond(bps, {{"source", item.root_source}});
+                    m.setWriterPayloadBytesPerSecond(bps, {{"writer", config_.name}, {"source", item.root_source}});
                 });
             }
         }
@@ -773,7 +773,7 @@ bool MLDPWriter::buildRequest(const std::string&                                
         errorf(*logger_, "Dropping frame for source {}: missing DataFrame.datatimestamps.timestamplist", sourceName);
         metric_call(metrics_, [&](auto& m)
                     {
-                        m.incrementBusFailures(1.0, {{"source", sourceName}});
+                        m.incrementWriterFailures(1.0, {{"writer", config_.name}, {"source", sourceName}});
                     });
         return false;
     }

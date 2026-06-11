@@ -91,12 +91,12 @@ Metrics::Metrics(const MetricsConfig& config, std::string controller_name)
     processor_buffer_depth_family_ = &makeGaugeFamily(*registry_, "mldp_pvxs_driver_processor_buffer_depth", "Buffered sample depth retained per processor source snapshot input.", clabels);
     processor_compute_errors_family_ = &makeCounterFamily(*registry_, "mldp_pvxs_driver_processor_compute_errors_total", "Number of processor compute() calls that threw an exception.", clabels);
     processor_snapshot_misses_family_ = &makeCounterFamily(*registry_, "mldp_pvxs_driver_processor_snapshot_misses_total", "Number of trySnapshot() calls that returned no snapshot (sources not yet aligned).", clabels);
-    // Bus metrics
-    bus_push_family_ = &makeCounterFamily(*registry_, "mldp_pvxs_driver_bus_push_total", "Number of events pushed onto the bus.", clabels);
-    bus_failure_family_ = &makeCounterFamily(*registry_, "mldp_pvxs_driver_bus_failure_total", "Number of bus push failures reported by the MLDP gRPC API.", clabels);
-    bus_payload_bytes_family_ = &makeCounterFamily(*registry_, "mldp_pvxs_driver_bus_payload_bytes_total", "Total protobuf payload bytes written to the MLDP ingestion stream.", clabels);
-    bus_payload_bytes_per_second_family_ = &makeGaugeFamily(*registry_, "mldp_pvxs_driver_bus_payload_bytes_per_second", "Bytes/second for the most recent successful ingestion batch.", clabels);
-    bus_stream_rotations_family_ = &makeCounterFamily(*registry_, "mldp_pvxs_driver_bus_stream_rotations_total", "Number of gRPC ingestion stream open/close cycles by reason.", clabels);
+    // Writer metrics
+    writer_push_family_ = &makeCounterFamily(*registry_, "mldp_pvxs_driver_writer_push_total", "Number of events/requests pushed by MLDP writers.", clabels);
+    writer_failure_family_ = &makeCounterFamily(*registry_, "mldp_pvxs_driver_writer_failure_total", "Number of push/write failures reported by MLDP writers.", clabels);
+    writer_payload_bytes_family_ = &makeCounterFamily(*registry_, "mldp_pvxs_driver_writer_payload_bytes_total", "Total protobuf payload bytes written to the MLDP ingestion stream.", clabels);
+    writer_payload_bytes_per_second_family_ = &makeGaugeFamily(*registry_, "mldp_pvxs_driver_writer_payload_bytes_per_second", "Bytes/second for the most recent successful ingestion batch.", clabels);
+    writer_stream_rotations_family_ = &makeCounterFamily(*registry_, "mldp_pvxs_driver_writer_stream_rotations_total", "Number of gRPC ingestion stream open/close cycles by reason.", clabels);
     writer_data_bytes_family_ = &makeCounterFamily(*registry_, "mldp_pvxs_driver_writer_data_bytes_total", "Total estimated raw in-memory DataBatch bytes delivered to a writer (pre-serialisation; labeled by source).", clabels);
     writer_data_bytes_per_second_family_ = &makeGaugeFamily(*registry_, "mldp_pvxs_driver_writer_data_bytes_per_second", "Estimated raw DataBatch bytes/second for the most recent writer processing cycle (labeled by source).", clabels);
     // System CPU metrics
@@ -435,49 +435,49 @@ void Metrics::incrementProcessorSnapshotMisses(double value, prometheus::Labels 
     processor_snapshot_misses_family_->Add(std::move(tags)).Increment(value);
 }
 
-void Metrics::incrementBusPushes(double value, prometheus::Labels tags)
+void Metrics::incrementWriterPushes(double value, prometheus::Labels tags)
 {
-    bus_push_family_->Add(std::move(tags)).Increment(value);
+    writer_push_family_->Add(std::move(tags)).Increment(value);
 }
 
-void Metrics::incrementBusFailures(double value, prometheus::Labels tags)
+void Metrics::incrementWriterFailures(double value, prometheus::Labels tags)
 {
-    bus_failure_family_->Add(std::move(tags)).Increment(value);
+    writer_failure_family_->Add(std::move(tags)).Increment(value);
 }
 
-void Metrics::incrementBusPayloadBytes(double value, prometheus::Labels tags)
+void Metrics::incrementWriterPayloadBytes(double value, prometheus::Labels tags)
 {
-    bus_payload_bytes_family_->Add(std::move(tags)).Increment(value);
+    writer_payload_bytes_family_->Add(std::move(tags)).Increment(value);
 }
 
-void Metrics::setBusPayloadBytesPerSecond(double value, prometheus::Labels tags)
+void Metrics::setWriterPayloadBytesPerSecond(double value, prometheus::Labels tags)
 {
-    bus_payload_bytes_per_second_family_->Add(std::move(tags)).Set(value);
+    writer_payload_bytes_per_second_family_->Add(std::move(tags)).Set(value);
 }
 
-void Metrics::incrementBusStreamRotations(double value, prometheus::Labels tags)
+void Metrics::incrementWriterStreamRotations(double value, prometheus::Labels tags)
 {
-    bus_stream_rotations_family_->Add(std::move(tags)).Increment(value);
+    writer_stream_rotations_family_->Add(std::move(tags)).Increment(value);
 }
 
-double Metrics::busPushTotal(prometheus::Labels tags) const
+double Metrics::writerPushTotal(prometheus::Labels tags) const
 {
-    return bus_push_family_->Add(std::move(tags)).Value();
+    return writer_push_family_->Add(std::move(tags)).Value();
 }
 
-double Metrics::busFailuresTotal(prometheus::Labels tags) const
+double Metrics::writerFailuresTotal(prometheus::Labels tags) const
 {
-    return bus_failure_family_->Add(std::move(tags)).Value();
+    return writer_failure_family_->Add(std::move(tags)).Value();
 }
 
-double Metrics::busPayloadBytesTotal(prometheus::Labels tags) const
+double Metrics::writerPayloadBytesTotal(prometheus::Labels tags) const
 {
-    return bus_payload_bytes_family_->Add(std::move(tags)).Value();
+    return writer_payload_bytes_family_->Add(std::move(tags)).Value();
 }
 
-double Metrics::busPayloadBytesPerSecond(prometheus::Labels tags) const
+double Metrics::writerPayloadBytesPerSecond(prometheus::Labels tags) const
 {
-    return bus_payload_bytes_per_second_family_->Add(std::move(tags)).Value();
+    return writer_payload_bytes_per_second_family_->Add(std::move(tags)).Value();
 }
 
 void Metrics::incrementWriterDataBytesTotal(double value, prometheus::Labels tags)

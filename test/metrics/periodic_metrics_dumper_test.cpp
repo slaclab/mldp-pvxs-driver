@@ -20,13 +20,13 @@ TEST_F(PeriodicMetricsDumperTest, EscapesQuotesInMetricLabels)
     MetricsConfig config;
     Metrics       metrics(config);
 
-    metrics.incrementBusPushes(1.0, {{"reader", "pv\"name"}});
+    metrics.incrementWriterPushes(1.0, {{"reader", "pv\"name"}});
 
     PeriodicMetricsDumper dumper(metrics, "", std::chrono::milliseconds(1));
     const auto            jsonl = dumper.serializeMetricsJsonl();
 
     // Check for the new structured format with "source" tag instead of "reader"
-    EXPECT_NE(jsonl.find("\"mldp_pvxs_driver_bus_push_total\""), std::string::npos);
+    EXPECT_NE(jsonl.find("\"mldp_pvxs_driver_writer_push_total\""), std::string::npos);
     EXPECT_NE(jsonl.find("\"source\""), std::string::npos);
     EXPECT_NE(jsonl.find("\"value\""), std::string::npos);
     // Ensure old format is not present

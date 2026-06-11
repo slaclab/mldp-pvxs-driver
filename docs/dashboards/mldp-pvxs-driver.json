@@ -192,7 +192,7 @@
       "collapsed": false,
       "gridPos": { "h": 1, "w": 24, "x": 0, "y": 17 },
       "id": 101,
-      "title": "MLDP Bus & Controller",
+      "title": "MLDP Writer & Controller",
       "type": "row"
     },
     {
@@ -218,18 +218,18 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "sum(rate(mldp_pvxs_driver_bus_push_total{controller=~\"$controller\"}[$__rate_interval])) by (controller)",
-          "legendFormat": "pushes {{controller}}",
+          "expr": "sum(rate(mldp_pvxs_driver_writer_push_total{controller=~\"$controller\",writer=~\"$writer\"}[$__rate_interval])) by (controller, writer)",
+          "legendFormat": "pushes {{controller}} {{writer}}",
           "refId": "A"
         },
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "sum(rate(mldp_pvxs_driver_bus_failure_total{controller=~\"$controller\"}[$__rate_interval])) by (controller, source)",
+          "expr": "sum(rate(mldp_pvxs_driver_writer_failure_total{controller=~\"$controller\",writer=~\"$writer\"}[$__rate_interval])) by (controller, writer, source)",
           "legendFormat": "failures {{source}}",
           "refId": "B"
         }
       ],
-      "title": "Bus Push vs Failure Rate",
+      "title": "Writer Push vs Failure Rate",
       "type": "timeseries"
     },
     {
@@ -248,18 +248,18 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "mldp_pvxs_driver_bus_payload_bytes_per_second{controller=~\"$controller\"}",
-          "legendFormat": "instant Bps {{controller}}",
+          "expr": "mldp_pvxs_driver_writer_payload_bytes_per_second{controller=~\"$controller\",writer=~\"$writer\"}",
+          "legendFormat": "instant Bps {{controller}} {{writer}}",
           "refId": "A"
         },
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "sum(rate(mldp_pvxs_driver_bus_payload_bytes_total{controller=~\"$controller\"}[$__rate_interval])) by (controller)",
-          "legendFormat": "avg rate {{controller}}",
+          "expr": "sum(rate(mldp_pvxs_driver_writer_payload_bytes_total{controller=~\"$controller\",writer=~\"$writer\"}[$__rate_interval])) by (controller, writer)",
+          "legendFormat": "avg rate {{controller}} {{writer}}",
           "refId": "B"
         }
       ],
-      "title": "Bus Payload Throughput",
+      "title": "Writer Payload Throughput",
       "type": "timeseries"
     },
     {
@@ -344,12 +344,12 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "sum(rate(mldp_pvxs_driver_bus_stream_rotations_total{controller=~\"$controller\"}[$__rate_interval])) by (controller, reason)",
-          "legendFormat": "{{reason}} {{controller}}",
+          "expr": "sum(rate(mldp_pvxs_driver_writer_stream_rotations_total{controller=~\"$controller\",writer=~\"$writer\"}[$__rate_interval])) by (controller, writer, reason)",
+          "legendFormat": "{{reason}} {{controller}} {{writer}}",
           "refId": "A"
         }
       ],
-      "title": "Bus Stream Rotations by Reason",
+      "title": "Writer Stream Rotations by Reason",
       "type": "timeseries"
     },
     {
@@ -974,15 +974,15 @@
       {
         "current": {},
         "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-        "definition": "label_values(mldp_pvxs_driver_hdf5_batches_written_total{controller=~\"$controller\"}, writer)",
+        "definition": "label_values(mldp_pvxs_driver_writer_push_total{controller=~\"$controller\"}, writer)",
         "hide": 0,
         "includeAll": true,
-        "label": "HDF5 Writer",
+        "label": "Writer",
         "multi": true,
         "name": "writer",
         "options": [],
         "query": {
-          "query": "label_values(mldp_pvxs_driver_hdf5_batches_written_total{controller=~\"$controller\"}, writer)",
+          "query": "label_values(mldp_pvxs_driver_writer_push_total{controller=~\"$controller\"}, writer)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 2,

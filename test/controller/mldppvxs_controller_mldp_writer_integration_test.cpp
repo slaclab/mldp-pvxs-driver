@@ -173,7 +173,7 @@ TEST(MLDPPVXSControllerTest, StartAndStopDoNotThrowWithEpicsConfig)
         ASSERT_NO_THROW(controller->stop(););
         // chgeck on metric if the event has been pushed
         auto& metrics = controller->metrics();
-        EXPECT_GE(metrics.busPushTotal({}), 0);
+        EXPECT_GE(metrics.writerPushTotal({}), 0);
     }
 }
 

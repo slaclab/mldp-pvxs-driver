@@ -10,6 +10,7 @@
 
 #include <writer/mldp_pv_metadata/MLDPPVMetadataWriter.h>
 
+#include <metrics/Metrics.h>
 #include <annotation.grpc.pb.h>
 #include <grpcpp/grpcpp.h>
 #include <pool/MLDPGrpcAnnotationPoolConfig.h>
@@ -22,6 +23,7 @@ using namespace mldp_pvxs_driver::writer;
 using namespace mldp_pvxs_driver::util::log;
 using namespace mldp_pvxs_driver::util::bus;
 using namespace mldp_pvxs_driver::util::pool;
+using namespace mldp_pvxs_driver::metrics;
 
 // ---------------------------------------------------------------------------
 // Construction / destruction
@@ -212,12 +214,22 @@ void MLDPPVMetadataWriter::saveSourceMetadata(const std::string&         sourceN
                    sourceName,
                    static_cast<int>(status.error_code()),
                    status.error_message());
+            metric_call(metrics_, [&](auto& m) {
+                m.incrementWriterFailures(1.0, {{"writer", config_.name}});
+            });
+            return;
         }
+        metric_call(metrics_, [&](auto& m) {
+            m.incrementWriterPushes(1.0, {{"writer", config_.name}});
+        });
     }
     catch (const std::exception& ex)
     {
         errorf(*logger_,
                "MLDPPVMetadataWriter saveSourceMetadata '{}' exception: {}",
                sourceName, ex.what());
+        metric_call(metrics_, [&](auto& m) {
+            m.incrementWriterFailures(1.0, {{"writer", config_.name}});
+        });
     }
 }

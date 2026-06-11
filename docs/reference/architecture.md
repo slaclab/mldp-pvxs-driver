@@ -650,12 +650,12 @@ The driver exposes Prometheus metrics for monitoring:
 - `mldp_pvxs_driver_reader_processing_time_ms`
 - `mldp_pvxs_driver_reader_pool_queue_depth`
 
-### Bus Metrics
+### Writer Metrics
 
-- `mldp_pvxs_driver_bus_push_total`
-- `mldp_pvxs_driver_bus_failure_total`
-- `mldp_pvxs_driver_bus_payload_bytes_total`
-- `mldp_pvxs_driver_bus_stream_rotations_total`
+- `mldp_pvxs_driver_writer_push_total`
+- `mldp_pvxs_driver_writer_failure_total`
+- `mldp_pvxs_driver_writer_payload_bytes_total`
+- `mldp_pvxs_driver_writer_stream_rotations_total`
 
 ### Controller Metrics
 
