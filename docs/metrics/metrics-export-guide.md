@@ -38,6 +38,8 @@ When the Prometheus endpoint is configured, the driver collects:
 - `mldp_pvxs_driver_reader_events_received_total` - Raw EPICS updates received
 - `mldp_pvxs_driver_reader_errors_total` - Reader failures
 - `mldp_pvxs_driver_reader_processing_time_ms` - Histogram of conversion time (ms)
+- `mldp_pvxs_driver_reader_data_bytes_total` - Raw in-memory DataBatch bytes received (pre-encoding) `{controller, source}`
+- `mldp_pvxs_driver_reader_data_bytes_per_second` - Estimated raw DataBatch bytes/second for most recent processing cycle `{controller, source}`
 
 - `mldp_pvxs_driver_reader_queue_depth` - Queued PV updates awaiting processing
 - `mldp_pvxs_driver_reader_pool_queue_depth` - Queued conversion tasks awaiting processing
@@ -57,11 +59,13 @@ When the Prometheus endpoint is configured, the driver collects:
 - `mldp_pvxs_driver_processor_buffer_depth` - Current retained sample depth across buffered input sources
 
 **Writer metrics**:
-- `mldp_pvxs_driver_writer_push_total` - Events/requests pushed by MLDP writers
-- `mldp_pvxs_driver_writer_failure_total` - Push/write failures
-- `mldp_pvxs_driver_writer_payload_bytes_total` - Total protobuf bytes sent
-- `mldp_pvxs_driver_writer_payload_bytes_per_second` - Current throughput
-- `mldp_pvxs_driver_writer_stream_rotations_total` - Stream open/close cycles
+- `mldp_pvxs_driver_writer_push_total` - Events/requests pushed by MLDP writers `{controller, writer}`
+- `mldp_pvxs_driver_writer_failure_total` - Push/write failures `{controller, writer}`
+- `mldp_pvxs_driver_writer_payload_bytes_total` - Total protobuf bytes sent (MLDPWriter only) `{controller, writer, source}`
+- `mldp_pvxs_driver_writer_payload_bytes_per_second` - Current protobuf throughput (MLDPWriter only) `{controller, writer, source}`
+- `mldp_pvxs_driver_writer_stream_rotations_total` - Stream open/close cycles `{controller, writer, reason}`
+- `mldp_pvxs_driver_writer_data_bytes_total` - Raw in-memory DataBatch bytes delivered to MLDPWriter (pre-serialization) `{controller, source}`
+- `mldp_pvxs_driver_writer_data_bytes_per_second` - Estimated raw DataBatch bytes/second for most recent writer cycle `{controller, source}`
 
 **HDF5 writer metrics** (per writer instance; requires `-DMLDP_PVXS_ENABLE_HDF5=ON`):
 - `mldp_pvxs_driver_hdf5_batches_written_total` — EventBatches written to HDF5 `{controller, writer}`

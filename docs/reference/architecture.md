@@ -640,46 +640,68 @@ writer:
 
 ## Metrics & Observability
 
-The driver exposes Prometheus metrics for monitoring:
+The driver exposes Prometheus metrics for monitoring. All metrics carry a `controller` label. Additional labels are noted per metric.
 
 ### Reader Metrics
 
-- `mldp_pvxs_driver_reader_events_received_total`
-- `mldp_pvxs_driver_reader_events_total`
-- `mldp_pvxs_driver_reader_errors_total`
-- `mldp_pvxs_driver_reader_processing_time_ms`
-- `mldp_pvxs_driver_reader_pool_queue_depth`
+| Metric | Type | Labels | Description |
+|---|---|---|---|
+| `mldp_pvxs_driver_reader_events_received_total` | Counter | `source` | Raw EPICS updates received from subscriptions |
+| `mldp_pvxs_driver_reader_events_total` | Counter | `source` | Events processed after conversion |
+| `mldp_pvxs_driver_reader_errors_total` | Counter | `source` | Reader failures |
+| `mldp_pvxs_driver_reader_processing_time_ms` | Histogram | `source` | PV-to-protobuf conversion time (ms) |
+| `mldp_pvxs_driver_reader_queue_depth` | Gauge | — | PV updates queued in reader work queue |
+| `mldp_pvxs_driver_reader_pool_queue_depth` | Gauge | — | Conversion tasks queued in reader thread pool |
+| `mldp_pvxs_driver_reader_data_bytes_total` | Counter | `source` | Raw in-memory DataBatch bytes received (pre-encoding) |
+| `mldp_pvxs_driver_reader_data_bytes_per_second` | Gauge | `source` | Estimated raw bytes/second for most recent processing cycle |
 
 ### Writer Metrics
 
-- `mldp_pvxs_driver_writer_push_total`
-- `mldp_pvxs_driver_writer_failure_total`
-- `mldp_pvxs_driver_writer_payload_bytes_total`
-- `mldp_pvxs_driver_writer_stream_rotations_total`
+| Metric | Type | Labels | Description |
+|---|---|---|---|
+| `mldp_pvxs_driver_writer_push_total` | Counter | `writer` | Events/requests successfully pushed (all three MLDP writer types) |
+| `mldp_pvxs_driver_writer_failure_total` | Counter | `writer`, `source` | gRPC errors and exceptions (all three MLDP writer types) |
+| `mldp_pvxs_driver_writer_payload_bytes_total` | Counter | `writer`, `source` | Protobuf payload bytes written to ingestion stream (MLDPWriter only) |
+| `mldp_pvxs_driver_writer_payload_bytes_per_second` | Gauge | `writer`, `source` | Encoded bytes/second for most recent batch (MLDPWriter only) |
+| `mldp_pvxs_driver_writer_stream_rotations_total` | Counter | `writer`, `reason` | gRPC ingestion stream open/close cycles (MLDPWriter only) |
+| `mldp_pvxs_driver_writer_data_bytes_total` | Counter | `source` | Raw in-memory DataBatch bytes delivered to MLDPWriter (pre-serialization) |
+| `mldp_pvxs_driver_writer_data_bytes_per_second` | Gauge | `source` | Estimated raw bytes/second for most recent writer cycle |
 
 ### Controller Metrics
 
-- `mldp_pvxs_driver_controller_send_time_seconds`
-- `mldp_pvxs_driver_controller_queue_depth`
-- `mldp_pvxs_driver_controller_channel_queue_depth`
+| Metric | Type | Labels | Description |
+|---|---|---|---|
+| `mldp_pvxs_driver_controller_send_time_seconds` | Histogram | `source` | Time to send one event batch to MLDP (seconds) |
+| `mldp_pvxs_driver_controller_queue_depth` | Gauge | — | Queued controller tasks waiting to send |
+| `mldp_pvxs_driver_controller_channel_queue_depth` | Gauge | — | Items queued per worker channel |
 
 ### Processor Metrics
 
-- `mldp_pvxs_driver_processor_compute_latency_us` (Histogram, label: `processor`) — `compute()` duration in microseconds
-- `mldp_pvxs_driver_processor_fire_total` (Counter, label: `processor`) — successful compute firings
-- `mldp_pvxs_driver_processor_buffer_depth` (Gauge, label: `processor`) — retained sample depth across buffered input sources
+| Metric | Type | Labels | Description |
+|---|---|---|---|
+| `mldp_pvxs_driver_processor_compute_latency_us` | Histogram | `processor` | `compute()` duration (microseconds) |
+| `mldp_pvxs_driver_processor_fire_total` | Counter | `processor` | Successful compute firings |
+| `mldp_pvxs_driver_processor_buffer_depth` | Gauge | `processor` | Retained sample depth across buffered input sources |
+| `mldp_pvxs_driver_processor_compute_errors_total` | Counter | `processor` | `compute()` calls that threw an exception |
+| `mldp_pvxs_driver_processor_snapshot_misses_total` | Counter | `processor` | `trySnapshot()` calls that returned no snapshot |
 
 ### Pool Metrics
 
-- `mldp_pvxs_driver_pool_connections_in_use`
-- `mldp_pvxs_driver_pool_connections_available`
+| Metric | Type | Labels | Description |
+|---|---|---|---|
+| `mldp_pvxs_driver_pool_connections_in_use` | Gauge | — | gRPC connections currently checked out |
+| `mldp_pvxs_driver_pool_connections_available` | Gauge | — | Idle gRPC connections ready for use |
 
 ### HDF5 Writer Metrics
 
-- `mldp_pvxs_driver_hdf5_batches_written_total`
-- `mldp_pvxs_driver_hdf5_rows_written_total` (label: `source`)
-- `mldp_pvxs_driver_hdf5_bytes_written_total` (label: `source`)
-- `mldp_pvxs_driver_hdf5_queue_depth`
-- `mldp_pvxs_driver_hdf5_queue_drops_total`
-- `mldp_pvxs_driver_hdf5_file_rotations_total` (label: `source`)
-- `mldp_pvxs_driver_hdf5_write_latency_ms`
+Requires `-DMLDP_PVXS_ENABLE_HDF5=ON`.
+
+| Metric | Type | Labels | Description |
+|---|---|---|---|
+| `mldp_pvxs_driver_hdf5_batches_written_total` | Counter | `writer` | EventBatches written to HDF5 |
+| `mldp_pvxs_driver_hdf5_rows_written_total` | Counter | `writer`, `source` | Rows (samples) appended |
+| `mldp_pvxs_driver_hdf5_bytes_written_total` | Counter | `writer`, `source` | Bytes written |
+| `mldp_pvxs_driver_hdf5_queue_depth` | Gauge | `writer` | Current write-queue depth |
+| `mldp_pvxs_driver_hdf5_queue_drops_total` | Counter | `writer` | Batches dropped on queue overflow |
+| `mldp_pvxs_driver_hdf5_file_rotations_total` | Counter | `writer`, `source` | File rotations |
+| `mldp_pvxs_driver_hdf5_write_latency_ms` | Histogram | `writer` | Write latency (ms) |
