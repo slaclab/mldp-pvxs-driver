@@ -14,6 +14,7 @@
 #include <condition_variable>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <thread>
 
 #include <prometheus/counter.h>
@@ -25,6 +26,7 @@
 #include <prometheus/registry.h>
 
 #include <metrics/MetricsConfig.h>
+#include <metrics/procmon/MetricsSnapshot.hpp>
 
 // Forward declaration for metric-grabber
 namespace procmon {
@@ -87,6 +89,8 @@ public:
     void observeProcessorComputeLatencyUs(double value, prometheus::Labels tags = {});
     void incrementProcessorFireCount(double value = 1.0, prometheus::Labels tags = {});
     void setProcessorBufferDepth(double value, prometheus::Labels tags = {});
+    void incrementProcessorComputeErrors(double value = 1.0, prometheus::Labels tags = {});
+    void incrementProcessorSnapshotMisses(double value = 1.0, prometheus::Labels tags = {});
 
     // Bus metrics ---------------------------------------------------------
     void   incrementBusPushes(double value = 1.0, prometheus::Labels tags = {});
@@ -125,6 +129,8 @@ private:
     prometheus::Family<prometheus::Histogram>* processor_compute_latency_us_family_{nullptr};
     prometheus::Family<prometheus::Counter>*   processor_fire_count_family_{nullptr};
     prometheus::Family<prometheus::Gauge>*     processor_buffer_depth_family_{nullptr};
+    prometheus::Family<prometheus::Counter>*   processor_compute_errors_family_{nullptr};
+    prometheus::Family<prometheus::Counter>*   processor_snapshot_misses_family_{nullptr};
 
     prometheus::Family<prometheus::Counter>* bus_push_family_{nullptr};
     prometheus::Family<prometheus::Counter>* bus_failure_family_{nullptr};
@@ -180,6 +186,9 @@ private:
 
     // Metric grabber collector
     std::unique_ptr<procmon::MetricsCollector> system_metrics_collector_;
+
+    // Previous snapshot for delta computation of cumulative counters
+    std::optional<procmon::MetricsSnapshot> prev_system_snapshot_;
 };
 
 // Helper to safely call a metrics method when the pointer may be null.

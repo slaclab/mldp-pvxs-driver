@@ -271,6 +271,10 @@ void MLDPWriter::workerLoop(std::size_t workerIndex)
                             m.incrementBusFailures(1.0, {{"source", "unknown"}});
                         });
         }
+        metric_call(metrics_, [&](auto& m)
+                    {
+                        m.incrementBusStreamRotations(1.0, {{"reason", reason}});
+                    });
         writer.reset();
         handle.reset();
         context.reset();

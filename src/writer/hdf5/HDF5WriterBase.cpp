@@ -219,16 +219,19 @@ void HDF5WriterBase::writerLoop()
             {
                 errorf(*logger_, "HDF5Writer [{}] source={} write HDF5 error: {}",
                        config_.name, util::bus::getRootSourceName(entry.batch), ex.getCDetailMsg());
+                if (writerMetrics_) writerMetrics_->incrementWriteErrors();
             }
             catch (const std::exception& ex)
             {
                 errorf(*logger_, "HDF5Writer [{}] source={} write failed: {}",
                        config_.name, util::bus::getRootSourceName(entry.batch), ex.what());
+                if (writerMetrics_) writerMetrics_->incrementWriteErrors();
             }
             catch (...)
             {
                 errorf(*logger_, "HDF5Writer [{}] source={} write failed — unknown exception",
                        config_.name, util::bus::getRootSourceName(entry.batch));
+                if (writerMetrics_) writerMetrics_->incrementWriteErrors();
             }
         }
     }

@@ -115,7 +115,11 @@ void ChannelProcessor::processTask(util::bus::IDataBus::EventBatch batch) noexce
 
     auto snapshot = buffer_.trySnapshot(config_.trigger());
     if (!snapshot.has_value())
+    {
+        metrics::metric_call(metrics_, [&](metrics::Metrics& m)
+                             { m.incrementProcessorSnapshotMisses(1.0, processorMetricLabels(config_.name())); });
         return;
+    }
 
     buffer_.resetFreshFlags();
     fireCompute(*snapshot);
@@ -157,11 +161,15 @@ void ChannelProcessor::fireCompute(const AlignedSnapshot& snapshot) noexcept
     catch (const std::exception& ex)
     {
         util::log::warnf(*logger_, "ChannelProcessor '{}' compute failed: {}", config_.name(), ex.what());
+        metrics::metric_call(metrics_, [&](metrics::Metrics& m)
+                             { m.incrementProcessorComputeErrors(1.0, processorMetricLabels(config_.name())); });
         return;
     }
     catch (...)
     {
         util::log::warnf(*logger_, "ChannelProcessor '{}' compute failed with unknown exception", config_.name());
+        metrics::metric_call(metrics_, [&](metrics::Metrics& m)
+                             { m.incrementProcessorComputeErrors(1.0, processorMetricLabels(config_.name())); });
         return;
     }
     const auto compute_finished_at = std::chrono::steady_clock::now();

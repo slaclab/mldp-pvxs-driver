@@ -58,6 +58,12 @@ HDF5WriterMetrics::HDF5WriterMetrics(prometheus::Registry& registry,
                                .Labels(clabels)
                                .Register(registry);
 
+    write_errors_family_ = &prometheus::BuildCounter()
+                                .Name("mldp_pvxs_driver_hdf5_write_errors_total")
+                                .Help("Total HDF5 write errors (H5::Exception / std::exception / unknown).")
+                                .Labels(clabels)
+                                .Register(registry);
+
     file_rotations_family_ = &prometheus::BuildCounter()
                                   .Name("mldp_pvxs_driver_hdf5_file_rotations_total")
                                   .Help("Total HDF5 file rotations triggered by age or size threshold, per source.")
@@ -91,6 +97,11 @@ void HDF5WriterMetrics::setQueueDepth(double value)
 void HDF5WriterMetrics::incrementQueueDrops(double value)
 {
     queue_drops_family_->Add({}).Increment(value);
+}
+
+void HDF5WriterMetrics::incrementWriteErrors(double value)
+{
+    write_errors_family_->Add({}).Increment(value);
 }
 
 void HDF5WriterMetrics::observeWriteLatencyMs(double ms)

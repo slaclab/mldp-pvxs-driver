@@ -79,6 +79,8 @@ Metrics::Metrics(const MetricsConfig& config, std::string controller_name)
     processor_compute_latency_us_family_ = &makeHistogramFamily(*registry_, "mldp_pvxs_driver_processor_compute_latency_us", "Time spent computing processor outputs (microseconds).", clabels);
     processor_fire_count_family_ = &makeCounterFamily(*registry_, "mldp_pvxs_driver_processor_fire_total", "Number of successful processor compute firings.", clabels);
     processor_buffer_depth_family_ = &makeGaugeFamily(*registry_, "mldp_pvxs_driver_processor_buffer_depth", "Buffered sample depth retained per processor source snapshot input.", clabels);
+    processor_compute_errors_family_ = &makeCounterFamily(*registry_, "mldp_pvxs_driver_processor_compute_errors_total", "Number of processor compute() calls that threw an exception.", clabels);
+    processor_snapshot_misses_family_ = &makeCounterFamily(*registry_, "mldp_pvxs_driver_processor_snapshot_misses_total", "Number of trySnapshot() calls that returned no snapshot (sources not yet aligned).", clabels);
     // Bus metrics
     bus_push_family_ = &makeCounterFamily(*registry_, "mldp_pvxs_driver_bus_push_total", "Number of events pushed onto the bus.", clabels);
     bus_failure_family_ = &makeCounterFamily(*registry_, "mldp_pvxs_driver_bus_failure_total", "Number of bus push failures reported by the MLDP gRPC API.", clabels);
@@ -167,22 +169,26 @@ void Metrics::collectSystemMetricsLoop()
                 const auto&        snapshot = *metricResult;
                 prometheus::Labels labels = {};
 
-                // Update CPU metrics (counters)
-                if (snapshot.utime)
+                // Update CPU metrics (counters — increment by delta against previous snapshot)
+                if (prev_system_snapshot_)
                 {
-                    process_cpu_user_ticks_family_->Add(labels).Increment(static_cast<double>(*snapshot.utime));
-                }
-                if (snapshot.stime)
-                {
-                    process_cpu_system_ticks_family_->Add(labels).Increment(static_cast<double>(*snapshot.stime));
-                }
-                if (snapshot.cutime)
-                {
-                    process_cpu_children_user_ticks_family_->Add(labels).Increment(static_cast<double>(*snapshot.cutime));
-                }
-                if (snapshot.cstime)
-                {
-                    process_cpu_children_system_ticks_family_->Add(labels).Increment(static_cast<double>(*snapshot.cstime));
+                    const auto& prev = *prev_system_snapshot_;
+                    if (snapshot.utime && prev.utime && *snapshot.utime >= *prev.utime)
+                    {
+                        process_cpu_user_ticks_family_->Add(labels).Increment(static_cast<double>(*snapshot.utime - *prev.utime));
+                    }
+                    if (snapshot.stime && prev.stime && *snapshot.stime >= *prev.stime)
+                    {
+                        process_cpu_system_ticks_family_->Add(labels).Increment(static_cast<double>(*snapshot.stime - *prev.stime));
+                    }
+                    if (snapshot.cutime && prev.cutime && *snapshot.cutime >= *prev.cutime)
+                    {
+                        process_cpu_children_user_ticks_family_->Add(labels).Increment(static_cast<double>(*snapshot.cutime - *prev.cutime));
+                    }
+                    if (snapshot.cstime && prev.cstime && *snapshot.cstime >= *prev.cstime)
+                    {
+                        process_cpu_children_system_ticks_family_->Add(labels).Increment(static_cast<double>(*snapshot.cstime - *prev.cstime));
+                    }
                 }
 
                 // Update memory metrics (gauges)
@@ -215,28 +221,36 @@ void Metrics::collectSystemMetricsLoop()
                     process_memory_rss_total_bytes_family_->Add(labels).Set(static_cast<double>(*snapshot.total_rss()));
                 }
 
-                // Update I/O metrics (counters)
-                if (snapshot.read_bytes)
+                // Update I/O metrics (counters — increment by delta against previous snapshot)
+                if (prev_system_snapshot_)
                 {
-                    process_io_read_bytes_family_->Add(labels).Increment(static_cast<double>(*snapshot.read_bytes));
-                }
-                if (snapshot.write_bytes)
-                {
-                    process_io_write_bytes_family_->Add(labels).Increment(static_cast<double>(*snapshot.write_bytes));
-                }
-                if (snapshot.cancelled_write_bytes)
-                {
-                    process_io_cancelled_write_bytes_family_->Add(labels).Increment(static_cast<double>(*snapshot.cancelled_write_bytes));
+                    const auto& prev = *prev_system_snapshot_;
+                    if (snapshot.read_bytes && prev.read_bytes && *snapshot.read_bytes >= *prev.read_bytes)
+                    {
+                        process_io_read_bytes_family_->Add(labels).Increment(static_cast<double>(*snapshot.read_bytes - *prev.read_bytes));
+                    }
+                    if (snapshot.write_bytes && prev.write_bytes && *snapshot.write_bytes >= *prev.write_bytes)
+                    {
+                        process_io_write_bytes_family_->Add(labels).Increment(static_cast<double>(*snapshot.write_bytes - *prev.write_bytes));
+                    }
+                    if (snapshot.cancelled_write_bytes && prev.cancelled_write_bytes && *snapshot.cancelled_write_bytes >= *prev.cancelled_write_bytes)
+                    {
+                        process_io_cancelled_write_bytes_family_->Add(labels).Increment(static_cast<double>(*snapshot.cancelled_write_bytes - *prev.cancelled_write_bytes));
+                    }
                 }
 
-                // Update context switch metrics (counters)
-                if (snapshot.voluntary_ctxt_switches)
+                // Update context switch metrics (counters — increment by delta against previous snapshot)
+                if (prev_system_snapshot_)
                 {
-                    process_context_switches_voluntary_family_->Add(labels).Increment(static_cast<double>(*snapshot.voluntary_ctxt_switches));
-                }
-                if (snapshot.nonvoluntary_ctxt_switches)
-                {
-                    process_context_switches_involuntary_family_->Add(labels).Increment(static_cast<double>(*snapshot.nonvoluntary_ctxt_switches));
+                    const auto& prev = *prev_system_snapshot_;
+                    if (snapshot.voluntary_ctxt_switches && prev.voluntary_ctxt_switches && *snapshot.voluntary_ctxt_switches >= *prev.voluntary_ctxt_switches)
+                    {
+                        process_context_switches_voluntary_family_->Add(labels).Increment(static_cast<double>(*snapshot.voluntary_ctxt_switches - *prev.voluntary_ctxt_switches));
+                    }
+                    if (snapshot.nonvoluntary_ctxt_switches && prev.nonvoluntary_ctxt_switches && *snapshot.nonvoluntary_ctxt_switches >= *prev.nonvoluntary_ctxt_switches)
+                    {
+                        process_context_switches_involuntary_family_->Add(labels).Increment(static_cast<double>(*snapshot.nonvoluntary_ctxt_switches - *prev.nonvoluntary_ctxt_switches));
+                    }
                 }
 
                 // Update file descriptor metrics (gauge)
@@ -260,6 +274,9 @@ void Metrics::collectSystemMetricsLoop()
                 {
                     process_nice_family_->Add(labels).Set(static_cast<double>(*snapshot.nice));
                 }
+
+                // Save snapshot for next iteration's delta computation
+                prev_system_snapshot_ = snapshot;
             }
             else if (metricResult.has_error())
             {
@@ -371,6 +388,16 @@ void Metrics::incrementProcessorFireCount(double value, prometheus::Labels tags)
 void Metrics::setProcessorBufferDepth(double value, prometheus::Labels tags)
 {
     processor_buffer_depth_family_->Add(std::move(tags)).Set(value);
+}
+
+void Metrics::incrementProcessorComputeErrors(double value, prometheus::Labels tags)
+{
+    processor_compute_errors_family_->Add(std::move(tags)).Increment(value);
+}
+
+void Metrics::incrementProcessorSnapshotMisses(double value, prometheus::Labels tags)
+{
+    processor_snapshot_misses_family_->Add(std::move(tags)).Increment(value);
 }
 
 void Metrics::incrementBusPushes(double value, prometheus::Labels tags)

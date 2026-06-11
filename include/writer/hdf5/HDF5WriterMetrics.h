@@ -69,6 +69,9 @@ public:
     /** Increment the count of batches dropped due to queue overflow. */
     void incrementQueueDrops(double value = 1.0);
 
+    /** Increment the count of write errors (H5::Exception / std::exception / unknown). */
+    void incrementWriteErrors(double value = 1.0);
+
     /**
      * @brief Record one write-latency sample (appendFrame / flushTabularBuffer).
      * @param ms Elapsed time in milliseconds.
@@ -94,6 +97,7 @@ private:
     prometheus::Family<prometheus::Counter>*   batches_written_family_{nullptr};
     prometheus::Family<prometheus::Gauge>*     queue_depth_family_{nullptr};
     prometheus::Family<prometheus::Counter>*   queue_drops_family_{nullptr};
+    prometheus::Family<prometheus::Counter>*   write_errors_family_{nullptr};
     prometheus::Family<prometheus::Histogram>* write_latency_ms_family_{nullptr};
 
     // Per-source (constant labels + dynamic source label)
