@@ -64,6 +64,10 @@ public:
     void   observeReaderProcessingTimeMs(double value, prometheus::Labels tags = {});
     void   setReaderQueueDepth(double value, prometheus::Labels tags = {});
     void   setReaderPoolQueueDepth(double value, prometheus::Labels tags = {});
+    void   incrementReaderDataBytesTotal(double value, prometheus::Labels tags = {});
+    void   setReaderDataBytesPerSecond(double value, prometheus::Labels tags = {});
+    double readerDataBytesTotal(prometheus::Labels tags = {}) const;
+    double readerDataBytesPerSecond(prometheus::Labels tags = {}) const;
     double readerEventsTotal() const;
     double readerEventsReceivedTotal() const;
     double readerErrorsTotal() const;
@@ -103,6 +107,12 @@ public:
     double busPayloadBytesTotal(prometheus::Labels tags = {}) const;
     double busPayloadBytesPerSecond(prometheus::Labels tags = {}) const;
 
+    // Writer metrics ---------------------------------------------------------
+    void   incrementWriterDataBytesTotal(double value, prometheus::Labels tags = {});
+    void   setWriterDataBytesPerSecond(double value, prometheus::Labels tags = {});
+    double writerDataBytesTotal(prometheus::Labels tags = {}) const;
+    double writerDataBytesPerSecond(prometheus::Labels tags = {}) const;
+
 private:
     MetricsConfig                         config_;
     std::string                           controller_name_;
@@ -116,6 +126,8 @@ private:
     prometheus::Family<prometheus::Histogram>* reader_processing_time_ms_family_{nullptr};
     prometheus::Family<prometheus::Gauge>*     reader_queue_depth_family_{nullptr};
     prometheus::Family<prometheus::Gauge>*     reader_pool_queue_depth_family_{nullptr};
+    prometheus::Family<prometheus::Counter>*   reader_data_bytes_family_{nullptr};
+    prometheus::Family<prometheus::Gauge>*     reader_data_bytes_per_second_family_{nullptr};
 
     prometheus::Family<prometheus::Gauge>* pool_connections_in_use_family_{nullptr};
     prometheus::Family<prometheus::Gauge>* pool_connections_available_family_{nullptr};
@@ -137,6 +149,9 @@ private:
     prometheus::Family<prometheus::Counter>* bus_payload_bytes_family_{nullptr};
     prometheus::Family<prometheus::Gauge>*   bus_payload_bytes_per_second_family_{nullptr};
     prometheus::Family<prometheus::Counter>* bus_stream_rotations_family_{nullptr};
+
+    prometheus::Family<prometheus::Counter>* writer_data_bytes_family_{nullptr};
+    prometheus::Family<prometheus::Gauge>*   writer_data_bytes_per_second_family_{nullptr};
 
     std::unique_ptr<prometheus::Exposer> exposer_;
 

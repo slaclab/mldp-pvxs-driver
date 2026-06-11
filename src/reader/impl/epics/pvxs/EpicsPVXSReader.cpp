@@ -43,6 +43,47 @@ bool hasTimestamp(const DataBatch& batch)
 {
     return !batch.timestamps.empty();
 }
+
+std::size_t estimatePvxsValueBytes(const pvxs::Value& v)
+{
+    if (!v.valid()) return 0;
+    switch (v.type().code)
+    {
+    case pvxs::TypeCode::Bool:    return 1;
+    case pvxs::TypeCode::Int8:
+    case pvxs::TypeCode::UInt8:   return 1;
+    case pvxs::TypeCode::Int16:
+    case pvxs::TypeCode::UInt16:  return 2;
+    case pvxs::TypeCode::Int32:
+    case pvxs::TypeCode::UInt32:
+    case pvxs::TypeCode::Float32: return 4;
+    case pvxs::TypeCode::Int64:
+    case pvxs::TypeCode::UInt64:
+    case pvxs::TypeCode::Float64: return 8;
+    case pvxs::TypeCode::String:  return v.as<std::string>().size();
+    case pvxs::TypeCode::BoolA:   return v.as<pvxs::shared_array<const bool>>().size();
+    case pvxs::TypeCode::Int8A:
+    case pvxs::TypeCode::UInt8A:  return v.as<pvxs::shared_array<const uint8_t>>().size();
+    case pvxs::TypeCode::Int16A:
+    case pvxs::TypeCode::UInt16A: return v.as<pvxs::shared_array<const uint16_t>>().size() * 2;
+    case pvxs::TypeCode::Int32A:
+    case pvxs::TypeCode::UInt32A:
+    case pvxs::TypeCode::Float32A: return v.as<pvxs::shared_array<const int32_t>>().size() * 4;
+    case pvxs::TypeCode::Int64A:
+    case pvxs::TypeCode::UInt64A:
+    case pvxs::TypeCode::Float64A: return v.as<pvxs::shared_array<const int64_t>>().size() * 8;
+    case pvxs::TypeCode::Struct:
+    case pvxs::TypeCode::Union:
+    case pvxs::TypeCode::Any:
+    {
+        std::size_t total = 0;
+        for (const auto& child : v.ichildren())
+            total += estimatePvxsValueBytes(child);
+        return total;
+    }
+    default: return 0;
+    }
+}
 } // namespace
 
 /// Construct the reader: initialise the PVA context from the process environment
@@ -314,7 +355,8 @@ void EpicsPVXSReader::processEvent(std::string pvName, pvxs::Value epics_value)
         const auto* runtimeCfg = runtimeConfigFor(pvName);
         const auto  mode = runtimeCfg ? runtimeCfg->mode : PVRuntimeConfig::Mode::Default;
 
-        std::size_t emitted = 0;
+        const std::size_t dataBytes = estimatePvxsValueBytes(epics_value);
+        std::size_t       emitted   = 0;
 
         switch (mode)
         {
@@ -341,6 +383,19 @@ void EpicsPVXSReader::processEvent(std::string pvName, pvxs::Value epics_value)
                         {
                             m.incrementReaderEvents(1.0, sourceTag);
                         });
+            if (dataBytes > 0)
+            {
+                metric_call(metrics_, [&](auto& m) {
+                    m.incrementReaderDataBytesTotal(static_cast<double>(dataBytes), sourceTag);
+                });
+                if (processing_ms > 0.0)
+                {
+                    const double bps = (static_cast<double>(dataBytes) * 1000.0) / processing_ms;
+                    metric_call(metrics_, [&](auto& m) {
+                        m.setReaderDataBytesPerSecond(bps, sourceTag);
+                    });
+                }
+            }
             tracef(*logger_, "[{}/{}] event published", name_, pvName);
         }
     }

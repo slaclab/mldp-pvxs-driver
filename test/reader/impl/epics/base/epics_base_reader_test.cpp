@@ -509,6 +509,39 @@ pvs:
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 }
 
+TEST_F(EpicsBaseReaderTest, ReaderDataBytesMetricsIncrementedAfterEvent)
+{
+    const std::string yaml = R"(
+name: epics_base_1
+pvs:
+  - name: test:counter
+)";
+    const auto cfg     = makeConfigFromYaml(yaml);
+    auto       metrics = std::make_shared<mldp_pvxs_driver::metrics::Metrics>(
+        mldp_pvxs_driver::metrics::MetricsConfig());
+    auto reader_ptr = mldp_pvxs_driver::reader::ReaderFactory::create("epics-base", mock_bus, cfg, metrics);
+    ASSERT_NE(reader_ptr, nullptr);
+
+    const prometheus::Labels source_tag{{"source", "test:counter"}};
+    const int                max_wait_ms = 5000;
+    int                      waited_ms   = 0;
+    bool                     got_bytes   = false;
+    while (waited_ms < max_wait_ms)
+    {
+        if (metrics->readerDataBytesTotal(source_tag) > 0.0)
+        {
+            got_bytes = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        waited_ms += 100;
+    }
+
+    EXPECT_TRUE(got_bytes) << "readerDataBytesTotal never incremented for test:counter";
+    EXPECT_GT(metrics->readerDataBytesTotal(source_tag), 0.0);
+    EXPECT_GE(metrics->readerDataBytesPerSecond(source_tag), 0.0);
+}
+
 // Verify reader-level metadata and per-PV metadata overrides are merged into EventBatch.metadata.
 // Reader config uses YAML key "metadata" for both reader-level and per-PV blocks.
 // Per-PV keys win over reader-level keys on conflict.

@@ -20,6 +20,7 @@
 using namespace mldp_pvxs_driver::util::log;
 using namespace mldp_pvxs_driver::writer;
 using namespace mldp_pvxs_driver::writer::hdf5_detail;
+using namespace mldp_pvxs_driver::metrics;
 
 // ---------------------------------------------------------------------------
 // Construction / destruction
@@ -35,6 +36,7 @@ HDF5WriterBase::HDF5WriterBase(HDF5WriterConfig                  config,
         writerMetrics_ = std::make_unique<metrics::HDF5WriterMetrics>(
             *metrics->registry(), metrics->controllerName(), config_.name);
     }
+    metrics_ = metrics;
 }
 
 HDF5WriterBase::~HDF5WriterBase()
@@ -201,14 +203,27 @@ void HDF5WriterBase::writerLoop()
                 {
                     for (const auto& frame : ts.frames)
                     {
-                        const auto t0 = std::chrono::steady_clock::now();
+                        const std::size_t dataBatchBytes = util::bus::estimateDataBatchBytes(frame);
+                        const auto        t0 = std::chrono::steady_clock::now();
                         writeFrameImpl(ts.root_source_name, frame, entry.batchSeq);
+                        const double ms = std::chrono::duration<double, std::milli>(
+                                              std::chrono::steady_clock::now() - t0)
+                                              .count();
                         if (writerMetrics_)
-                        {
-                            const double ms = std::chrono::duration<double, std::milli>(
-                                                  std::chrono::steady_clock::now() - t0)
-                                                  .count();
                             writerMetrics_->observeWriteLatencyMs(ms);
+                        if (dataBatchBytes > 0)
+                        {
+                            metric_call(metrics_, [&](auto& m) {
+                                m.incrementWriterDataBytesTotal(static_cast<double>(dataBatchBytes),
+                                                                {{"source", ts.root_source_name}});
+                            });
+                            if (ms > 0.0)
+                            {
+                                const double bps = static_cast<double>(dataBatchBytes) * 1000.0 / ms;
+                                metric_call(metrics_, [&](auto& m) {
+                                    m.setWriterDataBytesPerSecond(bps, {{"source", ts.root_source_name}});
+                                });
+                            }
                         }
                     }
                     if (writerMetrics_)
@@ -325,11 +340,22 @@ void HDF5WriterBase::processTabularBatch(const QueueEntry& entry)
 {
     const auto& source = util::bus::asTimeSeries(entry.batch).root_source_name;
     auto&       buf = tabularBuffers_[source];
-    // Capture metadata from the first batch that carries non-empty metadata.
     if (buf.pendingMetadata.empty() && !entry.batch.metadata.empty())
         buf.pendingMetadata = entry.batch.metadata;
+
+    std::size_t batchBytes = 0;
     for (const auto& frame : util::bus::asTimeSeries(entry.batch).frames)
+    {
+        batchBytes += util::bus::estimateDataBatchBytes(frame);
         accumulateTabularFrame(source, frame, buf);
+    }
+    if (batchBytes > 0)
+    {
+        metric_call(metrics_, [&](auto& m) {
+            m.incrementWriterDataBytesTotal(static_cast<double>(batchBytes),
+                                            {{"source", source}});
+        });
+    }
 }
 
 void HDF5WriterBase::accumulateTabularFrame(const std::string&          sourceName,

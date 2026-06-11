@@ -8,17 +8,27 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
-/** @file
- * @brief Protocol-agnostic columnar data batch used as the bus frame type.
+/**
+ * @file   DataBatch.h
+ * @brief  Protocol-agnostic columnar data batch used as the event-bus frame type.
+ * @author SLAC mldp-pvxs-driver contributors
+ * @date   2024-01-01
+ * @details
+ *   `DataBatch` carries time-stamped, heterogeneous column data without any
+ *   dependency on MLDP protobuf types.  Writers that target MLDP convert
+ *   `DataBatch` → `dp::service::common::DataFrame` internally; other writers
+ *   (e.g. HDF5, Arrow) consume `DataBatch` directly.
  *
- * `DataBatch` carries time-stamped, heterogeneous column data without any
- * dependency on MLDP protobuf types.  Writers that target MLDP convert
- * `DataBatch` → `dp::service::common::DataFrame` internally; other writers
- * (e.g. HDF5) consume `DataBatch` directly.
+ *   All types in this file live in `mldp_pvxs_driver::util::bus`.
+ * @copyright
+ *   See the LICENSE.txt file found in the top-level directory of this
+ *   distribution and at:
+ *   https://confluence.slac.stanford.edu/display/ppareg/LICENSE.html
  */
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <unordered_map>
@@ -32,7 +42,9 @@ namespace mldp_pvxs_driver::util::bus {
 // ---------------------------------------------------------------------------
 
 /**
- * @brief Per-sample timestamp (Unix epoch seconds + nanosecond offset).
+ * @struct TimestampEntry
+ * @brief  Per-sample timestamp: Unix epoch seconds plus nanosecond sub-second offset.
+ * @note   Two `uint64_t` fields → `sizeof(TimestampEntry)` == 16 bytes.
  */
 struct TimestampEntry
 {
@@ -45,10 +57,11 @@ struct TimestampEntry
 // ---------------------------------------------------------------------------
 
 /**
- * @brief Shape descriptor for array-valued columns.
- *
- * For a 1-D waveform of 1024 samples: `dims = {1024}`.
- * For a 64×64 image frame: `dims = {64, 64}`.
+ * @struct ArrayDims
+ * @brief  Shape descriptor for array-valued columns.
+ * @details
+ *   For a 1-D waveform of 1024 samples: `dims = {1024}`.
+ *   For a 64×64 image frame: `dims = {64, 64}`.
  */
 struct ArrayDims
 {
@@ -56,7 +69,8 @@ struct ArrayDims
 };
 
 /**
- * @brief Union of all supported per-column data representations.
+ * @typedef ColumnValues
+ * @brief   Union of all supported per-column data representations.
  *
  * Scalar columns store one value per timestamp entry.
  * Array columns store one flattened array per timestamp entry; use
@@ -93,7 +107,8 @@ using ColumnValues = std::variant<
     >;
 
 /**
- * @brief Named column of homogeneous typed samples.
+ * @struct DataColumn
+ * @brief  Named column of homogeneous typed samples.
  */
 struct DataColumn
 {
@@ -102,10 +117,11 @@ struct DataColumn
 };
 
 /**
- * @brief Named enum column: integer values with a user-defined semantic id.
- *
- * The @p enum_id is a contract between data producer and consumer
- * (e.g. `"epics:alarm_status:v2"`).
+ * @struct EnumDataColumn
+ * @brief  Named enum column: integer values with a user-defined semantic id.
+ * @details
+ *   The @p enum_id is a contract between data producer and consumer
+ *   (e.g. `"epics:alarm_status:v2"`).
  */
 struct EnumDataColumn
 {
@@ -119,7 +135,8 @@ struct EnumDataColumn
 // ---------------------------------------------------------------------------
 
 /**
- * @brief Protocol-agnostic, columnar data frame passed through the event bus.
+ * @struct DataBatch
+ * @brief  Protocol-agnostic, columnar data frame passed through the event bus.
  *
  * One `DataBatch` carries all samples for one ingestion event:
  * - `timestamps` — ordered list of per-sample time points.
@@ -151,5 +168,56 @@ struct DataBatch
     std::vector<EnumDataColumn>                enum_columns; ///< Enum columns.
     std::unordered_map<std::string, ArrayDims> array_dims;   ///< Shape info keyed by column name.
 };
+
+/**
+ * @brief   Estimate the raw in-memory size of a DataBatch.
+ * @details Sums timestamp storage, column name lengths, column payload bytes
+ *          (exact for fixed-width scalars; conservative for `vector<bool>`),
+ *          and enum-column name and value storage.
+ * @param[in] batch  The DataBatch whose memory footprint to estimate.
+ * @return  Estimated byte count.  Does not include `std::vector` internal
+ *          bookkeeping (capacity, pointer, and size fields).
+ * @note    `vector<bool>` is counted as 1 byte per element (packed storage is
+ *          implementation-defined; this is a conservative upper bound).
+ *          `sizeof(TimestampEntry)` is assumed to be 16 bytes (two `uint64_t`).
+ */
+inline std::size_t estimateDataBatchBytes(const DataBatch& batch)
+{
+    std::size_t bytes = batch.timestamps.size() * sizeof(TimestampEntry);
+
+    for (const auto& col : batch.columns)
+    {
+        bytes += col.name.size();
+        bytes += std::visit([](const auto& v) -> std::size_t
+        {
+            using T = std::decay_t<decltype(v)>;
+            if constexpr (std::is_same_v<T, std::vector<double>>)   return v.size() * sizeof(double);
+            if constexpr (std::is_same_v<T, std::vector<float>>)    return v.size() * sizeof(float);
+            if constexpr (std::is_same_v<T, std::vector<int64_t>>)  return v.size() * sizeof(int64_t);
+            if constexpr (std::is_same_v<T, std::vector<int32_t>>)  return v.size() * sizeof(int32_t);
+            if constexpr (std::is_same_v<T, std::vector<bool>>)     return v.size();
+            if constexpr (std::is_same_v<T, std::vector<std::string>>)
+            { std::size_t s = 0; for (const auto& x : v) s += x.size(); return s; }
+            if constexpr (std::is_same_v<T, std::vector<std::vector<uint8_t>>>)
+            { std::size_t s = 0; for (const auto& x : v) s += x.size(); return s; }
+            if constexpr (std::is_same_v<T, std::vector<std::vector<double>>>)
+            { std::size_t s = 0; for (const auto& x : v) s += x.size() * sizeof(double); return s; }
+            if constexpr (std::is_same_v<T, std::vector<std::vector<float>>>)
+            { std::size_t s = 0; for (const auto& x : v) s += x.size() * sizeof(float); return s; }
+            if constexpr (std::is_same_v<T, std::vector<std::vector<int64_t>>>)
+            { std::size_t s = 0; for (const auto& x : v) s += x.size() * sizeof(int64_t); return s; }
+            if constexpr (std::is_same_v<T, std::vector<std::vector<int32_t>>>)
+            { std::size_t s = 0; for (const auto& x : v) s += x.size() * sizeof(int32_t); return s; }
+            if constexpr (std::is_same_v<T, std::vector<std::vector<bool>>>)
+            { std::size_t s = 0; for (const auto& x : v) s += x.size(); return s; }
+            return 0;
+        }, col.values);
+    }
+
+    for (const auto& ec : batch.enum_columns)
+        bytes += ec.name.size() + ec.values.size() * sizeof(int32_t) + ec.enum_id.size();
+
+    return bytes;
+}
 
 } // namespace mldp_pvxs_driver::util::bus

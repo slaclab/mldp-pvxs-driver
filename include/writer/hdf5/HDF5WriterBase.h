@@ -116,6 +116,7 @@ protected:
     HDF5WriterConfig                            config_;
     std::shared_ptr<util::log::ILogger>         logger_;
     std::unique_ptr<metrics::HDF5WriterMetrics> writerMetrics_;
+    std::shared_ptr<metrics::Metrics>           metrics_;
 
     // Queue — shared between caller threads and writerThread_
     std::mutex              queueMutex_;

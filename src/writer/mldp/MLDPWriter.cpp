@@ -393,6 +393,7 @@ void MLDPWriter::workerLoop(std::size_t workerIndex)
                               dp::service::ingestion::IngestDataRequest>(&arena);
         std::size_t acceptedEvents = 0;
         std::size_t payloadBytes = 0;
+        const std::size_t dataBatchBytes = util::bus::estimateDataBatchBytes(item.frame);
         const auto  requestId = mldp_pvxs_driver::util::format_string(
             "pv_stream_{}_{}_{}", streamStart.time_since_epoch().count(),
             item.root_source, requestCounter);
@@ -436,22 +437,36 @@ void MLDPWriter::workerLoop(std::size_t workerIndex)
                                                  {{"source", item.root_source}});
                         });
         }
+        const auto   elapsed = std::chrono::steady_clock::now() - itemStart;
+        const double ms      = std::chrono::duration<double, std::milli>(elapsed).count();
+
         if (payloadBytes > 0)
         {
-            metric_call(metrics_, [&](auto& m)
-                        {
-                            m.incrementBusPayloadBytes(static_cast<double>(payloadBytes),
-                                                       {{"source", item.root_source}});
-                        });
-            const auto   elapsed = std::chrono::steady_clock::now() - itemStart;
-            const double ms = std::chrono::duration<double, std::milli>(elapsed).count();
+            metric_call(metrics_, [&](auto& m) {
+                m.incrementBusPayloadBytes(static_cast<double>(payloadBytes),
+                                           {{"source", item.root_source}});
+            });
             if (ms > 0.0)
             {
                 const double bps = (static_cast<double>(payloadBytes) * 1000.0) / ms;
-                metric_call(metrics_, [&](auto& m)
-                            {
-                                m.setBusPayloadBytesPerSecond(bps, {{"source", item.root_source}});
-                            });
+                metric_call(metrics_, [&](auto& m) {
+                    m.setBusPayloadBytesPerSecond(bps, {{"source", item.root_source}});
+                });
+            }
+        }
+
+        if (dataBatchBytes > 0)
+        {
+            metric_call(metrics_, [&](auto& m) {
+                m.incrementWriterDataBytesTotal(static_cast<double>(dataBatchBytes),
+                                                {{"source", item.root_source}});
+            });
+            if (ms > 0.0)
+            {
+                const double bps = (static_cast<double>(dataBatchBytes) * 1000.0) / ms;
+                metric_call(metrics_, [&](auto& m) {
+                    m.setWriterDataBytesPerSecond(bps, {{"source", item.root_source}});
+                });
             }
         }
         record_send_time({{"source", item.root_source}});

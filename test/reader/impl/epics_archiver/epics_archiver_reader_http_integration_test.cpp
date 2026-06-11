@@ -15,6 +15,8 @@
 #include "../../../mock/MockArchiverPbHttpServer.h"
 #include "../../../mock/MockDataBus.h"
 
+#include <metrics/Metrics.h>
+#include <prometheus/labels.h>
 #include <reader/impl/epics_archiver/EpicsArchiverReader.h>
 #include <util/bus/IDataBus.h>
 
@@ -440,6 +442,41 @@ TEST(EpicsArchiverReaderHttpIntegrationTest, StaticAndPerPvMetadataMergedIntoEve
         EXPECT_EQ(batch.metadata.at("subsystem"), "override_bpms");
     }
     EXPECT_TRUE(found) << "No batch with root_source=TEST:PV:DOUBLE received";
+}
+
+TEST(EpicsArchiverReaderHttpIntegrationTest, ReaderDataBytesMetricsIncrementedAfterFetch)
+{
+    MockArchiverPbHttpServer::GenerationConfig gen_cfg;
+    gen_cfg.min_events_per_second   = 4;
+    gen_cfg.max_events_per_second   = 4;
+    gen_cfg.open_ended_duration_sec = 1;
+    gen_cfg.random_seed             = 42;
+    MockArchiverPbHttpServer server(gen_cfg);
+    server.start();
+    ASSERT_GT(server.port(), 0);
+
+    auto metrics = std::make_shared<mldp_pvxs_driver::metrics::Metrics>(
+        mldp_pvxs_driver::metrics::MetricsConfig());
+    auto bus = std::make_shared<MockEventBusPush>();
+
+    const std::string yaml = std::string(R"(
+        name: archiver-bytes-metrics-test
+        hostname: ")") + server.baseUrl() +
+                             R"("
+        start-date: "2026-02-25T08:00:00.000Z"
+        pvs:
+          - name: "TEST:PV:DOUBLE"
+    )";
+
+    auto reader_cfg = makeConfigFromYaml(yaml);
+    auto reader     = std::make_unique<EpicsArchiverReader>(bus, metrics, reader_cfg);
+    ASSERT_TRUE(waitForMockRequestStartAndCompletion(server, std::chrono::seconds(3)));
+
+    const prometheus::Labels source_tag{{"source", "TEST:PV:DOUBLE"}};
+    EXPECT_GT(metrics->readerDataBytesTotal(source_tag), 0.0)
+        << "readerDataBytesTotal not incremented after archiver fetch";
+    EXPECT_GT(metrics->readerDataBytesPerSecond(source_tag), 0.0)
+        << "readerDataBytesPerSecond not set after archiver fetch";
 }
 
 } // namespace

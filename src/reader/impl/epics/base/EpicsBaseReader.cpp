@@ -40,6 +40,76 @@ bool hasTimestamps(const DataBatch& batch)
 {
     return !batch.timestamps.empty();
 }
+
+std::size_t estimateEpicsBaseValueBytes(const ::epics::pvData::PVStructurePtr& v)
+{
+    if (!v) return 0;
+    std::size_t total = 0;
+    for (const auto& field : v->getPVFields())
+    {
+        if (!field) continue;
+        switch (field->getField()->getType())
+        {
+        case ::epics::pvData::scalar:
+        {
+            auto sc = std::dynamic_pointer_cast<::epics::pvData::PVScalar>(field);
+            if (!sc) break;
+            switch (sc->getScalar()->getScalarType())
+            {
+            case ::epics::pvData::pvBoolean:
+            case ::epics::pvData::pvByte:
+            case ::epics::pvData::pvUByte:   total += 1; break;
+            case ::epics::pvData::pvShort:
+            case ::epics::pvData::pvUShort:  total += 2; break;
+            case ::epics::pvData::pvInt:
+            case ::epics::pvData::pvUInt:
+            case ::epics::pvData::pvFloat:   total += 4; break;
+            case ::epics::pvData::pvLong:
+            case ::epics::pvData::pvULong:
+            case ::epics::pvData::pvDouble:  total += 8; break;
+            case ::epics::pvData::pvString:
+            {
+                auto s = std::dynamic_pointer_cast<::epics::pvData::PVString>(field);
+                if (s) total += s->get().size();
+                break;
+            }
+            default: break;
+            }
+            break;
+        }
+        case ::epics::pvData::scalarArray:
+        {
+            auto arr = std::dynamic_pointer_cast<::epics::pvData::PVScalarArray>(field);
+            if (!arr) break;
+            std::size_t n = arr->getLength();
+            switch (arr->getScalarArray()->getElementType())
+            {
+            case ::epics::pvData::pvBoolean:
+            case ::epics::pvData::pvByte:
+            case ::epics::pvData::pvUByte:   total += n; break;
+            case ::epics::pvData::pvShort:
+            case ::epics::pvData::pvUShort:  total += n * 2; break;
+            case ::epics::pvData::pvInt:
+            case ::epics::pvData::pvUInt:
+            case ::epics::pvData::pvFloat:   total += n * 4; break;
+            case ::epics::pvData::pvLong:
+            case ::epics::pvData::pvULong:
+            case ::epics::pvData::pvDouble:  total += n * 8; break;
+            default: break;
+            }
+            break;
+        }
+        case ::epics::pvData::structure:
+        {
+            auto sub = std::dynamic_pointer_cast<::epics::pvData::PVStructure>(field);
+            if (sub) total += estimateEpicsBaseValueBytes(sub);
+            break;
+        }
+        default: break;
+        }
+    }
+    return total;
+}
 } // namespace
 
 /// Construct the reader: build an EpicsReaderConfig from @p cfg, create the
@@ -303,7 +373,8 @@ void EpicsBaseReader::processEvent(std::string pvName, ::epics::pvData::PVStruct
         const auto* runtimeCfg = runtimeConfigFor(pvName);
         const auto  mode = runtimeCfg ? runtimeCfg->mode : PVRuntimeConfig::Mode::Default;
 
-        std::size_t emitted = 0;
+        const std::size_t dataBytes = estimateEpicsBaseValueBytes(epics_value);
+        std::size_t       emitted   = 0;
 
         switch (mode)
         {
@@ -330,6 +401,19 @@ void EpicsBaseReader::processEvent(std::string pvName, ::epics::pvData::PVStruct
                         {
                             m.incrementReaderEvents(1.0, sourceTag);
                         });
+            if (dataBytes > 0)
+            {
+                metric_call(metrics_, [&](auto& m) {
+                    m.incrementReaderDataBytesTotal(static_cast<double>(dataBytes), sourceTag);
+                });
+                if (processing_ms > 0.0)
+                {
+                    const double bps = (static_cast<double>(dataBytes) * 1000.0) / processing_ms;
+                    metric_call(metrics_, [&](auto& m) {
+                        m.setReaderDataBytesPerSecond(bps, sourceTag);
+                    });
+                }
+            }
             tracef(*logger_, "[{}/{}] event published", name_, pvName);
         }
     }

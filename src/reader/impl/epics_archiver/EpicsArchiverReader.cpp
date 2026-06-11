@@ -533,10 +533,13 @@ void EpicsArchiverReader::fetchConfiguredPVs(const std::string& from, const std:
 
         PbChunkState     chunk_state;
         std::string      line_buf;
+        std::size_t      total_bytes = 0;
+        const auto       fetch_start = std::chrono::steady_clock::now();
         HttpResponseInfo response = http_client_->streamGet(
             HttpRequest{.url = url},
             [&](const char* data, std::size_t size)
             {
+                total_bytes += size;
                 // The HTTP client may deliver arbitrary byte fragment sizes.
                 // Reassemble newline-delimited PB/HTTP records before parsing.
                 for (std::size_t i = 0; i < size; ++i)
@@ -596,6 +599,23 @@ void EpicsArchiverReader::fetchConfiguredPVs(const std::string& from, const std:
         }
         // Ensure the final partially accumulated chunk/batch is published.
         finalizeChunk(chunk_state);
+
+        if (total_bytes > 0)
+        {
+            const prometheus::Labels source_tag{{"source", pv}};
+            const double fetch_ms = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - fetch_start).count();
+            metric_call(metrics_, [&](auto& m) {
+                m.incrementReaderDataBytesTotal(static_cast<double>(total_bytes), source_tag);
+            });
+            if (fetch_ms > 0.0)
+            {
+                const double bps = (static_cast<double>(total_bytes) * 1000.0) / fetch_ms;
+                metric_call(metrics_, [&](auto& m) {
+                    m.setReaderDataBytesPerSecond(bps, source_tag);
+                });
+            }
+        }
 
         if (response.http_status != 200)
         {
