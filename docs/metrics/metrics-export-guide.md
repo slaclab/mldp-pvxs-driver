@@ -118,13 +118,58 @@ For periodic file-based logging, use the `PeriodicMetricsDumper` background thre
 
 ### Manual Metrics Dumps
 
-Trigger manual dumps without periodic features:
+Trigger a one-shot snapshot without periodic features:
 - Press **Ctrl+P** in the foreground terminal (outputs `MetricsSnapshot` format to stdout)
 - Or send signals: `kill -USR1 <pid>` or `kill -QUIT <pid>`
 
 ### Runtime Controls
 
-- **Ctrl+D**: Toggle the periodic metrics dumper on/off (while the driver is running)
+The following keys are available while the driver is running in a foreground terminal:
+
+| Key | Action |
+|---|---|
+| **Ctrl+P** | Print one-shot metrics snapshot to stdout |
+| **Ctrl+D** | **Toggle** the periodic file dumper on/off |
+| `kill -USR1 <pid>` | Same as Ctrl+P (signal-based) |
+| `kill -QUIT <pid>` | Same as Ctrl+P (signal-based) |
+
+#### Ctrl+D — Periodic File Dumper Toggle
+
+**Ctrl+D** starts or stops the background `PeriodicMetricsDumper` thread at runtime
+without restarting the driver.
+
+**Prerequisites** — pass the file path and interval on the command line:
+
+```bash
+mldp_pvxs_driver -c config.yaml \
+  --metrics-output /data/metrics.jsonl \
+  --metrics-interval 30
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--metrics-output FILE` | `metrics.jsonl` | Destination file for JSONL exports |
+| `--metrics-interval SECONDS` | `5` | Seconds between writes |
+
+**Toggle behaviour:**
+
+1. **First Ctrl+D** — starts the dumper. Logs:
+   ```
+   Starting periodic metrics dumper to file '/data/metrics.jsonl' every 30 seconds...
+   ```
+2. **Second Ctrl+D** — stops the dumper. Logs:
+   ```
+   Stopping periodic metrics dumper...
+   Stopped periodic metrics dumper.
+   ```
+3. Toggle again at any time to restart it.
+
+**File behaviour:**
+- The output file is opened in **append mode** — data from previous runs is preserved.
+- Each write adds one JSONL line (see [JSON Lines Format](#json-lines-format-file) below).
+- If the dumper was never started (Ctrl+D never pressed), no file is created.
+
+> The dumper is also stopped automatically when the driver shuts down (Ctrl+C / SIGTERM).
 
 ## Output Formats
 

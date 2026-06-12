@@ -7,17 +7,19 @@
 
 ## What Does This Driver Do?
 
-The MLDP PVXS Driver watches EPICS Process Variables (PVs) — live or historical — and
-forwards their data to one or more destinations:
+The MLDP PVXS Driver reads data from one or more sources and forwards it to one or more
+destinations. Sources and destinations are pluggable — the built-in implementations target
+EPICS control systems and MLDP/HDF5 storage, but the reader/writer architecture is
+general-purpose and not limited to EPICS data.
 
-- **MLDP** — the Machine Learning Data Platform (over gRPC)
-- **HDF5 files** — local disk storage for analysis
+- **Readers** — connect to a data source (live EPICS PVs, historical archiver data, metadata services, or custom sources)
+- **Writers** — deliver data to a destination (MLDP gRPC, HDF5 files, or custom sinks)
 
 You describe *what to read* and *where to write* in a single YAML configuration file,
 then run the driver. It handles everything in between.
 
 ```
-EPICS PVs / Archiver
+[Data Source(s)]
       │
    [Reader]          ← you choose the source type
       │
@@ -34,8 +36,13 @@ EPICS PVs / Archiver
 
 ### Reader — Where Data Comes From
 
-A **reader** connects to a data source and pushes updates into the driver.
-You can run multiple readers at the same time.
+A **reader** connects to any data source and pushes updates into the driver.
+You can run multiple readers at the same time, and mix different reader types.
+The reader interface is pluggable — the built-in implementations target EPICS control
+systems, but custom readers can be registered for any source (databases, message
+brokers, REST APIs, etc.).
+
+**Built-in reader types:**
 
 | Reader type | Use when… |
 |---|---|
@@ -44,20 +51,26 @@ You can run multiple readers at the same time.
 | `epics-archiver` | You want **historical data** from an Archiver Appliance |
 | `epics-ds-metadata` | You want to fetch **PV metadata** (names, tags) from an EPICS Directory Service and persist it to MLDP |
 
-> 📖 Details: [epics-pvxs reader](../readers/epics-pvxs-reader.md) · [epics-base reader](../readers/epics-base-reader.md) · [archiver reader](../readers/epics-archiver-reader.md) · [epics-ds-metadata reader](../readers/epics-ds-metadata-reader.md)
+> 📖 Built-in reader docs: [epics-pvxs reader](../readers/epics-pvxs-reader.md) · [epics-base reader](../readers/epics-base-reader.md) · [archiver reader](../readers/epics-archiver-reader.md) · [epics-ds-metadata reader](../readers/epics-ds-metadata-reader.md)
+> 📖 Custom readers: [readers-implementation.md](../readers/readers-implementation.md)
 
 ### Writer — Where Data Goes
 
 A **writer** receives data batches and stores or forwards them.
 You can run multiple writers simultaneously — every batch goes to all of them.
+Like readers, the writer interface is pluggable; custom writers can be registered
+for any destination.
+
+**Built-in writer types:**
 
 | Writer type | Use when… |
 |---|---|
 | `mldp` | You want to send data to the MLDP ingestion service over gRPC |
-| `hdf5` | You want one HDF5 file per PV, stored locally |
-| `hdf5-merge` | You want all PVs in a single rotating HDF5 file |
+| `hdf5` | You want one HDF5 file per source channel, stored locally |
+| `hdf5-merge` | You want all source channels in a single rotating HDF5 file |
 
-> 📖 Details: [MLDP writer](../writers/mldp-writer.md) · [HDF5 writer](../writers/hdf5-writer.md)
+> 📖 Built-in writer docs: [MLDP writer](../writers/mldp-writer.md) · [HDF5 writer](../writers/hdf5-writer.md)
+> 📖 Custom writers: [writers-implementation.md](../writers/writers-implementation.md)
 
 ### Controller — The Glue
 
@@ -330,9 +343,52 @@ metrics:
   scan-interval-seconds: 5
 ```
 
+### Periodic File Dumps (CLI flags)
+
+In addition to the Prometheus endpoint, the driver can write metrics to a
+[JSON Lines](https://jsonlines.org/) file at a regular interval.
+These flags are passed on the command line, not in the YAML file:
+
+| Flag | Default | Description |
+|---|---|---|
+| `--metrics-output FILE` | `metrics.jsonl` | Path for periodic JSONL metric exports |
+| `--metrics-interval SECONDS` | `5` | Dump interval in seconds |
+
+```bash
+mldp_pvxs_driver -c config.yaml \
+  --metrics-output /data/metrics.jsonl \
+  --metrics-interval 30
+```
+
+> The dumper is **not started automatically** when these flags are present.
+> You must press **Ctrl+D** in the foreground terminal to start it (see below).
+
+### Runtime Controls
+
+While the driver is running in the foreground terminal:
+
+| Key / Signal | Action |
+|---|---|
+| **Ctrl+P** | Print a one-shot metrics snapshot to stdout |
+| **Ctrl+D** | **Toggle** the periodic file dumper on/off |
+| `kill -USR1 <pid>` | Same as Ctrl+P (signal-based) |
+| `kill -QUIT <pid>` | Same as Ctrl+P (signal-based) |
+
+**Ctrl+D toggle behaviour:**
+- First press → starts the dumper, writing to `--metrics-output` every `--metrics-interval` seconds.
+- Second press → stops the dumper (no more file writes until toggled on again).
+- The output file is **appended to**, not overwritten, so data from previous runs is preserved.
+
+> 📖 Full details: [metrics-export-guide.md](../metrics/metrics-export-guide.md)
+
 ---
 
 ## Choosing the Right Reader
+
+The built-in readers all target EPICS control systems. If your data source is not EPICS,
+implement a custom reader — see [readers-implementation.md](../readers/readers-implementation.md).
+
+**For EPICS data sources:**
 
 ```
 Need live data?
