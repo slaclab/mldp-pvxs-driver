@@ -23,7 +23,6 @@
 #include <BS_thread_pool.hpp>
 
 #include <atomic>
-#include <chrono>
 #include <condition_variable>
 #include <deque>
 #include <memory>
