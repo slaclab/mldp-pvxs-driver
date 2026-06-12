@@ -443,10 +443,6 @@ void MLDPWriter::workerLoop(std::size_t workerIndex)
                 m.incrementWriterPayloadBytes(static_cast<double>(payloadBytes),
                                               {{"writer", config_.name}, {"source", item.root_source}});
             });
-            metric_call(metrics_, [&](auto& m) {
-                m.setWriterPostConversionBytes(static_cast<double>(payloadBytes),
-                                               {{"writer", config_.name}, {"source", item.root_source}});
-            });
         }
 
         if (dataBatchBytes > 0)
@@ -455,31 +451,44 @@ void MLDPWriter::workerLoop(std::size_t workerIndex)
                 m.incrementWriterDataBytesTotal(static_cast<double>(dataBatchBytes),
                                                 {{"source", item.root_source}});
             });
-            const auto now = std::chrono::steady_clock::now();
+        }
+
+        if (!item.frame.timestamps.empty())
+        {
+            const auto&  ts        = item.frame.timestamps.back();
+            const double event_sec = static_cast<double>(ts.epoch_seconds)
+                                     + static_cast<double>(ts.nanoseconds) * 1e-9;
+            std::lock_guard<std::mutex> lk(lastEventTimeMutex_);
+            auto& prev = lastEventTime_[item.root_source];
+            if (prev > 0.0)
             {
-                std::lock_guard<std::mutex> lk(lastWriteTimeMutex_);
-                auto& last = lastWriteTime_[item.root_source];
-                if (last != std::chrono::steady_clock::time_point{})
+                const double delta_sec = event_sec - prev;
+                if (delta_sec > 0.0)  // new pulse only; same-pulse columns → skip
                 {
-                    const double interval_ms = std::chrono::duration<double, std::milli>(
-                        now - last).count();
-                    if (interval_ms > 0.0)
-                    {
-                        const double bps = (static_cast<double>(dataBatchBytes) * 1000.0) / interval_ms;
+                    if (dataBatchBytes > 0)
                         metric_call(metrics_, [&](auto& m) {
-                            m.setWriterDataBytesPerSecond(bps, {{"source", item.root_source}});
+                            m.setWriterDataBytesPerSecond(
+                                static_cast<double>(dataBatchBytes) / delta_sec,
+                                {{"source", item.root_source}});
                         });
-                        if (payloadBytes > 0)
-                        {
-                            const double payload_bps = (static_cast<double>(payloadBytes) * 1000.0) / interval_ms;
-                            metric_call(metrics_, [&](auto& m) {
-                                m.setWriterPayloadBytesPerSecond(payload_bps, {{"writer", config_.name}, {"source", item.root_source}});
-                            });
-                        }
+                    if (payloadBytes > 0)
+                    {
+                        const double payload_bps = static_cast<double>(payloadBytes) / delta_sec;
+                        metric_call(metrics_, [&](auto& m) {
+                            m.setWriterPayloadBytesPerSecond(
+                                payload_bps,
+                                {{"writer", config_.name}, {"source", item.root_source}});
+                        });
+                        metric_call(metrics_, [&](auto& m) {
+                            m.setWriterPostConvDataBytesPerSecond(
+                                payload_bps,
+                                {{"writer", config_.name}, {"source", item.root_source}});
+                        });
                     }
                 }
-                last = now;
             }
+            if (prev <= 0.0 || event_sec > prev)
+                prev = event_sec;
         }
         record_send_time({{"source", item.root_source}});
 

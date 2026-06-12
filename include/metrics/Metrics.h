@@ -110,7 +110,8 @@ public:
     void   setWriterDataBytesPerSecond(double value, prometheus::Labels tags = {});
     double writerDataBytesTotal(prometheus::Labels tags = {}) const;
     double writerDataBytesPerSecond(prometheus::Labels tags = {}) const;
-    void   setWriterPostConversionBytes(double value, prometheus::Labels tags = {});
+    void   setWriterPostConvDataBytesPerSecond(double value, prometheus::Labels tags = {});
+    double writerPostConvDataBytesPerSecond(prometheus::Labels tags = {}) const;
 
 private:
     MetricsConfig                         config_;
@@ -151,7 +152,7 @@ private:
 
     prometheus::Family<prometheus::Counter>* writer_data_bytes_family_{nullptr};
     prometheus::Family<prometheus::Gauge>*   writer_data_bytes_per_second_family_{nullptr};
-    prometheus::Family<prometheus::Gauge>*   writer_post_conversion_bytes_family_{nullptr};
+    prometheus::Family<prometheus::Gauge>*   writer_post_conv_data_bytes_per_second_family_{nullptr};
 
     std::unique_ptr<prometheus::Exposer> exposer_;
 

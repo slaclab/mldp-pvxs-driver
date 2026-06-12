@@ -206,14 +206,6 @@ void HDF5WriterBase::writerLoop()
                         const std::size_t dataBatchBytes = util::bus::estimateDataBatchBytes(frame);
                         const auto        t0 = std::chrono::steady_clock::now();
                         const std::size_t postBytes = writeFrameImpl(ts.root_source_name, frame, entry.batchSeq);
-                        if (postBytes > 0)
-                        {
-                            metric_call(metrics_, [&](auto& m) {
-                                m.setWriterPostConversionBytes(
-                                    static_cast<double>(postBytes),
-                                    {{"writer", config_.name}, {"source", ts.root_source_name}});
-                            });
-                        }
                         const double ms = std::chrono::duration<double, std::milli>(
                                               std::chrono::steady_clock::now() - t0)
                                               .count();
@@ -225,24 +217,35 @@ void HDF5WriterBase::writerLoop()
                                 m.incrementWriterDataBytesTotal(static_cast<double>(dataBatchBytes),
                                                                 {{"source", ts.root_source_name}});
                             });
-                            const auto now = std::chrono::steady_clock::now();
+                        }
+                        if (!frame.timestamps.empty())
+                        {
+                            const auto&  tse       = frame.timestamps.back();
+                            const double event_sec = static_cast<double>(tse.epoch_seconds)
+                                                     + static_cast<double>(tse.nanoseconds) * 1e-9;
+                            std::lock_guard<std::mutex> lk(lastEventTimeMutex_);
+                            auto& prev = lastEventTime_[ts.root_source_name];
+                            if (prev > 0.0)
                             {
-                                std::lock_guard<std::mutex> lk(lastWriteTimeMutex_);
-                                auto& last = lastWriteTime_[ts.root_source_name];
-                                if (last != std::chrono::steady_clock::time_point{})
+                                const double delta_sec = event_sec - prev;
+                                if (delta_sec > 0.0)
                                 {
-                                    const double interval_ms = std::chrono::duration<double, std::milli>(
-                                        now - last).count();
-                                    if (interval_ms > 0.0)
-                                    {
-                                        const double bps = static_cast<double>(dataBatchBytes) * 1000.0 / interval_ms;
+                                    if (dataBatchBytes > 0)
                                         metric_call(metrics_, [&](auto& m) {
-                                            m.setWriterDataBytesPerSecond(bps, {{"source", ts.root_source_name}});
+                                            m.setWriterDataBytesPerSecond(
+                                                static_cast<double>(dataBatchBytes) / delta_sec,
+                                                {{"source", ts.root_source_name}});
                                         });
-                                    }
+                                    if (postBytes > 0)
+                                        metric_call(metrics_, [&](auto& m) {
+                                            m.setWriterPostConvDataBytesPerSecond(
+                                                static_cast<double>(postBytes) / delta_sec,
+                                                {{"writer", config_.name}, {"source", ts.root_source_name}});
+                                        });
                                 }
-                                last = now;
                             }
+                            if (prev <= 0.0 || event_sec > prev)
+                                prev = event_sec;
                         }
                     }
                     if (writerMetrics_)

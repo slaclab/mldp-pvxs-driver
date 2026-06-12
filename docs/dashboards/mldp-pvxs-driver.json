@@ -757,11 +757,11 @@
             "lineWidth": 1,
             "fillOpacity": 10
           },
-          "unit": "bytes"
+          "unit": "Bps"
         },
         "overrides": []
       },
-      "description": "Byte size of the most recently written frame in the writer's native format: protobuf payload bytes for MLDP, estimated HDF5 layout bytes (rows × columns × 8) for HDF5. Compare with writer_data_bytes to understand conversion expansion or compression.",
+      "description": "Post-conversion output bytes/second per writer and source. Symmetric to Reader Data Throughput — compare input vs output rate to detect encoding expansion.",
       "gridPos": {
         "h": 8,
         "w": 24,
@@ -784,12 +784,12 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "mldp_pvxs_driver_writer_post_conversion_bytes{controller=~\"$controller\",writer=~\"$writer\"}",
+          "expr": "mldp_pvxs_driver_writer_post_conv_data_bytes_per_second{controller=~\"$controller\",writer=~\"$writer\"}",
           "legendFormat": "{{writer}} / {{source}}",
           "refId": "A"
         }
       ],
-      "title": "Writer Post-Conversion Frame Size",
+      "title": "Writer Post-Conversion Output Rate",
       "type": "timeseries"
     },
     {

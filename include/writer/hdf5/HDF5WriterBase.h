@@ -211,9 +211,9 @@ private:
                                        const util::bus::DataBatch& batch,
                                        TabularBuffer&              buf);
     static bool isTabularBatch(const util::bus::IDataBus::EventBatch& batch);
-    /// Last write wall-clock time per source, used for inter-arrival Bps gauge.
-    std::mutex                                                               lastWriteTimeMutex_;
-    std::unordered_map<std::string, std::chrono::steady_clock::time_point>  lastWriteTime_;
+    /// Last EPICS event timestamp per source, used for inter-arrival Bps gauge.
+    std::mutex                              lastEventTimeMutex_;
+    std::unordered_map<std::string, double> lastEventTime_;  // EPICS epoch seconds
 };
 
 } // namespace mldp_pvxs_driver::writer

@@ -99,7 +99,7 @@ Metrics::Metrics(const MetricsConfig& config, std::string controller_name)
     writer_stream_rotations_family_ = &makeCounterFamily(*registry_, "mldp_pvxs_driver_writer_stream_rotations_total", "Number of gRPC ingestion stream open/close cycles by reason.", clabels);
     writer_data_bytes_family_ = &makeCounterFamily(*registry_, "mldp_pvxs_driver_writer_data_bytes_total", "Total estimated raw in-memory DataBatch bytes delivered to a writer (pre-serialisation; labeled by source).", clabels);
     writer_data_bytes_per_second_family_ = &makeGaugeFamily(*registry_, "mldp_pvxs_driver_writer_data_bytes_per_second", "Estimated raw DataBatch bytes/second for the most recent writer processing cycle (labeled by source).", clabels);
-    writer_post_conversion_bytes_family_ = &makeGaugeFamily(*registry_, "mldp_pvxs_driver_writer_post_conversion_bytes", "Post-conversion byte size of the most recent frame written by this writer (labeled by writer and source).", clabels);
+    writer_post_conv_data_bytes_per_second_family_ = &makeGaugeFamily(*registry_, "mldp_pvxs_driver_writer_post_conv_data_bytes_per_second", "Post-conversion output bytes/second per writer and source. Symmetric to mldp_pvxs_driver_reader_data_bytes_per_second on the output side.", clabels);
     // System CPU metrics
     process_cpu_user_ticks_family_ = &makeCounterFamily(*registry_, "mldp_pvxs_driver_process_cpu_user_ticks_total", "Total user CPU time in clock ticks.", clabels);
     process_cpu_user_ticks_family_->Add({});
@@ -510,7 +510,12 @@ double Metrics::writerDataBytesPerSecond(prometheus::Labels tags) const
     return writer_data_bytes_per_second_family_->Add(std::move(tags)).Value();
 }
 
-void Metrics::setWriterPostConversionBytes(double value, prometheus::Labels tags)
+void Metrics::setWriterPostConvDataBytesPerSecond(double value, prometheus::Labels tags)
 {
-    writer_post_conversion_bytes_family_->Add(std::move(tags)).Set(value);
+    writer_post_conv_data_bytes_per_second_family_->Add(std::move(tags)).Set(value);
+}
+
+double Metrics::writerPostConvDataBytesPerSecond(prometheus::Labels tags) const
+{
+    return writer_post_conv_data_bytes_per_second_family_->Add(std::move(tags)).Value();
 }

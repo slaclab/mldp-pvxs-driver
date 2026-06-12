@@ -116,9 +116,9 @@ private:
     std::atomic<std::size_t>                                          queuedItems_{0};
     std::atomic<bool>                                                 running_{false};
 
-    /// Last write wall-clock time per source, used for inter-arrival Bps gauge.
-    std::mutex                                                               lastWriteTimeMutex_;
-    std::unordered_map<std::string, std::chrono::steady_clock::time_point>  lastWriteTime_;
+    /// Last EPICS event timestamp per source, used for inter-arrival Bps gauge.
+    std::mutex                              lastEventTimeMutex_;
+    std::unordered_map<std::string, double> lastEventTime_;  // EPICS epoch seconds
 
     void                                  workerLoop(std::size_t workerIndex);
     bool                                  buildRequest(const std::string&                                  sourceName,
