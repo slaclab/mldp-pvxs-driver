@@ -495,7 +495,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "expr": "mldp_pvxs_driver_writer_payload_bytes_per_second{controller=~\"$controller\",writer=~\"$writer\"}",
-          "legendFormat": "instant Bps {{controller}} {{writer}}",
+          "legendFormat": "instant Bps {{controller}} {{writer}} {{source}}",
           "refId": "A"
         },
         {

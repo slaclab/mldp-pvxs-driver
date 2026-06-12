@@ -17,7 +17,9 @@
 #include <util/StringFormat.h>
 #include <util/log/Logger.h>
 
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 
 using namespace mldp_pvxs_driver::reader::impl::epics;
 using namespace mldp_pvxs_driver::util::log;
@@ -90,6 +92,81 @@ std::size_t estimatePvxsValueBytes(const pvxs::Value& v)
     }
     default: return 0;
     }
+}
+
+/// Remove rows where any float/double scalar column carries NaN.
+/// Compacts timestamps, all columns, and enum columns in-place.
+/// Returns true if at least one valid row survives; false means discard the batch.
+bool filterNanRows(DataBatch& batch)
+{
+    const std::size_t n = batch.timestamps.size();
+    if (n == 0)
+        return false;
+
+    std::vector<bool> keep(n, true);
+    for (const auto& col : batch.columns)
+    {
+        std::visit(
+            [&](const auto& vals)
+            {
+                using T = std::decay_t<decltype(vals)>;
+                if constexpr (std::is_same_v<T, std::vector<float>>)
+                {
+                    for (std::size_t i = 0; i < std::min(n, vals.size()); ++i)
+                        if (std::isnan(vals[i]))
+                            keep[i] = false;
+                }
+                else if constexpr (std::is_same_v<T, std::vector<double>>)
+                {
+                    for (std::size_t i = 0; i < std::min(n, vals.size()); ++i)
+                        if (std::isnan(vals[i]))
+                            keep[i] = false;
+                }
+            },
+            col.values);
+    }
+
+    if (!std::any_of(keep.begin(), keep.end(), [](bool k) { return k; }))
+        return false;
+    if (std::all_of(keep.begin(), keep.end(), [](bool k) { return k; }))
+        return true;
+
+    // Compact timestamps.
+    std::vector<TimestampEntry> newTs;
+    newTs.reserve(n);
+    for (std::size_t i = 0; i < n; ++i)
+        if (keep[i])
+            newTs.push_back(batch.timestamps[i]);
+    batch.timestamps = std::move(newTs);
+
+    // Compact each column.
+    for (auto& col : batch.columns)
+    {
+        std::visit(
+            [&](auto& vals)
+            {
+                std::decay_t<decltype(vals)> compacted;
+                compacted.reserve(vals.size());
+                for (std::size_t i = 0; i < std::min(n, vals.size()); ++i)
+                    if (keep[i])
+                        compacted.push_back(std::move(vals[i]));
+                vals = std::move(compacted);
+            },
+            col.values);
+    }
+
+    // Compact enum columns.
+    for (auto& ec : batch.enum_columns)
+    {
+        std::vector<int32_t> compacted;
+        compacted.reserve(ec.values.size());
+        for (std::size_t i = 0; i < std::min(n, ec.values.size()); ++i)
+            if (keep[i])
+                compacted.push_back(ec.values[i]);
+        ec.values = std::move(compacted);
+    }
+
+    return true;
 }
 } // namespace
 
@@ -218,6 +295,12 @@ void EpicsPVXSReader::processDefaultMode(const std::string& pvName, const pvxs::
     batch.timestamps.push_back(TimestampEntry{epoch_seconds, nanoseconds});
     EpicsMLDPConversion::convertPVToDataBatch(valueField, &batch, pvName);
 
+    if (!filterNanRows(batch))
+    {
+        tracef(*logger_, "[{}/{}] discarding event: value is NaN", name_, pvName);
+        return;
+    }
+
     IDataBus::EventBatch eventBatch;
     // Build merged metadata: reader-level base, PV-level overrides
     auto merged = config_.staticMetadata();
@@ -287,6 +370,7 @@ void EpicsPVXSReader::processSlacBsasTableMode(const std::string&     pvName,
             runtimeCfg ? runtimeCfg->tsNanosField : "nanoseconds",
             [&](std::string colName, std::vector<DataBatch> batches)
             {
+                bool colHasData = false;
                 for (auto& b : batches)
                 {
                     if (!hasTimestamp(b))
@@ -296,8 +380,16 @@ void EpicsPVXSReader::processSlacBsasTableMode(const std::string&     pvName,
                             sourceTag);
                         continue;
                     }
+                    if (!filterNanRows(b))
+                    {
+                        tracef(*logger_, "[{}/{}] column {} all-NaN — discarding", name_, pvName, colName);
+                        continue;
+                    }
                     std::get<TimeSeriesPayload>(tableBatch.payload).frames.push_back(std::move(b));
+                    colHasData = true;
                 }
+                if (!colHasData)
+                    return;
                 ++colsInBatch;
                 if (colBatchSize > 0 && colsInBatch >= colBatchSize)
                 {

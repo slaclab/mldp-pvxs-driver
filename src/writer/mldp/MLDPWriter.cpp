@@ -437,9 +437,6 @@ void MLDPWriter::workerLoop(std::size_t workerIndex)
                                                   {{"writer", config_.name}, {"source", item.root_source}});
                         });
         }
-        const auto   elapsed = std::chrono::steady_clock::now() - itemStart;
-        const double ms      = std::chrono::duration<double, std::milli>(elapsed).count();
-
         if (payloadBytes > 0)
         {
             metric_call(metrics_, [&](auto& m) {
@@ -450,13 +447,6 @@ void MLDPWriter::workerLoop(std::size_t workerIndex)
                 m.setWriterPostConversionBytes(static_cast<double>(payloadBytes),
                                                {{"writer", config_.name}, {"source", item.root_source}});
             });
-            if (ms > 0.0)
-            {
-                const double bps = (static_cast<double>(payloadBytes) * 1000.0) / ms;
-                metric_call(metrics_, [&](auto& m) {
-                    m.setWriterPayloadBytesPerSecond(bps, {{"writer", config_.name}, {"source", item.root_source}});
-                });
-            }
         }
 
         if (dataBatchBytes > 0)
@@ -479,6 +469,13 @@ void MLDPWriter::workerLoop(std::size_t workerIndex)
                         metric_call(metrics_, [&](auto& m) {
                             m.setWriterDataBytesPerSecond(bps, {{"source", item.root_source}});
                         });
+                        if (payloadBytes > 0)
+                        {
+                            const double payload_bps = (static_cast<double>(payloadBytes) * 1000.0) / interval_ms;
+                            metric_call(metrics_, [&](auto& m) {
+                                m.setWriterPayloadBytesPerSecond(payload_bps, {{"writer", config_.name}, {"source", item.root_source}});
+                            });
+                        }
                     }
                 }
                 last = now;

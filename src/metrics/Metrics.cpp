@@ -102,9 +102,13 @@ Metrics::Metrics(const MetricsConfig& config, std::string controller_name)
     writer_post_conversion_bytes_family_ = &makeGaugeFamily(*registry_, "mldp_pvxs_driver_writer_post_conversion_bytes", "Post-conversion byte size of the most recent frame written by this writer (labeled by writer and source).", clabels);
     // System CPU metrics
     process_cpu_user_ticks_family_ = &makeCounterFamily(*registry_, "mldp_pvxs_driver_process_cpu_user_ticks_total", "Total user CPU time in clock ticks.", clabels);
+    process_cpu_user_ticks_family_->Add({});
     process_cpu_system_ticks_family_ = &makeCounterFamily(*registry_, "mldp_pvxs_driver_process_cpu_system_ticks_total", "Total system CPU time in clock ticks.", clabels);
+    process_cpu_system_ticks_family_->Add({});
     process_cpu_children_user_ticks_family_ = &makeCounterFamily(*registry_, "mldp_pvxs_driver_process_cpu_children_user_ticks_total", "Total children user CPU time in clock ticks.", clabels);
+    process_cpu_children_user_ticks_family_->Add({});
     process_cpu_children_system_ticks_family_ = &makeCounterFamily(*registry_, "mldp_pvxs_driver_process_cpu_children_system_ticks_total", "Total children system CPU time in clock ticks.", clabels);
+    process_cpu_children_system_ticks_family_->Add({});
     // System memory metrics
     process_memory_virtual_bytes_family_ = &makeGaugeFamily(*registry_, "mldp_pvxs_driver_process_memory_virtual_bytes", "Current virtual memory size in bytes.", clabels);
     process_memory_rss_bytes_family_ = &makeGaugeFamily(*registry_, "mldp_pvxs_driver_process_memory_rss_bytes", "Current resident set size in bytes.", clabels);
@@ -115,11 +119,16 @@ Metrics::Metrics(const MetricsConfig& config, std::string controller_name)
     process_memory_rss_total_bytes_family_ = &makeGaugeFamily(*registry_, "mldp_pvxs_driver_process_memory_rss_total_bytes", "Total RSS (anon + file + shmem) in bytes.", clabels);
     // System I/O metrics
     process_io_read_bytes_family_ = &makeCounterFamily(*registry_, "mldp_pvxs_driver_process_io_read_bytes_total", "Total bytes read from storage.", clabels);
+    process_io_read_bytes_family_->Add({});
     process_io_write_bytes_family_ = &makeCounterFamily(*registry_, "mldp_pvxs_driver_process_io_write_bytes_total", "Total bytes written to storage.", clabels);
+    process_io_write_bytes_family_->Add({});
     process_io_cancelled_write_bytes_family_ = &makeCounterFamily(*registry_, "mldp_pvxs_driver_process_io_cancelled_write_bytes_total", "Total bytes cancelled before write.", clabels);
+    process_io_cancelled_write_bytes_family_->Add({});
     // System context switch metrics
     process_context_switches_voluntary_family_ = &makeCounterFamily(*registry_, "mldp_pvxs_driver_process_context_switches_voluntary_total", "Total voluntary context switches.", clabels);
+    process_context_switches_voluntary_family_->Add({});
     process_context_switches_involuntary_family_ = &makeCounterFamily(*registry_, "mldp_pvxs_driver_process_context_switches_involuntary_total", "Total involuntary context switches.", clabels);
+    process_context_switches_involuntary_family_->Add({});
     // System file descriptor metrics
     process_fds_open_family_ = &makeGaugeFamily(*registry_, "mldp_pvxs_driver_process_fds_open", "Number of open file descriptors.", clabels);
     // System thread metrics
