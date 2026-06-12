@@ -104,6 +104,9 @@ private:
         bool                    shutdown{false};
     };
 
+    /// gRPC stream state owned by one worker for its lifetime.
+    struct StreamState;
+
     MLDPWriterConfig                                                  config_;
     std::shared_ptr<mldp_pvxs_driver::util::log::ILogger>             logger_;
     std::shared_ptr<metrics::Metrics>                                 metrics_;
@@ -120,6 +123,8 @@ private:
     std::unordered_map<std::string, double> lastEventTime_;  // EPICS epoch seconds
 
     void                                  workerLoop(std::size_t workerIndex);
+    void                                  closeStream(StreamState& state, const char* reason) noexcept;
+    bool                                  ensureStream(StreamState& state);
     bool                                  buildRequest(const std::string&                                  sourceName,
                                                        const util::bus::DataBatch&                         batch,
                                                        const std::string&                                  requestId,
