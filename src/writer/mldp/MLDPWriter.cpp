@@ -446,6 +446,10 @@ void MLDPWriter::workerLoop(std::size_t workerIndex)
                 m.incrementWriterPayloadBytes(static_cast<double>(payloadBytes),
                                               {{"writer", config_.name}, {"source", item.root_source}});
             });
+            metric_call(metrics_, [&](auto& m) {
+                m.setWriterPostConversionBytes(static_cast<double>(payloadBytes),
+                                               {{"writer", config_.name}, {"source", item.root_source}});
+            });
             if (ms > 0.0)
             {
                 const double bps = (static_cast<double>(payloadBytes) * 1000.0) / ms;
@@ -461,12 +465,23 @@ void MLDPWriter::workerLoop(std::size_t workerIndex)
                 m.incrementWriterDataBytesTotal(static_cast<double>(dataBatchBytes),
                                                 {{"source", item.root_source}});
             });
-            if (ms > 0.0)
+            const auto now = std::chrono::steady_clock::now();
             {
-                const double bps = (static_cast<double>(dataBatchBytes) * 1000.0) / ms;
-                metric_call(metrics_, [&](auto& m) {
-                    m.setWriterDataBytesPerSecond(bps, {{"source", item.root_source}});
-                });
+                std::lock_guard<std::mutex> lk(lastWriteTimeMutex_);
+                auto& last = lastWriteTime_[item.root_source];
+                if (last != std::chrono::steady_clock::time_point{})
+                {
+                    const double interval_ms = std::chrono::duration<double, std::milli>(
+                        now - last).count();
+                    if (interval_ms > 0.0)
+                    {
+                        const double bps = (static_cast<double>(dataBatchBytes) * 1000.0) / interval_ms;
+                        metric_call(metrics_, [&](auto& m) {
+                            m.setWriterDataBytesPerSecond(bps, {{"source", item.root_source}});
+                        });
+                    }
+                }
+                last = now;
             }
         }
         record_send_time({{"source", item.root_source}});

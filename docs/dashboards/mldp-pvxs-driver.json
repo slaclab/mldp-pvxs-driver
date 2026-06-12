@@ -94,6 +94,7 @@
         },
         "overrides": []
       },
+      "description": "Rate of EPICS PV updates received from subscriptions (received) versus successfully converted and forwarded to the bus (processed). A gap between the two lines indicates events dropped during conversion.",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -152,6 +153,7 @@
         },
         "overrides": []
       },
+      "description": "Rate of errors encountered while processing EPICS PV updates, broken down by source PV. Sustained errors may indicate connectivity issues or unsupported PV types.",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -200,6 +202,7 @@
         },
         "overrides": []
       },
+      "description": "Percentile latencies (p50/p90/p99) of the CPU time spent converting a single EPICS PV update into a DataBatch, broken down by source PV. High values indicate conversion bottlenecks, not network delays.",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -222,8 +225,8 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "histogram_quantile(0.50, sum(rate(mldp_pvxs_driver_reader_processing_time_ms_bucket{controller=~\"$controller\"}[$__rate_interval])) by (le, controller))",
-          "legendFormat": "p50",
+          "expr": "histogram_quantile(0.50, sum(rate(mldp_pvxs_driver_reader_processing_time_ms_bucket{controller=~\"$controller\"}[$__rate_interval])) by (le, controller, source))",
+          "legendFormat": "p50 {{source}}",
           "refId": "A"
         },
         {
@@ -231,8 +234,8 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "histogram_quantile(0.90, sum(rate(mldp_pvxs_driver_reader_processing_time_ms_bucket{controller=~\"$controller\"}[$__rate_interval])) by (le, controller))",
-          "legendFormat": "p90",
+          "expr": "histogram_quantile(0.90, sum(rate(mldp_pvxs_driver_reader_processing_time_ms_bucket{controller=~\"$controller\"}[$__rate_interval])) by (le, controller, source))",
+          "legendFormat": "p90 {{source}}",
           "refId": "B"
         },
         {
@@ -240,8 +243,8 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "histogram_quantile(0.99, sum(rate(mldp_pvxs_driver_reader_processing_time_ms_bucket{controller=~\"$controller\"}[$__rate_interval])) by (le, controller))",
-          "legendFormat": "p99",
+          "expr": "histogram_quantile(0.99, sum(rate(mldp_pvxs_driver_reader_processing_time_ms_bucket{controller=~\"$controller\"}[$__rate_interval])) by (le, controller, source))",
+          "legendFormat": "p99 {{source}}",
           "refId": "C"
         }
       ],
@@ -266,6 +269,7 @@
         },
         "overrides": []
       },
+      "description": "Current depth of the reader work queue (updates waiting to be dispatched) and the reader thread-pool queue (updates waiting for a worker thread). Sustained non-zero values indicate the reader is falling behind.",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -323,6 +327,7 @@
         },
         "overrides": []
       },
+      "description": "Raw DataBatch byte throughput at the reader. 'instant Bps' is the inter-arrival rate of the last two events; 'avg rate' is the time-averaged rate over the Prometheus scrape window. Both should match the actual PV update bandwidth.",
       "gridPos": {
         "h": 8,
         "w": 24,
@@ -408,6 +413,7 @@
           }
         ]
       },
+      "description": "Rate of successful event pushes to the MLDP ingestion service versus failures, broken down by writer and source. A rising failure rate with stable push rate indicates gRPC or network issues.",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -465,6 +471,7 @@
         },
         "overrides": []
       },
+      "description": "Protobuf-serialized payload bytes per second sent to the MLDP ingestion service. 'instant Bps' uses write-latency as denominator; 'avg rate' is time-averaged. Reflects the actual wire bandwidth consumed by the gRPC stream.",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -522,6 +529,7 @@
         },
         "overrides": []
       },
+      "description": "Percentile latencies (p50/p90/p99) of the time the controller takes to route and dispatch a single event batch from readers to writers. Includes bus routing overhead but not writer I/O time.",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -588,6 +596,7 @@
         },
         "overrides": []
       },
+      "description": "Current depth of the main controller task queue and the per-worker channel queues. Rising depths indicate writers or the network cannot keep up with incoming event batches.",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -645,6 +654,7 @@
         },
         "overrides": []
       },
+      "description": "Rate of gRPC ingestion stream open/close cycles, labelled by the reason (e.g. threshold reached, error, shutdown). High rotation rate may increase connection overhead.",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -693,6 +703,7 @@
         },
         "overrides": []
       },
+      "description": "Raw DataBatch bytes delivered to all writers from the bus, before any serialization. 'instant Bps' is inter-arrival rate; 'avg rate' is time-averaged. Compare with Reader Data Throughput to detect routing losses.",
       "gridPos": {
         "h": 8,
         "w": 24,
@@ -733,12 +744,61 @@
       "type": "timeseries"
     },
     {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "description": "Byte size of the most recently written frame in the writer's native format: protobuf payload bytes for MLDP, estimated HDF5 layout bytes (rows × columns × 8) for HDF5. Compare with writer_data_bytes to understand conversion expansion or compression.",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 58
+      },
+      "id": 28,
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "mldp_pvxs_driver_writer_post_conversion_bytes{controller=~\"$controller\",writer=~\"$writer\"}",
+          "legendFormat": "{{writer}} / {{source}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Writer Post-Conversion Frame Size",
+      "type": "timeseries"
+    },
+    {
       "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 58
+        "y": 66
       },
       "id": 102,
       "title": "gRPC Connection Pool",
@@ -766,11 +826,12 @@
         },
         "overrides": []
       },
+      "description": "Stacked view of gRPC connection pool utilization: connections currently in use (active writes) versus connections available (idle, ready for reuse). Helps size the pool and detect saturation.",
       "gridPos": {
         "h": 8,
         "w": 16,
         "x": 0,
-        "y": 59
+        "y": 67
       },
       "id": 10,
       "options": {
@@ -836,11 +897,12 @@
         },
         "overrides": []
       },
+      "description": "Current number of gRPC connections actively performing writes. A single stat gauge for at-a-glance pool pressure.",
       "gridPos": {
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 59
+        "y": 67
       },
       "id": 11,
       "options": {
@@ -897,6 +959,7 @@
         },
         "overrides": []
       },
+      "description": "Rate at which the algorithm processor fires (computes outputs) versus snapshot misses (fires attempted but source data not yet available). High miss rate means the processor is firing faster than the readers can supply data.",
       "gridPos": {
         "h": 8,
         "w": 8,
@@ -954,6 +1017,7 @@
         },
         "overrides": []
       },
+      "description": "Percentile latencies (p50/p90/p99) of a single algorithm compute cycle in microseconds. Tracks the CPU cost of the user-supplied computation.",
       "gridPos": {
         "h": 8,
         "w": 8,
@@ -1036,6 +1100,7 @@
           }
         ]
       },
+      "description": "Current depth of per-source sample buffers retained for the next compute cycle (left axis) and rate of compute errors (right axis). Deep buffers indicate slow processing; errors indicate exceptions in the user algorithm.",
       "gridPos": {
         "h": 8,
         "w": 8,
@@ -1105,6 +1170,7 @@
         },
         "overrides": []
       },
+      "description": "Rate of HDF5 batch commits and individual data rows written per second, broken down by writer and source. Rows/s reflects the actual time-series density landing in HDF5 files.",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -1162,6 +1228,7 @@
         },
         "overrides": []
       },
+      "description": "Rate of estimated post-conversion bytes written to HDF5 files, calculated as rows × columns × 8 bytes. Reflects the raw file growth rate before any HDF5 compression.",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -1241,6 +1308,7 @@
           }
         ]
       },
+      "description": "Current depth of the HDF5 write queue (batches waiting to be written), rate of queue drops (batches discarded because queue was full), and rate of HDF5 write errors. Rising drops mean the disk cannot keep up.",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -1307,6 +1375,7 @@
         },
         "overrides": []
       },
+      "description": "Percentile latencies (p50/p90/p99) of individual HDF5 frame write operations in milliseconds. High latency may indicate I/O saturation or large frame sizes.",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -1373,6 +1442,7 @@
         },
         "overrides": []
       },
+      "description": "Rate of HDF5 file rotations (old file closed, new file opened), broken down by writer and source. Rotations occur when a file reaches the configured max size or the writer is restarted.",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -1433,6 +1503,7 @@
         },
         "overrides": []
       },
+      "description": "Linux /proc/stat CPU time consumed by the driver process in clock ticks per second, split into user, system, and children (user/system). Divide by sysconf(_SC_CLK_TCK) (typically 100) to convert to CPU seconds/second.",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -1508,6 +1579,7 @@
         },
         "overrides": []
       },
+      "description": "Process memory breakdown from /proc/status: total RSS, virtual size, peak virtual size, and RSS split into anonymous, file-backed, and shared-memory pages. Useful for detecting memory leaks or unexpected growth.",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -1610,6 +1682,7 @@
         },
         "overrides": []
       },
+      "description": "Process I/O bytes per second from /proc/io: bytes read from and written to storage, plus cancelled writes (writes later invalidated before reaching disk).",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -1676,6 +1749,7 @@
         },
         "overrides": []
       },
+      "description": "Current number of open file descriptors and active threads in the driver process. Rising FD count may indicate descriptor leaks; rising thread count may indicate runaway thread creation.",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -1733,6 +1807,7 @@
         },
         "overrides": []
       },
+      "description": "Rate of voluntary (process yielded the CPU) and involuntary (kernel preempted the process) context switches. High involuntary switches indicate CPU contention from other processes on the host.",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -1790,6 +1865,7 @@
         },
         "overrides": []
       },
+      "description": "Current Linux scheduling priority and nice value of the driver process. Lower nice = higher CPU priority. Useful for confirming the driver runs at the expected scheduling tier.",
       "gridPos": {
         "h": 8,
         "w": 12,

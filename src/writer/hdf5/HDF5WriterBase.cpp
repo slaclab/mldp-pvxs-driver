@@ -205,7 +205,15 @@ void HDF5WriterBase::writerLoop()
                     {
                         const std::size_t dataBatchBytes = util::bus::estimateDataBatchBytes(frame);
                         const auto        t0 = std::chrono::steady_clock::now();
-                        writeFrameImpl(ts.root_source_name, frame, entry.batchSeq);
+                        const std::size_t postBytes = writeFrameImpl(ts.root_source_name, frame, entry.batchSeq);
+                        if (postBytes > 0)
+                        {
+                            metric_call(metrics_, [&](auto& m) {
+                                m.setWriterPostConversionBytes(
+                                    static_cast<double>(postBytes),
+                                    {{"writer", config_.name}, {"source", ts.root_source_name}});
+                            });
+                        }
                         const double ms = std::chrono::duration<double, std::milli>(
                                               std::chrono::steady_clock::now() - t0)
                                               .count();
@@ -217,12 +225,23 @@ void HDF5WriterBase::writerLoop()
                                 m.incrementWriterDataBytesTotal(static_cast<double>(dataBatchBytes),
                                                                 {{"source", ts.root_source_name}});
                             });
-                            if (ms > 0.0)
+                            const auto now = std::chrono::steady_clock::now();
                             {
-                                const double bps = static_cast<double>(dataBatchBytes) * 1000.0 / ms;
-                                metric_call(metrics_, [&](auto& m) {
-                                    m.setWriterDataBytesPerSecond(bps, {{"source", ts.root_source_name}});
-                                });
+                                std::lock_guard<std::mutex> lk(lastWriteTimeMutex_);
+                                auto& last = lastWriteTime_[ts.root_source_name];
+                                if (last != std::chrono::steady_clock::time_point{})
+                                {
+                                    const double interval_ms = std::chrono::duration<double, std::milli>(
+                                        now - last).count();
+                                    if (interval_ms > 0.0)
+                                    {
+                                        const double bps = static_cast<double>(dataBatchBytes) * 1000.0 / interval_ms;
+                                        metric_call(metrics_, [&](auto& m) {
+                                            m.setWriterDataBytesPerSecond(bps, {{"source", ts.root_source_name}});
+                                        });
+                                    }
+                                }
+                                last = now;
                             }
                         }
                     }

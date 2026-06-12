@@ -486,7 +486,6 @@ static std::string buildMergeYaml(const std::string& pv_a,
         "      - name: reader-a\n"
         "        pvs:\n"
         "          - name: " + pv_a + "\n"
-        "  - epics-pvxs:\n"
         "      - name: reader-b\n"
         "        pvs:\n"
         "          - name: " + pv_b + "\n"

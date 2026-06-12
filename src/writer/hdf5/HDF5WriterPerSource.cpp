@@ -69,9 +69,9 @@ void HDF5WriterPerSource::doFlushAll() noexcept
 // writeFrameImpl
 // ---------------------------------------------------------------------------
 
-void HDF5WriterPerSource::writeFrameImpl(const std::string&          source,
-                                         const util::bus::DataBatch& frame,
-                                         uint64_t                    batchSeq)
+std::size_t HDF5WriterPerSource::writeFrameImpl(const std::string&          source,
+                                                const util::bus::DataBatch& frame,
+                                                uint64_t                    batchSeq)
 {
     auto ev = pool_->acquire(source);
 
@@ -94,6 +94,7 @@ void HDF5WriterPerSource::writeFrameImpl(const std::string&          source,
             writerMetrics_->incrementRowsWritten(source, static_cast<double>(frame.timestamps.size()));
         }
     }
+    return static_cast<std::size_t>(written);
 }
 
 // ---------------------------------------------------------------------------

@@ -27,8 +27,11 @@
 
 #include <prometheus/labels.h>
 
+#include <chrono>
 #include <mutex>
+#include <string>
 #include <string_view>
+#include <unordered_map>
 
 namespace mldp_pvxs_driver::reader::impl::epics {
 
@@ -174,6 +177,8 @@ private:
     mutable std::mutex                                          subscriptions_mutex_; ///< Protects subscription operations.
     pvxs::client::Context                                       pva_context_;         ///< PVXS client context.
     pvxs::MPMCFIFO<std::shared_ptr<pvxs::client::Subscription>> m_pva_subscriptions;  ///< Active subscriptions.
+    /// Last event wall-clock time per PV, used for inter-arrival Bps gauge.
+    std::unordered_map<std::string, std::chrono::steady_clock::time_point> last_event_time_;
 
     REGISTER_READER("epics-pvxs", EpicsPVXSReader)
 };

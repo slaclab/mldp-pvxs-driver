@@ -24,7 +24,10 @@
 #include <reader/impl/epics/base/EpicsBaseMonitorPoller.h>
 #include <reader/impl/epics/shared/EpicsReaderBase.h>
 
+#include <chrono>
 #include <mutex>
+#include <string>
+#include <unordered_map>
 
 namespace mldp_pvxs_driver::reader::impl::epics {
 
@@ -153,6 +156,8 @@ private:
 
     std::unique_ptr<EpicsBaseMonitorPoller> epics_base_poller_;      ///< Underlying polling monitor.
     std::mutex                              epics_base_drain_mutex_; ///< Serializes drain operations.
+    /// Last event wall-clock time per PV, used for inter-arrival Bps gauge.
+    std::unordered_map<std::string, std::chrono::steady_clock::time_point> last_event_time_;
 
     REGISTER_READER("epics-base", EpicsBaseReader)
 };

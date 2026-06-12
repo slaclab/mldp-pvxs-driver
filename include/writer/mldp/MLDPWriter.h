@@ -23,6 +23,7 @@
 #include <BS_thread_pool.hpp>
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <deque>
 #include <memory>
@@ -114,6 +115,10 @@ private:
     std::atomic<std::size_t>                                          nextChannel_{0};
     std::atomic<std::size_t>                                          queuedItems_{0};
     std::atomic<bool>                                                 running_{false};
+
+    /// Last write wall-clock time per source, used for inter-arrival Bps gauge.
+    std::mutex                                                               lastWriteTimeMutex_;
+    std::unordered_map<std::string, std::chrono::steady_clock::time_point>  lastWriteTime_;
 
     void                                  workerLoop(std::size_t workerIndex);
     bool                                  buildRequest(const std::string&                                  sourceName,

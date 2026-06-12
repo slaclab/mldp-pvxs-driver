@@ -75,11 +75,12 @@ void HDF5WriterMerge::doFlushAll() noexcept
 // writeFrameImpl / flushTabularBufferImpl
 // ---------------------------------------------------------------------------
 
-void HDF5WriterMerge::writeFrameImpl(const std::string&          source,
-                                     const util::bus::DataBatch& frame,
-                                     uint64_t                    batchSeq)
+std::size_t HDF5WriterMerge::writeFrameImpl(const std::string&          source,
+                                            const util::bus::DataBatch& frame,
+                                            uint64_t                    batchSeq)
 {
     appendFrameMerge(source, frame, batchSeq);
+    return frame.timestamps.size() * frame.columns.size() * sizeof(double);
 }
 
 void HDF5WriterMerge::flushTabularBufferImpl(const std::string& source,

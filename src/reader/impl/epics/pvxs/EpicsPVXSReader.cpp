@@ -72,6 +72,13 @@ std::size_t estimatePvxsValueBytes(const pvxs::Value& v)
     case pvxs::TypeCode::Int64A:
     case pvxs::TypeCode::UInt64A:
     case pvxs::TypeCode::Float64A: return v.as<pvxs::shared_array<const int64_t>>().size() * 8;
+    case pvxs::TypeCode::StringA:
+    {
+        std::size_t total = 0;
+        for (const auto& s : v.as<pvxs::shared_array<const std::string>>())
+            total += s.size();
+        return total;
+    }
     case pvxs::TypeCode::Struct:
     case pvxs::TypeCode::Union:
     case pvxs::TypeCode::Any:
@@ -388,13 +395,21 @@ void EpicsPVXSReader::processEvent(std::string pvName, pvxs::Value epics_value)
                 metric_call(metrics_, [&](auto& m) {
                     m.incrementReaderDataBytesTotal(static_cast<double>(dataBytes), sourceTag);
                 });
-                if (processing_ms > 0.0)
+                const auto now = std::chrono::steady_clock::now();
+                auto& last_time = last_event_time_[pvName];
+                if (last_time != std::chrono::steady_clock::time_point{})
                 {
-                    const double bps = (static_cast<double>(dataBytes) * 1000.0) / processing_ms;
-                    metric_call(metrics_, [&](auto& m) {
-                        m.setReaderDataBytesPerSecond(bps, sourceTag);
-                    });
+                    const double interval_ms = std::chrono::duration<double, std::milli>(
+                        now - last_time).count();
+                    if (interval_ms > 0.0)
+                    {
+                        const double bps = (static_cast<double>(dataBytes) * 1000.0) / interval_ms;
+                        metric_call(metrics_, [&](auto& m) {
+                            m.setReaderDataBytesPerSecond(bps, sourceTag);
+                        });
+                    }
                 }
+                last_time = now;
             }
             tracef(*logger_, "[{}/{}] event published", name_, pvName);
         }

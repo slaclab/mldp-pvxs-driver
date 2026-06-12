@@ -406,13 +406,21 @@ void EpicsBaseReader::processEvent(std::string pvName, ::epics::pvData::PVStruct
                 metric_call(metrics_, [&](auto& m) {
                     m.incrementReaderDataBytesTotal(static_cast<double>(dataBytes), sourceTag);
                 });
-                if (processing_ms > 0.0)
+                const auto now = std::chrono::steady_clock::now();
+                auto& last_time = last_event_time_[pvName];
+                if (last_time != std::chrono::steady_clock::time_point{})
                 {
-                    const double bps = (static_cast<double>(dataBytes) * 1000.0) / processing_ms;
-                    metric_call(metrics_, [&](auto& m) {
-                        m.setReaderDataBytesPerSecond(bps, sourceTag);
-                    });
+                    const double interval_ms = std::chrono::duration<double, std::milli>(
+                        now - last_time).count();
+                    if (interval_ms > 0.0)
+                    {
+                        const double bps = (static_cast<double>(dataBytes) * 1000.0) / interval_ms;
+                        metric_call(metrics_, [&](auto& m) {
+                            m.setReaderDataBytesPerSecond(bps, sourceTag);
+                        });
+                    }
                 }
+                last_time = now;
             }
             tracef(*logger_, "[{}/{}] event published", name_, pvName);
         }

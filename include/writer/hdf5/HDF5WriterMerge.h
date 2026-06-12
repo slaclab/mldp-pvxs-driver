@@ -44,9 +44,9 @@ public:
     ~HDF5WriterMerge() override;
 
 protected:
-    void writeFrameImpl(const std::string&          source,
-                        const util::bus::DataBatch& frame,
-                        uint64_t                    batchSeq) override;
+    std::size_t writeFrameImpl(const std::string&          source,
+                               const util::bus::DataBatch& frame,
+                               uint64_t                    batchSeq) override;
 
     void flushTabularBufferImpl(const std::string& source,
                                 TabularBuffer&     buf) override;

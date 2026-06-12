@@ -22,6 +22,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <deque>
+#include <chrono>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -167,9 +168,10 @@ protected:
     // -----------------------------------------------------------------------
 
     /// Write one DataBatch frame; subclass handles file acquisition and byte metrics.
-    virtual void writeFrameImpl(const std::string&          source,
-                                const util::bus::DataBatch& frame,
-                                uint64_t                    batchSeq) = 0;
+    /// Returns the estimated number of post-conversion bytes written.
+    virtual std::size_t writeFrameImpl(const std::string&          source,
+                                       const util::bus::DataBatch& frame,
+                                       uint64_t                    batchSeq) = 0;
 
     /// Flush the accumulated tabular buffer for one source.
     virtual void flushTabularBufferImpl(const std::string& source,
@@ -209,6 +211,9 @@ private:
                                        const util::bus::DataBatch& batch,
                                        TabularBuffer&              buf);
     static bool isTabularBatch(const util::bus::IDataBus::EventBatch& batch);
+    /// Last write wall-clock time per source, used for inter-arrival Bps gauge.
+    std::mutex                                                               lastWriteTimeMutex_;
+    std::unordered_map<std::string, std::chrono::steady_clock::time_point>  lastWriteTime_;
 };
 
 } // namespace mldp_pvxs_driver::writer
