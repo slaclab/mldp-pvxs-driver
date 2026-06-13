@@ -142,6 +142,15 @@ EpicsPVXSReader::EpicsPVXSReader(std::shared_ptr<util::bus::IDataBus> bus,
     addPV(pvNames());
 }
 
+EpicsPVXSReader::~EpicsPVXSReader()
+{
+    running_ = false;
+    if (reader_pool_)
+    {
+        reader_pool_->wait();
+    }
+}
+
 /// Subscribe to PVXS channel-access monitors for each PV in @p pvNames.
 /// Each incoming value is drained from the subscription queue in the PVXS
 /// network thread, a receive-event metric is recorded, and the value is then

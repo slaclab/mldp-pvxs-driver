@@ -95,6 +95,8 @@ public:
                     std::shared_ptr<metrics::Metrics>    metrics,
                     const config::Config&                cfg);
 
+    ~EpicsPVXSReader() override;
+
     /**
      * @brief Add PVs to the monitor.
      *
