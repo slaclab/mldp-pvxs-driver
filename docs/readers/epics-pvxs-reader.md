@@ -22,24 +22,24 @@ Implementation | `src/reader/impl/epics/pvxs/EpicsPVXSReader.cpp`
 
 ```mermaid
 flowchart TB
-    subgraph EpicsPVXSReader[\"EpicsPVXSReader\"]
-        subgraph Context[\"pvxs::client::Context\"]
-            subgraph Subscriptions[\"PV Subscriptions\"]
-                M1[\"monitor(pv1) --> callback\"]
-                M2[\"monitor(pv2) --> callback\"]
-                MN[\"monitor(pvN) --> callback\"]
+    subgraph EpicsPVXSReader["EpicsPVXSReader"]
+        subgraph Context["pvxs::client::Context"]
+            subgraph Subscriptions["PV Subscriptions"]
+                M1["monitor(pv1) -> callback"]
+                M2["monitor(pv2) -> callback"]
+                MN["monitor(pvN) -> callback"]
             end
         end
 
         Subscriptions -->|immediate event| ReaderPool
 
-        subgraph ReaderPool[\"Reader Thread Pool<br/>(conditional usage)\"]
-            Condition[\"if thread_count > 1 → use pool<br/>else → direct execution\"]
+        subgraph ReaderPool["Reader Thread Pool (conditional)"]
+            Condition["thread_count > 1: use pool, else: direct"]
         end
 
         ReaderPool --> ProcessEvent
 
-        ProcessEvent[\"processEvent()<br/>(data conversion + push)\"]
+        ProcessEvent["processEvent() - data conversion + push"]
     end
 ```
 
