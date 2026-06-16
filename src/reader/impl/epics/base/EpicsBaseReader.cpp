@@ -335,6 +335,7 @@ void EpicsBaseReader::processSlacBsasTableMode(const std::string&               
             runtimeCfg ? runtimeCfg->tsNanosField : "nanoseconds",
             [&](std::string colName, std::vector<DataBatch> frames)
             {
+                bool columnContributed = false;
                 for (auto& frame : frames)
                 {
                     if (!hasTimestamps(frame))
@@ -347,6 +348,7 @@ void EpicsBaseReader::processSlacBsasTableMode(const std::string&               
                         continue;
                     }
 
+                    columnContributed = true;
                     if (!frameTimestampsSet)
                     {
                         currentFrame.timestamps = std::move(frame.timestamps);
@@ -358,10 +360,13 @@ void EpicsBaseReader::processSlacBsasTableMode(const std::string&               
                         currentFrame.array_dims[k] = v;
                 }
 
-                ++colsInCurrentFrame;
-                if (perPvBatchSize > 0 && colsInCurrentFrame >= perPvBatchSize)
+                if (columnContributed)
                 {
-                    flushCurrentFrame();
+                    ++colsInCurrentFrame;
+                    if (perPvBatchSize > 0 && colsInCurrentFrame >= perPvBatchSize)
+                    {
+                        flushCurrentFrame();
+                    }
                 }
             },
             emitted))

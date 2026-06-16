@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 
 #include <pvxs/nt.h>
 
@@ -48,6 +49,20 @@ PVServer::PVServer()
 
     m_pvBsasTable.open(bsasTableType.create());
     m_server.addPV("test:bsas_table", m_pvBsasTable);
+
+    m_pvBsasTableNan = server::SharedPV::buildReadonly();
+    nt::NTTable nanTableBuilder;
+    nanTableBuilder.add_column(TypeCode::Float64, "COL_A");  // valid
+    nanTableBuilder.add_column(TypeCode::Float64, "COL_B");  // all-NaN
+    nanTableBuilder.add_column(TypeCode::Float64, "COL_C");  // all-NaN
+    nanTableBuilder.add_column(TypeCode::Float64, "COL_D");  // valid
+    nanTableBuilder.add_column(TypeCode::Float64, "COL_E");  // all-NaN
+    nanTableBuilder.add_column(TypeCode::Float64, "COL_F");  // valid
+    nanTableBuilder.add_column(TypeCode::UInt32, "secondsPastEpoch");
+    nanTableBuilder.add_column(TypeCode::UInt32, "nanoseconds");
+    auto nanTableType = nanTableBuilder.build();
+    m_pvBsasTableNan.open(nanTableType.create());
+    m_server.addPV("test:bsas_table_nan", m_pvBsasTableNan);
 
     m_cuHxr.registerPV(m_server);
 
@@ -286,6 +301,32 @@ PVServer::PVServer()
                                              pv["timeStamp.secondsPastEpoch"] = seconds;
                                              pv["timeStamp.nanoseconds"]      = nanos;
                                              m_pvBsasTable.post(pv);
+                                         }
+                                         {
+                                             constexpr size_t kRows = 3;
+                                             const double nan = std::numeric_limits<double>::quiet_NaN();
+                                             auto pv = m_pvBsasTableNan.fetch();
+                                             pv["labels"] = pvxs::shared_array<const std::string>{
+                                                 "COL_A", "COL_B", "COL_C", "COL_D", "COL_E", "COL_F",
+                                                 "secondsPastEpoch", "nanoseconds"};
+                                             pv["value.COL_A"] = pvxs::shared_array<const double>{1.0 + std::sin(time), 2.0, 3.0};
+                                             pv["value.COL_B"] = pvxs::shared_array<const double>{nan, nan, nan};
+                                             pv["value.COL_C"] = pvxs::shared_array<const double>{nan, nan, nan};
+                                             pv["value.COL_D"] = pvxs::shared_array<const double>{4.0, 5.0 + std::cos(time), 6.0};
+                                             pv["value.COL_E"] = pvxs::shared_array<const double>{nan, nan, nan};
+                                             pv["value.COL_F"] = pvxs::shared_array<const double>{7.0, 8.0, 9.0 + std::sin(time)};
+                                             pvxs::shared_array<uint32_t> secArr(kRows);
+                                             pvxs::shared_array<uint32_t> nanoArr(kRows);
+                                             for (size_t i = 0; i < kRows; ++i)
+                                             {
+                                                 secArr[i]  = static_cast<uint32_t>(seconds);
+                                                 nanoArr[i] = static_cast<uint32_t>(nanos + i);
+                                             }
+                                             pv["value.secondsPastEpoch"] = secArr.freeze();
+                                             pv["value.nanoseconds"]      = nanoArr.freeze();
+                                             pv["timeStamp.secondsPastEpoch"] = seconds;
+                                             pv["timeStamp.nanoseconds"]      = nanos;
+                                             m_pvBsasTableNan.post(pv);
                                          }
 
                                          // update all the typed PVs using their configured update functions

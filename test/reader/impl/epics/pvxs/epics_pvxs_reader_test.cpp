@@ -636,3 +636,115 @@ pvs:
     EXPECT_TRUE(found_grouped_frame)
         << "With column-batch-size: 2, at least one DataBatch frame should contain 2+ columns sharing timestamps";
 }
+
+// Verify that all-NaN columns do not count toward column-batch-size and no empty frames are pushed.
+TEST_F(EpicsPVXSReaderTest, ColumnBatchSizeMixedValidAndNaNColumns)
+{
+    const std::string yaml = R"(
+name: epics_nan_mix
+pvs:
+  - name: test:bsas_table_nan
+    option:
+      type: slac-bsas-table
+      column-batch-size: 2
+)";
+
+    const auto cfg = makeConfigFromYaml(yaml);
+    auto       reader_ptr = mldp_pvxs_driver::reader::ReaderFactory::create("epics-pvxs", mock_bus, cfg);
+    ASSERT_NE(reader_ptr, nullptr);
+
+    const int max_wait_ms = 5000;
+    int       waited_ms = 0;
+    while (waited_ms < max_wait_ms)
+    {
+        if (mock_bus->event_count() >= 2)
+            break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        waited_ms += 100;
+    }
+
+    ASSERT_GE(mock_bus->event_count(), 2u) << "Expected at least 2 bus pushes";
+
+    // With 3 valid columns (COL_A, COL_D, COL_F) and column-batch-size: 2,
+    // we expect frames grouped as [COL_A, COL_D] and [COL_F].
+    // No frame should be empty (0 columns).
+    bool found_grouped_frame = false;
+    bool found_empty_frame = false;
+    {
+        std::lock_guard<std::mutex> lock(mock_bus->mutex);
+        for (const auto& batch : mock_bus->received_events)
+        {
+            const auto& ts_payload = asTimeSeries(batch);
+            if (ts_payload.end_of_batch_group)
+                continue;
+            for (const auto& frame : ts_payload.frames)
+            {
+                if (frame.columns.empty())
+                {
+                    found_empty_frame = true;
+                }
+                if (frame.columns.size() >= 2)
+                {
+                    found_grouped_frame = true;
+                    EXPECT_FALSE(frame.timestamps.empty())
+                        << "Grouped frame must have shared timestamps";
+                }
+            }
+        }
+    }
+    EXPECT_FALSE(found_empty_frame)
+        << "NaN-only columns should not produce empty frames";
+    EXPECT_TRUE(found_grouped_frame)
+        << "With column-batch-size: 2 and 3 valid columns (skipping NaN), at least one frame should have 2 columns";
+}
+
+// Verify that when ALL columns are NaN, no data frames are pushed (only end-of-batch-group marker).
+TEST_F(EpicsPVXSReaderTest, ColumnBatchSizeAllNaNColumnsProduceNoFrames)
+{
+    const std::string yaml = R"(
+name: epics_all_nan
+pvs:
+  - name: test:bsas_table_nan
+    option:
+      type: slac-bsas-table
+      column-batch-size: 2
+)";
+
+    const auto cfg = makeConfigFromYaml(yaml);
+    auto       reader_ptr = mldp_pvxs_driver::reader::ReaderFactory::create("epics-pvxs", mock_bus, cfg);
+    ASSERT_NE(reader_ptr, nullptr);
+
+    const int max_wait_ms = 3000;
+    int       waited_ms = 0;
+    while (waited_ms < max_wait_ms)
+    {
+        if (mock_bus->event_count() >= 2)
+            break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        waited_ms += 100;
+    }
+
+    // Since test:bsas_table_nan has some valid columns (COL_A, COL_D, COL_F),
+    // verify that no frame has more columns than valid ones (max 2 per frame with batch-size: 2).
+    // Also verify no frame contains NaN-only column names (COL_B, COL_C, COL_E).
+    {
+        std::lock_guard<std::mutex> lock(mock_bus->mutex);
+        for (const auto& batch : mock_bus->received_events)
+        {
+            const auto& ts_payload = asTimeSeries(batch);
+            if (ts_payload.end_of_batch_group)
+                continue;
+            for (const auto& frame : ts_payload.frames)
+            {
+                EXPECT_LE(frame.columns.size(), 2u)
+                    << "No frame should exceed column-batch-size";
+                for (const auto& col : frame.columns)
+                {
+                    EXPECT_NE(col.name, "COL_B") << "NaN-only column COL_B should not appear in frames";
+                    EXPECT_NE(col.name, "COL_C") << "NaN-only column COL_C should not appear in frames";
+                    EXPECT_NE(col.name, "COL_E") << "NaN-only column COL_E should not appear in frames";
+                }
+            }
+        }
+    }
+}

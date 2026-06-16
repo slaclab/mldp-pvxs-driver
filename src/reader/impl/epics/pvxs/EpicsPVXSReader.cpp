@@ -363,6 +363,7 @@ void EpicsPVXSReader::processSlacBsasTableMode(const std::string&     pvName,
             runtimeCfg ? runtimeCfg->tsNanosField : "nanoseconds",
             [&](std::string colName, std::vector<DataBatch> batches)
             {
+                bool columnContributed = false;
                 for (auto& b : batches)
                 {
                     if (!hasTimestamp(b))
@@ -378,6 +379,7 @@ void EpicsPVXSReader::processSlacBsasTableMode(const std::string&     pvName,
                         continue;
                     }
 
+                    columnContributed = true;
                     if (!frameTimestampsSet)
                     {
                         currentFrame.timestamps = std::move(b.timestamps);
@@ -389,10 +391,13 @@ void EpicsPVXSReader::processSlacBsasTableMode(const std::string&     pvName,
                         currentFrame.array_dims[k] = v;
                 }
 
-                ++colsInCurrentFrame;
-                if (perPvBatchSize > 0 && colsInCurrentFrame >= perPvBatchSize)
+                if (columnContributed)
                 {
-                    flushCurrentFrame();
+                    ++colsInCurrentFrame;
+                    if (perPvBatchSize > 0 && colsInCurrentFrame >= perPvBatchSize)
+                    {
+                        flushCurrentFrame();
+                    }
                 }
             },
             emitted,
