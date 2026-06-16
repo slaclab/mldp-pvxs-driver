@@ -99,11 +99,13 @@ pvs:
       type: slac-bsas-table
       tsSeconds: secondsPastEpoch    # column holding per-row epoch seconds
       tsNanos: nanoseconds           # column holding per-row nanoseconds
+      column-batch-size: 1           # columns per batch push (0 = all at once)
 ```
 
 - Each NTTable column (PV name) becomes a separate source in the event batch.
 - The two timestamp columns are consumed for row indexing and are not forwarded.
 - Source name equals the PV-name column field name.
+- `column-batch-size` limits how many columns are pushed per `EventBatch`; 0 means all at once.
 - Conversion is handled by `BSASEpicsDataBatchConversion::tryBuildNtTableRowTsBatch()`.
 
 For a full description of the BSAS NTTable structure, field layout, and a

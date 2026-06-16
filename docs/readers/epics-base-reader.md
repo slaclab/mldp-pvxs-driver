@@ -60,6 +60,7 @@ reader:
   - epics-base:
       - name: my_base_reader
         thread-pool: 2               # Event conversion thread pool size
+        column-batch-size: 50        # NTTable column batch size
         monitor-poll-threads: 2      # Number of polling threads
         monitor-poll-interval-ms: 5  # Polling interval in ms
         pvs:
@@ -88,6 +89,7 @@ pvs:
       type: slac-bsas-table
       tsSeconds: secondsPastEpoch   # column holding per-row epoch seconds
       tsNanos: nanoseconds          # column holding per-row nanoseconds
+      column-batch-size: 1          # columns per batch push (0 = all at once)
 ```
 
 Conversion is handled by `EpicsPVDataBatchConversion::tryBuildNtTableRowTsBatch()`.

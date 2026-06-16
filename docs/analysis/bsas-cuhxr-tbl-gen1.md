@@ -43,7 +43,7 @@ PVXS monitor fires on each NTTable update from `BSAS:SYS0:1:CUHXR_TBL`.
 
 ### Stage 2 — BSASEpicsDataBatchConversion
 
-`BSASEpicsDataBatchConversion::convert()` iterates the NTTable column-by-column:
+`BSASEpicsDataBatchConversion::tryBuildNtTableRowTsBatch()` iterates the NTTable column-by-column:
 
 1. Validate incoming `pvxs::Value`; locate `value` struct.
 2. Resolve row timestamp arrays (`secondsPastEpoch` / `nanoseconds`) via `UIntArrayView` — accepts any integer width (uint32/int32/uint64/int64).

@@ -107,13 +107,15 @@ pvs:
       type: slac-bsas-table
       tsSeconds: secondsPastEpoch   # omit to use this default
       tsNanos:   nanoseconds        # omit to use this default
+      column-batch-size: 1          # columns per batch push (0 = all at once)
 ```
 
-Key         | Default            | Description
------------ | ------------------ | ----------------------------------------------
-`type`      | *(required)*       | Must be `slac-bsas-table` to activate this mode
-`tsSeconds` | `secondsPastEpoch` | Name of the per-row epoch-seconds column
-`tsNanos`   | `nanoseconds`      | Name of the per-row nanoseconds column
+Key                 | Default            | Description
+------------------- | ------------------ | ----------------------------------------------
+`type`              | *(required)*       | Must be `slac-bsas-table` to activate this mode
+`tsSeconds`         | `secondsPastEpoch` | Name of the per-row epoch-seconds column
+`tsNanos`           | `nanoseconds`      | Name of the per-row nanoseconds column
+`column-batch-size` | `1`                | Max columns per bus push; 0 means push all at once
 
 ## Implementation References
 

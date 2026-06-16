@@ -335,10 +335,12 @@ include/reader/
         │   └── EpicsReaderConfig.h
         ├── base/
         │   ├── EpicsBaseReader.h
+        │   ├── EpicsBaseReaderConfig.h
         │   ├── EpicsBaseMonitorPoller.h
         │   └── EpicsPVDataBatchConversion.h
         ├── pvxs/
         │   ├── EpicsPVXSReader.h
+        │   ├── EpicsPVXSReaderConfig.h
         │   ├── EpicsMLDPConversion.h
         │   └── BSASEpicsDataBatchConversion.h
         ├── epics_archiver/
@@ -361,10 +363,12 @@ src/reader/
     │   │   └── EpicsReaderConfig.cpp
     │   ├── base/
     │   │   ├── EpicsBaseReader.cpp
+    │   │   ├── EpicsBaseReaderConfig.cpp
     │   │   ├── EpicsBaseMonitorPoller.cpp
     │   │   └── EpicsPVDataBatchConversion.cpp
     │   └── pvxs/
     │       ├── EpicsPVXSReader.cpp
+    │       ├── EpicsPVXSReaderConfig.cpp
     │       ├── EpicsMLDPConversion.cpp
     │       └── BSASEpicsDataBatchConversion.cpp
     ├── epics_archiver/
