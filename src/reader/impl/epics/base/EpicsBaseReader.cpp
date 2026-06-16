@@ -9,6 +9,7 @@
 //////////////////////////////////////////////////////////////////////////////
 
 #include <reader/impl/epics/base/EpicsBaseReader.h>
+#include <reader/impl/epics/base/EpicsBaseReaderConfig.h>
 
 #include <config/Config.h>
 #include <metrics/Metrics.h>
@@ -120,8 +121,9 @@ EpicsBaseReader::EpicsBaseReader(std::shared_ptr<util::bus::IDataBus> bus,
     : EpicsReaderBase(
           std::move(bus),
           std::move(metrics),
-          EpicsReaderConfig(cfg),
+          EpicsBaseReaderConfig(cfg),
           makeLogger(cfg.get("name")))
+    , base_config_(cfg)
 {
     addPV(pvNames());
 }
@@ -141,8 +143,8 @@ void EpicsBaseReader::addPV(const PVSet& pvNames)
     const std::vector<std::string> pv_list(pvNames.begin(), pvNames.end());
     epics_base_poller_ = std::make_unique<EpicsBaseMonitorPoller>(
         pv_list,
-        config_.monitorPollThreads(),
-        config_.monitorPollIntervalMs(),
+        base_config_.monitorPollThreads(),
+        base_config_.monitorPollIntervalMs(),
         [this]()
         {
             drainEpicsBaseQueue();
@@ -267,16 +269,18 @@ void EpicsBaseReader::processDefaultMode(const std::string&                     
 /// Process a PV update in SlacBsasTable (NTTable row-timestamp) mode.
 ///
 /// Delegates conversion to EpicsPVDataConversion::tryBuildNtTableRowTsBatch.
-/// Columns are flushed to the bus in batches of at most
-/// config_.columnBatchSize() entries to bound memory usage for wide tables.
-/// @p emitted receives the total number of data rows published across all columns.
+/// Columns are grouped into shared DataBatch frames according to the per-PV
+/// columnBatchSize setting (default 1 = each column gets its own frame).
+/// Full EventBatch messages are pushed to the bus when global columnBatchSize
+/// columns have been accumulated.
 void EpicsBaseReader::processSlacBsasTableMode(const std::string&                     pvName,
                                                const ::epics::pvData::PVStructurePtr& epicsValue,
                                                const PVRuntimeConfig*                 runtimeCfg,
                                                std::size_t&                           emitted)
 {
     const prometheus::Labels sourceTag{{"source", pvName}};
-    const std::size_t        colBatchSize = config_.columnBatchSize();
+    const std::size_t        busBatchSize = config_.columnBatchSize();
+    const std::size_t        perPvBatchSize = runtimeCfg ? runtimeCfg->columnBatchSize : 1;
 
     // Build merged metadata: reader-level base, PV-level overrides
     auto merged_meta = config_.staticMetadata();
@@ -295,12 +299,34 @@ void EpicsBaseReader::processSlacBsasTableMode(const std::string&               
     tableBatch.payload  = TimeSeriesPayload{.root_source_name = pvName, .is_tabular = true};
     std::size_t colsInBatch = 0;
 
+    // Accumulator for grouping multiple columns into one shared-timestamp DataBatch frame.
+    DataBatch   currentFrame;
+    std::size_t colsInCurrentFrame = 0;
+    bool        frameTimestampsSet = false;
+
     auto resetBatch = [&tableBatch, &pvName, &colsInBatch, merged_meta]()
     {
         tableBatch = IDataBus::EventBatch{};
         tableBatch.metadata = merged_meta;
         tableBatch.payload  = TimeSeriesPayload{.root_source_name = pvName, .is_tabular = true};
         colsInBatch = 0;
+    };
+
+    auto flushCurrentFrame = [&]()
+    {
+        if (colsInCurrentFrame == 0)
+            return;
+        std::get<TimeSeriesPayload>(tableBatch.payload).frames.push_back(std::move(currentFrame));
+        currentFrame = DataBatch{};
+        colsInCurrentFrame = 0;
+        frameTimestampsSet = false;
+        ++colsInBatch;
+        if (busBatchSize > 0 && colsInBatch >= busBatchSize)
+        {
+            tableBatch.reader_name = name();
+            bus_->push(std::move(tableBatch));
+            resetBatch();
+        }
     };
 
     if (!EpicsPVDataConversion::tryBuildNtTableRowTsBatch(
@@ -320,14 +346,22 @@ void EpicsBaseReader::processSlacBsasTableMode(const std::string&               
                                     });
                         continue;
                     }
-                    std::get<TimeSeriesPayload>(tableBatch.payload).frames.push_back(std::move(frame));
+
+                    if (!frameTimestampsSet)
+                    {
+                        currentFrame.timestamps = std::move(frame.timestamps);
+                        frameTimestampsSet = true;
+                    }
+                    for (auto& col : frame.columns)
+                        currentFrame.columns.push_back(std::move(col));
+                    for (auto& [k, v] : frame.array_dims)
+                        currentFrame.array_dims[k] = v;
                 }
-                ++colsInBatch;
-                if (colBatchSize > 0 && colsInBatch >= colBatchSize)
+
+                ++colsInCurrentFrame;
+                if (perPvBatchSize > 0 && colsInCurrentFrame >= perPvBatchSize)
                 {
-                    tableBatch.reader_name = name();
-                    bus_->push(std::move(tableBatch));
-                    resetBatch();
+                    flushCurrentFrame();
                 }
             },
             emitted))
@@ -338,10 +372,15 @@ void EpicsBaseReader::processSlacBsasTableMode(const std::string&               
                         m.incrementReaderErrors(1.0, sourceTag);
                     });
     }
-    else if (!std::get<TimeSeriesPayload>(tableBatch.payload).frames.empty())
+    else
     {
-        tableBatch.reader_name = name();
-        bus_->push(std::move(tableBatch));
+        // Flush any remaining accumulated columns in current frame.
+        flushCurrentFrame();
+        if (!std::get<TimeSeriesPayload>(tableBatch.payload).frames.empty())
+        {
+            tableBatch.reader_name = name();
+            bus_->push(std::move(tableBatch));
+        }
     }
 }
 

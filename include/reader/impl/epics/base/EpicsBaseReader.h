@@ -22,6 +22,7 @@
 
 #include <reader/ReaderFactory.h>
 #include <reader/impl/epics/base/EpicsBaseMonitorPoller.h>
+#include <reader/impl/epics/base/EpicsBaseReaderConfig.h>
 #include <reader/impl/epics/shared/EpicsReaderBase.h>
 
 #include <chrono>
@@ -154,6 +155,7 @@ private:
                                   const PVRuntimeConfig*                 runtimeCfg,
                                   std::size_t&                           emitted);
 
+    EpicsBaseReaderConfig                   base_config_;            ///< Derived config with monitor-poll settings.
     std::unique_ptr<EpicsBaseMonitorPoller> epics_base_poller_;      ///< Underlying polling monitor.
     std::mutex                              epics_base_drain_mutex_; ///< Serializes drain operations.
     /// Last event wall-clock time per PV, used for inter-arrival Bps gauge.

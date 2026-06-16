@@ -89,6 +89,11 @@ std::optional<EpicsReaderConfig::PVConfig::NTTableRowTimestampOptions> parseNtTa
         throw EpicsReaderConfig::Error(optionContext + "." + std::string(SourceNameKey) + " is not supported for type 'slac-bsas-table'; source name always equals the column field name");
     }
 
+    if (optionCfg.hasChild(ColumnBatchSizeOptionKey))
+    {
+        opts.columnBatchSize = static_cast<std::size_t>(optionCfg.getInt(ColumnBatchSizeOptionKey, 1));
+    }
+
     return opts;
 }
 } // namespace
@@ -118,16 +123,6 @@ const std::string& EpicsReaderConfig::name() const
 unsigned int EpicsReaderConfig::threadPoolSize() const
 {
     return thread_pool_size_;
-}
-
-unsigned int EpicsReaderConfig::monitorPollThreads() const
-{
-    return monitor_poll_threads_;
-}
-
-unsigned int EpicsReaderConfig::monitorPollIntervalMs() const
-{
-    return monitor_poll_interval_ms_;
 }
 
 std::size_t EpicsReaderConfig::columnBatchSize() const
@@ -174,8 +169,6 @@ void EpicsReaderConfig::parse(const Config& readerEntry)
 
     thread_pool_size_ = static_cast<unsigned int>(readerEntry.getInt(ThreadPoolKey, 1));
     column_batch_size_ = static_cast<std::size_t>(readerEntry.getInt(ColumnBatchSizeKey, 50));
-    monitor_poll_threads_ = static_cast<unsigned int>(readerEntry.getInt(MonitorPollThreadsKey, 2));
-    monitor_poll_interval_ms_ = static_cast<unsigned int>(readerEntry.getInt(MonitorPollIntervalMsKey, 5));
 
     if (readerEntry.hasChild(BackendKey))
     {

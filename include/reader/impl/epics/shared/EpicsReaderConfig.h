@@ -10,12 +10,15 @@
 
 /**
  * @file EpicsReaderConfig.h
- * @brief Configuration parser for EPICS reader instances.
+ * @brief Base configuration parser for EPICS reader instances.
  *
- * This header provides the EpicsReaderConfig class for parsing and validating
- * EPICS reader configuration from YAML. It handles reader-level settings
- * (name, thread pool size) as well as per-PV configuration including
- * connection options and SLAC BSAS NTTable processing settings.
+ * This header provides the EpicsReaderConfigBase class for parsing and validating
+ * common EPICS reader configuration from YAML. It handles reader-level settings
+ * (name, thread pool size, column batch size) as well as per-PV configuration
+ * including connection options and SLAC BSAS NTTable processing settings.
+ *
+ * Backend-specific derived classes (EpicsPVXSReaderConfig, EpicsBaseReaderConfig)
+ * extend this base with additional settings.
  */
 
 #pragma once
@@ -45,6 +48,7 @@ inline constexpr char OptionTypeKey[] = "type";
 inline constexpr char TsSecondsKey[] = "tsSeconds";
 inline constexpr char TsNanosKey[] = "tsNanos";
 inline constexpr char SourceNameKey[] = "sourceName";
+inline constexpr char ColumnBatchSizeOptionKey[] = "column-batch-size";
 
 /**
  * @brief Strongly typed view over a single EPICS reader configuration entry.
@@ -58,12 +62,6 @@ inline constexpr char SourceNameKey[] = "sourceName";
 class EpicsReaderConfig
 {
 public:
-    /**
-     * @brief Exception thrown when the reader configuration cannot be parsed.
-     *
-     * The message is descriptive (missing fields, wrong types, etc.) so callers
-     * can surface errors directly to the control plane or logs.
-     */
     class Error : public std::runtime_error
     {
     public:
@@ -96,6 +94,7 @@ public:
         {
             std::string tsSecondsField = "secondsPastEpoch";
             std::string tsNanosField = "nanoseconds";
+            std::size_t columnBatchSize = 1;
         };
 
         std::string                                  name;         ///< Fully qualified PV name to monitor.
@@ -121,12 +120,6 @@ public:
 
     /** @return Number of threads in the reader processing pool. */
     unsigned int threadPoolSize() const;
-
-    /** @return Number of threads polling EPICS Base monitor queues. */
-    unsigned int monitorPollThreads() const;
-
-    /** @return Poll interval (ms) for EPICS Base monitor queues when idle. */
-    unsigned int monitorPollIntervalMs() const;
 
     /**
      * @return Max columns per bus push for NTTable row-ts batches.
@@ -167,11 +160,9 @@ private:
     std::string                                  name_;
     unsigned int                                 thread_pool_size_{2};
     std::size_t                                  column_batch_size_{50};
-    unsigned int                                 monitor_poll_threads_{2};
-    unsigned int                                 monitor_poll_interval_ms_{5};
     std::vector<PVConfig>                        pvs_;
     std::vector<std::string>                     pvNames_;
-    std::unordered_map<std::string, std::string> static_metadata_; ///< Reader-level static metadata.
+    std::unordered_map<std::string, std::string> static_metadata_;
 };
 
 } // namespace mldp_pvxs_driver::reader::impl::epics

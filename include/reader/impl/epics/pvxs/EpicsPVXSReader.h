@@ -21,6 +21,7 @@
 #pragma once
 
 #include <reader/ReaderFactory.h>
+#include <reader/impl/epics/pvxs/EpicsPVXSReaderConfig.h>
 #include <reader/impl/epics/shared/EpicsReaderBase.h>
 
 #include <pvxs/client.h>

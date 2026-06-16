@@ -580,3 +580,59 @@ pvs:
     }
     EXPECT_TRUE(found) << "No batch with root_source=test:counter received";
 }
+
+// Verify column-batch-size: 2 groups PV_A and PV_B into same DataBatch frame sharing timestamps.
+TEST_F(EpicsPVXSReaderTest, ColumnBatchSizeGroupsColumnsIntoSharedFrame)
+{
+    const std::string yaml = R"(
+name: epics_batch2
+pvs:
+  - name: test:bsas_table
+    option:
+      type: slac-bsas-table
+      column-batch-size: 2
+)";
+
+    const auto cfg = makeConfigFromYaml(yaml);
+    auto       reader_ptr = mldp_pvxs_driver::reader::ReaderFactory::create("epics-pvxs", mock_bus, cfg);
+    ASSERT_NE(reader_ptr, nullptr);
+
+    const int max_wait_ms = 5000;
+    int       waited_ms = 0;
+    while (waited_ms < max_wait_ms)
+    {
+        if (mock_bus->event_count() >= 2)
+            break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        waited_ms += 100;
+    }
+
+    ASSERT_GE(mock_bus->event_count(), 2u) << "Expected at least 2 bus pushes (data + marker)";
+
+    // With column-batch-size: 2, PV_A and PV_B should be grouped into the same
+    // DataBatch frame (sharing timestamps) rather than each getting their own frame.
+    bool found_grouped_frame = false;
+    {
+        std::lock_guard<std::mutex> lock(mock_bus->mutex);
+        for (const auto& batch : mock_bus->received_events)
+        {
+            const auto& ts_payload = asTimeSeries(batch);
+            if (ts_payload.end_of_batch_group)
+                continue;
+            for (const auto& frame : ts_payload.frames)
+            {
+                if (frame.columns.size() >= 2)
+                {
+                    found_grouped_frame = true;
+                    EXPECT_FALSE(frame.timestamps.empty())
+                        << "Grouped frame must have shared timestamps";
+                    break;
+                }
+            }
+            if (found_grouped_frame)
+                break;
+        }
+    }
+    EXPECT_TRUE(found_grouped_frame)
+        << "With column-batch-size: 2, at least one DataBatch frame should contain 2+ columns sharing timestamps";
+}

@@ -107,12 +107,6 @@ protected:
      */
     struct PVRuntimeConfig
     {
-        /**
-         * @brief Processing mode for PV updates.
-         */
-        /**
-         * @brief Processing mode for PV updates.
-         */
         enum class Mode
         {
             Default,       ///< Standard scalar/array processing with structure timestamp.
@@ -122,6 +116,7 @@ protected:
         Mode        mode = Mode::Default; ///< Selected processing mode.
         std::string tsSecondsField;       ///< Column name for epoch seconds (SlacBsasTable mode).
         std::string tsNanosField;         ///< Column name for nanoseconds (SlacBsasTable mode).
+        std::size_t columnBatchSize = 1;  ///< Columns grouped per DataBatch frame (SlacBsasTable mode).
     };
 
     /**

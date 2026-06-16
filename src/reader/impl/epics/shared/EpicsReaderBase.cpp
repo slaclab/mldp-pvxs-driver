@@ -37,6 +37,7 @@ EpicsReaderBase::EpicsReaderBase(std::shared_ptr<util::bus::IDataBus> bus,
             runtime.mode = PVRuntimeConfig::Mode::SlacBsasTable;
             runtime.tsSecondsField = pvConfig.nttableRowTs->tsSecondsField;
             runtime.tsNanosField = pvConfig.nttableRowTs->tsNanosField;
+            runtime.columnBatchSize = pvConfig.nttableRowTs->columnBatchSize;
         }
         pvRuntimeByName_.emplace(pvConfig.name, std::move(runtime));
     }

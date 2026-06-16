@@ -9,6 +9,7 @@
 //////////////////////////////////////////////////////////////////////////////
 
 #include <reader/impl/epics/pvxs/EpicsPVXSReader.h>
+#include <reader/impl/epics/pvxs/EpicsPVXSReaderConfig.h>
 
 #include <config/Config.h>
 #include <metrics/Metrics.h>
@@ -136,7 +137,7 @@ bool hasValidData(const DataBatch& batch)
 EpicsPVXSReader::EpicsPVXSReader(std::shared_ptr<util::bus::IDataBus> bus,
                                  std::shared_ptr<metrics::Metrics>    metrics,
                                  const config::Config&                cfg)
-    : EpicsReaderBase(std::move(bus), std::move(metrics), EpicsReaderConfig(cfg), makeLogger(cfg.get("name")))
+    : EpicsReaderBase(std::move(bus), std::move(metrics), EpicsPVXSReaderConfig(cfg), makeLogger(cfg.get("name")))
 {
     pva_context_ = pvxs::client::Context::fromEnv();
     addPV(pvNames());
@@ -295,18 +296,19 @@ void EpicsPVXSReader::processDefaultMode(const std::string& pvName, const pvxs::
 /// Process a PV update in SlacBsasTable mode (NTTable with per-row timestamps).
 ///
 /// Delegates conversion to BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch.
-/// Columns are emitted in batches of at most config_.columnBatchSize() entries;
-/// each full batch is pushed to the bus immediately, keeping memory bounded for
-/// wide tables.  The thread pool is used for parallel column conversion when it
-/// has more than one worker thread.  @p emitted receives the total number of
-/// data rows published across all columns.
+/// Columns are grouped into shared DataBatch frames according to the per-PV
+/// columnBatchSize setting (default 1 = each column gets its own frame).
+/// Grouped columns share a single timestamps vector within their DataBatch.
+/// Full EventBatch messages are pushed to the bus when global columnBatchSize
+/// columns have been accumulated, keeping memory bounded for wide tables.
 void EpicsPVXSReader::processSlacBsasTableMode(const std::string&     pvName,
                                                const pvxs::Value&     epicsValue,
                                                const PVRuntimeConfig* runtimeCfg,
                                                std::size_t&           emitted)
 {
     const prometheus::Labels sourceTag{{"source", pvName}};
-    const std::size_t        colBatchSize = config_.columnBatchSize();
+    const std::size_t        busBatchSize = config_.columnBatchSize();
+    const std::size_t        perPvBatchSize = runtimeCfg ? runtimeCfg->columnBatchSize : 1;
 
     // Build merged metadata: reader-level base, PV-level overrides
     auto merged_meta = config_.staticMetadata();
@@ -325,6 +327,11 @@ void EpicsPVXSReader::processSlacBsasTableMode(const std::string&     pvName,
     tableBatch.payload = TimeSeriesPayload{.root_source_name = pvName, .is_tabular = true};
     std::size_t colsInBatch = 0;
 
+    // Accumulator for grouping multiple columns into one shared-timestamp DataBatch frame.
+    DataBatch   currentFrame;
+    std::size_t colsInCurrentFrame = 0;
+    bool        frameTimestampsSet = false;
+
     auto resetBatch = [&tableBatch, &pvName, &colsInBatch, merged_meta]()
     {
         tableBatch = IDataBus::EventBatch{};
@@ -333,13 +340,29 @@ void EpicsPVXSReader::processSlacBsasTableMode(const std::string&     pvName,
         colsInBatch = 0;
     };
 
+    auto flushCurrentFrame = [&]()
+    {
+        if (colsInCurrentFrame == 0)
+            return;
+        std::get<TimeSeriesPayload>(tableBatch.payload).frames.push_back(std::move(currentFrame));
+        currentFrame = DataBatch{};
+        colsInCurrentFrame = 0;
+        frameTimestampsSet = false;
+        ++colsInBatch;
+        if (busBatchSize > 0 && colsInBatch >= busBatchSize)
+        {
+            tableBatch.reader_name = name();
+            bus_->push(std::move(tableBatch));
+            resetBatch();
+        }
+    };
+
     if (!BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch(
             *logger_, pvName, epicsValue,
             runtimeCfg ? runtimeCfg->tsSecondsField : "secondsPastEpoch",
             runtimeCfg ? runtimeCfg->tsNanosField : "nanoseconds",
             [&](std::string colName, std::vector<DataBatch> batches)
             {
-                bool colHasData = false;
                 for (auto& b : batches)
                 {
                     if (!hasTimestamp(b))
@@ -354,17 +377,22 @@ void EpicsPVXSReader::processSlacBsasTableMode(const std::string&     pvName,
                         tracef(*logger_, "[{}/{}] column {} all-NaN — discarding", name_, pvName, colName);
                         continue;
                     }
-                    std::get<TimeSeriesPayload>(tableBatch.payload).frames.push_back(std::move(b));
-                    colHasData = true;
+
+                    if (!frameTimestampsSet)
+                    {
+                        currentFrame.timestamps = std::move(b.timestamps);
+                        frameTimestampsSet = true;
+                    }
+                    for (auto& col : b.columns)
+                        currentFrame.columns.push_back(std::move(col));
+                    for (auto& [k, v] : b.array_dims)
+                        currentFrame.array_dims[k] = v;
                 }
-                if (!colHasData)
-                    return;
-                ++colsInBatch;
-                if (colBatchSize > 0 && colsInBatch >= colBatchSize)
+
+                ++colsInCurrentFrame;
+                if (perPvBatchSize > 0 && colsInCurrentFrame >= perPvBatchSize)
                 {
-                    tableBatch.reader_name = name();
-                    bus_->push(std::move(tableBatch));
-                    resetBatch();
+                    flushCurrentFrame();
                 }
             },
             emitted,
@@ -374,10 +402,15 @@ void EpicsPVXSReader::processSlacBsasTableMode(const std::string&     pvName,
             util::format_string("Error converting PV {} to MLDP SLAC BSAS table batch on reader {}.", pvName, name_),
             sourceTag);
     }
-    else if (!std::get<TimeSeriesPayload>(tableBatch.payload).frames.empty())
+    else
     {
-        tableBatch.reader_name = name();
-        bus_->push(std::move(tableBatch));
+        // Flush any remaining accumulated columns in current frame.
+        flushCurrentFrame();
+        if (!std::get<TimeSeriesPayload>(tableBatch.payload).frames.empty())
+        {
+            tableBatch.reader_name = name();
+            bus_->push(std::move(tableBatch));
+        }
     }
 
     // Signal end of this NTTable update round so downstream writers (e.g. HDF5)

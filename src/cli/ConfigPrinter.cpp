@@ -12,6 +12,7 @@
 
 #include <controller/MLDPPVXSControllerConfig.h>
 #include <pool/MLDPGrpcPoolConfig.h>
+#include <reader/impl/epics/base/EpicsBaseReaderConfig.h>
 #include <reader/impl/epics/shared/EpicsReaderConfig.h>
 #include <reader/impl/epics_archiver/EpicsArchiverReaderConfig.h>
 #include <writer/hdf5/HDF5WriterConfig.h>
@@ -24,6 +25,7 @@
 #include <vector>
 
 using mldp_pvxs_driver::controller::MLDPPVXSControllerConfig;
+using mldp_pvxs_driver::reader::impl::epics::EpicsBaseReaderConfig;
 using mldp_pvxs_driver::reader::impl::epics::EpicsReaderConfig;
 using mldp_pvxs_driver::reader::impl::epics_archiver::EpicsArchiverReaderConfig;
 using mldp_pvxs_driver::util::pool::MLDPGrpcPoolConfig;
@@ -157,14 +159,23 @@ std::string mldp_pvxs_driver::cli::formatStartupConfig(
         const auto& [type, cfg] = readers[i];
         out << "  [" << (i + 1) << "] type=" << type << " ";
 
-        if (type == kEpicsPvxsType || type == kEpicsBaseType)
+        if (type == kEpicsBaseType)
         {
-            const EpicsReaderConfig reader(cfg);
+            const EpicsBaseReaderConfig reader(cfg);
             out << "name=" << reader.name()
                 << " pvs=" << reader.pvs().size()
                 << " thread_pool=" << reader.threadPoolSize()
                 << " monitor_poll_threads=" << reader.monitorPollThreads()
                 << " monitor_poll_ms=" << reader.monitorPollIntervalMs()
+                << " column_batch_size=" << reader.columnBatchSize()
+                << " pv_preview=[" << previewList(reader.pvNames()) << "]";
+        }
+        else if (type == kEpicsPvxsType)
+        {
+            const EpicsReaderConfig reader(cfg);
+            out << "name=" << reader.name()
+                << " pvs=" << reader.pvs().size()
+                << " thread_pool=" << reader.threadPoolSize()
                 << " column_batch_size=" << reader.columnBatchSize()
                 << " pv_preview=[" << previewList(reader.pvNames()) << "]";
         }

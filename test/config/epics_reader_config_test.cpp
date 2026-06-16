@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 
+#include <reader/impl/epics/base/EpicsBaseReaderConfig.h>
+#include <reader/impl/epics/pvxs/EpicsPVXSReaderConfig.h>
 #include <reader/impl/epics/shared/EpicsReaderConfig.h>
 
 #include "test_config_helpers.h"
@@ -37,8 +39,6 @@ pvs:
     EXPECT_EQ("pv3", epicsCfg.pvs()[2].name);
     EXPECT_EQ("", epicsCfg.pvs()[2].option);
     EXPECT_FALSE(epicsCfg.pvs()[2].optionConfig.has_value());
-    EXPECT_EQ(2u, epicsCfg.monitorPollThreads());
-    EXPECT_EQ(5u, epicsCfg.monitorPollIntervalMs());
 }
 
 TEST(EpicsReaderConfigTest, RejectsBackendField)
@@ -169,6 +169,102 @@ pvs:
 
     const auto cfg = makeConfigFromYaml(yaml);
     EXPECT_THROW(static_cast<void>(EpicsReaderConfig(cfg)), EpicsReaderConfig::Error);
+}
+
+TEST(EpicsBaseReaderConfigTest, ParsesMonitorPollFields)
+{
+    const std::string yaml = R"(
+name: base_reader
+monitor-poll-threads: 4
+monitor-poll-interval-ms: 10
+pvs:
+  - name: pv1
+)";
+
+    const auto              cfg = makeConfigFromYaml(yaml);
+    EpicsBaseReaderConfig   baseCfg(cfg);
+
+    EXPECT_TRUE(baseCfg.valid());
+    EXPECT_EQ("base_reader", baseCfg.name());
+    EXPECT_EQ(4u, baseCfg.monitorPollThreads());
+    EXPECT_EQ(10u, baseCfg.monitorPollIntervalMs());
+}
+
+TEST(EpicsBaseReaderConfigTest, DefaultsMonitorPollFields)
+{
+    const std::string yaml = R"(
+name: base_defaults
+pvs:
+  - name: pv1
+)";
+
+    const auto            cfg = makeConfigFromYaml(yaml);
+    EpicsBaseReaderConfig baseCfg(cfg);
+
+    EXPECT_EQ(2u, baseCfg.monitorPollThreads());
+    EXPECT_EQ(5u, baseCfg.monitorPollIntervalMs());
+}
+
+TEST(EpicsPVXSReaderConfigTest, ConstructsFromYaml)
+{
+    const std::string yaml = R"(
+name: pvxs_reader
+thread-pool: 8
+pvs:
+  - name: pv1
+)";
+
+    const auto             cfg = makeConfigFromYaml(yaml);
+    EpicsPVXSReaderConfig  pvxsCfg(cfg);
+
+    EXPECT_TRUE(pvxsCfg.valid());
+    EXPECT_EQ("pvxs_reader", pvxsCfg.name());
+    EXPECT_EQ(8u, pvxsCfg.threadPoolSize());
+}
+
+TEST(EpicsReaderConfigTest, ParsesColumnBatchSizeInSlacBsasTableOption)
+{
+    const std::string yaml = R"(
+name: epics_bsas_batch
+pvs:
+  - name: BSAS:TABLE
+    option:
+      type: slac-bsas-table
+      tsSeconds: secondsPastEpoch
+      tsNanos: nanoseconds
+      column-batch-size: 10
+)";
+
+    const auto        cfg = makeConfigFromYaml(yaml);
+    EpicsReaderConfig epicsCfg(cfg);
+
+    ASSERT_TRUE(epicsCfg.valid());
+    ASSERT_EQ(1u, epicsCfg.pvs().size());
+
+    const auto& pv = epicsCfg.pvs().front();
+    ASSERT_TRUE(pv.nttableRowTs.has_value());
+    EXPECT_EQ(10u, pv.nttableRowTs->columnBatchSize);
+}
+
+TEST(EpicsReaderConfigTest, ColumnBatchSizeDefaultsToOneWhenNotSpecified)
+{
+    const std::string yaml = R"(
+name: epics_bsas_default
+pvs:
+  - name: BSAS:TABLE
+    option:
+      type: slac-bsas-table
+      tsSeconds: secondsPastEpoch
+      tsNanos: nanoseconds
+)";
+
+    const auto        cfg = makeConfigFromYaml(yaml);
+    EpicsReaderConfig epicsCfg(cfg);
+
+    ASSERT_TRUE(epicsCfg.valid());
+    const auto& pv = epicsCfg.pvs().front();
+    ASSERT_TRUE(pv.nttableRowTs.has_value());
+    EXPECT_EQ(1u, pv.nttableRowTs->columnBatchSize);
 }
 
 } // namespace mldp_pvxs_driver::reader::impl::epics
