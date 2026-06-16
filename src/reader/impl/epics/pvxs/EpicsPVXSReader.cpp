@@ -340,20 +340,26 @@ void EpicsPVXSReader::processSlacBsasTableMode(const std::string&     pvName,
         colsInBatch = 0;
     };
 
-    auto flushCurrentFrame = [&]()
+    auto flushCurrentFrame = [&](bool forceFlush = false)
     {
-        if (colsInCurrentFrame == 0)
+        if (colsInCurrentFrame == 0 && !forceFlush)
             return;
-        std::get<TimeSeriesPayload>(tableBatch.payload).frames.push_back(std::move(currentFrame));
-        currentFrame = DataBatch{};
-        colsInCurrentFrame = 0;
-        frameTimestampsSet = false;
-        ++colsInBatch;
-        if (busBatchSize > 0 && colsInBatch >= busBatchSize)
+        if (colsInCurrentFrame > 0)
         {
-            tableBatch.reader_name = name();
-            bus_->push(std::move(tableBatch));
-            resetBatch();
+            std::get<TimeSeriesPayload>(tableBatch.payload).frames.push_back(std::move(currentFrame));
+            currentFrame = DataBatch{};
+            colsInCurrentFrame = 0;
+            frameTimestampsSet = false;
+            ++colsInBatch;
+        }
+        if (forceFlush || (busBatchSize > 0 && colsInBatch >= busBatchSize))
+        {
+            if (!std::get<TimeSeriesPayload>(tableBatch.payload).frames.empty())
+            {
+                tableBatch.reader_name = name();
+                bus_->push(std::move(tableBatch));
+                resetBatch();
+            }
         }
     };
 
@@ -409,13 +415,7 @@ void EpicsPVXSReader::processSlacBsasTableMode(const std::string&     pvName,
     }
     else
     {
-        // Flush any remaining accumulated columns in current frame.
-        flushCurrentFrame();
-        if (!std::get<TimeSeriesPayload>(tableBatch.payload).frames.empty())
-        {
-            tableBatch.reader_name = name();
-            bus_->push(std::move(tableBatch));
-        }
+        flushCurrentFrame(true);
     }
 
     // Signal end of this NTTable update round so downstream writers (e.g. HDF5)
