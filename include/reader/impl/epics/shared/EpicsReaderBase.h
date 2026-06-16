@@ -138,12 +138,15 @@ protected:
         return pvNames_;
     }
 
+    const std::unordered_map<std::string, std::string>& mergedMetadataFor(const std::string& pvName) const;
+
     std::shared_ptr<util::log::ILogger>              logger_;          ///< Logger instance.
     EpicsReaderConfig                                config_;          ///< Parsed reader configuration.
     std::string                                      name_;            ///< Reader name from configuration.
     std::atomic<bool>                                running_{true};   ///< Flag indicating reader is active.
     std::shared_ptr<BS::light_thread_pool>           reader_pool_;     ///< Thread pool for event processing.
     std::unordered_map<std::string, PVRuntimeConfig> pvRuntimeByName_; ///< Per-PV runtime configuration.
+    std::unordered_map<std::string, std::unordered_map<std::string, std::string>> pvMergedMetadata_;
     PVSet                                            pvNames_;         ///< Set of monitored PV names.
 };
 

@@ -18,6 +18,7 @@
 #include <util/StringFormat.h>
 #include <util/log/Logger.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 
@@ -94,40 +95,42 @@ std::size_t estimatePvxsValueBytes(const pvxs::Value& v)
     }
 }
 
-/// Returns true if batch has at least one valid (non-NaN) float/double scalar value.
-/// Returns false when all float/double scalars are NaN or batch is empty — caller should discard.
 bool hasValidData(const DataBatch& batch)
 {
     if (batch.timestamps.empty())
         return false;
 
     bool hasNumeric = false;
-    bool foundValid = false;
-
     for (const auto& col : batch.columns)
     {
-        if (foundValid) break;
-        std::visit(
-            [&](const auto& vals)
+        bool valid = std::visit(
+            [&hasNumeric](const auto& vals) -> bool
             {
                 using T = std::decay_t<decltype(vals)>;
-                if constexpr (std::is_same_v<T, std::vector<float>>)
+                if constexpr (std::is_same_v<T, std::vector<float>> ||
+                              std::is_same_v<T, std::vector<double>>)
                 {
                     hasNumeric = true;
-                    for (auto v : vals)
-                        if (!std::isnan(v)) { foundValid = true; return; }
+                    return std::any_of(vals.begin(), vals.end(),
+                                       [](auto v) { return !std::isnan(v); });
                 }
-                else if constexpr (std::is_same_v<T, std::vector<double>>)
-                {
-                    hasNumeric = true;
-                    for (auto v : vals)
-                        if (!std::isnan(v)) { foundValid = true; return; }
-                }
+                return false;
             },
             col.values);
+        if (valid)
+            return true;
     }
+    return !hasNumeric;
+}
 
-    return !hasNumeric || foundValid;
+IDataBus::EventBatch makeTableEventBatch(
+    const std::unordered_map<std::string, std::string>& metadata,
+    const std::string& pvName)
+{
+    IDataBus::EventBatch batch;
+    batch.metadata = metadata;
+    batch.payload = TimeSeriesPayload{.root_source_name = pvName, .is_tabular = true};
+    return batch;
 }
 } // namespace
 
@@ -209,10 +212,9 @@ void EpicsPVXSReader::logAndRecordError(const std::string& message, const promet
 /// mode is designed for scalar / scalar-array payloads only.
 /// On success, one EventBatch with a single DataBatch is pushed to the bus
 /// and @p emitted is set to 1.
-void EpicsPVXSReader::processDefaultMode(const std::string& pvName, const pvxs::Value& epicsValue, std::size_t& emitted)
+void EpicsPVXSReader::processDefaultMode(const std::string& pvName, const pvxs::Value& epicsValue,
+                                         const prometheus::Labels& sourceTag, std::size_t& emitted)
 {
-    const prometheus::Labels sourceTag{{"source", pvName}};
-
     if (epicsValue.type().kind() != pvxs::Kind::Compound)
     {
         logAndRecordError(
@@ -272,18 +274,7 @@ void EpicsPVXSReader::processDefaultMode(const std::string& pvName, const pvxs::
     }
 
     IDataBus::EventBatch eventBatch;
-    // Build merged metadata: reader-level base, PV-level overrides
-    auto merged = config_.staticMetadata();
-    for (const auto& pv_cfg : config_.pvs())
-    {
-        if (pv_cfg.name == pvName)
-        {
-            for (auto& [k, v] : pv_cfg.metadata)
-                merged[k] = v;
-            break;
-        }
-    }
-    eventBatch.metadata = std::move(merged);
+    eventBatch.metadata = mergedMetadataFor(pvName);
     eventBatch.reader_name = name();
     eventBatch.payload = TimeSeriesPayload{
         .root_source_name = pvName,
@@ -304,41 +295,19 @@ void EpicsPVXSReader::processDefaultMode(const std::string& pvName, const pvxs::
 void EpicsPVXSReader::processSlacBsasTableMode(const std::string&     pvName,
                                                const pvxs::Value&     epicsValue,
                                                const PVRuntimeConfig* runtimeCfg,
+                                               const prometheus::Labels& sourceTag,
                                                std::size_t&           emitted)
 {
-    const prometheus::Labels sourceTag{{"source", pvName}};
-    const std::size_t        busBatchSize = config_.columnBatchSize();
-    const std::size_t        perPvBatchSize = runtimeCfg ? runtimeCfg->columnBatchSize : 1;
+    const std::size_t busBatchSize   = config_.columnBatchSize();
+    const std::size_t perPvBatchSize = runtimeCfg ? runtimeCfg->columnBatchSize : 1;
+    const auto&       merged_meta    = mergedMetadataFor(pvName);
 
-    // Build merged metadata: reader-level base, PV-level overrides
-    auto merged_meta = config_.staticMetadata();
-    for (const auto& pv_cfg : config_.pvs())
-    {
-        if (pv_cfg.name == pvName)
-        {
-            for (auto& [k, v] : pv_cfg.metadata)
-                merged_meta[k] = v;
-            break;
-        }
-    }
-
-    IDataBus::EventBatch tableBatch;
-    tableBatch.metadata = merged_meta;
-    tableBatch.payload = TimeSeriesPayload{.root_source_name = pvName, .is_tabular = true};
+    IDataBus::EventBatch tableBatch = makeTableEventBatch(merged_meta, pvName);
     std::size_t colsInBatch = 0;
 
-    // Accumulator for grouping multiple columns into one shared-timestamp DataBatch frame.
     DataBatch   currentFrame;
     std::size_t colsInCurrentFrame = 0;
     bool        frameTimestampsSet = false;
-
-    auto resetBatch = [&tableBatch, &pvName, &colsInBatch, merged_meta]()
-    {
-        tableBatch = IDataBus::EventBatch{};
-        tableBatch.metadata = merged_meta;
-        tableBatch.payload = TimeSeriesPayload{.root_source_name = pvName, .is_tabular = true};
-        colsInBatch = 0;
-    };
 
     auto flushCurrentFrame = [&](bool forceFlush = false)
     {
@@ -358,7 +327,8 @@ void EpicsPVXSReader::processSlacBsasTableMode(const std::string&     pvName,
             {
                 tableBatch.reader_name = name();
                 bus_->push(std::move(tableBatch));
-                resetBatch();
+                tableBatch = makeTableEventBatch(merged_meta, pvName);
+                colsInBatch = 0;
             }
         }
     };
@@ -418,8 +388,6 @@ void EpicsPVXSReader::processSlacBsasTableMode(const std::string&     pvName,
         flushCurrentFrame(true);
     }
 
-    // Signal end of this NTTable update round so downstream writers (e.g. HDF5)
-    // know all column batches have been emitted and can flush accumulated state.
     IDataBus::EventBatch markerBatch;
     markerBatch.metadata = merged_meta;
     markerBatch.reader_name = name();
@@ -467,12 +435,12 @@ void EpicsPVXSReader::processEvent(std::string pvName, pvxs::Value epics_value)
         switch (mode)
         {
         case PVRuntimeConfig::Mode::SlacBsasTable:
-            processSlacBsasTableMode(pvName, epics_value, runtimeCfg, emitted);
+            processSlacBsasTableMode(pvName, epics_value, runtimeCfg, sourceTag, emitted);
             break;
 
         case PVRuntimeConfig::Mode::Default:
         default:
-            processDefaultMode(pvName, epics_value, emitted);
+            processDefaultMode(pvName, epics_value, sourceTag, emitted);
             break;
         }
 
@@ -495,20 +463,23 @@ void EpicsPVXSReader::processEvent(std::string pvName, pvxs::Value epics_value)
                     m.incrementReaderDataBytesTotal(static_cast<double>(dataBytes), sourceTag);
                 });
                 const auto now = std::chrono::steady_clock::now();
-                auto& last_time = last_event_time_[pvName];
-                if (last_time != std::chrono::steady_clock::time_point{})
                 {
-                    const double interval_ms = std::chrono::duration<double, std::milli>(
-                        now - last_time).count();
-                    if (interval_ms > 0.0)
+                    std::lock_guard<std::mutex> lk(last_event_time_mutex_);
+                    auto& last_time = last_event_time_[pvName];
+                    if (last_time != std::chrono::steady_clock::time_point{})
                     {
-                        const double bps = (static_cast<double>(dataBytes) * 1000.0) / interval_ms;
-                        metric_call(metrics_, [&](auto& m) {
-                            m.setReaderDataBytesPerSecond(bps, sourceTag);
-                        });
+                        const double interval_ms = std::chrono::duration<double, std::milli>(
+                            now - last_time).count();
+                        if (interval_ms > 0.0)
+                        {
+                            const double bps = (static_cast<double>(dataBytes) * 1000.0) / interval_ms;
+                            metric_call(metrics_, [&](auto& m) {
+                                m.setReaderDataBytesPerSecond(bps, sourceTag);
+                            });
+                        }
                     }
+                    last_time = now;
                 }
-                last_time = now;
             }
             tracef(*logger_, "[{}/{}] event published", name_, pvName);
         }

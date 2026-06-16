@@ -158,7 +158,8 @@ private:
      * @param epicsValue The PVXS Value to process.
      * @param[out] emitted Set to 1 if an event was successfully emitted, 0 otherwise.
      */
-    void processDefaultMode(const std::string& pvName, const pvxs::Value& epicsValue, std::size_t& emitted);
+    void processDefaultMode(const std::string& pvName, const pvxs::Value& epicsValue,
+                            const prometheus::Labels& sourceTag, std::size_t& emitted);
 
     /**
      * @brief Process a PV update in SLAC BSAS table mode.
@@ -170,17 +171,19 @@ private:
      * @param pvName Name of the PV.
      * @param epicsValue The PVXS Value containing the NTTable.
      * @param runtimeCfg Runtime configuration with timestamp field names.
+     * @param sourceTag Prometheus labels for metrics.
      * @param[out] emitted Number of events successfully emitted.
      */
     void processSlacBsasTableMode(const std::string&     pvName,
                                   const pvxs::Value&     epicsValue,
                                   const PVRuntimeConfig* runtimeCfg,
+                                  const prometheus::Labels& sourceTag,
                                   std::size_t&           emitted);
 
     mutable std::mutex                                          subscriptions_mutex_; ///< Protects subscription operations.
     pvxs::client::Context                                       pva_context_;         ///< PVXS client context.
     pvxs::MPMCFIFO<std::shared_ptr<pvxs::client::Subscription>> m_pva_subscriptions;  ///< Active subscriptions.
-    /// Last event wall-clock time per PV, used for inter-arrival Bps gauge.
+    std::mutex                                                   last_event_time_mutex_;
     std::unordered_map<std::string, std::chrono::steady_clock::time_point> last_event_time_;
 
     REGISTER_READER("epics-pvxs", EpicsPVXSReader)

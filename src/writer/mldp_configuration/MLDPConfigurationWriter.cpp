@@ -89,7 +89,10 @@ void MLDPConfigurationWriter::start()
 
 void MLDPConfigurationWriter::stop() noexcept
 {
-    stop_.store(true);
+    {
+        std::lock_guard<std::mutex> lock(queue_mutex_);
+        stop_.store(true);
+    }
     queue_cv_.notify_all();
     for (auto& t : workers_)
     {

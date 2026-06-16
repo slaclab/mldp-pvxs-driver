@@ -40,7 +40,19 @@ EpicsReaderBase::EpicsReaderBase(std::shared_ptr<util::bus::IDataBus> bus,
             runtime.columnBatchSize = pvConfig.nttableRowTs->columnBatchSize;
         }
         pvRuntimeByName_.emplace(pvConfig.name, std::move(runtime));
+
+        auto merged = config_.staticMetadata();
+        for (const auto& [k, v] : pvConfig.metadata)
+            merged[k] = v;
+        pvMergedMetadata_.emplace(pvConfig.name, std::move(merged));
     }
+}
+
+const std::unordered_map<std::string, std::string>& EpicsReaderBase::mergedMetadataFor(const std::string& pvName) const
+{
+    static const std::unordered_map<std::string, std::string> empty;
+    const auto it = pvMergedMetadata_.find(pvName);
+    return (it != pvMergedMetadata_.end()) ? it->second : empty;
 }
 
 EpicsReaderBase::~EpicsReaderBase()

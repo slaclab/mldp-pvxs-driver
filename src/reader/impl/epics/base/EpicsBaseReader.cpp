@@ -245,18 +245,7 @@ void EpicsBaseReader::processDefaultMode(const std::string&                     
         EpicsPVDataBatchConversion::convertPVToDataBatch(*valueField, &batch_frame, pvName);
     }
     batch_frame.timestamps.push_back(TimestampEntry{epoch_seconds, nanoseconds});
-    // Build merged metadata: reader-level base, PV-level overrides
-    auto merged = config_.staticMetadata();
-    for (const auto& pv_cfg : config_.pvs())
-    {
-        if (pv_cfg.name == pvName)
-        {
-            for (auto& [k, v] : pv_cfg.metadata)
-                merged[k] = v;
-            break;
-        }
-    }
-    batch.metadata = std::move(merged);
+    batch.metadata = mergedMetadataFor(pvName);
     batch.reader_name = name();
     batch.payload = TimeSeriesPayload{
         .root_source_name = pvName,
@@ -279,38 +268,18 @@ void EpicsBaseReader::processSlacBsasTableMode(const std::string&               
                                                std::size_t&                           emitted)
 {
     const prometheus::Labels sourceTag{{"source", pvName}};
-    const std::size_t        busBatchSize = config_.columnBatchSize();
+    const std::size_t        busBatchSize   = config_.columnBatchSize();
     const std::size_t        perPvBatchSize = runtimeCfg ? runtimeCfg->columnBatchSize : 1;
-
-    // Build merged metadata: reader-level base, PV-level overrides
-    auto merged_meta = config_.staticMetadata();
-    for (const auto& pv_cfg : config_.pvs())
-    {
-        if (pv_cfg.name == pvName)
-        {
-            for (auto& [k, v] : pv_cfg.metadata)
-                merged_meta[k] = v;
-            break;
-        }
-    }
+    const auto&              merged_meta    = mergedMetadataFor(pvName);
 
     IDataBus::EventBatch tableBatch;
     tableBatch.metadata = merged_meta;
     tableBatch.payload  = TimeSeriesPayload{.root_source_name = pvName, .is_tabular = true};
     std::size_t colsInBatch = 0;
 
-    // Accumulator for grouping multiple columns into one shared-timestamp DataBatch frame.
     DataBatch   currentFrame;
     std::size_t colsInCurrentFrame = 0;
     bool        frameTimestampsSet = false;
-
-    auto resetBatch = [&tableBatch, &pvName, &colsInBatch, merged_meta]()
-    {
-        tableBatch = IDataBus::EventBatch{};
-        tableBatch.metadata = merged_meta;
-        tableBatch.payload  = TimeSeriesPayload{.root_source_name = pvName, .is_tabular = true};
-        colsInBatch = 0;
-    };
 
     auto flushCurrentFrame = [&]()
     {
@@ -325,7 +294,10 @@ void EpicsBaseReader::processSlacBsasTableMode(const std::string&               
         {
             tableBatch.reader_name = name();
             bus_->push(std::move(tableBatch));
-            resetBatch();
+            tableBatch = IDataBus::EventBatch{};
+            tableBatch.metadata = merged_meta;
+            tableBatch.payload  = TimeSeriesPayload{.root_source_name = pvName, .is_tabular = true};
+            colsInBatch = 0;
         }
     };
 
@@ -451,20 +423,23 @@ void EpicsBaseReader::processEvent(std::string pvName, ::epics::pvData::PVStruct
                     m.incrementReaderDataBytesTotal(static_cast<double>(dataBytes), sourceTag);
                 });
                 const auto now = std::chrono::steady_clock::now();
-                auto& last_time = last_event_time_[pvName];
-                if (last_time != std::chrono::steady_clock::time_point{})
                 {
-                    const double interval_ms = std::chrono::duration<double, std::milli>(
-                        now - last_time).count();
-                    if (interval_ms > 0.0)
+                    std::lock_guard<std::mutex> lk(last_event_time_mutex_);
+                    auto& last_time = last_event_time_[pvName];
+                    if (last_time != std::chrono::steady_clock::time_point{})
                     {
-                        const double bps = (static_cast<double>(dataBytes) * 1000.0) / interval_ms;
-                        metric_call(metrics_, [&](auto& m) {
-                            m.setReaderDataBytesPerSecond(bps, sourceTag);
-                        });
+                        const double interval_ms = std::chrono::duration<double, std::milli>(
+                            now - last_time).count();
+                        if (interval_ms > 0.0)
+                        {
+                            const double bps = (static_cast<double>(dataBytes) * 1000.0) / interval_ms;
+                            metric_call(metrics_, [&](auto& m) {
+                                m.setReaderDataBytesPerSecond(bps, sourceTag);
+                            });
+                        }
                     }
+                    last_time = now;
                 }
-                last_time = now;
             }
             tracef(*logger_, "[{}/{}] event published", name_, pvName);
         }
