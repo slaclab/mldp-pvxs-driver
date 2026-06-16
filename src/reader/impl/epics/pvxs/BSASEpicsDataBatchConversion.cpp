@@ -16,6 +16,7 @@
 #include <future>
 #include <optional>
 #include <type_traits>
+#include <unordered_map>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -28,19 +29,39 @@ using mldp_pvxs_driver::util::bus::IDataBus;
 namespace {
 
 /*
- * Conversion flow overview (BSAS NTTable, row-timestamp mode):
- * 1) Validate the incoming PVXS value and locate the NTTable "value" struct.
- * 2) Resolve row timestamp arrays (seconds/nanoseconds), accepting either:
- *    - top-level fields, or
- *    - value.<field> columns.
- * 3) Build normalized uint64 vectors for the timestamp fields only
- *    (seconds/nanoseconds) so downstream row indexing is uniform regardless
- *    of original integer width/signedness.
- * 4) For each non-timestamp column:
- *    - convert supported NTTable array types into one DataBatch payload,
- *    - attach the full row timestamp list to that batch,
- *    - emit the result under the column name.
- * 5) Report total emitted rows across all converted columns.
+ * BSAS NTTable → DataBatch conversion
+ *
+ * What comes in (PVXS NTTable):
+ *
+ *   epicsValue
+ *     ├── secondsPastEpoch[]   ← one timestamp-seconds per row
+ *     ├── nanoseconds[]        ← one timestamp-nanos per row
+ *     └── value (struct)
+ *           ├── col_A[]        ← typed data (float, int, string, ...)
+ *           ├── col_B[]
+ *           └── ...
+ *
+ * What goes out (per column):
+ *
+ *   DataBatch { timestamps[], columns[DataColumn], array_dims{} }
+ *
+ * How it works (two steps):
+ *
+ *   Step 1 — convertColumn(col)
+ *     Extracts raw typed values from one PVXS array column.
+ *     Returns a ColumnResult with DataColumn(s) but NO timestamps.
+ *     Pure function, thread-safe, parallelizable.
+ *
+ *   Step 2 — tryBuildNtTableRowTsBatch() [the caller]
+ *     Validates the NTTable structure.
+ *     Builds shared timestamp vectors from seconds/nanos arrays.
+ *     For each column: calls convertColumn(), attaches timestamps,
+ *     emits the assembled DataBatch via the emitColumn callback.
+ *
+ * Sequential vs parallel:
+ *   Both variants run Step 2 identically — the only difference is
+ *   whether Step 1 runs in a thread pool or inline. Timestamp
+ *   attachment and emission always happen in the main thread.
  */
 
 /// Helper to interpret integer PVXS array fields (of any width) as uint64.
@@ -92,12 +113,13 @@ std::optional<UIntArrayView> asUIntArrayView(const pvxs::Value& value)
     }
 }
 
-/// Result of converting a single NTTable column to DataBatch payload(s).
+/// Result of converting a single NTTable column to typed DataColumn(s).
 struct ColumnResult
 {
-    std::string            name;
-    std::vector<DataBatch> events; ///< At most one element (all rows packed).
-    size_t                 emitted{0};
+    std::string                                name;
+    std::vector<DataColumn>                    columns;
+    std::unordered_map<std::string, ArrayDims> array_dims;
+    size_t                                     emitted{0};
 };
 
 /// Fill per-row timestamps into a DataBatch's timestamps vector.
@@ -113,25 +135,18 @@ void fillTimestamps(DataBatch&                   batch,
     }
 }
 
-/// Convert one NTTable column into a single DataBatch that contains
-/// all @p rowCount timestamped values in the appropriate typed column.
-///
-/// Compound column types (StructA/UnionA/AnyA) are supported: each cell's nested
-/// "value" field (or the cell itself) is recursively converted via EpicsMLDPConversion.
-ColumnResult convertColumn(const pvxs::Value&           columns,
-                           const pvxs::Value&           col,
-                           const std::string&           colName,
-                           size_t                       rowCount,
-                           const std::vector<uint64_t>& tsSeconds,
-                           const std::vector<uint64_t>& tsNanos)
+/// Extract typed data from one NTTable column into DataColumn(s).
+/// Timestamps are NOT attached here — the caller assembles a DataBatch.
+ColumnResult convertColumn(const pvxs::Value& columns,
+                           const pvxs::Value& col,
+                           const std::string& colName,
+                           size_t             rowCount)
 {
     ColumnResult result;
     result.name = colName;
 
     const auto colCode = col.type().code;
 
-    // Generic helper: builds a DataBatch with one typed DataColumn from a PVXS
-    // shared_array. Iterates the array and casts each element via CastFn.
     const auto emitTypedColumn =
         [&]<typename ArrT, typename OutT>(auto castFn)
     {
@@ -141,9 +156,6 @@ ColumnResult convertColumn(const pvxs::Value&           columns,
         {
             return;
         }
-
-        DataBatch batch;
-        fillTimestamps(batch, n, tsSeconds, tsNanos);
 
         std::vector<OutT> vals;
         vals.reserve(n);
@@ -155,9 +167,7 @@ ColumnResult convertColumn(const pvxs::Value&           columns,
         DataColumn dc;
         dc.name = colName;
         dc.values = std::move(vals);
-        batch.columns.push_back(std::move(dc));
-
-        result.events.push_back(std::move(batch));
+        result.columns.push_back(std::move(dc));
         result.emitted = n;
     };
 
@@ -215,16 +225,11 @@ ColumnResult convertColumn(const pvxs::Value&           columns,
             const auto n = std::min(rowCount, static_cast<size_t>(arr.size()));
             if (n > 0)
             {
-                DataBatch batch;
-                fillTimestamps(batch, n, tsSeconds, tsNanos);
-
                 std::vector<std::string> vals(arr.begin(), arr.begin() + static_cast<ptrdiff_t>(n));
                 DataColumn               dc;
                 dc.name = colName;
                 dc.values = std::move(vals);
-                batch.columns.push_back(std::move(dc));
-
-                result.events.push_back(std::move(batch));
+                result.columns.push_back(std::move(dc));
                 result.emitted = n;
             }
             break;
@@ -234,15 +239,11 @@ ColumnResult convertColumn(const pvxs::Value&           columns,
     case pvxs::TypeCode::UnionA:
     case pvxs::TypeCode::AnyA:
         {
-            // Compound array columns: convert each cell's value fields into the
-            // same DataBatch, using EpicsMLDPConversion for the actual type dispatch.
             const auto arr = col.as<pvxs::shared_array<const pvxs::Value>>();
             const auto n = std::min(rowCount, static_cast<size_t>(arr.size()));
             if (n > 0)
             {
-                DataBatch batch;
-                fillTimestamps(batch, n, tsSeconds, tsNanos);
-
+                DataBatch tempBatch;
                 for (size_t i = 0; i < n; ++i)
                 {
                     const pvxs::Value cell = arr[i];
@@ -251,10 +252,12 @@ ColumnResult convertColumn(const pvxs::Value&           columns,
                             ? cell["value"]
                             : pvxs::Value{};
                     EpicsMLDPConversion::convertPVToDataBatch(
-                        cellValue.valid() ? cellValue : cell, &batch, colName);
+                        cellValue.valid() ? cellValue : cell, &tempBatch, colName);
                 }
-
-                result.events.push_back(std::move(batch));
+                for (auto& dc : tempBatch.columns)
+                    result.columns.push_back(std::move(dc));
+                for (auto& [k, v] : tempBatch.array_dims)
+                    result.array_dims[k] = std::move(v);
                 result.emitted = n;
             }
             break;
@@ -373,11 +376,15 @@ bool BSASEpicsDataBatchConversion::tryBuildNtTableRowTsBatch(mldp_pvxs_driver::u
             continue;
         }
 
-        auto result = convertColumn(columns, col, colName, rowCount, tsSeconds, tsNanos);
+        auto result = convertColumn(columns, col, colName, rowCount);
         if (result.emitted > 0)
         {
+            DataBatch batch;
+            fillTimestamps(batch, result.emitted, tsSeconds, tsNanos);
+            batch.columns = std::move(result.columns);
+            batch.array_dims = std::move(result.array_dims);
+            emitColumn(std::move(result.name), std::vector<DataBatch>{std::move(batch)});
             outEmitted += result.emitted;
-            emitColumn(std::move(result.name), std::move(result.events));
         }
         else
         {
@@ -467,13 +474,11 @@ bool BSASEpicsDataBatchConversion::tryBuildNtTableRowTsBatch(mldp_pvxs_driver::u
         return false;
     }
 
-    // Build shared timestamp arrays so parallel tasks can safely reference them.
-    auto tsSeconds = std::make_shared<std::vector<uint64_t>>(rowCount);
-    auto tsNanos = std::make_shared<std::vector<uint64_t>>(rowCount);
+    std::vector<uint64_t> tsSeconds(rowCount), tsNanos(rowCount);
     for (size_t i = 0; i < rowCount; ++i)
     {
-        (*tsSeconds)[i] = secondsArr->at(i);
-        (*tsNanos)[i] = nanosArr->at(i);
+        tsSeconds[i] = secondsArr->at(i);
+        tsNanos[i] = nanosArr->at(i);
     }
 
     // Collect columns to dispatch in parallel.
@@ -498,27 +503,28 @@ bool BSASEpicsDataBatchConversion::tryBuildNtTableRowTsBatch(mldp_pvxs_driver::u
         colInfos.push_back({col, colName});
     }
 
-    // Submit column conversions to the thread pool.
     std::vector<std::future<ColumnResult>> futures;
     futures.reserve(colInfos.size());
     for (auto& ci : colInfos)
     {
         futures.push_back(pool->submit_task(
-            [&columns, col = ci.col, name = ci.name, rowCount, tsSeconds, tsNanos]() -> ColumnResult
+            [&columns, col = ci.col, name = ci.name, rowCount]() -> ColumnResult
             {
-                return convertColumn(columns, col, name, rowCount, *tsSeconds, *tsNanos);
+                return convertColumn(columns, col, name, rowCount);
             }));
     }
 
-    // Collect futures and emit sequentially to keep callback side effects ordered
-    // at this boundary (conversion work itself is parallelized).
     for (auto& fut : futures)
     {
         auto result = fut.get();
         if (result.emitted > 0)
         {
+            DataBatch batch;
+            fillTimestamps(batch, result.emitted, tsSeconds, tsNanos);
+            batch.columns = std::move(result.columns);
+            batch.array_dims = std::move(result.array_dims);
+            emitColumn(std::move(result.name), std::vector<DataBatch>{std::move(batch)});
             outEmitted += result.emitted;
-            emitColumn(std::move(result.name), std::move(result.events));
         }
     }
 
