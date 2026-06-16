@@ -2,7 +2,7 @@
 
 > **Source:** `metrics.jsonl` collected 2026-06-12 18:46:44–18:48:00 UTC  
 > **Controller:** `gen-1-ingestion-driver`  
-> **Pipeline:** `epics-pvxs (BSAS NTTable)` → `BSASEpicsMLDPConversion` → `MLDPPVXSController` → `MLDPWriter (mldp_gen1_ingestion)`
+> **Pipeline:** `epics-pvxs (BSAS NTTable)` → `BSASEpicsDataBatchConversion` → `MLDPPVXSController` → `MLDPWriter (mldp_gen1_ingestion)`
 
 ---
 
@@ -41,9 +41,9 @@ PVXS monitor fires on each NTTable update from `BSAS:SYS0:1:CUHXR_TBL`.
 
 ![Reader ingress rate](img/reader-throughput.svg)
 
-### Stage 2 — BSASEpicsMLDPConversion
+### Stage 2 — BSASEpicsDataBatchConversion
 
-`BSASEpicsMLDPConversion::convert()` iterates the NTTable column-by-column:
+`BSASEpicsDataBatchConversion::convert()` iterates the NTTable column-by-column:
 
 1. Validate incoming `pvxs::Value`; locate `value` struct.
 2. Resolve row timestamp arrays (`secondsPastEpoch` / `nanoseconds`) via `UIntArrayView` — accepts any integer width (uint32/int32/uint64/int64).

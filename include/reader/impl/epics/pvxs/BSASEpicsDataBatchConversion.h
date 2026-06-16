@@ -9,10 +9,10 @@
 //////////////////////////////////////////////////////////////////////////////
 
 /**
- * @file BSASEpicsMLDPConversion.h
- * @brief SLAC BSAS-specific NTTable conversion utilities for PVXS.
+ * @file BSASEpicsDataBatchConversion.h
+ * @brief SLAC BSAS-specific NTTable to bus DataBatch conversion utilities for PVXS.
  *
- * This header provides the BSASEpicsMLDPConversion class for handling SLAC Beam
+ * This header provides the BSASEpicsDataBatchConversion class for handling SLAC Beam
  * Synchronous Acquisition System (BSAS) NTTable structures. The class extends
  * EpicsMLDPConversion with specialized handling for row-timestamped NTTable data,
  * where each row carries its own timestamp extracted from designated columns.
@@ -48,12 +48,12 @@ namespace mldp_pvxs_driver::reader::impl::epics {
  * - Parallel processing: Uses a thread pool for concurrent column conversion
  *
  * @note This class is designed for PVXS (PV Access). For EPICS Base pvData
- *       NTTable handling, see EpicsPVDataConversion.
+ *       NTTable handling, see EpicsPVDataBatchConversion.
  *
  * @see EpicsMLDPConversion for base conversion functionality
- * @see EpicsPVDataConversion for EPICS Base equivalents
+ * @see EpicsPVDataBatchConversion for EPICS Base equivalents
  */
-class BSASEpicsMLDPConversion : public EpicsMLDPConversion
+class BSASEpicsDataBatchConversion : public EpicsMLDPConversion
 {
 public:
     /**

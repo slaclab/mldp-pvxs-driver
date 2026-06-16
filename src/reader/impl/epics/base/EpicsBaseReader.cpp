@@ -13,7 +13,7 @@
 
 #include <config/Config.h>
 #include <metrics/Metrics.h>
-#include <reader/impl/epics/base/EpicsPVDataConversion.h>
+#include <reader/impl/epics/base/EpicsPVDataBatchConversion.h>
 #include <util/log/Logger.h>
 
 #include <chrono>
@@ -242,7 +242,7 @@ void EpicsBaseReader::processDefaultMode(const std::string&                     
                   name_, pvName);
             return;
         }
-        EpicsPVDataConversion::convertPVToDataBatch(*valueField, &batch_frame, pvName);
+        EpicsPVDataBatchConversion::convertPVToDataBatch(*valueField, &batch_frame, pvName);
     }
     batch_frame.timestamps.push_back(TimestampEntry{epoch_seconds, nanoseconds});
     // Build merged metadata: reader-level base, PV-level overrides
@@ -268,7 +268,7 @@ void EpicsBaseReader::processDefaultMode(const std::string&                     
 
 /// Process a PV update in SlacBsasTable (NTTable row-timestamp) mode.
 ///
-/// Delegates conversion to EpicsPVDataConversion::tryBuildNtTableRowTsBatch.
+/// Delegates conversion to EpicsPVDataBatchConversion::tryBuildNtTableRowTsBatch.
 /// Columns are grouped into shared DataBatch frames according to the per-PV
 /// columnBatchSize setting (default 1 = each column gets its own frame).
 /// Full EventBatch messages are pushed to the bus when global columnBatchSize
@@ -329,7 +329,7 @@ void EpicsBaseReader::processSlacBsasTableMode(const std::string&               
         }
     };
 
-    if (!EpicsPVDataConversion::tryBuildNtTableRowTsBatch(
+    if (!EpicsPVDataBatchConversion::tryBuildNtTableRowTsBatch(
             *logger_, pvName, epicsValue,
             runtimeCfg ? runtimeCfg->tsSecondsField : "secondsPastEpoch",
             runtimeCfg ? runtimeCfg->tsNanosField : "nanoseconds",

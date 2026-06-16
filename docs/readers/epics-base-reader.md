@@ -90,7 +90,7 @@ pvs:
       tsNanos: nanoseconds          # column holding per-row nanoseconds
 ```
 
-Conversion is handled by `EpicsPVDataConversion::tryBuildNtTableRowTsBatch()`.
+Conversion is handled by `EpicsPVDataBatchConversion::tryBuildNtTableRowTsBatch()`.
 
 For a full description of the BSAS NTTable structure, field layout, and a
 concrete annotated example see

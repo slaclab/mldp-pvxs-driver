@@ -13,7 +13,7 @@
 
 #include <config/Config.h>
 #include <metrics/Metrics.h>
-#include <reader/impl/epics/pvxs/BSASEpicsMLDPConversion.h>
+#include <reader/impl/epics/pvxs/BSASEpicsDataBatchConversion.h>
 #include <reader/impl/epics/pvxs/EpicsMLDPConversion.h>
 #include <util/StringFormat.h>
 #include <util/log/Logger.h>
@@ -295,7 +295,7 @@ void EpicsPVXSReader::processDefaultMode(const std::string& pvName, const pvxs::
 
 /// Process a PV update in SlacBsasTable mode (NTTable with per-row timestamps).
 ///
-/// Delegates conversion to BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch.
+/// Delegates conversion to BSASEpicsDataBatchConversion::tryBuildNtTableRowTsBatch.
 /// Columns are grouped into shared DataBatch frames according to the per-PV
 /// columnBatchSize setting (default 1 = each column gets its own frame).
 /// Grouped columns share a single timestamps vector within their DataBatch.
@@ -357,7 +357,7 @@ void EpicsPVXSReader::processSlacBsasTableMode(const std::string&     pvName,
         }
     };
 
-    if (!BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch(
+    if (!BSASEpicsDataBatchConversion::tryBuildNtTableRowTsBatch(
             *logger_, pvName, epicsValue,
             runtimeCfg ? runtimeCfg->tsSecondsField : "secondsPastEpoch",
             runtimeCfg ? runtimeCfg->tsNanosField : "nanoseconds",

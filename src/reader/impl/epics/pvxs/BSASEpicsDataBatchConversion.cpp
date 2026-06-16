@@ -9,7 +9,7 @@
 //////////////////////////////////////////////////////////////////////////////
 
 #include <pvxs/data.h>
-#include <reader/impl/epics/pvxs/BSASEpicsMLDPConversion.h>
+#include <reader/impl/epics/pvxs/BSASEpicsDataBatchConversion.h>
 
 #include <algorithm>
 #include <cstdint>
@@ -270,7 +270,7 @@ ColumnResult convertColumn(const pvxs::Value&           columns,
 
 } // namespace
 
-bool BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch(mldp_pvxs_driver::util::log::ILogger& log,
+bool BSASEpicsDataBatchConversion::tryBuildNtTableRowTsBatch(mldp_pvxs_driver::util::log::ILogger& log,
                                                         const std::string&                    tablePvName,
                                                         const pvxs::Value&                    epicsValue,
                                                         const std::string&                    tsSecondsField,
@@ -292,7 +292,7 @@ bool BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch(mldp_pvxs_driver::util::
                                      outEmitted);
 }
 
-bool BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch(mldp_pvxs_driver::util::log::ILogger& log,
+bool BSASEpicsDataBatchConversion::tryBuildNtTableRowTsBatch(mldp_pvxs_driver::util::log::ILogger& log,
                                                         const std::string&                    tablePvName,
                                                         const pvxs::Value&                    epicsValue,
                                                         const std::string&                    tsSecondsField,
@@ -404,7 +404,7 @@ bool BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch(mldp_pvxs_driver::util::
     return outEmitted > 0;
 }
 
-bool BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch(mldp_pvxs_driver::util::log::ILogger& log,
+bool BSASEpicsDataBatchConversion::tryBuildNtTableRowTsBatch(mldp_pvxs_driver::util::log::ILogger& log,
                                                         const std::string&                    tablePvName,
                                                         const pvxs::Value&                    epicsValue,
                                                         const std::string&                    tsSecondsField,

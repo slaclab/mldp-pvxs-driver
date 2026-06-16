@@ -119,9 +119,9 @@ Key         | Default            | Description
 
 Component                   | File
 --------------------------- | -----------------------------------------------------------
-PVXS conversion class       | `include/reader/impl/epics/pvxs/BSASEpicsMLDPConversion.h`
-PVXS conversion impl        | `src/reader/impl/epics/pvxs/BSASEpicsMLDPConversion.cpp`
-EPICS Base conversion       | `include/reader/impl/epics/base/EpicsPVDataConversion.h`
+PVXS conversion class       | `include/reader/impl/epics/pvxs/BSASEpicsDataBatchConversion.h`
+PVXS conversion impl        | `src/reader/impl/epics/pvxs/BSASEpicsDataBatchConversion.cpp`
+EPICS Base conversion       | `include/reader/impl/epics/base/EpicsPVDataBatchConversion.h`
 PVXS reader dispatch        | `src/reader/impl/epics/pvxs/EpicsPVXSReader.cpp`
 EPICS Base reader dispatch  | `src/reader/impl/epics/base/EpicsBaseReader.cpp`
 Mock IOC (concrete example) | `test/mock/sioc.cpp`

@@ -9,11 +9,11 @@
 //////////////////////////////////////////////////////////////////////////////
 
 /**
- * @file EpicsPVDataConversion.h
- * @brief Conversion utilities for EPICS Base pvData to MLDP DataBatch format.
+ * @file EpicsPVDataBatchConversion.h
+ * @brief Conversion utilities for EPICS Base pvData to bus DataBatch format.
  *
- * This header provides the EpicsPVDataConversion class for converting EPICS Base
- * pvData structures to the MLDP bus DataBatch format. It includes support for
+ * This header provides the EpicsPVDataBatchConversion class for converting EPICS Base
+ * pvData structures to the bus DataBatch format. It includes support for
  * standard scalar/array PVs as well as SLAC BSAS NTTable structures.
  */
 
@@ -30,7 +30,7 @@
 namespace mldp_pvxs_driver::reader::impl::epics {
 
 /**
- * @brief Conversion utilities for EPICS Base pvData to MLDP DataBatch format.
+ * @brief Conversion utilities for EPICS Base pvData to bus DataBatch format.
  *
  * This class provides static methods for converting EPICS Base pvData structures
  * (PVField, PVStructure) to the DataBatch columnar format used by the MLDP bus.
@@ -38,12 +38,12 @@ namespace mldp_pvxs_driver::reader::impl::epics {
  * BSAS NTTable structures with per-row timestamps.
  *
  * @note This class is designed for EPICS Base (pvData). For PVXS conversions,
- *       see EpicsMLDPConversion and BSASEpicsMLDPConversion.
+ *       see EpicsMLDPConversion and BSASEpicsDataBatchConversion.
  *
  * @see EpicsMLDPConversion for PVXS conversions
  * @see EpicsBaseReader for the reader that uses these conversions
  */
-class EpicsPVDataConversion
+class EpicsPVDataBatchConversion
 {
 public:
     /**

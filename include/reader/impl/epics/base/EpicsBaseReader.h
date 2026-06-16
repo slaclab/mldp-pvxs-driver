@@ -139,7 +139,7 @@ private:
     /**
      * @brief Handle a PV update in SlacBsasTable (NTTable row-timestamp) mode.
      *
-     * Delegates conversion to EpicsPVDataConversion::tryBuildNtTableRowTsBatch.
+     * Delegates conversion to EpicsPVDataBatchConversion::tryBuildNtTableRowTsBatch.
      * Columns are flushed to the bus in batches of at most
      * config_.columnBatchSize() entries to bound memory usage for wide tables.
      * @p emitted receives the total number of data rows published.

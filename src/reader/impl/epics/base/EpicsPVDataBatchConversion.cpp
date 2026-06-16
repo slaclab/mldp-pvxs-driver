@@ -8,7 +8,7 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
-#include <reader/impl/epics/base/EpicsPVDataConversion.h>
+#include <reader/impl/epics/base/EpicsPVDataBatchConversion.h>
 
 #include <algorithm>
 #include <cstdint>
@@ -163,7 +163,7 @@ void convertStructure(const ::epics::pvData::PVStructure& pvStruct,
         {
             continue;
         }
-        EpicsPVDataConversion::convertPVToDataBatch(*fields[i], batch, prefix + "." + fieldNames[i]);
+        EpicsPVDataBatchConversion::convertPVToDataBatch(*fields[i], batch, prefix + "." + fieldNames[i]);
     }
 }
 
@@ -386,7 +386,7 @@ ColumnResult convertColumn(const ::epics::pvData::PVFieldPtr& col,
             batch.timestamps.push_back(TimestampEntry{tsSeconds[i], tsNanos[i]});
             if (view[i])
             {
-                EpicsPVDataConversion::convertPVToDataBatch(*view[i], &batch, colName);
+                EpicsPVDataBatchConversion::convertPVToDataBatch(*view[i], &batch, colName);
             }
             result.events.emplace_back(std::move(batch));
         }
@@ -398,7 +398,7 @@ ColumnResult convertColumn(const ::epics::pvData::PVFieldPtr& col,
 
 } // namespace
 
-void EpicsPVDataConversion::convertPVToDataBatch(const ::epics::pvData::PVField& pvField,
+void EpicsPVDataBatchConversion::convertPVToDataBatch(const ::epics::pvData::PVField& pvField,
                                                  DataBatch*                      batch,
                                                  const std::string&              columnName)
 {
@@ -546,7 +546,7 @@ void EpicsPVDataConversion::convertPVToDataBatch(const ::epics::pvData::PVField&
     batch->columns.push_back(std::move(col));
 }
 
-bool EpicsPVDataConversion::tryBuildNtTableRowTsBatch(mldp_pvxs_driver::util::log::ILogger&  log,
+bool EpicsPVDataBatchConversion::tryBuildNtTableRowTsBatch(mldp_pvxs_driver::util::log::ILogger&  log,
                                                       const std::string&                     tablePvName,
                                                       const ::epics::pvData::PVStructurePtr& epicsValue,
                                                       const std::string&                     tsSecondsField,
@@ -568,7 +568,7 @@ bool EpicsPVDataConversion::tryBuildNtTableRowTsBatch(mldp_pvxs_driver::util::lo
                                      outEmitted);
 }
 
-bool EpicsPVDataConversion::tryBuildNtTableRowTsBatch(mldp_pvxs_driver::util::log::ILogger&  log,
+bool EpicsPVDataBatchConversion::tryBuildNtTableRowTsBatch(mldp_pvxs_driver::util::log::ILogger&  log,
                                                       const std::string&                     tablePvName,
                                                       const ::epics::pvData::PVStructurePtr& epicsValue,
                                                       const std::string&                     tsSecondsField,

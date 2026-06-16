@@ -46,10 +46,10 @@ namespace mldp_pvxs_driver::reader::impl::epics {
  * - Null                  → std::vector<std::string>{"null"}
  *
  * @note This class is designed for use with the PVXS library. For EPICS Base (pvData)
- *       conversions, see EpicsPVDataConversion.
+ *       conversions, see EpicsPVDataBatchConversion.
  *
- * @see EpicsPVDataConversion for EPICS Base pvData conversions
- * @see BSASEpicsMLDPConversion for SLAC BSAS NTTable handling
+ * @see EpicsPVDataBatchConversion for EPICS Base pvData conversions
+ * @see BSASEpicsDataBatchConversion for SLAC BSAS NTTable handling
  */
 class EpicsMLDPConversion
 {

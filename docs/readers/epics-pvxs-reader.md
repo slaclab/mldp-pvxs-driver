@@ -104,7 +104,7 @@ pvs:
 - Each NTTable column (PV name) becomes a separate source in the event batch.
 - The two timestamp columns are consumed for row indexing and are not forwarded.
 - Source name equals the PV-name column field name.
-- Conversion is handled by `BSASEpicsMLDPConversion::tryBuildNtTableRowTsBatch()`.
+- Conversion is handled by `BSASEpicsDataBatchConversion::tryBuildNtTableRowTsBatch()`.
 
 For a full description of the BSAS NTTable structure, field layout, and a
 concrete annotated example see
