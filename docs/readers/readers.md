@@ -13,6 +13,7 @@ Reader Type           | Status      | Data Source                     | Document
 `epics-archiver`      | Implemented | EPICS Archiver                  | [EpicsArchiverReader](epics-archiver-reader.md)
 `epics-ds-metadata`   | Implemented | EPICS Directory Service (PVA RPC) | [EpicsDSMetadataReader](epics-ds-metadata-reader.md)
 `slac-calendar`       | Implemented | SLAC Calendar HTTP API          | [SlacCalendarReader](slac-calendar-reader.md)
+`hdf5-bsas-gen1`      | Implemented | HDF5 BSAS Gen1 files (PyTables) | [HDF5BsasGen1Reader](hdf5-bsas-gen1-reader.md)
 
 ## Reader Build & Dependency Matrix
 
