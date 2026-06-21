@@ -35,11 +35,18 @@ EPICS/PVXS discovery is controlled by CMake/env variables used at configure time
 
 ```mermaid
 classDiagram
+    class IReaderLifecycle {
+        <<Interface>>
+        +onReaderCompleted(reader_name)
+    }
+
     class Reader {
         <<Abstract Base>>
         +name()
         +start()
         +stop()
+        +setLifecycleObserver(weak_ptr~IReaderLifecycle~)
+        #signalCompleted()
     }
 
     class EpicsReaderBase {
@@ -73,6 +80,7 @@ classDiagram
         slac-calendar
     }
 
+    IReaderLifecycle <.. Reader : observes
     Reader <|-- EpicsReaderBase
     Reader <|-- EpicsArchiverReader
     Reader <|-- EpicsDSMetadataReader
@@ -137,6 +145,36 @@ Beamline experiment schedule fetcher using the SLAC calendar HTTP API.
 
 → [Full Documentation: SlacCalendarReader](slac-calendar-reader.md)
 
+## Reader Lifecycle & Auto-Close
+
+Readers can signal completion to the controller through the `IReaderLifecycle` observer pattern. This enables **auto-close behavior**: when all readers in a controller are one-shot types and all signal completion, the controller initiates a graceful shutdown automatically.
+
+### How It Works
+
+1. The controller implements `IReaderLifecycle` and registers itself as the lifecycle observer on each reader at startup.
+2. When a one-shot reader finishes its work, it calls `signalCompleted()` (protected method on `Reader` base class).
+3. `signalCompleted()` notifies the controller's `onReaderCompleted()` callback via a `weak_ptr`.
+4. The controller posts an async removal of the completed reader (to avoid deadlock — the callback runs on the reader's worker thread).
+5. When no readers remain, the controller calls `stop()` for graceful shutdown.
+
+### Which Readers Signal Completion
+
+| Reader | Signals completion? | Condition |
+|--------|-------------------|-----------|
+| `EpicsArchiverReader` | Yes, in `historical_once` mode | After one-shot fetch completes (success or failure) |
+| `EpicsDSMetadataReader` | Yes, when `rescan-interval-sec = 0` | After single fetch cycle + PV sweep |
+| `SlacCalendarReader` | Yes, when `rescan-interval-sec = 0` | After single fetch cycle |
+| `EpicsBaseReader` | No | Event-driven subscription, never completes |
+| `EpicsPVXSReader` | No | Event-driven subscription, never completes |
+| `EpicsArchiverReader` (periodic_tail) | No | Continuous polling, never completes |
+| `HDF5BsasGen1Reader` | Yes | After file read completes |
+
+Long-running readers (subscriptions, periodic polling) never call `signalCompleted()`, so the controller stays alive. No configuration flag is needed — auto-close is inherent to the reader mix.
+
+→ [Controller Auto-Close Details](../reference/controller.md#auto-close-reader-lifecycle)
+
+---
+
 ## Architecture Overview
 
 ### Core Pattern
@@ -175,7 +213,12 @@ public:
     // Return human-readable identifier
     virtual std::string name() const override;
 
+    // Lifecycle observer (set by controller at startup)
+    void setLifecycleObserver(std::weak_ptr<IReaderLifecycle> observer);
+
 protected:
+    void signalCompleted();  // Call when one-shot work is done
+
     std::shared_ptr<IDataBus> bus_;       // Event bus
     std::shared_ptr<metrics::Metrics> metrics_; // Optional metrics
 };
@@ -327,7 +370,8 @@ See **[Implementing Custom Readers](readers-implementation.md)**.
 
 ```TEXT
 include/reader/
-├── Reader.h                          # Abstract base class
+├── IReader.h                         # Abstract base class
+├── IReaderLifecycle.h                # Lifecycle observer interface
 ├── ReaderFactory.h                   # Factory registration
 └── impl/
     └── epics/

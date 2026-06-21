@@ -43,9 +43,23 @@ The **MLDPPVXSController** is the central orchestrator of the MLDP PVXS Driver. 
 Ordered shutdown (idempotent):
 
 1. Set `running_` to false — new `push()` calls are rejected.
-2. Clear readers (stops monitoring/polling).
+2. Clear readers (stops monitoring/polling, protected by `readers_mutex_`).
 3. Call `stop()` on each writer (drains pending work).
 4. Release resources.
+
+### Auto-Close (Reader Lifecycle)
+
+The controller implements `IReaderLifecycle` and acts as a lifecycle observer for all readers. After reader creation, each reader's lifecycle observer is wired to the controller via `shared_from_this()`.
+
+When a one-shot reader completes its work, it calls `signalCompleted()`, which invokes the controller's `onReaderCompleted()` callback. The controller:
+
+1. Posts an **async removal** of the completed reader to the thread pool (to avoid deadlock — the callback runs on the reader's worker thread, and the reader destructor would join that same thread).
+2. Removes the reader from the active list under `readers_mutex_`.
+3. If no readers remain, initiates graceful `stop()`.
+
+**When it triggers:** Only when _all_ configured readers are one-shot types and all have signaled completion. Long-running readers (EPICS subscriptions, archiver `periodic_tail`, any reader with `rescan-interval-sec > 0`) never call `signalCompleted()`, so the controller stays alive. No configuration flag is needed — the behavior is inherent to reader type.
+
+**In-flight batch draining:** Batches already pushed by a completing reader are queued in the writer thread pool. The controller's `stop()` calls each writer's `stop()`, which drains pending work before returning.
 
 ---
 
@@ -229,6 +243,7 @@ metrics:               # optional — Prometheus HTTP endpoint
 | `src/controller/MLDPPVXSController.cpp` | Lifecycle, dispatch, and routing integration |
 | `include/controller/MLDPPVXSControllerConfig.h` | Typed config with routing entry parsing |
 | `src/controller/MLDPPVXSControllerConfig.cpp` | YAML parsing (writers, readers, routing, metrics) |
+| `include/reader/IReaderLifecycle.h` | Lifecycle observer interface (`onReaderCompleted`) |
 | `include/controller/RouteTable.h` | Immutable route table class |
 | `src/controller/RouteTable.cpp` | Route table build, accepts, orphan detection |
 | `include/util/bus/IDataBus.h` | `EventBatchStruct` with `reader_name` field |
