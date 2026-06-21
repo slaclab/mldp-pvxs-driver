@@ -349,12 +349,7 @@ void MLDPPVXSController::stop()
         readers_.clear();
     }
 
-    infof(*logger_, "Draining controller dispatch queue (thread_pool)...");
-    if (thread_pool_)
-    {
-        thread_pool_->wait();
-    }
-    infof(*logger_, "Controller dispatch queue drained");
+    infof(*logger_, "All readers removed — dispatch queue already drained (push is synchronous)");
 
     for (auto& processor : processors_)
     {
