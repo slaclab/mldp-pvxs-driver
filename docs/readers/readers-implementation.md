@@ -40,7 +40,7 @@ All readers must inherit from the `Reader` base class and implement the required
 ### Base Class
 
 ```cpp
-// include/reader/Reader.h
+// include/reader/IReader.h
 class Reader {
 public:
     Reader(std::shared_ptr<util::bus::IDataBus> bus,
@@ -51,7 +51,13 @@ public:
     // Return a human-readable identifier for this reader instance
     virtual std::string name() const = 0;
 
+    // Set lifecycle observer (called by controller at startup)
+    void setLifecycleObserver(std::weak_ptr<IReaderLifecycle> observer);
+
 protected:
+    // Call when one-shot work is done to notify the controller
+    void signalCompleted();
+
     std::shared_ptr<util::bus::IDataBus> bus_;     // Event bus for pushing data
     std::shared_ptr<metrics::Metrics> metrics_;          // Optional metrics collector
 };
@@ -732,6 +738,8 @@ if (metrics_) {
 - Start background threads in `start()`
 - Clean up resources in `stop()` and destructor
 - Make `start()` and `stop()` idempotent
+- **One-shot readers**: call `signalCompleted()` when work is done (after the worker loop exits naturally, not on external shutdown). This notifies the controller's `IReaderLifecycle` observer, which removes the reader and triggers auto-close if no readers remain. See [Reader Lifecycle & Auto-Close](readers.md#reader-lifecycle--auto-close).
+- **Long-running readers** (subscriptions, periodic polling): do **not** call `signalCompleted()` — they run until explicitly stopped
 
 ## Testing
 

@@ -88,7 +88,10 @@ void SlacCalendarReader::runWorker()
         }
 
         if (config_.rescanIntervalSec() <= 0.0)
+        {
+            signalCompleted();
             break;
+        }
 
         std::unique_lock<std::mutex> lk(worker_mutex_);
         worker_cv_.wait_for(lk,

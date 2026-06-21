@@ -61,8 +61,9 @@ flowchart TB
 6. Batches events by historical sample timestamps (using `batch-duration-sec`)
 7. Pushes batches to event bus
 8. Completes and thread exits (reader still running but idle)
+9. Signals `signalCompleted()` to notify the controller — enables [auto-close](readers.md#reader-lifecycle--auto-close) when all readers are one-shot
 
-**Worker thread lifecycle:** Starts, fetches and processes, exits automatically. Shutdown cancels the HTTP request immediately; thread joins before destructor completes.
+**Worker thread lifecycle:** Starts, fetches and processes, exits automatically. Calls `signalCompleted()` on exit to support [controller auto-close](readers.md#reader-lifecycle--auto-close). Shutdown cancels the HTTP request immediately; thread joins before destructor completes.
 
 ```yaml
 reader:
@@ -88,7 +89,7 @@ reader:
 6. Waits `poll-interval-sec` (interruptible via condition variable)
 7. Repeats until reader destruction
 
-**Worker thread lifecycle:** Runs until reader destruction. Condition variable allows prompt shutdown without waiting for poll interval to expire.
+**Worker thread lifecycle:** Runs until reader destruction. Condition variable allows prompt shutdown without waiting for poll interval to expire. Does **not** call `signalCompleted()` — periodic readers never trigger [auto-close](readers.md#reader-lifecycle--auto-close).
 
 ```yaml
 reader:

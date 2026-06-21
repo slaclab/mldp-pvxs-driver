@@ -11,6 +11,8 @@
 // Reader.hpp
 #pragma once
 
+#include <reader/IReaderLifecycle.h>
+
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -46,7 +48,22 @@ public:
     /** @brief Return the human-readable identifier for this reader instance. */
     virtual std::string name() const = 0;
 
+    /** @brief Register an optional observer for one-shot reader completion. */
+    void setLifecycleObserver(std::weak_ptr<IReaderLifecycle> observer)
+    {
+        lifecycle_ = std::move(observer);
+    }
+
 protected:
+    /** @brief Notify the lifecycle observer that the reader completed its one-shot work. */
+    void signalCompleted()
+    {
+        if (auto observer = lifecycle_.lock())
+        {
+            observer->onReaderCompleted(name());
+        }
+    }
+
     /** @brief Event bus that derived readers use to deliver events.
      *
      * Ownership is shared so readers can outlive their producers.
@@ -63,6 +80,9 @@ protected:
 
     /** @brief Access the provenance metadata map. */
     const std::unordered_map<std::string, std::string>& provenance() const { return provenance_; }
+
+private:
+    std::weak_ptr<IReaderLifecycle> lifecycle_;
 };
 
 } // namespace mldp_pvxs_driver::reader

@@ -17,12 +17,14 @@
 #include <metrics/Metrics.h>
 #include <processor/IChannelProcessor.h>
 #include <reader/IReader.h>
+#include <reader/IReaderLifecycle.h>
 #include <util/bus/IDataBus.h>
 #include <util/log/Logger.h>
 #include <writer/IWriter.h>
 
 #include <atomic>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -103,7 +105,9 @@ namespace mldp_pvxs_driver::controller {
  *    items and worker threads batch them into gRPC streams.
  * 4. Call @ref stop to halt the workers and tear down resources.
  */
-class MLDPPVXSController : public util::bus::IDataBus, public std::enable_shared_from_this<MLDPPVXSController>
+class MLDPPVXSController : public util::bus::IDataBus,
+                           public reader::IReaderLifecycle,
+                           public std::enable_shared_from_this<MLDPPVXSController>
 {
 public:
     /**
@@ -154,6 +158,8 @@ public:
      */
     bool push(EventBatch batch_values) override;
 
+    void onReaderCompleted(const std::string& reader_name) override;
+
     /**
      * @brief Access the shared metrics collector.
      *
@@ -168,12 +174,14 @@ private:
     std::vector<std::shared_ptr<BS::light_thread_pool>>   processor_pools_;   ///< One dedicated 1-thread pool per processor (each algorithm runs isolated).
     std::shared_ptr<metrics::Metrics>                     metrics_;     ///< Shared metrics collector/exposer.
     std::atomic<bool>                                     running_{false};
+    mutable std::mutex                                    readers_mutex_; ///< Protects reader lifecycle mutations.
     std::vector<reader::ReaderUPtr>                       readers_;     ///< Owned reader instances.
     std::vector<writer::IWriterUPtr>                      writers_;     ///< Fan-out writer instances.
     std::vector<processor::IChannelProcessorUPtr>         processors_;  ///< In-process virtual channel processors.
     RouteTable                                            route_table_; ///< Selective reader→writer dispatch.
 
     explicit MLDPPVXSController(const config::Config& config);
+    bool removeCompletedReader(const std::string& reader_name);
 };
 
 } // namespace mldp_pvxs_driver::controller

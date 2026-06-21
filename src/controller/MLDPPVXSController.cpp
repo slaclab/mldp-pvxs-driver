@@ -23,6 +23,7 @@
 
 #include <functional>
 #include <algorithm>
+#include <iterator>
 #include <sstream>
 #include <stdexcept>
 #include <unordered_set>
@@ -302,6 +303,7 @@ void MLDPPVXSController::start()
         const auto& type = entry.first;
         const auto& readerConfig = entry.second;
         auto        reader = ReaderFactory::create(type, shared_from_this(), readerConfig, metrics_);
+        reader->setLifecycleObserver(shared_from_this());
         readers_.push_back(std::move(reader));
     }
 
@@ -341,7 +343,10 @@ void MLDPPVXSController::stop()
     infof(*logger_, "Controller is stopping");
     running_.store(false);
 
-    readers_.clear();
+    {
+        std::lock_guard<std::mutex> lock(readers_mutex_);
+        readers_.clear();
+    }
 
     for (auto& processor : processors_)
     {
@@ -356,6 +361,53 @@ void MLDPPVXSController::stop()
     writers_.clear();
 
     infof(*logger_, "Controller stopped");
+}
+
+void MLDPPVXSController::onReaderCompleted(const std::string& reader_name)
+{
+    if (!running_.load())
+    {
+        return;
+    }
+
+    thread_pool_->detach_task(
+        [self = shared_from_this(), reader_name]
+        {
+            if (!self->removeCompletedReader(reader_name))
+            {
+                return;
+            }
+
+            if (self->running_.load())
+            {
+                self->stop();
+            }
+        });
+}
+
+bool MLDPPVXSController::removeCompletedReader(const std::string& reader_name)
+{
+    std::lock_guard<std::mutex> lock(readers_mutex_);
+    auto it = std::find_if(readers_.begin(), readers_.end(),
+                           [&](const auto& reader)
+                           {
+                               return reader != nullptr && reader->name() == reader_name;
+                           });
+    if (it == readers_.end())
+    {
+        debugf(*logger_, "Ignoring completion for unknown reader '{}'", reader_name);
+        return false;
+    }
+
+    infof(*logger_, "Reader '{}' completed; removing it from the active lifecycle set", reader_name);
+    readers_.erase(it);
+    if (!readers_.empty())
+    {
+        return false;
+    }
+
+    infof(*logger_, "All readers completed; triggering controller shutdown");
+    return true;
 }
 
 bool MLDPPVXSController::push(EventBatch batch_values)

@@ -17,6 +17,7 @@
  */
 #include <gtest/gtest.h>
 
+#include <reader/IReaderLifecycle.h>
 #include <reader/impl/epics_ds/EpicsDSMetadataReader.h>
 #include <util/bus/IDataBus.h>
 
@@ -26,7 +27,9 @@
 
 #include <algorithm>
 #include <chrono>
+#include <condition_variable>
 #include <memory>
+#include <mutex>
 #include <thread>
 #include <vector>
 
@@ -56,6 +59,42 @@ static bool waitForSnapshot(const std::shared_ptr<MockDataBus>& bus,
     }
     return bus->snapshot().size() >= count;
 }
+
+class LifecycleObserver final : public mldp_pvxs_driver::reader::IReaderLifecycle
+{
+public:
+    void onReaderCompleted(const std::string& reader_name) override
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        completed_name_ = reader_name;
+        ++count_;
+        cv_.notify_all();
+    }
+
+    bool waitForCompletion(std::chrono::milliseconds timeout)
+    {
+        std::unique_lock<std::mutex> lock(mu_);
+        return cv_.wait_for(lock, timeout, [&] { return count_ > 0; });
+    }
+
+    int completionCount() const
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        return count_;
+    }
+
+    std::string completedName() const
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        return completed_name_;
+    }
+
+private:
+    mutable std::mutex      mu_;
+    std::condition_variable cv_;
+    int                     count_{0};
+    std::string             completed_name_;
+};
 
 // ============================================================================
 // Fixture
@@ -238,6 +277,36 @@ pvs:
     EXPECT_EQ(entry.attributes.at("ioc"), "");
     EXPECT_EQ(entry.attributes.at("scheme"), "");
     EXPECT_EQ(entry.attributes.at("z"), "");
+
+    (void)reader;
+    (void)mockServer;
+}
+
+TEST(EpicsDSMetadataReaderLifecycleTest, OneShotRunSignalsLifecycleCompletion)
+{
+    auto mockServer = std::make_unique<MockDSServer>("test:ds:lifecycle");
+    auto bus        = std::make_shared<MockDataBus>();
+    auto observer   = std::make_shared<LifecycleObserver>();
+
+    auto cfg = makeConfigFromYaml(R"yaml(
+name: lifecycle-ds-reader
+service: test:ds:lifecycle
+query: "%"
+timeout-sec: 5.0
+source-name-column: channelName
+tags-column: tags
+rescan-interval-sec: 0.0
+worker-thread-count: 1
+pvs:
+  - name: VPIO:IN20:111:PRES
+)yaml");
+
+    auto reader = std::make_unique<EpicsDSMetadataReader>(bus, nullptr, cfg);
+    reader->setLifecycleObserver(observer);
+
+    ASSERT_TRUE(observer->waitForCompletion(std::chrono::milliseconds(5000)));
+    EXPECT_EQ(observer->completionCount(), 1);
+    EXPECT_EQ(observer->completedName(), "lifecycle-ds-reader");
 
     (void)reader;
     (void)mockServer;

@@ -86,7 +86,7 @@ The three axes below are independent and combinable. All require `pvs`.
 ### One-Shot (Default)
 
 When `rescan-interval-sec` is `0.0` (the default), the reader runs one fetch cycle
-(wildcard query + PV-list sweep) then the worker thread exits. The reader instance stays
+(wildcard query + PV-list sweep) then the worker thread exits and calls `signalCompleted()` to support [controller auto-close](readers.md#reader-lifecycle--auto-close). The reader instance stays
 alive but idle.
 
 ```yaml
@@ -108,7 +108,7 @@ reader:
 
 When `rescan-interval-sec` is greater than `0`, the worker repeats the full fetch cycle
 (wildcard query + PV-list sweep) on that interval until the reader is destroyed. The sleep
-between iterations is interruptible via a condition variable so shutdown is prompt.
+between iterations is interruptible via a condition variable so shutdown is prompt. Does **not** call `signalCompleted()` — periodic readers never trigger [auto-close](readers.md#reader-lifecycle--auto-close).
 
 ```yaml
 reader:

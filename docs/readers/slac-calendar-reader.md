@@ -59,7 +59,7 @@ When `rescan-interval-sec` is `0.0` (the default), the reader:
 2. Issues one HTTP GET per configured experiment.
 3. Parses the JSON array — each event becomes one `ConfigurationPayload` + one
    `ConfigurationActivationPayload` pushed to the bus.
-4. Worker thread exits; reader stays alive but idle.
+4. Worker thread exits and calls `signalCompleted()` to support [controller auto-close](readers.md#reader-lifecycle--auto-close); reader stays alive but idle.
 
 ```yaml
 reader:
@@ -76,7 +76,7 @@ reader:
 ### Periodic Rescan
 
 When `rescan-interval-sec > 0`, the worker repeats the fetch on that interval.
-The sleep between iterations is interruptible so shutdown is prompt.
+The sleep between iterations is interruptible so shutdown is prompt. Does **not** call `signalCompleted()` — periodic readers never trigger [auto-close](readers.md#reader-lifecycle--auto-close).
 
 ```yaml
 reader:

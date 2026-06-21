@@ -30,7 +30,7 @@ flowchart TB
     QueryableFactory["QueryableFactory<br/>(Out-of-Band Query Registry)"]
     WriterFactory["WriterFactory<br/>(Static Registration)"]
 
-    subgraph Controller["MLDPPVXSController"]
+    subgraph Controller["MLDPPVXSController — IDataBus + IReaderLifecycle"]
         direction TB
         HashPart["Hash-Based Partitioning<br/>(Source Affinity)"]
         subgraph Workers["Worker Queues"]
@@ -109,6 +109,7 @@ All readers:
 - Push events through `IDataBus` interface
 - Are decoupled from writer implementation
 - Are mirrored on the writer side by `WriterFactory` and `REGISTER_WRITER`
+- Can signal completion via `signalCompleted()` for one-shot modes — the controller's `IReaderLifecycle` observer removes completed readers and triggers auto-close when none remain (see [Reader Lifecycle & Auto-Close](../readers/readers.md#reader-lifecycle--auto-close))
 
 For details on existing readers, see [Reader Types](../readers/readers.md). To implement a custom reader, see [Implementing Custom Readers](../readers/readers-implementation.md).
 

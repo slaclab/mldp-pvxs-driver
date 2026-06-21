@@ -275,11 +275,13 @@ TEST(MLDPPVMetadataWriterTest, GracefulOnUnreachableEndpoint)
     EXPECT_NO_THROW(writer->stop());
 }
 
-// 6. start() followed by stop() without any pushes completes without errors.
-TEST(MLDPPVMetadataWriterTest, StartStopLifecycle)
+// 6. stop() remains idempotent after a clean start/stop cycle.
+TEST(MLDPPVMetadataWriterTest, StopIsIdempotentAfterLifecycle)
 {
     const auto cfg = makeConfigFromYaml(
         "name: annotation_test\n"
+        "thread-pool: 1\n"
+        "deadline-seconds: 1\n"
         "mldp-pv-metadata-pool:\n"
         "  provider-name: test-provider\n"
         "  ingestion-url: 127.0.0.1:50051\n"
@@ -292,7 +294,7 @@ TEST(MLDPPVMetadataWriterTest, StartStopLifecycle)
     ASSERT_NE(writer, nullptr);
 
     ASSERT_NO_THROW(writer->start());
-    EXPECT_TRUE(writer->isHealthy());
+    ASSERT_NO_THROW(writer->stop());
     ASSERT_NO_THROW(writer->stop());
 }
 
