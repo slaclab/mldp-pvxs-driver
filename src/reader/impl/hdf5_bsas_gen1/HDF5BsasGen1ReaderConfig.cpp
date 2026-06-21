@@ -10,6 +10,8 @@
 
 #include <reader/impl/hdf5_bsas_gen1/HDF5BsasGen1ReaderConfig.h>
 
+#include <config/ProvenanceConfig.h>
+
 #include <map>
 
 using namespace mldp_pvxs_driver::config;
@@ -48,6 +50,8 @@ void HDF5BsasGen1ReaderConfig::parse(const Config& readerEntry)
         readerEntry.subConfig("metadata").front() >> m;
         static_metadata_.insert(m.begin(), m.end());
     }
+
+    provenance_ = config::parseProvenance(readerEntry);
 
     valid_ = true;
 }

@@ -37,6 +37,7 @@ public:
     const std::string& groupName() const { return group_name_; }
     std::size_t chunkSize() const { return chunk_size_; }
     const std::unordered_map<std::string, std::string>& staticMetadata() const { return static_metadata_; }
+    const std::unordered_map<std::string, std::string>& provenance() const { return provenance_; }
 
 private:
     void parse(const config::Config& readerEntry);
@@ -47,6 +48,7 @@ private:
     std::string group_name_ = "data";
     std::size_t chunk_size_ = 1000;
     std::unordered_map<std::string, std::string> static_metadata_;
+    std::unordered_map<std::string, std::string> provenance_;
 };
 
 } // namespace mldp_pvxs_driver::reader::impl::hdf5_bsas_gen1

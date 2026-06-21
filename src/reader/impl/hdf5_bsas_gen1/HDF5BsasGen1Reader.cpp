@@ -175,6 +175,8 @@ void HDF5BsasGen1Reader::emitChunk(
     IDataBus::EventBatch batch;
     batch.metadata = config_.staticMetadata();
     batch.metadata["source"] = sourceName;
+    for (const auto& [k, v] : config_.provenance())
+        batch.metadata["provenance." + k] = v;
     batch.payload = TimeSeriesPayload{
         .root_source_name = sourceName,
         .is_tabular = true};

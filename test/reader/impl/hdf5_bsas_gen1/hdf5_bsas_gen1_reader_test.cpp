@@ -649,4 +649,53 @@ TEST_F(HDF5BsasGen1ReaderTest, LargeScaleReaderEmitsAllData)
     fs::remove(largeFile);
 }
 
+// ---------------------------------------------------------------------------
+// Provenance configuration tests
+// ---------------------------------------------------------------------------
+
+TEST_F(HDF5BsasGen1ReaderTest, ProvenanceFlowsToEventBatch)
+{
+    auto bus = std::make_shared<MockDataBus>();
+    auto cfg = makeConfigFromYaml(
+        "name: bsas_prov\n"
+        "file-path: " + mockFile_ + "\n"
+        "chunk-size: 1000\n"
+        "provenance:\n"
+        "  facility: LCLS\n"
+        "  instrument: CXI\n"
+        "  subsystem: BSAS\n");
+
+    {
+        HDF5BsasGen1Reader reader(bus, nullptr, cfg);
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    }
+
+    auto batches = bus->snapshot();
+    ASSERT_GE(batches.size(), 1u);
+    EXPECT_EQ(batches[0].metadata.at("provenance.facility"), "LCLS");
+    EXPECT_EQ(batches[0].metadata.at("provenance.instrument"), "CXI");
+    EXPECT_EQ(batches[0].metadata.at("provenance.subsystem"), "BSAS");
+}
+
+TEST_F(HDF5BsasGen1ReaderTest, MissingProvenanceIsValid)
+{
+    auto bus = std::make_shared<MockDataBus>();
+    auto cfg = makeConfigFromYaml(
+        "name: bsas_noprov\n"
+        "file-path: " + mockFile_ + "\n"
+        "chunk-size: 1000\n");
+
+    {
+        HDF5BsasGen1Reader reader(bus, nullptr, cfg);
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    }
+
+    auto batches = bus->snapshot();
+    ASSERT_GE(batches.size(), 1u);
+    for (const auto& [k, v] : batches[0].metadata)
+    {
+        EXPECT_FALSE(k.rfind("provenance.", 0) == 0) << "Unexpected provenance key: " << k;
+    }
+}
+
 #endif // MLDP_PVXS_HDF5_ENABLED
