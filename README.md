@@ -34,6 +34,8 @@ The architecture is reader → bus → controller → writer:
 3. Controller partitions and routes batches.
 4. Writers deliver to MLDP gRPC or HDF5 storage.
 
+Readers can be **long-running** (e.g., live PV subscriptions that stream indefinitely) or **one-shot** (e.g., archiver queries that finish after retrieving a fixed dataset). When a one-shot reader completes, it signals the controller and is automatically removed. Once all readers have finished and no readers remain active, the CLI exits automatically.
+
 For detailed diagrams and threading/data-flow internals see [Architecture Overview](docs/reference/architecture.md).
 
 ## Command-line interface
