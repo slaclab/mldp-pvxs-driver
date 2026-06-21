@@ -316,7 +316,10 @@ void EpicsDSMetadataReader::runWorker(std::stop_token st)
         }
 
         if (config_.rescanIntervalSec() <= 0.0)
+        {
+            signalCompleted();
             break;
+        }
 
         std::unique_lock lk(sleep_mutex_);
         sleep_cv_.wait_for(lk,

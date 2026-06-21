@@ -229,6 +229,7 @@ void EpicsArchiverReader::runWorker()
                 if (running_.load())
                 {
                     fetchConfiguredPVs();
+                    signalCompleted();
                 }
                 break;
             }

@@ -10,6 +10,7 @@
 
 #include <gtest/gtest.h>
 
+#include <reader/IReaderLifecycle.h>
 #include <reader/impl/slac_calendar/SlacCalendarReader.h>
 #include <util/bus/IDataBus.h>
 
@@ -68,6 +69,42 @@ private:
     mutable std::mutex              mu_;
     mutable std::condition_variable cv_;
     std::vector<EventBatch>         batches_;
+};
+
+class LifecycleObserver final : public mldp_pvxs_driver::reader::IReaderLifecycle
+{
+public:
+    void onReaderCompleted(const std::string& reader_name) override
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        completed_name_ = reader_name;
+        ++count_;
+        cv_.notify_all();
+    }
+
+    bool waitForCompletion(std::chrono::milliseconds timeout)
+    {
+        std::unique_lock<std::mutex> lk(mu_);
+        return cv_.wait_for(lk, timeout, [&] { return count_ > 0; });
+    }
+
+    int completionCount() const
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        return count_;
+    }
+
+    std::string completedName() const
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        return completed_name_;
+    }
+
+private:
+    mutable std::mutex      mu_;
+    std::condition_variable cv_;
+    int                     count_{0};
+    std::string             completed_name_;
 };
 
 // ---------------------------------------------------------------------------
@@ -257,6 +294,20 @@ TEST_F(SlacCalendarReaderTest, MultipleExperimentsAllFetched)
     }
     EXPECT_TRUE(found_lcls);
     EXPECT_TRUE(found_facet);
+}
+
+TEST_F(SlacCalendarReaderTest, OneShotRunSignalsLifecycleCompletion)
+{
+    server_.setResponse("lcls", kLclsEvent);
+
+    const auto cfg = makeConfigFromYaml(makeReaderYaml(server_.baseUrl(), "  - lcls\n"));
+    auto observer = std::make_shared<LifecycleObserver>();
+    auto reader = std::make_unique<SlacCalendarReader>(bus_, nullptr, cfg);
+    reader->setLifecycleObserver(observer);
+
+    ASSERT_TRUE(observer->waitForCompletion(std::chrono::milliseconds(5000)));
+    EXPECT_EQ(observer->completionCount(), 1);
+    EXPECT_EQ(observer->completedName(), "test-cal-reader");
 }
 
 TEST_F(SlacCalendarReaderTest, HttpErrorIsLoggedAndSkipped)
