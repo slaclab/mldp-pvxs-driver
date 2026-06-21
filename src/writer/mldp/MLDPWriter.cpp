@@ -425,6 +425,7 @@ void MLDPWriter::workerLoop(std::size_t workerIndex)
 {
     auto&       ch    = *channels_[workerIndex];
     StreamState state;
+    std::size_t drainCount = 0;
 
     const auto dequeueTimeout = config_.streamMaxAge;
     while (true)
@@ -467,8 +468,12 @@ void MLDPWriter::workerLoop(std::size_t workerIndex)
 
         if (!running_.load())
         {
-            debugf(*logger_, "MLDPWriter worker[{}] draining — {} item(s) remaining",
-                   workerIndex, queuedItems_.load(std::memory_order_relaxed));
+            ++drainCount;
+            if (drainCount == 1 || drainCount % 1000 == 0)
+            {
+                debugf(*logger_, "MLDPWriter worker[{}] draining — processed {} item(s), {} remaining",
+                       workerIndex, drainCount, queuedItems_.load(std::memory_order_relaxed));
+            }
         }
 
         const auto itemStart        = std::chrono::steady_clock::now();
