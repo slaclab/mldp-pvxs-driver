@@ -72,6 +72,8 @@ void HDF5BsasGen1Reader::readFile()
 {
     try
     {
+        logger_->log(util::log::Level::Trace,
+                     "readFile: opening " + config_.filePath() + " group=" + config_.groupName());
         H5::H5File file(config_.filePath(), H5F_ACC_RDONLY);
         H5::Group dataGroup = file.openGroup(config_.groupName());
 
@@ -81,6 +83,24 @@ void HDF5BsasGen1Reader::readFile()
 
         BlockInfo block1;
         block1.items = readFixedStringDataset(dataGroup, "block1_items");
+
+        // Detect timestamp column order from block2_items
+        auto block2Items = readFixedStringDataset(dataGroup, "block2_items");
+        std::size_t secCol = 0;
+        std::size_t nanoCol = 1;
+        for (std::size_t i = 0; i < block2Items.size(); ++i)
+        {
+            if (block2Items[i] == "secondsPastEpoch")
+                secCol = i;
+            else if (block2Items[i] == "nanoseconds")
+                nanoCol = i;
+        }
+
+        logger_->log(util::log::Level::Trace,
+                     "readFile: block0 columns=" + std::to_string(block0.items.size()) +
+                         " block1 columns=" + std::to_string(block1.items.size()) +
+                         " ts order: secCol=" + std::to_string(secCol) +
+                         " nanoCol=" + std::to_string(nanoCol));
 
         // Determine dimensions
         H5::DataSet block0Ds = dataGroup.openDataSet("block0_values");
@@ -100,7 +120,16 @@ void HDF5BsasGen1Reader::readFile()
 
         const std::size_t chunkSize = config_.chunkSize();
         const std::string sourceName = config_.name();
+        const std::size_t totalChunks = (totalRows + chunkSize - 1) / chunkSize;
 
+        logger_->log(util::log::Level::Info,
+                     "readFile: totalRows=" + std::to_string(totalRows) +
+                         " chunkSize=" + std::to_string(chunkSize) +
+                         " totalChunks=" + std::to_string(totalChunks) +
+                         " floatCols=" + std::to_string(numFloatCols) +
+                         " intCols=" + std::to_string(numIntCols));
+
+        std::size_t chunkIdx = 0;
         for (std::size_t startRow = 0; startRow < totalRows && running_; startRow += chunkSize)
         {
             const std::size_t numRows = std::min(chunkSize, totalRows - startRow);
@@ -119,8 +148,8 @@ void HDF5BsasGen1Reader::readFile()
             std::vector<TimestampEntry> timestamps(numRows);
             for (std::size_t r = 0; r < numRows; ++r)
             {
-                timestamps[r].epoch_seconds = tsData[r * 2 + 0];
-                timestamps[r].nanoseconds = tsData[r * 2 + 1];
+                timestamps[r].epoch_seconds = tsData[r * 2 + secCol];
+                timestamps[r].nanoseconds = tsData[r * 2 + nanoCol];
             }
 
             // Read float64 data (block0_values)
@@ -145,9 +174,17 @@ void HDF5BsasGen1Reader::readFile()
                 block1Ds.read(intData.data(), H5::PredType::NATIVE_INT16, mspace, fspace);
             }
 
+            logger_->log(util::log::Level::Trace,
+                         "readFile: emitting chunk " + std::to_string(chunkIdx + 1) + "/" +
+                             std::to_string(totalChunks) + " rows=" + std::to_string(numRows));
+
             emitChunk(sourceName, timestamps, block0, floatData, block1, intData,
                       numRows, numFloatCols, numIntCols);
+            ++chunkIdx;
         }
+
+        logger_->log(util::log::Level::Info,
+                     "readFile: completed " + std::to_string(chunkIdx) + " chunks, signaling completion");
     }
     catch (const H5::Exception& e)
     {
@@ -161,6 +198,8 @@ void HDF5BsasGen1Reader::readFile()
             logger_->log(util::log::Level::Error,
                          std::string("HDF5BsasGen1Reader: ") + e.what());
     }
+
+    signalCompleted();
 }
 
 void HDF5BsasGen1Reader::emitChunk(

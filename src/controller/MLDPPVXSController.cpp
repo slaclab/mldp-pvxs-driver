@@ -335,32 +335,44 @@ void MLDPPVXSController::start()
 
 void MLDPPVXSController::stop()
 {
-    if (!running_.load())
+    if (!running_.exchange(false))
     {
-        warnf(*logger_, "Controller already stopped");
+        while (!stopped_.load())
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
         return;
     }
     infof(*logger_, "Controller is stopping");
-    running_.store(false);
 
     {
         std::lock_guard<std::mutex> lock(readers_mutex_);
+        infof(*logger_, "Removing {} reader(s)", readers_.size());
         readers_.clear();
     }
 
+    infof(*logger_, "Draining controller dispatch queue (thread_pool)...");
+    if (thread_pool_)
+    {
+        thread_pool_->wait();
+    }
+    infof(*logger_, "Controller dispatch queue drained");
+
     for (auto& processor : processors_)
     {
+        debugf(*logger_, "Stopping processor '{}'", processor->name());
         processor->stop();
     }
     processors_.clear();
 
     for (auto& w : writers_)
     {
+        infof(*logger_, "Stopping writer '{}' — waiting for internal queue drain...", w->name());
         w->stop();
+        infof(*logger_, "Writer '{}' stopped", w->name());
     }
     writers_.clear();
 
     infof(*logger_, "Controller stopped");
+    stopped_.store(true);
 }
 
 void MLDPPVXSController::onReaderCompleted(const std::string& reader_name)

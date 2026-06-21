@@ -406,7 +406,7 @@ int main(int argc, char** argv)
         pfd.fd = STDIN_FILENO;
         pfd.events = POLLIN;
 
-        while (!quit)
+        while (!quit && !driver->isStopped())
         {
             if (metrics_requested)
             {

@@ -140,7 +140,10 @@ void MLDPWriter::stop() noexcept
     {
         return;
     }
-    infof(*logger_, "MLDPWriter stopping");
+
+    const auto pending = queuedItems_.load(std::memory_order_relaxed);
+    infof(*logger_, "MLDPWriter stopping — {} item(s) pending in queue", pending);
+
     running_.store(false);
     for (auto& ch : channels_)
     {
@@ -150,12 +153,15 @@ void MLDPWriter::stop() noexcept
         }
         ch->cv.notify_one();
     }
+
+    debugf(*logger_, "MLDPWriter waiting for worker threads to drain...");
     if (threadPool_)
     {
         threadPool_->wait();
     }
+
     channels_.clear();
-    infof(*logger_, "MLDPWriter stopped");
+    infof(*logger_, "MLDPWriter stopped — all queues drained");
 }
 
 bool MLDPWriter::isHealthy() const noexcept
@@ -458,6 +464,12 @@ void MLDPWriter::workerLoop(std::size_t workerIndex)
 
         queuedItems_.fetch_sub(1, std::memory_order_relaxed);
         updateQueueDepthMetric();
+
+        if (!running_.load())
+        {
+            debugf(*logger_, "MLDPWriter worker[{}] draining — {} item(s) remaining",
+                   workerIndex, queuedItems_.load(std::memory_order_relaxed));
+        }
 
         const auto itemStart        = std::chrono::steady_clock::now();
         const auto record_send_time = [this, itemStart](prometheus::Labels tags)

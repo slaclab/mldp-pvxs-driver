@@ -78,14 +78,16 @@ void HDF5WriterBase::start()
 
 void HDF5WriterBase::stop() noexcept
 {
-    infof(*logger_, "HDF5Writer [{}] stopping", config_.name);
-
+    std::size_t pending = 0;
     {
         std::lock_guard<std::mutex> lk(queueMutex_);
+        pending = queue_.size();
         stopping_.store(true);
     }
+    infof(*logger_, "HDF5Writer [{}] stopping — {} item(s) pending in queue", config_.name, pending);
     queueCv_.notify_all();
 
+    debugf(*logger_, "HDF5Writer [{}] waiting for writer thread to drain...", config_.name);
     if (writerThread_.joinable())
     {
         try
@@ -111,7 +113,7 @@ void HDF5WriterBase::stop() noexcept
 
     doStop();
 
-    infof(*logger_, "HDF5Writer [{}] stopped", config_.name);
+    infof(*logger_, "HDF5Writer [{}] stopped — queue drained", config_.name);
 }
 
 // ---------------------------------------------------------------------------
@@ -167,6 +169,11 @@ void HDF5WriterBase::writerLoop()
 
         if (writerMetrics_)
             writerMetrics_->setQueueDepth(static_cast<double>(depthAtDrain));
+
+        if (stopping_.load())
+        {
+            debugf(*logger_, "HDF5Writer [{}] draining — {} batch(es) remaining", config_.name, drained.size());
+        }
 
         for (auto& entry : drained)
         {
