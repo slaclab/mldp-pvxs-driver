@@ -37,6 +37,8 @@ public:
         std::size_t numIntCols   = 4;
         std::size_t numRows      = 20;
         uint32_t    baseEpoch    = 1700000000u;
+        std::string floatColPrefix = "SIG_";
+        std::string intColPrefix = "FLAG_";
     };
 
     static void generate(const std::string& outputPath, const Params& params);

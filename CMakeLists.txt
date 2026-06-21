@@ -938,6 +938,29 @@ if(MLDP_PVXS_DRIVER_TESTS)
         target_compile_definitions(mldp_controller_hdf5_integration_test PRIVATE
             MLDP_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/data"
         )
+
+        add_executable(mldp_controller_hdf5_provenance_test
+            "${CMAKE_CURRENT_SOURCE_DIR}/test/controller/mldppvxs_controller_hdf5_provenance_test.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/BsasGen1HDF5Mock.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/test/ryml_single_header_translation_unit.cpp"
+        )
+        target_include_directories(mldp_controller_hdf5_provenance_test PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/include"
+            "${CMAKE_CURRENT_SOURCE_DIR}/test"
+            "${CMAKE_CURRENT_BINARY_DIR}"
+        )
+        if(APPLE)
+            target_link_libraries(mldp_controller_hdf5_provenance_test PRIVATE gtest_main
+                -Wl,-force_load $<TARGET_FILE:lib${PROJECT_NAME}>)
+        else()
+            target_link_libraries(mldp_controller_hdf5_provenance_test PRIVATE gtest_main
+                -Wl,--whole-archive lib${PROJECT_NAME} -Wl,--no-whole-archive)
+        endif()
+        gtest_discover_tests(mldp_controller_hdf5_provenance_test
+            PROPERTIES LABELS "hdf5;controller;integration;provenance")
+        target_compile_definitions(mldp_controller_hdf5_provenance_test PRIVATE
+            MLDP_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/data"
+        )
     endif()
 endif()
 

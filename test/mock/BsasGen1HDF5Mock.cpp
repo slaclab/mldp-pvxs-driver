@@ -100,17 +100,17 @@ void addItemsDatasetVarietyAttr(H5::DataSet& ds)
     writeBoolAttr(ds, "transposed", false);
 }
 
-std::string makeFloatColName(std::size_t idx)
+std::string makeFloatColName(const std::string& prefix, std::size_t idx)
 {
     std::ostringstream oss;
-    oss << "SIG_" << std::setfill('0') << std::setw(4) << idx;
+    oss << prefix << std::setfill('0') << std::setw(4) << idx;
     return oss.str();
 }
 
-std::string makeIntColName(std::size_t idx)
+std::string makeIntColName(const std::string& prefix, std::size_t idx)
 {
     std::ostringstream oss;
-    oss << "FLAG_" << std::setfill('0') << std::setw(2) << idx;
+    oss << prefix << std::setfill('0') << std::setw(2) << idx;
     return oss.str();
 }
 
@@ -146,11 +146,11 @@ void BsasGen1HDF5Mock::generate(const std::string& outputPath, const Params& par
     // Build column name lists
     std::vector<std::string> floatCols(params.numFloatCols);
     for (std::size_t i = 0; i < params.numFloatCols; ++i)
-        floatCols[i] = makeFloatColName(i);
+        floatCols[i] = makeFloatColName(params.floatColPrefix, i);
 
     std::vector<std::string> intCols(params.numIntCols);
     for (std::size_t i = 0; i < params.numIntCols; ++i)
-        intCols[i] = makeIntColName(i);
+        intCols[i] = makeIntColName(params.intColPrefix, i);
 
     std::vector<std::string> tsCols = {"secondsPastEpoch", "nanoseconds"};
 
