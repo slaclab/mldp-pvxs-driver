@@ -13,6 +13,7 @@
 
 #include <memory>
 #include <string>
+#include <unordered_map>
 
 namespace mldp_pvxs_driver::metrics {
 class Metrics;
@@ -53,6 +54,15 @@ protected:
     std::shared_ptr<util::bus::IDataBus> bus_;
     /** @brief Shared metrics collector (may be null when not configured). */
     std::shared_ptr<metrics::Metrics> metrics_;
+    /** @brief Provenance metadata inherited by all reader implementations.
+     *
+     * Populated from the `provenance:` map in the reader's YAML config block.
+     * Derived readers can attach this to outgoing events for data lineage tracking.
+     */
+    std::unordered_map<std::string, std::string> provenance_;
+
+    /** @brief Access the provenance metadata map. */
+    const std::unordered_map<std::string, std::string>& provenance() const { return provenance_; }
 };
 
 } // namespace mldp_pvxs_driver::reader
