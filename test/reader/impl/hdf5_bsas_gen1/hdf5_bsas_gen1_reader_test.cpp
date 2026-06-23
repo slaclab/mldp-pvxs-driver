@@ -138,6 +138,39 @@ TEST_F(HDF5BsasGen1ReaderTest, ReaderEmitsBatches)
     EXPECT_TRUE(marker.is_tabular);
 }
 
+TEST_F(HDF5BsasGen1ReaderTest, ReaderExpandsGlobPatternsFromConfiguredPath)
+{
+    const auto secondFile = (tempDir_ / "second_bsas_gen1.h5").string();
+
+    BsasGen1HDF5Mock::Params params;
+    params.numFloatCols = kFloatCols;
+    params.numIntCols   = kIntCols;
+    params.numRows      = 7;
+    params.baseEpoch    = kBaseEpoch + 1000;
+    BsasGen1HDF5Mock::generate(secondFile, params);
+
+    auto bus = std::make_shared<MockDataBus>();
+    auto cfg = makeConfigFromYaml(
+        "name: bsas_glob\n"
+        "file-path: " + (tempDir_ / "*.h5").string() + "\n"
+        "chunk-size: 1000\n");
+
+    {
+        HDF5BsasGen1Reader reader(bus, nullptr, cfg);
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    }
+
+    auto batches = bus->snapshot();
+    ASSERT_EQ(batches.size(), 4u);
+
+    ASSERT_TRUE(isTimeSeries(batches[0]));
+    ASSERT_TRUE(isTimeSeries(batches[2]));
+    EXPECT_EQ(asTimeSeries(batches[0]).frames[0].timestamps.size(), kRows);
+    EXPECT_EQ(asTimeSeries(batches[2]).frames[0].timestamps.size(), 7u);
+
+    fs::remove(secondFile);
+}
+
 TEST_F(HDF5BsasGen1ReaderTest, ChunkedReadingProducesMultipleBatches)
 {
     auto bus = std::make_shared<MockDataBus>();
