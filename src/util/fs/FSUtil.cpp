@@ -16,10 +16,9 @@
 #include <system_error>
 
 namespace fs = std::filesystem;
+using namespace mldp_pvxs_driver::util::fsutil;
 
 namespace {
-
-using mldp_pvxs_driver::util::fsutil::FSUtil;
 
 bool containsGlobTokens(std::string_view value)
 {
@@ -110,8 +109,6 @@ fs::path extractSearchRoot(const fs::path& pattern)
 
 } // namespace
 
-namespace mldp_pvxs_driver::util::fsutil {
-
 std::set<fs::path> FSUtil::findFilesByGlob(const fs::path& globPattern)
 {
     std::set<fs::path> result;
@@ -121,8 +118,8 @@ std::set<fs::path> FSUtil::findFilesByGlob(const fs::path& globPattern)
     }
 
     std::error_code error;
-    const fs::path patternPath = globPattern.lexically_normal();
-    const fs::path searchRoot = extractSearchRoot(patternPath);
+    const fs::path  patternPath = globPattern.lexically_normal();
+    const fs::path  searchRoot = extractSearchRoot(patternPath);
 
     if (!fs::exists(searchRoot, error) || error)
     {
@@ -136,7 +133,7 @@ std::set<fs::path> FSUtil::findFilesByGlob(const fs::path& globPattern)
     }
 
     const std::string absolutePattern = absolutePatternPath.generic_string();
-    const std::regex matcher(globToRegex(absolutePattern), std::regex::ECMAScript);
+    const std::regex  matcher(globToRegex(absolutePattern), std::regex::ECMAScript);
 
     if (fs::is_regular_file(searchRoot, error))
     {
@@ -177,5 +174,3 @@ std::set<fs::path> FSUtil::findFilesByGlob(const fs::path& globPattern)
 
     return result;
 }
-
-} // namespace mldp_pvxs_driver::util::fsutil
