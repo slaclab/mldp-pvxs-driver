@@ -15,6 +15,9 @@
 #include <reader/impl/epics/base/EpicsBaseReaderConfig.h>
 #include <reader/impl/epics/shared/EpicsReaderConfig.h>
 #include <reader/impl/epics_archiver/EpicsArchiverReaderConfig.h>
+#ifdef MLDP_PVXS_HDF5_ENABLED
+    #include <reader/impl/hdf5_bsas_gen1/HDF5BsasGen1ReaderConfig.h>
+#endif
 #include <writer/hdf5/HDF5WriterConfig.h>
 #include <writer/mldp/MLDPWriterConfig.h>
 
@@ -28,6 +31,9 @@ using mldp_pvxs_driver::controller::MLDPPVXSControllerConfig;
 using mldp_pvxs_driver::reader::impl::epics::EpicsBaseReaderConfig;
 using mldp_pvxs_driver::reader::impl::epics::EpicsReaderConfig;
 using mldp_pvxs_driver::reader::impl::epics_archiver::EpicsArchiverReaderConfig;
+#ifdef MLDP_PVXS_HDF5_ENABLED
+using mldp_pvxs_driver::reader::impl::hdf5_bsas_gen1::HDF5BsasGen1ReaderConfig;
+#endif
 using mldp_pvxs_driver::util::pool::MLDPGrpcPoolConfig;
 
 namespace {
@@ -35,6 +41,7 @@ namespace {
 constexpr const char* kEpicsPvxsType = "epics-pvxs";
 constexpr const char* kEpicsBaseType = "epics-base";
 constexpr const char* kEpicsArchiverType = "epics-archiver";
+constexpr const char* kHdf5BsasGen1Type = "hdf5-bsas-gen1";
 
 std::string previewList(const std::vector<std::string>& values, std::size_t maxItems = 3)
 {
@@ -198,6 +205,16 @@ std::string mldp_pvxs_driver::cli::formatStartupConfig(
             }
             out << " pv_preview=[" << previewList(reader.pvNames()) << "]";
         }
+#ifdef MLDP_PVXS_HDF5_ENABLED
+        else if (type == kHdf5BsasGen1Type)
+        {
+            const HDF5BsasGen1ReaderConfig reader(cfg);
+            out << "name=" << reader.name()
+                << " file-path=" << reader.filePath()
+                << " group=" << reader.groupName()
+                << " chunk-size=" << reader.chunkSize();
+        }
+#endif
         else
         {
             out << "summary=unavailable";

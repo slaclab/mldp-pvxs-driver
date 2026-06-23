@@ -15,8 +15,9 @@ general-purpose and not limited to EPICS data.
 - **Readers** — connect to a data source (live EPICS PVs, historical archiver data, metadata services, or custom sources)
 - **Writers** — deliver data to a destination (MLDP gRPC, HDF5 files, or custom sinks)
 
-You describe *what to read* and *where to write* in a single YAML configuration file,
-then run the driver. It handles everything in between.
+You describe *what to read* and *where to write* as one accumulated configuration,
+then run the driver. That effective configuration can come from one or more YAML files
+plus dotted `PATH=VALUE` assignments passed with `-c`.
 
 ```
 [Data Source(s)]
@@ -186,20 +187,50 @@ mldp_pvxs_driver config validate config.yaml
 mldp_pvxs_driver config list config.yaml
 
 # Dry-run the startup without starting readers/writers
-mldp_pvxs_driver --config config.yaml --dry-run
+mldp_pvxs_driver -c config.yaml --dry-run
+
+# Dry-run with extra dotted assignments merged on top
+mldp_pvxs_driver \
+  -c config.yaml \
+  -c metrics.endpoint=0.0.0.0:9464 \
+  -c reader.hdf5-bsas-gen1[0].file-path=/tmp/bsas.h5 \
+  --dry-run
 ```
 
 ---
 
-## Configuration File Structure
+## Startup Configuration Inputs
 
-All configuration lives in a single YAML file passed to the driver at startup:
+At startup, each `-c` value contributes to one final effective configuration.
 
 ```bash
-mldp_pvxs_driver --config my-config.yaml
+mldp_pvxs_driver -c my-config.yaml
 ```
 
-The file has four top-level sections:
+Rules:
+
+1. If `-c` points to an existing file, that YAML file is loaded.
+2. If `-c` is not a file, it must be a dotted assignment like `metrics.endpoint=0.0.0.0:9464`.
+3. All `-c` values are merged in the order provided.
+4. Non-file `-c` values that are not valid dotted assignments are rejected.
+
+Examples:
+
+```bash
+# Single file
+mldp_pvxs_driver -c my-config.yaml
+
+# Multiple files merged in order
+mldp_pvxs_driver -c base.yaml -c site.yaml -c local.yaml
+
+# File plus dotted assignments
+mldp_pvxs_driver \
+  -c base.yaml \
+  -c metrics.endpoint=0.0.0.0:9464 \
+  -c reader.hdf5-bsas-gen1[0].file-path=/tmp/bsas.h5
+```
+
+The resulting effective configuration has four top-level sections:
 
 ```yaml
 writer:          # required — one or more output destinations

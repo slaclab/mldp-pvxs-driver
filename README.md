@@ -8,7 +8,15 @@ This project provides a generic driver architecture for ingesting real-time or h
 
 ## Configuration Summary
 
-The driver consumes one YAML document via `--config` with five top-level sections:
+The driver builds one effective configuration by accumulating one or more `-c/--config`
+inputs. Each `-c` value must be either:
+
+- a path to an existing YAML file, or
+- a dotted `PATH=VALUE` assignment, which is converted to YAML and merged in
+
+All `-c` inputs are merged in the order provided.
+
+The effective configuration has five top-level sections:
 
 | Key | Required | Purpose |
 |-----|----------|---------|
@@ -40,12 +48,13 @@ For detailed diagrams and threading/data-flow internals see [Architecture Overvi
 
 ## Command-line interface
 
-The driver is configured via a YAML file (see above) and is started from the command line.
+The driver is configured from one or more `-c/--config` inputs (see above) and is started
+from the command line.
 
 ### Usage
 
 ```bash
-mldp_pvxs_driver [--help] [--version] [--config PATH] [--log-level LEVEL] [--metrics-output FILE] [--metrics-interval SECONDS] [--print-config-startup] [--dry-run]
+mldp_pvxs_driver [--help] [--version] [--config SOURCE]... [--log-level LEVEL] [--metrics-output FILE] [--metrics-interval SECONDS] [--print-config-startup] [--dry-run]
 ```
 
 ### Options
@@ -54,9 +63,12 @@ mldp_pvxs_driver [--help] [--version] [--config PATH] [--log-level LEVEL] [--met
   - Show the built-in help and exit.
 - `-v, --version`
   - Print the version and exit.
-- `-c, --config PATH`
-  - Path to the YAML configuration file.
-  - Default: `config.yaml`
+- `-c, --config SOURCE`
+  - Configuration source.
+  - If `SOURCE` is an existing file, it is loaded as YAML.
+  - Otherwise `SOURCE` must be a dotted assignment like `metrics.endpoint=0.0.0.0:9464`.
+  - May be repeated; all values are merged in order into one effective configuration.
+  - Default when omitted: `config.yaml`
 - `-l, --log-level LEVEL`
   - Logging verbosity.
   - Accepted values: `trace`, `debug`, `info`, `warn`, `error`, `critical`, `off`
@@ -79,19 +91,26 @@ mldp_pvxs_driver [--help] [--version] [--config PATH] [--log-level LEVEL] [--met
 
 ```bash
 # Run with an explicit config file
-./mldp_pvxs_driver --config ./config.yaml
+./mldp_pvxs_driver -c ./config.yaml
 
 # Enable debug logging
-./mldp_pvxs_driver --config ./config.yaml --log-level debug
+./mldp_pvxs_driver -c ./config.yaml --log-level debug
 
 # Print effective config at startup (compact format)
-./mldp_pvxs_driver --config ./config.yaml --print-config-startup
+./mldp_pvxs_driver -c ./config.yaml --print-config-startup
 
 # Validate config and exit without starting runtime components
-./mldp_pvxs_driver --config ./config.yaml --dry-run
+./mldp_pvxs_driver -c ./config.yaml --dry-run
 
 # Validate + print effective config summary, then exit
-./mldp_pvxs_driver --config ./config.yaml --print-config --dry-run
+./mldp_pvxs_driver -c ./config.yaml --print-config --dry-run
+
+# Merge a config file with dotted assignments
+./mldp_pvxs_driver \
+  -c ./config.yaml \
+  -c metrics.endpoint=0.0.0.0:9464 \
+  -c reader.hdf5-bsas-gen1[0].file-path=/tmp/bsas.h5 \
+  --dry-run
 
 # Show help/version
 ./mldp_pvxs_driver --help
@@ -102,7 +121,7 @@ For periodic metrics dumps and manual triggers (Ctrl+P, Ctrl+D, SIGUSR1/SIGQUIT)
 
 ## Configuration Management
 
-Instead of writing YAML by hand, use the built-in configuration utilities (run without `--config`):
+Instead of writing YAML by hand, use the built-in configuration utilities (run without `-c`):
 
 ### Interactive Configuration Wizard
 

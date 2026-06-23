@@ -72,7 +72,11 @@ Config Config::configFromFile(const std::string& filename)
             throw std::runtime_error{"Could not read file"};
         }
     }
-    const std::string& yaml = contents.str();
+    return configFromYamlString(contents.str());
+}
+
+Config Config::configFromYamlString(const std::string& yaml)
+{
     return Config{std::make_shared<ryml::Tree>(ryml::parse_in_arena(c4::to_csubstr(yaml)))};
 }
 
@@ -87,6 +91,16 @@ Config::Config(ConfigTreePtr tree, ryml::ConstNodeRef node)
 c4::yml::ConstNodeRef Config::raw() const
 {
     return node_;
+}
+
+c4::yml::NodeRef Config::mutableRaw()
+{
+    if (!tree_ || node_.invalid())
+    {
+        return {};
+    }
+
+    return tree_->ref(node_.id());
 }
 
 bool Config::valid() const

@@ -90,3 +90,36 @@ reader: []
     EXPECT_NE(printed.find("metrics: disabled"), std::string::npos);
     EXPECT_NE(printed.find("readers: count=0"), std::string::npos);
 }
+
+#ifdef MLDP_PVXS_HDF5_ENABLED
+TEST(ConfigPrinterTest, PrintsHdf5BsasGen1ReaderDetails)
+{
+    const std::string yaml = R"(
+writer:
+  mldp:
+    - name: mldp_main
+      mldp-pool:
+        provider-name: test_provider
+        ingestion-url: dp-ingestion:50051
+        query-url: dp-query:50052
+        min-conn: 1
+        max-conn: 1
+reader:
+  hdf5-bsas-gen1:
+    - name: bsas_reader
+      file-path: /tmp/bsas-gen1.h5
+      group: data
+      chunk-size: 200
+)";
+
+    const auto cfg = makeConfigFromYaml(yaml);
+    ASSERT_TRUE(cfg.valid());
+
+    const std::string printed =
+        mldp_pvxs_driver::cli::formatStartupConfig(cfg, "config.yaml");
+
+    EXPECT_NE(printed.find("type=hdf5-bsas-gen1"), std::string::npos);
+    EXPECT_NE(printed.find("file-path=/tmp/bsas-gen1.h5"), std::string::npos);
+    EXPECT_NE(printed.find("chunk-size=200"), std::string::npos);
+}
+#endif

@@ -9,6 +9,9 @@
 //////////////////////////////////////////////////////////////////////////////
 
 #include <config/validate.h>
+#ifdef MLDP_PVXS_HDF5_ENABLED
+    #include <reader/impl/hdf5_bsas_gen1/HDF5BsasGen1ReaderConfig.h>
+#endif
 #include <set>
 #include <string>
 #include <vector>
@@ -442,6 +445,50 @@ std::vector<ConfigDiagnostic> validateConfig(const Config& cfg)
                     }
                 }
             }
+
+#ifdef MLDP_PVXS_HDF5_ENABLED
+            if (readerEntry.hasChild("hdf5-bsas-gen1"))
+            {
+                auto hdf5Instances = readerEntry.subConfig("hdf5-bsas-gen1");
+                for (std::size_t i = 0; i < hdf5Instances.size(); ++i)
+                {
+                    const Config& inst = hdf5Instances[i];
+                    std::string   pfx = readerPfx + ".hdf5-bsas-gen1[" + std::to_string(i) + "]";
+
+                    std::string name = inst.get("name", "");
+                    if (!inst.hasChild("name") || name.empty())
+                    {
+                        err(pfx + ".name", "missing or empty");
+                    }
+                    else
+                    {
+                        if (seenReaderNames.count(name))
+                        {
+                            err("reader", "duplicate instance name '" + name + "'");
+                        }
+                        else
+                        {
+                            seenReaderNames.insert(name);
+                            allReaderNames.push_back(name);
+                        }
+                    }
+
+                    if (!inst.hasChild("file-path") || inst.get("file-path", "").empty())
+                    {
+                        err(pfx + ".file-path", "missing or empty");
+                    }
+
+                    if (inst.hasChild("chunk-size"))
+                    {
+                        int v = inst.getInt("chunk-size", 0);
+                        if (v <= 0)
+                        {
+                            err(pfx + ".chunk-size", "must be > 0");
+                        }
+                    }
+                }
+            }
+#endif
         } // end else (reader block not empty)
 
         // -------------------------------------------------------------------------

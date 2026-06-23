@@ -37,7 +37,10 @@
 
 #include <cli/ConfigPrinter.h>
 #include <config/Config.h>
+#include <config/ConfigOverride.h>
+#include <config/ConfigSource.h>
 #include <config/subcommand.h>
+#include <config/validate.h>
 #include <controller/MLDPPVXSController.h>
 #include <metrics/MetricsSnapshot.h>
 #include <mldp_pvxs_driver_version.h>
@@ -89,14 +92,16 @@ void restore_terminal()
 }
 
 // Configure command line argument parser.
-void configure_parameter(ArgumentParser& program)
+void configure_parameter(ArgumentParser& program,
+                         std::vector<std::string>& configSources)
 {
     program.add_description(
-        "MLDP PVXS Driver - Forwards reader updates (e.g., EPICS PVs) to the MLDP ingestion API.\n" "Supports multiple reader implementations.\n" "\n" "Config utilities (run without starting the driver):\n" "  config wizard   [--output PATH] [--from PATH]   Interactive TUI to generate config.yaml\n" "  config validate PATH                             Validate a YAML file and report errors\n" "  config template [--minimal|--full]               Print a YAML template to stdout\n" "  config list     PATH                             Show writers, readers, routing, metrics\n" "  config add      PATH (reader|writer|routing) …   Add an entry to an existing config\n" "  config remove   PATH (reader|writer|routing) --name NAME   Remove a named entry\n" "\n" "  Run 'mldp_pvxs_driver config <sub-command> --help' for per-command options.");
+        "MLDP PVXS Driver - Forwards reader updates (e.g., EPICS PVs) to the MLDP ingestion API.\n" "Supports multiple reader implementations.\n" "\n" "Configuration inputs:\n" "  Repeat -c/--config to accumulate one effective configuration.\n" "  Each -c value must be either an existing YAML file path or a dotted PATH=VALUE assignment.\n" "\n" "Config utilities (run without starting the driver):\n" "  config wizard   [--output PATH] [--from PATH]   Interactive TUI to generate config.yaml\n" "  config validate PATH                             Validate a YAML file and report errors\n" "  config template [--minimal|--full]               Print a YAML template to stdout\n" "  config list     PATH                             Show writers, readers, routing, metrics\n" "  config add      PATH (reader|writer|routing) …   Add an entry to an existing config\n" "  config remove   PATH (reader|writer|routing) --name NAME   Remove a named entry\n" "\n" "  Run 'mldp_pvxs_driver config <sub-command> --help' for per-command options.");
     program.add_argument("-c", "--config")
-        .help("Path to configuration YAML file")
-        .default_value(std::string("config.yaml"))
-        .metavar("FILE");
+        .help("Configuration source: YAML file path or dotted PATH=VALUE assignment (repeatable, merged in order)")
+        .metavar("SOURCE")
+        .append()
+        .store_into(configSources);
 
     program.add_argument("-l", "--log-level")
         .help("Logging level (trace, debug, info, warn, error, critical, off)")
@@ -135,6 +140,8 @@ void configure_parameter(ArgumentParser& program)
 
 Examples:
   mldp_pvxs_driver -c config.yaml --dry-run
+  mldp_pvxs_driver -c base.yaml -c site.yaml -c local.yaml --dry-run
+  mldp_pvxs_driver -c config.yaml -c metrics.endpoint=0.0.0.0:9464 --dry-run
   mldp_pvxs_driver config validate config.yaml
   mldp_pvxs_driver config template --minimal > config.yaml
   mldp_pvxs_driver config wizard --output config.yaml
@@ -242,7 +249,8 @@ int main(int argc, char** argv)
             MLDP_PVXS_DRIVER_VERSION_MINOR,
             MLDP_PVXS_DRIVER_VERSION_PATCH));
 
-    configure_parameter(program);
+    std::vector<std::string> configSources;
+    configure_parameter(program, configSources);
 
     const auto start_dumper = [&program](std::shared_ptr<PeriodicMetricsDumper>& metrics_dumper)
     {
@@ -357,11 +365,11 @@ int main(int argc, char** argv)
             MLDP_PVXS_DRIVER_VERSION_PATCH);
 
         // Load configuration
-        auto config_path = program.get<std::string>("--config");
+        const auto config_path = configSources.empty() ? std::string("config.yaml") : configSources.front();
         spdlog::info("Loading configuration from {}", config_path);
         const bool dryRun = program.get<bool>("--dry-run");
         const bool printConfig = program.get<bool>("--print-config-startup");
-        auto       config = Config::configFromFile(config_path);
+        auto       config = loadMergedConfigSources(configSources);
         if (printConfig)
         {
             if (dryRun)
@@ -389,6 +397,26 @@ int main(int argc, char** argv)
 
         if (dryRun)
         {
+            const auto diagnostics = validateConfig(config);
+            int        errorCount = 0;
+            for (const auto& diag : diagnostics)
+            {
+                if (diag.severity == ConfigDiagnostic::Severity::ERROR)
+                {
+                    ++errorCount;
+                    spdlog::error("{}: {}", diag.field_path, diag.message);
+                }
+            }
+
+            if (errorCount > 0)
+            {
+                spdlog::error("Dry-run validation failed with {} error(s).", errorCount);
+                setLogger(nullptr);
+                setLoggerFactory({});
+                spdlog::shutdown();
+                return EXIT_FAILURE;
+            }
+
             spdlog::info("Dry-run requested. Configuration validated; exiting without starting driver.");
             setLogger(nullptr);
             setLoggerFactory({});

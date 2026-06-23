@@ -54,6 +54,7 @@ class Config
 {
 public:
     [[nodiscard]] static Config configFromFile(const std::string& filename);
+    [[nodiscard]] static Config configFromYamlString(const std::string& yaml);
 
     /**
      * @brief Default-construct an empty (invalid) config.
@@ -82,6 +83,14 @@ public:
      * @return The wrapped `ryml::ConstNodeRef`.
      */
     ryml::ConstNodeRef raw() const;
+
+    /**
+     * @brief Access the underlying rapidyaml node with mutation support.
+     *
+     * This is intended for configuration transforms that need to update the
+     * in-memory YAML tree before typed parsing runs.
+     */
+    ryml::NodeRef mutableRaw();
 
     /**
      * @brief Check whether the wrapped node has a child with the given key.
