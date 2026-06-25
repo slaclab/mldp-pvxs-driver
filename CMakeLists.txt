@@ -676,6 +676,7 @@ if(MLDP_PVXS_DRIVER_TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/test/cli/config_printer_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/controller/mldppvxs_controller_mldp_writer_integration_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/controller/mldppvxs_controller_reader_lifecycle_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/controller/mldppvxs_controller_blocking_queue_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/controller/route_table_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/controller/mldppvxs_controller_epics_archiver_periodic_tail_integration_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/controller/route_table_config_test.cpp"

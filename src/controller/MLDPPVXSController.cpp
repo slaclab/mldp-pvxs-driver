@@ -21,6 +21,7 @@
 #include <util/StringFormat.h>
 #include <writer/WriterFactory.h>
 
+#include <chrono>
 #include <functional>
 #include <algorithm>
 #include <iterator>
@@ -330,6 +331,8 @@ void MLDPPVXSController::start()
             warnf(*logger_, "Writer '{}' not mentioned in any route — will receive no data", name);
     }
 
+    consumer_thread_ = std::thread([this] { consumerLoop(); });
+
     infof(*logger_, "Controller started");
 }
 
@@ -349,7 +352,13 @@ void MLDPPVXSController::stop()
         readers_.clear();
     }
 
-    infof(*logger_, "All readers removed — dispatch queue already drained (push is synchronous)");
+    // Wake blocked pushers and consumer thread, then join consumer.
+    queue_not_full_.notify_all();
+    queue_not_empty_.notify_all();
+    if (consumer_thread_.joinable())
+        consumer_thread_.join();
+
+    infof(*logger_, "Consumer thread joined — queue drained");
 
     for (auto& processor : processors_)
     {
@@ -377,19 +386,18 @@ void MLDPPVXSController::onReaderCompleted(const std::string& reader_name)
         return;
     }
 
-    thread_pool_->detach_task(
-        [self = shared_from_this(), reader_name]
+    std::thread([self = shared_from_this(), reader_name]
+    {
+        if (!self->removeCompletedReader(reader_name))
         {
-            if (!self->removeCompletedReader(reader_name))
-            {
-                return;
-            }
+            return;
+        }
 
-            if (self->running_.load())
-            {
-                self->stop();
-            }
-        });
+        if (self->running_.load())
+        {
+            self->stop();
+        }
+    }).detach();
 }
 
 bool MLDPPVXSController::removeCompletedReader(const std::string& reader_name)
@@ -476,7 +484,70 @@ bool MLDPPVXSController::push(EventBatch batch_values)
         }
     }
 
-    // Parallel fan-out to writers via thread pool.
+    // Enqueue with blocking backpressure.
+    {
+        std::unique_lock<std::mutex> lk(queue_mutex_);
+        const auto timeout = std::chrono::milliseconds(config_.pushTimeoutMs());
+
+        bool has_space = queue_not_full_.wait_for(lk, timeout, [this] {
+            return queue_.size() < config_.queueCapacity() || !running_.load();
+        });
+
+        if (!running_.load())
+            return false;
+
+        if (!has_space)
+        {
+            warnf(*logger_, "Push queue full ({} items) — dropping batch for source {}",
+                  queue_.size(), rootSource);
+            return false;
+        }
+
+        queue_.push_back(std::move(batch_values));
+    }
+    queue_not_empty_.notify_one();
+    return true;
+}
+
+Metrics& MLDPPVXSController::metrics() const
+{
+    if (!metrics_)
+    {
+        throw std::runtime_error("Metrics not configured for controller");
+    }
+    return *metrics_;
+}
+
+void MLDPPVXSController::consumerLoop()
+{
+    infof(*logger_, "Consumer thread started");
+    while (true)
+    {
+        std::deque<EventBatch> local;
+        {
+            std::unique_lock<std::mutex> lk(queue_mutex_);
+            queue_not_empty_.wait(lk, [this] {
+                return !queue_.empty() || !running_.load();
+            });
+
+            if (!running_.load() && queue_.empty())
+                break;
+
+            local.swap(queue_);
+        }
+        queue_not_full_.notify_all();
+
+        for (auto& batch : local)
+        {
+            dispatchToWriters(std::move(batch));
+        }
+    }
+    infof(*logger_, "Consumer thread exiting");
+}
+
+void MLDPPVXSController::dispatchToWriters(EventBatch batch_values)
+{
+    const std::string rootSource = getRootSourceName(batch_values);
     const std::size_t n = writers_.size();
 
     std::vector<std::future<bool>> futures;
@@ -505,8 +576,6 @@ bool MLDPPVXSController::push(EventBatch batch_values)
         writer_indices.push_back(i);
     }
 
-    // Collect results; warn for any writer that rejected the batch.
-    bool anyAccepted = false;
     for (std::size_t fi = 0; fi < futures.size(); ++fi)
     {
         const bool ok = futures[fi].get();
@@ -515,16 +584,5 @@ bool MLDPPVXSController::push(EventBatch batch_values)
             warnf(*logger_, "Writer '{}' rejected batch for source {}",
                   writers_[writer_indices[fi]]->name(), rootSource);
         }
-        anyAccepted = anyAccepted || ok;
     }
-    return anyAccepted;
-}
-
-Metrics& MLDPPVXSController::metrics() const
-{
-    if (!metrics_)
-    {
-        throw std::runtime_error("Metrics not configured for controller");
-    }
-    return *metrics_;
 }

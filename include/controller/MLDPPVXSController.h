@@ -23,9 +23,12 @@
 #include <writer/IWriter.h>
 
 #include <atomic>
+#include <condition_variable>
+#include <deque>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace mldp_pvxs_driver::controller {
@@ -184,8 +187,16 @@ private:
     std::vector<processor::IChannelProcessorUPtr>         processors_;  ///< In-process virtual channel processors.
     RouteTable                                            route_table_; ///< Selective reader→writer dispatch.
 
+    mutable std::mutex              queue_mutex_;
+    std::condition_variable         queue_not_full_;
+    std::condition_variable         queue_not_empty_;
+    std::deque<EventBatch>          queue_;
+    std::thread                     consumer_thread_;
+
     explicit MLDPPVXSController(const config::Config& config);
     bool removeCompletedReader(const std::string& reader_name);
+    void consumerLoop();
+    void dispatchToWriters(EventBatch batch);
 };
 
 } // namespace mldp_pvxs_driver::controller
