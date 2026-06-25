@@ -67,6 +67,7 @@ std::string buildYaml(const fs::path& hdf5Path,
          << "    - name: " << readerName << "\n"
          << "      file-path: " << hdf5Path.string() << "\n"
          << "      chunk-size: 1000\n"
+         << "      use-label-as-name: false\n"
          << "      metadata:\n"
          << "        test_run: " << sourceTag << "\n";
 

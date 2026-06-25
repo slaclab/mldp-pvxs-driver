@@ -28,27 +28,19 @@ namespace {
 
 using mldp_pvxs_driver::util::fsutil::FSUtil;
 
-std::vector<std::string> readFixedStringDataset(H5::Group& group, const char* name)
+std::string readStringAttr(H5::H5Object& obj, const char* name)
 {
-    H5::DataSet ds = group.openDataSet(name);
-    H5::DataSpace space = ds.getSpace();
-    hsize_t dims[1]{0};
-    space.getSimpleExtentDims(dims);
-    const std::size_t count = dims[0];
-
-    H5::StrType strType = ds.getStrType();
-    const std::size_t strLen = strType.getSize();
-
-    std::vector<char> buf(count * strLen, '\0');
-    ds.read(buf.data(), strType);
-
-    std::vector<std::string> result(count);
-    for (std::size_t i = 0; i < count; ++i)
-    {
-        const char* ptr = buf.data() + i * strLen;
-        result[i] = std::string(ptr, strnlen(ptr, strLen));
-    }
-    return result;
+    if (!obj.attrExists(name))
+        return {};
+    H5::Attribute attr = obj.openAttribute(name);
+    H5::StrType strType = attr.getStrType();
+    std::string value;
+    value.resize(strType.getSize());
+    attr.read(strType, value.data());
+    auto end = value.find('\0');
+    if (end != std::string::npos)
+        value.resize(end);
+    return value;
 }
 
 } // anonymous namespace
@@ -84,59 +76,83 @@ void HDF5BsasGen1Reader::readFile()
 
         logger_->log(util::log::Level::Trace,
                      "readFile: matched " + std::to_string(files.size()) + " file(s) for " +
-                         config_.filePath() + " group=" + config_.groupName());
+                         config_.filePath());
 
         for (const auto& filePath : files)
         {
             logger_->log(util::log::Level::Trace,
-                         "readFile: opening " + filePath.string() + " group=" + config_.groupName());
+                         "readFile: opening " + filePath.string());
             H5::H5File file(filePath.string(), H5F_ACC_RDONLY);
-            H5::Group dataGroup = file.openGroup(config_.groupName());
 
-            // Read block structure
-            BlockInfo block0;
-            block0.items = readFixedStringDataset(dataGroup, "block0_items");
+            // Discover datasets at root level
+            std::vector<ColumnInfo> columns;
+            std::size_t totalRows = 0;
+            bool hasSeconds = false;
+            bool hasNanos = false;
 
-            BlockInfo block1;
-            block1.items = readFixedStringDataset(dataGroup, "block1_items");
-
-            // Detect timestamp column order from block2_items
-            auto block2Items = readFixedStringDataset(dataGroup, "block2_items");
-            std::size_t secCol = 0;
-            std::size_t nanoCol = 1;
-            for (std::size_t i = 0; i < block2Items.size(); ++i)
+            const hsize_t numObjects = file.getNumObjs();
+            for (hsize_t i = 0; i < numObjects; ++i)
             {
-                if (block2Items[i] == "secondsPastEpoch")
-                    secCol = i;
-                else if (block2Items[i] == "nanoseconds")
-                    nanoCol = i;
+                if (file.getObjTypeByIdx(i) != H5G_DATASET)
+                    continue;
+
+                std::string dsName = file.getObjnameByIdx(i);
+
+                if (dsName == "secondsPastEpoch")
+                {
+                    hasSeconds = true;
+                    H5::DataSet ds = file.openDataSet(dsName);
+                    H5::DataSpace sp = ds.getSpace();
+                    hsize_t dims[2]{0, 0};
+                    sp.getSimpleExtentDims(dims);
+                    totalRows = dims[0];
+                    continue;
+                }
+                if (dsName == "nanoseconds")
+                {
+                    hasNanos = true;
+                    continue;
+                }
+
+                H5::DataSet ds = file.openDataSet(dsName);
+                H5::DataType dtype = ds.getDataType();
+                std::string label = readStringAttr(ds, "label");
+
+                ColumnInfo col;
+                col.name = dsName;
+                col.label = label.empty() ? dsName : label;
+
+                if (dtype.getClass() == H5T_FLOAT && dtype.getSize() == 8)
+                    col.type = ColumnInfo::Type::Float64;
+                else if (dtype.getClass() == H5T_INTEGER && dtype.getSize() == 2)
+                    col.type = ColumnInfo::Type::Int16;
+                else
+                    continue;
+
+                columns.push_back(std::move(col));
             }
 
-            logger_->log(util::log::Level::Trace,
-                         "readFile: block0 columns=" + std::to_string(block0.items.size()) +
-                             " block1 columns=" + std::to_string(block1.items.size()) +
-                             " ts order: secCol=" + std::to_string(secCol) +
-                             " nanoCol=" + std::to_string(nanoCol));
+            if (!hasSeconds || !hasNanos)
+                throw std::runtime_error("missing secondsPastEpoch/nanoseconds in " + filePath.string());
 
-            // Determine dimensions
-            H5::DataSet block0Ds = dataGroup.openDataSet("block0_values");
-            H5::DataSpace block0Space = block0Ds.getSpace();
-            hsize_t block0Dims[2]{0, 0};
-            block0Space.getSimpleExtentDims(block0Dims);
-            const std::size_t totalRows = block0Dims[0];
-            const std::size_t numFloatCols = block0Dims[1];
+            // Sort: float64 first, then int16 (stable order by discovery)
+            std::stable_sort(columns.begin(), columns.end(),
+                [](const ColumnInfo& a, const ColumnInfo& b) {
+                    return static_cast<int>(a.type) < static_cast<int>(b.type);
+                });
 
-            H5::DataSet block1Ds = dataGroup.openDataSet("block1_values");
-            H5::DataSpace block1Space = block1Ds.getSpace();
-            hsize_t block1Dims[2]{0, 0};
-            block1Space.getSimpleExtentDims(block1Dims);
-            const std::size_t numIntCols = block1Dims[1];
-
-            H5::DataSet block2Ds = dataGroup.openDataSet("block2_values");
+            std::size_t numFloatCols = 0;
+            std::size_t numIntCols = 0;
+            for (const auto& col : columns)
+            {
+                if (col.type == ColumnInfo::Type::Float64) ++numFloatCols;
+                else ++numIntCols;
+            }
 
             const std::size_t chunkSize = config_.chunkSize();
             const std::string sourceName = config_.name();
             const std::size_t totalChunks = (totalRows + chunkSize - 1) / chunkSize;
+            const bool useLabel = config_.useLabelAsName();
 
             logger_->log(util::log::Level::Info,
                          "readFile: totalRows=" + std::to_string(totalRows) +
@@ -145,56 +161,90 @@ void HDF5BsasGen1Reader::readFile()
                              " floatCols=" + std::to_string(numFloatCols) +
                              " intCols=" + std::to_string(numIntCols));
 
+            // Open all datasets once
+            H5::DataSet secDs = file.openDataSet("secondsPastEpoch");
+            H5::DataSet nanoDs = file.openDataSet("nanoseconds");
+
+            std::vector<H5::DataSet> colDatasets;
+            colDatasets.reserve(columns.size());
+            for (const auto& col : columns)
+                colDatasets.push_back(file.openDataSet(col.name));
+
+            // Build column info with resolved names
+            std::vector<ColumnInfo> resolvedColumns = columns;
+            if (useLabel)
+            {
+                for (auto& col : resolvedColumns)
+                    col.name = col.label;
+            }
+
             std::size_t chunkIdx = 0;
             for (std::size_t startRow = 0; startRow < totalRows && running_; startRow += chunkSize)
             {
                 const std::size_t numRows = std::min(chunkSize, totalRows - startRow);
 
-                // Read timestamps (block2_values)
-                std::vector<uint32_t> tsData(numRows * 2);
+                // Read timestamps
+                std::vector<uint32_t> secData(numRows);
+                std::vector<uint32_t> nanoData(numRows);
                 {
                     hsize_t offset[2] = {startRow, 0};
-                    hsize_t count[2] = {numRows, 2};
-                    H5::DataSpace fspace = block2Ds.getSpace();
+                    hsize_t count[2] = {numRows, 1};
+                    H5::DataSpace fspace = secDs.getSpace();
                     fspace.selectHyperslab(H5S_SELECT_SET, count, offset);
-                    H5::DataSpace mspace(2, count);
-                    block2Ds.read(tsData.data(), H5::PredType::NATIVE_UINT32, mspace, fspace);
+                    hsize_t mdims[1] = {numRows};
+                    H5::DataSpace mspace(1, mdims);
+                    secDs.read(secData.data(), H5::PredType::NATIVE_UINT32, mspace, fspace);
+                }
+                {
+                    hsize_t offset[2] = {startRow, 0};
+                    hsize_t count[2] = {numRows, 1};
+                    H5::DataSpace fspace = nanoDs.getSpace();
+                    fspace.selectHyperslab(H5S_SELECT_SET, count, offset);
+                    hsize_t mdims[1] = {numRows};
+                    H5::DataSpace mspace(1, mdims);
+                    nanoDs.read(nanoData.data(), H5::PredType::NATIVE_UINT32, mspace, fspace);
                 }
 
                 std::vector<TimestampEntry> timestamps(numRows);
                 for (std::size_t r = 0; r < numRows; ++r)
                 {
-                    timestamps[r].epoch_seconds = tsData[r * 2 + secCol];
-                    timestamps[r].nanoseconds = tsData[r * 2 + nanoCol];
+                    timestamps[r].epoch_seconds = secData[r];
+                    timestamps[r].nanoseconds = nanoData[r];
                 }
 
-                // Read float64 data (block0_values)
+                // Read float64 columns
                 std::vector<double> floatData(numRows * numFloatCols);
+                for (std::size_t c = 0; c < numFloatCols; ++c)
                 {
                     hsize_t offset[2] = {startRow, 0};
-                    hsize_t count[2] = {numRows, numFloatCols};
-                    H5::DataSpace fspace = block0Ds.getSpace();
+                    hsize_t count[2] = {numRows, 1};
+                    H5::DataSpace fspace = colDatasets[c].getSpace();
                     fspace.selectHyperslab(H5S_SELECT_SET, count, offset);
-                    H5::DataSpace mspace(2, count);
-                    block0Ds.read(floatData.data(), H5::PredType::NATIVE_DOUBLE, mspace, fspace);
+                    hsize_t mdims[1] = {numRows};
+                    H5::DataSpace mspace(1, mdims);
+                    colDatasets[c].read(floatData.data() + c * numRows,
+                                       H5::PredType::NATIVE_DOUBLE, mspace, fspace);
                 }
 
-                // Read int16 data (block1_values)
+                // Read int16 columns
                 std::vector<int16_t> intData(numRows * numIntCols);
+                for (std::size_t c = 0; c < numIntCols; ++c)
                 {
                     hsize_t offset[2] = {startRow, 0};
-                    hsize_t count[2] = {numRows, numIntCols};
-                    H5::DataSpace fspace = block1Ds.getSpace();
+                    hsize_t count[2] = {numRows, 1};
+                    H5::DataSpace fspace = colDatasets[numFloatCols + c].getSpace();
                     fspace.selectHyperslab(H5S_SELECT_SET, count, offset);
-                    H5::DataSpace mspace(2, count);
-                    block1Ds.read(intData.data(), H5::PredType::NATIVE_INT16, mspace, fspace);
+                    hsize_t mdims[1] = {numRows};
+                    H5::DataSpace mspace(1, mdims);
+                    colDatasets[numFloatCols + c].read(intData.data() + c * numRows,
+                                                      H5::PredType::NATIVE_INT16, mspace, fspace);
                 }
 
                 logger_->log(util::log::Level::Trace,
                              "readFile: emitting chunk " + std::to_string(chunkIdx + 1) + "/" +
                                  std::to_string(totalChunks) + " rows=" + std::to_string(numRows));
 
-                emitChunk(sourceName, timestamps, block0, floatData, block1, intData,
+                emitChunk(sourceName, timestamps, resolvedColumns, floatData, intData,
                           numRows, numFloatCols, numIntCols);
                 ++chunkIdx;
             }
@@ -223,10 +273,9 @@ void HDF5BsasGen1Reader::readFile()
 void HDF5BsasGen1Reader::emitChunk(
     const std::string& sourceName,
     const std::vector<TimestampEntry>& timestamps,
-    const BlockInfo& block0,
-    const std::vector<double>& block0Data,
-    const BlockInfo& block1,
-    const std::vector<int16_t>& block1Data,
+    const std::vector<ColumnInfo>& columns,
+    const std::vector<double>& floatData,
+    const std::vector<int16_t>& intData,
     std::size_t numRows, std::size_t numFloatCols, std::size_t numIntCols)
 {
     IDataBus::EventBatch batch;
@@ -241,16 +290,16 @@ void HDF5BsasGen1Reader::emitChunk(
     auto& tsp = std::get<TimeSeriesPayload>(batch.payload);
 
     // Emit one frame per float64 column
-    for (std::size_t c = 0; c < numFloatCols && c < block0.items.size(); ++c)
+    for (std::size_t c = 0; c < numFloatCols; ++c)
     {
         DataBatch frame;
         frame.timestamps = timestamps;
 
         DataColumn col;
-        col.name = block0.items[c];
+        col.name = columns[c].name;
         std::vector<double> values(numRows);
         for (std::size_t r = 0; r < numRows; ++r)
-            values[r] = block0Data[r * numFloatCols + c];
+            values[r] = floatData[c * numRows + r];
         col.values = std::move(values);
         frame.columns.push_back(std::move(col));
 
@@ -258,16 +307,16 @@ void HDF5BsasGen1Reader::emitChunk(
     }
 
     // Emit one frame per int16 column (as int32)
-    for (std::size_t c = 0; c < numIntCols && c < block1.items.size(); ++c)
+    for (std::size_t c = 0; c < numIntCols; ++c)
     {
         DataBatch frame;
         frame.timestamps = timestamps;
 
         DataColumn col;
-        col.name = block1.items[c];
+        col.name = columns[numFloatCols + c].name;
         std::vector<int32_t> values(numRows);
         for (std::size_t r = 0; r < numRows; ++r)
-            values[r] = static_cast<int32_t>(block1Data[r * numIntCols + c]);
+            values[r] = static_cast<int32_t>(intData[c * numRows + r]);
         col.values = std::move(values);
         frame.columns.push_back(std::move(col));
 

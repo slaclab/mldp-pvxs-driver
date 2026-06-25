@@ -16,4 +16,3 @@ PROCESS_LOG*.md
 data/hdf5/
 !kubernetes/configmap.yaml
 !docs/examples/config*
-data/bsas-gen1-extract.h5

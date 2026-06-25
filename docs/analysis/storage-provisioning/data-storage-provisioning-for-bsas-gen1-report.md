@@ -1,6 +1,6 @@
 # BSAS Gen1 Data Storage Provisioning Report
 
-**Source file:** `data/bsas-gen1-extract.h5`  
+**Source file:** BSAS Gen1 HDF5 (flat format, ~1300 float64 + 16 int16 columns)  
 **Database:** MongoDB 8 (`dp` database)  
 **Date:** 2026-06-21  
 **Ingestion provider:** `hdf5_bsas_gen1_provider`

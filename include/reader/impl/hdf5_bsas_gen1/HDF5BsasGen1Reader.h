@@ -24,10 +24,11 @@
 namespace mldp_pvxs_driver::reader::impl::hdf5_bsas_gen1 {
 
 /**
- * @brief Reads BSAS Gen1 HDF5 files in PyTables "fixed" format.
+ * @brief Reads BSAS Gen1 HDF5 files in flat format.
  *
- * Parses the block structure (block0=float64, block1=int16, block2=timestamps)
- * and emits DataBatch frames in tabular mode (one frame per column per chunk).
+ * Each file has root-level datasets: float64/int16 data columns plus
+ * secondsPastEpoch/nanoseconds timestamps. Emits DataBatch frames in
+ * tabular mode (one frame per column per chunk).
  */
 class HDF5BsasGen1Reader : public Reader
 {
@@ -40,18 +41,19 @@ public:
     std::string name() const override { return config_.name(); }
 
 private:
-    struct BlockInfo
+    struct ColumnInfo
     {
-        std::vector<std::string> items;
+        std::string name;
+        std::string label;
+        enum class Type { Float64, Int16 } type;
     };
 
     void readFile();
     void emitChunk(const std::string& sourceName,
                    const std::vector<util::bus::TimestampEntry>& timestamps,
-                   const BlockInfo& block0,
-                   const std::vector<double>& block0Data,
-                   const BlockInfo& block1,
-                   const std::vector<int16_t>& block1Data,
+                   const std::vector<ColumnInfo>& columns,
+                   const std::vector<double>& floatData,
+                   const std::vector<int16_t>& intData,
                    std::size_t numRows, std::size_t numFloatCols, std::size_t numIntCols);
 
     std::shared_ptr<util::log::ILogger> logger_;

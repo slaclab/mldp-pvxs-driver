@@ -81,14 +81,25 @@ TEST_F(HDF5BsasGen1ReaderTest, ConfigParsesValidYaml)
     auto cfg = makeConfigFromYaml(
         "name: test_reader\n"
         "file-path: " + mockFile_ + "\n"
-        "chunk-size: 5\n");
+        "chunk-size: 5\n"
+        "use-label-as-name: false\n");
 
     HDF5BsasGen1ReaderConfig config(cfg);
     EXPECT_TRUE(config.valid());
     EXPECT_EQ(config.name(), "test_reader");
     EXPECT_EQ(config.filePath(), mockFile_);
     EXPECT_EQ(config.chunkSize(), 5u);
-    EXPECT_EQ(config.groupName(), "data");
+    EXPECT_FALSE(config.useLabelAsName());
+}
+
+TEST_F(HDF5BsasGen1ReaderTest, ConfigDefaultsUseLabelTrue)
+{
+    auto cfg = makeConfigFromYaml(
+        "name: test_reader\n"
+        "file-path: " + mockFile_ + "\n");
+
+    HDF5BsasGen1ReaderConfig config(cfg);
+    EXPECT_TRUE(config.useLabelAsName());
 }
 
 TEST_F(HDF5BsasGen1ReaderTest, ConfigThrowsOnMissingFilePath)
@@ -113,7 +124,8 @@ TEST_F(HDF5BsasGen1ReaderTest, ReaderEmitsBatches)
     auto cfg = makeConfigFromYaml(
         "name: bsas_test\n"
         "file-path: " + mockFile_ + "\n"
-        "chunk-size: 1000\n");
+        "chunk-size: 1000\n"
+        "use-label-as-name: false\n");
 
     {
         HDF5BsasGen1Reader reader(bus, nullptr, cfg);
@@ -153,7 +165,8 @@ TEST_F(HDF5BsasGen1ReaderTest, ReaderExpandsGlobPatternsFromConfiguredPath)
     auto cfg = makeConfigFromYaml(
         "name: bsas_glob\n"
         "file-path: " + (tempDir_ / "*.h5").string() + "\n"
-        "chunk-size: 1000\n");
+        "chunk-size: 1000\n"
+        "use-label-as-name: false\n");
 
     {
         HDF5BsasGen1Reader reader(bus, nullptr, cfg);
@@ -177,7 +190,8 @@ TEST_F(HDF5BsasGen1ReaderTest, ChunkedReadingProducesMultipleBatches)
     auto cfg = makeConfigFromYaml(
         "name: bsas_chunked\n"
         "file-path: " + mockFile_ + "\n"
-        "chunk-size: 7\n");
+        "chunk-size: 7\n"
+        "use-label-as-name: false\n");
 
     {
         HDF5BsasGen1Reader reader(bus, nullptr, cfg);
@@ -196,7 +210,8 @@ TEST_F(HDF5BsasGen1ReaderTest, TimestampsAreCorrect)
     auto cfg = makeConfigFromYaml(
         "name: bsas_ts\n"
         "file-path: " + mockFile_ + "\n"
-        "chunk-size: 1000\n");
+        "chunk-size: 1000\n"
+        "use-label-as-name: false\n");
 
     {
         HDF5BsasGen1Reader reader(bus, nullptr, cfg);
@@ -224,7 +239,8 @@ TEST_F(HDF5BsasGen1ReaderTest, Float64ColumnValuesAreCorrect)
     auto cfg = makeConfigFromYaml(
         "name: bsas_float\n"
         "file-path: " + mockFile_ + "\n"
-        "chunk-size: 1000\n");
+        "chunk-size: 1000\n"
+        "use-label-as-name: false\n");
 
     {
         HDF5BsasGen1Reader reader(bus, nullptr, cfg);
@@ -257,7 +273,8 @@ TEST_F(HDF5BsasGen1ReaderTest, Int16ColumnValuesAreCorrectAsInt32)
     auto cfg = makeConfigFromYaml(
         "name: bsas_int\n"
         "file-path: " + mockFile_ + "\n"
-        "chunk-size: 1000\n");
+        "chunk-size: 1000\n"
+        "use-label-as-name: false\n");
 
     {
         HDF5BsasGen1Reader reader(bus, nullptr, cfg);
@@ -284,13 +301,14 @@ TEST_F(HDF5BsasGen1ReaderTest, Int16ColumnValuesAreCorrectAsInt32)
     }
 }
 
-TEST_F(HDF5BsasGen1ReaderTest, ColumnNamesMatchBlockItems)
+TEST_F(HDF5BsasGen1ReaderTest, ColumnNamesMatchDatasetNames)
 {
     auto bus = std::make_shared<MockDataBus>();
     auto cfg = makeConfigFromYaml(
         "name: bsas_names\n"
         "file-path: " + mockFile_ + "\n"
-        "chunk-size: 1000\n");
+        "chunk-size: 1000\n"
+        "use-label-as-name: false\n");
 
     {
         HDF5BsasGen1Reader reader(bus, nullptr, cfg);
@@ -321,6 +339,30 @@ TEST_F(HDF5BsasGen1ReaderTest, ColumnNamesMatchBlockItems)
     }
 }
 
+TEST_F(HDF5BsasGen1ReaderTest, UseLabelAsNameResolvesLabelAttr)
+{
+    auto bus = std::make_shared<MockDataBus>();
+    auto cfg = makeConfigFromYaml(
+        "name: bsas_label\n"
+        "file-path: " + mockFile_ + "\n"
+        "chunk-size: 1000\n"
+        "use-label-as-name: true\n");
+
+    {
+        HDF5BsasGen1Reader reader(bus, nullptr, cfg);
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    }
+
+    auto batches = bus->snapshot();
+    ASSERT_GE(batches.size(), 1u);
+    const auto& tsp = asTimeSeries(batches[0]);
+    ASSERT_GE(tsp.frames.size(), 1u);
+
+    // Mock label replaces _ with : in dataset name
+    // SIG_0000 -> label "SIG:0000"
+    EXPECT_EQ(tsp.frames[0].columns[0].name, "SIG:0000");
+}
+
 TEST_F(HDF5BsasGen1ReaderTest, ReaderNameMatches)
 {
     auto bus = std::make_shared<MockDataBus>();
@@ -334,229 +376,67 @@ TEST_F(HDF5BsasGen1ReaderTest, ReaderNameMatches)
 }
 
 // ---------------------------------------------------------------------------
-// Mock structure validation — verify generated file matches reference format
+// Mock structure validation — verify generated file matches flat format
 // ---------------------------------------------------------------------------
 
-TEST_F(HDF5BsasGen1ReaderTest, MockFileMatchesReferenceStructure)
+TEST_F(HDF5BsasGen1ReaderTest, MockFileMatchesFlatStructure)
 {
-    // Open the mock-generated file and verify its HDF5 structure matches
-    // the real bsas-gen1-extract.h5 file format exactly.
     H5::H5File file(mockFile_, H5F_ACC_RDONLY);
 
-    // Root attributes
-    ASSERT_TRUE(file.attrExists("CLASS"));
-    ASSERT_TRUE(file.attrExists("PYTABLES_FORMAT_VERSION"));
-    ASSERT_TRUE(file.attrExists("VERSION"));
-    ASSERT_TRUE(file.attrExists("TITLE"));
+    // No root attributes
+    EXPECT_EQ(file.getNumAttrs(), 0u);
 
-    // /data group exists with correct attributes
-    ASSERT_TRUE(file.nameExists("data"));
-    H5::Group dataGroup = file.openGroup("data");
-    ASSERT_TRUE(dataGroup.attrExists("CLASS"));
-    ASSERT_TRUE(dataGroup.attrExists("VERSION"));
-    ASSERT_TRUE(dataGroup.attrExists("TITLE"));
-    ASSERT_TRUE(dataGroup.attrExists("axis0_variety"));
-    ASSERT_TRUE(dataGroup.attrExists("axis1_variety"));
-    ASSERT_TRUE(dataGroup.attrExists("block0_items_variety"));
-    ASSERT_TRUE(dataGroup.attrExists("block1_items_variety"));
-    ASSERT_TRUE(dataGroup.attrExists("block2_items_variety"));
-    ASSERT_TRUE(dataGroup.attrExists("nblocks"));
-    ASSERT_TRUE(dataGroup.attrExists("ndim"));
-    ASSERT_TRUE(dataGroup.attrExists("pandas_type"));
-    ASSERT_TRUE(dataGroup.attrExists("pandas_version"));
-    ASSERT_TRUE(dataGroup.attrExists("encoding"));
-    ASSERT_TRUE(dataGroup.attrExists("errors"));
+    // No groups — only datasets at root
+    hsize_t numObjs = file.getNumObjs();
+    EXPECT_EQ(numObjs, kFloatCols + kIntCols + 2); // +2 for timestamps
 
-    // Verify nblocks=3, ndim=2
+    for (hsize_t i = 0; i < numObjs; ++i)
+        EXPECT_EQ(file.getObjTypeByIdx(i), H5G_DATASET);
+
+    // Verify float64 dataset structure
     {
-        int64_t nblocks = 0;
-        dataGroup.openAttribute("nblocks").read(H5::PredType::NATIVE_INT64, &nblocks);
-        EXPECT_EQ(nblocks, 3);
-        int64_t ndim = 0;
-        dataGroup.openAttribute("ndim").read(H5::PredType::NATIVE_INT64, &ndim);
-        EXPECT_EQ(ndim, 2);
-    }
-
-    // axis0: 1D string dataset with all column names
-    ASSERT_TRUE(dataGroup.nameExists("axis0"));
-    {
-        H5::DataSet ds = dataGroup.openDataSet("axis0");
-        H5::DataSpace sp = ds.getSpace();
-        ASSERT_EQ(sp.getSimpleExtentNdims(), 1);
-        hsize_t dims[1]{0};
-        sp.getSimpleExtentDims(dims);
-        EXPECT_EQ(dims[0], kFloatCols + kIntCols + 2); // +2 for timestamp cols
-        // Must be fixed-length string
-        H5::DataType dt = ds.getDataType();
-        EXPECT_EQ(dt.getClass(), H5T_STRING);
-        ASSERT_TRUE(ds.attrExists("CLASS"));
-        ASSERT_TRUE(ds.attrExists("FLAVOR"));
-    }
-
-    // axis1: 1D int64 dataset with row indices
-    ASSERT_TRUE(dataGroup.nameExists("axis1"));
-    {
-        H5::DataSet ds = dataGroup.openDataSet("axis1");
-        H5::DataSpace sp = ds.getSpace();
-        hsize_t dims[1]{0};
-        sp.getSimpleExtentDims(dims);
-        EXPECT_EQ(dims[0], kRows);
-        EXPECT_EQ(ds.getDataType().getClass(), H5T_INTEGER);
-    }
-
-    // block0_items: 1D fixed string[numFloatCols]
-    ASSERT_TRUE(dataGroup.nameExists("block0_items"));
-    {
-        H5::DataSet ds = dataGroup.openDataSet("block0_items");
-        hsize_t dims[1]{0};
-        ds.getSpace().getSimpleExtentDims(dims);
-        EXPECT_EQ(dims[0], kFloatCols);
-        EXPECT_EQ(ds.getDataType().getClass(), H5T_STRING);
-    }
-
-    // block0_values: 2D float64 (rows x floatCols)
-    ASSERT_TRUE(dataGroup.nameExists("block0_values"));
-    {
-        H5::DataSet ds = dataGroup.openDataSet("block0_values");
+        H5::DataSet ds = file.openDataSet("SIG_0000");
         H5::DataSpace sp = ds.getSpace();
         ASSERT_EQ(sp.getSimpleExtentNdims(), 2);
         hsize_t dims[2]{0, 0};
         sp.getSimpleExtentDims(dims);
         EXPECT_EQ(dims[0], kRows);
-        EXPECT_EQ(dims[1], kFloatCols);
+        EXPECT_EQ(dims[1], 1u);
         EXPECT_EQ(ds.getDataType().getClass(), H5T_FLOAT);
-        EXPECT_EQ(ds.getDataType().getSize(), 8u); // float64
-        ASSERT_TRUE(ds.attrExists("transposed"));
+        EXPECT_EQ(ds.getDataType().getSize(), 8u);
+        ASSERT_TRUE(ds.attrExists("MATLAB_class"));
+        ASSERT_TRUE(ds.attrExists("label"));
     }
 
-    // block1_items: 1D fixed string[numIntCols]
-    ASSERT_TRUE(dataGroup.nameExists("block1_items"));
+    // Verify int16 dataset structure
     {
-        H5::DataSet ds = dataGroup.openDataSet("block1_items");
-        hsize_t dims[1]{0};
-        ds.getSpace().getSimpleExtentDims(dims);
-        EXPECT_EQ(dims[0], kIntCols);
-    }
-
-    // block1_values: 2D int16 (rows x intCols)
-    ASSERT_TRUE(dataGroup.nameExists("block1_values"));
-    {
-        H5::DataSet ds = dataGroup.openDataSet("block1_values");
+        H5::DataSet ds = file.openDataSet("FLAG_00");
         H5::DataSpace sp = ds.getSpace();
-        ASSERT_EQ(sp.getSimpleExtentNdims(), 2);
         hsize_t dims[2]{0, 0};
         sp.getSimpleExtentDims(dims);
         EXPECT_EQ(dims[0], kRows);
-        EXPECT_EQ(dims[1], kIntCols);
+        EXPECT_EQ(dims[1], 1u);
         EXPECT_EQ(ds.getDataType().getClass(), H5T_INTEGER);
-        EXPECT_EQ(ds.getDataType().getSize(), 2u); // int16
+        EXPECT_EQ(ds.getDataType().getSize(), 2u);
+        ASSERT_TRUE(ds.attrExists("MATLAB_class"));
+        ASSERT_TRUE(ds.attrExists("label"));
     }
 
-    // block2_items: 1D fixed string[2] = {"secondsPastEpoch", "nanoseconds"}
-    ASSERT_TRUE(dataGroup.nameExists("block2_items"));
+    // Verify timestamp datasets
     {
-        H5::DataSet ds = dataGroup.openDataSet("block2_items");
-        hsize_t dims[1]{0};
-        ds.getSpace().getSimpleExtentDims(dims);
-        EXPECT_EQ(dims[0], 2u);
-
-        H5::StrType strType = ds.getStrType();
-        std::size_t strLen = strType.getSize();
-        std::vector<char> buf(2 * strLen, '\0');
-        ds.read(buf.data(), strType);
-        std::string col0(buf.data(), strnlen(buf.data(), strLen));
-        std::string col1(buf.data() + strLen, strnlen(buf.data() + strLen, strLen));
-        EXPECT_EQ(col0, "secondsPastEpoch");
-        EXPECT_EQ(col1, "nanoseconds");
-    }
-
-    // block2_values: 2D uint32 (rows x 2)
-    ASSERT_TRUE(dataGroup.nameExists("block2_values"));
-    {
-        H5::DataSet ds = dataGroup.openDataSet("block2_values");
-        H5::DataSpace sp = ds.getSpace();
-        ASSERT_EQ(sp.getSimpleExtentNdims(), 2);
+        H5::DataSet ds = file.openDataSet("secondsPastEpoch");
+        EXPECT_EQ(ds.getDataType().getClass(), H5T_INTEGER);
+        EXPECT_EQ(ds.getDataType().getSize(), 4u);
         hsize_t dims[2]{0, 0};
-        sp.getSimpleExtentDims(dims);
+        ds.getSpace().getSimpleExtentDims(dims);
         EXPECT_EQ(dims[0], kRows);
-        EXPECT_EQ(dims[1], 2u);
+        EXPECT_EQ(dims[1], 1u);
+    }
+    {
+        H5::DataSet ds = file.openDataSet("nanoseconds");
         EXPECT_EQ(ds.getDataType().getClass(), H5T_INTEGER);
-        EXPECT_EQ(ds.getDataType().getSize(), 4u); // uint32
+        EXPECT_EQ(ds.getDataType().getSize(), 4u);
     }
-}
-
-// ---------------------------------------------------------------------------
-// Compare mock to real reference file (data/bsas-gen1-extract.h5)
-// Verify identical structure: same datasets, same dtypes, same attrs.
-// ---------------------------------------------------------------------------
-
-TEST_F(HDF5BsasGen1ReaderTest, MockMatchesRealReferenceFileStructure)
-{
-    if (!std::getenv("BSAS_GEN1_REFERENCE_TEST"))
-    {
-        GTEST_SKIP() << "Set BSAS_GEN1_REFERENCE_TEST=1 to enable (requires data/bsas-gen1-extract.h5)";
-    }
-
-    const std::string refPath = std::string(MLDP_TEST_DATA_DIR) + "/bsas-gen1-extract.h5";
-    if (!fs::exists(refPath))
-    {
-        GTEST_SKIP() << "Reference file not found: " << refPath;
-    }
-
-    // Generate mock with same dimensions as reference: 1351 float, 16 int, 19 rows
-    const std::string matchFile = (tempDir_ / "mock_ref_match.h5").string();
-    BsasGen1HDF5Mock::Params refParams;
-    refParams.numFloatCols = 1351;
-    refParams.numIntCols   = 16;
-    refParams.numRows      = 19;
-    refParams.baseEpoch    = 1700000000u;
-    BsasGen1HDF5Mock::generate(matchFile, refParams);
-
-    H5::H5File refFile(refPath, H5F_ACC_RDONLY);
-    H5::H5File mockFile(matchFile, H5F_ACC_RDONLY);
-
-    H5::Group refData = refFile.openGroup("data");
-    H5::Group mockData = mockFile.openGroup("data");
-
-    // Verify datasets exist with same shapes and dtypes
-    auto checkDataset = [&](const char* name) {
-        ASSERT_TRUE(refData.nameExists(name)) << name << " missing in reference";
-        ASSERT_TRUE(mockData.nameExists(name)) << name << " missing in mock";
-
-        H5::DataSet refDs = refData.openDataSet(name);
-        H5::DataSet mockDs = mockData.openDataSet(name);
-
-        // Same rank
-        int refNdims = refDs.getSpace().getSimpleExtentNdims();
-        int mockNdims = mockDs.getSpace().getSimpleExtentNdims();
-        EXPECT_EQ(refNdims, mockNdims) << name << " rank mismatch";
-
-        // Same shape
-        std::vector<hsize_t> refDims(refNdims), mockDims(mockNdims);
-        refDs.getSpace().getSimpleExtentDims(refDims.data());
-        mockDs.getSpace().getSimpleExtentDims(mockDims.data());
-        for (int i = 0; i < refNdims; ++i)
-            EXPECT_EQ(refDims[i], mockDims[i]) << name << " dim[" << i << "] mismatch";
-
-        // Same dtype class
-        EXPECT_EQ(refDs.getDataType().getClass(), mockDs.getDataType().getClass())
-            << name << " dtype class mismatch";
-
-        // Same dtype size
-        EXPECT_EQ(refDs.getDataType().getSize(), mockDs.getDataType().getSize())
-            << name << " dtype size mismatch";
-    };
-
-    checkDataset("axis0");
-    checkDataset("axis1");
-    checkDataset("block0_items");
-    checkDataset("block0_values");
-    checkDataset("block1_items");
-    checkDataset("block1_values");
-    checkDataset("block2_items");
-    checkDataset("block2_values");
-
-    fs::remove(matchFile);
 }
 
 // ---------------------------------------------------------------------------
@@ -596,7 +476,8 @@ TEST_F(HDF5BsasGen1ReaderTest, LargeScaleReaderEmitsAllData)
     auto cfg = makeConfigFromYaml(
         "name: bsas_large\n"
         "file-path: " + largeFile + "\n"
-        "chunk-size: " + std::to_string(chunkSize) + "\n");
+        "chunk-size: " + std::to_string(chunkSize) + "\n"
+        "use-label-as-name: false\n");
 
     {
         HDF5BsasGen1Reader reader(bus, nullptr, cfg);
@@ -693,6 +574,7 @@ TEST_F(HDF5BsasGen1ReaderTest, ProvenanceFlowsToEventBatch)
         "name: bsas_prov\n"
         "file-path: " + mockFile_ + "\n"
         "chunk-size: 1000\n"
+        "use-label-as-name: false\n"
         "provenance:\n"
         "  facility: LCLS\n"
         "  instrument: CXI\n"

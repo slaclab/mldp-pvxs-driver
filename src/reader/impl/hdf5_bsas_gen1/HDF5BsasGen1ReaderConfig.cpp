@@ -38,11 +38,11 @@ void HDF5BsasGen1ReaderConfig::parse(const Config& readerEntry)
     if (file_path_.empty())
         throw Error("file-path must not be empty");
 
-    group_name_ = readerEntry.get("group", "data");
-
     chunk_size_ = static_cast<std::size_t>(readerEntry.getInt("chunk-size", 1000L));
     if (chunk_size_ == 0)
         throw Error("chunk-size must be > 0");
+
+    use_label_as_name_ = readerEntry.getBool("use-label-as-name", true);
 
     if (readerEntry.hasChild("metadata"))
     {

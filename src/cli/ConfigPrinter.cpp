@@ -211,7 +211,7 @@ std::string mldp_pvxs_driver::cli::formatStartupConfig(
             const HDF5BsasGen1ReaderConfig reader(cfg);
             out << "name=" << reader.name()
                 << " file-path=" << reader.filePath()
-                << " group=" << reader.groupName()
+                << " use-label=" << (reader.useLabelAsName() ? "true" : "false")
                 << " chunk-size=" << reader.chunkSize();
         }
 #endif

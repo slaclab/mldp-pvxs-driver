@@ -16,17 +16,13 @@
 namespace mldp_pvxs_driver::test::mock {
 
 /**
- * @brief Generates BSAS Gen1 HDF5 files in PyTables "fixed" format.
+ * @brief Generates BSAS Gen1 HDF5 files in flat format.
  *
  * Produces files structurally identical to real BSAS Gen1 exports:
- *   /data/axis0         — all column names (string)
- *   /data/axis1         — row indices (int64)
- *   /data/block0_items  — float64 column names
- *   /data/block0_values — float64 data (rows x float64_cols)
- *   /data/block1_items  — int16 column names
- *   /data/block1_values — int16 data (rows x int16_cols)
- *   /data/block2_items  — ["secondsPastEpoch", "nanoseconds"]
- *   /data/block2_values — uint32 timestamps (rows x 2)
+ *   /SIG_0000         — float64 dataset shape (N,1) with @MATLAB_class and @label
+ *   /FLAG_00          — int16 dataset shape (N,1) with @MATLAB_class and @label
+ *   /secondsPastEpoch — uint32 dataset shape (N,1)
+ *   /nanoseconds      — uint32 dataset shape (N,1)
  */
 class BsasGen1HDF5Mock
 {

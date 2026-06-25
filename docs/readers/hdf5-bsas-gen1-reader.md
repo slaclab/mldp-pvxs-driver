@@ -125,20 +125,7 @@ Test                                  | Description
 `ColumnNamesMatchBlockItems`          | Frame column names match `block*_items`
 `ReaderNameMatches`                   | `name()` returns configured name
 `MockFileMatchesReferenceStructure`   | Mock HDF5 structure matches expected format
-`MockMatchesRealReferenceFileStructure` | Mock matches real `bsas-gen1-extract.h5` (opt-in)
 `LargeScaleReaderEmitsAllData`        | Env-configurable large-scale verification
-
-### Optional Reference File Test
-
-`MockMatchesRealReferenceFileStructure` compares the mock generator output
-against a real BSAS Gen1 file (`data/bsas-gen1-extract.h5`). This test is
-**opt-in** because the reference file is not stored in the git repository:
-
-```bash
-# Enable the reference file test
-BSAS_GEN1_REFERENCE_TEST=1 ./bin/mldp_hdf5_bsas_gen1_reader_test \
-    --gtest_filter='*MockMatchesRealReference*'
-```
 
 ### Large-Scale Test
 
