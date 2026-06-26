@@ -365,14 +365,33 @@ TEST_F(HDF5BsasGen1ReaderTest, UseLabelAsNameFallsBackWhenLabelContainsInvalidUt
     fs::remove(invalidFile);
 }
 
-TEST_F(HDF5BsasGen1ReaderTest, RealBsasFileColumnNamesArePreserved)
+TEST_F(HDF5BsasGen1ReaderTest, MatlabStyleLabelsArePreserved)
 {
-    const fs::path realFile = fs::current_path() / "CU_SXR_20260515_040923.h5";
-    ASSERT_TRUE(fs::exists(realFile)) << "missing test fixture: " << realFile;
+    const auto matlabLikeFile = (tempDir_ / "mock_bsas_matlab_style.h5").string();
+
+    BsasGen1HDF5Mock::Params params;
+    params.numRows = kRows;
+    params.baseEpoch = kBaseEpoch;
+    params.explicitColumns = std::vector<BsasGen1HDF5Mock::Params::ColumnSpec>{
+        {"ACCL_IN20_300_L0A_ACUSBR", "ACCL:IN20:300:L0A_ACUSBR", true},
+        {"ACCL_IN20_300_L0A_PCUSBR", "ACCL:IN20:300:L0A_PCUSBR", true},
+        {"TORO_IN20_791_TMITCUSBR", "TORO:IN20:791:TMITCUSBR", true},
+        {"WIRE_IN20_561_POSNCUSBR", "WIRE:IN20:561:POSNCUSBR", false},
+        {"DUMP_LI21_305_TGT_STS", "DUMP:LI21:305:TGT:STS", false},
+    };
+    BsasGen1HDF5Mock::generate(matlabLikeFile, params);
+
+    const std::vector<std::string> expectedNames = {
+        "ACCL:IN20:300:L0A_ACUSBR",
+        "ACCL:IN20:300:L0A_PCUSBR",
+        "TORO:IN20:791:TMITCUSBR",
+        "DUMP:LI21:305:TGT:STS",
+        "WIRE:IN20:561:POSNCUSBR",
+    };
 
     auto bus = std::make_shared<MockDataBus>();
     auto cfg = makeConfigFromYaml(
-        "name: bsas_real\n" "file-path: " + realFile.string() + "\n" "chunk-size: 1000\n" "use-label-as-name: true\n");
+        "name: bsas_real\n" "file-path: " + matlabLikeFile + "\n" "chunk-size: 1000\n" "use-label-as-name: true\n");
 
     {
         HDF5BsasGen1Reader reader(bus, nullptr, cfg);
@@ -382,12 +401,15 @@ TEST_F(HDF5BsasGen1ReaderTest, RealBsasFileColumnNamesArePreserved)
     auto batches = bus->snapshot();
     ASSERT_GE(batches.size(), 1u);
     const auto& tsp = asTimeSeries(batches[0]);
-    ASSERT_GE(tsp.frames.size(), 4u);
+    ASSERT_EQ(tsp.frames.size(), expectedNames.size());
 
-    EXPECT_EQ(tsp.frames[0].columns[0].name, "ACCL:IN20:300:L0A_ACUSBR");
-    EXPECT_EQ(tsp.frames[1].columns[0].name, "ACCL:IN20:300:L0A_PCUSBR");
-    EXPECT_EQ(tsp.frames[2].columns[0].name, "ACCL:IN20:400:L0B_ACUSBR");
-    EXPECT_EQ(tsp.frames[3].columns[0].name, "ACCL:IN20:400:L0B_PCUSBR");
+    for (std::size_t i = 0; i < expectedNames.size(); ++i)
+    {
+        ASSERT_EQ(tsp.frames[i].columns.size(), 1u) << "frame " << i;
+        EXPECT_EQ(tsp.frames[i].columns[0].name, expectedNames[i]) << "frame " << i;
+    }
+
+    fs::remove(matlabLikeFile);
 }
 
 TEST_F(HDF5BsasGen1ReaderTest, ReaderNameMatches)

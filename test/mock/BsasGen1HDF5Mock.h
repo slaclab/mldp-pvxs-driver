@@ -11,7 +11,9 @@
 #pragma once
 
 #include <cstddef>
+#include <optional>
 #include <string>
+#include <vector>
 
 namespace mldp_pvxs_driver::test::mock {
 
@@ -29,13 +31,21 @@ class BsasGen1HDF5Mock
 public:
     struct Params
     {
-        std::size_t numFloatCols = 10;
-        std::size_t numIntCols = 4;
-        std::size_t numRows = 20;
-        uint32_t    baseEpoch = 1700000000u;
-        std::string floatColPrefix = "SIG_";
-        std::string intColPrefix = "FLAG_";
-        bool        injectInvalidUtf8Label = false;
+        struct ColumnSpec
+        {
+            std::string datasetName;
+            std::string label;
+            bool        isFloat64 = true;
+        };
+
+        std::size_t                            numFloatCols = 10;
+        std::size_t                            numIntCols = 4;
+        std::size_t                            numRows = 20;
+        uint32_t                               baseEpoch = 1700000000u;
+        std::string                            floatColPrefix = "SIG_";
+        std::string                            intColPrefix = "FLAG_";
+        bool                                   injectInvalidUtf8Label = false;
+        std::optional<std::vector<ColumnSpec>> explicitColumns;
     };
 
     static void generate(const std::string& outputPath, const Params& params);
