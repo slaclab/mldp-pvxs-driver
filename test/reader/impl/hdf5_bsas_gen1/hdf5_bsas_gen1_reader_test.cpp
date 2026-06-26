@@ -360,9 +360,34 @@ TEST_F(HDF5BsasGen1ReaderTest, UseLabelAsNameFallsBackWhenLabelContainsInvalidUt
     ASSERT_GE(batches.size(), 1u);
     const auto& tsp = asTimeSeries(batches[0]);
     ASSERT_GE(tsp.frames.size(), 1u);
-    EXPECT_EQ(tsp.frames[0].columns[0].name, "SIG_0000");
+    EXPECT_EQ(tsp.frames[0].columns[0].name, "IG:0000");
 
     fs::remove(invalidFile);
+}
+
+TEST_F(HDF5BsasGen1ReaderTest, RealBsasFileColumnNamesArePreserved)
+{
+    const fs::path realFile = fs::current_path() / "CU_SXR_20260515_040923.h5";
+    ASSERT_TRUE(fs::exists(realFile)) << "missing test fixture: " << realFile;
+
+    auto bus = std::make_shared<MockDataBus>();
+    auto cfg = makeConfigFromYaml(
+        "name: bsas_real\n" "file-path: " + realFile.string() + "\n" "chunk-size: 1000\n" "use-label-as-name: true\n");
+
+    {
+        HDF5BsasGen1Reader reader(bus, nullptr, cfg);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    }
+
+    auto batches = bus->snapshot();
+    ASSERT_GE(batches.size(), 1u);
+    const auto& tsp = asTimeSeries(batches[0]);
+    ASSERT_GE(tsp.frames.size(), 4u);
+
+    EXPECT_EQ(tsp.frames[0].columns[0].name, "ACCL:IN20:300:L0A_ACUSBR");
+    EXPECT_EQ(tsp.frames[1].columns[0].name, "ACCL:IN20:300:L0A_PCUSBR");
+    EXPECT_EQ(tsp.frames[2].columns[0].name, "ACCL:IN20:400:L0B_ACUSBR");
+    EXPECT_EQ(tsp.frames[3].columns[0].name, "ACCL:IN20:400:L0B_PCUSBR");
 }
 
 TEST_F(HDF5BsasGen1ReaderTest, ReaderNameMatches)

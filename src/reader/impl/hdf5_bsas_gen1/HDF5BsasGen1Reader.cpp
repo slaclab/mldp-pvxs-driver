@@ -112,6 +112,11 @@ namespace {
         return out;
     }
 
+    bool hadInvalidUtf8(const std::string& input)
+    {
+        return !input.empty() && !isValidUtf8(input);
+    }
+
     std::string normalizeColumnName(const std::string& candidate,
                                     const std::string& fallback)
     {
@@ -233,7 +238,7 @@ void HDF5BsasGen1Reader::readFile()
 
                 ColumnInfo col;
                 col.name = dsName;
-                col.label = label.empty() ? dsName : label;
+                col.label = hadInvalidUtf8(label) || label.empty() ? dsName : label;
 
                 if (dtype.getClass() == H5T_FLOAT && dtype.getSize() == 8)
                     col.type = ColumnInfo::Type::Float64;
