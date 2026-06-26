@@ -15,9 +15,10 @@
 #include <util/log/ILog.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cstring>
-#include <string>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 namespace mldp_pvxs_driver::reader::impl::hdf5_bsas_gen1 {
@@ -26,27 +27,136 @@ using namespace util::bus;
 
 namespace {
 
-using mldp_pvxs_driver::util::fsutil::FSUtil;
+    using mldp_pvxs_driver::util::fsutil::FSUtil;
 
-std::string readStringAttr(H5::H5Object& obj, const char* name)
-{
-    if (!obj.attrExists(name))
-        return {};
-    H5::Attribute attr = obj.openAttribute(name);
-    H5::StrType strType = attr.getStrType();
-    std::string value;
-    value.resize(strType.getSize());
-    attr.read(strType, value.data());
-    auto end = value.find('\0');
-    if (end != std::string::npos)
-        value.resize(end);
-    return value;
-}
+    bool isContinuationByte(unsigned char byte)
+    {
+        return (byte & 0xC0) == 0x80;
+    }
+
+    bool isValidUtf8(const std::string& input)
+    {
+        const auto* p = reinterpret_cast<const unsigned char*>(input.data());
+        const auto* end = p + input.size();
+        while (p < end)
+        {
+            if (*p < 0x80)
+            {
+                ++p;
+            }
+            else if ((*p & 0xE0) == 0xC0 && p + 1 < end && isContinuationByte(p[1]))
+            {
+                if (*p < 0xC2)
+                {
+                    return false;
+                }
+                p += 2;
+            }
+            else if ((*p & 0xF0) == 0xE0 && p + 2 < end &&
+                     isContinuationByte(p[1]) && isContinuationByte(p[2]))
+            {
+                const auto ch = static_cast<uint32_t>((*p & 0x0F) << 12 |
+                                                      (p[1] & 0x3F) << 6 |
+                                                      (p[2] & 0x3F));
+                if (ch < 0x800 || (ch >= 0xD800 && ch <= 0xDFFF))
+                {
+                    return false;
+                }
+                p += 3;
+            }
+            else if ((*p & 0xF8) == 0xF0 && p + 3 < end &&
+                     isContinuationByte(p[1]) && isContinuationByte(p[2]) &&
+                     isContinuationByte(p[3]))
+            {
+                const auto ch = static_cast<uint32_t>((*p & 0x07) << 18 |
+                                                      (p[1] & 0x3F) << 12 |
+                                                      (p[2] & 0x3F) << 6 |
+                                                      (p[3] & 0x3F));
+                if (ch < 0x10000 || ch > 0x10FFFF)
+                {
+                    return false;
+                }
+                p += 4;
+            }
+            else
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    std::string sanitizeUtf8(const std::string& input)
+    {
+        if (isValidUtf8(input))
+        {
+            return input;
+        }
+
+        std::string out;
+        out.reserve(input.size());
+        const auto* p = reinterpret_cast<const unsigned char*>(input.data());
+        const auto* end = p + input.size();
+        while (p < end)
+        {
+            if (*p >= 0x20 && *p < 0x7F)
+            {
+                out.push_back(static_cast<char>(*p));
+            }
+            else if (*p == ' ')
+            {
+                out.push_back('_');
+            }
+            ++p;
+        }
+        return out;
+    }
+
+    std::string normalizeColumnName(const std::string& candidate,
+                                    const std::string& fallback)
+    {
+        std::string name = sanitizeUtf8(candidate);
+        if (name.empty())
+        {
+            name = sanitizeUtf8(fallback);
+        }
+
+        for (char& ch : name)
+        {
+            const auto uch = static_cast<unsigned char>(ch);
+            if (std::iscntrl(uch))
+            {
+                ch = '_';
+            }
+        }
+
+        if (name.empty())
+        {
+            name = "unnamed_column";
+        }
+
+        return name;
+    }
+
+    std::string readStringAttr(H5::H5Object& obj, const char* name)
+    {
+        if (!obj.attrExists(name))
+            return {};
+        H5::Attribute attr = obj.openAttribute(name);
+        H5::StrType   strType = attr.getStrType();
+        std::string   value;
+        value.resize(strType.getSize());
+        attr.read(strType, value.data());
+        auto end = value.find('\0');
+        if (end != std::string::npos)
+            value.resize(end);
+        return sanitizeUtf8(value);
+    }
 
 } // anonymous namespace
 
 HDF5BsasGen1Reader::HDF5BsasGen1Reader(
-    std::shared_ptr<IDataBus>        bus,
+    std::shared_ptr<IDataBus>         bus,
     std::shared_ptr<metrics::Metrics> metrics,
     const config::Config&             cfg)
     : Reader(std::move(bus), std::move(metrics))
@@ -54,7 +164,10 @@ HDF5BsasGen1Reader::HDF5BsasGen1Reader(
 {
     logger_ = util::log::newLogger("hdf5_bsas_gen1_reader");
     running_ = true;
-    worker_ = std::thread([this]() { readFile(); });
+    worker_ = std::thread([this]()
+                          {
+                              readFile();
+                          });
 }
 
 HDF5BsasGen1Reader::~HDF5BsasGen1Reader()
@@ -86,9 +199,9 @@ void HDF5BsasGen1Reader::readFile()
 
             // Discover datasets at root level
             std::vector<ColumnInfo> columns;
-            std::size_t totalRows = 0;
-            bool hasSeconds = false;
-            bool hasNanos = false;
+            std::size_t             totalRows = 0;
+            bool                    hasSeconds = false;
+            bool                    hasNanos = false;
 
             const hsize_t numObjects = file.getNumObjs();
             for (hsize_t i = 0; i < numObjects; ++i)
@@ -101,9 +214,9 @@ void HDF5BsasGen1Reader::readFile()
                 if (dsName == "secondsPastEpoch")
                 {
                     hasSeconds = true;
-                    H5::DataSet ds = file.openDataSet(dsName);
+                    H5::DataSet   ds = file.openDataSet(dsName);
                     H5::DataSpace sp = ds.getSpace();
-                    hsize_t dims[2]{0, 0};
+                    hsize_t       dims[2]{0, 0};
                     sp.getSimpleExtentDims(dims);
                     totalRows = dims[0];
                     continue;
@@ -114,9 +227,9 @@ void HDF5BsasGen1Reader::readFile()
                     continue;
                 }
 
-                H5::DataSet ds = file.openDataSet(dsName);
+                H5::DataSet  ds = file.openDataSet(dsName);
                 H5::DataType dtype = ds.getDataType();
-                std::string label = readStringAttr(ds, "label");
+                std::string  label = readStringAttr(ds, "label");
 
                 ColumnInfo col;
                 col.name = dsName;
@@ -137,22 +250,25 @@ void HDF5BsasGen1Reader::readFile()
 
             // Sort: float64 first, then int16 (stable order by discovery)
             std::stable_sort(columns.begin(), columns.end(),
-                [](const ColumnInfo& a, const ColumnInfo& b) {
-                    return static_cast<int>(a.type) < static_cast<int>(b.type);
-                });
+                             [](const ColumnInfo& a, const ColumnInfo& b)
+                             {
+                                 return static_cast<int>(a.type) < static_cast<int>(b.type);
+                             });
 
             std::size_t numFloatCols = 0;
             std::size_t numIntCols = 0;
             for (const auto& col : columns)
             {
-                if (col.type == ColumnInfo::Type::Float64) ++numFloatCols;
-                else ++numIntCols;
+                if (col.type == ColumnInfo::Type::Float64)
+                    ++numFloatCols;
+                else
+                    ++numIntCols;
             }
 
             const std::size_t chunkSize = config_.chunkSize();
             const std::string sourceName = config_.name();
             const std::size_t totalChunks = (totalRows + chunkSize - 1) / chunkSize;
-            const bool useLabel = config_.useLabelAsName();
+            const bool        useLabel = config_.useLabelAsName();
 
             logger_->log(util::log::Level::Info,
                          "readFile: totalRows=" + std::to_string(totalRows) +
@@ -177,6 +293,12 @@ void HDF5BsasGen1Reader::readFile()
                 for (auto& col : resolvedColumns)
                     col.name = col.label;
             }
+            for (std::size_t idx = 0; idx < resolvedColumns.size(); ++idx)
+            {
+                auto& col = resolvedColumns[idx];
+                col.label = sanitizeUtf8(col.label);
+                col.name = normalizeColumnName(col.name, columns[idx].name);
+            }
 
             std::size_t chunkIdx = 0;
             for (std::size_t startRow = 0; startRow < totalRows && running_; startRow += chunkSize)
@@ -187,20 +309,20 @@ void HDF5BsasGen1Reader::readFile()
                 std::vector<uint32_t> secData(numRows);
                 std::vector<uint32_t> nanoData(numRows);
                 {
-                    hsize_t offset[2] = {startRow, 0};
-                    hsize_t count[2] = {numRows, 1};
+                    hsize_t       offset[2] = {startRow, 0};
+                    hsize_t       count[2] = {numRows, 1};
                     H5::DataSpace fspace = secDs.getSpace();
                     fspace.selectHyperslab(H5S_SELECT_SET, count, offset);
-                    hsize_t mdims[1] = {numRows};
+                    hsize_t       mdims[1] = {numRows};
                     H5::DataSpace mspace(1, mdims);
                     secDs.read(secData.data(), H5::PredType::NATIVE_UINT32, mspace, fspace);
                 }
                 {
-                    hsize_t offset[2] = {startRow, 0};
-                    hsize_t count[2] = {numRows, 1};
+                    hsize_t       offset[2] = {startRow, 0};
+                    hsize_t       count[2] = {numRows, 1};
                     H5::DataSpace fspace = nanoDs.getSpace();
                     fspace.selectHyperslab(H5S_SELECT_SET, count, offset);
-                    hsize_t mdims[1] = {numRows};
+                    hsize_t       mdims[1] = {numRows};
                     H5::DataSpace mspace(1, mdims);
                     nanoDs.read(nanoData.data(), H5::PredType::NATIVE_UINT32, mspace, fspace);
                 }
@@ -216,28 +338,28 @@ void HDF5BsasGen1Reader::readFile()
                 std::vector<double> floatData(numRows * numFloatCols);
                 for (std::size_t c = 0; c < numFloatCols; ++c)
                 {
-                    hsize_t offset[2] = {startRow, 0};
-                    hsize_t count[2] = {numRows, 1};
+                    hsize_t       offset[2] = {startRow, 0};
+                    hsize_t       count[2] = {numRows, 1};
                     H5::DataSpace fspace = colDatasets[c].getSpace();
                     fspace.selectHyperslab(H5S_SELECT_SET, count, offset);
-                    hsize_t mdims[1] = {numRows};
+                    hsize_t       mdims[1] = {numRows};
                     H5::DataSpace mspace(1, mdims);
                     colDatasets[c].read(floatData.data() + c * numRows,
-                                       H5::PredType::NATIVE_DOUBLE, mspace, fspace);
+                                        H5::PredType::NATIVE_DOUBLE, mspace, fspace);
                 }
 
                 // Read int16 columns
                 std::vector<int16_t> intData(numRows * numIntCols);
                 for (std::size_t c = 0; c < numIntCols; ++c)
                 {
-                    hsize_t offset[2] = {startRow, 0};
-                    hsize_t count[2] = {numRows, 1};
+                    hsize_t       offset[2] = {startRow, 0};
+                    hsize_t       count[2] = {numRows, 1};
                     H5::DataSpace fspace = colDatasets[numFloatCols + c].getSpace();
                     fspace.selectHyperslab(H5S_SELECT_SET, count, offset);
-                    hsize_t mdims[1] = {numRows};
+                    hsize_t       mdims[1] = {numRows};
                     H5::DataSpace mspace(1, mdims);
                     colDatasets[numFloatCols + c].read(intData.data() + c * numRows,
-                                                      H5::PredType::NATIVE_INT16, mspace, fspace);
+                                                       H5::PredType::NATIVE_INT16, mspace, fspace);
                 }
 
                 logger_->log(util::log::Level::Trace,
@@ -271,12 +393,14 @@ void HDF5BsasGen1Reader::readFile()
 }
 
 void HDF5BsasGen1Reader::emitChunk(
-    const std::string& sourceName,
+    const std::string&                 sourceName,
     const std::vector<TimestampEntry>& timestamps,
-    const std::vector<ColumnInfo>& columns,
-    const std::vector<double>& floatData,
-    const std::vector<int16_t>& intData,
-    std::size_t numRows, std::size_t numFloatCols, std::size_t numIntCols)
+    const std::vector<ColumnInfo>&     columns,
+    const std::vector<double>&         floatData,
+    const std::vector<int16_t>&        intData,
+    std::size_t                        numRows,
+    std::size_t                        numFloatCols,
+    std::size_t                        numIntCols)
 {
     IDataBus::EventBatch batch;
     batch.metadata = config_.staticMetadata();

@@ -22,37 +22,48 @@ namespace mldp_pvxs_driver::test::mock {
 
 namespace {
 
-void writeByteStringAttr(H5::H5Object& obj, const char* name, const char* value)
-{
-    H5::StrType strType(H5::PredType::C_S1, std::strlen(value));
-    strType.setStrpad(H5T_STR_NULLTERM);
-    strType.setCset(H5T_CSET_ASCII);
-    H5::DataSpace scalar(H5S_SCALAR);
-    auto attr = obj.createAttribute(name, strType, scalar);
-    attr.write(strType, value);
-}
+    void writeByteStringAttr(H5::H5Object& obj, const char* name, const char* value)
+    {
+        H5::StrType strType(H5::PredType::C_S1, std::strlen(value));
+        strType.setStrpad(H5T_STR_NULLTERM);
+        strType.setCset(H5T_CSET_ASCII);
+        H5::DataSpace scalar(H5S_SCALAR);
+        auto          attr = obj.createAttribute(name, strType, scalar);
+        attr.write(strType, value);
+    }
 
-std::string makeFloatColName(const std::string& prefix, std::size_t idx)
-{
-    std::ostringstream oss;
-    oss << prefix << std::setfill('0') << std::setw(4) << idx;
-    return oss.str();
-}
+    std::string makeFloatColName(const std::string& prefix, std::size_t idx)
+    {
+        std::ostringstream oss;
+        oss << prefix << std::setfill('0') << std::setw(4) << idx;
+        return oss.str();
+    }
 
-std::string makeIntColName(const std::string& prefix, std::size_t idx)
-{
-    std::ostringstream oss;
-    oss << prefix << std::setfill('0') << std::setw(2) << idx;
-    return oss.str();
-}
+    std::string makeIntColName(const std::string& prefix, std::size_t idx)
+    {
+        std::ostringstream oss;
+        oss << prefix << std::setfill('0') << std::setw(2) << idx;
+        return oss.str();
+    }
 
-std::string makeLabel(const std::string& name)
-{
-    std::string label = name;
-    for (auto& c : label)
-        if (c == '_') c = ':';
-    return label;
-}
+    std::string makeLabel(const std::string& name)
+    {
+        std::string label = name;
+        for (auto& c : label)
+            if (c == '_')
+                c = ':';
+        return label;
+    }
+
+    std::string makePossiblyInvalidLabel(const std::string& name, bool injectInvalidUtf8)
+    {
+        std::string label = makeLabel(name);
+        if (injectInvalidUtf8 && !label.empty())
+        {
+            label[0] = static_cast<char>(0xFF);
+        }
+        return label;
+    }
 
 } // anonymous namespace
 
@@ -67,35 +78,37 @@ void BsasGen1HDF5Mock::generate(const std::string& outputPath, const Params& par
     for (std::size_t c = 0; c < params.numFloatCols; ++c)
     {
         std::string name = makeFloatColName(params.floatColPrefix, c);
-        auto ds = file.createDataSet(name, H5::PredType::IEEE_F64LE, space);
+        auto        ds = file.createDataSet(name, H5::PredType::IEEE_F64LE, space);
 
         std::vector<double> data(params.numRows);
         for (std::size_t r = 0; r < params.numRows; ++r)
             data[r] = std::sin(static_cast<double>(r) * 0.1 + static_cast<double>(c) * 0.01);
         ds.write(data.data(), H5::PredType::NATIVE_DOUBLE);
 
+        const auto label = makePossiblyInvalidLabel(name, params.injectInvalidUtf8Label && c == 0);
         writeByteStringAttr(ds, "MATLAB_class", "double");
-        writeByteStringAttr(ds, "label", makeLabel(name).c_str());
+        writeByteStringAttr(ds, "label", label.c_str());
     }
 
     // Int16 datasets
     for (std::size_t c = 0; c < params.numIntCols; ++c)
     {
         std::string name = makeIntColName(params.intColPrefix, c);
-        auto ds = file.createDataSet(name, H5::PredType::STD_I16LE, space);
+        auto        ds = file.createDataSet(name, H5::PredType::STD_I16LE, space);
 
         std::vector<int16_t> data(params.numRows);
         for (std::size_t r = 0; r < params.numRows; ++r)
             data[r] = static_cast<int16_t>(r + c);
         ds.write(data.data(), H5::PredType::NATIVE_INT16);
 
+        const auto label = makePossiblyInvalidLabel(name, false);
         writeByteStringAttr(ds, "MATLAB_class", "int16");
-        writeByteStringAttr(ds, "label", makeLabel(name).c_str());
+        writeByteStringAttr(ds, "label", label.c_str());
     }
 
     // Timestamp datasets
     {
-        auto ds = file.createDataSet("secondsPastEpoch", H5::PredType::STD_U32LE, space);
+        auto                  ds = file.createDataSet("secondsPastEpoch", H5::PredType::STD_U32LE, space);
         std::vector<uint32_t> data(params.numRows);
         for (std::size_t r = 0; r < params.numRows; ++r)
             data[r] = params.baseEpoch + static_cast<uint32_t>(r);
@@ -106,7 +119,7 @@ void BsasGen1HDF5Mock::generate(const std::string& outputPath, const Params& par
     }
 
     {
-        auto ds = file.createDataSet("nanoseconds", H5::PredType::STD_U32LE, space);
+        auto                  ds = file.createDataSet("nanoseconds", H5::PredType::STD_U32LE, space);
         std::vector<uint32_t> data(params.numRows);
         for (std::size_t r = 0; r < params.numRows; ++r)
             data[r] = static_cast<uint32_t>(r * 1000);

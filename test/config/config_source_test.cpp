@@ -73,4 +73,15 @@ TEST(ConfigSourceTest, RejectsNonFileWhenNotValidDottedAssignment)
     EXPECT_THROW(loadMergedConfigSources({"metrics: { endpoint: 0.0.0.0:9464 }"}), std::runtime_error);
 }
 
+TEST(ConfigSourceTest, RejectsExistingDirectoryAsConfigSource)
+{
+    const auto tempDir = std::filesystem::temp_directory_path() / "mldp_config_source_dir_test";
+    std::filesystem::create_directories(tempDir);
+
+    EXPECT_THROW(loadMergedConfigSources({tempDir.string()}), std::runtime_error);
+
+    std::error_code ec;
+    std::filesystem::remove(tempDir, ec);
+}
+
 } // namespace mldp_pvxs_driver::config

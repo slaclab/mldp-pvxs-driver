@@ -143,7 +143,11 @@ if(MLDP_PVXS_ENABLE_HDF5)
     set(BUILD_TESTING          OFF CACHE BOOL "" FORCE)
     set(HDF5_BUILD_HL_LIB      ON  CACHE BOOL "" FORCE)
     set(HDF5_BUILD_CPP_LIB     ON  CACHE BOOL "" FORCE)
-    set(HDF5_ENABLE_Z_LIB_SUPPORT ON CACHE BOOL "" FORCE)
+    set(HDF5_ENABLE_ZLIB_SUPPORT ON CACHE BOOL "" FORCE)
+    set(HDF5_ALLOW_EXTERNAL_SUPPORT "NO" CACHE STRING "" FORCE)
+
+    # ZLIB must be found BEFORE HDF5 configures so the deflate filter is compiled in.
+    find_package(ZLIB REQUIRED)
 
     FetchContent_Declare(hdf5
         GIT_REPOSITORY https://github.com/HDFGroup/hdf5.git
@@ -171,6 +175,7 @@ if(MLDP_PVXS_ENABLE_HDF5)
     # Suppress a false-positive -Walloc-size-larger-than in HDF5's own C++ sources
     # (H5Location.cpp new char[actual_name_len] with a range the analyser over-estimates).
     target_compile_options(${_MLDP_HDF5_TARGET} PRIVATE -Wno-alloc-size-larger-than)
+    target_link_libraries(${_MLDP_HDF5_TARGET} INTERFACE ZLIB::ZLIB)
 else()
     message(STATUS "MLDP_PVXS_ENABLE_HDF5=OFF — HDF5 writer excluded")
 endif()

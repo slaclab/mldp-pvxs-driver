@@ -12,24 +12,24 @@
 
 #ifdef MLDP_PVXS_HDF5_ENABLED
 
-#include <reader/impl/hdf5_bsas_gen1/HDF5BsasGen1Reader.h>
-#include <reader/impl/hdf5_bsas_gen1/HDF5BsasGen1ReaderConfig.h>
-#include <util/bus/IDataBus.h>
+    #include <reader/impl/hdf5_bsas_gen1/HDF5BsasGen1Reader.h>
+    #include <reader/impl/hdf5_bsas_gen1/HDF5BsasGen1ReaderConfig.h>
+    #include <util/bus/IDataBus.h>
 
-#include <H5Cpp.h>
+    #include <H5Cpp.h>
 
-#include <chrono>
-#include <cmath>
-#include <cstdlib>
-#include <cstring>
-#include <filesystem>
-#include <iomanip>
-#include <sstream>
-#include <thread>
+    #include <chrono>
+    #include <cmath>
+    #include <cstdlib>
+    #include <cstring>
+    #include <filesystem>
+    #include <iomanip>
+    #include <sstream>
+    #include <thread>
 
-#include "config/test_config_helpers.h"
-#include "mock/BsasGen1HDF5Mock.h"
-#include "mock/MockDataBus.h"
+    #include "config/test_config_helpers.h"
+    #include "mock/BsasGen1HDF5Mock.h"
+    #include "mock/MockDataBus.h"
 
 using namespace mldp_pvxs_driver::reader::impl::hdf5_bsas_gen1;
 using namespace mldp_pvxs_driver::util::bus;
@@ -45,8 +45,8 @@ class HDF5BsasGen1ReaderTest : public ::testing::Test
 {
 protected:
     static constexpr std::size_t kFloatCols = 10;
-    static constexpr std::size_t kIntCols   = 4;
-    static constexpr std::size_t kRows      = 20;
+    static constexpr std::size_t kIntCols = 4;
+    static constexpr std::size_t kRows = 20;
     static constexpr uint32_t    kBaseEpoch = 1700000000u;
 
     void SetUp() override
@@ -57,9 +57,9 @@ protected:
 
         BsasGen1HDF5Mock::Params params;
         params.numFloatCols = kFloatCols;
-        params.numIntCols   = kIntCols;
-        params.numRows      = kRows;
-        params.baseEpoch    = kBaseEpoch;
+        params.numIntCols = kIntCols;
+        params.numRows = kRows;
+        params.baseEpoch = kBaseEpoch;
         BsasGen1HDF5Mock::generate(mockFile_, params);
     }
 
@@ -79,10 +79,7 @@ protected:
 TEST_F(HDF5BsasGen1ReaderTest, ConfigParsesValidYaml)
 {
     auto cfg = makeConfigFromYaml(
-        "name: test_reader\n"
-        "file-path: " + mockFile_ + "\n"
-        "chunk-size: 5\n"
-        "use-label-as-name: false\n");
+        "name: test_reader\n" "file-path: " + mockFile_ + "\n" "chunk-size: 5\n" "use-label-as-name: false\n");
 
     HDF5BsasGen1ReaderConfig config(cfg);
     EXPECT_TRUE(config.valid());
@@ -95,8 +92,7 @@ TEST_F(HDF5BsasGen1ReaderTest, ConfigParsesValidYaml)
 TEST_F(HDF5BsasGen1ReaderTest, ConfigDefaultsUseLabelTrue)
 {
     auto cfg = makeConfigFromYaml(
-        "name: test_reader\n"
-        "file-path: " + mockFile_ + "\n");
+        "name: test_reader\n" "file-path: " + mockFile_ + "\n");
 
     HDF5BsasGen1ReaderConfig config(cfg);
     EXPECT_TRUE(config.useLabelAsName());
@@ -122,10 +118,7 @@ TEST_F(HDF5BsasGen1ReaderTest, ReaderEmitsBatches)
 {
     auto bus = std::make_shared<MockDataBus>();
     auto cfg = makeConfigFromYaml(
-        "name: bsas_test\n"
-        "file-path: " + mockFile_ + "\n"
-        "chunk-size: 1000\n"
-        "use-label-as-name: false\n");
+        "name: bsas_test\n" "file-path: " + mockFile_ + "\n" "chunk-size: 1000\n" "use-label-as-name: false\n");
 
     {
         HDF5BsasGen1Reader reader(bus, nullptr, cfg);
@@ -156,17 +149,14 @@ TEST_F(HDF5BsasGen1ReaderTest, ReaderExpandsGlobPatternsFromConfiguredPath)
 
     BsasGen1HDF5Mock::Params params;
     params.numFloatCols = kFloatCols;
-    params.numIntCols   = kIntCols;
-    params.numRows      = 7;
-    params.baseEpoch    = kBaseEpoch + 1000;
+    params.numIntCols = kIntCols;
+    params.numRows = 7;
+    params.baseEpoch = kBaseEpoch + 1000;
     BsasGen1HDF5Mock::generate(secondFile, params);
 
     auto bus = std::make_shared<MockDataBus>();
     auto cfg = makeConfigFromYaml(
-        "name: bsas_glob\n"
-        "file-path: " + (tempDir_ / "*.h5").string() + "\n"
-        "chunk-size: 1000\n"
-        "use-label-as-name: false\n");
+        "name: bsas_glob\n" "file-path: " + (tempDir_ / "*.h5").string() + "\n" "chunk-size: 1000\n" "use-label-as-name: false\n");
 
     {
         HDF5BsasGen1Reader reader(bus, nullptr, cfg);
@@ -188,10 +178,7 @@ TEST_F(HDF5BsasGen1ReaderTest, ChunkedReadingProducesMultipleBatches)
 {
     auto bus = std::make_shared<MockDataBus>();
     auto cfg = makeConfigFromYaml(
-        "name: bsas_chunked\n"
-        "file-path: " + mockFile_ + "\n"
-        "chunk-size: 7\n"
-        "use-label-as-name: false\n");
+        "name: bsas_chunked\n" "file-path: " + mockFile_ + "\n" "chunk-size: 7\n" "use-label-as-name: false\n");
 
     {
         HDF5BsasGen1Reader reader(bus, nullptr, cfg);
@@ -208,10 +195,7 @@ TEST_F(HDF5BsasGen1ReaderTest, TimestampsAreCorrect)
 {
     auto bus = std::make_shared<MockDataBus>();
     auto cfg = makeConfigFromYaml(
-        "name: bsas_ts\n"
-        "file-path: " + mockFile_ + "\n"
-        "chunk-size: 1000\n"
-        "use-label-as-name: false\n");
+        "name: bsas_ts\n" "file-path: " + mockFile_ + "\n" "chunk-size: 1000\n" "use-label-as-name: false\n");
 
     {
         HDF5BsasGen1Reader reader(bus, nullptr, cfg);
@@ -237,10 +221,7 @@ TEST_F(HDF5BsasGen1ReaderTest, Float64ColumnValuesAreCorrect)
 {
     auto bus = std::make_shared<MockDataBus>();
     auto cfg = makeConfigFromYaml(
-        "name: bsas_float\n"
-        "file-path: " + mockFile_ + "\n"
-        "chunk-size: 1000\n"
-        "use-label-as-name: false\n");
+        "name: bsas_float\n" "file-path: " + mockFile_ + "\n" "chunk-size: 1000\n" "use-label-as-name: false\n");
 
     {
         HDF5BsasGen1Reader reader(bus, nullptr, cfg);
@@ -271,10 +252,7 @@ TEST_F(HDF5BsasGen1ReaderTest, Int16ColumnValuesAreCorrectAsInt32)
 {
     auto bus = std::make_shared<MockDataBus>();
     auto cfg = makeConfigFromYaml(
-        "name: bsas_int\n"
-        "file-path: " + mockFile_ + "\n"
-        "chunk-size: 1000\n"
-        "use-label-as-name: false\n");
+        "name: bsas_int\n" "file-path: " + mockFile_ + "\n" "chunk-size: 1000\n" "use-label-as-name: false\n");
 
     {
         HDF5BsasGen1Reader reader(bus, nullptr, cfg);
@@ -305,10 +283,7 @@ TEST_F(HDF5BsasGen1ReaderTest, ColumnNamesMatchDatasetNames)
 {
     auto bus = std::make_shared<MockDataBus>();
     auto cfg = makeConfigFromYaml(
-        "name: bsas_names\n"
-        "file-path: " + mockFile_ + "\n"
-        "chunk-size: 1000\n"
-        "use-label-as-name: false\n");
+        "name: bsas_names\n" "file-path: " + mockFile_ + "\n" "chunk-size: 1000\n" "use-label-as-name: false\n");
 
     {
         HDF5BsasGen1Reader reader(bus, nullptr, cfg);
@@ -343,10 +318,7 @@ TEST_F(HDF5BsasGen1ReaderTest, UseLabelAsNameResolvesLabelAttr)
 {
     auto bus = std::make_shared<MockDataBus>();
     auto cfg = makeConfigFromYaml(
-        "name: bsas_label\n"
-        "file-path: " + mockFile_ + "\n"
-        "chunk-size: 1000\n"
-        "use-label-as-name: true\n");
+        "name: bsas_label\n" "file-path: " + mockFile_ + "\n" "chunk-size: 1000\n" "use-label-as-name: true\n");
 
     {
         HDF5BsasGen1Reader reader(bus, nullptr, cfg);
@@ -363,13 +335,41 @@ TEST_F(HDF5BsasGen1ReaderTest, UseLabelAsNameResolvesLabelAttr)
     EXPECT_EQ(tsp.frames[0].columns[0].name, "SIG:0000");
 }
 
+TEST_F(HDF5BsasGen1ReaderTest, UseLabelAsNameFallsBackWhenLabelContainsInvalidUtf8)
+{
+    const auto invalidFile = (tempDir_ / "mock_bsas_gen1_invalid_label.h5").string();
+
+    BsasGen1HDF5Mock::Params params;
+    params.numFloatCols = kFloatCols;
+    params.numIntCols = kIntCols;
+    params.numRows = kRows;
+    params.baseEpoch = kBaseEpoch;
+    params.injectInvalidUtf8Label = true;
+    BsasGen1HDF5Mock::generate(invalidFile, params);
+
+    auto bus = std::make_shared<MockDataBus>();
+    auto cfg = makeConfigFromYaml(
+        "name: bsas_label_invalid\n" "file-path: " + invalidFile + "\n" "chunk-size: 1000\n" "use-label-as-name: true\n");
+
+    {
+        HDF5BsasGen1Reader reader(bus, nullptr, cfg);
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    }
+
+    auto batches = bus->snapshot();
+    ASSERT_GE(batches.size(), 1u);
+    const auto& tsp = asTimeSeries(batches[0]);
+    ASSERT_GE(tsp.frames.size(), 1u);
+    EXPECT_EQ(tsp.frames[0].columns[0].name, "SIG_0000");
+
+    fs::remove(invalidFile);
+}
+
 TEST_F(HDF5BsasGen1ReaderTest, ReaderNameMatches)
 {
     auto bus = std::make_shared<MockDataBus>();
     auto cfg = makeConfigFromYaml(
-        "name: my_reader\n"
-        "file-path: " + mockFile_ + "\n"
-        "chunk-size: 1000\n");
+        "name: my_reader\n" "file-path: " + mockFile_ + "\n" "chunk-size: 1000\n");
 
     HDF5BsasGen1Reader reader(bus, nullptr, cfg);
     EXPECT_EQ(reader.name(), "my_reader");
@@ -395,7 +395,7 @@ TEST_F(HDF5BsasGen1ReaderTest, MockFileMatchesFlatStructure)
 
     // Verify float64 dataset structure
     {
-        H5::DataSet ds = file.openDataSet("SIG_0000");
+        H5::DataSet   ds = file.openDataSet("SIG_0000");
         H5::DataSpace sp = ds.getSpace();
         ASSERT_EQ(sp.getSimpleExtentNdims(), 2);
         hsize_t dims[2]{0, 0};
@@ -410,9 +410,9 @@ TEST_F(HDF5BsasGen1ReaderTest, MockFileMatchesFlatStructure)
 
     // Verify int16 dataset structure
     {
-        H5::DataSet ds = file.openDataSet("FLAG_00");
+        H5::DataSet   ds = file.openDataSet("FLAG_00");
         H5::DataSpace sp = ds.getSpace();
-        hsize_t dims[2]{0, 0};
+        hsize_t       dims[2]{0, 0};
         sp.getSimpleExtentDims(dims);
         EXPECT_EQ(dims[0], kRows);
         EXPECT_EQ(dims[1], 1u);
@@ -453,31 +453,28 @@ TEST_F(HDF5BsasGen1ReaderTest, MockFileMatchesFlatStructure)
 TEST_F(HDF5BsasGen1ReaderTest, LargeScaleReaderEmitsAllData)
 {
     const char* envFloat = std::getenv("BSAS_GEN1_TEST_FLOAT_COLS");
-    const char* envInt   = std::getenv("BSAS_GEN1_TEST_INT_COLS");
-    const char* envRows  = std::getenv("BSAS_GEN1_TEST_ROWS");
+    const char* envInt = std::getenv("BSAS_GEN1_TEST_INT_COLS");
+    const char* envRows = std::getenv("BSAS_GEN1_TEST_ROWS");
     const char* envChunk = std::getenv("BSAS_GEN1_TEST_CHUNK_SIZE");
 
-    const std::size_t numFloatCols = envFloat ? static_cast<std::size_t>(std::atol(envFloat)) : 100;
-    const std::size_t numIntCols   = envInt   ? static_cast<std::size_t>(std::atol(envInt))   : 16;
-    const std::size_t numRows      = envRows  ? static_cast<std::size_t>(std::atol(envRows))  : 5000;
-    const std::size_t chunkSize    = envChunk ? static_cast<std::size_t>(std::atol(envChunk)) : 512;
-    constexpr uint32_t baseEpoch   = 1700000000u;
+    const std::size_t  numFloatCols = envFloat ? static_cast<std::size_t>(std::atol(envFloat)) : 100;
+    const std::size_t  numIntCols = envInt ? static_cast<std::size_t>(std::atol(envInt)) : 16;
+    const std::size_t  numRows = envRows ? static_cast<std::size_t>(std::atol(envRows)) : 5000;
+    const std::size_t  chunkSize = envChunk ? static_cast<std::size_t>(std::atol(envChunk)) : 512;
+    constexpr uint32_t baseEpoch = 1700000000u;
 
     const std::string largeFile = (tempDir_ / "mock_bsas_large.h5").string();
 
     BsasGen1HDF5Mock::Params params;
     params.numFloatCols = numFloatCols;
-    params.numIntCols   = numIntCols;
-    params.numRows      = numRows;
-    params.baseEpoch    = baseEpoch;
+    params.numIntCols = numIntCols;
+    params.numRows = numRows;
+    params.baseEpoch = baseEpoch;
     BsasGen1HDF5Mock::generate(largeFile, params);
 
     auto bus = std::make_shared<MockDataBus>();
     auto cfg = makeConfigFromYaml(
-        "name: bsas_large\n"
-        "file-path: " + largeFile + "\n"
-        "chunk-size: " + std::to_string(chunkSize) + "\n"
-        "use-label-as-name: false\n");
+        "name: bsas_large\n" "file-path: " + largeFile + "\n" "chunk-size: " + std::to_string(chunkSize) + "\n" "use-label-as-name: false\n");
 
     {
         HDF5BsasGen1Reader reader(bus, nullptr, cfg);
@@ -544,7 +541,7 @@ TEST_F(HDF5BsasGen1ReaderTest, LargeScaleReaderEmitsAllData)
             for (std::size_t r = 0; r < chunkRows; ++r)
             {
                 const std::size_t globalRow = rowOffset + r;
-                int32_t expected = static_cast<int32_t>(globalRow + c);
+                int32_t           expected = static_cast<int32_t>(globalRow + c);
                 EXPECT_EQ(vals[r], expected)
                     << "chunk=" << chunk << " intcol=" << c << " row=" << r;
             }
@@ -571,14 +568,7 @@ TEST_F(HDF5BsasGen1ReaderTest, ProvenanceFlowsToEventBatch)
 {
     auto bus = std::make_shared<MockDataBus>();
     auto cfg = makeConfigFromYaml(
-        "name: bsas_prov\n"
-        "file-path: " + mockFile_ + "\n"
-        "chunk-size: 1000\n"
-        "use-label-as-name: false\n"
-        "provenance:\n"
-        "  facility: LCLS\n"
-        "  instrument: CXI\n"
-        "  subsystem: BSAS\n");
+        "name: bsas_prov\n" "file-path: " + mockFile_ + "\n" "chunk-size: 1000\n" "use-label-as-name: false\n" "provenance:\n" "  facility: LCLS\n" "  instrument: CXI\n" "  subsystem: BSAS\n");
 
     {
         HDF5BsasGen1Reader reader(bus, nullptr, cfg);
@@ -596,9 +586,7 @@ TEST_F(HDF5BsasGen1ReaderTest, MissingProvenanceIsValid)
 {
     auto bus = std::make_shared<MockDataBus>();
     auto cfg = makeConfigFromYaml(
-        "name: bsas_noprov\n"
-        "file-path: " + mockFile_ + "\n"
-        "chunk-size: 1000\n");
+        "name: bsas_noprov\n" "file-path: " + mockFile_ + "\n" "chunk-size: 1000\n");
 
     {
         HDF5BsasGen1Reader reader(bus, nullptr, cfg);

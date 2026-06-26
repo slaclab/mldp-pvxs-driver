@@ -114,11 +114,18 @@ Config loadMergedConfigSources(const std::vector<std::string>& sources)
         std::error_code ec;
         const fs::path  candidate{source};
 
-        if (fs::exists(candidate, ec) && !ec)
+        if (fs::is_regular_file(candidate, ec) && !ec)
         {
-            const auto next = Config::configFromFile(source);
+            const auto next = Config::configFromFile(candidate.string());
             mergeNode(merged.mutableRaw(), next.raw());
             continue;
+        }
+
+        if (fs::exists(candidate, ec) && !ec)
+        {
+            throw std::runtime_error(
+                "Configuration source '" + source +
+                "' exists but is not a readable regular file");
         }
 
         try
