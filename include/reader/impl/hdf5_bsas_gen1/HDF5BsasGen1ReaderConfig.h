@@ -35,9 +35,9 @@ public:
     const std::string& name() const { return name_; }
     const std::string& filePath() const { return file_path_; }
     std::size_t chunkSize() const { return chunk_size_; }
-    bool useLabelAsName() const { return use_label_as_name_; }
     const std::unordered_map<std::string, std::string>& staticMetadata() const { return static_metadata_; }
     const std::unordered_map<std::string, std::string>& provenance() const { return provenance_; }
+    std::size_t logIntervalSec() const { return log_interval_sec_; }
 
 private:
     void parse(const config::Config& readerEntry);
@@ -46,7 +46,7 @@ private:
     std::string name_;
     std::string file_path_;
     std::size_t chunk_size_ = 1000;
-    bool use_label_as_name_ = true;
+    std::size_t log_interval_sec_ = 10;
     std::unordered_map<std::string, std::string> static_metadata_;
     std::unordered_map<std::string, std::string> provenance_;
 };

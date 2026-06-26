@@ -79,23 +79,22 @@ protected:
 TEST_F(HDF5BsasGen1ReaderTest, ConfigParsesValidYaml)
 {
     auto cfg = makeConfigFromYaml(
-        "name: test_reader\n" "file-path: " + mockFile_ + "\n" "chunk-size: 5\n" "use-label-as-name: false\n");
+        "name: test_reader\n" "file-path: " + mockFile_ + "\n" "chunk-size: 5\n");
 
     HDF5BsasGen1ReaderConfig config(cfg);
     EXPECT_TRUE(config.valid());
     EXPECT_EQ(config.name(), "test_reader");
     EXPECT_EQ(config.filePath(), mockFile_);
     EXPECT_EQ(config.chunkSize(), 5u);
-    EXPECT_FALSE(config.useLabelAsName());
 }
 
-TEST_F(HDF5BsasGen1ReaderTest, ConfigDefaultsUseLabelTrue)
+TEST_F(HDF5BsasGen1ReaderTest, ConfigDefaultChunkSize)
 {
     auto cfg = makeConfigFromYaml(
         "name: test_reader\n" "file-path: " + mockFile_ + "\n");
 
     HDF5BsasGen1ReaderConfig config(cfg);
-    EXPECT_TRUE(config.useLabelAsName());
+    EXPECT_EQ(config.chunkSize(), 1000u);
 }
 
 TEST_F(HDF5BsasGen1ReaderTest, ConfigThrowsOnMissingFilePath)
@@ -118,7 +117,7 @@ TEST_F(HDF5BsasGen1ReaderTest, ReaderEmitsBatches)
 {
     auto bus = std::make_shared<MockDataBus>();
     auto cfg = makeConfigFromYaml(
-        "name: bsas_test\n" "file-path: " + mockFile_ + "\n" "chunk-size: 1000\n" "use-label-as-name: false\n");
+        "name: bsas_test\n" "file-path: " + mockFile_ + "\n" "chunk-size: 1000\n");
 
     {
         HDF5BsasGen1Reader reader(bus, nullptr, cfg);
@@ -156,7 +155,7 @@ TEST_F(HDF5BsasGen1ReaderTest, ReaderExpandsGlobPatternsFromConfiguredPath)
 
     auto bus = std::make_shared<MockDataBus>();
     auto cfg = makeConfigFromYaml(
-        "name: bsas_glob\n" "file-path: " + (tempDir_ / "*.h5").string() + "\n" "chunk-size: 1000\n" "use-label-as-name: false\n");
+        "name: bsas_glob\n" "file-path: " + (tempDir_ / "*.h5").string() + "\n" "chunk-size: 1000\n");
 
     {
         HDF5BsasGen1Reader reader(bus, nullptr, cfg);
@@ -178,7 +177,7 @@ TEST_F(HDF5BsasGen1ReaderTest, ChunkedReadingProducesMultipleBatches)
 {
     auto bus = std::make_shared<MockDataBus>();
     auto cfg = makeConfigFromYaml(
-        "name: bsas_chunked\n" "file-path: " + mockFile_ + "\n" "chunk-size: 7\n" "use-label-as-name: false\n");
+        "name: bsas_chunked\n" "file-path: " + mockFile_ + "\n" "chunk-size: 7\n");
 
     {
         HDF5BsasGen1Reader reader(bus, nullptr, cfg);
@@ -195,7 +194,7 @@ TEST_F(HDF5BsasGen1ReaderTest, TimestampsAreCorrect)
 {
     auto bus = std::make_shared<MockDataBus>();
     auto cfg = makeConfigFromYaml(
-        "name: bsas_ts\n" "file-path: " + mockFile_ + "\n" "chunk-size: 1000\n" "use-label-as-name: false\n");
+        "name: bsas_ts\n" "file-path: " + mockFile_ + "\n" "chunk-size: 1000\n");
 
     {
         HDF5BsasGen1Reader reader(bus, nullptr, cfg);
@@ -221,7 +220,7 @@ TEST_F(HDF5BsasGen1ReaderTest, Float64ColumnValuesAreCorrect)
 {
     auto bus = std::make_shared<MockDataBus>();
     auto cfg = makeConfigFromYaml(
-        "name: bsas_float\n" "file-path: " + mockFile_ + "\n" "chunk-size: 1000\n" "use-label-as-name: false\n");
+        "name: bsas_float\n" "file-path: " + mockFile_ + "\n" "chunk-size: 1000\n");
 
     {
         HDF5BsasGen1Reader reader(bus, nullptr, cfg);
@@ -252,7 +251,7 @@ TEST_F(HDF5BsasGen1ReaderTest, Int16ColumnValuesAreCorrectAsInt32)
 {
     auto bus = std::make_shared<MockDataBus>();
     auto cfg = makeConfigFromYaml(
-        "name: bsas_int\n" "file-path: " + mockFile_ + "\n" "chunk-size: 1000\n" "use-label-as-name: false\n");
+        "name: bsas_int\n" "file-path: " + mockFile_ + "\n" "chunk-size: 1000\n");
 
     {
         HDF5BsasGen1Reader reader(bus, nullptr, cfg);
@@ -283,7 +282,7 @@ TEST_F(HDF5BsasGen1ReaderTest, ColumnNamesMatchDatasetNames)
 {
     auto bus = std::make_shared<MockDataBus>();
     auto cfg = makeConfigFromYaml(
-        "name: bsas_names\n" "file-path: " + mockFile_ + "\n" "chunk-size: 1000\n" "use-label-as-name: false\n");
+        "name: bsas_names\n" "file-path: " + mockFile_ + "\n" "chunk-size: 1000\n");
 
     {
         HDF5BsasGen1Reader reader(bus, nullptr, cfg);
@@ -314,11 +313,11 @@ TEST_F(HDF5BsasGen1ReaderTest, ColumnNamesMatchDatasetNames)
     }
 }
 
-TEST_F(HDF5BsasGen1ReaderTest, UseLabelAsNameResolvesLabelAttr)
+TEST_F(HDF5BsasGen1ReaderTest, ColumnNamesAlwaysUseDatasetName)
 {
     auto bus = std::make_shared<MockDataBus>();
     auto cfg = makeConfigFromYaml(
-        "name: bsas_label\n" "file-path: " + mockFile_ + "\n" "chunk-size: 1000\n" "use-label-as-name: true\n");
+        "name: bsas_dsname\n" "file-path: " + mockFile_ + "\n" "chunk-size: 1000\n");
 
     {
         HDF5BsasGen1Reader reader(bus, nullptr, cfg);
@@ -330,12 +329,11 @@ TEST_F(HDF5BsasGen1ReaderTest, UseLabelAsNameResolvesLabelAttr)
     const auto& tsp = asTimeSeries(batches[0]);
     ASSERT_GE(tsp.frames.size(), 1u);
 
-    // Mock label replaces _ with : in dataset name
-    // SIG_0000 -> label "SIG:0000"
-    EXPECT_EQ(tsp.frames[0].columns[0].name, "SIG:0000");
+    // Column name is always the HDF5 dataset name, not the label
+    EXPECT_EQ(tsp.frames[0].columns[0].name, "SIG_0000");
 }
 
-TEST_F(HDF5BsasGen1ReaderTest, UseLabelAsNameFallsBackWhenLabelContainsInvalidUtf8)
+TEST_F(HDF5BsasGen1ReaderTest, InvalidUtf8LabelDoesNotAffectColumnName)
 {
     const auto invalidFile = (tempDir_ / "mock_bsas_gen1_invalid_label.h5").string();
 
@@ -349,7 +347,7 @@ TEST_F(HDF5BsasGen1ReaderTest, UseLabelAsNameFallsBackWhenLabelContainsInvalidUt
 
     auto bus = std::make_shared<MockDataBus>();
     auto cfg = makeConfigFromYaml(
-        "name: bsas_label_invalid\n" "file-path: " + invalidFile + "\n" "chunk-size: 1000\n" "use-label-as-name: true\n");
+        "name: bsas_label_invalid\n" "file-path: " + invalidFile + "\n" "chunk-size: 1000\n");
 
     {
         HDF5BsasGen1Reader reader(bus, nullptr, cfg);
@@ -360,12 +358,13 @@ TEST_F(HDF5BsasGen1ReaderTest, UseLabelAsNameFallsBackWhenLabelContainsInvalidUt
     ASSERT_GE(batches.size(), 1u);
     const auto& tsp = asTimeSeries(batches[0]);
     ASSERT_GE(tsp.frames.size(), 1u);
-    EXPECT_EQ(tsp.frames[0].columns[0].name, "IG:0000");
+    // Dataset name is always used regardless of label validity
+    EXPECT_EQ(tsp.frames[0].columns[0].name, "SIG_0000");
 
     fs::remove(invalidFile);
 }
 
-TEST_F(HDF5BsasGen1ReaderTest, MatlabStyleLabelsArePreserved)
+TEST_F(HDF5BsasGen1ReaderTest, MatlabStyleDatasetNamesArePreserved)
 {
     const auto matlabLikeFile = (tempDir_ / "mock_bsas_matlab_style.h5").string();
 
@@ -381,17 +380,18 @@ TEST_F(HDF5BsasGen1ReaderTest, MatlabStyleLabelsArePreserved)
     };
     BsasGen1HDF5Mock::generate(matlabLikeFile, params);
 
+    // Column names come from dataset names (float64 sorted first, then int16)
     const std::vector<std::string> expectedNames = {
-        "ACCL:IN20:300:L0A_ACUSBR",
-        "ACCL:IN20:300:L0A_PCUSBR",
-        "TORO:IN20:791:TMITCUSBR",
-        "DUMP:LI21:305:TGT:STS",
-        "WIRE:IN20:561:POSNCUSBR",
+        "ACCL_IN20_300_L0A_ACUSBR",
+        "ACCL_IN20_300_L0A_PCUSBR",
+        "TORO_IN20_791_TMITCUSBR",
+        "WIRE_IN20_561_POSNCUSBR",
+        "DUMP_LI21_305_TGT_STS",
     };
 
     auto bus = std::make_shared<MockDataBus>();
     auto cfg = makeConfigFromYaml(
-        "name: bsas_real\n" "file-path: " + matlabLikeFile + "\n" "chunk-size: 1000\n" "use-label-as-name: true\n");
+        "name: bsas_real\n" "file-path: " + matlabLikeFile + "\n" "chunk-size: 1000\n");
 
     {
         HDF5BsasGen1Reader reader(bus, nullptr, cfg);
@@ -521,7 +521,7 @@ TEST_F(HDF5BsasGen1ReaderTest, LargeScaleReaderEmitsAllData)
 
     auto bus = std::make_shared<MockDataBus>();
     auto cfg = makeConfigFromYaml(
-        "name: bsas_large\n" "file-path: " + largeFile + "\n" "chunk-size: " + std::to_string(chunkSize) + "\n" "use-label-as-name: false\n");
+        "name: bsas_large\n" "file-path: " + largeFile + "\n" "chunk-size: " + std::to_string(chunkSize) + "\n");
 
     {
         HDF5BsasGen1Reader reader(bus, nullptr, cfg);
@@ -615,7 +615,7 @@ TEST_F(HDF5BsasGen1ReaderTest, ProvenanceFlowsToEventBatch)
 {
     auto bus = std::make_shared<MockDataBus>();
     auto cfg = makeConfigFromYaml(
-        "name: bsas_prov\n" "file-path: " + mockFile_ + "\n" "chunk-size: 1000\n" "use-label-as-name: false\n" "provenance:\n" "  facility: LCLS\n" "  instrument: CXI\n" "  subsystem: BSAS\n");
+        "name: bsas_prov\n" "file-path: " + mockFile_ + "\n" "chunk-size: 1000\n" "provenance:\n" "  facility: LCLS\n" "  instrument: CXI\n" "  subsystem: BSAS\n");
 
     {
         HDF5BsasGen1Reader reader(bus, nullptr, cfg);
@@ -624,9 +624,9 @@ TEST_F(HDF5BsasGen1ReaderTest, ProvenanceFlowsToEventBatch)
 
     auto batches = bus->snapshot();
     ASSERT_GE(batches.size(), 1u);
-    EXPECT_EQ(batches[0].metadata.at("provenance.facility"), "LCLS");
-    EXPECT_EQ(batches[0].metadata.at("provenance.instrument"), "CXI");
-    EXPECT_EQ(batches[0].metadata.at("provenance.subsystem"), "BSAS");
+    EXPECT_EQ(batches[0].metadata.at("facility"), "LCLS");
+    EXPECT_EQ(batches[0].metadata.at("instrument"), "CXI");
+    EXPECT_EQ(batches[0].metadata.at("subsystem"), "BSAS");
 }
 
 TEST_F(HDF5BsasGen1ReaderTest, MissingProvenanceIsValid)
@@ -642,10 +642,9 @@ TEST_F(HDF5BsasGen1ReaderTest, MissingProvenanceIsValid)
 
     auto batches = bus->snapshot();
     ASSERT_GE(batches.size(), 1u);
-    for (const auto& [k, v] : batches[0].metadata)
-    {
-        EXPECT_FALSE(k.rfind("provenance.", 0) == 0) << "Unexpected provenance key: " << k;
-    }
+    EXPECT_EQ(batches[0].metadata.count("facility"), 0u);
+    EXPECT_EQ(batches[0].metadata.count("instrument"), 0u);
+    EXPECT_EQ(batches[0].metadata.count("subsystem"), 0u);
 }
 
 #endif // MLDP_PVXS_HDF5_ENABLED

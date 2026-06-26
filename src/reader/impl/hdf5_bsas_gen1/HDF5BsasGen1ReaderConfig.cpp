@@ -42,7 +42,9 @@ void HDF5BsasGen1ReaderConfig::parse(const Config& readerEntry)
     if (chunk_size_ == 0)
         throw Error("chunk-size must be > 0");
 
-    use_label_as_name_ = readerEntry.getBool("use-label-as-name", true);
+    log_interval_sec_ = static_cast<std::size_t>(readerEntry.getInt("log-interval-sec", 10L));
+    if (log_interval_sec_ == 0)
+        throw Error("log-interval-sec must be > 0");
 
     if (readerEntry.hasChild("metadata"))
     {

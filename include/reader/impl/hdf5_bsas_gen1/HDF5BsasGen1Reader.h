@@ -26,13 +26,25 @@ namespace mldp_pvxs_driver::reader::impl::hdf5_bsas_gen1 {
 /**
  * @brief Reads BSAS Gen1 HDF5 files in flat format.
  *
- * Each file has root-level datasets: float64/int16 data columns plus
- * secondsPastEpoch/nanoseconds timestamps. Emits DataBatch frames in
- * tabular mode (one frame per column per chunk).
+ * Resolves a glob pattern to one or more HDF5 files and processes each
+ * sequentially. Each file contains root-level 1-D datasets: float64 and
+ * int16 data columns alongside secondsPastEpoch/nanoseconds timestamp
+ * vectors. Data is read in configurable row-chunks and emitted as
+ * TimeSeriesPayload frames in tabular mode (one frame per column per chunk).
+ *
+ * Per-file Prometheus metrics are recorded using the file name (not the
+ * configured reader name) as the @c source label, enabling per-file
+ * observability when a glob matches multiple files.
  */
 class HDF5BsasGen1Reader : public Reader
 {
 public:
+    /**
+     * @brief Construct and immediately begin background reading.
+     * @param bus    Data bus to push EventBatch payloads onto.
+     * @param metrics Prometheus metric registry (may be nullptr in tests).
+     * @param cfg    Parsed YAML configuration block for this reader instance.
+     */
     HDF5BsasGen1Reader(std::shared_ptr<util::bus::IDataBus> bus,
                        std::shared_ptr<metrics::Metrics>    metrics,
                        const config::Config&                cfg);
@@ -41,15 +53,36 @@ public:
     std::string name() const override { return config_.name(); }
 
 private:
+    /** @brief Column descriptor discovered during HDF5 dataset enumeration. */
     struct ColumnInfo
     {
-        std::string name;
-        std::string label;
-        enum class Type { Float64, Int16 } type;
+        std::string name;  ///< Dataset name within the HDF5 file (used as column name).
+        std::unordered_map<std::string, std::string> metadata; ///< All HDF5 attributes as key/value.
+        enum class Type { Float64, Int16 } type; ///< Numeric storage type.
     };
 
+    /**
+     * @brief Worker entry-point: resolves glob, iterates files, reads chunks.
+     *
+     * Runs on a dedicated thread spawned in the constructor. Processes all
+     * matched files sequentially and calls signalCompleted() on exit.
+     */
     void readFile();
+
+    /**
+     * @brief Assemble and push one chunk's worth of data onto the bus.
+     * @param sourceName  Logical source identifier (config_.name()).
+     * @param currentFile Full filesystem path of the file being read.
+     * @param timestamps  Row timestamps for this chunk.
+     * @param columns     Resolved column descriptors (name/label/type).
+     * @param floatData   Contiguous float64 column data (column-major).
+     * @param intData     Contiguous int16 column data (column-major).
+     * @param numRows     Number of rows in this chunk.
+     * @param numFloatCols Number of float64 columns.
+     * @param numIntCols  Number of int16 columns.
+     */
     void emitChunk(const std::string& sourceName,
+                   const std::string& currentFile,
                    const std::vector<util::bus::TimestampEntry>& timestamps,
                    const std::vector<ColumnInfo>& columns,
                    const std::vector<double>& floatData,

@@ -114,6 +114,7 @@ struct DataColumn
 {
     std::string  name;   ///< Column / signal name.
     ColumnValues values; ///< Typed sample vector (one entry per timestamp).
+    std::unordered_map<std::string, std::string> metadata; ///< Per-column key/value attributes.
 };
 
 /**

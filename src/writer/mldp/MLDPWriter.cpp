@@ -425,7 +425,8 @@ void MLDPWriter::workerLoop(std::size_t workerIndex)
 {
     auto&       ch    = *channels_[workerIndex];
     StreamState state;
-    std::size_t drainCount = 0;
+    std::size_t drainCount    = 0;
+    auto        lastDrainLog  = std::chrono::steady_clock::time_point{};
 
     const auto dequeueTimeout = config_.streamMaxAge;
     while (true)
@@ -469,10 +470,12 @@ void MLDPWriter::workerLoop(std::size_t workerIndex)
         if (!running_.load())
         {
             ++drainCount;
-            if (drainCount == 1 || drainCount % 1000 == 0)
+            const auto now = std::chrono::steady_clock::now();
+            if (drainCount == 1 || now - lastDrainLog >= std::chrono::seconds(10))
             {
-                debugf(*logger_, "MLDPWriter worker[{}] draining — processed {} item(s), {} remaining",
-                       workerIndex, drainCount, queuedItems_.load(std::memory_order_relaxed));
+                infof(*logger_, "MLDPWriter worker[{}] draining — processed {} item(s), {} remaining",
+                      workerIndex, drainCount, queuedItems_.load(std::memory_order_relaxed));
+                lastDrainLog = now;
             }
         }
 
@@ -622,6 +625,11 @@ void MLDPWriter::workerLoop(std::size_t workerIndex)
         }
     }
 
+    if (drainCount > 0)
+    {
+        infof(*logger_, "MLDPWriter worker[{}] drain complete — processed {} item(s)",
+              workerIndex, drainCount);
+    }
     closeStream(state, "shutdown");
 }
 
