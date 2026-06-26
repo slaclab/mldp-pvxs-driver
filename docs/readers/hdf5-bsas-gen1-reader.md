@@ -1,9 +1,10 @@
 # HDF5BsasGen1Reader (HDF5 BSAS Gen1)
 
-The `HDF5BsasGen1Reader` reads BSAS Gen1 HDF5 files in PyTables "fixed" format
-and emits chunked tabular `DataBatch` frames onto the driver bus. It parses
-the block structure (`block0` = float64, `block1` = int16, `block2` = uint32
-timestamps) and produces one frame per column per chunk.
+The `HDF5BsasGen1Reader` reads BSAS Gen1 HDF5 files in flat MATLAB-compatible
+format and emits chunked tabular `DataBatch` frames onto the driver bus. Each
+data column is a separate root-level dataset with shape (N,1), annotated with
+`@MATLAB_class` and `@label` attributes. The reader produces one frame per
+column per chunk.
 
 **Registration Type:** `"hdf5-bsas-gen1"`
 
@@ -21,27 +22,73 @@ Config         | `include/reader/impl/hdf5_bsas_gen1/HDF5BsasGen1ReaderConfig.h`
 - **Required libraries/components:**
   - HDF5 C++ (`hdf5_cpp-static` or `hdf5_cpp-shared`)
 
-## HDF5 File Structure
+## Gen1 HDF5 File Schema
 
-The reader expects PyTables "fixed" format files with a `/data` group containing:
+The reader expects a flat HDF5 file where all datasets reside at the root level.
+Each data column is stored as an independent dataset with shape `(N, 1)`.
 
 ```text
 /
-├── CLASS = "GROUP"
-├── PYTABLES_FORMAT_VERSION = "2.0"
-└── data/
-    ├── axis0          — 1D string: all column names
-    ├── axis1          — 1D int64: row indices
-    ├── block0_items   — 1D string: float64 column names
-    ├── block0_values  — 2D float64 (rows x float_cols)
-    ├── block1_items   — 1D string: int16 column names
-    ├── block1_values  — 2D int16 (rows x int_cols)
-    ├── block2_items   — 1D string: ["secondsPastEpoch", "nanoseconds"]
-    └── block2_values  — 2D uint32 (rows x 2)
+├── SIG_0000          — float64 (N,1)  @MATLAB_class="double"  @label="SIG:0000"
+├── SIG_0001          — float64 (N,1)  @MATLAB_class="double"  @label="SIG:0001"
+│   …
+├── FLAG_00           — int16   (N,1)  @MATLAB_class="int16"   @label="FLAG:00"
+├── FLAG_01           — int16   (N,1)  @MATLAB_class="int16"   @label="FLAG:01"
+│   …
+├── secondsPastEpoch  — uint32  (N,1)  @MATLAB_class="uint32"  @label="secondsPastEpoch"
+└── nanoseconds       — uint32  (N,1)  @MATLAB_class="uint32"  @label="nanoseconds"
 ```
 
-This matches the format produced by `pandas.HDFStore` with `format='fixed'`
-for BSAS Gen1 data exports.
+### Dataset Requirements
+
+Dataset              | HDF5 Type           | Shape   | Required
+-------------------- | ------------------- | ------- | --------
+`secondsPastEpoch`   | `H5T_STD_U32LE`    | (N, 1)  | Yes
+`nanoseconds`        | `H5T_STD_U32LE`    | (N, 1)  | Yes
+Data columns (float) | `H5T_IEEE_F64LE`   | (N, 1)  | At least one data column
+Data columns (int)   | `H5T_STD_I16LE`    | (N, 1)  | Optional
+
+### Per-Dataset Attributes
+
+Attribute        | Type   | Description
+---------------- | ------ | -------------------------------------------------------
+`MATLAB_class`   | string | MATLAB type name (`"double"`, `"int16"`, `"uint32"`)
+`label`          | string | Human-readable column name (used as source name when `use-label-as-name: true`)
+
+The `@MATLAB_class` attribute identifies the data type and is written for
+MATLAB `hdf5read()` / `h5read()` compatibility. The `@label` attribute
+provides the logical column name (typically an EPICS PV name).
+
+## MATLAB Compatibility
+
+Gen1 BSAS HDF5 files are produced by SLAC's MATLAB-based data acquisition
+pipeline and follow MATLAB HDF5 conventions:
+
+- **Flat root-level layout** — no groups; each signal is a standalone dataset
+- **`@MATLAB_class` attribute** — every dataset carries this attribute so
+  MATLAB's `h5read()` can reconstruct the native type without manual casting
+- **Column-major (N,1) shape** — each dataset is a single-column matrix,
+  matching MATLAB's default array orientation
+- **ASCII null-terminated strings** — attribute strings use `H5T_CSET_ASCII`
+  with `H5T_STR_NULLTERM` padding, which MATLAB reads natively
+
+Files produced by this pipeline can be read directly in MATLAB:
+
+```matlab
+data = h5read('bsas_data.h5', '/SIG_0000');       % returns Nx1 double
+ts   = h5read('bsas_data.h5', '/secondsPastEpoch'); % returns Nx1 uint32
+info = h5info('bsas_data.h5');                     % shows all datasets + attrs
+```
+
+### Label Handling and UTF-8 Sanitization
+
+The reader performs UTF-8 validation on `@label` attributes. Labels containing
+invalid UTF-8 sequences (which can occur in legacy MATLAB exports using
+non-ASCII encodings) are sanitized:
+
+- Valid ASCII printable characters are preserved
+- Invalid byte sequences are stripped
+- If sanitization produces an empty string, the dataset name is used as fallback
 
 ## Architecture
 
@@ -50,16 +97,16 @@ flowchart TB
     subgraph HDF5BsasGen1Reader["HDF5BsasGen1Reader"]
         subgraph Worker["Background Worker Thread"]
             Open["Open HDF5 file"]
-            ReadMeta["Read block*_items\n(column names)"]
+            Discover["Discover root-level datasets\n(type + @label attrs)"]
             Loop["For each chunk of rows"]
-            ReadTS["Read block2_values\n(timestamps)"]
-            ReadFloat["Read block0_values\n(float64 data)"]
-            ReadInt["Read block1_values\n(int16 data)"]
+            ReadTS["Read secondsPastEpoch/nanoseconds\n(hyperslab)"]
+            ReadFloat["Read float64 columns\n(hyperslab)"]
+            ReadInt["Read int16 columns\n(hyperslab)"]
             Emit["Emit tabular DataBatch\n(one frame per column)"]
             Marker["Emit end_of_batch_group\nmarker"]
         end
 
-        Open --> ReadMeta --> Loop
+        Open --> Discover --> Loop
         Loop --> ReadTS --> ReadFloat --> ReadInt --> Emit --> Marker
         Marker -->|next chunk| Loop
 
@@ -73,14 +120,16 @@ flowchart TB
 The reader runs a single background worker thread that:
 
 1. Opens the HDF5 file read-only
-2. Reads column names from `block0_items`, `block1_items`
-3. Iterates over rows in chunks of `chunk-size`
-4. For each chunk, reads timestamps, float64 data, and int16 data via hyperslab selection
-5. Emits one `TimeSeriesPayload` with `is_tabular=true` containing one frame per column
-6. Emits an `end_of_batch_group` marker after each chunk
-7. Exits when all rows are processed
+2. Enumerates root-level datasets, classifying by HDF5 type (float64, int16, uint32)
+3. Reads `@label` attributes for column naming (with UTF-8 sanitization)
+4. Iterates over rows in chunks of `chunk-size`
+5. For each chunk, reads timestamps and data columns via hyperslab selection on (N,1) datasets
+6. Emits one `TimeSeriesPayload` with `is_tabular=true` containing one frame per column
+7. Emits an `end_of_batch_group` marker after each chunk
+8. Exits when all rows are processed
 
-Int16 columns are widened to int32 in the emitted frames.
+Int16 columns are widened to int32 in the emitted frames. File-path supports glob
+patterns — multiple matched files are read sequentially.
 
 ## Configuration
 
@@ -88,44 +137,53 @@ Int16 columns are widened to int32 in the emitted frames.
 reader:
   - hdf5-bsas-gen1:
       - name: my_bsas_reader
-        file-path: /path/to/bsas-data.h5
+        file-path: /path/to/bsas-data*.h5
         chunk-size: 1000
-        group: data
+        use-label-as-name: true
         metadata:
           facility: LCLS
+        provenance:
+          origin: matlab-daq
 ```
 
-Key                 | Default    | Required | Description
-------------------- | ---------- | -------- | -------------------------------------------
-`name`              | *(none)*   | Yes      | Reader instance name
-`file-path`         | *(none)*   | Yes      | Path to the HDF5 file
-`chunk-size`        | `1000`     | No       | Number of rows per chunk
-`group`             | `data`     | No       | HDF5 group containing the block datasets
-`metadata`          | *(empty)*  | No       | Static key-value metadata attached to each batch
+Key                  | Default    | Required | Description
+-------------------- | ---------- | -------- | -------------------------------------------
+`name`               | *(none)*   | Yes      | Reader instance name
+`file-path`          | *(none)*   | Yes      | Path or glob pattern to HDF5 file(s)
+`chunk-size`         | `1000`     | No       | Number of rows per chunk
+`use-label-as-name`  | `true`     | No       | Use `@label` attribute as column name instead of dataset name
+`metadata`           | *(empty)*  | No       | Static key-value metadata attached to each batch
+`provenance`         | *(empty)*  | No       | Key-value provenance metadata (prefixed with `provenance.`)
 
 ## Testing
 
 Tests are in `test/reader/impl/hdf5_bsas_gen1/hdf5_bsas_gen1_reader_test.cpp`.
 
 A `BsasGen1HDF5Mock` generator (`test/mock/BsasGen1HDF5Mock.{h,cpp}`) creates
-structurally identical HDF5 files with deterministic data for testing.
+structurally identical MATLAB-compatible HDF5 files with deterministic data for testing.
 
 ### Test Cases
 
-Test                                  | Description
-------------------------------------- | ----------------------------------------------------------
-`ConfigParsesValidYaml`               | Config parses all fields correctly
-`ConfigThrowsOnMissingFilePath`       | Missing `file-path` throws `Error`
-`ConfigThrowsOnMissingName`           | Missing `name` throws `Error`
-`ReaderEmitsBatches`                  | Single chunk emits data batch + marker
-`ChunkedReadingProducesMultipleBatches` | Multiple chunks produce correct batch count
-`TimestampsAreCorrect`                | Per-row timestamps match generated values
-`Float64ColumnValuesAreCorrect`       | Float64 column data matches `sin()` pattern
-`Int16ColumnValuesAreCorrectAsInt32`  | Int16 columns widened to int32 correctly
-`ColumnNamesMatchBlockItems`          | Frame column names match `block*_items`
-`ReaderNameMatches`                   | `name()` returns configured name
-`MockFileMatchesReferenceStructure`   | Mock HDF5 structure matches expected format
-`LargeScaleReaderEmitsAllData`        | Env-configurable large-scale verification
+Test                                            | Description
+----------------------------------------------- | ----------------------------------------------------------
+`ConfigParsesValidYaml`                         | Config parses all fields correctly
+`ConfigDefaultsUseLabelTrue`                    | `use-label-as-name` defaults to `true`
+`ConfigThrowsOnMissingFilePath`                 | Missing `file-path` throws `Error`
+`ConfigThrowsOnMissingName`                     | Missing `name` throws `Error`
+`ReaderEmitsBatches`                            | Single chunk emits data batch + marker
+`ReaderExpandsGlobPatternsFromConfiguredPath`   | Glob patterns match multiple files
+`ChunkedReadingProducesMultipleBatches`         | Multiple chunks produce correct batch count
+`TimestampsAreCorrect`                          | Per-row timestamps match generated values
+`Float64ColumnValuesAreCorrect`                 | Float64 column data matches `sin()` pattern
+`Int16ColumnValuesAreCorrectAsInt32`            | Int16 columns widened to int32 correctly
+`ColumnNamesMatchDatasetNames`                  | Frame column names match dataset names
+`UseLabelAsNameResolvesLabelAttr`               | `@label` attribute used as column name
+`UseLabelAsNameFallsBackWhenLabelContainsInvalidUtf8` | Invalid UTF-8 labels fall back to dataset name
+`MatlabStyleLabelsArePreserved`                 | MATLAB-style labels (with colons) preserved correctly
+`ReaderNameMatches`                             | `name()` returns configured name
+`MockFileMatchesFlatStructure`                  | Mock HDF5 matches flat MATLAB format
+`LargeScaleReaderEmitsAllData`                  | Env-configurable large-scale verification
+`ProvenanceFlowsToEventBatch`                   | Provenance metadata propagates to bus
 
 ### Large-Scale Test
 
