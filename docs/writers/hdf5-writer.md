@@ -64,7 +64,7 @@ push() → bounded MPSC deque
 - **Writer thread**: drains bounded MPSC queue; calls `writeFrameImpl()` (virtual) per frame or `flushTabularBufferImpl()` (virtual) on end-of-batch-group.
 - **Flush thread**: calls `doFlushAll()` (virtual) every `flush-interval-ms`.
 - **Tabular buffers**: `TabularBuffer` per source accumulated entirely in the base; subclass called only at flush.
-- **Back-pressure**: queue capped at `kQueueCapacity` (8192). `push()` returns `false` when full.
+- **Back-pressure**: queue capped at `queue-capacity` (default 8192). `push()` **blocks indefinitely** until space is available — data is never dropped. Only returns `false` when the writer is stopping (double Ctrl+C / `forceStop()`).
 - **Destructor safety**: `~HDF5WriterBase()` does **not** call `stop()` (pure-virtual `doStop()` would be invalid at base-dtor time). Each subclass destructor calls `stop()` while its vtable is still live.
 
 ### Pure-virtual hooks
@@ -272,6 +272,7 @@ writer:
       max-file-size-mb: 512     # optional; default: 512
       flush-interval-ms: 1000   # optional; default: 1000
       compression-level: 0      # optional; 0–9, default: 0 (off)
+      queue-capacity: 8192      # optional; default: 8192
 
   hdf5-merge:                   # type "hdf5-merge" — HDF5WriterMerge
     - name: hdf5_merged         # required — unique instance name
@@ -280,6 +281,7 @@ writer:
       max-file-size-mb: 512     # optional; default: 512
       flush-interval-ms: 1000   # optional; default: 1000
       compression-level: 0      # optional; 0–9, default: 0 (off)
+      queue-capacity: 8192      # optional; default: 8192
 ```
 
 | Key | Type | Default | Description |
@@ -290,6 +292,7 @@ writer:
 | `max-file-size-mb` | uint64 | `512` | Rotate file after this size (MiB). |
 | `flush-interval-ms` | int | `1000` | How often the flush thread calls `H5File::flush`. |
 | `compression-level` | int | `0` | DEFLATE level 0–9 (0 = no compression). |
+| `queue-capacity` | size_t | `8192` | Max queued batches before `push()` blocks. push blocks indefinitely — never drops data. |
 
 ## hdf5-merge Writer
 
@@ -461,7 +464,7 @@ Output: one file in `/data/merged/`:
 | `HDF5WriterPerSource(config)` | Opens `HDF5FilePool`; one file per source. |
 | `HDF5WriterMerge(config)` | Opens single shared merge file. |
 | `start()` | Calls `doStart()` (opens pool / merge file), then spawns writer and flush threads. |
-| `push(batch)` | Enqueues batch under `queueMutex_`; returns `false` if queue at capacity. |
+| `push(batch)` | Enqueues batch under `queueMutex_`; **blocks** if queue at capacity until space available. Returns `false` only when stopping (double Ctrl+C). |
 | `stop()` | Sets `stopping_`; joins both threads; calls `doStop()` (closes files). |
 
 ## Thread-Safety Notes

@@ -30,7 +30,7 @@ push() → round-robin → WorkerChannel[i].deque
 - **Worker channels**: each worker owns a `WorkerChannel` (mutex + CV + deque). `push()` selects a channel via atomic round-robin.
 - **Thread pool**: `BS::light_thread_pool` with `thread-pool` threads (default: 1).
 - **Stream flushing**: each worker flushes the gRPC stream when payload exceeds `stream-max-bytes` or age exceeds `stream-max-age-ms`.
-- **Back-pressure**: `push()` returns `false` when the queue is at capacity.
+- **Back-pressure**: `push()` blocks when the total queued items across all worker channels reaches `queue-capacity`. With `push-timeout-ms > 0` (default 5000 ms), push blocks up to the timeout then returns `false` (drop). With `push-timeout-ms: 0`, push returns `false` immediately when full (no blocking).
 
 ## Configuration
 
@@ -43,6 +43,8 @@ writer:
       thread-pool: 4              # optional; default: 1
       stream-max-bytes: 2097152   # optional; default: 2 MiB
       stream-max-age-ms: 200      # optional; default: 200 ms
+      queue-capacity: 10000       # optional; default: 10000
+      push-timeout-ms: 5000       # optional; default: 5000 (0 = drop immediately)
       mldp-pool:
         provider-name: pvxs_provider
         ingestion-url: grpc://ingest-host:50051
@@ -57,6 +59,8 @@ writer:
 | `thread-pool` | int | `1` | Concurrent ingestion worker threads. |
 | `stream-max-bytes` | size_t | `2097152` | Flush gRPC stream after this payload size (bytes). |
 | `stream-max-age-ms` | int | `200` | Flush gRPC stream after this age (milliseconds). |
+| `queue-capacity` | size_t | `10000` | Max queued items across all worker channels before push blocks. |
+| `push-timeout-ms` | int | `5000` | How long push() blocks waiting for space; 0 = drop immediately without waiting. |
 | `mldp-pool.*` | object | — | Connection pool settings (see `MLDPGrpcPoolConfig`). |
 
 ## Lifecycle
@@ -64,7 +68,7 @@ writer:
 | Step | What happens |
 |------|-------------|
 | `start()` | Registers provider with MLDP service; spawns worker threads. |
-| `push(batch)` | Extracts `TimeSeriesPayload` frames; fans out across worker channels via round-robin; returns `false` on overflow. Batch `metadata` map is forwarded to `buildRequest()` and stamped on each `ColumnProvenance.source` label in the gRPC request. |
+| `push(batch)` | Extracts `TimeSeriesPayload` frames; fans out across worker channels via round-robin. Blocks when queue at capacity (up to `push-timeout-ms`); returns `false` on timeout or if `push-timeout-ms: 0` and queue full. Batch `metadata` map is forwarded to `buildRequest()` and stamped on each `ColumnProvenance.source` label in the gRPC request. |
 | `stop()` | Sets shutdown flag on all channels; drains queues; joins thread pool. |
 
 ## Key Files

@@ -56,6 +56,8 @@ writer:
       thread-pool: 4               # optional; default: 1
       stream-max-bytes: 2097152    # optional; default: 2097152 (2 MiB)
       stream-max-age-ms: 200       # optional; default: 200 ms
+      queue-capacity: 10000        # optional; default: 10000
+      push-timeout-ms: 5000        # optional; default: 5000 (0 = drop immediately)
       mldp-pool:                   # required
         provider-name: pvxs_provider           # required
         provider-description: "My provider"    # optional
@@ -71,6 +73,8 @@ writer:
 | `thread-pool` | int | `1` | Worker threads for concurrent gRPC ingestion. |
 | `stream-max-bytes` | size_t | `2097152` | Flush gRPC stream when payload exceeds this (bytes). |
 | `stream-max-age-ms` | int | `200` | Flush gRPC stream when age exceeds this (milliseconds). |
+| `queue-capacity` | size_t | `10000` | Max queued items across all worker channels before push blocks. |
+| `push-timeout-ms` | int | `5000` | How long `push()` blocks waiting for space (ms). 0 = drop immediately without waiting. |
 | `mldp-pool.provider-name` | string | — | **Required.** Provider name registered with the MLDP service. |
 | `mldp-pool.provider-description` | string | `""` | Human-readable provider description. |
 | `mldp-pool.ingestion-url` | string | — | **Required.** gRPC endpoint for data ingestion. |
@@ -107,6 +111,7 @@ writer:
       max-file-size-mb: 512        # optional; default: 512 MiB
       flush-interval-ms: 1000      # optional; default: 1000 ms
       compression-level: 0         # optional; 0–9; default: 0 (no compression)
+      queue-capacity: 8192         # optional; default: 8192
       merge-root-sources: false    # optional; default: false — set true to merge all sources into one file
 ```
 
@@ -118,6 +123,7 @@ writer:
 | `max-file-size-mb` | uint64 | `512` | Rotate file after this size in MiB. |
 | `flush-interval-ms` | int | `1000` | Flush thread call interval in milliseconds. |
 | `compression-level` | int | `0` | DEFLATE compression level 0–9 (0 = off). |
+| `queue-capacity` | size_t | `8192` | Max queued batches before `push()` blocks. Push blocks indefinitely — **never drops data**. Only unblocks on shutdown (double Ctrl+C). |
 | `merge-root-sources` | bool | `false` | Opt-in merge mode; all root-sources share one output file with one HDF5 group per source. See [hdf5-writer.md](../writers/hdf5-writer.md#merge-mode). |
 
 → [Full HDF5 Writer Documentation](../writers/hdf5-writer.md)

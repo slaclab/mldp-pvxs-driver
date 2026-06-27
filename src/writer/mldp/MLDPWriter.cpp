@@ -167,6 +167,7 @@ void MLDPWriter::stop() noexcept
 void MLDPWriter::forceStop() noexcept
 {
     forceQuit_.store(true, std::memory_order_release);
+    backpressureCv_.notify_all();
     for (auto& ch : channels_)
         ch->cv.notify_one();
 }
@@ -206,6 +207,27 @@ bool MLDPWriter::push(util::bus::IDataBus::EventBatch batch) noexcept
     if (rootSourceName.empty() || ts_mut.frames.empty())
     {
         return false;
+    }
+
+    // Backpressure: block until queue has space or timeout expires.
+    {
+        std::unique_lock lk(backpressureMutex_);
+        if (config_.pushTimeout.count() == 0)
+        {
+            if (queuedItems_.load(std::memory_order_relaxed) >= config_.queueCapacity)
+                return false;
+        }
+        else
+        {
+            bool has_space = backpressureCv_.wait_for(lk, config_.pushTimeout, [this] {
+                return queuedItems_.load(std::memory_order_relaxed) < config_.queueCapacity
+                       || !running_.load();
+            });
+            if (!running_.load())
+                return false;
+            if (!has_space)
+                return false;
+        }
     }
 
     auto metadata = std::make_shared<const std::unordered_map<std::string, std::string>>(batch.metadata);
@@ -476,6 +498,7 @@ void MLDPWriter::workerLoop(std::size_t workerIndex)
         }
 
         queuedItems_.fetch_sub(1, std::memory_order_relaxed);
+        backpressureCv_.notify_one();
         updateQueueDepthMetric();
 
         if (!running_.load())

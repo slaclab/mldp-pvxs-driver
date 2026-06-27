@@ -30,6 +30,10 @@ inline constexpr char MldpThreadPoolKey[] = "thread-pool";
 inline constexpr char MldpStreamMaxBytesKey[] = "stream-max-bytes";
 /// YAML key: `writer.mldp[i].stream-max-age-ms` — flush stream after this age in ms (default: 200).
 inline constexpr char MldpStreamMaxAgeMsKey[] = "stream-max-age-ms";
+/// YAML key: `writer.mldp[i].queue-capacity` — max queued items before push blocks (default: 10000).
+inline constexpr char MldpQueueCapacityKey[] = "queue-capacity";
+/// YAML key: `writer.mldp[i].push-timeout-ms` — how long push() blocks waiting for space; 0 = drop immediately (default: 5000).
+inline constexpr char MldpPushTimeoutMsKey[] = "push-timeout-ms";
 
 /**
  * @brief Configuration for the MLDP ingestion writer.
@@ -74,6 +78,12 @@ struct MLDPWriterConfig
 
     /// YAML key: `writer.mldp[i].stream-max-age-ms` — max stream age before flushing.  Default: 200 ms.
     std::chrono::milliseconds streamMaxAge{200};
+
+    /// YAML key: `writer.mldp[i].queue-capacity` — max queued items across all worker channels before push blocks.  Default: 10000.
+    std::size_t queueCapacity{10000};
+
+    /// YAML key: `writer.mldp[i].push-timeout-ms` — how long push() blocks waiting for space; 0 = drop immediately.  Default: 5000 ms.
+    std::chrono::milliseconds pushTimeout{5000};
 
     /**
      * @brief Parse MLDP writer configuration from the `writer.mldp` YAML node.

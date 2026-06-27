@@ -86,6 +86,7 @@ void HDF5WriterBase::stop() noexcept
     }
     infof(*logger_, "HDF5Writer [{}] stopping — {} item(s) pending in queue", config_.name, pending);
     queueCv_.notify_all();
+    queueNotFull_.notify_all();
 
     debugf(*logger_, "HDF5Writer [{}] waiting for writer thread to drain...", config_.name);
     if (writerThread_.joinable())
@@ -127,15 +128,13 @@ bool HDF5WriterBase::push(util::bus::IDataBus::EventBatch batch) noexcept
         debugf(*logger_, "HDF5Writer [{}] push rejected — writer is stopping", config_.name);
         return false;
     }
-    const uint64_t              seq = nextBatchSeq_.fetch_add(1, std::memory_order_relaxed);
-    std::lock_guard<std::mutex> lk(queueMutex_);
-    if (queue_.size() >= kQueueCapacity)
-    {
-        warnf(*logger_, "HDF5Writer [{}] queue full ({} items) — dropping batch", config_.name, queue_.size());
-        if (writerMetrics_)
-            writerMetrics_->incrementQueueDrops();
+    const uint64_t seq = nextBatchSeq_.fetch_add(1, std::memory_order_relaxed);
+    std::unique_lock<std::mutex> lk(queueMutex_);
+    queueNotFull_.wait(lk, [this] {
+        return queue_.size() < config_.queueCapacity || stopping_.load();
+    });
+    if (stopping_.load())
         return false;
-    }
     queue_.push_back({seq, std::move(batch)});
     queueCv_.notify_one();
     return true;
@@ -166,6 +165,7 @@ void HDF5WriterBase::writerLoop()
             depthAtDrain = queue_.size();
             drained.swap(queue_);
         }
+        queueNotFull_.notify_all();
 
         if (writerMetrics_)
             writerMetrics_->setQueueDepth(static_cast<double>(depthAtDrain));

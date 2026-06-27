@@ -687,6 +687,7 @@ if(MLDP_PVXS_DRIVER_TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/test/controller/route_table_config_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/ryml_single_header_translation_unit.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/writer/mldp/mldp_writer_integration_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/writer/mldp/mldp_writer_backpressure_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/writer/mldp_pv_metadata/mldp_pv_metadata_writer_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/writer/mldp_configuration/mldp_configuration_writer_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics/pvxs/epics_pvxs_reader_test.cpp"
@@ -890,6 +891,7 @@ if(MLDP_PVXS_DRIVER_TESTS)
             "${CMAKE_CURRENT_SOURCE_DIR}/test/writer/hdf5/hdf5_file_pool_test.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/test/writer/hdf5/hdf5_writer_test.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/test/writer/hdf5/hdf5_writer_metrics_test.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/test/writer/hdf5/hdf5_writer_backpressure_test.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/test/ryml_single_header_translation_unit.cpp"
         )
         target_include_directories(mldp_hdf5_writer_test PRIVATE

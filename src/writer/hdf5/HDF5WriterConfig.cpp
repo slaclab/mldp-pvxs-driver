@@ -75,5 +75,16 @@ HDF5WriterConfig HDF5WriterConfig::parse(const Config& node)
         cfg.compressionLevel = val;
     }
 
+    // queue-capacity (backpressure)
+    if (node.hasChild(HDF5QueueCapacityKey))
+    {
+        const int val = node.getInt(HDF5QueueCapacityKey, 0);
+        if (val <= 0)
+        {
+            throw Error("writer.hdf5." + std::string(HDF5QueueCapacityKey) + " must be > 0");
+        }
+        cfg.queueCapacity = static_cast<std::size_t>(val);
+    }
+
     return cfg;
 }

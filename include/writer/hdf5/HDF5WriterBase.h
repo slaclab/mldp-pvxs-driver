@@ -107,8 +107,6 @@ protected:
         util::bus::IDataBus::EventBatch batch;
     };
 
-    static constexpr std::size_t kQueueCapacity = 8192;
-
     // -----------------------------------------------------------------------
     // Protected shared state — accessible to subclasses
     // -----------------------------------------------------------------------
@@ -121,6 +119,7 @@ protected:
     // Queue — shared between caller threads and writerThread_
     std::mutex              queueMutex_;
     std::condition_variable queueCv_;
+    std::condition_variable queueNotFull_;
     std::deque<QueueEntry>  queue_;
     std::atomic<bool>       stopping_{false};
     std::atomic<uint64_t>   nextBatchSeq_{0};

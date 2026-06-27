@@ -32,6 +32,8 @@ inline constexpr char HDF5MaxFileSizeMBKey[] = "max-file-size-mb";
 inline constexpr char HDF5FlushIntervalMsKey[] = "flush-interval-ms";
 /// YAML key: `writer.hdf5[i].compression-level` — DEFLATE level 0–9 (default: 0 = off).
 inline constexpr char HDF5CompressionKey[] = "compression-level";
+/// YAML key: `writer.hdf5[i].queue-capacity` — max queued items before push blocks (default: 8192).
+inline constexpr char HDF5QueueCapacityKey[] = "queue-capacity";
 
 /**
  * @brief Configuration for the HDF5 file writer.
@@ -73,6 +75,9 @@ struct HDF5WriterConfig
 
     /// YAML key: `writer.hdf5[i].compression-level` — DEFLATE level 0–9 (0 = no compression).  Default: 0.
     int compressionLevel{0};
+
+    /// YAML key: `writer.hdf5[i].queue-capacity` — max queued items before push blocks indefinitely.  Default: 8192.
+    std::size_t queueCapacity{8192};
 
     /**
      * @brief Parse the writer.hdf5 YAML sub-node.

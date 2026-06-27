@@ -91,5 +91,37 @@ MLDPWriterConfig MLDPWriterConfig::parse(const Config& mldpNode)
         }
     }
 
+    // Queue capacity (backpressure)
+    if (mldpNode.hasChild(MldpQueueCapacityKey))
+    {
+        const auto nodes = mldpNode.subConfig(MldpQueueCapacityKey);
+        if (!nodes.empty() && nodes.front().raw().has_val())
+        {
+            int val = 0;
+            nodes.front() >> val;
+            if (val <= 0)
+            {
+                throw Error(std::string(MldpQueueCapacityKey) + " must be > 0");
+            }
+            cfg.queueCapacity = static_cast<std::size_t>(val);
+        }
+    }
+
+    // Push timeout (backpressure)
+    if (mldpNode.hasChild(MldpPushTimeoutMsKey))
+    {
+        const auto nodes = mldpNode.subConfig(MldpPushTimeoutMsKey);
+        if (!nodes.empty() && nodes.front().raw().has_val())
+        {
+            int val = 0;
+            nodes.front() >> val;
+            if (val < 0)
+            {
+                throw Error(std::string(MldpPushTimeoutMsKey) + " must be >= 0");
+            }
+            cfg.pushTimeout = std::chrono::milliseconds(val);
+        }
+    }
+
     return cfg;
 }

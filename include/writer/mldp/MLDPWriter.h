@@ -120,6 +120,10 @@ private:
     std::atomic<bool>                                                 running_{false};
     std::atomic<bool>                                                 forceQuit_{false};
 
+    /// Backpressure: blocks push() when queuedItems_ >= config_.queueCapacity.
+    std::mutex              backpressureMutex_;
+    std::condition_variable backpressureCv_;
+
     /// Last EPICS event timestamp per source, used for inter-arrival Bps gauge.
     std::mutex                              lastEventTimeMutex_;
     std::unordered_map<std::string, double> lastEventTime_;  // EPICS epoch seconds
