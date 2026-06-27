@@ -124,6 +124,10 @@ private:
     std::mutex              backpressureMutex_;
     std::condition_variable backpressureCv_;
 
+    /// Throttled push logging (every 10s).
+    std::mutex                            pushLogMutex_;
+    std::chrono::steady_clock::time_point lastPushLogTime_{};
+
     /// Last EPICS event timestamp per source, used for inter-arrival Bps gauge.
     std::mutex                              lastEventTimeMutex_;
     std::unordered_map<std::string, double> lastEventTime_;  // EPICS epoch seconds

@@ -214,6 +214,8 @@ MLDPPVXSController::~MLDPPVXSController()
     {
         stop();
     }
+    if (consumer_thread_.joinable())
+        consumer_thread_.join();
     tracef(*logger_, "~MLDPPVXSController [tid={}]: resetting thread_pool", std::this_thread::get_id());
     processor_pools_.clear();
     thread_pool_.reset();
@@ -331,6 +333,8 @@ void MLDPPVXSController::start()
             warnf(*logger_, "Writer '{}' not mentioned in any route — will receive no data", name);
     }
 
+    // Start consumer thread BEFORE readers so that onReaderCompleted → stop()
+    // can always find a joinable consumer_thread_.
     consumer_thread_ = std::thread([this] { consumerLoop(); });
 
     infof(*logger_, "Controller started");
@@ -503,20 +507,29 @@ bool MLDPPVXSController::push(EventBatch batch_values)
     // Enqueue with blocking backpressure.
     {
         std::unique_lock<std::mutex> lk(queue_mutex_);
-        const auto timeout = std::chrono::milliseconds(config_.pushTimeoutMs());
-
-        bool has_space = queue_not_full_.wait_for(lk, timeout, [this] {
-            return queue_.size() < config_.queueCapacity() || !running_.load();
-        });
-
-        if (!running_.load())
-            return false;
-
-        if (!has_space)
+        if (config_.pushTimeoutMs() == 0)
         {
-            warnf(*logger_, "Push queue full ({} items) — dropping batch for source {}",
-                  queue_.size(), rootSource);
-            return false;
+            if (queue_.size() >= config_.queueCapacity())
+            {
+                warnf(*logger_, "Push queue full ({} items) — dropping batch for source {}",
+                      queue_.size(), rootSource);
+                return false;
+            }
+        }
+        else
+        {
+            const auto timeout = std::chrono::milliseconds(config_.pushTimeoutMs());
+            bool has_space = queue_not_full_.wait_for(lk, timeout, [this] {
+                return queue_.size() < config_.queueCapacity() || !running_.load();
+            });
+            if (!running_.load())
+                return false;
+            if (!has_space)
+            {
+                warnf(*logger_, "Push queue full ({} items) — dropping batch for source {} (timeout {}ms)",
+                      queue_.size(), rootSource, config_.pushTimeoutMs());
+                return false;
+            }
         }
 
         queue_.push_back(std::move(batch_values));

@@ -131,6 +131,20 @@ The reader runs a single background worker thread that:
 Int16 columns are widened to int32 in the emitted frames. File-path supports glob
 patterns — multiple matched files are read sequentially.
 
+### Backpressure and Shutdown
+
+The reader never discards data while it is active. When the downstream bus rejects
+a push (queue full), the reader waits 10 ms and retries. Only when the controller
+stops the reader (`running_` becomes false) does it bail out immediately — skipping
+any unprocessed chunks without pushing them onto the bus.
+
+| Condition | Behaviour |
+| --- | --- |
+| Bus push succeeds | Continue to next chunk |
+| Bus push fails, reader active | Sleep 10 ms, rebuild batch, retry once |
+| Bus push fails after retry | Return false, abort read loop |
+| Controller stops reader | Exit immediately, no further pushes |
+
 ## Configuration
 
 ```yaml

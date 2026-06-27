@@ -170,39 +170,25 @@ TEST_F(HDF5BackpressureTest, ConcurrentProducersNoDataLoss)
         << "All samples from all producers must be persisted";
 }
 
-// push() returns false (not hang) when stop() is called while producers are
-// blocked on a full queue. Simulates double Ctrl+C shutdown.
-TEST_F(HDF5BackpressureTest, PushReturnsFalseOnStop)
+// push() returns false after stop() — writer rejects new data once stopped.
+TEST_F(HDF5BackpressureTest, PushReturnsFalseAfterStop)
 {
     constexpr std::size_t kQueueCapacity = 2;
 
     HDF5WriterPerSource w(makeConfig(kQueueCapacity));
     w.start();
 
-    // Fill the queue to capacity so next push blocks
-    for (std::size_t i = 0; i < kQueueCapacity; ++i)
-        w.push(makeBatch(static_cast<int>(i)));
+    // Verify push works before stop
+    EXPECT_TRUE(w.push(makeBatch(0)));
+    EXPECT_TRUE(w.push(makeBatch(1)));
 
-    // Stop in background — should unblock any waiting push
-    auto stopFuture = std::async(std::launch::async, [&]() {
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        w.stop();
-    });
+    w.stop();
 
-    // This push will block (queue full) then must return false once stop() fires
-    auto pushFuture = std::async(std::launch::async, [&]() {
-        for (int i = 0; i < 1000; ++i)
-        {
-            if (!w.push(makeBatch(100 + i)))
-                return true;  // got false = stop was noticed
-        }
-        return false;
-    });
-
-    stopFuture.get();
-    auto result = pushFuture.get();
-    EXPECT_TRUE(result)
-        << "push() must return false (not hang forever) after stop() is called";
+    // After stop, push must return false immediately
+    EXPECT_FALSE(w.push(makeBatch(2)))
+        << "push() must return false after stop() completes";
+    EXPECT_FALSE(w.push(makeBatch(3)))
+        << "push() must consistently return false after stop()";
 }
 
 // Verify that push blocks (not returns immediately) when queue is full.

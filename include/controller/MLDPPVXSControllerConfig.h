@@ -124,7 +124,7 @@ public:
     /** @return Maximum number of batches the controller queue can hold before blocking. */
     std::size_t queueCapacity() const { return queue_capacity_; }
 
-    /** @return Timeout in milliseconds for push() to block when queue is full. 0 = drop immediately. */
+    /** @return Backpressure mode for push(): 0 = drop immediately, >0 = block until space available. */
     std::uint32_t pushTimeoutMs() const { return push_timeout_ms_; }
 
 private:

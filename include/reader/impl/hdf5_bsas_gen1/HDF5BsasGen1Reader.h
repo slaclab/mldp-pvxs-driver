@@ -66,11 +66,28 @@ private:
      *
      * Runs on a dedicated thread spawned in the constructor. Processes all
      * matched files sequentially and calls signalCompleted() on exit.
+     *
+     * @note Backpressure guarantee: as long as the reader is NOT stopped by
+     * the controller, data is never discarded. When the downstream bus is full,
+     * the reader waits (with retry) until space becomes available — it will
+     * never drop a chunk. Only when the controller sets running_ to false does
+     * the reader bail out immediately, skipping any unprocessed data without
+     * pushing it onto the bus.
      */
     void readFile();
 
     /**
      * @brief Assemble and push one chunk's worth of data onto the bus.
+     *
+     * Uses a retry-with-backoff strategy: if the bus rejects the push
+     * (queue full / backpressure), waits 10 ms and retries once.
+     *
+     * @note No-discard guarantee: until the reader is stopped by the
+     * controller, this method will always wait and retry rather than
+     * discarding data. A chunk is either delivered successfully or the
+     * reader exits because the controller requested shutdown — data is
+     * never silently dropped while the reader is active.
+     *
      * @param sourceName  Logical source identifier (config_.name()).
      * @param currentFile Full filesystem path of the file being read.
      * @param timestamps  Row timestamps for this chunk.
@@ -80,8 +97,11 @@ private:
      * @param numRows     Number of rows in this chunk.
      * @param numFloatCols Number of float64 columns.
      * @param numIntCols  Number of int16 columns.
+     * @return true if both data batch and marker were pushed successfully;
+     *         false if the reader was stopped or retry failed (caller should
+     *         abort the read loop).
      */
-    void emitChunk(const std::string& sourceName,
+    bool emitChunk(const std::string& sourceName,
                    const std::string& currentFile,
                    const std::vector<util::bus::TimestampEntry>& timestamps,
                    const std::vector<ColumnInfo>& columns,

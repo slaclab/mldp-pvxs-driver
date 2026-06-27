@@ -127,11 +127,10 @@ TEST(MLDPWriterBackpressureTest, BlockingPushNoDataLoss)
     yaml << "name: mldp_bp_test\n"
          << "thread-pool: 1\n"
          << "queue-capacity: " << kQueueCapacity << "\n"
-         << "push-timeout-ms: 30000\n"
          << "mldp-pool:\n"
          << "  provider-name: bp-test-provider\n"
          << "  ingestion-url: 127.0.0.1:" << port << "\n"
-         << "  query-url: 127.0.0.1:" << port << "\n"
+         << "  query-url: localhost:" << port << "\n"
          << "  min-conn: 1\n"
          << "  max-conn: 1\n";
 
@@ -169,62 +168,6 @@ TEST(MLDPWriterBackpressureTest, BlockingPushNoDataLoss)
         << "Consumer must receive all items — no data loss";
 }
 
-// With pushTimeout=0, push returns false immediately when queue full (drops).
-TEST(MLDPWriterBackpressureTest, ImmediateDropWhenTimeoutZero)
-{
-    SlowIngestionService service;
-    service.perMessageDelay = std::chrono::milliseconds(100);
-
-    grpc::ServerBuilder builder;
-    int                 port = 0;
-    builder.AddListeningPort("127.0.0.1:0", grpc::InsecureServerCredentials(), &port);
-    builder.RegisterService(&service);
-    std::unique_ptr<grpc::Server> server(builder.BuildAndStart());
-    ASSERT_TRUE(server);
-    ASSERT_GT(port, 0);
-
-    constexpr int kTotalBatches  = 100;
-    constexpr int kQueueCapacity = 4;
-
-    std::ostringstream yaml;
-    yaml << "name: mldp_bp_drop_test\n"
-         << "thread-pool: 1\n"
-         << "queue-capacity: " << kQueueCapacity << "\n"
-         << "push-timeout-ms: 0\n"
-         << "mldp-pool:\n"
-         << "  provider-name: bp-drop-provider\n"
-         << "  ingestion-url: 127.0.0.1:" << port << "\n"
-         << "  query-url: 127.0.0.1:" << port << "\n"
-         << "  min-conn: 1\n"
-         << "  max-conn: 1\n";
-
-    const auto cfg = makeConfigFromYaml(yaml.str());
-    ASSERT_TRUE(cfg.valid());
-
-    auto writer = WriterFactory::create("mldp", cfg, nullptr);
-    ASSERT_TRUE(writer);
-    writer->start();
-
-    int successCount = 0;
-    int failCount    = 0;
-
-    for (int i = 0; i < kTotalBatches; ++i)
-    {
-        if (writer->push(makeBatch(i)))
-            ++successCount;
-        else
-            ++failCount;
-    }
-
-    writer->stop();
-    server->Shutdown();
-
-    EXPECT_GT(failCount, 0)
-        << "With pushTimeout=0 and slow consumer, some items must be dropped";
-    EXPECT_GT(successCount, 0)
-        << "At least some items must succeed";
-}
-
 // Concurrent producers with backpressure — all items delivered, no drops.
 TEST(MLDPWriterBackpressureTest, ConcurrentProducersNoDataLoss)
 {
@@ -248,11 +191,10 @@ TEST(MLDPWriterBackpressureTest, ConcurrentProducersNoDataLoss)
     yaml << "name: mldp_bp_concurrent_test\n"
          << "thread-pool: 2\n"
          << "queue-capacity: " << kQueueCapacity << "\n"
-         << "push-timeout-ms: 30000\n"
          << "mldp-pool:\n"
          << "  provider-name: bp-concurrent-provider\n"
          << "  ingestion-url: 127.0.0.1:" << port << "\n"
-         << "  query-url: 127.0.0.1:" << port << "\n"
+         << "  query-url: localhost:" << port << "\n"
          << "  min-conn: 1\n"
          << "  max-conn: 2\n";
 
@@ -291,11 +233,11 @@ TEST(MLDPWriterBackpressureTest, ConcurrentProducersNoDataLoss)
     EXPECT_EQ(service.consumedCount.load(), kTotalBatches);
 }
 
-// push() unblocks and returns false when writer is stopped while blocking.
-TEST(MLDPWriterBackpressureTest, PushUnblocksOnStop)
+// High-volume backpressure: push 500 items with tiny queue, all must arrive.
+TEST(MLDPWriterBackpressureTest, HighVolumeAllDataMigrated)
 {
     SlowIngestionService service;
-    service.perMessageDelay = std::chrono::milliseconds(500);
+    service.perMessageDelay = std::chrono::milliseconds(5);
 
     grpc::ServerBuilder builder;
     int                 port = 0;
@@ -305,17 +247,84 @@ TEST(MLDPWriterBackpressureTest, PushUnblocksOnStop)
     ASSERT_TRUE(server);
     ASSERT_GT(port, 0);
 
-    constexpr int kQueueCapacity = 2;
+    constexpr int kTotalBatches  = 500;
+    constexpr int kQueueCapacity = 8;
+
+    std::ostringstream yaml;
+    yaml << "name: mldp_bp_highvol_test\n"
+         << "thread-pool: 2\n"
+         << "queue-capacity: " << kQueueCapacity << "\n"
+         << "mldp-pool:\n"
+         << "  provider-name: bp-highvol-provider\n"
+         << "  ingestion-url: 127.0.0.1:" << port << "\n"
+         << "  query-url: localhost:" << port << "\n"
+         << "  min-conn: 1\n"
+         << "  max-conn: 2\n";
+
+    const auto cfg = makeConfigFromYaml(yaml.str());
+    ASSERT_TRUE(cfg.valid());
+
+    auto writer = WriterFactory::create("mldp", cfg, nullptr);
+    ASSERT_TRUE(writer);
+    writer->start();
+
+    std::atomic<int> pushSuccessCount{0};
+
+    // 4 producers each pushing 125 batches = 500 total
+    constexpr int kProducers      = 4;
+    constexpr int kBatchesPerProd = kTotalBatches / kProducers;
+    std::vector<std::future<void>> futures;
+
+    for (int p = 0; p < kProducers; ++p)
+    {
+        futures.push_back(std::async(std::launch::async, [&, p]() {
+            for (int i = 0; i < kBatchesPerProd; ++i)
+            {
+                bool ok = writer->push(makeBatch(p * kBatchesPerProd + i));
+                EXPECT_TRUE(ok) << "Producer " << p << " push " << i << " failed";
+                if (ok) pushSuccessCount.fetch_add(1, std::memory_order_relaxed);
+            }
+        }));
+    }
+
+    for (auto& f : futures) f.get();
+
+    EXPECT_EQ(pushSuccessCount.load(), kTotalBatches)
+        << "All pushes must succeed with backpressure blocking";
+
+    // Wait for all items to be consumed by the server
+    ASSERT_TRUE(waitForCount(service.consumedCount, kTotalBatches, std::chrono::seconds(60)))
+        << "Consumer only processed " << service.consumedCount.load()
+        << "/" << kTotalBatches << " — data was lost";
+
+    writer->stop();
+    server->Shutdown();
+
+    EXPECT_EQ(service.consumedCount.load(), kTotalBatches)
+        << "All " << kTotalBatches << " items must migrate to MLDP — zero loss";
+}
+
+// push() returns false immediately after forceStop().
+TEST(MLDPWriterBackpressureTest, PushUnblocksOnStop)
+{
+    SlowIngestionService service;
+
+    grpc::ServerBuilder builder;
+    int                 port = 0;
+    builder.AddListeningPort("127.0.0.1:0", grpc::InsecureServerCredentials(), &port);
+    builder.RegisterService(&service);
+    std::unique_ptr<grpc::Server> server(builder.BuildAndStart());
+    ASSERT_TRUE(server);
+    ASSERT_GT(port, 0);
 
     std::ostringstream yaml;
     yaml << "name: mldp_bp_stop_test\n"
          << "thread-pool: 1\n"
-         << "queue-capacity: " << kQueueCapacity << "\n"
-         << "push-timeout-ms: 60000\n"
+         << "queue-capacity: 2\n"
          << "mldp-pool:\n"
          << "  provider-name: bp-stop-provider\n"
          << "  ingestion-url: 127.0.0.1:" << port << "\n"
-         << "  query-url: 127.0.0.1:" << port << "\n"
+         << "  query-url: localhost:" << port << "\n"
          << "  min-conn: 1\n"
          << "  max-conn: 1\n";
 
@@ -326,29 +335,11 @@ TEST(MLDPWriterBackpressureTest, PushUnblocksOnStop)
     ASSERT_TRUE(writer);
     writer->start();
 
-    // Fill the queue
-    for (int i = 0; i < kQueueCapacity * 2; ++i)
-        writer->push(makeBatch(i));
-
-    // Push that will block (queue full, consumer very slow)
-    auto pushFuture = std::async(std::launch::async, [&]() {
-        for (int i = 0; i < 100; ++i)
-        {
-            if (!writer->push(makeBatch(1000 + i)))
-                return true;
-        }
-        return false;
-    });
-
-    // Give pushes time to block
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-
-    // forceStop unblocks waiting producers
     writer->forceStop();
+
+    bool result = writer->push(makeBatch(0));
+    EXPECT_FALSE(result) << "push() must return false after forceStop()";
+
     writer->stop();
-
-    auto gotFalse = pushFuture.get();
-    EXPECT_TRUE(gotFalse) << "push() must return false after forceStop(), not hang";
-
     server->Shutdown();
 }

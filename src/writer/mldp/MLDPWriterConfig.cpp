@@ -107,21 +107,5 @@ MLDPWriterConfig MLDPWriterConfig::parse(const Config& mldpNode)
         }
     }
 
-    // Push timeout (backpressure)
-    if (mldpNode.hasChild(MldpPushTimeoutMsKey))
-    {
-        const auto nodes = mldpNode.subConfig(MldpPushTimeoutMsKey);
-        if (!nodes.empty() && nodes.front().raw().has_val())
-        {
-            int val = 0;
-            nodes.front() >> val;
-            if (val < 0)
-            {
-                throw Error(std::string(MldpPushTimeoutMsKey) + " must be >= 0");
-            }
-            cfg.pushTimeout = std::chrono::milliseconds(val);
-        }
-    }
-
     return cfg;
 }

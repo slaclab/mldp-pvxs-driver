@@ -145,6 +145,7 @@ void MLDPWriter::stop() noexcept
     infof(*logger_, "MLDPWriter stopping — {} item(s) pending in queue", pending);
 
     running_.store(false);
+    backpressureCv_.notify_all();
     for (auto& ch : channels_)
     {
         {
@@ -209,25 +210,16 @@ bool MLDPWriter::push(util::bus::IDataBus::EventBatch batch) noexcept
         return false;
     }
 
-    // Backpressure: block until queue has space or timeout expires.
+    // Backpressure: block until queue has space or writer is stopping.
     {
         std::unique_lock lk(backpressureMutex_);
-        if (config_.pushTimeout.count() == 0)
-        {
-            if (queuedItems_.load(std::memory_order_relaxed) >= config_.queueCapacity)
-                return false;
-        }
-        else
-        {
-            bool has_space = backpressureCv_.wait_for(lk, config_.pushTimeout, [this] {
-                return queuedItems_.load(std::memory_order_relaxed) < config_.queueCapacity
-                       || !running_.load();
-            });
-            if (!running_.load())
-                return false;
-            if (!has_space)
-                return false;
-        }
+        backpressureCv_.wait(lk, [this] {
+            return queuedItems_.load(std::memory_order_relaxed) < config_.queueCapacity
+                   || !running_.load()
+                   || forceQuit_.load(std::memory_order_acquire);
+        });
+        if (!running_.load() || forceQuit_.load(std::memory_order_acquire))
+            return false;
     }
 
     auto metadata = std::make_shared<const std::unordered_map<std::string, std::string>>(batch.metadata);
@@ -253,6 +245,17 @@ bool MLDPWriter::push(util::bus::IDataBus::EventBatch batch) noexcept
         enqueued = true;
     }
     updateQueueDepthMetric();
+    if (enqueued)
+    {
+        const auto now = std::chrono::steady_clock::now();
+        std::lock_guard lk(pushLogMutex_);
+        if (now - lastPushLogTime_ >= std::chrono::seconds(10))
+        {
+            lastPushLogTime_ = now;
+            infof(*logger_, "Pushed {} element(s) for source '{}', queue remaining: {}",
+                  ts_mut.frames.size(), rootSourceName, queuedItems_.load(std::memory_order_relaxed));
+        }
+    }
     return enqueued;
 }
 

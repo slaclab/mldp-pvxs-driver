@@ -234,6 +234,25 @@ HDF5BsasGen1Reader::~HDF5BsasGen1Reader()
         worker_.join();
 }
 
+// readFile() — Data flow sequence:
+//
+// 1. Resolve glob → ordered file list.
+// 2. For each file:
+//    a. Open HDF5 read-only, discover datasets (timestamps + data columns).
+//    b. Sort columns: float64 first, then int16.
+//    c. Read in row-chunks (configurable size):
+//       - Read timestamps (sec + nano) via hyperslab.
+//       - Read float64 columns into contiguous column-major buffer.
+//       - Read int16 columns into contiguous column-major buffer.
+//       - Call emitChunk() → push data + end_of_batch marker onto bus.
+//    d. If emitChunk() returns false (stopped or backpressure exhausted),
+//       break immediately — no further data is read or pushed.
+//    e. After all chunks: record per-file metrics (bytes, time, throughput).
+// 3. After all files (or early exit): signalCompleted() notifies downstream.
+//
+// Backpressure: emitChunk() handles retry; this loop never discards data.
+// Fast exit: if running_ becomes false (controller stop), both inner chunk
+// loop and outer file loop terminate without pushing buffered data.
 void HDF5BsasGen1Reader::readFile()
 {
     std::string current_file_name;
@@ -442,8 +461,9 @@ void HDF5BsasGen1Reader::readFile()
                     numRows * 2 * sizeof(uint32_t);
                 file_total_bytes += chunk_bytes;
 
-                emitChunk(sourceName, filePath.string(), timestamps, columns, floatData, intData,
-                          numRows, numFloatCols, numIntCols);
+                if (!emitChunk(sourceName, filePath.string(), timestamps, columns, floatData, intData,
+                               numRows, numFloatCols, numIntCols))
+                    break;
 
                 metric_call(metrics_, [&](auto& m)
                             {
@@ -463,6 +483,9 @@ void HDF5BsasGen1Reader::readFile()
                     lastProgressLog = now;
                 }
             }
+
+            if (!running_)
+                break;
 
             if (chunkIdx > 0)
             {
@@ -518,7 +541,23 @@ void HDF5BsasGen1Reader::readFile()
     signalCompleted();
 }
 
-void HDF5BsasGen1Reader::emitChunk(
+// emitChunk() — Push sequence:
+//
+// 1. Build data batch (all float64 + int16 frames for this chunk).
+// 2. Push data batch onto bus via pushWithRetry():
+//    a. Check running_ — bail immediately if controller stopped us.
+//    b. Attempt bus_->push(). If accepted → done.
+//    c. If rejected (queue full): sleep 10 ms, check running_ again,
+//       rebuild batch, retry once.
+//    d. If retry also fails → return false (caller breaks read loop).
+// 3. Build end_of_batch_group marker.
+// 4. Push marker via same pushWithRetry() logic.
+// 5. Return true only if both pushes succeeded.
+//
+// Guarantee: while running_ is true, data is never discarded — the method
+// waits for space rather than dropping. Only a controller-initiated stop
+// causes an early return without delivery.
+bool HDF5BsasGen1Reader::emitChunk(
     const std::string&                 sourceName,
     const std::string&                 currentFile,
     const std::vector<TimestampEntry>& timestamps,
@@ -529,70 +568,89 @@ void HDF5BsasGen1Reader::emitChunk(
     std::size_t                        numFloatCols,
     std::size_t                        numIntCols)
 {
-    IDataBus::EventBatch batch;
-    batch.reader_name = name();
-    batch.metadata = config_.staticMetadata();
-    batch.metadata.insert(provenance().begin(), provenance().end());
-    batch.metadata["source"] = sourceName;
-    batch.metadata["file"] = currentFile;
-    for (const auto& [k, v] : provenance())
-        batch.metadata["provenance." + k] = v;
-    batch.payload = TimeSeriesPayload{
-        .root_source_name = sourceName,
-        .is_tabular = true};
-
-    auto& tsp = std::get<TimeSeriesPayload>(batch.payload);
-
-    // Emit one frame per float64 column
-    for (std::size_t c = 0; c < numFloatCols; ++c)
+    auto buildDataBatch = [&]()
     {
-        DataBatch frame;
-        frame.timestamps = timestamps;
+        IDataBus::EventBatch batch;
+        batch.reader_name = name();
+        batch.metadata = config_.staticMetadata();
+        batch.metadata.insert(provenance().begin(), provenance().end());
+        batch.metadata["source"] = sourceName;
+        batch.metadata["file"] = currentFile;
+        for (const auto& [k, v] : provenance())
+            batch.metadata["provenance." + k] = v;
+        batch.payload = TimeSeriesPayload{
+            .root_source_name = sourceName,
+            .is_tabular = true};
 
-        DataColumn col;
-        col.name = columns[c].name;
-        col.metadata = columns[c].metadata;
-        std::vector<double> values(numRows);
-        for (std::size_t r = 0; r < numRows; ++r)
-            values[r] = floatData[c * numRows + r];
-        col.values = std::move(values);
-        frame.columns.push_back(std::move(col));
+        auto& tsp = std::get<TimeSeriesPayload>(batch.payload);
 
-        tsp.frames.push_back(std::move(frame));
-    }
+        for (std::size_t c = 0; c < numFloatCols; ++c)
+        {
+            DataBatch frame;
+            frame.timestamps = timestamps;
+            DataColumn col;
+            col.name = columns[c].name;
+            col.metadata = columns[c].metadata;
+            std::vector<double> values(numRows);
+            for (std::size_t r = 0; r < numRows; ++r)
+                values[r] = floatData[c * numRows + r];
+            col.values = std::move(values);
+            frame.columns.push_back(std::move(col));
+            tsp.frames.push_back(std::move(frame));
+        }
 
-    // Emit one frame per int16 column (as int32)
-    for (std::size_t c = 0; c < numIntCols; ++c)
+        for (std::size_t c = 0; c < numIntCols; ++c)
+        {
+            DataBatch frame;
+            frame.timestamps = timestamps;
+            DataColumn col;
+            col.name = columns[numFloatCols + c].name;
+            col.metadata = columns[numFloatCols + c].metadata;
+            std::vector<int32_t> values(numRows);
+            for (std::size_t r = 0; r < numRows; ++r)
+                values[r] = static_cast<int32_t>(intData[c * numRows + r]);
+            col.values = std::move(values);
+            frame.columns.push_back(std::move(col));
+            tsp.frames.push_back(std::move(frame));
+        }
+
+        return batch;
+    };
+
+    auto buildMarker = [&]()
     {
-        DataBatch frame;
-        frame.timestamps = timestamps;
+        IDataBus::EventBatch marker;
+        marker.reader_name = name();
+        marker.metadata.insert(provenance().begin(), provenance().end());
+        marker.metadata["source"] = sourceName;
+        for (const auto& [k, v] : provenance())
+            marker.metadata["provenance." + k] = v;
+        marker.payload = TimeSeriesPayload{
+            .root_source_name = sourceName,
+            .end_of_batch_group = true,
+            .is_tabular = true};
+        return marker;
+    };
 
-        DataColumn col;
-        col.name = columns[numFloatCols + c].name;
-        col.metadata = columns[numFloatCols + c].metadata;
-        std::vector<int32_t> values(numRows);
-        for (std::size_t r = 0; r < numRows; ++r)
-            values[r] = static_cast<int32_t>(intData[c * numRows + r]);
-        col.values = std::move(values);
-        frame.columns.push_back(std::move(col));
+    auto pushWithRetry = [&](auto&& builder) -> bool
+    {
+        if (!running_)
+            return false;
+        auto event = builder();
+        if (bus_->push(std::move(event)))
+            return true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        if (!running_)
+            return false;
+        event = builder();
+        return bus_->push(std::move(event));
+    };
 
-        tsp.frames.push_back(std::move(frame));
-    }
-
-    bus_->push(std::move(batch));
-
-    // Send end_of_batch_group marker
-    IDataBus::EventBatch marker;
-    marker.reader_name = name();
-    marker.metadata.insert(provenance().begin(), provenance().end());
-    marker.metadata["source"] = sourceName;
-    for (const auto& [k, v] : provenance())
-        marker.metadata["provenance." + k] = v;
-    marker.payload = TimeSeriesPayload{
-        .root_source_name = sourceName,
-        .end_of_batch_group = true,
-        .is_tabular = true};
-    bus_->push(std::move(marker));
+    if (!pushWithRetry(buildDataBatch))
+        return false;
+    if (!pushWithRetry(buildMarker))
+        return false;
+    return true;
 }
 
 } // namespace mldp_pvxs_driver::reader::impl::hdf5_bsas_gen1
