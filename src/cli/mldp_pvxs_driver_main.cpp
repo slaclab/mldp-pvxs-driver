@@ -216,6 +216,7 @@ std::string serializeMetricsText(const mldp_pvxs_driver::metrics::Metrics& metri
 
 // Global flags for signal handling
 volatile std::atomic<bool> quit = false;
+volatile std::atomic<bool> force_quit = false;
 volatile std::atomic<bool> metrics_requested = false;
 
 // Global driver instance
@@ -228,7 +229,16 @@ int main(int argc, char** argv)
     // process before we can restore terminal settings.
     const auto exitHandler = [](int)
     {
-        quit = true;
+        if (quit.load())
+        {
+            force_quit = true;
+            if (driver)
+                driver->forceStop();
+        }
+        else
+        {
+            quit = true;
+        }
     };
     std::signal(SIGINT, exitHandler);
     std::signal(SIGTERM, exitHandler);

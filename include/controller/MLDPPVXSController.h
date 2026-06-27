@@ -151,6 +151,7 @@ public:
      * worker completion before returning.
      */
     void stop();
+    void forceStop();
 
     /**
      * @brief Forward a batch of events produced by readers to the configured writers.
@@ -180,6 +181,8 @@ private:
     std::vector<std::shared_ptr<BS::light_thread_pool>>   processor_pools_;   ///< One dedicated 1-thread pool per processor (each algorithm runs isolated).
     std::shared_ptr<metrics::Metrics>                     metrics_;     ///< Shared metrics collector/exposer.
     std::atomic<bool>                                     running_{false};
+    std::atomic<bool>                                     stopping_{false};
+    std::atomic<bool>                                     force_quit_{false};
     std::atomic<bool>                                     stopped_{false};
     mutable std::mutex                                    readers_mutex_; ///< Protects reader lifecycle mutations.
     std::vector<reader::ReaderUPtr>                       readers_;     ///< Owned reader instances.

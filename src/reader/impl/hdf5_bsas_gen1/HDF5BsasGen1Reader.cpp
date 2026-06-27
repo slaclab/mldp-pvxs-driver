@@ -218,6 +218,7 @@ HDF5BsasGen1Reader::HDF5BsasGen1Reader(
     : Reader(std::move(bus), std::move(metrics))
     , config_(cfg)
 {
+    provenance_ = config_.provenance();
     logger_ = util::log::newLogger("hdf5_bsas_gen1_reader");
     running_ = true;
     worker_ = std::thread([this]()
@@ -531,10 +532,11 @@ void HDF5BsasGen1Reader::emitChunk(
     IDataBus::EventBatch batch;
     batch.reader_name = name();
     batch.metadata = config_.staticMetadata();
+    batch.metadata.insert(provenance().begin(), provenance().end());
     batch.metadata["source"] = sourceName;
     batch.metadata["file"] = currentFile;
-    for (const auto& [k, v] : config_.provenance())
-        batch.metadata[k] = v;
+    for (const auto& [k, v] : provenance())
+        batch.metadata["provenance." + k] = v;
     batch.payload = TimeSeriesPayload{
         .root_source_name = sourceName,
         .is_tabular = true};
@@ -582,7 +584,10 @@ void HDF5BsasGen1Reader::emitChunk(
     // Send end_of_batch_group marker
     IDataBus::EventBatch marker;
     marker.reader_name = name();
+    marker.metadata.insert(provenance().begin(), provenance().end());
     marker.metadata["source"] = sourceName;
+    for (const auto& [k, v] : provenance())
+        marker.metadata["provenance." + k] = v;
     marker.payload = TimeSeriesPayload{
         .root_source_name = sourceName,
         .end_of_batch_group = true,

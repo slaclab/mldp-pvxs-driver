@@ -385,8 +385,8 @@ TEST_F(HDF5BsasGen1ReaderTest, MatlabStyleDatasetNamesArePreserved)
         "ACCL_IN20_300_L0A_ACUSBR",
         "ACCL_IN20_300_L0A_PCUSBR",
         "TORO_IN20_791_TMITCUSBR",
-        "WIRE_IN20_561_POSNCUSBR",
         "DUMP_LI21_305_TGT_STS",
+        "WIRE_IN20_561_POSNCUSBR",
     };
 
     auto bus = std::make_shared<MockDataBus>();

@@ -164,6 +164,13 @@ void MLDPWriter::stop() noexcept
     infof(*logger_, "MLDPWriter stopped — all queues drained");
 }
 
+void MLDPWriter::forceStop() noexcept
+{
+    forceQuit_.store(true, std::memory_order_release);
+    for (auto& ch : channels_)
+        ch->cv.notify_one();
+}
+
 bool MLDPWriter::isHealthy() const noexcept
 {
     return running_.load();
@@ -437,8 +444,12 @@ void MLDPWriter::workerLoop(std::size_t workerIndex)
             std::unique_lock lk(ch.mutex);
             ch.cv.wait_for(lk, dequeueTimeout, [&]
                            {
-                               return !ch.items.empty() || ch.shutdown;
+                               return !ch.items.empty() || ch.shutdown || forceQuit_.load(std::memory_order_relaxed);
                            });
+            if (forceQuit_.load(std::memory_order_relaxed))
+            {
+                break;
+            }
             if (ch.shutdown && ch.items.empty())
             {
                 break;

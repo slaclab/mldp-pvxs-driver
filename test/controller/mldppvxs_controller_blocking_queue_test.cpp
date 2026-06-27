@@ -288,6 +288,8 @@ TEST_F(MLDPPVXSControllerBlockingQueueTest, PushDropsOnTimeout)
     EXPECT_GT(failures, 0) << "Expected some pushes to be dropped due to timeout";
     EXPECT_GT(successes, 0) << "Expected some pushes to succeed";
 
+    controller->stop();
+
     auto received = mldp_pvxs_driver::writer::TestQueueCaptureWriter::receivedCount();
     EXPECT_EQ(received, static_cast<std::size_t>(successes))
         << "Writer should receive exactly the number of accepted pushes";
@@ -312,4 +314,35 @@ TEST_F(MLDPPVXSControllerBlockingQueueTest, PushReturnsFalseAfterStop)
 
     int failures = mldp_pvxs_driver::reader::TestQueueReader::pushFailCount().load();
     EXPECT_GT(failures, 0) << "Pushes after stop should return false";
+}
+
+TEST_F(MLDPPVXSControllerBlockingQueueTest, ForceStopTerminatesWithoutDrain)
+{
+    constexpr int batch_count = 50;
+    constexpr int writer_delay_ms = 100;
+
+    auto controller = MLDPPVXSController::create(makeConfigFromYaml(makeQueueTestYaml(
+        R"yaml(
+  - test-queue:
+      - name: slow-drain-reader
+        batch-count: 50
+        delay-between-ms: 0
+        complete: false
+)yaml",
+        4096, 5000, writer_delay_ms)));
+
+    controller->start();
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+    auto before_force = std::chrono::steady_clock::now();
+    controller->forceStop();
+    controller->stop();
+    auto elapsed = std::chrono::steady_clock::now() - before_force;
+
+    auto received = mldp_pvxs_driver::writer::TestQueueCaptureWriter::receivedCount();
+    EXPECT_LT(received, static_cast<std::size_t>(batch_count))
+        << "forceStop should discard queued items, not drain all " << batch_count;
+
+    EXPECT_LT(elapsed, std::chrono::milliseconds(2000))
+        << "forceStop+stop should return quickly without draining";
 }

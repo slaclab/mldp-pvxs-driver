@@ -77,6 +77,14 @@ public:
     virtual void stop() noexcept = 0;
 
     /**
+     * @brief Force-stop the writer, discarding any queued work immediately.
+     *
+     * Called on a second SIGINT/SIGTERM during graceful shutdown. Default
+     * implementation delegates to stop(); override to discard queued items.
+     */
+    virtual void forceStop() noexcept { stop(); }
+
+    /**
      * @brief Optional health probe.
      *
      * @return true (default) — healthy; override to expose deeper state.

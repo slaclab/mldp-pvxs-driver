@@ -72,6 +72,7 @@ public:
     void start() override;
     bool push(util::bus::IDataBus::EventBatch batch) noexcept override;
     void stop() noexcept override;
+    void forceStop() noexcept override;
     bool isHealthy() const noexcept override;
 
     bool acceptsPayload(const util::bus::BatchPayload& payload) const noexcept override
@@ -117,6 +118,7 @@ private:
     std::atomic<std::size_t>                                          nextChannel_{0};
     std::atomic<std::size_t>                                          queuedItems_{0};
     std::atomic<bool>                                                 running_{false};
+    std::atomic<bool>                                                 forceQuit_{false};
 
     /// Last EPICS event timestamp per source, used for inter-arrival Bps gauge.
     std::mutex                              lastEventTimeMutex_;

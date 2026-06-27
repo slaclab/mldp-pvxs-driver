@@ -338,12 +338,14 @@ void MLDPPVXSController::start()
 
 void MLDPPVXSController::stop()
 {
-    if (!running_.exchange(false))
+    if (stopping_.exchange(true))
     {
         while (!stopped_.load())
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         return;
     }
+
+    running_.store(false);
     infof(*logger_, "Controller is stopping");
 
     {
@@ -377,6 +379,20 @@ void MLDPPVXSController::stop()
 
     infof(*logger_, "Controller stopped");
     stopped_.store(true);
+}
+
+void MLDPPVXSController::forceStop()
+{
+    force_quit_.store(true, std::memory_order_release);
+    running_.store(false, std::memory_order_release);
+    {
+        std::lock_guard<std::mutex> lk(queue_mutex_);
+        queue_.clear();
+    }
+    queue_not_full_.notify_all();
+    queue_not_empty_.notify_all();
+    for (auto& w : writers_)
+        w->forceStop();
 }
 
 void MLDPPVXSController::onReaderCompleted(const std::string& reader_name)
@@ -539,6 +555,8 @@ void MLDPPVXSController::consumerLoop()
 
         for (auto& batch : local)
         {
+            if (force_quit_.load())
+                break;
             dispatchToWriters(std::move(batch));
         }
     }
