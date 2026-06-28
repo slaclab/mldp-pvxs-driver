@@ -92,6 +92,7 @@ Metrics::Metrics(const MetricsConfig& config, std::string controller_name)
     processor_compute_errors_family_ = &makeCounterFamily(*registry_, "mldp_pvxs_driver_processor_compute_errors_total", "Number of processor compute() calls that threw an exception.", clabels);
     processor_snapshot_misses_family_ = &makeCounterFamily(*registry_, "mldp_pvxs_driver_processor_snapshot_misses_total", "Number of trySnapshot() calls that returned no snapshot (sources not yet aligned).", clabels);
     // Writer metrics
+    writer_queue_depth_family_ = &makeGaugeFamily(*registry_, "mldp_pvxs_driver_writer_queue_depth", "Number of items queued across all worker channels in a writer instance.", clabels);
     writer_push_family_ = &makeCounterFamily(*registry_, "mldp_pvxs_driver_writer_push_total", "Number of events/requests pushed by MLDP writers.", clabels);
     writer_failure_family_ = &makeCounterFamily(*registry_, "mldp_pvxs_driver_writer_failure_total", "Number of push/write failures reported by MLDP writers.", clabels);
     writer_payload_bytes_family_ = &makeCounterFamily(*registry_, "mldp_pvxs_driver_writer_payload_bytes_total", "Total protobuf payload bytes written to the MLDP ingestion stream.", clabels);
@@ -439,6 +440,11 @@ void Metrics::incrementProcessorComputeErrors(double value, prometheus::Labels t
 void Metrics::incrementProcessorSnapshotMisses(double value, prometheus::Labels tags)
 {
     processor_snapshot_misses_family_->Add(std::move(tags)).Increment(value);
+}
+
+void Metrics::setWriterQueueDepth(double value, prometheus::Labels tags)
+{
+    writer_queue_depth_family_->Add(std::move(tags)).Set(value);
 }
 
 void Metrics::incrementWriterPushes(double value, prometheus::Labels tags)

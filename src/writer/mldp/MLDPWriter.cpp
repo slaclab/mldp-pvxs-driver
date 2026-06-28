@@ -210,18 +210,6 @@ bool MLDPWriter::push(util::bus::IDataBus::EventBatch batch) noexcept
         return false;
     }
 
-    // Backpressure: block until queue has space or writer is stopping.
-    {
-        std::unique_lock lk(backpressureMutex_);
-        backpressureCv_.wait(lk, [this] {
-            return queuedItems_.load(std::memory_order_relaxed) < config_.queueCapacity
-                   || !running_.load()
-                   || forceQuit_.load(std::memory_order_acquire);
-        });
-        if (!running_.load() || forceQuit_.load(std::memory_order_acquire))
-            return false;
-    }
-
     auto metadata = std::make_shared<const std::unordered_map<std::string, std::string>>(batch.metadata);
     bool enqueued = false;
     for (auto& frame : ts_mut.frames)
@@ -234,6 +222,19 @@ bool MLDPWriter::push(util::bus::IDataBus::EventBatch batch) noexcept
                         });
             continue;
         }
+
+        // Per-frame backpressure: block until queue has space or writer is stopping.
+        {
+            std::unique_lock lk(backpressureMutex_);
+            backpressureCv_.wait(lk, [this] {
+                return queuedItems_.load(std::memory_order_relaxed) < config_.queueCapacity
+                       || !running_.load()
+                       || forceQuit_.load(std::memory_order_acquire);
+            });
+            if (!running_.load() || forceQuit_.load(std::memory_order_acquire))
+                return enqueued;
+        }
+
         const auto idx = nextChannel_.fetch_add(1, std::memory_order_relaxed) % channels_.size();
         QueueItem  item{rootSourceName, metadata, std::move(frame)};
         {
@@ -252,7 +253,7 @@ bool MLDPWriter::push(util::bus::IDataBus::EventBatch batch) noexcept
         if (now - lastPushLogTime_ >= std::chrono::seconds(10))
         {
             lastPushLogTime_ = now;
-            infof(*logger_, "Pushed {} element(s) for source '{}', queue remaining: {}",
+            infof(*logger_, "Pushed {} element(s) for source '{}', queue depth: {}",
                   ts_mut.frames.size(), rootSourceName, queuedItems_.load(std::memory_order_relaxed));
         }
     }
@@ -981,6 +982,6 @@ void MLDPWriter::updateQueueDepthMetric()
     const double depth = static_cast<double>(queuedItems_.load(std::memory_order_relaxed));
     metric_call(metrics_, [&](auto& m)
                 {
-                    m.setControllerQueueDepth(depth);
+                    m.setWriterQueueDepth(depth, {{"writer", config_.name}});
                 });
 }

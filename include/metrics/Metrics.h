@@ -97,6 +97,7 @@ public:
     void incrementProcessorSnapshotMisses(double value = 1.0, prometheus::Labels tags = {});
 
     // Writer metrics ---------------------------------------------------------
+    void   setWriterQueueDepth(double value, prometheus::Labels tags = {});
     void   incrementWriterPushes(double value = 1.0, prometheus::Labels tags = {});
     void   incrementWriterFailures(double value = 1.0, prometheus::Labels tags = {});
     void   incrementWriterPayloadBytes(double value, prometheus::Labels tags = {});
@@ -144,6 +145,7 @@ private:
     prometheus::Family<prometheus::Counter>*   processor_compute_errors_family_{nullptr};
     prometheus::Family<prometheus::Counter>*   processor_snapshot_misses_family_{nullptr};
 
+    prometheus::Family<prometheus::Gauge>*   writer_queue_depth_family_{nullptr};
     prometheus::Family<prometheus::Counter>* writer_push_family_{nullptr};
     prometheus::Family<prometheus::Counter>* writer_failure_family_{nullptr};
     prometheus::Family<prometheus::Counter>* writer_payload_bytes_family_{nullptr};
