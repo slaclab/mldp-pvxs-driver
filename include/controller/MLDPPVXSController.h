@@ -200,6 +200,9 @@ private:
     std::mutex                                            queue_log_mutex_;
     std::chrono::steady_clock::time_point                 last_queue_log_time_{};
 
+    std::mutex                                            push_log_mutex_;
+    std::chrono::steady_clock::time_point                 last_push_log_time_{};
+
     explicit MLDPPVXSController(const config::Config& config);
     bool removeCompletedReader(const std::string& reader_name);
     void consumerLoop();

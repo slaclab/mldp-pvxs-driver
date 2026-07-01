@@ -532,8 +532,16 @@ bool MLDPPVXSController::push(EventBatch batch_values)
         const std::size_t depthAfter = queue_.size();
         if (metrics_)
             metrics_->setControllerQueueDepth(static_cast<double>(depthAfter));
-        debugf(*logger_, "push() accepted — queue depth {}/{} source '{}'",
-               depthAfter, config_.queueCapacity(), rootSource);
+        {
+            const auto now = std::chrono::steady_clock::now();
+            std::lock_guard<std::mutex> plk(push_log_mutex_);
+            if (now - last_push_log_time_ >= std::chrono::seconds(10))
+            {
+                last_push_log_time_ = now;
+                debugf(*logger_, "push() accepted — queue depth {}/{} source '{}'",
+                       depthAfter, config_.queueCapacity(), rootSource);
+            }
+        }
     }
     queue_not_empty_.notify_one();
     return true;
