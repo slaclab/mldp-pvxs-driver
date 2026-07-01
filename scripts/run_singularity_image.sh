@@ -2,7 +2,13 @@
 # run_singularity_image.sh — Run a command inside the MLDP PVXS Driver Singularity image.
 #
 # Usage:
-#   ./scripts/run_singularity_image.sh <image.sif> [workdir] [-- command args...]
+#   ./scripts/run_singularity_image.sh [-b SRC[:DST[:OPTS]]]... <image.sif> [workdir] [-- command args...]
+#
+# Options:
+#   -b, --bind SRC[:DST[:OPTS]]   Extra host path to bind-mount. Repeatable.
+#                                 Passed verbatim to the runner's --bind flag,
+#                                 so Singularity's src, src:dst, and src:dst:ro
+#                                 forms are supported.
 #
 # Arguments:
 #   image.sif   Path to the Singularity/Apptainer .sif image  (required)
@@ -16,6 +22,10 @@
 #
 #   # Interactive shell, explicit workdir
 #   ./scripts/run_singularity_image.sh mldp-pvxs-driver-env.sif /path/to/source
+#
+#   # Interactive shell with two extra host paths mounted
+#   ./scripts/run_singularity_image.sh -b /tmp/data:/data -b /opt/tools:/tools \
+#     mldp-pvxs-driver-env.sif /path/to/source
 #
 #   # Build the driver
 #   ./scripts/run_singularity_image.sh mldp-pvxs-driver-env.sif /path/to/source -- \
@@ -31,9 +41,26 @@
 
 set -euo pipefail
 
+# ---- Parse optional flags ---------------------------------------------------
+EXTRA_BINDS=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -b|--bind)
+            if [[ $# -lt 2 ]]; then
+                echo "error: $1 requires a value" >&2; exit 1
+            fi
+            EXTRA_BINDS+=("$2"); shift 2 ;;
+        --bind=*)
+            EXTRA_BINDS+=("${1#--bind=}"); shift ;;
+        -h|--help)
+            sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        *) break ;;
+    esac
+done
+
 # ---- Parse positional args before -- ----------------------------------------
 if [[ $# -lt 1 ]]; then
-    echo "Usage: $(basename "$0") <image.sif> [workdir] [-- command...]" >&2
+    echo "Usage: $(basename "$0") [-b SRC[:DST[:OPTS]]]... <image.sif> [workdir] [-- command...]" >&2
     exit 1
 fi
 
@@ -57,6 +84,13 @@ if [[ ! -d "$WORKDIR" ]]; then
     echo "error: workdir not found: $WORKDIR" >&2; exit 1
 fi
 
+for b in "${EXTRA_BINDS[@]}"; do
+    src="${b%%:*}"
+    if [[ ! -e "$src" ]]; then
+        echo "error: bind source not found: $src (from --bind $b)" >&2; exit 1
+    fi
+done
+
 # ---- Detect apptainer / singularity -----------------------------------------
 if command -v apptainer >/dev/null 2>&1; then
     RUNNER=apptainer
@@ -70,13 +104,22 @@ WORKDIR="$(cd "$WORKDIR" && pwd)"  # absolute path
 
 echo "Image   : $IMAGE"
 echo "Workdir : $WORKDIR -> /workspace"
+for b in "${EXTRA_BINDS[@]}"; do
+    echo "Bind    : $b"
+done
 echo "Runner  : $RUNNER"
 echo ""
+
+# ---- Assemble bind args -----------------------------------------------------
+BIND_ARGS=(--bind "${WORKDIR}:/workspace")
+for b in "${EXTRA_BINDS[@]}"; do
+    BIND_ARGS+=(--bind "$b")
+done
 
 # ---- Run --------------------------------------------------------------------
 if [[ $# -eq 0 ]]; then
     # Interactive shell
-    exec "${RUNNER}" run --bind "${WORKDIR}":/workspace "${IMAGE}"
+    exec "${RUNNER}" run "${BIND_ARGS[@]}" "${IMAGE}"
 else
-    exec "${RUNNER}" run --bind "${WORKDIR}":/workspace "${IMAGE}" "$@"
+    exec "${RUNNER}" run "${BIND_ARGS[@]}" "${IMAGE}" "$@"
 fi
