@@ -122,3 +122,68 @@ All 8 ingestion pool connections in use throughout — pool fully saturated, no 
 2. **Memory spike is transient but large.** 35 GB peak from a 72 MB/s burst lasting ~7 min. Worth investigating if this is unbounded buffering or expected HDF5 read-ahead.
 3. **Clean drain.** Both queues reach 0 by run end — no data loss signal.
 4. **Send latency is bimodal.** p90 ≤ 1 ms but p99 ≤ 500 ms — occasional long waits match backpressure episodes.
+
+---
+
+## Where Is the Bottleneck: MongoDB or MLDP Middle Layer?
+
+### Evidence Summary
+
+| Signal | Value | Layer |
+|--------|-------|-------|
+| Writer queue at max depth | 99% of run | pvxs-driver writer |
+| Reader peak throughput | 72 MB/s (burst) | HDF5 reader |
+| Reader avg throughput (active) | ~24 MB/s | HDF5 reader |
+| Effective writer throughput | ~KB/s vs reader ~MB/s | gRPC → MLDP ingest |
+| Connection pool (ingestion) | 8/8 in use, 0 available | MLDP ingest server |
+| MongoDB write avg latency (prod mongos) | **2.9 ms** | MongoDB |
+| MongoDB WiredTiger dirty % | <0.05% all shards | MongoDB |
+
+### Verdict: MLDP Ingest Server Is the Bottleneck, Not MongoDB
+
+1. **Reader burst rate (72 MB/s) far exceeds writer drain rate.** The gap between reader throughput and effective writer throughput is the defining observation. MongoDB write latency at 2.9 ms would support roughly 280 ops/s per connection × 8 connections = ~2,240 ops/s — the MLDP ingest server's gRPC accept rate, not MongoDB's storage speed, limits how fast those ops arrive.
+
+2. **Both queues saturate simultaneously.** Controller queue (before the writer) and writer queue (before gRPC send) both hit their ceiling. If MongoDB were slow, only the writer queue would fill; the controller would stay clear. Equal saturation means the gRPC send layer is the constraint.
+
+3. **Writer throughput reported as KB/s while reader runs at MB/s.** The ~1,000× throughput gap is the MLDP ingest server's batch-acceptance rate, not a storage write speed. MongoDB writing ~2.9 ms per op is fast; the server is not accepting batches fast enough.
+
+4. **All 8 pool connections occupied with 0 available throughout.** Connection pool ceiling is reached. More connections would allow more concurrent gRPC streams and directly raise throughput.
+
+5. **MongoDB state is healthy.** WiredTiger cache 77–80% fill (below the 80% eviction trigger), dirty pages <0.05%, zero application-thread eviction stalls, replication lag 0 on 5/6 shards. None of the MongoDB degradation signatures are present.
+
+### What MongoDB Would Look Like If It Were the Bottleneck
+
+- mongos write latency would spike beyond 10–20 ms average.
+- WiredTiger dirty page % would climb toward 20% (dirty eviction trigger).
+- `application thread time evicting` counter would be non-zero and growing.
+- Writer queue would be full; controller queue would not — the controller could push into the writer faster than MongoDB drained it.
+
+None of these conditions are present.
+
+### MongoDB Risks (Not Today's Bottleneck, But Upcoming)
+
+| Risk | Current State | Trigger Condition |
+|------|--------------|-------------------|
+| WiredTiger cache eviction stalls | 77–80% fill (threshold: 80%) | Continued ingestion growth or larger working set |
+| Chunk imbalance write hot-spot | rs1: 6/20 chunks (30%); rs4: 1/20 | Balancer converging post-shard-expansion; monitor 48 h |
+| rs4 secondary lag | 10 s | If lag grows → failover risk on rs4 |
+
+### Recommended Actions
+
+#### Immediate — MLDP Ingest Server (unlocks throughput now)
+
+| Action | Expected gain |
+|--------|--------------|
+| Scale `dp-ingestion` replicas beyond 4 | More server-side gRPC capacity |
+| Increase `max-conn` in pvxs-driver pool (8 → 16+) | Linear throughput increase until next bottleneck |
+| Tune gRPC `max-connection-age` / keepalive on dp-ingestion | Reduces GOAWAY / reconnect overhead |
+| Increase pvxs-driver `thread-pool` | More concurrent workers draining the controller queue |
+
+#### Near-term — MongoDB (prevent future degradation)
+
+| Action | Why |
+|--------|-----|
+| Increase `wiredTigerCacheSizeGB` (7.46 GB → 10–12 GB per pod) | Prevents eviction stalls as 31 GB working set keeps growing |
+| Add TTL index on `dp.buckets.createdAt` | Bounds working set; stabilises cache fill long-term |
+| Monitor chunk balancer over next 48 h; manually `moveChunk` if rs1 still holds >4 chunks | Removes write hot-spot on rs1 |
+| Investigate rs1 unsharded collection (1.34 M objects, 4.3 KB avg vs 27.5 KB elsewhere) | May consume rs1 cache and index memory unnecessarily |
