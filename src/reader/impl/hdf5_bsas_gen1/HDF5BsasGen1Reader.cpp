@@ -62,13 +62,11 @@
 #include <string>
 #include <vector>
 
-namespace mldp_pvxs_driver::reader::impl::hdf5_bsas_gen1 {
-
-using namespace util::bus;
+using namespace mldp_pvxs_driver::reader::impl::hdf5_bsas_gen1;
+using namespace mldp_pvxs_driver::util::fsutil;
+using namespace mldp_pvxs_driver::util::bus;
 
 namespace {
-
-    using mldp_pvxs_driver::util::fsutil::FSUtil;
 
     bool isContinuationByte(unsigned char byte)
     {
@@ -209,6 +207,39 @@ namespace {
         return result;
     }
 
+    // Natural-order comparison for filesystem paths: numeric segments compared
+    // as integers so 2026/3 < 2026/4 < 2026/10 instead of lexicographic order.
+    bool naturalLess(const std::filesystem::path& a, const std::filesystem::path& b)
+    {
+        const std::string sa = a.string();
+        const std::string sb = b.string();
+        std::size_t i = 0, j = 0;
+        while (i < sa.size() && j < sb.size())
+        {
+            if (std::isdigit(static_cast<unsigned char>(sa[i])) &&
+                std::isdigit(static_cast<unsigned char>(sb[j])))
+            {
+                std::size_t ni = i, nj = j;
+                while (ni < sa.size() && std::isdigit(static_cast<unsigned char>(sa[ni]))) ++ni;
+                while (nj < sb.size() && std::isdigit(static_cast<unsigned char>(sb[nj]))) ++nj;
+                const long long va = std::stoll(sa.substr(i, ni - i));
+                const long long vb = std::stoll(sb.substr(j, nj - j));
+                if (va != vb)
+                    return va < vb;
+                i = ni;
+                j = nj;
+            }
+            else
+            {
+                if (sa[i] != sb[j])
+                    return sa[i] < sb[j];
+                ++i;
+                ++j;
+            }
+        }
+        return sa.size() < sb.size();
+    }
+
 } // anonymous namespace
 
 HDF5BsasGen1Reader::HDF5BsasGen1Reader(
@@ -259,12 +290,16 @@ void HDF5BsasGen1Reader::readFile()
     try
     {
         // --- Phase 1: Glob resolution ---
-        // Expand file_path pattern to ordered list of matching HDF5 files.
-        const auto files = FSUtil::findFilesByGlob(config_.filePath());
-        if (files.empty())
+        // Expand file_path pattern then natural-sort so numeric path segments
+        // (year/month/day) compare as integers: 2026/4 < 2026/10.
+        const auto rawFiles = FSUtil::findFilesByGlob(config_.filePath());
+        if (rawFiles.empty())
         {
             throw std::runtime_error("no files matched configured file-path: " + config_.filePath());
         }
+
+        std::vector<std::filesystem::path> files(rawFiles.begin(), rawFiles.end());
+        std::sort(files.begin(), files.end(), naturalLess);
 
         logger_->log(util::log::Level::Debug,
                      "readFile: matched " + std::to_string(files.size()) + " file(s) for " +
@@ -675,5 +710,3 @@ bool HDF5BsasGen1Reader::emitChunk(
         return false;
     return true;
 }
-
-} // namespace mldp_pvxs_driver::reader::impl::hdf5_bsas_gen1
