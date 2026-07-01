@@ -35,22 +35,22 @@ HDF5WriterPerSource::HDF5WriterPerSource(const config::Config&             node,
 
 HDF5WriterPerSource::~HDF5WriterPerSource()
 {
-    if (!stopping_.load())
+    if (!stopped_.load())
         stop();
 }
 
 // ---------------------------------------------------------------------------
-// doStart / doStop / doFlushAll
+// onHDF5Start / onHDF5Stop / doFlushAll
 // ---------------------------------------------------------------------------
 
-void HDF5WriterPerSource::doStart()
+void HDF5WriterPerSource::onHDF5Start()
 {
     pool_ = std::make_unique<HDF5FilePool>(config_);
     if (writerMetrics_)
         pool_->setMetrics(writerMetrics_.get());
 }
 
-void HDF5WriterPerSource::doStop() noexcept
+void HDF5WriterPerSource::onHDF5Stop() noexcept
 {
     if (pool_)
     {

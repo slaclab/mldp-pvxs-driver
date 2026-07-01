@@ -16,8 +16,8 @@
 #include <pool/MLDPGrpcAnnotationPoolConfig.h>
 #include <util/log/Logger.h>
 
+#include <algorithm>
 #include <chrono>
-#include <thread>
 
 using namespace mldp_pvxs_driver::writer;
 using namespace mldp_pvxs_driver::util::log;
@@ -29,129 +29,71 @@ using namespace mldp_pvxs_driver::metrics;
 // Construction / destruction
 // ---------------------------------------------------------------------------
 
-MLDPPVMetadataWriter::MLDPPVMetadataWriter(const config::Config&             root,
-                                           std::shared_ptr<metrics::Metrics> metrics)
-    : config_(MLDPPVMetadataWriterConfig::parse(root))
-    , metrics_(std::move(metrics))
-    , logger_(newLogger("pv_metadata_writer:" + config_.name))
-{
-}
-
 MLDPPVMetadataWriter::~MLDPPVMetadataWriter()
 {
-    if (running_.load())
-    {
-        stop();
-    }
+    stop();
+}
+
+MLDPPVMetadataWriter::MLDPPVMetadataWriter(const config::Config&             root,
+                                           std::shared_ptr<metrics::Metrics> metrics)
+    : MLDPPVMetadataWriter(MLDPPVMetadataWriterConfig::parse(root), std::move(metrics))
+{
+}
+
+MLDPPVMetadataWriter::MLDPPVMetadataWriter(MLDPPVMetadataWriterConfig        config,
+                                           std::shared_ptr<metrics::Metrics> metrics)
+    : BaseQueuedWriter<WorkItem>(
+          QueueConfig{1000, std::max(1, config.threadPool), 0},
+          "mldp-pv-metadata:" + config.name,
+          newLogger("pv_metadata_writer:" + config.name))
+    , config_(std::move(config))
+    , metrics_(std::move(metrics))
+{
 }
 
 // ---------------------------------------------------------------------------
-// IWriter lifecycle
+// BaseQueuedWriter hooks
 // ---------------------------------------------------------------------------
 
-void MLDPPVMetadataWriter::start()
+void MLDPPVMetadataWriter::doStart()
 {
-    if (running_.load())
-    {
-        warnf(*logger_, "MLDPPVMetadataWriter '{}' already started", config_.name);
-        return;
-    }
-
     pool_ = MLDPGrpcAnnotationPool::create(config_.poolConfig, metrics_);
-    stop_.store(false);
-    running_.store(true);
-
-    const int count = std::max(1, config_.threadPool);
-    workers_.reserve(static_cast<std::size_t>(count));
-    for (int i = 0; i < count; ++i)
-    {
-        workers_.emplace_back([this]
-                              {
-                                  workerLoop();
-                              });
-    }
-
-    infof(*logger_, "MLDPPVMetadataWriter '{}' started ({} workers)",
-          config_.name, count);
+    infof(logger(), "MLDPPVMetadataWriter '{}' pool ready", config_.name);
 }
 
-void MLDPPVMetadataWriter::stop() noexcept
+void MLDPPVMetadataWriter::doStop() noexcept
 {
-    tracef(*logger_, "MLDPPVMetadataWriter '{}' [tid={}]: signaling {} workers to stop", config_.name, std::this_thread::get_id(), workers_.size());
-    stop_.store(true);
-    queue_cv_.notify_all();
-    for (std::size_t i = 0; i < workers_.size(); ++i)
-    {
-        if (workers_[i].joinable())
-        {
-            tracef(*logger_, "MLDPPVMetadataWriter '{}' [tid={}]: joining worker {}", config_.name, std::this_thread::get_id(), i);
-            workers_[i].join();
-            tracef(*logger_, "MLDPPVMetadataWriter '{}' [tid={}]: worker {} joined", config_.name, std::this_thread::get_id(), i);
-        }
-    }
-    workers_.clear();
-    running_.store(false);
-    infof(*logger_, "MLDPPVMetadataWriter '{}' stopped", config_.name);
+    pool_.reset();
+    infof(logger(), "MLDPPVMetadataWriter '{}' stopped", config_.name);
 }
 
-// ---------------------------------------------------------------------------
-// push
-// ---------------------------------------------------------------------------
-
-bool MLDPPVMetadataWriter::push(IDataBus::EventBatch batch) noexcept
+std::vector<MLDPPVMetadataWriter::WorkItem>
+MLDPPVMetadataWriter::toItems(IDataBus::EventBatch& batch)
 {
     const auto* meta = std::get_if<SourceMetadataPayload>(&batch.payload);
     if (!meta)
     {
-        tracef(*logger_, "MLDPPVMetadataWriter '{}' discarding non-metadata payload from '{}'",
+        tracef(logger(), "MLDPPVMetadataWriter '{}' discarding non-metadata payload from '{}'",
                config_.name, batch.reader_name);
-        return true;
+        return {};
     }
+
+    std::vector<WorkItem> items;
+    items.reserve(meta->sources.size());
+    for (const auto& [sourceName, entry] : meta->sources)
     {
-        std::lock_guard<std::mutex> lock(queue_mutex_);
-        for (const auto& [sourceName, entry] : meta->sources)
-        {
-            tracef(*logger_, "MLDPPVMetadataWriter '{}' enqueuing '{}' ({} attrs)",
-                   config_.name, sourceName, entry.attributes.size());
-            work_queue_.push({sourceName, entry});
-        }
+        tracef(logger(), "MLDPPVMetadataWriter '{}' enqueuing '{}' ({} attrs)",
+               config_.name, sourceName, entry.attributes.size());
+        items.emplace_back(sourceName, entry);
     }
-    queue_cv_.notify_all();
-    return true;
+    return items;
 }
 
-// ---------------------------------------------------------------------------
-// workerLoop
-// ---------------------------------------------------------------------------
-
-void MLDPPVMetadataWriter::workerLoop()
+void MLDPPVMetadataWriter::processItem(std::size_t /*workerIndex*/, WorkItem item)
 {
-    tracef(*logger_, "MLDPPVMetadataWriter '{}' worker started [tid={}]",
-           config_.name, std::this_thread::get_id());
-    while (true)
-    {
-        std::unique_lock<std::mutex> lock(queue_mutex_);
-        queue_cv_.wait(lock, [this]
-                       {
-                           return stop_.load() || !work_queue_.empty();
-                       });
-
-        if (work_queue_.empty())
-        {
-            tracef(*logger_, "MLDPPVMetadataWriter '{}' worker exiting (stop requested, queue empty) [tid={}]",
-                   config_.name, std::this_thread::get_id());
-            return;
-        }
-
-        WorkItem item = std::move(work_queue_.front());
-        work_queue_.pop();
-        lock.unlock();
-
-        tracef(*logger_, "MLDPPVMetadataWriter '{}' worker saving '{}' ({} attrs) [tid={}]",
-               config_.name, item.source_name, item.entry.attributes.size(),
-               std::this_thread::get_id());
-        saveSourceMetadata(item.source_name, item.entry);
-    }
+    tracef(logger(), "MLDPPVMetadataWriter '{}' worker saving '{}' ({} attrs)",
+           config_.name, item.first, item.second.attributes.size());
+    saveSourceMetadata(item.first, item.second);
 }
 
 // ---------------------------------------------------------------------------
@@ -209,7 +151,7 @@ void MLDPPVMetadataWriter::saveSourceMetadata(const std::string&         sourceN
         const auto status = handle->stub->savePvMetadata(&ctx, req, &resp);
         if (!status.ok())
         {
-            errorf(*logger_,
+            errorf(logger(),
                    "MLDPPVMetadataWriter savePvMetadata '{}': gRPC error {}: {}",
                    sourceName,
                    static_cast<int>(status.error_code()),
@@ -225,7 +167,7 @@ void MLDPPVMetadataWriter::saveSourceMetadata(const std::string&         sourceN
     }
     catch (const std::exception& ex)
     {
-        errorf(*logger_,
+        errorf(logger(),
                "MLDPPVMetadataWriter saveSourceMetadata '{}' exception: {}",
                sourceName, ex.what());
         metric_call(metrics_, [&](auto& m) {

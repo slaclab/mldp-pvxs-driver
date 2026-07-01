@@ -40,6 +40,36 @@ public:
 - `start()` and `stop()` are single-owner lifecycle operations.
 - `push()` returns `false` when applying back-pressure or dropping a batch.
 
+## BaseQueuedWriter — Shared Queue and Back-Pressure
+
+All production writers inherit `BaseQueuedWriter<Item>` (`include/writer/BaseQueuedWriter.h`) rather than implementing their own queues. This base class provides:
+
+- **Bounded MPSC queue** — items are distributed round-robin across per-worker channels (deque + mutex + CV each).
+- **Back-pressure** — `push()` blocks the caller when total queued items reaches `queue_capacity`. It returns `false` only when the writer is stopping (`stop()` / `forceStop()` called). Data is **never silently dropped**.
+- **Thread pool** — `BS::light_thread_pool` with `worker_count` threads; each thread runs the base `workerLoop`, which dequeues items and calls the subclass `processItem()` hook.
+- **Lifecycle finalisation** — `start()` and `stop()` are `final`; subclasses hook in via `doStart()` / `doStop()`.
+
+### Template hooks
+
+| Hook | Called by | Contract |
+|------|-----------|----------|
+| `toItems(EventBatch&)` | `push()` on caller thread | Convert one batch → zero or more `Item`s. Return empty to silently drop. |
+| `processItem(workerIndex, Item)` | Worker thread | Consume one item. Must not throw (exceptions are caught and logged). |
+| `doStart()` | `start()`, after threads are up | Allocate connections, pools, etc. |
+| `doStop()` | `stop()`, after threads join | Release connections, pools, etc. |
+
+### Configuration
+
+Passed via `BaseQueuedWriter::QueueConfig` from the subclass constructor:
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `queue_capacity` | 200 | Max queued items before `push()` blocks. |
+| `worker_count` | 8 | Number of worker threads. |
+| `push_timeout_ms` | 0 | 0 = block forever; >0 = timeout in ms before returning `false`. |
+
+Each concrete writer maps its own YAML `thread-pool` / `queue-capacity` keys into these fields.
+
 ## Registration System
 
 Writers register at static-initialization time via `REGISTER_WRITER`:
@@ -121,16 +151,20 @@ struct MyWriterConfig {
 
 `parse()` must throw `MyWriterConfig::Error` on validation failure.
 
-### 2 — Implement `IWriter`
+### 2 — Implement `BaseQueuedWriter`
 
-Add `include/writer/my_type/MyWriter.h`:
+Add `include/writer/my_type/MyWriter.h`. Inherit `BaseQueuedWriter<MyItem>` — **do not** roll your own queue, mutex, or worker threads:
 
 ```cpp
-#include <writer/IWriter.h>
+#include <writer/BaseQueuedWriter.h>
 #include <writer/WriterFactory.h>
 #include <writer/my_type/MyWriterConfig.h>
 
-class MyWriter final : public IWriter {
+struct MyItem {
+    // smallest unit of work after converting one EventBatch
+};
+
+class MyWriter final : public BaseQueuedWriter<MyItem> {
     REGISTER_WRITER("my-type", MyWriter)
 public:
     // Factory constructor — called by WriterFactory
@@ -141,22 +175,55 @@ public:
     explicit MyWriter(MyWriterConfig config,
                       std::shared_ptr<metrics::Metrics> metrics = nullptr);
 
+    ~MyWriter() override;  // must call stop() while vtable is live
+
     std::string name() const override { return config_.name; }
-    void start() override;
-    bool push(util::bus::IDataBus::EventBatch batch) noexcept override;
-    void stop() noexcept override;
-    bool isHealthy() const noexcept override;
+
+    bool acceptsPayload(const util::bus::BatchPayload& p) const noexcept override;
+
+protected:
+    // Convert one EventBatch into zero or more MyItems.
+    // Return empty vector to silently drop.
+    std::vector<MyItem> toItems(util::bus::IDataBus::EventBatch& batch) override;
+
+    // Process one dequeued item on a worker thread. Must not throw.
+    void processItem(std::size_t workerIndex, MyItem item) override;
+
+    // Optional: open connections/pools after threads start.
+    void doStart() override;
+
+    // Optional: close connections/pools after threads join.
+    void doStop() noexcept override;
 
 private:
     MyWriterConfig config_;
-    // … threads, queues, connections …
+    std::shared_ptr<metrics::Metrics> metrics_;
+    // connections, pools — no queue/thread/mutex members needed
 };
 ```
 
+Delegate from the `config::Config` constructor to the typed one to avoid double-parsing:
+
+```cpp
+MyWriter::MyWriter(const config::Config& root, std::shared_ptr<Metrics> metrics)
+    : MyWriter(MyWriterConfig::parse(root), std::move(metrics)) {}
+
+MyWriter::MyWriter(MyWriterConfig config, std::shared_ptr<Metrics> metrics)
+    : BaseQueuedWriter<MyItem>(
+          QueueConfig{static_cast<int>(config.queueCapacity), config.threadPool, 0},
+          "my-type:" + config.name,
+          newLogger("my_writer:" + config.name))
+    , config_(std::move(config))
+    , metrics_(std::move(metrics))
+{}
+
+MyWriter::~MyWriter() { stop(); }
+```
+
 Key rules:
-- `push()` must be **noexcept** and **thread-safe**.
-- `push()` returns `false` on back-pressure or drop.
-- `start()` and `stop()` are called from a single owner; they may throw or log but must not leave dangling threads.
+- Back-pressure and thread lifecycle are owned by `BaseQueuedWriter` — do not override `start()`, `stop()`, or `push()` unless you have a very specific reason.
+- `processItem()` must be **noexcept** (exceptions are caught and logged by the base `workerLoop`).
+- The destructor **must** call `stop()` while the subclass vtable is still live.
 
 ### 3 — Register with CMake
 
@@ -208,8 +275,13 @@ Link it from the table in the **Existing Writers** section above.
 
 ### Checklist
 
-- [ ] `IWriter` fully implemented (`name`, `start`, `push`, `stop`, `isHealthy`)
-- [ ] `push()` is `noexcept` and thread-safe
+- [ ] Inherits `BaseQueuedWriter<MyItem>` (not `IWriter` directly)
+- [ ] `toItems()`, `processItem()`, `doStart()`, `doStop()` implemented
+- [ ] `processItem()` is noexcept (no uncaught throws)
+- [ ] Destructor calls `stop()`
+- [ ] Factory constructor delegates to typed constructor (no double-parse)
+- [ ] `QueueConfig` populated from parsed config fields
+- [ ] `acceptsPayload()` overridden when the writer handles only specific payload variants
 - [ ] Factory constructor signature matches `(const config::Config&, std::shared_ptr<metrics::Metrics>)`
 - [ ] `REGISTER_WRITER("my-type", MyWriter)` inside class body
 - [ ] Sources added to `CMakeLists.txt`

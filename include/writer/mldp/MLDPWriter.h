@@ -12,7 +12,7 @@
 
 #include <config/Config.h>
 #include <util/bus/DataBatch.h>
-#include <writer/IWriter.h>
+#include <writer/BaseQueuedWriter.h>
 #include <writer/WriterFactory.h>
 #include <writer/mldp/MLDPWriterConfig.h>
 
@@ -20,11 +20,7 @@
 #include <pool/MLDPGrpcPool.h>
 #include <util/log/Logger.h>
 
-#include <BS_thread_pool.hpp>
-
-#include <atomic>
-#include <condition_variable>
-#include <deque>
+#include <chrono>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -33,21 +29,28 @@
 
 namespace mldp_pvxs_driver::writer {
 
+/// Smallest unit of queued work passed between MLDPWriter::push and workers.
+struct MLDPQueueItem
+{
+    std::string                                                          root_source;
+    std::shared_ptr<const std::unordered_map<std::string, std::string>> metadata;
+    util::bus::DataBatch                                                 frame;
+};
+
 /**
  * @brief MLDP ingestion writer.
  *
  * Forwards event batches to the MLDP ingestion service over gRPC.
- * All worker logic (`WorkerChannel`, `QueueItem`, `workerLoop()`,
- * `buildRequest()`) lives here.
- *
- * The writer owns its `MLDPGrpcIngestionePool` and its thread pool.
- * `start()` registers the provider and spawns worker threads.
- * `push()` round-robins frames across channels.
+ * Queue management, backpressure, and thread-pool lifecycle are delegated
+ * to @ref BaseQueuedWriter.  This class supplies @c toItems() and
+ * @c processItem() domain hooks plus gRPC stream management.
  */
-class MLDPWriter final : public IWriter
+class MLDPWriter final : public BaseQueuedWriter<MLDPQueueItem>
 {
     REGISTER_WRITER("mldp", MLDPWriter)
 public:
+    using QueueItem = MLDPQueueItem;
+
     /**
      * @brief Factory constructor — parses config from the root YAML node.
      *
@@ -69,12 +72,6 @@ public:
         return config_.name;
     }
 
-    void start() override;
-    bool push(util::bus::IDataBus::EventBatch batch) noexcept override;
-    void stop() noexcept override;
-    void forceStop() noexcept override;
-    bool isHealthy() const noexcept override;
-
     bool acceptsPayload(const util::bus::BatchPayload& payload) const noexcept override
     {
         return std::holds_alternative<util::bus::TimeSeriesPayload>(payload);
@@ -87,65 +84,47 @@ public:
      */
     const std::string& providerId() const;
 
+protected:
+    std::vector<QueueItem> toItems(util::bus::IDataBus::EventBatch& batch) override;
+    void                   processItem(std::size_t workerIndex, QueueItem item) override;
+    void                   doStart() override;
+    void                   doStop() noexcept override;
+
 private:
-    /// Smallest unit of queued work: one frame + shared batch metadata.
-    struct QueueItem
-    {
-        std::string                                                         root_source;
-        std::shared_ptr<const std::unordered_map<std::string, std::string>> metadata;
-        util::bus::DataBatch                                                frame;
-    };
-
-    /// Per-worker channel: each worker has its own deque.
-    struct WorkerChannel
-    {
-        std::mutex              mutex;
-        std::condition_variable cv;
-        std::deque<QueueItem>   items;
-        bool                    shutdown{false};
-    };
-
     /// gRPC stream state owned by one worker for its lifetime.
     struct StreamState;
 
-    MLDPWriterConfig                                                  config_;
-    std::shared_ptr<mldp_pvxs_driver::util::log::ILogger>             logger_;
-    std::shared_ptr<metrics::Metrics>                                 metrics_;
-    std::shared_ptr<BS::light_thread_pool>                            threadPool_;
-    util::pool::MLDPGrpcIngestionePool::MLDPGrpcIngestionePoolShrdPtr ingestionPool_;
-    std::string                                                       providerId_;
-    std::vector<std::unique_ptr<WorkerChannel>>                       channels_;
-    std::atomic<std::size_t>                                          nextChannel_{0};
-    std::atomic<std::size_t>                                          queuedItems_{0};
-    std::atomic<bool>                                                 running_{false};
-    std::atomic<bool>                                                 forceQuit_{false};
-
-    /// Backpressure: blocks push() when queuedItems_ >= config_.queueCapacity.
-    std::mutex              backpressureMutex_;
-    std::condition_variable backpressureCv_;
+    MLDPWriterConfig                                                   config_;
+    std::shared_ptr<metrics::Metrics>                                  metrics_;
+    util::pool::MLDPGrpcIngestionePool::MLDPGrpcIngestionePoolShrdPtr  ingestionPool_;
+    std::string                                                        providerId_;
 
     /// Throttled push logging (every 10s).
     std::mutex                            pushLogMutex_;
     std::chrono::steady_clock::time_point lastPushLogTime_{};
 
-    /// Last EPICS event timestamp per source, used for inter-arrival Bps gauge.
-    std::mutex                              lastEventTimeMutex_;
-    std::unordered_map<std::string, double> lastEventTime_;  // EPICS epoch seconds
+    /// Wall-clock windowed throughput tracker per source.
+    struct SourceRateTracker {
+        std::chrono::steady_clock::time_point lastWallTime{};
+        std::size_t accumulatedBytes        = 0;
+        std::size_t accumulatedPayloadBytes = 0;
+    };
+    std::mutex                                            lastEventTimeMutex_;
+    std::unordered_map<std::string, SourceRateTracker>    sourceRateTrackers_;
 
-    void                                  workerLoop(std::size_t workerIndex);
-    void                                  closeStream(StreamState& state, const char* reason) noexcept;
-    bool                                  ensureStream(StreamState& state);
-    bool                                  buildRequest(const std::string&                                  sourceName,
-                                                       const util::bus::DataBatch&                         batch,
-                                                       const std::string&                                  requestId,
-                                                       dp::service::ingestion::IngestDataRequest&          request,
-                                                       std::size_t&                                        acceptedEvents,
-                                                       std::size_t&                                        payloadBytes,
-                                                       const std::unordered_map<std::string, std::string>* metadata = nullptr);
+    void closeStream(StreamState& state, const char* reason) noexcept;
+    bool ensureStream(StreamState& state);
+    bool buildRequest(const std::string&                                  sourceName,
+                      const util::bus::DataBatch&                         batch,
+                      const std::string&                                  requestId,
+                      dp::service::ingestion::IngestDataRequest&          request,
+                      std::size_t&                                        acceptedEvents,
+                      std::size_t&                                        payloadBytes,
+                      const std::unordered_map<std::string, std::string>* metadata = nullptr);
     static dp::service::common::DataFrame toDataFrame(const util::bus::DataBatch&                         batch,
                                                       const std::string&                                  rootSource,
                                                       const std::unordered_map<std::string, std::string>* metadata = nullptr);
-    void                                  updateQueueDepthMetric();
+    void updateQueueDepthMetric();
 };
 
 } // namespace mldp_pvxs_driver::writer

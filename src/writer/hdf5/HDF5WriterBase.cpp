@@ -28,7 +28,11 @@ using namespace mldp_pvxs_driver::metrics;
 
 HDF5WriterBase::HDF5WriterBase(HDF5WriterConfig                  config,
                                std::shared_ptr<metrics::Metrics> metrics)
-    : config_(std::move(config))
+    : BaseQueuedWriter<HDF5QueueItem>(
+          QueueConfig{static_cast<int>(config.queueCapacity), 1},
+          "hdf5_writer:" + config.name,
+          util::log::newLogger("hdf5_writer:" + config.name))
+    , config_(std::move(config))
     , logger_(util::log::newLogger("hdf5_writer:" + config_.name))
 {
     if (metrics)
@@ -41,17 +45,17 @@ HDF5WriterBase::HDF5WriterBase(HDF5WriterConfig                  config,
 
 HDF5WriterBase::~HDF5WriterBase()
 {
-    // Do NOT call stop() here — doStop() is pure virtual and the subclass
+    // Do NOT call stop() here — onHDF5Stop() is pure virtual and the subclass
     // vtable has already been torn down by the time this base dtor runs.
     // Each subclass calls stop() from its own destructor while the vtable
     // is still valid.
 }
 
 // ---------------------------------------------------------------------------
-// IWriter lifecycle
+// BaseQueuedWriter lifecycle hooks
 // ---------------------------------------------------------------------------
 
-void HDF5WriterBase::start()
+void HDF5WriterBase::doStart()
 {
     infof(*logger_, "HDF5Writer [{}] starting (output_dir={}, max_file_size_mb={}, flush_interval_ms={})",
           config_.name,
@@ -59,227 +63,165 @@ void HDF5WriterBase::start()
           config_.maxFileSizeMB,
           std::chrono::duration_cast<std::chrono::milliseconds>(config_.flushInterval).count());
 
-    stopping_.store(false);
-    doStart();
+    flushStopping_.store(false);
+    onHDF5Start();
 
-    writerThread_ = std::thread([this]
-                                {
-                                    BS::this_thread::set_os_thread_name("hdf5-writer");
-                                    writerLoop();
-                                });
     flushThread_ = std::thread([this]
                                {
                                    BS::this_thread::set_os_thread_name("hdf5-flush");
                                    flushLoop();
                                });
 
-    infof(*logger_, "HDF5Writer [{}] started — writer and flush threads running", config_.name);
+    infof(*logger_, "HDF5Writer [{}] started — worker and flush threads running", config_.name);
 }
 
-void HDF5WriterBase::stop() noexcept
+void HDF5WriterBase::doStop() noexcept
 {
-    std::size_t pending = 0;
-    {
-        std::lock_guard<std::mutex> lk(queueMutex_);
-        pending = queue_.size();
-        stopping_.store(true);
-    }
-    infof(*logger_, "HDF5Writer [{}] stopping — {} item(s) pending in queue", config_.name, pending);
-    queueCv_.notify_all();
-    queueNotFull_.notify_all();
+    infof(*logger_, "HDF5Writer [{}] stopping flush thread", config_.name);
+    flushStopping_.store(true);
 
-    debugf(*logger_, "HDF5Writer [{}] waiting for writer thread to drain...", config_.name);
-    if (writerThread_.joinable())
-    {
-        try
-        {
-            writerThread_.join();
-        }
-        catch (...)
-        {
-        }
-    }
     if (flushThread_.joinable())
     {
         try
         {
-            tracef(*logger_, "HDF5Writer [{}] [tid={}] joining flush thread", config_.name, std::this_thread::get_id());
+            tracef(*logger_, "HDF5Writer [{}] joining flush thread", config_.name);
             flushThread_.join();
-            tracef(*logger_, "HDF5Writer [{}] [tid={}] flush thread joined", config_.name, std::this_thread::get_id());
+            tracef(*logger_, "HDF5Writer [{}] flush thread joined", config_.name);
         }
         catch (...)
         {
         }
     }
 
-    doStop();
-
-    infof(*logger_, "HDF5Writer [{}] stopped — queue drained", config_.name);
+    onHDF5Stop();
+    stopped_.store(true);
+    infof(*logger_, "HDF5Writer [{}] stopped", config_.name);
 }
 
 // ---------------------------------------------------------------------------
-// push()
+// toItems — called on the push() caller's thread
 // ---------------------------------------------------------------------------
 
-bool HDF5WriterBase::push(util::bus::IDataBus::EventBatch batch) noexcept
+std::vector<HDF5QueueItem> HDF5WriterBase::toItems(util::bus::IDataBus::EventBatch& batch)
 {
-    if (stopping_.load())
-    {
-        debugf(*logger_, "HDF5Writer [{}] push rejected — writer is stopping", config_.name);
-        return false;
-    }
+    if (!std::holds_alternative<util::bus::TimeSeriesPayload>(batch.payload))
+        return {};
+
     const uint64_t seq = nextBatchSeq_.fetch_add(1, std::memory_order_relaxed);
-    std::unique_lock<std::mutex> lk(queueMutex_);
-    queueNotFull_.wait(lk, [this] {
-        return queue_.size() < config_.queueCapacity || stopping_.load();
-    });
-    if (stopping_.load())
-        return false;
-    queue_.push_back({seq, std::move(batch)});
-    queueCv_.notify_one();
-    return true;
+
+    if (writerMetrics_)
+        writerMetrics_->setQueueDepth(static_cast<double>(queueDepth() + 1));
+
+    std::vector<HDF5QueueItem> items;
+    items.push_back({seq, std::move(batch)});
+    return items;
 }
 
 // ---------------------------------------------------------------------------
-// writerLoop()
+// processItem — called on the single worker thread
 // ---------------------------------------------------------------------------
 
-void HDF5WriterBase::writerLoop()
+void HDF5WriterBase::processItem(std::size_t /*workerIndex*/, HDF5QueueItem item)
 {
-    debugf(*logger_, "HDF5Writer [{}] writer thread started", config_.name);
-    while (true)
+    try
     {
-        std::deque<QueueEntry> drained;
-        std::size_t            depthAtDrain = 0;
+        if (!util::bus::isTimeSeries(item.batch))
+            return;
+
+        const auto& ts = util::bus::asTimeSeries(item.batch);
+
+        if (ts.end_of_batch_group)
         {
-            std::unique_lock<std::mutex> lk(queueMutex_);
-            queueCv_.wait(lk, [this]
-                          {
-                              return !queue_.empty() || stopping_.load();
-                          });
-            if (queue_.empty())
+            const auto& source = ts.root_source_name;
+            auto        it = tabularBuffers_.find(source);
+            if (it != tabularBuffers_.end() && it->second.rowCount > 0)
             {
-                debugf(*logger_, "HDF5Writer [{}] writer thread exiting — queue drained", config_.name);
-                break;
-            }
-            depthAtDrain = queue_.size();
-            drained.swap(queue_);
-        }
-        queueNotFull_.notify_all();
-
-        if (writerMetrics_)
-            writerMetrics_->setQueueDepth(static_cast<double>(depthAtDrain));
-
-        if (stopping_.load())
-        {
-            debugf(*logger_, "HDF5Writer [{}] draining — {} batch(es) remaining", config_.name, drained.size());
-        }
-
-        for (auto& entry : drained)
-        {
-            try
-            {
-                if (!util::bus::isTimeSeries(entry.batch))
+                const auto t0 = std::chrono::steady_clock::now();
+                flushTabularBufferImpl(source, it->second);
+                if (writerMetrics_)
                 {
-                    continue;
+                    const double ms = std::chrono::duration<double, std::milli>(
+                                          std::chrono::steady_clock::now() - t0)
+                                          .count();
+                    writerMetrics_->observeWriteLatencyMs(ms);
+                    writerMetrics_->incrementBatchesWritten();
                 }
-                const auto& ts = util::bus::asTimeSeries(entry.batch);
-                if (ts.end_of_batch_group)
+            }
+        }
+        else if (ts.is_tabular)
+        {
+            processTabularBatch(item);
+        }
+        else
+        {
+            for (const auto& frame : ts.frames)
+            {
+                const std::size_t dataBatchBytes = util::bus::estimateDataBatchBytes(frame);
+                const auto        t0 = std::chrono::steady_clock::now();
+                const std::size_t postBytes = writeFrameImpl(ts.root_source_name, frame, item.batchSeq);
+                const double ms = std::chrono::duration<double, std::milli>(
+                                      std::chrono::steady_clock::now() - t0)
+                                      .count();
+                if (writerMetrics_)
+                    writerMetrics_->observeWriteLatencyMs(ms);
+                if (dataBatchBytes > 0)
                 {
-                    const auto& source = ts.root_source_name;
-                    auto        it = tabularBuffers_.find(source);
-                    if (it != tabularBuffers_.end() && it->second.rowCount > 0)
+                    metric_call(metrics_, [&](auto& m) {
+                        m.incrementWriterDataBytesTotal(static_cast<double>(dataBatchBytes),
+                                                        {{"source", ts.root_source_name}});
+                    });
+                }
+                if (!frame.timestamps.empty())
+                {
+                    const auto&  tse = frame.timestamps.back();
+                    const double event_sec = static_cast<double>(tse.epoch_seconds)
+                                            + static_cast<double>(tse.nanoseconds) * 1e-9;
+                    auto& prev = lastEventTime_[ts.root_source_name];
+                    if (prev > 0.0)
                     {
-                        const auto t0 = std::chrono::steady_clock::now();
-                        flushTabularBufferImpl(source, it->second);
-                        if (writerMetrics_)
+                        const double delta_sec = event_sec - prev;
+                        if (delta_sec > 0.0)
                         {
-                            const double ms = std::chrono::duration<double, std::milli>(
-                                                  std::chrono::steady_clock::now() - t0)
-                                                  .count();
-                            writerMetrics_->observeWriteLatencyMs(ms);
-                            writerMetrics_->incrementBatchesWritten();
+                            if (dataBatchBytes > 0)
+                                metric_call(metrics_, [&](auto& m) {
+                                    m.setWriterDataBytesPerSecond(
+                                        static_cast<double>(dataBatchBytes) / delta_sec,
+                                        {{"source", ts.root_source_name}});
+                                });
+                            if (postBytes > 0)
+                                metric_call(metrics_, [&](auto& m) {
+                                    m.setWriterPostConvDataBytesPerSecond(
+                                        static_cast<double>(postBytes) / delta_sec,
+                                        {{"writer", config_.name}, {"source", ts.root_source_name}});
+                                });
                         }
                     }
-                }
-                else if (ts.is_tabular)
-                {
-                    processTabularBatch(entry);
-                }
-                else
-                {
-                    for (const auto& frame : ts.frames)
-                    {
-                        const std::size_t dataBatchBytes = util::bus::estimateDataBatchBytes(frame);
-                        const auto        t0 = std::chrono::steady_clock::now();
-                        const std::size_t postBytes = writeFrameImpl(ts.root_source_name, frame, entry.batchSeq);
-                        const double ms = std::chrono::duration<double, std::milli>(
-                                              std::chrono::steady_clock::now() - t0)
-                                              .count();
-                        if (writerMetrics_)
-                            writerMetrics_->observeWriteLatencyMs(ms);
-                        if (dataBatchBytes > 0)
-                        {
-                            metric_call(metrics_, [&](auto& m) {
-                                m.incrementWriterDataBytesTotal(static_cast<double>(dataBatchBytes),
-                                                                {{"source", ts.root_source_name}});
-                            });
-                        }
-                        if (!frame.timestamps.empty())
-                        {
-                            const auto&  tse       = frame.timestamps.back();
-                            const double event_sec = static_cast<double>(tse.epoch_seconds)
-                                                     + static_cast<double>(tse.nanoseconds) * 1e-9;
-                            std::lock_guard<std::mutex> lk(lastEventTimeMutex_);
-                            auto& prev = lastEventTime_[ts.root_source_name];
-                            if (prev > 0.0)
-                            {
-                                const double delta_sec = event_sec - prev;
-                                if (delta_sec > 0.0)
-                                {
-                                    if (dataBatchBytes > 0)
-                                        metric_call(metrics_, [&](auto& m) {
-                                            m.setWriterDataBytesPerSecond(
-                                                static_cast<double>(dataBatchBytes) / delta_sec,
-                                                {{"source", ts.root_source_name}});
-                                        });
-                                    if (postBytes > 0)
-                                        metric_call(metrics_, [&](auto& m) {
-                                            m.setWriterPostConvDataBytesPerSecond(
-                                                static_cast<double>(postBytes) / delta_sec,
-                                                {{"writer", config_.name}, {"source", ts.root_source_name}});
-                                        });
-                                }
-                            }
-                            if (prev <= 0.0 || event_sec > prev)
-                                prev = event_sec;
-                        }
-                    }
-                    if (writerMetrics_)
-                        writerMetrics_->incrementBatchesWritten();
+                    if (prev <= 0.0 || event_sec > prev)
+                        prev = event_sec;
                 }
             }
-            catch (const H5::Exception& ex)
-            {
-                errorf(*logger_, "HDF5Writer [{}] source={} write HDF5 error: {}",
-                       config_.name, util::bus::getRootSourceName(entry.batch), ex.getCDetailMsg());
-                if (writerMetrics_) writerMetrics_->incrementWriteErrors();
-            }
-            catch (const std::exception& ex)
-            {
-                errorf(*logger_, "HDF5Writer [{}] source={} write failed: {}",
-                       config_.name, util::bus::getRootSourceName(entry.batch), ex.what());
-                if (writerMetrics_) writerMetrics_->incrementWriteErrors();
-            }
-            catch (...)
-            {
-                errorf(*logger_, "HDF5Writer [{}] source={} write failed — unknown exception",
-                       config_.name, util::bus::getRootSourceName(entry.batch));
-                if (writerMetrics_) writerMetrics_->incrementWriteErrors();
-            }
+            if (writerMetrics_)
+                writerMetrics_->incrementBatchesWritten();
         }
     }
-    debugf(*logger_, "HDF5Writer [{}] writer thread exited", config_.name);
+    catch (const H5::Exception& ex)
+    {
+        errorf(*logger_, "HDF5Writer [{}] source={} write HDF5 error: {}",
+               config_.name, util::bus::getRootSourceName(item.batch), ex.getCDetailMsg());
+        if (writerMetrics_) writerMetrics_->incrementWriteErrors();
+    }
+    catch (const std::exception& ex)
+    {
+        errorf(*logger_, "HDF5Writer [{}] source={} write failed: {}",
+               config_.name, util::bus::getRootSourceName(item.batch), ex.what());
+        if (writerMetrics_) writerMetrics_->incrementWriteErrors();
+    }
+    catch (...)
+    {
+        errorf(*logger_, "HDF5Writer [{}] source={} write failed — unknown exception",
+               config_.name, util::bus::getRootSourceName(item.batch));
+        if (writerMetrics_) writerMetrics_->incrementWriteErrors();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -291,7 +233,7 @@ void HDF5WriterBase::flushLoop()
     debugf(*logger_, "HDF5Writer [{}] flush thread started (interval={}ms)", config_.name,
            std::chrono::duration_cast<std::chrono::milliseconds>(config_.flushInterval).count());
 
-    while (!stopping_.load())
+    while (!flushStopping_.load())
     {
         tracef(*logger_, "HDF5Writer [{}] flush thread [tid={}] sleeping {}ms", config_.name,
                std::this_thread::get_id(),
@@ -365,7 +307,7 @@ bool HDF5WriterBase::isTabularBatch(const util::bus::IDataBus::EventBatch& batch
 // processTabularBatch / accumulateTabularFrame
 // ---------------------------------------------------------------------------
 
-void HDF5WriterBase::processTabularBatch(const QueueEntry& entry)
+void HDF5WriterBase::processTabularBatch(const HDF5QueueItem& entry)
 {
     const auto& source = util::bus::asTimeSeries(entry.batch).root_source_name;
     auto&       buf = tabularBuffers_[source];

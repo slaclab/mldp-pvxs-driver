@@ -1,0 +1,158 @@
+# 01 — BaseQueuedWriter: centralized queue + backpressure base class
+
+## Goal
+
+Extract queue management, backpressure, and worker-dispatch logic out of
+`MLDPWriter` into a reusable `BaseQueuedWriter<Item>` abstract class so every
+writer that needs internal queuing inherits it for free.
+
+---
+
+## Motivation
+
+`MLDPWriter` owns three concerns that are writer-agnostic:
+
+1. **Bounded MPSC queue** — `channels_[]`, `queuedItems_`, `WorkerChannel`
+2. **Backpressure** — `backpressureMutex_`, `backpressureCv_`, blocking push
+3. **Worker thread pool** — `threadPool_`, `workerLoop(i)` dispatch
+
+`HDF5WriterBase` independently re-implements a similar bounded queue + thread
+pair.  Unifying both under one base eliminates drift and gives future writers a
+consistent contract.
+
+---
+
+## New class: `BaseQueuedWriter<Item>`
+
+**Location**: `include/writer/BaseQueuedWriter.h` + `src/writer/BaseQueuedWriter.cpp`
+(or header-only if template; prefer header-only template with explicit instantiation
+guards to keep compile times sane).
+
+### Template parameter
+- `Item` — the per-worker queue element type.  Each concrete subclass defines its
+  own `Item` (e.g. `MLDPWriter::QueueItem`, `HDF5WriterBase::WriteBatch`).
+
+### Public API (mirrors `IWriter`, inherits from it)
+
+```cpp
+// Lifecycle — final; subclass hooks called internally
+void start() final;    // calls doStart() after thread pool is up
+void stop() noexcept final;    // drains queues, calls doStop()
+void forceStop() noexcept final;
+
+// Default push: filters payload, serializes to Item via toItem(),
+// then applies backpressure + enqueues.
+// Subclass may override entirely if needed.
+bool push(util::bus::IDataBus::EventBatch batch) noexcept override;
+```
+
+### Protected pure virtuals (subclass contract)
+
+```cpp
+// Convert an accepted EventBatch into zero or more queue Items.
+// Return empty vector to silently drop.
+virtual std::vector<Item> toItems(util::bus::IDataBus::EventBatch& batch) = 0;
+
+// Process one dequeued Item.  Called from a worker thread.
+virtual void processItem(std::size_t workerIndex, Item item) = 0;
+
+// Optional lifecycle hooks
+virtual void doStart() {}   // called after threads are up
+virtual void doStop()  {}   // called after all threads join
+```
+
+### Protected non-virtual helpers (provided by base)
+
+```cpp
+// Notify backpressure CV (call from processItem after consuming work)
+void notifySlotFree();
+
+// Current queue depth across all channels
+std::size_t queueDepth() const noexcept;
+
+// Config accessors
+int  workerCount() const noexcept;
+int  queueCapacity() const noexcept;
+```
+
+### Backpressure contract
+
+- `push()` blocks per-item when `queuedItems_ >= queueCapacity`.
+- Unblocks on: slot freed (`notifySlotFree()`), `running_` → false, or
+  `forceQuit_` → true.
+- `push_timeout_ms` from config: if > 0, blocking push times out and returns
+  `false` instead of blocking forever.  Currently `MLDPWriter` blocks
+  indefinitely — fix this in migration.
+
+### Config fields (base reads from `IWriterConfig` or passed struct)
+
+```
+queue_capacity     int   default 200
+worker_count       int   default 8    (replaces threadPoolSize)
+push_timeout_ms    int   default 0    (0 = block forever)
+```
+
+---
+
+## Migration plan for MLDPWriter
+
+1. Define `MLDPWriter::QueueItem` (already exists as inner struct — keep as-is).
+2. Change `MLDPWriter : public IWriter` → `MLDPWriter : public BaseQueuedWriter<QueueItem>`.
+3. Remove from `MLDPWriter`: `channels_`, `queuedItems_`, `backpressureMutex_`,
+   `backpressureCv_`, `threadPool_`, `nextChannel_`, `WorkerChannel`, all
+   blocking-push boilerplate.
+4. Implement `toItems()` — wraps existing per-frame loop (lines 215–247 in
+   `MLDPWriter.cpp`).
+5. Implement `processItem()` — wraps existing `workerLoop` body (lines 457–671),
+   minus queue dequeue/shutdown logic (owned by base).
+6. Move `doStart()` → provider registration + `ingestionPool_` init.
+7. Move `doStop()` → `ingestionPool_.reset()`.
+8. Delete `start()`, `stop()`, `forceStop()` overrides in `MLDPWriter` (base owns
+   them now).
+
+---
+
+## Migration plan for HDF5WriterBase
+
+1. `HDF5WriterBase::WriteBatch` becomes the `Item` type.
+2. Same removal of duplicated queue/thread machinery from `HDF5WriterBase`.
+3. `writeFrameImpl` / `flushTabularBufferImpl` stay as pure virtuals on
+   `HDF5WriterBase` — unrelated to queue mechanics.
+
+---
+
+## Migration plan for MLDPConfigurationWriter + MLDPPVMetadataWriter
+
+Both use simpler single-thread queues.  They can use `BaseQueuedWriter<Item>` with
+`worker_count=1`.  No backpressure config needed (payload volume is low) — set
+`push_timeout_ms=0` and `queue_capacity` to a generous default (e.g. 1000).
+
+---
+
+## Files to create
+
+- `include/writer/BaseQueuedWriter.h`
+- `src/writer/BaseQueuedWriter.cpp` (explicit instantiation if template split)
+
+## Files to modify
+
+- `include/writer/mldp/MLDPWriter.h`
+- `src/writer/mldp/MLDPWriter.cpp`
+- `include/writer/hdf5/HDF5WriterBase.h`
+- `src/writer/hdf5/HDF5WriterBase.cpp`
+- `include/writer/mldp_configuration/MLDPConfigurationWriter.h`
+- `src/writer/mldp_configuration/MLDPConfigurationWriter.cpp`
+- `include/writer/mldp_pv_metadata/MLDPPVMetadataWriter.h`
+- `src/writer/mldp_pv_metadata/MLDPPVMetadataWriter.cpp`
+- `CMakeLists.txt` (add new source file)
+
+---
+
+## Acceptance criteria
+
+- [ ] `BaseQueuedWriter<Item>` compiles standalone with a trivial `Item = int` test.
+- [ ] `MLDPWriter` passes existing tests with no behavior change.
+- [ ] `HDF5WriterBase` passes existing tests with no behavior change.
+- [ ] `MLDPConfigurationWriter` and `MLDPPVMetadataWriter` build cleanly.
+- [ ] `push_timeout_ms > 0` path tested: push returns false on timeout, does not hang.
+- [ ] Log lines in `MLDPWriter.cpp` for push/block/queue-depth are preserved.

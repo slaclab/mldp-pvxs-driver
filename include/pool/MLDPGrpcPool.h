@@ -16,6 +16,7 @@
 #include <pool/MLDPGrpcPoolConfig.h>
 #include <util/log/Logger.h>
 
+#include <atomic>
 #include <condition_variable>
 #include <grpcpp/grpcpp.h>
 #include <ingestion.grpc.pb.h>
@@ -260,6 +261,7 @@ private:
     std::condition_variable  cv_;
     std::vector<Item>        items_;
     std::size_t              current_size_{0};
+    std::atomic<int>         channel_id_counter_{0};
     std::string              provider_id_; ///< Last provider ID returned by MLDP.
     // Token used to detect pool lifetime. Pooled handles keep a weak_ptr to
     // this token so they can safely avoid calling back into the pool after
