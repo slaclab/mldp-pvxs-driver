@@ -65,7 +65,7 @@ When the Prometheus endpoint is configured, the driver collects:
 - `mldp_pvxs_driver_writer_payload_bytes_per_second` - Current protobuf throughput (MLDPWriter only) `{controller, writer, source}`
 - `mldp_pvxs_driver_writer_stream_rotations_total` - Stream open/close cycles `{controller, writer, reason}`
 - `mldp_pvxs_driver_writer_data_bytes_total` - Raw in-memory DataBatch bytes delivered to MLDPWriter (pre-serialization) `{controller, source}`
-- `mldp_pvxs_driver_writer_data_bytes_per_second` - Estimated raw DataBatch bytes/second for most recent writer cycle `{controller, source}`
+- `mldp_pvxs_driver_writer_data_bytes_per_second` - Wall-clock ingest throughput: raw DataBatch bytes accumulated over a ≥1 s wall-clock window, then divided by the actual elapsed wall time `{controller, source}`
 
 **HDF5 writer metrics** (per writer instance; requires `-DMLDP_PVXS_ENABLE_HDF5=ON`):
 - `mldp_pvxs_driver_hdf5_batches_written_total` — EventBatches written to HDF5 `{controller, writer}`

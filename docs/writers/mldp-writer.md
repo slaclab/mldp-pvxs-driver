@@ -87,6 +87,12 @@ writer:
 | `include/writer/mldp/MLDPWriterConfig.h` | Config struct, YAML keys, `parse()`. |
 | `src/writer/mldp/MLDPWriter.cpp` | `toItems()`, `processItem()`, `buildRequest()`, metrics. |
 
+## Connection Pool and Kubernetes Load Balancing
+
+Each `MLDPGrpcIngestionePool` object opens its own TCP connection to the ingest server. gRPC HTTP/2 would normally multiplex all streams over a single shared subchannel when multiple channels point at the same target URL, causing all traffic to land on the same backend pod behind a Layer-4 load balancer (MetalLB, kube-proxy IPVS/iptables). The pool prevents this by setting `GRPC_ARG_USE_LOCAL_SUBCHANNEL_POOL=1` and a unique `GRPC_ARG_CHANNEL_ID` on every channel it creates. Each pool object therefore opens a distinct TCP connection, and kube-proxy hashes the unique `(src_ip, src_port, dst_ip, dst_port)` tuple to a different backend pod.
+
+In practice: with `max-conn: 8` and a multi-replica MLDP deployment behind a `LoadBalancer` service, all 8 workers spread across replicas instead of saturating one.
+
 ## Metrics
 
-`MLDPWriter` updates queue-depth gauges via `updateQueueDepthMetric()` after each `push()` and worker drain. Metrics are injected as `std::shared_ptr<metrics::Metrics>` at construction.
+`MLDPWriter` updates queue-depth gauges via `updateQueueDepthMetric()` after each `push()` and worker drain. Throughput metrics (`data_bytes_per_second`, `payload_bytes_per_second`) use a wall-clock windowed accumulator per source: bytes are summed and flushed every ≥1 s of wall time, giving accurate real-time ingest throughput regardless of the acquisition timestamp spacing in the data. Metrics are injected as `std::shared_ptr<metrics::Metrics>` at construction.

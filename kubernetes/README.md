@@ -69,6 +69,16 @@ kubectl create secret generic mldp-pvxs-tls \
 
 Uncomment the `tls-certs` volume/volumeMount in `deployment.yaml` and set `credentials` in `configmap.yaml`.
 
+## gRPC Load Balancing Across Pods
+
+gRPC multiplexes all streams over a single HTTP/2 connection. A Layer-4 load balancer (MetalLB, kube-proxy) hashes at TCP-connection level, so a single connection means all traffic lands on one pod.
+
+The driver forces a distinct TCP connection per pool slot via `GRPC_ARG_USE_LOCAL_SUBCHANNEL_POOL` + a unique `GRPC_ARG_CHANNEL_ID`. With `max-conn: N` and ≥N replicas, each worker opens to a different pod. To use this effectively:
+
+- Set `max-conn` in `mldp-pool` to the number of replicas (or higher).
+- Ensure the MLDP ingest service is of `type: LoadBalancer` or `ClusterIP` with kube-proxy in IPVS/iptables mode.
+- `externalTrafficPolicy: Cluster` (the default) is sufficient; node-local is not required.
+
 ## EPICS Network
 
 CA/PVA broadcast doesn't traverse pod network. Set `EPICS_CA_ADDR_LIST` in `deployment.yaml` to your CA gateway or unicast address.
