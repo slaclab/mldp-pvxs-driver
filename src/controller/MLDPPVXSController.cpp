@@ -244,6 +244,12 @@ void MLDPPVXSController::start()
 
     running_.store(true);
     infof(*logger_, "Controller is starting");
+    infof(*logger_, "Controller config: name='{}' queue_capacity={} push_timeout_ms={} writers={} readers={}",
+          config_.name(),
+          config_.queueCapacity(),
+          config_.pushTimeoutMs(),
+          config_.writerEntries().size(),
+          config_.readerEntries().size());
 
     // Register queryable factories before any worker thread runs.
     prepareQueryables(config_, metrics_);
