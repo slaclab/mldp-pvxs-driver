@@ -6,9 +6,10 @@
 #
 # Options:
 #   -b, --bind SRC[:DST[:OPTS]]   Extra host path to bind-mount. Repeatable.
-#                                 Passed verbatim to the runner's --bind flag,
-#                                 so Singularity's src, src:dst, and src:dst:ro
-#                                 forms are supported.
+#                                 Default mode is read-only (:ro) — appended
+#                                 automatically when OPTS is omitted.
+#                                 Pass ':rw' explicitly to allow writes:
+#                                   -b /host/out:/out:rw
 #
 # Arguments:
 #   image.sif   Path to the Singularity/Apptainer .sif image  (required)
@@ -102,19 +103,32 @@ fi
 
 WORKDIR="$(cd "$WORKDIR" && pwd)"  # absolute path
 
+# ---- Assemble bind args -----------------------------------------------------
+# Extra binds default to read-only. Normalize each entry so it ends in :ro
+# unless caller supplied explicit OPTS (:ro or :rw).
+#   SRC                -> SRC:SRC:ro
+#   SRC:DST            -> SRC:DST:ro
+#   SRC:DST:ro|rw|...  -> unchanged
+BIND_ARGS=(--bind "${WORKDIR}:/workspace")
+NORMALIZED_BINDS=()
+for b in "${EXTRA_BINDS[@]}"; do
+    colons="${b//[^:]/}"
+    case ${#colons} in
+        0) b="${b}:${b}:ro" ;;
+        1) b="${b}:ro" ;;
+        *) : ;;  # OPTS already present
+    esac
+    BIND_ARGS+=(--bind "$b")
+    NORMALIZED_BINDS+=("$b")
+done
+
 echo "Image   : $IMAGE"
 echo "Workdir : $WORKDIR -> /workspace"
-for b in "${EXTRA_BINDS[@]}"; do
+for b in "${NORMALIZED_BINDS[@]}"; do
     echo "Bind    : $b"
 done
 echo "Runner  : $RUNNER"
 echo ""
-
-# ---- Assemble bind args -----------------------------------------------------
-BIND_ARGS=(--bind "${WORKDIR}:/workspace")
-for b in "${EXTRA_BINDS[@]}"; do
-    BIND_ARGS+=(--bind "$b")
-done
 
 # ---- Run --------------------------------------------------------------------
 if [[ $# -eq 0 ]]; then
