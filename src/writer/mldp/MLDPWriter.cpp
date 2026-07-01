@@ -259,30 +259,32 @@ void MLDPWriter::processItem(std::size_t /*workerIndex*/, QueueItem item)
                     });
     }
 
-    if (!item.frame.timestamps.empty())
     {
-        const auto&  ts        = item.frame.timestamps.back();
-        const double event_sec = static_cast<double>(ts.epoch_seconds)
-                                 + static_cast<double>(ts.nanoseconds) * 1e-9;
         std::lock_guard<std::mutex> lk(lastEventTimeMutex_);
-        auto& prev = lastEventTime_[item.root_source];
-        if (prev > 0.0)
+        auto& tracker   = sourceRateTrackers_[item.root_source];
+        const auto now  = std::chrono::steady_clock::now();
+        tracker.accumulatedBytes        += dataBatchBytes;
+        tracker.accumulatedPayloadBytes += payloadBytes;
+
+        if (tracker.lastWallTime.time_since_epoch().count() > 0)
         {
-            const double delta_sec = event_sec - prev;
-            if (delta_sec > 0.0)
+            const double wall_delta =
+                std::chrono::duration<double>(now - tracker.lastWallTime).count();
+            if (wall_delta >= 1.0)
             {
-                if (dataBatchBytes > 0)
+                if (tracker.accumulatedBytes > 0)
                 {
                     metric_call(metrics_, [&](auto& m)
                                 {
                                     m.setWriterDataBytesPerSecond(
-                                        static_cast<double>(dataBatchBytes) / delta_sec,
+                                        static_cast<double>(tracker.accumulatedBytes) / wall_delta,
                                         {{"source", item.root_source}});
                                 });
                 }
-                if (payloadBytes > 0)
+                if (tracker.accumulatedPayloadBytes > 0)
                 {
-                    const double payload_bps = static_cast<double>(payloadBytes) / delta_sec;
+                    const double payload_bps =
+                        static_cast<double>(tracker.accumulatedPayloadBytes) / wall_delta;
                     metric_call(metrics_, [&](auto& m)
                                 {
                                     m.setWriterPayloadBytesPerSecond(
@@ -296,10 +298,15 @@ void MLDPWriter::processItem(std::size_t /*workerIndex*/, QueueItem item)
                                         {{"writer", config_.name}, {"source", item.root_source}});
                                 });
                 }
+                tracker.accumulatedBytes        = 0;
+                tracker.accumulatedPayloadBytes = 0;
+                tracker.lastWallTime            = now;
             }
         }
-        if (prev <= 0.0 || event_sec > prev)
-            prev = event_sec;
+        else
+        {
+            tracker.lastWallTime = now;
+        }
     }
     record_send_time({{"source", item.root_source}});
 

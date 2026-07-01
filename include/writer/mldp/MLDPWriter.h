@@ -103,9 +103,14 @@ private:
     std::mutex                            pushLogMutex_;
     std::chrono::steady_clock::time_point lastPushLogTime_{};
 
-    /// Last EPICS event timestamp per source, used for inter-arrival Bps gauge.
-    std::mutex                              lastEventTimeMutex_;
-    std::unordered_map<std::string, double> lastEventTime_;
+    /// Wall-clock windowed throughput tracker per source.
+    struct SourceRateTracker {
+        std::chrono::steady_clock::time_point lastWallTime{};
+        std::size_t accumulatedBytes        = 0;
+        std::size_t accumulatedPayloadBytes = 0;
+    };
+    std::mutex                                            lastEventTimeMutex_;
+    std::unordered_map<std::string, SourceRateTracker>    sourceRateTrackers_;
 
     void closeStream(StreamState& state, const char* reason) noexcept;
     bool ensureStream(StreamState& state);
