@@ -18,18 +18,27 @@
 ## Internal Architecture
 
 ```
-push() → round-robin → WorkerChannel[i].deque
-                              ↓
-                       workerLoop(i)
-                              ↓
-                   MLDPGrpcIngestionePool
-                              ↓
-                       gRPC IngestDataRequest
+push() ──► BaseQueuedWriter (bounded MPSC queue, back-pressure)
+                   │  round-robin across worker channels
+                   ▼
+           processItem(workerIndex, MLDPQueueItem)
+                   │
+                   ▼
+        MLDPGrpcIngestionePool
+                   │
+                   ▼
+        gRPC IngestDataRequest (bidi stream)
 ```
 
-- **Worker channels**: each worker owns a `WorkerChannel` (mutex + CV + deque). `push()` selects a channel via atomic round-robin.
+`MLDPWriter` inherits `BaseQueuedWriter<MLDPQueueItem>` and supplies two hooks:
+
+- **`toItems()`** — extracts `TimeSeriesPayload` frames from the batch; returns one `MLDPQueueItem` per frame (source name + metadata + `DataBatch`).
+- **`processItem()`** — per-worker handler; opens/reuses a per-worker gRPC bidi-stream via `ensureStream()`, builds the protobuf request, writes it, and flushes when `stream-max-bytes` or `stream-max-age-ms` is exceeded.
+
+Queue and thread management:
+
+- **Worker channels**: the base class owns per-worker channels (mutex + CV + deque). `push()` selects a channel via atomic round-robin.
 - **Thread pool**: `BS::light_thread_pool` with `thread-pool` threads (default: 1).
-- **Stream flushing**: each worker flushes the gRPC stream when payload exceeds `stream-max-bytes` or age exceeds `stream-max-age-ms`.
 - **Back-pressure**: `push()` blocks indefinitely when the total queued items across all worker channels reaches `queue-capacity`. It only returns `false` when the writer is stopping (`stop()` or `forceStop()` called).
 
 ## Configuration
@@ -76,7 +85,7 @@ writer:
 |------|---------|
 | `include/writer/mldp/MLDPWriter.h` | Class definition, `WorkerChannel`, `QueueItem`. |
 | `include/writer/mldp/MLDPWriterConfig.h` | Config struct, YAML keys, `parse()`. |
-| `src/writer/mldp/MLDPWriter.cpp` | `workerLoop()`, `buildRequest()`, metrics. |
+| `src/writer/mldp/MLDPWriter.cpp` | `toItems()`, `processItem()`, `buildRequest()`, metrics. |
 
 ## Metrics
 

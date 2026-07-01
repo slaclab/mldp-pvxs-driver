@@ -38,20 +38,20 @@ HDF5WriterMerge::HDF5WriterMerge(const config::Config&             node,
 
 HDF5WriterMerge::~HDF5WriterMerge()
 {
-    if (!stopping_.load())
+    if (!stopped_.load())
         stop();
 }
 
 // ---------------------------------------------------------------------------
-// doStart / doStop / doFlushAll
+// onHDF5Start / onHDF5Stop / doFlushAll
 // ---------------------------------------------------------------------------
 
-void HDF5WriterMerge::doStart()
+void HDF5WriterMerge::onHDF5Start()
 {
     openMergeFile();
 }
 
-void HDF5WriterMerge::doStop() noexcept
+void HDF5WriterMerge::onHDF5Stop() noexcept
 {
     closeMergeFile();
 }

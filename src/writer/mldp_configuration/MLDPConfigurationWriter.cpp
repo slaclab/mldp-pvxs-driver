@@ -25,144 +25,82 @@ using namespace mldp_pvxs_driver::util::bus;
 using namespace mldp_pvxs_driver::util::pool;
 using namespace mldp_pvxs_driver::metrics;
 
-namespace {
-
-/// Minimal overloaded-lambda helper for std::visit.
-template <class... Ts>
-struct overloaded : Ts...
-{
-    using Ts::operator()...;
-};
-template <class... Ts>
-overloaded(Ts...) -> overloaded<Ts...>;
-
-} // namespace
-
 // ---------------------------------------------------------------------------
 // Construction / destruction
 // ---------------------------------------------------------------------------
 
-MLDPConfigurationWriter::MLDPConfigurationWriter(const config::Config&             root,
-                                                 std::shared_ptr<metrics::Metrics> metrics)
-    : config_(MLDPConfigurationWriterConfig::parse(root))
-    , metrics_(std::move(metrics))
-    , logger_(newLogger("configuration_writer:" + config_.name))
-{
-}
-
 MLDPConfigurationWriter::~MLDPConfigurationWriter()
 {
-    if (running_.load())
-    {
-        stop();
-    }
+    stop();
+}
+
+MLDPConfigurationWriter::MLDPConfigurationWriter(const config::Config&             root,
+                                                 std::shared_ptr<metrics::Metrics> metrics)
+    : MLDPConfigurationWriter(MLDPConfigurationWriterConfig::parse(root), std::move(metrics))
+{
+}
+
+MLDPConfigurationWriter::MLDPConfigurationWriter(MLDPConfigurationWriterConfig     config,
+                                                 std::shared_ptr<metrics::Metrics> metrics)
+    : BaseQueuedWriter<ConfigItem>(
+          QueueConfig{1000, std::max(1, config.threadPool), 0},
+          "mldp-configuration:" + config.name,
+          newLogger("configuration_writer:" + config.name))
+    , config_(std::move(config))
+    , metrics_(std::move(metrics))
+{
 }
 
 // ---------------------------------------------------------------------------
-// IWriter lifecycle
+// BaseQueuedWriter hooks
 // ---------------------------------------------------------------------------
 
-void MLDPConfigurationWriter::start()
+void MLDPConfigurationWriter::doStart()
 {
-    if (running_.load())
-    {
-        warnf(*logger_, "MLDPConfigurationWriter '{}' already started", config_.name);
-        return;
-    }
-
     pool_ = MLDPGrpcAnnotationPool::create(config_.poolConfig, metrics_);
-    stop_.store(false);
-    running_.store(true);
-
-    const int count = std::max(1, config_.threadPool);
-    workers_.reserve(static_cast<std::size_t>(count));
-    for (int i = 0; i < count; ++i)
-    {
-        workers_.emplace_back([this]
-                              {
-                                  workerLoop();
-                              });
-    }
-    infof(*logger_, "MLDPConfigurationWriter '{}' started ({} workers)",
-          config_.name, count);
+    infof(logger(), "MLDPConfigurationWriter '{}' pool ready", config_.name);
 }
 
-void MLDPConfigurationWriter::stop() noexcept
+void MLDPConfigurationWriter::doStop() noexcept
 {
-    {
-        std::lock_guard<std::mutex> lock(queue_mutex_);
-        stop_.store(true);
-    }
-    queue_cv_.notify_all();
-    for (auto& t : workers_)
-    {
-        if (t.joinable())
-        {
-            t.join();
-        }
-    }
-    workers_.clear();
-    running_.store(false);
-    infof(*logger_, "MLDPConfigurationWriter '{}' stopped", config_.name);
+    pool_.reset();
+    infof(logger(), "MLDPConfigurationWriter '{}' stopped", config_.name);
 }
 
-bool MLDPConfigurationWriter::push(IDataBus::EventBatch batch) noexcept
+std::vector<MLDPConfigurationWriter::ConfigItem>
+MLDPConfigurationWriter::toItems(IDataBus::EventBatch& batch)
 {
+    if (auto* cfg = std::get_if<ConfigurationPayload>(&batch.payload))
     {
-        std::lock_guard<std::mutex> lock(queue_mutex_);
-        if (auto* cfg = std::get_if<ConfigurationPayload>(&batch.payload))
-        {
-            work_queue_.push(WorkItem{*cfg});
-        }
-        else if (auto* act = std::get_if<ConfigurationActivationPayload>(&batch.payload))
-        {
-            work_queue_.push(WorkItem{*act});
-        }
-        else
-        {
-            // Payload type not handled by this writer — silently ignore.
-            return true;
-        }
+        return {ConfigItem{*cfg}};
     }
-    queue_cv_.notify_one();
-    return true;
+    if (auto* act = std::get_if<ConfigurationActivationPayload>(&batch.payload))
+    {
+        return {ConfigItem{*act}};
+    }
+    return {};
+}
+
+void MLDPConfigurationWriter::processItem(std::size_t /*workerIndex*/, ConfigItem item)
+{
+    std::visit(
+        [this](auto&& payload) {
+            using T = std::decay_t<decltype(payload)>;
+            if constexpr (std::is_same_v<T, ConfigurationPayload>)
+            {
+                doSaveConfiguration(payload);
+            }
+            else if constexpr (std::is_same_v<T, ConfigurationActivationPayload>)
+            {
+                doSaveConfigurationActivation(payload);
+            }
+        },
+        item);
 }
 
 // ---------------------------------------------------------------------------
 // Private helpers
 // ---------------------------------------------------------------------------
-
-void MLDPConfigurationWriter::workerLoop()
-{
-    while (true)
-    {
-        std::unique_lock<std::mutex> lock(queue_mutex_);
-        queue_cv_.wait(lock, [this]
-                       {
-                           return stop_.load() || !work_queue_.empty();
-                       });
-
-        if (work_queue_.empty())
-        {
-            // stop_ was set and queue is drained — exit.
-            return;
-        }
-
-        auto item = std::move(work_queue_.front());
-        work_queue_.pop();
-        lock.unlock();
-
-        std::visit(overloaded{[this](const ConfigurationPayload& cfg)
-                              {
-                                  doSaveConfiguration(cfg);
-                              },
-                              [this](const ConfigurationActivationPayload& act)
-                              {
-                                  doSaveConfigurationActivation(act);
-                              }},
-                   item.data);
-    }
-}
 
 void MLDPConfigurationWriter::doSaveConfiguration(const ConfigurationPayload& cfg)
 {
@@ -201,12 +139,13 @@ void MLDPConfigurationWriter::doSaveConfiguration(const ConfigurationPayload& cf
 
         dp::service::annotation::SaveConfigurationResponse resp;
         grpc::ClientContext                                ctx;
-        ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(config_.deadlineSeconds));
+        ctx.set_deadline(std::chrono::system_clock::now() +
+                         std::chrono::seconds(config_.deadlineSeconds));
 
         const auto status = handle->stub->saveConfiguration(&ctx, req, &resp);
         if (!status.ok())
         {
-            errorf(*logger_,
+            errorf(logger(),
                    "MLDPConfigurationWriter saveConfiguration '{}': gRPC error {}: {}",
                    cfg.configuration_name,
                    static_cast<int>(status.error_code()),
@@ -222,7 +161,7 @@ void MLDPConfigurationWriter::doSaveConfiguration(const ConfigurationPayload& cf
     }
     catch (const std::exception& ex)
     {
-        errorf(*logger_,
+        errorf(logger(),
                "MLDPConfigurationWriter saveConfiguration '{}' exception: {}",
                cfg.configuration_name, ex.what());
         metric_call(metrics_, [&](auto& m) {
@@ -279,12 +218,13 @@ void MLDPConfigurationWriter::doSaveConfigurationActivation(
 
         dp::service::annotation::SaveConfigurationActivationResponse resp;
         grpc::ClientContext                                          ctx;
-        ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(config_.deadlineSeconds));
+        ctx.set_deadline(std::chrono::system_clock::now() +
+                         std::chrono::seconds(config_.deadlineSeconds));
 
         const auto status = handle->stub->saveConfigurationActivation(&ctx, req, &resp);
         if (!status.ok())
         {
-            errorf(*logger_,
+            errorf(logger(),
                    "MLDPConfigurationWriter saveConfigurationActivation '{}': gRPC error {}: {}",
                    act.configuration_name,
                    static_cast<int>(status.error_code()),
@@ -300,7 +240,7 @@ void MLDPConfigurationWriter::doSaveConfigurationActivation(
     }
     catch (const std::exception& ex)
     {
-        errorf(*logger_,
+        errorf(logger(),
                "MLDPConfigurationWriter saveConfigurationActivation '{}' exception: {}",
                act.configuration_name, ex.what());
         metric_call(metrics_, [&](auto& m) {

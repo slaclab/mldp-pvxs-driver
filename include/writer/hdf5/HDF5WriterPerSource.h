@@ -44,8 +44,8 @@ protected:
                                 TabularBuffer&     buf) override;
 
     void doFlushAll() noexcept override;
-    void doStart() override;
-    void doStop() noexcept override;
+    void onHDF5Start() override;
+    void onHDF5Stop() noexcept override;
 
 private:
     std::unique_ptr<HDF5FilePool> pool_;

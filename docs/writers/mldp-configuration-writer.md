@@ -13,18 +13,25 @@ Only `ConfigurationPayload` and `ConfigurationActivationPayload` batches are pro
 ```
 push(ConfigurationPayload | ConfigurationActivationPayload)
                     ↓
-              WorkItem queue
+     BaseQueuedWriter (bounded MPSC queue, back-pressure)
                     ↓
-           workerLoop (N threads)
+         processItem(workerIndex, ConfigItem variant)
                     ↓
-      MLDPGrpcAnnotationPool
+        MLDPGrpcAnnotationPool
            /               \
   saveConfiguration   saveConfigurationActivation
 ```
 
-- **Work queue**: `push()` wraps the active payload variant in a `WorkItem` and enqueues it.
-- **Worker threads**: `thread-pool` threads drain the queue; each item dispatches to the appropriate RPC based on the `WorkData` variant.
-- **Back-pressure**: `push()` returns `false` when the writer is not running.
+`MLDPConfigurationWriter` inherits `BaseQueuedWriter<ConfigItem>` (where `ConfigItem` is `std::variant<ConfigurationPayload, ConfigurationActivationPayload>`) and supplies two hooks:
+
+- **`toItems()`** — inspects the batch payload; returns a 1-element vector for `ConfigurationPayload` or `ConfigurationActivationPayload`, empty vector for all other types.
+- **`processItem()`** — dispatches via `std::visit` to `doSaveConfiguration()` or `doSaveConfigurationActivation()`.
+
+Queue and thread management:
+
+- **Bounded queue**: capacity 1000 items (configurable via `thread-pool` worker count; queue capacity fixed).
+- **Worker threads**: `thread-pool` threads (default: 2) drain the queue concurrently.
+- **Back-pressure**: `push()` blocks when the queue is full and returns `false` only when the writer is stopping.
 
 ## Configuration
 
@@ -55,15 +62,15 @@ writer:
 
 | Step | What happens |
 |------|-------------|
-| `start()` | Initializes `MLDPGrpcAnnotationPool`; spawns `thread-pool` worker threads. |
-| `push(batch)` | If payload is `ConfigurationPayload` or `ConfigurationActivationPayload`: wraps in `WorkItem` and enqueues. All other payload types: no-op. Returns `false` when not running. |
-| `stop()` | Sets stop flag; notifies all worker threads; joins them. |
+| `start()` | Base class starts thread pool; calls `doStart()` → initializes `MLDPGrpcAnnotationPool`. |
+| `push(batch)` | Base `toItems()` hook: returns 1 `ConfigItem` for accepted payloads; empty for others. Enqueued item blocks caller if queue is full; returns `false` only when stopping. |
+| `stop()` | Base class drains queue, joins workers; calls `doStop()` → releases pool. |
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `include/writer/mldp_configuration/MLDPConfigurationWriter.h` | Class definition, `WorkItem`, `WorkData` variant. |
+| `include/writer/mldp_configuration/MLDPConfigurationWriter.h` | Class definition; `ConfigItem` variant alias; `toItems`/`processItem`/`doStart`/`doStop` overrides. |
 | `include/writer/mldp_configuration/MLDPConfigurationWriterConfig.h` | Config struct, YAML keys, `parse()`. |
-| `src/writer/mldp_configuration/MLDPConfigurationWriter.cpp` | `workerLoop()`, `doSaveConfiguration()`, `doSaveConfigurationActivation()`. |
+| `src/writer/mldp_configuration/MLDPConfigurationWriter.cpp` | `toItems()`, `processItem()`, `doSaveConfiguration()`, `doSaveConfigurationActivation()`. |
 | `src/writer/mldp_configuration/MLDPConfigurationWriterConfig.cpp` | YAML parsing. |

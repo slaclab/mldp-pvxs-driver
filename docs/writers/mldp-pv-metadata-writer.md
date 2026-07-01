@@ -11,18 +11,27 @@ Only `SourceMetadataPayload` batches are processed; all other payload types are 
 ## Internal Architecture
 
 ```
-push(SourceMetadataPayload) → expand source entries → WorkItem queue
+push(SourceMetadataPayload) → toItems() fan-out → one WorkItem per source entry
                                                              ↓
-                                                      workerLoop (N threads)
+                                          BaseQueuedWriter (bounded MPSC queue, back-pressure)
+                                                             ↓
+                                             processItem(workerIndex, WorkItem)
                                                              ↓
                                                   MLDPGrpcAnnotationPool
                                                              ↓
                                                    savePvMetadata RPC
 ```
 
-- **Work queue**: `push()` fans each source-metadata entry from the payload map into individual `WorkItem`s on an internal `std::queue`.
-- **Worker threads**: `thread-pool` threads drain the queue concurrently, each calling `savePvMetadata` on the annotation endpoint.
-- **Back-pressure**: `push()` returns `false` when the writer is not running.
+`MLDPPVMetadataWriter` inherits `BaseQueuedWriter<WorkItem>` (where `WorkItem` is `std::pair<std::string, SourceMetadataEntry>`) and supplies two hooks:
+
+- **`toItems()`** — extracts `SourceMetadataPayload`; fans out each `{source → SourceMetadataEntry}` pair into an individual `WorkItem`; returns empty vector for other payload types.
+- **`processItem()`** — calls `saveSourceMetadata(source_name, entry)` to issue the `savePvMetadata` gRPC RPC.
+
+Queue and thread management:
+
+- **Bounded queue**: capacity 1000 items.
+- **Worker threads**: `thread-pool` threads (default: 2) drain the queue concurrently.
+- **Back-pressure**: `push()` blocks when the queue is full and returns `false` only when the writer is stopping.
 
 ## Configuration
 
@@ -53,15 +62,15 @@ writer:
 
 | Step | What happens |
 |------|-------------|
-| `start()` | Initializes `MLDPGrpcAnnotationPool`; spawns `thread-pool` worker threads. |
-| `push(batch)` | If payload is `SourceMetadataPayload`: expands each `{source → SourceMetadataEntry}` pair into a `WorkItem` and enqueues it. All other payload types: no-op. Returns `false` when not running. |
-| `stop()` | Sets stop flag; notifies all worker threads; joins them. |
+| `start()` | Base class starts thread pool; calls `doStart()` → initializes `MLDPGrpcAnnotationPool`. |
+| `push(batch)` | Base `toItems()` hook: fans out source entries into `WorkItem`s; empty for non-metadata payloads. Enqueued items block caller if queue is full; returns `false` only when stopping. |
+| `stop()` | Base class drains queue, joins workers; calls `doStop()` → releases pool. |
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `include/writer/mldp_pv_metadata/MLDPPVMetadataWriter.h` | Class definition, `WorkItem`. |
+| `include/writer/mldp_pv_metadata/MLDPPVMetadataWriter.h` | Class definition; `WorkItem` alias; `toItems`/`processItem`/`doStart`/`doStop` overrides. |
 | `include/writer/mldp_pv_metadata/MLDPPVMetadataWriterConfig.h` | Config struct, YAML keys, `parse()`. |
-| `src/writer/mldp_pv_metadata/MLDPPVMetadataWriter.cpp` | `workerLoop()`, `saveSourceMetadata()`. |
+| `src/writer/mldp_pv_metadata/MLDPPVMetadataWriter.cpp` | `toItems()`, `processItem()`, `saveSourceMetadata()`. |
 | `src/writer/mldp_pv_metadata/MLDPPVMetadataWriterConfig.cpp` | YAML parsing. |

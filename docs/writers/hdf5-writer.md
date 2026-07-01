@@ -27,45 +27,50 @@ Each concrete class registers itself directly in the writer factory via the `REG
 
 ```
 IWriter
-└── HDF5WriterBase          (abstract — shared queue, threads, tabular buffers)
-      ├── HDF5WriterPerSource   (type "hdf5" — one file per root_source via HDF5FilePool)
-      └── HDF5WriterMerge       (type "hdf5-merge" — all sources share one H5::H5File)
+└── BaseQueuedWriter<HDF5QueueItem>   (bounded MPSC queue, back-pressure, thread pool)
+      └── HDF5WriterBase              (abstract — tabular buffers, flush thread, HDF5 helpers)
+              ├── HDF5WriterPerSource   (type "hdf5" — one file per root_source via HDF5FilePool)
+              └── HDF5WriterMerge       (type "hdf5-merge" — all sources share one H5::H5File)
 ```
+
+`HDF5WriterBase` inherits `BaseQueuedWriter<HDF5QueueItem>` (worker_count=1 enforced so per-worker state remains single-threaded) and implements `processItem()` to run the HDF5 write path. Subclasses supply the five pure-virtual I/O hooks below.
 
 ### hdf5 — HDF5WriterPerSource (one file per source)
 
 ```
-push() → bounded MPSC deque
-               ↓ (writerThread)
-        writeFrameImpl()  →  HDF5FilePool.acquire(source)
-                                       ↓
-                               H5::H5File (per source)
-                                       ↓
-                      flushThread → doFlushAll() → pool->flushAll()
+push() ──► BaseQueuedWriter (bounded MPSC queue, back-pressure)
+                   │
+                   ▼  processItem (single writer thread)
+           writeFrameImpl()  →  HDF5FilePool.acquire(source)
+                                           ↓
+                                   H5::H5File (per source)
+                                           ↓
+                          flushThread → doFlushAll() → pool->flushAll()
 ```
 
 ### hdf5-merge — HDF5WriterMerge (all sources, one file)
 
 ```
-push() → bounded MPSC deque
-               ↓ (writerThread)
-        writeFrameImpl()  →  checkMergeRotation()
-                                       ↓
-                              lock mergeFileMutex_
-                                       ↓
-                           single shared H5::H5File
-                           datasets under /<source>/ group
-                                       ↓
-                      flushThread → doFlushAll() → mergeFile_->flush()
+push() ──► BaseQueuedWriter (bounded MPSC queue, back-pressure)
+                   │
+                   ▼  processItem (single writer thread)
+           writeFrameImpl()  →  checkMergeRotation()
+                                           ↓
+                                  lock mergeFileMutex_
+                                           ↓
+                               single shared H5::H5File
+                               datasets under /<source>/ group
+                                           ↓
+                          flushThread → doFlushAll() → mergeFile_->flush()
 ```
 
 ### Shared base (HDF5WriterBase)
 
-- **Writer thread**: drains bounded MPSC queue; calls `writeFrameImpl()` (virtual) per frame or `flushTabularBufferImpl()` (virtual) on end-of-batch-group.
-- **Flush thread**: calls `doFlushAll()` (virtual) every `flush-interval-ms`.
+- **`processItem()` (writer thread)**: dequeues `HDF5QueueItem`s; calls `writeFrameImpl()` (virtual) per frame or `flushTabularBufferImpl()` (virtual) on end-of-batch-group.
+- **Flush thread**: independent thread started by `HDF5WriterBase::doStart()`; calls `doFlushAll()` (virtual) every `flush-interval-ms`.
 - **Tabular buffers**: `TabularBuffer` per source accumulated entirely in the base; subclass called only at flush.
 - **Back-pressure**: queue capped at `queue-capacity` (default 8192). `push()` **blocks indefinitely** until space is available — data is never dropped. Only returns `false` when the writer is stopping (double Ctrl+C / `forceStop()`).
-- **Destructor safety**: `~HDF5WriterBase()` does **not** call `stop()` (pure-virtual `doStop()` would be invalid at base-dtor time). Each subclass destructor calls `stop()` while its vtable is still live.
+- **Destructor safety**: `~HDF5WriterBase()` does **not** call `stop()` (pure-virtual hooks would be invalid at base-dtor time). Each subclass destructor calls `stop()` while its vtable is still live.
 
 ### Pure-virtual hooks
 
@@ -461,11 +466,11 @@ Output: one file in `/data/merged/`:
 
 | Step | What happens |
 |------|-------------|
-| `HDF5WriterPerSource(config)` | Opens `HDF5FilePool`; one file per source. |
-| `HDF5WriterMerge(config)` | Opens single shared merge file. |
-| `start()` | Calls `doStart()` (opens pool / merge file), then spawns writer and flush threads. |
-| `push(batch)` | Enqueues batch under `queueMutex_`; **blocks** if queue at capacity until space available. Returns `false` only when stopping (double Ctrl+C). |
-| `stop()` | Sets `stopping_`; joins both threads; calls `doStop()` (closes files). |
+| `HDF5WriterPerSource(config)` | Constructs base with `QueueConfig{queue_capacity, 1, 0}`; pool opened in `doStart()`. |
+| `HDF5WriterMerge(config)` | Constructs base with `QueueConfig{queue_capacity, 1, 0}`; merge file opened in `doStart()`. |
+| `start()` | Base starts thread pool (1 worker); calls `doStart()` → opens pool / merge file and starts flush thread. |
+| `push(batch)` | Base `toItems()` wraps batch in `HDF5QueueItem`; **blocks** if queue at capacity until space is available. Returns `false` only when stopping. |
+| `stop()` | Base drains queue, joins worker; calls `doStop()` → stops flush thread, closes files. |
 
 ## Thread-Safety Notes
 
