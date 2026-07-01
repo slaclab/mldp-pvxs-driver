@@ -161,11 +161,20 @@ std::shared_ptr<MLDPGrpcObject> MLDPGrpcIngestionePool::createChannel()
         creds = grpc::InsecureChannelCredentials();
     }
 
-    auto ingestion_channel = grpc::CreateChannel(config_.ingestionUrl(), creds);
+    // Each pool object gets a unique channel_id so gRPC opens a distinct TCP
+    // connection per object. Without this, gRPC reuses the same subchannel for
+    // channels with identical target+credentials, sending all workers to the
+    // same backend pod behind a L4 load balancer.
+    grpc::ChannelArguments args;
+    args.SetInt(GRPC_ARG_USE_LOCAL_SUBCHANNEL_POOL, 1);
+    args.SetString(GRPC_ARG_CHANNEL_ID,
+                   std::to_string(channel_id_counter_.fetch_add(1, std::memory_order_relaxed)));
+
+    auto ingestion_channel = grpc::CreateCustomChannel(config_.ingestionUrl(), creds, args);
     std::shared_ptr<grpc::Channel> query_channel;
     if (!config_.queryUrl().empty())
     {
-        query_channel = grpc::CreateChannel(config_.queryUrl(), creds);
+        query_channel = grpc::CreateCustomChannel(config_.queryUrl(), creds, args);
     }
     auto object = std::make_shared<MLDPGrpcObject>(ingestion_channel, query_channel);
     return object;
