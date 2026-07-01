@@ -359,6 +359,10 @@ void MLDPPVXSController::stop()
     }
 
     // Wake blocked pushers and consumer thread, then join consumer.
+    {
+        std::lock_guard<std::mutex> lk(queue_mutex_);
+        debugf(*logger_, "stop() — queue depth before drain: {}", queue_.size());
+    }
     queue_not_full_.notify_all();
     queue_not_empty_.notify_all();
     if (consumer_thread_.joinable())
@@ -391,6 +395,7 @@ void MLDPPVXSController::forceStop()
     running_.store(false, std::memory_order_release);
     {
         std::lock_guard<std::mutex> lk(queue_mutex_);
+        infof(*logger_, "forceStop() — discarding {} queued batch(es)", queue_.size());
         queue_.clear();
     }
     queue_not_full_.notify_all();
@@ -449,6 +454,7 @@ bool MLDPPVXSController::push(EventBatch batch_values)
 {
     if (!running_.load())
     {
+        debugf(*logger_, "push() rejected — controller not running");
         return false;
     }
 
@@ -504,35 +510,30 @@ bool MLDPPVXSController::push(EventBatch batch_values)
         }
     }
 
-    // Enqueue with blocking backpressure.
+    // Enqueue with blocking backpressure — never drops while running_.
     {
         std::unique_lock<std::mutex> lk(queue_mutex_);
-        if (config_.pushTimeoutMs() == 0)
+        const std::size_t depthBefore = queue_.size();
+        if (depthBefore >= config_.queueCapacity())
         {
-            if (queue_.size() >= config_.queueCapacity())
-            {
-                warnf(*logger_, "Push queue full ({} items) — dropping batch for source {}",
-                      queue_.size(), rootSource);
-                return false;
-            }
+            debugf(*logger_, "push() blocking — queue full ({}/{}) for source '{}'",
+                   depthBefore, config_.queueCapacity(), rootSource);
         }
-        else
+        queue_not_full_.wait(lk, [this] {
+            return queue_.size() < config_.queueCapacity() || !running_.load();
+        });
+        if (!running_.load())
         {
-            const auto timeout = std::chrono::milliseconds(config_.pushTimeoutMs());
-            bool has_space = queue_not_full_.wait_for(lk, timeout, [this] {
-                return queue_.size() < config_.queueCapacity() || !running_.load();
-            });
-            if (!running_.load())
-                return false;
-            if (!has_space)
-            {
-                warnf(*logger_, "Push queue full ({} items) — dropping batch for source {} (timeout {}ms)",
-                      queue_.size(), rootSource, config_.pushTimeoutMs());
-                return false;
-            }
+            debugf(*logger_, "push() unblocked by stop — not running, source '{}'", rootSource);
+            return false;
         }
 
         queue_.push_back(std::move(batch_values));
+        const std::size_t depthAfter = queue_.size();
+        if (metrics_)
+            metrics_->setControllerQueueDepth(static_cast<double>(depthAfter));
+        debugf(*logger_, "push() accepted — queue depth {}/{} source '{}'",
+               depthAfter, config_.queueCapacity(), rootSource);
     }
     queue_not_empty_.notify_one();
     return true;
@@ -563,14 +564,36 @@ void MLDPPVXSController::consumerLoop()
                 break;
 
             local.swap(queue_);
+            if (metrics_)
+                metrics_->setControllerQueueDepth(static_cast<double>(queue_.size()));
+            debugf(*logger_, "consumerLoop() dequeued {} batch(es), queue now empty", local.size());
         }
         queue_not_full_.notify_all();
 
         for (auto& batch : local)
         {
             if (force_quit_.load())
+            {
+                debugf(*logger_, "consumerLoop() force_quit set — aborting drain, {} batch(es) discarded",
+                       local.size());
                 break;
+            }
             dispatchToWriters(std::move(batch));
+        }
+
+        {
+            const auto now = std::chrono::steady_clock::now();
+            std::lock_guard<std::mutex> lk(queue_log_mutex_);
+            if (now - last_queue_log_time_ >= std::chrono::seconds(10))
+            {
+                last_queue_log_time_ = now;
+                std::size_t depth;
+                {
+                    std::lock_guard<std::mutex> qlk(queue_mutex_);
+                    depth = queue_.size();
+                }
+                infof(*logger_, "Controller main queue depth: {}", depth);
+            }
         }
     }
     infof(*logger_, "Consumer thread exiting");

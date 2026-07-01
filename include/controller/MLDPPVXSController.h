@@ -23,6 +23,7 @@
 #include <writer/IWriter.h>
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <deque>
 #include <memory>
@@ -195,6 +196,9 @@ private:
     std::condition_variable         queue_not_empty_;
     std::deque<EventBatch>          queue_;
     std::thread                     consumer_thread_;
+
+    std::mutex                                            queue_log_mutex_;
+    std::chrono::steady_clock::time_point                 last_queue_log_time_{};
 
     explicit MLDPPVXSController(const config::Config& config);
     bool removeCompletedReader(const std::string& reader_name);

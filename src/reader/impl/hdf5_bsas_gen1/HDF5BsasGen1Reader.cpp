@@ -266,7 +266,7 @@ void HDF5BsasGen1Reader::readFile()
             throw std::runtime_error("no files matched configured file-path: " + config_.filePath());
         }
 
-        logger_->log(util::log::Level::Trace,
+        logger_->log(util::log::Level::Debug,
                      "readFile: matched " + std::to_string(files.size()) + " file(s) for " +
                          config_.filePath());
 
@@ -463,7 +463,13 @@ void HDF5BsasGen1Reader::readFile()
 
                 if (!emitChunk(sourceName, filePath.string(), timestamps, columns, floatData, intData,
                                numRows, numFloatCols, numIntCols))
+                {
+                    logger_->log(util::log::Level::Debug,
+                                 "readFile: emitChunk returned false at chunk " + std::to_string(chunkIdx + 1) +
+                                     "/" + std::to_string(totalChunks) + " for " + fileName +
+                                     " — running_=" + (running_ ? "true" : "false"));
                     break;
+                }
 
                 metric_call(metrics_, [&](auto& m)
                             {
@@ -485,7 +491,11 @@ void HDF5BsasGen1Reader::readFile()
             }
 
             if (!running_)
+            {
+                logger_->log(util::log::Level::Debug,
+                             "readFile: running_ false after chunk loop — aborting file scan at " + fileName);
                 break;
+            }
 
             if (chunkIdx > 0)
             {
@@ -538,6 +548,7 @@ void HDF5BsasGen1Reader::readFile()
                          std::string("HDF5BsasGen1Reader: ") + e.what());
     }
 
+    logger_->log(util::log::Level::Debug, "readFile: all files processed — signaling completed");
     signalCompleted();
 }
 
@@ -632,23 +643,35 @@ bool HDF5BsasGen1Reader::emitChunk(
         return marker;
     };
 
-    auto pushWithRetry = [&](auto&& builder) -> bool
+    auto pushWithRetry = [&](const char* label, auto&& builder) -> bool
     {
-        if (!running_)
-            return false;
-        auto event = builder();
-        if (bus_->push(std::move(event)))
-            return true;
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        if (!running_)
-            return false;
-        event = builder();
-        return bus_->push(std::move(event));
+        bool blocked = false;
+        while (running_)
+        {
+            auto event = builder();
+            if (bus_->push(std::move(event)))
+            {
+                if (blocked)
+                    logger_->log(util::log::Level::Debug,
+                                 std::string("emitChunk: ") + label + " push unblocked for source '" + sourceName + "'");
+                return true;
+            }
+            if (!blocked)
+            {
+                blocked = true;
+                logger_->log(util::log::Level::Debug,
+                             std::string("emitChunk: ") + label + " push blocked (bus full) for source '" + sourceName + "'");
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+        logger_->log(util::log::Level::Debug,
+                     std::string("emitChunk: ") + label + " push aborted — running_ false for source '" + sourceName + "'");
+        return false;
     };
 
-    if (!pushWithRetry(buildDataBatch))
+    if (!pushWithRetry("data_batch", buildDataBatch))
         return false;
-    if (!pushWithRetry(buildMarker))
+    if (!pushWithRetry("marker", buildMarker))
         return false;
     return true;
 }

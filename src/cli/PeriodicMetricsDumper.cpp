@@ -177,13 +177,20 @@ std::string PeriodicMetricsDumper::serializeMetricsJsonl()
         // Skip comment lines and empty lines
         if (!line.empty() && line.front() != '#' && line.back() != '\0')
         {
-            // Parse prometheus line format: metric_name{labels} value timestamp
-            const auto space1 = line.find(' ');
-            if (space1 != std::string_view::npos)
+            // Parse prometheus line format: metric_name{labels} value [timestamp]
+            const auto brace_open  = line.find('{');
+            const auto brace_close = line.find('}');
+            // When labels are present the value follows '} ', so find the space
+            // AFTER the closing brace.  Without labels use the first space.
+            // This avoids misidentifying spaces inside quoted label values
+            // (e.g. reason="max bytes exceeded") as the value separator.
+            const auto value_sep = (brace_close != std::string_view::npos)
+                                       ? line.find(' ', brace_close)
+                                       : line.find(' ');
+            if (value_sep != std::string_view::npos)
             {
+                const auto space1 = value_sep;
                 const auto space2 = line.find(' ', space1 + 1);
-                const auto brace_open = line.find('{');
-                const auto brace_close = line.find('}');
 
                 std::string_view metric_name;
                 std::string_view labels_str;
