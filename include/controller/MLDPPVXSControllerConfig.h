@@ -124,9 +124,6 @@ public:
     /** @return Maximum number of batches the controller queue can hold before blocking. */
     std::size_t queueCapacity() const { return queue_capacity_; }
 
-    /** @return Backpressure mode for push(): 0 = drop immediately, >0 = block until space available. */
-    std::uint32_t pushTimeoutMs() const { return push_timeout_ms_; }
-
 private:
     void parse(const ::mldp_pvxs_driver::config::Config& root);
     void parseWriter(const ::mldp_pvxs_driver::config::Config& root);
@@ -146,7 +143,6 @@ private:
     std::vector<RouteFilterEntry>                       routeEntries_;
     std::vector<QueryableEntry>                         queryable_entries_;
     std::size_t                                         queue_capacity_{4096};
-    std::uint32_t                                       push_timeout_ms_{5000};
 };
 
 } // namespace mldp_pvxs_driver::controller

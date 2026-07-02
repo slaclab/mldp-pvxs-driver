@@ -170,12 +170,10 @@ namespace {
 
 std::string makeQueueTestYaml(const std::string& reader_block,
                               int queue_capacity = 4096,
-                              int push_timeout_ms = 5000,
                               int writer_push_delay_ms = 0)
 {
     return "name: queue-test-controller\n"
            "queue_capacity: " + std::to_string(queue_capacity) + "\n"
-           "push_timeout_ms: " + std::to_string(push_timeout_ms) + "\n"
            "writer:\n"
            "  test-queue-capture:\n"
            "    - name: queue-capture\n"
@@ -220,7 +218,7 @@ TEST_F(MLDPPVXSControllerBlockingQueueTest, AllBatchesDeliveredUnderNormalLoad)
         delay-between-ms: 5
         complete: true
 )yaml",
-        4096, 5000, 0)));
+        4096, 0)));
 
     controller->start();
 
@@ -247,7 +245,7 @@ TEST_F(MLDPPVXSControllerBlockingQueueTest, PushBlocksWhenQueueFull)
         delay-between-ms: 0
         complete: true
 )yaml",
-        queue_capacity, 5000, writer_delay_ms)));
+        queue_capacity, writer_delay_ms)));
 
     controller->start();
 
@@ -257,41 +255,6 @@ TEST_F(MLDPPVXSControllerBlockingQueueTest, PushBlocksWhenQueueFull)
 
     EXPECT_EQ(mldp_pvxs_driver::reader::TestQueueReader::pushSuccessCount().load(), batch_count);
     EXPECT_EQ(mldp_pvxs_driver::reader::TestQueueReader::pushFailCount().load(), 0);
-}
-
-TEST_F(MLDPPVXSControllerBlockingQueueTest, PushDropsOnTimeout)
-{
-    constexpr int batch_count = 20;
-    constexpr int queue_capacity = 2;
-    constexpr int push_timeout_ms = 50;
-    constexpr int writer_delay_ms = 200;
-
-    auto controller = MLDPPVXSController::create(makeConfigFromYaml(makeQueueTestYaml(
-        R"yaml(
-  - test-queue:
-      - name: overflow-producer
-        batch-count: 20
-        delay-between-ms: 0
-        complete: true
-)yaml",
-        queue_capacity, push_timeout_ms, writer_delay_ms)));
-
-    controller->start();
-
-    std::this_thread::sleep_for(std::chrono::milliseconds(3000));
-
-    int successes = mldp_pvxs_driver::reader::TestQueueReader::pushSuccessCount().load();
-    int failures = mldp_pvxs_driver::reader::TestQueueReader::pushFailCount().load();
-
-    EXPECT_EQ(successes + failures, batch_count);
-    EXPECT_GT(failures, 0) << "Expected some pushes to be dropped due to timeout";
-    EXPECT_GT(successes, 0) << "Expected some pushes to succeed";
-
-    controller->stop();
-
-    auto received = mldp_pvxs_driver::writer::TestQueueCaptureWriter::receivedCount();
-    EXPECT_EQ(received, static_cast<std::size_t>(successes))
-        << "Writer should receive exactly the number of accepted pushes";
 }
 
 TEST_F(MLDPPVXSControllerBlockingQueueTest, PushReturnsFalseAfterStop)
@@ -304,7 +267,7 @@ TEST_F(MLDPPVXSControllerBlockingQueueTest, PushReturnsFalseAfterStop)
         delay-between-ms: 200
         complete: false
 )yaml",
-        4096, 5000, 0)));
+        4096, 0)));
 
     controller->start();
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -328,7 +291,7 @@ TEST_F(MLDPPVXSControllerBlockingQueueTest, ForceStopTerminatesWithoutDrain)
         delay-between-ms: 0
         complete: false
 )yaml",
-        4096, 5000, writer_delay_ms)));
+        4096, writer_delay_ms)));
 
     controller->start();
     std::this_thread::sleep_for(std::chrono::milliseconds(300));

@@ -90,7 +90,6 @@ void MLDPPVXSControllerConfig::parse(const ::mldp_pvxs_driver::config::Config& r
     parseQueryables(root);
 
     queue_capacity_   = static_cast<std::size_t>(root.getInt("queue_capacity", static_cast<int>(queue_capacity_)));
-    push_timeout_ms_  = static_cast<std::uint32_t>(root.getInt("push_timeout_ms", static_cast<int>(push_timeout_ms_)));
 
     valid_ = true;
 }
