@@ -56,6 +56,7 @@ public:
         int queue_capacity  = 200; ///< Max queued items before push() blocks.
         int worker_count    = 8;   ///< Number of worker threads.
         int push_timeout_ms = 0;   ///< 0 = block forever; >0 = timeout in ms.
+        int idle_check_ms   = 0;   ///< 0 = no idle wakeup; >0 = call onWorkerIdle() after this many ms idle.
     };
 
     // -----------------------------------------------------------------------
@@ -135,6 +136,16 @@ protected:
 
     /** Called after all threads are joined, inside stop(). */
     virtual void doStop() noexcept {}
+
+    /**
+     * @brief Called on a worker thread after idle_check_ms with no new item.
+     *
+     * Only invoked when QueueConfig::idle_check_ms > 0.
+     * Default no-op; subclasses override to perform periodic work (e.g. close stale streams).
+     *
+     * @param workerIndex  Zero-based index of the idle worker.
+     */
+    virtual void onWorkerIdle(std::size_t /*workerIndex*/) {}
 
     // -----------------------------------------------------------------------
     // Protected helpers

@@ -30,11 +30,25 @@ using mldp_pvxs_driver::util::pool::MLDPGrpcIngestionePool;
 
 namespace {
 
-bool hasTimestampListW(const dp::service::common::DataFrame& frame)
+constexpr std::string_view kUnknownSource = "unknown";
+
+bool hasTimestampList(const dp::service::common::DataFrame& frame)
 {
     return frame.has_datatimestamps() &&
            frame.datatimestamps().has_timestamplist() &&
            frame.datatimestamps().timestamplist().timestamps_size() > 0;
+}
+
+bool hasAnyColumn(const dp::service::common::DataFrame& f)
+{
+    return f.doublecolumns_size()      > 0 || f.floatcolumns_size()       > 0 ||
+           f.datacolumns_size()        > 0 || f.int32columns_size()        > 0 ||
+           f.int64columns_size()       > 0 || f.boolcolumns_size()         > 0 ||
+           f.stringcolumns_size()      > 0 || f.enumcolumns_size()         > 0 ||
+           f.imagecolumns_size()       > 0 || f.structcolumns_size()       > 0 ||
+           f.doublearraycolumns_size() > 0 || f.floatarraycolumns_size()   > 0 ||
+           f.int32arraycolumns_size()  > 0 || f.int64arraycolumns_size()   > 0 ||
+           f.boolarraycolumns_size()   > 0;
 }
 
 } // namespace
@@ -67,7 +81,8 @@ MLDPWriter::MLDPWriter(const config::Config&    root,
 MLDPWriter::MLDPWriter(MLDPWriterConfig         config,
                        std::shared_ptr<Metrics> metrics)
     : BaseQueuedWriter<QueueItem>(
-          QueueConfig{static_cast<int>(config.queueCapacity), config.threadPoolSize},
+          QueueConfig{static_cast<int>(config.queueCapacity), config.threadPoolSize, 0,
+                      static_cast<int>(config.streamMaxAge.count())},
           "grpc_writer:" + config.name,
           mldp_pvxs_driver::util::log::newLogger("grpc_writer:" + config.name))
     , config_(std::move(config))
@@ -93,11 +108,19 @@ void MLDPWriter::doStart()
         ingestionPool_.reset();
         throw std::runtime_error("MLDPWriter: failed to register provider with MLDP ingestion service");
     }
+    const auto wc = static_cast<std::size_t>(workerCount());
+    workerStates_.clear();
+    workerStates_.reserve(wc);
+    for (std::size_t i = 0; i < wc; ++i)
+        workerStates_.push_back(std::make_unique<StreamState>());
     infof(logger(), "MLDPWriter provider registered: {}", providerId_);
 }
 
 void MLDPWriter::doStop() noexcept
 {
+    for (auto& statePtr : workerStates_)
+        if (statePtr) closeStream(*statePtr, "writer stopping");
+    workerStates_.clear();
     ingestionPool_.reset();
 }
 
@@ -159,11 +182,9 @@ std::vector<MLDPWriter::QueueItem> MLDPWriter::toItems(util::bus::IDataBus::Even
 // processItem — per-worker gRPC send
 // ---------------------------------------------------------------------------
 
-void MLDPWriter::processItem(std::size_t /*workerIndex*/, QueueItem item)
+void MLDPWriter::processItem(std::size_t workerIndex, QueueItem item)
 {
-    // StreamState is per-worker; keep it in a thread_local so each worker
-    // maintains its own gRPC stream across processItem calls.
-    thread_local StreamState state;
+    auto& state = *workerStates_[workerIndex];
 
     const auto itemStart        = std::chrono::steady_clock::now();
     const auto record_send_time = [this, itemStart](prometheus::Labels tags)
@@ -178,16 +199,15 @@ void MLDPWriter::processItem(std::size_t /*workerIndex*/, QueueItem item)
 
     if (!ensureStream(state))
     {
-        record_send_time({{"source", "unknown"}});
+        record_send_time({{"source", std::string(kUnknownSource)}});
         return;
     }
 
     if (std::chrono::steady_clock::now() - state.streamStart >= config_.streamMaxAge)
     {
-        closeStream(state, "stream age exceeded");
-        if (!ensureStream(state))
+        if (!rotateStream(state, "stream age exceeded"))
         {
-            record_send_time({{"source", "unknown"}});
+            record_send_time({{"source", std::string(kUnknownSource)}});
             return;
         }
     }
@@ -212,10 +232,9 @@ void MLDPWriter::processItem(std::size_t /*workerIndex*/, QueueItem item)
     if ((state.streamPayloadBytes + payloadBytes) > config_.streamMaxBytes &&
         state.streamPayloadBytes > 0)
     {
-        closeStream(state, "max bytes exceeded");
-        if (!ensureStream(state))
+        if (!rotateStream(state, "max bytes exceeded"))
         {
-            record_send_time({{"source", "unknown"}});
+            record_send_time({{"source", std::string(kUnknownSource)}});
             return;
         }
     }
@@ -259,55 +278,7 @@ void MLDPWriter::processItem(std::size_t /*workerIndex*/, QueueItem item)
                     });
     }
 
-    {
-        std::lock_guard<std::mutex> lk(lastEventTimeMutex_);
-        auto& tracker   = sourceRateTrackers_[item.root_source];
-        const auto now  = std::chrono::steady_clock::now();
-        tracker.accumulatedBytes        += dataBatchBytes;
-        tracker.accumulatedPayloadBytes += payloadBytes;
-
-        if (tracker.lastWallTime.time_since_epoch().count() > 0)
-        {
-            const double wall_delta =
-                std::chrono::duration<double>(now - tracker.lastWallTime).count();
-            if (wall_delta >= 1.0)
-            {
-                if (tracker.accumulatedBytes > 0)
-                {
-                    metric_call(metrics_, [&](auto& m)
-                                {
-                                    m.setWriterDataBytesPerSecond(
-                                        static_cast<double>(tracker.accumulatedBytes) / wall_delta,
-                                        {{"source", item.root_source}});
-                                });
-                }
-                if (tracker.accumulatedPayloadBytes > 0)
-                {
-                    const double payload_bps =
-                        static_cast<double>(tracker.accumulatedPayloadBytes) / wall_delta;
-                    metric_call(metrics_, [&](auto& m)
-                                {
-                                    m.setWriterPayloadBytesPerSecond(
-                                        payload_bps,
-                                        {{"writer", config_.name}, {"source", item.root_source}});
-                                });
-                    metric_call(metrics_, [&](auto& m)
-                                {
-                                    m.setWriterPostConvDataBytesPerSecond(
-                                        payload_bps,
-                                        {{"writer", config_.name}, {"source", item.root_source}});
-                                });
-                }
-                tracker.accumulatedBytes        = 0;
-                tracker.accumulatedPayloadBytes = 0;
-                tracker.lastWallTime            = now;
-            }
-        }
-        else
-        {
-            tracker.lastWallTime = now;
-        }
-    }
+    updateSourceRateMetrics(item.root_source, dataBatchBytes, payloadBytes);
     record_send_time({{"source", item.root_source}});
 
     const auto postElapsed = std::chrono::steady_clock::now() - state.streamStart;
@@ -327,7 +298,7 @@ void MLDPWriter::closeStream(StreamState& state, const char* reason) noexcept
     }
     state.writer->WritesDone();
     auto    status = state.writer->Finish();
-    int64_t requestedRequests = static_cast<int64_t>(state.requestCounter);
+    int64_t sentRequests = static_cast<int64_t>(state.requestCounter);
     if (status.ok())
     {
         if (state.response.has_ingestdatastreamresult())
@@ -337,15 +308,15 @@ void MLDPWriter::closeStream(StreamState& state, const char* reason) noexcept
             {
                 errorf(logger(), "Ingestion stream finished with invalid numrequests ({}): {}", reason, result.numrequests());
             }
-            else if (result.numrequests() < requestedRequests)
+            else if (result.numrequests() < sentRequests)
             {
                 errorf(logger(), "Ingestion stream finished with incomplete requests ({}): server accepted {} of {} sent",
-                       reason, result.numrequests(), requestedRequests);
+                       reason, result.numrequests(), sentRequests);
             }
-            else if (result.numrequests() > requestedRequests)
+            else if (result.numrequests() > sentRequests)
             {
                 errorf(logger(), "Ingestion stream finished with mismatch ({}): server reports {} but we sent {}",
-                       reason, result.numrequests(), requestedRequests);
+                       reason, result.numrequests(), sentRequests);
             }
             else
             {
@@ -358,7 +329,7 @@ void MLDPWriter::closeStream(StreamState& state, const char* reason) noexcept
                    reason, state.response.exceptionalresult().message());
             metric_call(metrics_, [&](auto& m)
                         {
-                            m.incrementWriterFailures(1.0, {{"writer", config_.name}, {"source", "unknown"}});
+                            m.incrementWriterFailures(1.0, {{"writer", config_.name}, {"source", std::string(kUnknownSource)}});
                         });
         }
     }
@@ -367,7 +338,7 @@ void MLDPWriter::closeStream(StreamState& state, const char* reason) noexcept
         errorf(logger(), "Ingestion stream finished with error ({}): {}", reason, status.error_message());
         metric_call(metrics_, [&](auto& m)
                     {
-                        m.incrementWriterFailures(1.0, {{"writer", config_.name}, {"source", "unknown"}});
+                        m.incrementWriterFailures(1.0, {{"writer", config_.name}, {"source", std::string(kUnknownSource)}});
                     });
     }
     metric_call(metrics_, [&](auto& m)
@@ -402,7 +373,7 @@ bool MLDPWriter::ensureStream(StreamState& state)
             errorf(logger(), "Failed to open ingestion stream");
             metric_call(metrics_, [&](auto& m)
                         {
-                            m.incrementWriterFailures(1.0, {{"writer", config_.name}, {"source", "unknown"}});
+                            m.incrementWriterFailures(1.0, {{"writer", config_.name}, {"source", std::string(kUnknownSource)}});
                         });
             state.handle.reset();
             state.context.reset();
@@ -417,7 +388,7 @@ bool MLDPWriter::ensureStream(StreamState& state)
         errorf(logger(), "Failed to acquire ingestion stream: {}", ex.what());
         metric_call(metrics_, [&](auto& m)
                     {
-                        m.incrementWriterFailures(1.0, {{"writer", config_.name}, {"source", "unknown"}});
+                        m.incrementWriterFailures(1.0, {{"writer", config_.name}, {"source", std::string(kUnknownSource)}});
                     });
         state.handle.reset();
         state.writer.reset();
@@ -425,6 +396,84 @@ bool MLDPWriter::ensureStream(StreamState& state)
     }
 }
 
+// ---------------------------------------------------------------------------
+// rotateStream — close then immediately re-open a gRPC stream
+// ---------------------------------------------------------------------------
+
+bool MLDPWriter::rotateStream(StreamState& state, const char* reason)
+{
+    closeStream(state, reason);
+    return ensureStream(state);
+}
+
+// ---------------------------------------------------------------------------
+// onWorkerIdle — close stale streams when no items arrive within idle_check_ms
+// ---------------------------------------------------------------------------
+
+void MLDPWriter::onWorkerIdle(std::size_t workerIndex)
+{
+    auto& state = *workerStates_[workerIndex];
+    if (state.writer &&
+        std::chrono::steady_clock::now() - state.streamStart >= config_.streamMaxAge)
+    {
+        closeStream(state, "stream age exceeded (idle)");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// updateSourceRateMetrics — windowed throughput tracking per source
+// ---------------------------------------------------------------------------
+
+void MLDPWriter::updateSourceRateMetrics(const std::string& source,
+                                         std::size_t        dataBatchBytes,
+                                         std::size_t        payloadBytes)
+{
+    std::lock_guard<std::mutex> lk(lastEventTimeMutex_);
+    auto&      tracker = sourceRateTrackers_[source];
+    const auto now     = std::chrono::steady_clock::now();
+
+    tracker.accumulatedBytes        += dataBatchBytes;
+    tracker.accumulatedPayloadBytes += payloadBytes;
+
+    if (tracker.lastWallTime.time_since_epoch().count() == 0)
+    {
+        tracker.lastWallTime = now;
+        return;
+    }
+
+    const double wall_delta = std::chrono::duration<double>(now - tracker.lastWallTime).count();
+    if (wall_delta < 1.0)
+        return;
+
+    if (tracker.accumulatedBytes > 0)
+    {
+        metric_call(metrics_, [&](auto& m)
+                    {
+                        m.setWriterDataBytesPerSecond(
+                            static_cast<double>(tracker.accumulatedBytes) / wall_delta,
+                            {{"source", source}});
+                    });
+    }
+    if (tracker.accumulatedPayloadBytes > 0)
+    {
+        const double payload_bps = static_cast<double>(tracker.accumulatedPayloadBytes) / wall_delta;
+        metric_call(metrics_, [&](auto& m)
+                    {
+                        m.setWriterPayloadBytesPerSecond(
+                            payload_bps,
+                            {{"writer", config_.name}, {"source", source}});
+                    });
+        metric_call(metrics_, [&](auto& m)
+                    {
+                        m.setWriterPostConvDataBytesPerSecond(
+                            payload_bps,
+                            {{"writer", config_.name}, {"source", source}});
+                    });
+    }
+    tracker.accumulatedBytes        = 0;
+    tracker.accumulatedPayloadBytes = 0;
+    tracker.lastWallTime            = now;
+}
 
 // ---------------------------------------------------------------------------
 // toDataFrame — convert DataBatch → protobuf DataFrame
@@ -449,6 +498,20 @@ dp::service::common::DataFrame MLDPWriter::toDataFrame(const util::bus::DataBatc
         }
     };
 
+    const auto setup_col = [&](auto* c, const std::string& name)
+    {
+        c->set_name(name);
+        c->mutable_metadata()->mutable_provenance()->set_source(rootSource);
+        apply_metadata(c);
+    };
+
+    const auto apply_dims = [&](auto* c, const std::string& colName)
+    {
+        if (auto it = batch.array_dims.find(colName); it != batch.array_dims.end())
+            for (auto d : it->second.dims)
+                c->mutable_dimensions()->add_dims(d);
+    };
+
     // Timestamps
     {
         auto* tsList = df.mutable_datatimestamps()->mutable_timestamplist();
@@ -471,190 +534,92 @@ dp::service::common::DataFrame MLDPWriter::toDataFrame(const util::bus::DataBatc
                 if constexpr (std::is_same_v<T, std::vector<double>>)
                 {
                     auto* c = df.add_doublecolumns();
-                    c->set_name(col.name);
-                    c->mutable_metadata()->mutable_provenance()->set_source(rootSource);
-                    apply_metadata(c);
-                    for (auto v : vec)
-                    {
-                        c->add_values(v);
-                    }
+                    setup_col(c, col.name);
+                    c->mutable_values()->Reserve(static_cast<int>(vec.size()));
+                    for (auto v : vec) c->add_values(v);
                 }
                 else if constexpr (std::is_same_v<T, std::vector<float>>)
                 {
                     auto* c = df.add_floatcolumns();
-                    c->set_name(col.name);
-                    c->mutable_metadata()->mutable_provenance()->set_source(rootSource);
-                    apply_metadata(c);
-                    for (auto v : vec)
-                    {
-                        c->add_values(v);
-                    }
+                    setup_col(c, col.name);
+                    c->mutable_values()->Reserve(static_cast<int>(vec.size()));
+                    for (auto v : vec) c->add_values(v);
                 }
                 else if constexpr (std::is_same_v<T, std::vector<int64_t>>)
                 {
                     auto* c = df.add_int64columns();
-                    c->set_name(col.name);
-                    c->mutable_metadata()->mutable_provenance()->set_source(rootSource);
-                    apply_metadata(c);
-                    for (auto v : vec)
-                    {
-                        c->add_values(v);
-                    }
+                    setup_col(c, col.name);
+                    c->mutable_values()->Reserve(static_cast<int>(vec.size()));
+                    for (auto v : vec) c->add_values(v);
                 }
                 else if constexpr (std::is_same_v<T, std::vector<int32_t>>)
                 {
                     auto* c = df.add_int32columns();
-                    c->set_name(col.name);
-                    c->mutable_metadata()->mutable_provenance()->set_source(rootSource);
-                    apply_metadata(c);
-                    for (auto v : vec)
-                    {
-                        c->add_values(v);
-                    }
+                    setup_col(c, col.name);
+                    c->mutable_values()->Reserve(static_cast<int>(vec.size()));
+                    for (auto v : vec) c->add_values(v);
                 }
                 else if constexpr (std::is_same_v<T, std::vector<bool>>)
                 {
                     auto* c = df.add_boolcolumns();
-                    c->set_name(col.name);
-                    c->mutable_metadata()->mutable_provenance()->set_source(rootSource);
-                    apply_metadata(c);
-                    for (auto v : vec)
-                    {
-                        c->add_values(v);
-                    }
+                    setup_col(c, col.name);
+                    c->mutable_values()->Reserve(static_cast<int>(vec.size()));
+                    for (auto v : vec) c->add_values(v);
                 }
                 else if constexpr (std::is_same_v<T, std::vector<std::string>>)
                 {
                     auto* c = df.add_stringcolumns();
-                    c->set_name(col.name);
-                    c->mutable_metadata()->mutable_provenance()->set_source(rootSource);
-                    apply_metadata(c);
-                    for (const auto& v : vec)
-                    {
-                        c->add_values(v);
-                    }
+                    setup_col(c, col.name);
+                    c->mutable_values()->Reserve(static_cast<int>(vec.size()));
+                    for (const auto& v : vec) c->add_values(v);
                 }
                 else if constexpr (std::is_same_v<T, std::vector<std::vector<uint8_t>>>)
                 {
                     auto* c = df.add_structcolumns();
-                    c->set_name(col.name);
-                    c->mutable_metadata()->mutable_provenance()->set_source(rootSource);
-                    apply_metadata(c);
+                    setup_col(c, col.name);
                     c->set_schemaid("");
-                    for (const auto& blob : vec)
-                    {
-                        c->add_values(blob.data(), blob.size());
-                    }
+                    c->mutable_values()->Reserve(static_cast<int>(vec.size()));
+                    for (const auto& blob : vec) c->add_values(blob.data(), blob.size());
                 }
                 else if constexpr (std::is_same_v<T, std::vector<std::vector<double>>>)
                 {
                     auto* c = df.add_doublearraycolumns();
-                    c->set_name(col.name);
-                    c->mutable_metadata()->mutable_provenance()->set_source(rootSource);
-                    apply_metadata(c);
-                    for (const auto& arr : vec)
-                    {
-                        for (auto v : arr)
-                        {
-                            c->add_values(v);
-                        }
-                    }
-                    auto it = batch.array_dims.find(col.name);
-                    if (it != batch.array_dims.end())
-                    {
-                        for (auto d : it->second.dims)
-                        {
-                            c->mutable_dimensions()->add_dims(d);
-                        }
-                    }
+                    setup_col(c, col.name);
+                    c->mutable_values()->Reserve(static_cast<int>(vec.size()));
+                    for (const auto& arr : vec) for (auto v : arr) c->add_values(v);
+                    apply_dims(c, col.name);
                 }
                 else if constexpr (std::is_same_v<T, std::vector<std::vector<float>>>)
                 {
                     auto* c = df.add_floatarraycolumns();
-                    c->set_name(col.name);
-                    c->mutable_metadata()->mutable_provenance()->set_source(rootSource);
-                    apply_metadata(c);
-                    for (const auto& arr : vec)
-                    {
-                        for (auto v : arr)
-                        {
-                            c->add_values(v);
-                        }
-                    }
-                    auto it = batch.array_dims.find(col.name);
-                    if (it != batch.array_dims.end())
-                    {
-                        for (auto d : it->second.dims)
-                        {
-                            c->mutable_dimensions()->add_dims(d);
-                        }
-                    }
+                    setup_col(c, col.name);
+                    c->mutable_values()->Reserve(static_cast<int>(vec.size()));
+                    for (const auto& arr : vec) for (auto v : arr) c->add_values(v);
+                    apply_dims(c, col.name);
                 }
                 else if constexpr (std::is_same_v<T, std::vector<std::vector<int64_t>>>)
                 {
                     auto* c = df.add_int64arraycolumns();
-                    c->set_name(col.name);
-                    c->mutable_metadata()->mutable_provenance()->set_source(rootSource);
-                    apply_metadata(c);
-                    for (const auto& arr : vec)
-                    {
-                        for (auto v : arr)
-                        {
-                            c->add_values(v);
-                        }
-                    }
-                    auto it = batch.array_dims.find(col.name);
-                    if (it != batch.array_dims.end())
-                    {
-                        for (auto d : it->second.dims)
-                        {
-                            c->mutable_dimensions()->add_dims(d);
-                        }
-                    }
+                    setup_col(c, col.name);
+                    c->mutable_values()->Reserve(static_cast<int>(vec.size()));
+                    for (const auto& arr : vec) for (auto v : arr) c->add_values(v);
+                    apply_dims(c, col.name);
                 }
                 else if constexpr (std::is_same_v<T, std::vector<std::vector<int32_t>>>)
                 {
                     auto* c = df.add_int32arraycolumns();
-                    c->set_name(col.name);
-                    c->mutable_metadata()->mutable_provenance()->set_source(rootSource);
-                    apply_metadata(c);
-                    for (const auto& arr : vec)
-                    {
-                        for (auto v : arr)
-                        {
-                            c->add_values(v);
-                        }
-                    }
-                    auto it = batch.array_dims.find(col.name);
-                    if (it != batch.array_dims.end())
-                    {
-                        for (auto d : it->second.dims)
-                        {
-                            c->mutable_dimensions()->add_dims(d);
-                        }
-                    }
+                    setup_col(c, col.name);
+                    c->mutable_values()->Reserve(static_cast<int>(vec.size()));
+                    for (const auto& arr : vec) for (auto v : arr) c->add_values(v);
+                    apply_dims(c, col.name);
                 }
                 else if constexpr (std::is_same_v<T, std::vector<std::vector<bool>>>)
                 {
                     auto* c = df.add_boolarraycolumns();
-                    c->set_name(col.name);
-                    c->mutable_metadata()->mutable_provenance()->set_source(rootSource);
-                    apply_metadata(c);
-                    for (const auto& arr : vec)
-                    {
-                        for (auto v : arr)
-                        {
-                            c->add_values(v);
-                        }
-                    }
-                    auto it = batch.array_dims.find(col.name);
-                    if (it != batch.array_dims.end())
-                    {
-                        for (auto d : it->second.dims)
-                        {
-                            c->mutable_dimensions()->add_dims(d);
-                        }
-                    }
+                    setup_col(c, col.name);
+                    c->mutable_values()->Reserve(static_cast<int>(vec.size()));
+                    for (const auto& arr : vec) for (auto v : arr) c->add_values(v);
+                    apply_dims(c, col.name);
                 }
             },
             col.values);
@@ -664,14 +629,10 @@ dp::service::common::DataFrame MLDPWriter::toDataFrame(const util::bus::DataBatc
     for (const auto& ecol : batch.enum_columns)
     {
         auto* c = df.add_enumcolumns();
-        c->set_name(ecol.name);
-        c->mutable_metadata()->mutable_provenance()->set_source(rootSource);
-        apply_metadata(c);
+        setup_col(c, ecol.name);
         c->set_enumid(ecol.enum_id);
-        for (auto v : ecol.values)
-        {
-            c->add_values(v);
-        }
+        c->mutable_values()->Reserve(static_cast<int>(ecol.values.size()));
+        for (auto v : ecol.values) c->add_values(v);
     }
 
     return df;
@@ -696,23 +657,13 @@ bool MLDPWriter::buildRequest(const std::string&                                
     auto* dataFrame_ptr = request.mutable_ingestiondataframe();
     *dataFrame_ptr      = std::move(dataFrame);
 
-    const bool hasColumns =
-        dataFrame_ptr->doublecolumns_size() > 0 || dataFrame_ptr->floatcolumns_size() > 0 ||
-        dataFrame_ptr->datacolumns_size() > 0 || dataFrame_ptr->int32columns_size() > 0 ||
-        dataFrame_ptr->int64columns_size() > 0 || dataFrame_ptr->boolcolumns_size() > 0 ||
-        dataFrame_ptr->stringcolumns_size() > 0 || dataFrame_ptr->enumcolumns_size() > 0 ||
-        dataFrame_ptr->imagecolumns_size() > 0 || dataFrame_ptr->structcolumns_size() > 0 ||
-        dataFrame_ptr->doublearraycolumns_size() > 0 || dataFrame_ptr->floatarraycolumns_size() > 0 ||
-        dataFrame_ptr->int32arraycolumns_size() > 0 || dataFrame_ptr->int64arraycolumns_size() > 0 ||
-        dataFrame_ptr->boolarraycolumns_size() > 0;
-
-    if (!hasColumns)
+    if (!hasAnyColumn(*dataFrame_ptr))
     {
         warnf(logger(), "No valid columns for source {}, skipping request", sourceName);
         return false;
     }
 
-    if (!hasTimestampListW(*dataFrame_ptr))
+    if (!hasTimestampList(*dataFrame_ptr))
     {
         errorf(logger(), "Dropping frame for source {}: missing DataFrame.datatimestamps.timestamplist", sourceName);
         metric_call(metrics_, [&](auto& m)

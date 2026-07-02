@@ -94,6 +94,8 @@ private:
     /// gRPC stream state owned by one worker for its lifetime.
     struct StreamState;
 
+    std::vector<std::unique_ptr<StreamState>> workerStates_;
+
     MLDPWriterConfig                                                   config_;
     std::shared_ptr<metrics::Metrics>                                  metrics_;
     util::pool::MLDPGrpcIngestionePool::MLDPGrpcIngestionePoolShrdPtr  ingestionPool_;
@@ -114,6 +116,11 @@ private:
 
     void closeStream(StreamState& state, const char* reason) noexcept;
     bool ensureStream(StreamState& state);
+    bool rotateStream(StreamState& state, const char* reason);
+    void onWorkerIdle(std::size_t workerIndex) override;
+    void updateSourceRateMetrics(const std::string& source,
+                                 std::size_t        dataBatchBytes,
+                                 std::size_t        payloadBytes);
     bool buildRequest(const std::string&                                  sourceName,
                       const util::bus::DataBatch&                         batch,
                       const std::string&                                  requestId,

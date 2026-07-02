@@ -465,11 +465,19 @@ void BaseQueuedWriter<Item>::workerLoop(std::size_t workerIndex)
         bool hasItem = false;
         {
             std::unique_lock lk(ch.mutex);
-            ch.cv.wait(lk, [&]
-                       {
-                           return !ch.items.empty() || ch.shutdown ||
-                                  forceQuit_.load(std::memory_order_relaxed);
-                       });
+            const auto pred = [&]
+            {
+                return !ch.items.empty() || ch.shutdown ||
+                       forceQuit_.load(std::memory_order_relaxed);
+            };
+            if (cfg_.idle_check_ms > 0)
+            {
+                ch.cv.wait_for(lk, std::chrono::milliseconds(cfg_.idle_check_ms), pred);
+            }
+            else
+            {
+                ch.cv.wait(lk, pred);
+            }
             if (forceQuit_.load(std::memory_order_relaxed))
                 break;
             if (ch.shutdown && ch.items.empty())
@@ -483,7 +491,10 @@ void BaseQueuedWriter<Item>::workerLoop(std::size_t workerIndex)
         }
 
         if (!hasItem)
+        {
+            try { onWorkerIdle(workerIndex); } catch (...) {}
             continue;
+        }
 
         queuedItems_.fetch_sub(1, std::memory_order_relaxed);
         backpressureCv_.notify_one();
