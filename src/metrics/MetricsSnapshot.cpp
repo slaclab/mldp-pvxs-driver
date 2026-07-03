@@ -100,58 +100,83 @@ MetricsData MetricsSnapshot::getSnapshot(const Metrics& metrics) const
     const auto text = serializeMetricsText(metrics);
 
     // Parse prometheus text to extract metrics
-    std::map<std::string, std::map<std::string, double>> reader_metrics; // reader -> metric_type -> value
-    double                                               pool_in_use = 0.0;
+    std::map<std::string, std::map<std::string, double>> reader_metrics; // source  -> metric -> value
+    std::map<std::string, std::map<std::string, double>> writer_metrics; // writer  -> metric -> value
+    double                                               pool_in_use    = 0.0;
     double                                               pool_available = 0.0;
 
     std::istringstream stream(text);
     std::string        line;
     while (std::getline(stream, line))
     {
-        // Skip comments and empty lines
         if (line.empty() || line.front() == '#')
             continue;
 
-        // Parse writer push metrics (per reader)
+        // --- reader/source-level metrics ---
         if (line.find("mldp_pvxs_driver_writer_push_total") != std::string::npos)
         {
-            auto reader = extractLabelValue(line, "reader=");
-            if (reader.empty())
-            {
-                reader = extractLabelValue(line, "source=");
-            }
-            if (!reader.empty())
-            {
-                reader_metrics[reader]["pushes"] = extractMetricValue(line);
-            }
+            const auto source = extractLabelValue(line, "source=");
+            if (!source.empty())
+                reader_metrics[source]["pushes"] = extractMetricValue(line);
         }
-        // Parse payload bytes total (per reader)
         else if (line.find("mldp_pvxs_driver_writer_payload_bytes_total") != std::string::npos)
         {
-            auto reader = extractLabelValue(line, "reader=");
-            if (reader.empty())
-            {
-                reader = extractLabelValue(line, "source=");
-            }
-            if (!reader.empty())
-            {
-                reader_metrics[reader]["bytes_total"] = extractMetricValue(line);
-            }
+            const auto source = extractLabelValue(line, "source=");
+            if (!source.empty())
+                reader_metrics[source]["bytes_total"] = extractMetricValue(line);
         }
-        // Parse payload bytes per second (per reader)
         else if (line.find("mldp_pvxs_driver_writer_payload_bytes_per_second") != std::string::npos)
         {
-            auto reader = extractLabelValue(line, "reader=");
-            if (reader.empty())
-            {
-                reader = extractLabelValue(line, "source=");
-            }
-            if (!reader.empty())
-            {
-                reader_metrics[reader]["bytes_per_sec"] = extractMetricValue(line);
-            }
+            const auto source = extractLabelValue(line, "source=");
+            if (!source.empty())
+                reader_metrics[source]["bytes_per_sec"] = extractMetricValue(line);
         }
-        // Parse pool metrics
+
+        // --- writer-instance-level metrics ---
+        else if (line.find("mldp_pvxs_driver_writer_queue_depth") != std::string::npos)
+        {
+            const auto writer = extractLabelValue(line, "writer=");
+            if (!writer.empty())
+                writer_metrics[writer]["queue_depth"] = extractMetricValue(line);
+        }
+        else if (line.find("mldp_pvxs_driver_writer_stream_rotations_total") != std::string::npos)
+        {
+            const auto writer = extractLabelValue(line, "writer=");
+            if (!writer.empty())
+                writer_metrics[writer]["stream_rotations"] += extractMetricValue(line);
+        }
+        else if (line.find("mldp_pvxs_driver_writer_failure_total") != std::string::npos)
+        {
+            const auto writer = extractLabelValue(line, "writer=");
+            if (!writer.empty())
+                writer_metrics[writer]["failures"] += extractMetricValue(line);
+        }
+        else if (line.find("mldp_pvxs_driver_writer_payload_bytes_per_second") != std::string::npos)
+        {
+            const auto writer = extractLabelValue(line, "writer=");
+            if (!writer.empty())
+                writer_metrics[writer]["payload_bps"] += extractMetricValue(line);
+        }
+        else if (line.find("mldp_pvxs_driver_writer_data_bytes_per_second") != std::string::npos)
+        {
+            const auto writer = extractLabelValue(line, "writer=");
+            if (!writer.empty())
+                writer_metrics[writer]["data_bps"] += extractMetricValue(line);
+        }
+        else if (line.find("mldp_pvxs_driver_controller_send_time_seconds_sum") != std::string::npos)
+        {
+            const auto writer = extractLabelValue(line, "writer=");
+            if (!writer.empty())
+                writer_metrics[writer]["send_sum"] += extractMetricValue(line);
+        }
+        else if (line.find("mldp_pvxs_driver_controller_send_time_seconds_count") != std::string::npos)
+        {
+            const auto writer = extractLabelValue(line, "writer=");
+            if (!writer.empty())
+                writer_metrics[writer]["send_count"] += extractMetricValue(line);
+        }
+
+        // --- pool metrics ---
         else if (line.find("mldp_pvxs_driver_pool_connections_in_use") != std::string::npos)
         {
             pool_in_use = extractMetricValue(line);
@@ -165,29 +190,39 @@ MetricsData MetricsSnapshot::getSnapshot(const Metrics& metrics) const
     // Build snapshot
     MetricsData snapshot;
 
-    const auto getMetric = [](const std::map<std::string, double>& metrics_data, std::string_view key)
+    const auto getMetric = [](const std::map<std::string, double>& m, std::string_view key) -> double
     {
-        const auto it = metrics_data.find(std::string(key));
-        if (it == metrics_data.end())
-        {
-            return 0.0;
-        }
-        return it->second;
+        const auto it = m.find(std::string(key));
+        return (it != m.end()) ? it->second : 0.0;
     };
 
-    // Convert reader metrics to structured format
-    for (const auto& [reader, metrics_data] : reader_metrics)
+    for (const auto& [source, m] : reader_metrics)
     {
         ReaderMetrics rm;
-        rm.pv_name = reader;
-        rm.pushes = static_cast<long long>(getMetric(metrics_data, "pushes"));
-        rm.bytes_total = getMetric(metrics_data, "bytes_total");
-        rm.bytes_per_sec = getMetric(metrics_data, "bytes_per_sec");
+        rm.pv_name      = source;
+        rm.pushes       = static_cast<long long>(getMetric(m, "pushes"));
+        rm.bytes_total  = getMetric(m, "bytes_total");
+        rm.bytes_per_sec = getMetric(m, "bytes_per_sec");
         snapshot.readers.push_back(rm);
     }
 
-    // Set pool metrics
-    snapshot.pool.in_use = static_cast<long long>(pool_in_use);
+    for (const auto& [writer, m] : writer_metrics)
+    {
+        WriterMetrics wm;
+        wm.writer_name           = writer;
+        wm.queue_depth           = static_cast<long long>(getMetric(m, "queue_depth"));
+        wm.stream_rotations      = static_cast<long long>(getMetric(m, "stream_rotations"));
+        wm.failures              = static_cast<long long>(getMetric(m, "failures"));
+        wm.payload_bytes_per_sec = getMetric(m, "payload_bps");
+        wm.data_bytes_per_sec    = getMetric(m, "data_bps");
+        const double send_count  = getMetric(m, "send_count");
+        wm.send_time_mean_ms     = (send_count > 0.0)
+                                       ? (getMetric(m, "send_sum") / send_count * 1000.0)
+                                       : 0.0;
+        snapshot.writers.push_back(wm);
+    }
+
+    snapshot.pool.in_use    = static_cast<long long>(pool_in_use);
     snapshot.pool.available = static_cast<long long>(pool_available);
 
     return snapshot;
@@ -209,6 +244,25 @@ std::string MetricsSnapshot::toString(const MetricsData& snapshot)
             output << "  Pushes:     " << reader.pushes << "\n";
             output << "  Total Data: " << formatBytes(reader.bytes_total) << "\n";
             output << "  Rate:       " << formatBytes(reader.bytes_per_sec) << "/s\n";
+            output << "\n";
+        }
+    }
+
+    // Print per-writer performance metrics
+    if (!snapshot.writers.empty())
+    {
+        output << "WRITER PERFORMANCE:\n";
+        output << "─────────────────────────────────────────────────────────────────\n";
+        for (const auto& w : snapshot.writers)
+        {
+            output << "Writer: " << w.writer_name << "\n";
+            output << "  Queue Depth:      " << w.queue_depth << "\n";
+            output << "  Stream Rotations: " << w.stream_rotations << "\n";
+            output << "  Failures:         " << w.failures << "\n";
+            output << "  Payload Rate:     " << formatBytes(w.payload_bytes_per_sec) << "/s\n";
+            output << "  Data Rate:        " << formatBytes(w.data_bytes_per_sec)    << "/s\n";
+            output << "  Send Latency:     " << std::fixed << std::setprecision(3)
+                   << w.send_time_mean_ms << " ms (mean)\n";
             output << "\n";
         }
     }

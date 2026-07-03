@@ -29,6 +29,20 @@ struct ReaderMetrics
 };
 
 /**
+ * @brief Per-writer metrics data structure.
+ */
+struct WriterMetrics
+{
+    std::string writer_name;              ///< Writer instance name
+    long long   queue_depth = 0;          ///< Current queue depth
+    long long   stream_rotations = 0;     ///< Total stream rotations
+    long long   failures = 0;             ///< Total write failures
+    double      payload_bytes_per_sec = 0.0; ///< Payload throughput (bytes/second)
+    double      data_bytes_per_sec    = 0.0; ///< Raw data throughput (bytes/second)
+    double      send_time_mean_ms     = 0.0; ///< Mean send latency (ms)
+};
+
+/**
  * @brief Connection pool metrics data structure.
  */
 struct PoolMetrics
@@ -48,6 +62,7 @@ struct PoolMetrics
 struct MetricsData
 {
     std::vector<ReaderMetrics> readers; ///< Per-reader statistics
+    std::vector<WriterMetrics> writers; ///< Per-writer statistics
     PoolMetrics                pool;    ///< Connection pool statistics
 };
 
