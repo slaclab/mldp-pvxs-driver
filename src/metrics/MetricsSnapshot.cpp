@@ -127,9 +127,13 @@ MetricsData MetricsSnapshot::getSnapshot(const Metrics& metrics) const
         }
         else if (line.find("mldp_pvxs_driver_writer_payload_bytes_per_second") != std::string::npos)
         {
+            // labeled by both source= (reader) and writer= (writer instance)
             const auto source = extractLabelValue(line, "source=");
             if (!source.empty())
                 reader_metrics[source]["bytes_per_sec"] = extractMetricValue(line);
+            const auto writer = extractLabelValue(line, "writer=");
+            if (!writer.empty())
+                writer_metrics[writer]["payload_bps"] += extractMetricValue(line);
         }
 
         // --- writer-instance-level metrics ---
@@ -151,12 +155,6 @@ MetricsData MetricsSnapshot::getSnapshot(const Metrics& metrics) const
             if (!writer.empty())
                 writer_metrics[writer]["failures"] += extractMetricValue(line);
         }
-        else if (line.find("mldp_pvxs_driver_writer_payload_bytes_per_second") != std::string::npos)
-        {
-            const auto writer = extractLabelValue(line, "writer=");
-            if (!writer.empty())
-                writer_metrics[writer]["payload_bps"] += extractMetricValue(line);
-        }
         else if (line.find("mldp_pvxs_driver_writer_data_bytes_per_second") != std::string::npos)
         {
             const auto writer = extractLabelValue(line, "writer=");
@@ -165,15 +163,13 @@ MetricsData MetricsSnapshot::getSnapshot(const Metrics& metrics) const
         }
         else if (line.find("mldp_pvxs_driver_controller_send_time_seconds_sum") != std::string::npos)
         {
-            const auto writer = extractLabelValue(line, "writer=");
-            if (!writer.empty())
-                writer_metrics[writer]["send_sum"] += extractMetricValue(line);
+            // send_time has no writer= label — accumulate globally
+            writer_metrics["__global__"]["send_sum"] += extractMetricValue(line);
         }
         else if (line.find("mldp_pvxs_driver_controller_send_time_seconds_count") != std::string::npos)
         {
-            const auto writer = extractLabelValue(line, "writer=");
-            if (!writer.empty())
-                writer_metrics[writer]["send_count"] += extractMetricValue(line);
+            // send_time has no writer= label — accumulate globally
+            writer_metrics["__global__"]["send_count"] += extractMetricValue(line);
         }
 
         // --- pool metrics ---
@@ -206,18 +202,26 @@ MetricsData MetricsSnapshot::getSnapshot(const Metrics& metrics) const
         snapshot.readers.push_back(rm);
     }
 
+    // Global metrics (no writer= label) shared across all writer instances
+    const auto& global_m      = writer_metrics.count("__global__") ? writer_metrics.at("__global__")
+                                                                    : std::map<std::string, double>{};
+    const double global_data_bps   = getMetric(global_m, "data_bps");
+    const double global_send_sum   = getMetric(global_m, "send_sum");
+    const double global_send_count = getMetric(global_m, "send_count");
+
     for (const auto& [writer, m] : writer_metrics)
     {
+        if (writer == "__global__")
+            continue;
         WriterMetrics wm;
         wm.writer_name           = writer;
         wm.queue_depth           = static_cast<long long>(getMetric(m, "queue_depth"));
         wm.stream_rotations      = static_cast<long long>(getMetric(m, "stream_rotations"));
         wm.failures              = static_cast<long long>(getMetric(m, "failures"));
         wm.payload_bytes_per_sec = getMetric(m, "payload_bps");
-        wm.data_bytes_per_sec    = getMetric(m, "data_bps");
-        const double send_count  = getMetric(m, "send_count");
-        wm.send_time_mean_ms     = (send_count > 0.0)
-                                       ? (getMetric(m, "send_sum") / send_count * 1000.0)
+        wm.data_bytes_per_sec    = global_data_bps;
+        wm.send_time_mean_ms     = (global_send_count > 0.0)
+                                       ? (global_send_sum / global_send_count * 1000.0)
                                        : 0.0;
         snapshot.writers.push_back(wm);
     }

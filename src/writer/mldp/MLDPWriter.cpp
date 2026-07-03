@@ -323,11 +323,11 @@ void MLDPWriter::processItem(std::size_t workerIndex, QueueItem item)
             metric_call(metrics_, [&](auto& m)
                         {
                             m.incrementWriterDataBytesTotal(static_cast<double>(dataBatchBytes),
-                                                            {{"source", item.root_source}});
+                                                            {{"writer", config_.name}, {"source", item.root_source}});
                         });
         }
 
-        updateSourceRateMetrics(state, item.root_source, dataBatchBytes, totalPayloadBytes);
+        updateSourceRateMetrics(state, workerIndex, item.root_source, dataBatchBytes, totalPayloadBytes);
         record_send_time({{"source", item.root_source}});
 
         if (state.writer)
@@ -483,6 +483,7 @@ void MLDPWriter::onWorkerIdle(std::size_t workerIndex)
 // ---------------------------------------------------------------------------
 
 void MLDPWriter::updateSourceRateMetrics(StreamState&       state,
+                                         std::size_t        workerIndex,
                                          const std::string& source,
                                          std::size_t        dataBatchBytes,
                                          std::size_t        payloadBytes)
@@ -503,13 +504,15 @@ void MLDPWriter::updateSourceRateMetrics(StreamState&       state,
     if (wall_delta < 1.0)
         return;
 
+    const std::string workerLabel = std::to_string(workerIndex);
+
     if (tracker.accumulatedBytes > 0)
     {
         metric_call(metrics_, [&](auto& m)
                     {
                         m.setWriterDataBytesPerSecond(
                             static_cast<double>(tracker.accumulatedBytes) / wall_delta,
-                            {{"source", source}});
+                            {{"writer", config_.name}, {"worker", workerLabel}, {"source", source}});
                     });
     }
     if (tracker.accumulatedPayloadBytes > 0)
@@ -519,13 +522,13 @@ void MLDPWriter::updateSourceRateMetrics(StreamState&       state,
                     {
                         m.setWriterPayloadBytesPerSecond(
                             payload_bps,
-                            {{"writer", config_.name}, {"source", source}});
+                            {{"writer", config_.name}, {"worker", workerLabel}, {"source", source}});
                     });
         metric_call(metrics_, [&](auto& m)
                     {
                         m.setWriterPostConvDataBytesPerSecond(
                             payload_bps,
-                            {{"writer", config_.name}, {"source", source}});
+                            {{"writer", config_.name}, {"worker", workerLabel}, {"source", source}});
                     });
     }
     tracker.accumulatedBytes        = 0;

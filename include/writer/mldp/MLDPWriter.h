@@ -117,6 +117,7 @@ private:
     bool rotateStream(StreamState& state, const char* reason);
     void onWorkerIdle(std::size_t workerIndex) override;
     void updateSourceRateMetrics(StreamState&       state,
+                                 std::size_t        workerIndex,
                                  const std::string& source,
                                  std::size_t        dataBatchBytes,
                                  std::size_t        payloadBytes);
