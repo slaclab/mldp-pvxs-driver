@@ -105,20 +105,19 @@ private:
     std::mutex                            pushLogMutex_;
     std::chrono::steady_clock::time_point lastPushLogTime_{};
 
-    /// Wall-clock windowed throughput tracker per source.
+    /// Wall-clock windowed throughput tracker per source (per-worker, no shared mutex).
     struct SourceRateTracker {
         std::chrono::steady_clock::time_point lastWallTime{};
         std::size_t accumulatedBytes        = 0;
         std::size_t accumulatedPayloadBytes = 0;
     };
-    std::mutex                                            lastEventTimeMutex_;
-    std::unordered_map<std::string, SourceRateTracker>    sourceRateTrackers_;
 
     void closeStream(StreamState& state, const char* reason) noexcept;
     bool ensureStream(StreamState& state);
     bool rotateStream(StreamState& state, const char* reason);
     void onWorkerIdle(std::size_t workerIndex) override;
-    void updateSourceRateMetrics(const std::string& source,
+    void updateSourceRateMetrics(StreamState&       state,
+                                 const std::string& source,
                                  std::size_t        dataBatchBytes,
                                  std::size_t        payloadBytes);
     bool buildRequest(const std::string&                                  sourceName,

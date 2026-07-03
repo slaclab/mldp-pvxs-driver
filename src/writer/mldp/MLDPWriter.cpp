@@ -18,6 +18,7 @@
 #include <grpcpp/grpcpp.h>
 
 #include <chrono>
+#include <cstring>
 #include <cstdint>
 #include <optional>
 #include <stdexcept>
@@ -66,6 +67,10 @@ struct MLDPWriter::StreamState
     std::chrono::steady_clock::time_point                                                                   streamStart;
     std::size_t   streamPayloadBytes{0};
     std::uint64_t requestCounter{0};
+
+    google::protobuf::Arena arena;
+
+    std::unordered_map<std::string, MLDPWriter::SourceRateTracker> rateTrackers;
 };
 
 // ---------------------------------------------------------------------------
@@ -212,9 +217,9 @@ void MLDPWriter::processItem(std::size_t workerIndex, QueueItem item)
         }
     }
 
-    google::protobuf::Arena arena;
+    state.arena.Reset();
     auto* request = google::protobuf::Arena::CreateMessage<
-        dp::service::ingestion::IngestDataRequest>(&arena);
+        dp::service::ingestion::IngestDataRequest>(&state.arena);
     std::size_t       acceptedEvents = 0;
     std::size_t       payloadBytes   = 0;
     const std::size_t dataBatchBytes = util::bus::estimateDataBatchBytes(item.frame);
@@ -278,7 +283,7 @@ void MLDPWriter::processItem(std::size_t workerIndex, QueueItem item)
                     });
     }
 
-    updateSourceRateMetrics(item.root_source, dataBatchBytes, payloadBytes);
+    updateSourceRateMetrics(state, item.root_source, dataBatchBytes, payloadBytes);
     record_send_time({{"source", item.root_source}});
 
     const auto postElapsed = std::chrono::steady_clock::now() - state.streamStart;
@@ -424,12 +429,12 @@ void MLDPWriter::onWorkerIdle(std::size_t workerIndex)
 // updateSourceRateMetrics — windowed throughput tracking per source
 // ---------------------------------------------------------------------------
 
-void MLDPWriter::updateSourceRateMetrics(const std::string& source,
+void MLDPWriter::updateSourceRateMetrics(StreamState&       state,
+                                         const std::string& source,
                                          std::size_t        dataBatchBytes,
                                          std::size_t        payloadBytes)
 {
-    std::lock_guard<std::mutex> lk(lastEventTimeMutex_);
-    auto&      tracker = sourceRateTrackers_[source];
+    auto&      tracker = state.rateTrackers[source];
     const auto now     = std::chrono::steady_clock::now();
 
     tracker.accumulatedBytes        += dataBatchBytes;
@@ -535,29 +540,33 @@ dp::service::common::DataFrame MLDPWriter::toDataFrame(const util::bus::DataBatc
                 {
                     auto* c = df.add_doublecolumns();
                     setup_col(c, col.name);
-                    c->mutable_values()->Reserve(static_cast<int>(vec.size()));
-                    for (auto v : vec) c->add_values(v);
+                    auto* vals = c->mutable_values();
+                    vals->Resize(static_cast<int>(vec.size()), 0.0);
+                    std::memcpy(vals->mutable_data(), vec.data(), vec.size() * sizeof(double));
                 }
                 else if constexpr (std::is_same_v<T, std::vector<float>>)
                 {
                     auto* c = df.add_floatcolumns();
                     setup_col(c, col.name);
-                    c->mutable_values()->Reserve(static_cast<int>(vec.size()));
-                    for (auto v : vec) c->add_values(v);
+                    auto* vals = c->mutable_values();
+                    vals->Resize(static_cast<int>(vec.size()), 0.0f);
+                    std::memcpy(vals->mutable_data(), vec.data(), vec.size() * sizeof(float));
                 }
                 else if constexpr (std::is_same_v<T, std::vector<int64_t>>)
                 {
                     auto* c = df.add_int64columns();
                     setup_col(c, col.name);
-                    c->mutable_values()->Reserve(static_cast<int>(vec.size()));
-                    for (auto v : vec) c->add_values(v);
+                    auto* vals = c->mutable_values();
+                    vals->Resize(static_cast<int>(vec.size()), 0);
+                    std::memcpy(vals->mutable_data(), vec.data(), vec.size() * sizeof(int64_t));
                 }
                 else if constexpr (std::is_same_v<T, std::vector<int32_t>>)
                 {
                     auto* c = df.add_int32columns();
                     setup_col(c, col.name);
-                    c->mutable_values()->Reserve(static_cast<int>(vec.size()));
-                    for (auto v : vec) c->add_values(v);
+                    auto* vals = c->mutable_values();
+                    vals->Resize(static_cast<int>(vec.size()), 0);
+                    std::memcpy(vals->mutable_data(), vec.data(), vec.size() * sizeof(int32_t));
                 }
                 else if constexpr (std::is_same_v<T, std::vector<bool>>)
                 {
@@ -585,32 +594,44 @@ dp::service::common::DataFrame MLDPWriter::toDataFrame(const util::bus::DataBatc
                 {
                     auto* c = df.add_doublearraycolumns();
                     setup_col(c, col.name);
-                    c->mutable_values()->Reserve(static_cast<int>(vec.size()));
-                    for (const auto& arr : vec) for (auto v : arr) c->add_values(v);
+                    std::size_t total = 0; for (const auto& a : vec) total += a.size();
+                    auto* vals = c->mutable_values();
+                    vals->Resize(static_cast<int>(total), 0.0);
+                    double* dst = vals->mutable_data();
+                    for (const auto& arr : vec) { std::memcpy(dst, arr.data(), arr.size() * sizeof(double)); dst += arr.size(); }
                     apply_dims(c, col.name);
                 }
                 else if constexpr (std::is_same_v<T, std::vector<std::vector<float>>>)
                 {
                     auto* c = df.add_floatarraycolumns();
                     setup_col(c, col.name);
-                    c->mutable_values()->Reserve(static_cast<int>(vec.size()));
-                    for (const auto& arr : vec) for (auto v : arr) c->add_values(v);
+                    std::size_t total = 0; for (const auto& a : vec) total += a.size();
+                    auto* vals = c->mutable_values();
+                    vals->Resize(static_cast<int>(total), 0.0f);
+                    float* dst = vals->mutable_data();
+                    for (const auto& arr : vec) { std::memcpy(dst, arr.data(), arr.size() * sizeof(float)); dst += arr.size(); }
                     apply_dims(c, col.name);
                 }
                 else if constexpr (std::is_same_v<T, std::vector<std::vector<int64_t>>>)
                 {
                     auto* c = df.add_int64arraycolumns();
                     setup_col(c, col.name);
-                    c->mutable_values()->Reserve(static_cast<int>(vec.size()));
-                    for (const auto& arr : vec) for (auto v : arr) c->add_values(v);
+                    std::size_t total = 0; for (const auto& a : vec) total += a.size();
+                    auto* vals = c->mutable_values();
+                    vals->Resize(static_cast<int>(total), 0);
+                    int64_t* dst = vals->mutable_data();
+                    for (const auto& arr : vec) { std::memcpy(dst, arr.data(), arr.size() * sizeof(int64_t)); dst += arr.size(); }
                     apply_dims(c, col.name);
                 }
                 else if constexpr (std::is_same_v<T, std::vector<std::vector<int32_t>>>)
                 {
                     auto* c = df.add_int32arraycolumns();
                     setup_col(c, col.name);
-                    c->mutable_values()->Reserve(static_cast<int>(vec.size()));
-                    for (const auto& arr : vec) for (auto v : arr) c->add_values(v);
+                    std::size_t total = 0; for (const auto& a : vec) total += a.size();
+                    auto* vals = c->mutable_values();
+                    vals->Resize(static_cast<int>(total), 0);
+                    int32_t* dst = vals->mutable_data();
+                    for (const auto& arr : vec) { std::memcpy(dst, arr.data(), arr.size() * sizeof(int32_t)); dst += arr.size(); }
                     apply_dims(c, col.name);
                 }
                 else if constexpr (std::is_same_v<T, std::vector<std::vector<bool>>>)
