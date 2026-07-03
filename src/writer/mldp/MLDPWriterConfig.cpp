@@ -107,5 +107,21 @@ MLDPWriterConfig MLDPWriterConfig::parse(const Config& mldpNode)
         }
     }
 
+    // Max frames (Write() calls) per stream before close
+    if (mldpNode.hasChild(MldpMaxFramesPerStreamKey))
+    {
+        const auto nodes = mldpNode.subConfig(MldpMaxFramesPerStreamKey);
+        if (!nodes.empty() && nodes.front().raw().has_val())
+        {
+            int val = 0;
+            nodes.front() >> val;
+            if (val <= 0)
+            {
+                throw Error(std::string(MldpMaxFramesPerStreamKey) + " must be > 0");
+            }
+            cfg.maxFramesPerStream = static_cast<std::size_t>(val);
+        }
+    }
+
     return cfg;
 }

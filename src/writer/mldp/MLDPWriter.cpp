@@ -70,6 +70,8 @@ struct MLDPWriter::StreamState
 
     google::protobuf::Arena arena;
 
+    std::uint64_t framesWritten{0};
+
     std::unordered_map<std::string, MLDPWriter::SourceRateTracker> rateTrackers;
 };
 
@@ -184,7 +186,7 @@ std::vector<MLDPWriter::QueueItem> MLDPWriter::toItems(util::bus::IDataBus::Even
 }
 
 // ---------------------------------------------------------------------------
-// processItem — per-worker gRPC send
+// processItem — per-worker gRPC send (one Write() per column)
 // ---------------------------------------------------------------------------
 
 void MLDPWriter::processItem(std::size_t workerIndex, QueueItem item)
@@ -217,78 +219,128 @@ void MLDPWriter::processItem(std::size_t workerIndex, QueueItem item)
         }
     }
 
-    state.arena.Reset();
-    auto* request = google::protobuf::Arena::CreateMessage<
-        dp::service::ingestion::IngestDataRequest>(&state.arena);
-    std::size_t       acceptedEvents = 0;
-    std::size_t       payloadBytes   = 0;
-    const std::size_t dataBatchBytes = util::bus::estimateDataBatchBytes(item.frame);
-    const auto        requestId      = mldp_pvxs_driver::util::format_string(
-        "pv_stream_{}_{}_{}", state.streamStart.time_since_epoch().count(),
-        item.root_source, state.requestCounter);
+    const std::size_t dataBatchBytes  = util::bus::estimateDataBatchBytes(item.frame);
+    const std::size_t nRegularCols    = item.frame.columns.size();
+    const std::size_t nEnumCols       = item.frame.enum_columns.size();
+    const std::size_t nTotalCols      = nRegularCols + nEnumCols;
+    const std::size_t acceptedEvents  = item.frame.timestamps.size();
+    std::size_t       totalPayloadBytes = 0;
+    bool              writeFailed      = false;
 
-    if (!buildRequest(item.root_source, item.frame, requestId,
-                      *request, acceptedEvents, payloadBytes,
-                      item.metadata.get()))
+    for (std::size_t i = 0; i < nTotalCols; ++i)
     {
-        return;
-    }
+        const bool   isEnum  = (i >= nRegularCols);
+        const auto   realIdx = isEnum ? (i - nRegularCols) : i;
 
-    if ((state.streamPayloadBytes + payloadBytes) > config_.streamMaxBytes &&
-        state.streamPayloadBytes > 0)
-    {
-        if (!rotateStream(state, "max bytes exceeded"))
+        state.arena.Reset();
+        auto* request = google::protobuf::Arena::CreateMessage<
+            dp::service::ingestion::IngestDataRequest>(&state.arena);
+
+        request->set_providerid(providerId_);
+        request->set_clientrequestid(mldp_pvxs_driver::util::format_string(
+            "pv_stream_{}_{}_{}",
+            state.streamStart.time_since_epoch().count(),
+            item.root_source,
+            state.requestCounter));
+
+        auto* dfPtr = request->mutable_ingestiondataframe();
+        *dfPtr = toSingleColumnDataFrame(item.frame, realIdx, isEnum,
+                                         item.root_source, item.metadata.get());
+
+        if (!hasAnyColumn(*dfPtr))
         {
-            record_send_time({{"source", std::string(kUnknownSource)}});
-            return;
+            warnf(logger(), "No valid column [{}] for source {}, skipping", i, item.root_source);
+            continue;
+        }
+        if (!hasTimestampList(*dfPtr))
+        {
+            errorf(logger(), "Dropping column [{}] for source {}: missing timestamplist", i, item.root_source);
+            metric_call(metrics_, [&](auto& m)
+                        {
+                            m.incrementWriterFailures(1.0, {{"writer", config_.name}, {"source", item.root_source}});
+                        });
+            continue;
+        }
+
+        const std::size_t payloadBytes = static_cast<std::size_t>(request->ByteSizeLong());
+
+        if ((state.streamPayloadBytes + payloadBytes) > config_.streamMaxBytes &&
+            state.streamPayloadBytes > 0)
+        {
+            if (!rotateStream(state, "max bytes exceeded"))
+            {
+                record_send_time({{"source", std::string(kUnknownSource)}});
+                writeFailed = true;
+                break;
+            }
+        }
+
+        if (!state.writer->Write(*request))
+        {
+            errorf(logger(), "Failed to write column [{}] of source {} to ingestion stream", i, item.root_source);
+            metric_call(metrics_, [&](auto& m)
+                        {
+                            m.incrementWriterFailures(1.0, {{"writer", config_.name}, {"source", item.root_source}});
+                        });
+            closeStream(state, "write failed");
+            writeFailed = true;
+            break;
+        }
+
+        ++state.requestCounter;
+        ++state.framesWritten;
+        state.streamPayloadBytes += payloadBytes;
+        totalPayloadBytes        += payloadBytes;
+
+        if (payloadBytes > 0)
+        {
+            metric_call(metrics_, [&](auto& m)
+                        {
+                            m.incrementWriterPayloadBytes(static_cast<double>(payloadBytes),
+                                                          {{"writer", config_.name}, {"source", item.root_source}});
+                        });
+        }
+
+        if (state.framesWritten >= config_.maxFramesPerStream)
+        {
+            closeStream(state, "max frames per stream reached");
+            break;
         }
     }
 
-    if (!state.writer->Write(*request))
+    if (!writeFailed)
     {
-        errorf(logger(), "Failed to write source {} to ingestion stream", item.root_source);
-        metric_call(metrics_, [&](auto& m)
-                    {
-                        m.incrementWriterFailures(1.0, {{"writer", config_.name}, {"source", item.root_source}});
-                    });
-        closeStream(state, "write failed");
-        return;
+        if (acceptedEvents > 0)
+        {
+            metric_call(metrics_, [&](auto& m)
+                        {
+                            m.incrementWriterPushes(static_cast<double>(acceptedEvents),
+                                                    {{"writer", config_.name}, {"source", item.root_source}});
+                        });
+        }
+        if (dataBatchBytes > 0)
+        {
+            metric_call(metrics_, [&](auto& m)
+                        {
+                            m.incrementWriterDataBytesTotal(static_cast<double>(dataBatchBytes),
+                                                            {{"source", item.root_source}});
+                        });
+        }
+
+        updateSourceRateMetrics(state, item.root_source, dataBatchBytes, totalPayloadBytes);
+        record_send_time({{"source", item.root_source}});
+
+        if (state.writer)
+        {
+            const auto postElapsed = std::chrono::steady_clock::now() - state.streamStart;
+            if (postElapsed >= config_.streamMaxAge || state.streamPayloadBytes >= config_.streamMaxBytes)
+                closeStream(state, "threshold reached");
+        }
     }
-
-    ++state.requestCounter;
-    state.streamPayloadBytes += payloadBytes;
-
-    if (acceptedEvents > 0)
+    else
     {
-        metric_call(metrics_, [&](auto& m)
-                    {
-                        m.incrementWriterPushes(static_cast<double>(acceptedEvents),
-                                                {{"writer", config_.name}, {"source", item.root_source}});
-                    });
+        record_send_time({{"source", item.root_source}});
     }
-    if (payloadBytes > 0)
-    {
-        metric_call(metrics_, [&](auto& m)
-                    {
-                        m.incrementWriterPayloadBytes(static_cast<double>(payloadBytes),
-                                                      {{"writer", config_.name}, {"source", item.root_source}});
-                    });
-    }
-    if (dataBatchBytes > 0)
-    {
-        metric_call(metrics_, [&](auto& m)
-                    {
-                        m.incrementWriterDataBytesTotal(static_cast<double>(dataBatchBytes),
-                                                        {{"source", item.root_source}});
-                    });
-    }
-
-    updateSourceRateMetrics(state, item.root_source, dataBatchBytes, payloadBytes);
-    record_send_time({{"source", item.root_source}});
-
-    const auto postElapsed = std::chrono::steady_clock::now() - state.streamStart;
-    if (postElapsed >= config_.streamMaxAge || state.streamPayloadBytes >= config_.streamMaxBytes)
-        closeStream(state, "threshold reached");
 }
 
 // ---------------------------------------------------------------------------
@@ -354,7 +406,8 @@ void MLDPWriter::closeStream(StreamState& state, const char* reason) noexcept
     state.handle.reset();
     state.context.reset();
     state.streamPayloadBytes = 0;
-    state.requestCounter = 0;
+    state.requestCounter     = 0;
+    state.framesWritten      = 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -481,12 +534,15 @@ void MLDPWriter::updateSourceRateMetrics(StreamState&       state,
 }
 
 // ---------------------------------------------------------------------------
-// toDataFrame — convert DataBatch → protobuf DataFrame
+// toSingleColumnDataFrame — convert one column of DataBatch → protobuf DataFrame
 // ---------------------------------------------------------------------------
 
-dp::service::common::DataFrame MLDPWriter::toDataFrame(const util::bus::DataBatch&                         batch,
-                                                       const std::string&                                  rootSource,
-                                                       const std::unordered_map<std::string, std::string>* metadata)
+dp::service::common::DataFrame MLDPWriter::toSingleColumnDataFrame(
+    const util::bus::DataBatch&                         batch,
+    std::size_t                                         colIndex,
+    bool                                                isEnum,
+    const std::string&                                  rootSource,
+    const std::unordered_map<std::string, std::string>* metadata)
 {
     dp::service::common::DataFrame df;
 
@@ -517,9 +573,10 @@ dp::service::common::DataFrame MLDPWriter::toDataFrame(const util::bus::DataBatc
                 c->mutable_dimensions()->add_dims(d);
     };
 
-    // Timestamps
+    // Timestamps (shared across all columns in the batch)
     {
         auto* tsList = df.mutable_datatimestamps()->mutable_timestamplist();
+        tsList->mutable_timestamps()->Reserve(static_cast<int>(batch.timestamps.size()));
         for (const auto& ts : batch.timestamps)
         {
             auto* entry = tsList->add_timestamps();
@@ -528,176 +585,133 @@ dp::service::common::DataFrame MLDPWriter::toDataFrame(const util::bus::DataBatc
         }
     }
 
-    // Typed columns
-    for (const auto& col : batch.columns)
+    if (isEnum)
     {
-        std::visit(
-            [&](const auto& vec)
-            {
-                using T = std::decay_t<decltype(vec)>;
-
-                if constexpr (std::is_same_v<T, std::vector<double>>)
-                {
-                    auto* c = df.add_doublecolumns();
-                    setup_col(c, col.name);
-                    auto* vals = c->mutable_values();
-                    vals->Resize(static_cast<int>(vec.size()), 0.0);
-                    std::memcpy(vals->mutable_data(), vec.data(), vec.size() * sizeof(double));
-                }
-                else if constexpr (std::is_same_v<T, std::vector<float>>)
-                {
-                    auto* c = df.add_floatcolumns();
-                    setup_col(c, col.name);
-                    auto* vals = c->mutable_values();
-                    vals->Resize(static_cast<int>(vec.size()), 0.0f);
-                    std::memcpy(vals->mutable_data(), vec.data(), vec.size() * sizeof(float));
-                }
-                else if constexpr (std::is_same_v<T, std::vector<int64_t>>)
-                {
-                    auto* c = df.add_int64columns();
-                    setup_col(c, col.name);
-                    auto* vals = c->mutable_values();
-                    vals->Resize(static_cast<int>(vec.size()), 0);
-                    std::memcpy(vals->mutable_data(), vec.data(), vec.size() * sizeof(int64_t));
-                }
-                else if constexpr (std::is_same_v<T, std::vector<int32_t>>)
-                {
-                    auto* c = df.add_int32columns();
-                    setup_col(c, col.name);
-                    auto* vals = c->mutable_values();
-                    vals->Resize(static_cast<int>(vec.size()), 0);
-                    std::memcpy(vals->mutable_data(), vec.data(), vec.size() * sizeof(int32_t));
-                }
-                else if constexpr (std::is_same_v<T, std::vector<bool>>)
-                {
-                    auto* c = df.add_boolcolumns();
-                    setup_col(c, col.name);
-                    c->mutable_values()->Reserve(static_cast<int>(vec.size()));
-                    for (auto v : vec) c->add_values(v);
-                }
-                else if constexpr (std::is_same_v<T, std::vector<std::string>>)
-                {
-                    auto* c = df.add_stringcolumns();
-                    setup_col(c, col.name);
-                    c->mutable_values()->Reserve(static_cast<int>(vec.size()));
-                    for (const auto& v : vec) c->add_values(v);
-                }
-                else if constexpr (std::is_same_v<T, std::vector<std::vector<uint8_t>>>)
-                {
-                    auto* c = df.add_structcolumns();
-                    setup_col(c, col.name);
-                    c->set_schemaid("");
-                    c->mutable_values()->Reserve(static_cast<int>(vec.size()));
-                    for (const auto& blob : vec) c->add_values(blob.data(), blob.size());
-                }
-                else if constexpr (std::is_same_v<T, std::vector<std::vector<double>>>)
-                {
-                    auto* c = df.add_doublearraycolumns();
-                    setup_col(c, col.name);
-                    std::size_t total = 0; for (const auto& a : vec) total += a.size();
-                    auto* vals = c->mutable_values();
-                    vals->Resize(static_cast<int>(total), 0.0);
-                    double* dst = vals->mutable_data();
-                    for (const auto& arr : vec) { std::memcpy(dst, arr.data(), arr.size() * sizeof(double)); dst += arr.size(); }
-                    apply_dims(c, col.name);
-                }
-                else if constexpr (std::is_same_v<T, std::vector<std::vector<float>>>)
-                {
-                    auto* c = df.add_floatarraycolumns();
-                    setup_col(c, col.name);
-                    std::size_t total = 0; for (const auto& a : vec) total += a.size();
-                    auto* vals = c->mutable_values();
-                    vals->Resize(static_cast<int>(total), 0.0f);
-                    float* dst = vals->mutable_data();
-                    for (const auto& arr : vec) { std::memcpy(dst, arr.data(), arr.size() * sizeof(float)); dst += arr.size(); }
-                    apply_dims(c, col.name);
-                }
-                else if constexpr (std::is_same_v<T, std::vector<std::vector<int64_t>>>)
-                {
-                    auto* c = df.add_int64arraycolumns();
-                    setup_col(c, col.name);
-                    std::size_t total = 0; for (const auto& a : vec) total += a.size();
-                    auto* vals = c->mutable_values();
-                    vals->Resize(static_cast<int>(total), 0);
-                    int64_t* dst = vals->mutable_data();
-                    for (const auto& arr : vec) { std::memcpy(dst, arr.data(), arr.size() * sizeof(int64_t)); dst += arr.size(); }
-                    apply_dims(c, col.name);
-                }
-                else if constexpr (std::is_same_v<T, std::vector<std::vector<int32_t>>>)
-                {
-                    auto* c = df.add_int32arraycolumns();
-                    setup_col(c, col.name);
-                    std::size_t total = 0; for (const auto& a : vec) total += a.size();
-                    auto* vals = c->mutable_values();
-                    vals->Resize(static_cast<int>(total), 0);
-                    int32_t* dst = vals->mutable_data();
-                    for (const auto& arr : vec) { std::memcpy(dst, arr.data(), arr.size() * sizeof(int32_t)); dst += arr.size(); }
-                    apply_dims(c, col.name);
-                }
-                else if constexpr (std::is_same_v<T, std::vector<std::vector<bool>>>)
-                {
-                    auto* c = df.add_boolarraycolumns();
-                    setup_col(c, col.name);
-                    c->mutable_values()->Reserve(static_cast<int>(vec.size()));
-                    for (const auto& arr : vec) for (auto v : arr) c->add_values(v);
-                    apply_dims(c, col.name);
-                }
-            },
-            col.values);
-    }
-
-    // Enum columns
-    for (const auto& ecol : batch.enum_columns)
-    {
+        const auto& ecol = batch.enum_columns[colIndex];
         auto* c = df.add_enumcolumns();
         setup_col(c, ecol.name);
         c->set_enumid(ecol.enum_id);
         c->mutable_values()->Reserve(static_cast<int>(ecol.values.size()));
         for (auto v : ecol.values) c->add_values(v);
+        return df;
     }
+
+    const auto& col = batch.columns[colIndex];
+    std::visit(
+        [&](const auto& vec)
+        {
+            using T = std::decay_t<decltype(vec)>;
+
+            if constexpr (std::is_same_v<T, std::vector<double>>)
+            {
+                auto* c = df.add_doublecolumns();
+                setup_col(c, col.name);
+                auto* vals = c->mutable_values();
+                vals->Resize(static_cast<int>(vec.size()), 0.0);
+                std::memcpy(vals->mutable_data(), vec.data(), vec.size() * sizeof(double));
+            }
+            else if constexpr (std::is_same_v<T, std::vector<float>>)
+            {
+                auto* c = df.add_floatcolumns();
+                setup_col(c, col.name);
+                auto* vals = c->mutable_values();
+                vals->Resize(static_cast<int>(vec.size()), 0.0f);
+                std::memcpy(vals->mutable_data(), vec.data(), vec.size() * sizeof(float));
+            }
+            else if constexpr (std::is_same_v<T, std::vector<int64_t>>)
+            {
+                auto* c = df.add_int64columns();
+                setup_col(c, col.name);
+                auto* vals = c->mutable_values();
+                vals->Resize(static_cast<int>(vec.size()), 0);
+                std::memcpy(vals->mutable_data(), vec.data(), vec.size() * sizeof(int64_t));
+            }
+            else if constexpr (std::is_same_v<T, std::vector<int32_t>>)
+            {
+                auto* c = df.add_int32columns();
+                setup_col(c, col.name);
+                auto* vals = c->mutable_values();
+                vals->Resize(static_cast<int>(vec.size()), 0);
+                std::memcpy(vals->mutable_data(), vec.data(), vec.size() * sizeof(int32_t));
+            }
+            else if constexpr (std::is_same_v<T, std::vector<bool>>)
+            {
+                auto* c = df.add_boolcolumns();
+                setup_col(c, col.name);
+                c->mutable_values()->Reserve(static_cast<int>(vec.size()));
+                for (auto v : vec) c->add_values(v);
+            }
+            else if constexpr (std::is_same_v<T, std::vector<std::string>>)
+            {
+                auto* c = df.add_stringcolumns();
+                setup_col(c, col.name);
+                c->mutable_values()->Reserve(static_cast<int>(vec.size()));
+                for (const auto& v : vec) c->add_values(v);
+            }
+            else if constexpr (std::is_same_v<T, std::vector<std::vector<uint8_t>>>)
+            {
+                auto* c = df.add_structcolumns();
+                setup_col(c, col.name);
+                c->set_schemaid("");
+                c->mutable_values()->Reserve(static_cast<int>(vec.size()));
+                for (const auto& blob : vec) c->add_values(blob.data(), blob.size());
+            }
+            else if constexpr (std::is_same_v<T, std::vector<std::vector<double>>>)
+            {
+                auto* c = df.add_doublearraycolumns();
+                setup_col(c, col.name);
+                std::size_t total = 0; for (const auto& a : vec) total += a.size();
+                auto* vals = c->mutable_values();
+                vals->Resize(static_cast<int>(total), 0.0);
+                double* dst = vals->mutable_data();
+                for (const auto& arr : vec) { std::memcpy(dst, arr.data(), arr.size() * sizeof(double)); dst += arr.size(); }
+                apply_dims(c, col.name);
+            }
+            else if constexpr (std::is_same_v<T, std::vector<std::vector<float>>>)
+            {
+                auto* c = df.add_floatarraycolumns();
+                setup_col(c, col.name);
+                std::size_t total = 0; for (const auto& a : vec) total += a.size();
+                auto* vals = c->mutable_values();
+                vals->Resize(static_cast<int>(total), 0.0f);
+                float* dst = vals->mutable_data();
+                for (const auto& arr : vec) { std::memcpy(dst, arr.data(), arr.size() * sizeof(float)); dst += arr.size(); }
+                apply_dims(c, col.name);
+            }
+            else if constexpr (std::is_same_v<T, std::vector<std::vector<int64_t>>>)
+            {
+                auto* c = df.add_int64arraycolumns();
+                setup_col(c, col.name);
+                std::size_t total = 0; for (const auto& a : vec) total += a.size();
+                auto* vals = c->mutable_values();
+                vals->Resize(static_cast<int>(total), 0);
+                int64_t* dst = vals->mutable_data();
+                for (const auto& arr : vec) { std::memcpy(dst, arr.data(), arr.size() * sizeof(int64_t)); dst += arr.size(); }
+                apply_dims(c, col.name);
+            }
+            else if constexpr (std::is_same_v<T, std::vector<std::vector<int32_t>>>)
+            {
+                auto* c = df.add_int32arraycolumns();
+                setup_col(c, col.name);
+                std::size_t total = 0; for (const auto& a : vec) total += a.size();
+                auto* vals = c->mutable_values();
+                vals->Resize(static_cast<int>(total), 0);
+                int32_t* dst = vals->mutable_data();
+                for (const auto& arr : vec) { std::memcpy(dst, arr.data(), arr.size() * sizeof(int32_t)); dst += arr.size(); }
+                apply_dims(c, col.name);
+            }
+            else if constexpr (std::is_same_v<T, std::vector<std::vector<bool>>>)
+            {
+                auto* c = df.add_boolarraycolumns();
+                setup_col(c, col.name);
+                c->mutable_values()->Reserve(static_cast<int>(vec.size()));
+                for (const auto& arr : vec) for (auto v : arr) c->add_values(v);
+                apply_dims(c, col.name);
+            }
+        },
+        col.values);
 
     return df;
-}
-
-// ---------------------------------------------------------------------------
-// buildRequest — convert DataBatch → IngestDataRequest
-// ---------------------------------------------------------------------------
-
-bool MLDPWriter::buildRequest(const std::string&                                  sourceName,
-                              const util::bus::DataBatch&                         batch,
-                              const std::string&                                  requestId,
-                              dp::service::ingestion::IngestDataRequest&          request,
-                              std::size_t&                                        acceptedEvents,
-                              std::size_t&                                        payloadBytes,
-                              const std::unordered_map<std::string, std::string>* metadata)
-{
-    request.set_providerid(providerId_);
-    request.set_clientrequestid(requestId);
-
-    auto  dataFrame     = toDataFrame(batch, sourceName, metadata);
-    auto* dataFrame_ptr = request.mutable_ingestiondataframe();
-    *dataFrame_ptr      = std::move(dataFrame);
-
-    if (!hasAnyColumn(*dataFrame_ptr))
-    {
-        warnf(logger(), "No valid columns for source {}, skipping request", sourceName);
-        return false;
-    }
-
-    if (!hasTimestampList(*dataFrame_ptr))
-    {
-        errorf(logger(), "Dropping frame for source {}: missing DataFrame.datatimestamps.timestamplist", sourceName);
-        metric_call(metrics_, [&](auto& m)
-                    {
-                        m.incrementWriterFailures(1.0, {{"writer", config_.name}, {"source", sourceName}});
-                    });
-        return false;
-    }
-
-    acceptedEvents = static_cast<std::size_t>(
-        dataFrame_ptr->datatimestamps().timestamplist().timestamps_size());
-    payloadBytes = static_cast<std::size_t>(request.ByteSizeLong());
-    return true;
 }
 
 // ---------------------------------------------------------------------------

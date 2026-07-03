@@ -120,16 +120,12 @@ private:
                                  const std::string& source,
                                  std::size_t        dataBatchBytes,
                                  std::size_t        payloadBytes);
-    bool buildRequest(const std::string&                                  sourceName,
-                      const util::bus::DataBatch&                         batch,
-                      const std::string&                                  requestId,
-                      dp::service::ingestion::IngestDataRequest&          request,
-                      std::size_t&                                        acceptedEvents,
-                      std::size_t&                                        payloadBytes,
-                      const std::unordered_map<std::string, std::string>* metadata = nullptr);
-    static dp::service::common::DataFrame toDataFrame(const util::bus::DataBatch&                         batch,
-                                                      const std::string&                                  rootSource,
-                                                      const std::unordered_map<std::string, std::string>* metadata = nullptr);
+    static dp::service::common::DataFrame toSingleColumnDataFrame(
+        const util::bus::DataBatch&                         batch,
+        std::size_t                                         colIndex,
+        bool                                                isEnum,
+        const std::string&                                  rootSource,
+        const std::unordered_map<std::string, std::string>* metadata = nullptr);
     void updateQueueDepthMetric();
 };
 

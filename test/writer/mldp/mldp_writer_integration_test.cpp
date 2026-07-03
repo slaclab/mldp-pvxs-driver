@@ -909,3 +909,238 @@ TEST(MLDPWriterTest, BatchMetadataAppearsAsColumnAttributes)
     writer->stop();
     server->Shutdown();
 }
+
+// ---------------------------------------------------------------------------
+// PerColumnWritesSendOneRequestPerColumn
+// A DataBatch with N typed columns must produce N separate IngestDataRequests
+// on the stream, each carrying exactly one column plus the shared timestamps.
+// ---------------------------------------------------------------------------
+
+TEST(MLDPWriterTest, PerColumnWritesSendOneRequestPerColumn)
+{
+    WriterTestIngestionService service;
+    grpc::ServerBuilder        builder;
+    int                        port = 0;
+    builder.AddListeningPort("127.0.0.1:0", grpc::InsecureServerCredentials(), &port);
+    builder.RegisterService(&service);
+    std::unique_ptr<grpc::Server> server(builder.BuildAndStart());
+    ASSERT_TRUE(server);
+    ASSERT_GT(port, 0);
+
+    std::ostringstream yaml;
+    yaml << "name: mldp_per_col_test\n"
+         << "mldp-pool:\n"
+         << "  provider-name: per-col-provider\n"
+         << "  ingestion-url: 127.0.0.1:" << port << "\n"
+         << "  query-url: localhost:" << port << "\n"
+         << "  min-conn: 1\n"
+         << "  max-conn: 1\n"
+         << "max-frames-per-stream: 1000\n";
+
+    const auto cfg = makeConfigFromYaml(yaml.str());
+    ASSERT_TRUE(cfg.valid());
+
+    auto writer = mldp_pvxs_driver::writer::WriterFactory::create("mldp", cfg, nullptr);
+    ASSERT_TRUE(writer);
+    ASSERT_NO_THROW(writer->start());
+
+    using namespace mldp_pvxs_driver::util::bus;
+
+    // Build a batch with 3 typed columns (double, int32, float)
+    IDataBus::EventBatch batch;
+
+    DataBatch frame;
+    frame.timestamps.push_back({1000000000, 0});
+    frame.timestamps.push_back({1000000001, 0});
+
+    DataColumn col_d;
+    col_d.name   = "voltage";
+    col_d.values = std::vector<double>{1.0, 2.0};
+    frame.columns.push_back(std::move(col_d));
+
+    DataColumn col_i;
+    col_i.name   = "counter";
+    col_i.values = std::vector<int32_t>{10, 20};
+    frame.columns.push_back(std::move(col_i));
+
+    DataColumn col_f;
+    col_f.name   = "temperature";
+    col_f.values = std::vector<float>{3.0f, 4.0f};
+    frame.columns.push_back(std::move(col_f));
+
+    TimeSeriesPayload ts;
+    ts.root_source_name = "test:per:col:source";
+    ts.frames.push_back(std::move(frame));
+    batch.payload = std::move(ts);
+
+    constexpr int kExpectedRequests = 3;
+    ASSERT_TRUE(writer->push(std::move(batch)));
+    ASSERT_TRUE(writerWaitForCount(service.request_count, kExpectedRequests, std::chrono::milliseconds(5000)));
+
+    std::vector<dp::service::ingestion::IngestDataRequest> captured;
+    {
+        std::lock_guard<std::mutex> lock(service.captured_mutex);
+        captured = service.captured_requests;
+    }
+    ASSERT_EQ(static_cast<int>(captured.size()), kExpectedRequests)
+        << "Expected one request per column";
+
+    // Each request must have exactly one column type populated and shared timestamps
+    for (int i = 0; i < kExpectedRequests; ++i)
+    {
+        const auto& df = captured[i].ingestiondataframe();
+        EXPECT_TRUE(df.has_datatimestamps()) << "request[" << i << "] missing timestamps";
+        EXPECT_EQ(df.datatimestamps().timestamplist().timestamps_size(), 2)
+            << "request[" << i << "] timestamp count mismatch";
+
+        const int total_cols = df.doublecolumns_size() + df.int32columns_size() +
+                               df.floatcolumns_size()  + df.int64columns_size()  +
+                               df.boolcolumns_size()   + df.stringcolumns_size() +
+                               df.enumcolumns_size();
+        EXPECT_EQ(total_cols, 1) << "request[" << i << "] should have exactly 1 column, got " << total_cols;
+    }
+
+    // Verify column names appear (order may vary but all 3 must be present)
+    std::set<std::string> found_names;
+    for (const auto& req : captured)
+    {
+        const auto& df = req.ingestiondataframe();
+        for (int j = 0; j < df.doublecolumns_size(); ++j)  found_names.insert(df.doublecolumns(j).name());
+        for (int j = 0; j < df.int32columns_size();  ++j)  found_names.insert(df.int32columns(j).name());
+        for (int j = 0; j < df.floatcolumns_size();  ++j)  found_names.insert(df.floatcolumns(j).name());
+    }
+    EXPECT_TRUE(found_names.count("voltage"))     << "voltage column not found";
+    EXPECT_TRUE(found_names.count("counter"))     << "counter column not found";
+    EXPECT_TRUE(found_names.count("temperature")) << "temperature column not found";
+
+    writer->stop();
+    server->Shutdown();
+}
+
+// ---------------------------------------------------------------------------
+// MaxFramesPerStreamTriggersRotation
+// After maxFramesPerStream Write() calls the stream must close and reopen.
+// Verified by checking that a second stream is opened (two ingestDataStream
+// handler invocations) when we push enough columns to exceed the limit.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+class TrackingIngestionService final
+    : public dp::service::ingestion::DpIngestionService::Service
+{
+public:
+    std::atomic<int> request_count{0};
+    std::atomic<int> stream_open_count{0};
+
+    grpc::Status registerProvider(
+        grpc::ServerContext*,
+        const dp::service::ingestion::RegisterProviderRequest*,
+        dp::service::ingestion::RegisterProviderResponse* response) override
+    {
+        auto* result = response->mutable_registrationresult();
+        result->set_providerid("tracking-provider-id");
+        result->set_providername("tracking-provider");
+        result->set_isnewprovider(true);
+        return grpc::Status::OK;
+    }
+
+    grpc::Status ingestDataStream(
+        grpc::ServerContext*,
+        grpc::ServerReader<dp::service::ingestion::IngestDataRequest>* reader,
+        dp::service::ingestion::IngestDataStreamResponse*              response) override
+    {
+        stream_open_count.fetch_add(1, std::memory_order_relaxed);
+        dp::service::ingestion::IngestDataRequest req;
+        while (reader->Read(&req))
+            request_count.fetch_add(1, std::memory_order_relaxed);
+        auto* result = response->mutable_ingestdatastreamresult();
+        result->set_numrequests(static_cast<int32_t>(request_count.load()));
+        return grpc::Status::OK;
+    }
+};
+
+bool trackingWaitFor(std::atomic<int>& counter, int target, std::chrono::milliseconds timeout)
+{
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (std::chrono::steady_clock::now() < deadline)
+    {
+        if (counter.load(std::memory_order_relaxed) >= target)
+            return true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    return counter.load(std::memory_order_relaxed) >= target;
+}
+
+} // namespace
+
+TEST(MLDPWriterTest, MaxFramesPerStreamTriggersRotation)
+{
+    // Set max-frames-per-stream: 3.
+    // Push two batches each with 2 columns = 4 total Write() calls.
+    // After 3 frames the stream must rotate — expect stream_open_count >= 2.
+
+    TrackingIngestionService service;
+    grpc::ServerBuilder      builder;
+    int                      port = 0;
+    builder.AddListeningPort("127.0.0.1:0", grpc::InsecureServerCredentials(), &port);
+    builder.RegisterService(&service);
+    std::unique_ptr<grpc::Server> server(builder.BuildAndStart());
+    ASSERT_TRUE(server);
+    ASSERT_GT(port, 0);
+
+    std::ostringstream yaml;
+    yaml << "name: mldp_rotation_test\n"
+         << "stream-max-age-ms: 60000\n"
+         << "stream-max-bytes: 104857600\n"
+         << "max-frames-per-stream: 3\n"
+         << "mldp-pool:\n"
+         << "  provider-name: rotation-provider\n"
+         << "  ingestion-url: 127.0.0.1:" << port << "\n"
+         << "  query-url: localhost:" << port << "\n"
+         << "  min-conn: 1\n"
+         << "  max-conn: 1\n";
+
+    const auto cfg = makeConfigFromYaml(yaml.str());
+    ASSERT_TRUE(cfg.valid());
+
+    auto writer = mldp_pvxs_driver::writer::WriterFactory::create("mldp", cfg, nullptr);
+    ASSERT_TRUE(writer);
+    ASSERT_NO_THROW(writer->start());
+
+    using namespace mldp_pvxs_driver::util::bus;
+
+    auto make_batch = [](const std::string& source) -> IDataBus::EventBatch
+    {
+        IDataBus::EventBatch batch;
+        DataBatch            frame;
+        frame.timestamps.push_back({1000000000, 0});
+
+        DataColumn ca; ca.name = "ch_a"; ca.values = std::vector<double>{1.0};
+        DataColumn cb; cb.name = "ch_b"; cb.values = std::vector<int32_t>{2};
+        frame.columns.push_back(std::move(ca));
+        frame.columns.push_back(std::move(cb));
+
+        TimeSeriesPayload ts;
+        ts.root_source_name = source;
+        ts.frames.push_back(std::move(frame));
+        batch.payload = std::move(ts);
+        return batch;
+    };
+
+    // 2 batches × 2 columns = 4 Write() calls; limit is 3 → must rotate once
+    ASSERT_TRUE(writer->push(make_batch("test:rotation:source")));
+    ASSERT_TRUE(writer->push(make_batch("test:rotation:source")));
+
+    // Wait for all 4 requests to arrive
+    ASSERT_TRUE(trackingWaitFor(service.request_count, 4, std::chrono::milliseconds(5000)));
+
+    // Force stream close so the second stream's ingestDataStream call completes
+    writer->stop();
+    server->Shutdown();
+
+    EXPECT_GE(service.stream_open_count.load(), 2)
+        << "Expected at least 2 stream openings after exceeding max-frames-per-stream=3";
+    EXPECT_EQ(service.request_count.load(), 4)
+        << "Expected exactly 4 Write() calls (2 batches × 2 columns)";
+}

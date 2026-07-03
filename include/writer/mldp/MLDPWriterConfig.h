@@ -32,6 +32,8 @@ inline constexpr char MldpStreamMaxBytesKey[] = "stream-max-bytes";
 inline constexpr char MldpStreamMaxAgeMsKey[] = "stream-max-age-ms";
 /// YAML key: `writer.mldp[i].queue-capacity` — max queued items before push blocks (default: 10000).
 inline constexpr char MldpQueueCapacityKey[] = "queue-capacity";
+/// YAML key: `writer.mldp[i].max-frames-per-stream` — max Write() calls per stream before close (default: 100).
+inline constexpr char MldpMaxFramesPerStreamKey[] = "max-frames-per-stream";
 
 /**
  * @brief Configuration for the MLDP ingestion writer.
@@ -79,6 +81,9 @@ struct MLDPWriterConfig
 
     /// YAML key: `writer.mldp[i].queue-capacity` — max queued items across all worker channels before push blocks.  Default: 10000.
     std::size_t queueCapacity{10000};
+
+    /// YAML key: `writer.mldp[i].max-frames-per-stream` — max Write() calls (DataFrames) per stream before close.  Default: 100.
+    std::size_t maxFramesPerStream{100};
 
     /**
      * @brief Parse MLDP writer configuration from the `writer.mldp` YAML node.
