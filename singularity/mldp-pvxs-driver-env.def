@@ -50,7 +50,8 @@ From: rockylinux/rockylinux:9.3
         openssl-devel cyrus-sasl-devel libcurl-devel libicu-devel \
         gdb clang libevent-devel python3-devel \
         ca-certificates perl perl-Pod-Html perl-podlators \
-        jq file sudo
+        jq file sudo \
+        rsync iperf3
     dnf install -y go-toolset lcov valgrind clang-tools-extra lldb lld \
         || echo "Warning: optional packages unavailable; continuing"
     dnf clean all

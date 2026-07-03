@@ -5,8 +5,8 @@ services:
     environment:
       - MONGO_INITDB_ROOT_USERNAME=admin
       - MONGO_INITDB_ROOT_PASSWORD=admin
-    ports:
-      - "27017:27017"
+    # ports:
+    #   - "27017:27017"
 
   dp-ingestion:
     image: ghcr.io/slaclab/dp-service:rel-1.14.0
@@ -21,8 +21,8 @@ services:
       - "-cp"
       - "/app/app.jar"
       - "com.ospreydcs.dp.service.ingest.server.IngestionGrpcServer"
-    ports:
-      - "50051:50051"
+    # ports:
+    #   - "50051:50051"
   
   dp-query:
     image: ghcr.io/slaclab/dp-service:rel-1.14.0
@@ -43,8 +43,8 @@ services:
         - "-cp"
         - "/app/app.jar"
         - "com.ospreydcs.dp.service.query.server.QueryGrpcServer"
-    ports:
-      - "50052:50052"
+    # ports:
+    #   - "50052:50052"
 
   dp-annotation:
     image: ghcr.io/slaclab/dp-service:rel-1.14.0
@@ -59,8 +59,15 @@ services:
       - "-cp"
       - "/app/app.jar"
       - "com.ospreydcs.dp.service.annotation.server.AnnotationGrpcServer"
-    ports:
-      - "50053:50053"
+    # ports:
+    #   - "50053:50053"
+
+  iperf3:
+    image: alpine:3.20
+    container_name: iperf3
+    command: sh -c "apk add --no-cache iperf3 && iperf3 -s"
+    # ports:
+    #   - "5201:5201"
 
 volumes:
   kafka-data:
