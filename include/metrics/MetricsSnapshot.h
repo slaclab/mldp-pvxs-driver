@@ -57,6 +57,23 @@ struct PoolMetrics
 };
 
 /**
+ * @brief Process-level CPU, memory, I/O, and thread metrics.
+ */
+struct ProcessMetrics
+{
+    double    cpu_user_ticks   = 0.0; ///< Cumulative user CPU ticks
+    double    cpu_system_ticks = 0.0; ///< Cumulative system CPU ticks
+    long long threads          = 0;   ///< Current thread count
+    long long fds_open         = 0;   ///< Open file descriptors
+    double    vm_size_bytes    = 0.0; ///< Virtual memory size (bytes)
+    double    vm_rss_bytes     = 0.0; ///< Resident set size (bytes)
+    double    vm_peak_bytes    = 0.0; ///< Peak virtual memory (bytes)
+    double    rss_total_bytes  = 0.0; ///< Total RSS (anon+file+shmem, bytes)
+    double    io_read_bytes    = 0.0; ///< Cumulative bytes read from storage
+    double    io_write_bytes   = 0.0; ///< Cumulative bytes written to storage
+};
+
+/**
  * @brief Snapshot of driver metrics containing all collected data.
  */
 struct MetricsData
@@ -64,6 +81,7 @@ struct MetricsData
     std::vector<ReaderMetrics> readers; ///< Per-reader statistics
     std::vector<WriterMetrics> writers; ///< Per-writer statistics
     PoolMetrics                pool;    ///< Connection pool statistics
+    ProcessMetrics             process; ///< Process-level CPU/memory/IO metrics
 };
 
 /**

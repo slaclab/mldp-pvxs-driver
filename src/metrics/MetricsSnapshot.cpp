@@ -13,6 +13,7 @@
 
 #include <prometheus/text_serializer.h>
 
+#include <algorithm>
 #include <iomanip>
 #include <iostream>
 #include <map>
@@ -22,7 +23,6 @@ namespace mldp_pvxs_driver::metrics {
 
 std::string MetricsSnapshot::formatBytes(double bytes)
 {
-    // Format bytes in human-readable units
     constexpr double KB = 1024.0;
     constexpr double MB = KB * 1024.0;
     constexpr double GB = MB * 1024.0;
@@ -99,11 +99,11 @@ MetricsData MetricsSnapshot::getSnapshot(const Metrics& metrics) const
 {
     const auto text = serializeMetricsText(metrics);
 
-    // Parse prometheus text to extract metrics
-    std::map<std::string, std::map<std::string, double>> reader_metrics; // source  -> metric -> value
-    std::map<std::string, std::map<std::string, double>> writer_metrics; // writer  -> metric -> value
+    std::map<std::string, std::map<std::string, double>> reader_metrics;
+    std::map<std::string, std::map<std::string, double>> writer_metrics;
     double                                               pool_in_use    = 0.0;
     double                                               pool_available = 0.0;
+    ProcessMetrics                                       proc;
 
     std::istringstream stream(text);
     std::string        line;
@@ -127,7 +127,6 @@ MetricsData MetricsSnapshot::getSnapshot(const Metrics& metrics) const
         }
         else if (line.find("mldp_pvxs_driver_writer_payload_bytes_per_second") != std::string::npos)
         {
-            // labeled by both source= (reader) and writer= (writer instance)
             const auto source = extractLabelValue(line, "source=");
             if (!source.empty())
                 reader_metrics[source]["bytes_per_sec"] = extractMetricValue(line);
@@ -163,12 +162,10 @@ MetricsData MetricsSnapshot::getSnapshot(const Metrics& metrics) const
         }
         else if (line.find("mldp_pvxs_driver_controller_send_time_seconds_sum") != std::string::npos)
         {
-            // send_time has no writer= label — accumulate globally
             writer_metrics["__global__"]["send_sum"] += extractMetricValue(line);
         }
         else if (line.find("mldp_pvxs_driver_controller_send_time_seconds_count") != std::string::npos)
         {
-            // send_time has no writer= label — accumulate globally
             writer_metrics["__global__"]["send_count"] += extractMetricValue(line);
         }
 
@@ -181,9 +178,50 @@ MetricsData MetricsSnapshot::getSnapshot(const Metrics& metrics) const
         {
             pool_available = extractMetricValue(line);
         }
+
+        // --- process/CPU metrics ---
+        else if (line.find("mldp_pvxs_driver_process_cpu_user_ticks_total") != std::string::npos)
+        {
+            proc.cpu_user_ticks += extractMetricValue(line);
+        }
+        else if (line.find("mldp_pvxs_driver_process_cpu_system_ticks_total") != std::string::npos)
+        {
+            proc.cpu_system_ticks += extractMetricValue(line);
+        }
+        else if (line.find("mldp_pvxs_driver_process_threads") != std::string::npos)
+        {
+            proc.threads = static_cast<long long>(extractMetricValue(line));
+        }
+        else if (line.find("mldp_pvxs_driver_process_fds_open") != std::string::npos)
+        {
+            proc.fds_open = static_cast<long long>(extractMetricValue(line));
+        }
+        else if (line.find("mldp_pvxs_driver_process_memory_virtual_peak_bytes") != std::string::npos)
+        {
+            proc.vm_peak_bytes = extractMetricValue(line);
+        }
+        else if (line.find("mldp_pvxs_driver_process_memory_virtual_bytes") != std::string::npos)
+        {
+            proc.vm_size_bytes = extractMetricValue(line);
+        }
+        else if (line.find("mldp_pvxs_driver_process_memory_rss_total_bytes") != std::string::npos)
+        {
+            proc.rss_total_bytes = extractMetricValue(line);
+        }
+        else if (line.find("mldp_pvxs_driver_process_memory_rss_bytes") != std::string::npos)
+        {
+            proc.vm_rss_bytes = extractMetricValue(line);
+        }
+        else if (line.find("mldp_pvxs_driver_process_io_read_bytes_total") != std::string::npos)
+        {
+            proc.io_read_bytes += extractMetricValue(line);
+        }
+        else if (line.find("mldp_pvxs_driver_process_io_write_bytes_total") != std::string::npos)
+        {
+            proc.io_write_bytes += extractMetricValue(line);
+        }
     }
 
-    // Build snapshot
     MetricsData snapshot;
 
     const auto getMetric = [](const std::map<std::string, double>& m, std::string_view key) -> double
@@ -195,17 +233,15 @@ MetricsData MetricsSnapshot::getSnapshot(const Metrics& metrics) const
     for (const auto& [source, m] : reader_metrics)
     {
         ReaderMetrics rm;
-        rm.pv_name      = source;
-        rm.pushes       = static_cast<long long>(getMetric(m, "pushes"));
-        rm.bytes_total  = getMetric(m, "bytes_total");
+        rm.pv_name       = source;
+        rm.pushes        = static_cast<long long>(getMetric(m, "pushes"));
+        rm.bytes_total   = getMetric(m, "bytes_total");
         rm.bytes_per_sec = getMetric(m, "bytes_per_sec");
         snapshot.readers.push_back(rm);
     }
 
-    // Global metrics (no writer= label) shared across all writer instances
     const auto& global_m      = writer_metrics.count("__global__") ? writer_metrics.at("__global__")
                                                                     : std::map<std::string, double>{};
-    const double global_data_bps   = getMetric(global_m, "data_bps");
     const double global_send_sum   = getMetric(global_m, "send_sum");
     const double global_send_count = getMetric(global_m, "send_count");
 
@@ -219,7 +255,7 @@ MetricsData MetricsSnapshot::getSnapshot(const Metrics& metrics) const
         wm.stream_rotations      = static_cast<long long>(getMetric(m, "stream_rotations"));
         wm.failures              = static_cast<long long>(getMetric(m, "failures"));
         wm.payload_bytes_per_sec = getMetric(m, "payload_bps");
-        wm.data_bytes_per_sec    = global_data_bps;
+        wm.data_bytes_per_sec    = getMetric(m, "data_bps");
         wm.send_time_mean_ms     = (global_send_count > 0.0)
                                        ? (global_send_sum / global_send_count * 1000.0)
                                        : 0.0;
@@ -228,6 +264,7 @@ MetricsData MetricsSnapshot::getSnapshot(const Metrics& metrics) const
 
     snapshot.pool.in_use    = static_cast<long long>(pool_in_use);
     snapshot.pool.available = static_cast<long long>(pool_available);
+    snapshot.process        = proc;
 
     return snapshot;
 }
@@ -237,46 +274,89 @@ std::string MetricsSnapshot::toString(const MetricsData& snapshot)
     std::ostringstream output;
     output << "================================ METRICS DUMP ========================\n\n";
 
-    // Print per-reader metrics
+    // --- Readers table ---
     if (!snapshot.readers.empty())
     {
+        // Compute column widths
+        std::size_t pv_w = 7; // "PV Name"
+        for (const auto& r : snapshot.readers)
+            pv_w = std::max(pv_w, r.pv_name.size());
+        pv_w += 2;
+
+        const std::string sep(pv_w + 10 + 12 + 14 + 6, '-');
         output << "READER STATISTICS:\n";
-        output << "─────────────────────────────────────────────────────────────────\n";
-        for (const auto& reader : snapshot.readers)
+        output << sep << "\n";
+        output << std::left << std::setw(static_cast<int>(pv_w)) << "PV Name"
+               << std::right << std::setw(10) << "Pushes"
+               << std::setw(12) << "Total Data"
+               << std::setw(14) << "Rate" << "\n";
+        output << sep << "\n";
+        for (const auto& r : snapshot.readers)
         {
-            output << "PV: " << reader.pv_name << "\n";
-            output << "  Pushes:     " << reader.pushes << "\n";
-            output << "  Total Data: " << formatBytes(reader.bytes_total) << "\n";
-            output << "  Rate:       " << formatBytes(reader.bytes_per_sec) << "/s\n";
-            output << "\n";
+            output << std::left  << std::setw(static_cast<int>(pv_w)) << r.pv_name
+                   << std::right << std::setw(10) << r.pushes
+                   << std::setw(12) << formatBytes(r.bytes_total)
+                   << std::setw(13) << (formatBytes(r.bytes_per_sec) + "/s") << "\n";
         }
+        output << "\n";
     }
 
-    // Print per-writer performance metrics
+    // --- Writers table ---
     if (!snapshot.writers.empty())
     {
+        std::size_t name_w = 6; // "Writer"
+        for (const auto& w : snapshot.writers)
+            name_w = std::max(name_w, w.writer_name.size());
+        name_w += 2;
+
+        const std::string sep(name_w + 7 + 11 + 6 + 14 + 14 + 12, '-');
         output << "WRITER PERFORMANCE:\n";
-        output << "─────────────────────────────────────────────────────────────────\n";
+        output << sep << "\n";
+        output << std::left  << std::setw(static_cast<int>(name_w)) << "Writer"
+               << std::right << std::setw(7)  << "Queue"
+               << std::setw(11) << "Rotations"
+               << std::setw(6)  << "Fail"
+               << std::setw(14) << "Payload Rate"
+               << std::setw(14) << "Data Rate"
+               << std::setw(12) << "Latency" << "\n";
+        output << sep << "\n";
         for (const auto& w : snapshot.writers)
         {
-            output << "Writer: " << w.writer_name << "\n";
-            output << "  Queue Depth:      " << w.queue_depth << "\n";
-            output << "  Stream Rotations: " << w.stream_rotations << "\n";
-            output << "  Failures:         " << w.failures << "\n";
-            output << "  Payload Rate:     " << formatBytes(w.payload_bytes_per_sec) << "/s\n";
-            output << "  Data Rate:        " << formatBytes(w.data_bytes_per_sec)    << "/s\n";
-            output << "  Send Latency:     " << std::fixed << std::setprecision(3)
-                   << w.send_time_mean_ms << " ms (mean)\n";
-            output << "\n";
+            std::ostringstream lat;
+            lat << std::fixed << std::setprecision(3) << w.send_time_mean_ms << " ms";
+            output << std::left  << std::setw(static_cast<int>(name_w)) << w.writer_name
+                   << std::right << std::setw(7)  << w.queue_depth
+                   << std::setw(11) << w.stream_rotations
+                   << std::setw(6)  << w.failures
+                   << std::setw(14) << (formatBytes(w.payload_bytes_per_sec) + "/s")
+                   << std::setw(14) << (formatBytes(w.data_bytes_per_sec)    + "/s")
+                   << std::setw(12) << lat.str() << "\n";
         }
+        output << "\n";
     }
 
-    // Print pool statistics
+    // --- Connection pool ---
     output << "CONNECTION POOL:\n";
-    output << "─────────────────────────────────────────────────────────────────\n";
-    output << "  In Use:     " << snapshot.pool.in_use << "\n";
-    output << "  Available:  " << snapshot.pool.available << "\n";
-    output << "  Total:      " << snapshot.pool.total() << "\n";
+    output << "─────────────────────────────────────────\n";
+    output << "  In Use:    " << snapshot.pool.in_use    << "\n";
+    output << "  Available: " << snapshot.pool.available << "\n";
+    output << "  Total:     " << snapshot.pool.total()   << "\n";
+    output << "\n";
+
+    // --- Process / CPU / memory ---
+    const auto& p = snapshot.process;
+    output << "PROCESS METRICS:\n";
+    output << "─────────────────────────────────────────\n";
+    output << "  CPU (user ticks):   " << std::fixed << std::setprecision(0) << p.cpu_user_ticks   << "\n";
+    output << "  CPU (sys  ticks):   " << std::fixed << std::setprecision(0) << p.cpu_system_ticks << "\n";
+    output << "  Threads:            " << p.threads  << "\n";
+    output << "  Open FDs:           " << p.fds_open << "\n";
+    output << "  VM Size:            " << formatBytes(p.vm_size_bytes) << "\n";
+    output << "  VM Peak:            " << formatBytes(p.vm_peak_bytes) << "\n";
+    output << "  RSS:                " << formatBytes(p.vm_rss_bytes)  << "\n";
+    output << "  RSS Total:          " << formatBytes(p.rss_total_bytes) << "\n";
+    output << "  I/O Read  (total):  " << formatBytes(p.io_read_bytes)  << "\n";
+    output << "  I/O Write (total):  " << formatBytes(p.io_write_bytes) << "\n";
 
     output << "=====================================================================\n";
 

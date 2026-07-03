@@ -303,8 +303,8 @@ void MLDPWriter::processItem(std::size_t workerIndex, QueueItem item)
 
         if (state.framesWritten >= config_.maxFramesPerStream)
         {
-            closeStream(state, "max frames per stream reached");
-            break;
+            if (!rotateStream(state, "max frames per stream reached"))
+                break;
         }
     }
 
