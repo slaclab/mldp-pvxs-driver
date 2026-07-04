@@ -10,7 +10,8 @@
 
 /**
  * @file HDF5BsasGen1Reader.cpp
- * @brief Implementation of the BSAS Gen1 HDF5 file reader.
+ * @brief  Implementation of the BSAS Gen1 HDF5 file reader.
+ * @date   2026-07-04
  *
  * ## Reading flow
  *
@@ -68,144 +69,144 @@ using namespace mldp_pvxs_driver::util::bus;
 
 namespace {
 
-    bool isContinuationByte(unsigned char byte)
-    {
-        return (byte & 0xC0) == 0x80;
-    }
+bool isContinuationByte(unsigned char byte)
+{
+    return (byte & 0xC0) == 0x80;
+}
 
-    bool isValidUtf8(const std::string& input)
+bool isValidUtf8(const std::string& input)
+{
+    const auto* p = reinterpret_cast<const unsigned char*>(input.data());
+    const auto* end = p + input.size();
+    while (p < end)
     {
-        const auto* p = reinterpret_cast<const unsigned char*>(input.data());
-        const auto* end = p + input.size();
-        while (p < end)
+        if (*p < 0x80)
         {
-            if (*p < 0x80)
-            {
-                ++p;
-            }
-            else if ((*p & 0xE0) == 0xC0 && p + 1 < end && isContinuationByte(p[1]))
-            {
-                if (*p < 0xC2)
-                {
-                    return false;
-                }
-                p += 2;
-            }
-            else if ((*p & 0xF0) == 0xE0 && p + 2 < end &&
-                     isContinuationByte(p[1]) && isContinuationByte(p[2]))
-            {
-                const auto ch = static_cast<uint32_t>((*p & 0x0F) << 12 |
-                                                      (p[1] & 0x3F) << 6 |
-                                                      (p[2] & 0x3F));
-                if (ch < 0x800 || (ch >= 0xD800 && ch <= 0xDFFF))
-                {
-                    return false;
-                }
-                p += 3;
-            }
-            else if ((*p & 0xF8) == 0xF0 && p + 3 < end &&
-                     isContinuationByte(p[1]) && isContinuationByte(p[2]) &&
-                     isContinuationByte(p[3]))
-            {
-                const auto ch = static_cast<uint32_t>((*p & 0x07) << 18 |
-                                                      (p[1] & 0x3F) << 12 |
-                                                      (p[2] & 0x3F) << 6 |
-                                                      (p[3] & 0x3F));
-                if (ch < 0x10000 || ch > 0x10FFFF)
-                {
-                    return false;
-                }
-                p += 4;
-            }
-            else
+            ++p;
+        }
+        else if ((*p & 0xE0) == 0xC0 && p + 1 < end && isContinuationByte(p[1]))
+        {
+            if (*p < 0xC2)
             {
                 return false;
             }
+            p += 2;
         }
-        return true;
+        else if ((*p & 0xF0) == 0xE0 && p + 2 < end &&
+                 isContinuationByte(p[1]) && isContinuationByte(p[2]))
+        {
+            const auto ch = static_cast<uint32_t>((*p & 0x0F) << 12 |
+                                                  (p[1] & 0x3F) << 6 |
+                                                  (p[2] & 0x3F));
+            if (ch < 0x800 || (ch >= 0xD800 && ch <= 0xDFFF))
+            {
+                return false;
+            }
+            p += 3;
+        }
+        else if ((*p & 0xF8) == 0xF0 && p + 3 < end &&
+                 isContinuationByte(p[1]) && isContinuationByte(p[2]) &&
+                 isContinuationByte(p[3]))
+        {
+            const auto ch = static_cast<uint32_t>((*p & 0x07) << 18 |
+                                                  (p[1] & 0x3F) << 12 |
+                                                  (p[2] & 0x3F) << 6 |
+                                                  (p[3] & 0x3F));
+            if (ch < 0x10000 || ch > 0x10FFFF)
+            {
+                return false;
+            }
+            p += 4;
+        }
+        else
+        {
+            return false;
+        }
     }
+    return true;
+}
 
-    std::string sanitizeUtf8(const std::string& input)
+std::string sanitizeUtf8(const std::string& input)
+{
+    if (isValidUtf8(input))
     {
-        if (isValidUtf8(input))
-        {
-            return input;
-        }
-
-        std::string out;
-        out.reserve(input.size());
-        const auto* p = reinterpret_cast<const unsigned char*>(input.data());
-        const auto* end = p + input.size();
-        while (p < end)
-        {
-            if (*p >= 0x20 && *p < 0x7F)
-            {
-                out.push_back(static_cast<char>(*p));
-            }
-            else if (*p == ' ')
-            {
-                out.push_back('_');
-            }
-            ++p;
-        }
-        return out;
+        return input;
     }
 
-    std::string normalizeColumnName(const std::string& candidate,
-                                    const std::string& fallback)
+    std::string out;
+    out.reserve(input.size());
+    const auto* p = reinterpret_cast<const unsigned char*>(input.data());
+    const auto* end = p + input.size();
+    while (p < end)
     {
-        std::string name = sanitizeUtf8(candidate);
-        if (name.empty())
+        if (*p >= 0x20 && *p < 0x7F)
         {
-            name = sanitizeUtf8(fallback);
+            out.push_back(static_cast<char>(*p));
         }
-
-        for (char& ch : name)
+        else if (*p == ' ')
         {
-            const auto uch = static_cast<unsigned char>(ch);
-            if (std::iscntrl(uch))
-            {
-                ch = '_';
-            }
+            out.push_back('_');
         }
-
-        if (name.empty())
-        {
-            name = "unnamed_column";
-        }
-
-        return name;
+        ++p;
     }
+    return out;
+}
 
-    std::unordered_map<std::string, std::string> readAllStringAttrs(H5::H5Object& obj)
+std::string normalizeColumnName(const std::string& candidate,
+                                const std::string& fallback)
+{
+    std::string name = sanitizeUtf8(candidate);
+    if (name.empty())
     {
-        std::unordered_map<std::string, std::string> result;
-        const int numAttrs = obj.getNumAttrs();
-        for (int i = 0; i < numAttrs; ++i)
-        {
-            H5::Attribute attr = obj.openAttribute(static_cast<unsigned int>(i));
-            H5::DataType  dtype = attr.getDataType();
-            if (dtype.getClass() != H5T_STRING)
-                continue;
-            std::string attrName = attr.getName();
-            H5::StrType strType = attr.getStrType();
-            std::string value;
-            if (strType.isVariableStr())
-            {
-                attr.read(strType, value);
-            }
-            else
-            {
-                value.resize(strType.getSize());
-                attr.read(strType, value.data());
-            }
-            auto end = value.find('\0');
-            if (end != std::string::npos)
-                value.resize(end);
-            result[attrName] = sanitizeUtf8(value);
-        }
-        return result;
+        name = sanitizeUtf8(fallback);
     }
+
+    for (char& ch : name)
+    {
+        const auto uch = static_cast<unsigned char>(ch);
+        if (std::iscntrl(uch))
+        {
+            ch = '_';
+        }
+    }
+
+    if (name.empty())
+    {
+        name = "unnamed_column";
+    }
+
+    return name;
+}
+
+std::unordered_map<std::string, std::string> readAllStringAttrs(H5::H5Object& obj)
+{
+    std::unordered_map<std::string, std::string> result;
+    const int                                    numAttrs = obj.getNumAttrs();
+    for (int i = 0; i < numAttrs; ++i)
+    {
+        H5::Attribute attr = obj.openAttribute(static_cast<unsigned int>(i));
+        H5::DataType  dtype = attr.getDataType();
+        if (dtype.getClass() != H5T_STRING)
+            continue;
+        std::string attrName = attr.getName();
+        H5::StrType strType = attr.getStrType();
+        std::string value;
+        if (strType.isVariableStr())
+        {
+            attr.read(strType, value);
+        }
+        else
+        {
+            value.resize(strType.getSize());
+            attr.read(strType, value.data());
+        }
+        auto end = value.find('\0');
+        if (end != std::string::npos)
+            value.resize(end);
+        result[attrName] = sanitizeUtf8(value);
+    }
+    return result;
+}
 
 } // anonymous namespace
 
@@ -348,12 +349,12 @@ void HDF5BsasGen1Reader::readFile()
 
             const std::size_t chunkSize = config_.chunkSize();
             const std::string sourceName = config_.name();
-            
-            const std::string fileName = filePath.filename().string();
+
+            const std::string        fileName = filePath.filename().string();
             const prometheus::Labels source_tag{{"source", fileName}};
-            const auto file_start = std::chrono::steady_clock::now();
-            std::size_t file_total_bytes = 0;
-            const std::size_t totalChunks = (totalRows + chunkSize - 1) / chunkSize;
+            const auto               file_start = std::chrono::steady_clock::now();
+            std::size_t              file_total_bytes = 0;
+            const std::size_t        totalChunks = (totalRows + chunkSize - 1) / chunkSize;
 
             logger_->log(util::log::Level::Info,
                          "readFile: totalRows=" + std::to_string(totalRows) +
@@ -385,8 +386,8 @@ void HDF5BsasGen1Reader::readFile()
             //   c) Hyperslab-read all int16 columns into a separate buffer (column-major).
             //   d) emitChunk() packages data into TimeSeriesPayload and pushes to bus.
             std::size_t chunkIdx = 0;
-            auto lastProgressLog = std::chrono::steady_clock::time_point{};
-            const auto logInterval = std::chrono::seconds(config_.logIntervalSec());
+            auto        lastProgressLog = std::chrono::steady_clock::time_point{};
+            const auto  logInterval = std::chrono::seconds(config_.logIntervalSec());
             for (std::size_t startRow = 0; startRow < totalRows && running_; startRow += chunkSize)
             {
                 const std::size_t numRows = std::min(chunkSize, totalRows - startRow);
@@ -475,7 +476,7 @@ void HDF5BsasGen1Reader::readFile()
                             });
                 ++chunkIdx;
 
-                const auto now = std::chrono::steady_clock::now();
+                const auto        now = std::chrono::steady_clock::now();
                 const std::size_t processedRows = startRow + numRows;
                 if (chunkIdx == 1 || now - lastProgressLog >= logInterval)
                 {
@@ -504,7 +505,7 @@ void HDF5BsasGen1Reader::readFile()
 
             // --- Phase 7: Per-file metrics ---
             // Record total bytes read, wall-clock processing time, and throughput.
-            const auto file_end = std::chrono::steady_clock::now();
+            const auto   file_end = std::chrono::steady_clock::now();
             const double file_ms = std::chrono::duration<double, std::milli>(file_end - file_start).count();
 
             metric_call(metrics_, [&](auto& m)
@@ -528,18 +529,24 @@ void HDF5BsasGen1Reader::readFile()
     }
     catch (const H5::Exception& e)
     {
-        const std::string err_source = current_file_name.empty() ? std::string("unknown") : current_file_name;
+        const std::string        err_source = current_file_name.empty() ? std::string("unknown") : current_file_name;
         const prometheus::Labels err_tag{{"source", err_source}};
-        metric_call(metrics_, [&](auto& m) { m.incrementReaderErrors(1.0, err_tag); });
+        metric_call(metrics_, [&](auto& m)
+                    {
+                        m.incrementReaderErrors(1.0, err_tag);
+                    });
         if (logger_)
             logger_->log(util::log::Level::Error,
                          std::string("HDF5BsasGen1Reader: HDF5 error: ") + e.getCDetailMsg());
     }
     catch (const std::exception& e)
     {
-        const std::string err_source = current_file_name.empty() ? std::string("unknown") : current_file_name;
+        const std::string        err_source = current_file_name.empty() ? std::string("unknown") : current_file_name;
         const prometheus::Labels err_tag{{"source", err_source}};
-        metric_call(metrics_, [&](auto& m) { m.incrementReaderErrors(1.0, err_tag); });
+        metric_call(metrics_, [&](auto& m)
+                    {
+                        m.incrementReaderErrors(1.0, err_tag);
+                    });
         if (logger_)
             logger_->log(util::log::Level::Error,
                          std::string("HDF5BsasGen1Reader: ") + e.what());
@@ -576,16 +583,25 @@ bool HDF5BsasGen1Reader::emitChunk(
     std::size_t                        numFloatCols,
     std::size_t                        numIntCols)
 {
+    /// Sets reader_name, source, and provenance keys on any EventBatch.
+    /// Called by buildDataBatch and buildMarker to avoid duplicating this logic.
+    auto applyCommonMetadata = [&](IDataBus::EventBatch& event)
+    {
+        event.reader_name = name();
+        event.metadata["source"] = sourceName;
+        for (const auto& [k, v] : provenance())
+            event.metadata[k] = v;
+    };
+
+    /// Builds a data EventBatch containing one DataBatch frame per column.
+    /// Float64 frames come first (indices 0..numFloatCols-1), then int16 frames.
+    /// Column data is column-major in floatData/intData; frames are row-oriented.
     auto buildDataBatch = [&]()
     {
         IDataBus::EventBatch batch;
-        batch.reader_name = name();
         batch.metadata = config_.staticMetadata();
-        batch.metadata.insert(provenance().begin(), provenance().end());
-        batch.metadata["source"] = sourceName;
         batch.metadata["file"] = currentFile;
-        for (const auto& [k, v] : provenance())
-            batch.metadata["provenance." + k] = v;
+        applyCommonMetadata(batch); // source + provenance overwrite static keys on collision
         batch.payload = TimeSeriesPayload{
             .root_source_name = sourceName,
             .is_tabular = true};
@@ -625,14 +641,12 @@ bool HDF5BsasGen1Reader::emitChunk(
         return batch;
     };
 
+    /// Builds the end_of_batch_group sentinel pushed after every data batch.
+    /// Downstream consumers use this marker to know a full chunk has arrived.
     auto buildMarker = [&]()
     {
         IDataBus::EventBatch marker;
-        marker.reader_name = name();
-        marker.metadata.insert(provenance().begin(), provenance().end());
-        marker.metadata["source"] = sourceName;
-        for (const auto& [k, v] : provenance())
-            marker.metadata["provenance." + k] = v;
+        applyCommonMetadata(marker);
         marker.payload = TimeSeriesPayload{
             .root_source_name = sourceName,
             .end_of_batch_group = true,
@@ -640,6 +654,12 @@ bool HDF5BsasGen1Reader::emitChunk(
         return marker;
     };
 
+    /// Calls builder() to construct an EventBatch, then pushes it onto the bus.
+    /// Spins (50 ms sleep) while the bus is full and running_ is true.
+    /// Logs a warning on first block and a recovery message when unblocked.
+    /// @param label   Short string used in log messages to identify which push stalled.
+    /// @param builder Callable returning a freshly constructed EventBatch each call.
+    /// @return true on successful push; false if running_ became false before push succeeded.
     auto pushWithRetry = [&](const char* label, auto&& builder) -> bool
     {
         bool blocked = false;

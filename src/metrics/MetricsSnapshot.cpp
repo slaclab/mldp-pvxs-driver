@@ -249,7 +249,7 @@ MetricsData MetricsSnapshot::getSnapshot(const Metrics& metrics) const
     {
         if (writer == "__global__")
             continue;
-        WriterMetrics wm;
+        WriterSnapshot wm;
         wm.writer_name           = writer;
         wm.queue_depth           = static_cast<long long>(getMetric(m, "queue_depth"));
         wm.stream_rotations      = static_cast<long long>(getMetric(m, "stream_rotations"));

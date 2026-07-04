@@ -121,7 +121,8 @@ private:
                                  const std::string& source,
                                  std::size_t        dataBatchBytes,
                                  std::size_t        payloadBytes);
-    static dp::service::common::DataFrame toSingleColumnDataFrame(
+    static void toSingleColumnDataFrame(
+        dp::service::common::DataFrame*                     out,
         const util::bus::DataBatch&                         batch,
         std::size_t                                         colIndex,
         bool                                                isEnum,

@@ -244,8 +244,8 @@ void MLDPWriter::processItem(std::size_t workerIndex, QueueItem item)
             state.requestCounter));
 
         auto* dfPtr = request->mutable_ingestiondataframe();
-        *dfPtr = toSingleColumnDataFrame(item.frame, realIdx, isEnum,
-                                         item.root_source, item.metadata.get());
+        toSingleColumnDataFrame(dfPtr, item.frame, realIdx, isEnum,
+                                item.root_source, item.metadata.get());
 
         if (!hasAnyColumn(*dfPtr))
         {
@@ -540,15 +540,14 @@ void MLDPWriter::updateSourceRateMetrics(StreamState&       state,
 // toSingleColumnDataFrame — convert one column of DataBatch → protobuf DataFrame
 // ---------------------------------------------------------------------------
 
-dp::service::common::DataFrame MLDPWriter::toSingleColumnDataFrame(
+void MLDPWriter::toSingleColumnDataFrame(
+    dp::service::common::DataFrame*                     out,
     const util::bus::DataBatch&                         batch,
     std::size_t                                         colIndex,
     bool                                                isEnum,
     const std::string&                                  rootSource,
     const std::unordered_map<std::string, std::string>* metadata)
 {
-    dp::service::common::DataFrame df;
-
     const auto apply_metadata = [&](auto* c)
     {
         if (metadata)
@@ -578,7 +577,7 @@ dp::service::common::DataFrame MLDPWriter::toSingleColumnDataFrame(
 
     // Timestamps (shared across all columns in the batch)
     {
-        auto* tsList = df.mutable_datatimestamps()->mutable_timestamplist();
+        auto* tsList = out->mutable_datatimestamps()->mutable_timestamplist();
         tsList->mutable_timestamps()->Reserve(static_cast<int>(batch.timestamps.size()));
         for (const auto& ts : batch.timestamps)
         {
@@ -591,12 +590,12 @@ dp::service::common::DataFrame MLDPWriter::toSingleColumnDataFrame(
     if (isEnum)
     {
         const auto& ecol = batch.enum_columns[colIndex];
-        auto* c = df.add_enumcolumns();
+        auto* c = out->add_enumcolumns();
         setup_col(c, ecol.name);
         c->set_enumid(ecol.enum_id);
         c->mutable_values()->Reserve(static_cast<int>(ecol.values.size()));
         for (auto v : ecol.values) c->add_values(v);
-        return df;
+        return;
     }
 
     const auto& col = batch.columns[colIndex];
@@ -607,7 +606,7 @@ dp::service::common::DataFrame MLDPWriter::toSingleColumnDataFrame(
 
             if constexpr (std::is_same_v<T, std::vector<double>>)
             {
-                auto* c = df.add_doublecolumns();
+                auto* c = out->add_doublecolumns();
                 setup_col(c, col.name);
                 auto* vals = c->mutable_values();
                 vals->Resize(static_cast<int>(vec.size()), 0.0);
@@ -615,7 +614,7 @@ dp::service::common::DataFrame MLDPWriter::toSingleColumnDataFrame(
             }
             else if constexpr (std::is_same_v<T, std::vector<float>>)
             {
-                auto* c = df.add_floatcolumns();
+                auto* c = out->add_floatcolumns();
                 setup_col(c, col.name);
                 auto* vals = c->mutable_values();
                 vals->Resize(static_cast<int>(vec.size()), 0.0f);
@@ -623,7 +622,7 @@ dp::service::common::DataFrame MLDPWriter::toSingleColumnDataFrame(
             }
             else if constexpr (std::is_same_v<T, std::vector<int64_t>>)
             {
-                auto* c = df.add_int64columns();
+                auto* c = out->add_int64columns();
                 setup_col(c, col.name);
                 auto* vals = c->mutable_values();
                 vals->Resize(static_cast<int>(vec.size()), 0);
@@ -631,7 +630,7 @@ dp::service::common::DataFrame MLDPWriter::toSingleColumnDataFrame(
             }
             else if constexpr (std::is_same_v<T, std::vector<int32_t>>)
             {
-                auto* c = df.add_int32columns();
+                auto* c = out->add_int32columns();
                 setup_col(c, col.name);
                 auto* vals = c->mutable_values();
                 vals->Resize(static_cast<int>(vec.size()), 0);
@@ -639,21 +638,21 @@ dp::service::common::DataFrame MLDPWriter::toSingleColumnDataFrame(
             }
             else if constexpr (std::is_same_v<T, std::vector<bool>>)
             {
-                auto* c = df.add_boolcolumns();
+                auto* c = out->add_boolcolumns();
                 setup_col(c, col.name);
                 c->mutable_values()->Reserve(static_cast<int>(vec.size()));
                 for (auto v : vec) c->add_values(v);
             }
             else if constexpr (std::is_same_v<T, std::vector<std::string>>)
             {
-                auto* c = df.add_stringcolumns();
+                auto* c = out->add_stringcolumns();
                 setup_col(c, col.name);
                 c->mutable_values()->Reserve(static_cast<int>(vec.size()));
                 for (const auto& v : vec) c->add_values(v);
             }
             else if constexpr (std::is_same_v<T, std::vector<std::vector<uint8_t>>>)
             {
-                auto* c = df.add_structcolumns();
+                auto* c = out->add_structcolumns();
                 setup_col(c, col.name);
                 c->set_schemaid("");
                 c->mutable_values()->Reserve(static_cast<int>(vec.size()));
@@ -661,7 +660,7 @@ dp::service::common::DataFrame MLDPWriter::toSingleColumnDataFrame(
             }
             else if constexpr (std::is_same_v<T, std::vector<std::vector<double>>>)
             {
-                auto* c = df.add_doublearraycolumns();
+                auto* c = out->add_doublearraycolumns();
                 setup_col(c, col.name);
                 std::size_t total = 0; for (const auto& a : vec) total += a.size();
                 auto* vals = c->mutable_values();
@@ -672,7 +671,7 @@ dp::service::common::DataFrame MLDPWriter::toSingleColumnDataFrame(
             }
             else if constexpr (std::is_same_v<T, std::vector<std::vector<float>>>)
             {
-                auto* c = df.add_floatarraycolumns();
+                auto* c = out->add_floatarraycolumns();
                 setup_col(c, col.name);
                 std::size_t total = 0; for (const auto& a : vec) total += a.size();
                 auto* vals = c->mutable_values();
@@ -683,7 +682,7 @@ dp::service::common::DataFrame MLDPWriter::toSingleColumnDataFrame(
             }
             else if constexpr (std::is_same_v<T, std::vector<std::vector<int64_t>>>)
             {
-                auto* c = df.add_int64arraycolumns();
+                auto* c = out->add_int64arraycolumns();
                 setup_col(c, col.name);
                 std::size_t total = 0; for (const auto& a : vec) total += a.size();
                 auto* vals = c->mutable_values();
@@ -694,7 +693,7 @@ dp::service::common::DataFrame MLDPWriter::toSingleColumnDataFrame(
             }
             else if constexpr (std::is_same_v<T, std::vector<std::vector<int32_t>>>)
             {
-                auto* c = df.add_int32arraycolumns();
+                auto* c = out->add_int32arraycolumns();
                 setup_col(c, col.name);
                 std::size_t total = 0; for (const auto& a : vec) total += a.size();
                 auto* vals = c->mutable_values();
@@ -705,7 +704,7 @@ dp::service::common::DataFrame MLDPWriter::toSingleColumnDataFrame(
             }
             else if constexpr (std::is_same_v<T, std::vector<std::vector<bool>>>)
             {
-                auto* c = df.add_boolarraycolumns();
+                auto* c = out->add_boolarraycolumns();
                 setup_col(c, col.name);
                 c->mutable_values()->Reserve(static_cast<int>(vec.size()));
                 for (const auto& arr : vec) for (auto v : arr) c->add_values(v);
@@ -713,8 +712,6 @@ dp::service::common::DataFrame MLDPWriter::toSingleColumnDataFrame(
             }
         },
         col.values);
-
-    return df;
 }
 
 // ---------------------------------------------------------------------------

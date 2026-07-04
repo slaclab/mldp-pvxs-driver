@@ -29,9 +29,9 @@ struct ReaderMetrics
 };
 
 /**
- * @brief Per-writer metrics data structure.
+ * @brief Per-writer snapshot data (distinct from WriterMetrics Prometheus class).
  */
-struct WriterMetrics
+struct WriterSnapshot
 {
     std::string writer_name;              ///< Writer instance name
     long long   queue_depth = 0;          ///< Current queue depth
@@ -79,7 +79,7 @@ struct ProcessMetrics
 struct MetricsData
 {
     std::vector<ReaderMetrics> readers; ///< Per-reader statistics
-    std::vector<WriterMetrics> writers; ///< Per-writer statistics
+    std::vector<WriterSnapshot> writers; ///< Per-writer statistics
     PoolMetrics                pool;    ///< Connection pool statistics
     ProcessMetrics             process; ///< Process-level CPU/memory/IO metrics
 };

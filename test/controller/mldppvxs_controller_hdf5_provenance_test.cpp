@@ -275,9 +275,9 @@ TEST_F(ControllerHDF5ProvenanceTest, ProvenanceFlowsFromHDF5ReaderThroughControl
         {
             const auto& metadata = metadataFromValues(bucket);
             const auto& attrs = metadata.attributes();
-            EXPECT_TRUE(hasAttribute(attrs, "provenance.facility", "LCLS"));
-            EXPECT_TRUE(hasAttribute(attrs, "provenance.instrument", "CXI"));
-            EXPECT_TRUE(hasAttribute(attrs, "provenance.subsystem", "BSAS"));
+            EXPECT_TRUE(hasAttribute(attrs, "facility", "LCLS"));
+            EXPECT_TRUE(hasAttribute(attrs, "instrument", "CXI"));
+            EXPECT_TRUE(hasAttribute(attrs, "subsystem", "BSAS"));
             EXPECT_TRUE(hasAttribute(attrs, "source", readerName));
             EXPECT_TRUE(hasAttribute(attrs, "test_run", sourceTag));
             EXPECT_EQ(metadata.provenance().source(), readerName);
