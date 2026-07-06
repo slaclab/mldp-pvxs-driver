@@ -421,11 +421,6 @@ void MLDPWriter::closeStream(StreamState& state, const char* reason) noexcept
                     errorf(logger(), "Ingestion stream finished with incomplete requests ({}): server accepted {} of {} sent",
                            reasonStr, result.numrequests(), sentRequests);
                 }
-                else if (result.numrequests() > sentRequests)
-                {
-                    errorf(logger(), "Ingestion stream finished with mismatch ({}): server reports {} but we sent {}",
-                           reasonStr, result.numrequests(), sentRequests);
-                }
                 else
                 {
                     tracef(logger(), "Ingestion stream finished successfully ({}): {} requests", reasonStr, result.numrequests());

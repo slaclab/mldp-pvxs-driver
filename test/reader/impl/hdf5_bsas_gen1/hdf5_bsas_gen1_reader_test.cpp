@@ -933,4 +933,33 @@ TEST_F(HDF5BsasGen1ReaderTest, ShardSlotRespectCustomNumShards)
         EXPECT_TRUE(covered[static_cast<std::size_t>(i)]) << "shard " << i << " has no column";
 }
 
+// columns-per-frame config: default is 1.
+TEST_F(HDF5BsasGen1ReaderTest, ConfigDefaultColumnsPerFrameIsOne)
+{
+    auto cfg = makeConfigFromYaml(
+        "name: test_reader\n" "file-path: " + mockFile_ + "\n");
+
+    HDF5BsasGen1ReaderConfig config(cfg);
+    EXPECT_EQ(config.columnsPerFrame(), 1u);
+}
+
+// columns-per-frame config: explicit value parsed correctly.
+TEST_F(HDF5BsasGen1ReaderTest, ConfigColumnsPerFrameCustomValue)
+{
+    auto cfg = makeConfigFromYaml(
+        "name: test_reader\n" "file-path: " + mockFile_ + "\n" "columns-per-frame: 200\n");
+
+    HDF5BsasGen1ReaderConfig config(cfg);
+    EXPECT_EQ(config.columnsPerFrame(), 200u);
+}
+
+// columns-per-frame: 0 must throw.
+TEST_F(HDF5BsasGen1ReaderTest, ConfigColumnsPerFrameZeroThrows)
+{
+    auto cfg = makeConfigFromYaml(
+        "name: test_reader\n" "file-path: " + mockFile_ + "\n" "columns-per-frame: 0\n");
+
+    EXPECT_THROW(HDF5BsasGen1ReaderConfig{cfg}, HDF5BsasGen1ReaderConfig::Error);
+}
+
 #endif // MLDP_PVXS_HDF5_ENABLED

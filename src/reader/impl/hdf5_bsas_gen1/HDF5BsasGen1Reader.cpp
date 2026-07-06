@@ -619,25 +619,26 @@ bool HDF5BsasGen1Reader::emitChunk(
             event.metadata[k] = v;
     };
 
-    /// Builds a data EventBatch containing one DataBatch frame per column.
-    /// Float64 frames come first (indices 0..numFloatCols-1), then int16 frames.
-    /// Column data is column-major in floatData/intData; frames are row-oriented.
+    /// Builds a data EventBatch grouping columns into frames of up to
+    /// columnsPerFrame columns each.  All columns in a frame share timestamps.
     auto buildDataBatch = [&]()
     {
         IDataBus::EventBatch batch;
         batch.metadata = config_.staticMetadata();
         batch.metadata["file"] = currentFile;
-        applyCommonMetadata(batch); // source + provenance overwrite static keys on collision
+        applyCommonMetadata(batch);
         batch.payload = TimeSeriesPayload{
             .root_source_name = sourceName,
             .is_tabular = true};
 
         auto& tsp = std::get<TimeSeriesPayload>(batch.payload);
+        const std::size_t maxCols = config_.columnsPerFrame();
+
+        DataBatch frame;
+        frame.timestamps = timestamps;
 
         for (std::size_t c = 0; c < numFloatCols; ++c)
         {
-            DataBatch frame;
-            frame.timestamps = timestamps;
             DataColumn col;
             col.name = columns[c].name;
             col.metadata = columns[c].metadata;
@@ -646,13 +647,17 @@ bool HDF5BsasGen1Reader::emitChunk(
                 values[r] = floatData[c * numRows + r];
             col.values = std::move(values);
             frame.columns.push_back(std::move(col));
-            tsp.frames.push_back(std::move(frame));
+
+            if (frame.columns.size() >= maxCols)
+            {
+                tsp.frames.push_back(std::move(frame));
+                frame = DataBatch{};
+                frame.timestamps = timestamps;
+            }
         }
 
         for (std::size_t c = 0; c < numIntCols; ++c)
         {
-            DataBatch frame;
-            frame.timestamps = timestamps;
             DataColumn col;
             col.name = columns[numFloatCols + c].name;
             col.metadata = columns[numFloatCols + c].metadata;
@@ -661,8 +666,17 @@ bool HDF5BsasGen1Reader::emitChunk(
                 values[r] = static_cast<int32_t>(intData[c * numRows + r]);
             col.values = std::move(values);
             frame.columns.push_back(std::move(col));
-            tsp.frames.push_back(std::move(frame));
+
+            if (frame.columns.size() >= maxCols)
+            {
+                tsp.frames.push_back(std::move(frame));
+                frame = DataBatch{};
+                frame.timestamps = timestamps;
+            }
         }
+
+        if (!frame.columns.empty())
+            tsp.frames.push_back(std::move(frame));
 
         return batch;
     };

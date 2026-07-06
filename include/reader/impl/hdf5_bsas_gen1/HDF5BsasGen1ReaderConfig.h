@@ -39,6 +39,7 @@ public:
     const std::unordered_map<std::string, std::string>& provenance() const { return provenance_; }
     std::size_t logIntervalSec() const { return log_interval_sec_; }
     std::size_t numShards() const { return num_shards_; }
+    std::size_t columnsPerFrame() const { return columns_per_frame_; }
 
 private:
     void parse(const config::Config& readerEntry);
@@ -49,6 +50,7 @@ private:
     std::size_t chunk_size_ = 1000;
     std::size_t log_interval_sec_ = 10;
     std::size_t num_shards_ = 6;
+    std::size_t columns_per_frame_ = 1;
     std::unordered_map<std::string, std::string> static_metadata_;
     std::unordered_map<std::string, std::string> provenance_;
 };

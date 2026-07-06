@@ -153,6 +153,7 @@ reader:
       - name: my_bsas_reader
         file-path: /path/to/bsas-data*.h5
         chunk-size: 1000
+        columns-per-frame: 1367
         use-label-as-name: true
         metadata:
           facility: LCLS
@@ -166,6 +167,7 @@ Key                  | Default    | Required | Description
 `file-path`          | *(none)*   | Yes      | Path or glob pattern to HDF5 file(s)
 `chunk-size`         | `1000`     | No       | Number of rows per chunk
 `use-label-as-name`  | `true`     | No       | Use `@label` attribute as column name instead of dataset name
+`columns-per-frame`  | `1`        | No       | Number of columns grouped into each DataBatch frame. Higher values reduce gRPC Write() calls.
 `metadata`           | *(empty)*  | No       | Static key-value metadata attached to each batch
 `provenance`         | *(empty)*  | No       | Key-value provenance metadata (prefixed with `provenance.`)
 

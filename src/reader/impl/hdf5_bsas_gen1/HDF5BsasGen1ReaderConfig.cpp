@@ -50,6 +50,10 @@ void HDF5BsasGen1ReaderConfig::parse(const Config& readerEntry)
     if (num_shards_ == 0)
         throw Error("num-shards must be > 0");
 
+    columns_per_frame_ = static_cast<std::size_t>(readerEntry.getInt("columns-per-frame", 1L));
+    if (columns_per_frame_ == 0)
+        throw Error("columns-per-frame must be > 0");
+
     if (readerEntry.hasChild("metadata"))
     {
         std::map<std::string, std::string> m;
