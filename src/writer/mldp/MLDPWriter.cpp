@@ -413,19 +413,8 @@ void MLDPWriter::closeStream(StreamState& state, const char* reason) noexcept
             if (s->response.has_ingestdatastreamresult())
             {
                 const auto& result = s->response.ingestdatastreamresult();
-                if (result.numrequests() < 0)
-                {
-                    errorf(logger(), "Ingestion stream finished with invalid numrequests ({}): {}", reasonStr, result.numrequests());
-                }
-                else if (result.numrequests() < sentRequests)
-                {
-                    errorf(logger(), "Ingestion stream finished with incomplete requests ({}): server accepted {} of {} sent",
-                           reasonStr, result.numrequests(), sentRequests);
-                }
-                else
-                {
-                    tracef(logger(), "Ingestion stream finished successfully ({}): {} requests", reasonStr, result.numrequests());
-                }
+                tracef(logger(), "Ingestion stream finished ({}): server reports {} requests, sent {}",
+                       reasonStr, result.numrequests(), sentRequests);
             }
             if (s->response.has_exceptionalresult())
             {
