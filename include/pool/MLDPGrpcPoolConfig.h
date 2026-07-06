@@ -73,12 +73,13 @@ public:
     int                maxConnections()      const;
     const Credentials& credentials()         const;
 
+    void setMinConnections(int v)        { min_conn_        = v; }
+    void setMaxConnections(int v)        { max_conn_        = v; }
+
 protected:
     /** Protected setters — used by subclasses that populate only a subset of fields. */
     void setValid(bool v)                { valid_           = v; }
     void setAnnotationUrl(std::string u) { annotation_url_  = std::move(u); }
-    void setMinConnections(int v)        { min_conn_        = v; }
-    void setMaxConnections(int v)        { max_conn_        = v; }
     void setCredentials(Credentials c)   { credentials_     = std::move(c); }
 
 private:
