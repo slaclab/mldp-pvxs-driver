@@ -548,24 +548,24 @@ void MLDPWriter::toSingleColumnDataFrame(
     const std::string&                                  rootSource,
     const std::unordered_map<std::string, std::string>* metadata)
 {
-    const auto apply_metadata = [&](auto* c)
+    const auto apply_kv_map = [](auto* c, const std::unordered_map<std::string, std::string>* m)
     {
-        if (metadata)
+        if (!m) return;
+        for (const auto& [k, v] : *m)
         {
-            for (const auto& [k, v] : *metadata)
-            {
-                auto* attr = c->mutable_metadata()->add_attributes();
-                attr->set_name(k);
-                attr->set_value(v);
-            }
+            auto* attr = c->mutable_metadata()->add_attributes();
+            attr->set_name(k);
+            attr->set_value(v);
         }
     };
 
-    const auto setup_col = [&](auto* c, const std::string& name)
+    const auto setup_col = [&](auto* c, const std::string& name,
+                                const std::unordered_map<std::string, std::string>* col_meta = nullptr)
     {
         c->set_name(name);
         c->mutable_metadata()->mutable_provenance()->set_source(rootSource);
-        apply_metadata(c);
+        apply_kv_map(c, metadata);
+        apply_kv_map(c, col_meta);
     };
 
     const auto apply_dims = [&](auto* c, const std::string& colName)
@@ -607,7 +607,7 @@ void MLDPWriter::toSingleColumnDataFrame(
             if constexpr (std::is_same_v<T, std::vector<double>>)
             {
                 auto* c = out->add_doublecolumns();
-                setup_col(c, col.name);
+                setup_col(c, col.name, &col.metadata);
                 auto* vals = c->mutable_values();
                 vals->Resize(static_cast<int>(vec.size()), 0.0);
                 std::memcpy(vals->mutable_data(), vec.data(), vec.size() * sizeof(double));
@@ -615,7 +615,7 @@ void MLDPWriter::toSingleColumnDataFrame(
             else if constexpr (std::is_same_v<T, std::vector<float>>)
             {
                 auto* c = out->add_floatcolumns();
-                setup_col(c, col.name);
+                setup_col(c, col.name, &col.metadata);
                 auto* vals = c->mutable_values();
                 vals->Resize(static_cast<int>(vec.size()), 0.0f);
                 std::memcpy(vals->mutable_data(), vec.data(), vec.size() * sizeof(float));
@@ -623,7 +623,7 @@ void MLDPWriter::toSingleColumnDataFrame(
             else if constexpr (std::is_same_v<T, std::vector<int64_t>>)
             {
                 auto* c = out->add_int64columns();
-                setup_col(c, col.name);
+                setup_col(c, col.name, &col.metadata);
                 auto* vals = c->mutable_values();
                 vals->Resize(static_cast<int>(vec.size()), 0);
                 std::memcpy(vals->mutable_data(), vec.data(), vec.size() * sizeof(int64_t));
@@ -631,7 +631,7 @@ void MLDPWriter::toSingleColumnDataFrame(
             else if constexpr (std::is_same_v<T, std::vector<int32_t>>)
             {
                 auto* c = out->add_int32columns();
-                setup_col(c, col.name);
+                setup_col(c, col.name, &col.metadata);
                 auto* vals = c->mutable_values();
                 vals->Resize(static_cast<int>(vec.size()), 0);
                 std::memcpy(vals->mutable_data(), vec.data(), vec.size() * sizeof(int32_t));
@@ -639,21 +639,21 @@ void MLDPWriter::toSingleColumnDataFrame(
             else if constexpr (std::is_same_v<T, std::vector<bool>>)
             {
                 auto* c = out->add_boolcolumns();
-                setup_col(c, col.name);
+                setup_col(c, col.name, &col.metadata);
                 c->mutable_values()->Reserve(static_cast<int>(vec.size()));
                 for (auto v : vec) c->add_values(v);
             }
             else if constexpr (std::is_same_v<T, std::vector<std::string>>)
             {
                 auto* c = out->add_stringcolumns();
-                setup_col(c, col.name);
+                setup_col(c, col.name, &col.metadata);
                 c->mutable_values()->Reserve(static_cast<int>(vec.size()));
                 for (const auto& v : vec) c->add_values(v);
             }
             else if constexpr (std::is_same_v<T, std::vector<std::vector<uint8_t>>>)
             {
                 auto* c = out->add_structcolumns();
-                setup_col(c, col.name);
+                setup_col(c, col.name, &col.metadata);
                 c->set_schemaid("");
                 c->mutable_values()->Reserve(static_cast<int>(vec.size()));
                 for (const auto& blob : vec) c->add_values(blob.data(), blob.size());
@@ -661,7 +661,7 @@ void MLDPWriter::toSingleColumnDataFrame(
             else if constexpr (std::is_same_v<T, std::vector<std::vector<double>>>)
             {
                 auto* c = out->add_doublearraycolumns();
-                setup_col(c, col.name);
+                setup_col(c, col.name, &col.metadata);
                 std::size_t total = 0; for (const auto& a : vec) total += a.size();
                 auto* vals = c->mutable_values();
                 vals->Resize(static_cast<int>(total), 0.0);
@@ -672,7 +672,7 @@ void MLDPWriter::toSingleColumnDataFrame(
             else if constexpr (std::is_same_v<T, std::vector<std::vector<float>>>)
             {
                 auto* c = out->add_floatarraycolumns();
-                setup_col(c, col.name);
+                setup_col(c, col.name, &col.metadata);
                 std::size_t total = 0; for (const auto& a : vec) total += a.size();
                 auto* vals = c->mutable_values();
                 vals->Resize(static_cast<int>(total), 0.0f);
@@ -683,7 +683,7 @@ void MLDPWriter::toSingleColumnDataFrame(
             else if constexpr (std::is_same_v<T, std::vector<std::vector<int64_t>>>)
             {
                 auto* c = out->add_int64arraycolumns();
-                setup_col(c, col.name);
+                setup_col(c, col.name, &col.metadata);
                 std::size_t total = 0; for (const auto& a : vec) total += a.size();
                 auto* vals = c->mutable_values();
                 vals->Resize(static_cast<int>(total), 0);
@@ -694,7 +694,7 @@ void MLDPWriter::toSingleColumnDataFrame(
             else if constexpr (std::is_same_v<T, std::vector<std::vector<int32_t>>>)
             {
                 auto* c = out->add_int32arraycolumns();
-                setup_col(c, col.name);
+                setup_col(c, col.name, &col.metadata);
                 std::size_t total = 0; for (const auto& a : vec) total += a.size();
                 auto* vals = c->mutable_values();
                 vals->Resize(static_cast<int>(total), 0);
@@ -705,7 +705,7 @@ void MLDPWriter::toSingleColumnDataFrame(
             else if constexpr (std::is_same_v<T, std::vector<std::vector<bool>>>)
             {
                 auto* c = out->add_boolarraycolumns();
-                setup_col(c, col.name);
+                setup_col(c, col.name, &col.metadata);
                 c->mutable_values()->Reserve(static_cast<int>(vec.size()));
                 for (const auto& arr : vec) for (auto v : arr) c->add_values(v);
                 apply_dims(c, col.name);

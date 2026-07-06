@@ -16,5 +16,6 @@
     "chat.tools.terminal.autoApprove": {
         "ninja": true,
         "./bin/mldp_pvxs_driver_test": true
-    }
+    },
+    "cmake.ctest.neverDebugTestsWithLaunchConfiguration": false
 }
