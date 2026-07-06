@@ -46,6 +46,10 @@ void HDF5BsasGen1ReaderConfig::parse(const Config& readerEntry)
     if (log_interval_sec_ == 0)
         throw Error("log-interval-sec must be > 0");
 
+    num_shards_ = static_cast<std::size_t>(readerEntry.getInt("num-shards", 6L));
+    if (num_shards_ == 0)
+        throw Error("num-shards must be > 0");
+
     if (readerEntry.hasChild("metadata"))
     {
         std::map<std::string, std::string> m;

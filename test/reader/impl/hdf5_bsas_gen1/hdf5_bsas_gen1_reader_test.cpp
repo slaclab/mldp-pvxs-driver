@@ -18,6 +18,9 @@
 
     #include <H5Cpp.h>
 
+    #include <algorithm>
+    #include <array>
+    #include <cctype>
     #include <chrono>
     #include <cmath>
     #include <cstdlib>
@@ -645,6 +648,289 @@ TEST_F(HDF5BsasGen1ReaderTest, MissingProvenanceIsValid)
     EXPECT_EQ(batches[0].metadata.count("facility"), 0u);
     EXPECT_EQ(batches[0].metadata.count("instrument"), 0u);
     EXPECT_EQ(batches[0].metadata.count("subsystem"), 0u);
+}
+
+// ---------------------------------------------------------------------------
+// shardSlot metadata tests
+// ---------------------------------------------------------------------------
+
+// Helper: collect all shardSlot strings from the first data batch.
+static std::vector<std::string> collectShardSlots(const IDataBus::EventBatch& batch)
+{
+    std::vector<std::string> slots;
+    if (!isTimeSeries(batch))
+        return slots;
+    for (const auto& frame : asTimeSeries(batch).frames)
+        for (const auto& col : frame.columns)
+        {
+            auto it = col.metadata.find("shardSlot");
+            if (it != col.metadata.end())
+                slots.push_back(it->second);
+        }
+    return slots;
+}
+
+// shardSlot present on every column in every data batch.
+TEST_F(HDF5BsasGen1ReaderTest, ShardSlotPresentOnAllColumns)
+{
+    auto bus = std::make_shared<MockDataBus>();
+    auto cfg = makeConfigFromYaml(
+        "name: bsas_shard_present\n" "file-path: " + mockFile_ + "\n" "chunk-size: 1000\n");
+
+    {
+        HDF5BsasGen1Reader reader(bus, nullptr, cfg);
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    }
+
+    auto batches = bus->snapshot();
+    ASSERT_GE(batches.size(), 1u);
+    const auto& tsp = asTimeSeries(batches[0]);
+    ASSERT_EQ(tsp.frames.size(), kFloatCols + kIntCols);
+
+    for (std::size_t i = 0; i < tsp.frames.size(); ++i)
+    {
+        ASSERT_EQ(tsp.frames[i].columns.size(), 1u) << "frame " << i;
+        EXPECT_TRUE(tsp.frames[i].columns[0].metadata.count("shardSlot") > 0)
+            << "frame " << i << " missing shardSlot";
+    }
+}
+
+// shardSlot is a 5-digit zero-padded decimal string in [00000, 65535].
+TEST_F(HDF5BsasGen1ReaderTest, ShardSlotIsZeroPaddedFiveDigitDecimal)
+{
+    auto bus = std::make_shared<MockDataBus>();
+    auto cfg = makeConfigFromYaml(
+        "name: bsas_shard_format\n" "file-path: " + mockFile_ + "\n" "chunk-size: 1000\n");
+
+    {
+        HDF5BsasGen1Reader reader(bus, nullptr, cfg);
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    }
+
+    auto batches = bus->snapshot();
+    ASSERT_GE(batches.size(), 1u);
+    const auto slots = collectShardSlots(batches[0]);
+    ASSERT_FALSE(slots.empty());
+
+    for (const auto& s : slots)
+    {
+        ASSERT_EQ(s.size(), 5u) << "slot '" << s << "' not 5 chars";
+        for (char c : s)
+            EXPECT_TRUE(std::isdigit(static_cast<unsigned char>(c))) << "non-digit in '" << s << "'";
+        const int v = std::stoi(s);
+        EXPECT_GE(v, 0);
+        EXPECT_LE(v, 65535);
+    }
+}
+
+// shardSlot values span all 6 shard ranges (round-robin distribution).
+// With kFloatCols=10 + kIntCols=4 = 14 columns and 6 shards, each of the 6
+// shard ranges [00000-10921], [10922-21843], … must contain at least one slot.
+TEST_F(HDF5BsasGen1ReaderTest, ShardSlotCoverAllSixShardRanges)
+{
+    auto bus = std::make_shared<MockDataBus>();
+    auto cfg = makeConfigFromYaml(
+        "name: bsas_shard_dist\n" "file-path: " + mockFile_ + "\n" "chunk-size: 1000\n");
+
+    {
+        HDF5BsasGen1Reader reader(bus, nullptr, cfg);
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    }
+
+    auto batches = bus->snapshot();
+    ASSERT_GE(batches.size(), 1u);
+    const auto slots = collectShardSlots(batches[0]);
+    ASSERT_EQ(slots.size(), kFloatCols + kIntCols);
+
+    // 6 shards, 65536 slots → each range is 10922 slots wide (last may be 10926)
+    constexpr int numShards = 6;
+    constexpr int shardSize = 65536 / numShards;
+    std::array<bool, numShards> covered{};
+    covered.fill(false);
+
+    for (const auto& s : slots)
+    {
+        const int v = std::stoi(s);
+        const int shard = v / shardSize;
+        ASSERT_GE(shard, 0);
+        ASSERT_LT(shard, numShards) << "slot " << v << " out of range";
+        covered[static_cast<std::size_t>(shard)] = true;
+    }
+
+    // With 14 columns round-robin over 6 shards, all 6 must be hit
+    for (int i = 0; i < numShards; ++i)
+        EXPECT_TRUE(covered[static_cast<std::size_t>(i)]) << "shard " << i << " has no column";
+}
+
+// Columns are assigned strictly round-robin: col[0]→shard0, col[1]→shard1, …
+// Verify by checking each column's slot falls in the expected shard range.
+TEST_F(HDF5BsasGen1ReaderTest, ShardSlotAssignmentIsRoundRobin)
+{
+    auto bus = std::make_shared<MockDataBus>();
+    auto cfg = makeConfigFromYaml(
+        "name: bsas_shard_rr\n" "file-path: " + mockFile_ + "\n" "chunk-size: 1000\n");
+
+    {
+        HDF5BsasGen1Reader reader(bus, nullptr, cfg);
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    }
+
+    auto batches = bus->snapshot();
+    ASSERT_GE(batches.size(), 1u);
+    const auto slots = collectShardSlots(batches[0]);
+    ASSERT_EQ(slots.size(), kFloatCols + kIntCols);
+
+    constexpr int numShards = 6;
+    constexpr int shardSize = 65536 / numShards;
+
+    for (std::size_t i = 0; i < slots.size(); ++i)
+    {
+        const int v = std::stoi(slots[i]);
+        const int expectedShard = static_cast<int>(i % static_cast<std::size_t>(numShards));
+        const int lo = expectedShard * shardSize;
+        const int hi = lo + shardSize - 1;
+        EXPECT_GE(v, lo) << "col " << i << " slot " << v << " below shard " << expectedShard << " range";
+        EXPECT_LE(v, hi) << "col " << i << " slot " << v << " above shard " << expectedShard << " range";
+    }
+}
+
+// Same column name always maps to the same shardSlot across multiple files
+// processed in a single reader run (pv_shard_slot_map_ persistent across files).
+TEST_F(HDF5BsasGen1ReaderTest, ShardSlotIsStableAcrossFiles)
+{
+    const auto secondFile = (tempDir_ / "mock_bsas_stable_shard.h5").string();
+
+    BsasGen1HDF5Mock::Params params;
+    params.numFloatCols = kFloatCols;
+    params.numIntCols = kIntCols;
+    params.numRows = kRows;
+    params.baseEpoch = kBaseEpoch + 1000;
+    BsasGen1HDF5Mock::generate(secondFile, params);
+
+    auto bus = std::make_shared<MockDataBus>();
+    // Glob both files — reader processes them sequentially in one run
+    auto cfg = makeConfigFromYaml(
+        "name: bsas_shard_stable\n" "file-path: " + (tempDir_ / "*.h5").string() + "\n" "chunk-size: 1000\n");
+
+    {
+        HDF5BsasGen1Reader reader(bus, nullptr, cfg);
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    }
+
+    auto batches = bus->snapshot();
+    // 2 files × (1 data + 1 marker) = 4 batches
+    ASSERT_EQ(batches.size(), 4u);
+
+    // Collect slots from file 1 (batch 0) and file 2 (batch 2)
+    const auto slotsFile1 = collectShardSlots(batches[0]);
+    const auto slotsFile2 = collectShardSlots(batches[2]);
+
+    ASSERT_EQ(slotsFile1.size(), kFloatCols + kIntCols);
+    ASSERT_EQ(slotsFile2.size(), kFloatCols + kIntCols);
+
+    // Both files have identical column names → identical slots
+    for (std::size_t i = 0; i < slotsFile1.size(); ++i)
+        EXPECT_EQ(slotsFile1[i], slotsFile2[i])
+            << "column " << i << " got different shardSlot across files";
+
+    fs::remove(secondFile);
+}
+
+// shardSlot is stable across chunks of the same file (all chunks same slot per column).
+TEST_F(HDF5BsasGen1ReaderTest, ShardSlotIsStableAcrossChunks)
+{
+    auto bus = std::make_shared<MockDataBus>();
+    auto cfg = makeConfigFromYaml(
+        "name: bsas_shard_chunks\n" "file-path: " + mockFile_ + "\n" "chunk-size: 7\n");
+
+    {
+        HDF5BsasGen1Reader reader(bus, nullptr, cfg);
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    }
+
+    auto batches = bus->snapshot();
+    // 20 rows / 7 = 3 chunks → 6 batches (data+marker each)
+    ASSERT_EQ(batches.size(), 6u);
+
+    const auto slotsChunk0 = collectShardSlots(batches[0]);
+    const auto slotsChunk1 = collectShardSlots(batches[2]);
+    const auto slotsChunk2 = collectShardSlots(batches[4]);
+
+    ASSERT_EQ(slotsChunk0.size(), kFloatCols + kIntCols);
+    ASSERT_EQ(slotsChunk1.size(), kFloatCols + kIntCols);
+    ASSERT_EQ(slotsChunk2.size(), kFloatCols + kIntCols);
+
+    for (std::size_t i = 0; i < slotsChunk0.size(); ++i)
+    {
+        EXPECT_EQ(slotsChunk0[i], slotsChunk1[i]) << "column " << i << " chunk 0 vs 1";
+        EXPECT_EQ(slotsChunk0[i], slotsChunk2[i]) << "column " << i << " chunk 0 vs 2";
+    }
+}
+
+// num-shards config: default is 6.
+TEST_F(HDF5BsasGen1ReaderTest, ConfigDefaultNumShardsIsSix)
+{
+    auto cfg = makeConfigFromYaml(
+        "name: test_reader\n" "file-path: " + mockFile_ + "\n");
+
+    HDF5BsasGen1ReaderConfig config(cfg);
+    EXPECT_EQ(config.numShards(), 6u);
+}
+
+// num-shards config: explicit value parsed correctly.
+TEST_F(HDF5BsasGen1ReaderTest, ConfigNumShardsCustomValue)
+{
+    auto cfg = makeConfigFromYaml(
+        "name: test_reader\n" "file-path: " + mockFile_ + "\n" "num-shards: 3\n");
+
+    HDF5BsasGen1ReaderConfig config(cfg);
+    EXPECT_EQ(config.numShards(), 3u);
+}
+
+// num-shards: 0 must throw.
+TEST_F(HDF5BsasGen1ReaderTest, ConfigNumShardsZeroThrows)
+{
+    auto cfg = makeConfigFromYaml(
+        "name: test_reader\n" "file-path: " + mockFile_ + "\n" "num-shards: 0\n");
+
+    EXPECT_THROW(HDF5BsasGen1ReaderConfig{cfg}, HDF5BsasGen1ReaderConfig::Error);
+}
+
+// With num-shards: 3, slots must fall in the 3-shard ranges.
+TEST_F(HDF5BsasGen1ReaderTest, ShardSlotRespectCustomNumShards)
+{
+    auto bus = std::make_shared<MockDataBus>();
+    auto cfg = makeConfigFromYaml(
+        "name: bsas_shard_3\n" "file-path: " + mockFile_ + "\n" "chunk-size: 1000\n" "num-shards: 3\n");
+
+    {
+        HDF5BsasGen1Reader reader(bus, nullptr, cfg);
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    }
+
+    auto batches = bus->snapshot();
+    ASSERT_GE(batches.size(), 1u);
+    const auto slots = collectShardSlots(batches[0]);
+    ASSERT_EQ(slots.size(), kFloatCols + kIntCols);
+
+    constexpr int numShards = 3;
+    constexpr int shardSize = 65536 / numShards; // 21845
+    std::array<bool, numShards> covered{};
+    covered.fill(false);
+
+    for (std::size_t i = 0; i < slots.size(); ++i)
+    {
+        const int v = std::stoi(slots[i]);
+        const int expectedShard = static_cast<int>(i % static_cast<std::size_t>(numShards));
+        const int lo = expectedShard * shardSize;
+        const int hi = (expectedShard == numShards - 1) ? 65535 : (lo + shardSize - 1);
+        EXPECT_GE(v, lo) << "col " << i << " slot " << v << " below shard " << expectedShard;
+        EXPECT_LE(v, hi) << "col " << i << " slot " << v << " above shard " << expectedShard;
+        covered[static_cast<std::size_t>(expectedShard)] = true;
+    }
+
+    for (int i = 0; i < numShards; ++i)
+        EXPECT_TRUE(covered[static_cast<std::size_t>(i)]) << "shard " << i << " has no column";
 }
 
 #endif // MLDP_PVXS_HDF5_ENABLED
