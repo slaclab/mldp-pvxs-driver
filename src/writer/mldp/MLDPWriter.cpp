@@ -75,6 +75,15 @@ struct MLDPWriter::StreamState
     std::unordered_map<std::string, MLDPWriter::SourceRateTracker> rateTrackers;
 };
 
+struct MLDPWriter::ClosingStreamState
+{
+    std::optional<mldp_pvxs_driver::util::pool::PooledHandle<mldp_pvxs_driver::util::pool::MLDPGrpcObject>> handle;
+    std::unique_ptr<grpc::ClientWriter<dp::service::ingestion::IngestDataRequest>>                          writer;
+    std::unique_ptr<grpc::ClientContext>                                                                    context;
+    dp::service::ingestion::IngestDataStreamResponse                                                        response;
+    std::uint64_t requestCounter{0};
+};
+
 // ---------------------------------------------------------------------------
 // Construction / destruction
 // ---------------------------------------------------------------------------
@@ -120,6 +129,7 @@ void MLDPWriter::doStart()
     workerStates_.reserve(wc);
     for (std::size_t i = 0; i < wc; ++i)
         workerStates_.push_back(std::make_unique<StreamState>());
+    closePool_ = std::make_shared<BS::light_thread_pool>(1);
     infof(logger(), "MLDPWriter provider registered: {}", providerId_);
 }
 
@@ -128,6 +138,8 @@ void MLDPWriter::doStop() noexcept
     for (auto& statePtr : workerStates_)
         if (statePtr) closeStream(*statePtr, "writer stopping");
     workerStates_.clear();
+    if (closePool_) closePool_->wait();
+    closePool_.reset();
     ingestionPool_.reset();
 }
 
@@ -155,8 +167,9 @@ std::vector<MLDPWriter::QueueItem> MLDPWriter::toItems(util::bus::IDataBus::Even
 
     auto metadata = std::make_shared<const std::unordered_map<std::string, std::string>>(batch.metadata);
 
-    std::vector<QueueItem> items;
-    items.reserve(ts_mut.frames.size());
+    // Collect all non-empty frames into one QueueItem — one Write() per batch.
+    std::vector<util::bus::DataBatch> frames;
+    frames.reserve(ts_mut.frames.size());
     for (auto& frame : ts_mut.frames)
     {
         if (frame.timestamps.empty())
@@ -167,20 +180,23 @@ std::vector<MLDPWriter::QueueItem> MLDPWriter::toItems(util::bus::IDataBus::Even
                         });
             continue;
         }
-        items.push_back({rootSourceName, metadata, std::move(frame)});
+        frames.push_back(std::move(frame));
     }
 
-    if (!items.empty())
+    if (frames.empty())
+        return {};
+
+    std::vector<QueueItem> items;
+    items.push_back({rootSourceName, metadata, std::move(frames)});
+
+    updateQueueDepthMetric();
+    const auto now = std::chrono::steady_clock::now();
+    std::lock_guard lk(pushLogMutex_);
+    if (now - lastPushLogTime_ >= std::chrono::seconds(10))
     {
-        updateQueueDepthMetric();
-        const auto now = std::chrono::steady_clock::now();
-        std::lock_guard lk(pushLogMutex_);
-        if (now - lastPushLogTime_ >= std::chrono::seconds(10))
-        {
-            lastPushLogTime_ = now;
-            infof(logger(), "Pushed {} element(s) for source '{}', queue depth: {}",
-                  items.size(), rootSourceName, queueDepth());
-        }
+        lastPushLogTime_ = now;
+        infof(logger(), "Pushed 1 batch for source '{}', queue depth: {}",
+              rootSourceName, queueDepth());
     }
     return items;
 }
@@ -219,18 +235,27 @@ void MLDPWriter::processItem(std::size_t workerIndex, QueueItem item)
         }
     }
 
-    const std::size_t dataBatchBytes  = util::bus::estimateDataBatchBytes(item.frame);
-    const std::size_t nRegularCols    = item.frame.columns.size();
-    const std::size_t nEnumCols       = item.frame.enum_columns.size();
-    const std::size_t nTotalCols      = nRegularCols + nEnumCols;
-    const std::size_t acceptedEvents  = item.frame.timestamps.size();
-    std::size_t       totalPayloadBytes = 0;
-    bool              writeFailed      = false;
+    // Accumulate totals across all frames in this batch.
+    std::size_t dataBatchBytes    = 0;
+    std::size_t acceptedEvents    = 0;
+    std::size_t totalPayloadBytes = 0;
+    bool        writeFailed       = false;
 
-    for (std::size_t i = 0; i < nTotalCols; ++i)
+    for (auto& frame : item.frames)
     {
-        const bool   isEnum  = (i >= nRegularCols);
-        const auto   realIdx = isEnum ? (i - nRegularCols) : i;
+        dataBatchBytes += util::bus::estimateDataBatchBytes(frame);
+        acceptedEvents += frame.timestamps.size();
+    }
+
+    // Build one DataFrame per batch (all columns together) → one Write() call.
+    for (auto& frame : item.frames)
+    {
+        const std::size_t nRegularCols = frame.columns.size();
+        const std::size_t nEnumCols    = frame.enum_columns.size();
+        const std::size_t nTotalCols   = nRegularCols + nEnumCols;
+
+        if (nTotalCols == 0)
+            continue;
 
         state.arena.Reset();
         auto* request = google::protobuf::Arena::CreateMessage<
@@ -244,17 +269,24 @@ void MLDPWriter::processItem(std::size_t workerIndex, QueueItem item)
             state.requestCounter));
 
         auto* dfPtr = request->mutable_ingestiondataframe();
-        toSingleColumnDataFrame(dfPtr, item.frame, realIdx, isEnum,
-                                item.root_source, item.metadata.get());
+
+        // All columns of this frame share the same timestamps — written once.
+        for (std::size_t i = 0; i < nTotalCols; ++i)
+        {
+            const bool isEnum  = (i >= nRegularCols);
+            const auto realIdx = isEnum ? (i - nRegularCols) : i;
+            toSingleColumnDataFrame(dfPtr, frame, realIdx, isEnum,
+                                    item.root_source, item.metadata.get());
+        }
 
         if (!hasAnyColumn(*dfPtr))
         {
-            warnf(logger(), "No valid column [{}] for source {}, skipping", i, item.root_source);
+            warnf(logger(), "No valid columns for source {}, skipping frame", item.root_source);
             continue;
         }
         if (!hasTimestampList(*dfPtr))
         {
-            errorf(logger(), "Dropping column [{}] for source {}: missing timestamplist", i, item.root_source);
+            errorf(logger(), "Dropping frame for source {}: missing timestamplist", item.root_source);
             metric_call(metrics_, [&](auto& m)
                         {
                             m.incrementWriterFailures(1.0, {{"writer", config_.name}, {"source", item.root_source}});
@@ -277,7 +309,7 @@ void MLDPWriter::processItem(std::size_t workerIndex, QueueItem item)
 
         if (!state.writer->Write(*request))
         {
-            errorf(logger(), "Failed to write column [{}] of source {} to ingestion stream", i, item.root_source);
+            errorf(logger(), "Failed to write frame for source {} to ingestion stream", item.root_source);
             metric_call(metrics_, [&](auto& m)
                         {
                             m.incrementWriterFailures(1.0, {{"writer", config_.name}, {"source", item.root_source}});
@@ -304,7 +336,10 @@ void MLDPWriter::processItem(std::size_t workerIndex, QueueItem item)
         if (state.framesWritten >= config_.maxFramesPerStream)
         {
             if (!rotateStream(state, "max frames per stream reached"))
+            {
+                writeFailed = true;
                 break;
+            }
         }
     }
 
@@ -353,61 +388,72 @@ void MLDPWriter::closeStream(StreamState& state, const char* reason) noexcept
     {
         return;
     }
-    state.writer->WritesDone();
-    auto    status = state.writer->Finish();
-    int64_t sentRequests = static_cast<int64_t>(state.requestCounter);
-    if (status.ok())
+
+    auto closing = std::make_unique<ClosingStreamState>();
+    closing->writer         = std::move(state.writer);
+    closing->context        = std::move(state.context);
+    closing->handle         = std::move(state.handle);
+    closing->response       = std::move(state.response);
+    closing->requestCounter = state.requestCounter;
+
+    state.streamPayloadBytes = 0;
+    state.requestCounter     = 0;
+    state.framesWritten      = 0;
+
+    std::string reasonStr = reason;
+    closePool_->detach_task([this, s = std::move(closing), reasonStr]() mutable
     {
-        if (state.response.has_ingestdatastreamresult())
+        s->writer->WritesDone();
+        auto    status       = s->writer->Finish();
+        int64_t sentRequests = static_cast<int64_t>(s->requestCounter);
+
+        if (status.ok())
         {
-            const auto& result = state.response.ingestdatastreamresult();
-            if (result.numrequests() < 0)
+            if (s->response.has_ingestdatastreamresult())
             {
-                errorf(logger(), "Ingestion stream finished with invalid numrequests ({}): {}", reason, result.numrequests());
+                const auto& result = s->response.ingestdatastreamresult();
+                if (result.numrequests() < 0)
+                {
+                    errorf(logger(), "Ingestion stream finished with invalid numrequests ({}): {}", reasonStr, result.numrequests());
+                }
+                else if (result.numrequests() < sentRequests)
+                {
+                    errorf(logger(), "Ingestion stream finished with incomplete requests ({}): server accepted {} of {} sent",
+                           reasonStr, result.numrequests(), sentRequests);
+                }
+                else if (result.numrequests() > sentRequests)
+                {
+                    errorf(logger(), "Ingestion stream finished with mismatch ({}): server reports {} but we sent {}",
+                           reasonStr, result.numrequests(), sentRequests);
+                }
+                else
+                {
+                    tracef(logger(), "Ingestion stream finished successfully ({}): {} requests", reasonStr, result.numrequests());
+                }
             }
-            else if (result.numrequests() < sentRequests)
+            if (s->response.has_exceptionalresult())
             {
-                errorf(logger(), "Ingestion stream finished with incomplete requests ({}): server accepted {} of {} sent",
-                       reason, result.numrequests(), sentRequests);
-            }
-            else if (result.numrequests() > sentRequests)
-            {
-                errorf(logger(), "Ingestion stream finished with mismatch ({}): server reports {} but we sent {}",
-                       reason, result.numrequests(), sentRequests);
-            }
-            else
-            {
-                tracef(logger(), "Ingestion stream finished successfully ({}): {} requests", reason, result.numrequests());
+                errorf(logger(), "Ingestion stream finished with exceptional result ({}): {}",
+                       reasonStr, s->response.exceptionalresult().message());
+                metric_call(metrics_, [&](auto& m)
+                            {
+                                m.incrementWriterFailures(1.0, {{"writer", config_.name}, {"source", std::string(kUnknownSource)}});
+                            });
             }
         }
-        if (state.response.has_exceptionalresult())
+        else
         {
-            errorf(logger(), "Ingestion stream finished with exceptional result ({}): {}",
-                   reason, state.response.exceptionalresult().message());
+            errorf(logger(), "Ingestion stream finished with error ({}): {}", reasonStr, status.error_message());
             metric_call(metrics_, [&](auto& m)
                         {
                             m.incrementWriterFailures(1.0, {{"writer", config_.name}, {"source", std::string(kUnknownSource)}});
                         });
         }
-    }
-    else
-    {
-        errorf(logger(), "Ingestion stream finished with error ({}): {}", reason, status.error_message());
         metric_call(metrics_, [&](auto& m)
                     {
-                        m.incrementWriterFailures(1.0, {{"writer", config_.name}, {"source", std::string(kUnknownSource)}});
+                        m.incrementWriterStreamRotations(1.0, {{"writer", config_.name}, {"reason", reasonStr}});
                     });
-    }
-    metric_call(metrics_, [&](auto& m)
-                {
-                    m.incrementWriterStreamRotations(1.0, {{"writer", config_.name}, {"reason", reason}});
-                });
-    state.writer.reset();
-    state.handle.reset();
-    state.context.reset();
-    state.streamPayloadBytes = 0;
-    state.requestCounter     = 0;
-    state.framesWritten      = 0;
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -575,7 +621,9 @@ void MLDPWriter::toSingleColumnDataFrame(
                 c->mutable_dimensions()->add_dims(d);
     };
 
-    // Timestamps (shared across all columns in the batch)
+    // Timestamps — written once per DataFrame (first column call sets them).
+    if (!out->has_datatimestamps() ||
+        out->datatimestamps().timestamplist().timestamps_size() == 0)
     {
         auto* tsList = out->mutable_datatimestamps()->mutable_timestamplist();
         tsList->mutable_timestamps()->Reserve(static_cast<int>(batch.timestamps.size()));

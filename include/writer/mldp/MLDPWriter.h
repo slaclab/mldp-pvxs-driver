@@ -20,6 +20,8 @@
 #include <pool/MLDPGrpcPool.h>
 #include <util/log/Logger.h>
 
+#include <BS_thread_pool.hpp>
+
 #include <chrono>
 #include <memory>
 #include <mutex>
@@ -30,11 +32,13 @@
 namespace mldp_pvxs_driver::writer {
 
 /// Smallest unit of queued work passed between MLDPWriter::push and workers.
+/// Holds all DataBatch frames from one EventBatch so they are sent as a
+/// single multi-column DataFrame per Write() call on the gRPC stream.
 struct MLDPQueueItem
 {
     std::string                                                          root_source;
     std::shared_ptr<const std::unordered_map<std::string, std::string>> metadata;
-    util::bus::DataBatch                                                 frame;
+    std::vector<util::bus::DataBatch>                                    frames;
 };
 
 /**
@@ -93,6 +97,8 @@ protected:
 private:
     /// gRPC stream state owned by one worker for its lifetime.
     struct StreamState;
+    /// Subset of StreamState moved to the async close thread.
+    struct ClosingStreamState;
 
     std::vector<std::unique_ptr<StreamState>> workerStates_;
 
@@ -100,6 +106,7 @@ private:
     std::shared_ptr<metrics::Metrics>                                  metrics_;
     util::pool::MLDPGrpcIngestionePool::MLDPGrpcIngestionePoolShrdPtr  ingestionPool_;
     std::string                                                        providerId_;
+    std::shared_ptr<BS::light_thread_pool>                             closePool_;
 
     /// Throttled push logging (every 10s).
     std::mutex                            pushLogMutex_;

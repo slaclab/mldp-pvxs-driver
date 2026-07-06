@@ -123,5 +123,12 @@ MLDPWriterConfig MLDPWriterConfig::parse(const Config& mldpNode)
         }
     }
 
+    // Auto-size pool connections from thread count when not explicitly configured
+    if (cfg.poolConfig.minConnections() == 0)
+    {
+        cfg.poolConfig.setMinConnections(cfg.threadPoolSize);
+        cfg.poolConfig.setMaxConnections(cfg.threadPoolSize * 2);
+    }
+
     return cfg;
 }
