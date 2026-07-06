@@ -222,7 +222,13 @@ void BaseQueuedWriter<Item>::stop() noexcept
 
     util::log::debugf(*logger_, "BaseQueuedWriter '{}' waiting for workers to drain...", writerName_);
     if (threadPool_)
-        threadPool_->wait();
+    {
+        while (!threadPool_->wait_for(std::chrono::seconds(10)))
+        {
+            util::log::infof(*logger_, "BaseQueuedWriter '{}' draining — {} item(s) remaining",
+                             writerName_, queuedItems_.load(std::memory_order_relaxed));
+        }
+    }
 
     channels_.clear();
     threadPool_.reset();
