@@ -389,7 +389,7 @@ void MLDPWriter::closeStream(StreamState& state, const char* reason) noexcept
         return;
     }
 
-    auto closing = std::make_unique<ClosingStreamState>();
+    auto closing = std::make_shared<ClosingStreamState>();
     closing->writer         = std::move(state.writer);
     closing->context        = std::move(state.context);
     closing->handle         = std::move(state.handle);
