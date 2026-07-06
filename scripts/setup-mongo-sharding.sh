@@ -75,10 +75,10 @@ echo "==> Target: ${MONGOS_HOST}"
 echo "==> Drop collection: ${DROP_COLLECTION}"
 
 # ============================================================================
-# [1/4] Drop + shard key index (databaseAdmin)
+# [1/5] Drop + shard key index (databaseAdmin)
 # ============================================================================
 echo ""
-echo "--- [1/4] Drop + shard key index (databaseAdmin) ---"
+echo "--- [1/5] Drop + shard key index (databaseAdmin) ---"
 run_as_dbadmin <<ENDJS
 var dp = db.getSiblingDB("dp")
 var doDrop = ${DROP_COLLECTION}
@@ -96,10 +96,10 @@ try {
 ENDJS
 
 # ============================================================================
-# [2/4] Sharding setup (clusterAdmin)
+# [2/5] Sharding setup (clusterAdmin)
 # ============================================================================
 echo ""
-echo "--- [2/4] Sharding setup (clusterAdmin) ---"
+echo "--- [2/5] Sharding setup (clusterAdmin) ---"
 run_as_clusteradmin <<'ENDJS'
 var r = db.adminCommand({ enableSharding: "dp" })
 print("enableSharding ok:", r.ok)
@@ -142,10 +142,22 @@ print("balancer disabled for dp.buckets")
 ENDJS
 
 # ============================================================================
-# [3/4] Query indexes + validation (databaseAdmin)
+# [3/5] Shard dp.requestStatus with hashed _id (clusterAdmin)
 # ============================================================================
 echo ""
-echo "--- [3/4] Query indexes + validation (databaseAdmin) ---"
+echo "--- [3/5] Shard dp.requestStatus (clusterAdmin) ---"
+run_as_clusteradmin <<'ENDJS'
+try {
+    var r = db.adminCommand({ shardCollection: "dp.requestStatus", key: { _id: "hashed" } })
+    print("shardCollection dp.requestStatus ok:", r.ok)
+} catch(e) { print("shardCollection dp.requestStatus:", e.message) }
+ENDJS
+
+# ============================================================================
+# [4/5] Query indexes + validation (databaseAdmin)
+# ============================================================================
+echo ""
+echo "--- [4/5] Query indexes + validation (databaseAdmin) ---"
 run_as_dbadmin <<'ENDJS'
 var dp = db.getSiblingDB("dp")
 
