@@ -389,6 +389,8 @@ void MLDPWriter::closeStream(StreamState& state, const char* reason) noexcept
         return;
     }
 
+    state.writer->WritesDone();
+
     auto closing = std::make_shared<ClosingStreamState>();
     closing->writer         = std::move(state.writer);
     closing->context        = std::move(state.context);
@@ -403,7 +405,6 @@ void MLDPWriter::closeStream(StreamState& state, const char* reason) noexcept
     std::string reasonStr = reason;
     closePool_->detach_task([this, s = std::move(closing), reasonStr]() mutable
     {
-        s->writer->WritesDone();
         auto    status       = s->writer->Finish();
         int64_t sentRequests = static_cast<int64_t>(s->requestCounter);
 
