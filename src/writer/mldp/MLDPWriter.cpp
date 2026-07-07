@@ -18,8 +18,8 @@
 #include <grpcpp/grpcpp.h>
 
 #include <chrono>
-#include <cstring>
 #include <cstdint>
+#include <cstring>
 #include <optional>
 #include <stdexcept>
 
@@ -42,14 +42,14 @@ bool hasTimestampList(const dp::service::common::DataFrame& frame)
 
 bool hasAnyColumn(const dp::service::common::DataFrame& f)
 {
-    return f.doublecolumns_size()      > 0 || f.floatcolumns_size()       > 0 ||
-           f.datacolumns_size()        > 0 || f.int32columns_size()        > 0 ||
-           f.int64columns_size()       > 0 || f.boolcolumns_size()         > 0 ||
-           f.stringcolumns_size()      > 0 || f.enumcolumns_size()         > 0 ||
-           f.imagecolumns_size()       > 0 || f.structcolumns_size()       > 0 ||
-           f.doublearraycolumns_size() > 0 || f.floatarraycolumns_size()   > 0 ||
-           f.int32arraycolumns_size()  > 0 || f.int64arraycolumns_size()   > 0 ||
-           f.boolarraycolumns_size()   > 0;
+    return f.doublecolumns_size() > 0 || f.floatcolumns_size() > 0 ||
+           f.datacolumns_size() > 0 || f.int32columns_size() > 0 ||
+           f.int64columns_size() > 0 || f.boolcolumns_size() > 0 ||
+           f.stringcolumns_size() > 0 || f.enumcolumns_size() > 0 ||
+           f.imagecolumns_size() > 0 || f.structcolumns_size() > 0 ||
+           f.doublearraycolumns_size() > 0 || f.floatarraycolumns_size() > 0 ||
+           f.int32arraycolumns_size() > 0 || f.int64arraycolumns_size() > 0 ||
+           f.boolarraycolumns_size() > 0;
 }
 
 } // namespace
@@ -63,16 +63,25 @@ struct MLDPWriter::StreamState
     std::optional<mldp_pvxs_driver::util::pool::PooledHandle<mldp_pvxs_driver::util::pool::MLDPGrpcObject>> handle;
     std::unique_ptr<grpc::ClientWriter<dp::service::ingestion::IngestDataRequest>>                          writer;
     std::unique_ptr<grpc::ClientContext>                                                                    context;
-    dp::service::ingestion::IngestDataStreamResponse                                                        response;
+    std::unique_ptr<dp::service::ingestion::IngestDataStreamResponse>                                       response;
     std::chrono::steady_clock::time_point                                                                   streamStart;
-    std::size_t   streamPayloadBytes{0};
-    std::uint64_t requestCounter{0};
+    std::size_t                                                                                             streamPayloadBytes{0};
+    std::uint64_t                                                                                           requestCounter{0};
 
     google::protobuf::Arena arena;
 
     std::uint64_t framesWritten{0};
 
     std::unordered_map<std::string, MLDPWriter::SourceRateTracker> rateTrackers;
+};
+
+struct MLDPWriter::ClosingStreamState
+{
+    std::optional<mldp_pvxs_driver::util::pool::PooledHandle<mldp_pvxs_driver::util::pool::MLDPGrpcObject>> handle;
+    std::unique_ptr<grpc::ClientWriter<dp::service::ingestion::IngestDataRequest>>                          writer;
+    std::unique_ptr<grpc::ClientContext>                                                                    context;
+    std::unique_ptr<dp::service::ingestion::IngestDataStreamResponse>                                       response;
+    std::uint64_t                                                                                           requestCounter{0};
 };
 
 // ---------------------------------------------------------------------------
@@ -109,7 +118,7 @@ MLDPWriter::~MLDPWriter()
 void MLDPWriter::doStart()
 {
     ingestionPool_ = MLDPGrpcIngestionePool::create(config_.poolConfig, metrics_);
-    providerId_    = ingestionPool_->providerId();
+    providerId_ = ingestionPool_->providerId();
     if (providerId_.empty())
     {
         ingestionPool_.reset();
@@ -120,14 +129,19 @@ void MLDPWriter::doStart()
     workerStates_.reserve(wc);
     for (std::size_t i = 0; i < wc; ++i)
         workerStates_.push_back(std::make_unique<StreamState>());
+    closePool_ = std::make_shared<BS::light_thread_pool>(1);
     infof(logger(), "MLDPWriter provider registered: {}", providerId_);
 }
 
 void MLDPWriter::doStop() noexcept
 {
     for (auto& statePtr : workerStates_)
-        if (statePtr) closeStream(*statePtr, "writer stopping");
+        if (statePtr)
+            closeStream(*statePtr, "writer stopping");
     workerStates_.clear();
+    if (closePool_)
+        closePool_->wait();
+    closePool_.reset();
     ingestionPool_.reset();
 }
 
@@ -155,8 +169,9 @@ std::vector<MLDPWriter::QueueItem> MLDPWriter::toItems(util::bus::IDataBus::Even
 
     auto metadata = std::make_shared<const std::unordered_map<std::string, std::string>>(batch.metadata);
 
-    std::vector<QueueItem> items;
-    items.reserve(ts_mut.frames.size());
+    // Collect all non-empty frames into one QueueItem — one Write() per batch.
+    std::vector<util::bus::DataBatch> frames;
+    frames.reserve(ts_mut.frames.size());
     for (auto& frame : ts_mut.frames)
     {
         if (frame.timestamps.empty())
@@ -167,20 +182,23 @@ std::vector<MLDPWriter::QueueItem> MLDPWriter::toItems(util::bus::IDataBus::Even
                         });
             continue;
         }
-        items.push_back({rootSourceName, metadata, std::move(frame)});
+        frames.push_back(std::move(frame));
     }
 
-    if (!items.empty())
+    if (frames.empty())
+        return {};
+
+    std::vector<QueueItem> items;
+    items.push_back({rootSourceName, metadata, std::move(frames)});
+
+    updateQueueDepthMetric();
+    const auto      now = std::chrono::steady_clock::now();
+    std::lock_guard lk(pushLogMutex_);
+    if (now - lastPushLogTime_ >= std::chrono::seconds(10))
     {
-        updateQueueDepthMetric();
-        const auto now = std::chrono::steady_clock::now();
-        std::lock_guard lk(pushLogMutex_);
-        if (now - lastPushLogTime_ >= std::chrono::seconds(10))
-        {
-            lastPushLogTime_ = now;
-            infof(logger(), "Pushed {} element(s) for source '{}', queue depth: {}",
-                  items.size(), rootSourceName, queueDepth());
-        }
+        lastPushLogTime_ = now;
+        infof(logger(), "Pushed 1 batch for source '{}', queue depth: {}",
+              rootSourceName, queueDepth());
     }
     return items;
 }
@@ -193,11 +211,11 @@ void MLDPWriter::processItem(std::size_t workerIndex, QueueItem item)
 {
     auto& state = *workerStates_[workerIndex];
 
-    const auto itemStart        = std::chrono::steady_clock::now();
+    const auto itemStart = std::chrono::steady_clock::now();
     const auto record_send_time = [this, itemStart](prometheus::Labels tags)
     {
         const auto   elapsed = std::chrono::steady_clock::now() - itemStart;
-        const double sec     = std::chrono::duration<double>(elapsed).count();
+        const double sec = std::chrono::duration<double>(elapsed).count();
         metric_call(metrics_, [&](auto& m)
                     {
                         m.observeControllerSendTimeSeconds(sec, std::move(tags));
@@ -219,18 +237,27 @@ void MLDPWriter::processItem(std::size_t workerIndex, QueueItem item)
         }
     }
 
-    const std::size_t dataBatchBytes  = util::bus::estimateDataBatchBytes(item.frame);
-    const std::size_t nRegularCols    = item.frame.columns.size();
-    const std::size_t nEnumCols       = item.frame.enum_columns.size();
-    const std::size_t nTotalCols      = nRegularCols + nEnumCols;
-    const std::size_t acceptedEvents  = item.frame.timestamps.size();
-    std::size_t       totalPayloadBytes = 0;
-    bool              writeFailed      = false;
+    // Accumulate totals across all frames in this batch.
+    std::size_t dataBatchBytes = 0;
+    std::size_t acceptedEvents = 0;
+    std::size_t totalPayloadBytes = 0;
+    bool        writeFailed = false;
 
-    for (std::size_t i = 0; i < nTotalCols; ++i)
+    for (auto& frame : item.frames)
     {
-        const bool   isEnum  = (i >= nRegularCols);
-        const auto   realIdx = isEnum ? (i - nRegularCols) : i;
+        dataBatchBytes += util::bus::estimateDataBatchBytes(frame);
+        acceptedEvents += frame.timestamps.size();
+    }
+
+    // Build one DataFrame per batch (all columns together) → one Write() call.
+    for (auto& frame : item.frames)
+    {
+        const std::size_t nRegularCols = frame.columns.size();
+        const std::size_t nEnumCols = frame.enum_columns.size();
+        const std::size_t nTotalCols = nRegularCols + nEnumCols;
+
+        if (nTotalCols == 0)
+            continue;
 
         state.arena.Reset();
         auto* request = google::protobuf::Arena::CreateMessage<
@@ -244,17 +271,24 @@ void MLDPWriter::processItem(std::size_t workerIndex, QueueItem item)
             state.requestCounter));
 
         auto* dfPtr = request->mutable_ingestiondataframe();
-        toSingleColumnDataFrame(dfPtr, item.frame, realIdx, isEnum,
-                                item.root_source, item.metadata.get());
+
+        // All columns of this frame share the same timestamps — written once.
+        for (std::size_t i = 0; i < nTotalCols; ++i)
+        {
+            const bool isEnum = (i >= nRegularCols);
+            const auto realIdx = isEnum ? (i - nRegularCols) : i;
+            toSingleColumnDataFrame(dfPtr, frame, realIdx, isEnum,
+                                    item.root_source, item.metadata.get());
+        }
 
         if (!hasAnyColumn(*dfPtr))
         {
-            warnf(logger(), "No valid column [{}] for source {}, skipping", i, item.root_source);
+            warnf(logger(), "No valid columns for source {}, skipping frame", item.root_source);
             continue;
         }
         if (!hasTimestampList(*dfPtr))
         {
-            errorf(logger(), "Dropping column [{}] for source {}: missing timestamplist", i, item.root_source);
+            errorf(logger(), "Dropping frame for source {}: missing timestamplist", item.root_source);
             metric_call(metrics_, [&](auto& m)
                         {
                             m.incrementWriterFailures(1.0, {{"writer", config_.name}, {"source", item.root_source}});
@@ -277,7 +311,7 @@ void MLDPWriter::processItem(std::size_t workerIndex, QueueItem item)
 
         if (!state.writer->Write(*request))
         {
-            errorf(logger(), "Failed to write column [{}] of source {} to ingestion stream", i, item.root_source);
+            errorf(logger(), "Failed to write frame for source {} to ingestion stream", item.root_source);
             metric_call(metrics_, [&](auto& m)
                         {
                             m.incrementWriterFailures(1.0, {{"writer", config_.name}, {"source", item.root_source}});
@@ -290,7 +324,7 @@ void MLDPWriter::processItem(std::size_t workerIndex, QueueItem item)
         ++state.requestCounter;
         ++state.framesWritten;
         state.streamPayloadBytes += payloadBytes;
-        totalPayloadBytes        += payloadBytes;
+        totalPayloadBytes += payloadBytes;
 
         if (payloadBytes > 0)
         {
@@ -304,7 +338,10 @@ void MLDPWriter::processItem(std::size_t workerIndex, QueueItem item)
         if (state.framesWritten >= config_.maxFramesPerStream)
         {
             if (!rotateStream(state, "max frames per stream reached"))
+            {
+                writeFailed = true;
                 break;
+            }
         }
     }
 
@@ -353,61 +390,57 @@ void MLDPWriter::closeStream(StreamState& state, const char* reason) noexcept
     {
         return;
     }
+
     state.writer->WritesDone();
-    auto    status = state.writer->Finish();
-    int64_t sentRequests = static_cast<int64_t>(state.requestCounter);
-    if (status.ok())
-    {
-        if (state.response.has_ingestdatastreamresult())
-        {
-            const auto& result = state.response.ingestdatastreamresult();
-            if (result.numrequests() < 0)
-            {
-                errorf(logger(), "Ingestion stream finished with invalid numrequests ({}): {}", reason, result.numrequests());
-            }
-            else if (result.numrequests() < sentRequests)
-            {
-                errorf(logger(), "Ingestion stream finished with incomplete requests ({}): server accepted {} of {} sent",
-                       reason, result.numrequests(), sentRequests);
-            }
-            else if (result.numrequests() > sentRequests)
-            {
-                errorf(logger(), "Ingestion stream finished with mismatch ({}): server reports {} but we sent {}",
-                       reason, result.numrequests(), sentRequests);
-            }
-            else
-            {
-                tracef(logger(), "Ingestion stream finished successfully ({}): {} requests", reason, result.numrequests());
-            }
-        }
-        if (state.response.has_exceptionalresult())
-        {
-            errorf(logger(), "Ingestion stream finished with exceptional result ({}): {}",
-                   reason, state.response.exceptionalresult().message());
-            metric_call(metrics_, [&](auto& m)
-                        {
-                            m.incrementWriterFailures(1.0, {{"writer", config_.name}, {"source", std::string(kUnknownSource)}});
-                        });
-        }
-    }
-    else
-    {
-        errorf(logger(), "Ingestion stream finished with error ({}): {}", reason, status.error_message());
-        metric_call(metrics_, [&](auto& m)
-                    {
-                        m.incrementWriterFailures(1.0, {{"writer", config_.name}, {"source", std::string(kUnknownSource)}});
-                    });
-    }
-    metric_call(metrics_, [&](auto& m)
-                {
-                    m.incrementWriterStreamRotations(1.0, {{"writer", config_.name}, {"reason", reason}});
-                });
-    state.writer.reset();
-    state.handle.reset();
-    state.context.reset();
+
+    auto closing = std::make_shared<ClosingStreamState>();
+    closing->writer = std::move(state.writer);
+    closing->context = std::move(state.context);
+    closing->handle = std::move(state.handle);
+    closing->response = std::move(state.response);
+    closing->requestCounter = state.requestCounter;
+
     state.streamPayloadBytes = 0;
-    state.requestCounter     = 0;
-    state.framesWritten      = 0;
+    state.requestCounter = 0;
+    state.framesWritten = 0;
+
+    std::string reasonStr = reason;
+    closePool_->detach_task([this, s = std::move(closing), reasonStr]() mutable
+                            {
+                                auto    status = s->writer->Finish();
+                                int64_t sentRequests = static_cast<int64_t>(s->requestCounter);
+
+                                if (status.ok())
+                                {
+                                    if (s->response && s->response->has_ingestdatastreamresult())
+                                    {
+                                        const auto& result = s->response->ingestdatastreamresult();
+                                        tracef(logger(), "Ingestion stream finished ({}): server reports {} requests, sent {}",
+                                               reasonStr, result.numrequests(), sentRequests);
+                                    }
+                                    if (s->response && s->response->has_exceptionalresult())
+                                    {
+                                        errorf(logger(), "Ingestion stream finished with exceptional result ({}): {}",
+                                               reasonStr, s->response->exceptionalresult().message());
+                                        metric_call(metrics_, [&](auto& m)
+                                                    {
+                                                        m.incrementWriterFailures(1.0, {{"writer", config_.name}, {"source", std::string(kUnknownSource)}});
+                                                    });
+                                    }
+                                }
+                                else
+                                {
+                                    errorf(logger(), "Ingestion stream finished with error ({}): {}", reasonStr, status.error_message());
+                                    metric_call(metrics_, [&](auto& m)
+                                                {
+                                                    m.incrementWriterFailures(1.0, {{"writer", config_.name}, {"source", std::string(kUnknownSource)}});
+                                                });
+                                }
+                                metric_call(metrics_, [&](auto& m)
+                                            {
+                                                m.incrementWriterStreamRotations(1.0, {{"writer", config_.name}, {"reason", reasonStr}});
+                                            });
+                            });
 }
 
 // ---------------------------------------------------------------------------
@@ -422,10 +455,10 @@ bool MLDPWriter::ensureStream(StreamState& state)
     }
     try
     {
-        state.context  = std::make_unique<grpc::ClientContext>();
-        state.response = dp::service::ingestion::IngestDataStreamResponse();
+        state.context = std::make_unique<grpc::ClientContext>();
+        state.response = std::make_unique<dp::service::ingestion::IngestDataStreamResponse>();
         state.handle.emplace(ingestionPool_->acquire());
-        state.writer = (*state.handle)->stub->ingestDataStream(state.context.get(), &state.response);
+        state.writer = (*state.handle)->stub->ingestDataStream(state.context.get(), state.response.get());
         if (!state.writer)
         {
             errorf(logger(), "Failed to open ingestion stream");
@@ -437,7 +470,7 @@ bool MLDPWriter::ensureStream(StreamState& state)
             state.context.reset();
             return false;
         }
-        state.streamStart        = std::chrono::steady_clock::now();
+        state.streamStart = std::chrono::steady_clock::now();
         state.streamPayloadBytes = 0;
         return true;
     }
@@ -470,6 +503,8 @@ bool MLDPWriter::rotateStream(StreamState& state, const char* reason)
 
 void MLDPWriter::onWorkerIdle(std::size_t workerIndex)
 {
+    if (workerIndex >= workerStates_.size() || !workerStates_[workerIndex])
+        return;
     auto& state = *workerStates_[workerIndex];
     if (state.writer &&
         std::chrono::steady_clock::now() - state.streamStart >= config_.streamMaxAge)
@@ -489,9 +524,9 @@ void MLDPWriter::updateSourceRateMetrics(StreamState&       state,
                                          std::size_t        payloadBytes)
 {
     auto&      tracker = state.rateTrackers[source];
-    const auto now     = std::chrono::steady_clock::now();
+    const auto now = std::chrono::steady_clock::now();
 
-    tracker.accumulatedBytes        += dataBatchBytes;
+    tracker.accumulatedBytes += dataBatchBytes;
     tracker.accumulatedPayloadBytes += payloadBytes;
 
     if (tracker.lastWallTime.time_since_epoch().count() == 0)
@@ -531,9 +566,9 @@ void MLDPWriter::updateSourceRateMetrics(StreamState&       state,
                             {{"writer", config_.name}, {"worker", workerLabel}, {"source", source}});
                     });
     }
-    tracker.accumulatedBytes        = 0;
+    tracker.accumulatedBytes = 0;
     tracker.accumulatedPayloadBytes = 0;
-    tracker.lastWallTime            = now;
+    tracker.lastWallTime = now;
 }
 
 // ---------------------------------------------------------------------------
@@ -548,24 +583,25 @@ void MLDPWriter::toSingleColumnDataFrame(
     const std::string&                                  rootSource,
     const std::unordered_map<std::string, std::string>* metadata)
 {
-    const auto apply_metadata = [&](auto* c)
+    const auto apply_kv_map = [](auto* c, const std::unordered_map<std::string, std::string>* m)
     {
-        if (metadata)
+        if (!m)
+            return;
+        for (const auto& [k, v] : *m)
         {
-            for (const auto& [k, v] : *metadata)
-            {
-                auto* attr = c->mutable_metadata()->add_attributes();
-                attr->set_name(k);
-                attr->set_value(v);
-            }
+            auto* attr = c->mutable_metadata()->add_attributes();
+            attr->set_name(k);
+            attr->set_value(v);
         }
     };
 
-    const auto setup_col = [&](auto* c, const std::string& name)
+    const auto setup_col = [&](auto* c, const std::string& name,
+                               const std::unordered_map<std::string, std::string>* col_meta = nullptr)
     {
         c->set_name(name);
         c->mutable_metadata()->mutable_provenance()->set_source(rootSource);
-        apply_metadata(c);
+        apply_kv_map(c, metadata);
+        apply_kv_map(c, col_meta);
     };
 
     const auto apply_dims = [&](auto* c, const std::string& colName)
@@ -575,7 +611,9 @@ void MLDPWriter::toSingleColumnDataFrame(
                 c->mutable_dimensions()->add_dims(d);
     };
 
-    // Timestamps (shared across all columns in the batch)
+    // Timestamps — written once per DataFrame (first column call sets them).
+    if (!out->has_datatimestamps() ||
+        out->datatimestamps().timestamplist().timestamps_size() == 0)
     {
         auto* tsList = out->mutable_datatimestamps()->mutable_timestamplist();
         tsList->mutable_timestamps()->Reserve(static_cast<int>(batch.timestamps.size()));
@@ -590,11 +628,12 @@ void MLDPWriter::toSingleColumnDataFrame(
     if (isEnum)
     {
         const auto& ecol = batch.enum_columns[colIndex];
-        auto* c = out->add_enumcolumns();
+        auto*       c = out->add_enumcolumns();
         setup_col(c, ecol.name);
         c->set_enumid(ecol.enum_id);
         c->mutable_values()->Reserve(static_cast<int>(ecol.values.size()));
-        for (auto v : ecol.values) c->add_values(v);
+        for (auto v : ecol.values)
+            c->add_values(v);
         return;
     }
 
@@ -607,7 +646,7 @@ void MLDPWriter::toSingleColumnDataFrame(
             if constexpr (std::is_same_v<T, std::vector<double>>)
             {
                 auto* c = out->add_doublecolumns();
-                setup_col(c, col.name);
+                setup_col(c, col.name, &col.metadata);
                 auto* vals = c->mutable_values();
                 vals->Resize(static_cast<int>(vec.size()), 0.0);
                 std::memcpy(vals->mutable_data(), vec.data(), vec.size() * sizeof(double));
@@ -615,7 +654,7 @@ void MLDPWriter::toSingleColumnDataFrame(
             else if constexpr (std::is_same_v<T, std::vector<float>>)
             {
                 auto* c = out->add_floatcolumns();
-                setup_col(c, col.name);
+                setup_col(c, col.name, &col.metadata);
                 auto* vals = c->mutable_values();
                 vals->Resize(static_cast<int>(vec.size()), 0.0f);
                 std::memcpy(vals->mutable_data(), vec.data(), vec.size() * sizeof(float));
@@ -623,7 +662,7 @@ void MLDPWriter::toSingleColumnDataFrame(
             else if constexpr (std::is_same_v<T, std::vector<int64_t>>)
             {
                 auto* c = out->add_int64columns();
-                setup_col(c, col.name);
+                setup_col(c, col.name, &col.metadata);
                 auto* vals = c->mutable_values();
                 vals->Resize(static_cast<int>(vec.size()), 0);
                 std::memcpy(vals->mutable_data(), vec.data(), vec.size() * sizeof(int64_t));
@@ -631,7 +670,7 @@ void MLDPWriter::toSingleColumnDataFrame(
             else if constexpr (std::is_same_v<T, std::vector<int32_t>>)
             {
                 auto* c = out->add_int32columns();
-                setup_col(c, col.name);
+                setup_col(c, col.name, &col.metadata);
                 auto* vals = c->mutable_values();
                 vals->Resize(static_cast<int>(vec.size()), 0);
                 std::memcpy(vals->mutable_data(), vec.data(), vec.size() * sizeof(int32_t));
@@ -639,75 +678,104 @@ void MLDPWriter::toSingleColumnDataFrame(
             else if constexpr (std::is_same_v<T, std::vector<bool>>)
             {
                 auto* c = out->add_boolcolumns();
-                setup_col(c, col.name);
+                setup_col(c, col.name, &col.metadata);
                 c->mutable_values()->Reserve(static_cast<int>(vec.size()));
-                for (auto v : vec) c->add_values(v);
+                for (auto v : vec)
+                    c->add_values(v);
             }
             else if constexpr (std::is_same_v<T, std::vector<std::string>>)
             {
                 auto* c = out->add_stringcolumns();
-                setup_col(c, col.name);
+                setup_col(c, col.name, &col.metadata);
                 c->mutable_values()->Reserve(static_cast<int>(vec.size()));
-                for (const auto& v : vec) c->add_values(v);
+                for (const auto& v : vec)
+                    c->add_values(v);
             }
             else if constexpr (std::is_same_v<T, std::vector<std::vector<uint8_t>>>)
             {
                 auto* c = out->add_structcolumns();
-                setup_col(c, col.name);
+                setup_col(c, col.name, &col.metadata);
                 c->set_schemaid("");
                 c->mutable_values()->Reserve(static_cast<int>(vec.size()));
-                for (const auto& blob : vec) c->add_values(blob.data(), blob.size());
+                for (const auto& blob : vec)
+                    c->add_values(blob.data(), blob.size());
             }
             else if constexpr (std::is_same_v<T, std::vector<std::vector<double>>>)
             {
                 auto* c = out->add_doublearraycolumns();
-                setup_col(c, col.name);
-                std::size_t total = 0; for (const auto& a : vec) total += a.size();
+                setup_col(c, col.name, &col.metadata);
+                std::size_t total = 0;
+                for (const auto& a : vec)
+                    total += a.size();
                 auto* vals = c->mutable_values();
                 vals->Resize(static_cast<int>(total), 0.0);
                 double* dst = vals->mutable_data();
-                for (const auto& arr : vec) { std::memcpy(dst, arr.data(), arr.size() * sizeof(double)); dst += arr.size(); }
+                for (const auto& arr : vec)
+                {
+                    std::memcpy(dst, arr.data(), arr.size() * sizeof(double));
+                    dst += arr.size();
+                }
                 apply_dims(c, col.name);
             }
             else if constexpr (std::is_same_v<T, std::vector<std::vector<float>>>)
             {
                 auto* c = out->add_floatarraycolumns();
-                setup_col(c, col.name);
-                std::size_t total = 0; for (const auto& a : vec) total += a.size();
+                setup_col(c, col.name, &col.metadata);
+                std::size_t total = 0;
+                for (const auto& a : vec)
+                    total += a.size();
                 auto* vals = c->mutable_values();
                 vals->Resize(static_cast<int>(total), 0.0f);
                 float* dst = vals->mutable_data();
-                for (const auto& arr : vec) { std::memcpy(dst, arr.data(), arr.size() * sizeof(float)); dst += arr.size(); }
+                for (const auto& arr : vec)
+                {
+                    std::memcpy(dst, arr.data(), arr.size() * sizeof(float));
+                    dst += arr.size();
+                }
                 apply_dims(c, col.name);
             }
             else if constexpr (std::is_same_v<T, std::vector<std::vector<int64_t>>>)
             {
                 auto* c = out->add_int64arraycolumns();
-                setup_col(c, col.name);
-                std::size_t total = 0; for (const auto& a : vec) total += a.size();
+                setup_col(c, col.name, &col.metadata);
+                std::size_t total = 0;
+                for (const auto& a : vec)
+                    total += a.size();
                 auto* vals = c->mutable_values();
                 vals->Resize(static_cast<int>(total), 0);
                 int64_t* dst = vals->mutable_data();
-                for (const auto& arr : vec) { std::memcpy(dst, arr.data(), arr.size() * sizeof(int64_t)); dst += arr.size(); }
+                for (const auto& arr : vec)
+                {
+                    std::memcpy(dst, arr.data(), arr.size() * sizeof(int64_t));
+                    dst += arr.size();
+                }
                 apply_dims(c, col.name);
             }
             else if constexpr (std::is_same_v<T, std::vector<std::vector<int32_t>>>)
             {
                 auto* c = out->add_int32arraycolumns();
-                setup_col(c, col.name);
-                std::size_t total = 0; for (const auto& a : vec) total += a.size();
+                setup_col(c, col.name, &col.metadata);
+                std::size_t total = 0;
+                for (const auto& a : vec)
+                    total += a.size();
                 auto* vals = c->mutable_values();
                 vals->Resize(static_cast<int>(total), 0);
                 int32_t* dst = vals->mutable_data();
-                for (const auto& arr : vec) { std::memcpy(dst, arr.data(), arr.size() * sizeof(int32_t)); dst += arr.size(); }
+                for (const auto& arr : vec)
+                {
+                    std::memcpy(dst, arr.data(), arr.size() * sizeof(int32_t));
+                    dst += arr.size();
+                }
                 apply_dims(c, col.name);
             }
             else if constexpr (std::is_same_v<T, std::vector<std::vector<bool>>>)
             {
                 auto* c = out->add_boolarraycolumns();
-                setup_col(c, col.name);
+                setup_col(c, col.name, &col.metadata);
                 c->mutable_values()->Reserve(static_cast<int>(vec.size()));
-                for (const auto& arr : vec) for (auto v : arr) c->add_values(v);
+                for (const auto& arr : vec)
+                    for (auto v : arr)
+                        c->add_values(v);
                 apply_dims(c, col.name);
             }
         },

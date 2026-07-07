@@ -52,8 +52,8 @@ inline constexpr char MldpMaxFramesPerStreamKey[] = "max-frames-per-stream";
  *         provider-name: …
  *         ingestion-url: …
  *         query-url: …
- *         min-conn: 1
- *         max-conn: 4
+ *         min-conn: 1                   # optional; auto-sized from thread-pool if omitted
+ *         max-conn: 4                   # optional; defaults to thread-pool * 2
  * @endcode
  */
 struct MLDPWriterConfig

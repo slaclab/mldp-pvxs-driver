@@ -579,7 +579,7 @@ void MLDPPVXSController::consumerLoop()
             local.swap(queue_);
             if (metrics_)
                 metrics_->setControllerQueueDepth(static_cast<double>(queue_.size()));
-            debugf(*logger_, "consumerLoop() dequeued {} batch(es), queue now empty", local.size());
+            tracef(*logger_, "consumerLoop() dequeued {} batch(es), queue now empty", local.size());
         }
         queue_not_full_.notify_all();
 

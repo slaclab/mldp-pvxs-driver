@@ -111,26 +111,24 @@ void MLDPGrpcPoolConfig::parse(const config::Config& root)
 
     annotation_url_ = root.get(AnnotationUrlKey, "");
 
-    if (!root.hasChild(MinConnKey))
+    if (root.hasChild(MinConnKey))
     {
-        throw Error(makeMissingFieldMessage(MinConnKey));
-    }
-    min_conn_ = root.getInt(MinConnKey);
-    if (min_conn_ <= 0)
-    {
-        throw Error(std::string("mldp-pool.") + MinConnKey + " must be greater than zero");
+        min_conn_ = root.getInt(MinConnKey);
+        if (min_conn_ <= 0)
+        {
+            throw Error(std::string("mldp-pool.") + MinConnKey + " must be greater than zero");
+        }
     }
 
-    if (!root.hasChild(MaxConnKey))
+    if (root.hasChild(MaxConnKey))
     {
-        throw Error(makeMissingFieldMessage(MaxConnKey));
+        max_conn_ = root.getInt(MaxConnKey);
+        if (max_conn_ <= 0)
+        {
+            throw Error(std::string("mldp-pool.") + MaxConnKey + " must be greater than zero");
+        }
     }
-    max_conn_ = root.getInt(MaxConnKey);
-    if (max_conn_ <= 0)
-    {
-        throw Error(std::string("mldp-pool.") + MaxConnKey + " must be greater than zero");
-    }
-    if (max_conn_ < min_conn_)
+    if (max_conn_ > 0 && min_conn_ > 0 && max_conn_ < min_conn_)
     {
         throw Error(std::string("mldp-pool.") + MaxConnKey + " must be greater than or equal to " + MinConnKey);
     }
