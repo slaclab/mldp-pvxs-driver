@@ -123,8 +123,15 @@ MLDPWriterConfig MLDPWriterConfig::parse(const Config& mldpNode)
         }
     }
 
-    // Auto-size pool connections from thread count when not explicitly configured
-    if (cfg.poolConfig.minConnections() == 0)
+    // Auto-size pool connections from thread count when neither is explicitly configured.
+    // If max-conn is set without min-conn, that is a configuration error.
+    const bool hasMin = cfg.poolConfig.minConnections() > 0;
+    const bool hasMax = cfg.poolConfig.maxConnections() > 0;
+    if (!hasMin && hasMax)
+    {
+        throw Error("mldp-pool.max-conn is set but mldp-pool.min-conn is missing — both must be specified together");
+    }
+    if (!hasMin)
     {
         cfg.poolConfig.setMinConnections(cfg.threadPoolSize);
         cfg.poolConfig.setMaxConnections(cfg.threadPoolSize * 2);

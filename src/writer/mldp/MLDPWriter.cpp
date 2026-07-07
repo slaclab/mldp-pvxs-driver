@@ -63,7 +63,7 @@ struct MLDPWriter::StreamState
     std::optional<mldp_pvxs_driver::util::pool::PooledHandle<mldp_pvxs_driver::util::pool::MLDPGrpcObject>> handle;
     std::unique_ptr<grpc::ClientWriter<dp::service::ingestion::IngestDataRequest>>                          writer;
     std::unique_ptr<grpc::ClientContext>                                                                    context;
-    dp::service::ingestion::IngestDataStreamResponse                                                        response;
+    std::unique_ptr<dp::service::ingestion::IngestDataStreamResponse>                                       response;
     std::chrono::steady_clock::time_point                                                                   streamStart;
     std::size_t                                                                                             streamPayloadBytes{0};
     std::uint64_t                                                                                           requestCounter{0};
@@ -80,7 +80,7 @@ struct MLDPWriter::ClosingStreamState
     std::optional<mldp_pvxs_driver::util::pool::PooledHandle<mldp_pvxs_driver::util::pool::MLDPGrpcObject>> handle;
     std::unique_ptr<grpc::ClientWriter<dp::service::ingestion::IngestDataRequest>>                          writer;
     std::unique_ptr<grpc::ClientContext>                                                                    context;
-    dp::service::ingestion::IngestDataStreamResponse                                                        response;
+    std::unique_ptr<dp::service::ingestion::IngestDataStreamResponse>                                       response;
     std::uint64_t                                                                                           requestCounter{0};
 };
 
@@ -412,16 +412,16 @@ void MLDPWriter::closeStream(StreamState& state, const char* reason) noexcept
 
                                 if (status.ok())
                                 {
-                                    if (s->response.has_ingestdatastreamresult())
+                                    if (s->response && s->response->has_ingestdatastreamresult())
                                     {
-                                        const auto& result = s->response.ingestdatastreamresult();
+                                        const auto& result = s->response->ingestdatastreamresult();
                                         tracef(logger(), "Ingestion stream finished ({}): server reports {} requests, sent {}",
                                                reasonStr, result.numrequests(), sentRequests);
                                     }
-                                    if (s->response.has_exceptionalresult())
+                                    if (s->response && s->response->has_exceptionalresult())
                                     {
                                         errorf(logger(), "Ingestion stream finished with exceptional result ({}): {}",
-                                               reasonStr, s->response.exceptionalresult().message());
+                                               reasonStr, s->response->exceptionalresult().message());
                                         metric_call(metrics_, [&](auto& m)
                                                     {
                                                         m.incrementWriterFailures(1.0, {{"writer", config_.name}, {"source", std::string(kUnknownSource)}});
@@ -456,9 +456,9 @@ bool MLDPWriter::ensureStream(StreamState& state)
     try
     {
         state.context = std::make_unique<grpc::ClientContext>();
-        state.response = dp::service::ingestion::IngestDataStreamResponse();
+        state.response = std::make_unique<dp::service::ingestion::IngestDataStreamResponse>();
         state.handle.emplace(ingestionPool_->acquire());
-        state.writer = (*state.handle)->stub->ingestDataStream(state.context.get(), &state.response);
+        state.writer = (*state.handle)->stub->ingestDataStream(state.context.get(), state.response.get());
         if (!state.writer)
         {
             errorf(logger(), "Failed to open ingestion stream");
@@ -503,6 +503,8 @@ bool MLDPWriter::rotateStream(StreamState& state, const char* reason)
 
 void MLDPWriter::onWorkerIdle(std::size_t workerIndex)
 {
+    if (workerIndex >= workerStates_.size() || !workerStates_[workerIndex])
+        return;
     auto& state = *workerStates_[workerIndex];
     if (state.writer &&
         std::chrono::steady_clock::now() - state.streamStart >= config_.streamMaxAge)

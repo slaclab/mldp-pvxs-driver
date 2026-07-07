@@ -409,7 +409,7 @@ TEST(HDF5BsasGen1ReaderToMLDPWriterTest, ShardSlotAppearsInGrpcColumnAttributes)
          << "      mldp-pool:\n"
          << "        provider-name: shard_test_provider\n"
          << "        ingestion-url: 127.0.0.1:" << port << "\n"
-         << "        query-url: 127.0.0.1:" << port << "\n"
+         << "        query-url: localhost:" << port << "\n"
          << "        min-conn: 1\n"
          << "        max-conn: 1\n"
          << "reader:\n"
@@ -426,9 +426,9 @@ TEST(HDF5BsasGen1ReaderToMLDPWriterTest, ShardSlotAppearsInGrpcColumnAttributes)
     ASSERT_TRUE(controller);
     controller->start();
 
-    // Wait for at least (numFloatCols + numIntCols) = 5 column requests.
+    // All columns arrive in one IngestDataRequest per batch frame.
     const bool got_requests =
-        waitForRequests(service.request_count, 5, std::chrono::milliseconds(5000));
+        waitForRequests(service.request_count, 1, std::chrono::milliseconds(5000));
     EXPECT_TRUE(got_requests) << "Timed out waiting for ingestion requests";
 
     controller->stop();
@@ -450,8 +450,7 @@ TEST(HDF5BsasGen1ReaderToMLDPWriterTest, ShardSlotAppearsInGrpcColumnAttributes)
             return false;
         };
 
-    // Every captured request must contain exactly one column, and that column
-    // must carry a "shardSlot" attribute in its metadata.
+    // Every captured column must carry a "shardSlot" attribute in its metadata.
     int checked = 0;
     for (const auto& req : captured)
     {

@@ -911,12 +911,12 @@ TEST(MLDPWriterTest, BatchMetadataAppearsAsColumnAttributes)
 }
 
 // ---------------------------------------------------------------------------
-// PerColumnWritesSendOneRequestPerColumn
-// A DataBatch with N typed columns must produce N separate IngestDataRequests
-// on the stream, each carrying exactly one column plus the shared timestamps.
+// FrameWithMultipleColumnsSendsOneRequest
+// A DataBatch with N typed columns in one frame produces one IngestDataRequest
+// carrying all columns plus the shared timestamps.
 // ---------------------------------------------------------------------------
 
-TEST(MLDPWriterTest, PerColumnWritesSendOneRequestPerColumn)
+TEST(MLDPWriterTest, FrameWithMultipleColumnsSendsOneRequest)
 {
     WriterTestIngestionService service;
     grpc::ServerBuilder        builder;
@@ -973,7 +973,8 @@ TEST(MLDPWriterTest, PerColumnWritesSendOneRequestPerColumn)
     ts.frames.push_back(std::move(frame));
     batch.payload = std::move(ts);
 
-    constexpr int kExpectedRequests = 3;
+    // One frame with 3 columns → one Write() call (all columns in one IngestDataRequest).
+    constexpr int kExpectedRequests = 1;
     ASSERT_TRUE(writer->push(std::move(batch)));
     ASSERT_TRUE(writerWaitForCount(service.request_count, kExpectedRequests, std::chrono::milliseconds(5000)));
 
@@ -983,32 +984,23 @@ TEST(MLDPWriterTest, PerColumnWritesSendOneRequestPerColumn)
         captured = service.captured_requests;
     }
     ASSERT_EQ(static_cast<int>(captured.size()), kExpectedRequests)
-        << "Expected one request per column";
+        << "Expected one request per frame";
 
-    // Each request must have exactly one column type populated and shared timestamps
-    for (int i = 0; i < kExpectedRequests; ++i)
-    {
-        const auto& df = captured[i].ingestiondataframe();
-        EXPECT_TRUE(df.has_datatimestamps()) << "request[" << i << "] missing timestamps";
-        EXPECT_EQ(df.datatimestamps().timestamplist().timestamps_size(), 2)
-            << "request[" << i << "] timestamp count mismatch";
+    const auto& df = captured[0].ingestiondataframe();
+    EXPECT_TRUE(df.has_datatimestamps()) << "request missing timestamps";
+    EXPECT_EQ(df.datatimestamps().timestamplist().timestamps_size(), 2)
+        << "timestamp count mismatch";
 
-        const int total_cols = df.doublecolumns_size() + df.int32columns_size() +
-                               df.floatcolumns_size()  + df.int64columns_size()  +
-                               df.boolcolumns_size()   + df.stringcolumns_size() +
-                               df.enumcolumns_size();
-        EXPECT_EQ(total_cols, 1) << "request[" << i << "] should have exactly 1 column, got " << total_cols;
-    }
+    const int total_cols = df.doublecolumns_size() + df.int32columns_size() +
+                           df.floatcolumns_size()  + df.int64columns_size()  +
+                           df.boolcolumns_size()   + df.stringcolumns_size() +
+                           df.enumcolumns_size();
+    EXPECT_EQ(total_cols, 3) << "expected 3 columns in one request, got " << total_cols;
 
-    // Verify column names appear (order may vary but all 3 must be present)
     std::set<std::string> found_names;
-    for (const auto& req : captured)
-    {
-        const auto& df = req.ingestiondataframe();
-        for (int j = 0; j < df.doublecolumns_size(); ++j)  found_names.insert(df.doublecolumns(j).name());
-        for (int j = 0; j < df.int32columns_size();  ++j)  found_names.insert(df.int32columns(j).name());
-        for (int j = 0; j < df.floatcolumns_size();  ++j)  found_names.insert(df.floatcolumns(j).name());
-    }
+    for (int j = 0; j < df.doublecolumns_size(); ++j) found_names.insert(df.doublecolumns(j).name());
+    for (int j = 0; j < df.int32columns_size();  ++j) found_names.insert(df.int32columns(j).name());
+    for (int j = 0; j < df.floatcolumns_size();  ++j) found_names.insert(df.floatcolumns(j).name());
     EXPECT_TRUE(found_names.count("voltage"))     << "voltage column not found";
     EXPECT_TRUE(found_names.count("counter"))     << "counter column not found";
     EXPECT_TRUE(found_names.count("temperature")) << "temperature column not found";
@@ -1076,9 +1068,9 @@ bool trackingWaitFor(std::atomic<int>& counter, int target, std::chrono::millise
 
 TEST(MLDPWriterTest, MaxFramesPerStreamTriggersRotation)
 {
-    // Set max-frames-per-stream: 3.
-    // Push two batches each with 2 columns = 4 total Write() calls.
-    // After 3 frames the stream must rotate — expect stream_open_count >= 2.
+    // Set max-frames-per-stream: 1.
+    // Push two batches each with 2 columns = 2 total Write() calls (one per frame).
+    // After 1 frame the stream must rotate — expect stream_open_count >= 2.
 
     TrackingIngestionService service;
     grpc::ServerBuilder      builder;
@@ -1093,7 +1085,7 @@ TEST(MLDPWriterTest, MaxFramesPerStreamTriggersRotation)
     yaml << "name: mldp_rotation_test\n"
          << "stream-max-age-ms: 60000\n"
          << "stream-max-bytes: 104857600\n"
-         << "max-frames-per-stream: 3\n"
+         << "max-frames-per-stream: 1\n"
          << "mldp-pool:\n"
          << "  provider-name: rotation-provider\n"
          << "  ingestion-url: 127.0.0.1:" << port << "\n"
@@ -1128,19 +1120,19 @@ TEST(MLDPWriterTest, MaxFramesPerStreamTriggersRotation)
         return batch;
     };
 
-    // 2 batches × 2 columns = 4 Write() calls; limit is 3 → must rotate once
+    // 2 batches × 1 Write() each = 2 total; limit is 1 → must rotate after first
     ASSERT_TRUE(writer->push(make_batch("test:rotation:source")));
     ASSERT_TRUE(writer->push(make_batch("test:rotation:source")));
 
-    // Wait for all 4 requests to arrive
-    ASSERT_TRUE(trackingWaitFor(service.request_count, 4, std::chrono::milliseconds(5000)));
+    // Wait for all 2 requests to arrive
+    ASSERT_TRUE(trackingWaitFor(service.request_count, 2, std::chrono::milliseconds(5000)));
 
     // Force stream close so the second stream's ingestDataStream call completes
     writer->stop();
     server->Shutdown();
 
     EXPECT_GE(service.stream_open_count.load(), 2)
-        << "Expected at least 2 stream openings after exceeding max-frames-per-stream=3";
-    EXPECT_EQ(service.request_count.load(), 4)
-        << "Expected exactly 4 Write() calls (2 batches × 2 columns)";
+        << "Expected at least 2 stream openings after exceeding max-frames-per-stream=1";
+    EXPECT_EQ(service.request_count.load(), 2)
+        << "Expected exactly 2 Write() calls (2 batches × 1 frame each)";
 }
