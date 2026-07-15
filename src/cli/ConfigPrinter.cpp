@@ -192,8 +192,7 @@ std::string mldp_pvxs_driver::cli::formatStartupConfig(
             out << "name=" << reader.name()
                 << " mode=" << archiverModeSummary(reader.fetchMode())
                 << " host=" << reader.hostname()
-                << " pvs=" << reader.pvs().size()
-                << " batch_duration_s=" << reader.batchDurationSec();
+                << " pvs=" << reader.pvs().size();
             if (reader.fetchMode() == EpicsArchiverReaderConfig::FetchMode::PeriodicTail)
             {
                 out << " poll_interval_s=" << reader.pollIntervalSec()

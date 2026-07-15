@@ -25,6 +25,7 @@
 #include <util/log/ILog.h>
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <exception>
@@ -33,6 +34,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -41,6 +43,17 @@ class IHttpClient;
 }
 
 namespace mldp_pvxs_driver::reader::impl::epics_archiver {
+
+/**
+ * @brief Pending in-memory batch for one PV when pv-samples-per-batch is enabled.
+ */
+struct PendingPvBatch
+{
+    util::bus::DataBatch                         accumulated;      ///< Single DataBatch merging all pending samples for this PV.
+    std::unordered_map<std::string, std::string> metadata;         ///< Merged reader+PV metadata for the batch.
+    std::string                                  root_source_name; ///< PV name used as root source.
+    std::chrono::steady_clock::time_point        created_at;       ///< Wall-clock time of first sample in batch.
+};
 
 /**
  * @brief Incremental state while decoding one PB/HTTP chunk.
@@ -52,12 +65,9 @@ namespace mldp_pvxs_driver::reader::impl::epics_archiver {
  */
 struct PbChunkState
 {
-    bool                              have_header = false;           ///< True after PayloadInfo has been parsed.
-    EPICS::PayloadInfo                header;                        ///< Payload header for the current chunk.
-    std::vector<util::bus::DataBatch> events;                        ///< Converted sample batches for this chunk.
-    bool                              have_batch_start_time = false; ///< True after first sample of current output batch.
-    uint64_t                          batch_start_epoch_seconds = 0; ///< Historical batch start (seconds).
-    uint32_t                          batch_start_nanoseconds = 0;   ///< Historical batch start (nanoseconds).
+    bool                              have_header = false; ///< True after PayloadInfo has been parsed.
+    EPICS::PayloadInfo                header;             ///< Payload header for the current chunk.
+    std::vector<util::bus::DataBatch> events;             ///< Converted sample batches for this chunk.
 };
 
 /**
@@ -109,6 +119,31 @@ private:
     /// Only populated and consulted in PeriodicTail fetch mode.
     std::map<std::string, std::pair<uint64_t, uint32_t>> last_published_ns_per_pv_;
 
+    /// Per-PV pending batch accumulator used when pv-samples-per-batch is enabled.
+    /// Accessed exclusively from reader_thread_ — no extra mutex required.
+    std::unordered_map<std::string, PendingPvBatch> pending_pv_batches_;
+
+    /**
+     * @brief Submit the pending batch for a single PV to the bus and erase it.
+     *
+     * No-op when the PV has no entry or its frame list is empty.
+     */
+    void submitPendingBatch(const std::string& pv);
+
+    /**
+     * @brief Submit all non-empty pending PV batches to the bus.
+     *
+     * Called on timer expiry and during reader shutdown.
+     */
+    void flushAllPendingBatches();
+
+    /**
+     * @brief Flush pending batches whose age exceeds batch-flush-interval-ms.
+     *
+     * No-op when batch-flush-interval-ms is not configured.
+     */
+    void flushExpiredPendingBatches();
+
     /**
      * @brief Initialize reusable HTTP client for archiver API access.
      */
@@ -135,13 +170,6 @@ private:
      * Used at PB/HTTP chunk boundaries (empty line) and end-of-stream.
      */
     void finalizeChunk(PbChunkState& state);
-
-    /**
-     * @brief Split the current output batch when historical sample time exceeds the configured window.
-     */
-    void splitBatchIfHistoricalWindowExceeded(PbChunkState& state,
-                                              uint64_t      sample_epoch_seconds,
-                                              uint32_t      sample_nanoseconds);
 
     /**
      * @brief Parse one PB/HTTP line (header or sample) into the incremental chunk state.

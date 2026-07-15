@@ -73,7 +73,6 @@ struct EpicsReaderConfig
     std::string lookback_sec;
     std::string connect_timeout_sec = "30";
     std::string total_timeout_sec = "300";
-    std::string batch_duration_sec = "1";
     std::string tls_verify_peer = "true";
     std::string tls_verify_host = "true";
     // epics-ds-metadata only

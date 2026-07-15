@@ -288,7 +288,6 @@ TEST(EpicsArchiverReaderHttpIntegrationTest, SplitsPublishedBatchesByHistoricalS
                              R"("
         start-date: "2026-02-25T08:00:00.000Z"
         end-date: "2026-02-25T08:00:05.000Z"
-        batch-duration-sec: 1
         pvs:
           - name: "TEST:PV:DOUBLE"
     )";
@@ -477,6 +476,304 @@ TEST(EpicsArchiverReaderHttpIntegrationTest, ReaderDataBytesMetricsIncrementedAf
         << "readerDataBytesTotal not incremented after archiver fetch";
     EXPECT_GT(metrics->readerDataBytesPerSecond(source_tag), 0.0)
         << "readerDataBytesPerSecond not set after archiver fetch";
+}
+
+// ============================================================================
+// pv-samples-per-batch batching tests
+// ============================================================================
+
+// Verifies that exactly pv-samples-per-batch samples trigger one bus submission.
+TEST(EpicsArchiverReaderHttpIntegrationTest, SamplesReachingPvSamplesPerBatchTriggerSubmission)
+{
+    // Generate exactly 4 samples (1 second at 4 eps).
+    MockArchiverPbHttpServer::GenerationConfig gen_cfg;
+    gen_cfg.min_events_per_second = 4;
+    gen_cfg.max_events_per_second = 4;
+    gen_cfg.open_ended_duration_sec = 1;
+    gen_cfg.random_seed = 1001;
+
+    MockArchiverPbHttpServer server(gen_cfg);
+    server.start();
+    ASSERT_GT(server.port(), 0);
+
+    auto bus = std::make_shared<MockEventBusPush>();
+
+    // pv-samples-per-batch=4 matches the total sample count → exactly one push.
+    const std::string yaml = std::string(R"(
+        name: batch-trigger-test
+        hostname: ")") + server.baseUrl() +
+                             R"("
+        start-date: "2026-02-25T08:00:00.000Z"
+        pv-samples-per-batch: 4
+        pvs:
+          - name: "TEST:PV:DOUBLE"
+    )";
+
+    auto reader_cfg = makeConfigFromYaml(yaml);
+    auto reader     = std::make_unique<EpicsArchiverReader>(bus, nullptr, reader_cfg);
+    ASSERT_TRUE(waitForMockRequestStartAndCompletion(server, std::chrono::seconds(3)));
+
+    // Allow the reader to process and submit.
+    ASSERT_TRUE(waitForAtLeastPublishedBatches(*bus, 1u, std::chrono::seconds(2)));
+
+    const auto batches = bus->snapshot();
+    ASSERT_EQ(batches.size(), 1u);
+    EXPECT_EQ(getRootSourceName(batches[0]), "TEST:PV:DOUBLE");
+    // One merged DataBatch with 4 aligned timestamp+value rows.
+    ASSERT_EQ(asTimeSeries(batches[0]).frames.size(), 1u);
+    EXPECT_EQ(asTimeSeries(batches[0]).frames[0].timestamps.size(), 4u);
+}
+
+// Verifies that samples from two PVs are accumulated into separate pending batches.
+TEST(EpicsArchiverReaderHttpIntegrationTest, SamplesFromDifferentPvsRemainSeparated)
+{
+    MockArchiverPbHttpServer::GenerationConfig gen_cfg;
+    gen_cfg.min_events_per_second = 4;
+    gen_cfg.max_events_per_second = 4;
+    gen_cfg.open_ended_duration_sec = 1;
+    gen_cfg.random_seed = 2002;
+
+    MockArchiverPbHttpServer server(gen_cfg);
+    server.start();
+    ASSERT_GT(server.port(), 0);
+
+    auto bus = std::make_shared<MockEventBusPush>();
+
+    // Two PVs, each producing 4 samples; batch size 4 → two separate submissions.
+    const std::string yaml = std::string(R"(
+        name: two-pv-separation-test
+        hostname: ")") + server.baseUrl() +
+                             R"("
+        start-date: "2026-02-25T08:00:00.000Z"
+        pv-samples-per-batch: 4
+        pvs:
+          - name: "TEST:PV:DOUBLE"
+          - name: "TEST:PV2:DOUBLE"
+    )";
+
+    auto reader_cfg = makeConfigFromYaml(yaml);
+    auto reader     = std::make_unique<EpicsArchiverReader>(bus, nullptr, reader_cfg);
+    ASSERT_TRUE(server.waitForRequestCount(2u, std::chrono::seconds(3)));
+    ASSERT_TRUE(waitForMockRequestStartAndCompletion(server, std::chrono::seconds(3)));
+    ASSERT_TRUE(waitForAtLeastPublishedBatches(*bus, 2u, std::chrono::seconds(3)));
+
+    const auto batches = bus->snapshot();
+    ASSERT_GE(batches.size(), 2u);
+
+    std::set<std::string> sources;
+    for (const auto& b : batches)
+        sources.insert(getRootSourceName(b));
+
+    EXPECT_EQ(sources, (std::set<std::string>{"TEST:PV:DOUBLE", "TEST:PV2:DOUBLE"}));
+}
+
+// Verifies that 2*N samples for one PV produce two separate bus submissions.
+TEST(EpicsArchiverReaderHttpIntegrationTest, MultipleFullBatchesFromOnePvSubmittedCorrectly)
+{
+    // 8 samples at 8 eps over 1 second; batch size 4 → two pushes.
+    MockArchiverPbHttpServer::GenerationConfig gen_cfg;
+    gen_cfg.min_events_per_second = 8;
+    gen_cfg.max_events_per_second = 8;
+    gen_cfg.open_ended_duration_sec = 1;
+    gen_cfg.random_seed = 3003;
+
+    MockArchiverPbHttpServer server(gen_cfg);
+    server.start();
+    ASSERT_GT(server.port(), 0);
+
+    auto bus = std::make_shared<MockEventBusPush>();
+
+    const std::string yaml = std::string(R"(
+        name: double-batch-test
+        hostname: ")") + server.baseUrl() +
+                             R"("
+        start-date: "2026-02-25T08:00:00.000Z"
+        pv-samples-per-batch: 4
+        pvs:
+          - name: "TEST:PV:DOUBLE"
+    )";
+
+    auto reader_cfg = makeConfigFromYaml(yaml);
+    auto reader     = std::make_unique<EpicsArchiverReader>(bus, nullptr, reader_cfg);
+    ASSERT_TRUE(waitForMockRequestStartAndCompletion(server, std::chrono::seconds(3)));
+    ASSERT_TRUE(waitForAtLeastPublishedBatches(*bus, 2u, std::chrono::seconds(3)));
+
+    const auto batches = bus->snapshot();
+    ASSERT_GE(batches.size(), 2u);
+
+    size_t total_samples = 0;
+    for (const auto& b : batches)
+    {
+        EXPECT_EQ(getRootSourceName(b), "TEST:PV:DOUBLE");
+        // Each push contains one merged DataBatch.
+        ASSERT_EQ(asTimeSeries(b).frames.size(), 1u);
+        total_samples += asTimeSeries(b).frames[0].timestamps.size();
+    }
+    EXPECT_EQ(total_samples, 8u);
+}
+
+// Verifies that shutdown flushes remaining pending samples when batch-flush-interval-ms is set.
+// batch-flush-interval-ms enables timed flushing; shutdown drains whatever is still pending.
+TEST(EpicsArchiverReaderHttpIntegrationTest, ShutdownFlushesRemainingPendingSamples)
+{
+    // 4 samples; batch size 8 (never full); flush interval enabled → shutdown must flush.
+    MockArchiverPbHttpServer::GenerationConfig gen_cfg;
+    gen_cfg.min_events_per_second = 4;
+    gen_cfg.max_events_per_second = 4;
+    gen_cfg.open_ended_duration_sec = 1;
+    gen_cfg.random_seed = 4004;
+
+    MockArchiverPbHttpServer server(gen_cfg);
+    server.start();
+    ASSERT_GT(server.port(), 0);
+
+    auto bus = std::make_shared<MockEventBusPush>();
+
+    // batch-flush-interval-ms set to a large value so the timed flush does not fire
+    // during the fetch; shutdown flush must drain the 4 pending samples.
+    const std::string yaml = std::string(R"(
+        name: shutdown-flush-test
+        hostname: ")") + server.baseUrl() +
+                             R"("
+        start-date: "2026-02-25T08:00:00.000Z"
+        pv-samples-per-batch: 8
+        batch-flush-interval-ms: 600000
+        pvs:
+          - name: "TEST:PV:DOUBLE"
+    )";
+
+    auto reader_cfg = makeConfigFromYaml(yaml);
+    auto reader     = std::make_unique<EpicsArchiverReader>(bus, nullptr, reader_cfg);
+    ASSERT_TRUE(waitForMockRequestStartAndCompletion(server, std::chrono::seconds(3)));
+
+    // Destroy the reader; shutdown path must flush the 4 pending samples.
+    reader.reset();
+
+    const auto batches = bus->snapshot();
+    ASSERT_EQ(batches.size(), 1u);
+    // One merged DataBatch with 4 aligned timestamp+value rows.
+    ASSERT_EQ(asTimeSeries(batches[0]).frames.size(), 1u);
+    EXPECT_EQ(asTimeSeries(batches[0]).frames[0].timestamps.size(), 4u);
+}
+
+// Verifies that incomplete batches are NOT flushed at shutdown when batch-flush-interval-ms is disabled.
+TEST(EpicsArchiverReaderHttpIntegrationTest, ShutdownDoesNotFlushWhenFlushIntervalDisabled)
+{
+    // 4 samples; batch size 8 (never full); no flush interval → samples dropped at shutdown.
+    MockArchiverPbHttpServer::GenerationConfig gen_cfg;
+    gen_cfg.min_events_per_second = 4;
+    gen_cfg.max_events_per_second = 4;
+    gen_cfg.open_ended_duration_sec = 1;
+    gen_cfg.random_seed = 7007;
+
+    MockArchiverPbHttpServer server(gen_cfg);
+    server.start();
+    ASSERT_GT(server.port(), 0);
+
+    auto bus = std::make_shared<MockEventBusPush>();
+
+    const std::string yaml = std::string(R"(
+        name: no-flush-on-shutdown-test
+        hostname: ")") + server.baseUrl() +
+                             R"("
+        start-date: "2026-02-25T08:00:00.000Z"
+        pv-samples-per-batch: 8
+        pvs:
+          - name: "TEST:PV:DOUBLE"
+    )";
+
+    auto reader_cfg = makeConfigFromYaml(yaml);
+    auto reader     = std::make_unique<EpicsArchiverReader>(bus, nullptr, reader_cfg);
+    ASSERT_TRUE(waitForMockRequestStartAndCompletion(server, std::chrono::seconds(3)));
+    reader.reset();
+
+    // No batch-flush-interval-ms → incomplete batch not pushed.
+    EXPECT_EQ(bus->snapshot().size(), 0u);
+}
+
+// Verifies that batch-flush-interval-ms flushes an incomplete pending batch after the interval.
+TEST(EpicsArchiverReaderHttpIntegrationTest, FlushIntervalSubmitsIncompleteBatches)
+{
+    // 4 samples; batch size 100 (never full); flush interval 10 ms.
+    MockArchiverPbHttpServer::GenerationConfig gen_cfg;
+    gen_cfg.min_events_per_second = 4;
+    gen_cfg.max_events_per_second = 4;
+    gen_cfg.open_ended_duration_sec = 1;
+    gen_cfg.random_seed = 5005;
+
+    MockArchiverPbHttpServer server(gen_cfg);
+    server.start();
+    ASSERT_GT(server.port(), 0);
+
+    auto bus = std::make_shared<MockEventBusPush>();
+
+    // batch-flush-interval-ms is small enough to fire after the fetch completes.
+    const std::string yaml = std::string(R"(
+        name: flush-interval-test
+        hostname: ")") + server.baseUrl() +
+                             R"("
+        start-date: "2026-02-25T08:00:00.000Z"
+        pv-samples-per-batch: 100
+        batch-flush-interval-ms: 10
+        pvs:
+          - name: "TEST:PV:DOUBLE"
+    )";
+
+    auto reader_cfg = makeConfigFromYaml(yaml);
+    auto reader     = std::make_unique<EpicsArchiverReader>(bus, nullptr, reader_cfg);
+    ASSERT_TRUE(waitForMockRequestStartAndCompletion(server, std::chrono::seconds(3)));
+
+    // The flush is triggered after fetchConfiguredPVs returns; 10 ms is long past.
+    ASSERT_TRUE(waitForAtLeastPublishedBatches(*bus, 1u, std::chrono::seconds(2)));
+
+    const auto batches = bus->snapshot();
+    ASSERT_EQ(batches.size(), 1u);
+    // One merged DataBatch with 4 aligned timestamp+value rows.
+    ASSERT_EQ(asTimeSeries(batches[0]).frames.size(), 1u);
+    EXPECT_EQ(asTimeSeries(batches[0]).frames[0].timestamps.size(), 4u);
+}
+
+// Verifies that one flush submits incomplete batches for multiple PVs in a single pass.
+TEST(EpicsArchiverReaderHttpIntegrationTest, OneFlushSubmitsIncompleteBatchesForMultiplePvs)
+{
+    MockArchiverPbHttpServer::GenerationConfig gen_cfg;
+    gen_cfg.min_events_per_second = 4;
+    gen_cfg.max_events_per_second = 4;
+    gen_cfg.open_ended_duration_sec = 1;
+    gen_cfg.random_seed = 6006;
+
+    MockArchiverPbHttpServer server(gen_cfg);
+    server.start();
+    ASSERT_GT(server.port(), 0);
+
+    auto bus = std::make_shared<MockEventBusPush>();
+
+    const std::string yaml = std::string(R"(
+        name: multi-pv-flush-test
+        hostname: ")") + server.baseUrl() +
+                             R"("
+        start-date: "2026-02-25T08:00:00.000Z"
+        pv-samples-per-batch: 100
+        batch-flush-interval-ms: 10
+        pvs:
+          - name: "TEST:PV:DOUBLE"
+          - name: "TEST:PV2:DOUBLE"
+    )";
+
+    auto reader_cfg = makeConfigFromYaml(yaml);
+    auto reader     = std::make_unique<EpicsArchiverReader>(bus, nullptr, reader_cfg);
+    ASSERT_TRUE(server.waitForRequestCount(2u, std::chrono::seconds(3)));
+    ASSERT_TRUE(waitForMockRequestStartAndCompletion(server, std::chrono::seconds(3)));
+    ASSERT_TRUE(waitForAtLeastPublishedBatches(*bus, 2u, std::chrono::seconds(3)));
+
+    const auto batches = bus->snapshot();
+    ASSERT_GE(batches.size(), 2u);
+
+    std::set<std::string> sources;
+    for (const auto& b : batches)
+        sources.insert(getRootSourceName(b));
+
+    EXPECT_EQ(sources, (std::set<std::string>{"TEST:PV:DOUBLE", "TEST:PV2:DOUBLE"}));
 }
 
 } // namespace

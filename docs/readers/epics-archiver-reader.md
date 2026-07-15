@@ -58,8 +58,7 @@ flowchart TB
 3. Initiates HTTP GET request to Archiver Appliance `/retrieval/data/getData.raw`
 4. Streams PB/HTTP response (PayloadInfo + ScalarDouble samples)
 5. Parses protobuf messages line-by-line
-6. Batches events by historical sample timestamps (using `batch-duration-sec`)
-7. Pushes batches to event bus
+6. Pushes batches to event bus
 8. Completes and thread exits (reader still running but idle)
 9. Signals `signalCompleted()` to notify the controller — enables [auto-close](readers.md#reader-lifecycle--auto-close) when all readers are one-shot
 
@@ -72,7 +71,6 @@ reader:
         hostname: "archiver-appliance.example.com:11200"
         start-date: "2024-01-01T00:00:00Z"  # Required
         end-date: "2024-01-02T00:00:00Z"    # Optional
-        batch-duration-sec: 1               # Split events by 1-second windows
         thread-pool: 2                      # Event conversion thread pool size
         pvs:
           - name: MY:ARCHIVER:PV
@@ -99,7 +97,6 @@ reader:
         mode: periodic_tail             # Enable continuous polling
         poll-interval-sec: 5            # Poll every 5 seconds
         lookback-sec: 60                # Fetch last 60 seconds each time
-        batch-duration-sec: 1
         thread-pool: 2
         pvs:
           - name: MY:PV:NAME
@@ -120,7 +117,6 @@ Parameter            | Type   | Default | Description
 -------------------- | ------ | ------- | -------------------------------------------------------------------
 `start-date`         | string | —       | **Required** ISO 8601 timestamp for query start
 `end-date`           | string | —       | ISO 8601 timestamp for query end (defaults to `start-date` + 1 day)
-`batch-duration-sec` | float  | 1.0     | Split output batches using historical timestamps at this interval
 
 ### Periodic Tail Mode Parameters
 
@@ -129,7 +125,33 @@ Parameter            | Type   | Default         | Description
 `mode`               | string | `one_shot`      | Set to `periodic_tail` to enable continuous polling
 `poll-interval-sec`  | float  | 5.0             | Polling interval in seconds
 `lookback-sec`       | float  | (poll_interval) | Seconds of history to fetch per poll (defaults to poll_interval)
-`batch-duration-sec` | float  | 1.0             | Batch split interval
+
+### Sample-Count Batching Parameters
+
+These parameters apply to both `historical_once` and `periodic_tail` modes.
+
+Parameter                 | Type | Default | Description
+------------------------- | ---- | ------- | -------------------------------------------------------------------
+`pv-samples-per-batch`    | int  | 0       | Flush a pending PV batch after accumulating this many samples. `0` = disabled (submit immediately via timestamp splitting only).
+`batch-flush-interval-ms` | int  | 0       | Flush any incomplete pending batch after this many milliseconds. `0` = disabled; incomplete batches are dropped unless this is set. Also enables shutdown-time flush of remaining pending samples.
+
+**Interaction rules:**
+
+- When `pv-samples-per-batch > 0`, samples are accumulated per PV in memory. A batch is submitted only when the count reaches `pv-samples-per-batch`.
+- When `batch-flush-interval-ms > 0`, an additional time-based flush fires after each `fetchConfiguredPVs` call for batches whose age exceeds the interval. On reader shutdown, all remaining pending batches are also flushed.
+- When `pv-samples-per-batch > 0` and `batch-flush-interval-ms = 0`, incomplete batches that have not yet reached the sample limit are **discarded** at shutdown.
+
+```yaml
+reader:
+  epics-archiver:
+    - name: batched_archiver
+      hostname: "archiver.example.com:11200"
+      start-date: "2024-01-01T00:00:00Z"
+      pv-samples-per-batch: 10        # submit after 10 samples per PV
+      batch-flush-interval-ms: 5000   # also flush after 5 seconds if batch not full
+      pvs:
+        - name: MY:PV
+```
 
 ### HTTP and TLS Parameters
 
@@ -161,11 +183,14 @@ reader:
 - Hostname must be valid and reachable
 - At least one PV required
 - Start date required for one-shot mode
+- `pv-samples-per-batch` must be `> 0` when specified (enforced)
+- `batch-flush-interval-ms` must be `> 0` when specified (enforced)
 
 ## Key Features
 
 - **Time-Windowed Queries**: Query archiver data by start/end timestamps with efficient PB/HTTP streaming
-- **Timestamp-Based Batching**: Groups events by historical sample time, not wall-clock processing time — preserves original temporal structure
+- **Sample-Count Batching**: Accumulate up to `pv-samples-per-batch` samples per PV before submitting; each PV maintains independent pending state
+- **Timed Flush**: `batch-flush-interval-ms` ensures incomplete batches are not held indefinitely; also drains all pending batches on shutdown when set
 - **Automated Tail Polling**: Continuously fetch new archiver data at configurable intervals with a configurable lookback window to handle clock skew and backfill
 - **Background Worker Thread**: One-shot fetch or periodic polling runs off main reader construction
 - **Thread Pool Processing**: Configurable conversion parallelism
@@ -236,19 +261,6 @@ reader:
           - name: MY:PV
 ```
 
-### Fine-Grained Batching
-
-```yaml
-reader:
-  - epics-archiver:
-      - name: high_freq_archiver
-        hostname: "archiver.example.com:11200"
-        start-date: "2024-01-01T00:00:00Z"
-        batch-duration-sec: 0.1       # 100ms batches for high-frequency analysis
-        pvs:
-          - name: FAST:PV
-```
-
 ## Metrics
 
 Metric                                            | Description
@@ -261,15 +273,16 @@ Metric                                            | Description
 
 ## Implementation Details
 
-### Batch Splitting by Historical Timestamp
+### Sample-Count Batching
 
-Batches are created by grouping events that fall within the same `batch-duration-sec` window using the **archiver sample time**, not the reader's wall-clock processing time.
+When `pv-samples-per-batch > 0`, samples are accumulated in `PendingPvBatch` entries keyed by PV name. Each PV tracks its own pending frames and the wall-clock time when the first sample arrived (`created_at`). Submission fires when:
 
-```cpp
-// Example: batch-duration-sec: 1.0
-// Event from 2024-01-01T12:34:56.500Z  -> Batch [12:34:56, 12:34:57)
-// Event from 2024-01-01T12:34:57.200Z  -> Batch [12:34:57, 12:34:58)
-```
+1. The frame count reaches `pv-samples-per-batch` (size trigger), or
+2. `batch-flush-interval-ms > 0` and `now - created_at >= interval` after each `fetchConfiguredPVs` call (time trigger).
+
+When `batch-flush-interval-ms = 0`, incomplete batches that have not reached the sample limit are discarded on reader shutdown. Set `batch-flush-interval-ms` to enable shutdown-time drain of remaining pending samples.
+
+Samples accumulate in the pending buffer until the size or time trigger fires.
 
 ### HTTP Transport
 

@@ -46,6 +46,57 @@ bool hasTimestamps(const DataBatch& batch)
     return !batch.timestamps.empty();
 }
 
+void appendToBatch(DataBatch& dst, const DataBatch& src)
+{
+    // Timestamps: always append.
+    dst.timestamps.insert(dst.timestamps.end(), src.timestamps.begin(), src.timestamps.end());
+
+    // Regular columns: first sample seeds the column list; subsequent samples append values.
+    if (dst.columns.empty())
+    {
+        dst.columns = src.columns;
+    }
+    else
+    {
+        const std::size_t n = std::min(dst.columns.size(), src.columns.size());
+        for (std::size_t i = 0; i < n; ++i)
+        {
+            std::visit(
+                [&](auto& dst_vals)
+                {
+                    using T = std::decay_t<decltype(dst_vals)>;
+                    if (const auto* src_vals = std::get_if<T>(&src.columns[i].values))
+                    {
+                        dst_vals.insert(dst_vals.end(), src_vals->begin(), src_vals->end());
+                    }
+                },
+                dst.columns[i].values);
+        }
+    }
+
+    // Enum columns: same pattern.
+    if (dst.enum_columns.empty())
+    {
+        dst.enum_columns = src.enum_columns;
+    }
+    else
+    {
+        const std::size_t n = std::min(dst.enum_columns.size(), src.enum_columns.size());
+        for (std::size_t i = 0; i < n; ++i)
+        {
+            auto& d = dst.enum_columns[i].values;
+            const auto& s = src.enum_columns[i].values;
+            d.insert(d.end(), s.begin(), s.end());
+        }
+    }
+
+    // Array dims are invariant across samples of the same PV type; take from first.
+    if (dst.array_dims.empty())
+    {
+        dst.array_dims = src.array_dims;
+    }
+}
+
 std::string buildArchiverUrl(const EpicsArchiverReaderConfig&  cfg,
                              const std::string&                pv,
                              const std::string&                from,
@@ -97,17 +148,6 @@ std::string unescapePbHttpLine(const std::string& in)
 bool sampleTimeLessThan(uint64_t lhs_epoch, uint32_t lhs_nano, uint64_t rhs_epoch, uint32_t rhs_nano)
 {
     return (lhs_epoch < rhs_epoch) || (lhs_epoch == rhs_epoch && lhs_nano < rhs_nano);
-}
-
-uint64_t elapsedNanoseconds(uint64_t start_epoch, uint32_t start_nano, uint64_t end_epoch, uint32_t end_nano)
-{
-    uint64_t sec_delta = end_epoch - start_epoch;
-    if (end_nano >= start_nano)
-    {
-        return sec_delta * 1'000'000'000ULL + static_cast<uint64_t>(end_nano - start_nano);
-    }
-
-    return (sec_delta - 1ULL) * 1'000'000'000ULL + (1'000'000'000ULL + static_cast<uint64_t>(end_nano) - start_nano);
 }
 
 } // namespace
@@ -229,6 +269,10 @@ void EpicsArchiverReader::runWorker()
                 if (running_.load())
                 {
                     fetchConfiguredPVs();
+                    if (config_.batchFlushIntervalMs() > 0)
+                    {
+                        flushAllPendingBatches();
+                    }
                     signalCompleted();
                 }
                 break;
@@ -266,6 +310,10 @@ void EpicsArchiverReader::runWorker()
                                         {
                                             return !running_.load();
                                         });
+                }
+                if (config_.batchFlushIntervalMs() > 0)
+                {
+                    flushAllPendingBatches();
                 }
                 break;
             }
@@ -310,11 +358,97 @@ void EpicsArchiverReader::runWorker()
     }
 }
 
+void EpicsArchiverReader::submitPendingBatch(const std::string& pv)
+{
+    auto it = pending_pv_batches_.find(pv);
+    if (it == pending_pv_batches_.end() || it->second.accumulated.timestamps.empty())
+    {
+        return;
+    }
+
+    PendingPvBatch& pending = it->second;
+    const prometheus::Labels source_tag{{"source", pv}};
+    const auto flush_start = std::chrono::steady_clock::now();
+
+    IDataBus::EventBatch batch;
+    batch.metadata = pending.metadata;
+    TimeSeriesPayload ts_payload;
+    ts_payload.root_source_name = pending.root_source_name;
+
+    if (hasTimestamps(pending.accumulated))
+    {
+        ts_payload.frames.push_back(std::move(pending.accumulated));
+    }
+    else
+    {
+        errorf(*logger_, "Dropping pending batch without timestamps for root source {}", pending.root_source_name);
+        metric_call(metrics_, [&](auto& m)
+                    {
+                        m.incrementReaderErrors(1.0, source_tag);
+                    });
+    }
+
+    pending_pv_batches_.erase(it);
+
+    if (!ts_payload.frames.empty())
+    {
+        batch.payload = std::move(ts_payload);
+        batch.reader_name = name();
+        bus_->push(std::move(batch));
+
+        const double flush_ms = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - flush_start).count();
+        metric_call(metrics_, [&](auto& m)
+                    {
+                        m.observeReaderProcessingTimeMs(flush_ms, source_tag);
+                        m.incrementReaderEvents(1.0, source_tag);
+                    });
+    }
+}
+
+void EpicsArchiverReader::flushAllPendingBatches()
+{
+    std::vector<std::string> pvs;
+    pvs.reserve(pending_pv_batches_.size());
+    for (const auto& [pv, pending] : pending_pv_batches_)
+    {
+        if (!pending.accumulated.timestamps.empty())
+        {
+            pvs.push_back(pv);
+        }
+    }
+    for (const auto& pv : pvs)
+    {
+        submitPendingBatch(pv);
+    }
+}
+
+void EpicsArchiverReader::flushExpiredPendingBatches()
+{
+    if (config_.batchFlushIntervalMs() <= 0)
+    {
+        return;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    const auto threshold = std::chrono::milliseconds(config_.batchFlushIntervalMs());
+
+    std::vector<std::string> to_flush;
+    for (const auto& [pv, pending] : pending_pv_batches_)
+    {
+        if (!pending.accumulated.timestamps.empty() && (now - pending.created_at) >= threshold)
+        {
+            to_flush.push_back(pv);
+        }
+    }
+    for (const auto& pv : to_flush)
+    {
+        submitPendingBatch(pv);
+    }
+}
+
 void EpicsArchiverReader::flushChunk(PbChunkState& state)
 {
-    // Flush only the currently accumulated output batch (events vector) while
-    // keeping the parsed PB/HTTP chunk header. This is used for time-based
-    // splitting inside a single PB/HTTP chunk.
     if (!state.have_header)
     {
         return;
@@ -372,9 +506,7 @@ void EpicsArchiverReader::flushChunk(PbChunkState& state)
                     });
     }
 
-    state.have_batch_start_time = false;
-    state.batch_start_epoch_seconds = 0;
-    state.batch_start_nanoseconds = 0;
+    state.events.clear();
 }
 
 void EpicsArchiverReader::finalizeChunk(PbChunkState& state)
@@ -389,57 +521,6 @@ void EpicsArchiverReader::finalizeChunk(PbChunkState& state)
 
     flushChunk(state);
     state = PbChunkState{};
-}
-
-void EpicsArchiverReader::splitBatchIfHistoricalWindowExceeded(PbChunkState& state,
-                                                               uint64_t      sample_epoch_seconds,
-                                                               uint32_t      sample_nanoseconds)
-{
-    // Batch splitting is based on historical sample timestamps from the
-    // archiver payload, not wall-clock processing time. The first sample starts
-    // the batch window; later samples trigger a flush only when they exceed the
-    // configured threshold (strict overflow: elapsed > batch_duration_sec).
-    if (state.events.empty())
-    {
-        state.have_batch_start_time = true;
-        state.batch_start_epoch_seconds = sample_epoch_seconds;
-        state.batch_start_nanoseconds = sample_nanoseconds;
-        return;
-    }
-
-    if (!state.have_batch_start_time)
-    {
-        state.have_batch_start_time = true;
-        state.batch_start_epoch_seconds = sample_epoch_seconds;
-        state.batch_start_nanoseconds = sample_nanoseconds;
-        return;
-    }
-
-    if (sampleTimeLessThan(sample_epoch_seconds,
-                           sample_nanoseconds,
-                           state.batch_start_epoch_seconds,
-                           state.batch_start_nanoseconds))
-    {
-        // Recover safely from unexpected out-of-order data by publishing current batch first.
-        flushChunk(state);
-        state.have_batch_start_time = true;
-        state.batch_start_epoch_seconds = sample_epoch_seconds;
-        state.batch_start_nanoseconds = sample_nanoseconds;
-        return;
-    }
-
-    const uint64_t threshold_ns = static_cast<uint64_t>(config_.batchDurationSec()) * 1'000'000'000ULL;
-    const uint64_t elapsed_ns = elapsedNanoseconds(state.batch_start_epoch_seconds,
-                                                   state.batch_start_nanoseconds,
-                                                   sample_epoch_seconds,
-                                                   sample_nanoseconds);
-    if (elapsed_ns > threshold_ns)
-    {
-        flushChunk(state);
-        state.have_batch_start_time = true;
-        state.batch_start_epoch_seconds = sample_epoch_seconds;
-        state.batch_start_nanoseconds = sample_nanoseconds;
-    }
 }
 
 void EpicsArchiverReader::parsePbHttpLineIntoState(const std::string& line, PbChunkState& state)
@@ -492,11 +573,38 @@ void EpicsArchiverReader::parsePbHttpLineIntoState(const std::string& line, PbCh
         last_published_ns_per_pv_[pv] = {parsed.epoch_seconds, parsed.nanoseconds};
     }
 
-    // Decide whether the current sample starts a new output batch before
-    // appending it, so the sample that crosses the threshold belongs to the
-    // new batch.
-    splitBatchIfHistoricalWindowExceeded(state, parsed.epoch_seconds, parsed.nanoseconds);
-    state.events.emplace_back(std::move(parsed.batch));
+    if (config_.pvSamplesPerBatch() > 0)
+    {
+        // Per-PV sample-count batching path: accumulate into pending_pv_batches_.
+        auto& pending = pending_pv_batches_[pv];
+        if (pending.accumulated.timestamps.empty())
+        {
+            // First sample for this batch — initialize metadata.
+            auto merged = config_.staticMetadata();
+            for (const auto& pv_cfg : config_.pvs())
+            {
+                if (pv_cfg.name == pv)
+                {
+                    for (const auto& [k, v] : pv_cfg.metadata)
+                        merged[k] = v;
+                    break;
+                }
+            }
+            pending.metadata = std::move(merged);
+            pending.root_source_name = pv.empty() ? name_ : pv;
+            pending.created_at = std::chrono::steady_clock::now();
+        }
+        appendToBatch(pending.accumulated, parsed.batch);
+
+        if (static_cast<long>(pending.accumulated.timestamps.size()) >= config_.pvSamplesPerBatch())
+        {
+            submitPendingBatch(pv);
+        }
+    }
+    else
+    {
+        state.events.emplace_back(std::move(parsed.batch));
+    }
 }
 
 void EpicsArchiverReader::fetchConfiguredPVs()
@@ -630,4 +738,7 @@ void EpicsArchiverReader::fetchConfiguredPVs(const std::string& from, const std:
         }
         infof(*logger_, "Completed fetch of archiver PB/HTTP stream for PV '{}'", pv);
     }
+
+    // Flush pending PV batches whose age exceeds the configured interval.
+    flushExpiredPendingBatches();
 }

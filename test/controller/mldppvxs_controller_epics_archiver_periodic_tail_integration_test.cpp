@@ -71,7 +71,6 @@ protected:
                                  + "\"\n"
                                    "      mode: \"periodic_tail\"\n"
                                    "      poll-interval-sec: 1\n"
-                                   "      batch-duration-sec: 2\n"
                                    "      pvs:\n"
                                    "        - name: \""
                                  + pv_name_ + "\"\n";
@@ -223,7 +222,5 @@ TEST_F(MLDPPVXSControllerEpicsArchiverPeriodicTailIntegrationTest, RecordsReader
                                                                  pv_name_);
     EXPECT_GT(processing_time_count, 0.0) << "Reader should have at least one processing time observation";
 
-    // Verify events published is at least as many as the expected batches
-    // (accounting for batch-duration-sec: 2, which may create multiple batches per poll)
     EXPECT_GE(events_received, events_published) << "Should have more samples than batches due to batching";
 }
