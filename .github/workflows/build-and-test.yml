@@ -53,11 +53,13 @@ jobs:
 
       - name: License Header Check
         id: license_add
-        uses: B1NARY-GR0UP/nwa@0fe34632212bc439b187b1db49dc4fb7eff557b0 # main
-        with:
-          version: latest
-          cmd: check
-          path: .nwa-config.yaml
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL https://github.com/B1NARY-GR0UP/nwa/releases/download/v0.8.0/nwa_Linux_x86_64.tar.gz \
+            | tar -xz -C /usr/local/bin nwa
+          chmod +x /usr/local/bin/nwa
+          nwa config -c check .nwa-config.yaml
 
       - name: Log in to the Container registry
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
