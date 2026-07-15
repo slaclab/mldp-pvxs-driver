@@ -35,12 +35,8 @@ using mldp_pvxs_driver::reader::impl::epics_archiver::MockArchiverPbHttpServer;
 using mldp_pvxs_driver::test::mock::waitForAtLeastPublishedBatches;
 using mldp_pvxs_driver::test::mock::waitForMockRequestStart;
 using mldp_pvxs_driver::test::mock::waitForMockRequestStartAndCompletion;
-using mldp_pvxs_driver::util::bus::DataBatch;
-using mldp_pvxs_driver::util::bus::DataColumn;
-using mldp_pvxs_driver::util::bus::IDataBus;
 // Backward compatibility alias
 using MockEventBusPush = mldp_pvxs_driver::test::mock::MockDataBus;
-using mldp_pvxs_driver::util::bus::asTimeSeries;
 
 /// Parses ISO 8601 UTC timestamp string with millisecond precision to Unix epoch milliseconds.
 ///
