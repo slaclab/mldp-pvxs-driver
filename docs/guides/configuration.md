@@ -9,6 +9,11 @@ Complete YAML schema reference for the MLDP PVXS Driver. All keys are case-sensi
 ## Top-Level Structure
 
 ```yaml
+enrichers:      # optional — globally named queued-writer payload transformations
+  run-metadata:
+    type: static-metadata
+    metadata: {experiment_id: run-42}
+
 writer:         # required — at least one writer instance
   mldp: [...]
   hdf5: [...]              # requires -DMLDP_PVXS_ENABLE_HDF5=ON build option
@@ -44,6 +49,47 @@ metrics:        # optional — Prometheus HTTP endpoint
 ## `writer:` Block
 
 Top-level key. Must contain at least one writer instance across all types.
+
+### Global `enrichers:` and writer chains
+
+`enrichers:` is an optional mapping from an application-unique name to an enricher definition. Each definition is created once when the controller starts. A queued writer can reference an ordered chain with `enrichers: [name, ...]`; the same name on multiple writers deliberately shares its state and is serialized per enricher instance.
+
+```yaml
+enrichers:
+  run-metadata:
+    type: static-metadata
+    metadata: {experiment_id: run-42}
+  shard-slots:
+    type: shard-slot
+    num-shards: 6
+writer:
+  mldp:
+    - name: mldp_main
+      enrichers: [run-metadata, shard-slots]
+```
+
+Writer references must be a sequence of non-empty, unique declared names. Unknown names, duplicate names, missing `type`, and invalid definitions fail startup. Enrichment occurs before writer conversion and queue admission. A filtering enricher accepts but does not queue the batch; an enricher exception rejects it.
+
+Built-in enrichers are `static-metadata` (`metadata` map, overwrites batch keys), `column-attributes` (`column-pattern` glob and `attributes` map), `timestamp-clamp` (limits time-series nanoseconds to `999999999`), and `shard-slot`. `shard-slot` uses `num-shards` from 1 through 65536 (default 6), preserves an existing `shardSlot`, and assigns stable process-lifetime five-digit slots to first-seen columns. Mappings reset on process restart. Changing the shard count can split a PV's historical and new data across MongoDB shards.
+
+`static-metadata` applies to every payload type: time-series, source metadata, configuration, and configuration activation. The other C++ built-ins operate on time-series frames only; they accept the other payload types without changing them.
+
+### `python-enricher`
+
+`python-enricher` is available only when the driver is built with `-DBUILD_PYTHON_PROCESSOR=ON` (the default). Its global definition requires one `script-path`:
+
+```yaml
+enrichers:
+  classify-payload:
+    type: python-enricher
+    script-path: /opt/mldp/enrichers/classify.py
+writer:
+  mldp:
+    - name: mldp_main
+      enrichers: [classify-payload]
+```
+
+The script must export `enrich(batch)`. It receives a dictionary with `reader_name`, `payload_type`, and `metadata`. `payload_type` is one of `time-series`, `source-metadata`, `configuration`, or `configuration-activation`. Return `None` to accept but drop the batch, or return a dictionary containing an optional string-to-string `metadata` mapping to merge into the batch metadata. A non-dictionary result is rejected; Python exceptions are logged and rejected without stopping the writer. Python calls acquire the CPython GIL, so one shared Python enricher runs serially even when several writers reference it. See the [Payload Enricher Guide](../enrichers/enrichers.md#python-enricher) for the complete contract.
 
 ### `writer.mldp[]` — MLDP Ingestion Writer
 

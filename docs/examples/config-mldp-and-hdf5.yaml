@@ -3,9 +3,16 @@
 # Both writers receive every EventBatch concurrently.
 # HDF5 requires the build flag -DMLDP_PVXS_HDF5_ENABLED=ON.
 
+enrichers:
+  run-context:
+    type: static-metadata
+    metadata:
+      experiment_id: example-run
+
 writer:
   mldp:
     - name: mldp_primary
+      enrichers: [run-context]
       thread-pool: 4
       stream-max-bytes: 2097152
       stream-max-age-ms: 200
@@ -18,6 +25,7 @@ writer:
 
   hdf5:
     - name: hdf5_local
+      enrichers: [run-context]
       base-path: /data/hdf5
       max-file-age-s: 3600       # rotate files every hour
       max-file-size-mb: 512      # rotate files at 512 MiB

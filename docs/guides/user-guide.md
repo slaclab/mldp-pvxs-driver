@@ -79,6 +79,23 @@ The controller wires readers and writers together. You don't interact with it di
 it is configured implicitly by your YAML file. By default every reader feeds every writer.
 Use the optional `routing:` block to restrict which reader feeds which writer.
 
+### Enricher — Adjusting Batches Before Delivery
+
+An **enricher** is a named, reusable transformation applied just before a queued writer converts and stores a batch. Define enrichers globally and attach them to the writers that need them. This is useful for adding run metadata, attaching attributes to selected columns, correcting timestamps, or assigning MLDP shard slots without changing readers.
+
+```yaml
+enrichers:
+  run-context:
+    type: static-metadata
+    metadata: {experiment_id: run-42}
+writer:
+  mldp:
+    - name: mldp_main
+      enrichers: [run-context]
+```
+
+When two writers use the same enricher name, they share one instance and therefore share its state. For full type, ordering, shard-slot, and Python-script details, see the [Payload Enricher Guide](../enrichers/enrichers.md).
+
 ---
 
 ## Generating Your Configuration

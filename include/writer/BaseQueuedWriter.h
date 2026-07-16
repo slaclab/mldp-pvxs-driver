@@ -90,6 +90,12 @@ public:
      */
     bool push(util::bus::IDataBus::EventBatch batch) noexcept override;
 
+    void setEnrichers(std::vector<enricher::IPayloadEnricherPtr> enrichers) override
+    {
+        std::lock_guard lock(chainMutex_);
+        enrichers_ = std::move(enrichers);
+    }
+
 protected:
     /**
      * @brief Construct with queue config and a pre-built logger.
@@ -201,6 +207,8 @@ private:
     std::atomic<bool>                           forceQuit_{false};
     std::mutex                                  backpressureMutex_;
     std::condition_variable                     backpressureCv_;
+    std::mutex                                  chainMutex_;
+    std::vector<enricher::IPayloadEnricherPtr> enrichers_;
 };
 
 } // namespace mldp_pvxs_driver::writer

@@ -403,9 +403,14 @@ TEST(HDF5BsasGen1ReaderToMLDPWriterTest, ShardSlotAppearsInGrpcColumnAttributes)
 
     // Wire HDF5BsasGen1Reader → MLDPWriter via controller config.
     std::ostringstream yaml;
-    yaml << "writer:\n"
+    yaml << "enrichers:\n"
+         << "  shard-slots:\n"
+         << "    type: shard-slot\n"
+         << "    num-shards: 6\n"
+         << "writer:\n"
          << "  mldp:\n"
          << "    - name: mldp_shard\n"
+         << "      enrichers: [shard-slots]\n"
          << "      mldp-pool:\n"
          << "        provider-name: shard_test_provider\n"
          << "        ingestion-url: 127.0.0.1:" << port << "\n"

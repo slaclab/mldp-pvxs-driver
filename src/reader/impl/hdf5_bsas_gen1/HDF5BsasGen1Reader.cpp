@@ -58,7 +58,6 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
-#include <cstdio>
 #include <cstring>
 #include <stdexcept>
 #include <string>
@@ -220,7 +219,6 @@ HDF5BsasGen1Reader::HDF5BsasGen1Reader(
 {
     provenance_ = config_.provenance();
     logger_ = util::log::newLogger("hdf5_bsas_gen1_reader");
-    rng_ = std::mt19937(std::random_device{}());
     running_ = true;
     worker_ = std::thread([this]()
                           {
@@ -379,30 +377,6 @@ void HDF5BsasGen1Reader::readFile()
             for (auto& col : columns)
             {
                 col.name = normalizeColumnName(col.name, col.name);
-            }
-
-            // --- Phase 5b: shardSlot assignment ---
-            // Round-robin shard selection + random slot within that shard's range.
-            // pv_shard_slot_map_ persists across files: same PV always gets same slot.
-            {
-                const auto numShards = config_.numShards();
-                const auto shardSize = static_cast<uint32_t>(65536u / numShards);
-                for (auto& col : columns)
-                {
-                    auto [it, inserted] = pv_shard_slot_map_.emplace(col.name, uint16_t{0});
-                    if (inserted)
-                    {
-                        const auto shard = next_shard_ % numShards;
-                        ++next_shard_;
-                        const auto                             lo = static_cast<uint32_t>(shard) * shardSize;
-                        const auto                             hi = lo + shardSize - 1u;
-                        std::uniform_int_distribution<uint32_t> dist(lo, hi);
-                        it->second = static_cast<uint16_t>(dist(rng_));
-                    }
-                    char buf[6];
-                    std::snprintf(buf, sizeof(buf), "%05u", static_cast<unsigned>(it->second));
-                    col.metadata["shardSlot"] = buf;
-                }
             }
 
             // --- Phase 6: Chunked reading loop ---

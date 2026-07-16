@@ -18,7 +18,6 @@
 
 #include <atomic>
 #include <cstdint>
-#include <random>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -116,10 +115,6 @@ private:
     HDF5BsasGen1ReaderConfig config_;
     std::thread worker_;
     std::atomic<bool> running_{false};
-
-    std::unordered_map<std::string, uint16_t> pv_shard_slot_map_;
-    std::size_t                               next_shard_{0};
-    std::mt19937                              rng_;
 
     REGISTER_READER("hdf5-bsas-gen1", HDF5BsasGen1Reader)
 };

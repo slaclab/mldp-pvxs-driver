@@ -24,6 +24,7 @@
 #include <any>
 #include <map>
 #include <memory>
+#include <utility>
 #include <rapidyaml-0.10.0.hpp>
 #include <sstream>
 #include <string>
@@ -140,6 +141,9 @@ public:
      * as the `ConfigTreePtr` that backs the root instance is alive.
      */
     std::vector<Config> subConfig(const std::string& key) const;
+
+    /** Return direct map children with their YAML keys. */
+    std::vector<std::pair<std::string, Config>> namedSubConfig() const;
 
     /**
      * @brief Retrieve an integer value for the given key.

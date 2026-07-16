@@ -200,7 +200,8 @@ std::shared_ptr<MLDPPVXSController> MLDPPVXSController::create(const config::Con
 }
 
 MLDPPVXSController::MLDPPVXSController(const config::Config& config)
-    : config_(config)
+    : raw_config_(config)
+    , config_(config)
     , logger_(makeControllerLogger(config_.name()))
     , thread_pool_(std::make_shared<BS::light_thread_pool>(1)) // resized in start()
     , metrics_(std::make_shared<metrics::Metrics>(*config_.metricsConfig(), config_.name()))
@@ -253,6 +254,9 @@ void MLDPPVXSController::start()
     // Register queryable factories before any worker thread runs.
     prepareQueryables(config_, metrics_);
 
+    // Global enrichers are constructed once and shared by every referenced writer.
+    enricher_registry_ = std::make_unique<enricher::EnricherRegistry>(raw_config_);
+
     // Resize the fan-out thread pool to match the number of writer instances.
     const std::size_t numWriters = config_.writerEntries().size();
     thread_pool_ = std::make_shared<BS::light_thread_pool>(
@@ -266,6 +270,7 @@ void MLDPPVXSController::start()
     for (const auto& [type, writerNode] : config_.writerEntries())
     {
         auto w = WriterFactory::create(type, writerNode, metrics_);
+        w->setEnrichers(enricher_registry_->resolve(writerNode));
         w->start();
         writers_.push_back(std::move(w));
     }

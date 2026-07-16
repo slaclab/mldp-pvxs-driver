@@ -295,6 +295,26 @@ bool BaseQueuedWriter<Item>::push(util::bus::IDataBus::EventBatch batch) noexcep
     if (!running_.load())
         return false;
 
+    try
+    {
+        std::lock_guard lock(chainMutex_);
+        for (const auto& enricher : enrichers_)
+        {
+            if (!enricher->run(batch))
+                return true;
+        }
+    }
+    catch (const std::exception& ex)
+    {
+        util::log::errorf(*logger_, "BaseQueuedWriter '{}' enricher failed: {}", writerName_, ex.what());
+        return false;
+    }
+    catch (...)
+    {
+        util::log::errorf(*logger_, "BaseQueuedWriter '{}' enricher failed with unknown exception", writerName_);
+        return false;
+    }
+
     std::vector<Item> items;
     try
     {

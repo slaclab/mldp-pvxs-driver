@@ -158,6 +158,22 @@ std::vector<Config> Config::subConfig(const std::string& key) const
     return children;
 }
 
+std::vector<std::pair<std::string, Config>> Config::namedSubConfig() const
+{
+    std::vector<std::pair<std::string, Config>> children;
+    if (!valid() || !node_.is_map())
+        return children;
+    children.reserve(node_.num_children());
+    for (const auto child : node_.children())
+    {
+        if (!child.has_key())
+            continue;
+        const auto key = child.key();
+        children.emplace_back(std::string(key.str, key.len), Config{tree_, child});
+    }
+    return children;
+}
+
 int Config::getInt(const std::string& key, int def) const
 {
     if (!valid() || !node_.has_child(key.c_str()))
