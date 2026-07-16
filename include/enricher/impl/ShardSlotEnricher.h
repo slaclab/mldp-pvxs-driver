@@ -16,6 +16,8 @@
 #include <string>
 #include <unordered_map>
 
+struct sqlite3;
+
 namespace mldp_pvxs_driver::enricher {
 
 class ShardSlotEnricher final : public IPayloadEnricher
@@ -24,6 +26,7 @@ class ShardSlotEnricher final : public IPayloadEnricher
 
 public:
     explicit ShardSlotEnricher(const config::Config& config);
+    ~ShardSlotEnricher() override;
 
     void configure(const config::Config& config) override;
     bool enrich(util::bus::IDataBus::EventBatch& batch) noexcept override;
@@ -38,6 +41,8 @@ private:
     std::size_t                               next_shard_{0};
     std::mt19937                              rng_{std::random_device{}()};
     std::unordered_map<std::string, uint16_t> slots_;
+    std::string                               db_path_;
+    sqlite3*                                  db_{nullptr};
 };
 
 } // namespace mldp_pvxs_driver::enricher

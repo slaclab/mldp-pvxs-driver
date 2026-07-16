@@ -128,6 +128,7 @@ find_package(OpenSSL REQUIRED)
 find_package(gRPC REQUIRED)
 find_package(Threads REQUIRED)
 find_package(CURL REQUIRED)
+find_package(SQLite3 REQUIRED)
 
 # ---- HDF5 (optional writer back-end) ----
 if(MLDP_PVXS_ENABLE_HDF5)
@@ -593,6 +594,7 @@ target_link_libraries(lib${PROJECT_NAME} PUBLIC
     lib${PROJECT_NAME}_proto
     Threads::Threads
     pvxs
+    SQLite::SQLite3
     epics-pvaclient
     epics-pvaccess
     epics-pvaccessca

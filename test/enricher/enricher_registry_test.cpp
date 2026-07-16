@@ -7,6 +7,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <string>
 #include <system_error>
 
 namespace mldp_pvxs_driver::enricher {
@@ -84,26 +85,87 @@ writer: {mldp: [{enrichers: [one, one]}]}
         EXPECT_THROW(duplicate_registry.resolve(duplicate.subConfig("writer").front().subConfig("mldp").front()), std::runtime_error);
     }
 
+    std::filesystem::path tempDbPath()
+    {
+        return std::filesystem::temp_directory_path() / ("shard_slot_test_" + std::to_string(std::rand()) + ".db");
+    }
+
+    void removeTempDb(const std::filesystem::path& p)
+    {
+        for (const auto& ext : {"", "-wal", "-shm"})
+        {
+            std::error_code ec;
+            std::filesystem::remove(std::filesystem::path(p.string() + ext), ec);
+        }
+    }
+
     TEST(EnricherRegistryTest, ShardSlotIsStableFormattedAndPreservesExisting)
     {
-        const auto       config = makeConfigFromYaml(R"(
+        const auto db   = tempDbPath();
+        const auto yaml = "enrichers: {slots: {type: shard-slot, num-shards: 6, db-path: " + db.string() + "}}\n"
+                          "writer: {mldp: [{enrichers: [slots]}]}\n";
+        const auto config = makeConfigFromYaml(yaml);
+        {
+            EnricherRegistry registry(config);
+            const auto       writer = config.subConfig("writer").front().subConfig("mldp").front();
+            const auto       slots = registry.resolve(writer);
+            auto             first = timeSeriesBatch("PV:ONE");
+            auto             second = timeSeriesBatch("PV:ONE");
+            ASSERT_TRUE(slots.front()->run(first));
+            ASSERT_TRUE(slots.front()->run(second));
+            const auto first_slot = std::get<TimeSeriesPayload>(first.payload).frames.front().columns.front().metadata.at("shardSlot");
+            EXPECT_EQ(5U, first_slot.size());
+            EXPECT_EQ(first_slot, std::get<TimeSeriesPayload>(second.payload).frames.front().columns.front().metadata.at("shardSlot"));
+            auto preserved = timeSeriesBatch("PV:TWO");
+            std::get<TimeSeriesPayload>(preserved.payload).frames.front().columns.front().metadata["shardSlot"] = "12345";
+            ASSERT_TRUE(slots.front()->run(preserved));
+            EXPECT_EQ("12345", std::get<TimeSeriesPayload>(preserved.payload).frames.front().columns.front().metadata.at("shardSlot"));
+        }
+        removeTempDb(db);
+    }
+
+    TEST(EnricherRegistryTest, ShardSlotPersistenceAcrossInstances)
+    {
+        const auto db   = tempDbPath();
+        const auto yaml = [&](const std::string& extra = "") {
+            return "enrichers: {slots: {type: shard-slot, num-shards: 6, db-path: " + db.string() + extra + "}}\n"
+                   "writer: {mldp: [{enrichers: [slots]}]}\n";
+        };
+
+        std::string slot1;
+        {
+            const auto       config = makeConfigFromYaml(yaml());
+            EnricherRegistry registry(config);
+            const auto       writer = config.subConfig("writer").front().subConfig("mldp").front();
+            const auto       slots  = registry.resolve(writer);
+            auto             batch  = timeSeriesBatch("PV:PERSIST");
+            ASSERT_TRUE(slots.front()->run(batch));
+            slot1 = std::get<TimeSeriesPayload>(batch.payload).frames.front().columns.front().metadata.at("shardSlot");
+            ASSERT_EQ(5U, slot1.size());
+        }
+
+        // Second instance — loads from the same DB file; must reproduce the same slot.
+        {
+            const auto       config = makeConfigFromYaml(yaml());
+            EnricherRegistry registry(config);
+            const auto       writer = config.subConfig("writer").front().subConfig("mldp").front();
+            const auto       slots  = registry.resolve(writer);
+            auto             batch  = timeSeriesBatch("PV:PERSIST");
+            ASSERT_TRUE(slots.front()->run(batch));
+            const auto slot2 = std::get<TimeSeriesPayload>(batch.payload).frames.front().columns.front().metadata.at("shardSlot");
+            EXPECT_EQ(slot1, slot2);
+        }
+
+        removeTempDb(db);
+    }
+
+    TEST(EnricherRegistryTest, ShardSlotRejectsMissingDbPath)
+    {
+        const auto config = makeConfigFromYaml(R"(
 enrichers: {slots: {type: shard-slot, num-shards: 6}}
 writer: {mldp: [{enrichers: [slots]}]}
 )");
-        EnricherRegistry registry(config);
-        const auto       writer = config.subConfig("writer").front().subConfig("mldp").front();
-        const auto       slots = registry.resolve(writer);
-        auto             first = timeSeriesBatch("PV:ONE");
-        auto             second = timeSeriesBatch("PV:ONE");
-        ASSERT_TRUE(slots.front()->run(first));
-        ASSERT_TRUE(slots.front()->run(second));
-        const auto first_slot = std::get<TimeSeriesPayload>(first.payload).frames.front().columns.front().metadata.at("shardSlot");
-        EXPECT_EQ(5U, first_slot.size());
-        EXPECT_EQ(first_slot, std::get<TimeSeriesPayload>(second.payload).frames.front().columns.front().metadata.at("shardSlot"));
-        auto preserved = timeSeriesBatch("PV:TWO");
-        std::get<TimeSeriesPayload>(preserved.payload).frames.front().columns.front().metadata["shardSlot"] = "12345";
-        ASSERT_TRUE(slots.front()->run(preserved));
-        EXPECT_EQ("12345", std::get<TimeSeriesPayload>(preserved.payload).frames.front().columns.front().metadata.at("shardSlot"));
+        EXPECT_THROW(EnricherRegistry{config}, std::runtime_error);
     }
 
 #ifdef BUILD_PYTHON_PROCESSOR

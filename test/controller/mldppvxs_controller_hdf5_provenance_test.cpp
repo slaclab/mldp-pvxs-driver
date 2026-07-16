@@ -403,10 +403,12 @@ TEST(HDF5BsasGen1ReaderToMLDPWriterTest, ShardSlotAppearsInGrpcColumnAttributes)
 
     // Wire HDF5BsasGen1Reader → MLDPWriter via controller config.
     std::ostringstream yaml;
+    const auto shardDb = (tempDir / "shard_slot.db").string();
     yaml << "enrichers:\n"
          << "  shard-slots:\n"
          << "    type: shard-slot\n"
          << "    num-shards: 6\n"
+         << "    db-path: " << shardDb << "\n"
          << "writer:\n"
          << "  mldp:\n"
          << "    - name: mldp_shard\n"
