@@ -177,22 +177,6 @@ This keeps `IWriter` and `BaseQueuedWriter` untouched.
 
 ---
 
-### 7. Writer-group enrichers (optional, phase 2)
-
-A writer group shares one `EnricherChain` that runs before fan-out to members:
-
-```yaml
-writer_groups:
-  - name: mldp-cluster
-    enrichers:
-      - type: stamp-ingestion-time
-    writers: [mldp-writer-1, mldp-writer-2]
-```
-
-Phase 2 only — not in initial implementation.
-
----
-
 ## Concrete Enricher Examples (ship with feature)
 
 ### `StaticMetadataEnricher`
@@ -208,6 +192,27 @@ Clamps `nanoseconds` field of every `TimestampEntry` to `[0, 999_999_999]`.
 Useful as a guard for the MLDP server rejection bug (see `mldp-writer-bidi-stream.md`).
 Config: none (always enforces IEEE nanosecond range).
 
+### `ShardSlotEnricher`
+Assigns a stable MongoDB shard slot (`shardSlot` key in `DataColumn::metadata`)
+to every column in a `TimeSeriesPayload`. Uses round-robin shard selection with
+a random slot within each shard's range, persisting the per-column assignment
+across batches so the same column always gets the same slot.
+
+```yaml
+type: shard-slot
+num_shards: 6          # number of MongoDB shards (default 6)
+```
+
+Implementation notes:
+- Maintains `std::unordered_map<std::string, uint16_t> pv_slot_map_` and
+  `std::mt19937 rng_` as enricher member state (seeded once in `configure()`).
+- Shard range per slot: `[shard * (65536 / num_shards), shard * (65536 / num_shards) + shardSize - 1]`.
+  Random slot selected uniformly within that range via `std::uniform_int_distribution<uint32_t>`.
+- Iterates all frames in `TimeSeriesPayload`; stamps `shardSlot` (5-char zero-padded decimal)
+  on each `DataColumn::metadata` entry that does not already have the key.
+- Replaces the inline Phase 5b shard logic in `HDF5BsasGen1Reader` — once this enricher
+  ships, `pv_shard_slot_map_`, `next_shard_`, and `rng_` are removed from the reader.
+
 ---
 
 ## Files to Create
@@ -222,12 +227,15 @@ Config: none (always enforces IEEE nanosecond range).
 | `include/enricher/impl/StaticMetadataEnricher.h` | First built-in enricher |
 | `include/enricher/impl/ColumnAttributeEnricher.h` | Second built-in enricher |
 | `include/enricher/impl/TimestampClampEnricher.h` | Third built-in enricher |
+| `include/enricher/impl/ShardSlotEnricher.h` | Fourth built-in enricher |
 | `src/enricher/impl/StaticMetadataEnricher.cpp` | Impl + `REGISTER_ENRICHER` |
 | `src/enricher/impl/ColumnAttributeEnricher.cpp` | Impl + `REGISTER_ENRICHER` |
 | `src/enricher/impl/TimestampClampEnricher.cpp` | Impl + `REGISTER_ENRICHER` |
+| `src/enricher/impl/ShardSlotEnricher.cpp` | Impl + `REGISTER_ENRICHER` |
 | `test/enricher/EnricherChainTest.cpp` | Chain ordering, drop semantics |
 | `test/enricher/StaticMetadataEnricherTest.cpp` | KV injection coverage |
 | `test/enricher/TimestampClampEnricherTest.cpp` | Boundary clamping |
+| `test/enricher/ShardSlotEnricherTest.cpp` | Slot stability, round-robin shard distribution |
 
 ## Files to Modify
 
@@ -236,6 +244,9 @@ Config: none (always enforces IEEE nanosecond range).
 | `src/controller/MLDPPVXSController.cpp` | Build `enricher_chains_` at startup; apply per-writer in `dispatchToWriters()` |
 | `include/controller/MLDPPVXSController.h` | Add `std::vector<EnricherChain> enricher_chains_` member |
 | `src/CMakeLists.txt` / `CMakeLists.txt` | Add `src/enricher/` sources |
+| `include/reader/impl/hdf5_bsas_gen1/HDF5BsasGen1Reader.h` | Remove `pv_shard_slot_map_`, `next_shard_`, `rng_` members |
+| `src/reader/impl/hdf5_bsas_gen1/HDF5BsasGen1Reader.cpp` | Remove Phase 5b shard-slot block; remove `rng_` init in ctor |
+| `include/reader/impl/hdf5_bsas_gen1/HDF5BsasGen1ReaderConfig.h` | Remove `numShards()` / `num_shards_` (moved to enricher config) |
 
 ---
 
