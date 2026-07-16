@@ -26,10 +26,18 @@ namespace mldp_pvxs_driver::processor {
 class PythonScriptDirectoryLoader
 {
 public:
+    /** Load every Python processor module in a directory. */
     static std::vector<IChannelProcessorUPtr> load(
-        const std::filesystem::path&         script_dir,
-        std::shared_ptr<util::bus::IDataBus> bus,
-        std::shared_ptr<metrics::Metrics>    metrics,
+        const std::filesystem::path&           script_dir,
+        std::shared_ptr<util::bus::IDataBus>   bus,
+        std::shared_ptr<metrics::Metrics>      metrics,
+        std::shared_ptr<BS::light_thread_pool> thread_pool = nullptr);
+
+    /** Load exactly one Python processor module. */
+    static std::vector<IChannelProcessorUPtr> loadScript(
+        const std::filesystem::path&           script_path,
+        std::shared_ptr<util::bus::IDataBus>   bus,
+        std::shared_ptr<metrics::Metrics>      metrics,
         std::shared_ptr<BS::light_thread_pool> thread_pool = nullptr);
 };
 

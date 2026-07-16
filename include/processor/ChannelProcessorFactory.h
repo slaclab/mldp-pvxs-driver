@@ -54,17 +54,20 @@ public:
      * @throws std::runtime_error when the type is unknown.
      */
     static std::vector<IChannelProcessorUPtr> create(
-        const std::string&                      type,
-        const config::Config&                   cfg,
-        std::shared_ptr<util::bus::IDataBus>    bus,
-        std::shared_ptr<metrics::Metrics>       metrics     = nullptr,
-        std::shared_ptr<BS::light_thread_pool>  thread_pool = nullptr);
+        const std::string&                     type,
+        const config::Config&                  cfg,
+        std::shared_ptr<util::bus::IDataBus>   bus,
+        std::shared_ptr<metrics::Metrics>      metrics = nullptr,
+        std::shared_ptr<BS::light_thread_pool> thread_pool = nullptr);
 
     /**
      * @brief Register or replace the factory for one processor type.
      * @return Always true to support static-init registration idioms.
      */
     static bool registerType(const std::string& type, ProcessorFactory factory);
+
+    /** @return Whether a processor factory is registered for @p type. */
+    static bool isRegistered(const std::string& type);
 
 private:
     static ProcessorFactory& lookup(const std::string& type);

@@ -1,6 +1,6 @@
 # Implementing Payload Enrichers
 
-> **Related:** [Payload Enricher Guide](enrichers.md) | [Writer Implementation Guide](../writers/writers-implementation.md) | [Configuration Reference](../guides/configuration.md#global-enrichers-and-writer-chains)
+> **Related:** [Payload Enricher Guide](enrichers.md) | [Python Enricher Guide](python-enricher.md) | [Writer Implementation Guide](../writers/writers-implementation.md) | [Configuration Reference](../guides/configuration.md#global-enrichers-and-writer-chains)
 
 This guide describes how to add a new payload enricher in C++ or Python. Enrichers are global plugins: the controller constructs one shared instance for every named YAML definition, then installs shared references into queued writer chains.
 
@@ -12,13 +12,13 @@ This guide describes how to add a new payload enricher in C++ or Python. Enriche
 | It is latency-sensitive or runs on every high-rate batch. | You need rapid deployment without recompiling the driver. |
 | It needs richer state than the Python metadata contract exposes. | A one-file `enrich(batch)` function is sufficient. |
 
-The current Python bridge deliberately exposes only the reader name, payload type, and batch metadata. It cannot modify columns, timestamps, or payload values.
+The Python bridge exposes only the reader name, payload type, and batch metadata. It cannot modify columns, timestamps, or payload values. See [Python Enricher Guide](python-enricher.md) for the full input/return contract.
 
 ## C++ Enricher
 
 ### 1. Implement `IPayloadEnricher`
 
-Create a header and source under `include/enricher/` and `src/enricher/`. The constructor receives the named definition's `config::Config`; validate mandatory settings in `configure()` and throw `std::runtime_error` for invalid startup configuration.
+Create a header and source under `include/enricher/impl/` and `src/enricher/impl/`. The constructor receives the named definition's `config::Config`; validate mandatory settings in `configure()` and throw `std::runtime_error` for invalid startup configuration.
 
 ```cpp
 #include <enricher/EnricherFactory.h>
@@ -72,7 +72,7 @@ Add the implementation file to `lib${PROJECT_NAME}`:
 
 ```cmake
 target_sources(lib${PROJECT_NAME} PRIVATE
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/enricher/AddSourceEnricher.cpp")
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/enricher/impl/AddSourceEnricher.cpp")
 ```
 
 If the enricher depends on an optional library, add a focused build option and guard both the CMake source and the registration with the same compile definition.
@@ -94,57 +94,13 @@ Add tests under `test/enricher/`. Cover valid configuration, invalid configurati
 
 ## Python Enricher
 
-### 1. Enable the build gate
+For a new Python enricher, follow the steps in [Python Enricher Guide](python-enricher.md):
 
-The type exists only when the driver is configured with Python support:
-
-```bash
-cmake -S . -B build -DMLDP_PVXS_DRIVER_TESTS=ON -DBUILD_PYTHON_PROCESSOR=ON
-```
-
-When disabled, `python-enricher` is not registered and a configuration using it fails at startup as an unknown type.
-
-### 2. Write the module
-
-Create one `.py` file. It needs only `enrich(batch)`; there is no required `config` object.
-
-```python
-def enrich(batch):
-    metadata = dict(batch["metadata"])
-    metadata["enriched_by"] = "beamline-policy"
-    metadata["payload_kind"] = batch["payload_type"]
-    return {"metadata": metadata}
-```
-
-To filter a batch for one writer destination:
-
-```python
-def enrich(batch):
-    if batch["payload_type"] == "configuration-activation":
-        return None
-    return {}
-```
-
-Python enrichers cannot mutate the input dictionary to change the C++ batch. Return a dictionary with `metadata` instead. Metadata keys and values must be strings.
-
-### 3. Reference the script
-
-```yaml
-enrichers:
-  beamline-policy:
-    type: python-enricher
-    script-path: /opt/mldp/enrichers/beamline_policy.py
-writer:
-  mldp:
-    - name: mldp_main
-      enrichers: [beamline-policy]
-```
-
-Each named definition loads its own module. Reusing the same name across writers intentionally shares that module and its Python state. Use different global names when isolation is required.
-
-### 4. Test the script
-
-Place C++ integration tests under `test/enricher/`; use a temporary Python script, following `python_enricher_test.cpp`. Test every payload type your script cares about, its metadata changes, `None` filtering, and invalid/exception behavior.
+1. Enable `BUILD_PYTHON_PROCESSOR=ON`.
+2. Write the `.py` module with `enrich(batch)` and `ENRICHER_TYPE`.
+3. Drop the file into `python-plugin-path` (or use an explicit `script-path`).
+4. Reference the logical type or `python-enricher` in YAML.
+5. Add C++ integration tests under `test/enricher/`.
 
 ## C++ Review Checklist
 
@@ -154,4 +110,4 @@ Place C++ integration tests under `test/enricher/`; use a temporary Python scrip
 - [ ] State assumes calls are serialized per instance, but does not assume a single writer.
 - [ ] The source is included in the appropriate CMake target and optional compile guard.
 - [ ] Tests cover relevant `BatchPayload` alternatives and shared-state behavior.
-- [ ] The configuration guide and the built-in enricher table are updated for user-visible settings.
+- [ ] The enrichers guide and the built-in enricher table are updated for user-visible settings.

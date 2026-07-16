@@ -588,7 +588,7 @@ In this example:
 
 ## `processors:` Block {#processors-block}
 
-Optional. Declares channel processors — algorithm-backed virtual channel engines that consume real source batches, run a compute function, and publish virtual output sources back onto the bus. Each entry requires a `type:` key that selects the processor factory.
+Optional. Declares channel processors — algorithm-backed virtual channel engines that consume real source batches, run a compute function, and publish virtual output sources back onto the bus. The existing sequence form remains supported. A mapping form additionally supports `algorithms-plugin-path` and named Python algorithms; the path defaults to `./algorithms` relative to the process working directory.
 
 Processors integrate with the `routing:` system the same way writers do: they appear as named targets in `routing:` to control which readers feed them, and their virtual output sources can be used as `from:` origins to feed downstream writers.
 
@@ -599,6 +599,17 @@ processors:
   - type: python-processor
     script-dir: /opt/scripts/processors
 ```
+
+To load one script by logical type, use the mapping form:
+
+```yaml
+processors:
+  algorithms-plugin-path: /opt/mldp/algorithms
+  beam-calculation:
+    type: beam_calculation  # loads /opt/mldp/algorithms/beam_calculation.py
+```
+
+If an unregistered processor definition has `script-path`, that explicit file takes precedence over `algorithms-plugin-path`.
 
 ### `processors[].type: python-processor`
 

@@ -6,7 +6,9 @@
 //////////////////////////////////////////////////////////////////////////////
 #include <gtest/gtest.h>
 
-#include <enricher/BuiltinEnrichers.h>
+#include <enricher/impl/ColumnAttributesEnricher.h>
+#include <enricher/impl/StaticMetadataEnricher.h>
+#include <enricher/impl/TimestampClampEnricher.h>
 
 #include "config/test_config_helpers.h"
 

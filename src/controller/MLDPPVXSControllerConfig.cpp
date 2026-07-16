@@ -89,7 +89,7 @@ void MLDPPVXSControllerConfig::parse(const ::mldp_pvxs_driver::config::Config& r
     parseRouting(root);
     parseQueryables(root);
 
-    queue_capacity_   = static_cast<std::size_t>(root.getInt("queue_capacity", static_cast<int>(queue_capacity_)));
+    queue_capacity_ = static_cast<std::size_t>(root.getInt("queue_capacity", static_cast<int>(queue_capacity_)));
 
     valid_ = true;
 }
@@ -100,7 +100,9 @@ void MLDPPVXSControllerConfig::parseWriter(const ::mldp_pvxs_driver::config::Con
 
     if (!root.hasChild(WriterKey))
     {
-        throw Error("'writer' block is missing; configure at least one writer under writer.<type>");
+        if (!root.hasChild("processors"))
+            throw Error("'writer' block is missing; configure at least one writer under writer.<type>");
+        return;
     }
 
     const auto writerNodes = root.subConfig(WriterKey);
@@ -152,7 +154,7 @@ void MLDPPVXSControllerConfig::parseReaders(const ::mldp_pvxs_driver::config::Co
         return;
     }
 
-    const auto& readerNode     = readerNodes.front();
+    const auto& readerNode = readerNodes.front();
     const auto  registeredTypes = mldp_pvxs_driver::reader::ReaderFactory::registeredTypes();
 
     for (const auto& typeName : registeredTypes)
@@ -177,18 +179,42 @@ void MLDPPVXSControllerConfig::parseReaders(const ::mldp_pvxs_driver::config::Co
 void MLDPPVXSControllerConfig::parseProcessors(const ::mldp_pvxs_driver::config::Config& root)
 {
     processorEntries_.clear();
+    algorithms_plugin_path_.clear();
 
     if (!root.hasChild("processors"))
     {
         return;
     }
+    algorithms_plugin_path_ = "algorithms";
 
-    if (!root.isSequence("processors"))
+    const auto processorBlocks = root.subConfig("processors");
+    if (!root.isSequence("processors") && processorBlocks.size() == 1 && processorBlocks.front().raw().is_map())
     {
-        throw Error("processors must be a sequence");
+        const auto& processorMap = processorBlocks.front();
+        if (processorMap.hasChild("algorithms-plugin-path"))
+        {
+            algorithms_plugin_path_ = processorMap.get("algorithms-plugin-path");
+            if (algorithms_plugin_path_.empty())
+                throw Error("processors 'algorithms-plugin-path' must not be empty");
+        }
+        for (const auto& [name, processorNode] : processorMap.namedSubConfig())
+        {
+            if (name == "algorithms-plugin-path")
+                continue;
+            if (!processorNode.raw().is_map())
+                throw Error("processor '" + name + "' must be a mapping");
+            const auto type = processorNode.get("type", name);
+            if (type.empty())
+                throw Error("processor entry missing 'type' field");
+            processorEntries_.push_back({type, processorNode});
+        }
+        return;
     }
 
-    for (const auto& processorNode : root.subConfig("processors"))
+    if (!root.isSequence("processors"))
+        throw Error("processors must be a sequence or mapping");
+
+    for (const auto& processorNode : processorBlocks)
     {
         const auto type = processorNode.get("type", "");
         if (type.empty())

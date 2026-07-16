@@ -9,24 +9,25 @@
 //////////////////////////////////////////////////////////////////////////////
 #pragma once
 
-#include <enricher/IPayloadEnricher.h>
-
-#include <string>
-#include <unordered_map>
-#include <vector>
+#include <enricher/EnricherFactory.h>
 
 namespace mldp_pvxs_driver::enricher {
 
-class EnricherRegistry
+class TimestampClampEnricher final : public IPayloadEnricher
 {
-public:
-    explicit EnricherRegistry(const config::Config& root);
-    std::vector<IPayloadEnricherPtr> resolve(const config::Config& writer) const;
+    REGISTER_ENRICHER("timestamp-clamp", TimestampClampEnricher)
 
-private:
-    /// Base directory for logical Python enricher types; relative paths use the process CWD.
-    std::string                                          python_plugin_path_{"enrichers"};
-    std::unordered_map<std::string, IPayloadEnricherPtr> enrichers_;
+public:
+    explicit TimestampClampEnricher(const config::Config&) {}
+
+    void configure(const config::Config&) override {}
+
+    bool enrich(util::bus::IDataBus::EventBatch& batch) noexcept override;
+
+    std::string enricherType() const override
+    {
+        return "timestamp-clamp";
+    }
 };
 
 } // namespace mldp_pvxs_driver::enricher

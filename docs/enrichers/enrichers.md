@@ -6,7 +6,7 @@ Payload enrichers are named transformations applied to an `EventBatch` immediate
 
 ## Configuration Model
 
-Declare enrichers once under top-level `enrichers:`. Each key is an application-unique name; its `type` selects an implementation. A queued writer names the enrichers it needs in ordered `enrichers:` list.
+Declare enrichers once under top-level `enrichers:`. Each key is an application-unique name; its `type` selects an implementation. A queued writer names the enrichers it needs in an ordered `enrichers:` list.
 
 ```yaml
 enrichers:
@@ -27,7 +27,7 @@ writer:
       enrichers: [run-context]
 ```
 
-The controller creates every named definition once at startup. A name used by more than one writer therefore denotes one shared, stateful instance. Names in a single writer chain must be non-empty and unique; unknown names and invalid definitions stop startup.
+The controller creates every named definition once at startup. A name used by more than one writer denotes one shared, stateful instance. Names in a single writer chain must be non-empty and unique; unknown names and invalid definitions stop startup.
 
 ## Execution and Concurrency
 
@@ -43,78 +43,55 @@ flowchart LR
 
 `BaseQueuedWriter::push()` runs the chain after its running check and before `toItems()`. It locks the chain only while traversing it, then releases that lock before item conversion, queue admission, back-pressure waits, and worker processing.
 
-Each `IPayloadEnricher` serializes its own `enrich()` calls. As a result, a shared stateful enricher is safe across writer chains without serializing unrelated enrichers or queues.
+Each `IPayloadEnricher` serializes its own `enrich()` calls. A shared stateful enricher is safe across writer chains without serializing unrelated enrichers or queues.
 
 An enricher returning `false` drops the batch for that writer but is still treated as an accepted `push()`, matching an empty `toItems()` result. An exception or internal enrichment failure rejects the batch and is logged.
 
-## Built-in C++ Enrichers
+## Script Resolution for Python Enrichers
 
-| Type | Required settings | Affected payloads | Behavior |
-|---|---|---|---|
-| `static-metadata` | `metadata` map | All | Merges configured string values into batch metadata; configured values overwrite existing values. |
-| `column-attributes` | `column-pattern`, `attributes` map | Time series | Applies attributes to `DataColumn` objects whose names match the glob pattern. Configured values overwrite existing attributes. |
-| `timestamp-clamp` | None | Time series | Limits each timestamp `nanoseconds` value to `999999999`. |
-| `shard-slot` | Optional `num-shards` | Time series | Adds a stable process-lifetime, zero-padded five-digit `shardSlot` attribute to first-seen columns. |
+When `BUILD_PYTHON_PROCESSOR=ON`, the registry resolves unrecognized `type` values as Python scripts using this priority order:
 
-`column-attributes`, `timestamp-clamp`, and `shard-slot` accept the other three `EventBatch` payload variants unchanged. `static-metadata` is the appropriate generic enricher when metadata must accompany source metadata, configuration, or configuration-activation batches.
+1. **Registered C++ type** — matched first; no file I/O.
+2. **Explicit `script-path`** on an unregistered type — that path is used directly. The module's declared `ENRICHER_TYPE` must match the configured `type`.
+3. **Logical type via `python-plugin-path`** — the file `<python-plugin-path>/<type>.py` is loaded. `ENRICHER_TYPE` must be declared in the module and must match `type`.
 
-### `shard-slot` details
-
-`num-shards` defaults to `6` and must be in the inclusive range `1..65536`. First-seen column names are assigned round-robin shard ranges, with a random slot selected inside each range. Existing `shardSlot` attributes are preserved.
-
-Mappings last only for the driver process. A restart remaps first-seen columns, and changing `num-shards` can split one PV's historical and new data across MongoDB shards. HDF5 BSAS Gen1 readers no longer configure `num-shards` or stamp this attribute; attach `shard-slot` to the writer that needs it.
-
-## Python Enricher
-
-`python-enricher` is built only when `BUILD_PYTHON_PROCESSOR=ON`. It loads one Python file from `script-path`; the module must export an `enrich(batch)` callable.
+`python-plugin-path` defaults to `enrichers` relative to the process working directory. Set it once under the `enrichers:` block:
 
 ```yaml
 enrichers:
+  python-plugin-path: /opt/mldp/enrichers
   tag-payload:
+    type: tag_payload          # loads /opt/mldp/enrichers/tag_payload.py
+  corrector:
+    type: ts_corrector
+    script-path: /data/scripts/ts_corrector.py   # explicit path overrides plugin path
+```
+
+The explicit `type: python-enricher` form bypasses all type-matching logic; `script-path` is required and `ENRICHER_TYPE` is optional:
+
+```yaml
+enrichers:
+  my-script:
     type: python-enricher
-    script-path: /opt/mldp/enrichers/tag_payload.py
-writer:
-  mldp:
-    - name: mldp_main
-      enrichers: [tag-payload]
+    script-path: /opt/mldp/enrichers/beamline_policy.py
 ```
 
-### Python input and return contract
+See [Python Enricher Guide](python-enricher.md) for the full contract and examples.
 
-The function receives this dictionary:
+## Built-in C++ Enrichers
 
-```python
-{
-    "reader_name": "bsas_reader",
-    "payload_type": "time-series",
-    "metadata": {"run": "42"},
-}
-```
+| Type | Required settings | Payload scope | Detail page |
+|---|---|---|---|
+| `static-metadata` | `metadata` map | All variants | [static-metadata](builtin/static-metadata.md) |
+| `column-attributes` | `column-pattern`, `attributes` map | Time series only | [column-attributes](builtin/column-attributes.md) |
+| `timestamp-clamp` | None | Time series only | [timestamp-clamp](builtin/timestamp-clamp.md) |
+| `shard-slot` | Optional `num-shards` | Time series only | [shard-slot](builtin/shard-slot.md) |
 
-`payload_type` is one of `time-series`, `source-metadata`, `configuration`, or `configuration-activation`.
+`column-attributes`, `timestamp-clamp`, and `shard-slot` pass non-time-series variants unchanged. `static-metadata` is the appropriate generic enricher when metadata must accompany source-metadata, configuration, or configuration-activation batches.
 
-Return one of:
+## Python Enricher
 
-| Return value | Effect |
-|---|---|
-| `None` | Accept and drop the batch for this writer. |
-| Dictionary without `metadata` | Keep the batch unchanged. |
-| Dictionary with `metadata` | Merge its string-to-string entries into batch metadata, overwriting matching keys. |
-| Any other value, or a dictionary whose metadata keys/values are not strings | Reject the batch. |
-
-Example:
-
-```python
-def enrich(batch):
-    return {
-        "metadata": {
-            "payload_kind": batch["payload_type"],
-            "processed_by": "tag_payload",
-        }
-    }
-```
-
-Python exceptions are printed/logged and reject the affected batch without stopping the writer. Calls acquire the CPython GIL. Since named enrichers are shared, one `python-enricher` instance executes serially when multiple writer chains reference it.
+`python-enricher` is built only when `BUILD_PYTHON_PROCESSOR=ON`. See [Python Enricher Guide](python-enricher.md) for the input/return contract, examples, and development workflow.
 
 ## Testing
 

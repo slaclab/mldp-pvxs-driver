@@ -7,26 +7,24 @@
 // may be copied, modified, propagated, or distributed except according to
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
-#pragma once
+#include <enricher/impl/TimestampClampEnricher.h>
 
-#include <enricher/IPayloadEnricher.h>
-
-#include <string>
-#include <unordered_map>
-#include <vector>
+#include <algorithm>
+#include <cstdint>
 
 namespace mldp_pvxs_driver::enricher {
 
-class EnricherRegistry
+bool TimestampClampEnricher::enrich(util::bus::IDataBus::EventBatch& batch) noexcept
 {
-public:
-    explicit EnricherRegistry(const config::Config& root);
-    std::vector<IPayloadEnricherPtr> resolve(const config::Config& writer) const;
+    if (!util::bus::isTimeSeries(batch))
+        return true;
 
-private:
-    /// Base directory for logical Python enricher types; relative paths use the process CWD.
-    std::string                                          python_plugin_path_{"enrichers"};
-    std::unordered_map<std::string, IPayloadEnricherPtr> enrichers_;
-};
+    for (auto& frame : std::get<util::bus::TimeSeriesPayload>(batch.payload).frames)
+    {
+        for (auto& timestamp : frame.timestamps)
+            timestamp.nanoseconds = std::min<uint64_t>(timestamp.nanoseconds, 999999999U);
+    }
+    return true;
+}
 
 } // namespace mldp_pvxs_driver::enricher

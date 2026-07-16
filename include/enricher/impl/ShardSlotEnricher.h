@@ -9,35 +9,35 @@
 //////////////////////////////////////////////////////////////////////////////
 #pragma once
 
-#ifdef BUILD_PYTHON_PROCESSOR
-
 #include <enricher/EnricherFactory.h>
 
-struct _object;
-using PyObject = _object;
+#include <cstdint>
+#include <random>
+#include <string>
+#include <unordered_map>
 
 namespace mldp_pvxs_driver::enricher {
 
-/** Executes a Python module's enrich(batch) function for each payload. */
-class PythonEnricher final : public IPayloadEnricher
+class ShardSlotEnricher final : public IPayloadEnricher
 {
-    REGISTER_ENRICHER("python-enricher", PythonEnricher)
+    REGISTER_ENRICHER("shard-slot", ShardSlotEnricher)
 
 public:
-    explicit PythonEnricher(const config::Config& config);
-    ~PythonEnricher() override;
+    explicit ShardSlotEnricher(const config::Config& config);
 
     void configure(const config::Config& config) override;
     bool enrich(util::bus::IDataBus::EventBatch& batch) noexcept override;
 
-    std::string enricherType() const override { return python_enricher_type_; }
+    std::string enricherType() const override
+    {
+        return "shard-slot";
+    }
 
 private:
-    PyObject*   module_{nullptr};
-    PyObject*   enrich_function_{nullptr};
-    std::string python_enricher_type_{"python-enricher"};
+    std::size_t                               num_shards_{6};
+    std::size_t                               next_shard_{0};
+    std::mt19937                              rng_{std::random_device{}()};
+    std::unordered_map<std::string, uint16_t> slots_;
 };
 
 } // namespace mldp_pvxs_driver::enricher
-
-#endif // BUILD_PYTHON_PROCESSOR
