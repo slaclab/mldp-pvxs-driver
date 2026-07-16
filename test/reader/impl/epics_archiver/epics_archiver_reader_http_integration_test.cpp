@@ -265,8 +265,8 @@ TEST(EpicsArchiverReaderHttpIntegrationTest, FetchesMixedTypedPvSetUsingPvSuffix
     }
 }
 
-// Verifies published batches are split by historical sample timestamps and still include the 'to' query.
-TEST(EpicsArchiverReaderHttpIntegrationTest, SplitsPublishedBatchesByHistoricalSampleTime)
+// Verifies configured sample-count batching and the optional 'to' query parameter.
+TEST(EpicsArchiverReaderHttpIntegrationTest, SplitsPublishedBatchesByConfiguredSampleCount)
 {
     MockArchiverPbHttpServer::GenerationConfig gen_cfg;
     gen_cfg.min_events_per_second = 4;
@@ -288,6 +288,7 @@ TEST(EpicsArchiverReaderHttpIntegrationTest, SplitsPublishedBatchesByHistoricalS
                              R"("
         start-date: "2026-02-25T08:00:00.000Z"
         end-date: "2026-02-25T08:00:05.000Z"
+        pv-samples-per-batch: 4
         pvs:
           - name: "TEST:PV:DOUBLE"
     )";
@@ -295,6 +296,7 @@ TEST(EpicsArchiverReaderHttpIntegrationTest, SplitsPublishedBatchesByHistoricalS
     auto reader_cfg = makeConfigFromYaml(yaml);
     auto reader = std::make_unique<EpicsArchiverReader>(bus, nullptr, reader_cfg);
     ASSERT_TRUE(waitForMockRequestStartAndCompletion(server, std::chrono::seconds(2)));
+    ASSERT_TRUE(waitForAtLeastPublishedBatches(*bus, 5u, std::chrono::seconds(2)));
     EXPECT_EQ(reader->name(), "archiver-http-batch-split");
 
     const auto req = server.lastRequest();
@@ -302,48 +304,33 @@ TEST(EpicsArchiverReaderHttpIntegrationTest, SplitsPublishedBatchesByHistoricalS
     EXPECT_EQ(*req.to, "2026-02-25T08:00:05.000Z");
 
     const auto batches = bus->snapshot();
-    ASSERT_GT(batches.size(), 1u);
+    ASSERT_EQ(batches.size(), 5u);
 
-    size_t   total_events = 0u;
     uint64_t prev_epoch = 0u;
     uint64_t prev_nano = 0u;
     bool     first = true;
 
     for (const auto& batch : batches)
     {
-        ASSERT_FALSE(asTimeSeries(batch).frames.empty());
-        const auto& first_frame = asTimeSeries(batch).frames.front();
-        const auto& last_frame = asTimeSeries(batch).frames.back();
-        ASSERT_FALSE(first_frame.timestamps.empty());
-        ASSERT_FALSE(last_frame.timestamps.empty());
-        const auto first_epoch_s = first_frame.timestamps[0].epoch_seconds;
-        const auto first_nano_s  = first_frame.timestamps[0].nanoseconds;
-        const auto last_epoch_s  = last_frame.timestamps[0].epoch_seconds;
-        const auto last_nano_s   = last_frame.timestamps[0].nanoseconds;
+        EXPECT_EQ(getRootSourceName(batch), "TEST:PV:DOUBLE");
+        ASSERT_EQ(asTimeSeries(batch).frames.size(), 1u);
 
-        const uint64_t first_ns = first_epoch_s * 1'000'000'000ULL + first_nano_s;
-        const uint64_t last_ns  = last_epoch_s * 1'000'000'000ULL + last_nano_s;
-        EXPECT_LE(last_ns - first_ns, 1'000'000'000ULL);
-
-        for (const auto& frame : asTimeSeries(batch).frames)
+        const auto& frame = asTimeSeries(batch).frames[0];
+        ASSERT_EQ(frame.timestamps.size(), 4u);
+        for (const auto& timestamp : frame.timestamps)
         {
-            ASSERT_FALSE(frame.timestamps.empty());
-            total_events++;
-            const auto ts_epoch = frame.timestamps[0].epoch_seconds;
-            const auto ts_nano  = frame.timestamps[0].nanoseconds;
             if (!first)
             {
                 const bool nondecreasing =
-                    (ts_epoch > prev_epoch) || (ts_epoch == prev_epoch && ts_nano >= prev_nano);
+                    (timestamp.epoch_seconds > prev_epoch) ||
+                    (timestamp.epoch_seconds == prev_epoch && timestamp.nanoseconds >= prev_nano);
                 EXPECT_TRUE(nondecreasing);
             }
-            prev_epoch = ts_epoch;
-            prev_nano = ts_nano;
+            prev_epoch = timestamp.epoch_seconds;
+            prev_nano = timestamp.nanoseconds;
             first = false;
         }
     }
-
-    EXPECT_EQ(total_events, 20u);
 }
 
 // Verifies destroying the reader during a long PB/HTTP download cancels the in-flight HTTP stream.
