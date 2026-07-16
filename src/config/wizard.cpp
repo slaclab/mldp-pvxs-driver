@@ -205,7 +205,6 @@ std::string generateYaml(const WizardState& st)
                 }
                 o << ind(3) << "connect-timeout-sec: " << r.connect_timeout_sec << "\n";
                 o << ind(3) << "total-timeout-sec: " << r.total_timeout_sec << "\n";
-                o << ind(3) << "batch-duration-sec: " << r.batch_duration_sec << "\n";
                 o << ind(3) << "tls-verify-peer: " << r.tls_verify_peer << "\n";
                 o << ind(3) << "tls-verify-host: " << r.tls_verify_host << "\n";
             }
@@ -498,7 +497,6 @@ void loadFromConfig(const std::string& path, WizardState& st)
                     r.lookback_sec = std::to_string(inst.getInt("lookback-sec", 0));
                     r.connect_timeout_sec = std::to_string(inst.getInt("connect-timeout-sec", 30));
                     r.total_timeout_sec = std::to_string(inst.getInt("total-timeout-sec", 300));
-                    r.batch_duration_sec = std::to_string(inst.getInt("batch-duration-sec", 1));
                     r.tls_verify_peer = inst.getBool("tls-verify-peer", true) ? "true" : "false";
                     r.tls_verify_host = inst.getBool("tls-verify-host", true) ? "true" : "false";
                 }

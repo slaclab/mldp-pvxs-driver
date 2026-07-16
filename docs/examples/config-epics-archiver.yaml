@@ -25,7 +25,6 @@ reader:
       end-date:   "2026-01-02T00:00:00Z"
       connect-timeout-sec: 30
       total-timeout-sec: 600    # 10 minutes for large windows
-      batch-duration-sec: 1     # split output into 1-second batches
       tls-verify-peer: true
       tls-verify-host: true
       pvs:
@@ -41,9 +40,21 @@ reader:
       lookback-sec: 10          # request last 10 seconds of data each poll
       connect-timeout-sec: 30
       total-timeout-sec: 0      # infinite — allow long-running streaming sessions
-      batch-duration-sec: 1
       pvs:
         - name: FACET:DL1:SBEN:1:BDES
+
+    # --- Sample-count batching (historical_once) ---
+    # Accumulate 10 samples per PV before submitting; flush any incomplete
+    # batch after 5 seconds if the sample limit is not yet reached.
+    - name: archiver_batched
+      hostname: archiver.example.com:11200
+      mode: historical_once
+      start-date: "2026-01-01T00:00:00Z"
+      end-date:   "2026-01-02T00:00:00Z"
+      pv-samples-per-batch: 10      # submit after 10 samples per PV
+      batch-flush-interval-ms: 5000 # also flush after 5 s if batch not full
+      pvs:
+        - name: SITE:SYS:BEAM_ENERGY
 
 metrics:
   endpoint: "0.0.0.0:9464"

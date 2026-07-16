@@ -126,7 +126,6 @@ reader:
       end-date:   "2026-01-02T00:00:00Z"
       connect-timeout-sec: 30
       total-timeout-sec: 600    # 10 minutes for large windows
-      batch-duration-sec: 1     # split output into 1-second batches
       tls-verify-peer: true
       tls-verify-host: true
       pvs:
@@ -142,7 +141,6 @@ reader:
       lookback-sec: 10          # request last 10 seconds of data each poll
       connect-timeout-sec: 30
       total-timeout-sec: 0      # infinite — allow long-running streaming sessions
-      batch-duration-sec: 1
       pvs:
         - name: FACET:DL1:SBEN:1:BDES
 

@@ -782,16 +782,6 @@ static Component MakeEpicsReaderForm(EpicsReaderConfig* cfg, PanelAppState* stat
                                 on_change("total_timeout_sec");
                             },
                             on_focus_fn("total_timeout_sec"));
-    auto f_bds = InputField("Batch Duration (s)", &cfg->batch_duration_sec, [](const std::string& s)
-                            {
-                                return isPositiveInt(s) ? "" : "Must be positive int";
-                            },
-                            [on_change]
-                            {
-                                on_change("batch_duration_sec");
-                            },
-                            on_focus_fn("batch_duration_sec"));
-
     // tls booleans stored as shared_ptr
     auto tls_peer = std::make_shared<bool>(cfg->tls_verify_peer == "true");
     auto tls_host = std::make_shared<bool>(cfg->tls_verify_host == "true");
@@ -813,7 +803,6 @@ static Component MakeEpicsReaderForm(EpicsReaderConfig* cfg, PanelAppState* stat
         look_maybe,
         f_cto,
         f_tto,
-        f_bds,
         tls_sync,
     });
     auto arch_maybe = Maybe(arch_fields, [rtype_idx]
