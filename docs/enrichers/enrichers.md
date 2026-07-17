@@ -17,6 +17,7 @@ enrichers:
   shard-slots:
     type: shard-slot
     num-shards: 6
+    db-path: /var/lib/mldp/shard_slots.db
 
 writer:
   mldp:
@@ -85,7 +86,7 @@ See [Python Enricher Guide](python-enricher.md) for the full contract and exampl
 | `static-metadata` | `metadata` map | All variants | [static-metadata](builtin/static-metadata.md) |
 | `column-attributes` | `column-pattern`, `attributes` map | Time series only | [column-attributes](builtin/column-attributes.md) |
 | `timestamp-clamp` | None | Time series only | [timestamp-clamp](builtin/timestamp-clamp.md) |
-| `shard-slot` | Optional `num-shards` | Time series only | [shard-slot](builtin/shard-slot.md) |
+| `shard-slot` | Required `db-path`; optional `num-shards` | Time series only | [shard-slot](builtin/shard-slot.md) |
 
 `column-attributes`, `timestamp-clamp`, and `shard-slot` pass non-time-series variants unchanged. `static-metadata` is the appropriate generic enricher when metadata must accompany source-metadata, configuration, or configuration-activation batches.
 
