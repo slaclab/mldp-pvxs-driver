@@ -18,22 +18,22 @@ namespace mldp_pvxs_driver::processor {
 
 namespace {
 
-using Registry = std::unordered_map<std::string, ChannelProcessorFactory::ProcessorFactory>;
+    using Registry = std::unordered_map<std::string, ChannelProcessorFactory::ProcessorFactory>;
 
-Registry& registry()
-{
-    static Registry instance;
-    return instance;
-}
+    Registry& registry()
+    {
+        static Registry instance;
+        return instance;
+    }
 
 } // namespace
 
 std::vector<IChannelProcessorUPtr> ChannelProcessorFactory::create(
-    const std::string&                      type,
-    const config::Config&                   cfg,
-    std::shared_ptr<util::bus::IDataBus>    bus,
-    std::shared_ptr<metrics::Metrics>       metrics,
-    std::shared_ptr<BS::light_thread_pool>  thread_pool)
+    const std::string&                     type,
+    const config::Config&                  cfg,
+    std::shared_ptr<util::bus::IDataBus>   bus,
+    std::shared_ptr<metrics::Metrics>      metrics,
+    std::shared_ptr<BS::light_thread_pool> thread_pool)
 {
     auto& factory = lookup(type);
     return factory(cfg, std::move(bus), std::move(metrics), std::move(thread_pool));
@@ -43,6 +43,11 @@ bool ChannelProcessorFactory::registerType(const std::string& type, ProcessorFac
 {
     registry()[type] = std::move(factory);
     return true;
+}
+
+bool ChannelProcessorFactory::isRegistered(const std::string& type)
+{
+    return registry().contains(type);
 }
 
 ChannelProcessorFactory::ProcessorFactory& ChannelProcessorFactory::lookup(const std::string& type)

@@ -10,10 +10,12 @@
 
 #pragma once
 
+#include <enricher/IPayloadEnricher.h>
 #include <util/bus/IDataBus.h>
 
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace mldp_pvxs_driver::writer {
 
@@ -124,6 +126,9 @@ public:
     {
         return false;
     }
+
+    /** Install the ordered shared enrichers used by queued writer implementations. */
+    virtual void setEnrichers(std::vector<enricher::IPayloadEnricherPtr>) {}
 };
 
 /// Convenience alias for unique ownership of a writer.

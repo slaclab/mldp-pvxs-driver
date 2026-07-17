@@ -10,25 +10,26 @@
 
 #include "util/log/Logger.h"
 #include <controller/MLDPPVXSController.h>
-#include <processor/ChannelProcessorFactory.h>
 #include <future>
-#include <thread>
 #include <memory>
+#include <processor/ChannelProcessorFactory.h>
 #include <query/QueryableFactory.h>
 #include <query/impl/mldp/MLDPAnnotationQueryClient.h>
 #include <query/impl/mldp/MLDPQueryClient.h>
 #include <reader/ReaderFactory.h>
+#include <thread>
 #include <util/StringFormat.h>
 #include <writer/WriterFactory.h>
 
-#include <chrono>
-#include <functional>
 #include <algorithm>
+#include <chrono>
+#include <filesystem>
+#include <functional>
 #include <iterator>
 #include <sstream>
 #include <stdexcept>
-#include <unordered_set>
 #include <unordered_map>
+#include <unordered_set>
 
 using namespace mldp_pvxs_driver::metrics;
 using namespace mldp_pvxs_driver::controller;
@@ -79,7 +80,7 @@ static void prepareQueryables(const MLDPPVXSControllerConfig&                   
 }
 
 void validateProcessorOutputSourceCollisions(
-    const std::unordered_set<std::string>& reader_names,
+    const std::unordered_set<std::string>&                                 reader_names,
     const std::vector<mldp_pvxs_driver::processor::IChannelProcessorUPtr>& processors)
 {
     for (const auto& processor : processors)
@@ -119,7 +120,7 @@ std::string describeCycle(const std::vector<std::string>& stack, const std::stri
 void validateProcessorGraphAcyclic(
     const std::vector<mldp_pvxs_driver::processor::IChannelProcessorUPtr>& processors)
 {
-    std::unordered_map<std::string, std::vector<std::string>> graph;
+    std::unordered_map<std::string, std::vector<std::string>>        graph;
     std::unordered_map<std::string, std::unordered_set<std::string>> outputs_by_processor;
 
     for (const auto& processor : processors)
@@ -142,9 +143,12 @@ void validateProcessorGraphAcyclic(
             }
 
             const auto& inputs = consumer->inputSourceNames();
-            const auto depends_on_producer = std::any_of(
+            const auto  depends_on_producer = std::any_of(
                 inputs.begin(), inputs.end(),
-                [&](const std::string& input) { return producer_outputs.find(input) != producer_outputs.end(); });
+                [&](const std::string& input)
+                {
+                    return producer_outputs.find(input) != producer_outputs.end();
+                });
             if (depends_on_producer)
             {
                 graph[producer->name()].push_back(consumer->name());
@@ -160,7 +164,7 @@ void validateProcessorGraphAcyclic(
     };
 
     std::unordered_map<std::string, VisitState> state;
-    std::vector<std::string> stack;
+    std::vector<std::string>                    stack;
 
     std::function<void(const std::string&)> dfs = [&](const std::string& node)
     {
@@ -200,7 +204,8 @@ std::shared_ptr<MLDPPVXSController> MLDPPVXSController::create(const config::Con
 }
 
 MLDPPVXSController::MLDPPVXSController(const config::Config& config)
-    : config_(config)
+    : raw_config_(config)
+    , config_(config)
     , logger_(makeControllerLogger(config_.name()))
     , thread_pool_(std::make_shared<BS::light_thread_pool>(1)) // resized in start()
     , metrics_(std::make_shared<metrics::Metrics>(*config_.metricsConfig(), config_.name()))
@@ -253,6 +258,9 @@ void MLDPPVXSController::start()
     // Register queryable factories before any worker thread runs.
     prepareQueryables(config_, metrics_);
 
+    // Global enrichers are constructed once and shared by every referenced writer.
+    enricher_registry_ = std::make_unique<enricher::EnricherRegistry>(raw_config_);
+
     // Resize the fan-out thread pool to match the number of writer instances.
     const std::size_t numWriters = config_.writerEntries().size();
     thread_pool_ = std::make_shared<BS::light_thread_pool>(
@@ -266,6 +274,7 @@ void MLDPPVXSController::start()
     for (const auto& [type, writerNode] : config_.writerEntries())
     {
         auto w = WriterFactory::create(type, writerNode, metrics_);
+        w->setEnrichers(enricher_registry_->resolve(writerNode));
         w->start();
         writers_.push_back(std::move(w));
     }
@@ -286,7 +295,31 @@ void MLDPPVXSController::start()
         processor_pools_.push_back(pool);
         ++proc_idx;
 
-        auto batch = processor::ChannelProcessorFactory::create(type, processorNode, shared_from_this(), metrics_, std::move(pool));
+        auto resolved_type = type;
+        auto resolved_node = processorNode;
+#ifdef BUILD_PYTHON_PROCESSOR
+        if (!processor::ChannelProcessorFactory::isRegistered(type))
+        {
+            resolved_type = "python-script";
+            resolved_node = config::Config::configFromYamlString(config::ryml::emitrs_yaml<std::string>(processorNode.raw()));
+            if (!resolved_node.hasChild("type"))
+            {
+                const auto children = resolved_node.namedSubConfig();
+                if (children.size() != 1)
+                    throw std::runtime_error("could not copy Python processor configuration");
+                resolved_node = children.front().second;
+            }
+            auto root = resolved_node.mutableRaw();
+            if (!root.has_child("script-path"))
+                root[root.to_arena("script-path")].create();
+            auto       child = root[root.to_arena("script-path")];
+            const auto script_path = processorNode.hasChild("script-path")
+                                         ? std::filesystem::path{processorNode.get("script-path")}
+                                         : std::filesystem::path{config_.algorithmsPluginPath()} / (type + ".py");
+            child << child.to_arena(script_path.string());
+        }
+#endif
+        auto batch = processor::ChannelProcessorFactory::create(resolved_type, resolved_node, shared_from_this(), metrics_, std::move(pool));
         processors_.insert(processors_.end(),
                            std::make_move_iterator(batch.begin()),
                            std::make_move_iterator(batch.end()));
@@ -340,7 +373,10 @@ void MLDPPVXSController::start()
 
     // Start consumer thread BEFORE readers so that onReaderCompleted → stop()
     // can always find a joinable consumer_thread_.
-    consumer_thread_ = std::thread([this] { consumerLoop(); });
+    consumer_thread_ = std::thread([this]
+                                   {
+                                       consumerLoop();
+                                   });
 
     infof(*logger_, "Controller started");
 }
@@ -417,27 +453,28 @@ void MLDPPVXSController::onReaderCompleted(const std::string& reader_name)
     }
 
     std::thread([self = shared_from_this(), reader_name]
-    {
-        if (!self->removeCompletedReader(reader_name))
-        {
-            return;
-        }
+                {
+                    if (!self->removeCompletedReader(reader_name))
+                    {
+                        return;
+                    }
 
-        if (self->running_.load())
-        {
-            self->stop();
-        }
-    }).detach();
+                    if (self->running_.load())
+                    {
+                        self->stop();
+                    }
+                })
+        .detach();
 }
 
 bool MLDPPVXSController::removeCompletedReader(const std::string& reader_name)
 {
     std::lock_guard<std::mutex> lock(readers_mutex_);
-    auto it = std::find_if(readers_.begin(), readers_.end(),
-                           [&](const auto& reader)
-                           {
+    auto                        it = std::find_if(readers_.begin(), readers_.end(),
+                                                  [&](const auto& reader)
+                                                  {
                                return reader != nullptr && reader->name() == reader_name;
-                           });
+                                                  });
     if (it == readers_.end())
     {
         debugf(*logger_, "Ignoring completion for unknown reader '{}'", reader_name);
@@ -495,7 +532,10 @@ bool MLDPPVXSController::push(EventBatch batch_values)
     // (reader_name matches a processor's outputReaderName) to prevent infinite recursion.
     const bool from_processor = std::any_of(
         processors_.begin(), processors_.end(),
-        [&](const auto& p) { return p->outputReaderName() == batch_values.reader_name; });
+        [&](const auto& p)
+        {
+            return p->outputReaderName() == batch_values.reader_name;
+        });
 
     if (!from_processor)
     {
@@ -518,15 +558,16 @@ bool MLDPPVXSController::push(EventBatch batch_values)
     // Enqueue with blocking backpressure — never drops while running_.
     {
         std::unique_lock<std::mutex> lk(queue_mutex_);
-        const std::size_t depthBefore = queue_.size();
+        const std::size_t            depthBefore = queue_.size();
         if (depthBefore >= config_.queueCapacity())
         {
             debugf(*logger_, "push() blocking — queue full ({}/{}) for source '{}'",
                    depthBefore, config_.queueCapacity(), rootSource);
         }
-        queue_not_full_.wait(lk, [this] {
-            return queue_.size() < config_.queueCapacity() || !running_.load();
-        });
+        queue_not_full_.wait(lk, [this]
+                             {
+                                 return queue_.size() < config_.queueCapacity() || !running_.load();
+                             });
         if (!running_.load())
         {
             debugf(*logger_, "push() unblocked by stop — not running, source '{}'", rootSource);
@@ -538,7 +579,7 @@ bool MLDPPVXSController::push(EventBatch batch_values)
         if (metrics_)
             metrics_->setControllerQueueDepth(static_cast<double>(depthAfter));
         {
-            const auto now = std::chrono::steady_clock::now();
+            const auto                  now = std::chrono::steady_clock::now();
             std::lock_guard<std::mutex> plk(push_log_mutex_);
             if (now - last_push_log_time_ >= std::chrono::seconds(10))
             {
@@ -569,9 +610,10 @@ void MLDPPVXSController::consumerLoop()
         std::deque<EventBatch> local;
         {
             std::unique_lock<std::mutex> lk(queue_mutex_);
-            queue_not_empty_.wait(lk, [this] {
-                return !queue_.empty() || !running_.load();
-            });
+            queue_not_empty_.wait(lk, [this]
+                                  {
+                                      return !queue_.empty() || !running_.load();
+                                  });
 
             if (!running_.load() && queue_.empty())
                 break;
@@ -595,7 +637,7 @@ void MLDPPVXSController::consumerLoop()
         }
 
         {
-            const auto now = std::chrono::steady_clock::now();
+            const auto                  now = std::chrono::steady_clock::now();
             std::lock_guard<std::mutex> lk(queue_log_mutex_);
             if (now - last_queue_log_time_ >= std::chrono::seconds(10))
             {

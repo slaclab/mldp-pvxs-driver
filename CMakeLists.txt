@@ -128,6 +128,7 @@ find_package(OpenSSL REQUIRED)
 find_package(gRPC REQUIRED)
 find_package(Threads REQUIRED)
 find_package(CURL REQUIRED)
+find_package(SQLite3 REQUIRED)
 
 # ---- HDF5 (optional writer back-end) ----
 if(MLDP_PVXS_ENABLE_HDF5)
@@ -511,6 +512,12 @@ add_library(lib${PROJECT_NAME}
     "${CMAKE_CURRENT_SOURCE_DIR}/src/config/Config.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/config/ConfigSource.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/config/ConfigOverride.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/enricher/EnricherFactory.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/enricher/EnricherRegistry.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/enricher/impl/StaticMetadataEnricher.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/enricher/impl/ColumnAttributesEnricher.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/enricher/impl/TimestampClampEnricher.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/enricher/impl/ShardSlotEnricher.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/processor/ChannelProcessorFactory.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/processor/ChannelProcessor.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/processor/InputBuffer.cpp"
@@ -577,7 +584,8 @@ if(BUILD_PYTHON_PROCESSOR)
     find_package(Python3 REQUIRED COMPONENTS Development)
     target_sources(lib${PROJECT_NAME} PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/src/processor/PythonScriptDirectoryLoader.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/processor/impl/PythonAlgorithm.cpp")
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/processor/impl/PythonAlgorithm.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/enricher/PythonEnricher.cpp")
     target_link_libraries(lib${PROJECT_NAME} PRIVATE Python3::Python)
     target_compile_definitions(lib${PROJECT_NAME} PRIVATE BUILD_PYTHON_PROCESSOR=1)
 endif()
@@ -586,6 +594,7 @@ target_link_libraries(lib${PROJECT_NAME} PUBLIC
     lib${PROJECT_NAME}_proto
     Threads::Threads
     pvxs
+    SQLite::SQLite3
     epics-pvaclient
     epics-pvaccess
     epics-pvaccessca
@@ -678,6 +687,8 @@ if(MLDP_PVXS_DRIVER_TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/test/config/mldppvxs_controller_config_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/config/config_source_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/config/config_override_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/enricher/enricher_registry_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/enricher/payload_enricher_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/cli/config_printer_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/controller/mldppvxs_controller_mldp_writer_integration_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/controller/mldppvxs_controller_reader_lifecycle_test.cpp"
@@ -751,10 +762,14 @@ if(MLDP_PVXS_DRIVER_TESTS)
     endif()
 
     if(BUILD_PYTHON_PROCESSOR)
+        target_compile_definitions(lib${PROJECT_NAME} PRIVATE MLDP_PYTHON_ENRICHER_TEST_HOOKS=1)
         target_sources(${PROJECT_NAME}_test PRIVATE
             "${CMAKE_CURRENT_SOURCE_DIR}/test/processor/PythonAlgorithmTest.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/test/processor/PythonScriptDirectoryLoaderTest.cpp")
-        target_compile_definitions(${PROJECT_NAME}_test PRIVATE BUILD_PYTHON_PROCESSOR=1)
+            "${CMAKE_CURRENT_SOURCE_DIR}/test/processor/PythonScriptDirectoryLoaderTest.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/test/enricher/python_enricher_test.cpp")
+        target_compile_definitions(${PROJECT_NAME}_test PRIVATE
+            BUILD_PYTHON_PROCESSOR=1
+            MLDP_PYTHON_ENRICHER_TEST_HOOKS=1)
         target_link_libraries(${PROJECT_NAME}_test PRIVATE Python3::Python)
     endif()
 

@@ -151,7 +151,7 @@ TEST(MLDPPVXSControllerConfigTest, ParsesTlsCredentialsBlock)
     MLDPPVXSControllerConfig controllerCfg(cfg);
 
     ASSERT_EQ(1u, controllerCfg.writerEntries().size());
-    const auto mldpCfg = MLDPWriterConfig::parse(controllerCfg.writerEntries()[0].second);
+    const auto  mldpCfg = MLDPWriterConfig::parse(controllerCfg.writerEntries()[0].second);
     const auto& creds = mldpCfg.poolConfig.credentials();
     EXPECT_EQ(MLDPGrpcPoolConfig::Credentials::Type::Ssl, creds.type);
     EXPECT_EQ("CERTDATA", creds.ssl_options.pem_cert_chain);
@@ -225,7 +225,7 @@ reader: []
     ASSERT_TRUE(controllerCfg.valid());
     ASSERT_EQ(1u, controllerCfg.writerEntries().size());
     const auto  mldpCfg = MLDPWriterConfig::parse(controllerCfg.writerEntries()[0].second);
-    const auto& pool    = mldpCfg.poolConfig;
+    const auto& pool = mldpCfg.poolConfig;
     EXPECT_EQ("https://mldp-ingestion.example:50051", pool.ingestionUrl());
     EXPECT_EQ("https://mldp-query.example:50052", pool.queryUrl());
 }
@@ -252,7 +252,7 @@ reader: []
     ASSERT_TRUE(controllerCfg.valid());
     ASSERT_EQ(1u, controllerCfg.writerEntries().size());
     const auto  mldpCfg = MLDPWriterConfig::parse(controllerCfg.writerEntries()[0].second);
-    const auto& pool    = mldpCfg.poolConfig;
+    const auto& pool = mldpCfg.poolConfig;
     EXPECT_EQ("https://mldp-ingestion.example:50051", pool.ingestionUrl());
     EXPECT_TRUE(pool.queryUrl().empty());
 }
@@ -275,6 +275,32 @@ reader: []
 
     MLDPPVXSControllerConfig controllerCfg(makeConfigFromYaml(yaml));
     EXPECT_TRUE(controllerCfg.processorEntries().empty());
+    EXPECT_TRUE(controllerCfg.algorithmsPluginPath().empty());
+}
+
+TEST(MLDPPVXSControllerConfigTest, ParsesProcessorPluginMapping)
+{
+    const auto               cfg = makeConfigFromYaml(R"(
+processors:
+  algorithms-plugin-path: /opt/mldp/algorithms
+  calculate:
+    type: beam_calculation
+)");
+    MLDPPVXSControllerConfig controllerCfg(cfg);
+    ASSERT_EQ(1U, controllerCfg.processorEntries().size());
+    EXPECT_EQ("beam_calculation", controllerCfg.processorEntries().front().first);
+    EXPECT_EQ("/opt/mldp/algorithms", controllerCfg.algorithmsPluginPath());
+}
+
+TEST(MLDPPVXSControllerConfigTest, DefaultsProcessorPluginPath)
+{
+    const auto               cfg = makeConfigFromYaml(R"(
+processors:
+  calculate:
+    type: beam_calculation
+)");
+    MLDPPVXSControllerConfig controllerCfg(cfg);
+    EXPECT_EQ("algorithms", controllerCfg.algorithmsPluginPath());
 }
 
 TEST(MLDPPVXSControllerConfigTest, ThrowsWhenProviderNameMissing)
@@ -431,6 +457,5 @@ reader: []
     const auto cfg = makeConfigFromYaml(yaml);
     EXPECT_THROW(static_cast<void>(MLDPPVXSControllerConfig(cfg)), MLDPPVXSControllerConfig::Error);
 }
-
 
 } // namespace mldp_pvxs_driver::controller

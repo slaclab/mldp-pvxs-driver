@@ -171,6 +171,10 @@ Key                  | Default    | Required | Description
 `metadata`           | *(empty)*  | No       | Static key-value metadata attached to each batch
 `provenance`         | *(empty)*  | No       | Key-value provenance metadata (prefixed with `provenance.`)
 
+### Shard-slot migration
+
+The reader no longer accepts `num-shards` and no longer stamps `shardSlot` attributes. Configure the global `shard-slot` enricher and reference it from the target MLDP writer instead. This makes shard assignment consistent when multiple writer destinations consume the same reader output. Shard mappings live for the process lifetime; they reset after restart, and changing `num-shards` may place new samples for an existing PV on different MongoDB shards than historical samples.
+
 ## Testing
 
 Tests are in `test/reader/impl/hdf5_bsas_gen1/hdf5_bsas_gen1_reader_test.cpp`.

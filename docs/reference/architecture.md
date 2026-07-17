@@ -29,6 +29,7 @@ flowchart TB
     IDataBus(["IDataBus<br/>(Push Interface)"])
     QueryableFactory["QueryableFactory<br/>(Out-of-Band Query Registry)"]
     WriterFactory["WriterFactory<br/>(Static Registration)"]
+    EnricherRegistry["EnricherRegistry<br/>(Global Named Plugins)"]
 
     subgraph Controller["MLDPPVXSController — IDataBus + IReaderLifecycle"]
         direction TB
@@ -79,6 +80,7 @@ flowchart TB
     Controller -. prepareQueryables .-> QueryableFactory
 
     W0 & W1 & WN --> WriterFactory
+    EnricherRegistry --> WriterFactory
     WriterFactory --> WR6
     WriterFactory --> WR1 & WR2 & WR3 & WR4 & WR5
 
@@ -261,6 +263,14 @@ processors:
 
 → [Python Processor Documentation](../processors/python-processor.md)
 → [Full `processors:` YAML Reference](../guides/configuration.md#processors-block)
+
+## Payload Enrichment Layer
+
+The controller builds one `EnricherRegistry` from top-level `enrichers:` declarations before it starts writers. Each queued writer resolves its ordered `enrichers:` name list from that catalog. Names shared by writers point to the same stateful instance, while different names create independent instances.
+
+`BaseQueuedWriter` applies its chain after the running check and before the writer-specific `toItems()` conversion. It protects chain traversal only; conversion, queue/back-pressure waits, and worker processing remain independent. Each `IPayloadEnricher` serializes its own `enrich()` calls so sharing an enricher is safe without serializing unrelated writer queues.
+
+The built-in C++ enrichers cover static batch metadata, time-series column attributes, timestamp clamping, and shard-slot assignment. The optional `python-enricher` uses the existing CPython build gate and receives a compact dictionary view of each bus payload type. See [global enricher configuration](../guides/configuration.md#global-enrichers-and-writer-chains).
 
 ## Push Model Architecture
 

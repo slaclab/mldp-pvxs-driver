@@ -12,20 +12,16 @@
 
 #include <controller/MLDPPVXSController.h>
 
-#include <grpcpp/security/server_credentials.h>
-#include <grpcpp/server.h>
-#include <grpcpp/server_builder.h>
-#include <grpcpp/server_context.h>
-#include <ingestion.grpc.pb.h>
-
 #include "../common/MldpQueryTestUtils.h"
 #include "../config/test_config_helpers.h"
 #include "../mock/BsasGen1HDF5Mock.h"
 
-#include <atomic>
+#include <sqlite3.h>
+
+#include <array>
 #include <chrono>
 #include <filesystem>
-#include <mutex>
+#include <iomanip>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -44,57 +40,6 @@ namespace {
 
 using ColumnBuckets = std::unordered_map<std::string, std::vector<dp::service::common::DataValues>>;
 using Attributes = google::protobuf::RepeatedPtrField<dp::service::common::Attribute>;
-
-// ---------------------------------------------------------------------------
-// Fake gRPC ingestion service — captures IngestDataRequest messages
-// ---------------------------------------------------------------------------
-class CaptureIngestionService final
-    : public dp::service::ingestion::DpIngestionService::Service
-{
-public:
-    std::atomic<int>                                         request_count{0};
-    std::vector<dp::service::ingestion::IngestDataRequest>  captured;
-    std::mutex                                               mu;
-
-    grpc::Status registerProvider(
-        grpc::ServerContext*,
-        const dp::service::ingestion::RegisterProviderRequest* req,
-        dp::service::ingestion::RegisterProviderResponse*      resp) override
-    {
-        auto* r = resp->mutable_registrationresult();
-        r->set_providerid("test-provider-id");
-        r->set_providername(req->providername());
-        r->set_isnewprovider(true);
-        return grpc::Status::OK;
-    }
-
-    grpc::Status ingestDataStream(
-        grpc::ServerContext*,
-        grpc::ServerReader<dp::service::ingestion::IngestDataRequest>* reader,
-        dp::service::ingestion::IngestDataStreamResponse*) override
-    {
-        dp::service::ingestion::IngestDataRequest req;
-        while (reader->Read(&req))
-        {
-            request_count.fetch_add(1, std::memory_order_relaxed);
-            std::lock_guard<std::mutex> lk(mu);
-            captured.push_back(req);
-        }
-        return grpc::Status::OK;
-    }
-};
-
-bool waitForRequests(std::atomic<int>& counter, int target, std::chrono::milliseconds timeout)
-{
-    const auto deadline = std::chrono::steady_clock::now() + timeout;
-    while (std::chrono::steady_clock::now() < deadline)
-    {
-        if (counter.load(std::memory_order_relaxed) >= target)
-            return true;
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    return counter.load(std::memory_order_relaxed) >= target;
-}
 
 constexpr auto kQueryTimeout = std::chrono::seconds(20);
 constexpr auto kLookbackWindow = std::chrono::seconds(120);
@@ -312,6 +257,36 @@ protected:
     std::shared_ptr<mldp_pvxs_driver::controller::MLDPPVXSController> controller_;
 };
 
+std::string buildShardSlotYaml(const fs::path&    hdf5Path,
+                               const std::string& readerName,
+                               const std::string& dbPath,
+                               int                numShards)
+{
+    std::ostringstream yaml;
+    yaml << "enrichers:\n"
+         << "  sharding:\n"
+         << "    type: shard-slot\n"
+         << "    num-shards: " << numShards << "\n"
+         << "    db-path: " << dbPath << "\n"
+         << "writer:\n"
+         << "  mldp:\n"
+         << "    - name: mldp_shard\n"
+         << "      enrichers: [sharding]\n"
+         << "      mldp-pool:\n"
+         << "        provider-name: shard-test-provider\n"
+         << "        ingestion-url: dp-ingestion:50051\n"
+         << "        query-url: dp-query:50052\n"
+         << "        min-conn: 1\n"
+         << "        max-conn: 1\n"
+         << "reader:\n"
+         << "  hdf5-bsas-gen1:\n"
+         << "    - name: " << readerName << "\n"
+         << "      file-path: " << hdf5Path.string() << "\n"
+         << "      chunk-size: 1000\n"
+         << "      use-label-as-name: false\n";
+    return yaml.str();
+}
+
 } // namespace
 
 TEST_F(ControllerHDF5ProvenanceTest, ProvenanceFlowsFromHDF5ReaderThroughControllerToMLDP)
@@ -373,106 +348,200 @@ TEST_F(ControllerHDF5ProvenanceTest, MissingProvenanceDoesNotEmitExtraAttributes
 }
 
 // ---------------------------------------------------------------------------
-// shardSlot end-to-end: HDF5BsasGen1Reader → MLDPWriter → gRPC column attributes
+// shardSlot end-to-end via real MLDP services:
+// HDF5BsasGen1Reader → shard-slot enricher → MLDPWriter (dp-ingestion:50051)
+// Results verified by querying back from dp-query:50052.
 // ---------------------------------------------------------------------------
 
-TEST(HDF5BsasGen1ReaderToMLDPWriterTest, ShardSlotAppearsInGrpcColumnAttributes)
+TEST_F(ControllerHDF5ProvenanceTest, ShardSlotAppearsInStoredColumnAttributes)
 {
-    // Stand up a fake gRPC ingestion server on an OS-assigned port.
-    CaptureIngestionService service;
-    grpc::ServerBuilder     builder;
-    int                     port = 0;
-    builder.AddListeningPort("127.0.0.1:0", grpc::InsecureServerCredentials(), &port);
-    builder.RegisterService(&service);
-    std::unique_ptr<grpc::Server> server(builder.BuildAndStart());
-    ASSERT_TRUE(server);
-    ASSERT_GT(port, 0);
+    const std::string readerName  = makeUniquePrefix("shard_reader_");
+    const std::string floatPrefix = makeUniquePrefix("SHARD_FLOAT_");
+    const std::string intPrefix   = makeUniquePrefix("SHARD_INT_");
+    const std::string dbPath      = (tempDir_ / "shard_slot.db").string();
 
-    // Generate a small HDF5 mock file — 3 float cols, 2 int cols, 5 rows.
-    const auto tempDir  = std::filesystem::temp_directory_path() / "shard_slot_test";
-    std::filesystem::create_directories(tempDir);
-    const auto mockFile = (tempDir / "shard_slot.h5").string();
-
+    // 3 float + 2 int = 5 columns, all with unique names.
     BsasGen1HDF5Mock::Params params;
-    params.numFloatCols = 3;
-    params.numIntCols   = 2;
-    params.numRows      = 5;
-    params.baseEpoch    = static_cast<uint32_t>(
+    params.numFloatCols  = 3;
+    params.numIntCols    = 2;
+    params.numRows       = 5;
+    params.baseEpoch     = static_cast<uint32_t>(
         std::chrono::system_clock::to_time_t(std::chrono::system_clock::now()) - 5);
-    BsasGen1HDF5Mock::generate(mockFile, params);
+    params.floatColPrefix = floatPrefix;
+    params.intColPrefix   = intPrefix;
+    BsasGen1HDF5Mock::generate(mockFile_.string(), params);
 
-    // Wire HDF5BsasGen1Reader → MLDPWriter via controller config.
-    std::ostringstream yaml;
-    yaml << "writer:\n"
-         << "  mldp:\n"
-         << "    - name: mldp_shard\n"
-         << "      mldp-pool:\n"
-         << "        provider-name: shard_test_provider\n"
-         << "        ingestion-url: 127.0.0.1:" << port << "\n"
-         << "        query-url: localhost:" << port << "\n"
-         << "        min-conn: 1\n"
-         << "        max-conn: 1\n"
-         << "reader:\n"
-         << "  hdf5-bsas-gen1:\n"
-         << "    - name: shard_reader\n"
-         << "      file-path: " << mockFile << "\n"
-         << "      chunk-size: 1000\n"
-         << "      use-label-as-name: false\n";
-
-    const auto config = makeConfigFromYaml(yaml.str());
-    ASSERT_TRUE(config.valid()) << "Controller config invalid";
-
-    auto controller = mldp_pvxs_driver::controller::MLDPPVXSController::create(config);
-    ASSERT_TRUE(controller);
-    controller->start();
-
-    // All columns arrive in one IngestDataRequest per batch frame.
-    const bool got_requests =
-        waitForRequests(service.request_count, 1, std::chrono::milliseconds(5000));
-    EXPECT_TRUE(got_requests) << "Timed out waiting for ingestion requests";
-
-    controller->stop();
-    server->Shutdown();
-    std::filesystem::remove_all(tempDir);
-
-    std::vector<dp::service::ingestion::IngestDataRequest> captured;
+    // Build list of expected PV names (must match what the reader emits).
+    std::vector<std::string> pvNames;
+    for (std::size_t i = 0; i < params.numFloatCols; ++i)
     {
-        std::lock_guard<std::mutex> lk(service.mu);
-        captured = service.captured;
+        std::ostringstream oss;
+        oss << floatPrefix << std::setfill('0') << std::setw(4) << i;
+        pvNames.push_back(oss.str());
     }
-    ASSERT_FALSE(captured.empty()) << "No IngestDataRequest captured";
-
-    const auto hasAttr =
-        [](const google::protobuf::RepeatedPtrField<dp::service::common::Attribute>& attrs,
-           const std::string& key) -> bool {
-            for (const auto& a : attrs)
-                if (a.name() == key) return true;
-            return false;
-        };
-
-    // Every captured column must carry a "shardSlot" attribute in its metadata.
-    int checked = 0;
-    for (const auto& req : captured)
+    for (std::size_t i = 0; i < params.numIntCols; ++i)
     {
-        const auto& df = req.ingestiondataframe();
-        for (int i = 0; i < df.doublecolumns_size(); ++i)
+        std::ostringstream oss;
+        oss << intPrefix << std::setfill('0') << std::setw(2) << i;
+        pvNames.push_back(oss.str());
+    }
+
+    const auto config = makeConfigFromYaml(
+        buildShardSlotYaml(mockFile_, readerName, dbPath, 6));
+    ASSERT_TRUE(config.valid());
+
+    controller_ = mldp_pvxs_driver::controller::MLDPPVXSController::create(config);
+    ASSERT_TRUE(controller_);
+    controller_->start();
+    std::this_thread::sleep_for(kStartupDelay);
+
+    const auto columns = queryAndCollectColumns(pvNames, kQueryTimeout, kLookbackWindow);
+    ASSERT_TRUE(columns.has_value()) << "Failed to query columns from dp-query:50052";
+
+    controller_->stop();
+    controller_.reset();
+
+    // Every returned bucket must carry a "shardSlot" attribute.
+    for (const auto& pvName : pvNames)
+    {
+        const auto it = columns->find(pvName);
+        if (it == columns->end()) continue;
+        for (const auto& bucket : it->second)
         {
-            EXPECT_TRUE(hasAttr(df.doublecolumns(i).metadata().attributes(), "shardSlot"))
-                << "doublecolumns[" << i << "] missing shardSlot attribute";
-            ++checked;
-        }
-        for (int i = 0; i < df.floatcolumns_size(); ++i)
-        {
-            EXPECT_TRUE(hasAttr(df.floatcolumns(i).metadata().attributes(), "shardSlot"))
-                << "floatcolumns[" << i << "] missing shardSlot attribute";
-            ++checked;
-        }
-        for (int i = 0; i < df.int32columns_size(); ++i)
-        {
-            EXPECT_TRUE(hasAttr(df.int32columns(i).metadata().attributes(), "shardSlot"))
-                << "int32columns[" << i << "] missing shardSlot attribute";
-            ++checked;
+            const auto& attrs = metadataFromValues(bucket).attributes();
+            EXPECT_TRUE(hasAttribute(attrs, "shardSlot", "") || [&] {
+                for (const auto& a : attrs)
+                    if (a.name() == "shardSlot") return true;
+                return false;
+            }()) << "Column '" << pvName << "' missing shardSlot attribute";
         }
     }
-    EXPECT_GT(checked, 0) << "No scalar columns found in captured requests";
+}
+
+// ---------------------------------------------------------------------------
+// 6-shard distribution + SQLite persistence:
+// 12 columns (6 float + 6 int) → num-shards=6 → all 6 buckets hit.
+// Slot in DB must match slot stored by dp-query.
+// ---------------------------------------------------------------------------
+TEST_F(ControllerHDF5ProvenanceTest, ShardSlotDistributedAcross6ShardsAndPersistedToDb)
+{
+    const std::string readerName  = makeUniquePrefix("shard6_reader_");
+    const std::string floatPrefix = makeUniquePrefix("SHARD6_FLOAT_");
+    const std::string intPrefix   = makeUniquePrefix("SHARD6_INT_");
+    const std::string dbPath      = (tempDir_ / "shard6_test.db").string();
+
+    // 6 float + 6 int = 12 columns; round-robin across 6 shards → 2 per bucket.
+    BsasGen1HDF5Mock::Params params;
+    params.numFloatCols   = 6;
+    params.numIntCols     = 6;
+    params.numRows        = 5;
+    params.baseEpoch      = static_cast<uint32_t>(
+        std::chrono::system_clock::to_time_t(std::chrono::system_clock::now()) - 5);
+    params.floatColPrefix = floatPrefix;
+    params.intColPrefix   = intPrefix;
+    BsasGen1HDF5Mock::generate(mockFile_.string(), params);
+
+    std::vector<std::string> pvNames;
+    for (std::size_t i = 0; i < params.numFloatCols; ++i)
+    {
+        std::ostringstream oss;
+        oss << floatPrefix << std::setfill('0') << std::setw(4) << i;
+        pvNames.push_back(oss.str());
+    }
+    for (std::size_t i = 0; i < params.numIntCols; ++i)
+    {
+        std::ostringstream oss;
+        oss << intPrefix << std::setfill('0') << std::setw(2) << i;
+        pvNames.push_back(oss.str());
+    }
+
+    const auto config = makeConfigFromYaml(
+        buildShardSlotYaml(mockFile_, readerName, dbPath, 6));
+    ASSERT_TRUE(config.valid());
+
+    controller_ = mldp_pvxs_driver::controller::MLDPPVXSController::create(config);
+    ASSERT_TRUE(controller_);
+    controller_->start();
+    std::this_thread::sleep_for(kStartupDelay);
+
+    const auto columns = queryAndCollectColumns(pvNames, kQueryTimeout, kLookbackWindow);
+    ASSERT_TRUE(columns.has_value()) << "Failed to query columns from dp-query:50052";
+
+    controller_->stop();
+    controller_.reset();
+
+    // A. Collect (column_name → shardSlot string) from returned buckets.
+    std::unordered_map<std::string, std::string> querySlots;
+    for (const auto& pvName : pvNames)
+    {
+        const auto it = columns->find(pvName);
+        if (it == columns->end()) continue;
+        for (const auto& bucket : it->second)
+        {
+            for (const auto& attr : metadataFromValues(bucket).attributes())
+            {
+                if (attr.name() == "shardSlot")
+                {
+                    querySlots[pvName] = attr.value();
+                    break;
+                }
+            }
+        }
+    }
+    ASSERT_FALSE(querySlots.empty()) << "No shardSlot attributes found in query results";
+
+    for (const auto& [col, slot] : querySlots)
+        EXPECT_FALSE(slot.empty()) << "Column '" << col << "' has empty shardSlot";
+
+    // B. All 6 shard buckets must be represented.
+    constexpr int kNumShards = 6;
+    std::array<bool, kNumShards> bucket_hit{};
+    bucket_hit.fill(false);
+    for (const auto& [col, slot_str] : querySlots)
+    {
+        if (slot_str.empty()) continue;
+        const auto slot_val = static_cast<uint32_t>(std::stoul(slot_str));
+        for (int k = 0; k < kNumShards; ++k)
+        {
+            const auto lower = (65536u * static_cast<uint32_t>(k)) / kNumShards;
+            const auto upper = (65536u * static_cast<uint32_t>(k + 1)) / kNumShards - 1;
+            if (slot_val >= lower && slot_val <= upper)
+            {
+                bucket_hit[static_cast<std::size_t>(k)] = true;
+                break;
+            }
+        }
+    }
+    for (int k = 0; k < kNumShards; ++k)
+        EXPECT_TRUE(bucket_hit[static_cast<std::size_t>(k)])
+            << "Shard bucket " << k << " has no column assigned";
+
+    // C. SQLite DB slot must match the slot returned by dp-query.
+    //    Controller (and enricher instance) is already stopped — DB file is closed.
+    sqlite3* db = nullptr;
+    ASSERT_EQ(SQLITE_OK, sqlite3_open_v2(dbPath.c_str(), &db, SQLITE_OPEN_READONLY, nullptr))
+        << "Cannot open shard DB: " << dbPath;
+
+    sqlite3_stmt* stmt = nullptr;
+    sqlite3_prepare_v2(db, "SELECT source_name, slot FROM shard_slots", -1, &stmt, nullptr);
+    int db_row_count = 0;
+    while (sqlite3_step(stmt) == SQLITE_ROW)
+    {
+        ++db_row_count;
+        const std::string db_col  = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+        const auto        db_slot = static_cast<uint32_t>(sqlite3_column_int(stmt, 1));
+
+        const auto it = querySlots.find(db_col);
+        if (it == querySlots.end() || it->second.empty())
+            continue;
+
+        const auto query_slot = static_cast<uint32_t>(std::stoul(it->second));
+        EXPECT_EQ(db_slot, query_slot)
+            << "DB slot " << db_slot << " != query slot " << query_slot
+            << " for column '" << db_col << "'";
+    }
+    sqlite3_finalize(stmt);
+    sqlite3_close(db);
+
+    EXPECT_GT(db_row_count, 0) << "No rows found in shard DB";
 }

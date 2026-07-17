@@ -12,6 +12,7 @@
 
 #include <BS_thread_pool.hpp>
 #include <config/Config.h>
+#include <enricher/EnricherRegistry.h>
 #include <controller/MLDPPVXSControllerConfig.h>
 #include <controller/RouteTable.h>
 #include <metrics/Metrics.h>
@@ -176,6 +177,7 @@ public:
     metrics::Metrics& metrics() const;
 
 private:
+    config::Config                                      raw_config_;  ///< Root YAML retained for global plugin definitions.
     MLDPPVXSControllerConfig                              config_;      ///< Typed controller configuration.
     std::shared_ptr<mldp_pvxs_driver::util::log::ILogger> logger_;      ///< Logger instance for controller logging.
     std::shared_ptr<BS::light_thread_pool>                 thread_pool_;       ///< Writer fan-out pool.
@@ -190,6 +192,7 @@ private:
     std::vector<writer::IWriterUPtr>                      writers_;     ///< Fan-out writer instances.
     std::vector<processor::IChannelProcessorUPtr>         processors_;  ///< In-process virtual channel processors.
     RouteTable                                            route_table_; ///< Selective reader→writer dispatch.
+    std::unique_ptr<enricher::EnricherRegistry>           enricher_registry_;
 
     mutable std::mutex              queue_mutex_;
     std::condition_variable         queue_not_full_;

@@ -48,6 +48,9 @@ All production writers inherit `BaseQueuedWriter<Item>` (`include/writer/BaseQue
 - **Back-pressure** — `push()` blocks the caller when total queued items reaches `queue_capacity`. It returns `false` only when the writer is stopping (`stop()` / `forceStop()` called). Data is **never silently dropped**.
 - **Thread pool** — `BS::light_thread_pool` with `worker_count` threads; each thread runs the base `workerLoop`, which dequeues items and calls the subclass `processItem()` hook.
 - **Lifecycle finalisation** — `start()` and `stop()` are `final`; subclasses hook in via `doStart()` / `doStop()`.
+- **Payload enrichment** — before `toItems()`, the base runs the writer's ordered global enricher chain. The chain lock covers only enrichment, not conversion, back-pressure, queue admission, or worker processing.
+
+Enrichers are configured at top level and referenced by name from each writer; see the [Payload Enricher Guide](../enrichers/enrichers.md). A referenced enricher instance is shared across writers, and each instance serializes its own calls. A filter that returns `false` accepts the batch but prevents it from entering the queue; an enricher error rejects the batch.
 
 ### Template hooks
 
@@ -98,11 +101,12 @@ The macro inserts a `static inline WriterRegistrator<T>` member. Before `main()`
 ```cpp
 for (const auto& [type, writerNode] : config_.writerEntries()) {
     auto writer = WriterFactory::create(type, writerNode, metrics_);
+    writer->setEnrichers(enricherRegistry.resolve(writerNode));
     ...
 }
 ```
 
-No `#ifdef` branches needed. YAML configuration determines which writers are active.
+The controller constructs the global `EnricherRegistry` before writers start, then resolves each writer's ordered name list into shared instances. No writer-specific `#ifdef` branches are needed; YAML determines which writers and enrichers are active.
 
 ## Configuration Layout
 

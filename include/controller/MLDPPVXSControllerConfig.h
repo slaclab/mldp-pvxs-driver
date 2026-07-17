@@ -95,6 +95,9 @@ public:
      */
     const std::vector<std::pair<std::string, config::Config>>& processorEntries() const;
 
+    /** @return Base directory used to resolve named Python processor scripts. */
+    const std::string& algorithmsPluginPath() const { return algorithms_plugin_path_; }
+
     /**
      * @brief Parsed queryable entries from the @c queryable: YAML sequence.
      */
@@ -138,6 +141,7 @@ private:
     std::vector<config::Config>                         readerConfigs_;
     std::vector<std::pair<std::string, config::Config>> readerEntries_;
     std::vector<std::pair<std::string, config::Config>> writerEntries_;
+    std::string                                         algorithms_plugin_path_;
     std::vector<std::pair<std::string, config::Config>> processorEntries_;
     std::optional<metrics::MetricsConfig>               metricsConfig_;
     std::vector<RouteFilterEntry>                       routeEntries_;

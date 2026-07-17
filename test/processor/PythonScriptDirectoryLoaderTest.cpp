@@ -10,14 +10,14 @@
 
 #ifdef BUILD_PYTHON_PROCESSOR
 
-#include <gtest/gtest.h>
+    #include <gtest/gtest.h>
 
-#include <BS_thread_pool.hpp>
-#include <processor/PythonScriptDirectoryLoader.h>
+    #include <BS_thread_pool.hpp>
+    #include <processor/PythonScriptDirectoryLoader.h>
 
-#include <filesystem>
-#include <fstream>
-#include <memory>
+    #include <filesystem>
+    #include <fstream>
+    #include <memory>
 
 using mldp_pvxs_driver::processor::PythonScriptDirectoryLoader;
 
@@ -149,6 +149,26 @@ def compute(snapshot):
     const auto outputs = processors.front()->outputSourceNames();
     ASSERT_EQ(outputs.size(), 1u);
     EXPECT_EQ(outputs.front(), "VIRTUAL:X");
+}
+
+TEST(PythonScriptDirectoryLoaderTest, LoadsOneNamedScript)
+{
+    TempDir dir;
+    const auto script = dir.path() / "named.py";
+    writeScript(script, R"py(
+config = {
+    "name": "named-proc",
+    "sources": ["SRC:A"],
+    "output_source": "VIRTUAL:X",
+}
+def compute(snapshot):
+    import mldp
+    return mldp.timeseries("VIRTUAL:X", {"value": 1.0})
+)py");
+
+    auto processors = PythonScriptDirectoryLoader::loadScript(script, nullptr, nullptr, makePool());
+    ASSERT_EQ(1U, processors.size());
+    EXPECT_EQ("named-proc", processors.front()->name());
 }
 
 #endif // BUILD_PYTHON_PROCESSOR
