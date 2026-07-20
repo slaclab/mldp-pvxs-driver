@@ -179,13 +179,18 @@ void MLDPPVXSControllerConfig::parseReaders(const ::mldp_pvxs_driver::config::Co
 void MLDPPVXSControllerConfig::parseProcessors(const ::mldp_pvxs_driver::config::Config& root)
 {
     processorEntries_.clear();
-    algorithms_plugin_path_.clear();
+
+    if (root.hasChild("python-plugins-path"))
+    {
+        algorithms_plugin_path_ = root.get("python-plugins-path");
+        if (algorithms_plugin_path_.empty())
+            throw Error("'python-plugins-path' must not be empty");
+    }
 
     if (!root.hasChild("processors"))
     {
         return;
     }
-    algorithms_plugin_path_ = "algorithms";
 
     const auto processorBlocks = root.subConfig("processors");
     if (!root.isSequence("processors") && processorBlocks.size() == 1 && processorBlocks.front().raw().is_map())

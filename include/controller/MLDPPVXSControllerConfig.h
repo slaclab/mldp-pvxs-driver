@@ -141,7 +141,7 @@ private:
     std::vector<config::Config>                         readerConfigs_;
     std::vector<std::pair<std::string, config::Config>> readerEntries_;
     std::vector<std::pair<std::string, config::Config>> writerEntries_;
-    std::string                                         algorithms_plugin_path_;
+    std::string                                         algorithms_plugin_path_{"python-plugins"};
     std::vector<std::pair<std::string, config::Config>> processorEntries_;
     std::optional<metrics::MetricsConfig>               metricsConfig_;
     std::vector<RouteFilterEntry>                       routeEntries_;

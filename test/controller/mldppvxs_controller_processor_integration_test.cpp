@@ -18,6 +18,8 @@
 
 #include <algorithm>
 #include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -356,3 +358,97 @@ TEST(MLDPPVXSControllerProcessorIntegrationTest, ProcessorChainCycleThrows)
     auto controller = MLDPPVXSController::create(makeConfigFromYaml(makeCyclicChainYaml()));
     EXPECT_THROW(controller->start(), std::runtime_error);
 }
+
+#ifdef BUILD_PYTHON_PROCESSOR
+TEST(MLDPPVXSControllerProcessorIntegrationTest, UsesDefaultAlgorithmsDirectoryForPythonPlugin)
+{
+    const auto original_path = std::filesystem::current_path();
+    const auto working_path = std::filesystem::temp_directory_path() / ("proc-default-dir-" + std::to_string(std::rand()));
+    std::filesystem::create_directories(working_path / "python-plugins");
+
+    {
+        std::ofstream script(working_path / "python-plugins" / "custom_compute.py");
+        script << R"py(
+config = {
+    "name": "custom-compute",
+    "sources": ["SRC:A"],
+    "alignment": "latest-value",
+    "trigger": "any-update",
+    "output_source": "VIRTUAL:CUSTOM:OUT",
+}
+def compute(snapshot):
+    import mldp
+    return mldp.timeseries("VIRTUAL:CUSTOM:OUT", {"value": 42.0})
+)py";
+    }
+
+    struct CwdGuard
+    {
+        std::filesystem::path path;
+        ~CwdGuard()
+        {
+            std::error_code ec;
+            std::filesystem::current_path(path, ec);
+        }
+    } guard{original_path};
+
+    std::filesystem::current_path(working_path);
+
+    {
+        std::lock_guard<std::mutex> lk(mldp_pvxs_driver::writer::TestCaptureWriter::mutex_);
+        mldp_pvxs_driver::writer::TestCaptureWriter::received_sources.clear();
+    }
+
+    const std::string yaml = R"yaml(
+name: controller-default-algo-test
+writer:
+  test-capture:
+    - name: capture-writer
+reader:
+  - test-push:
+      - name: test-reader
+        source: SRC:A
+        value: 7.0
+processors:
+  custom-proc:
+    type: custom_compute
+routing:
+  custom-proc:
+    from: [test-reader]
+    include:
+      - SRC:A
+  capture-writer:
+    from: [custom-proc]
+    include:
+      - VIRTUAL:CUSTOM:OUT
+)yaml";
+
+    auto controller = MLDPPVXSController::create(makeConfigFromYaml(yaml));
+    controller->start();
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (std::chrono::steady_clock::now() < deadline)
+    {
+        {
+            std::lock_guard<std::mutex> lk(mldp_pvxs_driver::writer::TestCaptureWriter::mutex_);
+            const auto& src = mldp_pvxs_driver::writer::TestCaptureWriter::received_sources;
+            if (std::find(src.begin(), src.end(), "VIRTUAL:CUSTOM:OUT") != src.end())
+                break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+
+    {
+        std::lock_guard<std::mutex> lk(mldp_pvxs_driver::writer::TestCaptureWriter::mutex_);
+        const auto& sources = mldp_pvxs_driver::writer::TestCaptureWriter::received_sources;
+        ASSERT_FALSE(sources.empty());
+        EXPECT_NE(std::find(sources.begin(), sources.end(), "VIRTUAL:CUSTOM:OUT"), sources.end())
+            << "Expected VIRTUAL:CUSTOM:OUT from Python plugin in default algorithms/ directory";
+    }
+
+    controller->stop();
+
+    std::error_code ec;
+    std::filesystem::remove_all(working_path, ec);
+}
+#endif

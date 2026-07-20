@@ -25,7 +25,7 @@ public:
 
 private:
     /// Base directory for logical Python enricher types; relative paths use the process CWD.
-    std::string                                          python_plugin_path_{"enrichers"};
+    std::string                                          python_plugin_path_{"python-plugins"};
     std::unordered_map<std::string, IPayloadEnricherPtr> enrichers_;
 };
 

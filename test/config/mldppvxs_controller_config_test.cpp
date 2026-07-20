@@ -275,7 +275,7 @@ reader: []
 
     MLDPPVXSControllerConfig controllerCfg(makeConfigFromYaml(yaml));
     EXPECT_TRUE(controllerCfg.processorEntries().empty());
-    EXPECT_TRUE(controllerCfg.algorithmsPluginPath().empty());
+    EXPECT_EQ("python-plugins", controllerCfg.algorithmsPluginPath());
 }
 
 TEST(MLDPPVXSControllerConfigTest, ParsesProcessorPluginMapping)
@@ -300,7 +300,32 @@ processors:
     type: beam_calculation
 )");
     MLDPPVXSControllerConfig controllerCfg(cfg);
-    EXPECT_EQ("algorithms", controllerCfg.algorithmsPluginPath());
+    EXPECT_EQ("python-plugins", controllerCfg.algorithmsPluginPath());
+}
+
+TEST(MLDPPVXSControllerConfigTest, TopLevelPythonPluginsPathOverridesDefault)
+{
+    const auto               cfg = makeConfigFromYaml(R"(
+python-plugins-path: /shared/plugins
+processors:
+  calculate:
+    type: beam_calculation
+)");
+    MLDPPVXSControllerConfig controllerCfg(cfg);
+    EXPECT_EQ("/shared/plugins", controllerCfg.algorithmsPluginPath());
+}
+
+TEST(MLDPPVXSControllerConfigTest, PerSectionAlgorithmsPluginPathOverridesTopLevel)
+{
+    const auto               cfg = makeConfigFromYaml(R"(
+python-plugins-path: /shared/plugins
+processors:
+  algorithms-plugin-path: /specific/algorithms
+  calculate:
+    type: beam_calculation
+)");
+    MLDPPVXSControllerConfig controllerCfg(cfg);
+    EXPECT_EQ("/specific/algorithms", controllerCfg.algorithmsPluginPath());
 }
 
 TEST(MLDPPVXSControllerConfigTest, ThrowsWhenProviderNameMissing)

@@ -240,12 +240,12 @@ writer: {mldp: [{enrichers: [slots]}]}
         EnricherRegistry registry(config);
     }
 
-    TEST_F(PythonPluginRegistryTest, UsesLocalEnrichersDirectoryByDefault)
+    TEST_F(PythonPluginRegistryTest, UsesLocalPythonPluginsDirectoryByDefault)
     {
         const auto original_path = std::filesystem::current_path();
         const auto working_path = directory_ / "working";
-        std::filesystem::create_directories(working_path / "enrichers");
-        directory_ = working_path / "enrichers";
+        std::filesystem::create_directories(working_path / "python-plugins");
+        directory_ = working_path / "python-plugins";
         write("local_type.py", "local_type");
 
         struct CurrentPathGuard
@@ -262,6 +262,22 @@ writer: {mldp: [{enrichers: [slots]}]}
         std::filesystem::current_path(working_path);
 
         const auto config = makeConfigFromYaml("enrichers:\n  local:\n    type: local_type\n");
+        EXPECT_NO_THROW(EnricherRegistry{config});
+    }
+
+    TEST_F(PythonPluginRegistryTest, TopLevelPythonPluginsPathOverridesDefault)
+    {
+        write("tag_payload.py", "tag_payload");
+        const auto config = makeConfigFromYaml("python-plugins-path: " + directory_.string() + "\nenrichers:\n  tag:\n    type: tag_payload\n");
+
+        EnricherRegistry registry(config);
+    }
+
+    TEST_F(PythonPluginRegistryTest, PerSectionPluginPathOverridesTopLevel)
+    {
+        write("tag_payload.py", "tag_payload");
+        const auto config = makeConfigFromYaml("python-plugins-path: /does/not/exist\nenrichers:\n  python-plugin-path: " + directory_.string() + "\n  tag:\n    type: tag_payload\n");
+
         EXPECT_NO_THROW(EnricherRegistry{config});
     }
 #endif

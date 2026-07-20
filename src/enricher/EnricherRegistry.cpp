@@ -55,6 +55,13 @@ config::Config withScriptPath(const config::Config& definition, const std::files
 
 EnricherRegistry::EnricherRegistry(const config::Config& root)
 {
+    if (root.hasChild("python-plugins-path"))
+    {
+        python_plugin_path_ = root.get("python-plugins-path");
+        if (python_plugin_path_.empty())
+            throw std::runtime_error("'python-plugins-path' must not be empty");
+    }
+
     if (!root.hasChild("enrichers"))
         return;
     const auto entries = root.subConfig("enrichers");
