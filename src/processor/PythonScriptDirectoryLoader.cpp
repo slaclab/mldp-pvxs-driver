@@ -120,15 +120,33 @@ std::vector<std::string> pyStringList(PyObject* obj, const std::string& field)
     return values;
 }
 
-config::Config configFromModuleDict(PyObject* config_dict)
+config::Config configFromModuleDict(PyObject* config_dict, const std::string& name_override = "")
 {
     if (config_dict == nullptr || !PyDict_Check(config_dict))
     {
-        throw std::runtime_error("python processor script must define dict 'config'");
+        if (name_override.empty())
+            throw std::runtime_error("python processor script must define dict 'config'");
+        std::ostringstream yaml;
+        yaml << "name: " << quoteYaml(name_override) << "\n";
+        yaml << "alignment: \"latest-value\"\n";
+        yaml << "trigger: \"any-update\"\n";
+        return config::Config{std::make_shared<config::ryml::Tree>(config::ryml::parse_in_arena(c4::to_csubstr(yaml.str())))};
     }
 
-    const auto name = pyString(PyDict_GetItemString(config_dict, "name"), "name");
-    const auto sources = pyStringList(PyDict_GetItemString(config_dict, "sources"), "sources");
+    std::string name;
+    PyObject*   name_obj = PyDict_GetItemString(config_dict, "name");
+    if (name_obj != nullptr && name_obj != Py_None)
+        name = pyString(name_obj, "name");
+    if (!name_override.empty())
+        name = name_override;
+    if (name.empty())
+        throw std::runtime_error("processor name must be provided via YAML 'name' field or Python config");
+
+    std::vector<std::string> sources;
+    PyObject*                sources_obj = PyDict_GetItemString(config_dict, "sources");
+    if (sources_obj != nullptr && sources_obj != Py_None)
+        sources = pyStringList(sources_obj, "sources");
+
     const auto alignment_obj = PyDict_GetItemString(config_dict, "alignment");
     const auto trigger_obj = PyDict_GetItemString(config_dict, "trigger");
     const auto alignment = alignment_obj ? pyString(alignment_obj, "alignment") : std::string{"latest-value"};
@@ -136,10 +154,13 @@ config::Config configFromModuleDict(PyObject* config_dict)
 
     std::ostringstream yaml;
     yaml << "name: " << quoteYaml(name) << "\n";
-    yaml << "sources:\n";
-    for (const auto& source : sources)
+    if (!sources.empty())
     {
-        yaml << "  - " << quoteYaml(source) << "\n";
+        yaml << "sources:\n";
+        for (const auto& source : sources)
+        {
+            yaml << "  - " << quoteYaml(source) << "\n";
+        }
     }
     yaml << "alignment: " << quoteYaml(alignment) << "\n";
     yaml << "trigger: " << quoteYaml(trigger) << "\n";
@@ -223,7 +244,8 @@ std::vector<IChannelProcessorUPtr> loadScripts(
     const std::filesystem::path&              import_dir,
     std::shared_ptr<util::bus::IDataBus>      bus,
     std::shared_ptr<metrics::Metrics>         metrics,
-    std::shared_ptr<BS::light_thread_pool>    thread_pool)
+    std::shared_ptr<BS::light_thread_pool>    thread_pool,
+    const std::string&                        name_override = "")
 {
     std::vector<IChannelProcessorUPtr> processors;
 
@@ -247,7 +269,7 @@ std::vector<IChannelProcessorUPtr> loadScripts(
             config::Config module_cfg;
             try
             {
-                module_cfg = configFromModuleDict(config_dict);
+                module_cfg = configFromModuleDict(config_dict, name_override);
             }
             catch (...)
             {
@@ -306,11 +328,12 @@ std::vector<IChannelProcessorUPtr> PythonScriptDirectoryLoader::loadScript(
     const std::filesystem::path&           script_path,
     std::shared_ptr<util::bus::IDataBus>   bus,
     std::shared_ptr<metrics::Metrics>      metrics,
-    std::shared_ptr<BS::light_thread_pool> thread_pool)
+    std::shared_ptr<BS::light_thread_pool> thread_pool,
+    const std::string&                     name_override)
 {
     if (!std::filesystem::is_regular_file(script_path) || script_path.extension() != ".py")
         throw std::runtime_error("cannot open Python processor script '" + script_path.string() + "'");
-    return loadScripts({script_path}, script_path.parent_path(), std::move(bus), std::move(metrics), std::move(thread_pool));
+    return loadScripts({script_path}, script_path.parent_path(), std::move(bus), std::move(metrics), std::move(thread_pool), name_override);
 }
 
 static bool reg_python_processor = ChannelProcessorFactory::registerType(
@@ -338,7 +361,8 @@ static bool reg_python_script = ChannelProcessorFactory::registerType(
             std::filesystem::path{cfg.get("script-path")},
             std::move(bus),
             std::move(metrics),
-            std::move(thread_pool));
+            std::move(thread_pool),
+            cfg.get("name", ""));
     });
 
 #endif // BUILD_PYTHON_PROCESSOR

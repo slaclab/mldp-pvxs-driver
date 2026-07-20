@@ -154,6 +154,12 @@ const std::vector<std::string>& ChannelProcessor::inputSourceNames() const noexc
     return config_.sources();
 }
 
+void ChannelProcessor::setEffectiveSources(std::vector<std::string> sources)
+{
+    config_.setSources(std::move(sources));
+    buffer_ = InputBuffer(config_.sources(), config_.alignment(), config_.maxBufferDepth());
+}
+
 void ChannelProcessor::fireCompute(const AlignedSnapshot& snapshot) noexcept
 {
     std::vector<AlgorithmOutput> outputs;

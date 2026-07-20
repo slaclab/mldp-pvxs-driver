@@ -62,13 +62,13 @@ std::vector<std::string> parseSources(const config::Config& cfg)
 {
     if (!cfg.hasChild(kSourcesKey))
     {
-        throw MLDPChannelProcessorConfig::Error("processor: 'sources' is required");
+        return {};
     }
 
     const auto source_nodes = cfg.subConfig(kSourcesKey);
     if (source_nodes.empty())
     {
-        throw MLDPChannelProcessorConfig::Error("processor: 'sources' must not be empty");
+        return {};
     }
 
     std::vector<std::string> sources;
@@ -83,11 +83,6 @@ std::vector<std::string> parseSources(const config::Config& cfg)
         }
     }
 
-    if (sources.empty())
-    {
-        throw MLDPChannelProcessorConfig::Error("processor: 'sources' must contain at least one non-empty entry");
-    }
-
     return sources;
 }
 
@@ -95,15 +90,9 @@ std::vector<std::string> parseSources(const config::Config& cfg)
 
 MLDPChannelProcessorConfig::MLDPChannelProcessorConfig(const config::Config& cfg)
 {
-    if (!cfg.hasChild(kNameKey))
+    if (cfg.hasChild(kNameKey))
     {
-        throw Error("processor: 'name' is required");
-    }
-
-    name_ = cfg.get(kNameKey);
-    if (name_.empty())
-    {
-        throw Error("processor: 'name' must not be empty");
+        name_ = cfg.get(kNameKey);
     }
 
     sources_ = parseSources(cfg);
@@ -159,4 +148,19 @@ double MLDPChannelProcessorConfig::triggerIntervalSec() const noexcept
 std::size_t MLDPChannelProcessorConfig::maxBufferDepth() const noexcept
 {
     return max_buffer_depth_;
+}
+
+void MLDPChannelProcessorConfig::setName(std::string name)
+{
+    name_ = std::move(name);
+}
+
+void MLDPChannelProcessorConfig::setSources(std::vector<std::string> sources)
+{
+    sources_ = std::move(sources);
+}
+
+bool MLDPChannelProcessorConfig::hasExplicitSources() const noexcept
+{
+    return !sources_.empty();
 }

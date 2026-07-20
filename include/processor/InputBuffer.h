@@ -80,6 +80,7 @@ private:
     std::unordered_set<std::string>                       fresh_;                  ///< Sources updated since the last freshness reset.
     std::unordered_set<std::string>                       required_source_lookup_; ///< Fast lookup set for accepted source names.
     std::vector<std::string>                              required_sources_;       ///< Ordered required source list for trigger checks.
+    std::unordered_set<std::string>                       seen_sources_;           ///< Dynamically tracked sources in open mode.
     AlignmentPolicy                                       alignment_;              ///< Alignment mode used when buffering payloads.
     std::size_t                                           max_depth_{0};           ///< Maximum retained samples per source; zero means unlimited.
 };

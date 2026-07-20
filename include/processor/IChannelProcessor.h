@@ -44,6 +44,9 @@ public:
 
     /** @brief Ordered input root-source names this processor consumes. */
     virtual const std::vector<std::string>& inputSourceNames() const noexcept = 0;
+
+    /** @brief Inject effective source names derived from routing (called before start). */
+    virtual void setEffectiveSources(std::vector<std::string>) {}
 };
 
 using IChannelProcessorUPtr = std::unique_ptr<IChannelProcessor>;

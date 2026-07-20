@@ -326,7 +326,27 @@ void MLDPPVXSController::start()
     }
     for (auto& processor : processors_)
     {
-        processor->start();
+        if (processor->inputSourceNames().empty())
+        {
+            for (const auto& route : config_.routeEntries())
+            {
+                if (route.writer_name == processor->name())
+                {
+                    std::vector<std::string> effective;
+                    for (const auto& pat : route.include_patterns)
+                    {
+                        if (pat.find('*') == std::string::npos &&
+                            pat.find('?') == std::string::npos)
+                        {
+                            effective.push_back(pat);
+                        }
+                    }
+                    if (!effective.empty())
+                        processor->setEffectiveSources(std::move(effective));
+                    break;
+                }
+            }
+        }
     }
 
     {
@@ -336,6 +356,11 @@ void MLDPPVXSController::start()
         validateProcessorOutputSourceCollisions(reader_name_set, processors_);
     }
     validateProcessorGraphAcyclic(processors_);
+
+    for (auto& processor : processors_)
+    {
+        processor->start();
+    }
 
     // -- Readers --
     infof(*logger_, "Starting readers");

@@ -451,4 +451,94 @@ routing:
     std::error_code ec;
     std::filesystem::remove_all(working_path, ec);
 }
+
+TEST(MLDPPVXSControllerProcessorIntegrationTest, RoutingOnlyProcessorWithoutSourcesInScript)
+{
+    const auto original_path = std::filesystem::current_path();
+    const auto working_path = std::filesystem::temp_directory_path() / ("proc-routing-only-" + std::to_string(std::rand()));
+    std::filesystem::create_directories(working_path / "python-plugins");
+
+    {
+        std::ofstream script(working_path / "python-plugins" / "routing_only_proc.py");
+        script << R"py(
+config = {
+    "alignment": "latest-value",
+    "trigger": "any-update",
+    "output_source": "VIRTUAL:ROUTED:OUT",
+}
+def compute(snapshot):
+    import mldp
+    return mldp.timeseries("VIRTUAL:ROUTED:OUT", {"value": 99.0})
+)py";
+    }
+
+    struct CwdGuard
+    {
+        std::filesystem::path path;
+        ~CwdGuard()
+        {
+            std::error_code ec;
+            std::filesystem::current_path(path, ec);
+        }
+    } guard{original_path};
+
+    std::filesystem::current_path(working_path);
+
+    {
+        std::lock_guard<std::mutex> lk(mldp_pvxs_driver::writer::TestCaptureWriter::mutex_);
+        mldp_pvxs_driver::writer::TestCaptureWriter::received_sources.clear();
+    }
+
+    const std::string yaml = R"yaml(
+name: controller-routing-only-test
+writer:
+  test-capture:
+    - name: capture-writer
+reader:
+  - test-push:
+      - name: test-reader
+        source: SRC:A
+        value: 7.0
+processors:
+  - type: routing_only_proc
+    name: routed-proc
+routing:
+  routed-proc:
+    from: [test-reader]
+    include:
+      - SRC:A
+  capture-writer:
+    from: [routed-proc]
+    include:
+      - VIRTUAL:ROUTED:OUT
+)yaml";
+
+    auto controller = MLDPPVXSController::create(makeConfigFromYaml(yaml));
+    controller->start();
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (std::chrono::steady_clock::now() < deadline)
+    {
+        {
+            std::lock_guard<std::mutex> lk(mldp_pvxs_driver::writer::TestCaptureWriter::mutex_);
+            const auto& src = mldp_pvxs_driver::writer::TestCaptureWriter::received_sources;
+            if (std::find(src.begin(), src.end(), "VIRTUAL:ROUTED:OUT") != src.end())
+                break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+
+    {
+        std::lock_guard<std::mutex> lk(mldp_pvxs_driver::writer::TestCaptureWriter::mutex_);
+        const auto& sources = mldp_pvxs_driver::writer::TestCaptureWriter::received_sources;
+        ASSERT_FALSE(sources.empty());
+        EXPECT_NE(std::find(sources.begin(), sources.end(), "VIRTUAL:ROUTED:OUT"), sources.end())
+            << "Expected VIRTUAL:ROUTED:OUT from routing-only Python processor (no sources in script)";
+    }
+
+    controller->stop();
+
+    std::error_code ec2;
+    std::filesystem::remove_all(working_path, ec2);
+}
 #endif

@@ -127,7 +127,7 @@ trigger: interval
     EXPECT_THROW(MLDPChannelProcessorConfig config(cfg), MLDPChannelProcessorConfig::Error);
 }
 
-TEST(MLDPChannelProcessorConfigTest, EmptyNameThrows)
+TEST(MLDPChannelProcessorConfigTest, EmptyNameAllowed)
 {
     const auto cfg = makeConfigFromYaml(R"yaml(
 name: ""
@@ -135,26 +135,58 @@ sources:
   - s1
 )yaml");
 
-    EXPECT_THROW(MLDPChannelProcessorConfig config(cfg), MLDPChannelProcessorConfig::Error);
+    MLDPChannelProcessorConfig config(cfg);
+    EXPECT_TRUE(config.name().empty());
 }
 
-TEST(MLDPChannelProcessorConfigTest, EmptySourcesThrows)
+TEST(MLDPChannelProcessorConfigTest, MissingNameAllowed)
+{
+    const auto cfg = makeConfigFromYaml(R"yaml(
+sources:
+  - s1
+)yaml");
+
+    MLDPChannelProcessorConfig config(cfg);
+    EXPECT_TRUE(config.name().empty());
+}
+
+TEST(MLDPChannelProcessorConfigTest, EmptySourcesReturnsEmpty)
 {
     const auto cfg = makeConfigFromYaml(R"yaml(
 name: p
 sources: []
 )yaml");
 
-    EXPECT_THROW(MLDPChannelProcessorConfig config(cfg), MLDPChannelProcessorConfig::Error);
+    MLDPChannelProcessorConfig config(cfg);
+    EXPECT_TRUE(config.sources().empty());
+    EXPECT_FALSE(config.hasExplicitSources());
 }
 
-TEST(MLDPChannelProcessorConfigTest, MissingSourcesThrows)
+TEST(MLDPChannelProcessorConfigTest, MissingSourcesReturnsEmpty)
 {
     const auto cfg = makeConfigFromYaml(R"yaml(
 name: p
 )yaml");
 
-    EXPECT_THROW(MLDPChannelProcessorConfig config(cfg), MLDPChannelProcessorConfig::Error);
+    MLDPChannelProcessorConfig config(cfg);
+    EXPECT_TRUE(config.sources().empty());
+    EXPECT_FALSE(config.hasExplicitSources());
+}
+
+TEST(MLDPChannelProcessorConfigTest, SetNameAndSources)
+{
+    const auto cfg = makeConfigFromYaml(R"yaml(
+name: ""
+)yaml");
+
+    MLDPChannelProcessorConfig config(cfg);
+    config.setName("injected-name");
+    config.setSources({"src:a", "src:b"});
+
+    EXPECT_EQ(config.name(), "injected-name");
+    ASSERT_EQ(config.sources().size(), 2u);
+    EXPECT_EQ(config.sources()[0], "src:a");
+    EXPECT_TRUE(config.hasExplicitSources());
 }
 
 TEST(MLDPChannelProcessorConfigTest, UnknownAlignmentThrows)

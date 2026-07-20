@@ -56,6 +56,7 @@ public:
     const std::string&              outputReaderName() const noexcept override;
     std::vector<std::string>        outputSourceNames() const noexcept override;
     const std::vector<std::string>& inputSourceNames() const noexcept override;
+    void                            setEffectiveSources(std::vector<std::string> sources) override;
 
 private:
     void fireCompute(const AlignedSnapshot& snapshot) noexcept;

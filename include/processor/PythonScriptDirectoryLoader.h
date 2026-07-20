@@ -19,6 +19,7 @@
 
 #include <filesystem>
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace mldp_pvxs_driver::processor {
@@ -38,7 +39,8 @@ public:
         const std::filesystem::path&           script_path,
         std::shared_ptr<util::bus::IDataBus>   bus,
         std::shared_ptr<metrics::Metrics>      metrics,
-        std::shared_ptr<BS::light_thread_pool> thread_pool = nullptr);
+        std::shared_ptr<BS::light_thread_pool> thread_pool = nullptr,
+        const std::string&                     name_override = "");
 };
 
 } // namespace mldp_pvxs_driver::processor

@@ -198,3 +198,55 @@ TEST(InputBufferTest, BackPressureUnlimited)
     EXPECT_DOUBLE_EQ(values.front(), 0.0);
     EXPECT_DOUBLE_EQ(values.back(), 99.0);
 }
+
+// --- Open mode tests (empty sources) ---
+
+TEST(InputBufferTest, OpenModeAcceptsAllSources)
+{
+    InputBuffer buffer({}, AlignmentPolicy::LatestValue);
+    buffer.ingest("pv:x", makePayload({makeFrame(10, 1, 1.0)}));
+    buffer.ingest("pv:y", makePayload({makeFrame(11, 2, 2.0)}));
+
+    const auto snapshot = buffer.trySnapshot(TriggerPolicy::AnyUpdate);
+    ASSERT_TRUE(snapshot.has_value());
+    EXPECT_EQ(snapshot->channels.size(), 2u);
+    EXPECT_EQ(snapshot->channels.count("pv:x"), 1u);
+    EXPECT_EQ(snapshot->channels.count("pv:y"), 1u);
+}
+
+TEST(InputBufferTest, OpenModeAnyUpdateTriggersOnFirstIngest)
+{
+    InputBuffer buffer({}, AlignmentPolicy::LatestValue);
+    buffer.ingest("pv:a", makePayload({makeFrame(10, 1, 5.0)}));
+
+    const auto snapshot = buffer.trySnapshot(TriggerPolicy::AnyUpdate);
+    ASSERT_TRUE(snapshot.has_value());
+    EXPECT_EQ(snapshot->channels.size(), 1u);
+}
+
+TEST(InputBufferTest, OpenModeAllUpdatedTracksSeenSources)
+{
+    InputBuffer buffer({}, AlignmentPolicy::LatestValue);
+    buffer.ingest("pv:a", makePayload({makeFrame(10, 1, 1.0)}));
+
+    // First ingest: only "pv:a" is seen and fresh → fires
+    ASSERT_TRUE(buffer.trySnapshot(TriggerPolicy::AllUpdated).has_value());
+
+    // Reset; now "pv:b" arrives (new seen source)
+    buffer.resetFreshFlags();
+    buffer.ingest("pv:b", makePayload({makeFrame(11, 1, 2.0)}));
+
+    // "pv:b" is fresh but "pv:a" is not → does NOT fire
+    EXPECT_FALSE(buffer.trySnapshot(TriggerPolicy::AllUpdated).has_value());
+
+    buffer.ingest("pv:a", makePayload({makeFrame(12, 1, 3.0)}));
+    // Both seen sources are now fresh → fires
+    ASSERT_TRUE(buffer.trySnapshot(TriggerPolicy::AllUpdated).has_value());
+
+    buffer.resetFreshFlags();
+    buffer.ingest("pv:a", makePayload({makeFrame(13, 1, 4.0)}));
+    EXPECT_FALSE(buffer.trySnapshot(TriggerPolicy::AllUpdated).has_value());
+
+    buffer.ingest("pv:b", makePayload({makeFrame(14, 1, 5.0)}));
+    ASSERT_TRUE(buffer.trySnapshot(TriggerPolicy::AllUpdated).has_value());
+}

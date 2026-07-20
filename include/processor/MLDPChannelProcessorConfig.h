@@ -73,6 +73,10 @@ public:
     /** @brief Get the maximum retained buffer depth per source; zero means unlimited. */
     std::size_t maxBufferDepth() const noexcept;
 
+    void setName(std::string name);
+    void setSources(std::vector<std::string> sources);
+    bool hasExplicitSources() const noexcept;
+
 private:
     std::string              name_;                  ///< Unique processor instance name.
     std::vector<std::string> sources_;               ///< Required source names consumed by the processor.

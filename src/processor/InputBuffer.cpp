@@ -113,9 +113,15 @@ void trimOldestSamples(util::bus::DataBatch& batch, std::size_t max_depth)
 void InputBuffer::ingest(const std::string&                  root_source_name,
                          const util::bus::TimeSeriesPayload& payload)
 {
-    if (required_source_lookup_.find(root_source_name) == required_source_lookup_.end())
+    if (!required_source_lookup_.empty() &&
+        required_source_lookup_.find(root_source_name) == required_source_lookup_.end())
     {
         return;
+    }
+
+    if (required_source_lookup_.empty())
+    {
+        seen_sources_.insert(root_source_name);
     }
 
     if (payload.frames.empty())
@@ -175,9 +181,18 @@ void InputBuffer::ingest(const std::string&                  root_source_name,
 
 std::optional<AlignedSnapshot> InputBuffer::trySnapshot(TriggerPolicy trigger)
 {
-    if (trigger == TriggerPolicy::AllUpdated && fresh_.size() != required_sources_.size())
+    if (trigger == TriggerPolicy::AllUpdated)
     {
-        return std::nullopt;
+        if (!required_sources_.empty())
+        {
+            if (fresh_.size() != required_sources_.size())
+                return std::nullopt;
+        }
+        else
+        {
+            if (fresh_.size() != seen_sources_.size())
+                return std::nullopt;
+        }
     }
 
     AlignedSnapshot snapshot;
@@ -195,6 +210,7 @@ void InputBuffer::clear()
 {
     slots_.clear();
     fresh_.clear();
+    seen_sources_.clear();
 }
 
 std::size_t InputBuffer::bufferDepth() const noexcept
