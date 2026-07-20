@@ -467,3 +467,67 @@ TEST_F(EpicsArchiverReaderConfigTest, BatchFlushIntervalMsDefaultsToZero)
 
     EXPECT_EQ(config.batchFlushIntervalMs(), 0L);
 }
+
+// Verifies fetch-threads defaults to 1 (sequential) when not configured.
+TEST_F(EpicsArchiverReaderConfigTest, FetchThreadsDefaultsToOne)
+{
+    const std::string yaml = R"(
+        name: test-archiver
+        hostname: "archiver.slac.stanford.edu:11200"
+        start-date: "2026-01-01T00:00:00Z"
+        pvs:
+          - name: "PV1"
+    )";
+
+    auto                      cfg = makeConfigFromYaml(yaml);
+    EpicsArchiverReaderConfig config(cfg);
+
+    EXPECT_EQ(config.fetchThreads(), 1L);
+}
+
+// Verifies fetch-threads is parsed when explicitly configured.
+TEST_F(EpicsArchiverReaderConfigTest, AcceptsFetchThreads)
+{
+    const std::string yaml = R"(
+        name: test-archiver
+        hostname: "archiver.slac.stanford.edu:11200"
+        start-date: "2026-01-01T00:00:00Z"
+        fetch-threads: 4
+        pvs:
+          - name: "PV1"
+    )";
+
+    auto                      cfg = makeConfigFromYaml(yaml);
+    EpicsArchiverReaderConfig config(cfg);
+
+    EXPECT_TRUE(config.valid());
+    EXPECT_EQ(config.fetchThreads(), 4L);
+}
+
+// Verifies fetch-threads rejects values less than 1.
+TEST_F(EpicsArchiverReaderConfigTest, RejectsInvalidFetchThreads)
+{
+    const std::string yaml_zero = R"(
+        name: test-archiver
+        hostname: "archiver.slac.stanford.edu:11200"
+        start-date: "2026-01-01T00:00:00Z"
+        fetch-threads: 0
+        pvs:
+          - name: "PV1"
+    )";
+
+    auto cfg_zero = makeConfigFromYaml(yaml_zero);
+    EXPECT_THROW(EpicsArchiverReaderConfig config(cfg_zero), EpicsArchiverReaderConfig::Error);
+
+    const std::string yaml_negative = R"(
+        name: test-archiver
+        hostname: "archiver.slac.stanford.edu:11200"
+        start-date: "2026-01-01T00:00:00Z"
+        fetch-threads: -2
+        pvs:
+          - name: "PV1"
+    )";
+
+    auto cfg_negative = makeConfigFromYaml(yaml_negative);
+    EXPECT_THROW(EpicsArchiverReaderConfig config(cfg_negative), EpicsArchiverReaderConfig::Error);
+}

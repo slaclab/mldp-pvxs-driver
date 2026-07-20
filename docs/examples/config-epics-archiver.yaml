@@ -23,6 +23,7 @@ reader:
       mode: historical_once
       start-date: "2026-01-01T00:00:00Z"
       end-date:   "2026-01-02T00:00:00Z"
+      fetch-threads: 3          # fetch 3 PVs in parallel
       connect-timeout-sec: 30
       total-timeout-sec: 600    # 10 minutes for large windows
       tls-verify-peer: true

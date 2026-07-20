@@ -25,19 +25,26 @@ Config         | `include/reader/impl/epics_archiver/EpicsArchiverReaderConfig.h
 ```mermaid
 flowchart TB
     subgraph EpicsArchiverReader["EpicsArchiverReader"]
-        subgraph Worker["Background Worker Thread"]
+        Queue["PV Work Queue<br/>(shared, mutex-protected)"]
+
+        subgraph Workers["Worker Threads (configurable count)"]
+            W0["Worker 0<br/>+ HTTP Client"]
+            W1["Worker 1<br/>+ HTTP Client"]
+            WN["Worker N<br/>+ HTTP Client"]
+        end
+
+        Queue -->|pop PV| W0
+        Queue -->|pop PV| W1
+        Queue -->|pop PV| WN
+
+        subgraph Processing["Per-Worker Processing"]
             Fetch["HTTP Fetch<br/>(via CURL)"]
             Parse["PB/HTTP Stream Parser<br/>(line-by-line)"]
-            Batch["Batch Splitter<br/>(by timestamp)"]
+            Batch["Batch Splitter<br/>(by timestamp/count)"]
         end
 
-        Worker --> ReaderPool
-
-        subgraph ReaderPool["Reader Thread Pool"]
-            Convert["Data Conversion<br/>(Origin type → protobuf)"]
-        end
-
-        ReaderPool --> Push["Push to Event Bus"]
+        Workers --> Processing
+        Processing --> Push["Push to Event Bus<br/>(blocking backpressure)"]
         Push --> Bus["IDataBus"]
     end
 
@@ -46,7 +53,7 @@ flowchart TB
         Periodic["Periodic Tail<br/>(continuous polling)"]
     end
 
-    Fetch -.->|mode| Modes
+    Queue -.->|mode| Modes
 ```
 
 ## Operating Modes
@@ -71,7 +78,7 @@ reader:
         hostname: "archiver-appliance.example.com:11200"
         start-date: "2024-01-01T00:00:00Z"  # Required
         end-date: "2024-01-02T00:00:00Z"    # Optional
-        thread-pool: 2                      # Event conversion thread pool size
+        fetch-threads: 4                    # Parallel PV fetch workers (default: 1)
         pvs:
           - name: MY:ARCHIVER:PV
           - name: ANOTHER:HISTORICAL:PV
@@ -125,6 +132,18 @@ Parameter            | Type   | Default         | Description
 `mode`               | string | `one_shot`      | Set to `periodic_tail` to enable continuous polling
 `poll-interval-sec`  | float  | 5.0             | Polling interval in seconds
 `lookback-sec`       | float  | (poll_interval) | Seconds of history to fetch per poll (defaults to poll_interval)
+
+### Parallelism Parameters
+
+Parameter       | Type | Default | Description
+--------------- | ---- | ------- | -------------------------------------------------------------------
+`fetch-threads` | int  | 1       | Number of parallel worker threads fetching PVs concurrently. Each worker has its own HTTP client. PVs are distributed via a shared work queue — workers pop the next available PV when they finish the current one.
+
+When `fetch-threads > 1`:
+- Each worker owns an independent HTTP connection (curl handles are not shared)
+- PVs are load-balanced dynamically — slow PVs don't starve fast workers
+- Worker HTTP clients use infinite timeout (`total-timeout-sec=0`) and disabled stall detection to avoid false aborts during bus backpressure
+- Shutdown sets `running=false` and cancels all HTTP clients; workers exit immediately, dropping any buffered samples
 
 ### Sample-Count Batching Parameters
 
@@ -185,6 +204,7 @@ reader:
 - Start date required for one-shot mode
 - `pv-samples-per-batch` must be `> 0` when specified (enforced)
 - `batch-flush-interval-ms` must be `> 0` when specified (enforced)
+- `fetch-threads` must be `>= 1` when specified (enforced)
 
 ## Key Features
 
@@ -192,8 +212,8 @@ reader:
 - **Sample-Count Batching**: Accumulate up to `pv-samples-per-batch` samples per PV before submitting; each PV maintains independent pending state
 - **Timed Flush**: `batch-flush-interval-ms` ensures incomplete batches are not held indefinitely; also drains all pending batches on shutdown when set
 - **Automated Tail Polling**: Continuously fetch new archiver data at configurable intervals with a configurable lookback window to handle clock skew and backfill
-- **Background Worker Thread**: One-shot fetch or periodic polling runs off main reader construction
-- **Thread Pool Processing**: Configurable conversion parallelism
+- **Parallel PV Fetching**: Configurable `fetch-threads` distributes PVs across multiple worker threads via a shared work queue for significantly faster ingestion of many PVs
+- **Background Worker Threads**: One-shot fetch or periodic polling runs off main reader construction
 - **Secure Defaults**: TLS verification enabled by default; configurable per-instance timeouts
 - **Graceful Shutdown**: HTTP request cancellation on reader destruction; thread joins before destructor completes
 - **Metrics**: Prometheus metrics for events received, processed, and errors
