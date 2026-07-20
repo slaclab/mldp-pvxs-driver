@@ -194,11 +194,13 @@ std::vector<MLDPWriter::QueueItem> MLDPWriter::toItems(util::bus::IDataBus::Even
     updateQueueDepthMetric();
     const auto      now = std::chrono::steady_clock::now();
     std::lock_guard lk(pushLogMutex_);
+    ++pushBatchCount_;
     if (now - lastPushLogTime_ >= std::chrono::seconds(10))
     {
+        infof(logger(), "Pushed {} batches in last 10s (latest source: '{}', queue depth: {})",
+              pushBatchCount_, rootSourceName, queueDepth());
+        pushBatchCount_ = 0;
         lastPushLogTime_ = now;
-        infof(logger(), "Pushed 1 batch for source '{}', queue depth: {}",
-              rootSourceName, queueDepth());
     }
     return items;
 }
