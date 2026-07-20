@@ -117,9 +117,10 @@ private:
     public:
         void populate(const std::vector<std::string>& pv_names);
         std::optional<std::string> pop();
+        std::size_t size() const;
 
     private:
-        std::mutex              mutex_;
+        mutable std::mutex      mutex_;
         std::queue<std::string> pvs_;
     };
 

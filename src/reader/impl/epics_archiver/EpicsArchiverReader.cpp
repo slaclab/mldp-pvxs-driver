@@ -173,6 +173,12 @@ std::optional<std::string> EpicsArchiverReader::PVWorkQueue::pop()
     return pv;
 }
 
+std::size_t EpicsArchiverReader::PVWorkQueue::size() const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return pvs_.size();
+}
+
 // --- EpicsArchiverReader ---
 
 EpicsArchiverReader::EpicsArchiverReader(
@@ -317,6 +323,8 @@ void EpicsArchiverReader::runWorker(std::size_t index)
                     {
                         break;
                     }
+                    infof(*logger_, "Worker {} starting PV '{}' (queue remaining: {})",
+                           index, *pv, pv_queue_.size());
                     fetchSinglePV(ctx, *pv, config_.startDate(), config_.endDate());
                 }
 
@@ -392,6 +400,8 @@ void EpicsArchiverReader::runWorker(std::size_t index)
                         {
                             break;
                         }
+                        infof(*logger_, "Worker {} starting PV '{}' (queue remaining: {})",
+                               index, *pv, pv_queue_.size());
                         fetchSinglePV(ctx, *pv, from, to);
                     }
 
