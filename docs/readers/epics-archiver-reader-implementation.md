@@ -12,7 +12,8 @@ This guide describes the `EpicsArchiverReader` implementation, which provides hi
 
 - Supports one-shot historical fetches.
 - Supports periodic polling for archiver tailing.
-- Pushes batches to `IDataBus` for downstream processing.
+- Configurable `fetch-threads` parallelizes PV fetching across multiple worker threads, each with its own HTTP client. PVs are distributed via a shared work queue (dynamic load balancing).
+- Pushes batches to `IDataBus` for downstream processing. Push uses blocking backpressure — worker HTTP clients disable stall detection to avoid false timeouts during backpressure.
 
 ## Best Fit
 
@@ -24,6 +25,9 @@ This guide describes the `EpicsArchiverReader` implementation, which provides hi
 
 - Uses PB/HTTP streaming for archiver access.
 - Configurable timeouts and window settings keep the reader adaptable to different deployments.
+- Multi-threaded architecture: each worker owns a `WorkerContext` (HTTP client + per-PV state). Shared `PVWorkQueue` distributes work dynamically.
+- In periodic_tail mode, worker 0 coordinates time window computation and queue population; other workers wait on a condition variable before each cycle.
+- Shutdown: `running_=false` + cancel all HTTP clients + notify all CVs. Workers exit immediately, dropping buffered samples (no data loss during normal operation — `bus_->push()` blocks until success).
 
 ## Configuration
 

@@ -317,6 +317,7 @@ Two fetch modes:
       mode: historical_once            # optional; default: historical_once
       start-date: "2026-01-01T00:00:00Z"  # required for historical_once
       end-date:   "2026-01-02T00:00:00Z"  # optional
+      fetch-threads: 4                 # optional; default: 1 (parallel PV fetch workers)
       connect-timeout-sec: 30          # optional; default: 30
       total-timeout-sec: 300           # optional; default: 300 (0 = infinite)
       pv-samples-per-batch: 0          # optional; default: 0 (disabled)
@@ -348,6 +349,7 @@ Two fetch modes:
 | `end-date` | string | — | Optional ISO 8601 end of time window. |
 | `connect-timeout-sec` | long | `30` | HTTP connection establishment timeout (seconds). |
 | `total-timeout-sec` | long | `300` | Total HTTP operation timeout (seconds). `0` = infinite. |
+| `fetch-threads` | long | `1` | Number of parallel worker threads fetching PVs. Each gets its own HTTP client. |
 | `pv-samples-per-batch` | long | `0` | Accumulate this many samples per PV before submitting. `0` = disabled. |
 | `batch-flush-interval-ms` | long | `0` | Flush incomplete PV batches after this many ms. `0` = disabled; when disabled, incomplete batches are discarded at shutdown. |
 | `poll-interval-sec` | long | — | **Required for `periodic_tail`.** Tail poll interval (seconds). |

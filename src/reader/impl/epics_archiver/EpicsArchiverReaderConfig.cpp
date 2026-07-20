@@ -145,6 +145,11 @@ long EpicsArchiverReaderConfig::batchFlushIntervalMs() const
     return batch_flush_interval_ms_;
 }
 
+long EpicsArchiverReaderConfig::fetchThreads() const
+{
+    return fetch_threads_;
+}
+
 bool EpicsArchiverReaderConfig::tlsVerifyPeer() const
 {
     return tls_verify_peer_;
@@ -301,6 +306,13 @@ void EpicsArchiverReaderConfig::parse(const Config& readerEntry)
     if (readerEntry.hasChild(BatchFlushIntervalMsKey) && batch_flush_interval_ms_ <= 0)
     {
         throw Error("batch-flush-interval-ms must be positive (>0) when specified");
+    }
+
+    // Parse optional parallel fetch thread count (default: 1 = sequential)
+    fetch_threads_ = readerEntry.getInt(FetchThreadsKey, 1L);
+    if (readerEntry.hasChild(FetchThreadsKey) && fetch_threads_ < 1)
+    {
+        throw Error("fetch-threads must be >= 1 when specified");
     }
 
     // Parse optional reader-level static metadata

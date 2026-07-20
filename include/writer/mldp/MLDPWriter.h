@@ -111,6 +111,7 @@ private:
     /// Throttled push logging (every 10s).
     std::mutex                            pushLogMutex_;
     std::chrono::steady_clock::time_point lastPushLogTime_{};
+    std::size_t                           pushBatchCount_{0};
 
     /// Wall-clock windowed throughput tracker per source (per-worker, no shared mutex).
     struct SourceRateTracker {
