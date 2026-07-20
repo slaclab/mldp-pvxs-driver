@@ -413,12 +413,12 @@ processors:
   custom-proc:
     type: custom_compute
 routing:
-  custom-proc:
+  custom-compute:
     from: [test-reader]
     include:
       - SRC:A
   capture-writer:
-    from: [custom-proc]
+    from: [custom-compute]
     include:
       - VIRTUAL:CUSTOM:OUT
 )yaml";

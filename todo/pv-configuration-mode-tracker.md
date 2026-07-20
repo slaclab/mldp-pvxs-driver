@@ -3,10 +3,10 @@
 ## Goal
 
 Monitor two PVs that emit enum states. On each state change:
-1. Close current open `ConfigurationActivation` (set `endTime`)
-2. Open new `ConfigurationActivation` for the new state (no `endTime`)
+1. Close current open `ConfigurationActivation` (emit event with `endTime`)
+2. Open new `ConfigurationActivation` for the new state (emit event without `endTime`)
 
-All using the driver's existing gRPC pool — no separate Python gRPC connection.
+Uses the existing data flow: **PVXS reader → routing → processor → bus → MLDPConfigurationWriter** (gRPC upsert).
 
 ## PVs
 
@@ -17,88 +17,171 @@ All using the driver's existing gRPC pool — no separate Python gRPC connection
 
 ---
 
-## Tasks
+## Architecture Flow
 
-### 1. Add save methods to `MLDPAnnotationQueryClient`
-
-**Files:**
-- `include/query/impl/mldp/MLDPAnnotationQueryClient.h`
-- `src/query/MLDPAnnotationQueryClient.cpp`
-
-**Methods:**
-
-```cpp
-std::optional<std::string>
-saveConfiguration(const dp::service::annotation::SaveConfigurationRequest& request);
-
-std::optional<std::string>
-saveConfigurationActivation(const dp::service::annotation::SaveConfigurationActivationRequest& request);
-
-std::optional<dp::service::common::ConfigurationActivation>
-getLatestActiveConfiguration(const std::string& configurationName);
 ```
-
-**Notes:**
-- Same pattern as existing read methods: `pool_->acquire()` → build request → `stub->saveXxx()` → check status → extract result
-- `getLatestActiveConfiguration` uses `queryConfigurationActivations` with ANDed `ConfigurationNameCriterion` + `TimestampCriterion(now)` — single RPC, server-side filter
-- No deadline (matches existing query methods)
-- `saveConfigurationActivation` handles both create (new `clientActivationId`) and update/close (same `clientActivationId` with `endTime` set)
+EPICS PV (mbbi)
+    │
+    ▼
+EpicsPVXSReader (reads via pvxs monitor)
+    │
+    ▼ routing: connects reader → processor
+    │
+ChannelProcessor → PythonAlgorithm::compute()
+    │
+    ▼ Python script:
+    │   1. mldp.query_configuration_activations(prefix)   ← read-only query bridge
+    │   2. return [                                        ← emit events via bus
+    │        mldp.configuration(name, category=...)        → ConfigurationPayload (upsert)
+    │        mldp.configuration_activation(name, end_time=now, client_activation_id=old_id)  → close old
+    │        mldp.configuration_activation(name, client_activation_id=new_id)                → open new
+    │      ]
+    │
+    ▼ bus_->push() for each emitted event
+    │
+MLDPConfigurationWriter (gRPC saveConfiguration / saveConfigurationActivation = upsert)
+```
 
 ---
 
-### 2. Create C++ → Python bridge for annotation queries
+## Tasks
 
-**Why:** Existing Python processors only emit payloads (fire-and-forget via bus). Close→open cycle needs read-then-write. Bridge exposes C++ client to embedded Python.
+### 1. Fix incomplete `configuration_activation` payload bridge
+
+**Files:**
+- `src/processor/impl/PythonAlgorithm.cpp` (lines 503–510)
+- `src/processor/PythonScriptDirectoryLoader.cpp` (line 53)
+
+**Problem:** The `"configuration_activation"` branch in `payloadFromPyObject()` currently ignores the `data` dict — only sets `configuration_name` and `start_time` (from `reference_time`). Cannot express close (needs `end_time`) or idempotent update (needs `client_activation_id`).
+
+**Fix in `PythonAlgorithm.cpp`:**
+Parse `data` dict fields:
+- `client_activation_id` → `payload.client_activation_id`
+- `start_time` (epoch float or dict `{seconds, nanos}`) → `payload.start_time` (override default)
+- `end_time` (same format) → `payload.end_time`
+- `description` → `payload.description`
+- `tags` (list of str) → `payload.tags`
+- `modified_by` → `payload.modified_by`
+- Remaining string keys → `payload.attributes`
+
+Pattern: follow `configurationPayloadFromDict()` (same file, lines 153–213).
+
+**Fix in `PythonScriptDirectoryLoader.cpp`:**
+Update the `mldp` module helper:
+```python
+def configuration_activation(source, **kwargs) -> _MldpPayload:
+    return _MldpPayload("configuration_activation", source, kwargs)
+```
+
+---
+
+### 2. Python query bridge (read-only)
+
+**Why:** The processor must query MLDP to discover current active configurations before deciding what events to emit (close old → open new). This is read-only; writes go through bus → writer.
 
 **New files:**
-- `include/processor/MldpPythonAnnotationBridge.h`
-- `src/processor/MldpPythonAnnotationBridge.cpp`
+- `include/processor/MldpPythonQueryBridge.h`
+- `src/processor/MldpPythonQueryBridge.cpp`
 
 **Modify:**
-- `src/processor/PythonScriptDirectoryLoader.cpp` — register `PyMethodDef` functions on `mldp` module in `ensurePythonReady()`
-- `src/controller/MLDPPVXSController.cpp` — after queryable creation, pass `shared_ptr<MLDPAnnotationQueryClient>` to bridge singleton
+- `src/processor/PythonScriptDirectoryLoader.cpp` — in `ensurePythonReady()`, register `PyMethodDef` functions on the `mldp` module
 
-**Python functions exposed:**
+**Python script declares queryable dependency:**
+```python
+config = {
+    "name": "configuration_mode_tracker",
+    "sources": ["MPS:UNDS:3500:SXRSS_MODE", "MPS:UNDH:2850:HXRSS_MODE"],
+    "queryable": "mldp-pv-metadata"  # triggers QueryableFactory usage
+}
+```
+
+**Python functions exposed (read-only):**
 
 | Python | C++ | Returns |
 |--------|-----|---------|
-| `mldp.save_configuration(name, category, **kwargs)` | `saveConfiguration(req)` | config name `str` or raises |
-| `mldp.save_configuration_activation(config_name, start_time, client_activation_id=None, end_time=None, **kwargs)` | `saveConfigurationActivation(req)` | activation ID `str` or raises |
-| `mldp.get_active_configuration(config_name)` | `getLatestActiveConfiguration(name)` | `dict` or `None` |
-| `mldp.query_configuration_activations(config_name)` | `queryConfigurationActivations(req)` | `list[dict]` |
+| `mldp.get_active_configurations(timestamp=None)` | `MLDPAnnotationQueryClient::getActiveConfigurations(at)` | `list[dict]` |
+| `mldp.query_configuration_activations(config_name)` | `MLDPAnnotationQueryClient::queryConfigurationActivations(req)` | `list[dict]` |
+| `mldp.get_configuration(name)` | `MLDPAnnotationQueryClient::getConfiguration(name)` | `dict` or `None` |
 
 **Thread safety:**
 - Release GIL (`Py_BEGIN_ALLOW_THREADS`) before gRPC calls, reacquire after
 - `MLDPAnnotationQueryClient` is thread-safe (pool-based)
 
 **Lifetime:**
-- Bridge holds `shared_ptr` to client — lives for process duration
-- Set before any `compute()` runs
+- Bridge holds `shared_ptr<MLDPAnnotationQueryClient>` created from `QueryableFactory::create<MLDPAnnotationQueryClient>()`
+- Initialized once during `ensurePythonReady()` if `mldp-pv-metadata` queryable is prepared
 
 ---
 
-### 3. Write Python processor script
+### 3. Python processor script
 
-**File:** `scripts/processors/configuration_mode_tracker.py`
+**File:** placed in configured `script-dir` or referenced by `script-path`
 
 **Logic:**
-```
-on PV change:
-  1. save_configuration(new_config_name)          — idempotent upsert
-  2. get_active_configuration(prefix_configs...)   — find open activation
-  3. save_configuration_activation(old, endTime)   — close it
-  4. save_configuration_activation(new, startTime) — open new
-```
+```python
+import mldp
 
-**Config mapping:**
-- `MPS:UNDS:3500:SXRSS_MODE` → prefix `sxrss-mode`, configs: `sxrss-mode-undefined`, `sxrss-mode-sase`, etc.
-- `MPS:UNDH:2850:HXRSS_MODE` → prefix `hxrss-mode`, configs: `hxrss-mode-undefined`, `hxrss-mode-seeded`, etc.
+config = {
+    "name": "configuration_mode_tracker",
+    "sources": ["MPS:UNDS:3500:SXRSS_MODE", "MPS:UNDH:2850:HXRSS_MODE"],
+    "alignment": "latest-value",
+    "trigger": "any-update",
+    "queryable": "mldp-pv-metadata"
+}
+
+PV_CONFIG = {
+    "MPS:UNDS:3500:SXRSS_MODE": {
+        "prefix": "sxrss-mode",
+        "states": ["undefined", "sase", "seeded", "delay-line", "slit"]
+    },
+    "MPS:UNDH:2850:HXRSS_MODE": {
+        "prefix": "hxrss-mode",
+        "states": ["undefined", "seeded", "sase-phase-shift"]
+    }
+}
+
+def compute(snapshot):
+    results = []
+    for pv_name, pv_data in snapshot.items():
+        cfg = PV_CONFIG.get(pv_name)
+        if not cfg:
+            continue
+        state_index = int(pv_data["value"])
+        new_config_name = f"{cfg['prefix']}-{cfg['states'][state_index]}"
+
+        # 1. Upsert configuration (idempotent)
+        results.append(mldp.configuration(
+            new_config_name,
+            category="undulator-mode"
+        ))
+
+        # 2. Query current active for all states of this prefix
+        all_config_names = [f"{cfg['prefix']}-{s}" for s in cfg['states']]
+        for name in all_config_names:
+            activations = mldp.query_configuration_activations(name)
+            for act in activations:
+                if act.get("end_time") is None:
+                    # 3. Close active activation
+                    results.append(mldp.configuration_activation(
+                        name,
+                        client_activation_id=act["client_activation_id"],
+                        end_time=snapshot.timestamp
+                    ))
+
+        # 4. Open new activation
+        results.append(mldp.configuration_activation(
+            new_config_name,
+            client_activation_id=f"{new_config_name}-{snapshot.timestamp}"
+        ))
+
+    return results
+```
 
 **Edge cases:**
-- Startup: no `_state` → first value always triggers new activation (query finds nothing → skip close, just open)
+- Startup: no prior state → query finds nothing → skip close, just open
 - Undefined (0): tracked as its own activation
-- Duplicate `saveConfiguration`: idempotent (upsert by name)
-- Restart: stateless — queries MLDP for current active on first trigger
+- Duplicate `configuration`: idempotent (upsert by name via writer)
+- Restart: stateless — always queries MLDP for current active
 
 ---
 
@@ -115,43 +198,53 @@ reader:
 processors:
   - type: python-script
     script-path: /opt/scripts/processors/configuration_mode_tracker.py
+
+writer:
+  mldp-configuration:
+    - name: config_writer
+
+routing:
+  configuration_mode_tracker:
+    from: [mode_pvs]
+  config_writer:
+    from: [configuration_mode_tracker]
+
+queryable:
+  - type: mldp-pv-metadata
 ```
 
 ---
 
-### 5. Verification
+### 5. Validate MLDPConfigurationWriter upsert semantics
 
-- [ ] Build inside devcontainer — C++ compiles with new methods + bridge
-- [ ] Unit test: mock gRPC stub for `saveConfiguration`, `saveConfigurationActivation`
-- [ ] Integration: Python processor loads, PV change → configuration + activation created
+**No code change needed.** Document findings:
+
+- `MLDPConfigurationWriter::doSaveConfiguration()` calls gRPC `saveConfiguration` RPC — upsert by `configuration_name`
+- `MLDPConfigurationWriter::doSaveConfigurationActivation()` calls gRPC `saveConfigurationActivation` RPC — upsert by `client_activation_id`
+- Both insert new records or update existing ones
+- `client_activation_id` is the idempotency key: same ID + new `end_time` = close an activation
+- Writer accepts both `ConfigurationPayload` and `ConfigurationActivationPayload` variants from bus
+
+---
+
+### 6. Verification
+
+- [ ] Build inside devcontainer — C++ compiles with fixed payload bridge
+- [ ] Unit test: Python `configuration_activation(source, end_time=..., client_activation_id=...)` produces correct `ConfigurationActivationPayload`
+- [ ] Unit test: mock gRPC stub receives correct `saveConfigurationActivation` with `end_time` set (close) and without (open)
+- [ ] Integration: Python processor loads, PV change → events emitted → writer persists
 - [ ] Restart test: processor restarts, queries current state, resumes correctly
-- [ ] Timeline test: `queryConfigurationActivations` shows continuous coverage (no gaps, no overlaps)
+- [ ] Timeline test: activations show continuous coverage (no gaps, no overlaps)
 
 ---
 
-## Architecture Flow
+## Design Choices
 
-```
-EPICS PV (mbbi) → pvxs reader → ChannelProcessor → PythonAlgorithm::compute()
-                                                         │
-                                                         ▼
-                                                  Python script calls:
-                                                  mldp.get_active_configuration()
-                                                  mldp.save_configuration_activation()
-                                                         │
-                                                         ▼ (via PyMethodDef bridge)
-                                                  MLDPAnnotationQueryClient
-                                                         │
-                                                         ▼ (gRPC, existing pool)
-                                                  MLDP Annotation Service
-```
+**Why no write bridge?**
+The bus → writer path already handles writes. Adding PyMethodDef write functions would bypass the bus, lose routing/enrichment, and duplicate the gRPC logic. Processors emit events; writers persist them.
 
-## Open Design Choice
+**Why a read-only query bridge?**
+The processor needs to know *what's currently active* before deciding to close or open. This is a read (not a write) — it queries the annotation service. The `MLDPAnnotationQueryClient` (via `QueryableFactory`) provides this.
 
 **How to find "current active for this prefix":**
-
-Option A (recommended): Query all known config names for the prefix (finite set — known states). Stateless on restart.
-
-Option B: Store last-opened activation ID in `_state`. Lost on restart — must query anyway as fallback.
-
-→ Use **A**. Always query. Script is stateless.
+Query all known config names for the prefix (finite set — known states). Always query. Script is stateless. Same as original Option A.
