@@ -10,7 +10,8 @@
 
 #include <processor/MLDPChannelProcessorConfig.h>
 
-namespace mldp_pvxs_driver::processor {
+using namespace mldp_pvxs_driver;
+using namespace mldp_pvxs_driver::processor;
 
 namespace {
 
@@ -159,5 +160,3 @@ std::size_t MLDPChannelProcessorConfig::maxBufferDepth() const noexcept
 {
     return max_buffer_depth_;
 }
-
-} // namespace mldp_pvxs_driver::processor

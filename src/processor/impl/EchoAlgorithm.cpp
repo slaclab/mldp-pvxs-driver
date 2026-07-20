@@ -17,12 +17,13 @@
 
 #ifdef BUILD_ECHO_PROCESSOR
 
-#include <processor/ChannelProcessorFactory.h>
-#include <util/log/Logger.h>
+    #include <processor/ChannelProcessorFactory.h>
+    #include <util/log/Logger.h>
 
-#include <type_traits>
+    #include <type_traits>
 
-namespace mldp_pvxs_driver::processor {
+using namespace mldp_pvxs_driver;
+using namespace mldp_pvxs_driver::processor;
 
 namespace {
 
@@ -114,7 +115,7 @@ std::vector<AlgorithmOutput> EchoAlgorithm::compute(const AlignedSnapshot& snaps
         return {};
     }
 
-    const auto channel_it = snapshot.channels.begin();
+    const auto                   channel_it = snapshot.channels.begin();
     util::bus::TimeSeriesPayload payload;
     payload.root_source_name = output_source_;
     payload.frames.push_back(channel_it->second);
@@ -134,7 +135,5 @@ std::vector<AlgorithmOutput> EchoAlgorithm::compute(const AlignedSnapshot& snaps
 }
 
 REGISTER_ALGORITHM("echo", EchoAlgorithm);
-
-} // namespace mldp_pvxs_driver::processor
 
 #endif // BUILD_ECHO_PROCESSOR

@@ -14,17 +14,18 @@
 #include <stdexcept>
 #include <unordered_map>
 
-namespace mldp_pvxs_driver::processor {
+using namespace mldp_pvxs_driver;
+using namespace mldp_pvxs_driver::processor;
 
 namespace {
 
-    using Registry = std::unordered_map<std::string, ChannelProcessorFactory::ProcessorFactory>;
+using Registry = std::unordered_map<std::string, ChannelProcessorFactory::ProcessorFactory>;
 
-    Registry& registry()
-    {
-        static Registry instance;
-        return instance;
-    }
+Registry& registry()
+{
+    static Registry instance;
+    return instance;
+}
 
 } // namespace
 
@@ -61,5 +62,3 @@ ChannelProcessorFactory::ProcessorFactory& ChannelProcessorFactory::lookup(const
 
     return it->second;
 }
-
-} // namespace mldp_pvxs_driver::processor

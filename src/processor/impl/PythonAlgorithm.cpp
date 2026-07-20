@@ -12,17 +12,18 @@
 
 #ifdef BUILD_PYTHON_PROCESSOR
 
-#include <Python.h>
+    #include <Python.h>
 
-#include <util/log/Logger.h>
+    #include <util/log/Logger.h>
 
-#include <cmath>
-#include <optional>
-#include <stdexcept>
-#include <string>
-#include <utility>
+    #include <cmath>
+    #include <optional>
+    #include <stdexcept>
+    #include <string>
+    #include <utility>
 
-namespace mldp_pvxs_driver::processor {
+using namespace mldp_pvxs_driver;
+using namespace mldp_pvxs_driver::processor;
 
 namespace {
 
@@ -130,7 +131,7 @@ util::bus::SourceMetadataEntry metadataEntryFromDict(PyObject* dict)
         }
     }
 
-    PyObject *key = nullptr, *value = nullptr;
+    PyObject * key = nullptr, *value = nullptr;
     Py_ssize_t pos = 0;
     while (PyDict_Next(dict, &pos, &key, &value) != 0)
     {
@@ -191,7 +192,7 @@ util::bus::ConfigurationPayload configurationPayloadFromDict(const std::string& 
         }
     }
 
-    PyObject *key = nullptr, *value = nullptr;
+    PyObject * key = nullptr, *value = nullptr;
     Py_ssize_t pos = 0;
     while (PyDict_Next(dict, &pos, &key, &value) != 0)
     {
@@ -271,7 +272,7 @@ void PythonAlgorithm::configure(const config::Config&)
         const auto count = PySequence_Size(output_sources);
         for (Py_ssize_t idx = 0; idx < count; ++idx)
         {
-            PyObject* item = PySequence_GetItem(output_sources, idx);
+            PyObject*  item = PySequence_GetItem(output_sources, idx);
             const auto value = pyString(item);
             Py_XDECREF(item);
             if (!value || value->empty())
@@ -325,7 +326,7 @@ std::vector<AlgorithmOutput> PythonAlgorithm::compute(const AlignedSnapshot& sna
     for (const auto& [source, batch] : snapshot.channels)
     {
         double latest_value = 0.0;
-        bool found_value = false;
+        bool   found_value = false;
         for (const auto& column : batch.columns)
         {
             if (const auto* values = std::get_if<std::vector<double>>(&column.values); values != nullptr && !values->empty())
@@ -378,7 +379,7 @@ std::vector<AlgorithmOutput> PythonAlgorithm::compute(const AlignedSnapshot& sna
         const auto count = PySequence_Size(result);
         for (Py_ssize_t idx = 0; idx < count; ++idx)
         {
-            PyObject* item = PySequence_GetItem(result, idx);
+            PyObject*  item = PySequence_GetItem(result, idx);
             const auto converted = payloadFromPyObject(item, snapshot.reference_time);
             Py_XDECREF(item);
             if (converted.has_value())
@@ -400,7 +401,7 @@ void PythonAlgorithm::reset() noexcept
 {
 }
 
-std::optional<AlgorithmOutput> PythonAlgorithm::payloadFromPyObject(PyObject* obj,
+std::optional<AlgorithmOutput> PythonAlgorithm::payloadFromPyObject(PyObject*                      obj,
                                                                     const util::bus::BusTimestamp& reference_time) const
 {
     if (obj == nullptr)
@@ -409,13 +410,13 @@ std::optional<AlgorithmOutput> PythonAlgorithm::payloadFromPyObject(PyObject* ob
     }
 
     PyErr_Clear();
-    PyObject* type_obj   = PyObject_GetAttrString(obj, "mldp_type");
+    PyObject* type_obj = PyObject_GetAttrString(obj, "mldp_type");
     PyErr_Clear();
     PyObject* source_obj = PyObject_GetAttrString(obj, "source");
     PyErr_Clear();
-    PyObject* data       = PyObject_GetAttrString(obj, "data");
+    PyObject*  data = PyObject_GetAttrString(obj, "data");
     const auto payload_type = pyString(type_obj);
-    const auto source       = pyString(source_obj);
+    const auto source = pyString(source_obj);
     Py_XDECREF(type_obj);
     Py_XDECREF(source_obj);
 
@@ -436,7 +437,7 @@ std::optional<AlgorithmOutput> PythonAlgorithm::payloadFromPyObject(PyObject* ob
             return std::nullopt;
         }
 
-        util::bus::DataBatch batch;
+        util::bus::DataBatch    batch;
         util::bus::BusTimestamp timestamp = reference_time;
         if (auto* from_value = PyDict_GetItemString(data, "from"); from_value != nullptr)
         {
@@ -454,7 +455,7 @@ std::optional<AlgorithmOutput> PythonAlgorithm::payloadFromPyObject(PyObject* ob
         }
         batch.timestamps.push_back(toTimestampEntry(timestamp));
 
-        PyObject *key = nullptr, *value = nullptr;
+        PyObject * key = nullptr, *value = nullptr;
         Py_ssize_t pos = 0;
         while (PyDict_Next(data, &pos, &key, &value) != 0)
         {
@@ -513,7 +514,5 @@ std::optional<AlgorithmOutput> PythonAlgorithm::payloadFromPyObject(PyObject* ob
     util::log::warnf("PythonAlgorithm skipping unknown payload type '{}'", *payload_type);
     return std::nullopt;
 }
-
-} // namespace mldp_pvxs_driver::processor
 
 #endif // BUILD_PYTHON_PROCESSOR

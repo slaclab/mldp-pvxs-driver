@@ -14,7 +14,8 @@
 #include <cstdint>
 #include <variant>
 
-namespace mldp_pvxs_driver::processor {
+using namespace mldp_pvxs_driver;
+using namespace mldp_pvxs_driver::processor;
 
 namespace {
 
@@ -77,13 +78,20 @@ void trimOldestSamples(util::bus::DataBatch& batch, std::size_t max_depth)
     for (const auto& column : batch.columns)
     {
         const bool underflow = std::visit(
-            [drop_count](const auto& values) { return values.size() <= drop_count; },
+            [drop_count](const auto& values)
+            {
+                return values.size() <= drop_count;
+            },
             column.values);
         if (underflow)
         {
             batch.timestamps.clear();
             for (auto& col : batch.columns)
-                std::visit([](auto& v) { v.clear(); }, col.values);
+                std::visit([](auto& v)
+                           {
+                               v.clear();
+                           },
+                           col.values);
             return;
         }
     }
@@ -102,7 +110,7 @@ void trimOldestSamples(util::bus::DataBatch& batch, std::size_t max_depth)
 
 } // namespace
 
-void InputBuffer::ingest(const std::string&                 root_source_name,
+void InputBuffer::ingest(const std::string&                  root_source_name,
                          const util::bus::TimeSeriesPayload& payload)
 {
     if (required_source_lookup_.find(root_source_name) == required_source_lookup_.end())
@@ -209,5 +217,3 @@ std::size_t InputBuffer::bufferDepthForSource(const std::string& root_source_nam
     }
     return it->second.timestamps.size();
 }
-
-} // namespace mldp_pvxs_driver::processor

@@ -17,7 +17,8 @@
 #include <utility>
 #include <variant>
 
-namespace mldp_pvxs_driver::processor {
+using namespace mldp_pvxs_driver;
+using namespace mldp_pvxs_driver::processor;
 
 namespace {
 
@@ -33,11 +34,11 @@ std::shared_ptr<util::log::ILogger> makeProcessorLogger(const std::string& name)
 
 } // namespace
 
-ChannelProcessor::ChannelProcessor(MLDPChannelProcessorConfig               config,
-                                   IAlgorithmUPtr                           algorithm,
-                                   std::shared_ptr<util::bus::IDataBus>     bus,
-                                   std::shared_ptr<metrics::Metrics>        metrics,
-                                   std::shared_ptr<BS::light_thread_pool>   thread_pool)
+ChannelProcessor::ChannelProcessor(MLDPChannelProcessorConfig             config,
+                                   IAlgorithmUPtr                         algorithm,
+                                   std::shared_ptr<util::bus::IDataBus>   bus,
+                                   std::shared_ptr<metrics::Metrics>      metrics,
+                                   std::shared_ptr<BS::light_thread_pool> thread_pool)
     : config_(std::move(config))
     , algorithm_(std::move(algorithm))
     , bus_(std::move(bus))
@@ -78,9 +79,10 @@ void ChannelProcessor::stop() noexcept
 
     {
         std::unique_lock<std::mutex> lock(drain_mutex_);
-        drain_cv_.wait(lock, [this] {
-            return pending_tasks_.load(std::memory_order_acquire) == 0;
-        });
+        drain_cv_.wait(lock, [this]
+                       {
+                           return pending_tasks_.load(std::memory_order_acquire) == 0;
+                       });
     }
 
     buffer_.clear();
@@ -117,7 +119,9 @@ void ChannelProcessor::processTask(util::bus::IDataBus::EventBatch batch) noexce
     if (!snapshot.has_value())
     {
         metrics::metric_call(metrics_, [&](metrics::Metrics& m)
-                             { m.incrementProcessorSnapshotMisses(1.0, processorMetricLabels(config_.name())); });
+                             {
+                                 m.incrementProcessorSnapshotMisses(1.0, processorMetricLabels(config_.name()));
+                             });
         return;
     }
 
@@ -153,7 +157,7 @@ const std::vector<std::string>& ChannelProcessor::inputSourceNames() const noexc
 void ChannelProcessor::fireCompute(const AlignedSnapshot& snapshot) noexcept
 {
     std::vector<AlgorithmOutput> outputs;
-    const auto compute_started_at = std::chrono::steady_clock::now();
+    const auto                   compute_started_at = std::chrono::steady_clock::now();
     try
     {
         outputs = algorithm_->compute(snapshot);
@@ -162,25 +166,29 @@ void ChannelProcessor::fireCompute(const AlignedSnapshot& snapshot) noexcept
     {
         util::log::warnf(*logger_, "ChannelProcessor '{}' compute failed: {}", config_.name(), ex.what());
         metrics::metric_call(metrics_, [&](metrics::Metrics& m)
-                             { m.incrementProcessorComputeErrors(1.0, processorMetricLabels(config_.name())); });
+                             {
+                                 m.incrementProcessorComputeErrors(1.0, processorMetricLabels(config_.name()));
+                             });
         return;
     }
     catch (...)
     {
         util::log::warnf(*logger_, "ChannelProcessor '{}' compute failed with unknown exception", config_.name());
         metrics::metric_call(metrics_, [&](metrics::Metrics& m)
-                             { m.incrementProcessorComputeErrors(1.0, processorMetricLabels(config_.name())); });
+                             {
+                                 m.incrementProcessorComputeErrors(1.0, processorMetricLabels(config_.name()));
+                             });
         return;
     }
     const auto compute_finished_at = std::chrono::steady_clock::now();
     metrics::metric_call(metrics_, [&](metrics::Metrics& metrics)
-    {
-        const auto labels = processorMetricLabels(config_.name());
-        const auto duration_us = std::chrono::duration<double, std::micro>(compute_finished_at - compute_started_at).count();
-        metrics.observeProcessorComputeLatencyUs(duration_us, labels);
-        metrics.incrementProcessorFireCount(1.0, labels);
-        metrics.setProcessorBufferDepth(static_cast<double>(buffer_.bufferDepth()), labels);
-    });
+                         {
+                             const auto labels = processorMetricLabels(config_.name());
+                             const auto duration_us = std::chrono::duration<double, std::micro>(compute_finished_at - compute_started_at).count();
+                             metrics.observeProcessorComputeLatencyUs(duration_us, labels);
+                             metrics.incrementProcessorFireCount(1.0, labels);
+                             metrics.setProcessorBufferDepth(static_cast<double>(buffer_.bufferDepth()), labels);
+                         });
 
     for (auto& output : outputs)
     {
@@ -193,5 +201,3 @@ void ChannelProcessor::fireCompute(const AlignedSnapshot& snapshot) noexcept
         }
     }
 }
-
-} // namespace mldp_pvxs_driver::processor
