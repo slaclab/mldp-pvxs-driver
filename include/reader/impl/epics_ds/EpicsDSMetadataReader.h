@@ -76,7 +76,7 @@ namespace mldp_pvxs_driver::reader::impl::epics_ds {
  *   | source-name-column    | string | `channelName`  | NTTable column holding PV name |
  *   | tags-column           | string | `""`           | NTTable column holding tags (disabled when empty) |
  *   | show-columns          | string | `""`           | Comma-separated DS columns for `show=` param (all columns when empty) |
- *   | rescan-interval-sec   | double | `0.0`          | Re-fetch period; 0 = run once |
+ *   | rescan-interval-sec   | double | `0.0`          | Re-fetch period; 0 = run once and auto-closes when all readers complete; must be >= 0 |
  *   | worker-thread-count   | int    | `1`            | 1 = inline; N>1 = 1 producer + (N-1) consumers |
  *   | max-queue-depth       | int    | `16`           | Bounded queue size (producer/consumer mode only) |
  *   | pvs                   | list   | (required)     | Per-PV enrichment entries; at least one entry required |
@@ -191,6 +191,9 @@ private:
 
     /** Run targeted per-PV enrichment sweep and publish one batch per PV. */
     void runPVListSweep(std::stop_token st) noexcept;
+
+    /** Close the result queue and wait for all queued wildcard-query results to be published. */
+    void drainResultConsumers();
 
     /**
      * @brief Parse an NTTable PVXS Value into a SourceMetadataPayload.

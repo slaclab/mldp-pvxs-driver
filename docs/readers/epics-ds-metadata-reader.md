@@ -86,8 +86,9 @@ The three axes below are independent and combinable. All require `pvs`.
 ### One-Shot (Default)
 
 When `rescan-interval-sec` is `0.0` (the default), the reader runs one fetch cycle
-(wildcard query + PV-list sweep) then the worker thread exits and calls `signalCompleted()` to support [controller auto-close](readers.md#reader-lifecycle--auto-close). The reader instance stays
-alive but idle.
+(wildcard query + PV-list sweep), drains every queued wildcard-query result, then calls
+`signalCompleted()` to support [controller auto-close](readers.md#reader-lifecycle--auto-close).
+The reader instance stays alive but idle.
 
 ```yaml
 reader:
@@ -170,7 +171,7 @@ Parameter              | Type   | Default                                  | Des
 `source-name-column`   | string | `"channelName"`                          | NTTable column that carries the PV / source name.
 `tags-column`          | string | `""`                                     | NTTable column for comma-separated tags. Empty = disabled.
 `show-columns`         | string | `""`                                     | Comma-separated columns passed as `show=` in the wildcard NTURI query. Empty = server returns all columns.
-`rescan-interval-sec`  | double | `0.0`                                    | Repeat fetch interval in seconds. `0` = run once.
+`rescan-interval-sec`  | double | `0.0`                                    | Repeat fetch interval in seconds. `0` = run once, then participates in controller auto-close; must be non-negative.
 `worker-thread-count`  | int    | `1`                                      | `1` = single-thread inline; `N > 1` = 1 producer + N-1 consumers. Range: `1..64`.
 `max-queue-depth`      | int    | `16`                                     | Bounded queue depth in producer/consumer mode. Ignored when `worker-thread-count` is `1`. Range: `1..1024`.
 `pv-show-columns`      | string | `"dname,ename,etype,lname,ioc,scheme,z"` | DS `show=` columns fetched per PV. Duplicate values are rejected.
@@ -181,7 +182,7 @@ Parameter              | Type   | Default                                  | Des
 - `pvs` is required and must contain at least one entry.
 - `pvs[].name` is required per entry and must be non-empty.
 - `timeout-sec` must be strictly positive.
-- `rescan-interval-sec` must be `>= 0`.
+- `rescan-interval-sec` must be `>= 0`; negative values, including `-1`, are rejected.
 - `worker-thread-count` must be in range `1..64`.
 - `max-queue-depth` must be in range `1..1024`.
 - `pv-show-columns` must not contain duplicate column names.

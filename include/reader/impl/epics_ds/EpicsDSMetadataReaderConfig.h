@@ -48,7 +48,7 @@ namespace mldp_pvxs_driver::reader::impl::epics_ds {
  *   | source-name-column    | string | `channelName`  | NTTable column holding PV name |
  *   | tags-column           | string | `""`           | NTTable column holding tags (disabled when empty) |
  *   | show-columns          | string | `""`           | Comma-separated columns for wildcard `show=` param |
- *   | rescan-interval-sec   | double | `0.0`          | Re-fetch period; 0 = run once |
+ *   | rescan-interval-sec   | double | `0.0`          | Re-fetch period; 0 = run once and participates in controller auto-close; must be >= 0 |
  *   | worker-thread-count   | int    | `1`            | 1 = inline; N>1 = 1 producer + (N-1) consumers |
  *   | max-queue-depth       | int    | `16`           | Bounded queue depth (producer/consumer mode only) |
  *   | pvs                   | list   | (required)     | Per-PV enrichment entries |
@@ -152,7 +152,7 @@ public:
     const std::vector<std::string>& pvShowColumns() const noexcept { return pv_show_columns_; }
 
     /**
-     * @brief Interval between periodic re-fetches in seconds (default: 0.0 = run once).
+     * @brief Interval between periodic re-fetches in seconds (default: 0.0 = run once; must be non-negative).
      */
     double rescanIntervalSec() const noexcept { return rescan_interval_sec_; }
 

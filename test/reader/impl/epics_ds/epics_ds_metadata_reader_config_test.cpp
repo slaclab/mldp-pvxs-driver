@@ -167,7 +167,36 @@ pvs:
 pv-show-columns: "dname"
 )yaml");
 
-    EXPECT_THROW(EpicsDSMetadataReaderConfig config(cfg), EpicsDSMetadataReaderConfig::Error);
+    try
+    {
+        EpicsDSMetadataReaderConfig config(cfg);
+        FAIL() << "Expected negative rescan interval to be rejected";
+    }
+    catch (const EpicsDSMetadataReaderConfig::Error& error)
+    {
+        EXPECT_STREQ(error.what(), "epics-ds-metadata reader: 'rescan-interval-sec' must be >= 0");
+    }
+}
+
+TEST_F(EpicsDSMetadataReaderConfigTest, MinusOneRescanThrows)
+{
+    auto cfg = makeConfigFromYaml(R"yaml(
+name: test-reader
+rescan-interval-sec: -1
+pvs:
+  - name: BPMS:LI20:2445:X
+pv-show-columns: "dname"
+)yaml");
+
+    try
+    {
+        EpicsDSMetadataReaderConfig config(cfg);
+        FAIL() << "Expected negative rescan interval to be rejected";
+    }
+    catch (const EpicsDSMetadataReaderConfig::Error& error)
+    {
+        EXPECT_STREQ(error.what(), "epics-ds-metadata reader: 'rescan-interval-sec' must be >= 0");
+    }
 }
 
 // Verifies that rescan-interval-sec: 0.0 is accepted (single-shot mode).

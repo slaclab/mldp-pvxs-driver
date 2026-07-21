@@ -379,7 +379,7 @@ persist the metadata to the MLDP annotation service.
       source-name-column: channelName         # optional; default: "channelName"
       tags-column: tags                       # optional; default: "" (disabled)
       show-columns: "channelName,hostName"    # optional; default: "" (all columns)
-      rescan-interval-sec: 300.0              # optional; default: 0.0 (run once)
+      rescan-interval-sec: 300.0              # optional; default: 0.0 (run once and auto-close after all readers complete)
       worker-thread-count: 2                  # optional; default: 1
       max-queue-depth: 16                     # optional; default: 16
       pv-show-columns: "dname,ename,etype"    # optional; default: dname,ename,etype,lname,ioc,scheme,z
@@ -398,7 +398,7 @@ persist the metadata to the MLDP annotation service.
 | `source-name-column` | string | `"channelName"` | NTTable column carrying the PV / source name. |
 | `tags-column` | string | `""` | NTTable column for comma-separated tags. Empty = disabled. |
 | `show-columns` | string | `""` | Comma-separated columns passed as `show=` in the wildcard NTURI query. Empty = server returns all columns. |
-| `rescan-interval-sec` | double | `0.0` | Repeat fetch interval in seconds. `0` = run once. |
+| `rescan-interval-sec` | double | `0.0` | Repeat fetch interval in seconds. `0` = run once and participates in controller auto-close. |
 | `worker-thread-count` | int | `1` | `1` = single-thread inline; `N > 1` = 1 producer + N-1 consumers. Range: `1..64`. |
 | `max-queue-depth` | int | `16` | Bounded queue depth in producer/consumer mode. Ignored when `worker-thread-count` is `1`. Range: `1..1024`. |
 | `pvs` | list | — | **Required.** Per-PV enrichment entries for targeted DS lookups. Must contain at least one entry. Each entry requires `name`; `metadata` map is optional. |
@@ -408,7 +408,7 @@ persist the metadata to the MLDP annotation service.
 
 - `name` is required and must be non-empty.
 - `timeout-sec` must be strictly positive.
-- `rescan-interval-sec` must be `>= 0`.
+- `rescan-interval-sec` must be `>= 0`; negative values, including `-1`, are rejected.
 - `worker-thread-count` must be in range `1..64`.
 - `max-queue-depth` must be in range `1..1024`.
 - `pvs` is required and must contain at least one entry.

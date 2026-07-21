@@ -134,11 +134,7 @@ EpicsDSMetadataReader::~EpicsDSMetadataReader()
     worker_thread_.request_stop();
     worker_thread_.join();
     util::log::tracef(*logger_, "~EpicsDSMetadataReader '{}' [tid={}]: worker thread joined", config_.name(), std::this_thread::get_id());
-    if (result_queue_)
-    {
-        util::log::tracef(*logger_, "~EpicsDSMetadataReader '{}' [tid={}]: closing result queue", config_.name(), std::this_thread::get_id());
-        result_queue_->close();
-    }
+    drainResultConsumers();
     util::log::tracef(*logger_, "~EpicsDSMetadataReader '{}' [tid={}]: done (consumer jthreads joining)", config_.name(), std::this_thread::get_id());
     // consumer_threads_ jthread destructors join automatically
 }
@@ -240,19 +236,16 @@ EpicsDSMetadataReader::queryPVAttributes(const EpicsDSMetadataReaderConfig::PVEn
         }
     }
 
-    if (logger_->shouldLog(util::log::Level::Debug))
+    std::ostringstream summary;
+    summary << "EpicsDSMetadataReader '" << config_.name()
+            << "' PV '" << pv.name << "' attributes:";
+    for (const auto& col : config_.pvShowColumns())
     {
-        std::ostringstream summary;
-        summary << "EpicsDSMetadataReader '" << config_.name()
-                << "' PV '" << pv.name << "' attributes:";
-        for (const auto& col : config_.pvShowColumns())
-        {
-            const auto it = attributes.find(col);
-            summary << ' ' << col << '='
-                    << (it != attributes.end() && !it->second.empty() ? it->second : "<missing>");
-        }
-        util::log::debugf(*logger_, "{}", summary.str());
+        const auto it = attributes.find(col);
+        summary << ' ' << col << '='
+                << (it != attributes.end() && !it->second.empty() ? it->second : "<missing>");
     }
+    util::log::infof(*logger_, "{}", summary.str());
 
     return attributes;
 }
@@ -315,8 +308,9 @@ void EpicsDSMetadataReader::runWorker(std::stop_token st)
                               config_.name(), e.what());
         }
 
-        if (config_.rescanIntervalSec() <= 0.0)
+        if (!st.stop_requested() && config_.rescanIntervalSec() == 0.0)
         {
+            drainResultConsumers();
             signalCompleted();
             break;
         }
@@ -325,6 +319,20 @@ void EpicsDSMetadataReader::runWorker(std::stop_token st)
         sleep_cv_.wait_for(lk, st,
                            std::chrono::duration<double>(config_.rescanIntervalSec()),
                            [] { return false; });
+    }
+}
+
+void EpicsDSMetadataReader::drainResultConsumers()
+{
+    if (!result_queue_)
+        return;
+
+    util::log::tracef(*logger_, "EpicsDSMetadataReader '{}' [tid={}]: closing result queue", config_.name(), std::this_thread::get_id());
+    result_queue_->close();
+    for (auto& consumer : consumer_threads_)
+    {
+        if (consumer.joinable())
+            consumer.join();
     }
 }
 

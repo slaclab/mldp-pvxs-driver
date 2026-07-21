@@ -312,6 +312,53 @@ pvs:
     (void)mockServer;
 }
 
+TEST(EpicsDSMetadataReaderLifecycleTest, MultiWorkerOneShotCompletesAfterAllBatchesArePublished)
+{
+    auto mockServer = std::make_unique<MockDSServer>("test:ds:multi-worker-lifecycle");
+    auto bus        = std::make_shared<MockDataBus>();
+    auto observer   = std::make_shared<LifecycleObserver>();
+
+    auto cfg = makeConfigFromYaml(R"yaml(
+name: multi-worker-lifecycle-ds-reader
+service: test:ds:multi-worker-lifecycle
+query: "%"
+timeout-sec: 5.0
+source-name-column: channelName
+tags-column: tags
+rescan-interval-sec: 0.0
+worker-thread-count: 2
+pvs:
+  - name: VPIO:IN20:111:PRES
+  - name: BPMS:IN20:221:X
+)yaml");
+
+    auto reader = std::make_unique<EpicsDSMetadataReader>(bus, nullptr, cfg);
+    reader->setLifecycleObserver(observer);
+
+    ASSERT_TRUE(observer->waitForCompletion(std::chrono::milliseconds(5000)));
+    EXPECT_EQ(observer->completionCount(), 1);
+
+    const auto snapshot = bus->snapshot();
+    ASSERT_EQ(snapshot.size(), 3u);
+    bool hasWildcardPayload = false;
+    bool hasVpioPayload     = false;
+    bool hasBpmsPayload     = false;
+    for (const auto& batch : snapshot)
+    {
+        ASSERT_TRUE(isSourceMetadata(batch));
+        const auto& payload = asSourceMetadata(batch);
+        hasWildcardPayload = hasWildcardPayload || payload.sources.size() == 30u;
+        hasVpioPayload     = hasVpioPayload || payload.sources.count("VPIO:IN20:111:PRES") > 0;
+        hasBpmsPayload     = hasBpmsPayload || payload.sources.count("BPMS:IN20:221:X") > 0;
+    }
+    EXPECT_TRUE(hasWildcardPayload);
+    EXPECT_TRUE(hasVpioPayload);
+    EXPECT_TRUE(hasBpmsPayload);
+
+    (void)reader;
+    (void)mockServer;
+}
+
 TEST(EpicsDSMetadataReaderPVListTest, UsesDefaultPVShowColumnsWhenBlank)
 {
     auto mockServer = std::make_unique<MockDSServer>("test:ds:pv-blank-show");

@@ -121,6 +121,18 @@ bool waitForCount(std::atomic<int>& counter, int target, std::chrono::millisecon
     return counter.load(std::memory_order_relaxed) >= target;
 }
 
+bool waitForStopped(const MLDPPVXSController& controller, std::chrono::milliseconds timeout)
+{
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (std::chrono::steady_clock::now() < deadline)
+    {
+        if (controller.isStopped())
+            return true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    return controller.isStopped();
+}
+
 std::string makeControllerYaml(const std::string& annotation_url,
                                 const std::string& ds_service,
                                 const std::string& reader_name)
@@ -299,4 +311,27 @@ TEST_F(DsMetadataWriterTest, ControllerStopsCleanlyWithinDeadline)
         << "controller->stop() took "
         << std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count()
         << "ms — worker likely blocked in RPC wait()";
+}
+
+// ---------------------------------------------------------------------------
+// TEST 5 — one-shot DS reader drains its writer, then auto-stops the controller
+// ---------------------------------------------------------------------------
+
+TEST_F(DsMetadataWriterTest, OneShotReaderAutoStopsAfterWriterDrain)
+{
+    MockDSServer mock_ds("test:ds-auto-exit");
+
+    ASSERT_NO_THROW(startController("test:ds-auto-exit", "auto-exit-reader"));
+
+    ASSERT_TRUE(waitForStopped(*controller_, std::chrono::milliseconds(8000)))
+        << "Controller did not auto-stop after the one-shot DS reader completed";
+    EXPECT_FALSE(controller_->isRunning());
+
+    const auto saved = svc_.snapshot();
+    EXPECT_GE(svc_.save_count.load(std::memory_order_relaxed), 31)
+        << "Expected all 30 wildcard-query PVs and the configured PV-list write before auto-stop";
+    EXPECT_EQ(saved.size(), 30u)
+        << "Expected every wildcard-query PV to be persisted before auto-stop";
+    EXPECT_EQ(saved.count("BPMS:IN20:221:TMIT"), 1u)
+        << "Configured PV-list metadata was not persisted before controller auto-stop";
 }
