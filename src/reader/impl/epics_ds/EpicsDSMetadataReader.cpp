@@ -17,6 +17,7 @@
  */
 
 #include <reader/impl/epics_ds/EpicsDSMetadataReader.h>
+#include <reader/impl/epics/shared/PvxsClientConfig.h>
 
 #include <thread>
 #include <util/log/Logger.h>
@@ -106,7 +107,7 @@ EpicsDSMetadataReader::EpicsDSMetadataReader(
     : reader::Reader(std::move(bus), std::move(metrics))
     , config_(cfg)
     , logger_(util::log::newLogger("reader:epics-ds-metadata:" + config_.name()))
-    , pva_context_(pvxs::client::Config::fromEnv().build())
+    , pva_context_(epics::PvxsClientConfig::buildContext(cfg, "epics-ds-metadata"))
 {
     const auto n = config_.workerThreadCount();
     if (n == 1) {

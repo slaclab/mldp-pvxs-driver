@@ -9,10 +9,19 @@
 //////////////////////////////////////////////////////////////////////////////
 
 #include <reader/impl/epics/pvxs/EpicsPVXSReaderConfig.h>
+#include <reader/impl/epics/shared/PvxsClientConfig.h>
 
 using namespace mldp_pvxs_driver::reader::impl::epics;
 
 EpicsPVXSReaderConfig::EpicsPVXSReaderConfig(const ::mldp_pvxs_driver::config::Config& readerEntry)
     : EpicsReaderConfig(readerEntry)
 {
+    try
+    {
+        PvxsClientConfig::validate(readerEntry, "epics-pvxs");
+    }
+    catch (const PvxsClientConfig::Error& error)
+    {
+        throw Error(error.what());
+    }
 }

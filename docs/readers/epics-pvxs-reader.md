@@ -59,6 +59,13 @@ reader:
       - name: my_pvxs_reader
         thread-pool: 2                # Event conversion thread pool size
         column-batch-size: 50         # NTTable column batch size
+        environment:                  # optional, affects only this reader's PVXS context
+          EPICS_PVA_ADDR_LIST: "134.79.0.255:5076"
+          EPICS_PVA_AUTO_ADDR_LIST: "NO"
+          EPICS_PVA_INTF_ADDR_LIST: "10.0.0.10"
+          EPICS_PVA_BROADCAST_PORT: "5076"
+          EPICS_PVA_NAME_SERVERS: "nameserver.example.org:5076"
+          EPICS_PVA_CONN_TMO: "42.5"
         pvs:
           - name: MY:PV:NAME
           - name: BSA:TABLE:PV
@@ -67,6 +74,21 @@ reader:
               tsSeconds: secondsPastEpoch
               tsNanos: nanoseconds
 ```
+
+### Per-reader PVXS network settings
+
+`environment:` is an optional map of PVXS client settings. The reader begins with the
+process `EPICS_PVA_*` environment settings, then applies this map only while building
+its own `pvxs::client::Context`. It never changes the process environment, so other
+readers retain their independently configured contexts. Omit `environment:` to use
+only the inherited process settings.
+
+Any `EPICS_PVA_*` definition with a scalar string value is forwarded to PVXS. For
+example, `EPICS_PVA_CONN_TMO: "42.5"` is forwarded with the five settings shown
+above. Non-`EPICS_PVA_*` names, a non-map `environment:` block, and non-scalar values
+are rejected during reader configuration. PVXS owns interpretation of the forwarded
+definitions: unsupported names can be ignored, and malformed values follow PVXS's
+logging and handling behavior.
 
 ## Key Features
 

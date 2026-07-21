@@ -44,6 +44,48 @@ metrics:        # optional — Prometheus HTTP endpoint
   scan-interval-seconds: 1
 ```
 
+### `reader.epics-pvxs[]` — PVAccess Monitor Reader
+
+Each `epics-pvxs` reader accepts its usual `name`, `thread-pool`, and `pvs` fields,
+plus an optional `environment:` map for a reader-local PVXS network configuration.
+The map starts from the process `EPICS_PVA_*` values and overrides only the context
+created for that reader; it does not change the process environment.
+
+```yaml
+reader:
+  - epics-pvxs:
+      - name: live_pvs
+        environment:
+          EPICS_PVA_ADDR_LIST: "134.79.0.255:5076"
+          EPICS_PVA_AUTO_ADDR_LIST: "NO"
+          EPICS_PVA_INTF_ADDR_LIST: "10.0.0.10"
+          EPICS_PVA_BROADCAST_PORT: "5076"
+          EPICS_PVA_NAME_SERVERS: "nameserver.example.org:5076"
+          EPICS_PVA_CONN_TMO: "42.5"
+        pvs:
+          - name: MY:PV:NAME
+```
+
+The map may contain any `EPICS_PVA_*` definition with a scalar string value. Shell or
+container `EPICS_PVA_*` variables provide defaults; YAML definitions override only
+that reader's context. Non-`EPICS_PVA_*` names, non-map blocks, and non-scalar values
+are rejected. PVXS owns interpretation of the forwarded definitions: unsupported
+names can be ignored, and malformed values follow PVXS's logging and handling
+behavior.
+
+### `reader.epics-ds-metadata[]` — Directory Service Metadata Reader
+
+`epics-ds-metadata` accepts the same optional reader-local PVXS `environment:` map.
+It configures only the context used for Directory Service RPC calls.
+
+The map may contain any `EPICS_PVA_*` definition with a scalar string value. Shell or
+container `EPICS_PVA_*` variables provide defaults; YAML definitions override only
+that reader's context. Non-`EPICS_PVA_*` names, non-map blocks, and non-scalar values
+are rejected. PVXS owns interpretation of the forwarded definitions: unsupported
+names can be ignored, and malformed values follow PVXS's logging and handling
+behavior. The setting is not available for `epics-base`, archiver, calendar, or HDF5
+readers.
+
 ---
 
 ## `writer:` Block

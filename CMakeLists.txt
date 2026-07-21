@@ -523,6 +523,7 @@ add_library(lib${PROJECT_NAME}
     "${CMAKE_CURRENT_SOURCE_DIR}/src/processor/InputBuffer.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/processor/MLDPChannelProcessorConfig.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/shared/EpicsReaderBase.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/shared/PvxsClientConfig.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/pvxs/EpicsPVXSReader.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/pvxs/EpicsPVXSReaderConfig.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/base/EpicsBaseReader.cpp"

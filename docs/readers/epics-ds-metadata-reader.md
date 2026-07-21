@@ -97,6 +97,13 @@ reader:
         service: ds
         query: "%"
         timeout-sec: 5.0
+        environment:                  # optional, affects only this reader's PVXS context
+          EPICS_PVA_ADDR_LIST: "134.79.0.255:5076"
+          EPICS_PVA_AUTO_ADDR_LIST: "NO"
+          EPICS_PVA_INTF_ADDR_LIST: "10.0.0.10"
+          EPICS_PVA_BROADCAST_PORT: "5076"
+          EPICS_PVA_NAME_SERVERS: "nameserver.example.org:5076"
+          EPICS_PVA_CONN_TMO: "42.5"
         source-name-column: channelName
         tags-column: tags
         pvs:                          # required — at least one entry
@@ -175,6 +182,7 @@ Parameter              | Type   | Default                                  | Des
 `worker-thread-count`  | int    | `1`                                      | `1` = single-thread inline; `N > 1` = 1 producer + N-1 consumers. Range: `1..64`.
 `max-queue-depth`      | int    | `16`                                     | Bounded queue depth in producer/consumer mode. Ignored when `worker-thread-count` is `1`. Range: `1..1024`.
 `pv-show-columns`      | string | `"dname,ename,etype,lname,ioc,scheme,z"` | DS `show=` columns fetched per PV. Duplicate values are rejected.
+`environment`          | map | omitted | Optional reader-local PVXS network overrides. See below.
 
 **Validation rules:**
 
@@ -186,6 +194,19 @@ Parameter              | Type   | Default                                  | Des
 - `worker-thread-count` must be in range `1..64`.
 - `max-queue-depth` must be in range `1..1024`.
 - `pv-show-columns` must not contain duplicate column names.
+
+### Per-reader PVXS network settings
+
+`environment:` configures only this reader's `pvxs::client::Context`. The context
+starts with inherited process `EPICS_PVA_*` values and applies the YAML map as local
+overrides; it never modifies the process environment or any other reader context.
+Omit the map to use only inherited process settings.
+
+Any `EPICS_PVA_*` definition with a scalar string value is forwarded to PVXS. For
+example, `EPICS_PVA_CONN_TMO: "42.5"` is forwarded with the five settings shown
+above. The reader rejects non-`EPICS_PVA_*` names, non-map blocks, and non-scalar
+values. PVXS owns interpretation of the forwarded definitions: unsupported names can
+be ignored, and malformed values follow PVXS's logging and handling behavior.
 
 ## Key Features
 

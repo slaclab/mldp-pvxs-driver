@@ -16,6 +16,7 @@
  * @copyright Copyright (c) 2025 SLAC National Accelerator Laboratory
  */
 
+#include <reader/impl/epics/shared/PvxsClientConfig.h>
 #include <reader/impl/epics_ds/EpicsDSMetadataReaderConfig.h>
 
 #include <algorithm>
@@ -83,6 +84,15 @@ EpicsDSMetadataReaderConfig::EpicsDSMetadataReaderConfig(const config::Config& c
 
 void EpicsDSMetadataReaderConfig::parse(const config::Config& cfg)
 {
+    try
+    {
+        epics::PvxsClientConfig::validate(cfg, "epics-ds-metadata");
+    }
+    catch (const epics::PvxsClientConfig::Error& error)
+    {
+        throw Error(error.what());
+    }
+
     if (!cfg.hasChild(kNameKey))
         throw Error("epics-ds-metadata reader: 'name' is required");
     name_ = cfg.get(kNameKey);

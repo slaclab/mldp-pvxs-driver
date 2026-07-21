@@ -80,6 +80,8 @@ spec:
               value: ""          # set your CA broadcast/unicast list
             - name: EPICS_CA_AUTO_ADDR_LIST
               value: "YES"
+            # Process EPICS_PVA_* variables remain defaults for every PVXS reader.
+            # To override one reader only, set its YAML reader.environment map instead.
             # - name: EPICS_PVA_ADDR_LIST
             #   value: ""
 

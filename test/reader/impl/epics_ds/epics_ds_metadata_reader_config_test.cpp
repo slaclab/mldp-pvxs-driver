@@ -22,6 +22,7 @@
 #include "../../../config/test_config_helpers.h"
 
 #include <config/Config.h>
+#include <reader/impl/epics/shared/PvxsClientConfig.h>
 #include <reader/impl/epics_ds/EpicsDSMetadataReaderConfig.h>
 
 using mldp_pvxs_driver::config::makeConfigFromYaml;
@@ -57,6 +58,54 @@ pvs:
     const std::vector<std::string> expected{"dname", "ename", "etype", "lname", "ioc", "scheme", "z"};
     EXPECT_EQ(config.pvShowColumns(), expected);
     EXPECT_DOUBLE_EQ(config.rescanIntervalSec(), 0.0);
+}
+
+TEST_F(EpicsDSMetadataReaderConfigTest, AcceptsReaderLocalPvxsEnvironment)
+{
+    auto cfg = makeConfigFromYaml(R"yaml(
+name: test-reader
+environment:
+  EPICS_PVA_ADDR_LIST: "192.0.2.10:5076"
+  EPICS_PVA_AUTO_ADDR_LIST: "false"
+  EPICS_PVA_INTF_ADDR_LIST: "10.0.0.10"
+  EPICS_PVA_BROADCAST_PORT: "5077"
+  EPICS_PVA_NAME_SERVERS: "192.0.2.30:5076"
+  EPICS_PVA_CONN_TMO: "42.5"
+pvs:
+  - name: BPMS:LI20:2445:X
+    )yaml");
+
+    EXPECT_NO_THROW(static_cast<void>(EpicsDSMetadataReaderConfig(cfg)));
+}
+
+TEST_F(EpicsDSMetadataReaderConfigTest, RejectsInvalidReaderLocalPvxsEnvironment)
+{
+    const std::vector<std::string> environments{
+        "environment: invalid",
+        "environment:\n  INVALID_KEY: value",
+        "environment:\n  EPICS_PVA_ADDR_LIST:\n    - 192.0.2.10:5076",
+    };
+
+    for (const auto& environment : environments)
+    {
+        const auto cfg = makeConfigFromYaml("name: test-reader\n" + environment + "\npvs:\n  - name: BPMS:LI20:2445:X\n");
+        EXPECT_THROW(static_cast<void>(EpicsDSMetadataReaderConfig(cfg)), EpicsDSMetadataReaderConfig::Error) << environment;
+    }
+}
+
+TEST_F(EpicsDSMetadataReaderConfigTest, AcceptsPvxsOwnedDefinitionValues)
+{
+    auto cfg = makeConfigFromYaml(R"yaml(
+name: test-reader
+environment:
+  EPICS_PVA_UNSUPPORTED: value
+  EPICS_PVA_AUTO_ADDR_LIST: maybe
+pvs:
+  - name: BPMS:LI20:2445:X
+)yaml");
+
+    EXPECT_NO_THROW(static_cast<void>(EpicsDSMetadataReaderConfig(cfg)));
+    EXPECT_NO_THROW(static_cast<void>(mldp_pvxs_driver::reader::impl::epics::PvxsClientConfig::buildConfig(cfg, "epics-ds-metadata")));
 }
 
 TEST_F(EpicsDSMetadataReaderConfigTest, MissingPVShowColumnsUsesDefaultList)

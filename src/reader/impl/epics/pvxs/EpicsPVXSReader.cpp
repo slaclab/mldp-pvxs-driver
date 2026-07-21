@@ -10,6 +10,7 @@
 
 #include <reader/impl/epics/pvxs/EpicsPVXSReader.h>
 #include <reader/impl/epics/pvxs/EpicsPVXSReaderConfig.h>
+#include <reader/impl/epics/shared/PvxsClientConfig.h>
 
 #include <config/Config.h>
 #include <metrics/Metrics.h>
@@ -142,7 +143,7 @@ EpicsPVXSReader::EpicsPVXSReader(std::shared_ptr<util::bus::IDataBus> bus,
                                  const config::Config&                cfg)
     : EpicsReaderBase(std::move(bus), std::move(metrics), EpicsPVXSReaderConfig(cfg), makeLogger(cfg.get("name")))
 {
-    pva_context_ = pvxs::client::Context::fromEnv();
+    pva_context_ = PvxsClientConfig::buildContext(cfg, "epics-pvxs");
     addPV(pvNames());
 }
 
