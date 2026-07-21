@@ -322,9 +322,9 @@ void EpicsDSMetadataReader::runWorker(std::stop_token st)
         }
 
         std::unique_lock lk(sleep_mutex_);
-        sleep_cv_.wait_for(lk,
+        sleep_cv_.wait_for(lk, st,
                            std::chrono::duration<double>(config_.rescanIntervalSec()),
-                           [&st] { return st.stop_requested(); });
+                           [] { return false; });
     }
 }
 
