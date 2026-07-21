@@ -224,7 +224,10 @@ void PythonEnricher::configure(const config::Config& config)
     if (script_path.empty())
         throw std::runtime_error("python-enricher requires 'script-path'");
     if (!Py_IsInitialized())
+    {
         Py_Initialize();
+        PyEval_SaveThread();
+    }
     GILGuard gil;
     PyObject* loaded_module = loadModule(script_path);
     PyObject* loaded_function = PyObject_GetAttrString(loaded_module, "enrich");

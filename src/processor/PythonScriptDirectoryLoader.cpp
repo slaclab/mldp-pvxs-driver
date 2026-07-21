@@ -190,6 +190,10 @@ void ensurePythonReady()
     if (!Py_IsInitialized())
     {
         Py_Initialize();
+        // Release the GIL so worker threads can acquire it via PyGILState_Ensure().
+        // Without this the main thread holds the GIL indefinitely and any
+        // thread-pool compute call deadlocks on PyGILState_Ensure().
+        PyEval_SaveThread();
     }
 
     static bool registered = false;
