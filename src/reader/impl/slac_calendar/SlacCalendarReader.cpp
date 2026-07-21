@@ -145,49 +145,58 @@ void SlacCalendarReader::parseAndPush(const std::string& jsonBody, const std::st
     if (!events.is_array())
         throw std::runtime_error("expected JSON array from SLAC calendar API");
 
-    infof(*logger_,
-          "SlacCalendarReader '{}' experiment '{}': raw JSON ({} events):\n{}",
-          config_.name(), experiment, events.size(), events.dump(2));
-
     for (const auto& ev : events)
-    {
-        static constexpr std::array<std::string_view, 5> required_fields{
-            "program_name", "calendar", "url", "start", "end"};
-        bool skip = false;
-        for (const auto& field : required_fields)
-        {
-            const std::string key(field);
-            if (!ev.contains(key) || ev[key].is_null() || !ev[key].is_string())
-            {
-                warnf(*logger_,
-                      "SlacCalendarReader '{}' experiment '{}': skipping event with null/missing field '{}'",
-                      config_.name(), experiment, field);
-                skip = true;
-                break;
-            }
-        }
-        if (!skip)
-            pushEvent(ev, experiment);
-    }
+        pushEvent(ev, experiment);
+}
+
+static std::string jsonStr(const nlohmann::json& ev, const std::string& key, const std::string& def = "")
+{
+    if (!ev.contains(key) || ev[key].is_null() || !ev[key].is_string())
+        return def;
+    return ev[key].get<std::string>();
 }
 
 void SlacCalendarReader::pushEvent(const nlohmann::json& ev, const std::string& experiment)
 {
+    const std::string desc      = jsonStr(ev, "description");
+    const std::string start_str = jsonStr(ev, "start");
+    const std::string url       = jsonStr(ev, "url");
+
+    std::string missing_fields;
+    for (const auto& field : {"program_name", "calendar", "url", "start", "end"})
+    {
+        const std::string k(field);
+        if (!ev.contains(k) || ev[k].is_null() || !ev[k].is_string())
+        {
+            if (!missing_fields.empty()) missing_fields += ", ";
+            missing_fields += field;
+        }
+    }
+    if (!missing_fields.empty())
+        warnf(*logger_,
+              "SlacCalendarReader '{}' experiment '{}': null/missing fields [{}]"
+              " in event [description='{}', start='{}', url='{}'] — using empty defaults",
+              config_.name(), experiment, missing_fields, desc, start_str, url);
+
+    const std::string program_name = jsonStr(ev, "program_name");
+    const std::string calendar     = jsonStr(ev, "calendar");
+    const std::string end_str      = jsonStr(ev, "end");
+
     // --- ConfigurationPayload ---
     ConfigurationPayload cfg_payload;
     cfg_payload.root_source_name    = config_.name();
-    cfg_payload.configuration_name = ev["program_name"].get<std::string>();
-    cfg_payload.category           = ev["calendar"].get<std::string>();
+    cfg_payload.configuration_name = program_name;
+    cfg_payload.category           = calendar;
 
-    const std::string desc = ev.value("description", "");
     if (!desc.empty())
         cfg_payload.description = desc;
 
-    if (ev.contains("tags") && !ev["tags"].is_null())
+    if (ev.contains("tags") && !ev["tags"].is_null() && ev["tags"].is_array())
     {
         std::vector<std::string> tags;
         for (const auto& t : ev["tags"])
-            tags.push_back(t.get<std::string>());
+            if (t.is_string())
+                tags.push_back(t.get<std::string>());
         if (!tags.empty())
         {
             cfg_payload.tags = tags;
@@ -202,27 +211,29 @@ void SlacCalendarReader::pushEvent(const nlohmann::json& ev, const std::string& 
          std::vector<std::pair<std::string, std::string>>{
              {"note", "note"}, {"poc", "poc"}, {"config", "config"}, {"machine", "machine"}})
     {
-        if (ev.contains(key) && !ev[key].is_null())
-            cfg_payload.attributes[attr] = ev[key].get<std::string>();
+        const std::string val = jsonStr(ev, key);
+        if (!val.empty())
+            cfg_payload.attributes[attr] = val;
     }
 
-    if (ev.contains("details") && !ev["details"].is_null())
+    if (ev.contains("details") && !ev["details"].is_null() && ev["details"].is_string())
     {
         const std::string raw = ev["details"].get<std::string>();
-        const std::string url = extractHtmlInnerText(raw);
-        if (!url.empty())
-            cfg_payload.attributes["details"] = url;
+        const std::string det = extractHtmlInnerText(raw);
+        if (!det.empty())
+            cfg_payload.attributes["details"] = det;
     }
 
-    if (ev.contains("hutch") && !ev["hutch"].is_null())
+    if (ev.contains("hutch") && !ev["hutch"].is_null() && ev["hutch"].is_object())
     {
         const auto& h = ev["hutch"];
-        if (h.contains("name") && !h["name"].is_null())
-            cfg_payload.attributes["hutch_name"] = h["name"].get<std::string>();
-        if (h.contains("color") && !h["color"].is_null())
-            cfg_payload.attributes["hutch_color"] = h["color"].get<std::string>();
-        if (h.contains("line") && !h["line"].is_null())
-            cfg_payload.attributes["hutch_line"] = h["line"].get<std::string>();
+        for (const auto& [hk, ha] : std::vector<std::pair<std::string,std::string>>{
+                 {"name","hutch_name"},{"color","hutch_color"},{"line","hutch_line"}})
+        {
+            const std::string val = jsonStr(h, hk);
+            if (!val.empty())
+                cfg_payload.attributes[ha] = val;
+        }
     }
 
     {
@@ -232,24 +243,34 @@ void SlacCalendarReader::pushEvent(const nlohmann::json& ev, const std::string& 
         bus_->push(std::move(b));
     }
 
-    // --- ConfigurationActivationPayload ---
+    // --- ConfigurationActivationPayload (skip if start or end missing) ---
+    if (start_str.empty() || end_str.empty())
+    {
+        warnf(*logger_,
+              "SlacCalendarReader '{}' experiment '{}': skipping activation for '{}' (missing start/end)",
+              config_.name(), experiment, program_name);
+        return;
+    }
+
     ConfigurationActivationPayload act_payload;
-    act_payload.client_activation_id = ev["url"].get<std::string>();
-    act_payload.configuration_name   = ev["program_name"].get<std::string>();
-    act_payload.start_time           = parseBusTimestamp(ev["start"].get<std::string>());
-    act_payload.end_time             = parseBusTimestamp(ev["end"].get<std::string>());
+    act_payload.client_activation_id = url;
+    act_payload.configuration_name   = program_name;
+    act_payload.start_time           = parseBusTimestamp(start_str);
+    act_payload.end_time             = parseBusTimestamp(end_str);
     if (!desc.empty())
         act_payload.description = desc;
-    if (ev.contains("tags") && !ev["tags"].is_null())
+    if (ev.contains("tags") && !ev["tags"].is_null() && ev["tags"].is_array())
     {
         std::vector<std::string> tags;
         for (const auto& t : ev["tags"])
-            tags.push_back(t.get<std::string>());
+            if (t.is_string())
+                tags.push_back(t.get<std::string>());
         if (!tags.empty())
             act_payload.tags = tags;
     }
     act_payload.attributes["experiment"] = experiment;
-    act_payload.attributes["calendar"]   = ev["calendar"].get<std::string>();
+    if (!calendar.empty())
+        act_payload.attributes["calendar"] = calendar;
 
     {
         IDataBus::EventBatch b;
