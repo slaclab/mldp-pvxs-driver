@@ -145,8 +145,30 @@ void SlacCalendarReader::parseAndPush(const std::string& jsonBody, const std::st
     if (!events.is_array())
         throw std::runtime_error("expected JSON array from SLAC calendar API");
 
+    infof(*logger_,
+          "SlacCalendarReader '{}' experiment '{}': raw JSON ({} events):\n{}",
+          config_.name(), experiment, events.size(), events.dump(2));
+
     for (const auto& ev : events)
-        pushEvent(ev, experiment);
+    {
+        static constexpr std::array<std::string_view, 5> required_fields{
+            "program_name", "calendar", "url", "start", "end"};
+        bool skip = false;
+        for (const auto& field : required_fields)
+        {
+            const std::string key(field);
+            if (!ev.contains(key) || ev[key].is_null() || !ev[key].is_string())
+            {
+                warnf(*logger_,
+                      "SlacCalendarReader '{}' experiment '{}': skipping event with null/missing field '{}'",
+                      config_.name(), experiment, field);
+                skip = true;
+                break;
+            }
+        }
+        if (!skip)
+            pushEvent(ev, experiment);
+    }
 }
 
 void SlacCalendarReader::pushEvent(const nlohmann::json& ev, const std::string& experiment)
