@@ -184,3 +184,149 @@ lookahead-days: 7
 start-date: "01/01/2026"
 )yaml"));
 }
+
+TEST(SlacCalendarReaderConfigTest, ParsesStartDateWithTime)
+{
+    const auto cfg = makeConfigFromYaml(R"yaml(
+name: r
+base-url: http://localhost
+experiments:
+  - lcls
+lookahead-days: 7
+start-date: "2026-01-01T08:30:00"
+)yaml");
+    ASSERT_NO_THROW(assertNoThrow(cfg));
+    SlacCalendarReaderConfig c(cfg);
+    ASSERT_TRUE(c.startDate().has_value());
+    EXPECT_EQ(*c.startDate(), "2026-01-01T08:30:00");
+}
+
+TEST(SlacCalendarReaderConfigTest, ParsesEndDateDateOnly)
+{
+    const auto cfg = makeConfigFromYaml(R"yaml(
+name: r
+base-url: http://localhost
+experiments:
+  - lcls
+start-date: "2026-01-01"
+end-date: "2026-02-01"
+)yaml");
+    ASSERT_NO_THROW(assertNoThrow(cfg));
+    SlacCalendarReaderConfig c(cfg);
+    ASSERT_TRUE(c.endDate().has_value());
+    EXPECT_EQ(*c.endDate(), "2026-02-01");
+}
+
+TEST(SlacCalendarReaderConfigTest, ParsesEndDateWithTime)
+{
+    const auto cfg = makeConfigFromYaml(R"yaml(
+name: r
+base-url: http://localhost
+experiments:
+  - lcls
+start-date: "2026-01-01T00:00:00"
+end-date: "2026-02-01T23:59:59"
+)yaml");
+    ASSERT_NO_THROW(assertNoThrow(cfg));
+    SlacCalendarReaderConfig c(cfg);
+    ASSERT_TRUE(c.endDate().has_value());
+    EXPECT_EQ(*c.endDate(), "2026-02-01T23:59:59");
+}
+
+TEST(SlacCalendarReaderConfigTest, ThrowsWhenEndDateWithoutStartDate)
+{
+    assertThrows(makeConfigFromYaml(R"yaml(
+name: r
+base-url: http://localhost
+experiments:
+  - lcls
+end-date: "2026-02-01"
+)yaml"));
+}
+
+TEST(SlacCalendarReaderConfigTest, ThrowsWhenEndDateBeforeStartDate)
+{
+    assertThrows(makeConfigFromYaml(R"yaml(
+name: r
+base-url: http://localhost
+experiments:
+  - lcls
+start-date: "2026-03-01"
+end-date: "2026-01-01"
+)yaml"));
+}
+
+TEST(SlacCalendarReaderConfigTest, ThrowsWhenEndDateWithLookaheadDays)
+{
+    assertThrows(makeConfigFromYaml(R"yaml(
+name: r
+base-url: http://localhost
+experiments:
+  - lcls
+start-date: "2026-01-01"
+end-date: "2026-02-01"
+lookahead-days: 7
+)yaml"));
+}
+
+TEST(SlacCalendarReaderConfigTest, ThrowsWhenEndDateWithRescanInterval)
+{
+    assertThrows(makeConfigFromYaml(R"yaml(
+name: r
+base-url: http://localhost
+experiments:
+  - lcls
+start-date: "2026-01-01"
+end-date: "2026-02-01"
+rescan-interval-sec: 300
+)yaml"));
+}
+
+TEST(SlacCalendarReaderConfigTest, ParsesEndDateWithTimezone)
+{
+    const auto cfg = makeConfigFromYaml(R"yaml(
+name: r
+base-url: http://localhost
+experiments:
+  - lcls
+start-date: "2025-01-01T00:00:00Z"
+end-date: "2025-12-31T23:59:59Z"
+)yaml");
+    ASSERT_NO_THROW(assertNoThrow(cfg));
+    SlacCalendarReaderConfig c(cfg);
+    ASSERT_TRUE(c.startDate().has_value());
+    ASSERT_TRUE(c.endDate().has_value());
+    EXPECT_EQ(*c.startDate(), "2025-01-01T00:00:00Z");
+    EXPECT_EQ(*c.endDate(), "2025-12-31T23:59:59Z");
+}
+
+TEST(SlacCalendarReaderConfigTest, ParsesEndDateWithPosixTimezone)
+{
+    const auto cfg = makeConfigFromYaml(R"yaml(
+name: r
+base-url: http://localhost
+experiments:
+  - lcls
+start-date: "2025-01-01T00:00:00-08:00"
+end-date: "2025-12-31T23:59:59-08:00"
+)yaml");
+    ASSERT_NO_THROW(assertNoThrow(cfg));
+    SlacCalendarReaderConfig c(cfg);
+    EXPECT_TRUE(c.startDate().has_value());
+    EXPECT_TRUE(c.endDate().has_value());
+}
+
+TEST(SlacCalendarReaderConfigTest, LookaheadDaysNotRequiredWhenEndDateSet)
+{
+    const auto cfg = makeConfigFromYaml(R"yaml(
+name: r
+base-url: http://localhost
+experiments:
+  - lcls
+start-date: "2026-01-01"
+end-date: "2026-02-01"
+)yaml");
+    ASSERT_NO_THROW(assertNoThrow(cfg));
+    SlacCalendarReaderConfig c(cfg);
+    EXPECT_TRUE(c.valid());
+}

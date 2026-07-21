@@ -61,7 +61,7 @@ private:
                          const std::string& endIso);
     std::string nowOffsetIso(int offsetDays);
     std::string nowIso();
-    std::string startDateToIso(const std::string& yyyymmdd);
+    std::string dateToIso(const std::string& s);
     std::string extractHtmlInnerText(const std::string& html);
 
     SlacCalendarReaderConfig              config_;

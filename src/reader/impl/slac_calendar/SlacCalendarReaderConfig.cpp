@@ -20,6 +20,7 @@ static constexpr auto kExperimentsKey        = "experiments";
 static constexpr auto kLookaheadDaysKey      = "lookahead-days";
 static constexpr auto kLookbackDaysKey       = "lookback-days";
 static constexpr auto kStartDateKey          = "start-date";
+static constexpr auto kEndDateKey            = "end-date";
 static constexpr auto kRescanIntervalSecKey  = "rescan-interval-sec";
 static constexpr auto kConnectTimeoutSecKey  = "connect-timeout-sec";
 static constexpr auto kTotalTimeoutSecKey    = "total-timeout-sec";
@@ -61,23 +62,44 @@ void SlacCalendarReaderConfig::parse(const config::Config& cfg)
     if (experiments_.empty())
         throw Error("slac-calendar reader: 'experiments' must contain at least one entry");
 
-    if (!cfg.hasChild(kLookaheadDaysKey))
-        throw Error("slac-calendar reader: 'lookahead-days' is required");
-    lookahead_days_ = cfg.getInt(kLookaheadDaysKey, 0);
-    if (lookahead_days_ <= 0)
-        throw Error("slac-calendar reader: 'lookahead-days' must be > 0");
-
-    lookback_days_ = cfg.getInt(kLookbackDaysKey, 1);
-    if (lookback_days_ < 0)
-        throw Error("slac-calendar reader: 'lookback-days' must be >= 0");
+    static const std::regex kDateRe(R"(\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}(Z|[+-]\d{2}:\d{2})?)?)");
 
     if (cfg.hasChild(kStartDateKey))
     {
         const std::string sd = cfg.get(kStartDateKey);
-        static const std::regex kDateRe(R"(\d{4}-\d{2}-\d{2})");
         if (!std::regex_match(sd, kDateRe))
-            throw Error("slac-calendar reader: 'start-date' must be YYYY-MM-DD, got: " + sd);
+            throw Error("slac-calendar reader: 'start-date' must be YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS, got: " + sd);
         start_date_ = sd;
+    }
+
+    if (cfg.hasChild(kEndDateKey))
+    {
+        if (!start_date_.has_value())
+            throw Error("slac-calendar reader: 'end-date' requires 'start-date'");
+        const std::string ed = cfg.get(kEndDateKey);
+        if (!std::regex_match(ed, kDateRe))
+            throw Error("slac-calendar reader: 'end-date' must be YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS, got: " + ed);
+        if (ed < *start_date_)
+            throw Error("slac-calendar reader: 'end-date' must be >= 'start-date'");
+        end_date_ = ed;
+    }
+
+    if (end_date_.has_value())
+    {
+        if (cfg.hasChild(kLookaheadDaysKey) || cfg.hasChild(kLookbackDaysKey) || cfg.hasChild(kRescanIntervalSecKey))
+            throw Error("slac-calendar reader: 'end-date' is incompatible with 'lookahead-days', 'lookback-days', and 'rescan-interval-sec'");
+    }
+    else
+    {
+        if (!cfg.hasChild(kLookaheadDaysKey))
+            throw Error("slac-calendar reader: 'lookahead-days' is required");
+        lookahead_days_ = cfg.getInt(kLookaheadDaysKey, 0);
+        if (lookahead_days_ <= 0)
+            throw Error("slac-calendar reader: 'lookahead-days' must be > 0");
+
+        lookback_days_ = cfg.getInt(kLookbackDaysKey, 1);
+        if (lookback_days_ < 0)
+            throw Error("slac-calendar reader: 'lookback-days' must be >= 0");
     }
 
     rescan_interval_sec_ = cfg.getDouble(kRescanIntervalSecKey, 0.0);

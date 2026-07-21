@@ -71,8 +71,10 @@ void SlacCalendarReader::runWorker()
             std::string start_iso, end_iso;
             if (first_run_.load() && config_.startDate().has_value())
             {
-                start_iso = startDateToIso(*config_.startDate());
-                end_iso   = nowIso();
+                start_iso = dateToIso(*config_.startDate());
+                end_iso   = config_.endDate().has_value()
+                          ? dateToIso(*config_.endDate())
+                          : nowIso();
             }
             else
             {
@@ -87,7 +89,7 @@ void SlacCalendarReader::runWorker()
             errorf(*logger_, "SlacCalendarReader '{}' fetch error: {}", config_.name(), e.what());
         }
 
-        if (config_.rescanIntervalSec() <= 0.0)
+        if (config_.endDate().has_value() || config_.rescanIntervalSec() <= 0.0)
         {
             signalCompleted();
             break;
@@ -313,20 +315,65 @@ std::string SlacCalendarReader::nowIso()
     return nowOffsetIso(0);
 }
 
-std::string SlacCalendarReader::startDateToIso(const std::string& yyyymmdd)
+std::string SlacCalendarReader::dateToIso(const std::string& s)
 {
+    int y, m, d, H = 0, M = 0, S = 0;
+    bool has_tz    = false;
+    int  tz_offset = 0; // seconds east of UTC
+
+    if (s.size() > 10 && s[10] == 'T')
+    {
+        // find tz suffix: Z or ±HH:MM
+        std::string dt = s;
+        if (!dt.empty() && dt.back() == 'Z')
+        {
+            has_tz = true; tz_offset = 0;
+            dt.pop_back();
+        }
+        else if (dt.size() >= 22)
+        {
+            const size_t sign_pos = dt.size() - 6;
+            const char   sign_ch  = dt[sign_pos];
+            if (sign_ch == '+' || sign_ch == '-')
+            {
+                int th, tm2;
+                if (sscanf(dt.c_str() + sign_pos + 1, "%d:%d", &th, &tm2) == 2)
+                {
+                    tz_offset = (sign_ch == '+' ? 1 : -1) * (th * 3600 + tm2 * 60);
+                    has_tz    = true;
+                    dt        = dt.substr(0, sign_pos);
+                }
+            }
+        }
+        if (sscanf(dt.c_str(), "%d-%d-%dT%d:%d:%d", &y, &m, &d, &H, &M, &S) < 3)
+            throw std::runtime_error("bad date: " + s);
+    }
+    else
+    {
+        if (sscanf(s.c_str(), "%d-%d-%d", &y, &m, &d) != 3)
+            throw std::runtime_error("bad date: " + s);
+    }
+
+    time_t epoch;
+    if (has_tz)
+    {
+        // interpret as UTC: (wall time - tz_offset) = UTC epoch
+        struct tm u{};
+        u.tm_year = y - 1900; u.tm_mon = m - 1; u.tm_mday = d;
+        u.tm_hour = H;        u.tm_min = M;      u.tm_sec  = S;
+        epoch = timegm(&u) - tz_offset;
+    }
+    else
+    {
+        struct tm lt{};
+        lt.tm_year = y - 1900; lt.tm_mon = m - 1; lt.tm_mday = d;
+        lt.tm_hour = H;        lt.tm_min = M;      lt.tm_sec  = S;
+        lt.tm_isdst = -1;
+        epoch = mktime(&lt);
+    }
+
     struct tm t{};
-    int y, m, d;
-    if (sscanf(yyyymmdd.c_str(), "%d-%d-%d", &y, &m, &d) != 3)
-        throw std::runtime_error("bad start-date: " + yyyymmdd);
-    t.tm_year  = y - 1900;
-    t.tm_mon   = m - 1;
-    t.tm_mday  = d;
-    t.tm_hour  = 0;
-    t.tm_min   = 0;
-    t.tm_sec   = 0;
-    t.tm_isdst = -1;
-    mktime(&t);
+    localtime_r(&epoch, &t);
 
     char buf[64], tz[16];
     std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%S", &t);
