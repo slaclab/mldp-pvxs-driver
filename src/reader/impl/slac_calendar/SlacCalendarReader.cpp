@@ -49,6 +49,7 @@ SlacCalendarReader::SlacCalendarReader(std::shared_ptr<IDataBus>         bus,
 
     running_ = true;
     worker_thread_ = std::thread([this] { runWorker(); });
+    stats_thread_  = std::thread([this] { runStats(); });
 }
 
 SlacCalendarReader::~SlacCalendarReader()
@@ -60,6 +61,25 @@ SlacCalendarReader::~SlacCalendarReader()
     worker_cv_.notify_all();
     if (worker_thread_.joinable())
         worker_thread_.join();
+    if (stats_thread_.joinable())
+        stats_thread_.join();
+}
+
+void SlacCalendarReader::runStats()
+{
+    while (running_.load())
+    {
+        std::unique_lock<std::mutex> lk(worker_mutex_);
+        worker_cv_.wait_for(lk,
+                            std::chrono::seconds(10),
+                            [this] { return !running_.load(); });
+        if (!running_.load()) break;
+        infof(*logger_,
+              "SlacCalendarReader '{}' stats: configurations_pushed={} activations_pushed={}",
+              config_.name(),
+              cfg_pushed_.load(),
+              act_pushed_.load());
+    }
 }
 
 void SlacCalendarReader::runWorker()
@@ -241,6 +261,7 @@ void SlacCalendarReader::pushEvent(const nlohmann::json& ev, const std::string& 
         b.reader_name = config_.name();
         b.payload     = std::move(cfg_payload);
         bus_->push(std::move(b));
+        ++cfg_pushed_;
     }
 
     // --- ConfigurationActivationPayload (skip if start or end missing) ---
@@ -277,6 +298,7 @@ void SlacCalendarReader::pushEvent(const nlohmann::json& ev, const std::string& 
         b.reader_name = config_.name();
         b.payload     = std::move(act_payload);
         bus_->push(std::move(b));
+        ++act_pushed_;
     }
 }
 

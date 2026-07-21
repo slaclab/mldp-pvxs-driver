@@ -48,6 +48,7 @@ public:
 
 private:
     void runWorker();
+    void runStats();
     void fetchAndPublish(const std::string& startIso, const std::string& endIso);
     std::string fetchExperiment(const std::string& experiment,
                                 const std::string& startIso,
@@ -68,8 +69,11 @@ private:
     std::shared_ptr<util::log::ILogger>   logger_;
     util::http::CurlHttpClient            http_client_;
     std::thread                           worker_thread_;
+    std::thread                           stats_thread_;
     std::atomic<bool>                     running_{false};
     std::atomic<bool>                     first_run_{true};
+    std::atomic<uint64_t>                 cfg_pushed_{0};
+    std::atomic<uint64_t>                 act_pushed_{0};
     std::condition_variable               worker_cv_;
     std::mutex                            worker_mutex_;
 };
