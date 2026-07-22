@@ -36,6 +36,7 @@
 #include <rapidyaml-0.10.0.hpp>
 
 #include <cli/ConfigPrinter.h>
+#include <query/QuerySubcommand.h>
 #include <config/Config.h>
 #include <config/ConfigOverride.h>
 #include <config/ConfigSource.h>
@@ -298,6 +299,28 @@ int main(int argc, char** argv)
         if (argc >= 2 && std::string_view{argv[1]} == "config")
         {
             return mldp_pvxs_driver::config::runConfigSubcommand(argc - 1, argv + 1);
+        }
+
+        if (argc >= 2 && std::string_view{argv[1]} == "query")
+        {
+            std::vector<std::string> queryConfigSources;
+            for (int index = 2; index < argc; ++index)
+            {
+                if (std::string_view{argv[index]} == "-c" || std::string_view{argv[index]} == "--config")
+                {
+                    if (++index >= argc)
+                    {
+                        throw std::runtime_error("query option requires a configuration source");
+                    }
+                    queryConfigSources.emplace_back(argv[index]);
+                }
+                else
+                {
+                    throw std::runtime_error("query accepts only -c/--config configuration sources in Phase 1");
+                }
+            }
+            mldp_pvxs_driver::cli::prepareQuerySubcommand(loadMergedConfigSources(queryConfigSources));
+            return mldp_pvxs_driver::cli::runQueryRepl(std::cin, std::cout);
         }
 
         // Parse command line arguments

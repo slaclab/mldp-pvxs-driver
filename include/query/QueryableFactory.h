@@ -19,6 +19,7 @@
 #include <stdexcept>
 #include <typeindex>
 #include <unordered_map>
+#include <set>
 
 namespace mldp_pvxs_driver::query {
 
@@ -36,12 +37,25 @@ public:
     void prepare(const config::Config&             cfg,
                  std::shared_ptr<metrics::Metrics> metrics = nullptr)
     {
-        std::unique_lock lock(mutex_);
-        creators_[std::type_index(typeid(T))] =
-            [cfg, metrics]() -> IQueryableUPtr
+        const auto creator = [cfg, metrics]() -> IQueryableUPtr
         {
             return std::make_unique<T>(cfg, metrics);
         };
+        std::unique_lock lock(mutex_);
+        for (const auto table : T::kVirtualTables)
+        {
+            const std::string table_name{table};
+            auto it = table_creators_.find(table_name);
+            if (it != table_creators_.end())
+            {
+                throw std::runtime_error("QueryableFactory: duplicate virtual table registration: " + table_name);
+            }
+        }
+        creators_[std::type_index(typeid(T))] = creator;
+        for (const auto table : T::kVirtualTables)
+        {
+            table_creators_.emplace(std::string(table), TableCreator{creator, std::type_index(typeid(T))});
+        }
     }
 
     // Runtime: create instance of T. Returns unique_ptr<T> directly.
@@ -68,17 +82,49 @@ public:
         return creators_.count(std::type_index(typeid(T))) > 0;
     }
 
+    IQueryableUPtr createByTable(std::string_view table_name)
+    {
+        std::function<IQueryableUPtr()> creator;
+        {
+            std::shared_lock lock(mutex_);
+            const auto it = table_creators_.find(std::string(table_name));
+            if (it == table_creators_.end())
+            {
+                throw std::runtime_error("QueryableFactory: table not prepared: " + std::string(table_name));
+            }
+            creator = it->second.creator;
+        }
+        return creator();
+    }
+
+    std::set<std::string> registeredTables() const
+    {
+        std::shared_lock lock(mutex_);
+        std::set<std::string> tables;
+        for (const auto& [table, registration] : table_creators_)
+        {
+            tables.insert(table);
+        }
+        return tables;
+    }
+
     // Test helper: clear all registered creators.
     void reset()
     {
         std::unique_lock lock(mutex_);
         creators_.clear();
+        table_creators_.clear();
     }
 
 private:
     QueryableFactory() = default;
     mutable std::shared_mutex                                            mutex_;
     std::unordered_map<std::type_index, std::function<IQueryableUPtr()>> creators_;
+    struct TableCreator {
+        std::function<IQueryableUPtr()> creator;
+        std::type_index                 type;
+    };
+    std::unordered_map<std::string, TableCreator>                         table_creators_;
 };
 
 } // namespace mldp_pvxs_driver::query

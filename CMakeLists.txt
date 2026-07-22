@@ -13,6 +13,7 @@ option(MLDP_PVXS_DRIVER_LINK_EPICS_PVXS_STATIC "Link EPICS and PVXS libraries st
 option(MLDP_PVXS_ENABLE_HDF5 "Build with HDF5 writer support" ON)
 option(BUILD_ECHO_PROCESSOR "Build echo pass-through processor (test/debug only)" ON)
 option(BUILD_PYTHON_PROCESSOR "Build Python script processor (requires CPython 3.x)" ON)
+option(MLDP_QUERY_CLIENT_FLIGHT "Enable Apache Arrow Flight and Flight SQL for query-client development" OFF)
 
 # Default to Release build
 if(NOT CMAKE_BUILD_TYPE)
@@ -27,6 +28,7 @@ set(ARGPARSE_VERSION "v3.2")
 set(EPICSARCHIVERAP_VERSION "2.2.1")
 set(CPP_HTTPLIB_VERSION "v0.16.3")
 set(DP_GRPC_VERSION "main")
+set(ARROW_VERSION "apache-arrow-18.1.0")
 
 # Output directories
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
@@ -119,6 +121,94 @@ FetchContent_Declare(nlohmann_json
 set(JSON_BuildTests OFF CACHE BOOL "" FORCE)
 set(JSON_Install OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(nlohmann_json)
+
+# Acquire Apache Arrow for the query client. Keep the embedded build limited to
+# the core components required by the driver; Flight is explicitly opt-in.
+message(STATUS "Acquiring Apache Arrow version ${ARROW_VERSION}...")
+set(ARROW_BUILD_STATIC ON CACHE BOOL "" FORCE)
+set(ARROW_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+set(ARROW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(ARROW_BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
+set(ARROW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(ARROW_BUILD_INTEGRATION OFF CACHE BOOL "" FORCE)
+set(ARROW_BUILD_UTILITIES OFF CACHE BOOL "" FORCE)
+set(ARROW_BUILD_INSTALL OFF CACHE BOOL "" FORCE)
+set(ARROW_BUILD_OPENMP_BENCHMARKS OFF CACHE BOOL "" FORCE)
+set(ARROW_COMPUTE ON CACHE BOOL "" FORCE)
+set(ARROW_FILESYSTEM ON CACHE BOOL "" FORCE)
+set(ARROW_IPC ON CACHE BOOL "" FORCE)
+set(ARROW_ACERO OFF CACHE BOOL "" FORCE)
+set(ARROW_CSV OFF CACHE BOOL "" FORCE)
+set(ARROW_DATASET OFF CACHE BOOL "" FORCE)
+set(ARROW_JSON OFF CACHE BOOL "" FORCE)
+set(ARROW_ORC OFF CACHE BOOL "" FORCE)
+set(ARROW_PARQUET OFF CACHE BOOL "" FORCE)
+set(ARROW_S3 OFF CACHE BOOL "" FORCE)
+set(ARROW_GCS OFF CACHE BOOL "" FORCE)
+set(ARROW_HDFS OFF CACHE BOOL "" FORCE)
+set(ARROW_AZURE OFF CACHE BOOL "" FORCE)
+set(ARROW_GANDIVA OFF CACHE BOOL "" FORCE)
+set(ARROW_PYTHON OFF CACHE BOOL "" FORCE)
+set(ARROW_SUBSTRAIT OFF CACHE BOOL "" FORCE)
+set(ARROW_WITH_BROTLI OFF CACHE BOOL "" FORCE)
+set(ARROW_WITH_BZ2 OFF CACHE BOOL "" FORCE)
+set(ARROW_WITH_LZ4 OFF CACHE BOOL "" FORCE)
+set(ARROW_WITH_SNAPPY OFF CACHE BOOL "" FORCE)
+set(ARROW_WITH_ZLIB OFF CACHE BOOL "" FORCE)
+set(ARROW_WITH_ZSTD OFF CACHE BOOL "" FORCE)
+set(ARROW_WITH_UTF8PROC OFF CACHE BOOL "" FORCE)
+set(ARROW_WITH_RE2 OFF CACHE BOOL "" FORCE)
+set(ARROW_WITH_OPENTELEMETRY OFF CACHE BOOL "" FORCE)
+set(ARROW_JEMALLOC OFF CACHE BOOL "" FORCE)
+set(ARROW_MIMALLOC OFF CACHE BOOL "" FORCE)
+set(ARROW_SIMD_LEVEL NONE CACHE STRING "" FORCE)
+set(ARROW_RUNTIME_SIMD_LEVEL NONE CACHE STRING "" FORCE)
+set(ARROW_WITH_GRPC ${MLDP_QUERY_CLIENT_FLIGHT} CACHE BOOL "" FORCE)
+set(ARROW_FLIGHT ${MLDP_QUERY_CLIENT_FLIGHT} CACHE BOOL "" FORCE)
+set(ARROW_FLIGHT_SQL ${MLDP_QUERY_CLIENT_FLIGHT} CACHE BOOL "" FORCE)
+FetchContent_Declare(arrow
+    GIT_REPOSITORY https://github.com/apache/arrow.git
+    GIT_TAG ${ARROW_VERSION}
+    GIT_SHALLOW TRUE
+    SOURCE_SUBDIR cpp
+)
+FetchContent_MakeAvailable(arrow)
+
+if(NOT TARGET arrow_static)
+    message(FATAL_ERROR "Apache Arrow ${ARROW_VERSION} did not provide its static core target")
+endif()
+
+set(_MLDP_ARROW_FLIGHT_TARGET "")
+set(_MLDP_ARROW_FLIGHT_SQL_TARGET "")
+if(MLDP_QUERY_CLIENT_FLIGHT)
+    foreach(_arrow_flight_target
+        ArrowFlight::arrow_flight_static
+        ArrowFlight::arrow_flight
+        Arrow::arrow_flight_static
+        Arrow::arrow_flight
+        arrow_flight_static
+        arrow_flight)
+        if(TARGET ${_arrow_flight_target})
+            set(_MLDP_ARROW_FLIGHT_TARGET ${_arrow_flight_target})
+            break()
+        endif()
+    endforeach()
+    foreach(_arrow_flight_sql_target
+        ArrowFlightSql::arrow_flight_sql_static
+        ArrowFlightSql::arrow_flight_sql
+        Arrow::arrow_flight_sql_static
+        Arrow::arrow_flight_sql
+        arrow_flight_sql_static
+        arrow_flight_sql)
+        if(TARGET ${_arrow_flight_sql_target})
+            set(_MLDP_ARROW_FLIGHT_SQL_TARGET ${_arrow_flight_sql_target})
+            break()
+        endif()
+    endforeach()
+    if(NOT _MLDP_ARROW_FLIGHT_TARGET OR NOT _MLDP_ARROW_FLIGHT_SQL_TARGET)
+        message(FATAL_ERROR "MLDP_QUERY_CLIENT_FLIGHT=ON requires Arrow Flight and Flight SQL targets")
+    endif()
+endif()
 
 # Find required packages
 find_package(Protobuf REQUIRED)
@@ -547,6 +637,7 @@ add_library(lib${PROJECT_NAME}
     "${CMAKE_CURRENT_SOURCE_DIR}/src/pool/MLDPGrpcAnnotationPool.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/MLDPQueryClient.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/MLDPAnnotationQueryClient.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/SpillManager.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/controller/MLDPPVXSControllerConfig.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/controller/MLDPPVXSController.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/controller/RouteTable.cpp"
@@ -607,8 +698,15 @@ target_link_libraries(lib${PROJECT_NAME} PUBLIC
     spdlog::spdlog
     CURL::libcurl
     nlohmann_json::nlohmann_json
+    arrow_static
     $<$<BOOL:${MLDP_PVXS_ENABLE_HDF5}>:${_MLDP_HDF5_TARGET}>
 )
+if(MLDP_QUERY_CLIENT_FLIGHT)
+    target_link_libraries(lib${PROJECT_NAME} PUBLIC
+        ${_MLDP_ARROW_FLIGHT_TARGET}
+        ${_MLDP_ARROW_FLIGHT_SQL_TARGET}
+    )
+endif()
 target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/ext/BS_thread_pool/include")
 target_compile_definitions(lib${PROJECT_NAME} PUBLIC BS_THREAD_POOL_NATIVE_EXTENSIONS)
 target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/ext/rapidyaml/include")
@@ -616,6 +714,11 @@ target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR
 target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include/metrics")
 # Ensure the build tree's generated headers (e.g. config.h) are visible to users of the library
 target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_BINARY_DIR}")
+target_include_directories(lib${PROJECT_NAME} PUBLIC
+    "${arrow_BINARY_DIR}/src"
+    "${arrow_SOURCE_DIR}/cpp/src"
+    "${arrow_SOURCE_DIR}/cpp/src/generated"
+)
 set_target_properties(lib${PROJECT_NAME} PROPERTIES PREFIX "")
 
 if(MLDP_PVXS_DRIVER_COVERAGE)
@@ -807,6 +910,22 @@ if(MLDP_PVXS_DRIVER_TESTS)
     include(GoogleTest)
     gtest_discover_tests(${PROJECT_NAME}_test)
 
+    # Apache Arrow dependency smoke test. MockFileSystem remains test-only;
+    # production targets link only Arrow's supported core components above.
+    add_executable(arrow_dependency_test
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/query/arrow_dependency_test.cpp"
+    )
+    target_link_libraries(arrow_dependency_test PRIVATE
+        gtest_main
+        arrow_static
+    )
+    target_include_directories(arrow_dependency_test PRIVATE
+        "${arrow_BINARY_DIR}/src"
+        "${arrow_SOURCE_DIR}/cpp/src"
+        "${arrow_SOURCE_DIR}/cpp/src/generated"
+    )
+    gtest_discover_tests(arrow_dependency_test)
+
     # QueryableFactory unit tests
     add_executable(queryable_factory_test
         "${CMAKE_CURRENT_SOURCE_DIR}/test/query/queryable_factory_test.cpp"
@@ -825,6 +944,25 @@ if(MLDP_PVXS_DRIVER_TESTS)
             -Wl,--whole-archive lib${PROJECT_NAME} -Wl,--no-whole-archive)
     endif()
     gtest_discover_tests(queryable_factory_test)
+
+    add_executable(query_arrow_foundation_test
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/query/query_arrow_foundation_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/query/QuerySubcommand.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/ryml_single_header_translation_unit.cpp"
+    )
+    target_include_directories(query_arrow_foundation_test PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test"
+        "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    if(APPLE)
+        target_link_libraries(query_arrow_foundation_test PRIVATE gtest_main
+            -Wl,-force_load $<TARGET_FILE:lib${PROJECT_NAME}>)
+    else()
+        target_link_libraries(query_arrow_foundation_test PRIVATE gtest_main
+            -Wl,--whole-archive lib${PROJECT_NAME} -Wl,--no-whole-archive)
+    endif()
+    gtest_discover_tests(query_arrow_foundation_test)
 
     # MLDPAnnotationQueryClient integration tests
     add_executable(mldp_annotation_query_client_test
@@ -1050,6 +1188,7 @@ if(MLDP_PVXS_DRIVER_MAIN)
         "${CMAKE_CURRENT_SOURCE_DIR}/ext/rapidyaml/include/rapidyaml-0.10.0.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/SpdlogLogger.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/ConfigPrinter.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/query/QuerySubcommand.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/config/subcommand.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/config/validate.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/config/template.cpp"

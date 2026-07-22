@@ -61,6 +61,22 @@ TEST_F(QueryableFactoryTest, ResetClearsRegisteredTypes) {
     EXPECT_FALSE(QueryableFactory::instance().isPrepared<MLDPQueryClient>());
 }
 
+TEST_F(QueryableFactoryTest, RegistersVirtualTablesAndCreatesByTable) {
+    QueryableFactory::instance().prepare<MLDPQueryClient>(make_minimal_config());
+
+    EXPECT_EQ(QueryableFactory::instance().registeredTables(),
+              (std::set<std::string>{"mldp.pv_stats", "mldp.time_series"}));
+    EXPECT_NE(QueryableFactory::instance().createByTable("mldp.pv_stats"), nullptr);
+}
+
+TEST_F(QueryableFactoryTest, ResetClearsVirtualTables) {
+    QueryableFactory::instance().prepare<MLDPQueryClient>(make_minimal_config());
+    QueryableFactory::instance().reset();
+
+    EXPECT_TRUE(QueryableFactory::instance().registeredTables().empty());
+    EXPECT_THROW(QueryableFactory::instance().createByTable("mldp.pv_stats"), std::runtime_error);
+}
+
 TEST_F(QueryableFactoryTest, QueryableHolderAsReturnsNonNullForCorrectType) {
     QueryableFactory::instance().prepare<MLDPQueryClient>(make_minimal_config());
     auto q = QueryableFactory::instance().create<MLDPQueryClient>();

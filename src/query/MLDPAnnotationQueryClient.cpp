@@ -10,6 +10,9 @@
 
 #include <query/impl/mldp/MLDPAnnotationQueryClient.h>
 
+#include <query/ExecutionContext.h>
+#include <query/QueryResult.h>
+
 #include <pool/MLDPGrpcAnnotationPoolConfig.h>
 #include <util/log/Logger.h>
 
@@ -17,8 +20,58 @@
 #include <grpcpp/grpcpp.h>
 
 using namespace mldp_pvxs_driver::query::impl::mldp;
+using namespace mldp_pvxs_driver::query;
 using namespace mldp_pvxs_driver::util::log;
 using mldp_pvxs_driver::util::pool::MLDPGrpcAnnotationPool;
+
+const std::set<std::string_view> MLDPAnnotationQueryClient::kVirtualTables = {
+    "mldp.pv_metadata",
+    "mldp.configuration",
+    "mldp.configuration_activation",
+    "mldp.active_configurations",
+};
+
+std::set<std::string_view> MLDPAnnotationQueryClient::virtualTables() const
+{
+    return kVirtualTables;
+}
+
+std::vector<ColumnSchema> MLDPAnnotationQueryClient::tableSchema(std::string_view table_name) const
+{
+    const auto stringSearch = std::set<PredicateOp>{PredicateOp::EQ, PredicateOp::IN, PredicateOp::PREFIX, PredicateOp::CONTAINS};
+    if (table_name == "mldp.pv_metadata")
+    {
+        return {{"pv", ColumnType::STRING, false, true, stringSearch, {}, "PV name"},
+                {"alias", ColumnType::STRING, false, true, stringSearch, {}, "PV alias"},
+                {"tag", ColumnType::STRING, false, true, {PredicateOp::EQ, PredicateOp::IN}, {}, "Metadata tag"}};
+    }
+    if (table_name == "mldp.configuration")
+    {
+        return {{"name", ColumnType::STRING, false, true, stringSearch, {}, "Configuration name"},
+                {"category", ColumnType::STRING, false, true, {PredicateOp::EQ, PredicateOp::IN}, {}, "Configuration category"},
+                {"parent", ColumnType::STRING, false, true, {PredicateOp::EQ, PredicateOp::IN}, {}, "Parent configuration"}};
+    }
+    if (table_name == "mldp.configuration_activation")
+    {
+        return {{"time", ColumnType::TIMESTAMP, false, true, {PredicateOp::EQ, PredicateOp::GTE, PredicateOp::LTE}, {}, "Activation time"},
+                {"config_name", ColumnType::STRING, false, true, {PredicateOp::EQ, PredicateOp::IN}, {}, "Configuration name"},
+                {"activation_id", ColumnType::STRING, false, true, {PredicateOp::EQ, PredicateOp::IN}, {}, "Activation identifier"}};
+    }
+    if (table_name == "mldp.active_configurations")
+    {
+        return {{"at", ColumnType::TIMESTAMP, true, false, {PredicateOp::EQ}, {}, "Requested point in time"},
+                {"name", ColumnType::STRING, false, true, {}, {}, "Active configuration name"}};
+    }
+    throw std::invalid_argument("MLDPAnnotationQueryClient: unknown virtual table: " + std::string(table_name));
+}
+
+QueryResult MLDPAnnotationQueryClient::execute(std::string_view,
+                                               const std::vector<Predicate>&,
+                                               const std::set<std::string>&,
+                                               const ExecutionContext&)
+{
+    throw std::logic_error("MLDP annotation query execution is not implemented yet (Phase 4)");
+}
 
 namespace {
 

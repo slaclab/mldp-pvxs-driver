@@ -10,6 +10,9 @@
 
 #include <query/impl/mldp/MLDPQueryClient.h>
 
+#include <query/ExecutionContext.h>
+#include <query/QueryResult.h>
+
 #include <util/log/Logger.h>
 
 #include <grpcpp/grpcpp.h>
@@ -22,9 +25,48 @@
 #include <unordered_map>
 
 using namespace mldp_pvxs_driver::query::impl::mldp;
+using namespace mldp_pvxs_driver::query;
 using namespace mldp_pvxs_driver::util::bus;
 using namespace mldp_pvxs_driver::util::log;
 using mldp_pvxs_driver::util::pool::MLDPGrpcQueryPool;
+
+const std::set<std::string_view> MLDPQueryClient::kVirtualTables = {
+    "mldp.time_series",
+    "mldp.pv_stats",
+};
+
+std::set<std::string_view> MLDPQueryClient::virtualTables() const
+{
+    return kVirtualTables;
+}
+
+std::vector<ColumnSchema> MLDPQueryClient::tableSchema(std::string_view table_name) const
+{
+    if (table_name == "mldp.time_series")
+    {
+        return {{"pv", ColumnType::STRING, true, true, {PredicateOp::EQ, PredicateOp::IN}, {}, "Source name"},
+                {"time", ColumnType::TIMESTAMP, false, true, {PredicateOp::GTE, PredicateOp::LTE}, {}, "Sample timestamp"},
+                {"value", ColumnType::STRING, false, true, {}, {}, "Sample value"},
+                {"timeout", ColumnType::DURATION_SECONDS, false, false, {PredicateOp::EQ}, {}, "Query timeout"},
+                {"rpc_deadline", ColumnType::DURATION_SECONDS, false, false, {PredicateOp::EQ}, {}, "RPC deadline"}};
+    }
+    if (table_name == "mldp.pv_stats")
+    {
+        return {{"pv", ColumnType::STRING, true, true, {PredicateOp::EQ, PredicateOp::IN}, {}, "Source name"},
+                {"first_timestamp", ColumnType::TIMESTAMP, false, true, {}, {}, "First observed timestamp"},
+                {"last_timestamp", ColumnType::TIMESTAMP, false, true, {}, {}, "Last observed timestamp"},
+                {"num_buckets", ColumnType::INT, false, true, {}, {}, "Number of buckets"}};
+    }
+    throw std::invalid_argument("MLDPQueryClient: unknown virtual table: " + std::string(table_name));
+}
+
+QueryResult MLDPQueryClient::execute(std::string_view,
+                                     const std::vector<Predicate>&,
+                                     const std::set<std::string>&,
+                                     const ExecutionContext&)
+{
+    throw std::logic_error("MLDP query execution is not implemented yet (Phase 4)");
+}
 
 namespace {
 

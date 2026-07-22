@@ -46,6 +46,8 @@ namespace mldp_pvxs_driver::query::impl::mldp {
 class MLDPQueryClient : public IQueryable
 {
 public:
+    static const std::set<std::string_view> kVirtualTables;
+
     /**
      * @brief Construct and immediately initialise the underlying query pool.
      *
@@ -73,6 +75,13 @@ public:
     MLDPQueryClient& operator=(const MLDPQueryClient&) = delete;
     MLDPQueryClient(MLDPQueryClient&&) = default;
     MLDPQueryClient& operator=(MLDPQueryClient&&) = default;
+
+    std::set<std::string_view> virtualTables() const override;
+    std::vector<ColumnSchema> tableSchema(std::string_view table_name) const override;
+    QueryResult execute(std::string_view table_name,
+                        const std::vector<Predicate>& pushable_predicates,
+                        const std::set<std::string>& projection_hint,
+                        const ExecutionContext& context) override;
 
     /**
      * @brief Query MLDP metadata for a set of source identifiers.

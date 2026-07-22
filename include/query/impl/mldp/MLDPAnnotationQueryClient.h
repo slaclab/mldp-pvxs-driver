@@ -43,6 +43,8 @@ namespace mldp_pvxs_driver::query::impl::mldp {
 class MLDPAnnotationQueryClient : public IQueryable
 {
 public:
+    static const std::set<std::string_view> kVirtualTables;
+
     /**
      * @brief Construct and immediately initialise the underlying annotation pool.
      *
@@ -81,6 +83,13 @@ public:
     MLDPAnnotationQueryClient& operator=(const MLDPAnnotationQueryClient&) = delete;
     MLDPAnnotationQueryClient(MLDPAnnotationQueryClient&&) = default;
     MLDPAnnotationQueryClient& operator=(MLDPAnnotationQueryClient&&) = default;
+
+    std::set<std::string_view> virtualTables() const override;
+    std::vector<ColumnSchema> tableSchema(std::string_view table_name) const override;
+    QueryResult execute(std::string_view table_name,
+                        const std::vector<Predicate>& pushable_predicates,
+                        const std::set<std::string>& projection_hint,
+                        const ExecutionContext& context) override;
 
     // -----------------------------------------------------------------------
     // PV metadata
