@@ -21,6 +21,7 @@
 #include <arrow/array/builder_binary.h>
 #include <arrow/array/builder_primitive.h>
 #include <arrow/memory_pool.h>
+#include <arrow/scalar.h>
 #include <gtest/gtest.h>
 
 #include <set>
@@ -59,7 +60,7 @@ public:
         {
             return {
                 {"pv", query::ColumnType::STRING, true, true, {query::PredicateOp::EQ, query::PredicateOp::IN}, {}, "PV"},
-                {"owner", query::ColumnType::STRING, false, true, {}, {}, "owner"},
+                {"owner", query::ColumnType::STRING, false, true, {}, {query::PredicateOp::LIKE}, "owner"},
             };
         }
 
@@ -309,6 +310,45 @@ TEST_F(PlannerExecutorTest, RetainsFilterableOnlyPredicateForLocalExecution)
     ASSERT_EQ(scan->pushable_predicates.size(), 1);
     EXPECT_EQ(scan->pushable_predicates[0].column, "pv");
     EXPECT_EQ(scan->projection_hint, std::set<std::string>({"pv", "value"}));
+}
+
+TEST_F(PlannerExecutorTest, LikeIsCaseInsensitiveAndRemainsLocal)
+{
+    query::QueryPlanner planner;
+    const auto plan = planner.plan(query::parseQuery("SELECT pv FROM fake.meta WHERE pv = 'A' AND owner LIKE '%L_CE'"));
+    const auto* project = std::get_if<plan::PhysicalProject>(&plan->value);
+    ASSERT_NE(project, nullptr);
+    const auto* filter = std::get_if<plan::PhysicalFilter>(&project->input->value);
+    ASSERT_NE(filter, nullptr);
+    ASSERT_EQ(filter->predicates.size(), 1);
+    EXPECT_EQ(filter->predicates.front().op, query::PredicateOp::LIKE);
+    const auto* scan = findScan(filter->input);
+    ASSERT_NE(scan, nullptr);
+    ASSERT_EQ(scan->pushable_predicates.size(), 1);
+    EXPECT_EQ(scan->pushable_predicates.front().column, "pv");
+
+    query::QueryExecutor executor;
+    const auto result = executor.execute(plan, {.pool = arrow::default_memory_pool()});
+    ASSERT_EQ(result.batches.size(), 1);
+    ASSERT_EQ(result.batches.front()->num_rows(), 1);
+    EXPECT_EQ(result.batches.front()->column(0)->GetScalar(0).ValueOrDie()->ToString(), "A");
+}
+
+TEST_F(PlannerExecutorTest, LikeSupportsStarAndEscapedWildcards)
+{
+    query::QueryPlanner planner;
+    query::QueryExecutor executor;
+
+    const auto star_result = executor.execute(
+        planner.plan(query::parseQuery("SELECT pv FROM fake.meta WHERE pv = 'A' AND owner LIKE 'A*E'")),
+        {.pool = arrow::default_memory_pool()});
+    ASSERT_EQ(star_result.batches.front()->num_rows(), 1);
+    EXPECT_EQ(star_result.batches.front()->column(0)->GetScalar(0).ValueOrDie()->ToString(), "A");
+
+    const auto escaped_result = executor.execute(
+        planner.plan(query::parseQuery(R"(SELECT pv FROM fake.meta WHERE pv = 'A' AND owner LIKE 'alice\%')")),
+        {.pool = arrow::default_memory_pool()});
+    ASSERT_EQ(escaped_result.batches.front()->num_rows(), 0);
 }
 
 TEST_F(PlannerExecutorTest, ReportsBinderAndTypeFailuresWithTypedErrors)

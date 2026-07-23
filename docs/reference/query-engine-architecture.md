@@ -226,23 +226,23 @@ Time values are epoch seconds; the executor converts to nanoseconds internally. 
 
 | Column | Pushable ops | Notes |
 |---|---|---|
-| `pv` | `=`, `IN`, `PREFIX`, `CONTAINS` | `QueryPvMetadataRequest` criterion: exact / prefix / contains. |
-| `alias` | `=`, `IN`, `PREFIX`, `CONTAINS` | Aliases criterion. |
+| `pv` | `=`, `IN`, `PREFIX`, `CONTAINS`, `LIKE` (local) | `QueryPvMetadataRequest` criterion: exact / prefix / contains. |
+| `alias` | `=`, `IN`, `PREFIX`, `CONTAINS`, `LIKE` (local) | Aliases criterion. |
 | `tag` | `=`, `IN` | Tags criterion. |
 | `description` | — | Fetched only. |
 | `created_time` | — | Fetched only. |
 | `updated_time` | — | Fetched only. |
 | `modified_by` | — | Fetched only. |
 
-At least one pushable predicate is required.
+An unfiltered query lists all PV metadata records. Predicates narrow that list on the annotation service.
 
 ### `mldp.configuration` — `MLDPAnnotationQueryClient`
 
 | Column | Pushable ops | Notes |
 |---|---|---|
-| `name` | `=`, `IN`, `PREFIX`, `CONTAINS` | `QueryConfigurationsRequest` name criterion. |
-| `category` | `=`, `IN` | Category criterion. |
-| `parent` | `=`, `IN` | Parent criterion. |
+| `name` | `=`, `IN`, `PREFIX`, `CONTAINS`, `LIKE` (local) | `QueryConfigurationsRequest` name criterion. |
+| `category` | `=`, `IN`, `LIKE` (local) | Category criterion. |
+| `parent` | `=`, `IN`, `LIKE` (local) | Parent criterion. |
 
 An unfiltered query lists all configurations. Predicates narrow that list on the annotation service.
 

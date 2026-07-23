@@ -47,40 +47,41 @@ std::set<std::string_view> MLDPAnnotationQueryClient::virtualTables() const
 std::vector<ColumnSchema> MLDPAnnotationQueryClient::tableSchema(std::string_view table_name) const
 {
     const auto stringSearch = std::set<PredicateOp>{PredicateOp::EQ, PredicateOp::IN, PredicateOp::PREFIX, PredicateOp::CONTAINS};
+    const auto stringFilter = std::set<PredicateOp>{PredicateOp::LIKE};
     if (table_name == "mldp.pv_metadata")
     {
-        return {{"pv", ColumnType::STRING, false, true, stringSearch, {}, "PV name"},
-                {"alias", ColumnType::STRING, false, true, stringSearch, {}, "PV alias"},
-                {"tag", ColumnType::STRING, false, true, {PredicateOp::EQ, PredicateOp::IN}, {}, "Metadata tag"},
-                {"description", ColumnType::STRING, false, true, {}, {}, "Description"},
+        return {{"pv", ColumnType::STRING, false, true, stringSearch, stringFilter, "PV name"},
+                {"alias", ColumnType::STRING, false, true, stringSearch, stringFilter, "PV alias"},
+                {"tag", ColumnType::STRING, false, true, {PredicateOp::EQ, PredicateOp::IN}, stringFilter, "Metadata tag"},
+                {"description", ColumnType::STRING, false, true, {}, stringFilter, "Description"},
                 {"created_time", ColumnType::TIMESTAMP, false, true, {}, {}, "Created time"},
                 {"updated_time", ColumnType::TIMESTAMP, false, true, {}, {}, "Updated time"},
-                {"modified_by", ColumnType::STRING, false, true, {}, {}, "Last modifier"}};
+                {"modified_by", ColumnType::STRING, false, true, {}, stringFilter, "Last modifier"}};
     }
     if (table_name == "mldp.configuration")
     {
-        return {{"name", ColumnType::STRING, false, true, stringSearch, {}, "Configuration name"},
-                {"category", ColumnType::STRING, false, true, {PredicateOp::EQ, PredicateOp::IN}, {}, "Configuration category"},
-                {"parent", ColumnType::STRING, false, true, {PredicateOp::EQ, PredicateOp::IN}, {}, "Parent configuration"},
-                {"description", ColumnType::STRING, false, true, {}, {}, "Description"},
+        return {{"name", ColumnType::STRING, false, true, stringSearch, stringFilter, "Configuration name"},
+                {"category", ColumnType::STRING, false, true, {PredicateOp::EQ, PredicateOp::IN}, stringFilter, "Configuration category"},
+                {"parent", ColumnType::STRING, false, true, {PredicateOp::EQ, PredicateOp::IN}, stringFilter, "Parent configuration"},
+                {"description", ColumnType::STRING, false, true, {}, stringFilter, "Description"},
                 {"created_time", ColumnType::TIMESTAMP, false, true, {}, {}, "Created time"},
                 {"updated_time", ColumnType::TIMESTAMP, false, true, {}, {}, "Updated time"},
-                {"modified_by", ColumnType::STRING, false, true, {}, {}, "Last modifier"}};
+                {"modified_by", ColumnType::STRING, false, true, {}, stringFilter, "Last modifier"}};
     }
     if (table_name == "mldp.configuration_activation")
     {
         return {{"time", ColumnType::TIMESTAMP, false, true, {PredicateOp::EQ, PredicateOp::GTE, PredicateOp::LTE}, {}, "Activation time"},
-                {"config_name", ColumnType::STRING, false, true, {PredicateOp::EQ, PredicateOp::IN}, {}, "Configuration name"},
-                {"activation_id", ColumnType::STRING, false, true, {PredicateOp::EQ, PredicateOp::IN}, {}, "Activation identifier"},
-                {"description", ColumnType::STRING, false, true, {}, {}, "Description"},
+                {"config_name", ColumnType::STRING, false, true, {PredicateOp::EQ, PredicateOp::IN}, stringFilter, "Configuration name"},
+                {"activation_id", ColumnType::STRING, false, true, {PredicateOp::EQ, PredicateOp::IN}, stringFilter, "Activation identifier"},
+                {"description", ColumnType::STRING, false, true, {}, stringFilter, "Description"},
                 {"created_time", ColumnType::TIMESTAMP, false, true, {}, {}, "Created time"},
                 {"updated_time", ColumnType::TIMESTAMP, false, true, {}, {}, "Updated time"}};
     }
     if (table_name == "mldp.active_configurations")
     {
         return {{"at", ColumnType::TIMESTAMP, true, false, {PredicateOp::EQ}, {}, "Requested point in time"},
-                {"name", ColumnType::STRING, false, true, {}, {}, "Active configuration name"},
-                {"activation_id", ColumnType::STRING, false, true, {}, {}, "Activation identifier"},
+                {"name", ColumnType::STRING, false, true, {}, stringFilter, "Active configuration name"},
+                {"activation_id", ColumnType::STRING, false, true, {}, stringFilter, "Activation identifier"},
                 {"time", ColumnType::TIMESTAMP, false, true, {}, {}, "Activation start time"}};
     }
     throw std::invalid_argument("MLDPAnnotationQueryClient: unknown virtual table: " + std::string(table_name));
@@ -184,8 +185,10 @@ QueryResult MLDPAnnotationQueryClient::execute(std::string_view              tab
             else
                 throw std::invalid_argument("Unsupported mldp.pv_metadata predicate column or operator: " + predicate.column);
         }
+        // The annotation API requires at least one criterion.  Its PV-name
+        // prefix criterion accepts an empty prefix, which matches every PV.
         if (request.criteria_size() == 0)
-            throw std::invalid_argument("mldp.pv_metadata requires at least one pushable predicate");
+            request.add_criteria()->mutable_pvnamecriterion()->add_prefix("");
         const auto [records, next] = queryPvMetadata(request);
         arrow::StringBuilder    pv, alias, tag, description, modified_by;
         arrow::TimestampBuilder created(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), arrow::default_memory_pool());
@@ -241,6 +244,11 @@ QueryResult MLDPAnnotationQueryClient::execute(std::string_view              tab
             else
                 throw std::invalid_argument("Unsupported mldp.configuration predicate column or operator: " + predicate.column);
         }
+        // The annotation API requires at least one criterion.  Its name-prefix
+        // criterion accepts an empty prefix, which Mongo translates to the
+        // anchored expression "^" and therefore matches every configuration.
+        if (request.criteria_size() == 0)
+            request.add_criteria()->mutable_namecriterion()->add_prefix("");
         const auto [records, next] = queryConfigurations(request);
         arrow::StringBuilder    name, category, parent, description, modified_by;
         arrow::TimestampBuilder created(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), arrow::default_memory_pool()), updated(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), arrow::default_memory_pool());

@@ -131,6 +131,15 @@ TEST(QueryParserTest, ParsesSelectJoinPredicatesLimitAndPageToken)
     EXPECT_EQ(*select.page_token, "next-1");
 }
 
+TEST(QueryParserTest, PreservesLikeAsItsOwnPredicateOperator)
+{
+    const auto statement = parseQuery("SELECT * FROM mldp.configuration WHERE name LIKE 'beam%'");
+    const auto& select = std::get<SelectStatement>(statement);
+    ASSERT_EQ(select.predicates.size(), 1);
+    ASSERT_TRUE(std::holds_alternative<OpPredicate>(select.predicates.front()));
+    EXPECT_EQ(std::get<OpPredicate>(select.predicates.front()).op, PredicateBinaryOp::LIKE);
+}
+
 TEST(QueryParserTest, ParsesShowTablesDescribeAndExplain)
 {
     auto show_tables = parseQuery("SHOW TABLES");

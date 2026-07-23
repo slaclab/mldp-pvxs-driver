@@ -15,6 +15,7 @@
 #include <query/SpillManager.h>
 
 #include <algorithm>
+#include <cctype>
 #include <arrow/array/builder_binary.h>
 #include <arrow/array/builder_primitive.h>
 #include <arrow/builder.h>
@@ -56,6 +57,75 @@ std::string scalarToString(const std::shared_ptr<arrow::Scalar>& scalar)
     return scalar->ToString();
 }
 
+bool matchesLikePattern(std::string_view value, std::string_view pattern)
+{
+    struct PatternToken {
+        enum class Type { LITERAL, ANY, SINGLE };
+        Type type;
+        char value{};
+    };
+
+    std::vector<PatternToken> tokens;
+    tokens.reserve(pattern.size());
+    for (std::size_t index = 0; index < pattern.size(); ++index)
+    {
+        const auto character = pattern[index];
+        if (character == '\\' && index + 1 < pattern.size())
+        {
+            tokens.push_back({.type = PatternToken::Type::LITERAL, .value = pattern[++index]});
+        }
+        else if (character == '%' || character == '*')
+        {
+            tokens.push_back({.type = PatternToken::Type::ANY});
+        }
+        else if (character == '_')
+        {
+            tokens.push_back({.type = PatternToken::Type::SINGLE});
+        }
+        else
+        {
+            tokens.push_back({.type = PatternToken::Type::LITERAL, .value = character});
+        }
+    }
+
+    const auto equalIgnoreCase = [](const char lhs, const char rhs)
+    {
+        return std::tolower(static_cast<unsigned char>(lhs)) == std::tolower(static_cast<unsigned char>(rhs));
+    };
+
+    std::size_t value_index = 0;
+    std::size_t token_index = 0;
+    std::size_t wildcard_token = std::string::npos;
+    std::size_t wildcard_value = 0;
+    while (value_index < value.size())
+    {
+        if (token_index < tokens.size() &&
+            (tokens[token_index].type == PatternToken::Type::SINGLE ||
+             (tokens[token_index].type == PatternToken::Type::LITERAL && equalIgnoreCase(tokens[token_index].value, value[value_index]))))
+        {
+            ++token_index;
+            ++value_index;
+        }
+        else if (token_index < tokens.size() && tokens[token_index].type == PatternToken::Type::ANY)
+        {
+            wildcard_token = token_index++;
+            wildcard_value = value_index;
+        }
+        else if (wildcard_token != std::string::npos)
+        {
+            token_index = wildcard_token + 1;
+            value_index = ++wildcard_value;
+        }
+        else
+        {
+            return false;
+        }
+    }
+    while (token_index < tokens.size() && tokens[token_index].type == PatternToken::Type::ANY)
+        ++token_index;
+    return token_index == tokens.size();
+}
+
 bool scalarMatchesPredicate(const std::shared_ptr<arrow::Scalar>& scalar, const Predicate& predicate)
 {
     if (!scalar || !scalar->is_valid)
@@ -94,6 +164,8 @@ bool scalarMatchesPredicate(const std::shared_ptr<arrow::Scalar>& scalar, const 
                 return value_text.rfind(rhs, 0) == 0;
             if (op == PredicateOp::CONTAINS)
                 return value_text.find(rhs) != std::string::npos;
+            if (op == PredicateOp::LIKE)
+                return matchesLikePattern(value_text, rhs);
             if (op == PredicateOp::LT)
                 return value_text < rhs;
             if (op == PredicateOp::LTE)

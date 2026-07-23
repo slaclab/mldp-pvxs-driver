@@ -51,9 +51,10 @@ mldp> SELECT name, category
 ...> WHERE category = 'beam';
 ```
 
-`mldp.configuration` also supports an unfiltered list operation:
+`mldp.pv_metadata` and `mldp.configuration` support unfiltered list operations:
 
 ```sql
+SELECT * FROM mldp.pv_metadata;
 SELECT * FROM mldp.configuration;
 ```
 
@@ -199,9 +200,29 @@ FROM   <table> [AS <alias>]
 | Comparison | `time >= 1700000000 AND time <= 1700003600` |
 | Prefix match | `pv PREFIX 'MY:MAGNET'` |
 | Contains | `pv CONTAINS 'MAGNET'` |
-| SQL LIKE | `pv LIKE 'MY:MAGNET'` (treated as CONTAINS) |
+| SQL LIKE | `description LIKE '%vacuum%'` or `name LIKE 'beam*'` |
 
 Multiple predicates are combined with `AND`.
+
+### Pattern matching with `LIKE`
+
+`LIKE` matches string values case-insensitively. It supports standard SQL patterns plus `*` as a convenient alternative to `%`:
+
+| Pattern | Meaning | Example |
+|---|---|---|
+| `%` or `*` | Zero or more characters | `name LIKE 'beam*'` |
+| `_` | Exactly one character | `name LIKE 'sector_1'` |
+| `\%`, `\*`, `\_`, `\\` | Literal `%`, `*`, `_`, or backslash | `description LIKE 'rate\\%'` |
+
+`LIKE` is available for every string column. It is evaluated locally after records are fetched, so a broad pattern can retrieve more data than a pushable predicate. Combine it with a pushable predicate when practical:
+
+```sql
+SELECT pv, description
+FROM mldp.pv_metadata
+WHERE tag = 'vacuum' AND description LIKE '%interlock%'
+```
+
+`CONTAINS` remains a case-sensitive literal substring operator: wildcard characters have no special meaning with `CONTAINS`.
 
 ### Time literals
 
@@ -328,17 +349,19 @@ PV metadata and annotation records from the MLDP annotation service.
 
 | Column | Type | Pushable operators | Notes |
 |---|---|---|---|
-| `pv` | string | `=`, `IN`, `PREFIX`, `CONTAINS` | PV name or alias. |
-| `alias` | string | `=`, `IN`, `PREFIX`, `CONTAINS` | Alternate name. |
-| `tag` | string | `=`, `IN` | Metadata tag. |
-| `description` | string | — | Free-text description. |
+| `pv` | string | `=`, `IN`, `PREFIX`, `CONTAINS`, `LIKE` (local) | PV name or alias. |
+| `alias` | string | `=`, `IN`, `PREFIX`, `CONTAINS`, `LIKE` (local) | Alternate name. |
+| `tag` | string | `=`, `IN`, `LIKE` (local) | Metadata tag. |
+| `description` | string | `LIKE` (local) | Free-text description. |
 | `created_time` | timestamp | — | Record creation time. |
 | `updated_time` | timestamp | — | Last modification time. |
-| `modified_by` | string | — | Last modifier identity. |
+| `modified_by` | string | `LIKE` (local) | Last modifier identity. |
 
-At least one pushable predicate is required (`pv`, `alias`, or `tag`).
+An unfiltered query lists all PV metadata records. Predicates narrow the list on the annotation service.
 
-Dynamic attributes are accessible as `attr.<key>` and support `=`, `!=`, `IN`, `PREFIX`, `CONTAINS`.
+`LIKE` is available on every string column and runs as a local filter; see [Pattern matching with `LIKE`](#pattern-matching-with-like) for its wildcard and escaping rules.
+
+Dynamic attributes are accessible as `attr.<key>` and support `=`, `!=`, `IN`, `PREFIX`, `CONTAINS`, `LIKE`.
 
 ```sql
 -- Find PVs by prefix
@@ -350,6 +373,11 @@ WHERE pv PREFIX 'MY:MAGNET'
 SELECT pv, alias, description
 FROM mldp.pv_metadata
 WHERE tag = 'production'
+
+-- Case-insensitive description search
+SELECT pv, description
+FROM mldp.pv_metadata
+WHERE description LIKE '%vacuum%'
 ```
 
 ---
@@ -360,20 +388,25 @@ Machine/beam configuration records.
 
 | Column | Type | Pushable operators | Notes |
 |---|---|---|---|
-| `name` | string | `=`, `IN`, `PREFIX`, `CONTAINS` | Configuration name. |
-| `category` | string | `=`, `IN` | Configuration category. |
-| `parent` | string | `=`, `IN` | Parent configuration name. |
-| `description` | string | — | Free-text description. |
+| `name` | string | `=`, `IN`, `PREFIX`, `CONTAINS`, `LIKE` (local) | Configuration name. |
+| `category` | string | `=`, `IN`, `LIKE` (local) | Configuration category. |
+| `parent` | string | `=`, `IN`, `LIKE` (local) | Parent configuration name. |
+| `description` | string | `LIKE` (local) | Free-text description. |
 | `created_time` | timestamp | — | Creation time. |
 | `updated_time` | timestamp | — | Last modification time. |
-| `modified_by` | string | — | Last modifier identity. |
+| `modified_by` | string | `LIKE` (local) | Last modifier identity. |
 
-At least one pushable predicate is required (`name`, `category`, or `parent`).
+An unfiltered query lists all configurations. Predicates narrow the list on the annotation service.
 
 ```sql
 SELECT name, category, description
 FROM mldp.configuration
 WHERE category = 'beam_mode'
+
+-- `%` and `*` are equivalent any-length wildcards
+SELECT name, description
+FROM mldp.configuration
+WHERE name LIKE 'beam*'
 ```
 
 ---
@@ -385,9 +418,9 @@ Time-windowed activation records for configurations.
 | Column | Type | Pushable operators | Notes |
 |---|---|---|---|
 | `time` | timestamp | `=`, `>=`, `<=` | Activation window start time. |
-| `config_name` | string | `=`, `IN` | Configuration name. |
-| `activation_id` | string | `=`, `IN` | Client-assigned activation identifier. |
-| `description` | string | — | Free-text description. |
+| `config_name` | string | `=`, `IN`, `LIKE` (local) | Configuration name. |
+| `activation_id` | string | `=`, `IN`, `LIKE` (local) | Client-assigned activation identifier. |
+| `description` | string | `LIKE` (local) | Free-text description. |
 | `created_time` | timestamp | — | Record creation time. |
 | `updated_time` | timestamp | — | Last modification time. |
 

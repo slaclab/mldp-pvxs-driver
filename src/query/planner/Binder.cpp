@@ -126,7 +126,7 @@ PredicateOp mapBinaryOp(const PredicateBinaryOp op)
     case PredicateBinaryOp::GTE:
         return PredicateOp::GTE;
     case PredicateBinaryOp::LIKE:
-        return PredicateOp::CONTAINS;
+        return PredicateOp::LIKE;
     case PredicateBinaryOp::CONTAINS:
         return PredicateOp::CONTAINS;
     case PredicateBinaryOp::PREFIX:
@@ -137,7 +137,7 @@ PredicateOp mapBinaryOp(const PredicateBinaryOp op)
 
 std::set<PredicateOp> defaultTextOps()
 {
-    return {PredicateOp::EQ, PredicateOp::NEQ, PredicateOp::IN, PredicateOp::PREFIX, PredicateOp::CONTAINS};
+    return {PredicateOp::EQ, PredicateOp::NEQ, PredicateOp::IN, PredicateOp::PREFIX, PredicateOp::CONTAINS, PredicateOp::LIKE};
 }
 
 plan::PlannerLiteralValue toPlannerLiteral(const LiteralValue& value)

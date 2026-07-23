@@ -58,6 +58,10 @@ static std::string unescapeQuoted(const char* text, const std::size_t length)
         {
             ++index;
             current = text[index];
+            if (current == '%' || current == '*' || current == '_' || current == '\\')
+            {
+                out.push_back('\\');
+            }
         }
         out.push_back(current);
     }

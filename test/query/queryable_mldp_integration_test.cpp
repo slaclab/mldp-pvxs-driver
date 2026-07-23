@@ -450,6 +450,19 @@ TEST_F(QueryableMldpIntegrationTest, AnnotationTablesAndJoinsReturnOnlySeededRec
     EXPECT_EQ(std::unordered_set<std::string>(metadata_rows.begin(), metadata_rows.end()),
               std::unordered_set<std::string>(metadata_pvs.begin(), metadata_pvs.end()));
 
+    const auto all_metadata = pollSql(
+        "SELECT pv FROM mldp.pv_metadata",
+        "all PV metadata",
+        [&](const QueryExecutionResult& candidate)
+        {
+            const auto returned_pvs = strings(candidate, 0);
+            return std::all_of(metadata_pvs.begin(), metadata_pvs.end(), [&](const std::string& pv)
+                               { return std::find(returned_pvs.begin(), returned_pvs.end(), pv) != returned_pvs.end(); });
+        });
+    const auto all_metadata_pvs = strings(all_metadata, 0);
+    for (const auto& pv : metadata_pvs)
+        EXPECT_NE(std::find(all_metadata_pvs.begin(), all_metadata_pvs.end(), pv), all_metadata_pvs.end());
+
     const auto configuration = pollSql(
         "SELECT name, category FROM mldp.configuration WHERE name IN (" + commaSeparatedQuoted(configuration_names) + ")",
         "configuration",
@@ -459,6 +472,21 @@ TEST_F(QueryableMldpIntegrationTest, AnnotationTablesAndJoinsReturnOnlySeededRec
         });
     ASSERT_EQ(rowCount(configuration), static_cast<int64_t>(configuration_names.size()));
     EXPECT_GT(configuration.stats.rpc_calls, 1u);
+
+    const auto all_configurations = pollSql(
+        "SELECT name FROM mldp.configuration",
+        "all configurations",
+        [&](const QueryExecutionResult& candidate)
+        {
+            const auto returned_names = strings(candidate, 0);
+            return std::all_of(configuration_names.begin(), configuration_names.end(), [&](const std::string& name)
+                               { return std::find(returned_names.begin(), returned_names.end(), name) != returned_names.end(); }) &&
+                   std::find(returned_names.begin(), returned_names.end(), active_configuration_name) != returned_names.end();
+        });
+    const auto all_configuration_names = strings(all_configurations, 0);
+    for (const auto& name : configuration_names)
+        EXPECT_NE(std::find(all_configuration_names.begin(), all_configuration_names.end(), name), all_configuration_names.end());
+    EXPECT_NE(std::find(all_configuration_names.begin(), all_configuration_names.end(), active_configuration_name), all_configuration_names.end());
 
     const auto activation = pollSql(
         "SELECT config_name, activation_id FROM mldp.configuration_activation WHERE activation_id IN (" + commaSeparatedQuoted(activation_ids) + ")",

@@ -42,6 +42,7 @@ enum class PredicateOp
     IN,
     PREFIX,
     CONTAINS,
+    LIKE,
     BETWEEN
 };
 
