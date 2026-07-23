@@ -34,6 +34,24 @@ namespace {
 
 std::string joinOps(const std::set<PredicateOp>& ops)
 {
+    const auto name = [](const PredicateOp op) -> std::string_view
+    {
+        switch (op)
+        {
+            case PredicateOp::EQ: return "=";
+            case PredicateOp::NEQ: return "!=";
+            case PredicateOp::LT: return "<";
+            case PredicateOp::LTE: return "<=";
+            case PredicateOp::GT: return ">";
+            case PredicateOp::GTE: return ">=";
+            case PredicateOp::IN: return "IN";
+            case PredicateOp::PREFIX: return "PREFIX";
+            case PredicateOp::CONTAINS: return "CONTAINS";
+            case PredicateOp::LIKE: return "LIKE";
+            case PredicateOp::BETWEEN: return "BETWEEN";
+        }
+        return "unknown";
+    };
     std::ostringstream out;
     bool               first = true;
     for (const auto op : ops)
@@ -43,9 +61,22 @@ std::string joinOps(const std::set<PredicateOp>& ops)
             out << ",";
         }
         first = false;
-        out << static_cast<int>(op);
+        out << name(op);
     }
     return out.str();
+}
+
+std::string_view columnTypeName(const ColumnType type)
+{
+    switch (type)
+    {
+        case ColumnType::STRING: return "string";
+        case ColumnType::TIMESTAMP: return "timestamp";
+        case ColumnType::DURATION_SECONDS: return "duration_seconds";
+        case ColumnType::INT: return "int";
+        case ColumnType::BOOL: return "bool";
+    }
+    return "unknown";
 }
 
 std::string scalarToString(const std::shared_ptr<arrow::Scalar>& scalar)
@@ -240,6 +271,28 @@ bool scalarMatchesPredicate(const std::shared_ptr<arrow::Scalar>& scalar, const 
     return compareSingle(predicate.values.front(), predicate.op);
 }
 
+bool listContainsPredicateValue(const std::shared_ptr<arrow::Scalar>& scalar, const Predicate& predicate)
+{
+    const auto list = std::dynamic_pointer_cast<arrow::ListScalar>(scalar);
+    if (!list || !list->is_valid || !list->value)
+    {
+        return false;
+    }
+    for (int64_t index = 0; index < list->value->length(); ++index)
+    {
+        const auto value = list->value->GetScalar(index);
+        if (!value.ok())
+        {
+            throw std::runtime_error(value.status().ToString());
+        }
+        if (scalarMatchesPredicate(*value, Predicate{.column = "tag", .op = predicate.op, .values = predicate.values}))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 arrow::Result<std::shared_ptr<arrow::RecordBatch>> applyFilter(const std::shared_ptr<arrow::RecordBatch>& batch,
                                                                const std::vector<Predicate>&              predicates)
 {
@@ -249,6 +302,22 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> applyFilter(const std::shared
         bool include = true;
         for (const auto& predicate : predicates)
         {
+            if (predicate.column == "tag")
+            {
+                const auto tags_index = batch->schema()->GetFieldIndex("tags");
+                if (tags_index < 0)
+                {
+                    include = false;
+                    break;
+                }
+                ARROW_ASSIGN_OR_RAISE(auto tags, batch->column(tags_index)->GetScalar(row));
+                if (!listContainsPredicateValue(tags, predicate))
+                {
+                    include = false;
+                    break;
+                }
+                continue;
+            }
             const auto field_index = batch->schema()->GetFieldIndex(predicate.column);
             if (field_index < 0)
             {
@@ -807,7 +876,7 @@ executeNode(const plan::PhysicalNodePtr& node, QueryStats& stats, const Executio
         for (const auto& column : schema)
         {
             if (!col_name.Append(column.name).ok() ||
-                !col_type.Append(std::to_string(static_cast<int>(column.type))).ok() ||
+                !col_type.Append(columnTypeName(column.type)).ok() ||
                 !col_required.Append(column.required).ok() ||
                 !col_output.Append(column.is_output).ok() ||
                 !col_pushable.Append(joinOps(column.pushable_ops)).ok() ||

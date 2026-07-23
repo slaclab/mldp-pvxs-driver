@@ -62,4 +62,14 @@ public:
             std::ostream&                    error) const;
 };
 
+namespace detail {
+
+/** Return interactive REPL completion candidates for text before the cursor. */
+std::vector<std::string> replCompletions(std::string_view input);
+
+/** Return the ASCII token length replxx should replace for a completion. */
+int replCompletionContextLength(std::string_view input);
+
+} // namespace detail
+
 } // namespace mldp_pvxs_driver::cli

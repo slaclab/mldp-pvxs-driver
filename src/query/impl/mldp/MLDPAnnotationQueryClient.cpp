@@ -18,13 +18,16 @@
 
 #include <annotation.grpc.pb.h>
 #include <arrow/array/builder_binary.h>
+#include <arrow/array/builder_nested.h>
 #include <arrow/array/builder_primitive.h>
 #include <arrow/record_batch.h>
 #include <arrow/type.h>
 #include <grpcpp/grpcpp.h>
 
-#include <algorithm>
+#include <map>
+#include <memory>
 #include <stdexcept>
+#include <unordered_map>
 #include <variant>
 
 using namespace mldp_pvxs_driver::query::impl::mldp;
@@ -52,7 +55,9 @@ std::vector<ColumnSchema> MLDPAnnotationQueryClient::tableSchema(std::string_vie
     {
         return {{"pv", ColumnType::STRING, false, true, stringSearch, stringFilter, "PV name"},
                 {"alias", ColumnType::STRING, false, true, stringSearch, stringFilter, "PV alias"},
-                {"tag", ColumnType::STRING, false, true, {PredicateOp::EQ, PredicateOp::IN}, stringFilter, "Metadata tag"},
+                {"tags", ColumnType::STRING, false, true, {}, {}, "Complete tag collection; filter with tag = or tag IN (backend-pushed and locally verified)"},
+                {"attributes", ColumnType::STRING, false, true, {}, {}, "Dynamic attribute map; select or filter attributes.<key> (backend-pushed and locally verified)"},
+                {"tag", ColumnType::STRING, false, false, {PredicateOp::EQ, PredicateOp::IN}, {}, "Tag membership predicate shorthand for tags"},
                 {"description", ColumnType::STRING, false, true, {}, stringFilter, "Description"},
                 {"created_time", ColumnType::TIMESTAMP, false, true, {}, {}, "Created time"},
                 {"updated_time", ColumnType::TIMESTAMP, false, true, {}, {}, "Updated time"},
@@ -63,6 +68,9 @@ std::vector<ColumnSchema> MLDPAnnotationQueryClient::tableSchema(std::string_vie
         return {{"name", ColumnType::STRING, false, true, stringSearch, stringFilter, "Configuration name"},
                 {"category", ColumnType::STRING, false, true, {PredicateOp::EQ, PredicateOp::IN}, stringFilter, "Configuration category"},
                 {"parent", ColumnType::STRING, false, true, {PredicateOp::EQ, PredicateOp::IN}, stringFilter, "Parent configuration"},
+                {"tags", ColumnType::STRING, false, true, {}, {}, "Complete tag collection; filter with tag = or tag IN (backend-pushed and locally verified)"},
+                {"attributes", ColumnType::STRING, false, true, {}, {}, "Dynamic attribute map; select or filter attributes.<key> (backend-pushed and locally verified)"},
+                {"tag", ColumnType::STRING, false, false, {PredicateOp::EQ, PredicateOp::IN}, {}, "Tag membership predicate shorthand for tags"},
                 {"description", ColumnType::STRING, false, true, {}, stringFilter, "Description"},
                 {"created_time", ColumnType::TIMESTAMP, false, true, {}, {}, "Created time"},
                 {"updated_time", ColumnType::TIMESTAMP, false, true, {}, {}, "Updated time"},
@@ -74,6 +82,9 @@ std::vector<ColumnSchema> MLDPAnnotationQueryClient::tableSchema(std::string_vie
                 {"config_name", ColumnType::STRING, false, true, {PredicateOp::EQ, PredicateOp::IN}, stringFilter, "Configuration name"},
                 {"activation_id", ColumnType::STRING, false, true, {PredicateOp::EQ, PredicateOp::IN}, stringFilter, "Activation identifier"},
                 {"description", ColumnType::STRING, false, true, {}, stringFilter, "Description"},
+                {"tags", ColumnType::STRING, false, true, {}, {}, "Complete tag collection; filter with tag = or tag IN (backend-pushed and locally verified)"},
+                {"attributes", ColumnType::STRING, false, true, {}, {}, "Dynamic attribute map; select or filter attributes.<key> (backend-pushed and locally verified)"},
+                {"tag", ColumnType::STRING, false, false, {PredicateOp::EQ, PredicateOp::IN}, {}, "Tag membership predicate shorthand for tags"},
                 {"created_time", ColumnType::TIMESTAMP, false, true, {}, {}, "Created time"},
                 {"updated_time", ColumnType::TIMESTAMP, false, true, {}, {}, "Updated time"}};
     }
@@ -133,6 +144,90 @@ void appendString(arrow::StringBuilder& builder, std::string_view value)
         throw std::runtime_error("Failed to build Arrow annotation string column");
 }
 
+std::set<std::string> dynamicAttributeKeys(const std::set<std::string>& projection_hint,
+                                           const std::vector<Predicate>& predicates)
+{
+    std::set<std::string> keys;
+    const auto collect = [&keys](const std::string& name)
+    {
+        constexpr std::string_view prefix = "attributes.";
+        if (name.rfind(prefix, 0) == 0 && name.size() > prefix.size())
+            keys.insert(name.substr(prefix.size()));
+    };
+    for (const auto& name : projection_hint)
+        collect(name);
+    for (const auto& predicate : predicates)
+        collect(predicate.column);
+    return keys;
+}
+
+class MetadataBuilders
+{
+public:
+    explicit MetadataBuilders(const std::set<std::string>& attribute_keys)
+        : tags_values_(std::make_shared<arrow::StringBuilder>())
+        , tags_(arrow::default_memory_pool(), tags_values_)
+        , attributes_keys_(std::make_shared<arrow::StringBuilder>())
+        , attributes_values_(std::make_shared<arrow::StringBuilder>())
+        , attributes_(arrow::default_memory_pool(), attributes_keys_, attributes_values_)
+    {
+        for (const auto& key : attribute_keys)
+            values_.emplace(key, std::make_unique<arrow::StringBuilder>());
+    }
+
+    template <typename Metadata>
+    void append(const Metadata& metadata)
+    {
+        if (!tags_.Append().ok() || !attributes_.Append().ok())
+            throw std::runtime_error("Failed to begin Arrow metadata collection");
+        for (const auto& tag : metadata.tags())
+            appendString(*tags_values_, tag);
+        std::unordered_map<std::string, std::string> attributes;
+        for (const auto& attribute : metadata.attributes())
+        {
+            attributes.insert_or_assign(attribute.name(), attribute.value());
+            appendString(*attributes_keys_, attribute.name());
+            appendString(*attributes_values_, attribute.value());
+        }
+        for (auto& [key, builder] : values_)
+        {
+            if (const auto it = attributes.find(key); it != attributes.end())
+                appendString(*builder, it->second);
+            else if (!builder->AppendNull().ok())
+                throw std::runtime_error("Failed to append null dynamic metadata value");
+        }
+    }
+
+    void finish(std::vector<std::shared_ptr<arrow::Field>>& fields,
+                std::vector<std::shared_ptr<arrow::Array>>& arrays)
+    {
+        std::shared_ptr<arrow::Array> tags;
+        std::shared_ptr<arrow::Array> attributes;
+        if (!tags_.Finish(&tags).ok() || !attributes_.Finish(&attributes).ok())
+            throw std::runtime_error("Failed to finish Arrow metadata collections");
+        fields.push_back(arrow::field("tags", tags->type()));
+        arrays.push_back(std::move(tags));
+        fields.push_back(arrow::field("attributes", attributes->type()));
+        arrays.push_back(std::move(attributes));
+        for (auto& [key, builder] : values_)
+        {
+            std::shared_ptr<arrow::Array> value;
+            if (!builder->Finish(&value).ok())
+                throw std::runtime_error("Failed to finish dynamic metadata value");
+            fields.push_back(arrow::field("attributes." + key, arrow::utf8(), true));
+            arrays.push_back(std::move(value));
+        }
+    }
+
+private:
+    std::shared_ptr<arrow::StringBuilder> tags_values_;
+    arrow::ListBuilder tags_;
+    std::shared_ptr<arrow::StringBuilder> attributes_keys_;
+    std::shared_ptr<arrow::StringBuilder> attributes_values_;
+    arrow::MapBuilder attributes_;
+    std::map<std::string, std::unique_ptr<arrow::StringBuilder>> values_;
+};
+
 std::shared_ptr<mldp_pvxs_driver::util::log::ILogger> makeAnnotationQueryClientLogger()
 {
     std::string name = "mldp_annotation_query_client";
@@ -143,7 +238,7 @@ std::shared_ptr<mldp_pvxs_driver::util::log::ILogger> makeAnnotationQueryClientL
 
 QueryResult MLDPAnnotationQueryClient::execute(std::string_view              table_name,
                                                const std::vector<Predicate>& predicates,
-                                               const std::set<std::string>&,
+                                               const std::set<std::string>& projection_hint,
                                                const ExecutionContext& context,
                                                std::string_view        page_token)
 {
@@ -182,6 +277,13 @@ QueryResult MLDPAnnotationQueryClient::execute(std::string_view              tab
                 for (const auto& value : values)
                     criterion->mutable_tagscriterion()->add_values(value);
             }
+            else if (predicate.column.rfind("attributes.", 0) == 0 && (predicate.op == PredicateOp::EQ || predicate.op == PredicateOp::IN))
+            {
+                auto* target = criterion->mutable_attributescriterion();
+                target->set_key(predicate.column.substr(std::string("attributes.").size()));
+                for (const auto& value : values)
+                    target->add_values(value);
+            }
             else
                 throw std::invalid_argument("Unsupported mldp.pv_metadata predicate column or operator: " + predicate.column);
         }
@@ -190,31 +292,28 @@ QueryResult MLDPAnnotationQueryClient::execute(std::string_view              tab
         if (request.criteria_size() == 0)
             request.add_criteria()->mutable_pvnamecriterion()->add_prefix("");
         const auto [records, next] = queryPvMetadata(request);
-        arrow::StringBuilder    pv, alias, tag, description, modified_by;
+        arrow::StringBuilder    pv, alias, description, modified_by;
         arrow::TimestampBuilder created(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), arrow::default_memory_pool());
         arrow::TimestampBuilder updated(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), arrow::default_memory_pool());
+        MetadataBuilders metadata(dynamicAttributeKeys(projection_hint, predicates));
         for (const auto& record : records)
         {
-            const auto aliases = std::max(1, record.aliases_size());
-            const auto tags = std::max(1, record.tags_size());
-            for (int a = 0; a < aliases; ++a)
-                for (int t = 0; t < tags; ++t)
-                {
-                    appendString(pv, record.pvname());
-                    if (a < record.aliases_size()) { appendString(alias, record.aliases(a)); } else { (void)alias.AppendNull(); }
-                    if (t < record.tags_size()) { appendString(tag, record.tags(t)); } else { (void)tag.AppendNull(); }
-                    appendString(description, record.description());
-                    appendString(modified_by, record.modifiedby());
-                    appendTimestamp(created, record.createdtime());
-                    appendTimestamp(updated, record.updatedtime());
-                }
+            appendString(pv, record.pvname());
+            if (record.aliases_size() > 0) appendString(alias, record.aliases(0)); else { (void)alias.AppendNull(); }
+            appendString(description, record.description());
+            appendString(modified_by, record.modifiedby());
+            appendTimestamp(created, record.createdtime());
+            appendTimestamp(updated, record.updatedtime());
+            metadata.append(record);
         }
-        std::shared_ptr<arrow::Array> a, b, c, d, e, f, g;
-        if (!pv.Finish(&a).ok() || !alias.Finish(&b).ok() || !tag.Finish(&c).ok() ||
-            !description.Finish(&d).ok() || !modified_by.Finish(&e).ok() ||
-            !created.Finish(&f).ok() || !updated.Finish(&g).ok())
+        std::shared_ptr<arrow::Array> a, b, c, d, e, f;
+        if (!pv.Finish(&a).ok() || !alias.Finish(&b).ok() || !description.Finish(&c).ok() || !modified_by.Finish(&d).ok() ||
+            !created.Finish(&e).ok() || !updated.Finish(&f).ok())
             throw std::runtime_error("Failed to finish Arrow pv_metadata batch");
-        return {.batch = arrow::RecordBatch::Make(arrow::schema({arrow::field("pv", a->type()), arrow::field("alias", b->type()), arrow::field("tag", c->type()), arrow::field("description", d->type()), arrow::field("modified_by", e->type()), arrow::field("created_time", f->type()), arrow::field("updated_time", g->type())}), a->length(), {a, b, c, d, e, f, g}), .next_page_token = next};
+        std::vector<std::shared_ptr<arrow::Field>> fields = {arrow::field("pv", a->type()), arrow::field("alias", b->type()), arrow::field("description", c->type()), arrow::field("modified_by", d->type()), arrow::field("created_time", e->type()), arrow::field("updated_time", f->type())};
+        std::vector<std::shared_ptr<arrow::Array>> arrays = {a, b, c, d, e, f};
+        metadata.finish(fields, arrays);
+        return {.batch = arrow::RecordBatch::Make(arrow::schema(std::move(fields)), a->length(), std::move(arrays)), .next_page_token = next};
     }
     if (table_name == "mldp.configuration")
     {
@@ -241,6 +340,16 @@ QueryResult MLDPAnnotationQueryClient::execute(std::string_view              tab
             else if (predicate.column == "parent" && (predicate.op == PredicateOp::EQ || predicate.op == PredicateOp::IN))
                 for (const auto& value : values)
                     criterion->mutable_parentcriterion()->add_values(value);
+            else if (predicate.column == "tag" && (predicate.op == PredicateOp::EQ || predicate.op == PredicateOp::IN))
+                for (const auto& value : values)
+                    criterion->mutable_tagscriterion()->add_values(value);
+            else if (predicate.column.rfind("attributes.", 0) == 0 && (predicate.op == PredicateOp::EQ || predicate.op == PredicateOp::IN))
+            {
+                auto* target = criterion->mutable_attributescriterion();
+                target->set_key(predicate.column.substr(std::string("attributes.").size()));
+                for (const auto& value : values)
+                    target->add_values(value);
+            }
             else
                 throw std::invalid_argument("Unsupported mldp.configuration predicate column or operator: " + predicate.column);
         }
@@ -252,6 +361,7 @@ QueryResult MLDPAnnotationQueryClient::execute(std::string_view              tab
         const auto [records, next] = queryConfigurations(request);
         arrow::StringBuilder    name, category, parent, description, modified_by;
         arrow::TimestampBuilder created(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), arrow::default_memory_pool()), updated(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), arrow::default_memory_pool());
+        MetadataBuilders metadata(dynamicAttributeKeys(projection_hint, predicates));
         for (const auto& record : records)
         {
             appendString(name, record.configurationname());
@@ -261,13 +371,17 @@ QueryResult MLDPAnnotationQueryClient::execute(std::string_view              tab
             appendString(modified_by, record.modifiedby());
             appendTimestamp(created, record.createdtime());
             appendTimestamp(updated, record.updatedtime());
+            metadata.append(record);
         }
         std::shared_ptr<arrow::Array> a, b, c, d, e, f, g;
         if (!name.Finish(&a).ok() || !category.Finish(&b).ok() || !parent.Finish(&c).ok() ||
             !description.Finish(&d).ok() || !modified_by.Finish(&e).ok() ||
             !created.Finish(&f).ok() || !updated.Finish(&g).ok())
             throw std::runtime_error("Failed to finish Arrow configuration batch");
-        return {.batch = arrow::RecordBatch::Make(arrow::schema({arrow::field("name", a->type()), arrow::field("category", b->type()), arrow::field("parent", c->type()), arrow::field("description", d->type()), arrow::field("modified_by", e->type()), arrow::field("created_time", f->type()), arrow::field("updated_time", g->type())}), a->length(), {a, b, c, d, e, f, g}), .next_page_token = next};
+        std::vector<std::shared_ptr<arrow::Field>> fields = {arrow::field("name", a->type()), arrow::field("category", b->type()), arrow::field("parent", c->type()), arrow::field("description", d->type()), arrow::field("modified_by", e->type()), arrow::field("created_time", f->type()), arrow::field("updated_time", g->type())};
+        std::vector<std::shared_ptr<arrow::Array>> arrays = {a, b, c, d, e, f, g};
+        metadata.finish(fields, arrays);
+        return {.batch = arrow::RecordBatch::Make(arrow::schema(std::move(fields)), a->length(), std::move(arrays)), .next_page_token = next};
     }
     if (table_name == "mldp.configuration_activation")
     {
@@ -285,6 +399,16 @@ QueryResult MLDPAnnotationQueryClient::execute(std::string_view              tab
             else if (predicate.column == "activation_id" && (predicate.op == PredicateOp::EQ || predicate.op == PredicateOp::IN))
                 for (const auto& value : stringValues(predicate))
                     criterion->mutable_clientactivationidcriterion()->add_values(value);
+            else if (predicate.column == "tag" && (predicate.op == PredicateOp::EQ || predicate.op == PredicateOp::IN))
+                for (const auto& value : stringValues(predicate))
+                    criterion->mutable_tagscriterion()->add_values(value);
+            else if (predicate.column.rfind("attributes.", 0) == 0 && (predicate.op == PredicateOp::EQ || predicate.op == PredicateOp::IN))
+            {
+                auto* target = criterion->mutable_attributescriterion();
+                target->set_key(predicate.column.substr(std::string("attributes.").size()));
+                for (const auto& value : stringValues(predicate))
+                    target->add_values(value);
+            }
             else
                 throw std::invalid_argument("Unsupported mldp.configuration_activation predicate column or operator: " + predicate.column);
         }
@@ -293,17 +417,22 @@ QueryResult MLDPAnnotationQueryClient::execute(std::string_view              tab
         const auto [records, next] = queryConfigurationActivations(request);
         arrow::TimestampBuilder time(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), arrow::default_memory_pool());
         arrow::StringBuilder    config, id, description;
+        MetadataBuilders metadata(dynamicAttributeKeys(projection_hint, predicates));
         for (const auto& record : records)
         {
             appendTimestamp(time, record.starttime());
             appendString(config, record.configurationname());
             appendString(id, record.clientactivationid());
             appendString(description, record.description());
+            metadata.append(record);
         }
         std::shared_ptr<arrow::Array> a, b, c, d;
         if (!time.Finish(&a).ok() || !config.Finish(&b).ok() || !id.Finish(&c).ok() || !description.Finish(&d).ok())
             throw std::runtime_error("Failed to finish Arrow configuration_activation batch");
-        return {.batch = arrow::RecordBatch::Make(arrow::schema({arrow::field("time", a->type()), arrow::field("config_name", b->type()), arrow::field("activation_id", c->type()), arrow::field("description", d->type())}), a->length(), {a, b, c, d}), .next_page_token = next};
+        std::vector<std::shared_ptr<arrow::Field>> fields = {arrow::field("time", a->type()), arrow::field("config_name", b->type()), arrow::field("activation_id", c->type()), arrow::field("description", d->type())};
+        std::vector<std::shared_ptr<arrow::Array>> arrays = {a, b, c, d};
+        metadata.finish(fields, arrays);
+        return {.batch = arrow::RecordBatch::Make(arrow::schema(std::move(fields)), a->length(), std::move(arrays)), .next_page_token = next};
     }
     if (table_name == "mldp.active_configurations")
     {

@@ -95,7 +95,7 @@ TEST(QueryLexerTest, RejectsUnknownAndUnterminatedInputAtItsSourcePosition)
 TEST(QueryParserTest, ParsesSelectJoinPredicatesLimitAndPageToken)
 {
     const auto statement = parseQuery(
-        "SELECT ts.pv, meta.attr.owner " "FROM mldp.pv_stats AS ts " "LEFT JOIN mldp.pv_metadata meta ON ts.pv = meta.pv " "WHERE ts.pv IN ('A', 'B') AND ts.time >= NOW-60s " "LIMIT 10 PAGE TOKEN 'next-1'");
+        "SELECT ts.pv, meta.attributes.owner " "FROM mldp.pv_stats AS ts " "LEFT JOIN mldp.pv_metadata meta ON ts.pv = meta.pv " "WHERE ts.pv IN ('A', 'B') AND ts.time >= NOW-60s " "LIMIT 10 PAGE TOKEN 'next-1'");
 
     ASSERT_TRUE(std::holds_alternative<SelectStatement>(statement));
     const auto& select = std::get<SelectStatement>(statement);
@@ -104,7 +104,7 @@ TEST(QueryParserTest, ParsesSelectJoinPredicatesLimitAndPageToken)
     EXPECT_EQ(select.columns[0].qualifier.value_or(""), "ts");
     EXPECT_EQ(select.columns[0].name, "pv");
     EXPECT_EQ(select.columns[1].qualifier.value_or(""), "meta");
-    EXPECT_EQ(select.columns[1].name, "attr.owner");
+    EXPECT_EQ(select.columns[1].name, "attributes.owner");
 
     EXPECT_EQ(select.from.table_name, "mldp.pv_stats");
     EXPECT_EQ(select.from.alias.value_or(""), "ts");

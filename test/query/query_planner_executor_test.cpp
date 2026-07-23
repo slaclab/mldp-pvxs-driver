@@ -61,6 +61,8 @@ public:
             return {
                 {"pv", query::ColumnType::STRING, true, true, {query::PredicateOp::EQ, query::PredicateOp::IN}, {}, "PV"},
                 {"owner", query::ColumnType::STRING, false, true, {}, {query::PredicateOp::LIKE}, "owner"},
+                {"tags", query::ColumnType::STRING, false, true, {}, {}, "tags"},
+                {"tag", query::ColumnType::STRING, false, false, {query::PredicateOp::EQ, query::PredicateOp::IN}, {}, "tag membership"},
             };
         }
 
@@ -91,6 +93,7 @@ public:
         {
             arrow::StringBuilder pv_builder;
             arrow::StringBuilder owner_builder;
+            arrow::StringBuilder tags_builder;
 
             const auto include_row = [&](const std::string& pv) -> bool
             {
@@ -128,17 +131,21 @@ public:
             {
                 EXPECT_TRUE(pv_builder.Append("A").ok());
                 EXPECT_TRUE(owner_builder.Append("alice").ok());
+                EXPECT_TRUE(tags_builder.Append("sample").ok());
             }
             if (include_row("C"))
             {
                 EXPECT_TRUE(pv_builder.Append("C").ok());
                 EXPECT_TRUE(owner_builder.Append("carol").ok());
+                EXPECT_TRUE(tags_builder.Append("configuration").ok());
             }
 
             std::shared_ptr<arrow::Array> pv;
             std::shared_ptr<arrow::Array> owner;
+            std::shared_ptr<arrow::Array> tags;
             EXPECT_TRUE(pv_builder.Finish(&pv).ok());
             EXPECT_TRUE(owner_builder.Finish(&owner).ok());
+            EXPECT_TRUE(tags_builder.Finish(&tags).ok());
 
             std::vector<std::shared_ptr<arrow::Field>> fields;
             std::vector<std::shared_ptr<arrow::Array>> columns;
@@ -151,6 +158,11 @@ public:
             {
                 fields.push_back(arrow::field("owner", arrow::utf8()));
                 columns.push_back(owner);
+            }
+            if (projection_hint.empty() || projection_hint.contains("tags"))
+            {
+                fields.push_back(arrow::field("tags", arrow::utf8()));
+                columns.push_back(tags);
             }
 
             return query::QueryResult{
@@ -312,6 +324,22 @@ TEST_F(PlannerExecutorTest, RetainsFilterableOnlyPredicateForLocalExecution)
     EXPECT_EQ(scan->projection_hint, std::set<std::string>({"pv", "value"}));
 }
 
+TEST_F(PlannerExecutorTest, RetainsPushedMetadataPredicatesForLocalVerification)
+{
+    query::QueryPlanner planner;
+    const auto plan = planner.plan(query::parseQuery("SELECT pv FROM fake.meta WHERE pv = 'A' AND tag IN ('sample', 'magnet')"));
+    const auto* project = std::get_if<plan::PhysicalProject>(&plan->value);
+    ASSERT_NE(project, nullptr);
+    const auto* filter = std::get_if<plan::PhysicalFilter>(&project->input->value);
+    ASSERT_NE(filter, nullptr);
+    ASSERT_EQ(filter->predicates.size(), 1);
+    EXPECT_EQ(filter->predicates.front().column, "tag");
+    const auto* scan = findScan(filter->input);
+    ASSERT_NE(scan, nullptr);
+    ASSERT_EQ(scan->pushable_predicates.size(), 2);
+    EXPECT_TRUE(scan->projection_hint.contains("tags"));
+}
+
 TEST_F(PlannerExecutorTest, LikeIsCaseInsensitiveAndRemainsLocal)
 {
     query::QueryPlanner planner;
@@ -435,6 +463,21 @@ TEST_F(PlannerExecutorTest, ShowTablesReturnsRegisteredTables)
     const auto result = executor.execute(plan, context);
     ASSERT_EQ(result.batches.size(), 1);
     ASSERT_GE(result.batches[0]->num_rows(), 1);
+}
+
+TEST_F(PlannerExecutorTest, DescribeUsesReadableTypesAndOperators)
+{
+    query::QueryPlanner planner;
+    query::QueryExecutor executor;
+    const auto result = executor.execute(
+        planner.plan(query::parseQuery("DESCRIBE fake.samples")),
+        {.pool = arrow::default_memory_pool()});
+    ASSERT_EQ(result.batches.size(), 1);
+    const auto& batch = result.batches.front();
+    EXPECT_EQ(batch->column(1)->GetScalar(0).ValueOrDie()->ToString(), "string");
+    EXPECT_EQ(batch->column(4)->GetScalar(0).ValueOrDie()->ToString(), "=,IN");
+    EXPECT_EQ(batch->column(1)->GetScalar(1).ValueOrDie()->ToString(), "timestamp");
+    EXPECT_EQ(batch->column(4)->GetScalar(1).ValueOrDie()->ToString(), "<=,>=");
 }
 
 TEST_F(PlannerExecutorTest, ExecutesInnerJoinWithQualifiedColumns)

@@ -10,9 +10,12 @@
 
 #include <query/QueryFormatter.h>
 
+#include <arrow/array.h>
 #include <arrow/io/memory.h>
 #include <arrow/ipc/writer.h>
 #include <arrow/scalar.h>
+
+#include <algorithm>
 
 #include <iomanip>
 #include <sstream>
@@ -80,6 +83,77 @@ bool isNumericOrBoolType(const std::shared_ptr<arrow::DataType>& type)
     }
 }
 
+std::string jsonValue(const std::shared_ptr<arrow::Scalar>& scalar)
+{
+    if (!scalar || !scalar->is_valid) return "null";
+    if (isNumericOrBoolType(scalar->type)) return scalar->ToString();
+    if (scalar->type->id() == arrow::Type::LIST)
+    {
+        const auto list = std::dynamic_pointer_cast<arrow::ListScalar>(scalar);
+        std::ostringstream out; out << "[";
+        for (int64_t i = 0; i < list->value->length(); ++i)
+        {
+            if (i != 0) out << ",";
+            const auto value = list->value->GetScalar(i);
+            if (!value.ok()) throw std::runtime_error(value.status().ToString());
+            out << jsonValue(*value);
+        }
+        return out.str() + "]";
+    }
+    if (scalar->type->id() == arrow::Type::MAP)
+    {
+        const auto map = std::dynamic_pointer_cast<arrow::MapScalar>(scalar);
+        const auto entries = std::dynamic_pointer_cast<arrow::StructArray>(map->value);
+        const auto keys = entries->field(0);
+        const auto values = entries->field(1);
+        std::ostringstream out; out << "{";
+        for (int64_t i = 0; i < entries->length(); ++i)
+        {
+            if (i != 0) out << ",";
+            const auto key = keys->GetScalar(i); const auto value = values->GetScalar(i);
+            if (!key.ok() || !value.ok()) throw std::runtime_error("Failed to render Arrow map value");
+            out << "\"" << escapeJson((*key)->ToString()) << "\":" << jsonValue(*value);
+        }
+        return out.str() + "}";
+    }
+    return "\"" + escapeJson(scalar->ToString()) + "\"";
+}
+
+std::string tableValue(const std::shared_ptr<arrow::Scalar>& scalar)
+{
+    if (!scalar || !scalar->is_valid) return "";
+    if (scalar->type->id() == arrow::Type::LIST)
+    {
+        const auto list = std::dynamic_pointer_cast<arrow::ListScalar>(scalar);
+        std::ostringstream out;
+        for (int64_t i = 0; i < list->value->length(); ++i)
+        {
+            if (i != 0) out << "\n";
+            const auto value = list->value->GetScalar(i);
+            if (!value.ok()) throw std::runtime_error(value.status().ToString());
+            out << (*value)->ToString();
+        }
+        return out.str();
+    }
+    if (scalar->type->id() == arrow::Type::MAP)
+    {
+        const auto map = std::dynamic_pointer_cast<arrow::MapScalar>(scalar);
+        const auto entries = std::dynamic_pointer_cast<arrow::StructArray>(map->value);
+        std::vector<std::string> values;
+        for (int64_t i = 0; i < entries->length(); ++i)
+        {
+            const auto key = entries->field(0)->GetScalar(i); const auto value = entries->field(1)->GetScalar(i);
+            if (!key.ok() || !value.ok()) throw std::runtime_error("Failed to render Arrow map value");
+            values.push_back((*key)->ToString() + "=" + (*value)->ToString());
+        }
+        std::sort(values.begin(), values.end());
+        std::ostringstream out;
+        for (std::size_t i = 0; i < values.size(); ++i) { if (i != 0) out << "\n"; out << values[i]; }
+        return out.str();
+    }
+    return scalar->ToString();
+}
+
 void writeJsonLines(const query::QueryExecutionResult& result, std::ostream& output)
 {
     for (const auto& batch : result.batches)
@@ -110,15 +184,7 @@ void writeJsonLines(const query::QueryExecutionResult& result, std::ostream& out
                     output << "null";
                     continue;
                 }
-                const auto value = scalar->ToString();
-                if (isNumericOrBoolType(scalar->type))
-                {
-                    output << value;
-                }
-                else
-                {
-                    output << "\"" << escapeJson(value) << "\"";
-                }
+                output << jsonValue(scalar);
             }
             output << "}\n";
         }
@@ -156,6 +222,19 @@ std::string escapeCsv(const std::string& input)
     }
     out << '"';
     return out.str();
+}
+
+std::string csvValue(const std::shared_ptr<arrow::Scalar>& scalar)
+{
+    if (!scalar || !scalar->is_valid)
+    {
+        return {};
+    }
+    if (scalar->type->id() == arrow::Type::LIST || scalar->type->id() == arrow::Type::MAP)
+    {
+        return jsonValue(scalar);
+    }
+    return scalar->ToString();
 }
 
 void writeCsv(const query::QueryExecutionResult& result, std::ostream& output)
@@ -200,7 +279,7 @@ void writeCsv(const query::QueryExecutionResult& result, std::ostream& output)
                 {
                     continue;
                 }
-                output << escapeCsv(scalar->ToString());
+                output << escapeCsv(csvValue(scalar));
             }
             output << "\n";
         }
@@ -298,8 +377,16 @@ void writeTable(const query::QueryExecutionResult& result, std::ostream& output)
                     throw std::runtime_error(scalar_result.status().ToString());
                 }
                 const auto scalar = *scalar_result;
-                std::string cell = (scalar && scalar->is_valid) ? scalar->ToString() : "";
-                widths[c] = std::max(widths[c], cell.size());
+                std::string cell = tableValue(scalar);
+                const auto first_line_end = cell.find('\n');
+                widths[c] = std::max(widths[c], (first_line_end == std::string::npos ? cell : cell.substr(0, first_line_end)).size());
+                for (std::size_t line_start = first_line_end == std::string::npos ? cell.size() : first_line_end + 1;
+                     line_start < cell.size();)
+                {
+                    const auto line_end = cell.find('\n', line_start);
+                    widths[c] = std::max(widths[c], cell.substr(line_start, line_end - line_start).size());
+                    line_start = line_end == std::string::npos ? cell.size() : line_end + 1;
+                }
                 cells.push_back(std::move(cell));
             }
             rows.push_back(std::move(cells));
@@ -334,15 +421,20 @@ void writeTable(const query::QueryExecutionResult& result, std::ostream& output)
     // Data rows
     for (const auto& row : rows)
     {
-        for (int c = 0; c < num_cols; ++c)
+        std::size_t lines = 1;
+        for (const auto& cell : row)
+            lines = std::max(lines, static_cast<std::size_t>(1 + std::count(cell.begin(), cell.end(), '\n')));
+        for (std::size_t line = 0; line < lines; ++line)
         {
-            if (c > 0)
+            for (int c = 0; c < num_cols; ++c)
             {
-                output << " | ";
+                if (c > 0) output << " | ";
+                const auto start = [&] { std::size_t offset = 0; for (std::size_t part = 0; part < line; ++part) { const auto pos = row[c].find('\n', offset); if (pos == std::string::npos) return row[c].size(); offset = pos + 1; } return offset; }();
+                const auto end = row[c].find('\n', start);
+                output << std::left << std::setw(static_cast<int>(widths[c])) << row[c].substr(start, end - start);
             }
-            output << std::left << std::setw(static_cast<int>(widths[c])) << row[c];
+            output << "\n";
         }
-        output << "\n";
     }
 
     output << "(" << rows.size() << " row" << (rows.size() != 1 ? "s" : "") << ")\n";

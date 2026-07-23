@@ -17,6 +17,7 @@
 #include <query/plan/PlannerError.h>
 
 #include <arrow/api.h>
+#include <arrow/array/builder_nested.h>
 #include <arrow/filesystem/mockfs.h>
 #include <arrow/io/memory.h>
 #include <arrow/ipc/reader.h>
@@ -157,6 +158,48 @@ TEST(QueryFormatterTest, FormatsJsonCsvTableAndArrowToTheSuppliedStream)
     EXPECT_TRUE((*read_batch)->Equals(*batch));
 }
 
+TEST(QueryFormatterTest, FormatsNativeMetadataCollectionsWithoutExpandingRows)
+{
+    auto tag_values = std::make_shared<arrow::StringBuilder>();
+    arrow::ListBuilder tags_builder(arrow::default_memory_pool(), tag_values);
+    auto attribute_keys = std::make_shared<arrow::StringBuilder>();
+    auto attribute_values = std::make_shared<arrow::StringBuilder>();
+    arrow::MapBuilder attributes_builder(arrow::default_memory_pool(), attribute_keys, attribute_values);
+    ASSERT_TRUE(tags_builder.Append().ok());
+    ASSERT_TRUE(tag_values->Append("sample").ok());
+    ASSERT_TRUE(tag_values->Append("magnet").ok());
+    ASSERT_TRUE(attributes_builder.Append().ok());
+    ASSERT_TRUE(attribute_keys->Append("units").ok());
+    ASSERT_TRUE(attribute_values->Append("A").ok());
+    ASSERT_TRUE(attribute_keys->Append("namespace").ok());
+    ASSERT_TRUE(attribute_values->Append("mldp_sample").ok());
+    std::shared_ptr<arrow::Array> tags;
+    std::shared_ptr<arrow::Array> attributes;
+    ASSERT_TRUE(tags_builder.Finish(&tags).ok());
+    ASSERT_TRUE(attributes_builder.Finish(&attributes).ok());
+    const auto batch = arrow::RecordBatch::Make(
+        arrow::schema({arrow::field("tags", tags->type()), arrow::field("attributes", attributes->type())}),
+        1,
+        {tags, attributes});
+    const query::QueryExecutionResult result{.batches = {batch}};
+
+    std::ostringstream json;
+    cli::formatQueryResult(result, cli::QueryOutputFormat::Json, json);
+    EXPECT_EQ(json.str(), "{\"tags\":[\"sample\",\"magnet\"],\"attributes\":{\"units\":\"A\",\"namespace\":\"mldp_sample\"}}\n");
+
+    std::ostringstream csv;
+    cli::formatQueryResult(result, cli::QueryOutputFormat::Csv, csv);
+    EXPECT_EQ(csv.str(),
+              "tags,attributes\n"
+              "\"[\"\"sample\"\",\"\"magnet\"\"]\",\"{\"\"units\"\":\"\"A\"\",\"\"namespace\"\":\"\"mldp_sample\"\"}\"\n");
+
+    std::ostringstream table;
+    cli::formatQueryResult(result, cli::QueryOutputFormat::Table, table);
+    EXPECT_NE(table.str().find("sample"), std::string::npos);
+    EXPECT_NE(table.str().find("magnet"), std::string::npos);
+    EXPECT_NE(table.str().find("namespace=mldp_sample"), std::string::npos);
+}
+
 TEST(QuerySubcommandTest, PreparesBothSupportedQueryableShapes)
 {
     cli::QuerySubcommandPreparer preparer;
@@ -278,6 +321,64 @@ TEST(QuerySubcommandTest, ReplShowsHelpAndExitsOnQuit)
     EXPECT_TRUE(error.str().empty());
 }
 
+TEST(QuerySubcommandTest, ReplFormatPersistsForFollowingStatements)
+{
+    char arg0[] = "query";
+    char* argv[] = {arg0};
+    cli::QuerySubcommand querySubcommand;
+    std::istringstream input(".format\n.format json\nSHOW TABLES;\n.quit\n");
+    std::ostringstream output;
+    std::ostringstream error;
+    const std::vector<std::string> config_sources{
+        "queryable.mldp.query-url=localhost:2",
+        "queryable.mldp.min-conn=1",
+        "queryable.mldp.max-conn=1"};
+
+    EXPECT_EQ(querySubcommand.run(1, argv, config_sources, input, output, error), 0);
+    EXPECT_NE(output.str().find("Output format: table"), std::string::npos);
+    EXPECT_NE(output.str().find("Output format: json"), std::string::npos);
+    EXPECT_NE(output.str().find("{\"table_name\":\"mldp.time_series\"}"), std::string::npos);
+    EXPECT_TRUE(error.str().empty());
+}
+
+TEST(QuerySubcommandTest, ReplRejectsInvalidFormatWithoutChangingTheSession)
+{
+    char arg0[] = "query";
+    char* argv[] = {arg0};
+    cli::QuerySubcommand querySubcommand;
+    std::istringstream input(".format json\n.format invalid\n.format\n.quit\n");
+    std::ostringstream output;
+    std::ostringstream error;
+    const std::vector<std::string> config_sources{
+        "queryable.mldp.query-url=localhost:2",
+        "queryable.mldp.min-conn=1",
+        "queryable.mldp.max-conn=1"};
+
+    EXPECT_EQ(querySubcommand.run(1, argv, config_sources, input, output, error), 0);
+    EXPECT_NE(error.str().find("Invalid --format value 'invalid'"), std::string::npos);
+    EXPECT_NE(output.str().find("Output format: json"), std::string::npos);
+}
+
+TEST(QueryCompletionTest, CompletesCommandsKeywordsTablesAndColumns)
+{
+    query::QueryableFactory::instance().reset();
+    const auto config = config::Config::configFromYamlString(
+        "query-url: localhost:2\nmin-conn: 1\nmax-conn: 1\n");
+    query::QueryableFactory::instance().prepare<query::impl::mldp::MLDPQueryClient>(config);
+
+    EXPECT_EQ(cli::detail::replCompletions("sel"), std::vector<std::string>({"SELECT"}));
+    EXPECT_EQ(cli::detail::replCompletions(".for"), std::vector<std::string>({".format"}));
+    EXPECT_EQ(cli::detail::replCompletions(".format j"), std::vector<std::string>({"json"}));
+    const auto tables = cli::detail::replCompletions("SELECT * FROM mldp.t");
+    EXPECT_NE(std::find(tables.begin(), tables.end(), "mldp.time_series"), tables.end());
+    const auto columns = cli::detail::replCompletions("SELECT ts.p FROM mldp.time_series AS ts WHERE ts.p");
+    EXPECT_NE(std::find(columns.begin(), columns.end(), "ts.pv"), columns.end());
+    EXPECT_TRUE(cli::detail::replCompletions("SELECT 'sel").empty());
+    EXPECT_EQ(cli::detail::replCompletionContextLength("SELECT ts.p"), 4);
+
+    query::QueryableFactory::instance().reset();
+}
+
 TEST(QuerySubcommandTest, ReplReportsIncompleteStatementAtEndOfInput)
 {
     char arg0[] = "query";
@@ -333,12 +434,12 @@ TEST(QuerySubcommandTest, ReplRecognisesSemicolonsOnlyOutsideQuotedStrings)
 
 TEST(QuerySubcommandTest, ReplClearAndUnknownCommandKeepSessionUsable)
 {
-    char arg0[] = "query";
-    char* argv[] = {arg0};
-    cli::QuerySubcommand querySubcommand;
-    std::istringstream input("SELECT *\n.clear\n.unknown\nSHOW TABLES;\n.quit\n");
-    std::ostringstream output;
-    std::ostringstream error;
+    char                           arg0[] = "query";
+    char*                          argv[] = {arg0};
+    cli::QuerySubcommand           querySubcommand;
+    std::istringstream             input("SHOW TABLES;\nhistory\nSELECT *\n.clear\n.unknown\nSHOW TABLES;\n.quit\n");
+    std::ostringstream             output;
+    std::ostringstream             error;
     const std::vector<std::string> config_sources{
         "queryable.mldp.query-url=localhost:2",
         "queryable.mldp.min-conn=1",
@@ -346,6 +447,9 @@ TEST(QuerySubcommandTest, ReplClearAndUnknownCommandKeepSessionUsable)
 
     EXPECT_EQ(querySubcommand.run(1, argv, config_sources, input, output, error), 0);
     EXPECT_NE(error.str().find("unknown REPL command '.unknown'"), std::string::npos);
+    EXPECT_EQ(error.str().find("Expected valid query syntax"), std::string::npos);
+    EXPECT_NE(output.str().find("SHOW TABLES"), std::string::npos);
+    EXPECT_NE(output.str().find("Buffered statement cleared."), std::string::npos);
     EXPECT_NE(output.str().find("mldp.time_series"), std::string::npos);
 }
 

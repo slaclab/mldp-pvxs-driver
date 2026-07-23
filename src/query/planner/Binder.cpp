@@ -57,7 +57,11 @@ std::string resolveColumnOnTable(const QualifiedColumn& column,
     {
         return column.name;
     }
-    if (column.name.rfind("attr.", 0) == 0)
+    if (column.name.rfind("attributes.", 0) == 0 && findColumnSchema(table.schema, "attributes") != nullptr)
+    {
+        return column.name;
+    }
+    if (column.name.rfind("provenance.", 0) == 0 && findColumnSchema(table.schema, "provenance") != nullptr)
     {
         return column.name;
     }
@@ -177,8 +181,12 @@ plan::PlannerPredicate buildPredicate(const WherePredicate& where,
             }
 
             const auto* schema_column = findColumnSchema(bound_table->schema, resolved.column_name);
-            const bool is_attr_predicate = schema_column == nullptr && resolved.column_name.rfind("attr.", 0) == 0;
-            if (schema_column == nullptr && !is_attr_predicate)
+            const bool is_dynamic_metadata_predicate = schema_column == nullptr &&
+                                                       ((resolved.column_name.rfind("attributes.", 0) == 0 &&
+                                                         findColumnSchema(bound_table->schema, "attributes") != nullptr) ||
+                                                        (resolved.column_name.rfind("provenance.", 0) == 0 &&
+                                                         findColumnSchema(bound_table->schema, "provenance") != nullptr));
+            if (schema_column == nullptr && !is_dynamic_metadata_predicate)
             {
                 throw plan::PlannerException(plan::BindError{
                     .message = "Unknown column '" + qualify(resolved.table_alias, resolved.column_name) + "'"});

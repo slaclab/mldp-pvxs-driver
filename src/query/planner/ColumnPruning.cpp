@@ -40,7 +40,7 @@ void collectReferencedColumns(const plan::LogicalNodePtr& node,
     {
         for (const auto& predicate : scan->pushable_predicates)
         {
-            columns[scan->table_alias].insert(predicate.column);
+            columns[scan->table_alias].insert(predicate.column == "tag" ? "tags" : predicate.column);
         }
         return;
     }
@@ -49,7 +49,7 @@ void collectReferencedColumns(const plan::LogicalNodePtr& node,
         for (const auto& predicate : filter->predicates)
         {
             const auto alias = predicate.table_alias.empty() ? "" : predicate.table_alias;
-            columns[alias].insert(predicate.column);
+            columns[alias].insert(predicate.column == "tag" ? "tags" : predicate.column);
         }
         collectReferencedColumns(filter->input, columns);
         return;

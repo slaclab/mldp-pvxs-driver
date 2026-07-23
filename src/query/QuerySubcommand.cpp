@@ -27,10 +27,12 @@
 #include <replxx.hxx>
 
 #include <algorithm>
+#include <cctype>
 #include <cerrno>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <iterator>
 #include <memory>
@@ -174,7 +176,155 @@ std::optional<std::size_t> statementTerminator(std::string_view line)
 
 bool isReplCommand(std::string_view command)
 {
-    return command == ".help" || command == ".clear" || command == ".quit" || command == ".exit";
+    return command == ".help" || command == ".clear" || command == ".format" || command.starts_with(".format ") ||
+           command.starts_with(".format\t") || command == ".history" || command == "history" || command == ".quit" || command == ".exit";
+}
+
+std::string formatName(const QueryOutputFormat format)
+{
+    switch (format)
+    {
+        case QueryOutputFormat::Table: return "table";
+        case QueryOutputFormat::Json: return "json";
+        case QueryOutputFormat::Csv: return "csv";
+        case QueryOutputFormat::Arrow: return "arrow";
+    }
+    throw std::runtime_error("Unknown query output format");
+}
+
+std::string uppercase(std::string_view value)
+{
+    std::string result(value);
+    std::transform(result.begin(), result.end(), result.begin(), [](const unsigned char character)
+                   {
+                       return static_cast<char>(std::toupper(character));
+                   });
+    return result;
+}
+
+bool isUserHistoryEntry(std::string_view entry)
+{
+    const auto command = trim(entry);
+    if (command.empty() || command.starts_with("mldp>") || command.starts_with("...>") ||
+        command.starts_with("Query error:") || command.starts_with("Parse error") ||
+        command.starts_with("Planner error") || command.starts_with("-- "))
+    {
+        return false;
+    }
+    if (command.front() == '.' || command == "history")
+    {
+        return true;
+    }
+
+    const auto first_space = command.find_first_of(" \t\r\n");
+    const auto keyword = uppercase(command.substr(0, first_space));
+    return keyword == "SELECT" || keyword == "SHOW" || keyword == "DESCRIBE" || keyword == "EXPLAIN";
+}
+
+bool startsWithIgnoreCase(std::string_view value, std::string_view prefix)
+{
+    return value.size() >= prefix.size() && uppercase(value.substr(0, prefix.size())) == uppercase(prefix);
+}
+
+bool isCompletionBreak(const char character)
+{
+    return std::isspace(static_cast<unsigned char>(character)) || character == ',' || character == '(' || character == ')' ||
+           character == ';' || character == '=' || character == '<' || character == '>' || character == '*';
+}
+
+bool isInsideQuotedLiteral(std::string_view input)
+{
+    char quote = '\0';
+    bool escaped = false;
+    for (const char character : input)
+    {
+        if (quote != '\0')
+        {
+            if (escaped) escaped = false;
+            else if (character == '\\') escaped = true;
+            else if (character == quote) quote = '\0';
+        }
+        else if (character == '\'' || character == '\"')
+        {
+            quote = character;
+        }
+    }
+    return quote != '\0';
+}
+
+std::string completionToken(std::string_view input)
+{
+    const auto token_start = input.find_last_of(" \t\r\n,();=<>*");
+    return std::string(input.substr(token_start == std::string_view::npos ? 0 : token_start + 1));
+}
+
+std::vector<std::string> wordsBeforeToken(std::string_view input)
+{
+    std::vector<std::string> words;
+    std::string word;
+    const auto token = completionToken(input);
+    const auto preceding = input.substr(0, input.size() - token.size());
+    for (const char character : preceding)
+    {
+        if (isCompletionBreak(character))
+        {
+            if (!word.empty())
+            {
+                words.push_back(word);
+                word.clear();
+            }
+        }
+        else
+        {
+            word.push_back(character);
+        }
+    }
+    if (!word.empty()) words.push_back(word);
+    return words;
+}
+
+std::vector<std::pair<std::string, std::string>> tableAliases(std::string_view input)
+{
+    const auto words = wordsBeforeToken(input);
+    std::vector<std::pair<std::string, std::string>> aliases;
+    for (std::size_t index = 0; index < words.size(); ++index)
+    {
+        const auto keyword = uppercase(words[index]);
+        if ((keyword != "FROM" && keyword != "JOIN") || index + 1 >= words.size()) continue;
+        const auto& table = words[++index];
+        std::string alias = table;
+        if (index + 2 < words.size() && uppercase(words[index + 1]) == "AS") alias = words[index += 2];
+        else if (index + 1 < words.size())
+        {
+            const auto next = uppercase(words[index + 1]);
+            if (next != "WHERE" && next != "INNER" && next != "LEFT" && next != "OUTER" && next != "JOIN" && next != "ON" && next != "LIMIT") alias = words[++index];
+        }
+        aliases.emplace_back(alias, table);
+    }
+    return aliases;
+}
+
+std::vector<std::string> columnsForTable(std::string_view table)
+{
+    try
+    {
+        auto queryable = mldp_pvxs_driver::query::QueryableFactory::instance().createByTable(std::string(table));
+        std::vector<std::string> columns;
+        for (const auto& column : queryable->tableSchema(table))
+            if (column.is_output) columns.push_back(column.name);
+        return columns;
+    }
+    catch (const std::exception&)
+    {
+        return {};
+    }
+}
+
+bool expectsTable(const std::vector<std::string>& words)
+{
+    if (words.empty()) return false;
+    const auto keyword = uppercase(words.back());
+    return keyword == "FROM" || keyword == "JOIN" || keyword == "DESCRIBE";
 }
 
 std::filesystem::path replHistoryPath()
@@ -203,33 +353,18 @@ public:
 
         repl_ = std::make_unique<replxx::Replxx>();
         repl_->set_max_history_size(1000);
-        repl_->set_word_break_characters(" \t\n\"'");
+        repl_->set_word_break_characters(" \t\n,();=<>*\"'");
+        repl_->set_double_tab_completion(false);
+        repl_->set_complete_on_empty(true);
+        repl_->set_beep_on_ambiguous_completion(false);
+        repl_->bind_key_internal(replxx::Replxx::KEY::TAB, "complete_line");
         repl_->set_completion_callback(
             [](const std::string& context, int& context_length) -> replxx::Replxx::completions_t
             {
-                std::vector<std::string> candidates{
-                    "SELECT", "FROM", "WHERE", "AND", "IN", "LIKE", "BETWEEN", "LIMIT", "PAGE", "TOKEN",
-                    "SHOW", "TABLES", "DESCRIBE", "EXPLAIN", "AS", "INNER", "LEFT", "OUTER", "JOIN", "ON",
-                    "NOW", "PREFIX", "CONTAINS", ".help", ".clear", ".quit", ".exit"};
-                for (const auto& table : mldp_pvxs_driver::query::QueryableFactory::instance().registeredTables())
-                {
-                    candidates.push_back(table);
-                }
-
-                const auto prefix_length = std::min(static_cast<std::size_t>(std::max(context_length, 0)), context.size());
-                const auto prefix = context.substr(context.size() - prefix_length);
-                candidates.erase(
-                    std::remove_if(candidates.begin(), candidates.end(), [&](const std::string& candidate)
-                                   {
-                                       return candidate.rfind(prefix, 0) != 0;
-                                   }),
-                    candidates.end());
                 replxx::Replxx::completions_t completions;
-                completions.reserve(candidates.size());
-                for (const auto& candidate : candidates)
-                {
+                context_length = mldp_pvxs_driver::cli::detail::replCompletionContextLength(context);
+                for (const auto& candidate : mldp_pvxs_driver::cli::detail::replCompletions(context))
                     completions.emplace_back(candidate);
-                }
                 return completions;
             });
 
@@ -241,6 +376,7 @@ public:
             if (!error)
             {
                 (void)repl_->history_load(history_path_.string());
+                sanitizeHistory();
             }
         }
     }
@@ -279,19 +415,79 @@ public:
 
     void addHistory(std::string_view entry)
     {
-        if (repl_ && !entry.empty())
+        if (entry.empty())
+        {
+            return;
+        }
+        session_history_.emplace_back(entry);
+        if (repl_)
         {
             repl_->history_add(std::string(entry));
         }
     }
 
+    std::vector<std::string> history() const
+    {
+        if (!repl_)
+        {
+            return session_history_;
+        }
+
+        std::vector<std::string> entries;
+        auto                     scan = repl_->history_scan();
+        while (scan.next())
+        {
+            entries.push_back(scan.get().text());
+        }
+        return entries;
+    }
+
+    bool clearScreen()
+    {
+        if (!repl_)
+        {
+            return false;
+        }
+        repl_->clear_screen();
+        return true;
+    }
+
 private:
+    void sanitizeHistory()
+    {
+        std::vector<std::string> entries;
+        auto                     scan = repl_->history_scan();
+        while (scan.next())
+        {
+            const auto& entry = scan.get().text();
+            if (isUserHistoryEntry(entry))
+            {
+                entries.push_back(entry);
+            }
+        }
+        if (entries.size() == static_cast<std::size_t>(repl_->history_size()))
+        {
+            return;
+        }
+
+        repl_->history_clear();
+        for (const auto& entry : entries)
+        {
+            repl_->history_add(entry);
+        }
+        std::ofstream(history_path_, std::ios::trunc).close();
+        (void)repl_->history_save(history_path_.string());
+    }
+
     std::istream&                   input_;
     std::unique_ptr<replxx::Replxx> repl_;
     std::filesystem::path           history_path_;
+    std::vector<std::string>        session_history_;
 };
 
-int runRepl(const QueryCliOptions&                    options,
+QueryOutputFormat parseFormat(std::string_view value);
+
+int runRepl(QueryCliOptions                           options,
             const mldp_pvxs_driver::cli::QueryRunner& runner,
             std::istream&                             input,
             std::ostream&                             output,
@@ -323,6 +519,10 @@ int runRepl(const QueryCliOptions&                    options,
         {
             editor.addHistory(command);
             buffer.clear();
+            if (!editor.clearScreen())
+            {
+                output << "Buffered statement cleared.\n";
+            }
             continue;
         }
         if (!buffer.empty() && isReplCommand(command))
@@ -339,8 +539,42 @@ int runRepl(const QueryCliOptions&                    options,
         {
             editor.addHistory(command);
             output << "Enter one SQL statement terminated by ';'.\n"
-                   << "Commands: .help, .clear, .quit, .exit\n"
+                   << "Commands: .help, .clear, .format [table|json|csv|arrow], .history, .quit, .exit\n"
                    << "Editing: arrows, Ctrl-A/Ctrl-E, Ctrl-W, Ctrl-U/Ctrl-K, history, and tab completion.\n";
+            continue;
+        }
+        if (buffer.empty() && (command == ".history" || command == "history"))
+        {
+            const auto entries = editor.history();
+            for (std::size_t index = 0; index < entries.size(); ++index)
+            {
+                output << std::setw(4) << (index + 1) << "  " << entries[index] << "\n";
+            }
+            continue;
+        }
+        if (buffer.empty() && (command == ".format" || startsWithIgnoreCase(command, ".format ") || startsWithIgnoreCase(command, ".format\t")))
+        {
+            editor.addHistory(command);
+            const auto argument = trim(std::string_view(command).substr(std::string_view(".format").size()));
+            if (argument.empty())
+            {
+                output << "Output format: " << formatName(options.format) << "\n";
+                continue;
+            }
+            if (argument.find_first_of(" \t\r\n") != std::string::npos)
+            {
+                error << "Query error: .format accepts exactly one style: table,json,csv,arrow\n";
+                continue;
+            }
+            try
+            {
+                options.format = parseFormat(argument);
+                output << "Output format: " << formatName(options.format) << "\n";
+            }
+            catch (const std::exception& ex)
+            {
+                error << "Query error: " << ex.what() << "\n";
+            }
             continue;
         }
         if (buffer.empty() && !command.empty() && command.front() == '.')
@@ -392,13 +626,14 @@ int runRepl(const QueryCliOptions&                    options,
 
 QueryOutputFormat parseFormat(std::string_view value)
 {
-    if (value == "table")
+    const auto normalized = uppercase(value);
+    if (normalized == "TABLE")
         return QueryOutputFormat::Table;
-    if (value == "json")
+    if (normalized == "JSON")
         return QueryOutputFormat::Json;
-    if (value == "csv")
+    if (normalized == "CSV")
         return QueryOutputFormat::Csv;
-    if (value == "arrow")
+    if (normalized == "ARROW")
         return QueryOutputFormat::Arrow;
     throw std::runtime_error("Invalid --format value '" + std::string(value) + "' (expected: table,json,csv,arrow)");
 }
@@ -497,6 +732,59 @@ struct SpillCleanupGuard
 };
 
 } // namespace
+
+std::vector<std::string> mldp_pvxs_driver::cli::detail::replCompletions(const std::string_view input)
+{
+    if (isInsideQuotedLiteral(input)) return {};
+
+    const auto token = completionToken(input);
+    const auto words = wordsBeforeToken(input);
+    std::vector<std::string> candidates;
+    const auto trimmed = trim(input);
+    if (startsWithIgnoreCase(trimmed, ".format"))
+    {
+        candidates = token.empty() || token.front() == '.'
+            ? std::vector<std::string>{".format"}
+            : std::vector<std::string>{"table", "json", "csv", "arrow"};
+    }
+    else if (!token.empty() && token.front() == '.')
+    {
+        candidates = {".help", ".clear", ".format", ".history", ".quit", ".exit"};
+    }
+    else if (expectsTable(words))
+    {
+        for (const auto& table : query::QueryableFactory::instance().registeredTables())
+            candidates.push_back(table);
+    }
+    else if (const auto dot = token.find('.'); dot != std::string::npos)
+    {
+        const auto alias = token.substr(0, dot);
+        const auto column_prefix = token.substr(dot + 1);
+        for (const auto& [candidate_alias, table] : tableAliases(input))
+            if (startsWithIgnoreCase(candidate_alias, alias))
+                for (const auto& column : columnsForTable(table)) candidates.push_back(candidate_alias + "." + column);
+        (void)column_prefix;
+    }
+    else
+    {
+        candidates = {"SELECT", "FROM", "WHERE", "AND", "OR", "IN", "LIKE", "BETWEEN", "LIMIT", "PAGE", "TOKEN",
+                      "SHOW", "TABLES", "DESCRIBE", "EXPLAIN", "AS", "INNER", "LEFT", "OUTER", "JOIN", "ON", "NOW", "PREFIX", "CONTAINS"};
+        const auto aliases = tableAliases(input);
+        if (aliases.size() == 1)
+            for (const auto& column : columnsForTable(aliases.front().second)) candidates.push_back(column);
+    }
+
+    candidates.erase(std::remove_if(candidates.begin(), candidates.end(), [&token](const std::string& candidate)
+                                    { return !startsWithIgnoreCase(candidate, token); }), candidates.end());
+    std::sort(candidates.begin(), candidates.end());
+    candidates.erase(std::unique(candidates.begin(), candidates.end()), candidates.end());
+    return candidates;
+}
+
+int mldp_pvxs_driver::cli::detail::replCompletionContextLength(const std::string_view input)
+{
+    return static_cast<int>(completionToken(input).size());
+}
 
 void mldp_pvxs_driver::cli::QuerySubcommandPreparer::prepare(const mldp_pvxs_driver::config::Config& config) const
 {

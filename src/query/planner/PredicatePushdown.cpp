@@ -54,6 +54,14 @@ plan::LogicalNodePtr rewrite(const plan::LogicalNodePtr& node)
             if (predicate.pushable_ops.contains(predicate.op))
             {
                 scan->pushable_predicates.push_back(predicate);
+                // Metadata criteria are an optimization only.  Retain them as
+                // a local filter so deployments that ignore a supported
+                // criterion still observe SQL semantics.
+                if (predicate.column == "tag" || predicate.column.rfind("attributes.", 0) == 0 ||
+                    predicate.column.rfind("provenance.", 0) == 0)
+                {
+                    post_filter.push_back(predicate);
+                }
             }
             else
             {

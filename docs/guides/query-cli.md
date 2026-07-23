@@ -61,12 +61,15 @@ SELECT * FROM mldp.configuration;
 | Command | Purpose |
 |---|---|
 | `.help` | Show statement, command, and editing usage. |
-| `.clear` | Discard the buffered statement. |
+| `.clear` | Discard the buffered statement and clear/redraw the interactive terminal. With redirected input, print a confirmation instead. |
+| `.history`, `history` | Print the command history. In an interactive terminal this includes saved history from earlier sessions. |
+| `.format` | Print the current output style. |
+| `.format <table\|json\|csv\|arrow>` | Set the output style for subsequent statements in this REPL session. |
 | `.quit`, `.exit` | Exit the session. |
 
 ### Line editing and completion
 
-When both standard input and output are interactive terminals, the REPL provides shell-style editing. Use Tab to complete SQL keywords, REPL commands, and table names registered by the active `queryable:` configuration. Completion is prefix-based; when more than one candidate matches, the terminal displays the choices and keeps the current input.
+When both standard input and output are interactive terminals, the REPL provides shell-style editing. Use Tab to complete SQL keywords, REPL commands, output styles, table names registered by the active `queryable:` configuration, and columns after a table alias. Completion is case-insensitive and prefix-based; it does not complete inside quoted literals. When more than one candidate matches, the terminal displays the choices and keeps the current input.
 
 | Keys | Behavior |
 |---|---|
@@ -79,7 +82,7 @@ When both standard input and output are interactive terminals, the REPL provides
 | Ctrl-L | Clear and redraw the terminal. |
 | Ctrl-C | Cancel the editable line, discard any buffered multi-line statement, and return to `mldp> `. |
 
-The REPL saves completed SQL statements and dot commands (but never unfinished input) across interactive sessions. It uses `$XDG_STATE_HOME/mldp-pvxs-driver/query-history`; if `XDG_STATE_HOME` is unset, it uses `$HOME/.local/state/mldp-pvxs-driver/query-history`. Delete that file to clear saved history.
+The REPL saves completed SQL statements and dot commands (but never result output or errors) across interactive sessions. Use `.history` (or `history`) to print it. It uses `$XDG_STATE_HOME/mldp-pvxs-driver/query-history`; if `XDG_STATE_HOME` is unset, it uses `$HOME/.local/state/mldp-pvxs-driver/query-history`. On startup it removes prompt and result-output entries left by older versions. Delete that file to clear saved history.
 
 When input is redirected or supplied by a script, the REPL retains plain line-based input: it shows the prompts, but disables terminal editing, completion, and persistent history. One-shot positional SQL and `--file` mode are unaffected.
 
@@ -178,6 +181,26 @@ EXPLAIN <select>
 SELECT ...
 ```
 
+### Reading `DESCRIBE`
+
+`DESCRIBE <table>` reports the query engine's logical schema for that virtual
+table. Its fields have the following meanings:
+
+| Field | Meaning |
+|---|---|
+| `name` | Column or predicate-shorthand name. |
+| `type` | Logical scalar type: `string`, `timestamp`, `duration_seconds`, `int`, or `bool`. The time-series `value` column carries its native Arrow union type at runtime. |
+| `required` | Whether a constraining predicate is required before the table can be scanned. |
+| `is_output` | Whether the field can be selected, including through `SELECT *`. `tag` is `false` because it is a predicate-only membership shorthand. |
+| `pushable_ops` | Operators the client can send to its backend request. For example, `=,IN,PREFIX,CONTAINS`. |
+| `filterable_ops` | Operators evaluated locally after records are fetched. |
+| `notes` | Field-specific behavior, metadata source, and any pushdown/fallback details. |
+
+An empty operator cell means the field is output-only, or that filtering is
+provided through a related predicate-only field such as `tag`. A backend-pushed
+criterion is an optimization: the client retains the equivalent local check
+where the response contract does not guarantee identical filtering semantics.
+
 ### SELECT grammar
 
 ```
@@ -260,14 +283,32 @@ WHERE ts.pv = 'MY:PV' AND ts.time >= NOW -1h AND ts.time <= NOW
 
 The `ON` clause must be a single equi-join condition (`left_col = right_col`).
 
-### Attribute columns
+### Dynamic metadata columns
 
-Dynamic key-value metadata stored in MLDP can be accessed with the `attr.<key>` notation:
+Dynamic metadata stays attached to its base record or sample: querying tags or
+attributes never creates one result row per tag or key. `tags` returns the full
+tag collection, while `attributes.<key>` and `provenance.<key>` return nullable
+string scalars. `tag` is predicate-only membership shorthand.
+
+| Field family | Access | Available on | Source and filtering |
+|---|---|---|---|
+| Tags | Select `tags`; filter with `tag =` or `tag IN` | `mldp.time_series`, `mldp.pv_metadata`, `mldp.configuration`, `mldp.configuration_activation` | Annotation-table criteria are sent to the annotation service and locally verified. Time-series tags come from returned bucket `dataColumn.metadata` and are filtered locally. |
+| Attributes | Select `attributes`; select/filter `attributes.<key>` with `=` or `IN` | `mldp.time_series`, `mldp.pv_metadata`, `mldp.configuration`, `mldp.configuration_activation` | Same execution path as tags. |
+| Provenance | Select `provenance`; select/filter `provenance.<key>` with `=` or `IN` | `mldp.time_series` only | Returned bucket `dataColumn.metadata`; filtered locally. |
+
+Missing dynamic keys project as `NULL` and do not match predicates. The
+time-series bucket metadata is authoritative for time-series display and
+filtering; it is not replaced with current `mldp.pv_metadata` annotations,
+which can differ from the metadata stored with historical samples.
+
+`mldp.pv_stats` and `mldp.active_configurations` do not advertise dynamic
+metadata fields because their gRPC responses do not provide them.
 
 ```sql
-SELECT pv, attr.units, attr.device_group
+SELECT pv, attributes.units, tags
 FROM mldp.pv_metadata
-WHERE pv PREFIX 'MY:MAGNET'
+WHERE attributes.namespace = 'mldp_sample'
+  AND tag IN ('sample', 'magnet')
 ```
 
 ### Pagination
@@ -301,6 +342,9 @@ Time-series samples from the MLDP query service.
 | `pv` | string | **yes** | `=`, `IN` | PV name. Must be constrained. |
 | `time` | timestamp | no | `>=`, `<=` | UTC epoch seconds. |
 | `value` | union | no | — | Typed sample value (see below). |
+| `tags` | list&lt;string&gt; | no | — | Complete bucket column-metadata tag collection. Filter with `tag =` or `tag IN` locally. |
+| `attributes` | map&lt;string,string&gt; | no | — | Complete bucket column-metadata attributes. Select/filter `attributes.&lt;key&gt;` locally. |
+| `provenance` | map&lt;string,string&gt; | no | — | Complete bucket column-metadata provenance. Select/filter `provenance.&lt;key&gt;` locally. |
 | `timeout` | duration | no | `=` | Query timeout in seconds. |
 | `rpc_deadline` | duration | no | `=` | RPC deadline in seconds. |
 
@@ -322,6 +366,14 @@ WHERE pv IN ('PV:A', 'PV:B', 'PV:C')
   AND time <= 1700003600
 ```
 
+```sql
+SELECT pv, time, attributes.ordinal, provenance.process, tags
+FROM mldp.time_series
+WHERE pv = 'MY:PV:CURRENT'
+  AND attributes.namespace = 'mldp_sample'
+  AND provenance.source = 'sample-generator/mldp_sample'
+```
+
 ---
 
 ### `mldp.pv_stats`
@@ -341,6 +393,9 @@ FROM mldp.pv_stats
 WHERE pv IN ('PV:A', 'PV:B')
 ```
 
+`mldp.pv_stats` does not expose tags, attributes, or provenance because the
+query-service statistics response contains aggregate bucket data only.
+
 ---
 
 ### `mldp.pv_metadata`
@@ -351,7 +406,9 @@ PV metadata and annotation records from the MLDP annotation service.
 |---|---|---|---|
 | `pv` | string | `=`, `IN`, `PREFIX`, `CONTAINS`, `LIKE` (local) | PV name or alias. |
 | `alias` | string | `=`, `IN`, `PREFIX`, `CONTAINS`, `LIKE` (local) | Alternate name. |
-| `tag` | string | `=`, `IN`, `LIKE` (local) | Metadata tag. |
+| `tag` | string | `=`, `IN` | Predicate-only tag membership shorthand. |
+| `tags` | list&lt;string&gt; | — | Complete tag collection. Filter with `tag =` or `tag IN`; criteria are backend-pushed when supported and locally verified. |
+| `attributes` | map&lt;string,string&gt; | — | Complete dynamic attribute collection. Select/filter `attributes.&lt;key&gt;`; criteria are backend-pushed when supported and locally verified. |
 | `description` | string | `LIKE` (local) | Free-text description. |
 | `created_time` | timestamp | — | Record creation time. |
 | `updated_time` | timestamp | — | Last modification time. |
@@ -361,11 +418,11 @@ An unfiltered query lists all PV metadata records. Predicates narrow the list on
 
 `LIKE` is available on every string column and runs as a local filter; see [Pattern matching with `LIKE`](#pattern-matching-with-like) for its wildcard and escaping rules.
 
-Dynamic attributes are accessible as `attr.<key>` and support `=`, `!=`, `IN`, `PREFIX`, `CONTAINS`, `LIKE`.
+Dynamic attributes are accessible as `attributes.<key>` and support `=` and `IN`. Missing keys project as `NULL` and do not match filters.
 
 ```sql
 -- Find PVs by prefix
-SELECT pv, description, attr.units
+SELECT pv, description, attributes.units, tags
 FROM mldp.pv_metadata
 WHERE pv PREFIX 'MY:MAGNET'
 
@@ -391,6 +448,9 @@ Machine/beam configuration records.
 | `name` | string | `=`, `IN`, `PREFIX`, `CONTAINS`, `LIKE` (local) | Configuration name. |
 | `category` | string | `=`, `IN`, `LIKE` (local) | Configuration category. |
 | `parent` | string | `=`, `IN`, `LIKE` (local) | Parent configuration name. |
+| `tags` | list&lt;string&gt; | — | Complete tag collection. Filter with `tag =` or `tag IN`; criteria are backend-pushed and locally verified. |
+| `attributes` | map&lt;string,string&gt; | — | Complete dynamic attribute collection. Select/filter `attributes.&lt;key&gt;`; criteria are backend-pushed and locally verified. |
+| `tag` | string | `=`, `IN` | Predicate-only tag membership shorthand. |
 | `description` | string | `LIKE` (local) | Free-text description. |
 | `created_time` | timestamp | — | Creation time. |
 | `updated_time` | timestamp | — | Last modification time. |
@@ -421,6 +481,9 @@ Time-windowed activation records for configurations.
 | `config_name` | string | `=`, `IN`, `LIKE` (local) | Configuration name. |
 | `activation_id` | string | `=`, `IN`, `LIKE` (local) | Client-assigned activation identifier. |
 | `description` | string | `LIKE` (local) | Free-text description. |
+| `tags` | list&lt;string&gt; | — | Complete tag collection. Filter with `tag =` or `tag IN`; criteria are backend-pushed and locally verified. |
+| `attributes` | map&lt;string,string&gt; | — | Complete dynamic attribute collection. Select/filter `attributes.&lt;key&gt;`; criteria are backend-pushed and locally verified. |
+| `tag` | string | `=`, `IN` | Predicate-only tag membership shorthand. |
 | `created_time` | timestamp | — | Record creation time. |
 | `updated_time` | timestamp | — | Last modification time. |
 
@@ -462,6 +525,10 @@ FROM mldp.active_configurations
 WHERE at = NOW -30m
 ```
 
+`mldp.active_configurations` does not expose tags, attributes, or provenance:
+the annotation response provides only the active configuration identity and
+activation time.
+
 ---
 
 ## Output formats
@@ -472,6 +539,11 @@ WHERE at = NOW -30m
 | `json` | One JSON object per row, newline-delimited. |
 | `csv` | RFC 4180 CSV with header row. |
 | `arrow` | Apache Arrow IPC stream (binary). Suitable for programmatic consumption. |
+
+Collection metadata stays native in every format: table output shows all
+collection entries in one cell (one entry per line), JSON emits arrays and
+objects, CSV stores canonical JSON in a quoted cell, and Arrow IPC preserves
+the list/map types.
 
 Example `table` output for `SHOW TABLES`:
 
@@ -636,7 +708,7 @@ mldp_pvxs_driver -c query-config.yaml query \
 
 # PVs tagged 'magnet'
 mldp_pvxs_driver -c query-config.yaml query \
-  "SELECT pv, alias, description, attr.device_group
+  "SELECT pv, alias, description, attributes.device_group, tags
    FROM mldp.pv_metadata
    WHERE tag = 'magnet'"
 ```
@@ -661,7 +733,7 @@ mldp_pvxs_driver -c query-config.yaml query \
 
 ```bash
 mldp_pvxs_driver -c query-config.yaml query \
-  "SELECT ts.pv, ts.time, ts.value, m.description, m.attr.units
+  "SELECT ts.pv, ts.time, ts.value, m.description, m.attributes.units
    FROM mldp.time_series ts
    JOIN mldp.pv_metadata m ON ts.pv = m.pv
    WHERE ts.pv PREFIX 'mldp_sample:MAGNET'

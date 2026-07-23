@@ -44,7 +44,7 @@ Core source files:
 
 1. `mldp_pvxs_driver query` parses global options and delegates to `QuerySubcommand::run(...)`.
 2. `QuerySubcommandPreparer::prepare(config)` iterates the `queryable:` block and calls `QueryableFactory::instance().prepare<T>(cfg)` for each declared backend.
-3. Positional SQL or `--file` selects one-shot execution. With neither, the REPL prepares the configured backends once and buffers semicolon-terminated statements; each statement then follows the same parse → plan → execute path.
+3. Positional SQL or `--file` selects one-shot execution. With neither, the REPL prepares the configured backends once, buffers semicolon-terminated statements, and permits `.format table|json|csv|arrow` to update the session output style; each statement then follows the same parse → plan → execute path.
 4. `QueryPlanner::plan(parsed)` produces a `PhysicalPlan`.
 5. `QueryExecutor::execute(physical, context)` evaluates the physical tree and returns `QueryResult`.
 6. `formatQueryResult(...)` writes the result to stdout.
