@@ -57,10 +57,61 @@ Implement table ownership, schema exposure, and predicate-to-backend translation
 - Unknown/unsupported column predicate in `execute()` throws `std::invalid_argument` with valid columns.
 - `projection_hint` is accepted and may be ignored if backend cannot project natively; correctness still holds.
 
+## Streaming / Paging Model
+
+### Current state — fully blocking, no streaming
+
+`execute()` has **no `page_token` input**. It drains the entire gRPC stream, builds one giant `RecordBatch` in RAM, then returns. User blocked until ALL rows arrive. SpillManager is NOT auto-triggered — it has zero automatic threshold logic and is only called explicitly by `QueryExecutor` for JOIN hash-table intermediates. So large time-series = user blocked + RAM explosion + no disk flush.
+
+### Required interface change — add `page_token` input
+
+`IQueryable::execute()` must accept an opaque resumption cursor:
+
+```cpp
+// IQueryable.h — add page_token parameter
+virtual QueryResult execute(std::string_view table_name,
+                            const std::vector<Predicate>& pushable_predicates,
+                            const std::set<std::string>& projection_hint,
+                            const ExecutionContext& context,
+                            std::string_view page_token = {}) = 0;
+```
+
+`QueryExecutor` must be updated to loop: call `execute()` with empty token first, then with `result.next_page_token` until token is empty.
+
+### Streaming execution model
+
+Each `execute()` call:
+
+1. If `page_token` is empty → open gRPC stream, start consuming rows.
+2. If `page_token` is non-empty → resume previously opened stream (keyed by token).
+3. Consume rows until `context.join_batch_size` rows accumulated OR stream exhausted.
+4. Return `{batch, next_page_token}` immediately — do NOT wait for stream end.
+5. `next_page_token` empty = last page, stream closed.
+
+Each impl holds internal stream state (open gRPC `ClientReader` or async reader) keyed by an opaque token string. Token format is impl-defined (e.g. UUID → stored reader map, or base64-encoded proto cursor).
+
+### Batch-size cap
+
+`context.join_batch_size` doubles as page size for ALL queries (not just JOINs):
+
+- `context.join_batch_size > 0` → cap rows per call at that value; applies to single-table scans and JOINs equally.
+- `context.join_batch_size == 0` → no cap; accumulate full result (backward-compat for small queries or tests).
+
+Single-table queries benefit the same as JOINs: first batch returns after `join_batch_size` rows, gRPC stream still flowing. SpillManager kicks in on top only when `QueryExecutor` accumulates multi-page batches for JOIN probe-build phases.
+
+### SpillManager — NOT called by `execute()` impls
+
+`execute()` impls do NOT call `SpillManager`. Each batch is already bounded by cap → fits in RAM. SpillManager is called by `QueryExecutor` when it accumulates multi-page batches for JOIN operations. The IQueryable layer has no spill responsibility.
+
+### User-visible latency
+
+With cap active, first batch returns as soon as `join_batch_size` rows arrive from gRPC. User sees first results without waiting for full dataset. Subsequent pages arrive on demand via `QueryExecutor` loop.
+
 ## Data Shape Requirements
 
 - All responses are converted to typed Arrow columns through the shared `ColumnType -> ArrowType` mapping.
-- `next_page_token` is passed through where backend paging applies.
+- `next_page_token` is passed through where backend paging applies; empty string signals last page.
+- Token must be opaque to caller — impl serialises whatever cursor the backend needs.
 - Join-capable column names must remain stable and consistent across table schemas (`pv`, `name`, etc.).
 
 ## Notes
