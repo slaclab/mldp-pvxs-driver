@@ -2,6 +2,19 @@
 
 ← [Back to main plan](query-client-impl.md)
 
+## Goal
+
+Implement table ownership, schema exposure, and predicate-to-backend translation inside `MLDPQueryClient` and `MLDPAnnotationQueryClient`, returning Arrow `RecordBatch` results through the unified `IQueryable` contract.
+
+## Ownership Boundary
+
+- Planner validates syntax/types/ops and passes pushable predicates.
+- Each `IQueryable` implementation owns:
+  - virtual table declarations (`kVirtualTables`)
+  - `tableSchema(table_name)`
+  - `execute(table_name, pushable_predicates, projection_hint, ctx)` translation details
+- No central cross-table predicate map is introduced in planner/executor.
+
 ## Tasks
 
 - [ ] `MLDPQueryClient`: add `kVirtualTables`, `tableSchema()`, `execute()` — predicate→`querySourcesData` / `querySourcesInfo` translation
@@ -37,8 +50,20 @@
   | `mldp.configuration_activation` | `attr.<key>` | `=`, `IN` | `AttributesCriterion` |
   | `mldp.active_configurations` | `at` | `=` | `GetActiveConfigurationsRequest::timestamp` (required) |
 
+## Schema and Error Requirements
+
+- `tableSchema()` must expose required columns, output columns, and supported pushable/filterable ops.
+- Unknown table name in `tableSchema()` or `execute()` must throw with the supported table list.
+- Unknown/unsupported column predicate in `execute()` throws `std::invalid_argument` with valid columns.
+- `projection_hint` is accepted and may be ignored if backend cannot project natively; correctness still holds.
+
+## Data Shape Requirements
+
+- All responses are converted to typed Arrow columns through the shared `ColumnType -> ArrowType` mapping.
+- `next_page_token` is passed through where backend paging applies.
+- Join-capable column names must remain stable and consistent across table schemas (`pv`, `name`, etc.).
+
 ## Notes
 
-- Unknown column → `execute()` throws `std::invalid_argument` listing valid columns from `tableSchema()`
-- Predicate→backend mapping is owned entirely by each implementation — planner has no column knowledge
-- `execute()` switches on `table_name`; each case translates predicates to proto criteria structs
+- `mldp.active_configurations` requires an `at` predicate (`=`) as pushable input.
+- `queryProviders` / `queryProviderStats` are proto-level future work and remain out of this phase.

@@ -2,7 +2,17 @@
 
 ← [Back to main plan](query-client-impl.md)
 
-**Not in initial scope.** Design must not preclude it. Key invariant: `QueryExecutor::execute()` always returns `arrow::RecordBatch` streams, never `vector<string>` rows.
+## Scope
+
+Future phase. Not part of initial delivery. Current phases must preserve compatibility for this phase.
+
+## Core Invariant
+
+`QueryExecutor::execute()` returns Arrow `RecordBatch` streams (not string rows), so the same execution pipeline can be streamed over Flight SQL without planner/executor redesign.
+
+## Goal
+
+Expose existing query planner/executor over Arrow Flight SQL gRPC APIs so external clients (DBeaver, pandas/ADBC, JDBC/ODBC Flight drivers) can query virtual tables remotely.
 
 ## Tasks
 
@@ -13,6 +23,18 @@
 - [ ] `GetSchema(CommandStatementQuery)` → planner Binder pass only → return Arrow schema
 - [ ] Wire `--serve-flight HOST:PORT` in `mldp_pvxs_driver_main.cpp`
 
+## API Mapping
+
+- `SHOW TABLES` semantic equivalent maps to Flight `GetTables()`.
+- `DESCRIBE <table>` semantic equivalent maps to Flight `GetSchema()`.
+- SQL statement execution maps to `GetFlightInfo` + `DoGet`.
+
+## Runtime and Build Requirements
+
+- `arrow_flight` stays optional in CMake; default CLI-only binary remains lean.
+- Planner, optimizer, spill manager, and queryable backends are reused unchanged.
+- Error messages from parse/planner layers should map to Flight status responses with clear causes.
+
 ## Architecture
 
 ```
@@ -22,7 +44,7 @@ Client (DBeaver, pandas, ADBC, etc.)
 FlightSQLServer
     ├─ GetFlightInfo → parse + plan → FlightInfo
     ├─ DoGet         → execute PhysicalPlan → stream RecordBatches
-    └─ GetSchema     → EXPLAIN → schema only
+    └─ GetSchema     → EXPLAIN/schema path
          │
          ▼ (same path as CLI query mode)
     QueryPlanner → PhysicalPlan → QueryExecutor → SpillManager → IQueryable → gRPC backends
@@ -30,8 +52,5 @@ FlightSQLServer
 
 ## Notes
 
-- `FlightSQLServer` wraps `QueryExecutor` directly — no architectural change to planner/executor/spill
-- `arrow_flight` CMake target linked optionally so default binary stays lean (Phase 0 prerequisite)
-- Compatible clients: DBeaver, `pandas` + `adbc_driver_flight_sql`, JDBC/ODBC Flight drivers
-- `SHOW TABLES` maps to `GetTables()` Flight SQL call
-- `DESCRIBE` maps to `GetSchema()` Flight SQL call
+- This phase is additive only; it does not change query semantics from CLI mode.
+- Phase 0 optional Flight linkage and Phase 5 output plumbing should already be aligned for this extension.

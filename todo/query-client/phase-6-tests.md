@@ -2,6 +2,17 @@
 
 ← [Back to main plan](query-client-impl.md)
 
+## Goal
+
+Cover parser, planner, join optimizers, executor, spill, queryable mapping, and CLI output so phase behavior is verifiable without re-reading the full implementation plan.
+
+## Test Strategy
+
+- Prefer unit tests for deterministic planner/executor behavior.
+- Use `arrow::fs::MockFileSystem` for spill tests to avoid disk dependence.
+- Use mock/stub queryables and RPC counters for optimizer/executor behavior checks.
+- Keep integration tests focused on real backend interoperability and join correctness.
+
 ## Unit Tests
 
 ### Parser
@@ -32,7 +43,7 @@
 - [ ] Qualified column names in `QueryResult` output (`alias.column`)
 - [ ] `EXPLAIN` output format — plan tree text matches expected shape
 - [ ] `EXPLAIN` join plan output — algorithm name, build/probe labels, correlated column annotation
-- [ ] `QueryStats` populated correctly (elapsed, row counts)
+- [ ] `QueryStats` populated correctly (elapsed, row counts, spill and memory fields)
 
 ### SpillManager
 - [ ] `SpillManager` with `arrow::fs::MockFileSystem` — spill + read round-trip; `cleanup()` deletes all files; `SpillReader` destructor deletes file
@@ -46,10 +57,17 @@
 
 ### Output Formatter
 - [ ] JSON and CSV formatters produce valid output for all `ColumnType` variants
+- [ ] Arrow IPC formatter emits readable stream by Arrow IPC readers
 
 ## Integration Tests
 
 - [ ] Real backend calls via both query clients
 - [ ] Two-table `INNER JOIN` (`mldp.pv_stats` × `mldp.pv_metadata`) — correct row pairing on `pv`
 - [ ] `LEFT JOIN` — PVs with no metadata record appear with NULL right columns
-- [ ] Correlated push join — verify single batched RPC per outer block (mock pool RPC counter)
+- [ ] Correlated push join — verify batched inner RPC behavior with expected call counts
+
+## Exit Criteria
+
+- Planner pass tests cover both success and failure paths.
+- Join tests cover hash, correlated nested-loop, and spill fallback behavior.
+- CLI formatting tests cover all supported output modes.

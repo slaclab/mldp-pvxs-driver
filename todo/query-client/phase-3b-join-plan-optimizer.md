@@ -4,6 +4,17 @@
 
 Extends [Phase 3](phase-3-planner-executor.md).
 
+## Goal
+
+Add full client-side join planning/execution on Arrow batches with bounded memory behavior, spill fallback, and deterministic join selection rules.
+
+## Non-Negotiable Join Constraints
+
+- All joins are client-side because each virtual table is backed by separate gRPC services.
+- Only equi-joins (`ON left.col = right.col`).
+- Supported join types: `INNER`, `LEFT OUTER`.
+- No server-side pushdown of join execution.
+
 ## AST Join Nodes
 
 - [ ] Extend `QueryAST.h` with `JoinClause` (type, table_ref, alias, `ON` condition), `QualifiedColumn` (alias + name)
@@ -25,6 +36,15 @@ Extends [Phase 3](phase-3-planner-executor.md).
 - [ ] `src/cli/query/planner/JoinOrderOptimizer.h/.cpp` — classify each side bounded/unbounded via predicate heuristic; assign build/probe; emit `PlanWarning` on unbounded×unbounded
 - [ ] `src/cli/query/planner/CorrelatedPushOptimizer.h/.cpp` — detect pushable join key on probe side; promote `PhysicalHashJoin` → `PhysicalNestedLoopJoin` with correlated predicate injection; respect `--join-batch-size`
 
+## Algorithm Selection Rules
+
+- bounded + bounded → hash join (smaller bounded side builds)
+- bounded + unbounded → hash join (bounded side builds)
+- unbounded + bounded → hash join (bounded side builds; sides may swap)
+- unbounded + unbounded → hash join with warning; spill expected under memory pressure
+
+Nested-loop is chosen only when correlated push is possible on the inner side join key.
+
 ## Executor Join Execution (Arrow-native)
 
 - [ ] `PhysicalHashJoin` executor: accumulate build-side `RecordBatch` into partitioned hash map; when `pool->bytes_allocated() > memory_limit_bytes` → spill partition via `SpillManager`; probe side streamed; matched rows assembled with `arrow::compute::Take`; `LEFT JOIN` null-padding via `arrow::MakeArrayOfNull`
@@ -42,9 +62,14 @@ Extends [Phase 3](phase-3-planner-executor.md).
 - [ ] `--join-batch-size N` (default 100) — outer rows per inner RPC in correlated nested-loop join
 - [ ] Add all flags to `QuerySubcommand` arg parse; pack into `ExecutionContext`
 
+## Correctness Requirements
+
+- `LEFT JOIN` emits all left rows; unmatched right side is nullable NULL columns.
+- Unqualified ambiguous column names fail in binder with explicit alias guidance.
+- `SELECT *` across joins emits qualified names (`alias.column`) to prevent collisions.
+- Join optimizers run after `PredicatePushdown`, before `RequiredColumnCheck`.
+
 ## Notes
 
-- All joins are client-side — no server-side join execution possible across separate gRPC backends
-- `NESTED_LOOP` chosen only when `CorrelatedPushOptimizer` can push join key as `IN(...)` to inner backend — not the default
-- `BLOCK_NESTED_LOOP` is a fallback with a `PlanWarning` — both sides unbounded
-- Join optimizer passes run after `PredicatePushdown`, before `RequiredColumnCheck`
+- `BLOCK_NESTED_LOOP` remains fallback behavior for worst-case unbounded joins.
+- Plan warnings are non-fatal and must be surfaced to the user.
