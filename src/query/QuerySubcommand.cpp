@@ -30,6 +30,7 @@
 #include <arrow/filesystem/localfs.h>
 #include <arrow/memory_pool.h>
 
+#include <filesystem>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -87,16 +88,20 @@ void prepareQuerySubcommand(const config::Config& config)
     }
 }
 
-int runQueryRepl(std::istream& input, std::ostream& output)
+int runQueryRepl(std::istream& input, std::ostream& output, const QueryCliOptions& options)
 {
+    const auto spill_dir = options.spill_dir.empty()
+        ? (std::filesystem::temp_directory_path() / "mldp-query-spill").string()
+        : options.spill_dir;
     auto spill_file_system = std::make_shared<arrow::fs::LocalFileSystem>();
     [[maybe_unused]] query::ExecutionContext context{
         .pool = arrow::default_memory_pool(),
-        .spill = std::make_shared<query::SpillManager>(spill_file_system, ".mldp-query-spill"),
-        .memory_limit_bytes = 256ULL * 1024ULL * 1024ULL,
-        .join_batch_size = 8192,
+        .spill = std::make_shared<query::SpillManager>(spill_file_system, spill_dir),
+        .memory_limit_bytes = options.memory_mb * 1024ULL * 1024ULL,
+        .spill_partitions = options.spill_partitions,
+        .join_batch_size = options.join_batch_size,
         .spill_fs = std::move(spill_file_system),
-        .spill_dir = ".mldp-query-spill",
+        .spill_dir = spill_dir,
     };
 
     std::string line;

@@ -19,11 +19,20 @@
 
 #include <config/Config.h>
 
+#include <cstdint>
 #include <iosfwd>
+#include <string>
 
 namespace mldp_pvxs_driver::cli {
 
+struct QueryCliOptions {
+    uint64_t    memory_mb{256};
+    std::string spill_dir{};
+    uint32_t    spill_partitions{16};
+    uint32_t    join_batch_size{100};
+};
+
 void prepareQuerySubcommand(const config::Config& config);
-int runQueryRepl(std::istream& input, std::ostream& output);
+int runQueryRepl(std::istream& input, std::ostream& output, const QueryCliOptions& options = {});
 
 } // namespace mldp_pvxs_driver::cli

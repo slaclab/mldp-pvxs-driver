@@ -99,6 +99,12 @@ void rewrite(const plan::LogicalNodePtr& node)
         rewrite(limit->input);
         return;
     }
+    if (auto* join = std::get_if<plan::LogicalJoin>(&node->value))
+    {
+        dedupe(join->predicates);
+        rewrite(join->left);
+        rewrite(join->right);
+    }
 }
 
 } // namespace

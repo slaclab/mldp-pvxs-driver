@@ -27,6 +27,12 @@ plan::LogicalNodePtr rewrite(const plan::LogicalNodePtr& node)
         limit->input = rewrite(limit->input);
         return node;
     }
+    if (auto* join = std::get_if<plan::LogicalJoin>(&node->value))
+    {
+        join->left = rewrite(join->left);
+        join->right = rewrite(join->right);
+        return node;
+    }
     if (auto* project = std::get_if<plan::LogicalProject>(&node->value))
     {
         project->input = rewrite(project->input);

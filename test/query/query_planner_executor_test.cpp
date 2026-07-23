@@ -13,6 +13,7 @@
 #include <query/QueryPlanner.h>
 #include <query/QueryResult.h>
 #include <query/QueryableFactory.h>
+#include <query/plan/PlannerError.h>
 #include <query/parser/QueryParser.h>
 
 #include <config/Config.h>
@@ -24,6 +25,7 @@
 
 #include <set>
 #include <string_view>
+#include <variant>
 
 using namespace mldp_pvxs_driver;
 
@@ -43,8 +45,16 @@ public:
         return kVirtualTables;
     }
 
-    std::vector<query::ColumnSchema> tableSchema(std::string_view) const override
+    std::vector<query::ColumnSchema> tableSchema(std::string_view table_name) const override
     {
+        if (table_name == "fake.meta")
+        {
+            return {
+                {"pv", query::ColumnType::STRING, true, true, {query::PredicateOp::EQ, query::PredicateOp::IN}, {}, "PV"},
+                {"owner", query::ColumnType::STRING, false, true, {}, {}, "owner"},
+            };
+        }
+
         return {
             {"pv", query::ColumnType::STRING, true, true, {query::PredicateOp::EQ, query::PredicateOp::IN}, {}, "PV"},
             {"time", query::ColumnType::TIMESTAMP, false, true, {query::PredicateOp::GTE, query::PredicateOp::LTE}, {}, "time"},
@@ -52,11 +62,82 @@ public:
         };
     }
 
-    query::QueryResult execute(std::string_view,
+    query::QueryResult execute(std::string_view table_name,
                                const std::vector<query::Predicate>& pushable_predicates,
                                const std::set<std::string>& projection_hint,
                                const query::ExecutionContext&) override
     {
+        if (table_name == "fake.meta")
+        {
+            arrow::StringBuilder pv_builder;
+            arrow::StringBuilder owner_builder;
+
+            const auto include_row = [&](const std::string& pv) -> bool
+            {
+                for (const auto& predicate : pushable_predicates)
+                {
+                    if (predicate.column == "pv" &&
+                        predicate.op == query::PredicateOp::EQ &&
+                        !predicate.values.empty() &&
+                        std::holds_alternative<std::string>(predicate.values.front()) &&
+                        std::get<std::string>(predicate.values.front()) != pv)
+                    {
+                        return false;
+                    }
+                    if (predicate.column == "pv" && predicate.op == query::PredicateOp::IN)
+                    {
+                        bool matched = false;
+                        for (const auto& value : predicate.values)
+                        {
+                            if (std::holds_alternative<std::string>(value) && std::get<std::string>(value) == pv)
+                            {
+                                matched = true;
+                                break;
+                            }
+                        }
+                        if (!matched)
+                        {
+                            return false;
+                        }
+                    }
+                }
+                return true;
+            };
+
+            if (include_row("A"))
+            {
+                EXPECT_TRUE(pv_builder.Append("A").ok());
+                EXPECT_TRUE(owner_builder.Append("alice").ok());
+            }
+            if (include_row("C"))
+            {
+                EXPECT_TRUE(pv_builder.Append("C").ok());
+                EXPECT_TRUE(owner_builder.Append("carol").ok());
+            }
+
+            std::shared_ptr<arrow::Array> pv;
+            std::shared_ptr<arrow::Array> owner;
+            EXPECT_TRUE(pv_builder.Finish(&pv).ok());
+            EXPECT_TRUE(owner_builder.Finish(&owner).ok());
+
+            std::vector<std::shared_ptr<arrow::Field>> fields;
+            std::vector<std::shared_ptr<arrow::Array>> columns;
+            if (projection_hint.empty() || projection_hint.contains("pv"))
+            {
+                fields.push_back(arrow::field("pv", arrow::utf8()));
+                columns.push_back(pv);
+            }
+            if (projection_hint.empty() || projection_hint.contains("owner"))
+            {
+                fields.push_back(arrow::field("owner", arrow::utf8()));
+                columns.push_back(owner);
+            }
+
+            return query::QueryResult{
+                .batch = arrow::RecordBatch::Make(arrow::schema(std::move(fields)), pv->length(), std::move(columns)),
+                .next_page_token = ""};
+        }
+
         arrow::StringBuilder pv_builder;
         arrow::Int64Builder time_builder;
         arrow::Int64Builder value_builder;
@@ -129,7 +210,7 @@ public:
     }
 };
 
-const std::set<std::string_view> FakeQueryable::kVirtualTables = {"fake.samples"};
+const std::set<std::string_view> FakeQueryable::kVirtualTables = {"fake.samples", "fake.meta"};
 
 class PlannerExecutorTest : public ::testing::Test {
 protected:
@@ -202,6 +283,52 @@ TEST_F(PlannerExecutorTest, ShowTablesReturnsRegisteredTables)
     const auto result = executor.execute(plan, context);
     ASSERT_EQ(result.batches.size(), 1);
     ASSERT_GE(result.batches[0]->num_rows(), 1);
+}
+
+TEST_F(PlannerExecutorTest, ExecutesInnerJoinWithQualifiedColumns)
+{
+    query::QueryPlanner planner;
+    query::QueryExecutor executor;
+    query::ExecutionContext context{
+        .pool = arrow::default_memory_pool(),
+        .join_batch_size = 100,
+    };
+
+    const auto statement = query::parseQuery(
+        "SELECT s.pv, m.owner FROM fake.samples s INNER JOIN fake.meta m ON s.pv = m.pv WHERE s.pv IN ('A', 'B')");
+    const auto plan = planner.plan(statement);
+    const auto result = executor.execute(plan, context);
+    ASSERT_EQ(result.batches.size(), 1);
+    EXPECT_EQ(result.stats.rows_returned, 1);
+    EXPECT_EQ(result.batches[0]->schema()->field(0)->name(), "s.pv");
+    EXPECT_EQ(result.batches[0]->schema()->field(1)->name(), "m.owner");
+}
+
+TEST_F(PlannerExecutorTest, ExecutesLeftJoinWithNullRightSide)
+{
+    query::QueryPlanner planner;
+    query::QueryExecutor executor;
+    query::ExecutionContext context{
+        .pool = arrow::default_memory_pool(),
+        .join_batch_size = 100,
+    };
+
+    const auto statement = query::parseQuery(
+        "SELECT * FROM fake.samples s LEFT JOIN fake.meta m ON s.pv = m.pv WHERE s.pv IN ('A', 'B')");
+    const auto plan = planner.plan(statement);
+    const auto result = executor.execute(plan, context);
+    ASSERT_EQ(result.batches.size(), 1);
+    EXPECT_EQ(result.stats.rows_returned, 2);
+    EXPECT_EQ(result.batches[0]->schema()->field(0)->name(), "s.pv");
+    EXPECT_EQ(result.batches[0]->schema()->field(3)->name(), "m.pv");
+    EXPECT_EQ(result.batches[0]->schema()->field(4)->name(), "m.owner");
+}
+
+TEST_F(PlannerExecutorTest, RejectsAmbiguousUnqualifiedColumnAcrossJoin)
+{
+    query::QueryPlanner planner;
+    const auto statement = query::parseQuery("SELECT pv FROM fake.samples s JOIN fake.meta m ON s.pv = m.pv");
+    EXPECT_THROW((void)planner.plan(statement), query::plan::PlannerException);
 }
 
 } // namespace

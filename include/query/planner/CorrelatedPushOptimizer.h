@@ -10,23 +10,10 @@
 
 #pragma once
 
-#include <chrono>
-#include <cstdint>
-#include <string>
-#include <vector>
+#include <query/plan/PhysicalPlan.h>
 
-namespace mldp_pvxs_driver::query {
+namespace mldp_pvxs_driver::query::planner {
 
-struct QueryStats {
-    std::chrono::milliseconds elapsed{0};
-    uint64_t                  rows_from_backend{0};
-    uint64_t                  rows_returned{0};
-    uint64_t                  rpc_calls{0};
-    uint64_t                  bytes_spilled{0};
-    uint64_t                  spill_files{0};
-    uint64_t                  peak_memory_bytes{0};
-    std::string               plan_summary;
-    std::vector<std::string>  plan_warnings;
-};
+plan::PhysicalNodePtr applyCorrelatedPushOptimizer(plan::PhysicalNodePtr root);
 
-} // namespace mldp_pvxs_driver::query
+} // namespace mldp_pvxs_driver::query::planner

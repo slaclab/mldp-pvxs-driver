@@ -35,6 +35,7 @@ struct ExecutionContext {
     arrow::MemoryPool*                    pool{nullptr};
     std::shared_ptr<SpillManager>         spill;
     uint64_t                              memory_limit_bytes{0};
+    uint32_t                              spill_partitions{16};
     uint32_t                              join_batch_size{0};
     std::shared_ptr<arrow::fs::FileSystem> spill_fs;
     std::string                           spill_dir;

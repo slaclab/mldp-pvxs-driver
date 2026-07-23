@@ -26,12 +26,20 @@ using PlannerLiteralValue = std::variant<std::string, int64_t, bool, NowLiteral>
 
 struct PlannerPredicate {
     std::string              column;
+    std::string              table_alias;
     PredicateOp              op{PredicateOp::EQ};
     std::vector<PlannerLiteralValue> values;
     ColumnType               column_type{ColumnType::STRING};
     bool                     required_column{false};
     std::set<PredicateOp>    pushable_ops;
     std::set<PredicateOp>    filterable_ops;
+};
+
+enum class LogicalJoinType { INNER, LEFT_OUTER };
+
+struct LogicalJoinCondition {
+    std::string left_column;
+    std::string right_column;
 };
 
 struct LogicalNode;
@@ -61,7 +69,18 @@ struct LogicalLimit {
     uint64_t       limit{0};
 };
 
-using LogicalNodeVariant = std::variant<LogicalScan, LogicalFilter, LogicalProject, LogicalLimit>;
+struct LogicalJoin {
+    LogicalJoinType             type{LogicalJoinType::INNER};
+    LogicalJoinCondition        condition;
+    LogicalNodePtr              left;
+    LogicalNodePtr              right;
+    std::vector<PlannerPredicate> predicates;
+    bool                        left_bounded{false};
+    bool                        right_bounded{false};
+    std::vector<std::string>    warnings;
+};
+
+using LogicalNodeVariant = std::variant<LogicalScan, LogicalFilter, LogicalProject, LogicalLimit, LogicalJoin>;
 
 struct LogicalNode {
     LogicalNodeVariant value;
@@ -72,13 +91,24 @@ inline LogicalNodePtr makeNode(LogicalNodeVariant value)
     return std::make_shared<LogicalNode>(LogicalNode{std::move(value)});
 }
 
-struct BoundSelect {
+struct BoundTable {
     std::string                 table_name;
     std::string                 table_alias;
     std::vector<ColumnSchema>   schema;
+    std::vector<PlannerPredicate> predicates;
+};
+
+struct BoundJoinClause {
+    LogicalJoinType    type{LogicalJoinType::INNER};
+    BoundTable         table;
+    LogicalJoinCondition condition;
+};
+
+struct BoundSelect {
+    BoundTable                  from;
+    std::vector<BoundJoinClause> joins;
     bool                        select_all{false};
     std::vector<std::string>    select_columns;
-    std::vector<PlannerPredicate> predicates;
     std::optional<uint64_t>     limit;
     std::optional<std::string>  page_token;
 };

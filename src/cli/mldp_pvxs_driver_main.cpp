@@ -304,9 +304,11 @@ int main(int argc, char** argv)
         if (argc >= 2 && std::string_view{argv[1]} == "query")
         {
             std::vector<std::string> queryConfigSources;
+            mldp_pvxs_driver::cli::QueryCliOptions queryOptions;
             for (int index = 2; index < argc; ++index)
             {
-                if (std::string_view{argv[index]} == "-c" || std::string_view{argv[index]} == "--config")
+                const auto arg = std::string_view{argv[index]};
+                if (arg == "-c" || arg == "--config")
                 {
                     if (++index >= argc)
                     {
@@ -314,13 +316,46 @@ int main(int argc, char** argv)
                     }
                     queryConfigSources.emplace_back(argv[index]);
                 }
+                else if (arg == "--memory-mb")
+                {
+                    if (++index >= argc)
+                    {
+                        throw std::runtime_error("--memory-mb requires a numeric value");
+                    }
+                    queryOptions.memory_mb = static_cast<uint64_t>(std::stoull(argv[index]));
+                }
+                else if (arg == "--spill-dir")
+                {
+                    if (++index >= argc)
+                    {
+                        throw std::runtime_error("--spill-dir requires a path");
+                    }
+                    queryOptions.spill_dir = argv[index];
+                }
+                else if (arg == "--spill-partitions")
+                {
+                    if (++index >= argc)
+                    {
+                        throw std::runtime_error("--spill-partitions requires a numeric value");
+                    }
+                    queryOptions.spill_partitions = static_cast<uint32_t>(std::stoul(argv[index]));
+                }
+                else if (arg == "--join-batch-size")
+                {
+                    if (++index >= argc)
+                    {
+                        throw std::runtime_error("--join-batch-size requires a numeric value");
+                    }
+                    queryOptions.join_batch_size = static_cast<uint32_t>(std::stoul(argv[index]));
+                }
                 else
                 {
-                    throw std::runtime_error("query accepts only -c/--config configuration sources in Phase 1");
+                    throw std::runtime_error(
+                        "query accepts -c/--config, --memory-mb, --spill-dir, --spill-partitions, --join-batch-size");
                 }
             }
             mldp_pvxs_driver::cli::prepareQuerySubcommand(loadMergedConfigSources(queryConfigSources));
-            return mldp_pvxs_driver::cli::runQueryRepl(std::cin, std::cout);
+            return mldp_pvxs_driver::cli::runQueryRepl(std::cin, std::cout, queryOptions);
         }
 
         // Parse command line arguments

@@ -10,6 +10,7 @@
 
 #include <query/planner/ColumnPruning.h>
 
+#include <map>
 #include <set>
 
 using namespace mldp_pvxs_driver::query;
@@ -17,7 +18,18 @@ using namespace mldp_pvxs_driver::query::planner;
 
 namespace {
 
-void collectReferencedColumns(const plan::LogicalNodePtr& node, std::set<std::string>& columns)
+std::pair<std::string, std::string> splitQualifiedColumn(const std::string& value)
+{
+    const auto dot = value.find('.');
+    if (dot == std::string::npos)
+    {
+        return {"", value};
+    }
+    return {value.substr(0, dot), value.substr(dot + 1)};
+}
+
+void collectReferencedColumns(const plan::LogicalNodePtr& node,
+                              std::map<std::string, std::set<std::string>>& columns)
 {
     if (!node)
     {
@@ -28,7 +40,7 @@ void collectReferencedColumns(const plan::LogicalNodePtr& node, std::set<std::st
     {
         for (const auto& predicate : scan->pushable_predicates)
         {
-            columns.insert(predicate.column);
+            columns[scan->table_alias].insert(predicate.column);
         }
         return;
     }
@@ -36,7 +48,8 @@ void collectReferencedColumns(const plan::LogicalNodePtr& node, std::set<std::st
     {
         for (const auto& predicate : filter->predicates)
         {
-            columns.insert(predicate.column);
+            const auto alias = predicate.table_alias.empty() ? "" : predicate.table_alias;
+            columns[alias].insert(predicate.column);
         }
         collectReferencedColumns(filter->input, columns);
         return;
@@ -45,7 +58,8 @@ void collectReferencedColumns(const plan::LogicalNodePtr& node, std::set<std::st
     {
         for (const auto& column : project->columns)
         {
-            columns.insert(column);
+            const auto [alias, name] = splitQualifiedColumn(column);
+            columns[alias].insert(name);
         }
         collectReferencedColumns(project->input, columns);
         return;
@@ -55,9 +69,19 @@ void collectReferencedColumns(const plan::LogicalNodePtr& node, std::set<std::st
         collectReferencedColumns(limit->input, columns);
         return;
     }
+    if (const auto* join = std::get_if<plan::LogicalJoin>(&node->value))
+    {
+        const auto [left_alias, left_name] = splitQualifiedColumn(join->condition.left_column);
+        const auto [right_alias, right_name] = splitQualifiedColumn(join->condition.right_column);
+        columns[left_alias].insert(left_name);
+        columns[right_alias].insert(right_name);
+        collectReferencedColumns(join->left, columns);
+        collectReferencedColumns(join->right, columns);
+    }
 }
 
-void applyProjectionHint(const plan::LogicalNodePtr& node, const std::set<std::string>& columns)
+void applyProjectionHint(const plan::LogicalNodePtr& node,
+                         const std::map<std::string, std::set<std::string>>& columns)
 {
     if (!node)
     {
@@ -66,7 +90,19 @@ void applyProjectionHint(const plan::LogicalNodePtr& node, const std::set<std::s
 
     if (auto* scan = std::get_if<plan::LogicalScan>(&node->value))
     {
-        scan->projection_hint = columns;
+        const auto alias_match = columns.find(scan->table_alias);
+        if (alias_match != columns.end())
+        {
+            scan->projection_hint = alias_match->second;
+        }
+        else if (const auto default_match = columns.find(""); default_match != columns.end())
+        {
+            scan->projection_hint = default_match->second;
+        }
+        else
+        {
+            scan->projection_hint.clear();
+        }
         if (scan->projection_hint.empty())
         {
             for (const auto& column : scan->schema)
@@ -94,13 +130,18 @@ void applyProjectionHint(const plan::LogicalNodePtr& node, const std::set<std::s
         applyProjectionHint(limit->input, columns);
         return;
     }
+    if (const auto* join = std::get_if<plan::LogicalJoin>(&node->value))
+    {
+        applyProjectionHint(join->left, columns);
+        applyProjectionHint(join->right, columns);
+    }
 }
 
 } // namespace
 
 plan::LogicalNodePtr mldp_pvxs_driver::query::planner::applyColumnPruning(plan::LogicalNodePtr root)
 {
-    std::set<std::string> columns;
+    std::map<std::string, std::set<std::string>> columns;
     collectReferencedColumns(root, columns);
     applyProjectionHint(root, columns);
     return root;

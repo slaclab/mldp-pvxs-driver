@@ -189,7 +189,9 @@ Readers collect data from configurable sources, push normalized batches onto a s
 - [Writers Overview](docs/writers/writers-implementation.md) - Writer pattern, factory registration, new writer guide
 - [MLDP Writer](docs/writers/mldp-writer.md) - gRPC ingestion writer details and configuration
 - [HDF5 Writer](docs/writers/hdf5-writer.md) - HDF5 storage writer details and configuration
+- [Query CLI Guide](docs/guides/query-cli.md) - Query subcommand usage, parameters, and tuning
 - [MLDP Query Client](docs/dev/query-client.md) - Standalone out-of-band query API
+- [Query Engine Architecture](docs/reference/query-engine-architecture.md) - Planner/executor internals and extension points
 - [Logging Abstraction Guide](docs/dev/logging.md) - How `util::log` works and custom logger implementation
 - [HTTP Transport Provider](docs/dev/http-provider.md) - Shared `util/http` abstraction for HTTP-based readers
 - [Metrics Export Guide](docs/metrics/metrics-export-guide.md) - Prometheus metrics and manual dump triggers

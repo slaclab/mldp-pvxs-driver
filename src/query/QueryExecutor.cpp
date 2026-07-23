@@ -12,15 +12,20 @@
 
 #include <query/QueryResult.h>
 #include <query/QueryableFactory.h>
+#include <query/SpillManager.h>
 
+#include <algorithm>
 #include <arrow/array/builder_binary.h>
 #include <arrow/array/builder_primitive.h>
+#include <arrow/builder.h>
 #include <arrow/compute/api.h>
+#include <arrow/table.h>
 #include <arrow/type.h>
 
 #include <chrono>
 #include <sstream>
 #include <stdexcept>
+#include <unordered_map>
 
 using namespace mldp_pvxs_driver::query;
 
@@ -254,6 +259,338 @@ applyLimit(const std::vector<std::shared_ptr<arrow::RecordBatch>>& input, const 
     return output;
 }
 
+std::shared_ptr<arrow::RecordBatch> combineBatches(const std::vector<std::shared_ptr<arrow::RecordBatch>>& batches)
+{
+    if (batches.empty())
+    {
+        return nullptr;
+    }
+    if (batches.size() == 1)
+    {
+        return batches.front();
+    }
+
+    auto table_result = arrow::Table::FromRecordBatches(batches);
+    if (!table_result.ok())
+    {
+        throw std::runtime_error(table_result.status().ToString());
+    }
+    auto combined_result = (*table_result)->CombineChunks();
+    if (!combined_result.ok())
+    {
+        throw std::runtime_error(combined_result.status().ToString());
+    }
+    auto rows = (*combined_result)->num_rows();
+    auto batch_result = (*combined_result)->CombineChunksToBatch();
+    if (!batch_result.ok())
+    {
+        throw std::runtime_error(batch_result.status().ToString());
+    }
+    if ((*batch_result)->num_rows() != rows)
+    {
+        throw std::runtime_error("Failed to combine record batches");
+    }
+    return *batch_result;
+}
+
+std::string scalarKey(const std::shared_ptr<arrow::Scalar>& scalar)
+{
+    if (!scalar || !scalar->is_valid)
+    {
+        return "";
+    }
+    return scalar->ToString();
+}
+
+std::shared_ptr<arrow::Array> buildArrayFromIndices(const std::shared_ptr<arrow::Array>& source,
+                                                    const std::vector<int64_t>& indices)
+{
+    std::unique_ptr<arrow::ArrayBuilder> builder;
+    auto status = arrow::MakeBuilder(arrow::default_memory_pool(), source->type(), &builder);
+    if (!status.ok())
+    {
+        throw std::runtime_error(status.ToString());
+    }
+    for (const auto index : indices)
+    {
+        if (index < 0)
+        {
+            status = builder->AppendNull();
+        }
+        else
+        {
+            auto scalar_result = source->GetScalar(index);
+            if (!scalar_result.ok())
+            {
+                throw std::runtime_error(scalar_result.status().ToString());
+            }
+            status = builder->AppendScalar(*(*scalar_result));
+        }
+        if (!status.ok())
+        {
+            throw std::runtime_error(status.ToString());
+        }
+    }
+    std::shared_ptr<arrow::Array> out;
+    status = builder->Finish(&out);
+    if (!status.ok())
+    {
+        throw std::runtime_error(status.ToString());
+    }
+    return out;
+}
+
+std::shared_ptr<arrow::RecordBatch> qualifyBatchColumns(const std::shared_ptr<arrow::RecordBatch>& batch,
+                                                        const std::string& alias)
+{
+    if (!batch)
+    {
+        return batch;
+    }
+
+    std::vector<std::shared_ptr<arrow::Field>> fields;
+    fields.reserve(static_cast<size_t>(batch->num_columns()));
+    for (const auto& field : batch->schema()->fields())
+    {
+        fields.push_back(field->WithName(alias + "." + field->name()));
+    }
+    return arrow::RecordBatch::Make(arrow::schema(std::move(fields)), batch->num_rows(), batch->columns());
+}
+
+std::shared_ptr<arrow::RecordBatch> joinBatches(const std::shared_ptr<arrow::RecordBatch>& left,
+                                                const std::shared_ptr<arrow::RecordBatch>& right,
+                                                const std::string& left_key,
+                                                const std::string& right_key,
+                                                const plan::JoinType type,
+                                                const ExecutionContext& context,
+                                                QueryStats& stats)
+{
+    const auto emptyLeft = left == nullptr || left->num_rows() == 0;
+    const auto emptyRight = right == nullptr || right->num_rows() == 0;
+    if (emptyLeft && (type == plan::JoinType::LEFT_OUTER || emptyRight))
+    {
+        if (!left)
+        {
+            return nullptr;
+        }
+        std::vector<std::shared_ptr<arrow::Array>> arrays;
+        arrays.reserve(static_cast<size_t>(left->num_columns() + (right ? right->num_columns() : 0)));
+        for (int index = 0; index < left->num_columns(); ++index)
+        {
+            arrays.push_back(left->column(index));
+        }
+        std::vector<std::shared_ptr<arrow::Field>> fields = left->schema()->fields();
+        if (right)
+        {
+            for (int index = 0; index < right->num_columns(); ++index)
+            {
+                fields.push_back(right->schema()->field(index)->WithNullable(true));
+                arrays.push_back(buildArrayFromIndices(right->column(index), std::vector<int64_t>(left->num_rows(), -1)));
+            }
+        }
+        return arrow::RecordBatch::Make(arrow::schema(std::move(fields)), left->num_rows(), std::move(arrays));
+    }
+    if (emptyLeft || emptyRight)
+    {
+        return arrow::RecordBatch::Make(
+            arrow::schema(std::vector<std::shared_ptr<arrow::Field>>{}),
+            0,
+            std::vector<std::shared_ptr<arrow::Array>>{});
+    }
+
+    const int left_key_index = left->schema()->GetFieldIndex(left_key);
+    const int right_key_index = right->schema()->GetFieldIndex(right_key);
+    if (left_key_index < 0 || right_key_index < 0)
+    {
+        throw std::runtime_error("Join key missing from one side");
+    }
+
+    std::shared_ptr<arrow::RecordBatch> build = right;
+    std::shared_ptr<arrow::RecordBatch> probe = left;
+    int build_key_index = right_key_index;
+    int probe_key_index = left_key_index;
+    bool build_is_left = false;
+    bool output_swap = false;
+
+    if (type == plan::JoinType::INNER && right->num_rows() > left->num_rows())
+    {
+        build = left;
+        probe = right;
+        build_key_index = left_key_index;
+        probe_key_index = right_key_index;
+        build_is_left = true;
+        output_swap = true;
+    }
+
+    std::vector<std::shared_ptr<arrow::RecordBatch>> build_spill_batches = {build};
+    uint64_t approximate_bytes = static_cast<uint64_t>(build->num_rows()) *
+        static_cast<uint64_t>(std::max(1, build->num_columns())) * sizeof(int64_t);
+    if (context.memory_limit_bytes > 0 && approximate_bytes > context.memory_limit_bytes && context.spill)
+    {
+        auto handle_result = context.spill->spill("join-build", build_spill_batches);
+        if (!handle_result.ok())
+        {
+            throw std::runtime_error(handle_result.status().ToString());
+        }
+        stats.bytes_spilled += static_cast<uint64_t>(handle_result->byte_count);
+        stats.spill_files += 1;
+        auto reader_result = context.spill->read(*handle_result);
+        if (!reader_result.ok())
+        {
+            throw std::runtime_error(reader_result.status().ToString());
+        }
+        auto reader = std::move(*reader_result);
+        build_spill_batches.clear();
+        while (true)
+        {
+            auto batch_result = reader.next();
+            if (!batch_result.ok())
+            {
+                throw std::runtime_error(batch_result.status().ToString());
+            }
+            if (!*batch_result)
+            {
+                break;
+            }
+            build_spill_batches.push_back(*batch_result);
+        }
+        build = combineBatches(build_spill_batches);
+    }
+
+    std::unordered_map<std::string, std::vector<int64_t>> build_index;
+    build_index.reserve(static_cast<size_t>(build->num_rows()));
+    for (int64_t row = 0; row < build->num_rows(); ++row)
+    {
+        auto scalar_result = build->column(build_key_index)->GetScalar(row);
+        if (!scalar_result.ok())
+        {
+            throw std::runtime_error(scalar_result.status().ToString());
+        }
+        if (!(*scalar_result) || !(*scalar_result)->is_valid)
+        {
+            continue;
+        }
+        build_index[scalarKey(*scalar_result)].push_back(row);
+    }
+
+    std::vector<int64_t> left_indices;
+    std::vector<int64_t> right_indices;
+    left_indices.reserve(static_cast<size_t>(probe->num_rows()));
+    right_indices.reserve(static_cast<size_t>(probe->num_rows()));
+
+    for (int64_t row = 0; row < probe->num_rows(); ++row)
+    {
+        auto scalar_result = probe->column(probe_key_index)->GetScalar(row);
+        if (!scalar_result.ok())
+        {
+            throw std::runtime_error(scalar_result.status().ToString());
+        }
+        if (!(*scalar_result) || !(*scalar_result)->is_valid)
+        {
+            if (type == plan::JoinType::LEFT_OUTER && !output_swap)
+            {
+                left_indices.push_back(row);
+                right_indices.push_back(-1);
+            }
+            continue;
+        }
+
+        const auto key = scalarKey(*scalar_result);
+        const auto found = build_index.find(key);
+        if (found == build_index.end())
+        {
+            if (type == plan::JoinType::LEFT_OUTER && !output_swap)
+            {
+                left_indices.push_back(row);
+                right_indices.push_back(-1);
+            }
+            continue;
+        }
+
+        for (const auto match_row : found->second)
+        {
+            if (output_swap)
+            {
+                left_indices.push_back(match_row);
+                right_indices.push_back(row);
+            }
+            else
+            {
+                left_indices.push_back(row);
+                right_indices.push_back(match_row);
+            }
+        }
+    }
+
+    std::vector<std::shared_ptr<arrow::Field>> out_fields;
+    std::vector<std::shared_ptr<arrow::Array>> out_arrays;
+    out_fields.reserve(static_cast<size_t>(left->num_columns() + right->num_columns()));
+    out_arrays.reserve(static_cast<size_t>(left->num_columns() + right->num_columns()));
+
+    for (int index = 0; index < left->num_columns(); ++index)
+    {
+        out_fields.push_back(left->schema()->field(index));
+        out_arrays.push_back(buildArrayFromIndices(left->column(index), left_indices));
+    }
+    for (int index = 0; index < right->num_columns(); ++index)
+    {
+        auto field = right->schema()->field(index);
+        if (type == plan::JoinType::LEFT_OUTER)
+        {
+            field = field->WithNullable(true);
+        }
+        out_fields.push_back(field);
+        out_arrays.push_back(buildArrayFromIndices(right->column(index), right_indices));
+    }
+
+    return arrow::RecordBatch::Make(
+        arrow::schema(std::move(out_fields)),
+        static_cast<int64_t>(left_indices.size()),
+        std::move(out_arrays));
+}
+
+void collectPlanWarnings(const plan::PhysicalNodePtr& node, std::vector<std::string>& warnings)
+{
+    if (!node)
+    {
+        return;
+    }
+    if (const auto* hash = std::get_if<plan::PhysicalHashJoin>(&node->value))
+    {
+        warnings.insert(warnings.end(), hash->warnings.begin(), hash->warnings.end());
+        collectPlanWarnings(hash->left, warnings);
+        collectPlanWarnings(hash->right, warnings);
+        return;
+    }
+    if (const auto* nested = std::get_if<plan::PhysicalNestedLoopJoin>(&node->value))
+    {
+        collectPlanWarnings(nested->outer, warnings);
+        collectPlanWarnings(nested->inner, warnings);
+        return;
+    }
+    if (const auto* block = std::get_if<plan::PhysicalBlockNestedLoopJoin>(&node->value))
+    {
+        warnings.insert(warnings.end(), block->warnings.begin(), block->warnings.end());
+        collectPlanWarnings(block->outer, warnings);
+        collectPlanWarnings(block->inner, warnings);
+        return;
+    }
+    if (const auto* filter = std::get_if<plan::PhysicalFilter>(&node->value))
+    {
+        collectPlanWarnings(filter->input, warnings);
+        return;
+    }
+    if (const auto* project = std::get_if<plan::PhysicalProject>(&node->value))
+    {
+        collectPlanWarnings(project->input, warnings);
+        return;
+    }
+    if (const auto* limit = std::get_if<plan::PhysicalLimit>(&node->value))
+    {
+        collectPlanWarnings(limit->input, warnings);
+    }
+}
+
 std::vector<std::shared_ptr<arrow::RecordBatch>>
 executeNode(const plan::PhysicalNodePtr& node, QueryStats& stats, const ExecutionContext& context)
 {
@@ -269,7 +606,7 @@ executeNode(const plan::PhysicalNodePtr& node, QueryStats& stats, const Executio
         std::vector<std::shared_ptr<arrow::RecordBatch>> output;
         if (result.batch != nullptr)
         {
-            output.push_back(result.batch);
+            output.push_back(scan->qualify_output ? qualifyBatchColumns(result.batch, scan->table_alias) : result.batch);
             stats.rows_from_backend += static_cast<uint64_t>(result.batch->num_rows());
         }
         stats.rpc_calls += 1;
@@ -301,6 +638,54 @@ executeNode(const plan::PhysicalNodePtr& node, QueryStats& stats, const Executio
     if (const auto* limit = std::get_if<plan::PhysicalLimit>(&node->value))
     {
         return applyLimit(executeNode(limit->input, stats, context), limit->limit);
+    }
+
+    if (const auto* join = std::get_if<plan::PhysicalHashJoin>(&node->value))
+    {
+        auto left_batch = combineBatches(executeNode(join->left, stats, context));
+        auto right_batch = combineBatches(executeNode(join->right, stats, context));
+        auto joined = joinBatches(left_batch, right_batch, join->condition.left_column, join->condition.right_column, join->type, context, stats);
+        if (!joined)
+        {
+            return {};
+        }
+        return {joined};
+    }
+
+    if (const auto* join = std::get_if<plan::PhysicalNestedLoopJoin>(&node->value))
+    {
+        auto outer_batch = combineBatches(executeNode(join->outer, stats, context));
+        auto inner_batch = combineBatches(executeNode(join->inner, stats, context));
+        auto joined = joinBatches(outer_batch,
+                                  inner_batch,
+                                  join->condition.left_column,
+                                  join->condition.right_column,
+                                  join->type,
+                                  context,
+                                  stats);
+        if (!joined)
+        {
+            return {};
+        }
+        return {joined};
+    }
+
+    if (const auto* join = std::get_if<plan::PhysicalBlockNestedLoopJoin>(&node->value))
+    {
+        auto outer_batch = combineBatches(executeNode(join->outer, stats, context));
+        auto inner_batch = combineBatches(executeNode(join->inner, stats, context));
+        auto joined = joinBatches(outer_batch,
+                                  inner_batch,
+                                  join->condition.left_column,
+                                  join->condition.right_column,
+                                  join->type,
+                                  context,
+                                  stats);
+        if (!joined)
+        {
+            return {};
+        }
+        return {joined};
     }
 
     if (std::holds_alternative<plan::PhysicalShowTables>(node->value))
@@ -414,6 +799,7 @@ QueryExecutionResult QueryExecutor::execute(const plan::PhysicalNodePtr& root,
     QueryExecutionResult result;
     const auto start = std::chrono::steady_clock::now();
     result.batches = executeNode(root, result.stats, context);
+    collectPlanWarnings(root, result.stats.plan_warnings);
     result.stats.plan_summary = plan::physicalPlanToString(root);
     if (context.pool != nullptr)
     {

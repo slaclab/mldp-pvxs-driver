@@ -215,7 +215,7 @@ Each `EventBatchStruct` also carries:
 
 - **Prepare at startup** (in `MLDPPVXSController::start()`): `prepareQueryables()` iterates `queryable:` config entries and calls `QueryableFactory::instance().prepare<T>(cfg, metrics)` for each known type.
 - **Create at runtime**: any component calls `QueryableFactory::instance().create<MLDPQueryClient>()` to get a fresh client; the factory constructs it from the stored config closure.
-- **Supported types**: `MLDPQueryClient` (type key `"mldp"`), `MLDPAnnotationQueryClient` (type key `"mldp-annotation"`).
+- **Supported types**: `MLDPQueryClient` (type key `"mldp"`), `MLDPAnnotationQueryClient` (type key `"mldp-pv-metadata"`).
 - Thread-safe: uses a `std::shared_mutex` on the internal creators map.
 
 **Current use**: startup initialization and test fixtures that need to issue ad-hoc queries (e.g. verify ingested data, fetch annotation metadata) without going through `IDataBus`.
@@ -223,6 +223,7 @@ Each `EventBatchStruct` also carries:
 **Future use**: the factory is positioned as the query interface for decision-making components — for example algorithms that inspect historical data or existing annotations to decide what to ingest, generate derived signals, or trigger additional processing. Because `QueryableFactory` is decoupled from the push path, these consumers can be added without touching the reader/writer pipeline.
 
 → [Query Client Documentation](../dev/query-client.md)
+→ [Query Engine Architecture](query-engine-architecture.md)
 
 ## Channel Processor Layer
 

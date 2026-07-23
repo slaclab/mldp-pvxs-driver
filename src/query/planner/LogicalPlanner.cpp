@@ -15,18 +15,37 @@ using namespace mldp_pvxs_driver::query::planner;
 
 plan::LogicalNodePtr mldp_pvxs_driver::query::planner::buildLogicalPlan(const plan::BoundSelect& bound)
 {
-    auto root = plan::makeNode(plan::LogicalScan{
-        .table_name = bound.table_name,
-        .table_alias = bound.table_alias,
-        .schema = bound.schema,
-        .pushable_predicates = {},
-        .projection_hint = {}});
+    const bool qualify_output = !bound.joins.empty();
 
-    if (!bound.predicates.empty())
+    const auto buildTableSubtree = [](const plan::BoundTable& table) -> plan::LogicalNodePtr
     {
-        root = plan::makeNode(plan::LogicalFilter{
-            .input = root,
-            .predicates = bound.predicates});
+        auto node = plan::makeNode(plan::LogicalScan{
+            .table_name = table.table_name,
+            .table_alias = table.table_alias,
+            .schema = table.schema,
+            .pushable_predicates = {},
+            .projection_hint = {}});
+        if (!table.predicates.empty())
+        {
+            node = plan::makeNode(plan::LogicalFilter{
+                .input = node,
+                .predicates = table.predicates});
+        }
+        return node;
+    };
+
+    auto root = buildTableSubtree(bound.from);
+    for (const auto& join : bound.joins)
+    {
+        root = plan::makeNode(plan::LogicalJoin{
+            .type = join.type,
+            .condition = join.condition,
+            .left = root,
+            .right = buildTableSubtree(join.table),
+            .predicates = {},
+            .left_bounded = false,
+            .right_bounded = false,
+            .warnings = {}});
     }
 
     if (!bound.select_all)
@@ -35,6 +54,32 @@ plan::LogicalNodePtr mldp_pvxs_driver::query::planner::buildLogicalPlan(const pl
             .input = root,
             .select_all = false,
             .columns = bound.select_columns});
+    }
+    else if (qualify_output)
+    {
+        std::vector<std::string> columns;
+        columns.reserve(bound.from.schema.size() + bound.joins.size() * 8);
+        for (const auto& field : bound.from.schema)
+        {
+            if (field.is_output)
+            {
+                columns.push_back(bound.from.table_alias + "." + field.name);
+            }
+        }
+        for (const auto& join : bound.joins)
+        {
+            for (const auto& field : join.table.schema)
+            {
+                if (field.is_output)
+                {
+                    columns.push_back(join.table.table_alias + "." + field.name);
+                }
+            }
+        }
+        root = plan::makeNode(plan::LogicalProject{
+            .input = root,
+            .select_all = true,
+            .columns = std::move(columns)});
     }
 
     if (bound.limit.has_value())

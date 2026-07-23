@@ -12,7 +12,9 @@
 
 #include <query/planner/Binder.h>
 #include <query/planner/ColumnPruning.h>
+#include <query/planner/CorrelatedPushOptimizer.h>
 #include <query/planner/ConstantFolding.h>
+#include <query/planner/JoinOrderOptimizer.h>
 #include <query/planner/LogicalPlanner.h>
 #include <query/planner/PhysicalPlanner.h>
 #include <query/planner/PredicatePushdown.h>
@@ -54,8 +56,11 @@ plan::PhysicalNodePtr QueryPlanner::plan(const QueryStatement& statement) const
     bound = planner::typeCheckSelect(std::move(bound));
     auto logical = planner::buildLogicalPlan(bound);
     logical = planner::applyPredicatePushdown(std::move(logical));
+    logical = planner::applyJoinOrderOptimizer(std::move(logical));
     logical = planner::applyConstantFolding(std::move(logical));
     logical = planner::applyColumnPruning(std::move(logical));
     planner::requiredColumnCheck(logical);
-    return planner::buildPhysicalPlan(logical);
+    auto physical = planner::buildPhysicalPlan(logical);
+    physical = planner::applyCorrelatedPushOptimizer(std::move(physical));
+    return physical;
 }

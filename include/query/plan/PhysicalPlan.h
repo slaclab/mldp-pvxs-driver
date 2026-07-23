@@ -25,6 +25,8 @@ using PhysicalNodePtr = std::shared_ptr<PhysicalNode>;
 
 struct PhysicalTableScan {
     std::string            table_name;
+    std::string            table_alias;
+    bool                   qualify_output{false};
     std::vector<Predicate> pushable_predicates;
     std::set<std::string>  projection_hint;
 };
@@ -44,6 +46,41 @@ struct PhysicalLimit {
     uint64_t       limit{0};
 };
 
+enum class JoinType { INNER, LEFT_OUTER };
+enum class JoinAlgorithm { HASH, NESTED_LOOP, BLOCK_NESTED_LOOP };
+
+struct JoinCondition {
+    std::string left_column;
+    std::string right_column;
+};
+
+struct PhysicalHashJoin {
+    JoinType                  type{JoinType::INNER};
+    JoinCondition             condition;
+    JoinAlgorithm             algorithm{JoinAlgorithm::HASH};
+    PhysicalNodePtr           left;
+    PhysicalNodePtr           right;
+    std::vector<std::string>  warnings;
+};
+
+struct PhysicalNestedLoopJoin {
+    JoinType        type{JoinType::INNER};
+    JoinCondition   condition;
+    JoinAlgorithm   algorithm{JoinAlgorithm::NESTED_LOOP};
+    PhysicalNodePtr outer;
+    PhysicalNodePtr inner;
+    bool            correlated_push{false};
+};
+
+struct PhysicalBlockNestedLoopJoin {
+    JoinType                 type{JoinType::INNER};
+    JoinCondition            condition;
+    JoinAlgorithm            algorithm{JoinAlgorithm::BLOCK_NESTED_LOOP};
+    PhysicalNodePtr          outer;
+    PhysicalNodePtr          inner;
+    std::vector<std::string> warnings;
+};
+
 struct PhysicalShowTables {
 };
 
@@ -59,6 +96,9 @@ using PhysicalNodeVariant = std::variant<PhysicalTableScan,
                                          PhysicalFilter,
                                          PhysicalProject,
                                          PhysicalLimit,
+                                         PhysicalHashJoin,
+                                         PhysicalNestedLoopJoin,
+                                         PhysicalBlockNestedLoopJoin,
                                          PhysicalShowTables,
                                          PhysicalDescribe,
                                          PhysicalExplain>;

@@ -59,23 +59,32 @@ plan::BoundSelect mldp_pvxs_driver::query::planner::typeCheckSelect(plan::BoundS
                                std::chrono::system_clock::now().time_since_epoch())
                                .count();
 
-    for (auto& predicate : bound.predicates)
+    const auto type_check_predicates = [&](std::vector<plan::PlannerPredicate>& predicates)
     {
-        for (auto& value : predicate.values)
+        for (auto& predicate : predicates)
         {
-            if (std::holds_alternative<NowLiteral>(value))
+            for (auto& value : predicate.values)
             {
-                if (predicate.column_type != ColumnType::TIMESTAMP)
+                if (std::holds_alternative<NowLiteral>(value))
                 {
-                    throw plan::PlannerException(plan::TypeError{
-                        .message = "NOW can only be compared against TIMESTAMP columns"});
-                }
+                    if (predicate.column_type != ColumnType::TIMESTAMP)
+                    {
+                        throw plan::PlannerException(plan::TypeError{
+                            .message = "NOW can only be compared against TIMESTAMP columns"});
+                    }
 
-                const auto now = std::get<NowLiteral>(value);
-                value = static_cast<int64_t>(now_epoch + now.offset_seconds);
+                    const auto now = std::get<NowLiteral>(value);
+                    value = static_cast<int64_t>(now_epoch + now.offset_seconds);
+                }
+                enforceLiteralType(predicate, value);
             }
-            enforceLiteralType(predicate, value);
         }
+    };
+
+    type_check_predicates(bound.from.predicates);
+    for (auto& join : bound.joins)
+    {
+        type_check_predicates(join.table.predicates);
     }
 
     return bound;
