@@ -79,6 +79,7 @@ public:
 protected:
     /** Protected setters — used by subclasses that populate only a subset of fields. */
     void setValid(bool v)                { valid_           = v; }
+    void setQueryUrl(std::string u)      { query_url_       = std::move(u); }
     void setAnnotationUrl(std::string u) { annotation_url_  = std::move(u); }
     void setCredentials(Credentials c)   { credentials_     = std::move(c); }
 

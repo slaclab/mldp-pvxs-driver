@@ -322,13 +322,12 @@ Both MLDP backend clients use gRPC connection pools (`MLDPGrpcQueryPool` and `ML
 queryable:
   mldp:
     mldp-pool:
-      ingestion-url: grpc://ingest:50051
-      query-url:     grpc://query:50052
+      query-url: grpc://dp-query:50052
       min-conn: 1
       max-conn: 4
   mldp-pv-metadata:
     mldp-pv-metadata-pool:
-      annotation-url: grpc://annotation:50053
+      annotation-url: grpc://dp-annotation:50053
       min-conn: 1
       max-conn: 2
 ```

@@ -10,6 +10,8 @@
 
 #include <query/impl/mldp/MLDPQueryClient.h>
 
+#include <pool/MLDPGrpcQueryPoolConfig.h>
+
 #include <query/ExecutionContext.h>
 #include <query/QueryResult.h>
 
@@ -482,10 +484,25 @@ MLDPQueryClient::MLDPQueryClient(const util::pool::MLDPGrpcPoolConfig& poolConfi
 {
 }
 
+MLDPQueryClient::MLDPQueryClient(const util::pool::MLDPGrpcQueryPoolConfig& poolConfig,
+                                 std::shared_ptr<metrics::Metrics>          metrics)
+    : logger_(makeQueryClientLogger())
+    , pool_(MLDPGrpcQueryPool::create(poolConfig, std::move(metrics)))
+{
+}
+
 MLDPQueryClient::MLDPQueryClient(const config::Config&             cfg,
                                  std::shared_ptr<metrics::Metrics> m)
-    : MLDPQueryClient(util::pool::MLDPGrpcPoolConfig(cfg), std::move(m))
 {
+    logger_ = makeQueryClientLogger();
+    if (cfg.hasChild(util::pool::IngestionUrlKey))
+    {
+        pool_ = MLDPGrpcQueryPool::create(util::pool::MLDPGrpcPoolConfig(cfg), m);
+    }
+    else
+    {
+        pool_ = MLDPGrpcQueryPool::create(util::pool::MLDPGrpcQueryPoolConfig(cfg), m);
+    }
 }
 
 // ---------------------------------------------------------------------------

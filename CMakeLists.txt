@@ -635,6 +635,7 @@ add_library(lib${PROJECT_NAME}
     "${CMAKE_CURRENT_SOURCE_DIR}/src/pool/MLDPGrpcQueryPool.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/pool/MLDPGrpcAnnotationPoolConfig.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/pool/MLDPGrpcAnnotationPool.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/pool/MLDPGrpcQueryPoolConfig.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/impl/mldp/MLDPQueryClient.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/impl/mldp/MLDPAnnotationQueryClient.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/parser/Lexer.cpp"

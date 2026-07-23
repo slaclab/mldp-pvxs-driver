@@ -15,6 +15,7 @@
 #include <metrics/Metrics.h>
 #include <pool/MLDPGrpcPoolConfig.h>
 #include <pool/MLDPGrpcQueryPool.h>
+#include <pool/MLDPGrpcQueryPoolConfig.h>
 #include <query/IQueryable.h>
 #include <util/bus/IDataBus.h>
 #include <util/log/Logger.h>
@@ -58,9 +59,23 @@ public:
                              std::shared_ptr<metrics::Metrics>     metrics = nullptr);
 
     /**
+     * @brief Construct from a query-only pool config (no ingestion-url required).
+     *
+     * Preferred when the queryable: block does not include ingestion-url.
+     *
+     * @param poolConfig  Query-only connection parameters.
+     * @param metrics     Optional shared metrics collector.
+     */
+    explicit MLDPQueryClient(const util::pool::MLDPGrpcQueryPoolConfig& poolConfig,
+                             std::shared_ptr<metrics::Metrics>          metrics = nullptr);
+
+    /**
      * @brief Construct from a Config tree; delegates to the pool-config ctor.
      *
      * Required by QueryableFactory::prepare<MLDPQueryClient>(cfg).
+     * If ingestion-url is absent in cfg, uses MLDPGrpcQueryPoolConfig
+     * (query-url + min-conn + max-conn only).  If ingestion-url is present,
+     * falls back to the full MLDPGrpcPoolConfig for backwards compatibility.
      *
      * @param cfg     Root config containing pool parameters.
      * @param metrics Optional shared metrics collector.

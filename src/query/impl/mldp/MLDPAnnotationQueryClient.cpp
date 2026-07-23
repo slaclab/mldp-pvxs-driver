@@ -126,6 +126,12 @@ void appendTimestamp(arrow::TimestampBuilder& builder, const dp::service::common
         throw std::runtime_error("Failed to build Arrow annotation timestamp column");
 }
 
+void appendString(arrow::StringBuilder& builder, std::string_view value)
+{
+    if (!builder.Append(value).ok())
+        throw std::runtime_error("Failed to build Arrow annotation string column");
+}
+
 std::shared_ptr<mldp_pvxs_driver::util::log::ILogger> makeAnnotationQueryClientLogger()
 {
     std::string name = "mldp_annotation_query_client";
@@ -191,23 +197,20 @@ QueryResult MLDPAnnotationQueryClient::execute(std::string_view              tab
             for (int a = 0; a < aliases; ++a)
                 for (int t = 0; t < tags; ++t)
                 {
-                    pv.Append(record.pvname());
-                    a < record.aliases_size() ? alias.Append(record.aliases(a)) : alias.AppendNull();
-                    t < record.tags_size() ? tag.Append(record.tags(t)) : tag.AppendNull();
-                    description.Append(record.description());
-                    modified_by.Append(record.modifiedby());
+                    appendString(pv, record.pvname());
+                    if (a < record.aliases_size()) { appendString(alias, record.aliases(a)); } else { (void)alias.AppendNull(); }
+                    if (t < record.tags_size()) { appendString(tag, record.tags(t)); } else { (void)tag.AppendNull(); }
+                    appendString(description, record.description());
+                    appendString(modified_by, record.modifiedby());
                     appendTimestamp(created, record.createdtime());
                     appendTimestamp(updated, record.updatedtime());
                 }
         }
         std::shared_ptr<arrow::Array> a, b, c, d, e, f, g;
-        pv.Finish(&a);
-        alias.Finish(&b);
-        tag.Finish(&c);
-        description.Finish(&d);
-        modified_by.Finish(&e);
-        created.Finish(&f);
-        updated.Finish(&g);
+        if (!pv.Finish(&a).ok() || !alias.Finish(&b).ok() || !tag.Finish(&c).ok() ||
+            !description.Finish(&d).ok() || !modified_by.Finish(&e).ok() ||
+            !created.Finish(&f).ok() || !updated.Finish(&g).ok())
+            throw std::runtime_error("Failed to finish Arrow pv_metadata batch");
         return {.batch = arrow::RecordBatch::Make(arrow::schema({arrow::field("pv", a->type()), arrow::field("alias", b->type()), arrow::field("tag", c->type()), arrow::field("description", d->type()), arrow::field("modified_by", e->type()), arrow::field("created_time", f->type()), arrow::field("updated_time", g->type())}), a->length(), {a, b, c, d, e, f, g}), .next_page_token = next};
     }
     if (table_name == "mldp.configuration")
@@ -245,22 +248,19 @@ QueryResult MLDPAnnotationQueryClient::execute(std::string_view              tab
         arrow::TimestampBuilder created(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), arrow::default_memory_pool()), updated(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), arrow::default_memory_pool());
         for (const auto& record : records)
         {
-            name.Append(record.configurationname());
-            category.Append(record.category());
-            parent.Append(record.parentconfigurationname());
-            description.Append(record.description());
-            modified_by.Append(record.modifiedby());
+            appendString(name, record.configurationname());
+            appendString(category, record.category());
+            appendString(parent, record.parentconfigurationname());
+            appendString(description, record.description());
+            appendString(modified_by, record.modifiedby());
             appendTimestamp(created, record.createdtime());
             appendTimestamp(updated, record.updatedtime());
         }
         std::shared_ptr<arrow::Array> a, b, c, d, e, f, g;
-        name.Finish(&a);
-        category.Finish(&b);
-        parent.Finish(&c);
-        description.Finish(&d);
-        modified_by.Finish(&e);
-        created.Finish(&f);
-        updated.Finish(&g);
+        if (!name.Finish(&a).ok() || !category.Finish(&b).ok() || !parent.Finish(&c).ok() ||
+            !description.Finish(&d).ok() || !modified_by.Finish(&e).ok() ||
+            !created.Finish(&f).ok() || !updated.Finish(&g).ok())
+            throw std::runtime_error("Failed to finish Arrow configuration batch");
         return {.batch = arrow::RecordBatch::Make(arrow::schema({arrow::field("name", a->type()), arrow::field("category", b->type()), arrow::field("parent", c->type()), arrow::field("description", d->type()), arrow::field("modified_by", e->type()), arrow::field("created_time", f->type()), arrow::field("updated_time", g->type())}), a->length(), {a, b, c, d, e, f, g}), .next_page_token = next};
     }
     if (table_name == "mldp.configuration_activation")
@@ -290,15 +290,13 @@ QueryResult MLDPAnnotationQueryClient::execute(std::string_view              tab
         for (const auto& record : records)
         {
             appendTimestamp(time, record.starttime());
-            config.Append(record.configurationname());
-            id.Append(record.clientactivationid());
-            description.Append(record.description());
+            appendString(config, record.configurationname());
+            appendString(id, record.clientactivationid());
+            appendString(description, record.description());
         }
         std::shared_ptr<arrow::Array> a, b, c, d;
-        time.Finish(&a);
-        config.Finish(&b);
-        id.Finish(&c);
-        description.Finish(&d);
+        if (!time.Finish(&a).ok() || !config.Finish(&b).ok() || !id.Finish(&c).ok() || !description.Finish(&d).ok())
+            throw std::runtime_error("Failed to finish Arrow configuration_activation batch");
         return {.batch = arrow::RecordBatch::Make(arrow::schema({arrow::field("time", a->type()), arrow::field("config_name", b->type()), arrow::field("activation_id", c->type()), arrow::field("description", d->type())}), a->length(), {a, b, c, d}), .next_page_token = next};
     }
     if (table_name == "mldp.active_configurations")
@@ -326,14 +324,13 @@ QueryResult MLDPAnnotationQueryClient::execute(std::string_view              tab
         arrow::TimestampBuilder time(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), arrow::default_memory_pool());
         for (const auto& record : records)
         {
-            name.Append(record.configurationname());
-            id.Append(record.clientactivationid());
+            appendString(name, record.configurationname());
+            appendString(id, record.clientactivationid());
             appendTimestamp(time, record.starttime());
         }
         std::shared_ptr<arrow::Array> a, b, c;
-        name.Finish(&a);
-        id.Finish(&b);
-        time.Finish(&c);
+        if (!name.Finish(&a).ok() || !id.Finish(&b).ok() || !time.Finish(&c).ok())
+            throw std::runtime_error("Failed to finish Arrow active_configurations batch");
         return {.batch = arrow::RecordBatch::Make(arrow::schema({arrow::field("name", a->type()), arrow::field("activation_id", b->type()), arrow::field("time", c->type())}), a->length(), {a, b, c}), .next_page_token = {}};
     }
     throw std::invalid_argument("MLDPAnnotationQueryClient: unknown virtual table '" + std::string(table_name) + "'; supported tables: mldp.pv_metadata, mldp.configuration, mldp.configuration_activation, mldp.active_configurations");

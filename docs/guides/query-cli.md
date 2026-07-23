@@ -58,20 +58,47 @@ mldp_pvxs_driver -c config.yaml query --format csv --no-stats \
 
 `query` mode activates only `queryable:` backends. It does not require `reader`, `writer`, `routing`, or `metrics` blocks.
 
+### Config file
+
+Service hostnames match the Docker Compose service names defined in `docker-compose.yml` (`dp-ingestion`, `dp-query`, `dp-annotation`):
+
 ```yaml
-# config.yaml
+# query-config.yaml
 queryable:
   mldp:
     mldp-pool:
-      ingestion-url: grpc://ingest:50051
-      query-url: grpc://query:50052
+      query-url: grpc://dp-query:50052
       min-conn: 1
       max-conn: 2
   mldp-pv-metadata:
     mldp-pv-metadata-pool:
-      annotation-url: grpc://annotation:50053
+      annotation-url: grpc://dp-annotation:50053
       min-conn: 1
       max-conn: 2
+```
+
+### Inline dotted assignments (no config file)
+
+Pass URLs directly with `-c` dotted assignments instead of writing a file:
+
+```bash
+mldp_pvxs_driver \
+  -c queryable.mldp.mldp-pool.query-url=grpc://dp-query:50052 \
+  -c queryable.mldp.mldp-pool.min-conn=1 \
+  -c queryable.mldp.mldp-pool.max-conn=2 \
+  -c queryable.mldp-pv-metadata.mldp-pv-metadata-pool.annotation-url=grpc://dp-annotation:50053 \
+  -c queryable.mldp-pv-metadata.mldp-pv-metadata-pool.min-conn=1 \
+  -c queryable.mldp-pv-metadata.mldp-pv-metadata-pool.max-conn=2 \
+  query "SHOW TABLES"
+```
+
+Override just the query URL when running against a different host:
+
+```bash
+mldp_pvxs_driver \
+  -c query-config.yaml \
+  -c queryable.mldp.mldp-pool.query-url=grpc://my-host:50052 \
+  query "SELECT pv, time, value FROM mldp.time_series WHERE pv = 'MY:PV' LIMIT 10"
 ```
 
 Two queryable types are available:
@@ -438,7 +465,6 @@ Save the following as `query-config.yaml` (adjust URLs if your MLDP stack uses d
 queryable:
   mldp:
     mldp-pool:
-      ingestion-url: grpc://dp-ingestion:50051
       query-url: grpc://dp-query:50052
       min-conn: 1
       max-conn: 2
