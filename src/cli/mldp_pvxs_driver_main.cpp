@@ -295,67 +295,47 @@ int main(int argc, char** argv)
 
     try
     {
-        // Dispatch "config" sub-command before argparse consumes argv.
-        if (argc >= 2 && std::string_view{argv[1]} == "config")
+        // Dispatch early subcommands before argparse consumes argv.
+        // Global -c/--config sources are accepted only before the subcommand.
+        std::vector<std::string> earlyConfigSources;
+        int                      earlySubcommandIndex = -1;
+        for (int index = 1; index < argc; ++index)
         {
-            return mldp_pvxs_driver::config::runConfigSubcommand(argc - 1, argv + 1);
+            const auto arg = std::string_view{argv[index]};
+            if (arg == "-c" || arg == "--config")
+            {
+                if (++index >= argc)
+                {
+                    throw std::runtime_error("Global -c/--config requires a source value");
+                }
+                earlyConfigSources.emplace_back(argv[index]);
+                continue;
+            }
+            if (arg == "config" || arg == "query")
+            {
+                earlySubcommandIndex = index;
+                break;
+            }
+            // Stop scanning once we hit a non-global option/argument.
+            break;
         }
 
-        if (argc >= 2 && std::string_view{argv[1]} == "query")
+        if (earlySubcommandIndex >= 0 && std::string_view{argv[earlySubcommandIndex]} == "config")
         {
-            std::vector<std::string> queryConfigSources;
-            mldp_pvxs_driver::cli::QueryCliOptions queryOptions;
-            for (int index = 2; index < argc; ++index)
-            {
-                const auto arg = std::string_view{argv[index]};
-                if (arg == "-c" || arg == "--config")
-                {
-                    if (++index >= argc)
-                    {
-                        throw std::runtime_error("query option requires a configuration source");
-                    }
-                    queryConfigSources.emplace_back(argv[index]);
-                }
-                else if (arg == "--memory-mb")
-                {
-                    if (++index >= argc)
-                    {
-                        throw std::runtime_error("--memory-mb requires a numeric value");
-                    }
-                    queryOptions.memory_mb = static_cast<uint64_t>(std::stoull(argv[index]));
-                }
-                else if (arg == "--spill-dir")
-                {
-                    if (++index >= argc)
-                    {
-                        throw std::runtime_error("--spill-dir requires a path");
-                    }
-                    queryOptions.spill_dir = argv[index];
-                }
-                else if (arg == "--spill-partitions")
-                {
-                    if (++index >= argc)
-                    {
-                        throw std::runtime_error("--spill-partitions requires a numeric value");
-                    }
-                    queryOptions.spill_partitions = static_cast<uint32_t>(std::stoul(argv[index]));
-                }
-                else if (arg == "--join-batch-size")
-                {
-                    if (++index >= argc)
-                    {
-                        throw std::runtime_error("--join-batch-size requires a numeric value");
-                    }
-                    queryOptions.join_batch_size = static_cast<uint32_t>(std::stoul(argv[index]));
-                }
-                else
-                {
-                    throw std::runtime_error(
-                        "query accepts -c/--config, --memory-mb, --spill-dir, --spill-partitions, --join-batch-size");
-                }
-            }
-            mldp_pvxs_driver::cli::prepareQuerySubcommand(loadMergedConfigSources(queryConfigSources));
-            return mldp_pvxs_driver::cli::runQueryRepl(std::cin, std::cout, queryOptions);
+            return mldp_pvxs_driver::config::runConfigSubcommand(
+                argc - earlySubcommandIndex,
+                argv + earlySubcommandIndex);
+        }
+
+        if (earlySubcommandIndex >= 0 && std::string_view{argv[earlySubcommandIndex]} == "query")
+        {
+            mldp_pvxs_driver::cli::QuerySubcommand querySubcommand;
+            return querySubcommand.run(
+                argc - earlySubcommandIndex,
+                argv + earlySubcommandIndex,
+                earlyConfigSources,
+                std::cout,
+                std::cerr);
         }
 
         // Parse command line arguments

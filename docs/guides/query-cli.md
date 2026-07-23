@@ -1,6 +1,6 @@
 # Query CLI Guide
 
-The `query` subcommand runs the embedded query engine in **line-oriented stdin mode**. It prepares configured query backends, then executes one query per input line.
+The `query` subcommand runs one SQL statement end-to-end (parse → plan → execute → render) and prints results to stdout.
 
 > **Related:** [Query Clients](../dev/query-client.md) | [Query Engine Architecture](../reference/query-engine-architecture.md) | [Configuration Reference](configuration.md#queryable-block)
 
@@ -9,58 +9,55 @@ The `query` subcommand runs the embedded query engine in **line-oriented stdin m
 ## Command
 
 ```bash
-mldp_pvxs_driver query [options]
+mldp_pvxs_driver [global options] query [query options] "<SQL>"
 ```
 
 Accepted options:
 
 | Option | Default | Purpose |
 |---|---:|---|
-| `-c`, `--config <source>` | none | Add config input (file path or dotted `PATH=VALUE` override). Repeatable. |
+| `--file <path>` | none | Read SQL text from file instead of positional SQL argument. |
+| `--format <table|json|csv|arrow>` | `table` | Output format. |
+| `--no-stats` | off | Suppress query stats footer. |
 | `--memory-mb <n>` | `256` | Memory budget for query execution context (MiB). |
 | `--spill-dir <path>` | system temp + `/mldp-query-spill` | Directory for spill files when memory pressure triggers spill. |
 | `--spill-partitions <n>` | `16` | Spill partition count used by join spill paths. |
 | `--join-batch-size <n>` | `100` | Batch size hint for join execution paths. |
 
-Unknown options are rejected. The current implementation does not expose a dedicated `query --help`; use this guide for supported parameters.
+Global config input is still owned by the main CLI parser:
+
+| Global option | Purpose |
+|---|---|
+| `-c`, `--config <source>` | Add config source (file path or dotted `PATH=VALUE`). Repeatable. Must appear before `query`. |
 
 ---
 
-## Interactive Usage
+## Usage
 
-Start the subcommand, then type one statement per line. End with `exit` or `quit`.
+Pass SQL as positional text:
 
 ```bash
-mldp_pvxs_driver query -c config.yaml
-SHOW TABLES
-DESCRIBE mldp.pv_metadata
-SELECT pv FROM mldp.time_series WHERE pv = 'MY:PV' LIMIT 5
-exit
+mldp_pvxs_driver -c config.yaml query "SELECT pv FROM mldp.time_series WHERE pv = 'MY:PV' LIMIT 5"
 ```
 
-Supported statements depend on parser/planner support and currently include `SELECT`, `EXPLAIN`, `SHOW TABLES`, and `DESCRIBE`.
-
----
-
-## Running from a File or Pipe
-
-Because query input is read from `stdin`, you can run batch queries with redirection:
+Or read SQL from file:
 
 ```bash
-mldp_pvxs_driver query -c config.yaml < queries.sql
+mldp_pvxs_driver -c config.yaml query --file queries.sql
 ```
 
-or:
+Schema introspection works without backend connection config:
 
 ```bash
-cat queries.sql | mldp_pvxs_driver query -c config.yaml
+mldp_pvxs_driver query "SHOW TABLES"
+mldp_pvxs_driver query "DESCRIBE mldp.pv_metadata"
 ```
 
 ---
 
 ## Query-Only Configuration
 
-`query` mode prepares only `queryable:` backends. It does not require readers/writers/routing blocks.
+`query` mode prepares only `queryable:` backends. It does not require readers/writers/routing/metrics blocks.
 
 ```yaml
 queryable:

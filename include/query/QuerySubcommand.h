@@ -18,21 +18,46 @@
 #pragma once
 
 #include <config/Config.h>
+#include <query/QueryFormatter.h>
 
 #include <cstdint>
 #include <iosfwd>
 #include <string>
+#include <vector>
 
 namespace mldp_pvxs_driver::cli {
 
 struct QueryCliOptions {
+    std::string       sql{};
+    std::string       sql_file{};
+    QueryOutputFormat format{QueryOutputFormat::Table};
+    bool              no_stats{false};
     uint64_t    memory_mb{256};
     std::string spill_dir{};
     uint32_t    spill_partitions{16};
     uint32_t    join_batch_size{100};
 };
 
-void prepareQuerySubcommand(const config::Config& config);
-int runQueryRepl(std::istream& input, std::ostream& output, const QueryCliOptions& options = {});
+class QuerySubcommandPreparer
+{
+public:
+    void prepare(const config::Config& config) const;
+};
+
+class QueryRunner
+{
+public:
+    int run(const QueryCliOptions& options, std::ostream& output) const;
+};
+
+class QuerySubcommand
+{
+public:
+    int run(int argc,
+            char** argv,
+            const std::vector<std::string>& global_config_sources,
+            std::ostream&                    output,
+            std::ostream&                    error) const;
+};
 
 } // namespace mldp_pvxs_driver::cli

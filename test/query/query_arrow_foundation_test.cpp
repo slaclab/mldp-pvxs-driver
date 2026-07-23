@@ -84,32 +84,67 @@ TEST(SpillManagerTest, CleanupDeletesOutstandingFiles)
 
 TEST(QuerySubcommandTest, PreparesBothSupportedQueryableShapes)
 {
+    cli::QuerySubcommandPreparer preparer;
     query::QueryableFactory::instance().reset();
     const auto typed = config::Config::configFromYamlString("queryable:\n  - type: mldp\n    provider-name: test\n    ingestion-url: localhost:1\n    query-url: localhost:2\n");
-    cli::prepareQuerySubcommand(typed);
+    preparer.prepare(typed);
     EXPECT_TRUE(query::QueryableFactory::instance().isPrepared<query::impl::mldp::MLDPQueryClient>());
 
     const auto keyed = config::Config::configFromYamlString("queryable:\n  mldp:\n    provider-name: test\n    ingestion-url: localhost:1\n    query-url: localhost:2\n");
-    cli::prepareQuerySubcommand(keyed);
+    preparer.prepare(keyed);
     EXPECT_TRUE(query::QueryableFactory::instance().isPrepared<query::impl::mldp::MLDPQueryClient>());
     query::QueryableFactory::instance().reset();
 }
 
 TEST(QuerySubcommandTest, ReplReportsPlanningOrExecutionErrorsAndExits)
 {
-    std::istringstream input("select * from mldp.pv_stats\nexit\n");
+    char arg0[] = "query";
+    char arg1[] = "select * from mldp.pv_stats";
+    char* argv[] = {arg0, arg1};
+    cli::QuerySubcommand querySubcommand;
     std::ostringstream output;
-    EXPECT_EQ(cli::runQueryRepl(input, output), 0);
-    EXPECT_TRUE(output.str().find("BindError") != std::string::npos ||
-                output.str().find("Execution error:") != std::string::npos);
+    std::ostringstream error;
+    EXPECT_EQ(querySubcommand.run(2, argv, {}, output, error), 1);
+    EXPECT_TRUE(error.str().find("BindError") != std::string::npos ||
+                error.str().find("Query error:") != std::string::npos);
 }
 
 TEST(QuerySubcommandTest, ReplReportsParseErrors)
 {
-    std::istringstream input("select from mldp.pv_stats\nexit\n");
+    char arg0[] = "query";
+    char arg1[] = "select from mldp.pv_stats";
+    char* argv[] = {arg0, arg1};
+    cli::QuerySubcommand querySubcommand;
     std::ostringstream output;
-    EXPECT_EQ(cli::runQueryRepl(input, output), 0);
-    EXPECT_NE(output.str().find("Parse error at "), std::string::npos);
+    std::ostringstream error;
+    EXPECT_EQ(querySubcommand.run(2, argv, {}, output, error), 1);
+    EXPECT_NE(error.str().find("Parse error at "), std::string::npos);
+}
+
+TEST(QuerySubcommandTest, RejectsLocalConfigFlag)
+{
+    char arg0[] = "query";
+    char arg1[] = "-c";
+    char arg2[] = "config.yaml";
+    char arg3[] = "SHOW TABLES";
+    char* argv[] = {arg0, arg1, arg2, arg3};
+    cli::QuerySubcommand querySubcommand;
+    std::ostringstream output;
+    std::ostringstream error;
+    EXPECT_EQ(querySubcommand.run(4, argv, {}, output, error), 1);
+    EXPECT_NE(error.str().find("global option"), std::string::npos);
+}
+
+TEST(QuerySubcommandTest, ShowTablesFailsWithoutQueryableConfig)
+{
+    char arg0[] = "query";
+    char arg1[] = "SHOW TABLES";
+    char* argv[] = {arg0, arg1};
+    cli::QuerySubcommand querySubcommand;
+    std::ostringstream output;
+    std::ostringstream error;
+    EXPECT_EQ(querySubcommand.run(2, argv, {}, output, error), 1);
+    EXPECT_NE(error.str().find("Missing 'queryable' configuration"), std::string::npos);
 }
 
 } // namespace

@@ -653,6 +653,7 @@ add_library(lib${PROJECT_NAME}
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/planner/CorrelatedPushOptimizer.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/QueryPlanner.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/QueryExecutor.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/QueryFormatter.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/SpillManager.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/controller/MLDPPVXSControllerConfig.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/controller/MLDPPVXSController.cpp"
