@@ -103,4 +103,12 @@ TEST(QuerySubcommandTest, ReplReportsUnimplementedQueriesAndExits)
     EXPECT_EQ(output.str(), "Query execution is not implemented yet.\n");
 }
 
+TEST(QuerySubcommandTest, ReplReportsParseErrors)
+{
+    std::istringstream input("select from mldp.pv_stats\nexit\n");
+    std::ostringstream output;
+    EXPECT_EQ(cli::runQueryRepl(input, output), 0);
+    EXPECT_NE(output.str().find("Parse error at "), std::string::npos);
+}
+
 } // namespace

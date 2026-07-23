@@ -18,6 +18,7 @@
 #include <query/QuerySubcommand.h>
 
 #include <query/ExecutionContext.h>
+#include <query/parser/QueryParser.h>
 #include <query/QueryableFactory.h>
 #include <query/SpillManager.h>
 #include <query/impl/mldp/MLDPAnnotationQueryClient.h>
@@ -104,7 +105,15 @@ int runQueryRepl(std::istream& input, std::ostream& output)
         }
         if (!line.empty())
         {
-            output << "Query execution is not implemented yet.\n";
+            try
+            {
+                [[maybe_unused]] auto parsed = query::parseQuery(line);
+                output << "Query execution is not implemented yet.\n";
+            }
+            catch (const query::ParseError& error)
+            {
+                output << "Parse error at " << error.line() << ":" << error.column() << " - " << error.what() << "\n";
+            }
         }
     }
     return 0;

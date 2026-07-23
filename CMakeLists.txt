@@ -635,8 +635,10 @@ add_library(lib${PROJECT_NAME}
     "${CMAKE_CURRENT_SOURCE_DIR}/src/pool/MLDPGrpcQueryPool.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/pool/MLDPGrpcAnnotationPoolConfig.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/pool/MLDPGrpcAnnotationPool.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/MLDPQueryClient.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/MLDPAnnotationQueryClient.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/impl/mldp/MLDPQueryClient.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/impl/mldp/MLDPAnnotationQueryClient.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/parser/Lexer.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/parser/QueryParser.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/SpillManager.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/controller/MLDPPVXSControllerConfig.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/controller/MLDPPVXSController.cpp"
@@ -963,6 +965,24 @@ if(MLDP_PVXS_DRIVER_TESTS)
             -Wl,--whole-archive lib${PROJECT_NAME} -Wl,--no-whole-archive)
     endif()
     gtest_discover_tests(query_arrow_foundation_test)
+
+    add_executable(query_parser_test
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/query/query_parser_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/ryml_single_header_translation_unit.cpp"
+    )
+    target_include_directories(query_parser_test PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test"
+        "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    if(APPLE)
+        target_link_libraries(query_parser_test PRIVATE gtest_main
+            -Wl,-force_load $<TARGET_FILE:lib${PROJECT_NAME}>)
+    else()
+        target_link_libraries(query_parser_test PRIVATE gtest_main
+            -Wl,--whole-archive lib${PROJECT_NAME} -Wl,--no-whole-archive)
+    endif()
+    gtest_discover_tests(query_parser_test)
 
     # MLDPAnnotationQueryClient integration tests
     add_executable(mldp_annotation_query_client_test
