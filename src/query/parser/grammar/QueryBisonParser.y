@@ -99,7 +99,7 @@
             return column;
         }
 
-        if (path.front() == "attr")
+        if (path.front() == "attr" || path.front() == "attributes" || path.front() == "provenance")
         {
             column.name = joinPath(path, 0);
             return column;
@@ -173,6 +173,10 @@
         case TokenType::NOW: return QueryBisonParser::make_NOW(location);
         case TokenType::PREFIX: return QueryBisonParser::make_PREFIX(location);
         case TokenType::CONTAINS: return QueryBisonParser::make_CONTAINS(location);
+        case TokenType::ORDER: return QueryBisonParser::make_ORDER(location);
+        case TokenType::BY: return QueryBisonParser::make_BY(location);
+        case TokenType::ASC: return QueryBisonParser::make_ASC(location);
+        case TokenType::DESC: return QueryBisonParser::make_DESC(location);
         case TokenType::STAR: return QueryBisonParser::make_STAR(location);
         case TokenType::COMMA: return QueryBisonParser::make_COMMA(location);
         case TokenType::DOT: return QueryBisonParser::make_DOT(location);
@@ -208,7 +212,7 @@
 %token END_OF_INPUT 0
 %token <std::string> IDENTIFIER STRING_LITERAL DURATION_LITERAL
 %token <int64_t> NUMBER_LITERAL
-%token SELECT FROM WHERE AND IN LIKE BETWEEN LIMIT PAGE TOKEN SHOW TABLES DESCRIBE EXPLAIN AS INNER LEFT OUTER JOIN ON NOW PREFIX CONTAINS
+%token SELECT FROM WHERE AND IN LIKE BETWEEN LIMIT PAGE TOKEN SHOW TABLES DESCRIBE EXPLAIN AS INNER LEFT OUTER JOIN ON NOW PREFIX CONTAINS ORDER BY ASC DESC
 %token STAR COMMA DOT LPAREN RPAREN PLUS MINUS EQ NEQ LT LTE GT GTE
 
 %type <mldp_pvxs_driver::query::QueryStatement> statement
@@ -227,6 +231,8 @@
 %type <int64_t> signed_duration
 %type <std::optional<uint64_t>> limit_opt
 %type <std::optional<std::string>> page_opt
+%type <std::vector<mldp_pvxs_driver::query::OrderByItem>> order_by_opt order_by_list
+%type <mldp_pvxs_driver::query::OrderByItem> order_by_item
 
 %%
 
@@ -253,7 +259,7 @@ statement
     ;
 
 select_stmt
-    : SELECT select_list FROM table_ref join_clauses where_opt limit_opt page_opt
+    : SELECT select_list FROM table_ref join_clauses where_opt order_by_opt limit_opt page_opt
       {
           mldp_pvxs_driver::query::SelectStatement statement;
           statement.select_all = $2.select_all;
@@ -261,10 +267,34 @@ select_stmt
           statement.from = std::move($4);
           statement.joins = std::move($5);
           statement.predicates = std::move($6);
-          statement.limit = std::move($7);
-          statement.page_token = std::move($8);
+          statement.order_by = std::move($7);
+          statement.limit = std::move($8);
+          statement.page_token = std::move($9);
           $$ = std::move(statement);
       }
+    ;
+
+order_by_opt
+    : /* empty */
+      { $$ = {}; }
+    | ORDER BY order_by_list
+      { $$ = std::move($3); }
+    ;
+
+order_by_list
+    : order_by_item
+      { $$ = std::vector<mldp_pvxs_driver::query::OrderByItem>{std::move($1)}; }
+    | order_by_list COMMA order_by_item
+      { $1.push_back(std::move($3)); $$ = std::move($1); }
+    ;
+
+order_by_item
+    : column_ref
+      { $$ = mldp_pvxs_driver::query::OrderByItem{.column = std::move($1)}; }
+    | column_ref ASC
+      { $$ = mldp_pvxs_driver::query::OrderByItem{.column = std::move($1), .direction = mldp_pvxs_driver::query::SortDirection::ASCENDING}; }
+    | column_ref DESC
+      { $$ = mldp_pvxs_driver::query::OrderByItem{.column = std::move($1), .direction = mldp_pvxs_driver::query::SortDirection::DESCENDING}; }
     ;
 
 select_list

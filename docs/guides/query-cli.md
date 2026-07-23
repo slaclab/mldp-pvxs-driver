@@ -208,6 +208,7 @@ SELECT { * | column [, column ...] }
 FROM   <table> [AS <alias>]
        [JOIN <table> [AS <alias>] ON <col> = <col>] ...
 [WHERE <predicate> [AND <predicate>] ...]
+[ORDER BY column [ASC|DESC] [, column [ASC|DESC] ...]]
 [LIMIT <n>]
 [PAGE TOKEN '<token>']
 ```
@@ -226,6 +227,29 @@ FROM   <table> [AS <alias>]
 | SQL LIKE | `description LIKE '%vacuum%'` or `name LIKE 'beam*'` |
 
 Multiple predicates are combined with `AND`.
+
+`ORDER BY` sorts scalar fields before projection and `LIMIT`. `ASC` is the default and `NULL` values sort last. Collection columns (`tags`, `attributes`, and `provenance`) cannot be order keys, but dynamic scalar metadata keys can:
+
+```sql
+SELECT pv, alias, attributes.device_group, attributes.ordinal, tags
+FROM mldp.pv_metadata
+ORDER BY attributes.device_group, attributes.ordinal;
+```
+
+`GROUP BY`, aggregates, and `HAVING` are not currently supported.
+
+### Compact and expanded table output
+
+Table output keeps each result on one physical line. Lists and maps show their first two values followed by `+N` when values remain; map keys are sorted for a predictable display. Use the REPL controls below to inspect every value in a record:
+
+```text
+\expanded on     # persistently enable expanded records
+\expanded off    # return to compact table output
+\x               # toggle expanded records
+SELECT * FROM mldp.pv_metadata \G
+```
+
+The `\G` query terminator expands that one result without changing the current display mode. JSON, CSV, and Arrow output retain their complete machine-readable collections.
 
 ### Pattern matching with `LIKE`
 

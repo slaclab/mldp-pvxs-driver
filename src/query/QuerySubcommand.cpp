@@ -177,7 +177,8 @@ std::optional<std::size_t> statementTerminator(std::string_view line)
 bool isReplCommand(std::string_view command)
 {
     return command == ".help" || command == ".clear" || command == ".format" || command.starts_with(".format ") ||
-           command.starts_with(".format\t") || command == ".history" || command == "history" || command == ".quit" || command == ".exit";
+           command.starts_with(".format\t") || command == ".history" || command == "history" || command == "\\x" ||
+           command == "\\expanded" || command.starts_with("\\expanded ") || command == ".quit" || command == ".exit";
 }
 
 std::string formatName(const QueryOutputFormat format)
@@ -540,7 +541,8 @@ int runRepl(QueryCliOptions                           options,
             editor.addHistory(command);
             output << "Enter one SQL statement terminated by ';'.\n"
                    << "Commands: .help, .clear, .format [table|json|csv|arrow], .history, .quit, .exit\n"
-                   << "Editing: arrows, Ctrl-A/Ctrl-E, Ctrl-W, Ctrl-U/Ctrl-K, history, and tab completion.\n";
+                   << "Display: \\expanded [on|off], \\x (toggle), or terminate a query with \\G for one expanded result.\n"
+                   << "Editing: arrows, Ctrl-A/Ctrl-E, Ctrl-W, Ctrl-U/Ctrl-K, Ctrl-L (clear screen), history, and tab completion.\n";
             continue;
         }
         if (buffer.empty() && (command == ".history" || command == "history"))
@@ -550,6 +552,17 @@ int runRepl(QueryCliOptions                           options,
             {
                 output << std::setw(4) << (index + 1) << "  " << entries[index] << "\n";
             }
+            continue;
+        }
+        if (buffer.empty() && (command == "\\x" || command == "\\expanded" || command.starts_with("\\expanded ")))
+        {
+            const auto argument = trim(std::string_view(command).substr(command == "\\x" ? 2 : std::string_view("\\expanded").size()));
+            if (command == "\\x") options.expanded = !options.expanded;
+            else if (argument.empty()) { output << "Expanded display: " << (options.expanded ? "on" : "off") << "\n"; continue; }
+            else if (argument == "on") options.expanded = true;
+            else if (argument == "off") options.expanded = false;
+            else { error << "Query error: \\expanded accepts on or off\n"; continue; }
+            output << "Expanded display: " << (options.expanded ? "on" : "off") << "\n";
             continue;
         }
         if (buffer.empty() && (command == ".format" || startsWithIgnoreCase(command, ".format ") || startsWithIgnoreCase(command, ".format\t")))
@@ -584,15 +597,32 @@ int runRepl(QueryCliOptions                           options,
             continue;
         }
 
-        const auto terminator = statementTerminator(*line);
+        auto line_for_sql = *line;
+        bool expanded_once = false;
+        std::optional<std::size_t> terminator;
+        if (const auto marker = line_for_sql.find("\\G"); marker != std::string::npos && trim(std::string_view(line_for_sql).substr(marker + 2)).empty())
+        {
+            expanded_once = true;
+            line_for_sql.erase(marker, 2);
+            line_for_sql = trim(line_for_sql);
+            if (!line_for_sql.empty() && line_for_sql.back() == ';')
+            {
+                line_for_sql.pop_back();
+            }
+            terminator = line_for_sql.size();
+        }
+        else
+        {
+            terminator = statementTerminator(line_for_sql);
+        }
         if (terminator)
         {
             if (!buffer.empty())
             {
                 buffer.push_back('\n');
             }
-            buffer.append(*line, 0, *terminator);
-            if (!trim(std::string_view(*line).substr(*terminator + 1)).empty())
+            buffer.append(line_for_sql, 0, *terminator);
+            if (!expanded_once && !trim(std::string_view(line_for_sql).substr(*terminator + 1)).empty())
             {
                 error << "Query error: only one SQL statement may be submitted at a time\n";
                 buffer.clear();
@@ -608,7 +638,9 @@ int runRepl(QueryCliOptions                           options,
             editor.addHistory(sql);
             try
             {
-                (void)runner.run(options, sql, output);
+                auto query_options = options;
+                query_options.expanded = options.expanded || expanded_once;
+                (void)runner.run(query_options, sql, output);
             }
             catch (const std::exception& ex)
             {
@@ -620,7 +652,7 @@ int runRepl(QueryCliOptions                           options,
         {
             buffer.push_back('\n');
         }
-        buffer += *line;
+        buffer += line_for_sql;
     }
 }
 
@@ -749,7 +781,7 @@ std::vector<std::string> mldp_pvxs_driver::cli::detail::replCompletions(const st
     }
     else if (!token.empty() && token.front() == '.')
     {
-        candidates = {".help", ".clear", ".format", ".history", ".quit", ".exit"};
+        candidates = {".help", ".clear", ".format", ".history", "\\expanded", "\\x", ".quit", ".exit"};
     }
     else if (expectsTable(words))
     {
@@ -767,7 +799,7 @@ std::vector<std::string> mldp_pvxs_driver::cli::detail::replCompletions(const st
     }
     else
     {
-        candidates = {"SELECT", "FROM", "WHERE", "AND", "OR", "IN", "LIKE", "BETWEEN", "LIMIT", "PAGE", "TOKEN",
+        candidates = {"SELECT", "FROM", "WHERE", "AND", "OR", "IN", "LIKE", "BETWEEN", "ORDER", "BY", "ASC", "DESC", "LIMIT", "PAGE", "TOKEN",
                       "SHOW", "TABLES", "DESCRIBE", "EXPLAIN", "AS", "INNER", "LEFT", "OUTER", "JOIN", "ON", "NOW", "PREFIX", "CONTAINS"};
         const auto aliases = tableAliases(input);
         if (aliases.size() == 1)
@@ -840,7 +872,7 @@ int mldp_pvxs_driver::cli::QueryRunner::run(const QueryCliOptions& options, cons
     auto parsed = query::parseQuery(sql);
     auto physical = planner.plan(parsed);
     auto result = executor.execute(physical, context);
-    formatQueryResult(result, options.format, output);
+    formatQueryResult(result, options.format, output, options.expanded);
     if (!options.no_stats)
     {
         printQueryStats(result.stats, output);

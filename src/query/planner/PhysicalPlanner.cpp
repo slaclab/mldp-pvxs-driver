@@ -95,6 +95,12 @@ plan::PhysicalNodePtr buildNode(const plan::LogicalNodePtr& node)
             .input = buildNode(project->input),
             .columns = project->columns});
     }
+    if (const auto* sort = std::get_if<plan::LogicalSort>(&node->value))
+    {
+        return plan::makeNode(plan::PhysicalSort{
+            .input = buildNode(sort->input),
+            .keys = sort->keys});
+    }
     if (const auto* limit = std::get_if<plan::LogicalLimit>(&node->value))
     {
         return plan::makeNode(plan::PhysicalLimit{
@@ -137,6 +143,11 @@ void markJoinOutputQualification(const plan::PhysicalNodePtr& node, const bool u
     if (auto* project = std::get_if<plan::PhysicalProject>(&node->value))
     {
         markJoinOutputQualification(project->input, under_join);
+        return;
+    }
+    if (auto* sort = std::get_if<plan::PhysicalSort>(&node->value))
+    {
+        markJoinOutputQualification(sort->input, under_join);
         return;
     }
     if (auto* limit = std::get_if<plan::PhysicalLimit>(&node->value))
@@ -190,6 +201,12 @@ void appendNode(std::ostringstream& out, const plan::PhysicalNodePtr& node, cons
     {
         out << indent(level) << "PhysicalProject(columns=" << project->columns.size() << ")\n";
         appendNode(out, project->input, level + 1);
+        return;
+    }
+    if (const auto* sort = std::get_if<plan::PhysicalSort>(&node->value))
+    {
+        out << indent(level) << "PhysicalSort(keys=" << sort->keys.size() << ")\n";
+        appendNode(out, sort->input, level + 1);
         return;
     }
     if (const auto* limit = std::get_if<plan::PhysicalLimit>(&node->value))
@@ -296,6 +313,13 @@ std::string mldp_pvxs_driver::query::plan::physicalPlanToString(const plan::Phys
             out << std::string(static_cast<size_t>(level) * 2, ' ')
                 << "PhysicalProject(columns=" << project->columns.size() << ")\n";
             append_ref(project->input, append_ref, level + 1);
+            return;
+        }
+        if (const auto* sort = std::get_if<PhysicalSort>(&node->value))
+        {
+            out << std::string(static_cast<size_t>(level) * 2, ' ')
+                << "PhysicalSort(keys=" << sort->keys.size() << ")\n";
+            append_ref(sort->input, append_ref, level + 1);
             return;
         }
         if (const auto* limit = std::get_if<PhysicalLimit>(&node->value))

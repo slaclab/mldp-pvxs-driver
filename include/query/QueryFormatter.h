@@ -26,7 +26,8 @@ enum class QueryOutputFormat
 
 void formatQueryResult(const query::QueryExecutionResult& result,
                        QueryOutputFormat                  format,
-                       std::ostream&                      output);
+                       std::ostream&                      output,
+                       bool                               expanded = false);
 
 void printQueryStats(const query::QueryStats& stats, std::ostream& output);
 

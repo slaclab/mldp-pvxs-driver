@@ -18,18 +18,20 @@ using namespace mldp_pvxs_driver::query::planner;
 
 namespace {
 
-std::pair<std::string, std::string> splitQualifiedColumn(const std::string& value)
+std::pair<std::string, std::string> splitQualifiedColumn(const std::string&           value,
+                                                         const std::set<std::string>& table_aliases)
 {
     const auto dot = value.find('.');
-    if (dot == std::string::npos)
+    if (dot == std::string::npos || !table_aliases.contains(value.substr(0, dot)))
     {
         return {"", value};
     }
     return {value.substr(0, dot), value.substr(dot + 1)};
 }
 
-void collectReferencedColumns(const plan::LogicalNodePtr& node,
-                              std::map<std::string, std::set<std::string>>& columns)
+void collectReferencedColumns(const plan::LogicalNodePtr&                   node,
+                              std::map<std::string, std::set<std::string>>& columns,
+                              const std::set<std::string>&                  table_aliases)
 {
     if (!node)
     {
@@ -51,36 +53,84 @@ void collectReferencedColumns(const plan::LogicalNodePtr& node,
             const auto alias = predicate.table_alias.empty() ? "" : predicate.table_alias;
             columns[alias].insert(predicate.column == "tag" ? "tags" : predicate.column);
         }
-        collectReferencedColumns(filter->input, columns);
+        collectReferencedColumns(filter->input, columns, table_aliases);
         return;
     }
     if (const auto* project = std::get_if<plan::LogicalProject>(&node->value))
     {
         for (const auto& column : project->columns)
         {
-            const auto [alias, name] = splitQualifiedColumn(column);
+            const auto [alias, name] = splitQualifiedColumn(column, table_aliases);
             columns[alias].insert(name);
         }
-        collectReferencedColumns(project->input, columns);
+        collectReferencedColumns(project->input, columns, table_aliases);
+        return;
+    }
+    if (const auto* sort = std::get_if<plan::LogicalSort>(&node->value))
+    {
+        for (const auto& key : sort->keys)
+        {
+            const auto [alias, name] = splitQualifiedColumn(key.column, table_aliases);
+            columns[alias].insert(name);
+        }
+        collectReferencedColumns(sort->input, columns, table_aliases);
         return;
     }
     if (const auto* limit = std::get_if<plan::LogicalLimit>(&node->value))
     {
-        collectReferencedColumns(limit->input, columns);
+        collectReferencedColumns(limit->input, columns, table_aliases);
         return;
     }
     if (const auto* join = std::get_if<plan::LogicalJoin>(&node->value))
     {
-        const auto [left_alias, left_name] = splitQualifiedColumn(join->condition.left_column);
-        const auto [right_alias, right_name] = splitQualifiedColumn(join->condition.right_column);
+        const auto [left_alias, left_name] = splitQualifiedColumn(join->condition.left_column, table_aliases);
+        const auto [right_alias, right_name] = splitQualifiedColumn(join->condition.right_column, table_aliases);
         columns[left_alias].insert(left_name);
         columns[right_alias].insert(right_name);
-        collectReferencedColumns(join->left, columns);
-        collectReferencedColumns(join->right, columns);
+        collectReferencedColumns(join->left, columns, table_aliases);
+        collectReferencedColumns(join->right, columns, table_aliases);
     }
 }
 
-void applyProjectionHint(const plan::LogicalNodePtr& node,
+void collectTableAliases(const plan::LogicalNodePtr& node, std::set<std::string>& table_aliases)
+{
+    if (!node)
+    {
+        return;
+    }
+    if (const auto* scan = std::get_if<plan::LogicalScan>(&node->value))
+    {
+        table_aliases.insert(scan->table_alias);
+        return;
+    }
+    if (const auto* filter = std::get_if<plan::LogicalFilter>(&node->value))
+    {
+        collectTableAliases(filter->input, table_aliases);
+        return;
+    }
+    if (const auto* project = std::get_if<plan::LogicalProject>(&node->value))
+    {
+        collectTableAliases(project->input, table_aliases);
+        return;
+    }
+    if (const auto* sort = std::get_if<plan::LogicalSort>(&node->value))
+    {
+        collectTableAliases(sort->input, table_aliases);
+        return;
+    }
+    if (const auto* limit = std::get_if<plan::LogicalLimit>(&node->value))
+    {
+        collectTableAliases(limit->input, table_aliases);
+        return;
+    }
+    if (const auto* join = std::get_if<plan::LogicalJoin>(&node->value))
+    {
+        collectTableAliases(join->left, table_aliases);
+        collectTableAliases(join->right, table_aliases);
+    }
+}
+
+void applyProjectionHint(const plan::LogicalNodePtr&                         node,
                          const std::map<std::string, std::set<std::string>>& columns)
 {
     if (!node)
@@ -125,6 +175,11 @@ void applyProjectionHint(const plan::LogicalNodePtr& node,
         applyProjectionHint(project->input, columns);
         return;
     }
+    if (const auto* sort = std::get_if<plan::LogicalSort>(&node->value))
+    {
+        applyProjectionHint(sort->input, columns);
+        return;
+    }
     if (const auto* limit = std::get_if<plan::LogicalLimit>(&node->value))
     {
         applyProjectionHint(limit->input, columns);
@@ -142,7 +197,9 @@ void applyProjectionHint(const plan::LogicalNodePtr& node,
 plan::LogicalNodePtr mldp_pvxs_driver::query::planner::applyColumnPruning(plan::LogicalNodePtr root)
 {
     std::map<std::string, std::set<std::string>> columns;
-    collectReferencedColumns(root, columns);
+    std::set<std::string>                        table_aliases;
+    collectTableAliases(root, table_aliases);
+    collectReferencedColumns(root, columns, table_aliases);
     applyProjectionHint(root, columns);
     return root;
 }

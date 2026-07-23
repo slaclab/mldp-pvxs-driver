@@ -11,6 +11,7 @@
 #pragma once
 
 #include <query/IQueryable.h>
+#include <query/plan/LogicalPlan.h>
 
 #include <memory>
 #include <set>
@@ -44,6 +45,11 @@ struct PhysicalProject {
 struct PhysicalLimit {
     PhysicalNodePtr input;
     uint64_t       limit{0};
+};
+
+struct PhysicalSort {
+    PhysicalNodePtr       input;
+    std::vector<SortKey> keys;
 };
 
 enum class JoinType { INNER, LEFT_OUTER };
@@ -95,6 +101,7 @@ struct PhysicalExplain {
 using PhysicalNodeVariant = std::variant<PhysicalTableScan,
                                          PhysicalFilter,
                                          PhysicalProject,
+                                         PhysicalSort,
                                          PhysicalLimit,
                                          PhysicalHashJoin,
                                          PhysicalNestedLoopJoin,

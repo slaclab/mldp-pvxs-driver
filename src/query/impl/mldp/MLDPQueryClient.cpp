@@ -134,20 +134,33 @@ std::pair<int64_t, int64_t> requestedTimeRange(const std::vector<Predicate>& pre
     return {begin, end};
 }
 
-std::set<std::string> dynamicKeys(const std::set<std::string>& projection_hint,
-                                  const std::vector<Predicate>& predicates,
-                                  const std::string_view prefix)
+std::set<std::string> attributeKeys(const std::vector<dp::service::common::ColumnMetadata>& metadata)
 {
     std::set<std::string> keys;
-    const auto collect = [&keys, prefix](const std::string& name)
+    for (const auto& column_metadata : metadata)
     {
-        if (name.rfind(prefix, 0) == 0 && name.size() > prefix.size())
-            keys.insert(name.substr(prefix.size()));
-    };
-    for (const auto& name : projection_hint)
-        collect(name);
-    for (const auto& predicate : predicates)
-        collect(predicate.column);
+        for (const auto& attribute : column_metadata.attributes())
+        {
+            keys.insert(attribute.name());
+        }
+    }
+    return keys;
+}
+
+std::set<std::string> provenanceKeys(const std::vector<dp::service::common::ColumnMetadata>& metadata)
+{
+    std::set<std::string> keys;
+    for (const auto& column_metadata : metadata)
+    {
+        if (!column_metadata.provenance().source().empty())
+        {
+            keys.insert("source");
+        }
+        if (!column_metadata.provenance().process().empty())
+        {
+            keys.insert("process");
+        }
+    }
     return keys;
 }
 
@@ -155,20 +168,20 @@ class TimeSeriesMetadataBuilders
 {
 public:
     TimeSeriesMetadataBuilders(const std::set<std::string>& attributes, const std::set<std::string>& provenance)
-        : tags_values_(std::make_shared<arrow::StringBuilder>()), tags_(arrow::default_memory_pool(), tags_values_), attributes_keys_(std::make_shared<arrow::StringBuilder>()),
-          attributes_values_(std::make_shared<arrow::StringBuilder>()), attributes_(arrow::default_memory_pool(), attributes_keys_, attributes_values_),
-          provenance_keys_(std::make_shared<arrow::StringBuilder>()), provenance_values_(std::make_shared<arrow::StringBuilder>()),
-          provenance_(arrow::default_memory_pool(), provenance_keys_, provenance_values_)
+        : tags_values_(std::make_shared<arrow::StringBuilder>()), tags_(arrow::default_memory_pool(), tags_values_), attributes_keys_(std::make_shared<arrow::StringBuilder>()), attributes_values_(std::make_shared<arrow::StringBuilder>()), attributes_(arrow::default_memory_pool(), attributes_keys_, attributes_values_), provenance_keys_(std::make_shared<arrow::StringBuilder>()), provenance_values_(std::make_shared<arrow::StringBuilder>()), provenance_(arrow::default_memory_pool(), provenance_keys_, provenance_values_)
     {
-        for (const auto& key : attributes) attributes_values_by_key_.emplace(key, std::make_unique<arrow::StringBuilder>());
-        for (const auto& key : provenance) provenance_values_by_key_.emplace(key, std::make_unique<arrow::StringBuilder>());
+        for (const auto& key : attributes)
+            attributes_values_by_key_.emplace(key, std::make_unique<arrow::StringBuilder>());
+        for (const auto& key : provenance)
+            provenance_values_by_key_.emplace(key, std::make_unique<arrow::StringBuilder>());
     }
 
     void append(const dp::service::common::ColumnMetadata& metadata)
     {
         if (!tags_.Append().ok() || !attributes_.Append().ok() || !provenance_.Append().ok())
             throw std::runtime_error("Failed to begin Arrow time-series metadata collection");
-        for (const auto& tag : metadata.tags()) append(*tags_values_, tag);
+        for (const auto& tag : metadata.tags())
+            append(*tags_values_, tag);
         std::map<std::string, std::string> attributes;
         for (const auto& attribute : metadata.attributes())
         {
@@ -177,9 +190,14 @@ public:
             append(*attributes_values_, attribute.value());
         }
         const std::map<std::string, std::string> provenance = {
-            {"source", metadata.provenance().source()}, {"process", metadata.provenance().process()}};
+            {"source", metadata.provenance().source()},
+            {"process", metadata.provenance().process()}};
         for (const auto& [key, value] : provenance)
-            if (!value.empty()) { append(*provenance_keys_, key); append(*provenance_values_, value); }
+            if (!value.empty())
+            {
+                append(*provenance_keys_, key);
+                append(*provenance_values_, value);
+            }
         appendScalars(attributes_values_by_key_, attributes);
         appendScalars(provenance_values_by_key_, provenance);
     }
@@ -196,34 +214,48 @@ public:
 private:
     static void append(arrow::StringBuilder& builder, std::string_view value)
     {
-        if (!builder.Append(value).ok()) throw std::runtime_error("Failed to append Arrow metadata string");
+        if (!builder.Append(value).ok())
+            throw std::runtime_error("Failed to append Arrow metadata string");
     }
+
     static void appendScalars(std::map<std::string, std::unique_ptr<arrow::StringBuilder>>& builders,
-                              const std::map<std::string, std::string>& values)
+                              const std::map<std::string, std::string>&                     values)
     {
         for (auto& [key, builder] : builders)
-            if (const auto it = values.find(key); it != values.end()) append(*builder, it->second);
-            else if (!builder->AppendNull().ok()) throw std::runtime_error("Failed to append null metadata scalar");
+            if (const auto it = values.find(key); it != values.end())
+                append(*builder, it->second);
+            else if (!builder->AppendNull().ok())
+                throw std::runtime_error("Failed to append null metadata scalar");
     }
+
     template <typename Builder>
     static void finishCollection(const std::string& name, Builder& builder, std::vector<std::shared_ptr<arrow::Field>>& fields, std::vector<std::shared_ptr<arrow::Array>>& arrays)
     {
         std::shared_ptr<arrow::Array> array;
-        if (!builder.Finish(&array).ok()) throw std::runtime_error("Failed to finish Arrow metadata collection");
-        fields.push_back(arrow::field(name, array->type())); arrays.push_back(std::move(array));
+        if (!builder.Finish(&array).ok())
+            throw std::runtime_error("Failed to finish Arrow metadata collection");
+        fields.push_back(arrow::field(name, array->type()));
+        arrays.push_back(std::move(array));
     }
+
     static void finishScalars(const std::string& prefix, std::map<std::string, std::unique_ptr<arrow::StringBuilder>>& builders, std::vector<std::shared_ptr<arrow::Field>>& fields, std::vector<std::shared_ptr<arrow::Array>>& arrays)
     {
         for (auto& [key, builder] : builders)
         {
             std::shared_ptr<arrow::Array> array;
-            if (!builder->Finish(&array).ok()) throw std::runtime_error("Failed to finish Arrow metadata scalar");
-            fields.push_back(arrow::field(prefix + key, array->type(), true)); arrays.push_back(std::move(array));
+            if (!builder->Finish(&array).ok())
+                throw std::runtime_error("Failed to finish Arrow metadata scalar");
+            fields.push_back(arrow::field(prefix + key, array->type(), true));
+            arrays.push_back(std::move(array));
         }
     }
-    std::shared_ptr<arrow::StringBuilder> tags_values_; arrow::ListBuilder tags_;
-    std::shared_ptr<arrow::StringBuilder> attributes_keys_, attributes_values_; arrow::MapBuilder attributes_;
-    std::shared_ptr<arrow::StringBuilder> provenance_keys_, provenance_values_; arrow::MapBuilder provenance_;
+
+    std::shared_ptr<arrow::StringBuilder>                        tags_values_;
+    arrow::ListBuilder                                           tags_;
+    std::shared_ptr<arrow::StringBuilder>                        attributes_keys_, attributes_values_;
+    arrow::MapBuilder                                            attributes_;
+    std::shared_ptr<arrow::StringBuilder>                        provenance_keys_, provenance_values_;
+    arrow::MapBuilder                                            provenance_;
     std::map<std::string, std::unique_ptr<arrow::StringBuilder>> attributes_values_by_key_, provenance_values_by_key_;
 };
 
@@ -407,7 +439,7 @@ extractTimestampRange(const DataTimestamps& data_timestamps)
 
 QueryResult MLDPQueryClient::execute(std::string_view              table_name,
                                      const std::vector<Predicate>& pushable_predicates,
-                                     const std::set<std::string>& projection_hint,
+                                     const std::set<std::string>&,
                                      const ExecutionContext& context,
                                      std::string_view        page_token)
 {
@@ -500,10 +532,10 @@ QueryResult MLDPQueryClient::execute(std::string_view              table_name,
     for (const auto& pv_name : pvs)
         request.mutable_pvnamelist()->add_pvnames(pv_name);
 
-    auto                                      handle = pool_->acquire();
-    grpc::ClientContext                       rpc_context;
-    dp::service::query::QueryTableResponse    response;
-    const auto                                status = handle->query_stub->queryTable(&rpc_context, request, &response);
+    auto                                   handle = pool_->acquire();
+    grpc::ClientContext                    rpc_context;
+    dp::service::query::QueryTableResponse response;
+    const auto                             status = handle->query_stub->queryTable(&rpc_context, request, &response);
     if (!status.ok())
         throw std::runtime_error("MLDP queryTable failed: " + status.error_message());
     if (!response.has_tableresult())
@@ -520,7 +552,7 @@ QueryResult MLDPQueryClient::execute(std::string_view              table_name,
     }
     else if (dt.has_samplingclock())
     {
-        const auto& clock    = dt.samplingclock();
+        const auto&   clock = dt.samplingclock();
         const int64_t start_ns = static_cast<int64_t>(clock.starttime().epochseconds()) * 1'000'000'000LL +
                                  static_cast<int64_t>(clock.starttime().nanoseconds());
         for (uint64_t i = 0; i < static_cast<uint64_t>(clock.count()); ++i)
@@ -529,11 +561,12 @@ QueryResult MLDPQueryClient::execute(std::string_view              table_name,
 
     struct Row
     {
-        std::string                      pv_name;
-        int64_t                          time_ns;
-        dp::service::common::DataValue   value;
+        std::string                         pv_name;
+        int64_t                             time_ns;
+        dp::service::common::DataValue      value;
         dp::service::common::ColumnMetadata metadata;
     };
+
     std::vector<Row> all_rows;
     for (const auto& column : col_table.datacolumns())
     {
@@ -544,7 +577,17 @@ QueryResult MLDPQueryClient::execute(std::string_view              table_name,
         }
     }
     std::stable_sort(all_rows.begin(), all_rows.end(),
-                     [](const Row& a, const Row& b) { return a.time_ns < b.time_ns; });
+                     [](const Row& a, const Row& b)
+                     {
+                         return a.time_ns < b.time_ns;
+                     });
+
+    std::vector<dp::service::common::ColumnMetadata> all_metadata;
+    all_metadata.reserve(all_rows.size());
+    for (const auto& row : all_rows)
+    {
+        all_metadata.push_back(row.metadata);
+    }
 
     if (ts_offset > all_rows.size())
         ts_offset = all_rows.size();
@@ -552,12 +595,11 @@ QueryResult MLDPQueryClient::execute(std::string_view              table_name,
     const auto page_sz = context.join_batch_size == 0 ? all_rows.size() : context.join_batch_size;
     const auto page_end = std::min(all_rows.size(), ts_offset + page_sz);
 
-    auto* pool = context.pool != nullptr ? context.pool : arrow::default_memory_pool();
-    arrow::StringBuilder    pv_builder;
-    arrow::TimestampBuilder time_builder(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), pool);
-    DataValueBuilder        value_builder(pool);
-    TimeSeriesMetadataBuilders metadata(dynamicKeys(projection_hint, pushable_predicates, "attributes."),
-                                        dynamicKeys(projection_hint, pushable_predicates, "provenance."));
+    auto*                      pool = context.pool != nullptr ? context.pool : arrow::default_memory_pool();
+    arrow::StringBuilder       pv_builder;
+    arrow::TimestampBuilder    time_builder(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), pool);
+    DataValueBuilder           value_builder(pool);
+    TimeSeriesMetadataBuilders metadata(attributeKeys(all_metadata), provenanceKeys(all_metadata));
     for (std::size_t i = ts_offset; i < page_end; ++i)
     {
         if (!pv_builder.Append(all_rows[i].pv_name).ok() || !time_builder.Append(all_rows[i].time_ns).ok())
@@ -569,7 +611,7 @@ QueryResult MLDPQueryClient::execute(std::string_view              table_name,
     std::shared_ptr<arrow::Array> time;
     if (!pv_builder.Finish(&pv).ok() || !time_builder.Finish(&time).ok())
         throw std::runtime_error("Failed to finish Arrow time-series batch");
-    const auto value = value_builder.finish();
+    const auto                                 value = value_builder.finish();
     std::vector<std::shared_ptr<arrow::Field>> fields = {arrow::field("pv", arrow::utf8()), arrow::field("time", time->type()), arrow::field("value", value->type())};
     std::vector<std::shared_ptr<arrow::Array>> arrays = {pv, time, value};
     metadata.finish(fields, arrays);

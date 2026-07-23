@@ -27,6 +27,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <unordered_map>
+#include <numeric>
 
 using namespace mldp_pvxs_driver::query;
 
@@ -401,6 +402,81 @@ applyLimit(const std::vector<std::shared_ptr<arrow::RecordBatch>>& input, const 
     return output;
 }
 
+std::shared_ptr<arrow::RecordBatch> combineBatches(const std::vector<std::shared_ptr<arrow::RecordBatch>>& batches);
+
+std::vector<std::shared_ptr<arrow::RecordBatch>>
+applySort(const std::vector<std::shared_ptr<arrow::RecordBatch>>& input, const std::vector<plan::SortKey>& keys)
+{
+    if (input.empty() || keys.empty())
+    {
+        return input;
+    }
+    const auto batch = combineBatches(input);
+    if (!batch)
+    {
+        return {};
+    }
+
+    std::vector<int> indices;
+    indices.reserve(keys.size());
+    for (const auto& key : keys)
+    {
+        const auto index = batch->schema()->GetFieldIndex(key.column);
+        if (index < 0)
+        {
+            throw std::runtime_error("ORDER BY references unknown column: " + key.column);
+        }
+        indices.push_back(index);
+    }
+
+    std::vector<int64_t> rows(static_cast<std::size_t>(batch->num_rows()));
+    std::iota(rows.begin(), rows.end(), 0);
+    std::stable_sort(rows.begin(), rows.end(), [&](const int64_t lhs_row, const int64_t rhs_row)
+    {
+        for (std::size_t key_index = 0; key_index < keys.size(); ++key_index)
+        {
+            const auto lhs = batch->column(indices[key_index])->GetScalar(lhs_row);
+            const auto rhs = batch->column(indices[key_index])->GetScalar(rhs_row);
+            if (!lhs.ok() || !rhs.ok())
+            {
+                throw std::runtime_error("Failed to read ORDER BY value");
+            }
+            const bool lhs_null = !*lhs || !(*lhs)->is_valid;
+            const bool rhs_null = !*rhs || !(*rhs)->is_valid;
+            if (lhs_null || rhs_null)
+            {
+                if (lhs_null != rhs_null) return !lhs_null;
+                continue;
+            }
+            const auto lhs_value = scalarToString(*lhs);
+            const auto rhs_value = scalarToString(*rhs);
+            if (lhs_value == rhs_value) continue;
+            return keys[key_index].descending ? lhs_value > rhs_value : lhs_value < rhs_value;
+        }
+        return false;
+    });
+
+    arrow::Int64Builder index_builder;
+    if (!index_builder.AppendValues(rows).ok())
+    {
+        throw std::runtime_error("Failed to build ORDER BY row indices");
+    }
+    std::shared_ptr<arrow::Array> index_array;
+    if (!index_builder.Finish(&index_array).ok())
+    {
+        throw std::runtime_error("Failed to finish ORDER BY row indices");
+    }
+    std::vector<std::shared_ptr<arrow::Array>> arrays;
+    arrays.reserve(batch->num_columns());
+    for (const auto& column : batch->columns())
+    {
+        const auto taken = arrow::compute::Take(column, index_array);
+        if (!taken.ok()) throw std::runtime_error(taken.status().ToString());
+        arrays.push_back(taken->make_array());
+    }
+    return {arrow::RecordBatch::Make(batch->schema(), batch->num_rows(), std::move(arrays))};
+}
+
 std::shared_ptr<arrow::RecordBatch> combineBatches(const std::vector<std::shared_ptr<arrow::RecordBatch>>& batches)
 {
     if (batches.empty())
@@ -727,6 +803,7 @@ void collectPlanWarnings(const plan::PhysicalNodePtr& node, std::vector<std::str
         collectPlanWarnings(project->input, warnings);
         return;
     }
+
     if (const auto* limit = std::get_if<plan::PhysicalLimit>(&node->value))
     {
         collectPlanWarnings(limit->input, warnings);
@@ -784,6 +861,11 @@ executeNode(const plan::PhysicalNodePtr& node, QueryStats& stats, const Executio
     if (const auto* project = std::get_if<plan::PhysicalProject>(&node->value))
     {
         return applyProjection(executeNode(project->input, stats, context), project->columns);
+    }
+
+    if (const auto* sort = std::get_if<plan::PhysicalSort>(&node->value))
+    {
+        return applySort(executeNode(sort->input, stats, context), sort->keys);
     }
 
     if (const auto* limit = std::get_if<plan::PhysicalLimit>(&node->value))

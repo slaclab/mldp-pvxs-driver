@@ -198,6 +198,14 @@ TEST(QueryFormatterTest, FormatsNativeMetadataCollectionsWithoutExpandingRows)
     EXPECT_NE(table.str().find("sample"), std::string::npos);
     EXPECT_NE(table.str().find("magnet"), std::string::npos);
     EXPECT_NE(table.str().find("namespace=mldp_sample"), std::string::npos);
+    EXPECT_NE(table.str().find("sample, magnet"), std::string::npos);
+    EXPECT_NE(table.str().find("namespace=mldp_sample, units=A"), std::string::npos);
+
+    std::ostringstream expanded;
+    cli::formatQueryResult(result, cli::QueryOutputFormat::Table, expanded, true);
+    EXPECT_NE(expanded.str().find("-[ RECORD 1 ]"), std::string::npos);
+    EXPECT_NE(expanded.str().find("  - sample"), std::string::npos);
+    EXPECT_NE(expanded.str().find("  namespace: mldp_sample"), std::string::npos);
 }
 
 TEST(QuerySubcommandTest, PreparesBothSupportedQueryableShapes)
@@ -318,6 +326,7 @@ TEST(QuerySubcommandTest, ReplShowsHelpAndExitsOnQuit)
     EXPECT_EQ(querySubcommand.run(1, argv, config_sources, input, output, error), 0);
     EXPECT_NE(output.str().find("mldp> "), std::string::npos);
     EXPECT_NE(output.str().find("Enter one SQL statement terminated by ';'."), std::string::npos);
+    EXPECT_NE(output.str().find("Ctrl-L (clear screen)"), std::string::npos);
     EXPECT_TRUE(error.str().empty());
 }
 

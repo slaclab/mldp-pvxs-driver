@@ -17,14 +17,32 @@ plan::LogicalNodePtr mldp_pvxs_driver::query::planner::buildLogicalPlan(const pl
 {
     const bool qualify_output = !bound.joins.empty();
 
-    const auto buildTableSubtree = [](const plan::BoundTable& table) -> plan::LogicalNodePtr
+    const auto projectionHint = [&bound, qualify_output](const plan::BoundTable& table)
+    {
+        std::set<std::string> hint;
+        const auto collect = [&hint, &table, qualify_output](const std::string& column)
+        {
+            const auto prefix = qualify_output ? table.table_alias + "." : "";
+            if (column.rfind(prefix, 0) != 0) return;
+            const auto local = column.substr(prefix.size());
+            if (local.rfind("attributes.", 0) == 0 || local.rfind("provenance.", 0) == 0)
+            {
+                hint.insert(local);
+            }
+        };
+        for (const auto& column : bound.select_columns) collect(column);
+        for (const auto& key : bound.order_by) collect(key.column);
+        return hint;
+    };
+
+    const auto buildTableSubtree = [&projectionHint](const plan::BoundTable& table) -> plan::LogicalNodePtr
     {
         auto node = plan::makeNode(plan::LogicalScan{
             .table_name = table.table_name,
             .table_alias = table.table_alias,
             .schema = table.schema,
             .pushable_predicates = {},
-            .projection_hint = {}});
+            .projection_hint = projectionHint(table)});
         if (!table.predicates.empty())
         {
             node = plan::makeNode(plan::LogicalFilter{
@@ -46,6 +64,13 @@ plan::LogicalNodePtr mldp_pvxs_driver::query::planner::buildLogicalPlan(const pl
             .left_bounded = false,
             .right_bounded = false,
             .warnings = {}});
+    }
+
+    if (!bound.order_by.empty())
+    {
+        root = plan::makeNode(plan::LogicalSort{
+            .input = root,
+            .keys = bound.order_by});
     }
 
     if (!bound.select_all)

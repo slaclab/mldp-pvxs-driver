@@ -765,11 +765,15 @@ static const std::unordered_map<std::string, TokenType> kKeywords = {
     {"NOW", TokenType::NOW},
     {"PREFIX", TokenType::PREFIX},
     {"CONTAINS", TokenType::CONTAINS},
+    {"ORDER", TokenType::ORDER},
+    {"BY", TokenType::BY},
+    {"ASC", TokenType::ASC},
+    {"DESC", TokenType::DESC},
 };
 
 } // namespace mldp_pvxs_driver::query
-#line 767 "src/query/parser/generated/QueryFlexLexer.cpp"
-#line 768 "src/query/parser/generated/QueryFlexLexer.cpp"
+#line 775 "src/query/parser/generated/QueryFlexLexer.cpp"
+#line 776 "src/query/parser/generated/QueryFlexLexer.cpp"
 
 #define INITIAL 0
 
@@ -1027,10 +1031,10 @@ YY_DECL
 		}
 
 	{
-#line 133 "src/query/parser/grammar/QueryLexer.l"
+#line 141 "src/query/parser/grammar/QueryLexer.l"
 
 
-#line 1029 "src/query/parser/generated/QueryFlexLexer.cpp"
+#line 1037 "src/query/parser/generated/QueryFlexLexer.cpp"
 
 	while ( /*CONSTCOND*/1 )		/* loops until end-of-file is reached */
 		{
@@ -1090,7 +1094,7 @@ do_action:	/* This label is used only to access EOF actions. */
 case 1:
 /* rule 1 can match eol */
 YY_RULE_SETUP
-#line 135 "src/query/parser/grammar/QueryLexer.l"
+#line 143 "src/query/parser/grammar/QueryLexer.l"
 {
     auto* extra = static_cast<mldp_pvxs_driver::query::FlexLexerExtra*>(yyget_extra(yyscanner));
     mldp_pvxs_driver::query::advancePosition(extra, yytext, yyleng);
@@ -1098,7 +1102,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 2:
 YY_RULE_SETUP
-#line 140 "src/query/parser/grammar/QueryLexer.l"
+#line 148 "src/query/parser/grammar/QueryLexer.l"
 {
     auto* extra = static_cast<mldp_pvxs_driver::query::FlexLexerExtra*>(yyget_extra(yyscanner));
     const auto start = mldp_pvxs_driver::query::TokenPosition{extra->offset, extra->line, extra->column};
@@ -1123,7 +1127,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 3:
 YY_RULE_SETUP
-#line 162 "src/query/parser/grammar/QueryLexer.l"
+#line 170 "src/query/parser/grammar/QueryLexer.l"
 {
     auto* extra = static_cast<mldp_pvxs_driver::query::FlexLexerExtra*>(yyget_extra(yyscanner));
     const auto start = mldp_pvxs_driver::query::TokenPosition{extra->offset, extra->line, extra->column};
@@ -1134,7 +1138,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 4:
 YY_RULE_SETUP
-#line 170 "src/query/parser/grammar/QueryLexer.l"
+#line 178 "src/query/parser/grammar/QueryLexer.l"
 {
     auto* extra = static_cast<mldp_pvxs_driver::query::FlexLexerExtra*>(yyget_extra(yyscanner));
     const auto start = mldp_pvxs_driver::query::TokenPosition{extra->offset, extra->line, extra->column};
@@ -1145,7 +1149,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 5:
 YY_RULE_SETUP
-#line 178 "src/query/parser/grammar/QueryLexer.l"
+#line 186 "src/query/parser/grammar/QueryLexer.l"
 {
     auto* extra = static_cast<mldp_pvxs_driver::query::FlexLexerExtra*>(yyget_extra(yyscanner));
     const auto start = mldp_pvxs_driver::query::TokenPosition{extra->offset, extra->line, extra->column};
@@ -1165,7 +1169,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 6:
 YY_RULE_SETUP
-#line 195 "src/query/parser/grammar/QueryLexer.l"
+#line 203 "src/query/parser/grammar/QueryLexer.l"
 {
     auto* extra = static_cast<mldp_pvxs_driver::query::FlexLexerExtra*>(yyget_extra(yyscanner));
     const auto start = mldp_pvxs_driver::query::TokenPosition{extra->offset, extra->line, extra->column};
@@ -1176,7 +1180,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 7:
 YY_RULE_SETUP
-#line 203 "src/query/parser/grammar/QueryLexer.l"
+#line 211 "src/query/parser/grammar/QueryLexer.l"
 {
     auto* extra = static_cast<mldp_pvxs_driver::query::FlexLexerExtra*>(yyget_extra(yyscanner));
     const auto start = mldp_pvxs_driver::query::TokenPosition{extra->offset, extra->line, extra->column};
@@ -1188,17 +1192,17 @@ YY_RULE_SETUP
 }
 	YY_BREAK
 case YY_STATE_EOF(INITIAL):
-#line 213 "src/query/parser/grammar/QueryLexer.l"
+#line 221 "src/query/parser/grammar/QueryLexer.l"
 {
     return 0;
 }
 	YY_BREAK
 case 8:
 YY_RULE_SETUP
-#line 217 "src/query/parser/grammar/QueryLexer.l"
+#line 225 "src/query/parser/grammar/QueryLexer.l"
 YY_FATAL_ERROR( "flex scanner jammed" );
 	YY_BREAK
-#line 1197 "src/query/parser/generated/QueryFlexLexer.cpp"
+#line 1205 "src/query/parser/generated/QueryFlexLexer.cpp"
 
 	case YY_END_OF_BUFFER:
 		{
@@ -2327,5 +2331,6 @@ void yyfree (void * ptr , yyscan_t yyscanner)
 
 #define YYTABLES_NAME "yytables"
 
-#line 217 "src/query/parser/grammar/QueryLexer.l"
+#line 225 "src/query/parser/grammar/QueryLexer.l"
+
 

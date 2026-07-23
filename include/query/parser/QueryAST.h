@@ -74,12 +74,20 @@ struct JoinClause {
     JoinCondition condition;
 };
 
+enum class SortDirection { ASCENDING, DESCENDING };
+
+struct OrderByItem {
+    QualifiedColumn column;
+    SortDirection   direction{SortDirection::ASCENDING};
+};
+
 struct SelectStatement {
     bool                         select_all{false};
     std::vector<QualifiedColumn> columns;
     TableRef                     from;
     std::vector<JoinClause>      joins;
     std::vector<WherePredicate>  predicates;
+    std::vector<OrderByItem>      order_by;
     std::optional<uint64_t>      limit;
     std::optional<std::string>   page_token;
 };

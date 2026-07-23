@@ -973,6 +973,24 @@ if(MLDP_PVXS_DRIVER_TESTS)
     endif()
     gtest_discover_tests(queryable_factory_test)
 
+    add_executable(mldp_query_client_test
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/query/mldp_query_client_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/ryml_single_header_translation_unit.cpp"
+    )
+    target_include_directories(mldp_query_client_test PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test"
+        "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    if(APPLE)
+        target_link_libraries(mldp_query_client_test PRIVATE gtest_main
+            -Wl,-force_load $<TARGET_FILE:lib${PROJECT_NAME}>)
+    else()
+        target_link_libraries(mldp_query_client_test PRIVATE gtest_main
+            -Wl,--whole-archive lib${PROJECT_NAME} -Wl,--no-whole-archive)
+    endif()
+    gtest_discover_tests(mldp_query_client_test)
+
     add_executable(query_arrow_foundation_test
         "${CMAKE_CURRENT_SOURCE_DIR}/test/query/query_arrow_foundation_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/query/QuerySubcommand.cpp"

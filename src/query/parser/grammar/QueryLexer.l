@@ -122,6 +122,10 @@ static const std::unordered_map<std::string, TokenType> kKeywords = {
     {"NOW", TokenType::NOW},
     {"PREFIX", TokenType::PREFIX},
     {"CONTAINS", TokenType::CONTAINS},
+    {"ORDER", TokenType::ORDER},
+    {"BY", TokenType::BY},
+    {"ASC", TokenType::ASC},
+    {"DESC", TokenType::DESC},
 };
 
 } // namespace mldp_pvxs_driver::query

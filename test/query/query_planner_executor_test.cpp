@@ -62,6 +62,7 @@ public:
                 {"pv", query::ColumnType::STRING, true, true, {query::PredicateOp::EQ, query::PredicateOp::IN}, {}, "PV"},
                 {"owner", query::ColumnType::STRING, false, true, {}, {query::PredicateOp::LIKE}, "owner"},
                 {"tags", query::ColumnType::STRING, false, true, {}, {}, "tags"},
+                {"attributes", query::ColumnType::STRING, false, true, {}, {}, "attributes"},
                 {"tag", query::ColumnType::STRING, false, false, {query::PredicateOp::EQ, query::PredicateOp::IN}, {}, "tag membership"},
             };
         }
@@ -94,6 +95,8 @@ public:
             arrow::StringBuilder pv_builder;
             arrow::StringBuilder owner_builder;
             arrow::StringBuilder tags_builder;
+            arrow::StringBuilder attributes_builder;
+            arrow::StringBuilder device_group_builder;
 
             const auto include_row = [&](const std::string& pv) -> bool
             {
@@ -132,20 +135,28 @@ public:
                 EXPECT_TRUE(pv_builder.Append("A").ok());
                 EXPECT_TRUE(owner_builder.Append("alice").ok());
                 EXPECT_TRUE(tags_builder.Append("sample").ok());
+                EXPECT_TRUE(attributes_builder.Append("device_group=RF").ok());
+                EXPECT_TRUE(device_group_builder.Append("RF").ok());
             }
             if (include_row("C"))
             {
                 EXPECT_TRUE(pv_builder.Append("C").ok());
                 EXPECT_TRUE(owner_builder.Append("carol").ok());
                 EXPECT_TRUE(tags_builder.Append("configuration").ok());
+                EXPECT_TRUE(attributes_builder.Append("device_group=MAGNET").ok());
+                EXPECT_TRUE(device_group_builder.Append("MAGNET").ok());
             }
 
             std::shared_ptr<arrow::Array> pv;
             std::shared_ptr<arrow::Array> owner;
             std::shared_ptr<arrow::Array> tags;
+            std::shared_ptr<arrow::Array> attributes;
+            std::shared_ptr<arrow::Array> device_group;
             EXPECT_TRUE(pv_builder.Finish(&pv).ok());
             EXPECT_TRUE(owner_builder.Finish(&owner).ok());
             EXPECT_TRUE(tags_builder.Finish(&tags).ok());
+            EXPECT_TRUE(attributes_builder.Finish(&attributes).ok());
+            EXPECT_TRUE(device_group_builder.Finish(&device_group).ok());
 
             std::vector<std::shared_ptr<arrow::Field>> fields;
             std::vector<std::shared_ptr<arrow::Array>> columns;
@@ -163,6 +174,16 @@ public:
             {
                 fields.push_back(arrow::field("tags", arrow::utf8()));
                 columns.push_back(tags);
+            }
+            if (projection_hint.empty() || projection_hint.contains("attributes"))
+            {
+                fields.push_back(arrow::field("attributes", arrow::utf8()));
+                columns.push_back(attributes);
+            }
+            if (projection_hint.empty() || projection_hint.contains("attributes.device_group"))
+            {
+                fields.push_back(arrow::field("attributes.device_group", arrow::utf8()));
+                columns.push_back(device_group);
             }
 
             return query::QueryResult{
@@ -298,8 +319,8 @@ TEST_F(PlannerExecutorTest, PlansSelectWithBackboneNodes)
 TEST_F(PlannerExecutorTest, PushesBackendPredicateAndPrunesProjectionColumns)
 {
     query::QueryPlanner planner;
-    const auto plan = planner.plan(query::parseQuery("SELECT pv FROM fake.samples WHERE pv = 'A'"));
-    const auto* scan = findScan(plan);
+    const auto          plan = planner.plan(query::parseQuery("SELECT pv FROM fake.samples WHERE pv = 'A'"));
+    const auto*         scan = findScan(plan);
     ASSERT_NE(scan, nullptr);
     ASSERT_EQ(scan->pushable_predicates.size(), 1);
     EXPECT_EQ(scan->pushable_predicates[0].column, "pv");
@@ -310,8 +331,8 @@ TEST_F(PlannerExecutorTest, PushesBackendPredicateAndPrunesProjectionColumns)
 TEST_F(PlannerExecutorTest, RetainsFilterableOnlyPredicateForLocalExecution)
 {
     query::QueryPlanner planner;
-    const auto plan = planner.plan(query::parseQuery("SELECT pv FROM fake.samples WHERE pv = 'A' AND value = 1"));
-    const auto* project = std::get_if<plan::PhysicalProject>(&plan->value);
+    const auto          plan = planner.plan(query::parseQuery("SELECT pv FROM fake.samples WHERE pv = 'A' AND value = 1"));
+    const auto*         project = std::get_if<plan::PhysicalProject>(&plan->value);
     ASSERT_NE(project, nullptr);
     const auto* filter = std::get_if<plan::PhysicalFilter>(&project->input->value);
     ASSERT_NE(filter, nullptr);
@@ -327,8 +348,8 @@ TEST_F(PlannerExecutorTest, RetainsFilterableOnlyPredicateForLocalExecution)
 TEST_F(PlannerExecutorTest, RetainsPushedMetadataPredicatesForLocalVerification)
 {
     query::QueryPlanner planner;
-    const auto plan = planner.plan(query::parseQuery("SELECT pv FROM fake.meta WHERE pv = 'A' AND tag IN ('sample', 'magnet')"));
-    const auto* project = std::get_if<plan::PhysicalProject>(&plan->value);
+    const auto          plan = planner.plan(query::parseQuery("SELECT pv FROM fake.meta WHERE pv = 'A' AND tag IN ('sample', 'magnet')"));
+    const auto*         project = std::get_if<plan::PhysicalProject>(&plan->value);
     ASSERT_NE(project, nullptr);
     const auto* filter = std::get_if<plan::PhysicalFilter>(&project->input->value);
     ASSERT_NE(filter, nullptr);
@@ -343,8 +364,8 @@ TEST_F(PlannerExecutorTest, RetainsPushedMetadataPredicatesForLocalVerification)
 TEST_F(PlannerExecutorTest, LikeIsCaseInsensitiveAndRemainsLocal)
 {
     query::QueryPlanner planner;
-    const auto plan = planner.plan(query::parseQuery("SELECT pv FROM fake.meta WHERE pv = 'A' AND owner LIKE '%L_CE'"));
-    const auto* project = std::get_if<plan::PhysicalProject>(&plan->value);
+    const auto          plan = planner.plan(query::parseQuery("SELECT pv FROM fake.meta WHERE pv = 'A' AND owner LIKE '%L_CE'"));
+    const auto*         project = std::get_if<plan::PhysicalProject>(&plan->value);
     ASSERT_NE(project, nullptr);
     const auto* filter = std::get_if<plan::PhysicalFilter>(&project->input->value);
     ASSERT_NE(filter, nullptr);
@@ -356,7 +377,7 @@ TEST_F(PlannerExecutorTest, LikeIsCaseInsensitiveAndRemainsLocal)
     EXPECT_EQ(scan->pushable_predicates.front().column, "pv");
 
     query::QueryExecutor executor;
-    const auto result = executor.execute(plan, {.pool = arrow::default_memory_pool()});
+    const auto           result = executor.execute(plan, {.pool = arrow::default_memory_pool()});
     ASSERT_EQ(result.batches.size(), 1);
     ASSERT_EQ(result.batches.front()->num_rows(), 1);
     EXPECT_EQ(result.batches.front()->column(0)->GetScalar(0).ValueOrDie()->ToString(), "A");
@@ -364,7 +385,7 @@ TEST_F(PlannerExecutorTest, LikeIsCaseInsensitiveAndRemainsLocal)
 
 TEST_F(PlannerExecutorTest, LikeSupportsStarAndEscapedWildcards)
 {
-    query::QueryPlanner planner;
+    query::QueryPlanner  planner;
     query::QueryExecutor executor;
 
     const auto star_result = executor.execute(
@@ -467,9 +488,9 @@ TEST_F(PlannerExecutorTest, ShowTablesReturnsRegisteredTables)
 
 TEST_F(PlannerExecutorTest, DescribeUsesReadableTypesAndOperators)
 {
-    query::QueryPlanner planner;
+    query::QueryPlanner  planner;
     query::QueryExecutor executor;
-    const auto result = executor.execute(
+    const auto           result = executor.execute(
         planner.plan(query::parseQuery("DESCRIBE fake.samples")),
         {.pool = arrow::default_memory_pool()});
     ASSERT_EQ(result.batches.size(), 1);
@@ -497,6 +518,39 @@ TEST_F(PlannerExecutorTest, ExecutesInnerJoinWithQualifiedColumns)
     EXPECT_EQ(result.stats.rows_returned, 1);
     EXPECT_EQ(result.batches[0]->schema()->field(0)->name(), "s.pv");
     EXPECT_EQ(result.batches[0]->schema()->field(1)->name(), "m.owner");
+}
+
+TEST_F(PlannerExecutorTest, OrdersByAnUnselectedColumnBeforeApplyingLimit)
+{
+    query::QueryPlanner  planner;
+    query::QueryExecutor executor;
+    const auto           result = executor.execute(
+        planner.plan(query::parseQuery("SELECT pv FROM fake.samples WHERE pv IN ('A', 'B') ORDER BY time DESC LIMIT 1")),
+        {.pool = arrow::default_memory_pool()});
+    ASSERT_EQ(result.batches.size(), 1);
+    ASSERT_EQ(result.batches.front()->num_rows(), 1);
+    EXPECT_EQ(result.batches.front()->column(0)->GetScalar(0).ValueOrDie()->ToString(), "B");
+}
+
+TEST_F(PlannerExecutorTest, SelectsFiltersAndOrdersDynamicAttributeColumns)
+{
+    query::QueryPlanner  planner;
+    query::QueryExecutor executor;
+
+    const auto filtered = executor.execute(
+        planner.plan(query::parseQuery("SELECT pv, attributes.device_group FROM fake.meta WHERE pv IN ('A', 'C') AND attributes.device_group = 'RF'")),
+        {.pool = arrow::default_memory_pool()});
+    ASSERT_EQ(filtered.batches.size(), 1);
+    ASSERT_EQ(filtered.batches.front()->num_rows(), 1);
+    EXPECT_EQ(filtered.batches.front()->column(0)->GetScalar(0).ValueOrDie()->ToString(), "A");
+    EXPECT_EQ(filtered.batches.front()->column(1)->GetScalar(0).ValueOrDie()->ToString(), "RF");
+
+    const auto ordered = executor.execute(
+        planner.plan(query::parseQuery("SELECT pv FROM fake.meta WHERE pv IN ('A', 'C') ORDER BY attributes.device_group DESC LIMIT 1")),
+        {.pool = arrow::default_memory_pool()});
+    ASSERT_EQ(ordered.batches.size(), 1);
+    ASSERT_EQ(ordered.batches.front()->num_rows(), 1);
+    EXPECT_EQ(ordered.batches.front()->column(0)->GetScalar(0).ValueOrDie()->ToString(), "A");
 }
 
 TEST_F(PlannerExecutorTest, ExecutesLeftJoinWithNullRightSide)

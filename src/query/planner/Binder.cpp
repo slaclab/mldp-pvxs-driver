@@ -404,12 +404,32 @@ plan::BoundSelect mldp_pvxs_driver::query::planner::bindSelect(const SelectState
         .joins = std::move(joins),
         .select_all = statement.select_all,
         .select_columns = {},
+        .order_by = {},
         .limit = statement.limit,
         .page_token = statement.page_token};
 
+    const bool multi_table = !bound.joins.empty();
+    bound.order_by.reserve(statement.order_by.size());
+    for (const auto& item : statement.order_by)
+    {
+        const auto resolved = resolveColumnReference(item.column, all_tables);
+        const auto& schema = all_tables[table_index.at(resolved.table_alias)].schema;
+        const bool dynamic_attribute = resolved.column_name.rfind("attributes.", 0) == 0 ||
+                                       resolved.column_name.rfind("provenance.", 0) == 0;
+        const auto* column_schema = findColumnSchema(schema, resolved.column_name);
+        if ((!dynamic_attribute && (column_schema == nullptr || !column_schema->is_output)) ||
+            resolved.column_name == "tags" || resolved.column_name == "attributes" || resolved.column_name == "provenance")
+        {
+            throw plan::PlannerException(plan::BindError{
+                .message = "ORDER BY requires a scalar output column; collection columns such as tags and attributes are not sortable"});
+        }
+        bound.order_by.push_back(plan::SortKey{
+            .column = multi_table ? qualify(resolved.table_alias, resolved.column_name) : resolved.column_name,
+            .descending = item.direction == SortDirection::DESCENDING});
+    }
+
     if (!statement.select_all)
     {
-        const bool multi_table = !bound.joins.empty();
         bound.select_columns.reserve(statement.columns.size());
         for (const auto& column : statement.columns)
         {

@@ -69,6 +69,16 @@ struct LogicalLimit {
     uint64_t       limit{0};
 };
 
+struct SortKey {
+    std::string column;
+    bool        descending{false};
+};
+
+struct LogicalSort {
+    LogicalNodePtr       input;
+    std::vector<SortKey> keys;
+};
+
 struct LogicalJoin {
     LogicalJoinType             type{LogicalJoinType::INNER};
     LogicalJoinCondition        condition;
@@ -80,7 +90,7 @@ struct LogicalJoin {
     std::vector<std::string>    warnings;
 };
 
-using LogicalNodeVariant = std::variant<LogicalScan, LogicalFilter, LogicalProject, LogicalLimit, LogicalJoin>;
+using LogicalNodeVariant = std::variant<LogicalScan, LogicalFilter, LogicalProject, LogicalSort, LogicalLimit, LogicalJoin>;
 
 struct LogicalNode {
     LogicalNodeVariant value;
@@ -109,6 +119,7 @@ struct BoundSelect {
     std::vector<BoundJoinClause> joins;
     bool                        select_all{false};
     std::vector<std::string>    select_columns;
+    std::vector<SortKey>        order_by;
     std::optional<uint64_t>     limit;
     std::optional<std::string>  page_token;
 };

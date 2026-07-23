@@ -32,6 +32,7 @@ struct QueryCliOptions {
     std::string       sql{};
     std::string       sql_file{};
     QueryOutputFormat format{QueryOutputFormat::Table};
+    bool              expanded{false};
     bool              no_stats{false};
     uint64_t    memory_mb{256};
     std::string spill_dir{};

@@ -125,14 +125,22 @@ std::string tableValue(const std::shared_ptr<arrow::Scalar>& scalar)
     if (scalar->type->id() == arrow::Type::LIST)
     {
         const auto list = std::dynamic_pointer_cast<arrow::ListScalar>(scalar);
-        std::ostringstream out;
+        std::vector<std::string> values;
+        values.reserve(static_cast<std::size_t>(list->value->length()));
         for (int64_t i = 0; i < list->value->length(); ++i)
         {
-            if (i != 0) out << "\n";
             const auto value = list->value->GetScalar(i);
             if (!value.ok()) throw std::runtime_error(value.status().ToString());
-            out << (*value)->ToString();
+            values.push_back((*value)->ToString());
         }
+        std::ostringstream out;
+        const auto shown = std::min<std::size_t>(2, values.size());
+        for (std::size_t i = 0; i < shown; ++i)
+        {
+            if (i != 0) out << ", ";
+            out << values[i];
+        }
+        if (values.size() > shown) out << ", +" << (values.size() - shown);
         return out.str();
     }
     if (scalar->type->id() == arrow::Type::MAP)
@@ -148,10 +156,67 @@ std::string tableValue(const std::shared_ptr<arrow::Scalar>& scalar)
         }
         std::sort(values.begin(), values.end());
         std::ostringstream out;
-        for (std::size_t i = 0; i < values.size(); ++i) { if (i != 0) out << "\n"; out << values[i]; }
+        const auto shown = std::min<std::size_t>(2, values.size());
+        for (std::size_t i = 0; i < shown; ++i) { if (i != 0) out << ", "; out << values[i]; }
+        if (values.size() > shown) out << ", +" << (values.size() - shown);
         return out.str();
     }
     return scalar->ToString();
+}
+
+void writeExpanded(const query::QueryExecutionResult& result, std::ostream& output)
+{
+    std::size_t record = 0;
+    for (const auto& batch : result.batches)
+    {
+        if (!batch) continue;
+        for (int64_t row = 0; row < batch->num_rows(); ++row)
+        {
+            ++record;
+            output << "-[ RECORD " << record << " ]" << std::string(56, '-') << "\n";
+            for (int column = 0; column < batch->num_columns(); ++column)
+            {
+                const auto scalar_result = batch->column(column)->GetScalar(row);
+                if (!scalar_result.ok()) throw std::runtime_error(scalar_result.status().ToString());
+                const auto scalar = *scalar_result;
+                const auto& name = batch->schema()->field(column)->name();
+                if (!scalar || !scalar->is_valid)
+                {
+                    output << name << ":\n";
+                    continue;
+                }
+                if (scalar->type->id() == arrow::Type::LIST)
+                {
+                    const auto list = std::dynamic_pointer_cast<arrow::ListScalar>(scalar);
+                    output << name << ":\n";
+                    for (int64_t i = 0; i < list->value->length(); ++i)
+                    {
+                        const auto value = list->value->GetScalar(i);
+                        if (!value.ok()) throw std::runtime_error(value.status().ToString());
+                        output << "  - " << (*value)->ToString() << "\n";
+                    }
+                    continue;
+                }
+                if (scalar->type->id() == arrow::Type::MAP)
+                {
+                    const auto map = std::dynamic_pointer_cast<arrow::MapScalar>(scalar);
+                    const auto entries = std::dynamic_pointer_cast<arrow::StructArray>(map->value);
+                    std::vector<std::string> values;
+                    for (int64_t i = 0; i < entries->length(); ++i)
+                    {
+                        const auto key = entries->field(0)->GetScalar(i); const auto value = entries->field(1)->GetScalar(i);
+                        if (!key.ok() || !value.ok()) throw std::runtime_error("Failed to render Arrow map value");
+                        values.push_back((*key)->ToString() + ": " + (*value)->ToString());
+                    }
+                    std::sort(values.begin(), values.end());
+                    output << name << ":\n";
+                    for (const auto& value : values) output << "  " << value << "\n";
+                    continue;
+                }
+                output << name << ": " << scalar->ToString() << "\n";
+            }
+        }
+    }
 }
 
 void writeJsonLines(const query::QueryExecutionResult& result, std::ostream& output)
@@ -444,12 +509,14 @@ void writeTable(const query::QueryExecutionResult& result, std::ostream& output)
 
 void mldp_pvxs_driver::cli::formatQueryResult(const query::QueryExecutionResult& result,
                                               QueryOutputFormat                  format,
-                                              std::ostream&                      output)
+                                              std::ostream&                      output,
+                                              const bool                         expanded)
 {
     switch (format)
     {
         case QueryOutputFormat::Table:
-            writeTable(result, output);
+            if (expanded) writeExpanded(result, output);
+            else writeTable(result, output);
             break;
         case QueryOutputFormat::Json:
             writeJsonLines(result, output);

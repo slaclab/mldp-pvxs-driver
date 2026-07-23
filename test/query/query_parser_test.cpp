@@ -140,6 +140,19 @@ TEST(QueryParserTest, PreservesLikeAsItsOwnPredicateOperator)
     EXPECT_EQ(std::get<OpPredicate>(select.predicates.front()).op, PredicateBinaryOp::LIKE);
 }
 
+TEST(QueryParserTest, ParsesMultiKeyOrderBy)
+{
+    const auto statement = parseQuery("SELECT pv FROM mldp.pv_metadata ORDER BY attributes.device_group, attributes.ordinal DESC LIMIT 10");
+    const auto& select = std::get<SelectStatement>(statement);
+    ASSERT_EQ(select.order_by.size(), 2);
+    EXPECT_EQ(select.order_by[0].column.name, "attributes.device_group");
+    EXPECT_EQ(select.order_by[0].direction, SortDirection::ASCENDING);
+    EXPECT_EQ(select.order_by[1].column.name, "attributes.ordinal");
+    EXPECT_EQ(select.order_by[1].direction, SortDirection::DESCENDING);
+    ASSERT_TRUE(select.limit.has_value());
+    EXPECT_EQ(*select.limit, 10);
+}
+
 TEST(QueryParserTest, ParsesShowTablesDescribeAndExplain)
 {
     auto show_tables = parseQuery("SHOW TABLES");

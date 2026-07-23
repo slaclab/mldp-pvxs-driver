@@ -48,6 +48,10 @@ enum class TokenType {
     NOW,
     PREFIX,
     CONTAINS,
+    ORDER,
+    BY,
+    ASC,
+    DESC,
 
     STAR,
     COMMA,

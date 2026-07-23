@@ -694,7 +694,7 @@ extern int yylex (yyscan_t yyscanner);
 #undef yyTABLES_NAME
 #endif
 
-#line 217 "src/query/parser/grammar/QueryLexer.l"
+#line 225 "src/query/parser/grammar/QueryLexer.l"
 
 
 #line 700 "include/query/parser/generated/QueryFlexLexer.h"
