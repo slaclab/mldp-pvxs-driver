@@ -39,11 +39,7 @@ TEST(QueryLexerTest, TokenizesKeywordsAndDurationLiteralsCaseInsensitive)
 TEST(QueryParserTest, ParsesSelectJoinPredicatesLimitAndPageToken)
 {
     const auto statement = parseQuery(
-        "SELECT ts.pv, meta.attr.owner "
-        "FROM mldp.pv_stats AS ts "
-        "LEFT JOIN mldp.pv_metadata meta ON ts.pv = meta.pv "
-        "WHERE ts.pv IN ('A', 'B') AND ts.time >= NOW-60s "
-        "LIMIT 10 PAGE TOKEN 'next-1'");
+        "SELECT ts.pv, meta.attr.owner " "FROM mldp.pv_stats AS ts " "LEFT JOIN mldp.pv_metadata meta ON ts.pv = meta.pv " "WHERE ts.pv IN ('A', 'B') AND ts.time >= NOW-60s " "LIMIT 10 PAGE TOKEN 'next-1'");
 
     ASSERT_TRUE(std::holds_alternative<SelectStatement>(statement));
     const auto& select = std::get<SelectStatement>(statement);
@@ -63,6 +59,10 @@ TEST(QueryParserTest, ParsesSelectJoinPredicatesLimitAndPageToken)
 
     ASSERT_EQ(select.predicates.size(), 2);
     EXPECT_TRUE(std::holds_alternative<InPredicate>(select.predicates[0]));
+    const auto& in = std::get<InPredicate>(select.predicates[0]);
+    ASSERT_EQ(in.values.size(), 2);
+    EXPECT_EQ(std::get<std::string>(in.values[0]), "A");
+    EXPECT_EQ(std::get<std::string>(in.values[1]), "B");
     EXPECT_TRUE(std::holds_alternative<OpPredicate>(select.predicates[1]));
     const auto& range = std::get<OpPredicate>(select.predicates[1]);
     EXPECT_EQ(range.op, PredicateBinaryOp::GTE);

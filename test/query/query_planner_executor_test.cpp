@@ -13,8 +13,8 @@
 #include <query/QueryPlanner.h>
 #include <query/QueryResult.h>
 #include <query/QueryableFactory.h>
-#include <query/plan/PlannerError.h>
 #include <query/parser/QueryParser.h>
+#include <query/plan/PlannerError.h>
 
 #include <config/Config.h>
 
@@ -47,6 +47,12 @@ public:
 
     std::vector<query::ColumnSchema> tableSchema(std::string_view table_name) const override
     {
+        if (table_name == "fake.paged")
+        {
+            return {
+                {"pv", query::ColumnType::STRING, false, true, {}, {}, "Paged test value"},
+            };
+        }
         if (table_name == "fake.meta")
         {
             return {
@@ -62,11 +68,22 @@ public:
         };
     }
 
-    query::QueryResult execute(std::string_view table_name,
+    query::QueryResult execute(std::string_view                     table_name,
                                const std::vector<query::Predicate>& pushable_predicates,
-                               const std::set<std::string>& projection_hint,
-                               const query::ExecutionContext&) override
+                               const std::set<std::string>&         projection_hint,
+                               const query::ExecutionContext&,
+                               std::string_view page_token = {}) override
     {
+        if (table_name == "fake.paged")
+        {
+            arrow::StringBuilder pv_builder;
+            EXPECT_TRUE(pv_builder.Append(page_token.empty() ? "A" : "B").ok());
+            std::shared_ptr<arrow::Array> pv;
+            EXPECT_TRUE(pv_builder.Finish(&pv).ok());
+            return query::QueryResult{
+                .batch = arrow::RecordBatch::Make(arrow::schema({arrow::field("pv", arrow::utf8())}), 1, {pv}),
+                .next_page_token = page_token.empty() ? "second-page" : ""};
+        }
         if (table_name == "fake.meta")
         {
             arrow::StringBuilder pv_builder;
@@ -139,8 +156,8 @@ public:
         }
 
         arrow::StringBuilder pv_builder;
-        arrow::Int64Builder time_builder;
-        arrow::Int64Builder value_builder;
+        arrow::Int64Builder  time_builder;
+        arrow::Int64Builder  value_builder;
 
         const auto include_row = [&](const std::string& pv, const int64_t time) -> bool
         {
@@ -210,9 +227,10 @@ public:
     }
 };
 
-const std::set<std::string_view> FakeQueryable::kVirtualTables = {"fake.samples", "fake.meta"};
+const std::set<std::string_view> FakeQueryable::kVirtualTables = {"fake.samples", "fake.meta", "fake.paged"};
 
-class PlannerExecutorTest : public ::testing::Test {
+class PlannerExecutorTest : public ::testing::Test
+{
 protected:
     void SetUp() override
     {
@@ -229,9 +247,9 @@ protected:
 TEST_F(PlannerExecutorTest, PlansSelectWithBackboneNodes)
 {
     query::QueryPlanner planner;
-    const auto statement = query::parseQuery("SELECT pv FROM fake.samples WHERE pv = 'A' LIMIT 1");
-    const auto plan = planner.plan(statement);
-    const auto text = query::plan::physicalPlanToString(plan);
+    const auto          statement = query::parseQuery("SELECT pv FROM fake.samples WHERE pv = 'A' LIMIT 1");
+    const auto          plan = planner.plan(statement);
+    const auto          text = query::plan::physicalPlanToString(plan);
     EXPECT_NE(text.find("PhysicalLimit"), std::string::npos);
     EXPECT_NE(text.find("PhysicalProject"), std::string::npos);
     EXPECT_NE(text.find("PhysicalTableScan"), std::string::npos);
@@ -239,8 +257,8 @@ TEST_F(PlannerExecutorTest, PlansSelectWithBackboneNodes)
 
 TEST_F(PlannerExecutorTest, ExplainShortCircuitsToPlanRow)
 {
-    query::QueryPlanner planner;
-    query::QueryExecutor executor;
+    query::QueryPlanner     planner;
+    query::QueryExecutor    executor;
     query::ExecutionContext context{
         .pool = arrow::default_memory_pool(),
     };
@@ -255,8 +273,8 @@ TEST_F(PlannerExecutorTest, ExplainShortCircuitsToPlanRow)
 
 TEST_F(PlannerExecutorTest, ExecutesFilterProjectAndLimit)
 {
-    query::QueryPlanner planner;
-    query::QueryExecutor executor;
+    query::QueryPlanner     planner;
+    query::QueryExecutor    executor;
     query::ExecutionContext context{
         .pool = arrow::default_memory_pool(),
     };
@@ -270,10 +288,24 @@ TEST_F(PlannerExecutorTest, ExecutesFilterProjectAndLimit)
     EXPECT_EQ(result.batches[0]->schema()->field(0)->name(), "pv");
 }
 
+TEST_F(PlannerExecutorTest, AccumulatesBackendPagesAndTracksEveryRpc)
+{
+    query::QueryPlanner  planner;
+    query::QueryExecutor executor;
+    const auto           plan = planner.plan(query::parseQuery("SELECT pv FROM fake.paged"));
+    const auto           result = executor.execute(plan, query::ExecutionContext{.pool = arrow::default_memory_pool()});
+    ASSERT_EQ(result.batches.size(), 2);
+    EXPECT_EQ(result.stats.rpc_calls, 2);
+    EXPECT_EQ(result.stats.rows_from_backend, 2);
+    EXPECT_EQ(result.stats.rows_returned, 2);
+    EXPECT_EQ(std::dynamic_pointer_cast<arrow::StringArray>(result.batches[0]->column(0))->GetString(0), "A");
+    EXPECT_EQ(std::dynamic_pointer_cast<arrow::StringArray>(result.batches[1]->column(0))->GetString(0), "B");
+}
+
 TEST_F(PlannerExecutorTest, ShowTablesReturnsRegisteredTables)
 {
-    query::QueryPlanner planner;
-    query::QueryExecutor executor;
+    query::QueryPlanner     planner;
+    query::QueryExecutor    executor;
     query::ExecutionContext context{
         .pool = arrow::default_memory_pool(),
     };
@@ -287,8 +319,8 @@ TEST_F(PlannerExecutorTest, ShowTablesReturnsRegisteredTables)
 
 TEST_F(PlannerExecutorTest, ExecutesInnerJoinWithQualifiedColumns)
 {
-    query::QueryPlanner planner;
-    query::QueryExecutor executor;
+    query::QueryPlanner     planner;
+    query::QueryExecutor    executor;
     query::ExecutionContext context{
         .pool = arrow::default_memory_pool(),
         .join_batch_size = 100,
@@ -306,8 +338,8 @@ TEST_F(PlannerExecutorTest, ExecutesInnerJoinWithQualifiedColumns)
 
 TEST_F(PlannerExecutorTest, ExecutesLeftJoinWithNullRightSide)
 {
-    query::QueryPlanner planner;
-    query::QueryExecutor executor;
+    query::QueryPlanner     planner;
+    query::QueryExecutor    executor;
     query::ExecutionContext context{
         .pool = arrow::default_memory_pool(),
         .join_batch_size = 100,
@@ -327,7 +359,7 @@ TEST_F(PlannerExecutorTest, ExecutesLeftJoinWithNullRightSide)
 TEST_F(PlannerExecutorTest, RejectsAmbiguousUnqualifiedColumnAcrossJoin)
 {
     query::QueryPlanner planner;
-    const auto statement = query::parseQuery("SELECT pv FROM fake.samples s JOIN fake.meta m ON s.pv = m.pv");
+    const auto          statement = query::parseQuery("SELECT pv FROM fake.samples s JOIN fake.meta m ON s.pv = m.pv");
     EXPECT_THROW((void)planner.plan(statement), query::plan::PlannerException);
 }
 

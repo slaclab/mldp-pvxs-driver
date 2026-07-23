@@ -15,12 +15,22 @@
 
 #include <util/log/Logger.h>
 
+#include <google/protobuf/message.h>
 #include <grpcpp/grpcpp.h>
 #include <query.grpc.pb.h>
 
+#include <arrow/array/builder_binary.h>
+#include <arrow/array/builder_primitive.h>
+#include <arrow/array/builder_union.h>
+#include <arrow/record_batch.h>
+#include <arrow/type.h>
+
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <limits>
 #include <set>
+#include <stdexcept>
 #include <thread>
 #include <unordered_map>
 
@@ -60,15 +70,162 @@ std::vector<ColumnSchema> MLDPQueryClient::tableSchema(std::string_view table_na
     throw std::invalid_argument("MLDPQueryClient: unknown virtual table: " + std::string(table_name));
 }
 
-QueryResult MLDPQueryClient::execute(std::string_view,
-                                     const std::vector<Predicate>&,
-                                     const std::set<std::string>&,
-                                     const ExecutionContext&)
+namespace {
+
+constexpr std::string_view kTimeSeriesTable = "mldp.time_series";
+constexpr std::string_view kPvStatsTable = "mldp.pv_stats";
+
+int64_t timestampToNanoseconds(const dp::service::common::Timestamp& timestamp)
 {
-    throw std::logic_error("MLDP query execution is not implemented yet (Phase 4)");
+    return static_cast<int64_t>(timestamp.epochseconds()) * 1'000'000'000LL +
+           static_cast<int64_t>(timestamp.nanoseconds());
 }
 
-namespace {
+void setTimestamp(dp::service::common::Timestamp* target, int64_t seconds)
+{
+    target->set_epochseconds(static_cast<uint64_t>(seconds));
+    target->set_nanoseconds(0);
+}
+
+std::vector<std::string> requestedPvs(const std::vector<Predicate>& predicates)
+{
+    std::set<std::string> names;
+    for (const auto& predicate : predicates)
+    {
+        if (predicate.column != "pv" || (predicate.op != PredicateOp::EQ && predicate.op != PredicateOp::IN))
+            continue;
+        for (const auto& value : predicate.values)
+        {
+            if (!std::holds_alternative<std::string>(value))
+                throw std::invalid_argument("MLDP query predicate pv requires string values");
+            names.insert(std::get<std::string>(value));
+        }
+    }
+    if (names.empty())
+        throw std::invalid_argument("MLDP query requires an explicit pv = or pv IN predicate");
+    return {names.begin(), names.end()};
+}
+
+std::pair<int64_t, int64_t> requestedTimeRange(const std::vector<Predicate>& predicates)
+{
+    int64_t begin = 0;
+    int64_t end = std::numeric_limits<int64_t>::max() / 1'000'000'000LL;
+    for (const auto& predicate : predicates)
+    {
+        if (predicate.column != "time")
+            continue;
+        if ((predicate.op != PredicateOp::GTE && predicate.op != PredicateOp::LTE) || predicate.values.size() != 1 ||
+            !std::holds_alternative<int64_t>(predicate.values.front()))
+            throw std::invalid_argument("MLDP time predicate must be time >= or time <= with an integer timestamp");
+        if (predicate.op == PredicateOp::GTE)
+            begin = std::get<int64_t>(predicate.values.front());
+        else
+            end = std::get<int64_t>(predicate.values.front());
+    }
+    return {begin, end};
+}
+
+std::shared_ptr<arrow::DataType> dataValueType()
+{
+    return arrow::dense_union({arrow::field("string", arrow::utf8()),
+                               arrow::field("bool", arrow::boolean()),
+                               arrow::field("uint32", arrow::uint32()),
+                               arrow::field("uint64", arrow::uint64()),
+                               arrow::field("int32", arrow::int32()),
+                               arrow::field("int64", arrow::int64()),
+                               arrow::field("float", arrow::float32()),
+                               arrow::field("double", arrow::float64()),
+                               arrow::field("binary", arrow::binary()),
+                               arrow::field("timestamp", arrow::timestamp(arrow::TimeUnit::NANO, "UTC")),
+                               arrow::field("array", arrow::binary()),
+                               arrow::field("structure", arrow::binary()),
+                               arrow::field("image", arrow::binary())});
+}
+
+class DataValueBuilder
+{
+public:
+    explicit DataValueBuilder(arrow::MemoryPool* pool)
+        : string_(std::make_shared<arrow::StringBuilder>(pool))
+        , boolean_(std::make_shared<arrow::BooleanBuilder>(pool))
+        , uint32_(std::make_shared<arrow::UInt32Builder>(pool))
+        , uint64_(std::make_shared<arrow::UInt64Builder>(pool))
+        , int32_(std::make_shared<arrow::Int32Builder>(pool))
+        , int64_(std::make_shared<arrow::Int64Builder>(pool))
+        , float_(std::make_shared<arrow::FloatBuilder>(pool))
+        , double_(std::make_shared<arrow::DoubleBuilder>(pool))
+        , binary_(std::make_shared<arrow::BinaryBuilder>(pool))
+        , timestamp_(std::make_shared<arrow::TimestampBuilder>(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), pool))
+        , array_(std::make_shared<arrow::BinaryBuilder>(pool))
+        , structure_(std::make_shared<arrow::BinaryBuilder>(pool))
+        , image_(std::make_shared<arrow::BinaryBuilder>(pool))
+        , union_builder_(pool,
+                         {string_, boolean_, uint32_, uint64_, int32_, int64_, float_, double_, binary_, timestamp_, array_, structure_, image_},
+                         dataValueType())
+    {
+    }
+
+    void append(const dp::service::common::DataValue& value)
+    {
+        const auto appendSerialized = [&](int8_t type_id, arrow::BinaryBuilder& builder, const google::protobuf::Message& message)
+        {
+            const auto serialized = message.SerializeAsString();
+            if (!union_builder_.Append(type_id).ok() || !builder.Append(serialized).ok())
+                throw std::runtime_error("Failed to append Arrow DataValue union member");
+        };
+        switch (value.value_case())
+        {
+        case dp::service::common::DataValue::kStringValue: append(0, *string_, value.stringvalue()); break;
+        case dp::service::common::DataValue::kBooleanValue: append(1, *boolean_, value.booleanvalue()); break;
+        case dp::service::common::DataValue::kUintValue: append(2, *uint32_, value.uintvalue()); break;
+        case dp::service::common::DataValue::kUlongValue: append(3, *uint64_, value.ulongvalue()); break;
+        case dp::service::common::DataValue::kIntValue: append(4, *int32_, value.intvalue()); break;
+        case dp::service::common::DataValue::kLongValue: append(5, *int64_, value.longvalue()); break;
+        case dp::service::common::DataValue::kFloatValue: append(6, *float_, value.floatvalue()); break;
+        case dp::service::common::DataValue::kDoubleValue: append(7, *double_, value.doublevalue()); break;
+        case dp::service::common::DataValue::kByteArrayValue: append(8, *binary_, value.bytearrayvalue()); break;
+        case dp::service::common::DataValue::kTimestampValue: append(9, *timestamp_, timestampToNanoseconds(value.timestampvalue())); break;
+        case dp::service::common::DataValue::kArrayValue: appendSerialized(10, *array_, value.arrayvalue()); break;
+        case dp::service::common::DataValue::kStructureValue: appendSerialized(11, *structure_, value.structurevalue()); break;
+        case dp::service::common::DataValue::kImageValue: appendSerialized(12, *image_, value.imagevalue()); break;
+        case dp::service::common::DataValue::VALUE_NOT_SET:
+            if (!union_builder_.AppendNull().ok())
+                throw std::runtime_error("Failed to append null Arrow DataValue");
+            break;
+        }
+    }
+
+    std::shared_ptr<arrow::Array> finish()
+    {
+        std::shared_ptr<arrow::Array> array;
+        if (!union_builder_.Finish(&array).ok())
+            throw std::runtime_error("Failed to finish Arrow DataValue union");
+        return array;
+    }
+
+private:
+    template <typename Builder, typename Value>
+    void append(int8_t type_id, Builder& builder, const Value& value)
+    {
+        if (!union_builder_.Append(type_id).ok() || !builder.Append(value).ok())
+            throw std::runtime_error("Failed to append Arrow DataValue union member");
+    }
+
+    std::shared_ptr<arrow::StringBuilder>    string_;
+    std::shared_ptr<arrow::BooleanBuilder>   boolean_;
+    std::shared_ptr<arrow::UInt32Builder>    uint32_;
+    std::shared_ptr<arrow::UInt64Builder>    uint64_;
+    std::shared_ptr<arrow::Int32Builder>     int32_;
+    std::shared_ptr<arrow::Int64Builder>     int64_;
+    std::shared_ptr<arrow::FloatBuilder>     float_;
+    std::shared_ptr<arrow::DoubleBuilder>    double_;
+    std::shared_ptr<arrow::BinaryBuilder>    binary_;
+    std::shared_ptr<arrow::TimestampBuilder> timestamp_;
+    std::shared_ptr<arrow::BinaryBuilder>    array_;
+    std::shared_ptr<arrow::BinaryBuilder>    structure_;
+    std::shared_ptr<arrow::BinaryBuilder>    image_;
+    arrow::DenseUnionBuilder                 union_builder_;
+};
 
 std::shared_ptr<mldp_pvxs_driver::util::log::ILogger> makeQueryClientLogger()
 {
@@ -145,6 +302,174 @@ extractTimestampRange(const DataTimestamps& data_timestamps)
 }
 
 } // namespace
+
+QueryResult MLDPQueryClient::execute(std::string_view              table_name,
+                                     const std::vector<Predicate>& pushable_predicates,
+                                     const std::set<std::string>&,
+                                     const ExecutionContext& context,
+                                     std::string_view        page_token)
+{
+    if (table_name != kTimeSeriesTable && table_name != kPvStatsTable)
+        throw std::invalid_argument("MLDPQueryClient: unknown virtual table '" + std::string(table_name) +
+                                    "'; supported tables: mldp.time_series, mldp.pv_stats");
+
+    const auto pvs = requestedPvs(pushable_predicates);
+    if (table_name == kPvStatsTable)
+    {
+        std::size_t offset = 0;
+        if (!page_token.empty())
+        {
+            try
+            {
+                const auto token = std::string(page_token);
+                if (!token.starts_with("pv-stats:"))
+                    throw std::invalid_argument("invalid");
+                offset = static_cast<std::size_t>(std::stoull(token.substr(9)));
+            }
+            catch (const std::exception&)
+            {
+                throw std::invalid_argument("MLDP pv_stats continuation token is invalid");
+            }
+        }
+        if (offset > pvs.size())
+            throw std::invalid_argument("MLDP pv_stats continuation token is out of range");
+
+        const auto                              page_size = context.join_batch_size == 0 ? pvs.size() : context.join_batch_size;
+        const auto                              end = std::min(pvs.size(), offset + page_size);
+        dp::service::query::QueryPvStatsRequest request;
+        for (std::size_t index = offset; index < end; ++index)
+            request.mutable_pvnamelist()->add_pvnames(pvs[index]);
+
+        auto                                     handle = pool_->acquire();
+        grpc::ClientContext                      rpc_context;
+        dp::service::query::QueryPvStatsResponse response;
+        const auto                               status = handle->query_stub->queryPvStats(&rpc_context, request, &response);
+        if (!status.ok())
+            throw std::runtime_error("MLDP queryPvStats failed: " + status.error_message());
+        if (!response.has_statsresult())
+            throw std::runtime_error("MLDP queryPvStats failed: " + response.exceptionalresult().message());
+
+        arrow::StringBuilder    pv_builder;
+        arrow::TimestampBuilder first_builder(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), arrow::default_memory_pool());
+        arrow::TimestampBuilder last_builder(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), arrow::default_memory_pool());
+        arrow::Int64Builder     buckets_builder;
+        for (const auto& stat : response.statsresult().pvstats())
+        {
+            if (!pv_builder.Append(stat.pvname()).ok() || !first_builder.Append(timestampToNanoseconds(stat.firstdatatimestamp())).ok() ||
+                !last_builder.Append(timestampToNanoseconds(stat.lastdatatimestamp())).ok() || !buckets_builder.Append(stat.numbuckets()).ok())
+                throw std::runtime_error("Failed to build Arrow pv_stats batch");
+        }
+        std::shared_ptr<arrow::Array> pv;
+        std::shared_ptr<arrow::Array> first;
+        std::shared_ptr<arrow::Array> last;
+        std::shared_ptr<arrow::Array> buckets;
+        if (!pv_builder.Finish(&pv).ok() || !first_builder.Finish(&first).ok() ||
+            !last_builder.Finish(&last).ok() || !buckets_builder.Finish(&buckets).ok())
+            throw std::runtime_error("Failed to finish Arrow pv_stats batch");
+        return {.batch = arrow::RecordBatch::Make(arrow::schema({arrow::field("pv", arrow::utf8()),
+                                                                 arrow::field("first_timestamp", first->type()),
+                                                                 arrow::field("last_timestamp", last->type()),
+                                                                 arrow::field("num_buckets", arrow::int64())}),
+                                                  pv->length(), {pv, first, last, buckets}),
+                .next_page_token = end < pvs.size() ? "pv-stats:" + std::to_string(end) : ""};
+    }
+
+    std::size_t ts_offset = 0;
+    if (!page_token.empty())
+    {
+        try
+        {
+            const auto token = std::string(page_token);
+            if (!token.starts_with("ts:"))
+                throw std::invalid_argument("invalid");
+            ts_offset = static_cast<std::size_t>(std::stoull(token.substr(3)));
+        }
+        catch (const std::exception&)
+        {
+            throw std::invalid_argument("MLDP time_series continuation token is invalid");
+        }
+    }
+
+    const auto [begin, end] = requestedTimeRange(pushable_predicates);
+    dp::service::query::QueryTableRequest request;
+    request.set_format(dp::service::query::QueryTableRequest::TABLE_FORMAT_COLUMN);
+    setTimestamp(request.mutable_begintime(), begin);
+    setTimestamp(request.mutable_endtime(), end);
+    for (const auto& pv_name : pvs)
+        request.mutable_pvnamelist()->add_pvnames(pv_name);
+
+    auto                                      handle = pool_->acquire();
+    grpc::ClientContext                       rpc_context;
+    dp::service::query::QueryTableResponse    response;
+    const auto                                status = handle->query_stub->queryTable(&rpc_context, request, &response);
+    if (!status.ok())
+        throw std::runtime_error("MLDP queryTable failed: " + status.error_message());
+    if (!response.has_tableresult())
+        throw std::runtime_error("MLDP queryTable failed: " + response.exceptionalresult().message());
+
+    const auto& col_table = response.tableresult().columntable();
+
+    std::vector<int64_t> timestamps_ns;
+    const auto&          dt = col_table.datatimestamps();
+    if (dt.has_timestamplist())
+    {
+        for (const auto& ts : dt.timestamplist().timestamps())
+            timestamps_ns.push_back(timestampToNanoseconds(ts));
+    }
+    else if (dt.has_samplingclock())
+    {
+        const auto& clock    = dt.samplingclock();
+        const int64_t start_ns = static_cast<int64_t>(clock.starttime().epochseconds()) * 1'000'000'000LL +
+                                 static_cast<int64_t>(clock.starttime().nanoseconds());
+        for (uint64_t i = 0; i < static_cast<uint64_t>(clock.count()); ++i)
+            timestamps_ns.push_back(start_ns + static_cast<int64_t>(i) * static_cast<int64_t>(clock.periodnanos()));
+    }
+
+    struct Row
+    {
+        std::string                      pv_name;
+        int64_t                          time_ns;
+        dp::service::common::DataValue   value;
+    };
+    std::vector<Row> all_rows;
+    for (const auto& column : col_table.datacolumns())
+    {
+        for (int i = 0; i < column.datavalues_size(); ++i)
+        {
+            const int64_t ts = (i < static_cast<int>(timestamps_ns.size())) ? timestamps_ns[i] : 0;
+            all_rows.push_back({column.name(), ts, column.datavalues(i)});
+        }
+    }
+    std::stable_sort(all_rows.begin(), all_rows.end(),
+                     [](const Row& a, const Row& b) { return a.time_ns < b.time_ns; });
+
+    if (ts_offset > all_rows.size())
+        ts_offset = all_rows.size();
+
+    const auto page_sz = context.join_batch_size == 0 ? all_rows.size() : context.join_batch_size;
+    const auto page_end = std::min(all_rows.size(), ts_offset + page_sz);
+
+    auto* pool = context.pool != nullptr ? context.pool : arrow::default_memory_pool();
+    arrow::StringBuilder    pv_builder;
+    arrow::TimestampBuilder time_builder(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), pool);
+    DataValueBuilder        value_builder(pool);
+    for (std::size_t i = ts_offset; i < page_end; ++i)
+    {
+        if (!pv_builder.Append(all_rows[i].pv_name).ok() || !time_builder.Append(all_rows[i].time_ns).ok())
+            throw std::runtime_error("Failed to build Arrow time-series batch");
+        value_builder.append(all_rows[i].value);
+    }
+    std::shared_ptr<arrow::Array> pv;
+    std::shared_ptr<arrow::Array> time;
+    if (!pv_builder.Finish(&pv).ok() || !time_builder.Finish(&time).ok())
+        throw std::runtime_error("Failed to finish Arrow time-series batch");
+    const auto value = value_builder.finish();
+    return {.batch = arrow::RecordBatch::Make(arrow::schema({arrow::field("pv", arrow::utf8()),
+                                                             arrow::field("time", time->type()),
+                                                             arrow::field("value", value->type())}),
+                                              pv->length(), {pv, time, value}),
+            .next_page_token = page_end < all_rows.size() ? "ts:" + std::to_string(page_end) : ""};
+}
 
 // ---------------------------------------------------------------------------
 // Construction

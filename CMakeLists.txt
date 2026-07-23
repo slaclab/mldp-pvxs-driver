@@ -27,7 +27,7 @@ set(SPDLOG_VERSION "v1.16.0")
 set(ARGPARSE_VERSION "v3.2")
 set(EPICSARCHIVERAP_VERSION "2.2.1")
 set(CPP_HTTPLIB_VERSION "v0.16.3")
-set(DP_GRPC_VERSION "main")
+set(DP_GRPC_VERSION "rel-1.14.0")
 set(ARROW_VERSION "apache-arrow-18.1.0")
 
 # Output directories
@@ -1034,6 +1034,27 @@ if(MLDP_PVXS_DRIVER_TESTS)
             -Wl,--whole-archive lib${PROJECT_NAME} -Wl,--no-whole-archive)
     endif()
     gtest_discover_tests(mldp_annotation_query_client_test)
+
+    # Real MLDP stack query integration tests.  These intentionally use the
+    # Docker compose services rather than local mocks.
+    add_executable(queryable_mldp_integration_test
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/query/queryable_mldp_integration_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/ryml_single_header_translation_unit.cpp"
+    )
+    target_include_directories(queryable_mldp_integration_test PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test"
+        "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    if(APPLE)
+        target_link_libraries(queryable_mldp_integration_test PRIVATE gtest_main
+            -Wl,-force_load $<TARGET_FILE:lib${PROJECT_NAME}>)
+    else()
+        target_link_libraries(queryable_mldp_integration_test PRIVATE gtest_main
+            -Wl,--whole-archive lib${PROJECT_NAME} -Wl,--no-whole-archive)
+    endif()
+    gtest_discover_tests(queryable_mldp_integration_test
+        PROPERTIES LABELS "integration;query")
 
     # Wizard unit tests — link wizard lib directly for access to wizard_internal symbols
     if(MLDP_WIZARD)

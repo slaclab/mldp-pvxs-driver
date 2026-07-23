@@ -85,11 +85,12 @@ public:
     MLDPAnnotationQueryClient& operator=(MLDPAnnotationQueryClient&&) = default;
 
     std::set<std::string_view> virtualTables() const override;
-    std::vector<ColumnSchema> tableSchema(std::string_view table_name) const override;
-    QueryResult execute(std::string_view table_name,
-                        const std::vector<Predicate>& pushable_predicates,
-                        const std::set<std::string>& projection_hint,
-                        const ExecutionContext& context) override;
+    std::vector<ColumnSchema>  tableSchema(std::string_view table_name) const override;
+    QueryResult                execute(std::string_view              table_name,
+                                       const std::vector<Predicate>& pushable_predicates,
+                                       const std::set<std::string>&  projection_hint,
+                                       const ExecutionContext&       context,
+                                       std::string_view              page_token = {}) override;
 
     // -----------------------------------------------------------------------
     // PV metadata

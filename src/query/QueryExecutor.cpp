@@ -34,7 +34,7 @@ namespace {
 std::string joinOps(const std::set<PredicateOp>& ops)
 {
     std::ostringstream out;
-    bool first = true;
+    bool               first = true;
     for (const auto op : ops)
     {
         if (!first)
@@ -64,7 +64,8 @@ bool scalarMatchesPredicate(const std::shared_ptr<arrow::Scalar>& scalar, const 
     }
 
     const auto value_text = scalarToString(scalar);
-    const auto as_int = [&]() -> int64_t {
+    const auto as_int = [&]() -> int64_t
+    {
         if (scalar->type->id() == arrow::Type::INT64)
         {
             return std::dynamic_pointer_cast<arrow::Int64Scalar>(scalar)->value;
@@ -168,7 +169,7 @@ bool scalarMatchesPredicate(const std::shared_ptr<arrow::Scalar>& scalar, const 
 }
 
 arrow::Result<std::shared_ptr<arrow::RecordBatch>> applyFilter(const std::shared_ptr<arrow::RecordBatch>& batch,
-                                                               const std::vector<Predicate>& predicates)
+                                                               const std::vector<Predicate>&              predicates)
 {
     arrow::BooleanBuilder mask_builder;
     for (int64_t row = 0; row < batch->num_rows(); ++row)
@@ -200,7 +201,7 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> applyFilter(const std::shared
 
 std::vector<std::shared_ptr<arrow::RecordBatch>>
 applyProjection(const std::vector<std::shared_ptr<arrow::RecordBatch>>& input,
-                const std::vector<std::string>& columns)
+                const std::vector<std::string>&                         columns)
 {
     if (columns.empty())
     {
@@ -303,10 +304,10 @@ std::string scalarKey(const std::shared_ptr<arrow::Scalar>& scalar)
 }
 
 std::shared_ptr<arrow::Array> buildArrayFromIndices(const std::shared_ptr<arrow::Array>& source,
-                                                    const std::vector<int64_t>& indices)
+                                                    const std::vector<int64_t>&          indices)
 {
     std::unique_ptr<arrow::ArrayBuilder> builder;
-    auto status = arrow::MakeBuilder(arrow::default_memory_pool(), source->type(), &builder);
+    auto                                 status = arrow::MakeBuilder(arrow::default_memory_pool(), source->type(), &builder);
     if (!status.ok())
     {
         throw std::runtime_error(status.ToString());
@@ -341,7 +342,7 @@ std::shared_ptr<arrow::Array> buildArrayFromIndices(const std::shared_ptr<arrow:
 }
 
 std::shared_ptr<arrow::RecordBatch> qualifyBatchColumns(const std::shared_ptr<arrow::RecordBatch>& batch,
-                                                        const std::string& alias)
+                                                        const std::string&                         alias)
 {
     if (!batch)
     {
@@ -359,11 +360,11 @@ std::shared_ptr<arrow::RecordBatch> qualifyBatchColumns(const std::shared_ptr<ar
 
 std::shared_ptr<arrow::RecordBatch> joinBatches(const std::shared_ptr<arrow::RecordBatch>& left,
                                                 const std::shared_ptr<arrow::RecordBatch>& right,
-                                                const std::string& left_key,
-                                                const std::string& right_key,
-                                                const plan::JoinType type,
-                                                const ExecutionContext& context,
-                                                QueryStats& stats)
+                                                const std::string&                         left_key,
+                                                const std::string&                         right_key,
+                                                const plan::JoinType                       type,
+                                                const ExecutionContext&                    context,
+                                                QueryStats&                                stats)
 {
     const auto emptyLeft = left == nullptr || left->num_rows() == 0;
     const auto emptyRight = right == nullptr || right->num_rows() == 0;
@@ -407,10 +408,10 @@ std::shared_ptr<arrow::RecordBatch> joinBatches(const std::shared_ptr<arrow::Rec
 
     std::shared_ptr<arrow::RecordBatch> build = right;
     std::shared_ptr<arrow::RecordBatch> probe = left;
-    int build_key_index = right_key_index;
-    int probe_key_index = left_key_index;
-    bool build_is_left = false;
-    bool output_swap = false;
+    int                                 build_key_index = right_key_index;
+    int                                 probe_key_index = left_key_index;
+    bool                                build_is_left = false;
+    bool                                output_swap = false;
 
     if (type == plan::JoinType::INNER && right->num_rows() > left->num_rows())
     {
@@ -423,8 +424,8 @@ std::shared_ptr<arrow::RecordBatch> joinBatches(const std::shared_ptr<arrow::Rec
     }
 
     std::vector<std::shared_ptr<arrow::RecordBatch>> build_spill_batches = {build};
-    uint64_t approximate_bytes = static_cast<uint64_t>(build->num_rows()) *
-        static_cast<uint64_t>(std::max(1, build->num_columns())) * sizeof(int64_t);
+    uint64_t                                         approximate_bytes = static_cast<uint64_t>(build->num_rows()) *
+                                                                         static_cast<uint64_t>(std::max(1, build->num_columns())) * sizeof(int64_t);
     if (context.memory_limit_bytes > 0 && approximate_bytes > context.memory_limit_bytes && context.spill)
     {
         auto handle_result = context.spill->spill("join-build", build_spill_batches);
@@ -601,21 +602,30 @@ executeNode(const plan::PhysicalNodePtr& node, QueryStats& stats, const Executio
 
     if (const auto* scan = std::get_if<plan::PhysicalTableScan>(&node->value))
     {
-        auto queryable = QueryableFactory::instance().createByTable(scan->table_name);
-        const auto result = queryable->execute(scan->table_name, scan->pushable_predicates, scan->projection_hint, context);
+        auto                                             queryable = QueryableFactory::instance().createByTable(scan->table_name);
         std::vector<std::shared_ptr<arrow::RecordBatch>> output;
-        if (result.batch != nullptr)
+        std::string                                      page_token;
+        do
         {
-            output.push_back(scan->qualify_output ? qualifyBatchColumns(result.batch, scan->table_alias) : result.batch);
-            stats.rows_from_backend += static_cast<uint64_t>(result.batch->num_rows());
-        }
-        stats.rpc_calls += 1;
+            const auto result = queryable->execute(scan->table_name,
+                                                   scan->pushable_predicates,
+                                                   scan->projection_hint,
+                                                   context,
+                                                   page_token);
+            ++stats.rpc_calls;
+            if (result.batch != nullptr)
+            {
+                output.push_back(scan->qualify_output ? qualifyBatchColumns(result.batch, scan->table_alias) : result.batch);
+                stats.rows_from_backend += static_cast<uint64_t>(result.batch->num_rows());
+            }
+            page_token = result.next_page_token;
+        } while (!page_token.empty());
         return output;
     }
 
     if (const auto* filter = std::get_if<plan::PhysicalFilter>(&node->value))
     {
-        const auto input = executeNode(filter->input, stats, context);
+        const auto                                       input = executeNode(filter->input, stats, context);
         std::vector<std::shared_ptr<arrow::RecordBatch>> output;
         output.reserve(input.size());
         for (const auto& batch : input)
@@ -712,16 +722,16 @@ executeNode(const plan::PhysicalNodePtr& node, QueryStats& stats, const Executio
 
     if (const auto* describe = std::get_if<plan::PhysicalDescribe>(&node->value))
     {
-        auto queryable = QueryableFactory::instance().createByTable(describe->table_name);
+        auto       queryable = QueryableFactory::instance().createByTable(describe->table_name);
         const auto schema = queryable->tableSchema(describe->table_name);
 
-        arrow::StringBuilder col_name;
-        arrow::StringBuilder col_type;
+        arrow::StringBuilder  col_name;
+        arrow::StringBuilder  col_type;
         arrow::BooleanBuilder col_required;
         arrow::BooleanBuilder col_output;
-        arrow::StringBuilder col_pushable;
-        arrow::StringBuilder col_filterable;
-        arrow::StringBuilder col_notes;
+        arrow::StringBuilder  col_pushable;
+        arrow::StringBuilder  col_filterable;
+        arrow::StringBuilder  col_notes;
         for (const auto& column : schema)
         {
             if (!col_name.Append(column.name).ok() ||
@@ -794,10 +804,10 @@ executeNode(const plan::PhysicalNodePtr& node, QueryStats& stats, const Executio
 } // namespace
 
 QueryExecutionResult QueryExecutor::execute(const plan::PhysicalNodePtr& root,
-                                            const ExecutionContext& context) const
+                                            const ExecutionContext&      context) const
 {
     QueryExecutionResult result;
-    const auto start = std::chrono::steady_clock::now();
+    const auto           start = std::chrono::steady_clock::now();
     result.batches = executeNode(root, result.stats, context);
     collectPlanWarnings(root, result.stats.plan_warnings);
     result.stats.plan_summary = plan::physicalPlanToString(root);
