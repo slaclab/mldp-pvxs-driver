@@ -27,6 +27,8 @@
 #include <string_view>
 #include <variant>
 
+namespace plan = mldp_pvxs_driver::query::plan;
+
 using namespace mldp_pvxs_driver;
 
 namespace {
@@ -244,6 +246,31 @@ protected:
     }
 };
 
+const plan::PhysicalTableScan* findScan(const plan::PhysicalNodePtr& node)
+{
+    if (!node)
+    {
+        return nullptr;
+    }
+    if (const auto* scan = std::get_if<plan::PhysicalTableScan>(&node->value))
+    {
+        return scan;
+    }
+    if (const auto* filter = std::get_if<plan::PhysicalFilter>(&node->value))
+    {
+        return findScan(filter->input);
+    }
+    if (const auto* project = std::get_if<plan::PhysicalProject>(&node->value))
+    {
+        return findScan(project->input);
+    }
+    if (const auto* limit = std::get_if<plan::PhysicalLimit>(&node->value))
+    {
+        return findScan(limit->input);
+    }
+    return nullptr;
+}
+
 TEST_F(PlannerExecutorTest, PlansSelectWithBackboneNodes)
 {
     query::QueryPlanner planner;
@@ -253,6 +280,59 @@ TEST_F(PlannerExecutorTest, PlansSelectWithBackboneNodes)
     EXPECT_NE(text.find("PhysicalLimit"), std::string::npos);
     EXPECT_NE(text.find("PhysicalProject"), std::string::npos);
     EXPECT_NE(text.find("PhysicalTableScan"), std::string::npos);
+}
+
+TEST_F(PlannerExecutorTest, PushesBackendPredicateAndPrunesProjectionColumns)
+{
+    query::QueryPlanner planner;
+    const auto plan = planner.plan(query::parseQuery("SELECT pv FROM fake.samples WHERE pv = 'A'"));
+    const auto* scan = findScan(plan);
+    ASSERT_NE(scan, nullptr);
+    ASSERT_EQ(scan->pushable_predicates.size(), 1);
+    EXPECT_EQ(scan->pushable_predicates[0].column, "pv");
+    EXPECT_EQ(scan->projection_hint, std::set<std::string>({"pv"}));
+    EXPECT_EQ(query::plan::physicalPlanToString(plan).find("PhysicalFilter"), std::string::npos);
+}
+
+TEST_F(PlannerExecutorTest, RetainsFilterableOnlyPredicateForLocalExecution)
+{
+    query::QueryPlanner planner;
+    const auto plan = planner.plan(query::parseQuery("SELECT pv FROM fake.samples WHERE pv = 'A' AND value = 1"));
+    const auto* project = std::get_if<plan::PhysicalProject>(&plan->value);
+    ASSERT_NE(project, nullptr);
+    const auto* filter = std::get_if<plan::PhysicalFilter>(&project->input->value);
+    ASSERT_NE(filter, nullptr);
+    ASSERT_EQ(filter->predicates.size(), 1);
+    EXPECT_EQ(filter->predicates[0].column, "value");
+    const auto* scan = findScan(filter->input);
+    ASSERT_NE(scan, nullptr);
+    ASSERT_EQ(scan->pushable_predicates.size(), 1);
+    EXPECT_EQ(scan->pushable_predicates[0].column, "pv");
+    EXPECT_EQ(scan->projection_hint, std::set<std::string>({"pv", "value"}));
+}
+
+TEST_F(PlannerExecutorTest, ReportsBinderAndTypeFailuresWithTypedErrors)
+{
+    query::QueryPlanner planner;
+    for (const std::string_view sql : {
+             "SELECT pv FROM fake.unknown WHERE pv = 'A'",
+             "SELECT unknown FROM fake.samples WHERE pv = 'A'",
+             "SELECT pv FROM fake.samples WHERE time = 'not-a-time'",
+             "SELECT pv FROM fake.samples WHERE pv >= 'A'",
+             "SELECT value FROM fake.samples"})
+    {
+        try
+        {
+            (void)planner.plan(query::parseQuery(sql));
+            FAIL() << "Expected planning failure for " << sql;
+        }
+        catch (const query::plan::PlannerException& error)
+        {
+            EXPECT_TRUE(std::holds_alternative<query::plan::BindError>(error.error()) ||
+                        std::holds_alternative<query::plan::TypeError>(error.error()) ||
+                        std::holds_alternative<query::plan::PlanError>(error.error()));
+        }
+    }
 }
 
 TEST_F(PlannerExecutorTest, ExplainShortCircuitsToPlanRow)

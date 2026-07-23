@@ -13,6 +13,9 @@
 
 #include <gtest/gtest.h>
 
+#include <string_view>
+#include <vector>
+
 using namespace mldp_pvxs_driver::query;
 
 namespace {
@@ -34,6 +37,59 @@ TEST(QueryLexerTest, TokenizesKeywordsAndDurationLiteralsCaseInsensitive)
     EXPECT_EQ(tokens[10].type, TokenType::MINUS);
     EXPECT_EQ(tokens[11].type, TokenType::DURATION_LITERAL);
     EXPECT_EQ(tokens[11].lexeme, "60s");
+}
+
+TEST(QueryLexerTest, TokenizesEveryPunctuationAndOperatorClass)
+{
+    const auto tokens = Lexer("* , . ( ) + - = != < <= > >= 123 45m 'single' \"double\"").tokenize();
+    const std::vector<TokenType> expected = {
+        TokenType::STAR, TokenType::COMMA, TokenType::DOT, TokenType::LPAREN, TokenType::RPAREN,
+        TokenType::PLUS, TokenType::MINUS, TokenType::EQ, TokenType::NEQ, TokenType::LT,
+        TokenType::LTE, TokenType::GT, TokenType::GTE, TokenType::NUMBER_LITERAL,
+        TokenType::DURATION_LITERAL, TokenType::STRING_LITERAL, TokenType::STRING_LITERAL,
+        TokenType::END_OF_INPUT};
+    ASSERT_EQ(tokens.size(), expected.size());
+    for (std::size_t index = 0; index < expected.size(); ++index)
+    {
+        EXPECT_EQ(tokens[index].type, expected[index]) << index;
+    }
+    EXPECT_EQ(tokens[15].lexeme, "single");
+    EXPECT_EQ(tokens[16].lexeme, "double");
+}
+
+TEST(QueryLexerTest, TokenizesEveryKeywordCaseInsensitively)
+{
+    const auto tokens = Lexer(
+        "select from where and in like between limit page token show tables describe explain as inner left outer join on now prefix contains")
+                            .tokenize();
+    const std::vector<TokenType> expected = {
+        TokenType::SELECT, TokenType::FROM, TokenType::WHERE, TokenType::AND, TokenType::IN,
+        TokenType::LIKE, TokenType::BETWEEN, TokenType::LIMIT, TokenType::PAGE, TokenType::TOKEN,
+        TokenType::SHOW, TokenType::TABLES, TokenType::DESCRIBE, TokenType::EXPLAIN, TokenType::AS,
+        TokenType::INNER, TokenType::LEFT, TokenType::OUTER, TokenType::JOIN, TokenType::ON,
+        TokenType::NOW, TokenType::PREFIX, TokenType::CONTAINS, TokenType::END_OF_INPUT};
+    ASSERT_EQ(tokens.size(), expected.size());
+    for (std::size_t index = 0; index < expected.size(); ++index)
+    {
+        EXPECT_EQ(tokens[index].type, expected[index]) << index;
+    }
+}
+
+TEST(QueryLexerTest, RejectsUnknownAndUnterminatedInputAtItsSourcePosition)
+{
+    for (const std::string_view sql : {"SELECT @", "SELECT 'unterminated"})
+    {
+        try
+        {
+            (void)Lexer(sql).tokenize();
+            FAIL() << "Expected ParseError for " << sql;
+        }
+        catch (const ParseError& error)
+        {
+            EXPECT_EQ(error.line(), 1);
+            EXPECT_GE(error.column(), 1);
+        }
+    }
 }
 
 TEST(QueryParserTest, ParsesSelectJoinPredicatesLimitAndPageToken)
@@ -87,6 +143,19 @@ TEST(QueryParserTest, ParsesShowTablesDescribeAndExplain)
     auto explain = parseQuery("EXPLAIN SELECT * FROM mldp.pv_stats");
     ASSERT_TRUE(std::holds_alternative<ExplainStatement>(explain));
     EXPECT_TRUE(std::get<ExplainStatement>(explain).query.select_all);
+}
+
+TEST(QueryParserTest, ParsesInnerLeftAndMultiJoinChains)
+{
+    const auto statement = parseQuery(
+        "SELECT a.pv FROM fake.a a INNER JOIN fake.b b ON a.pv = b.pv LEFT OUTER JOIN fake.c c ON b.pv = c.pv");
+    ASSERT_TRUE(std::holds_alternative<SelectStatement>(statement));
+    const auto& joins = std::get<SelectStatement>(statement).joins;
+    ASSERT_EQ(joins.size(), 2);
+    EXPECT_EQ(joins[0].type, JoinType::INNER);
+    EXPECT_EQ(joins[1].type, JoinType::LEFT_OUTER);
+    EXPECT_EQ(joins[1].condition.left.qualifier.value_or(""), "b");
+    EXPECT_EQ(joins[1].condition.right.qualifier.value_or(""), "c");
 }
 
 TEST(QueryParserTest, ReportsParseErrorsWithPosition)

@@ -10,7 +10,7 @@
 
 #include <query/QueryFormatter.h>
 
-#include <arrow/io/stdio.h>
+#include <arrow/io/memory.h>
 #include <arrow/ipc/writer.h>
 #include <arrow/pretty_print.h>
 #include <arrow/scalar.h>
@@ -122,7 +122,7 @@ void writeJsonLines(const query::QueryExecutionResult& result, std::ostream& out
                     output << "\"" << escapeJson(value) << "\"";
                 }
             }
-            output << "\n";
+            output << "}\n";
         }
     }
 }
@@ -209,15 +209,20 @@ void writeCsv(const query::QueryExecutionResult& result, std::ostream& output)
     }
 }
 
-void writeArrowIpc(const query::QueryExecutionResult& result)
+void writeArrowIpc(const query::QueryExecutionResult& result, std::ostream& output)
 {
     if (result.batches.empty() || !result.batches.front())
     {
         return;
     }
 
-    arrow::io::StdoutStream stdout_stream;
-    auto writer_result = arrow::ipc::MakeStreamWriter(&stdout_stream, result.batches.front()->schema());
+    auto stream_result = arrow::io::BufferOutputStream::Create();
+    if (!stream_result.ok())
+    {
+        throw std::runtime_error(stream_result.status().ToString());
+    }
+    const auto& stream = *stream_result;
+    auto writer_result = arrow::ipc::MakeStreamWriter(stream, result.batches.front()->schema());
     if (!writer_result.ok())
     {
         throw std::runtime_error(writer_result.status().ToString());
@@ -239,6 +244,17 @@ void writeArrowIpc(const query::QueryExecutionResult& result)
     if (!close_status.ok())
     {
         throw std::runtime_error(close_status.ToString());
+    }
+    auto buffer_result = stream->Finish();
+    if (!buffer_result.ok())
+    {
+        throw std::runtime_error(buffer_result.status().ToString());
+    }
+    const auto& buffer = *buffer_result;
+    output.write(reinterpret_cast<const char*>(buffer->data()), buffer->size());
+    if (!output)
+    {
+        throw std::runtime_error("Failed to write Arrow IPC output");
     }
 }
 
@@ -280,7 +296,7 @@ void mldp_pvxs_driver::cli::formatQueryResult(const query::QueryExecutionResult&
             writeCsv(result, output);
             break;
         case QueryOutputFormat::Arrow:
-            writeArrowIpc(result);
+            writeArrowIpc(result, output);
             break;
     }
 }

@@ -20,3 +20,4 @@ data/hdf5/
 src/reader/impl/hdf5_bsas_gen1/HDF5BsasGen1Reader.cpp
 test/reader/impl/hdf5_bsas_gen1/hdf5_bsas_gen1_reader_test.cpp
 *.db
+__pycache__

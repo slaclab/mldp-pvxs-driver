@@ -1,135 +1,368 @@
 # Query Engine Architecture
 
-This document describes the embedded query engine used by `mldp_pvxs_driver query` from a developer perspective.
+This document describes the embedded query engine used by `mldp_pvxs_driver query` from an architectural and developer perspective.
 
-> **Related:** [Query CLI Guide](../guides/query-cli.md) | [Query Clients](../dev/query-client.md) | [Architecture Overview](architecture.md)
-
----
-
-## End-to-End Flow
-
-1. CLI parses query runtime options in `src/cli/mldp_pvxs_driver_main.cpp`.
-2. `prepareQuerySubcommand(...)` prepares `QueryableFactory` from the `queryable:` config.
-3. `runQueryRepl(...)` reads one line at a time from `stdin`.
-4. Each line is parsed (`parseQuery`), planned (`QueryPlanner::plan`), then executed (`QueryExecutor::execute`).
-
-Core files:
-
-- `src/query/QuerySubcommand.cpp`
-- `src/query/QueryPlanner.cpp`
-- `src/query/QueryExecutor.cpp`
-- `include/query/plan/LogicalPlan.h`
-- `include/query/plan/PhysicalPlan.h`
+> **Related:** [Query CLI Guide](../guides/query-cli.md) | [Configuration Reference](../guides/configuration.md) | [Architecture Overview](architecture.md)
 
 ---
 
-## Planner Pipeline
+## Overview
 
-`QueryPlanner::plan(...)` runs a fixed pass order for `SELECT` statements:
+The query engine is a single-binary, embedded SQL engine that translates a subset of SQL into gRPC calls against MLDP backend services and returns results as Apache Arrow `RecordBatch` objects. It is activated by the `query` subcommand and requires only a `queryable:` config block — no reader, writer, routing, or metrics sections.
 
-1. `bindSelect(...)`
-2. `typeCheckSelect(...)`
-3. `buildLogicalPlan(...)`
-4. `applyPredicatePushdown(...)`
-5. `applyJoinOrderOptimizer(...)`
-6. `applyConstantFolding(...)`
-7. `applyColumnPruning(...)`
-8. `requiredColumnCheck(...)`
-9. `buildPhysicalPlan(...)`
-10. `applyCorrelatedPushOptimizer(...)`
+```
+SQL text
+  │
+  ▼
+QueryParser        (Flex/Bison lexer + parser)
+  │  ParsedStatement (AST)
+  ▼
+QueryPlanner       (Binder → optimizer passes → PhysicalPlan)
+  │  PhysicalPlan
+  ▼
+QueryExecutor      (recursive tree evaluation)
+  │  QueryResult (Arrow RecordBatches + QueryStats)
+  ▼
+QueryFormatter     (table / json / csv / arrow)
+```
 
-Non-`SELECT` statements map directly to physical nodes:
+Core source files:
 
-- `SHOW TABLES` → `PhysicalShowTables`
-- `DESCRIBE <table>` → `PhysicalDescribe`
-- `EXPLAIN <query>` → `PhysicalExplain`
-
----
-
-## Logical and Physical Plans
-
-Logical nodes (`include/query/plan/LogicalPlan.h`):
-
-- `LogicalScan`
-- `LogicalFilter`
-- `LogicalProject`
-- `LogicalLimit`
-- `LogicalJoin`
-
-Physical nodes (`include/query/plan/PhysicalPlan.h`):
-
-- `PhysicalTableScan`
-- `PhysicalFilter`
-- `PhysicalProject`
-- `PhysicalLimit`
-- `PhysicalHashJoin`
-- `PhysicalNestedLoopJoin`
-- `PhysicalBlockNestedLoopJoin`
-- `PhysicalShowTables`
-- `PhysicalDescribe`
-- `PhysicalExplain`
+| File | Role |
+|---|---|
+| `src/query/QuerySubcommand.cpp` | CLI wiring, config loading, REPL loop |
+| `src/query/QueryPlanner.cpp` | Planning pipeline orchestration |
+| `src/query/QueryExecutor.cpp` | Physical tree evaluation |
+| `src/query/QueryFormatter.cpp` | Result rendering |
+| `src/query/SpillManager.cpp` | Disk-spill coordination |
+| `include/query/plan/LogicalPlan.h` | Logical plan node types |
+| `include/query/plan/PhysicalPlan.h` | Physical plan node types |
 
 ---
 
-## Join Planning and Optimization
+## End-to-end flow
 
-### Join order optimization
-
-`applyJoinOrderOptimizer(...)` annotates boundedness and may reorder **inner joins** to put a bounded side first.  
-If both sides are unbounded, it emits a warning:
-
-`PlanWarning: joining two unbounded sides; spill is expected under memory pressure`
-
-### Correlated push optimization
-
-`applyCorrelatedPushOptimizer(...)` rewrites eligible hash-join shapes into nested-loop joins with `correlated_push=true` when the right side is a direct `PhysicalTableScan`.
-
-### Required-column safety
-
-`requiredColumnCheck(...)` enforces required schema columns must be constrained by a pushable predicate or covered by an equi-join key, preventing unconstrained scans on required dimensions.
+1. `mldp_pvxs_driver query` parses global options and delegates to `QuerySubcommand::run(...)`.
+2. `QuerySubcommandPreparer::prepare(config)` iterates the `queryable:` block and calls `QueryableFactory::instance().prepare<T>(cfg)` for each declared backend.
+3. The SQL is loaded (positional arg or `--file`), then parsed with `parseQuery(sql)`.
+4. `QueryPlanner::plan(parsed)` produces a `PhysicalPlan`.
+5. `QueryExecutor::execute(physical, context)` evaluates the physical tree and returns `QueryResult`.
+6. `formatQueryResult(...)` writes the result to stdout.
+7. `printQueryStats(...)` writes the stats footer unless `--no-stats`.
 
 ---
 
-## Execution Model
+## Parser
 
-`QueryExecutor::execute(...)` recursively evaluates the physical tree:
+The parser lives in `src/query/parser/` and is generated by Flex + GNU Bison 3.7+.
 
-- scans call `QueryableFactory::createByTable(...)->execute(...)`
-- filters and projects apply in-memory Arrow transforms
-- joins combine child batches and execute through shared join helpers
-- SHOW/DESCRIBE/EXPLAIN materialize synthetic Arrow `RecordBatch` outputs
+- **Lexer** (`QueryLexer.l` → `QueryFlexLexer.cpp`): tokenizes keywords, identifiers, string/number/duration literals, and operators.
+- **Parser** (`QueryBisonParser.y` → `QueryBisonParser.cpp`): produces a `QueryStatement` variant (AST).
 
-Execution returns:
+### Supported statement types
 
-- output batches
-- `QueryStats` (`include/query/QueryStats.h`) with:
-  - elapsed time
-  - backend rows
-  - returned rows
-  - RPC calls
-  - spill bytes/files
-  - peak memory bytes
-  - plan summary
-  - plan warnings
+| Statement | AST node |
+|---|---|
+| `SELECT ... FROM ... [JOIN] [WHERE] [LIMIT] [PAGE TOKEN]` | `SelectStatement` |
+| `SHOW TABLES` | `ShowTablesStatement` |
+| `DESCRIBE <table>` | `DescribeStatement` |
+| `EXPLAIN <select>` | `ExplainStatement` |
 
----
+### Duration literals
 
-## Memory and Spill
+The parser recognizes duration literals in `NOW ± <n><unit>` expressions:
 
-Runtime controls are passed via `QueryCliOptions` → `ExecutionContext`:
-
-- `memory_mb` → `memory_limit_bytes`
-- `spill_dir`
-- `spill_partitions`
-- `join_batch_size`
-
-`SpillManager` is attached in `runQueryRepl(...)` and used by join execution under memory pressure (notably on build-side materialization paths). Spill activity is reflected in `QueryStats.bytes_spilled` and `QueryStats.spill_files`.
+| Suffix | Unit |
+|---|---|
+| `s` or `S` | seconds |
+| `m` or `M` | minutes |
+| `h` or `H` | hours |
 
 ---
 
-## Extension Points
+## Planner pipeline
 
-- Add/extend parser grammar in `src/query/parser/grammar/*`.
-- Add planner passes under `src/query/planner/*` and wire in `QueryPlanner.cpp`.
-- Add physical operators in `include/query/plan/PhysicalPlan.h` + `QueryExecutor.cpp`.
-- Add backend table/query behavior by implementing/extending `IQueryable` providers and registering through `QueryableFactory`.
+`QueryPlanner::plan(...)` runs a fixed-order pass sequence for `SELECT` statements:
+
+```
+bindSelect            — resolve tables + columns; attach column schemas
+typeCheckSelect       — verify predicate types against column types
+buildLogicalPlan      — emit LogicalScan / LogicalFilter / LogicalProject / LogicalLimit / LogicalJoin tree
+applyPredicatePushdown — push WHERE predicates down to the scan nodes that own them
+applyJoinOrderOptimizer — reorder inner joins to put bounded side first
+applyConstantFolding  — fold NOW ± offset to concrete epoch seconds
+applyColumnPruning    — drop columns not referenced in SELECT or join keys
+requiredColumnCheck   — enforce required-column predicate constraints
+buildPhysicalPlan     — emit physical node tree
+applyCorrelatedPushOptimizer — rewrite hash-join → nested-loop when right side is a direct scan
+```
+
+Non-`SELECT` statements skip the pipeline and map directly to physical leaf nodes:
+
+| Statement | Physical node |
+|---|---|
+| `SHOW TABLES` | `PhysicalShowTables` |
+| `DESCRIBE <table>` | `PhysicalDescribe` |
+| `EXPLAIN <select>` | `PhysicalExplain` |
+
+### Binder (`bindSelect`)
+
+The binder (`src/query/planner/Binder.cpp`) performs name resolution:
+
+1. Each `FROM` / `JOIN` table name is looked up in `QueryableFactory` to obtain its `IQueryable` instance.
+2. `IQueryable::tableSchema(table_name)` returns a `std::vector<ColumnSchema>` describing column names, types, required-predicate flags, and supported pushable/filterable operators.
+3. Column references in `SELECT`, `WHERE`, and `ON` clauses are resolved to `(table_alias, column_name)` pairs.
+4. Each `WHERE` predicate is bound to a `PlannerPredicate` carrying the resolved column type and operator-support sets.
+5. `attr.<key>` column references resolve to dynamic attribute access; they default to string type and support all text operators.
+6. A required-column check ensures that any column with `required = true` (e.g., `mldp.time_series.pv`) is covered by a pushable predicate or an equi-join key.
+
+### Join optimization passes
+
+**`applyJoinOrderOptimizer`** annotates each table side with a `bounded` flag (true when a pushable time or PV predicate is present). Inner joins are reordered to put the bounded side on the left (probe) so the unbounded side fetches correlated results. If both sides are unbounded the optimizer emits:
+
+```
+PlanWarning: joining two unbounded sides; spill is expected under memory pressure
+```
+
+**`applyCorrelatedPushOptimizer`** rewrites eligible hash-join shapes where the right side is a direct `PhysicalTableScan` into a nested-loop join with `correlated_push = true`. This enables the executor to fetch right-side rows keyed by each left-side join-key value instead of materializing the full right-side scan.
+
+---
+
+## Logical and physical plans
+
+### Logical nodes (`include/query/plan/LogicalPlan.h`)
+
+| Node | Description |
+|---|---|
+| `LogicalScan` | Full or filtered scan of one virtual table |
+| `LogicalFilter` | In-memory predicate filter on a child result |
+| `LogicalProject` | Column projection |
+| `LogicalLimit` | Row-count limit and optional page token |
+| `LogicalJoin` | INNER or LEFT OUTER join of two logical subtrees |
+
+### Physical nodes (`include/query/plan/PhysicalPlan.h`)
+
+| Node | Description |
+|---|---|
+| `PhysicalTableScan` | Calls `IQueryable::execute(...)` for one table |
+| `PhysicalFilter` | Arrow-based in-memory filter |
+| `PhysicalProject` | Arrow column selection |
+| `PhysicalLimit` | Row-count limit |
+| `PhysicalHashJoin` | Hash-join (build right side, probe left side) |
+| `PhysicalNestedLoopJoin` | Row-by-row nested-loop join |
+| `PhysicalBlockNestedLoopJoin` | Block nested-loop join for unbounded pairs |
+| `PhysicalShowTables` | Enumerates registered virtual tables |
+| `PhysicalDescribe` | Returns the `ColumnSchema` for one table |
+| `PhysicalExplain` | Renders the physical plan as text |
+
+---
+
+## IQueryable — the provider interface
+
+```cpp
+class IQueryable {
+public:
+    virtual std::set<std::string_view> virtualTables() const = 0;
+    virtual std::vector<ColumnSchema>  tableSchema(std::string_view table_name) const = 0;
+    virtual QueryResult execute(std::string_view table_name,
+                                const std::vector<Predicate>& pushable_predicates,
+                                const std::set<std::string>&  requested_columns,
+                                const ExecutionContext&        context,
+                                std::string_view              page_token) = 0;
+};
+```
+
+Each backend implementation registers through `QueryableFactory`:
+
+```cpp
+QueryableFactory::instance().prepare<MLDPQueryClient>(cfg);
+QueryableFactory::instance().prepare<MLDPAnnotationQueryClient>(cfg);
+```
+
+`createByTable(table_name)` returns the `IQueryable` instance registered for that virtual table name.
+
+### ColumnSchema
+
+```cpp
+struct ColumnSchema {
+    std::string           name;
+    ColumnType            type;            // STRING, TIMESTAMP, INT, DURATION_SECONDS
+    bool                  required;        // planner error if not covered
+    bool                  pushable;        // true = can be sent to the backend
+    std::set<PredicateOp> pushable_ops;    // operators the backend handles
+    std::set<PredicateOp> filterable_ops;  // operators applied in-memory post-fetch
+    std::string           description;
+};
+```
+
+The planner splits `WHERE` predicates into pushable (sent to `execute`) and filterable (evaluated in-memory in `PhysicalFilter`) based on `pushable_ops` and `filterable_ops`.
+
+---
+
+## Virtual table catalog (predicate rules)
+
+### `mldp.time_series` — `MLDPQueryClient`
+
+| Column | Pushable ops | Notes |
+|---|---|---|
+| `pv` | `=`, `IN` | **Required.** Translated to `QueryTableRequest.pvNameList`. |
+| `time` | `>=`, `<=` | Translated to `QueryTableRequest.beginTime` / `endTime`. |
+| `value` | — | Fetched only; dense-union Arrow type. |
+| `timeout` | `=` | Sets gRPC query timeout. |
+| `rpc_deadline` | `=` | Sets gRPC deadline. |
+
+Time values are epoch seconds; the executor converts to nanoseconds internally. The backend returns column-format `QueryTableResponse`; rows are sorted by timestamp before pagination.
+
+### `mldp.pv_stats` — `MLDPQueryClient`
+
+| Column | Pushable ops | Notes |
+|---|---|---|
+| `pv` | `=`, `IN` | **Required.** Sent as `QueryPvStatsRequest.pvNameList`. |
+| `first_timestamp` | — | First recorded sample. |
+| `last_timestamp` | — | Last recorded sample. |
+| `num_buckets` | — | Total bucket count. |
+
+### `mldp.pv_metadata` — `MLDPAnnotationQueryClient`
+
+| Column | Pushable ops | Notes |
+|---|---|---|
+| `pv` | `=`, `IN`, `PREFIX`, `CONTAINS` | `QueryPvMetadataRequest` criterion: exact / prefix / contains. |
+| `alias` | `=`, `IN`, `PREFIX`, `CONTAINS` | Aliases criterion. |
+| `tag` | `=`, `IN` | Tags criterion. |
+| `description` | — | Fetched only. |
+| `created_time` | — | Fetched only. |
+| `updated_time` | — | Fetched only. |
+| `modified_by` | — | Fetched only. |
+
+At least one pushable predicate is required.
+
+### `mldp.configuration` — `MLDPAnnotationQueryClient`
+
+| Column | Pushable ops | Notes |
+|---|---|---|
+| `name` | `=`, `IN`, `PREFIX`, `CONTAINS` | `QueryConfigurationsRequest` name criterion. |
+| `category` | `=`, `IN` | Category criterion. |
+| `parent` | `=`, `IN` | Parent criterion. |
+
+At least one pushable predicate is required.
+
+### `mldp.configuration_activation` — `MLDPAnnotationQueryClient`
+
+| Column | Pushable ops | Notes |
+|---|---|---|
+| `time` | `=`, `>=`, `<=` | Timestamp criterion on activation start time. |
+| `config_name` | `=`, `IN` | Configuration name criterion. |
+| `activation_id` | `=`, `IN` | Client activation ID criterion. |
+
+At least one pushable predicate is required.
+
+### `mldp.active_configurations` — `MLDPAnnotationQueryClient`
+
+| Column | Pushable ops | Notes |
+|---|---|---|
+| `at` | `=` | **Required.** Maps to `GetActiveConfigurationsRequest.timestamp`. |
+| `name` | — | Active configuration name. |
+| `activation_id` | — | Activation identifier. |
+| `time` | — | Activation start time. |
+
+Exactly one `at = <epoch>` predicate required. Pagination not supported.
+
+---
+
+## Execution model
+
+`QueryExecutor::execute(physical, context)` recursively evaluates the physical tree:
+
+- **`PhysicalTableScan`** calls `QueryableFactory::createByTable(name)->execute(pushable_predicates, ...)` and returns `QueryResult { batch, next_page_token }`.
+- **`PhysicalFilter`** applies Arrow compute kernels to filter batch rows in-memory.
+- **`PhysicalProject`** selects the requested columns from a batch.
+- **`PhysicalLimit`** truncates to `n` rows and threads the page token.
+- **`PhysicalHashJoin`** materializes the right-side build into a hash map, then probes with left-side rows.
+- **`PhysicalNestedLoopJoin`** / **`PhysicalBlockNestedLoopJoin`** iterate row pairs; the block variant fetches left-side pages to bound peak memory.
+- **`PhysicalShowTables`** queries `QueryableFactory` for all registered virtual table names.
+- **`PhysicalDescribe`** calls `IQueryable::tableSchema(...)` and returns a synthetic `RecordBatch`.
+- **`PhysicalExplain`** serializes the physical plan tree as text.
+
+Execution returns `QueryResult` containing:
+
+- Zero or more Arrow `RecordBatch` objects.
+- A `QueryStats` record:
+  - `elapsed_ms` — wall time for the entire execution.
+  - `backend_rows` — total rows fetched from backends.
+  - `returned_rows` — rows after filters and projections.
+  - `rpc_calls` — total gRPC calls made.
+  - `bytes_spilled` — bytes written to spill files.
+  - `spill_files` — number of spill files created.
+  - `peak_memory_bytes` — peak Arrow memory pool allocation.
+  - `plan_summary` — compact plan string.
+  - `plan_warnings` — planner-emitted advisory messages.
+
+---
+
+## Memory and spill
+
+Runtime controls flow from `QueryCliOptions` → `ExecutionContext`:
+
+| CLI option | `ExecutionContext` field | Effect |
+|---|---|---|
+| `--memory-mb` | `memory_limit_bytes` | Soft memory limit; triggers spill when exceeded. |
+| `--spill-dir` | `spill_dir` | Root directory for spill files. |
+| `--spill-partitions` | `spill_partitions` | Hash partition count for spill writes. |
+| `--join-batch-size` | `join_batch_size` | Batch page size for join build-side iteration. |
+
+`SpillManager` (`src/query/SpillManager.cpp`) is created in `QuerySubcommand::run(...)` and attached to the `ExecutionContext`. Join execution paths check `memory_limit_bytes` before materializing the build side; when the limit is exceeded, build-side batches are written to partitioned spill files on the Arrow `LocalFileSystem`. Spill activity is reflected in `QueryStats.bytes_spilled` and `QueryStats.spill_files`. Spill files are cleaned up automatically when `SpillManager` is destroyed (via `SpillCleanupGuard`).
+
+---
+
+## Connection pool model
+
+Both MLDP backend clients use gRPC connection pools (`MLDPGrpcQueryPool` and `MLDPGrpcAnnotationPool`) configured from the `queryable:` YAML block:
+
+```yaml
+queryable:
+  mldp:
+    mldp-pool:
+      ingestion-url: grpc://ingest:50051
+      query-url:     grpc://query:50052
+      min-conn: 1
+      max-conn: 4
+  mldp-pv-metadata:
+    mldp-pv-metadata-pool:
+      annotation-url: grpc://annotation:50053
+      min-conn: 1
+      max-conn: 2
+```
+
+Each `execute(...)` call acquires a pool handle, issues one gRPC call, then releases the handle. Channels are kept alive for the lifetime of the `QuerySubcommand`. TLS is supported by using `grpcs://` URLs; the pool uses `grpc::SslCredentials` in that case.
+
+---
+
+## Extension points
+
+### Adding a new virtual table to an existing backend
+
+1. Add the table name to `virtualTables()` in the relevant `IQueryable` implementation.
+2. Add its `ColumnSchema` vector to `tableSchema(...)`.
+3. Handle the new table name in `execute(...)` and map predicates to the appropriate gRPC request fields.
+
+### Adding a new IQueryable backend
+
+1. Implement `IQueryable` in `src/query/impl/<name>/`.
+2. Add a `prepare<MyQueryable>` specialization in `QueryableFactory.cpp` that reads the config block.
+3. Register the type string in `QuerySubcommand.cpp:prepareQueryable(...)`.
+4. Add the new type key to the `queryable:` YAML schema.
+
+### Adding parser syntax
+
+- Grammar changes: edit `src/query/parser/grammar/QueryBisonParser.y` and `QueryLexer.l`, then regenerate with `flex`/`bison`.
+- New predicate operators: add a `TokenType`, extend `PredicateBinaryOp`, update `Binder.cpp:mapBinaryOp(...)`, and add the operator to the relevant `ColumnSchema::pushable_ops` sets.
+
+### Adding planner passes
+
+Add a new pass function under `src/query/planner/`, declare it in the matching header, and call it in the fixed-order sequence in `QueryPlanner::plan(...)` at the appropriate point.
+
+### Adding physical operators
+
+1. Define the new node variant in `include/query/plan/PhysicalPlan.h`.
+2. Implement the execution case in `QueryExecutor::execute(...)`.
+3. Wire the logical-to-physical lowering in `buildPhysicalPlan(...)`.
