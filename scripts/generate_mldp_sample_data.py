@@ -255,7 +255,7 @@ def save_configurations(bindings: Bindings, annotation_stub: object, namespace: 
     # The two beam-mode windows are adjacent and closed; the independent RF
     # and vacuum categories remain open, producing coherent active states.
     windows = ((names[0], now - 7200, now - 3600), (names[1], now - 3600, now), (names[2], now - 1800, None), (names[3], now - 900, None))
-    for activation_id, (name, start, end) in zip(activation_ids(namespace), windows, strict=True):
+    for activation_id, (name, start, end) in zip(activation_ids(namespace), windows):
         request = bindings.annotation.SaveConfigurationActivationRequest(
             clientActivationId=activation_id,
             configurationName=name,

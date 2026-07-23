@@ -1,6 +1,6 @@
 # Query CLI Guide
 
-The `query` subcommand runs one SQL statement — parse → plan → execute → render — and prints results to stdout.
+The `query` subcommand runs SQL statements — parse → plan → execute → render — and prints results to stdout. Supply a statement or file for one-shot execution, or omit both to open an interactive session.
 
 > **Related:** [Query Engine Architecture](../reference/query-engine-architecture.md) | [Configuration Reference](configuration.md#queryable-block) | [Tutorial: first queries with sample data](#tutorial-first-queries-with-sample-data)
 
@@ -10,6 +10,8 @@ The `query` subcommand runs one SQL statement — parse → plan → execute →
 
 ```bash
 mldp_pvxs_driver [global options] query [query options] "<SQL>"
+# Or start an interactive SQL session
+mldp_pvxs_driver [global options] query [query options]
 ```
 
 Global config must appear **before** `query`:
@@ -30,14 +32,64 @@ mldp_pvxs_driver -c config.yaml query "<SQL>"
 | `--spill-partitions <n>` | `16` | Spill partition count for join spill paths. |
 | `--join-batch-size <n>` | `100` | Batch size hint for join execution and pagination. |
 
+### Interactive session
+
+Run `query` without positional SQL or `--file` to start the REPL:
+
+```bash
+mldp_pvxs_driver -c query-config.yaml query
+mldp> SHOW TABLES;
+```
+
+Terminate each statement with a semicolon. Statements can span lines; the prompt changes from `mldp> ` to `...> ` while a statement is buffered. A semicolon inside a quoted string does not terminate the statement. The session executes one statement at a time and remains open after parse, planning, or execution errors.
+
+For example:
+
+```text
+mldp> SELECT name, category
+...> FROM mldp.configuration
+...> WHERE category = 'beam';
+```
+
+`mldp.configuration` also supports an unfiltered list operation:
+
+```sql
+SELECT * FROM mldp.configuration;
+```
+
+| Command | Purpose |
+|---|---|
+| `.help` | Show statement, command, and editing usage. |
+| `.clear` | Discard the buffered statement. |
+| `.quit`, `.exit` | Exit the session. |
+
+### Line editing and completion
+
+When both standard input and output are interactive terminals, the REPL provides shell-style editing. Use Tab to complete SQL keywords, REPL commands, and table names registered by the active `queryable:` configuration. Completion is prefix-based; when more than one candidate matches, the terminal displays the choices and keeps the current input.
+
+| Keys | Behavior |
+|---|---|
+| Left/Right, Ctrl-B/Ctrl-F | Move one character backward/forward. |
+| Home/End, Ctrl-A/Ctrl-E | Move to the beginning/end of the editable line. |
+| Up/Down | Navigate prior completed statements and commands. |
+| Backspace/Delete, Ctrl-D | Delete before/at the cursor. Ctrl-D at an empty primary prompt exits. |
+| Ctrl-W / Alt-D | Delete the preceding / following word. |
+| Ctrl-U / Ctrl-K | Erase text before / after the cursor. |
+| Ctrl-L | Clear and redraw the terminal. |
+| Ctrl-C | Cancel the editable line, discard any buffered multi-line statement, and return to `mldp> `. |
+
+The REPL saves completed SQL statements and dot commands (but never unfinished input) across interactive sessions. It uses `$XDG_STATE_HOME/mldp-pvxs-driver/query-history`; if `XDG_STATE_HOME` is unset, it uses `$HOME/.local/state/mldp-pvxs-driver/query-history`. Delete that file to clear saved history.
+
+When input is redirected or supplied by a script, the REPL retains plain line-based input: it shows the prompts, but disables terminal editing, completion, and persistent history. One-shot positional SQL and `--file` mode are unaffected.
+
 ---
 
 ## Quick-start examples
 
 ```bash
-# Schema introspection — no backend connection needed
-mldp_pvxs_driver query "SHOW TABLES"
-mldp_pvxs_driver query "DESCRIBE mldp.time_series"
+# Schema introspection — queryable config required
+mldp_pvxs_driver -c query-config.yaml query "SHOW TABLES"
+mldp_pvxs_driver -c query-config.yaml query "DESCRIBE mldp.time_series"
 
 # Fetch last hour of samples for one PV
 mldp_pvxs_driver -c config.yaml query \
@@ -58,6 +110,8 @@ mldp_pvxs_driver -c config.yaml query --format csv --no-stats \
 
 `query` mode activates only `queryable:` backends. It does not require `reader`, `writer`, `routing`, or `metrics` blocks.
 
+The client settings are nested in their named pool (`mldp-pool` for `mldp`, and `mldp-annotation-pool` or the `mldp-pv-metadata-pool` alias for annotation tables). The CLI also accepts the older flat form with the endpoint and connection settings directly under the type key.
+
 ### Config file
 
 Service hostnames match the Docker Compose service names defined in `docker-compose.yml` (`dp-ingestion`, `dp-query`, `dp-annotation`):
@@ -67,12 +121,12 @@ Service hostnames match the Docker Compose service names defined in `docker-comp
 queryable:
   mldp:
     mldp-pool:
-      query-url: grpc://dp-query:50052
+      query-url: dp-query:50052
       min-conn: 1
       max-conn: 2
   mldp-pv-metadata:
     mldp-pv-metadata-pool:
-      annotation-url: grpc://dp-annotation:50053
+      annotation-url: dp-annotation:50053
       min-conn: 1
       max-conn: 2
 ```
@@ -83,10 +137,10 @@ Pass URLs directly with `-c` dotted assignments instead of writing a file:
 
 ```bash
 mldp_pvxs_driver \
-  -c queryable.mldp.mldp-pool.query-url=grpc://dp-query:50052 \
+  -c queryable.mldp.mldp-pool.query-url=dp-query:50052 \
   -c queryable.mldp.mldp-pool.min-conn=1 \
   -c queryable.mldp.mldp-pool.max-conn=2 \
-  -c queryable.mldp-pv-metadata.mldp-pv-metadata-pool.annotation-url=grpc://dp-annotation:50053 \
+  -c queryable.mldp-pv-metadata.mldp-pv-metadata-pool.annotation-url=dp-annotation:50053 \
   -c queryable.mldp-pv-metadata.mldp-pv-metadata-pool.min-conn=1 \
   -c queryable.mldp-pv-metadata.mldp-pv-metadata-pool.max-conn=2 \
   query "SHOW TABLES"
@@ -97,7 +151,7 @@ Override just the query URL when running against a different host:
 ```bash
 mldp_pvxs_driver \
   -c query-config.yaml \
-  -c queryable.mldp.mldp-pool.query-url=grpc://my-host:50052 \
+  -c queryable.mldp.mldp-pool.query-url=my-host:50052 \
   query "SELECT pv, time, value FROM mldp.time_series WHERE pv = 'MY:PV' LIMIT 10"
 ```
 
@@ -381,10 +435,25 @@ WHERE at = NOW -30m
 
 | `--format` | Description |
 |---|---|
-| `table` | ASCII-bordered table (default). Best for interactive use. |
+| `table` | psql-style ASCII table with column headers and separator (default). |
 | `json` | One JSON object per row, newline-delimited. |
 | `csv` | RFC 4180 CSV with header row. |
 | `arrow` | Apache Arrow IPC stream (binary). Suitable for programmatic consumption. |
+
+Example `table` output for `SHOW TABLES`:
+
+```
+table_name
+-------------------------------
+mldp.active_configurations
+mldp.configuration
+mldp.configuration_activation
+mldp.pv_metadata
+mldp.pv_stats
+mldp.time_series
+(6 rows)
+-- 6 rows (6 from backend, 0 filtered) in 0ms | 0 RPC | 0 bytes spilled | 0 MB peak
+```
 
 ---
 
@@ -465,12 +534,12 @@ Save the following as `query-config.yaml` (adjust URLs if your MLDP stack uses d
 queryable:
   mldp:
     mldp-pool:
-      query-url: grpc://dp-query:50052
+      query-url: dp-query:50052
       min-conn: 1
       max-conn: 2
   mldp-pv-metadata:
     mldp-pv-metadata-pool:
-      annotation-url: grpc://dp-annotation:50053
+      annotation-url: dp-annotation:50053
       min-conn: 1
       max-conn: 2
 ```
@@ -479,13 +548,13 @@ queryable:
 
 ```bash
 # List all available virtual tables
-mldp_pvxs_driver query "SHOW TABLES"
+mldp_pvxs_driver -c query-config.yaml query "SHOW TABLES"
 
 # Inspect time-series table columns
-mldp_pvxs_driver query "DESCRIBE mldp.time_series"
+mldp_pvxs_driver -c query-config.yaml query "DESCRIBE mldp.time_series"
 
 # Inspect metadata table columns
-mldp_pvxs_driver query "DESCRIBE mldp.pv_metadata"
+mldp_pvxs_driver -c query-config.yaml query "DESCRIBE mldp.pv_metadata"
 ```
 
 ### Step 4 — Fetch time-series samples

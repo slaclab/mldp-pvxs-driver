@@ -241,8 +241,6 @@ QueryResult MLDPAnnotationQueryClient::execute(std::string_view              tab
             else
                 throw std::invalid_argument("Unsupported mldp.configuration predicate column or operator: " + predicate.column);
         }
-        if (request.criteria_size() == 0)
-            throw std::invalid_argument("mldp.configuration requires at least one pushable predicate");
         const auto [records, next] = queryConfigurations(request);
         arrow::StringBuilder    name, category, parent, description, modified_by;
         arrow::TimestampBuilder created(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), arrow::default_memory_pool()), updated(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), arrow::default_memory_pool());
@@ -359,7 +357,7 @@ MLDPAnnotationQueryClient::MLDPAnnotationQueryClient(
 MLDPAnnotationQueryClient::MLDPAnnotationQueryClient(
     const config::Config&             cfg,
     std::shared_ptr<metrics::Metrics> m)
-    : MLDPAnnotationQueryClient(util::pool::MLDPGrpcPoolConfig(cfg), std::move(m))
+    : MLDPAnnotationQueryClient(util::pool::MLDPGrpcAnnotationPoolConfig(cfg), std::move(m))
 {
 }
 

@@ -12,9 +12,7 @@
 
 #include <arrow/io/memory.h>
 #include <arrow/ipc/writer.h>
-#include <arrow/pretty_print.h>
 #include <arrow/scalar.h>
-#include <arrow/table.h>
 
 #include <iomanip>
 #include <sstream>
@@ -265,17 +263,89 @@ void writeTable(const query::QueryExecutionResult& result, std::ostream& output)
         return;
     }
 
-    auto table_result = arrow::Table::FromRecordBatches(result.batches);
-    if (!table_result.ok())
+    const auto& schema = result.batches.front()->schema();
+    const int num_cols = schema->num_fields();
+
+    // Collect header names and column widths
+    std::vector<std::string> headers;
+    std::vector<size_t>      widths;
+    headers.reserve(num_cols);
+    widths.reserve(num_cols);
+    for (int c = 0; c < num_cols; ++c)
     {
-        throw std::runtime_error(table_result.status().ToString());
+        const auto& name = schema->field(c)->name();
+        headers.push_back(name);
+        widths.push_back(name.size());
     }
-    arrow::PrettyPrintOptions options{2};
-    const auto status = arrow::PrettyPrint(*(*table_result), options, &output);
-    if (!status.ok())
+
+    // Collect all cell values and track max column widths
+    std::vector<std::vector<std::string>> rows;
+    for (const auto& batch : result.batches)
     {
-        throw std::runtime_error(status.ToString());
+        if (!batch)
+        {
+            continue;
+        }
+        for (int64_t row = 0; row < batch->num_rows(); ++row)
+        {
+            std::vector<std::string> cells;
+            cells.reserve(num_cols);
+            for (int c = 0; c < batch->num_columns(); ++c)
+            {
+                auto scalar_result = batch->column(c)->GetScalar(row);
+                if (!scalar_result.ok())
+                {
+                    throw std::runtime_error(scalar_result.status().ToString());
+                }
+                const auto scalar = *scalar_result;
+                std::string cell = (scalar && scalar->is_valid) ? scalar->ToString() : "";
+                widths[c] = std::max(widths[c], cell.size());
+                cells.push_back(std::move(cell));
+            }
+            rows.push_back(std::move(cells));
+        }
     }
+
+    // Separator line: -...--+-...--+...
+    auto separator = [&]() {
+        for (int c = 0; c < num_cols; ++c)
+        {
+            if (c > 0)
+            {
+                output << "-+-";
+            }
+            output << std::string(widths[c], '-');
+        }
+        output << "\n";
+    };
+
+    // Header
+    for (int c = 0; c < num_cols; ++c)
+    {
+        if (c > 0)
+        {
+            output << " | ";
+        }
+        output << std::left << std::setw(static_cast<int>(widths[c])) << headers[c];
+    }
+    output << "\n";
+    separator();
+
+    // Data rows
+    for (const auto& row : rows)
+    {
+        for (int c = 0; c < num_cols; ++c)
+        {
+            if (c > 0)
+            {
+                output << " | ";
+            }
+            output << std::left << std::setw(static_cast<int>(widths[c])) << row[c];
+        }
+        output << "\n";
+    }
+
+    output << "(" << rows.size() << " row" << (rows.size() != 1 ? "s" : "") << ")\n";
 }
 
 } // namespace

@@ -334,6 +334,7 @@ int main(int argc, char** argv)
                 argc - earlySubcommandIndex,
                 argv + earlySubcommandIndex,
                 earlyConfigSources,
+                std::cin,
                 std::cout,
                 std::cerr);
         }

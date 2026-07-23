@@ -29,6 +29,7 @@ set(EPICSARCHIVERAP_VERSION "2.2.1")
 set(CPP_HTTPLIB_VERSION "v0.16.3")
 set(DP_GRPC_VERSION "rel-1.14.0")
 set(ARROW_VERSION "apache-arrow-18.1.0")
+set(REPLXX_VERSION "release-0.0.4")
 
 # Output directories
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
@@ -61,6 +62,15 @@ FetchContent_Declare(argparse
     GIT_TAG ${ARGPARSE_VERSION}
 )
 FetchContent_MakeAvailable(argparse)
+
+# Query REPL line editing, history, and completion.
+message(STATUS "Acquiring replxx version ${REPLXX_VERSION}...")
+FetchContent_Declare(replxx
+    GIT_REPOSITORY https://github.com/AmokHuginnsson/replxx.git
+    GIT_TAG ${REPLXX_VERSION}
+    GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(replxx)
 
 # Optional: interactive config wizard (FTXUI TUI)
 option(MLDP_WIZARD "Build interactive config wizard (requires FTXUI)" ON)
@@ -975,9 +985,11 @@ if(MLDP_PVXS_DRIVER_TESTS)
     )
     if(APPLE)
         target_link_libraries(query_arrow_foundation_test PRIVATE gtest_main
+            replxx
             -Wl,-force_load $<TARGET_FILE:lib${PROJECT_NAME}>)
     else()
         target_link_libraries(query_arrow_foundation_test PRIVATE gtest_main
+            replxx
             -Wl,--whole-archive lib${PROJECT_NAME} -Wl,--no-whole-archive)
     endif()
     gtest_discover_tests(query_arrow_foundation_test)
@@ -1279,11 +1291,13 @@ if(MLDP_PVXS_DRIVER_MAIN)
         target_link_libraries(${PROJECT_NAME} PRIVATE
             -Wl,-force_load $<TARGET_FILE:lib${PROJECT_NAME}>
             argparse::argparse
+            replxx
         )
     else()
         target_link_libraries(${PROJECT_NAME} PRIVATE
             -Wl,--whole-archive lib${PROJECT_NAME} -Wl,--no-whole-archive
             argparse::argparse
+            replxx
             spdlog::spdlog
         )
     endif()

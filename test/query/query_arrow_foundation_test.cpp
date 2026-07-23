@@ -11,6 +11,10 @@
 #include <query/QueryableFactory.h>
 #include <query/SpillManager.h>
 #include <query/impl/mldp/MLDPQueryClient.h>
+#include <query/parser/QueryParser.h>
+#include <config/ConfigSource.h>
+#include <query/planner/Binder.h>
+#include <query/plan/PlannerError.h>
 
 #include <arrow/api.h>
 #include <arrow/filesystem/mockfs.h>
@@ -167,7 +171,68 @@ TEST(QuerySubcommandTest, PreparesBothSupportedQueryableShapes)
     query::QueryableFactory::instance().reset();
 }
 
-TEST(QuerySubcommandTest, ReplReportsPlanningOrExecutionErrorsAndExits)
+TEST(QuerySubcommandTest, PreparesNestedQueryablePoolsFromInlineConfiguration)
+{
+    cli::QuerySubcommandPreparer preparer;
+    query::QueryableFactory::instance().reset();
+    const auto config = config::loadMergedConfigSources({"queryable.mldp.mldp-pool.query-url=localhost:2",
+                                                         "queryable.mldp.mldp-pool.min-conn=1",
+                                                         "queryable.mldp.mldp-pool.max-conn=2",
+                                                         "queryable.mldp-pv-metadata.mldp-pv-metadata-pool.annotation-url=localhost:3",
+                                                         "queryable.mldp-pv-metadata.mldp-pv-metadata-pool.min-conn=1",
+                                                         "queryable.mldp-pv-metadata.mldp-pv-metadata-pool.max-conn=2"});
+
+    preparer.prepare(config);
+    EXPECT_EQ(query::QueryableFactory::instance().registeredTables(),
+              (std::set<std::string>{"mldp.active_configurations",
+                                     "mldp.configuration",
+                                     "mldp.configuration_activation",
+                                     "mldp.pv_metadata",
+                                     "mldp.pv_stats",
+                                     "mldp.time_series"}));
+    EXPECT_NE(query::QueryableFactory::instance().createByTable("mldp.configuration"), nullptr);
+    EXPECT_NE(query::QueryableFactory::instance().createByTable("mldp.time_series"), nullptr);
+    query::QueryableFactory::instance().reset();
+}
+
+TEST(QuerySubcommandTest, ReportsRegisteredClientInitializationFailureInsteadOfUnknownTable)
+{
+    cli::QuerySubcommandPreparer preparer;
+    query::QueryableFactory::instance().reset();
+    const auto config = config::Config::configFromYamlString(
+        "queryable:\n" "  mldp:\n" "    query-url: localhost:2\n" "    min-conn: 1\n" "    max-conn: 1\n" "  mldp-pv-metadata:\n" "    annotation-url: localhost:3\n" "    min-conn: 1\n" "    max-conn: 1\n");
+    preparer.prepare(config);
+
+    const auto statement = query::parseQuery("SELECT * FROM mldp.configuration");
+    EXPECT_NO_THROW(query::planner::bindSelect(std::get<query::SelectStatement>(statement)));
+    query::QueryableFactory::instance().reset();
+}
+
+TEST(QuerySubcommandTest, ReportsAnnotationClientConfigurationErrorsWithoutHidingTheTable)
+{
+    cli::QuerySubcommandPreparer preparer;
+    query::QueryableFactory::instance().reset();
+    const auto config = config::Config::configFromYamlString(
+        "queryable:\n" "  mldp-pv-metadata:\n" "    min-conn: 1\n" "    max-conn: 1\n");
+    preparer.prepare(config);
+
+    const auto statement = query::parseQuery("SELECT * FROM mldp.configuration");
+    try
+    {
+        (void)query::planner::bindSelect(std::get<query::SelectStatement>(statement));
+        FAIL() << "Expected annotation client construction to fail";
+    }
+    catch (const query::plan::PlannerException& ex)
+    {
+        const auto message = query::plan::plannerErrorWhat(ex.error());
+        EXPECT_NE(message.find("Failed to initialize query client"), std::string::npos);
+        EXPECT_NE(message.find("annotation-url"), std::string::npos);
+        EXPECT_EQ(message.find("Unknown table"), std::string::npos);
+    }
+    query::QueryableFactory::instance().reset();
+}
+
+TEST(QuerySubcommandTest, OneShotReportsPlanningOrExecutionErrors)
 {
     char arg0[] = "query";
     char arg1[] = "select * from mldp.pv_stats";
@@ -175,12 +240,13 @@ TEST(QuerySubcommandTest, ReplReportsPlanningOrExecutionErrorsAndExits)
     cli::QuerySubcommand querySubcommand;
     std::ostringstream output;
     std::ostringstream error;
-    EXPECT_EQ(querySubcommand.run(2, argv, {}, output, error), 1);
+    std::istringstream input;
+    EXPECT_EQ(querySubcommand.run(2, argv, {}, input, output, error), 1);
     EXPECT_TRUE(error.str().find("BindError") != std::string::npos ||
                 error.str().find("Query error:") != std::string::npos);
 }
 
-TEST(QuerySubcommandTest, ReplReportsParseErrors)
+TEST(QuerySubcommandTest, OneShotReportsParseErrors)
 {
     char arg0[] = "query";
     char arg1[] = "select from mldp.pv_stats";
@@ -188,8 +254,117 @@ TEST(QuerySubcommandTest, ReplReportsParseErrors)
     cli::QuerySubcommand querySubcommand;
     std::ostringstream output;
     std::ostringstream error;
-    EXPECT_EQ(querySubcommand.run(2, argv, {}, output, error), 1);
+    std::istringstream input;
+    EXPECT_EQ(querySubcommand.run(2, argv, {}, input, output, error), 1);
     EXPECT_NE(error.str().find("Parse error at "), std::string::npos);
+}
+
+TEST(QuerySubcommandTest, ReplShowsHelpAndExitsOnQuit)
+{
+    char arg0[] = "query";
+    char* argv[] = {arg0};
+    cli::QuerySubcommand querySubcommand;
+    std::istringstream input(".help\n.quit\n");
+    std::ostringstream output;
+    std::ostringstream error;
+
+    const std::vector<std::string> config_sources{
+        "queryable.mldp.query-url=localhost:2",
+        "queryable.mldp.min-conn=1",
+        "queryable.mldp.max-conn=1"};
+    EXPECT_EQ(querySubcommand.run(1, argv, config_sources, input, output, error), 0);
+    EXPECT_NE(output.str().find("mldp> "), std::string::npos);
+    EXPECT_NE(output.str().find("Enter one SQL statement terminated by ';'."), std::string::npos);
+    EXPECT_TRUE(error.str().empty());
+}
+
+TEST(QuerySubcommandTest, ReplReportsIncompleteStatementAtEndOfInput)
+{
+    char arg0[] = "query";
+    char* argv[] = {arg0};
+    cli::QuerySubcommand querySubcommand;
+    std::istringstream input("SELECT *\nFROM mldp.pv_stats\n");
+    std::ostringstream output;
+    std::ostringstream error;
+
+    const std::vector<std::string> config_sources{
+        "queryable.mldp.query-url=localhost:2",
+        "queryable.mldp.min-conn=1",
+        "queryable.mldp.max-conn=1"};
+    EXPECT_EQ(querySubcommand.run(1, argv, config_sources, input, output, error), 0);
+    EXPECT_NE(error.str().find("incomplete SQL statement discarded"), std::string::npos);
+}
+
+TEST(QuerySubcommandTest, ReplRunsSubmittedStatementsAndRecoversFromParseErrors)
+{
+    char arg0[] = "query";
+    char* argv[] = {arg0};
+    cli::QuerySubcommand querySubcommand;
+    std::istringstream input("select from mldp.pv_stats;\nSHOW TABLES;\n.quit\n");
+    std::ostringstream output;
+    std::ostringstream error;
+    const std::vector<std::string> config_sources{
+        "queryable.mldp.query-url=localhost:2",
+        "queryable.mldp.min-conn=1",
+        "queryable.mldp.max-conn=1"};
+
+    EXPECT_EQ(querySubcommand.run(1, argv, config_sources, input, output, error), 0);
+    EXPECT_NE(error.str().find("Parse error at "), std::string::npos);
+    EXPECT_NE(output.str().find("mldp.time_series"), std::string::npos);
+}
+
+TEST(QuerySubcommandTest, ReplRecognisesSemicolonsOnlyOutsideQuotedStrings)
+{
+    char arg0[] = "query";
+    char* argv[] = {arg0};
+    cli::QuerySubcommand querySubcommand;
+    std::istringstream input("SELECT *\nFROM mldp.pv_stats\nWHERE pv = 'A;B';\n.quit\n");
+    std::ostringstream output;
+    std::ostringstream error;
+    const std::vector<std::string> config_sources{
+        "queryable.mldp.query-url=localhost:2",
+        "queryable.mldp.min-conn=1",
+        "queryable.mldp.max-conn=1"};
+
+    EXPECT_EQ(querySubcommand.run(1, argv, config_sources, input, output, error), 0);
+    EXPECT_EQ(error.str().find("Unexpected character ';'"), std::string::npos);
+    EXPECT_NE(output.str().find("...> "), std::string::npos);
+}
+
+TEST(QuerySubcommandTest, ReplClearAndUnknownCommandKeepSessionUsable)
+{
+    char arg0[] = "query";
+    char* argv[] = {arg0};
+    cli::QuerySubcommand querySubcommand;
+    std::istringstream input("SELECT *\n.clear\n.unknown\nSHOW TABLES;\n.quit\n");
+    std::ostringstream output;
+    std::ostringstream error;
+    const std::vector<std::string> config_sources{
+        "queryable.mldp.query-url=localhost:2",
+        "queryable.mldp.min-conn=1",
+        "queryable.mldp.max-conn=1"};
+
+    EXPECT_EQ(querySubcommand.run(1, argv, config_sources, input, output, error), 0);
+    EXPECT_NE(error.str().find("unknown REPL command '.unknown'"), std::string::npos);
+    EXPECT_NE(output.str().find("mldp.time_series"), std::string::npos);
+}
+
+TEST(QuerySubcommandTest, ReplPlainStreamFallbackDoesNotWriteInteractiveHistory)
+{
+    char arg0[] = "query";
+    char* argv[] = {arg0};
+    cli::QuerySubcommand querySubcommand;
+    std::istringstream input(".help\n.quit\n");
+    std::ostringstream output;
+    std::ostringstream error;
+    const std::vector<std::string> config_sources{
+        "queryable.mldp.query-url=localhost:2",
+        "queryable.mldp.min-conn=1",
+        "queryable.mldp.max-conn=1"};
+
+    EXPECT_EQ(querySubcommand.run(1, argv, config_sources, input, output, error), 0);
+    EXPECT_NE(output.str().find("mldp> "), std::string::npos);
+    EXPECT_TRUE(error.str().empty());
 }
 
 TEST(QuerySubcommandTest, RejectsLocalConfigFlag)
@@ -202,7 +377,8 @@ TEST(QuerySubcommandTest, RejectsLocalConfigFlag)
     cli::QuerySubcommand querySubcommand;
     std::ostringstream output;
     std::ostringstream error;
-    EXPECT_EQ(querySubcommand.run(4, argv, {}, output, error), 1);
+    std::istringstream input;
+    EXPECT_EQ(querySubcommand.run(4, argv, {}, input, output, error), 1);
     EXPECT_NE(error.str().find("global option"), std::string::npos);
 }
 
@@ -214,7 +390,8 @@ TEST(QuerySubcommandTest, ShowTablesFailsWithoutQueryableConfig)
     cli::QuerySubcommand querySubcommand;
     std::ostringstream output;
     std::ostringstream error;
-    EXPECT_EQ(querySubcommand.run(2, argv, {}, output, error), 1);
+    std::istringstream input;
+    EXPECT_EQ(querySubcommand.run(2, argv, {}, input, output, error), 1);
     EXPECT_NE(error.str().find("Missing 'queryable' configuration"), std::string::npos);
 }
 

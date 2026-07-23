@@ -23,6 +23,7 @@
 #include <cstdint>
 #include <iosfwd>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace mldp_pvxs_driver::cli {
@@ -47,7 +48,7 @@ public:
 class QueryRunner
 {
 public:
-    int run(const QueryCliOptions& options, std::ostream& output) const;
+    int run(const QueryCliOptions& options, std::string_view sql, std::ostream& output) const;
 };
 
 class QuerySubcommand
@@ -56,6 +57,7 @@ public:
     int run(int argc,
             char** argv,
             const std::vector<std::string>& global_config_sources,
+            std::istream&                     input,
             std::ostream&                    output,
             std::ostream&                    error) const;
 };

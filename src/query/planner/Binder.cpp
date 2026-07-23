@@ -240,15 +240,22 @@ plan::PlannerPredicate buildPredicate(const WherePredicate& where,
 
 plan::BoundTable makeBoundTable(const TableRef& table_ref)
 {
+    const auto registered_tables = QueryableFactory::instance().registeredTables();
+    if (!registered_tables.contains(table_ref.table_name))
+    {
+        throw plan::PlannerException(plan::BindError{
+            .message = "Unknown table '" + table_ref.table_name + "'"});
+    }
+
     IQueryableUPtr queryable;
     try
     {
         queryable = QueryableFactory::instance().createByTable(table_ref.table_name);
     }
-    catch (const std::runtime_error&)
+    catch (const std::exception& ex)
     {
         throw plan::PlannerException(plan::BindError{
-            .message = "Unknown table '" + table_ref.table_name + "'"});
+            .message = "Failed to initialize query client for table '" + table_ref.table_name + "': " + ex.what()});
     }
     const auto alias = table_ref.alias.value_or(table_ref.table_name);
     return plan::BoundTable{
