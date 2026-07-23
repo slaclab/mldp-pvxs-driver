@@ -639,6 +639,8 @@ add_library(lib${PROJECT_NAME}
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/impl/mldp/MLDPAnnotationQueryClient.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/parser/Lexer.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/parser/QueryParser.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/parser/generated/QueryFlexLexer.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/parser/generated/QueryBisonParser.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/SpillManager.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/controller/MLDPPVXSControllerConfig.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/controller/MLDPPVXSController.cpp"

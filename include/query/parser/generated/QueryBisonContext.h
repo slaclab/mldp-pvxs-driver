@@ -13,23 +13,18 @@
 #include <query/parser/QueryAST.h>
 #include <query/parser/Token.h>
 
-#include <string_view>
+#include <cstddef>
+#include <string>
 #include <vector>
 
-namespace mldp_pvxs_driver::query {
+namespace mldp_pvxs_driver::query::generated {
 
-class QueryParser
-{
-public:
-    explicit QueryParser(std::vector<Token> tokens);
-
-    QueryStatement parse();
-    static QueryStatement parse(std::string_view sql);
-
-private:
-    std::vector<Token> tokens_;
+struct ParseContext {
+    const std::vector<Token>& tokens;
+    std::size_t               index{0};
+    QueryStatement            result;
+    TokenPosition             last_position{};
+    bool                      has_last_position{false};
 };
 
-QueryStatement parseQuery(std::string_view sql);
-
-} // namespace mldp_pvxs_driver::query
+} // namespace mldp_pvxs_driver::query::generated
