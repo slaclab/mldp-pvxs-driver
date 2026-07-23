@@ -1,0 +1,229 @@
+//////////////////////////////////////////////////////////////////////////////
+// This file is part of 'mldp-pvxs-driver'.
+// It is subject to the license terms in the LICENSE.txt file found in the
+// top-level directory of this distribution and at:
+//    https://confluence.slac.stanford.edu/display/ppareg/LICENSE.html.
+// No part of 'mldp-pvxs-driver', including this file,
+// may be copied, modified, propagated, or distributed except according to
+// the terms contained in the LICENSE.txt file.
+//////////////////////////////////////////////////////////////////////////////
+
+#include <query/planner/PhysicalPlanner.h>
+
+#include <query/plan/PlannerError.h>
+
+#include <sstream>
+
+using namespace mldp_pvxs_driver::query;
+using namespace mldp_pvxs_driver::query::planner;
+
+namespace {
+
+std::vector<std::variant<std::string, int64_t, bool>>
+toExecutableValues(const std::vector<plan::PlannerLiteralValue>& values)
+{
+    std::vector<std::variant<std::string, int64_t, bool>> converted;
+    converted.reserve(values.size());
+    for (const auto& value : values)
+    {
+        if (std::holds_alternative<NowLiteral>(value))
+        {
+            throw plan::PlannerException(plan::TypeError{
+                .message = "NOW literal reached physical planning unexpectedly"});
+        }
+        if (std::holds_alternative<std::string>(value))
+        {
+            converted.push_back(std::get<std::string>(value));
+        }
+        else if (std::holds_alternative<int64_t>(value))
+        {
+            converted.push_back(std::get<int64_t>(value));
+        }
+        else
+        {
+            converted.push_back(std::get<bool>(value));
+        }
+    }
+    return converted;
+}
+
+Predicate toExecutablePredicate(const plan::PlannerPredicate& predicate)
+{
+    return Predicate{
+        .column = predicate.column,
+        .op = predicate.op,
+        .values = toExecutableValues(predicate.values)};
+}
+
+plan::PhysicalNodePtr buildNode(const plan::LogicalNodePtr& node)
+{
+    if (!node)
+    {
+        return nullptr;
+    }
+
+    if (const auto* scan = std::get_if<plan::LogicalScan>(&node->value))
+    {
+        std::vector<Predicate> pushable_predicates;
+        pushable_predicates.reserve(scan->pushable_predicates.size());
+        for (const auto& predicate : scan->pushable_predicates)
+        {
+            pushable_predicates.push_back(toExecutablePredicate(predicate));
+        }
+        return plan::makeNode(plan::PhysicalTableScan{
+            .table_name = scan->table_name,
+            .pushable_predicates = std::move(pushable_predicates),
+            .projection_hint = scan->projection_hint});
+    }
+    if (const auto* filter = std::get_if<plan::LogicalFilter>(&node->value))
+    {
+        std::vector<Predicate> predicates;
+        predicates.reserve(filter->predicates.size());
+        for (const auto& predicate : filter->predicates)
+        {
+            predicates.push_back(toExecutablePredicate(predicate));
+        }
+        return plan::makeNode(plan::PhysicalFilter{
+            .input = buildNode(filter->input),
+            .predicates = std::move(predicates)});
+    }
+    if (const auto* project = std::get_if<plan::LogicalProject>(&node->value))
+    {
+        return plan::makeNode(plan::PhysicalProject{
+            .input = buildNode(project->input),
+            .columns = project->columns});
+    }
+    if (const auto* limit = std::get_if<plan::LogicalLimit>(&node->value))
+    {
+        return plan::makeNode(plan::PhysicalLimit{
+            .input = buildNode(limit->input),
+            .limit = limit->limit});
+    }
+    return nullptr;
+}
+
+std::string indent(const int level)
+{
+    return std::string(static_cast<size_t>(level) * 2, ' ');
+}
+
+void appendNode(std::ostringstream& out, const plan::PhysicalNodePtr& node, const int level)
+{
+    if (!node)
+    {
+        out << indent(level) << "<null>\n";
+        return;
+    }
+    if (const auto* scan = std::get_if<plan::PhysicalTableScan>(&node->value))
+    {
+        out << indent(level) << "PhysicalTableScan(table=" << scan->table_name << ")\n";
+        return;
+    }
+    if (const auto* filter = std::get_if<plan::PhysicalFilter>(&node->value))
+    {
+        out << indent(level) << "PhysicalFilter(predicates=" << filter->predicates.size() << ")\n";
+        appendNode(out, filter->input, level + 1);
+        return;
+    }
+    if (const auto* project = std::get_if<plan::PhysicalProject>(&node->value))
+    {
+        out << indent(level) << "PhysicalProject(columns=" << project->columns.size() << ")\n";
+        appendNode(out, project->input, level + 1);
+        return;
+    }
+    if (const auto* limit = std::get_if<plan::PhysicalLimit>(&node->value))
+    {
+        out << indent(level) << "PhysicalLimit(limit=" << limit->limit << ")\n";
+        appendNode(out, limit->input, level + 1);
+        return;
+    }
+    if (std::holds_alternative<plan::PhysicalShowTables>(node->value))
+    {
+        out << indent(level) << "PhysicalShowTables\n";
+        return;
+    }
+    if (const auto* describe = std::get_if<plan::PhysicalDescribe>(&node->value))
+    {
+        out << indent(level) << "PhysicalDescribe(table=" << describe->table_name << ")\n";
+        return;
+    }
+    if (std::holds_alternative<plan::PhysicalExplain>(node->value))
+    {
+        out << indent(level) << "PhysicalExplain\n";
+    }
+}
+
+} // namespace
+
+plan::PhysicalNodePtr mldp_pvxs_driver::query::planner::buildPhysicalPlan(const plan::LogicalNodePtr& root)
+{
+    return buildNode(root);
+}
+
+std::string mldp_pvxs_driver::query::plan::physicalPlanToString(const plan::PhysicalNodePtr& root)
+{
+    std::ostringstream out;
+    if (!root)
+    {
+        out << "<empty>";
+        return out.str();
+    }
+
+    if (std::holds_alternative<PhysicalExplain>(root->value))
+    {
+        out << std::get<PhysicalExplain>(root->value).plan_text;
+        return out.str();
+    }
+
+    // Reuse planner formatter implemented in this translation unit.
+    auto append = [&out](const PhysicalNodePtr& node, const auto& append_ref, int level) -> void
+    {
+        if (!node)
+        {
+            out << std::string(static_cast<size_t>(level) * 2, ' ') << "<null>\n";
+            return;
+        }
+        if (const auto* scan = std::get_if<PhysicalTableScan>(&node->value))
+        {
+            out << std::string(static_cast<size_t>(level) * 2, ' ')
+                << "PhysicalTableScan(table=" << scan->table_name << ")\n";
+            return;
+        }
+        if (const auto* filter = std::get_if<PhysicalFilter>(&node->value))
+        {
+            out << std::string(static_cast<size_t>(level) * 2, ' ')
+                << "PhysicalFilter(predicates=" << filter->predicates.size() << ")\n";
+            append_ref(filter->input, append_ref, level + 1);
+            return;
+        }
+        if (const auto* project = std::get_if<PhysicalProject>(&node->value))
+        {
+            out << std::string(static_cast<size_t>(level) * 2, ' ')
+                << "PhysicalProject(columns=" << project->columns.size() << ")\n";
+            append_ref(project->input, append_ref, level + 1);
+            return;
+        }
+        if (const auto* limit = std::get_if<PhysicalLimit>(&node->value))
+        {
+            out << std::string(static_cast<size_t>(level) * 2, ' ')
+                << "PhysicalLimit(limit=" << limit->limit << ")\n";
+            append_ref(limit->input, append_ref, level + 1);
+            return;
+        }
+        if (std::holds_alternative<PhysicalShowTables>(node->value))
+        {
+            out << std::string(static_cast<size_t>(level) * 2, ' ') << "PhysicalShowTables\n";
+            return;
+        }
+        if (const auto* describe = std::get_if<PhysicalDescribe>(&node->value))
+        {
+            out << std::string(static_cast<size_t>(level) * 2, ' ')
+                << "PhysicalDescribe(table=" << describe->table_name << ")\n";
+            return;
+        }
+        out << std::string(static_cast<size_t>(level) * 2, ' ') << "PhysicalExplain\n";
+    };
+
+    append(root, append, 0);
+    return out.str();
+}

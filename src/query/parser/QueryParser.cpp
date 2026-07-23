@@ -14,7 +14,7 @@
 #include <query/parser/generated/QueryBisonContext.h>
 #include <query/parser/generated/QueryBisonParser.hpp>
 
-namespace mldp_pvxs_driver::query {
+using namespace mldp_pvxs_driver::query;
 
 QueryParser::QueryParser(std::vector<Token> tokens)
     : tokens_(std::move(tokens))
@@ -43,9 +43,7 @@ QueryStatement QueryParser::parse(const std::string_view sql)
     return QueryParser(Lexer(sql).tokenize()).parse();
 }
 
-QueryStatement parseQuery(const std::string_view sql)
+mldp_pvxs_driver::query::QueryStatement mldp_pvxs_driver::query::parseQuery(const std::string_view sql)
 {
     return QueryParser::parse(sql);
 }
-
-} // namespace mldp_pvxs_driver::query

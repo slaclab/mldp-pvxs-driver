@@ -14,7 +14,7 @@
 
 #include <string>
 
-namespace mldp_pvxs_driver::query {
+using namespace mldp_pvxs_driver::query;
 
 struct FlexLexerExtra
 {
@@ -96,5 +96,3 @@ std::vector<Token> Lexer::tokenize()
         .position = TokenPosition{extra.offset, extra.line, extra.column}});
     return tokens;
 }
-
-} // namespace mldp_pvxs_driver::query

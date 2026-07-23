@@ -95,12 +95,13 @@ TEST(QuerySubcommandTest, PreparesBothSupportedQueryableShapes)
     query::QueryableFactory::instance().reset();
 }
 
-TEST(QuerySubcommandTest, ReplReportsUnimplementedQueriesAndExits)
+TEST(QuerySubcommandTest, ReplReportsPlanningOrExecutionErrorsAndExits)
 {
     std::istringstream input("select * from mldp.pv_stats\nexit\n");
     std::ostringstream output;
     EXPECT_EQ(cli::runQueryRepl(input, output), 0);
-    EXPECT_EQ(output.str(), "Query execution is not implemented yet.\n");
+    EXPECT_TRUE(output.str().find("BindError") != std::string::npos ||
+                output.str().find("Execution error:") != std::string::npos);
 }
 
 TEST(QuerySubcommandTest, ReplReportsParseErrors)

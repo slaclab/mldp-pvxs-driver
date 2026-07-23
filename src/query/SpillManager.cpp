@@ -24,7 +24,7 @@
 #include <unordered_set>
 #include <utility>
 
-namespace mldp_pvxs_driver::query {
+using namespace mldp_pvxs_driver::query;
 
 struct SpillReader::State {
     State(std::shared_ptr<arrow::fs::FileSystem> file_system_value,
@@ -200,5 +200,3 @@ arrow::Status SpillManager::cleanup()
     }
     return arrow::Status::OK();
 }
-
-} // namespace mldp_pvxs_driver::query

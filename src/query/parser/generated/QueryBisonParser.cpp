@@ -2002,4 +2002,3 @@ namespace mldp_pvxs_driver { namespace query { namespace generated {
 #line 2003 "src/query/parser/generated/QueryBisonParser.cpp"
 
 #line 548 "src/query/parser/grammar/QueryBisonParser.y"
-

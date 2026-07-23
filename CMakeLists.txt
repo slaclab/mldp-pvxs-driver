@@ -641,6 +641,16 @@ add_library(lib${PROJECT_NAME}
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/parser/QueryParser.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/parser/generated/QueryFlexLexer.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/parser/generated/QueryBisonParser.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/planner/Binder.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/planner/TypeChecker.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/planner/LogicalPlanner.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/planner/PredicatePushdown.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/planner/ConstantFolding.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/planner/ColumnPruning.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/planner/RequiredColumnCheck.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/planner/PhysicalPlanner.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/QueryPlanner.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/QueryExecutor.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/SpillManager.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/controller/MLDPPVXSControllerConfig.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/controller/MLDPPVXSController.cpp"
@@ -985,6 +995,24 @@ if(MLDP_PVXS_DRIVER_TESTS)
             -Wl,--whole-archive lib${PROJECT_NAME} -Wl,--no-whole-archive)
     endif()
     gtest_discover_tests(query_parser_test)
+
+    add_executable(query_planner_executor_test
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/query/query_planner_executor_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/ryml_single_header_translation_unit.cpp"
+    )
+    target_include_directories(query_planner_executor_test PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test"
+        "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    if(APPLE)
+        target_link_libraries(query_planner_executor_test PRIVATE gtest_main
+            -Wl,-force_load $<TARGET_FILE:lib${PROJECT_NAME}>)
+    else()
+        target_link_libraries(query_planner_executor_test PRIVATE gtest_main
+            -Wl,--whole-archive lib${PROJECT_NAME} -Wl,--no-whole-archive)
+    endif()
+    gtest_discover_tests(query_planner_executor_test)
 
     # MLDPAnnotationQueryClient integration tests
     add_executable(mldp_annotation_query_client_test

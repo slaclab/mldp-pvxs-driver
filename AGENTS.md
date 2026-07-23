@@ -103,6 +103,7 @@ docker compose -f docker-compose-test.yml up --build ci
 - PointerAlignment: Left (`int* p`)
 - ColumnLimit: 0 (no line length limit)
 - Namespace: `mldp_pvxs_driver::` with inner indentation
+- In `.cpp` files prefer `using namespace mldp_pvxs_driver::...;` instead of `namespace mldp_pvxs_driver::... { ... }`; only anonymous namespaces (`namespace { ... }`) should use block-style namespace declarations.
 - License header required on all `.h`/`.cpp` files — run `./scripts/add-licenses-include-h.sh` before committing
 
 ## Architecture

@@ -18,9 +18,12 @@
 #include <query/QuerySubcommand.h>
 
 #include <query/ExecutionContext.h>
+#include <query/QueryExecutor.h>
+#include <query/QueryPlanner.h>
 #include <query/parser/QueryParser.h>
 #include <query/QueryableFactory.h>
 #include <query/SpillManager.h>
+#include <query/plan/PlannerError.h>
 #include <query/impl/mldp/MLDPAnnotationQueryClient.h>
 #include <query/impl/mldp/MLDPQueryClient.h>
 
@@ -97,6 +100,8 @@ int runQueryRepl(std::istream& input, std::ostream& output)
     };
 
     std::string line;
+    const query::QueryPlanner planner;
+    const query::QueryExecutor executor;
     while (std::getline(input, line))
     {
         if (line == "quit" || line == "exit")
@@ -107,12 +112,22 @@ int runQueryRepl(std::istream& input, std::ostream& output)
         {
             try
             {
-                [[maybe_unused]] auto parsed = query::parseQuery(line);
-                output << "Query execution is not implemented yet.\n";
+                auto parsed = query::parseQuery(line);
+                auto physical = planner.plan(parsed);
+                auto result = executor.execute(physical, context);
+                output << "Returned " << result.stats.rows_returned << " row(s)\n";
             }
             catch (const query::ParseError& error)
             {
                 output << "Parse error at " << error.line() << ":" << error.column() << " - " << error.what() << "\n";
+            }
+            catch (const query::plan::PlannerException& error)
+            {
+                output << query::plan::plannerErrorWhat(error.error()) << "\n";
+            }
+            catch (const std::exception& error)
+            {
+                output << "Execution error: " << error.what() << "\n";
             }
         }
     }
