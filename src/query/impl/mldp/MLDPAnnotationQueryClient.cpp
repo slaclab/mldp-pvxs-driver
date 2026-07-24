@@ -160,6 +160,28 @@ std::set<std::string> dynamicAttributeKeys(const std::vector<Metadata>& records)
     return keys;
 }
 
+std::set<std::string> requestedDynamicAttributeKeys(const std::set<std::string>& projection_hint)
+{
+    std::set<std::string> keys;
+    constexpr std::string_view prefix = "attributes.";
+    for (const auto& column : projection_hint)
+    {
+        if (column.rfind(prefix, 0) == 0 && column.size() > prefix.size())
+            keys.insert(column.substr(prefix.size()));
+    }
+    return keys;
+}
+
+template <typename Metadata>
+std::set<std::string> metadataAttributeKeys(const std::vector<Metadata>& records,
+                                             const std::set<std::string>& projection_hint)
+{
+    auto keys = dynamicAttributeKeys(records);
+    const auto requested = requestedDynamicAttributeKeys(projection_hint);
+    keys.insert(requested.begin(), requested.end());
+    return keys;
+}
+
 template <typename Record, typename Request, typename Query>
 std::vector<Record> queryAllPages(Request request, Query&& query)
 {
@@ -255,7 +277,7 @@ std::shared_ptr<mldp_pvxs_driver::util::log::ILogger> makeAnnotationQueryClientL
 
 QueryResult MLDPAnnotationQueryClient::execute(std::string_view              table_name,
                                                const std::vector<Predicate>& predicates,
-                                               const std::set<std::string>&,
+                                               const std::set<std::string>& projection_hint,
                                                const ExecutionContext& context,
                                                std::string_view        page_token)
 {
@@ -317,7 +339,7 @@ QueryResult MLDPAnnotationQueryClient::execute(std::string_view              tab
         arrow::StringBuilder    pv, alias, description, modified_by;
         arrow::TimestampBuilder created(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), arrow::default_memory_pool());
         arrow::TimestampBuilder updated(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), arrow::default_memory_pool());
-        MetadataBuilders        metadata(dynamicAttributeKeys(records));
+        MetadataBuilders        metadata(metadataAttributeKeys(records, projection_hint));
         for (const auto& record : records)
         {
             appendString(pv, record.pvname());
@@ -393,7 +415,7 @@ QueryResult MLDPAnnotationQueryClient::execute(std::string_view              tab
             });
         arrow::StringBuilder    name, category, parent, description, modified_by;
         arrow::TimestampBuilder created(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), arrow::default_memory_pool()), updated(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), arrow::default_memory_pool());
-        MetadataBuilders        metadata(dynamicAttributeKeys(records));
+        MetadataBuilders        metadata(metadataAttributeKeys(records, projection_hint));
         for (const auto& record : records)
         {
             appendString(name, record.configurationname());
@@ -455,7 +477,7 @@ QueryResult MLDPAnnotationQueryClient::execute(std::string_view              tab
         arrow::TimestampBuilder time(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), arrow::default_memory_pool());
         arrow::TimestampBuilder end_time(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), arrow::default_memory_pool());
         arrow::StringBuilder    config, id, description;
-        MetadataBuilders        metadata(dynamicAttributeKeys(records));
+        MetadataBuilders        metadata(metadataAttributeKeys(records, projection_hint));
         for (const auto& record : records)
         {
             appendTimestamp(time, record.starttime());

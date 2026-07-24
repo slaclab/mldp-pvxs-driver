@@ -18,6 +18,7 @@
 
 #include <arrow/array.h>
 #include <arrow/type.h>
+#include <arrow/util/key_value_metadata.h>
 #include <grpcpp/security/server_credentials.h>
 #include <grpcpp/server.h>
 #include <grpcpp/server_builder.h>
@@ -73,9 +74,14 @@ public:
         auto* first = table->add_datacolumns();
         first->set_name("RF:ONE");
         first->mutable_metadata()->add_tags("rf");
+        first->mutable_metadata()->add_tags("sample");
+        first->mutable_metadata()->add_tags("mldp_sample");
         first->mutable_metadata()->mutable_provenance()->set_source("ioc-a");
+        first->mutable_metadata()->mutable_provenance()->set_process("deterministic-sine");
         addAttribute(first, "device_group", "RF");
         addAttribute(first, "ordinal", "1");
+        addAttribute(first, "namespace", "mldp_sample");
+        addAttribute(first, "sample_period_seconds", "1");
         first->add_datavalues()->set_stringvalue("one");
 
         auto* second = table->add_datacolumns();
@@ -190,7 +196,7 @@ TEST(MLDPQueryClientTest, MaterializesMetadataVirtualColumnsWithACommonPageSchem
     EXPECT_TRUE(second_ordinal->IsNull(0));
     EXPECT_EQ(first_source->GetString(0), "ioc-a");
     EXPECT_TRUE(second_source->IsNull(0));
-    EXPECT_TRUE(first_process->IsNull(0));
+    EXPECT_EQ(first_process->GetString(0), "deterministic-sine");
     EXPECT_EQ(second_process->GetString(0), "archiver");
     EXPECT_TRUE(first_unrecorded->IsNull(0));
     EXPECT_TRUE(second_unrecorded->IsNull(0));
@@ -198,7 +204,7 @@ TEST(MLDPQueryClientTest, MaterializesMetadataVirtualColumnsWithACommonPageSchem
     server->Shutdown();
 }
 
-TEST(MLDPQueryClientTest, MaterializesNativeWideTableInRequestedPvOrderWithoutFieldMetadata)
+TEST(MLDPQueryClientTest, MaterializesNativeWideTableInRequestedPvOrderWithFieldMetadata)
 {
     QueryService        service;
     grpc::ServerBuilder builder;
@@ -224,8 +230,20 @@ TEST(MLDPQueryClientTest, MaterializesNativeWideTableInRequestedPvOrderWithoutFi
     EXPECT_EQ(result.batch->column(0)->type_id(), arrow::Type::TIMESTAMP);
     EXPECT_EQ(result.batch->column(1)->type_id(), arrow::Type::DOUBLE);
     EXPECT_EQ(result.batch->column(2)->type_id(), arrow::Type::STRING);
-    EXPECT_EQ(result.batch->schema()->field(1)->metadata(), nullptr);
-    EXPECT_EQ(result.batch->schema()->field(2)->metadata(), nullptr);
+    const auto magnet_metadata = result.batch->schema()->field(1)->metadata();
+    const auto rf_metadata = result.batch->schema()->field(2)->metadata();
+    ASSERT_NE(magnet_metadata, nullptr);
+    ASSERT_NE(rf_metadata, nullptr);
+    EXPECT_EQ(magnet_metadata->Get("tags").ValueOrDie(), "magnet");
+    EXPECT_EQ(magnet_metadata->Get("attributes.device_group").ValueOrDie(), "MAGNET");
+    EXPECT_EQ(magnet_metadata->Get("attributes.location").ValueOrDie(), "LTU");
+    EXPECT_EQ(magnet_metadata->Get("provenance.process").ValueOrDie(), "archiver");
+    EXPECT_EQ(rf_metadata->Get("tags").ValueOrDie(), "rf,sample,mldp_sample");
+    EXPECT_EQ(rf_metadata->Get("attributes.namespace").ValueOrDie(), "mldp_sample");
+    EXPECT_EQ(rf_metadata->Get("attributes.ordinal").ValueOrDie(), "1");
+    EXPECT_EQ(rf_metadata->Get("attributes.sample_period_seconds").ValueOrDie(), "1");
+    EXPECT_EQ(rf_metadata->Get("provenance.source").ValueOrDie(), "ioc-a");
+    EXPECT_EQ(rf_metadata->Get("provenance.process").ValueOrDie(), "deterministic-sine");
 
     const auto time = std::static_pointer_cast<arrow::TimestampArray>(result.batch->column(0));
     const auto magnet = std::static_pointer_cast<arrow::DoubleArray>(result.batch->column(1));

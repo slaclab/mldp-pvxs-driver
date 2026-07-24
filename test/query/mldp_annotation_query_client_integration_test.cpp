@@ -67,8 +67,12 @@ public:
             auto* first = result->add_pvmetadata();
             first->set_pvname("RF:ONE");
             first->add_tags("rf");
+            first->add_tags("sample");
+            first->add_tags("mldp_sample");
             addAttribute(first, "device_group", "RF");
             addAttribute(first, "ordinal", "1");
+            addAttribute(first, "namespace", "mldp_sample");
+            addAttribute(first, "sample_period_seconds", "1");
             result->set_nextpagetoken("second-page");
         }
         else if (request->pagetoken() == "second-page")
@@ -160,7 +164,7 @@ TEST_F(MLDPAnnotationQueryClientTest, MaterializesDiscoveredAttributesAcrossAllB
     ASSERT_NE(server, nullptr);
 
     MLDPAnnotationQueryClient client(make_annotation_config("127.0.0.1:" + std::to_string(port)));
-    const auto                result = client.execute("mldp.pv_metadata", {}, {"pv"}, {.pool = arrow::default_memory_pool()});
+    const auto                result = client.execute("mldp.pv_metadata", {}, {"pv", "attributes.unrecorded"}, {.pool = arrow::default_memory_pool()});
 
     ASSERT_NE(result.batch, nullptr);
     EXPECT_TRUE(result.next_page_token.empty());
@@ -174,19 +178,34 @@ TEST_F(MLDPAnnotationQueryClientTest, MaterializesDiscoveredAttributesAcrossAllB
     const auto device_group_index = result.batch->schema()->GetFieldIndex("attributes.device_group");
     const auto location_index = result.batch->schema()->GetFieldIndex("attributes.location");
     const auto ordinal_index = result.batch->schema()->GetFieldIndex("attributes.ordinal");
+    const auto namespace_index = result.batch->schema()->GetFieldIndex("attributes.namespace");
+    const auto period_index = result.batch->schema()->GetFieldIndex("attributes.sample_period_seconds");
+    const auto unrecorded_index = result.batch->schema()->GetFieldIndex("attributes.unrecorded");
     ASSERT_GE(device_group_index, 0);
     ASSERT_GE(location_index, 0);
     ASSERT_GE(ordinal_index, 0);
+    ASSERT_GE(namespace_index, 0);
+    ASSERT_GE(period_index, 0);
+    ASSERT_GE(unrecorded_index, 0);
 
     const auto device_group = std::static_pointer_cast<arrow::StringArray>(result.batch->column(device_group_index));
     const auto location = std::static_pointer_cast<arrow::StringArray>(result.batch->column(location_index));
     const auto ordinal = std::static_pointer_cast<arrow::StringArray>(result.batch->column(ordinal_index));
+    const auto name_space = std::static_pointer_cast<arrow::StringArray>(result.batch->column(namespace_index));
+    const auto period = std::static_pointer_cast<arrow::StringArray>(result.batch->column(period_index));
+    const auto unrecorded = std::static_pointer_cast<arrow::StringArray>(result.batch->column(unrecorded_index));
     EXPECT_EQ(device_group->GetString(0), "RF");
     EXPECT_EQ(device_group->GetString(1), "MAGNET");
     EXPECT_TRUE(location->IsNull(0));
     EXPECT_EQ(location->GetString(1), "LTU");
     EXPECT_EQ(ordinal->GetString(0), "1");
     EXPECT_TRUE(ordinal->IsNull(1));
+    EXPECT_EQ(name_space->GetString(0), "mldp_sample");
+    EXPECT_TRUE(name_space->IsNull(1));
+    EXPECT_EQ(period->GetString(0), "1");
+    EXPECT_TRUE(period->IsNull(1));
+    EXPECT_TRUE(unrecorded->IsNull(0));
+    EXPECT_TRUE(unrecorded->IsNull(1));
 
     server->Shutdown();
 }

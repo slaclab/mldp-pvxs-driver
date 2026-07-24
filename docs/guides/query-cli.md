@@ -487,8 +487,9 @@ Native wide time-series tables from one MLDP `TABLE_FORMAT_COLUMN` response.
 `pv =` or `pv IN (...)` is required and determines the requested PV columns.
 The result contains one shared `time` column followed by returned PV columns in
 the requested-PV order. Each PV column keeps its native Arrow type; shorter
-returned vectors are padded with trailing nulls. MLDP column metadata is not
-attached to Arrow field metadata in this phase. This is a special runtime-shaped
+returned vectors are padded with trailing nulls. Each generated PV Arrow field
+carries its archived column metadata as key/value entries (`tags`,
+`attributes.<key>`, `provenance.source`, and `provenance.process`). This is a special runtime-shaped
 table: it supports `SELECT *` only, does not support `ORDER BY` or joins, and
 does not accept projection or predicates on generated PV columns. Use `time`,
 `column_type`, `tag`, `attributes.<key>`, and `provenance.<key>` in `WHERE` to

@@ -236,7 +236,8 @@ Arrow batch. A shorter data vector is trailing-null padded; a vector longer
 than the shared timestamps or a duplicate returned PV is rejected. Requested
 PVs absent from a successful response are normal empty-selection results: they
 are omitted, and no returned PV produces an empty result. MLDP column metadata
-is not attached to Arrow field metadata in this phase. It is a special
+is attached to each generated PV Arrow field as key/value metadata: `tags`,
+`attributes.<key>`, `provenance.source`, and `provenance.process`. It is a special
 runtime-shaped table: `SELECT *` is required, and projections, predicates,
 `ORDER BY`, and joins over generated PV fields are not supported.
 

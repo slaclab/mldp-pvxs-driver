@@ -28,6 +28,7 @@
 #include <arrow/builder.h>
 #include <arrow/record_batch.h>
 #include <arrow/type.h>
+#include <arrow/util/key_value_metadata.h>
 
 #include <algorithm>
 #include <chrono>
@@ -355,6 +356,40 @@ void addRequestedDynamicMetadataKeys(std::set<std::string>&       keys,
 {
     const auto requested = requestedDynamicMetadataKeys(projection_hint, prefix);
     keys.insert(requested.begin(), requested.end());
+}
+
+std::shared_ptr<arrow::KeyValueMetadata> arrowFieldMetadata(const dp::service::common::ColumnMetadata& metadata)
+{
+    std::vector<std::string> keys;
+    std::vector<std::string> values;
+    if (metadata.tags_size() > 0)
+    {
+        std::string tags;
+        for (const auto& tag : metadata.tags())
+        {
+            if (!tags.empty())
+                tags += ',';
+            tags += tag;
+        }
+        keys.emplace_back("tags");
+        values.push_back(std::move(tags));
+    }
+    for (const auto& attribute : metadata.attributes())
+    {
+        keys.push_back("attributes." + attribute.name());
+        values.push_back(attribute.value());
+    }
+    if (!metadata.provenance().source().empty())
+    {
+        keys.emplace_back("provenance.source");
+        values.push_back(metadata.provenance().source());
+    }
+    if (!metadata.provenance().process().empty())
+    {
+        keys.emplace_back("provenance.process");
+        values.push_back(metadata.provenance().process());
+    }
+    return keys.empty() ? nullptr : std::make_shared<arrow::KeyValueMetadata>(std::move(keys), std::move(values));
 }
 
 class TimeSeriesMetadataBuilders
@@ -824,7 +859,7 @@ QueryResult MLDPQueryClient::execute(std::string_view              table_name,
             std::shared_ptr<arrow::Array> values;
             if (!builder->Finish(&values).ok())
                 throw std::runtime_error("Failed to finish Arrow MLDP PV column '" + column->name() + "'");
-            fields.push_back(arrow::field(column->name(), values->type()));
+            fields.push_back(arrow::field(column->name(), values->type(), true, arrowFieldMetadata(column->metadata())));
             arrays.push_back(std::move(values));
         }
         return {.batch = arrow::RecordBatch::Make(arrow::schema(std::move(fields)), time->length(), std::move(arrays)), .next_page_token = ""};
