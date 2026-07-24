@@ -10,6 +10,8 @@
 
 #pragma once
 
+#include <query/LiteralValue.h>
+
 #include <cstdint>
 #include <memory>
 #include <set>
@@ -48,11 +50,13 @@ enum class PredicateOp
     IS_NOT_NULL
 };
 
+using ExecutableLiteralValue = std::variant<std::string, int64_t, double, bool, TimestampNsLiteral, DurationNsLiteral>;
+
 struct Predicate
 {
     std::string                                           column;
     PredicateOp                                           op;
-    std::vector<std::variant<std::string, int64_t, double, bool>> values;
+    std::vector<ExecutableLiteralValue> values;
 };
 
 struct ColumnSchema

@@ -59,6 +59,7 @@ class QueryRunner
 {
 public:
     int run(const QueryCliOptions& options, std::string_view sql, std::ostream& output) const;
+    std::shared_ptr<query::QueryTableCatalog> completionCatalog(const QueryCliOptions& options) const;
 
 private:
     mutable std::shared_ptr<query::QueryTableCatalog> table_catalog_;
@@ -87,6 +88,9 @@ namespace detail {
 
 /** Return interactive REPL completion candidates for text before the cursor. */
 std::vector<std::string> replCompletions(std::string_view input);
+
+/** Return completion candidates using the current session and persistent table catalog. */
+std::vector<std::string> replCompletions(std::string_view input, const std::shared_ptr<query::QueryTableCatalog>& table_catalog);
 
 /** Return the ASCII token length replxx should replace for a completion. */
 int replCompletionContextLength(std::string_view input);

@@ -172,6 +172,10 @@
             return QueryBisonParser::make_NUMBER_LITERAL(value, location);
         }
         case TokenType::DURATION_LITERAL: return QueryBisonParser::make_DURATION_LITERAL(token.lexeme, location);
+        case TokenType::TRUE: return QueryBisonParser::make_TRUE(location);
+        case TokenType::FALSE: return QueryBisonParser::make_FALSE(location);
+        case TokenType::TIMESTAMP_NS: return QueryBisonParser::make_TIMESTAMP_NS(location);
+        case TokenType::DURATION_NS: return QueryBisonParser::make_DURATION_NS(location);
         case TokenType::SELECT: return QueryBisonParser::make_SELECT(location);
         case TokenType::FROM: return QueryBisonParser::make_FROM(location);
         case TokenType::WHERE: return QueryBisonParser::make_WHERE(location);
@@ -234,7 +238,7 @@
 %token END_OF_INPUT 0
 %token <std::string> IDENTIFIER STRING_LITERAL DURATION_LITERAL
 %token <int64_t> NUMBER_LITERAL
-%token SELECT FROM WHERE AND IN LIKE BETWEEN LIMIT PAGE TOKEN SHOW TABLES DESCRIBE EXPLAIN AS INNER LEFT OUTER JOIN ON NOW PREFIX CONTAINS ORDER BY ASC DESC
+%token SELECT FROM WHERE AND IN LIKE BETWEEN LIMIT PAGE TOKEN SHOW TABLES DESCRIBE EXPLAIN AS INNER LEFT OUTER JOIN ON NOW PREFIX CONTAINS ORDER BY ASC DESC TRUE FALSE TIMESTAMP_NS DURATION_NS
 %token STAR COMMA DOT LPAREN RPAREN PLUS MINUS EQ NEQ LT LTE GT GTE
 
 %type <mldp_pvxs_driver::query::QueryStatement> statement
@@ -252,6 +256,7 @@
 %type <mldp_pvxs_driver::query::WherePredicate> predicate
 %type <std::vector<mldp_pvxs_driver::query::ExpressionPtr>> expression_list
 %type <mldp_pvxs_driver::query::LiteralValue> literal now_literal
+%type <int64_t> signed_integer
 %type <mldp_pvxs_driver::query::ExpressionPtr> expression
 %type <int64_t> signed_duration
 %type <std::optional<uint64_t>> limit_opt
@@ -602,8 +607,23 @@ literal
       { $$ = mldp_pvxs_driver::query::LiteralValue{$1}; }
     | NUMBER_LITERAL
       { $$ = mldp_pvxs_driver::query::LiteralValue{$1}; }
+    | TRUE
+      { $$ = mldp_pvxs_driver::query::LiteralValue{true}; }
+    | FALSE
+      { $$ = mldp_pvxs_driver::query::LiteralValue{false}; }
+    | TIMESTAMP_NS LPAREN signed_integer RPAREN
+      { $$ = mldp_pvxs_driver::query::LiteralValue{mldp_pvxs_driver::query::TimestampNsLiteral{$3}}; }
+    | DURATION_NS LPAREN signed_integer RPAREN
+      { $$ = mldp_pvxs_driver::query::LiteralValue{mldp_pvxs_driver::query::DurationNsLiteral{$3}}; }
     | now_literal
       { $$ = std::move($1); }
+    ;
+
+signed_integer
+    : NUMBER_LITERAL
+      { $$ = $1; }
+    | MINUS NUMBER_LITERAL
+      { $$ = -$2; }
     ;
 
 now_literal

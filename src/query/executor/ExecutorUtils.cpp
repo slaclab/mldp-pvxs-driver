@@ -131,12 +131,12 @@ int64_t timestampToEpochSeconds(const std::shared_ptr<arrow::TimestampScalar>& s
     throw std::runtime_error("Unsupported Arrow timestamp unit");
 }
 
-std::vector<std::variant<std::string, int64_t, double, bool>> extractInSubqueryValuesImpl(
+std::vector<ExecutableLiteralValue> extractInSubqueryValuesImpl(
     const std::vector<std::shared_ptr<arrow::RecordBatch>>& batches,
     const ColumnType target_type,
     const std::string_view target_column)
 {
-    std::vector<std::variant<std::string, int64_t, double, bool>> values;
+    std::vector<ExecutableLiteralValue> values;
     for (const auto& batch : batches)
     {
         if (batch->num_columns() != 1)
@@ -375,12 +375,14 @@ NativeScalar nativeScalarFromArrow(std::shared_ptr<arrow::Scalar> scalar)
     }
 }
 
-NativeScalar nativeScalarFromLiteral(const std::variant<std::string, int64_t, double, bool>& literal)
+NativeScalar nativeScalarFromLiteral(const ExecutableLiteralValue& literal)
 {
     if (std::holds_alternative<std::string>(literal)) return {.kind = NativeScalar::Kind::STRING, .value = std::get<std::string>(literal)};
     if (std::holds_alternative<int64_t>(literal)) return {.kind = NativeScalar::Kind::SIGNED_INTEGER, .value = std::get<int64_t>(literal)};
     if (std::holds_alternative<double>(literal)) return {.kind = NativeScalar::Kind::FLOATING_POINT, .value = std::get<double>(literal)};
-    return {.kind = NativeScalar::Kind::BOOLEAN, .value = std::get<bool>(literal)};
+    if (std::holds_alternative<bool>(literal)) return {.kind = NativeScalar::Kind::BOOLEAN, .value = std::get<bool>(literal)};
+    if (std::holds_alternative<TimestampNsLiteral>(literal)) return {.kind = NativeScalar::Kind::TIMESTAMP, .value = std::get<TimestampNsLiteral>(literal).value};
+    return {.kind = NativeScalar::Kind::DURATION, .value = std::get<DurationNsLiteral>(literal).value};
 }
 
 bool scalarMatchesPredicate(const std::shared_ptr<arrow::Scalar>& scalar, const Predicate& predicate)
@@ -408,7 +410,7 @@ bool scalarMatchesPredicate(const std::shared_ptr<arrow::Scalar>& scalar, const 
         return false;
     };
 
-    const auto compareSingle = [&](const std::variant<std::string, int64_t, double, bool>& literal, const PredicateOp op)
+    const auto compareSingle = [&](const ExecutableLiteralValue& literal, const PredicateOp op)
     {
         const auto native_literal = nativeScalarFromLiteral(literal);
         const auto numeric_kind = [](const NativeScalar::Kind kind)
@@ -453,6 +455,12 @@ bool scalarMatchesPredicate(const std::shared_ptr<arrow::Scalar>& scalar, const 
             };
             return compareNumeric(as_double(native_value), as_double(native_literal), op);
         }
+        if (native_value.kind == NativeScalar::Kind::TIMESTAMP || native_value.kind == NativeScalar::Kind::DURATION)
+        {
+            const auto lhs = std::get<int64_t>(native_value.value);
+            const auto rhs = std::get<int64_t>(native_literal.value);
+            return compareNumeric(lhs, rhs, op);
+        }
         if (native_value.kind != NativeScalar::Kind::BOOLEAN)
         {
             return false;
@@ -481,9 +489,18 @@ bool scalarMatchesPredicate(const std::shared_ptr<arrow::Scalar>& scalar, const 
     if (predicate.op == PredicateOp::BETWEEN)
     {
         if (predicate.values.size() != 2 ||
-            (!std::holds_alternative<int64_t>(predicate.values[0]) && !std::holds_alternative<double>(predicate.values[0])) ||
-            (!std::holds_alternative<int64_t>(predicate.values[1]) && !std::holds_alternative<double>(predicate.values[1])))
+            (!std::holds_alternative<int64_t>(predicate.values[0]) && !std::holds_alternative<double>(predicate.values[0]) && !std::holds_alternative<TimestampNsLiteral>(predicate.values[0]) && !std::holds_alternative<DurationNsLiteral>(predicate.values[0])) ||
+            (!std::holds_alternative<int64_t>(predicate.values[1]) && !std::holds_alternative<double>(predicate.values[1]) && !std::holds_alternative<TimestampNsLiteral>(predicate.values[1]) && !std::holds_alternative<DurationNsLiteral>(predicate.values[1])))
         {
+            return false;
+        }
+        if (std::holds_alternative<TimestampNsLiteral>(predicate.values[0]) || std::holds_alternative<DurationNsLiteral>(predicate.values[0]) ||
+            std::holds_alternative<TimestampNsLiteral>(predicate.values[1]) || std::holds_alternative<DurationNsLiteral>(predicate.values[1]))
+        {
+            if (native_value.kind == NativeScalar::Kind::TIMESTAMP && std::holds_alternative<TimestampNsLiteral>(predicate.values[0]) && std::holds_alternative<TimestampNsLiteral>(predicate.values[1]))
+                return std::get<int64_t>(native_value.value) >= std::get<TimestampNsLiteral>(predicate.values[0]).value && std::get<int64_t>(native_value.value) <= std::get<TimestampNsLiteral>(predicate.values[1]).value;
+            if (native_value.kind == NativeScalar::Kind::DURATION && std::holds_alternative<DurationNsLiteral>(predicate.values[0]) && std::holds_alternative<DurationNsLiteral>(predicate.values[1]))
+                return std::get<int64_t>(native_value.value) >= std::get<DurationNsLiteral>(predicate.values[0]).value && std::get<int64_t>(native_value.value) <= std::get<DurationNsLiteral>(predicate.values[1]).value;
             return false;
         }
         if (native_value.kind != NativeScalar::Kind::SIGNED_INTEGER && native_value.kind != NativeScalar::Kind::UNSIGNED_INTEGER && native_value.kind != NativeScalar::Kind::FLOATING_POINT) return false;
@@ -1101,7 +1118,7 @@ ColumnType columnTypeFromArrow(const std::shared_ptr<arrow::DataType>& type)
     return ::columnTypeFromArrowImpl(type);
 }
 
-std::vector<std::variant<std::string, int64_t, double, bool>> extractInSubqueryValues(const RecordBatches& batches, const ColumnType type, const std::string_view column)
+std::vector<ExecutableLiteralValue> extractInSubqueryValues(const RecordBatches& batches, const ColumnType type, const std::string_view column)
 {
     return ::extractInSubqueryValuesImpl(batches, type, column);
 }

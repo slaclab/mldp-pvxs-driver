@@ -21,12 +21,14 @@ The `query` subcommand runs SQL statements — parse → plan → execute → re
   - [SELECT grammar](#select-grammar)
   - [Predicates](#predicates)
   - [Time literals](#time-literals)
+  - [Native value predicates](#native-value-predicates)
   - [Joins](#joins)
   - [Pagination](#pagination)
 - [Virtual table catalog](#virtual-table-catalog)
 - [Output formats](#output-formats)
 - [Tuning notes](#tuning-notes)
 - [Tutorial: first queries with sample data](#tutorial-first-queries-with-sample-data)
+  - [Persistent table across client sessions](#persistent-table-across-client-sessions)
 
 ---
 
@@ -127,7 +129,7 @@ SELECT * FROM mldp.configuration;
 
 ### Line editing and completion
 
-When both standard input and output are interactive terminals, the REPL provides shell-style editing. Use Tab to complete SQL keywords, REPL commands, output styles, table names registered by the active `queryable:` configuration, and columns after a table alias. Completion is case-insensitive and prefix-based; it does not complete inside quoted literals. When more than one candidate matches, the terminal displays the choices and keeps the current input.
+When both standard input and output are interactive terminals, the REPL provides shell-style editing. Use Tab to complete SQL keywords, REPL commands, output styles, table names registered by the active `queryable:` configuration, active session tables, persistent Arrow IPC tables in `--table-catalog-dir`, and columns after a table alias. Completion is case-insensitive and prefix-based; it does not complete inside quoted literals. Stored-table columns come from their Arrow IPC schema. Table completion is available after `FROM`, `JOIN`, `DESCRIBE`/`DESC`, and `DROP TABLE`. When more than one candidate matches, the terminal displays the choices and keeps the current input.
 
 | Keys | Behavior |
 |---|---|
@@ -250,6 +252,7 @@ The engine supports a subset of SQL designed for time-series and annotation quer
 ```sql
 SHOW TABLES
 DESCRIBE <table>
+DESC <table>                 -- shorthand for DESCRIBE
 EXPLAIN <select>
 SELECT ...
 ```
@@ -258,6 +261,8 @@ SELECT ...
 
 `DESCRIBE <table>` reports the query engine's logical schema for that virtual
 table. Its fields have the following meanings:
+
+`DESC <table>` is an exact shorthand for `DESCRIBE <table>`.
 
 | Field | Meaning |
 |---|---|
@@ -361,6 +366,39 @@ WHERE time >= NOW -3600s AND time <= NOW
 ```
 
 Duration suffixes: `s` = seconds, `m` = minutes, `h` = hours.
+
+### Native value predicates
+
+The `value` column of materialized time-series results can be a native Arrow
+dense union. Local filtering supports `=`, `!=`, `<`, `<=`, `>`, `>=`, `IN`,
+and `BETWEEN` for comparable active members. These predicates are evaluated
+after data is materialized; they are not sent as MLDP backend RPC predicates.
+
+Boolean literals are case-insensitive: `TRUE` and `FALSE`. Use explicit
+nanosecond constructors for native timestamp and duration members:
+
+```sql
+-- Boolean values
+SELECT * FROM samples WHERE value = TRUE;
+SELECT * FROM samples WHERE value IN (false, TRUE);
+
+-- Native timestamps and durations; arguments are signed integer nanoseconds
+SELECT * FROM samples WHERE value >= timestamp_ns(1720000000000000000);
+SELECT * FROM samples WHERE value BETWEEN duration_ns(-500000000) AND duration_ns(500000000);
+```
+
+Numeric members (`int*`, `uint*`, `float`, and `double`) compare with numeric
+literals using numeric promotion. Strings compare with string literals, and
+booleans compare with boolean literals. Timestamps and durations compare only
+with their matching constructor type; `timestamp_ns(...)` and
+`duration_ns(...)` are not interchangeable with each other or with plain
+integer literals.
+
+An incompatible comparison never matches, including `!=`. An `IN` list matches
+only when at least one compatible literal is equal. `BETWEEN` requires two
+numeric bounds, two timestamp bounds, or two duration bounds of the matching
+family. Binary, null, arrays, structures, images, and other unsupported native
+members remain non-comparable; use `IS NOT NULL` when only nullness matters.
 
 ### Joins
 
@@ -733,8 +771,10 @@ mldp.configuration_activation
 mldp.pv_metadata
 mldp.pv_stats
 mldp.time_series
-(6 rows)
--- 6 rows (6 from backend, 0 filtered) in 0ms | 0 RPC | 0 bytes spilled | 0 MB peak
+mldp.time_series_table
+magnet_samples [persistent Arrow IPC: /var/lib/mldp/query-catalog/.mldp-query-tables/magnet_samples.arrow]
+(8 rows)
+-- 8 rows (8 from backend, 0 filtered) in 0ms | 0 RPC | 0 bytes spilled | 0 MB peak
 ```
 
 ---
@@ -831,141 +871,132 @@ queryable:
 
 ### Step 3 — Explore the schema
 
+Start one REPL session for the remaining interactive examples:
+
 ```bash
-# List all available virtual tables
-mldp_pvxs_driver -c query-config.yaml query "SHOW TABLES"
+mldp_pvxs_driver -c query-config.yaml query
+```
 
-# Inspect time-series table columns
-mldp_pvxs_driver -c query-config.yaml query "DESCRIBE mldp.time_series"
+Paste each semicolon-terminated statement into the REPL:
 
-# Inspect metadata table columns
-mldp_pvxs_driver -c query-config.yaml query "DESCRIBE mldp.pv_metadata"
+```sql
+SHOW TABLES;
+DESC mldp.time_series;
+DESCRIBE mldp.pv_metadata;
 ```
 
 ### Step 4 — Fetch time-series samples
 
-```bash
-# Last 10 minutes of samples for one MAGNET PV
-mldp_pvxs_driver -c query-config.yaml query \
-  "SELECT pv, time, value
-   FROM mldp.time_series
-   WHERE pv = 'mldp_sample:MAGNET:01:VALUE'
-     AND time >= NOW -10m
-     AND time <= NOW"
+```sql
+-- Last 10 minutes of samples for one MAGNET PV
+SELECT pv, time, value
+FROM mldp.time_series
+WHERE pv = 'mldp_sample:MAGNET:01:VALUE'
+  AND time >= NOW -10m
+  AND time <= NOW;
+
+-- Multiple PVs from different device families
+SELECT pv, time, value
+FROM mldp.time_series
+WHERE pv IN ('mldp_sample:MAGNET:01:VALUE',
+             'mldp_sample:RF:02:VALUE',
+             'mldp_sample:VACUUM:03:VALUE',
+             'mldp_sample:DIAGNOSTIC:04:VALUE')
+  AND time >= NOW -1h
+  AND time <= NOW;
 ```
 
-```bash
-# Multiple PVs from different device families, CSV output
-mldp_pvxs_driver -c query-config.yaml query --format csv \
-  "SELECT pv, time, value
-   FROM mldp.time_series
-   WHERE pv IN ('mldp_sample:MAGNET:01:VALUE',
-                'mldp_sample:RF:02:VALUE',
-                'mldp_sample:VACUUM:03:VALUE',
-                'mldp_sample:DIAGNOSTIC:04:VALUE')
-     AND time >= NOW -1h
-     AND time <= NOW" \
-  > samples.csv
-```
+The REPL writes results directly to its terminal. To export CSV or Arrow
+output, use one-shot mode with `--format` and shell redirection.
 
 ### Step 5 — Check PV availability
 
-```bash
-# A fresh generator run creates 10 buckets for each requested PV.
-mldp_pvxs_driver -c query-config.yaml query \
-  "SELECT pv, first_timestamp, last_timestamp, num_buckets
-   FROM mldp.pv_stats
-   WHERE pv IN ('mldp_sample:MAGNET:01:VALUE',
-                'mldp_sample:RF:02:VALUE',
-                'mldp_sample:VACUUM:03:VALUE',
-                'mldp_sample:DIAGNOSTIC:04:VALUE')"
+```sql
+-- A fresh generator run creates 10 buckets for each requested PV.
+SELECT pv, first_timestamp, last_timestamp, num_buckets
+FROM mldp.pv_stats
+WHERE pv IN ('mldp_sample:MAGNET:01:VALUE',
+             'mldp_sample:RF:02:VALUE',
+             'mldp_sample:VACUUM:03:VALUE',
+             'mldp_sample:DIAGNOSTIC:04:VALUE');
 ```
 
 ### Step 6 — Explore metadata
 
-```bash
+```sql
 # All sample-namespace PVs
-mldp_pvxs_driver -c query-config.yaml query \
-  "SELECT pv, description, attributes.device_group, attributes.units, modified_by
-   FROM mldp.pv_metadata
-   WHERE pv PREFIX 'mldp_sample'"
+SELECT pv, description, attributes.device_group, attributes.units, modified_by
+FROM mldp.pv_metadata
+WHERE pv PREFIX 'mldp_sample';
 
 # PVs tagged 'magnet' (MAGNET family PVs: 01, 05, 09, 13, 17)
-mldp_pvxs_driver -c query-config.yaml query \
-  "SELECT pv, alias, description, attributes.device_group, attributes.ordinal, tags
-   FROM mldp.pv_metadata
-   WHERE tag = 'magnet'"
+SELECT pv, alias, description, attributes.device_group, attributes.ordinal, tags
+FROM mldp.pv_metadata
+WHERE tag = 'magnet';
 
 # PVs filtered by namespace attribute
-mldp_pvxs_driver -c query-config.yaml query \
-  "SELECT pv, attributes.device_group, attributes.ordinal
-   FROM mldp.pv_metadata
-   WHERE attributes.namespace = 'mldp_sample'
-   ORDER BY attributes.ordinal"
+SELECT pv, attributes.device_group, attributes.ordinal
+FROM mldp.pv_metadata
+WHERE attributes.namespace = 'mldp_sample'
+ORDER BY attributes.ordinal;
 ```
 
 ### Step 7 — Query configurations
 
-```bash
+```sql
 # All sample configurations
-mldp_pvxs_driver -c query-config.yaml query \
-  "SELECT name, category, description
-   FROM mldp.configuration
-   WHERE name PREFIX 'mldp_sample'"
+SELECT name, category, description
+FROM mldp.configuration
+WHERE name PREFIX 'mldp_sample';
 
 # Only beam-mode configurations
-mldp_pvxs_driver -c query-config.yaml query \
-  "SELECT name, category, description
-   FROM mldp.configuration
-   WHERE category = 'beam_mode'"
+SELECT name, category, description
+FROM mldp.configuration
+WHERE category = 'beam_mode';
 
 # Closed activation windows for beam-mode configurations
-mldp_pvxs_driver -c query-config.yaml query \
-  "SELECT time, end_time, config_name, activation_id
-   FROM mldp.configuration_activation
-   WHERE config_name IN ('mldp_sample_injector_tuning', 'mldp_sample_user_delivery')
-     AND end_time IS NOT NULL"
+SELECT time, end_time, config_name, activation_id
+FROM mldp.configuration_activation
+WHERE config_name IN ('mldp_sample_injector_tuning', 'mldp_sample_user_delivery')
+  AND end_time IS NOT NULL;
 
 # Active configurations 30 minutes ago (RF and vacuum should be active)
-mldp_pvxs_driver -c query-config.yaml query \
-  "SELECT name, activation_id, time
-   FROM mldp.active_configurations
-   WHERE at = NOW -30m"
+SELECT name, activation_id, time
+FROM mldp.active_configurations
+WHERE at = NOW -30m;
 ```
 
 ### Step 8 — Join time-series with metadata
 
 This query obtains the PV list from `mldp.pv_metadata` before querying samples.
 
-```bash
-mldp_pvxs_driver -c query-config.yaml query \
-  "SELECT ts.pv, ts.time, ts.value, m.description, m.attributes.units
-   FROM mldp.time_series ts
-   JOIN mldp.pv_metadata m ON ts.pv = m.pv
-   WHERE ts.pv IN (
-     SELECT pv
-     FROM mldp.pv_metadata
-     WHERE pv PREFIX 'mldp_sample:MAGNET'
-   )
-     AND ts.time >= NOW -10m
-     AND ts.time <= NOW"
+```sql
+SELECT ts.pv, ts.time, ts.value, m.description, m.attributes.units
+FROM mldp.time_series ts
+JOIN mldp.pv_metadata m ON ts.pv = m.pv
+WHERE ts.pv IN (
+  SELECT pv
+  FROM mldp.pv_metadata
+  WHERE pv PREFIX 'mldp_sample:MAGNET'
+)
+  AND ts.time >= NOW -10m
+  AND ts.time <= NOW;
 ```
 
 ### Step 9 — Use EXPLAIN to inspect the query plan
 
-```bash
-mldp_pvxs_driver -c query-config.yaml query \
-  "EXPLAIN SELECT pv, time, value FROM mldp.time_series
-   WHERE pv = 'mldp_sample:MAGNET:01:VALUE'
-     AND time >= NOW -1h AND time <= NOW"
+```sql
+EXPLAIN SELECT pv, time, value FROM mldp.time_series
+WHERE pv = 'mldp_sample:MAGNET:01:VALUE'
+  AND time >= NOW -1h AND time <= NOW;
 ```
 
-### Step 10 — Save SQL to a file
+### Step 10 — Enter a longer multi-line query
 
-For longer queries, write the SQL to a file and use `--file`:
+The REPL keeps buffering until the terminating semicolon, so longer queries do
+not require a temporary SQL file:
 
-```bash
-cat > my_query.sql <<'EOF'
+```sql
 SELECT ts.pv,
        ts.time,
        ts.value,
@@ -979,10 +1010,7 @@ WHERE ts.pv IN ('mldp_sample:MAGNET:01:VALUE',
   AND ts.time >= NOW -1h
   AND ts.time <= NOW
   AND m.pv PREFIX 'mldp_sample'
-LIMIT 200
-EOF
-
-mldp_pvxs_driver -c query-config.yaml query --file my_query.sql
+LIMIT 200;
 ```
 
 ### Step 11 — Discover PVs and closed beam-mode windows in one query
@@ -1023,7 +1051,7 @@ non-null timestamp fields named `time` and `end_time` (qualified names such as
 rejected. Each returned batch is `time` followed by the requested native PV
 columns in metadata-query order.
 
-### Step 12 — Materialize a table for this session or future clients
+### Step 12 — Materialize a temporary table in this session
 
 Use `CREATE TEMP TABLE` when a materialized query result is needed only within
 the current interactive client session. The table is an immutable Arrow IPC
@@ -1042,27 +1070,59 @@ SELECT * FROM magnet_samples;
 DROP TABLE magnet_samples;
 ```
 
-Use `CREATE TABLE` without `TEMP` for a persistent immutable snapshot. It is
-visible to later CLI runs that use the same catalog directory:
+### Persistent table across client sessions
+
+Use `CREATE TABLE` without `TEMP` for an immutable snapshot that survives the
+REPL session. Every client must point at the same stable, writable catalog
+directory. The following walkthrough creates the table in one REPL, reads it
+in a second REPL, and removes it in a third.
+
+**Client session 1 — create the snapshot:**
 
 ```bash
 mldp_pvxs_driver -c query-config.yaml query \
-  --table-catalog-dir /var/lib/mldp/query-catalog \
-  "CREATE TABLE magnet_samples AS
-   SELECT pv, time, value
-   FROM mldp.time_series
-   WHERE pv = 'mldp_sample:MAGNET:01:VALUE'"
+  --table-catalog-dir /var/lib/mldp/query-catalog
+```
 
+```sql
+CREATE TABLE magnet_samples AS
+SELECT pv, time, value
+FROM mldp.time_series
+WHERE pv = 'mldp_sample:MAGNET:01:VALUE'
+  AND time >= NOW -10m
+  AND time <= NOW;
+```
+
+**Client session 2 — discover and read the same snapshot:**
+
+```bash
 mldp_pvxs_driver -c query-config.yaml query \
-  --table-catalog-dir /var/lib/mldp/query-catalog \
-  "SELECT * FROM magnet_samples"
+  --table-catalog-dir /var/lib/mldp/query-catalog
+```
+
+```sql
+SHOW TABLES;
+DESC magnet_samples;
+SELECT * FROM magnet_samples;
+```
+
+**Client session 3 — explicitly remove the snapshot:**
+
+```bash
+mldp_pvxs_driver -c query-config.yaml query \
+  --table-catalog-dir /var/lib/mldp/query-catalog
+```
+
+```sql
+DROP TABLE magnet_samples;
+SHOW TABLES;
 ```
 
 Set the catalog location with `query --table-catalog-dir <path>`. If it is not
-specified, the CLI uses `<tmp>/mldp-query-catalog`; choose a stable, writable
-directory such as `/var/lib/mldp/query-catalog` for tables that must survive
-multiple client runs. The catalog stores its managed files only in
-`<path>/.mldp-query-tables/`; it does not clean unrelated files. `CREATE TABLE`
-fails if the name already exists, so run `DROP TABLE magnet_samples` before
-recreating a persistent snapshot. Use a shared mounted catalog directory when
-multiple processes or hosts need to access the same snapshots.
+specified, the CLI uses `<tmp>/mldp-query-catalog`; choose a stable directory
+such as `/var/lib/mldp/query-catalog` when tables must survive multiple client
+runs. The catalog stores managed files only in `<path>/.mldp-query-tables/` and
+does not clean unrelated files. `CREATE TABLE` fails if the name already
+exists, so use `DROP TABLE magnet_samples` before recreating it. Use a shared
+mounted catalog directory when multiple processes or hosts need access to the
+same snapshots.

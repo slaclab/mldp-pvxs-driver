@@ -177,6 +177,18 @@ plan::PlannerLiteralValue toPlannerLiteral(const LiteralValue& value)
     {
         return std::get<double>(value);
     }
+    if (std::holds_alternative<bool>(value))
+    {
+        return std::get<bool>(value);
+    }
+    if (std::holds_alternative<TimestampNsLiteral>(value))
+    {
+        return std::get<TimestampNsLiteral>(value);
+    }
+    if (std::holds_alternative<DurationNsLiteral>(value))
+    {
+        return std::get<DurationNsLiteral>(value);
+    }
     return std::get<NowLiteral>(value);
 }
 

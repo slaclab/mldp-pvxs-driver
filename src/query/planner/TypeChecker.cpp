@@ -44,7 +44,8 @@ void enforceLiteralType(const plan::PlannerPredicate& predicate, const plan::Pla
         return;
     case ColumnType::NATIVE_VALUE:
         if (!std::holds_alternative<std::string>(value) && !std::holds_alternative<int64_t>(value) &&
-            !std::holds_alternative<double>(value) && !std::holds_alternative<bool>(value))
+            !std::holds_alternative<double>(value) && !std::holds_alternative<bool>(value) &&
+            !std::holds_alternative<TimestampNsLiteral>(value) && !std::holds_alternative<DurationNsLiteral>(value))
         {
             invalid();
         }

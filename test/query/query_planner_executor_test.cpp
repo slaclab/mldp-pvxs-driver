@@ -631,6 +631,63 @@ TEST_F(PlannerExecutorTest, FiltersMaterializedNativeUnionValuesByActiveTypeWith
     EXPECT_EQ(equal->num_rows(), 1);
 }
 
+TEST_F(PlannerExecutorTest, FiltersNativeTimestampAndDurationUnionValuesWithTypedLiterals)
+{
+    auto file_system = std::make_shared<arrow::fs::internal::MockFileSystem>(std::chrono::system_clock::now());
+    auto catalog = std::make_shared<query::QueryTableCatalog>(file_system, "catalog");
+    const auto value_type = arrow::dense_union({arrow::field("timestamp", arrow::timestamp(arrow::TimeUnit::NANO)),
+                                                arrow::field("duration", arrow::duration(arrow::TimeUnit::NANO)),
+                                                arrow::field("integer", arrow::int64())});
+    auto timestamp_builder = std::make_shared<arrow::TimestampBuilder>(arrow::timestamp(arrow::TimeUnit::NANO), arrow::default_memory_pool());
+    auto duration_builder = std::make_shared<arrow::DurationBuilder>(arrow::duration(arrow::TimeUnit::NANO), arrow::default_memory_pool());
+    auto integer_builder = std::make_shared<arrow::Int64Builder>();
+    arrow::DenseUnionBuilder value_builder(arrow::default_memory_pool(), {timestamp_builder, duration_builder, integer_builder}, value_type);
+    ASSERT_TRUE(value_builder.Append(0).ok()); ASSERT_TRUE(timestamp_builder->Append(10).ok());
+    ASSERT_TRUE(value_builder.Append(0).ok()); ASSERT_TRUE(timestamp_builder->Append(20).ok());
+    ASSERT_TRUE(value_builder.Append(1).ok()); ASSERT_TRUE(duration_builder->Append(10).ok());
+    ASSERT_TRUE(value_builder.Append(1).ok()); ASSERT_TRUE(duration_builder->Append(20).ok());
+    ASSERT_TRUE(value_builder.Append(2).ok()); ASSERT_TRUE(integer_builder->Append(10).ok());
+    std::shared_ptr<arrow::Array> value;
+    ASSERT_TRUE(value_builder.Finish(&value).ok());
+
+    arrow::StringBuilder pv_builder;
+    for (const auto& pv : {"TS:10", "TS:20", "D:10", "D:20", "I:10"}) ASSERT_TRUE(pv_builder.Append(pv).ok());
+    std::shared_ptr<arrow::Array> pv;
+    ASSERT_TRUE(pv_builder.Finish(&pv).ok());
+    const auto batch = arrow::RecordBatch::Make(arrow::schema({arrow::field("pv", arrow::utf8()), arrow::field("value", value_type)}), 5, {pv, value});
+    ASSERT_TRUE(catalog->create("typed_samples", query::TableLifetime::Session, {batch}).ok());
+
+    query::ExecutionContext context{.pool = arrow::default_memory_pool(), .table_catalog = catalog};
+    query::QueryPlanner planner(catalog);
+    query::QueryExecutor executor;
+    const auto expect = [&](const std::string_view sql, const std::vector<std::string>& expected_pvs, const std::vector<arrow::Type::type>& active_types)
+    {
+        const auto result = executor.execute(planner.plan(query::parseQuery(sql)), context);
+        EXPECT_EQ(result.stats.rpc_calls, 0U);
+        ASSERT_EQ(result.batches.size(), 1U);
+        const auto& selected = result.batches.front();
+        ASSERT_EQ(selected->num_rows(), static_cast<int64_t>(expected_pvs.size()));
+        ASSERT_EQ(active_types.size(), expected_pvs.size());
+        if (expected_pvs.empty()) return;
+        for (int64_t row = 0; row < selected->num_rows(); ++row)
+        {
+            const auto pv_scalar = selected->column(0)->GetScalar(row);
+            const auto value_scalar = selected->column(1)->GetScalar(row);
+            ASSERT_TRUE(pv_scalar.ok());
+            ASSERT_TRUE(value_scalar.ok());
+            EXPECT_EQ(std::dynamic_pointer_cast<arrow::StringScalar>(*pv_scalar)->ToString(), expected_pvs[static_cast<std::size_t>(row)]);
+            EXPECT_EQ(std::dynamic_pointer_cast<arrow::UnionScalar>(*value_scalar)->child_value()->type->id(), active_types[static_cast<std::size_t>(row)]);
+        }
+    };
+
+    expect("SELECT * FROM typed_samples WHERE value = timestamp_ns(10)", {"TS:10"}, {arrow::Type::TIMESTAMP});
+    expect("SELECT * FROM typed_samples WHERE value != timestamp_ns(10)", {"TS:20"}, {arrow::Type::TIMESTAMP});
+    expect("SELECT * FROM typed_samples WHERE value IN (duration_ns(20), timestamp_ns(10))", {"TS:10", "D:20"}, {arrow::Type::TIMESTAMP, arrow::Type::DURATION});
+    expect("SELECT * FROM typed_samples WHERE value BETWEEN timestamp_ns(10) AND timestamp_ns(20)", {"TS:10", "TS:20"}, {arrow::Type::TIMESTAMP, arrow::Type::TIMESTAMP});
+    expect("SELECT * FROM typed_samples WHERE value > duration_ns(10)", {"D:20"}, {arrow::Type::DURATION});
+    expect("SELECT * FROM typed_samples WHERE value BETWEEN duration_ns(10) AND timestamp_ns(20)", {}, {});
+}
+
 TEST_F(PlannerExecutorTest, PushesBackendPredicateAndPrunesProjectionColumns)
 {
     query::QueryPlanner planner;

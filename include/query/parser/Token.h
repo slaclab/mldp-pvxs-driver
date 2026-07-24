@@ -24,6 +24,10 @@ enum class TokenType {
     STRING_LITERAL,
     NUMBER_LITERAL,
     DURATION_LITERAL,
+    TRUE,
+    FALSE,
+    TIMESTAMP_NS,
+    DURATION_NS,
 
     SELECT,
     FROM,

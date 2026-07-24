@@ -29,6 +29,7 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <filesystem>
 #include <sstream>
 
 using namespace mldp_pvxs_driver;
@@ -657,8 +658,12 @@ TEST(QuerySubcommandTest, ReplShowsHelpAndExitsOnQuit)
 
 TEST(QuerySubcommandTest, ReplMaterializesMultilineCreateTableForFollowingSelect)
 {
+    const auto catalog_directory = std::filesystem::temp_directory_path() /
+                                   ("mldp-query-repl-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    auto catalog_directory_string = catalog_directory.string();
     char arg0[] = "query";
-    char* argv[] = {arg0};
+    char arg1[] = "--table-catalog-dir";
+    char* argv[] = {arg0, arg1, catalog_directory_string.data()};
     query::QueryableFactory::instance().reset();
     cli::QuerySubcommand querySubcommand([](const config::Config&)
     {
@@ -672,10 +677,13 @@ TEST(QuerySubcommandTest, ReplMaterializesMultilineCreateTableForFollowingSelect
     std::ostringstream output;
     std::ostringstream error;
 
-    EXPECT_EQ(querySubcommand.run(1, argv, {}, input, output, error), 0);
+    EXPECT_EQ(querySubcommand.run(3, argv, {}, input, output, error), 0);
     EXPECT_TRUE(error.str().empty()) << error.str();
     EXPECT_NE(output.str().find("MAGNET:01"), std::string::npos);
     EXPECT_NE(output.str().find("42"), std::string::npos);
+    std::error_code remove_error;
+    std::filesystem::remove_all(catalog_directory, remove_error);
+    EXPECT_FALSE(remove_error);
     query::QueryableFactory::instance().reset();
 }
 
@@ -754,6 +762,43 @@ TEST(QueryCompletionTest, CompletesCommandsKeywordsTablesAndColumns)
     EXPECT_EQ(cli::detail::replCompletionContextLength("SELECT ts.p"), 4);
 
     query::QueryableFactory::instance().reset();
+}
+
+TEST(QueryCompletionTest, CompletesSessionAndPersistentCatalogTablesAndColumns)
+{
+    auto file_system = std::make_shared<arrow::fs::internal::MockFileSystem>(std::chrono::system_clock::now());
+    auto catalog = std::make_shared<query::QueryTableCatalog>(file_system, "catalog");
+    arrow::StringBuilder name_builder;
+    arrow::Int64Builder value_builder;
+    ASSERT_TRUE(name_builder.Append("sample").ok());
+    ASSERT_TRUE(value_builder.Append(7).ok());
+    std::shared_ptr<arrow::Array> name;
+    std::shared_ptr<arrow::Array> value;
+    ASSERT_TRUE(name_builder.Finish(&name).ok());
+    ASSERT_TRUE(value_builder.Finish(&value).ok());
+    const auto batch = arrow::RecordBatch::Make(
+        arrow::schema({arrow::field("sample_name", arrow::utf8()), arrow::field("sample_value", arrow::int64())}),
+        1,
+        {name, value});
+    ASSERT_TRUE(catalog->create("session_samples", query::TableLifetime::Session, {batch}).ok());
+    ASSERT_TRUE(catalog->create("persistent_samples", query::TableLifetime::Persistent, {batch}).ok());
+
+    for (const std::string_view sql : {"SELECT * FROM ses", "DROP TABLE ses"})
+    {
+        const auto candidates = cli::detail::replCompletions(sql, catalog);
+        EXPECT_NE(std::find(candidates.begin(), candidates.end(), "session_samples"), candidates.end()) << sql;
+    }
+    const auto describe = cli::detail::replCompletions("DESC per", catalog);
+    EXPECT_NE(std::find(describe.begin(), describe.end(), "persistent_samples"), describe.end());
+    const auto persistent = cli::detail::replCompletions("SELECT * FROM session_samples JOIN per", catalog);
+    EXPECT_NE(std::find(persistent.begin(), persistent.end(), "persistent_samples"), persistent.end());
+
+    const auto qualified = cli::detail::replCompletions("SELECT s.sample_ FROM session_samples AS s WHERE s.sample_", catalog);
+    EXPECT_NE(std::find(qualified.begin(), qualified.end(), "s.sample_name"), qualified.end());
+    EXPECT_NE(std::find(qualified.begin(), qualified.end(), "s.sample_value"), qualified.end());
+    const auto unqualified = cli::detail::replCompletions("SELECT sample_ FROM session_samples WHERE sample_", catalog);
+    EXPECT_NE(std::find(unqualified.begin(), unqualified.end(), "sample_name"), unqualified.end());
+    EXPECT_NE(std::find(unqualified.begin(), unqualified.end(), "sample_value"), unqualified.end());
 }
 
 TEST(QuerySubcommandTest, ReplReportsIncompleteStatementAtEndOfInput)

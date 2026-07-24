@@ -23,7 +23,7 @@
 
 namespace mldp_pvxs_driver::query::plan {
 
-using PlannerLiteralValue = std::variant<std::string, int64_t, double, bool, NowLiteral>;
+using PlannerLiteralValue = std::variant<std::string, int64_t, double, bool, TimestampNsLiteral, DurationNsLiteral, NowLiteral>;
 
 struct PlannerPredicate {
     std::string              column;

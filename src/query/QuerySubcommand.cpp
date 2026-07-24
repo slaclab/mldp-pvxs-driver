@@ -231,7 +231,7 @@ bool isUserHistoryEntry(std::string_view entry)
 
     const auto first_space = command.find_first_of(" \t\r\n");
     const auto keyword = uppercase(command.substr(0, first_space));
-    return keyword == "SELECT" || keyword == "SHOW" || keyword == "DESCRIBE" || keyword == "EXPLAIN" || keyword == "CREATE" || keyword == "DROP";
+    return keyword == "SELECT" || keyword == "SHOW" || keyword == "DESCRIBE" || keyword == "DESC" || keyword == "EXPLAIN" || keyword == "CREATE" || keyword == "DROP";
 }
 
 bool startsWithIgnoreCase(std::string_view value, std::string_view prefix)
@@ -317,8 +317,19 @@ std::vector<std::pair<std::string, std::string>> tableAliases(std::string_view i
     return aliases;
 }
 
-std::vector<std::string> columnsForTable(std::string_view table)
+std::vector<std::string> columnsForTable(const std::string_view table,
+                                         const std::shared_ptr<mldp_pvxs_driver::query::QueryTableCatalog>& table_catalog)
 {
+    if (table_catalog)
+    {
+        if (const auto catalog_table = table_catalog->find(std::string(table)))
+        {
+            std::vector<std::string> columns;
+            columns.reserve(catalog_table->schema->num_fields());
+            for (const auto& field : catalog_table->schema->fields()) columns.push_back(field->name());
+            return columns;
+        }
+    }
     try
     {
         auto queryable = mldp_pvxs_driver::query::QueryableFactory::instance().createByTable(std::string(table));
@@ -337,7 +348,8 @@ bool expectsTable(const std::vector<std::string>& words)
 {
     if (words.empty()) return false;
     const auto keyword = uppercase(words.back());
-    return keyword == "FROM" || keyword == "JOIN" || keyword == "DESCRIBE";
+    if (keyword == "FROM" || keyword == "JOIN" || keyword == "DESCRIBE" || keyword == "DESC") return true;
+    return keyword == "TABLE" && words.size() >= 2 && uppercase(words[words.size() - 2]) == "DROP";
 }
 
 std::filesystem::path replHistoryPath()
@@ -356,8 +368,9 @@ std::filesystem::path replHistoryPath()
 class ReplLineEditor
 {
 public:
-    explicit ReplLineEditor(std::istream& input)
+    ReplLineEditor(std::istream& input, std::shared_ptr<mldp_pvxs_driver::query::QueryTableCatalog> table_catalog)
         : input_(input)
+        , table_catalog_(std::move(table_catalog))
     {
         if (&input != &std::cin || ::isatty(STDIN_FILENO) == 0)
         {
@@ -372,11 +385,11 @@ public:
         repl_->set_beep_on_ambiguous_completion(false);
         repl_->bind_key_internal(replxx::Replxx::KEY::TAB, "complete_line");
         repl_->set_completion_callback(
-            [](const std::string& context, int& context_length) -> replxx::Replxx::completions_t
+            [this](const std::string& context, int& context_length) -> replxx::Replxx::completions_t
             {
                 replxx::Replxx::completions_t completions;
                 context_length = mldp_pvxs_driver::cli::detail::replCompletionContextLength(context);
-                for (const auto& candidate : mldp_pvxs_driver::cli::detail::replCompletions(context))
+                for (const auto& candidate : mldp_pvxs_driver::cli::detail::replCompletions(context, table_catalog_))
                     completions.emplace_back(candidate);
                 return completions;
             });
@@ -496,6 +509,7 @@ private:
     std::unique_ptr<replxx::Replxx> repl_;
     std::filesystem::path           history_path_;
     std::vector<std::string>        session_history_;
+    std::shared_ptr<mldp_pvxs_driver::query::QueryTableCatalog> table_catalog_;
 };
 
 QueryOutputFormat parseFormat(std::string_view value);
@@ -507,7 +521,7 @@ int runRepl(QueryCliOptions                           options,
             std::ostream&                             error)
 {
     std::string    buffer;
-    ReplLineEditor editor(input);
+    ReplLineEditor editor(input, runner.completionCatalog(options));
     while (true)
     {
         bool       interrupted = false;
@@ -806,7 +820,9 @@ struct SpillCleanupGuard
 
 } // namespace
 
-std::vector<std::string> mldp_pvxs_driver::cli::detail::replCompletions(const std::string_view input)
+std::vector<std::string> mldp_pvxs_driver::cli::detail::replCompletions(
+    const std::string_view input,
+    const std::shared_ptr<query::QueryTableCatalog>& table_catalog)
 {
     if (isInsideQuotedLiteral(input)) return {};
 
@@ -828,6 +844,8 @@ std::vector<std::string> mldp_pvxs_driver::cli::detail::replCompletions(const st
     {
         for (const auto& table : query::QueryableFactory::instance().registeredTables())
             candidates.push_back(table);
+        if (table_catalog)
+            for (const auto& table : table_catalog->tableNames()) candidates.push_back(table);
     }
     else if (const auto dot = token.find('.'); dot != std::string::npos)
     {
@@ -835,16 +853,16 @@ std::vector<std::string> mldp_pvxs_driver::cli::detail::replCompletions(const st
         const auto column_prefix = token.substr(dot + 1);
         for (const auto& [candidate_alias, table] : tableAliases(input))
             if (startsWithIgnoreCase(candidate_alias, alias))
-                for (const auto& column : columnsForTable(table)) candidates.push_back(candidate_alias + "." + column);
+                for (const auto& column : columnsForTable(table, table_catalog)) candidates.push_back(candidate_alias + "." + column);
         (void)column_prefix;
     }
     else
     {
         candidates = {"SELECT", "FROM", "WHERE", "AND", "OR", "IN", "LIKE", "BETWEEN", "ORDER", "BY", "ASC", "DESC", "LIMIT", "PAGE", "TOKEN",
-                      "SHOW", "TABLES", "DESCRIBE", "EXPLAIN", "CREATE", "DROP", "TEMP", "TABLE", "AS", "INNER", "LEFT", "OUTER", "JOIN", "ON", "NOW", "PREFIX", "CONTAINS"};
+                      "SHOW", "TABLES", "DESCRIBE", "DESC", "EXPLAIN", "CREATE", "DROP", "TEMP", "TABLE", "AS", "INNER", "LEFT", "OUTER", "JOIN", "ON", "NOW", "PREFIX", "CONTAINS"};
         const auto aliases = tableAliases(input);
         if (aliases.size() == 1)
-            for (const auto& column : columnsForTable(aliases.front().second)) candidates.push_back(column);
+            for (const auto& column : columnsForTable(aliases.front().second, table_catalog)) candidates.push_back(column);
     }
 
     candidates.erase(std::remove_if(candidates.begin(), candidates.end(), [&token](const std::string& candidate)
@@ -852,6 +870,11 @@ std::vector<std::string> mldp_pvxs_driver::cli::detail::replCompletions(const st
     std::sort(candidates.begin(), candidates.end());
     candidates.erase(std::unique(candidates.begin(), candidates.end()), candidates.end());
     return candidates;
+}
+
+std::vector<std::string> mldp_pvxs_driver::cli::detail::replCompletions(const std::string_view input)
+{
+    return replCompletions(input, nullptr);
 }
 
 int mldp_pvxs_driver::cli::detail::replCompletionContextLength(const std::string_view input)
@@ -932,6 +955,20 @@ int mldp_pvxs_driver::cli::QueryRunner::run(const QueryCliOptions& options, cons
         printQueryStats(result.stats, output);
     }
     return 0;
+}
+
+std::shared_ptr<mldp_pvxs_driver::query::QueryTableCatalog>
+mldp_pvxs_driver::cli::QueryRunner::completionCatalog(const QueryCliOptions& options) const
+{
+    const auto catalog_dir = options.table_catalog_dir.empty()
+        ? (std::filesystem::temp_directory_path() / "mldp-query-catalog").string()
+        : options.table_catalog_dir;
+    if (!table_catalog_ || table_catalog_dir_ != catalog_dir)
+    {
+        table_catalog_ = std::make_shared<query::QueryTableCatalog>(std::make_shared<arrow::fs::LocalFileSystem>(), catalog_dir);
+        table_catalog_dir_ = catalog_dir;
+    }
+    return table_catalog_;
 }
 
 int mldp_pvxs_driver::cli::QuerySubcommand::run(int argc,

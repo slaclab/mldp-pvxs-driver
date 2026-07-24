@@ -76,6 +76,41 @@ TEST(QueryLexerTest, TokenizesEveryKeywordCaseInsensitively)
     }
 }
 
+TEST(QueryLexerTest, TokenizesBooleanAndTypedTemporalLiteralKeywordsCaseInsensitively)
+{
+    const auto tokens = Lexer("TRUE false Timestamp_Ns duration_ns").tokenize();
+    ASSERT_EQ(tokens.size(), 5U);
+    EXPECT_EQ(tokens[0].type, TokenType::TRUE);
+    EXPECT_EQ(tokens[1].type, TokenType::FALSE);
+    EXPECT_EQ(tokens[2].type, TokenType::TIMESTAMP_NS);
+    EXPECT_EQ(tokens[3].type, TokenType::DURATION_NS);
+}
+
+TEST(QueryParserTest, ParsesBooleanAndTypedNanosecondLiterals)
+{
+    const auto statement = parseQuery(
+        "SELECT * FROM samples WHERE value IN (true, FALSE, timestamp_ns(-42), duration_ns( 17 ))");
+    ASSERT_TRUE(std::holds_alternative<SelectStatement>(statement));
+    const auto& predicate = std::get<InPredicate>(std::get<SelectStatement>(statement).predicates.front());
+    ASSERT_EQ(predicate.values.size(), 4U);
+    EXPECT_TRUE(std::get<bool>(predicate.values[0]));
+    EXPECT_FALSE(std::get<bool>(predicate.values[1]));
+    EXPECT_EQ(std::get<TimestampNsLiteral>(predicate.values[2]).value, -42);
+    EXPECT_EQ(std::get<DurationNsLiteral>(predicate.values[3]).value, 17);
+}
+
+TEST(QueryParserTest, RejectsMalformedTypedNanosecondLiterals)
+{
+    for (const std::string_view sql : {
+             "SELECT * FROM samples WHERE value = timestamp_ns()",
+             "SELECT * FROM samples WHERE value = timestamp_ns(1.5)",
+             "SELECT * FROM samples WHERE value = duration_ns(foo)",
+             "SELECT * FROM samples WHERE value = duration_ns(1"})
+    {
+        EXPECT_THROW((void)parseQuery(sql), ParseError) << sql;
+    }
+}
+
 TEST(QueryLexerTest, RejectsUnknownAndUnterminatedInputAtItsSourcePosition)
 {
     for (const std::string_view sql : {"SELECT @", "SELECT 'unterminated"})
@@ -271,6 +306,10 @@ TEST(QueryParserTest, ParsesShowTablesDescribeAndExplain)
     auto describe = parseQuery("DESCRIBE mldp.pv_metadata");
     ASSERT_TRUE(std::holds_alternative<DescribeStatement>(describe));
     EXPECT_EQ(std::get<DescribeStatement>(describe).table_name, "mldp.pv_metadata");
+
+    auto desc = parseQuery("desc mldp.pv_metadata");
+    ASSERT_TRUE(std::holds_alternative<DescribeStatement>(desc));
+    EXPECT_EQ(std::get<DescribeStatement>(desc).table_name, "mldp.pv_metadata");
 
     auto explain = parseQuery("EXPLAIN SELECT * FROM mldp.pv_stats");
     ASSERT_TRUE(std::holds_alternative<ExplainStatement>(explain));

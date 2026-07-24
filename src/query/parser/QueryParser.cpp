@@ -58,7 +58,91 @@ QueryStatement QueryParser::parse(const std::string_view sql)
                        { return static_cast<char>(std::toupper(character)); });
         return result;
     };
-    const auto text = trim(sql);
+    std::string text(trim(sql));
+    const auto first_token_end = text.find_first_of(" \t\r\n");
+    if (uppercase(text.substr(0, first_token_end)) == "DESC")
+    {
+        text = "DESCRIBE" + std::string(text.substr(first_token_end));
+    }
+    std::unordered_map<std::string, LiteralValue> typed_literals;
+    const auto rewriteTypedLiterals = [&typed_literals](const std::string_view value)
+    {
+        std::string rewritten;
+        rewritten.reserve(value.size());
+        bool quoted = false;
+        char quote = '\0';
+        for (std::size_t index = 0; index < value.size();)
+        {
+            if (quoted)
+            {
+                rewritten += value[index];
+                if (value[index] == '\\' && index + 1 < value.size()) rewritten += value[++index];
+                else if (value[index] == quote) quoted = false;
+                ++index;
+                continue;
+            }
+            if (value[index] == '\'' || value[index] == '"')
+            {
+                quote = value[index];
+                quoted = true;
+                rewritten += value[index++];
+                continue;
+            }
+            const auto is_identifier = [](const char character)
+            {
+                return std::isalnum(static_cast<unsigned char>(character)) || character == '_';
+            };
+            if (!std::isalpha(static_cast<unsigned char>(value[index])) && value[index] != '_')
+            {
+                rewritten += value[index++];
+                continue;
+            }
+            const auto start = index;
+            while (index < value.size() && is_identifier(value[index])) ++index;
+            const auto word = value.substr(start, index - start);
+            std::string upper(word);
+            std::transform(upper.begin(), upper.end(), upper.begin(), [](const unsigned char character) { return static_cast<char>(std::toupper(character)); });
+            if ((upper == "TRUE" || upper == "FALSE") && (start == 0 || !is_identifier(value[start - 1])) &&
+                (index == value.size() || !is_identifier(value[index])))
+            {
+                const auto marker = "typed_literal_" + std::to_string(typed_literals.size());
+                typed_literals.emplace(marker, LiteralValue{upper == "TRUE"});
+                rewritten += "'" + marker + "'";
+                continue;
+            }
+            if (upper != "TIMESTAMP_NS" && upper != "DURATION_NS")
+            {
+                rewritten.append(word);
+                continue;
+            }
+            auto cursor = index;
+            while (cursor < value.size() && std::isspace(static_cast<unsigned char>(value[cursor]))) ++cursor;
+            if (cursor == value.size() || value[cursor] != '(')
+            {
+                rewritten.append(word);
+                continue;
+            }
+            ++cursor;
+            while (cursor < value.size() && std::isspace(static_cast<unsigned char>(value[cursor]))) ++cursor;
+            const auto number_start = cursor;
+            if (cursor < value.size() && value[cursor] == '-') ++cursor;
+            const auto digits_start = cursor;
+            while (cursor < value.size() && std::isdigit(static_cast<unsigned char>(value[cursor]))) ++cursor;
+            const auto number_end = cursor;
+            while (cursor < value.size() && std::isspace(static_cast<unsigned char>(value[cursor]))) ++cursor;
+            if (digits_start == number_end || cursor == value.size() || value[cursor] != ')')
+                throw ParseError("Invalid " + std::string(word) + " literal", TokenPosition{start, 1, start + 1});
+            int64_t ns = 0;
+            const auto [end, error] = std::from_chars(value.data() + number_start, value.data() + number_end, ns);
+            if (error != std::errc{} || end != value.data() + number_end)
+                throw ParseError("Invalid " + std::string(word) + " literal", TokenPosition{start, 1, start + 1});
+            const auto marker = "typed_literal_" + std::to_string(typed_literals.size());
+            typed_literals.emplace(marker, upper == "TIMESTAMP_NS" ? LiteralValue{TimestampNsLiteral{ns}} : LiteralValue{DurationNsLiteral{ns}});
+            rewritten += "'" + marker + "'";
+            index = cursor + 1;
+        }
+        return rewritten;
+    };
     const auto parseDecimalLiteral = [](const std::string_view value) -> std::optional<double>
     {
         if (value.empty()) return std::nullopt;
@@ -191,7 +275,7 @@ QueryStatement QueryParser::parse(const std::string_view sql)
             if (create_tokens[child_index].type == TokenType::AS) create_header_error();
         }
 
-        const auto child = trim(text.substr(as.position.offset + as.lexeme.size()));
+        const auto child = trim(std::string_view(text).substr(as.position.offset + as.lexeme.size()));
         QueryStatement parsed;
         try
         {
@@ -213,7 +297,7 @@ QueryStatement QueryParser::parse(const std::string_view sql)
     };
     if (starts("DROP TABLE "))
     {
-        const auto name = trim(text.substr(std::string_view{"DROP TABLE "}.size()));
+        const auto name = trim(std::string_view(text).substr(std::string_view{"DROP TABLE "}.size()));
         if (name.empty() || name.find_first_of(" \t\r\n") != std::string_view::npos) throw ParseError("DROP TABLE requires one table name", TokenPosition{});
         return DropTableStatement{.table_name = std::string(name)};
     }
@@ -225,7 +309,7 @@ QueryStatement QueryParser::parse(const std::string_view sql)
     std::unordered_map<std::string, std::shared_ptr<SelectStatement>> derived;
     std::unordered_map<std::string, std::shared_ptr<SelectStatement>> in_subqueries;
     std::unordered_map<std::string, bool> is_not_null;
-    std::string rewritten(sql);
+    std::string rewritten = rewriteTypedLiterals(text);
     std::size_t search = 0;
     unsigned int derived_number = 0;
     while ((search = rewritten.find('(', search)) != std::string::npos)
@@ -296,10 +380,12 @@ QueryStatement QueryParser::parse(const std::string_view sql)
     auto result = QueryParser(Lexer(decimal_rewritten).tokenize()).parse();
     if (!std::holds_alternative<SelectStatement>(result)) return result;
     auto& select = std::get<SelectStatement>(result);
-    const auto restore = [&decimals](LiteralValue& literal)
+    const auto restore = [&decimals, &typed_literals](LiteralValue& literal)
     {
         if (!std::holds_alternative<std::string>(literal)) return;
-        if (const auto it = decimals.find(std::get<std::string>(literal)); it != decimals.end()) literal = it->second;
+        const auto& text = std::get<std::string>(literal);
+        if (const auto it = decimals.find(text); it != decimals.end()) literal = it->second;
+        else if (const auto it = typed_literals.find(text); it != typed_literals.end()) literal = it->second;
     };
     const auto restore_expression = [&restore](const auto& self, ExpressionPtr& expression) -> void
     {

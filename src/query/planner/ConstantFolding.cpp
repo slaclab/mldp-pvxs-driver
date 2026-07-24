@@ -41,6 +41,14 @@ std::string literalKey(const plan::PlannerLiteralValue& value)
             {
                 return std::string("b:") + (v ? "1" : "0");
             }
+            else if constexpr (std::is_same_v<T, TimestampNsLiteral>)
+            {
+                return "t:" + std::to_string(v.value);
+            }
+            else if constexpr (std::is_same_v<T, DurationNsLiteral>)
+            {
+                return "u:" + std::to_string(v.value);
+            }
             else
             {
                 return "n:" + std::to_string(v.offset_seconds);

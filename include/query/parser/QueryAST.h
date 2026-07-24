@@ -10,6 +10,8 @@
 
 #pragma once
 
+#include <query/LiteralValue.h>
+
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -25,7 +27,7 @@ struct NowLiteral {
     int64_t offset_seconds{0};
 };
 
-using LiteralValue = std::variant<std::string, int64_t, double, NowLiteral>;
+using LiteralValue = std::variant<std::string, int64_t, double, bool, TimestampNsLiteral, DurationNsLiteral, NowLiteral>;
 
 struct QualifiedColumn {
     std::optional<std::string> qualifier;
