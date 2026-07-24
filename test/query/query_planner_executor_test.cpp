@@ -298,6 +298,10 @@ const plan::PhysicalTableScan* findScan(const plan::PhysicalNodePtr& node)
     {
         return findScan(project->input);
     }
+    if (const auto* sort = std::get_if<plan::PhysicalSort>(&node->value))
+    {
+        return findScan(sort->input);
+    }
     if (const auto* limit = std::get_if<plan::PhysicalLimit>(&node->value))
     {
         return findScan(limit->input);
@@ -524,8 +528,13 @@ TEST_F(PlannerExecutorTest, OrdersByAnUnselectedColumnBeforeApplyingLimit)
 {
     query::QueryPlanner  planner;
     query::QueryExecutor executor;
-    const auto           result = executor.execute(
-        planner.plan(query::parseQuery("SELECT pv FROM fake.samples WHERE pv IN ('A', 'B') ORDER BY time DESC LIMIT 1")),
+    const auto           plan = planner.plan(query::parseQuery("SELECT pv FROM fake.samples WHERE pv IN ('A', 'B') ORDER BY time DESC LIMIT 1"));
+    const auto*          scan = findScan(plan);
+    ASSERT_NE(scan, nullptr);
+    EXPECT_EQ(scan->projection_hint, std::set<std::string>({"pv", "time"}));
+
+    const auto result = executor.execute(
+        plan,
         {.pool = arrow::default_memory_pool()});
     ASSERT_EQ(result.batches.size(), 1);
     ASSERT_EQ(result.batches.front()->num_rows(), 1);

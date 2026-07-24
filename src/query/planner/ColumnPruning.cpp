@@ -140,18 +140,15 @@ void applyProjectionHint(const plan::LogicalNodePtr&                         nod
 
     if (auto* scan = std::get_if<plan::LogicalScan>(&node->value))
     {
+        scan->projection_hint.clear();
         const auto alias_match = columns.find(scan->table_alias);
         if (alias_match != columns.end())
         {
-            scan->projection_hint = alias_match->second;
+            scan->projection_hint.insert(alias_match->second.begin(), alias_match->second.end());
         }
-        else if (const auto default_match = columns.find(""); default_match != columns.end())
+        if (const auto default_match = columns.find(""); default_match != columns.end())
         {
-            scan->projection_hint = default_match->second;
-        }
-        else
-        {
-            scan->projection_hint.clear();
+            scan->projection_hint.insert(default_match->second.begin(), default_match->second.end());
         }
         if (scan->projection_hint.empty())
         {
