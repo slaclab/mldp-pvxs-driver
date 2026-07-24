@@ -28,7 +28,6 @@
 #include <arrow/table.h>
 #include <arrow/type.h>
 
-#include <chrono>
 #include <sstream>
 #include <stdexcept>
 #include <unordered_map>

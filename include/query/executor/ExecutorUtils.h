@@ -17,7 +17,6 @@
 
 #include <set>
 #include <string_view>
-#include <variant>
 
 namespace mldp_pvxs_driver::query::executor {
 

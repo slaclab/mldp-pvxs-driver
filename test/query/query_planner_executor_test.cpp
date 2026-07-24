@@ -912,6 +912,11 @@ TEST_F(PlannerExecutorTest, ShowTablesReturnsRegisteredTables)
     const auto result = executor.execute(plan, context);
     ASSERT_EQ(result.batches.size(), 1);
     ASSERT_GE(result.batches[0]->num_rows(), 1);
+    EXPECT_EQ(result.batches[0]->schema()->field(0)->name(), "table_name");
+    EXPECT_EQ(result.batches[0]->schema()->field(1)->name(), "type");
+    EXPECT_EQ(result.batches[0]->schema()->field(2)->name(), "location");
+    EXPECT_EQ(result.batches[0]->column(1)->GetScalar(0).ValueOrDie()->ToString(), "virtual");
+    EXPECT_EQ(result.batches[0]->column(2)->GetScalar(0).ValueOrDie()->ToString(), "");
 }
 
 TEST_F(PlannerExecutorTest, DescribeUsesReadableTypesAndOperators)

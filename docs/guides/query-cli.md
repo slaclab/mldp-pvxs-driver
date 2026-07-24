@@ -763,16 +763,16 @@ the list/map types.
 Example `table` output for `SHOW TABLES`:
 
 ```
-table_name
--------------------------------
-mldp.active_configurations
-mldp.configuration
-mldp.configuration_activation
-mldp.pv_metadata
-mldp.pv_stats
-mldp.time_series
-mldp.time_series_table
-magnet_samples [persistent Arrow IPC: /var/lib/mldp/query-catalog/.mldp-query-tables/magnet_samples.arrow]
+table_name                         type                  location
+---------------------------------------------------------------------------------------------------------------
+mldp.active_configurations         virtual
+mldp.configuration                 virtual
+mldp.configuration_activation      virtual
+mldp.pv_metadata                   virtual
+mldp.pv_stats                      virtual
+mldp.time_series                   virtual
+mldp.time_series_table             virtual
+magnet_samples                     persistent Arrow IPC  /var/lib/mldp/query-catalog/.mldp-query-tables/6d61676e65745f73616d706c6573.arrow
 (8 rows)
 -- 8 rows (8 from backend, 0 filtered) in 0ms | 0 RPC | 0 bytes spilled | 0 MB peak
 ```
