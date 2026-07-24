@@ -6,7 +6,9 @@
 //////////////////////////////////////////////////////////////////////////////
 
 #include <query/QuerySubcommand.h>
+#include <query/QueryExecutor.h>
 #include <query/QueryFormatter.h>
+#include <query/QueryPlanner.h>
 #include <query/ArrowTypeMap.h>
 #include <query/QueryableFactory.h>
 #include <query/SpillManager.h>
@@ -423,6 +425,91 @@ TEST(QuerySubcommandTest, EnforcesTheSpecialTimeSeriesTableSelectStarContract)
             const auto message = query::plan::plannerErrorWhat(error.error());
             EXPECT_NE(message.find("mldp.time_series_table"), std::string::npos);
         }
+    }
+    query::QueryableFactory::instance().reset();
+}
+
+TEST(QuerySubcommandTest, PlansWideTablePvAndWindowSubqueries)
+{
+    query::QueryableFactory::instance().reset();
+    const auto config = config::Config::configFromYamlString(
+        "queryable:\n"
+        "  mldp:\n"
+        "    query-url: localhost:2\n"
+        "    min-conn: 1\n"
+        "    max-conn: 1\n"
+        "  mldp-pv-metadata:\n"
+        "    annotation-url: localhost:3\n"
+        "    min-conn: 1\n"
+        "    max-conn: 1\n");
+    cli::QuerySubcommandPreparer preparer;
+    preparer.prepare(config);
+
+    const auto plan = query::QueryPlanner{}.plan(query::parseQuery(
+        "SELECT * FROM mldp.time_series_table "
+        "WHERE pv IN (SELECT pv FROM mldp.pv_metadata WHERE tag = 'magnet') "
+        "AND window IN (SELECT activation.time, activation.end_time "
+        "FROM mldp.configuration_activation activation "
+        "INNER JOIN mldp.configuration configuration ON activation.config_name = configuration.name "
+        "WHERE configuration.category = 'beam_mode' AND activation.end_time IS NOT NULL)"));
+    const auto plan_text = query::plan::physicalPlanToString(plan);
+    EXPECT_NE(plan_text.find("PhysicalTableScan(table=mldp.time_series_table"), std::string::npos);
+    EXPECT_NE(plan_text.find("pv_subquery=true"), std::string::npos);
+    EXPECT_NE(plan_text.find("window_subquery=true"), std::string::npos);
+    query::QueryableFactory::instance().reset();
+}
+
+TEST(QuerySubcommandTest, DescribesAndPlansLiteralWideTableWindow)
+{
+    query::QueryableFactory::instance().reset();
+    const auto config = config::Config::configFromYamlString(
+        "queryable:\n"
+        "  mldp:\n"
+        "    query-url: localhost:2\n"
+        "    min-conn: 1\n"
+        "    max-conn: 1\n");
+    cli::QuerySubcommandPreparer preparer;
+    preparer.prepare(config);
+
+    query::QueryPlanner planner;
+    const auto plan = planner.plan(query::parseQuery(
+        "SELECT * FROM mldp.time_series_table WHERE pv = 'SYS:MAGNET:CURRENT' AND window IN (20, 10)"));
+    const auto plan_text = query::plan::physicalPlanToString(plan);
+    EXPECT_NE(plan_text.find("window_literal=true"), std::string::npos);
+
+    query::QueryExecutor executor;
+    const auto describe = executor.execute(
+        planner.plan(query::parseQuery("DESCRIBE mldp.time_series_table")),
+        {.pool = arrow::default_memory_pool()});
+    ASSERT_EQ(describe.batches.size(), 1U);
+    const auto& batch = describe.batches.front();
+    const auto name = std::static_pointer_cast<arrow::StringArray>(batch->column(0));
+    const auto type = std::static_pointer_cast<arrow::StringArray>(batch->column(1));
+    const auto output = std::static_pointer_cast<arrow::BooleanArray>(batch->column(3));
+    const auto pushable = std::static_pointer_cast<arrow::StringArray>(batch->column(4));
+    int64_t window_index = -1;
+    for (int64_t index = 0; index < name->length(); ++index)
+    {
+        if (name->GetString(index) == "window")
+        {
+            window_index = index;
+            break;
+        }
+    }
+    ASSERT_GE(window_index, 0);
+    EXPECT_EQ(type->GetString(window_index), "timestamp");
+    EXPECT_FALSE(output->Value(window_index));
+    EXPECT_EQ(pushable->GetString(window_index), "IN");
+
+    for (const std::string_view sql : {
+             "SELECT * FROM mldp.time_series_table WHERE pv = 'P' AND window IN (10)",
+             "SELECT * FROM mldp.time_series_table WHERE pv = 'P' AND window IN (10, 20, 30)",
+             "SELECT * FROM mldp.time_series_table WHERE pv = 'P' AND window IN ('start', 'end')",
+             "SELECT * FROM mldp.time_series_table WHERE pv = 'P' AND window IN (10, 'end')",
+             "SELECT pv FROM mldp.time_series WHERE pv = 'P' AND window IN (10, 20)",
+             "SELECT * FROM mldp.time_series_table WHERE pv = 'P' AND window IN (10, 20) AND window IN (SELECT time, end_time FROM mldp.configuration_activation)"})
+    {
+        EXPECT_THROW((void)planner.plan(query::parseQuery(std::string(sql))), query::plan::PlannerException) << sql;
     }
     query::QueryableFactory::instance().reset();
 }

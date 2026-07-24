@@ -13,6 +13,7 @@
 #include <query/IQueryable.h>
 #include <query/parser/QueryAST.h>
 
+#include <array>
 #include <memory>
 #include <optional>
 #include <set>
@@ -56,6 +57,7 @@ struct LogicalScan {
     std::shared_ptr<SelectStatement> derived_query;
     std::shared_ptr<SelectStatement> pv_subquery;
     std::shared_ptr<SelectStatement> window_subquery;
+    std::optional<std::array<PlannerLiteralValue, 2>> window_literal;
 };
 
 struct LogicalFilter {
@@ -116,6 +118,7 @@ struct BoundTable {
     std::shared_ptr<SelectStatement> derived_query;
     std::shared_ptr<SelectStatement> pv_subquery;
     std::shared_ptr<SelectStatement> window_subquery;
+    std::optional<std::array<PlannerLiteralValue, 2>> window_literal;
 };
 
 struct BoundJoinClause {

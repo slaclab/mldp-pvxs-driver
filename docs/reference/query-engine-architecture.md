@@ -225,7 +225,7 @@ Time values are epoch seconds; the executor converts to nanoseconds internally. 
 | Column | Pushable ops | Notes |
 |---|---|---|
 | `pv` | `=`, `IN` | **Required.** Requested PVs are sent in SQL predicate order. |
-| `window` | `IN (SELECT time, end_time ...)` | Closed activation ranges used only to create wide-table requests. |
+| `window` | `IN (start, end)` or `IN (SELECT time, end_time ...)` | One literal inclusive interval or closed activation ranges used only to create wide-table requests. |
 | `time` | `>=`, `<=` | Translated to `QueryTableRequest.beginTime` / `endTime`. |
 | `column_type` | `=`, `IN` | Selects whole columns by native MLDP value kind. |
 | `tag`, `attributes.<key>`, `provenance.<key>` | `=`, `IN` | Select whole columns using MLDP column metadata. |
@@ -233,8 +233,10 @@ Time values are epoch seconds; the executor converts to nanoseconds internally. 
 
 The query client maps one `TABLE_FORMAT_COLUMN` response directly to a wide
 Arrow batch. A shorter data vector is trailing-null padded; a vector longer
-than the shared timestamps or a duplicate returned PV is rejected. MLDP column
-metadata is not attached to Arrow field metadata in this phase. It is a special
+than the shared timestamps or a duplicate returned PV is rejected. Requested
+PVs absent from a successful response are normal empty-selection results: they
+are omitted, and no returned PV produces an empty result. MLDP column metadata
+is not attached to Arrow field metadata in this phase. It is a special
 runtime-shaped table: `SELECT *` is required, and projections, predicates,
 `ORDER BY`, and joins over generated PV fields are not supported.
 

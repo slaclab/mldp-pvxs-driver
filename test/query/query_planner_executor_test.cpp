@@ -266,7 +266,63 @@ public:
     }
 };
 
+class EmptyWideInputQueryable final : public query::IQueryable
+{
+public:
+    static const std::set<std::string_view> kVirtualTables;
+    inline static uint64_t                  execute_calls{0};
+
+    explicit EmptyWideInputQueryable(const config::Config&, std::shared_ptr<metrics::Metrics> = nullptr)
+    {
+    }
+
+    std::set<std::string_view> virtualTables() const override
+    {
+        return kVirtualTables;
+    }
+
+    std::vector<query::ColumnSchema> tableSchema(const std::string_view table_name) const override
+    {
+        if (table_name == "mldp.pv_metadata")
+        {
+            return {{"pv", query::ColumnType::STRING, false, true, {query::PredicateOp::EQ}, {}, "PV"}};
+        }
+        if (table_name == "mldp.configuration_activation")
+        {
+            return {
+                {"time", query::ColumnType::TIMESTAMP, false, true, {}, {}, "time"},
+                {"end_time", query::ColumnType::TIMESTAMP, false, true, {}, {}, "end time"},
+                {"activation_id", query::ColumnType::STRING, false, true, {query::PredicateOp::EQ}, {}, "activation id"},
+            };
+        }
+        return {
+            {"pv", query::ColumnType::STRING, true, false, {query::PredicateOp::EQ, query::PredicateOp::IN}, {}, "PV input"},
+            {"time", query::ColumnType::TIMESTAMP, false, true, {query::PredicateOp::GTE, query::PredicateOp::LTE}, {}, "time"},
+            {"window", query::ColumnType::TIMESTAMP, false, false, {query::PredicateOp::IN}, {}, "window input"},
+        };
+    }
+
+    query::QueryResult execute(std::string_view,
+                               const std::vector<query::Predicate>& predicates,
+                               const std::set<std::string>&,
+                               const query::ExecutionContext&,
+                               std::string_view = {}) override
+    {
+        ++execute_calls;
+        for (const auto& predicate : predicates)
+        {
+            if (predicate.column == "activation_id" || predicate.column == "pv")
+            {
+                return {};
+            }
+        }
+        return {};
+    }
+};
+
 const std::set<std::string_view> FakeQueryable::kVirtualTables = {"fake.samples", "fake.meta", "fake.paged"};
+const std::set<std::string_view> EmptyWideInputQueryable::kVirtualTables = {
+    "mldp.time_series_table", "mldp.pv_metadata", "mldp.configuration_activation"};
 
 class PlannerExecutorTest : public ::testing::Test
 {
@@ -282,6 +338,34 @@ protected:
         query::QueryableFactory::instance().reset();
     }
 };
+
+TEST(EmptyWideInputTest, EmptyValidSubqueriesProduceNoWideTableRequest)
+{
+    query::QueryableFactory::instance().reset();
+    EmptyWideInputQueryable::execute_calls = 0;
+    query::QueryableFactory::instance().prepare<EmptyWideInputQueryable>(config::Config::configFromYamlString("{}"));
+
+    query::QueryPlanner  planner;
+    query::QueryExecutor executor;
+    const auto pv_empty = executor.execute(
+        planner.plan(query::parseQuery(
+            "SELECT * FROM mldp.time_series_table WHERE pv IN (SELECT pv FROM mldp.pv_metadata WHERE pv = 'NO:PV')")),
+        {.pool = arrow::default_memory_pool()});
+    EXPECT_TRUE(pv_empty.batches.empty());
+    EXPECT_EQ(pv_empty.stats.rpc_calls, 1U);
+    EXPECT_EQ(EmptyWideInputQueryable::execute_calls, 1U);
+
+    EmptyWideInputQueryable::execute_calls = 0;
+    const auto window_empty = executor.execute(
+        planner.plan(query::parseQuery(
+            "SELECT * FROM mldp.time_series_table WHERE pv = 'PV:ONE' "
+            "AND window IN (SELECT time, end_time FROM mldp.configuration_activation WHERE activation_id = 'none')")),
+        {.pool = arrow::default_memory_pool()});
+    EXPECT_TRUE(window_empty.batches.empty());
+    EXPECT_EQ(window_empty.stats.rpc_calls, 1U);
+    EXPECT_EQ(EmptyWideInputQueryable::execute_calls, 1U);
+    query::QueryableFactory::instance().reset();
+}
 
 const plan::PhysicalTableScan* findScan(const plan::PhysicalNodePtr& node)
 {

@@ -62,16 +62,23 @@ std::vector<ColumnSchema> MLDPQueryClient::tableSchema(std::string_view table_na
     if (table_name == "mldp.time_series" || table_name == "mldp.time_series_table")
     {
         const bool wide_table = table_name == "mldp.time_series_table";
-        return {{"pv", ColumnType::STRING, true, !wide_table, {PredicateOp::EQ, PredicateOp::IN}, {}, "Source name"},
-                {"time", ColumnType::TIMESTAMP, false, true, {PredicateOp::GTE, PredicateOp::LTE}, {}, "Sample timestamp"},
-                {"value", ColumnType::STRING, false, !wide_table, {}, {}, "Sample value"},
-                {"column_type", ColumnType::STRING, false, !wide_table, {PredicateOp::EQ, PredicateOp::IN}, {PredicateOp::EQ, PredicateOp::IN}, "Native MLDP data-value type"},
-                {"tags", ColumnType::STRING, false, !wide_table, {}, {}, "Bucket column-metadata tag collection; filter with tag = or tag IN locally"},
-                {"attributes", ColumnType::STRING, false, !wide_table, {}, {}, "Bucket column-metadata dynamic attribute map; select/filter attributes.<key> locally"},
-                {"provenance", ColumnType::STRING, false, !wide_table, {}, {}, "Bucket column-metadata dynamic provenance map; select/filter provenance.<key> locally"},
-                {"tag", ColumnType::STRING, false, false, {PredicateOp::EQ, PredicateOp::IN}, {PredicateOp::EQ, PredicateOp::IN}, "Tag membership predicate shorthand for tags"},
-                {"timeout", ColumnType::DURATION_SECONDS, false, false, {PredicateOp::EQ}, {}, "Query timeout"},
-                {"rpc_deadline", ColumnType::DURATION_SECONDS, false, false, {PredicateOp::EQ}, {}, "RPC deadline"}};
+        std::vector<ColumnSchema> schema = {
+            {"pv", ColumnType::STRING, true, !wide_table, {PredicateOp::EQ, PredicateOp::IN}, {}, "Source name"},
+            {"time", ColumnType::TIMESTAMP, false, true, {PredicateOp::GTE, PredicateOp::LTE}, {}, "Sample timestamp"},
+            {"value", ColumnType::STRING, false, !wide_table, {}, {}, "Sample value"},
+            {"column_type", ColumnType::STRING, false, !wide_table, {PredicateOp::EQ, PredicateOp::IN}, {PredicateOp::EQ, PredicateOp::IN}, "Native MLDP data-value type"},
+            {"tags", ColumnType::STRING, false, !wide_table, {}, {}, "Bucket column-metadata tag collection; filter with tag = or tag IN locally"},
+            {"attributes", ColumnType::STRING, false, !wide_table, {}, {}, "Bucket column-metadata dynamic attribute map; select/filter attributes.<key> locally"},
+            {"provenance", ColumnType::STRING, false, !wide_table, {}, {}, "Bucket column-metadata dynamic provenance map; select/filter provenance.<key> locally"},
+            {"tag", ColumnType::STRING, false, false, {PredicateOp::EQ, PredicateOp::IN}, {PredicateOp::EQ, PredicateOp::IN}, "Tag membership predicate shorthand for tags"},
+            {"timeout", ColumnType::DURATION_SECONDS, false, false, {PredicateOp::EQ}, {}, "Query timeout"},
+            {"rpc_deadline", ColumnType::DURATION_SECONDS, false, false, {PredicateOp::EQ}, {}, "RPC deadline"}};
+        if (wide_table)
+        {
+            schema.emplace_back("window", ColumnType::TIMESTAMP, false, false, std::set<PredicateOp>{PredicateOp::IN}, std::set<PredicateOp>{},
+                                "Wide-table interval input; accepts window IN (start, end) or window IN (SELECT time, end_time ...)");
+        }
+        return schema;
     }
     if (table_name == "mldp.pv_stats")
     {
@@ -329,6 +336,27 @@ std::set<std::string> provenanceKeys(const std::vector<dp::service::common::Colu
     return keys;
 }
 
+std::set<std::string> requestedDynamicMetadataKeys(const std::set<std::string>& projection_hint, const std::string_view prefix)
+{
+    std::set<std::string> keys;
+    for (const auto& column : projection_hint)
+    {
+        if (column.rfind(prefix, 0) == 0 && column.size() > prefix.size())
+        {
+            keys.insert(column.substr(prefix.size()));
+        }
+    }
+    return keys;
+}
+
+void addRequestedDynamicMetadataKeys(std::set<std::string>&       keys,
+                                     const std::set<std::string>& projection_hint,
+                                     const std::string_view        prefix)
+{
+    const auto requested = requestedDynamicMetadataKeys(projection_hint, prefix);
+    keys.insert(requested.begin(), requested.end());
+}
+
 class TimeSeriesMetadataBuilders
 {
 public:
@@ -354,15 +382,20 @@ public:
             append(*attributes_keys_, attribute.name());
             append(*attributes_values_, attribute.value());
         }
-        const std::map<std::string, std::string> provenance = {
-            {"source", metadata.provenance().source()},
-            {"process", metadata.provenance().process()}};
+        std::map<std::string, std::string> provenance;
+        if (!metadata.provenance().source().empty())
+        {
+            provenance.emplace("source", metadata.provenance().source());
+        }
+        if (!metadata.provenance().process().empty())
+        {
+            provenance.emplace("process", metadata.provenance().process());
+        }
         for (const auto& [key, value] : provenance)
-            if (!value.empty())
-            {
-                append(*provenance_keys_, key);
-                append(*provenance_values_, value);
-            }
+        {
+            append(*provenance_keys_, key);
+            append(*provenance_values_, value);
+        }
         appendScalars(attributes_values_by_key_, attributes);
         appendScalars(provenance_values_by_key_, provenance);
     }
@@ -604,7 +637,7 @@ extractTimestampRange(const DataTimestamps& data_timestamps)
 
 QueryResult MLDPQueryClient::execute(std::string_view              table_name,
                                      const std::vector<Predicate>& pushable_predicates,
-                                     const std::set<std::string>&,
+                                     const std::set<std::string>&  projection_hint,
                                      const ExecutionContext& context,
                                      std::string_view        page_token)
 {
@@ -721,7 +754,7 @@ QueryResult MLDPQueryClient::execute(std::string_view              table_name,
     {
         const auto found = returned.find(requested_pv);
         if (found == returned.end())
-            throw std::runtime_error("MLDP queryTable response does not contain requested PV column '" + requested_pv + "'");
+            continue;
         if (matchesColumnPredicates(*found->second, pushable_predicates))
             columns.push_back(found->second);
     }
@@ -746,6 +779,8 @@ QueryResult MLDPQueryClient::execute(std::string_view              table_name,
     {
         if (!page_token.empty())
             throw std::invalid_argument("MLDP time_series_table does not support continuation tokens");
+        if (columns.empty())
+            return {.batch = nullptr, .next_page_token = ""};
 
         auto* pool = context.pool != nullptr ? context.pool : arrow::default_memory_pool();
         arrow::TimestampBuilder time_builder(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), pool);
@@ -836,7 +871,11 @@ QueryResult MLDPQueryClient::execute(std::string_view              table_name,
     arrow::TimestampBuilder    time_builder(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), pool);
     DataValueBuilder           value_builder(pool);
     arrow::StringBuilder       type_builder(pool);
-    TimeSeriesMetadataBuilders metadata(attributeKeys(all_metadata), provenanceKeys(all_metadata));
+    auto attribute_keys = attributeKeys(all_metadata);
+    auto provenance_keys = provenanceKeys(all_metadata);
+    addRequestedDynamicMetadataKeys(attribute_keys, projection_hint, "attributes.");
+    addRequestedDynamicMetadataKeys(provenance_keys, projection_hint, "provenance.");
+    TimeSeriesMetadataBuilders metadata(attribute_keys, provenance_keys);
     for (std::size_t i = ts_offset; i < page_end; ++i)
     {
         if (!pv_builder.Append(all_rows[i].pv_name).ok() || !time_builder.Append(all_rows[i].time_ns).ok())

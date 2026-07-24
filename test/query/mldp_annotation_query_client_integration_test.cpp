@@ -50,12 +50,18 @@ void addAttribute(dp::service::common::PvMetadata* record, const std::string& na
 class PagedAnnotationService final : public dp::service::annotation::DpAnnotationService::Service
 {
 public:
+    bool no_records{false};
+
     grpc::Status queryPvMetadata(
         grpc::ServerContext*,
         const dp::service::annotation::QueryPvMetadataRequest* request,
         dp::service::annotation::QueryPvMetadataResponse*      response) override
     {
         auto* result = response->mutable_pvmetadataresult();
+        if (no_records)
+        {
+            return grpc::Status::OK;
+        }
         if (request->pagetoken().empty())
         {
             auto* first = result->add_pvmetadata();
@@ -181,6 +187,33 @@ TEST_F(MLDPAnnotationQueryClientTest, MaterializesDiscoveredAttributesAcrossAllB
     EXPECT_EQ(location->GetString(1), "LTU");
     EXPECT_EQ(ordinal->GetString(0), "1");
     EXPECT_TRUE(ordinal->IsNull(1));
+
+    server->Shutdown();
+}
+
+TEST_F(MLDPAnnotationQueryClientTest, EmptySelectionProducesAnEmptyBatch)
+{
+    PagedAnnotationService service;
+    service.no_records = true;
+    grpc::ServerBuilder builder;
+    int                 port = 0;
+    builder.AddListeningPort("127.0.0.1:0", grpc::InsecureServerCredentials(), &port);
+    builder.RegisterService(&service);
+    auto server = builder.BuildAndStart();
+    ASSERT_NE(server, nullptr);
+
+    MLDPAnnotationQueryClient client(make_annotation_config("127.0.0.1:" + std::to_string(port)));
+    const auto result = client.execute(
+        "mldp.pv_metadata",
+        {{.column = "pv", .op = PredicateOp::EQ, .values = {std::string("MISSING:PV")}}},
+        {"pv"},
+        {.pool = arrow::default_memory_pool()});
+
+    ASSERT_NE(result.batch, nullptr);
+    EXPECT_EQ(result.batch->num_rows(), 0);
+    EXPECT_TRUE(result.next_page_token.empty());
+    EXPECT_EQ(result.batch->schema()->field_names(),
+              std::vector<std::string>({"pv", "alias", "description", "modified_by", "created_time", "updated_time", "tags", "attributes"}));
 
     server->Shutdown();
 }

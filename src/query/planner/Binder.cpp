@@ -504,12 +504,38 @@ plan::BoundSelect mldp_pvxs_driver::query::planner::bindSelect(const SelectState
             }
             if (in->column.name == "window")
             {
-                if (all_tables.front().window_subquery)
-                    throw plan::PlannerException(plan::BindError{.message = "mldp.time_series_table accepts exactly one window IN (SELECT ...) predicate"});
+                if (all_tables.front().window_subquery || all_tables.front().window_literal)
+                    throw plan::PlannerException(plan::BindError{.message = "mldp.time_series_table accepts exactly one window input"});
                 all_tables.front().window_subquery = in->subquery;
                 continue;
             }
             throw plan::PlannerException(plan::BindError{.message = "mldp.time_series_table subquery predicates are limited to pv and window"});
+        }
+        if (const auto* in = std::get_if<InPredicate>(&where); in != nullptr && in->column.name == "window")
+        {
+            if (all_tables.size() != 1 || all_tables.front().table_name != "mldp.time_series_table" ||
+                (in->column.qualifier.has_value() && in->column.qualifier.value() != all_tables.front().table_alias &&
+                 in->column.qualifier.value() != all_tables.front().table_name))
+            {
+                throw plan::PlannerException(plan::BindError{
+                    .message = "Literal window IN (...) is supported only for mldp.time_series_table"});
+            }
+            if (all_tables.front().window_literal || all_tables.front().window_subquery)
+            {
+                throw plan::PlannerException(plan::BindError{
+                    .message = "mldp.time_series_table accepts exactly one window input"});
+            }
+            const auto& expressions = in->expressions;
+            const auto value_count = expressions.empty() ? in->values.size() : expressions.size();
+            if (value_count != 2)
+            {
+                throw plan::PlannerException(plan::BindError{
+                    .message = "mldp.time_series_table literal window requires exactly two timestamp expressions"});
+            }
+            const auto first = expressions.empty() ? in->values[0] : constantExpression(expressions[0]);
+            const auto second = expressions.empty() ? in->values[1] : constantExpression(expressions[1]);
+            all_tables.front().window_literal = std::array<plan::PlannerLiteralValue, 2>{toPlannerLiteral(first), toPlannerLiteral(second)};
+            continue;
         }
         const auto predicate = buildPredicate(where, all_tables);
         all_tables[table_index.at(predicate.table_alias)].predicates.push_back(predicate);
@@ -523,6 +549,10 @@ plan::BoundSelect mldp_pvxs_driver::query::planner::bindSelect(const SelectState
             std::any_of(table.predicates.begin(), table.predicates.end(), [](const auto& predicate) { return predicate.column == "pv"; }))
         {
             throw plan::PlannerException(plan::BindError{.message = "mldp.time_series_table accepts either literal pv predicates or pv IN (SELECT ...), not both"});
+        }
+        if (table.table_name == "mldp.time_series_table" && table.window_subquery && table.window_literal)
+        {
+            throw plan::PlannerException(plan::BindError{.message = "mldp.time_series_table accepts either a literal window or window IN (SELECT ...), not both"});
         }
     }
 

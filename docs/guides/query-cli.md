@@ -393,7 +393,9 @@ string scalars. `tag` is predicate-only membership shorthand.
 | Attributes | Select `attributes`; select/filter `attributes.<key>` with `=` or `IN` | `mldp.time_series`, `mldp.pv_metadata`, `mldp.configuration`, `mldp.configuration_activation` | Same execution path as tags. |
 | Provenance | Select `provenance`; select/filter `provenance.<key>` with `=` or `IN` | `mldp.time_series` only | Returned bucket `dataColumn.metadata`; filtered locally. |
 
-Missing dynamic keys project as `NULL` and do not match predicates. The
+Every selected dynamic key projects as a nullable string column, whether or not
+the MLDP response contains that key. Rows without the key project as `NULL` and
+do not match predicates. The
 time-series bucket metadata is authoritative for time-series display and
 filtering; it is not replaced with current `mldp.pv_metadata` annotations,
 which can differ from the metadata stored with historical samples.
@@ -433,6 +435,9 @@ The continuation token is printed in the stats footer after each paginated resul
 ### `mldp.time_series`
 
 Time-series samples from the MLDP query service.
+
+A valid selection that matches no samples returns an empty result. This also
+applies when a requested PV is not returned for the selected time range.
 
 | Column | Type | Required predicate | Pushable operators | Notes |
 |---|---|---|---|---|
@@ -489,6 +494,20 @@ does not accept projection or predicates on generated PV columns. Use `time`,
 `column_type`, `tag`, `attributes.<key>`, and `provenance.<key>` in `WHERE` to
 select whole PV columns.
 
+A requested PV that has no data for the selection is omitted. If no requested
+PV has matching data, the query returns an empty result.
+
+`pv` and `window` are `WHERE` predicates; they are not table arguments. A
+window input accepts either one literal inclusive interval, `window IN (start,
+end)`, or a subquery that returns non-null timestamp columns named `time` and
+`end_time`. Literal endpoints must be timestamp-compatible expressions; `NOW`
+and `NOW +/- duration` are supported, and reversed endpoints are automatically
+normalized. A query cannot supply both forms. Subquery ranges must be closed;
+overlapping or adjacent ranges are coalesced before the driver requests the
+wide table. As with ordinary SQL filtering, a valid `pv` or `window` subquery
+that finds no rows returns an empty result; malformed subquery output remains
+an error.
+
 ```sql
 SELECT *
 FROM mldp.time_series_table
@@ -497,6 +516,35 @@ WHERE pv IN ('SYS:MAGNET:CURRENT', 'SYS:VACUUM:PRESSURE')
   AND attributes.namespace = 'mldp_sample'
   AND time >= NOW -1h
   AND time <= NOW
+```
+
+```sql
+-- Start endpoint first; reversed endpoints are normalized automatically.
+SELECT *
+FROM mldp.time_series_table
+WHERE pv IN ('SYS:MAGNET:CURRENT', 'SYS:VACUUM:PRESSURE')
+  AND window IN (NOW - 10h, NOW)
+```
+
+```sql
+SELECT *
+FROM mldp.time_series_table
+WHERE pv IN (
+  SELECT pv
+  FROM mldp.pv_metadata
+  WHERE attributes.namespace = 'mldp_sample'
+    AND tag = 'magnet'
+)
+AND window IN (
+  SELECT activation.time, activation.end_time
+  FROM mldp.configuration_activation activation
+  JOIN mldp.configuration configuration
+    ON activation.config_name = configuration.name
+  WHERE activation.attributes.namespace = 'mldp_sample'
+    AND configuration.attributes.namespace = 'mldp_sample'
+    AND configuration.category = 'beam_mode'
+    AND activation.end_time IS NOT NULL
+)
 ```
 
 ---
@@ -722,9 +770,11 @@ python3 scripts/generate_mldp_sample_data.py
 ```
 
 This creates:
-- **20 PVs** named `mldp_sample:MAGNET:01:VALUE` through `mldp_sample:VACUUM:20:VALUE`
-- **3600 time-series samples** per PV at 1-second intervals ending roughly at "now"
-- PV metadata and four beam-mode/RF/vacuum configurations with activation windows
+- **20 PVs** cycling through four device families: `mldp_sample:MAGNET:01:VALUE`, `mldp_sample:RF:02:VALUE`, `mldp_sample:VACUUM:03:VALUE`, `mldp_sample:DIAGNOSTIC:04:VALUE`, `mldp_sample:MAGNET:05:VALUE`, …, `mldp_sample:DIAGNOSTIC:20:VALUE`
+- **3600 time-series samples** per PV (deterministic sine waves) at 1-second intervals ending roughly at "now"
+- PV metadata with tags (`sample`, `mldp_sample`, device family) and attributes (`namespace`, `device_group`, `ordinal`, `units`, `sample_period_seconds`)
+- **4 configurations:** two `beam_mode` (`mldp_sample_injector_tuning`, `mldp_sample_user_delivery`), one `rf` (`mldp_sample_rf_station_a`), one `vacuum` (`mldp_sample_vacuum_ready`)
+- **4 activation windows:** beam-mode activations are closed (the two most recent hours, adjacent); RF and vacuum activations are open (started within the last 30 and 15 minutes)
 
 The script prints the exact PV names, time range, and an example query when it finishes:
 
@@ -732,8 +782,9 @@ The script prints the exact PV names, time range, and an example query when it f
 Generated MLDP sample namespace: mldp_sample
 Provider: mldp_sample-sample-provider (<id>)
 Time series: 20 PVs x 3600 samples at 1-second intervals
-Time range: [1720000000, 1720003599] UTC epoch seconds
-...
+Time range: [<start>, <start+3599>] UTC epoch seconds
+Configurations: mldp_sample_injector_tuning, mldp_sample_user_delivery, mldp_sample_rf_station_a, mldp_sample_vacuum_ready
+Activation IDs: mldp_sample_injector_tuning_activation, mldp_sample_user_delivery_activation, mldp_sample_rf_station_a_activation, mldp_sample_vacuum_ready_activation
 Example query: SELECT pv, time, value FROM mldp.time_series WHERE pv = 'mldp_sample:MAGNET:01:VALUE'
 ```
 
@@ -791,7 +842,7 @@ mldp_pvxs_driver -c query-config.yaml query "DESCRIBE mldp.pv_metadata"
 ### Step 4 — Fetch time-series samples
 
 ```bash
-# Last 10 minutes of samples for one PV
+# Last 10 minutes of samples for one MAGNET PV
 mldp_pvxs_driver -c query-config.yaml query \
   "SELECT pv, time, value
    FROM mldp.time_series
@@ -801,16 +852,27 @@ mldp_pvxs_driver -c query-config.yaml query \
 ```
 
 ```bash
-# Multiple PVs, CSV output
+# Multiple PVs from different device families, CSV output
 mldp_pvxs_driver -c query-config.yaml query --format csv \
   "SELECT pv, time, value
    FROM mldp.time_series
    WHERE pv IN ('mldp_sample:MAGNET:01:VALUE',
                 'mldp_sample:RF:02:VALUE',
-                'mldp_sample:VACUUM:03:VALUE')
+                'mldp_sample:VACUUM:03:VALUE',
+                'mldp_sample:DIAGNOSTIC:04:VALUE')
      AND time >= NOW -1h
      AND time <= NOW" \
   > samples.csv
+```
+
+```bash
+# Include provenance metadata attached to time-series samples
+mldp_pvxs_driver -c query-config.yaml query \
+  "SELECT pv, time, value, provenance.source, provenance.process, tags
+   FROM mldp.time_series
+   WHERE pv = 'mldp_sample:MAGNET:01:VALUE'
+     AND time >= NOW -5m
+     AND time <= NOW"
 ```
 
 ### Step 5 — Check PV availability
@@ -820,7 +882,9 @@ mldp_pvxs_driver -c query-config.yaml query \
   "SELECT pv, first_timestamp, last_timestamp, num_buckets
    FROM mldp.pv_stats
    WHERE pv IN ('mldp_sample:MAGNET:01:VALUE',
-                'mldp_sample:RF:02:VALUE')"
+                'mldp_sample:RF:02:VALUE',
+                'mldp_sample:VACUUM:03:VALUE',
+                'mldp_sample:DIAGNOSTIC:04:VALUE')"
 ```
 
 ### Step 6 — Explore metadata
@@ -828,15 +892,22 @@ mldp_pvxs_driver -c query-config.yaml query \
 ```bash
 # All sample-namespace PVs
 mldp_pvxs_driver -c query-config.yaml query \
-  "SELECT pv, description, modified_by
+  "SELECT pv, description, attributes.device_group, attributes.units, modified_by
    FROM mldp.pv_metadata
    WHERE pv PREFIX 'mldp_sample'"
 
-# PVs tagged 'magnet'
+# PVs tagged 'magnet' (MAGNET family PVs: 01, 05, 09, 13, 17)
 mldp_pvxs_driver -c query-config.yaml query \
-  "SELECT pv, alias, description, attributes.device_group, tags
+  "SELECT pv, alias, description, attributes.device_group, attributes.ordinal, tags
    FROM mldp.pv_metadata
    WHERE tag = 'magnet'"
+
+# PVs filtered by namespace attribute
+mldp_pvxs_driver -c query-config.yaml query \
+  "SELECT pv, attributes.device_group, attributes.ordinal
+   FROM mldp.pv_metadata
+   WHERE attributes.namespace = 'mldp_sample'
+   ORDER BY attributes.ordinal"
 ```
 
 ### Step 7 — Query configurations
@@ -848,7 +919,20 @@ mldp_pvxs_driver -c query-config.yaml query \
    FROM mldp.configuration
    WHERE name PREFIX 'mldp_sample'"
 
-# Active configurations 30 minutes ago
+# Only beam-mode configurations
+mldp_pvxs_driver -c query-config.yaml query \
+  "SELECT name, category, description
+   FROM mldp.configuration
+   WHERE category = 'beam_mode'"
+
+# Closed activation windows for beam-mode configurations
+mldp_pvxs_driver -c query-config.yaml query \
+  "SELECT time, end_time, config_name, activation_id
+   FROM mldp.configuration_activation
+   WHERE config_name IN ('mldp_sample_injector_tuning', 'mldp_sample_user_delivery')
+     AND end_time IS NOT NULL"
+
+# Active configurations 30 minutes ago (RF and vacuum should be active)
 mldp_pvxs_driver -c query-config.yaml query \
   "SELECT name, activation_id, time
    FROM mldp.active_configurations
@@ -902,10 +986,13 @@ mldp_pvxs_driver -c query-config.yaml query --file my_query.sql
 ### Step 11 — Discover PVs and closed beam-mode windows in one query
 
 `mldp.time_series_table` also accepts its required `pv` input and an optional
-`window` input from subqueries. The metadata subquery is evaluated first to
-produce the ordered PV list, then the activation subquery produces closed time
-ranges. MLDP receives one wide-table request for each normalized range; overlap
-and directly adjacent ranges are coalesced, so no batch crosses a gap.
+`window` input. Use `window IN (start, end)` for one literal inclusive range,
+or a subquery for activation ranges. Literal endpoints are normalized into
+ascending order. The metadata subquery is evaluated first to produce the
+ordered PV list, then the activation subquery produces closed time ranges. MLDP
+receives one wide-table request for a literal interval or each normalized
+subquery range; overlap and directly adjacent subquery ranges are coalesced, so
+no batch crosses a gap.
 
 ```sql
 SELECT *

@@ -13,6 +13,7 @@
 #include <query/IQueryable.h>
 #include <query/plan/LogicalPlan.h>
 
+#include <array>
 #include <memory>
 #include <set>
 #include <string>
@@ -35,6 +36,7 @@ struct PhysicalTableScan {
     std::shared_ptr<SelectStatement> derived_query;
     std::shared_ptr<SelectStatement> pv_subquery;
     std::shared_ptr<SelectStatement> window_subquery;
+    std::optional<std::array<int64_t, 2>> window_literal;
 };
 
 struct PhysicalFilter {

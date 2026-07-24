@@ -15,6 +15,51 @@ using namespace mldp_pvxs_driver::query::planner;
 
 namespace {
 
+void markJoinOutputQualification(const plan::PhysicalNodePtr& node, const bool under_join)
+{
+    if (!node)
+    {
+        return;
+    }
+    if (auto* scan = std::get_if<plan::PhysicalTableScan>(&node->value))
+    {
+        scan->qualify_output = under_join;
+        return;
+    }
+    if (auto* filter = std::get_if<plan::PhysicalFilter>(&node->value))
+    {
+        markJoinOutputQualification(filter->input, under_join);
+        return;
+    }
+    if (auto* project = std::get_if<plan::PhysicalProject>(&node->value))
+    {
+        markJoinOutputQualification(project->input, under_join);
+        return;
+    }
+    if (auto* limit = std::get_if<plan::PhysicalLimit>(&node->value))
+    {
+        markJoinOutputQualification(limit->input, under_join);
+        return;
+    }
+    if (auto* join = std::get_if<plan::PhysicalHashJoin>(&node->value))
+    {
+        markJoinOutputQualification(join->left, true);
+        markJoinOutputQualification(join->right, true);
+        return;
+    }
+    if (auto* join = std::get_if<plan::PhysicalNestedLoopJoin>(&node->value))
+    {
+        markJoinOutputQualification(join->outer, true);
+        markJoinOutputQualification(join->inner, true);
+        return;
+    }
+    if (auto* join = std::get_if<plan::PhysicalBlockNestedLoopJoin>(&node->value))
+    {
+        markJoinOutputQualification(join->outer, true);
+        markJoinOutputQualification(join->inner, true);
+    }
+}
+
 plan::PhysicalNodePtr rewrite(const plan::PhysicalNodePtr& node)
 {
     if (!node)
@@ -70,5 +115,7 @@ plan::PhysicalNodePtr rewrite(const plan::PhysicalNodePtr& node)
 
 plan::PhysicalNodePtr mldp_pvxs_driver::query::planner::applyCorrelatedPushOptimizer(plan::PhysicalNodePtr root)
 {
-    return rewrite(std::move(root));
+    auto optimized = rewrite(std::move(root));
+    markJoinOutputQualification(optimized, false);
+    return optimized;
 }

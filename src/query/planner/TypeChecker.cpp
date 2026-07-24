@@ -82,6 +82,25 @@ plan::BoundSelect mldp_pvxs_driver::query::planner::typeCheckSelect(plan::BoundS
     };
 
     type_check_predicates(bound.from.predicates);
+    if (bound.from.window_literal)
+    {
+        auto window_predicate = plan::PlannerPredicate{
+            .column = "window",
+            .column_type = ColumnType::TIMESTAMP};
+        for (auto& value : *bound.from.window_literal)
+        {
+            if (std::holds_alternative<NowLiteral>(value))
+            {
+                const auto now = std::get<NowLiteral>(value);
+                value = static_cast<int64_t>(now_epoch + now.offset_seconds);
+            }
+            enforceLiteralType(window_predicate, value);
+        }
+        if (std::get<int64_t>((*bound.from.window_literal)[1]) < std::get<int64_t>((*bound.from.window_literal)[0]))
+        {
+            std::swap((*bound.from.window_literal)[0], (*bound.from.window_literal)[1]);
+        }
+    }
     for (auto& join : bound.joins)
     {
         type_check_predicates(join.table.predicates);

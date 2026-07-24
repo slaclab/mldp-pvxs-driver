@@ -127,8 +127,6 @@ std::vector<std::string> extractPvSubqueryValues(const std::vector<std::shared_p
             pvs.push_back(std::dynamic_pointer_cast<arrow::StringScalar>(*scalar)->ToString());
         }
     }
-    if (pvs.empty())
-        throw std::runtime_error("mldp.time_series_table pv subquery returned no PVs");
     return pvs;
 }
 
@@ -169,8 +167,6 @@ std::vector<std::pair<int64_t, int64_t>> extractNormalizedWindows(const std::vec
             windows.emplace_back(begin_ns, end_ns);
         }
     }
-    if (windows.empty())
-        throw std::runtime_error("mldp.time_series_table window subquery returned no closed windows");
     std::sort(windows.begin(), windows.end());
     std::vector<std::pair<int64_t, int64_t>> normalized;
     for (const auto& window : windows)
@@ -403,7 +399,19 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> applyFilter(const std::shared
         {
             if (predicate.column == "tag")
             {
-                const auto tags_index = batch->schema()->GetFieldIndex("tags");
+                int tags_index = batch->schema()->GetFieldIndex("tags");
+                if (tags_index < 0)
+                {
+                    for (int fi = 0; fi < batch->schema()->num_fields(); ++fi)
+                    {
+                        const auto& name = batch->schema()->field(fi)->name();
+                        if (name.size() > 5 && name.compare(name.size() - 5, 5, ".tags") == 0)
+                        {
+                            tags_index = fi;
+                            break;
+                        }
+                    }
+                }
                 if (tags_index < 0)
                 {
                     include = false;
@@ -417,7 +425,20 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> applyFilter(const std::shared
                 }
                 continue;
             }
-            const auto field_index = batch->schema()->GetFieldIndex(predicate.column);
+            int field_index = batch->schema()->GetFieldIndex(predicate.column);
+            if (field_index < 0)
+            {
+                const auto suffix = "." + predicate.column;
+                for (int fi = 0; fi < batch->schema()->num_fields(); ++fi)
+                {
+                    const auto& name = batch->schema()->field(fi)->name();
+                    if (name.size() > suffix.size() && name.compare(name.size() - suffix.size(), suffix.size(), suffix) == 0)
+                    {
+                        field_index = fi;
+                        break;
+                    }
+                }
+            }
             if (field_index < 0)
             {
                 include = false;
@@ -519,7 +540,20 @@ applySort(const std::vector<std::shared_ptr<arrow::RecordBatch>>& input, const s
     indices.reserve(keys.size());
     for (const auto& key : keys)
     {
-        const auto index = batch->schema()->GetFieldIndex(key.column);
+        int index = batch->schema()->GetFieldIndex(key.column);
+        if (index < 0)
+        {
+            const auto suffix = "." + key.column;
+            for (int fi = 0; fi < batch->schema()->num_fields(); ++fi)
+            {
+                const auto& name = batch->schema()->field(fi)->name();
+                if (name.size() > suffix.size() && name.compare(name.size() - suffix.size(), suffix.size(), suffix) == 0)
+                {
+                    index = fi;
+                    break;
+                }
+            }
+        }
         if (index < 0)
         {
             throw std::runtime_error("ORDER BY references unknown column: " + key.column);
@@ -938,28 +972,45 @@ executeNode(const plan::PhysicalNodePtr& node, QueryStats& stats, const Executio
                 for (auto& batch : *batches) batch = qualifyBatchColumns(batch, scan->table_alias);
             return *batches;
         }
-        if (scan->pv_subquery || scan->window_subquery)
+        if (scan->pv_subquery || scan->window_subquery || scan->window_literal)
         {
-            if (scan->table_name != "mldp.time_series_table" || !scan->pv_subquery)
+            if (scan->table_name != "mldp.time_series_table")
                 throw std::runtime_error("Only mldp.time_series_table supports pv/window subquery inputs");
             QueryPlanner planner(context.table_catalog);
-            const auto pv_batches = executeNode(planner.plan(QueryStatement{*scan->pv_subquery}), stats, context);
-            const auto pvs = extractPvSubqueryValues(pv_batches);
+            std::vector<std::string> pvs;
+            if (scan->pv_subquery)
+            {
+                const auto pv_batches = executeNode(planner.plan(QueryStatement{*scan->pv_subquery}), stats, context);
+                pvs = extractPvSubqueryValues(pv_batches);
+            }
             std::vector<std::pair<int64_t, int64_t>> windows;
             if (scan->window_subquery)
                 windows = extractNormalizedWindows(executeNode(planner.plan(QueryStatement{*scan->window_subquery}), stats, context));
+            else if (scan->window_literal)
+                windows.emplace_back((*scan->window_literal)[0] * 1'000'000'000LL, (*scan->window_literal)[1] * 1'000'000'000LL);
             else
                 windows.emplace_back(0, std::numeric_limits<int64_t>::max());
+
+            if ((scan->pv_subquery && pvs.empty()) || windows.empty())
+            {
+                return {};
+            }
 
             auto queryable = QueryableFactory::instance().createByTable(scan->table_name);
             std::vector<std::shared_ptr<arrow::RecordBatch>> output;
             for (const auto& [begin_ns, end_ns] : windows)
             {
                 std::vector<Predicate> predicates = scan->pushable_predicates;
-                predicates.erase(std::remove_if(predicates.begin(), predicates.end(), [](const Predicate& predicate) { return predicate.column == "pv" || predicate.column == "time"; }), predicates.end());
-                predicates.push_back(Predicate{.column = "pv", .op = PredicateOp::IN, .values = {}});
-                for (const auto& pv : pvs) predicates.back().values.push_back(pv);
-                if (scan->window_subquery)
+                predicates.erase(std::remove_if(predicates.begin(), predicates.end(), [scan](const Predicate& predicate) {
+                    return (scan->pv_subquery && predicate.column == "pv") ||
+                           ((scan->window_subquery || scan->window_literal) && predicate.column == "time");
+                }), predicates.end());
+                if (scan->pv_subquery)
+                {
+                    predicates.push_back(Predicate{.column = "pv", .op = PredicateOp::IN, .values = {}});
+                    for (const auto& pv : pvs) predicates.back().values.push_back(pv);
+                }
+                if (scan->window_subquery || scan->window_literal)
                 {
                     predicates.push_back(Predicate{.column = "time", .op = PredicateOp::GTE, .values = {begin_ns / 1'000'000'000LL}});
                     predicates.push_back(Predicate{.column = "time", .op = PredicateOp::LTE, .values = {end_ns / 1'000'000'000LL}});
@@ -969,7 +1020,7 @@ executeNode(const plan::PhysicalNodePtr& node, QueryStats& stats, const Executio
                 if (result.batch)
                 {
                     stats.rows_from_backend += static_cast<uint64_t>(result.batch->num_rows());
-                    output.push_back(result.batch);
+                    output.push_back(scan->qualify_output ? qualifyBatchColumns(result.batch, scan->table_alias) : result.batch);
                 }
             }
             return output;

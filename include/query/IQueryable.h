@@ -72,6 +72,14 @@ public:
 
     virtual std::set<std::string_view> virtualTables() const = 0;
     virtual std::vector<ColumnSchema>  tableSchema(std::string_view table_name) const = 0;
+    /**
+     * Execute a valid table selection.
+     *
+     * A successful backend request that matches no records is represented by
+     * an empty result; it is not an execution error. Transport failures,
+     * backend exceptional responses, and malformed response payloads remain
+     * errors.
+     */
     virtual QueryResult                execute(std::string_view              table_name,
                                                const std::vector<Predicate>& pushable_predicates,
                                                const std::set<std::string>&  projection_hint,

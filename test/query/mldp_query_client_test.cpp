@@ -146,11 +146,11 @@ TEST(MLDPQueryClientTest, MaterializesMetadataVirtualColumnsWithACommonPageSchem
         {.column = "time", .op = PredicateOp::GTE, .values = {int64_t{0}}},
     };
 
-    const auto first_page = client.execute("mldp.time_series", predicates, {"pv"}, context);
+    const auto first_page = client.execute("mldp.time_series", predicates, {"pv", "attributes.unrecorded", "provenance.source", "provenance.process"}, context);
     ASSERT_NE(first_page.batch, nullptr);
     ASSERT_EQ(first_page.batch->num_rows(), 1);
     ASSERT_EQ(first_page.next_page_token, "ts:1");
-    const auto second_page = client.execute("mldp.time_series", predicates, {"pv"}, context, first_page.next_page_token);
+    const auto second_page = client.execute("mldp.time_series", predicates, {"pv", "attributes.unrecorded", "provenance.source", "provenance.process"}, context, first_page.next_page_token);
     ASSERT_NE(second_page.batch, nullptr);
     ASSERT_EQ(second_page.batch->num_rows(), 1);
     EXPECT_TRUE(second_page.next_page_token.empty());
@@ -167,19 +167,33 @@ TEST(MLDPQueryClientTest, MaterializesMetadataVirtualColumnsWithACommonPageSchem
     const auto ordinal_index = first_page.batch->schema()->GetFieldIndex("attributes.ordinal");
     const auto source_index = first_page.batch->schema()->GetFieldIndex("provenance.source");
     const auto process_index = first_page.batch->schema()->GetFieldIndex("provenance.process");
+    const auto unrecorded_index = first_page.batch->schema()->GetFieldIndex("attributes.unrecorded");
     ASSERT_GE(location_index, 0);
     ASSERT_GE(ordinal_index, 0);
     ASSERT_GE(source_index, 0);
     ASSERT_GE(process_index, 0);
+    ASSERT_GE(unrecorded_index, 0);
 
     const auto first_location = std::static_pointer_cast<arrow::StringArray>(first_page.batch->column(location_index));
     const auto second_location = std::static_pointer_cast<arrow::StringArray>(second_page.batch->column(location_index));
     const auto first_ordinal = std::static_pointer_cast<arrow::StringArray>(first_page.batch->column(ordinal_index));
     const auto second_ordinal = std::static_pointer_cast<arrow::StringArray>(second_page.batch->column(ordinal_index));
+    const auto first_source = std::static_pointer_cast<arrow::StringArray>(first_page.batch->column(source_index));
+    const auto second_source = std::static_pointer_cast<arrow::StringArray>(second_page.batch->column(source_index));
+    const auto first_process = std::static_pointer_cast<arrow::StringArray>(first_page.batch->column(process_index));
+    const auto second_process = std::static_pointer_cast<arrow::StringArray>(second_page.batch->column(process_index));
+    const auto first_unrecorded = std::static_pointer_cast<arrow::StringArray>(first_page.batch->column(unrecorded_index));
+    const auto second_unrecorded = std::static_pointer_cast<arrow::StringArray>(second_page.batch->column(unrecorded_index));
     EXPECT_TRUE(first_location->IsNull(0));
     EXPECT_EQ(second_location->GetString(0), "LTU");
     EXPECT_EQ(first_ordinal->GetString(0), "1");
     EXPECT_TRUE(second_ordinal->IsNull(0));
+    EXPECT_EQ(first_source->GetString(0), "ioc-a");
+    EXPECT_TRUE(second_source->IsNull(0));
+    EXPECT_TRUE(first_process->IsNull(0));
+    EXPECT_EQ(second_process->GetString(0), "archiver");
+    EXPECT_TRUE(first_unrecorded->IsNull(0));
+    EXPECT_TRUE(second_unrecorded->IsNull(0));
 
     server->Shutdown();
 }
@@ -233,6 +247,33 @@ TEST(MLDPQueryClientTest, MaterializesNativeWideTableInRequestedPvOrderWithoutFi
         EXPECT_EQ(service.last_request.endtime().epochseconds(), 3);
     }
 
+    server->Shutdown();
+}
+
+TEST(MLDPQueryClientTest, SendsLiteralWindowBoundsToWideTableRequest)
+{
+    QueryService        service;
+    grpc::ServerBuilder builder;
+    int                 port = 0;
+    builder.AddListeningPort("127.0.0.1:0", grpc::InsecureServerCredentials(), &port);
+    builder.RegisterService(&service);
+    auto server = builder.BuildAndStart();
+    ASSERT_NE(server, nullptr);
+
+    MLDPQueryClient        client(makeQueryConfig("127.0.0.1:" + std::to_string(port)));
+    const ExecutionContext context{.pool = arrow::default_memory_pool(), .join_batch_size = 1};
+    const std::vector<Predicate> predicates = {
+        {.column = "pv", .op = PredicateOp::EQ, .values = {std::string("MAG:ONE")}},
+        {.column = "time", .op = PredicateOp::GTE, .values = {int64_t{10}}},
+        {.column = "time", .op = PredicateOp::LTE, .values = {int64_t{20}}},
+    };
+
+    ASSERT_NE(client.execute("mldp.time_series_table", predicates, {}, context).batch, nullptr);
+    {
+        const std::lock_guard lock(service.mutex);
+        EXPECT_EQ(service.last_request.begintime().epochseconds(), 10);
+        EXPECT_EQ(service.last_request.endtime().epochseconds(), 20);
+    }
     server->Shutdown();
 }
 
@@ -311,7 +352,7 @@ TEST(MLDPQueryClientTest, FiltersWholeNativeColumnsUsingTypeAndMetadataPredicate
     server->Shutdown();
 }
 
-TEST(MLDPQueryClientTest, MaterializesAllNullWideColumnsAndRejectsMissingRequestedColumns)
+TEST(MLDPQueryClientTest, MaterializesAllNullWideColumnsAndHandlesEmptySelections)
 {
     QueryService        service;
     service.all_null_column = true;
@@ -336,7 +377,22 @@ TEST(MLDPQueryClientTest, MaterializesAllNullWideColumnsAndRejectsMissingRequest
     const std::vector<Predicate> missing = {
         {.column = "pv", .op = PredicateOp::EQ, .values = {std::string("MISSING:PV")}},
     };
-    EXPECT_THROW((void)client.execute("mldp.time_series_table", missing, {}, context), std::runtime_error);
+    const auto empty_wide = client.execute("mldp.time_series_table", missing, {}, context);
+    EXPECT_EQ(empty_wide.batch, nullptr);
+    EXPECT_TRUE(empty_wide.next_page_token.empty());
+
+    const auto empty_long = client.execute("mldp.time_series", missing, {"pv", "provenance.source"}, context);
+    ASSERT_NE(empty_long.batch, nullptr);
+    EXPECT_EQ(empty_long.batch->num_rows(), 0);
+    EXPECT_GE(empty_long.batch->schema()->GetFieldIndex("pv"), 0);
+    EXPECT_GE(empty_long.batch->schema()->GetFieldIndex("provenance.source"), 0);
+
+    const std::vector<Predicate> partial = {
+        {.column = "pv", .op = PredicateOp::IN, .values = {std::string("RF:ONE"), std::string("MISSING:PV")}},
+    };
+    const auto partial_wide = client.execute("mldp.time_series_table", partial, {}, context);
+    ASSERT_NE(partial_wide.batch, nullptr);
+    EXPECT_EQ(partial_wide.batch->schema()->field_names(), std::vector<std::string>({"time", "RF:ONE"}));
 
     server->Shutdown();
 }

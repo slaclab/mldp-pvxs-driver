@@ -80,7 +80,9 @@ plan::PhysicalNodePtr buildNode(const plan::LogicalNodePtr& node)
             .arrow_ipc = scan->arrow_ipc,
             .derived_query = scan->derived_query,
             .pv_subquery = scan->pv_subquery,
-            .window_subquery = scan->window_subquery});
+            .window_subquery = scan->window_subquery,
+            .window_literal = scan->window_literal ? std::optional<std::array<int64_t, 2>>{
+                {std::get<int64_t>((*scan->window_literal)[0]), std::get<int64_t>((*scan->window_literal)[1])}} : std::nullopt});
     }
     if (const auto* filter = std::get_if<plan::LogicalFilter>(&node->value))
     {
@@ -193,7 +195,14 @@ void appendNode(std::ostringstream& out, const plan::PhysicalNodePtr& node, cons
     }
     if (const auto* scan = std::get_if<plan::PhysicalTableScan>(&node->value))
     {
-        out << indent(level) << (scan->arrow_ipc ? "PhysicalArrowIpcScan(table=" : "PhysicalTableScan(table=") << scan->table_name << ")\n";
+        out << indent(level) << (scan->arrow_ipc ? "PhysicalArrowIpcScan(table=" : "PhysicalTableScan(table=") << scan->table_name;
+        if (scan->pv_subquery || scan->window_subquery || scan->window_literal)
+        {
+            out << ", pv_subquery=" << (scan->pv_subquery ? "true" : "false")
+                << ", window_subquery=" << (scan->window_subquery ? "true" : "false")
+                << ", window_literal=" << (scan->window_literal ? "true" : "false");
+        }
+        out << ")\n";
         return;
     }
     if (const auto* filter = std::get_if<plan::PhysicalFilter>(&node->value))
@@ -313,7 +322,14 @@ std::string mldp_pvxs_driver::query::plan::physicalPlanToString(const plan::Phys
         if (const auto* scan = std::get_if<PhysicalTableScan>(&node->value))
         {
             out << std::string(static_cast<size_t>(level) * 2, ' ')
-                << (scan->arrow_ipc ? "PhysicalArrowIpcScan(table=" : "PhysicalTableScan(table=") << scan->table_name << ")\n";
+                << (scan->arrow_ipc ? "PhysicalArrowIpcScan(table=" : "PhysicalTableScan(table=") << scan->table_name;
+            if (scan->pv_subquery || scan->window_subquery || scan->window_literal)
+            {
+                out << ", pv_subquery=" << (scan->pv_subquery ? "true" : "false")
+                    << ", window_subquery=" << (scan->window_subquery ? "true" : "false")
+                    << ", window_literal=" << (scan->window_literal ? "true" : "false");
+            }
+            out << ")\n";
             return;
         }
         if (const auto* filter = std::get_if<PhysicalFilter>(&node->value))

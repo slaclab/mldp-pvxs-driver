@@ -221,7 +221,8 @@ protected:
         {
             payload.sources.emplace(source_pv, SourceMetadataEntry{
                                                    .aliases = std::vector<std::string>{source_pv + ":alias"},
-                                                   .tags = std::vector<std::string>{nameSpace_},
+                                                   .tags = std::vector<std::string>{nameSpace_, "magnet"},
+                                                   .attributes = {{"namespace", nameSpace_}},
                                                    .description = "query integration metadata",
                                                    .modified_by = "queryable_mldp_integration_test",
                                                });
@@ -253,6 +254,7 @@ protected:
             .configuration_name = name,
             .category = category,
             .description = "query integration configuration",
+            .attributes = {{"namespace", nameSpace_}},
             .modified_by = "queryable_mldp_integration_test",
         };
         ASSERT_TRUE(writer->push(std::move(configuration_batch)));
@@ -264,6 +266,7 @@ protected:
             .start_time = start_time,
             .end_time = end_time,
             .description = "query integration activation",
+            .attributes = {{"namespace", nameSpace_}},
             .modified_by = "queryable_mldp_integration_test",
         };
         ASSERT_TRUE(writer->push(std::move(activation_batch)));
@@ -404,6 +407,116 @@ TEST_F(QueryableMldpIntegrationTest, PvStatsReturnsEveryDriverOwnedPage)
         {
             EXPECT_GE(buckets->Value(index), 1);
         }
+    }
+}
+
+TEST_F(QueryableMldpIntegrationTest, WideTableUsesPvAndClosedWindowSubqueries)
+{
+    const std::vector<std::string> source_pvs = {pv("magnet_1"), pv("magnet_2")};
+    const auto now_seconds = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::system_clock::now().time_since_epoch())
+            .count());
+    for (std::size_t index = 0; index < source_pvs.size(); ++index)
+    {
+        seedTimeSeries(source_pvs[index], 3, static_cast<int64_t>(300 + index * 10));
+    }
+    seedMetadata(source_pvs);
+    const auto configuration_name = configName("beam_mode");
+    const auto activation_id = configName("beam_mode_activation");
+    const auto configuration_category = configName("beam_mode_category");
+    seedConfiguration(configuration_name,
+                      configuration_category,
+                      activation_id,
+                      BusTimestamp{.epoch_seconds = now_seconds - 1, .nanoseconds = 0},
+                      BusTimestamp{.epoch_seconds = now_seconds + 4, .nanoseconds = 0});
+
+    const auto seeded_activation = pollSql(
+        "SELECT time, end_time FROM mldp.configuration_activation WHERE activation_id = " + quote(activation_id) +
+            " AND end_time IS NOT NULL",
+        "closed seeded configuration activation",
+        [](const QueryExecutionResult& candidate)
+        {
+            return rowCount(candidate) == 1;
+        });
+    ASSERT_EQ(rowCount(seeded_activation), 1);
+
+    const auto window_sql =
+        "SELECT activation.time, activation.end_time "
+        "FROM mldp.configuration_activation activation "
+        "INNER JOIN mldp.configuration configuration ON activation.config_name = configuration.name "
+        "WHERE activation.activation_id = " + quote(activation_id) +
+        " AND configuration.name = " + quote(configuration_name) +
+        " AND configuration.category = " + quote(configuration_category) + " AND activation.end_time IS NOT NULL";
+    const auto windows = pollSql(
+        window_sql,
+        "closed namespace-filtered configuration activation",
+        [](const QueryExecutionResult& candidate)
+        {
+            return rowCount(candidate) == 1;
+        });
+    ASSERT_EQ(rowCount(windows), 1);
+    ASSERT_FALSE(windows.batches.empty());
+    const auto window_times = std::static_pointer_cast<arrow::TimestampArray>(windows.batches.front()->column(0));
+    const auto window_ends = std::static_pointer_cast<arrow::TimestampArray>(windows.batches.front()->column(1));
+    ASSERT_EQ(window_times->length(), 1);
+    ASSERT_EQ(window_ends->length(), 1);
+    EXPECT_EQ(window_times->Value(0) / 1'000'000'000LL, static_cast<int64_t>(now_seconds - 1));
+    EXPECT_EQ(window_ends->Value(0) / 1'000'000'000LL, static_cast<int64_t>(now_seconds + 4));
+
+    const auto sql =
+        "SELECT * FROM mldp.time_series_table "
+        "WHERE pv IN (SELECT pv FROM mldp.pv_metadata WHERE pv IN (" + commaSeparatedQuoted(source_pvs) + ")) "
+        "AND window IN (" + window_sql + ")";
+    const auto result = pollSql(
+        sql,
+        "wide table rows",
+        [&](const QueryExecutionResult& candidate)
+        {
+            return rowCount(candidate) > 0;
+        });
+
+    ASSERT_GT(rowCount(result), 0);
+    ASSERT_FALSE(result.batches.empty());
+    const auto& batch = result.batches.front();
+    EXPECT_EQ(batch->schema()->field_names(), (std::vector<std::string>{"time", source_pvs[0], source_pvs[1]}));
+    const auto times = std::static_pointer_cast<arrow::TimestampArray>(batch->column(0));
+    for (int64_t index = 0; index < times->length(); ++index)
+    {
+        const auto seconds = times->Value(index) / 1'000'000'000LL;
+        EXPECT_GE(seconds, static_cast<int64_t>(now_seconds - 1));
+        EXPECT_LE(seconds, static_cast<int64_t>(now_seconds + 4));
+    }
+}
+
+TEST_F(QueryableMldpIntegrationTest, WideTableUsesNormalizedLiteralWindow)
+{
+    const auto source_pv = pv("literal_window");
+    seedTimeSeries(source_pv, 3, 500);
+
+    const auto now_seconds = static_cast<int64_t>(
+        std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::system_clock::now().time_since_epoch())
+            .count());
+    const auto result = pollSql(
+        "SELECT * FROM mldp.time_series_table WHERE pv = " + quote(source_pv) +
+            " AND window IN (" + std::to_string(now_seconds + 4) + ", " + std::to_string(now_seconds - 1) + ")",
+        "wide table rows within literal window",
+        [&](const QueryExecutionResult& candidate)
+        {
+            return rowCount(candidate) > 0;
+        });
+
+    ASSERT_GT(rowCount(result), 0);
+    ASSERT_FALSE(result.batches.empty());
+    const auto& batch = result.batches.front();
+    ASSERT_EQ(batch->schema()->field_names(), (std::vector<std::string>{"time", source_pv}));
+    const auto times = std::static_pointer_cast<arrow::TimestampArray>(batch->column(0));
+    for (int64_t index = 0; index < times->length(); ++index)
+    {
+        const auto seconds = times->Value(index) / 1'000'000'000LL;
+        EXPECT_GE(seconds, now_seconds - 1);
+        EXPECT_LE(seconds, now_seconds + 4);
     }
 }
 

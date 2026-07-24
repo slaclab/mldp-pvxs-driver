@@ -110,6 +110,10 @@ void mldp_pvxs_driver::query::planner::requiredColumnCheck(const plan::LogicalNo
                     break;
                 }
             }
+            if (!has_pushable_predicate && column.name == "pv" && scan->pv_subquery)
+            {
+                has_pushable_predicate = true;
+            }
             if (!has_pushable_predicate)
             {
                 const auto join_columns = state.join_columns.find(scan->table_alias);

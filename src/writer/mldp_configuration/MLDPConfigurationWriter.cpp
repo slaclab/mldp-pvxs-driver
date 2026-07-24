@@ -155,6 +155,20 @@ void MLDPConfigurationWriter::doSaveConfiguration(const ConfigurationPayload& cf
             });
             return;
         }
+        if (!resp.has_saveconfigurationresult())
+        {
+            const auto message = resp.has_exceptionalresult()
+                ? resp.exceptionalresult().message()
+                : "annotation service returned no save result";
+            errorf(logger(),
+                   "MLDPConfigurationWriter saveConfiguration '{}': {}",
+                   cfg.configuration_name,
+                   message);
+            metric_call(metrics_, [&](auto& m) {
+                m.incrementWriterFailures(1.0, {{"writer", config_.name}});
+            });
+            return;
+        }
         metric_call(metrics_, [&](auto& m) {
             m.incrementWriterPushes(1.0, {{"writer", config_.name}});
         });
@@ -229,6 +243,20 @@ void MLDPConfigurationWriter::doSaveConfigurationActivation(
                    act.configuration_name,
                    static_cast<int>(status.error_code()),
                    status.error_message());
+            metric_call(metrics_, [&](auto& m) {
+                m.incrementWriterFailures(1.0, {{"writer", config_.name}});
+            });
+            return;
+        }
+        if (!resp.has_saveconfigurationactivationresult())
+        {
+            const auto message = resp.has_exceptionalresult()
+                ? resp.exceptionalresult().message()
+                : "annotation service returned no save result";
+            errorf(logger(),
+                   "MLDPConfigurationWriter saveConfigurationActivation '{}': {}",
+                   act.configuration_name,
+                   message);
             metric_call(metrics_, [&](auto& m) {
                 m.incrementWriterFailures(1.0, {{"writer", config_.name}});
             });

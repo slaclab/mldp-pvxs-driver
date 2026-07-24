@@ -242,6 +242,14 @@ TEST(QueryParserTest, ParsesWideTablePvAndWindowSubqueries)
     EXPECT_TRUE(std::holds_alternative<IsNotNullPredicate>(window.subquery->predicates[1]));
 }
 
+TEST(QueryParserTest, RequiresWhereBeforeWideTablePvPredicate)
+{
+    EXPECT_THROW((void)parseQuery("SELECT * FROM mldp.time_series_table pv IN ('mldp_sample:MAGNET:01:VALUE')"), ParseError);
+
+    EXPECT_NO_THROW((void)parseQuery(
+        "SELECT * FROM mldp.time_series_table WHERE pv IN ('mldp_sample:MAGNET:01:VALUE')"));
+}
+
 TEST(QueryParserTest, ParsesShowTablesDescribeAndExplain)
 {
     auto show_tables = parseQuery("SHOW TABLES");
