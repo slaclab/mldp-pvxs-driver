@@ -78,6 +78,12 @@ The parser recognizes duration literals in `NOW ± <n><unit>` expressions:
 | `m` or `M` | minutes |
 | `h` or `H` | hours |
 
+### Scalar functions
+
+The parser represents scalar calls as recursive `FunctionCall` expressions, so function syntax is generic and new built-ins do not require lexer changes. `ScalarFunctionRegistry` owns built-in signatures and constant evaluation. Predicate values must be constant so they can be type-checked and folded before existing backend predicate pushdown.
+
+`to_utc(STRING)` and `to_utc(STRING, STRING)` return a UTC epoch-second timestamp. The first form accepts an ISO-8601 `Z` or explicit-offset instant; the second form accepts a local timestamp and explicit `+/-HH:MM` offset. Named IANA zones and DST disambiguation require the pending `date/tz` runtime integration.
+
 ---
 
 ## Planner pipeline

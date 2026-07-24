@@ -24,6 +24,7 @@
     struct SelectListValue {
         bool                                select_all{false};
         std::vector<QualifiedColumn>        columns;
+        std::vector<SelectItem>             items;
     };
 
     } // namespace mldp_pvxs_driver::query::generated
@@ -108,6 +109,27 @@
         column.qualifier = path.front();
         column.name = joinPath(path, 1);
         return column;
+    }
+
+    static ExpressionPtr makeExpression(ExpressionValue value)
+    {
+        return std::make_shared<Expression>(Expression{.value = std::move(value)});
+    }
+
+    static LiteralValue legacyLiteral(const ExpressionPtr& expression)
+    {
+        if (expression && std::holds_alternative<LiteralValue>(expression->value))
+            return std::get<LiteralValue>(expression->value);
+        return std::string{};
+    }
+
+    static std::vector<LiteralValue> legacyLiterals(const std::vector<ExpressionPtr>& expressions)
+    {
+        std::vector<LiteralValue> values;
+        values.reserve(expressions.size());
+        for (const auto& expression : expressions)
+            values.push_back(legacyLiteral(expression));
+        return values;
     }
 
     static QueryBisonParser::symbol_type yylex(ParseContext& ctx)
@@ -218,7 +240,8 @@
 %type <mldp_pvxs_driver::query::QueryStatement> statement
 %type <mldp_pvxs_driver::query::SelectStatement> select_stmt
 %type <mldp_pvxs_driver::query::generated::SelectListValue> select_list
-%type <std::vector<mldp_pvxs_driver::query::QualifiedColumn>> column_list
+%type <std::vector<mldp_pvxs_driver::query::SelectItem>> select_item_list
+%type <mldp_pvxs_driver::query::SelectItem> select_item
 %type <mldp_pvxs_driver::query::QualifiedColumn> column_ref
 %type <std::vector<std::string>> identifier_path
 %type <mldp_pvxs_driver::query::TableRef> table_ref
@@ -227,8 +250,9 @@
 %type <mldp_pvxs_driver::query::JoinClause> join_clause
 %type <std::vector<mldp_pvxs_driver::query::WherePredicate>> where_opt predicate_list
 %type <mldp_pvxs_driver::query::WherePredicate> predicate
-%type <std::vector<mldp_pvxs_driver::query::LiteralValue>> literal_list
+%type <std::vector<mldp_pvxs_driver::query::ExpressionPtr>> expression_list
 %type <mldp_pvxs_driver::query::LiteralValue> literal now_literal
+%type <mldp_pvxs_driver::query::ExpressionPtr> expression
 %type <int64_t> signed_duration
 %type <std::optional<uint64_t>> limit_opt
 %type <std::optional<std::string>> page_opt
@@ -264,7 +288,12 @@ select_stmt
       {
           mldp_pvxs_driver::query::SelectStatement statement;
           statement.select_all = $2.select_all;
-          statement.columns = std::move($2.columns);
+          statement.select_items = std::move($2.items);
+          for (const auto& item : statement.select_items)
+          {
+              if (item.expression && std::holds_alternative<QualifiedColumn>(item.expression->value))
+                  statement.columns.push_back(std::get<QualifiedColumn>(item.expression->value));
+          }
           statement.from = std::move($4);
           statement.joins = std::move($5);
           statement.predicates = std::move($6);
@@ -290,12 +319,24 @@ order_by_list
     ;
 
 order_by_item
-    : column_ref
-      { $$ = mldp_pvxs_driver::query::OrderByItem{.column = std::move($1)}; }
-    | column_ref ASC
-      { $$ = mldp_pvxs_driver::query::OrderByItem{.column = std::move($1), .direction = mldp_pvxs_driver::query::SortDirection::ASCENDING}; }
-    | column_ref DESC
-      { $$ = mldp_pvxs_driver::query::OrderByItem{.column = std::move($1), .direction = mldp_pvxs_driver::query::SortDirection::DESCENDING}; }
+    : expression
+      {
+          mldp_pvxs_driver::query::OrderByItem item{.expression = std::move($1)};
+          if (std::holds_alternative<QualifiedColumn>(item.expression->value)) item.column = std::get<QualifiedColumn>(item.expression->value);
+          $$ = std::move(item);
+      }
+    | expression ASC
+      {
+          mldp_pvxs_driver::query::OrderByItem item{.expression = std::move($1), .direction = mldp_pvxs_driver::query::SortDirection::ASCENDING};
+          if (std::holds_alternative<QualifiedColumn>(item.expression->value)) item.column = std::get<QualifiedColumn>(item.expression->value);
+          $$ = std::move(item);
+      }
+    | expression DESC
+      {
+          mldp_pvxs_driver::query::OrderByItem item{.expression = std::move($1), .direction = mldp_pvxs_driver::query::SortDirection::DESCENDING};
+          if (std::holds_alternative<QualifiedColumn>(item.expression->value)) item.column = std::get<QualifiedColumn>(item.expression->value);
+          $$ = std::move(item);
+      }
     ;
 
 select_list
@@ -303,28 +344,25 @@ select_list
       {
           $$ = mldp_pvxs_driver::query::generated::SelectListValue{
               .select_all = true,
-              .columns = {}
+              .columns = {}, .items = {}
           };
       }
-    | column_list
-      {
-          $$ = mldp_pvxs_driver::query::generated::SelectListValue{
-              .select_all = false,
-              .columns = std::move($1)
-          };
-      }
+    | select_item_list
+      { $$ = mldp_pvxs_driver::query::generated::SelectListValue{.select_all = false, .columns = {}, .items = std::move($1)}; }
     ;
 
-column_list
-    : column_ref
-      {
-          $$ = std::vector<mldp_pvxs_driver::query::QualifiedColumn>{std::move($1)};
-      }
-    | column_list COMMA column_ref
-      {
-          $1.push_back(std::move($3));
-          $$ = std::move($1);
-      }
+select_item_list
+    : select_item
+      { $$ = std::vector<mldp_pvxs_driver::query::SelectItem>{std::move($1)}; }
+    | select_item_list COMMA select_item
+      { $1.push_back(std::move($3)); $$ = std::move($1); }
+    ;
+
+select_item
+    : expression
+      { $$ = mldp_pvxs_driver::query::SelectItem{.expression = std::move($1)}; }
+    | expression AS IDENTIFIER
+      { $$ = mldp_pvxs_driver::query::SelectItem{.expression = std::move($1), .alias = $3}; }
     ;
 
 table_ref
@@ -333,6 +371,17 @@ table_ref
           $$ = mldp_pvxs_driver::query::TableRef{
               .table_name = joinPath($1, 0),
               .alias = std::move($2)
+          };
+      }
+    | LPAREN select_stmt RPAREN alias_opt
+      {
+          if (!$4.has_value())
+          {
+              throw ParseError("Derived table sources require an alias", TokenPosition{0, static_cast<std::size_t>(@1.begin.line), static_cast<std::size_t>(@1.begin.column)});
+          }
+          $$ = mldp_pvxs_driver::query::TableRef{
+              .table_name = "<derived>", .alias = std::move($4),
+              .derived_query = std::make_shared<mldp_pvxs_driver::query::SelectStatement>(std::move($2))
           };
       }
     ;
@@ -421,104 +470,131 @@ predicate_list
     ;
 
 predicate
-    : column_ref IN LPAREN literal_list RPAREN
+    : column_ref IN LPAREN expression_list RPAREN
       {
           $$ = mldp_pvxs_driver::query::InPredicate{
               .column = std::move($1),
-              .values = std::move($4)
+              .values = legacyLiterals($4),
+              .expressions = std::move($4)
           };
       }
-    | column_ref BETWEEN literal AND literal
+    | column_ref IN LPAREN select_stmt RPAREN
+      {
+          $$ = mldp_pvxs_driver::query::InPredicate{
+              .column = std::move($1),
+              .subquery = std::make_shared<mldp_pvxs_driver::query::SelectStatement>(std::move($4))
+          };
+      }
+    | column_ref BETWEEN expression AND expression
       {
           $$ = mldp_pvxs_driver::query::RangePredicate{
               .column = std::move($1),
-              .lower = std::move($3),
-              .upper = std::move($5)
+              .lower = legacyLiteral($3), .upper = legacyLiteral($5),
+              .lower_expression = std::move($3),
+              .upper_expression = std::move($5)
           };
       }
-    | column_ref LIKE literal
+    | column_ref LIKE expression
       {
           $$ = mldp_pvxs_driver::query::OpPredicate{
               .column = std::move($1),
               .op = mldp_pvxs_driver::query::PredicateBinaryOp::LIKE,
-              .value = std::move($3)
+              .value = legacyLiteral($3),
+              .expression = std::move($3)
           };
       }
-    | column_ref CONTAINS literal
+    | column_ref CONTAINS expression
       {
           $$ = mldp_pvxs_driver::query::OpPredicate{
               .column = std::move($1),
               .op = mldp_pvxs_driver::query::PredicateBinaryOp::CONTAINS,
-              .value = std::move($3)
+              .value = legacyLiteral($3),
+              .expression = std::move($3)
           };
       }
-    | column_ref PREFIX literal
+    | column_ref PREFIX expression
       {
           $$ = mldp_pvxs_driver::query::OpPredicate{
               .column = std::move($1),
               .op = mldp_pvxs_driver::query::PredicateBinaryOp::PREFIX,
-              .value = std::move($3)
+              .value = legacyLiteral($3),
+              .expression = std::move($3)
           };
       }
-    | column_ref EQ literal
+    | column_ref EQ expression
       {
           $$ = mldp_pvxs_driver::query::EqPredicate{
               .column = std::move($1),
-              .value = std::move($3)
+              .value = legacyLiteral($3),
+              .expression = std::move($3)
           };
       }
-    | column_ref NEQ literal
+    | column_ref NEQ expression
       {
           $$ = mldp_pvxs_driver::query::OpPredicate{
               .column = std::move($1),
               .op = mldp_pvxs_driver::query::PredicateBinaryOp::NEQ,
-              .value = std::move($3)
+              .value = legacyLiteral($3),
+              .expression = std::move($3)
           };
       }
-    | column_ref LT literal
+    | column_ref LT expression
       {
           $$ = mldp_pvxs_driver::query::OpPredicate{
               .column = std::move($1),
               .op = mldp_pvxs_driver::query::PredicateBinaryOp::LT,
-              .value = std::move($3)
+              .value = legacyLiteral($3),
+              .expression = std::move($3)
           };
       }
-    | column_ref LTE literal
+    | column_ref LTE expression
       {
           $$ = mldp_pvxs_driver::query::OpPredicate{
               .column = std::move($1),
               .op = mldp_pvxs_driver::query::PredicateBinaryOp::LTE,
-              .value = std::move($3)
+              .value = legacyLiteral($3),
+              .expression = std::move($3)
           };
       }
-    | column_ref GT literal
+    | column_ref GT expression
       {
           $$ = mldp_pvxs_driver::query::OpPredicate{
               .column = std::move($1),
               .op = mldp_pvxs_driver::query::PredicateBinaryOp::GT,
-              .value = std::move($3)
+              .value = legacyLiteral($3),
+              .expression = std::move($3)
           };
       }
-    | column_ref GTE literal
+    | column_ref GTE expression
       {
           $$ = mldp_pvxs_driver::query::OpPredicate{
               .column = std::move($1),
               .op = mldp_pvxs_driver::query::PredicateBinaryOp::GTE,
-              .value = std::move($3)
+              .value = legacyLiteral($3),
+              .expression = std::move($3)
           };
       }
     ;
 
-literal_list
-    : literal
+expression_list
+    : expression
       {
-          $$ = std::vector<mldp_pvxs_driver::query::LiteralValue>{std::move($1)};
+          $$ = std::vector<mldp_pvxs_driver::query::ExpressionPtr>{std::move($1)};
       }
-    | literal_list COMMA literal
+    | expression_list COMMA expression
       {
           $1.push_back(std::move($3));
           $$ = std::move($1);
       }
+    ;
+
+expression
+    : literal
+      { $$ = makeExpression(ExpressionValue{std::move($1)}); }
+    | column_ref
+      { $$ = makeExpression(ExpressionValue{std::move($1)}); }
+    | IDENTIFIER LPAREN expression_list RPAREN
+      { $$ = makeExpression(ExpressionValue{FunctionCall{.name = std::move($1), .arguments = std::move($3)}}); }
     ;
 
 literal

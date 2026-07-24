@@ -42,7 +42,7 @@
 
 
 // Unqualified %code blocks.
-#line 32 "src/query/parser/grammar/QueryBisonParser.y"
+#line 33 "src/query/parser/grammar/QueryBisonParser.y"
 
     #include <charconv>
     #include <sstream>
@@ -122,6 +122,27 @@
         column.qualifier = path.front();
         column.name = joinPath(path, 1);
         return column;
+    }
+
+    static ExpressionPtr makeExpression(ExpressionValue value)
+    {
+        return std::make_shared<Expression>(Expression{.value = std::move(value)});
+    }
+
+    static LiteralValue legacyLiteral(const ExpressionPtr& expression)
+    {
+        if (expression && std::holds_alternative<LiteralValue>(expression->value))
+            return std::get<LiteralValue>(expression->value);
+        return std::string{};
+    }
+
+    static std::vector<LiteralValue> legacyLiterals(const std::vector<ExpressionPtr>& expressions)
+    {
+        std::vector<LiteralValue> values;
+        values.reserve(expressions.size());
+        for (const auto& expression : expressions)
+            values.push_back(legacyLiteral(expression));
+        return values;
     }
 
     static QueryBisonParser::symbol_type yylex(ParseContext& ctx)
@@ -219,7 +240,7 @@
 
     } // namespace mldp_pvxs_driver::query::generated
 
-#line 223 "src/query/parser/generated/QueryBisonParser.cpp"
+#line 244 "src/query/parser/generated/QueryBisonParser.cpp"
 
 
 #ifndef YY_
@@ -312,7 +333,7 @@
 
 #line 5 "src/query/parser/grammar/QueryBisonParser.y"
 namespace mldp_pvxs_driver { namespace query { namespace generated {
-#line 316 "src/query/parser/generated/QueryBisonParser.cpp"
+#line 337 "src/query/parser/generated/QueryBisonParser.cpp"
 
   /// Build a parser object.
   QueryBisonParser::QueryBisonParser (mldp_pvxs_driver::query::generated::ParseContext& ctx_yyarg)
@@ -385,6 +406,10 @@ namespace mldp_pvxs_driver { namespace query { namespace generated {
         value.YY_MOVE_OR_COPY< int64_t > (YY_MOVE (that.value));
         break;
 
+      case symbol_kind::S_expression: // expression
+        value.YY_MOVE_OR_COPY< mldp_pvxs_driver::query::ExpressionPtr > (YY_MOVE (that.value));
+        break;
+
       case symbol_kind::S_join_clause: // join_clause
         value.YY_MOVE_OR_COPY< mldp_pvxs_driver::query::JoinClause > (YY_MOVE (that.value));
         break;
@@ -404,6 +429,10 @@ namespace mldp_pvxs_driver { namespace query { namespace generated {
 
       case symbol_kind::S_statement: // statement
         value.YY_MOVE_OR_COPY< mldp_pvxs_driver::query::QueryStatement > (YY_MOVE (that.value));
+        break;
+
+      case symbol_kind::S_select_item: // select_item
+        value.YY_MOVE_OR_COPY< mldp_pvxs_driver::query::SelectItem > (YY_MOVE (that.value));
         break;
 
       case symbol_kind::S_select_stmt: // select_stmt
@@ -437,12 +466,12 @@ namespace mldp_pvxs_driver { namespace query { namespace generated {
         value.YY_MOVE_OR_COPY< std::string > (YY_MOVE (that.value));
         break;
 
-      case symbol_kind::S_join_clauses: // join_clauses
-        value.YY_MOVE_OR_COPY< std::vector<mldp_pvxs_driver::query::JoinClause> > (YY_MOVE (that.value));
+      case symbol_kind::S_expression_list: // expression_list
+        value.YY_MOVE_OR_COPY< std::vector<mldp_pvxs_driver::query::ExpressionPtr> > (YY_MOVE (that.value));
         break;
 
-      case symbol_kind::S_literal_list: // literal_list
-        value.YY_MOVE_OR_COPY< std::vector<mldp_pvxs_driver::query::LiteralValue> > (YY_MOVE (that.value));
+      case symbol_kind::S_join_clauses: // join_clauses
+        value.YY_MOVE_OR_COPY< std::vector<mldp_pvxs_driver::query::JoinClause> > (YY_MOVE (that.value));
         break;
 
       case symbol_kind::S_order_by_opt: // order_by_opt
@@ -450,8 +479,8 @@ namespace mldp_pvxs_driver { namespace query { namespace generated {
         value.YY_MOVE_OR_COPY< std::vector<mldp_pvxs_driver::query::OrderByItem> > (YY_MOVE (that.value));
         break;
 
-      case symbol_kind::S_column_list: // column_list
-        value.YY_MOVE_OR_COPY< std::vector<mldp_pvxs_driver::query::QualifiedColumn> > (YY_MOVE (that.value));
+      case symbol_kind::S_select_item_list: // select_item_list
+        value.YY_MOVE_OR_COPY< std::vector<mldp_pvxs_driver::query::SelectItem> > (YY_MOVE (that.value));
         break;
 
       case symbol_kind::S_where_opt: // where_opt
@@ -483,6 +512,10 @@ namespace mldp_pvxs_driver { namespace query { namespace generated {
         value.move< int64_t > (YY_MOVE (that.value));
         break;
 
+      case symbol_kind::S_expression: // expression
+        value.move< mldp_pvxs_driver::query::ExpressionPtr > (YY_MOVE (that.value));
+        break;
+
       case symbol_kind::S_join_clause: // join_clause
         value.move< mldp_pvxs_driver::query::JoinClause > (YY_MOVE (that.value));
         break;
@@ -502,6 +535,10 @@ namespace mldp_pvxs_driver { namespace query { namespace generated {
 
       case symbol_kind::S_statement: // statement
         value.move< mldp_pvxs_driver::query::QueryStatement > (YY_MOVE (that.value));
+        break;
+
+      case symbol_kind::S_select_item: // select_item
+        value.move< mldp_pvxs_driver::query::SelectItem > (YY_MOVE (that.value));
         break;
 
       case symbol_kind::S_select_stmt: // select_stmt
@@ -535,12 +572,12 @@ namespace mldp_pvxs_driver { namespace query { namespace generated {
         value.move< std::string > (YY_MOVE (that.value));
         break;
 
-      case symbol_kind::S_join_clauses: // join_clauses
-        value.move< std::vector<mldp_pvxs_driver::query::JoinClause> > (YY_MOVE (that.value));
+      case symbol_kind::S_expression_list: // expression_list
+        value.move< std::vector<mldp_pvxs_driver::query::ExpressionPtr> > (YY_MOVE (that.value));
         break;
 
-      case symbol_kind::S_literal_list: // literal_list
-        value.move< std::vector<mldp_pvxs_driver::query::LiteralValue> > (YY_MOVE (that.value));
+      case symbol_kind::S_join_clauses: // join_clauses
+        value.move< std::vector<mldp_pvxs_driver::query::JoinClause> > (YY_MOVE (that.value));
         break;
 
       case symbol_kind::S_order_by_opt: // order_by_opt
@@ -548,8 +585,8 @@ namespace mldp_pvxs_driver { namespace query { namespace generated {
         value.move< std::vector<mldp_pvxs_driver::query::OrderByItem> > (YY_MOVE (that.value));
         break;
 
-      case symbol_kind::S_column_list: // column_list
-        value.move< std::vector<mldp_pvxs_driver::query::QualifiedColumn> > (YY_MOVE (that.value));
+      case symbol_kind::S_select_item_list: // select_item_list
+        value.move< std::vector<mldp_pvxs_driver::query::SelectItem> > (YY_MOVE (that.value));
         break;
 
       case symbol_kind::S_where_opt: // where_opt
@@ -581,6 +618,10 @@ namespace mldp_pvxs_driver { namespace query { namespace generated {
         value.copy< int64_t > (that.value);
         break;
 
+      case symbol_kind::S_expression: // expression
+        value.copy< mldp_pvxs_driver::query::ExpressionPtr > (that.value);
+        break;
+
       case symbol_kind::S_join_clause: // join_clause
         value.copy< mldp_pvxs_driver::query::JoinClause > (that.value);
         break;
@@ -600,6 +641,10 @@ namespace mldp_pvxs_driver { namespace query { namespace generated {
 
       case symbol_kind::S_statement: // statement
         value.copy< mldp_pvxs_driver::query::QueryStatement > (that.value);
+        break;
+
+      case symbol_kind::S_select_item: // select_item
+        value.copy< mldp_pvxs_driver::query::SelectItem > (that.value);
         break;
 
       case symbol_kind::S_select_stmt: // select_stmt
@@ -633,12 +678,12 @@ namespace mldp_pvxs_driver { namespace query { namespace generated {
         value.copy< std::string > (that.value);
         break;
 
-      case symbol_kind::S_join_clauses: // join_clauses
-        value.copy< std::vector<mldp_pvxs_driver::query::JoinClause> > (that.value);
+      case symbol_kind::S_expression_list: // expression_list
+        value.copy< std::vector<mldp_pvxs_driver::query::ExpressionPtr> > (that.value);
         break;
 
-      case symbol_kind::S_literal_list: // literal_list
-        value.copy< std::vector<mldp_pvxs_driver::query::LiteralValue> > (that.value);
+      case symbol_kind::S_join_clauses: // join_clauses
+        value.copy< std::vector<mldp_pvxs_driver::query::JoinClause> > (that.value);
         break;
 
       case symbol_kind::S_order_by_opt: // order_by_opt
@@ -646,8 +691,8 @@ namespace mldp_pvxs_driver { namespace query { namespace generated {
         value.copy< std::vector<mldp_pvxs_driver::query::OrderByItem> > (that.value);
         break;
 
-      case symbol_kind::S_column_list: // column_list
-        value.copy< std::vector<mldp_pvxs_driver::query::QualifiedColumn> > (that.value);
+      case symbol_kind::S_select_item_list: // select_item_list
+        value.copy< std::vector<mldp_pvxs_driver::query::SelectItem> > (that.value);
         break;
 
       case symbol_kind::S_where_opt: // where_opt
@@ -678,6 +723,10 @@ namespace mldp_pvxs_driver { namespace query { namespace generated {
         value.move< int64_t > (that.value);
         break;
 
+      case symbol_kind::S_expression: // expression
+        value.move< mldp_pvxs_driver::query::ExpressionPtr > (that.value);
+        break;
+
       case symbol_kind::S_join_clause: // join_clause
         value.move< mldp_pvxs_driver::query::JoinClause > (that.value);
         break;
@@ -697,6 +746,10 @@ namespace mldp_pvxs_driver { namespace query { namespace generated {
 
       case symbol_kind::S_statement: // statement
         value.move< mldp_pvxs_driver::query::QueryStatement > (that.value);
+        break;
+
+      case symbol_kind::S_select_item: // select_item
+        value.move< mldp_pvxs_driver::query::SelectItem > (that.value);
         break;
 
       case symbol_kind::S_select_stmt: // select_stmt
@@ -730,12 +783,12 @@ namespace mldp_pvxs_driver { namespace query { namespace generated {
         value.move< std::string > (that.value);
         break;
 
-      case symbol_kind::S_join_clauses: // join_clauses
-        value.move< std::vector<mldp_pvxs_driver::query::JoinClause> > (that.value);
+      case symbol_kind::S_expression_list: // expression_list
+        value.move< std::vector<mldp_pvxs_driver::query::ExpressionPtr> > (that.value);
         break;
 
-      case symbol_kind::S_literal_list: // literal_list
-        value.move< std::vector<mldp_pvxs_driver::query::LiteralValue> > (that.value);
+      case symbol_kind::S_join_clauses: // join_clauses
+        value.move< std::vector<mldp_pvxs_driver::query::JoinClause> > (that.value);
         break;
 
       case symbol_kind::S_order_by_opt: // order_by_opt
@@ -743,8 +796,8 @@ namespace mldp_pvxs_driver { namespace query { namespace generated {
         value.move< std::vector<mldp_pvxs_driver::query::OrderByItem> > (that.value);
         break;
 
-      case symbol_kind::S_column_list: // column_list
-        value.move< std::vector<mldp_pvxs_driver::query::QualifiedColumn> > (that.value);
+      case symbol_kind::S_select_item_list: // select_item_list
+        value.move< std::vector<mldp_pvxs_driver::query::SelectItem> > (that.value);
         break;
 
       case symbol_kind::S_where_opt: // where_opt
@@ -1020,6 +1073,10 @@ namespace mldp_pvxs_driver { namespace query { namespace generated {
         yylhs.value.emplace< int64_t > ();
         break;
 
+      case symbol_kind::S_expression: // expression
+        yylhs.value.emplace< mldp_pvxs_driver::query::ExpressionPtr > ();
+        break;
+
       case symbol_kind::S_join_clause: // join_clause
         yylhs.value.emplace< mldp_pvxs_driver::query::JoinClause > ();
         break;
@@ -1039,6 +1096,10 @@ namespace mldp_pvxs_driver { namespace query { namespace generated {
 
       case symbol_kind::S_statement: // statement
         yylhs.value.emplace< mldp_pvxs_driver::query::QueryStatement > ();
+        break;
+
+      case symbol_kind::S_select_item: // select_item
+        yylhs.value.emplace< mldp_pvxs_driver::query::SelectItem > ();
         break;
 
       case symbol_kind::S_select_stmt: // select_stmt
@@ -1072,12 +1133,12 @@ namespace mldp_pvxs_driver { namespace query { namespace generated {
         yylhs.value.emplace< std::string > ();
         break;
 
-      case symbol_kind::S_join_clauses: // join_clauses
-        yylhs.value.emplace< std::vector<mldp_pvxs_driver::query::JoinClause> > ();
+      case symbol_kind::S_expression_list: // expression_list
+        yylhs.value.emplace< std::vector<mldp_pvxs_driver::query::ExpressionPtr> > ();
         break;
 
-      case symbol_kind::S_literal_list: // literal_list
-        yylhs.value.emplace< std::vector<mldp_pvxs_driver::query::LiteralValue> > ();
+      case symbol_kind::S_join_clauses: // join_clauses
+        yylhs.value.emplace< std::vector<mldp_pvxs_driver::query::JoinClause> > ();
         break;
 
       case symbol_kind::S_order_by_opt: // order_by_opt
@@ -1085,8 +1146,8 @@ namespace mldp_pvxs_driver { namespace query { namespace generated {
         yylhs.value.emplace< std::vector<mldp_pvxs_driver::query::OrderByItem> > ();
         break;
 
-      case symbol_kind::S_column_list: // column_list
-        yylhs.value.emplace< std::vector<mldp_pvxs_driver::query::QualifiedColumn> > ();
+      case symbol_kind::S_select_item_list: // select_item_list
+        yylhs.value.emplace< std::vector<mldp_pvxs_driver::query::SelectItem> > ();
         break;
 
       case symbol_kind::S_where_opt: // where_opt
@@ -1119,47 +1180,52 @@ namespace mldp_pvxs_driver { namespace query { namespace generated {
           switch (yyn)
             {
   case 2: // input: statement END_OF_INPUT
-#line 242 "src/query/parser/grammar/QueryBisonParser.y"
+#line 266 "src/query/parser/grammar/QueryBisonParser.y"
       {
           ctx.result = std::move(yystack_[1].value.as < mldp_pvxs_driver::query::QueryStatement > ());
       }
-#line 1127 "src/query/parser/generated/QueryBisonParser.cpp"
+#line 1188 "src/query/parser/generated/QueryBisonParser.cpp"
     break;
 
   case 3: // statement: select_stmt
-#line 249 "src/query/parser/grammar/QueryBisonParser.y"
+#line 273 "src/query/parser/grammar/QueryBisonParser.y"
       { yylhs.value.as < mldp_pvxs_driver::query::QueryStatement > () = std::move(yystack_[0].value.as < mldp_pvxs_driver::query::SelectStatement > ()); }
-#line 1133 "src/query/parser/generated/QueryBisonParser.cpp"
+#line 1194 "src/query/parser/generated/QueryBisonParser.cpp"
     break;
 
   case 4: // statement: SHOW TABLES
-#line 251 "src/query/parser/grammar/QueryBisonParser.y"
+#line 275 "src/query/parser/grammar/QueryBisonParser.y"
       { yylhs.value.as < mldp_pvxs_driver::query::QueryStatement > () = mldp_pvxs_driver::query::ShowTablesStatement{}; }
-#line 1139 "src/query/parser/generated/QueryBisonParser.cpp"
+#line 1200 "src/query/parser/generated/QueryBisonParser.cpp"
     break;
 
   case 5: // statement: DESCRIBE identifier_path
-#line 253 "src/query/parser/grammar/QueryBisonParser.y"
+#line 277 "src/query/parser/grammar/QueryBisonParser.y"
       {
           yylhs.value.as < mldp_pvxs_driver::query::QueryStatement > () = mldp_pvxs_driver::query::DescribeStatement{ .table_name = joinPath(yystack_[0].value.as < std::vector<std::string> > (), 0) };
       }
-#line 1147 "src/query/parser/generated/QueryBisonParser.cpp"
+#line 1208 "src/query/parser/generated/QueryBisonParser.cpp"
     break;
 
   case 6: // statement: EXPLAIN select_stmt
-#line 257 "src/query/parser/grammar/QueryBisonParser.y"
+#line 281 "src/query/parser/grammar/QueryBisonParser.y"
       {
           yylhs.value.as < mldp_pvxs_driver::query::QueryStatement > () = mldp_pvxs_driver::query::ExplainStatement{ .query = std::move(yystack_[0].value.as < mldp_pvxs_driver::query::SelectStatement > ()) };
       }
-#line 1155 "src/query/parser/generated/QueryBisonParser.cpp"
+#line 1216 "src/query/parser/generated/QueryBisonParser.cpp"
     break;
 
   case 7: // select_stmt: SELECT select_list FROM table_ref join_clauses where_opt order_by_opt limit_opt page_opt
-#line 264 "src/query/parser/grammar/QueryBisonParser.y"
+#line 288 "src/query/parser/grammar/QueryBisonParser.y"
       {
           mldp_pvxs_driver::query::SelectStatement statement;
           statement.select_all = yystack_[7].value.as < mldp_pvxs_driver::query::generated::SelectListValue > ().select_all;
-          statement.columns = std::move(yystack_[7].value.as < mldp_pvxs_driver::query::generated::SelectListValue > ().columns);
+          statement.select_items = std::move(yystack_[7].value.as < mldp_pvxs_driver::query::generated::SelectListValue > ().items);
+          for (const auto& item : statement.select_items)
+          {
+              if (item.expression && std::holds_alternative<QualifiedColumn>(item.expression->value))
+                  statement.columns.push_back(std::get<QualifiedColumn>(item.expression->value));
+          }
           statement.from = std::move(yystack_[5].value.as < mldp_pvxs_driver::query::TableRef > ());
           statement.joins = std::move(yystack_[4].value.as < std::vector<mldp_pvxs_driver::query::JoinClause> > ());
           statement.predicates = std::move(yystack_[3].value.as < std::vector<mldp_pvxs_driver::query::WherePredicate> > ());
@@ -1168,441 +1234,510 @@ namespace mldp_pvxs_driver { namespace query { namespace generated {
           statement.page_token = std::move(yystack_[0].value.as < std::optional<std::string> > ());
           yylhs.value.as < mldp_pvxs_driver::query::SelectStatement > () = std::move(statement);
       }
-#line 1172 "src/query/parser/generated/QueryBisonParser.cpp"
+#line 1238 "src/query/parser/generated/QueryBisonParser.cpp"
     break;
 
   case 8: // order_by_opt: %empty
-#line 280 "src/query/parser/grammar/QueryBisonParser.y"
+#line 309 "src/query/parser/grammar/QueryBisonParser.y"
       { yylhs.value.as < std::vector<mldp_pvxs_driver::query::OrderByItem> > () = {}; }
-#line 1178 "src/query/parser/generated/QueryBisonParser.cpp"
-    break;
-
-  case 9: // order_by_opt: ORDER BY order_by_list
-#line 282 "src/query/parser/grammar/QueryBisonParser.y"
-      { yylhs.value.as < std::vector<mldp_pvxs_driver::query::OrderByItem> > () = std::move(yystack_[0].value.as < std::vector<mldp_pvxs_driver::query::OrderByItem> > ()); }
-#line 1184 "src/query/parser/generated/QueryBisonParser.cpp"
-    break;
-
-  case 10: // order_by_list: order_by_item
-#line 287 "src/query/parser/grammar/QueryBisonParser.y"
-      { yylhs.value.as < std::vector<mldp_pvxs_driver::query::OrderByItem> > () = std::vector<mldp_pvxs_driver::query::OrderByItem>{std::move(yystack_[0].value.as < mldp_pvxs_driver::query::OrderByItem > ())}; }
-#line 1190 "src/query/parser/generated/QueryBisonParser.cpp"
-    break;
-
-  case 11: // order_by_list: order_by_list COMMA order_by_item
-#line 289 "src/query/parser/grammar/QueryBisonParser.y"
-      { yystack_[2].value.as < std::vector<mldp_pvxs_driver::query::OrderByItem> > ().push_back(std::move(yystack_[0].value.as < mldp_pvxs_driver::query::OrderByItem > ())); yylhs.value.as < std::vector<mldp_pvxs_driver::query::OrderByItem> > () = std::move(yystack_[2].value.as < std::vector<mldp_pvxs_driver::query::OrderByItem> > ()); }
-#line 1196 "src/query/parser/generated/QueryBisonParser.cpp"
-    break;
-
-  case 12: // order_by_item: column_ref
-#line 294 "src/query/parser/grammar/QueryBisonParser.y"
-      { yylhs.value.as < mldp_pvxs_driver::query::OrderByItem > () = mldp_pvxs_driver::query::OrderByItem{.column = std::move(yystack_[0].value.as < mldp_pvxs_driver::query::QualifiedColumn > ())}; }
-#line 1202 "src/query/parser/generated/QueryBisonParser.cpp"
-    break;
-
-  case 13: // order_by_item: column_ref ASC
-#line 296 "src/query/parser/grammar/QueryBisonParser.y"
-      { yylhs.value.as < mldp_pvxs_driver::query::OrderByItem > () = mldp_pvxs_driver::query::OrderByItem{.column = std::move(yystack_[1].value.as < mldp_pvxs_driver::query::QualifiedColumn > ()), .direction = mldp_pvxs_driver::query::SortDirection::ASCENDING}; }
-#line 1208 "src/query/parser/generated/QueryBisonParser.cpp"
-    break;
-
-  case 14: // order_by_item: column_ref DESC
-#line 298 "src/query/parser/grammar/QueryBisonParser.y"
-      { yylhs.value.as < mldp_pvxs_driver::query::OrderByItem > () = mldp_pvxs_driver::query::OrderByItem{.column = std::move(yystack_[1].value.as < mldp_pvxs_driver::query::QualifiedColumn > ()), .direction = mldp_pvxs_driver::query::SortDirection::DESCENDING}; }
-#line 1214 "src/query/parser/generated/QueryBisonParser.cpp"
-    break;
-
-  case 15: // select_list: STAR
-#line 303 "src/query/parser/grammar/QueryBisonParser.y"
-      {
-          yylhs.value.as < mldp_pvxs_driver::query::generated::SelectListValue > () = mldp_pvxs_driver::query::generated::SelectListValue{
-              .select_all = true,
-              .columns = {}
-          };
-      }
-#line 1225 "src/query/parser/generated/QueryBisonParser.cpp"
-    break;
-
-  case 16: // select_list: column_list
-#line 310 "src/query/parser/grammar/QueryBisonParser.y"
-      {
-          yylhs.value.as < mldp_pvxs_driver::query::generated::SelectListValue > () = mldp_pvxs_driver::query::generated::SelectListValue{
-              .select_all = false,
-              .columns = std::move(yystack_[0].value.as < std::vector<mldp_pvxs_driver::query::QualifiedColumn> > ())
-          };
-      }
-#line 1236 "src/query/parser/generated/QueryBisonParser.cpp"
-    break;
-
-  case 17: // column_list: column_ref
-#line 320 "src/query/parser/grammar/QueryBisonParser.y"
-      {
-          yylhs.value.as < std::vector<mldp_pvxs_driver::query::QualifiedColumn> > () = std::vector<mldp_pvxs_driver::query::QualifiedColumn>{std::move(yystack_[0].value.as < mldp_pvxs_driver::query::QualifiedColumn > ())};
-      }
 #line 1244 "src/query/parser/generated/QueryBisonParser.cpp"
     break;
 
-  case 18: // column_list: column_list COMMA column_ref
-#line 324 "src/query/parser/grammar/QueryBisonParser.y"
-      {
-          yystack_[2].value.as < std::vector<mldp_pvxs_driver::query::QualifiedColumn> > ().push_back(std::move(yystack_[0].value.as < mldp_pvxs_driver::query::QualifiedColumn > ()));
-          yylhs.value.as < std::vector<mldp_pvxs_driver::query::QualifiedColumn> > () = std::move(yystack_[2].value.as < std::vector<mldp_pvxs_driver::query::QualifiedColumn> > ());
-      }
-#line 1253 "src/query/parser/generated/QueryBisonParser.cpp"
+  case 9: // order_by_opt: ORDER BY order_by_list
+#line 311 "src/query/parser/grammar/QueryBisonParser.y"
+      { yylhs.value.as < std::vector<mldp_pvxs_driver::query::OrderByItem> > () = std::move(yystack_[0].value.as < std::vector<mldp_pvxs_driver::query::OrderByItem> > ()); }
+#line 1250 "src/query/parser/generated/QueryBisonParser.cpp"
     break;
 
-  case 19: // table_ref: identifier_path alias_opt
-#line 332 "src/query/parser/grammar/QueryBisonParser.y"
+  case 10: // order_by_list: order_by_item
+#line 316 "src/query/parser/grammar/QueryBisonParser.y"
+      { yylhs.value.as < std::vector<mldp_pvxs_driver::query::OrderByItem> > () = std::vector<mldp_pvxs_driver::query::OrderByItem>{std::move(yystack_[0].value.as < mldp_pvxs_driver::query::OrderByItem > ())}; }
+#line 1256 "src/query/parser/generated/QueryBisonParser.cpp"
+    break;
+
+  case 11: // order_by_list: order_by_list COMMA order_by_item
+#line 318 "src/query/parser/grammar/QueryBisonParser.y"
+      { yystack_[2].value.as < std::vector<mldp_pvxs_driver::query::OrderByItem> > ().push_back(std::move(yystack_[0].value.as < mldp_pvxs_driver::query::OrderByItem > ())); yylhs.value.as < std::vector<mldp_pvxs_driver::query::OrderByItem> > () = std::move(yystack_[2].value.as < std::vector<mldp_pvxs_driver::query::OrderByItem> > ()); }
+#line 1262 "src/query/parser/generated/QueryBisonParser.cpp"
+    break;
+
+  case 12: // order_by_item: expression
+#line 323 "src/query/parser/grammar/QueryBisonParser.y"
+      {
+          mldp_pvxs_driver::query::OrderByItem item{.expression = std::move(yystack_[0].value.as < mldp_pvxs_driver::query::ExpressionPtr > ())};
+          if (std::holds_alternative<QualifiedColumn>(item.expression->value)) item.column = std::get<QualifiedColumn>(item.expression->value);
+          yylhs.value.as < mldp_pvxs_driver::query::OrderByItem > () = std::move(item);
+      }
+#line 1272 "src/query/parser/generated/QueryBisonParser.cpp"
+    break;
+
+  case 13: // order_by_item: expression ASC
+#line 329 "src/query/parser/grammar/QueryBisonParser.y"
+      {
+          mldp_pvxs_driver::query::OrderByItem item{.expression = std::move(yystack_[1].value.as < mldp_pvxs_driver::query::ExpressionPtr > ()), .direction = mldp_pvxs_driver::query::SortDirection::ASCENDING};
+          if (std::holds_alternative<QualifiedColumn>(item.expression->value)) item.column = std::get<QualifiedColumn>(item.expression->value);
+          yylhs.value.as < mldp_pvxs_driver::query::OrderByItem > () = std::move(item);
+      }
+#line 1282 "src/query/parser/generated/QueryBisonParser.cpp"
+    break;
+
+  case 14: // order_by_item: expression DESC
+#line 335 "src/query/parser/grammar/QueryBisonParser.y"
+      {
+          mldp_pvxs_driver::query::OrderByItem item{.expression = std::move(yystack_[1].value.as < mldp_pvxs_driver::query::ExpressionPtr > ()), .direction = mldp_pvxs_driver::query::SortDirection::DESCENDING};
+          if (std::holds_alternative<QualifiedColumn>(item.expression->value)) item.column = std::get<QualifiedColumn>(item.expression->value);
+          yylhs.value.as < mldp_pvxs_driver::query::OrderByItem > () = std::move(item);
+      }
+#line 1292 "src/query/parser/generated/QueryBisonParser.cpp"
+    break;
+
+  case 15: // select_list: STAR
+#line 344 "src/query/parser/grammar/QueryBisonParser.y"
+      {
+          yylhs.value.as < mldp_pvxs_driver::query::generated::SelectListValue > () = mldp_pvxs_driver::query::generated::SelectListValue{
+              .select_all = true,
+              .columns = {}, .items = {}
+          };
+      }
+#line 1303 "src/query/parser/generated/QueryBisonParser.cpp"
+    break;
+
+  case 16: // select_list: select_item_list
+#line 351 "src/query/parser/grammar/QueryBisonParser.y"
+      { yylhs.value.as < mldp_pvxs_driver::query::generated::SelectListValue > () = mldp_pvxs_driver::query::generated::SelectListValue{.select_all = false, .columns = {}, .items = std::move(yystack_[0].value.as < std::vector<mldp_pvxs_driver::query::SelectItem> > ())}; }
+#line 1309 "src/query/parser/generated/QueryBisonParser.cpp"
+    break;
+
+  case 17: // select_item_list: select_item
+#line 356 "src/query/parser/grammar/QueryBisonParser.y"
+      { yylhs.value.as < std::vector<mldp_pvxs_driver::query::SelectItem> > () = std::vector<mldp_pvxs_driver::query::SelectItem>{std::move(yystack_[0].value.as < mldp_pvxs_driver::query::SelectItem > ())}; }
+#line 1315 "src/query/parser/generated/QueryBisonParser.cpp"
+    break;
+
+  case 18: // select_item_list: select_item_list COMMA select_item
+#line 358 "src/query/parser/grammar/QueryBisonParser.y"
+      { yystack_[2].value.as < std::vector<mldp_pvxs_driver::query::SelectItem> > ().push_back(std::move(yystack_[0].value.as < mldp_pvxs_driver::query::SelectItem > ())); yylhs.value.as < std::vector<mldp_pvxs_driver::query::SelectItem> > () = std::move(yystack_[2].value.as < std::vector<mldp_pvxs_driver::query::SelectItem> > ()); }
+#line 1321 "src/query/parser/generated/QueryBisonParser.cpp"
+    break;
+
+  case 19: // select_item: expression
+#line 363 "src/query/parser/grammar/QueryBisonParser.y"
+      { yylhs.value.as < mldp_pvxs_driver::query::SelectItem > () = mldp_pvxs_driver::query::SelectItem{.expression = std::move(yystack_[0].value.as < mldp_pvxs_driver::query::ExpressionPtr > ())}; }
+#line 1327 "src/query/parser/generated/QueryBisonParser.cpp"
+    break;
+
+  case 20: // select_item: expression AS IDENTIFIER
+#line 365 "src/query/parser/grammar/QueryBisonParser.y"
+      { yylhs.value.as < mldp_pvxs_driver::query::SelectItem > () = mldp_pvxs_driver::query::SelectItem{.expression = std::move(yystack_[2].value.as < mldp_pvxs_driver::query::ExpressionPtr > ()), .alias = yystack_[0].value.as < std::string > ()}; }
+#line 1333 "src/query/parser/generated/QueryBisonParser.cpp"
+    break;
+
+  case 21: // table_ref: identifier_path alias_opt
+#line 370 "src/query/parser/grammar/QueryBisonParser.y"
       {
           yylhs.value.as < mldp_pvxs_driver::query::TableRef > () = mldp_pvxs_driver::query::TableRef{
               .table_name = joinPath(yystack_[1].value.as < std::vector<std::string> > (), 0),
               .alias = std::move(yystack_[0].value.as < std::optional<std::string> > ())
           };
       }
-#line 1264 "src/query/parser/generated/QueryBisonParser.cpp"
+#line 1344 "src/query/parser/generated/QueryBisonParser.cpp"
     break;
 
-  case 20: // alias_opt: %empty
-#line 342 "src/query/parser/grammar/QueryBisonParser.y"
+  case 22: // table_ref: LPAREN select_stmt RPAREN alias_opt
+#line 377 "src/query/parser/grammar/QueryBisonParser.y"
+      {
+          if (!yystack_[0].value.as < std::optional<std::string> > ().has_value())
+          {
+              throw ParseError("Derived table sources require an alias", TokenPosition{0, static_cast<std::size_t>(yystack_[3].location.begin.line), static_cast<std::size_t>(yystack_[3].location.begin.column)});
+          }
+          yylhs.value.as < mldp_pvxs_driver::query::TableRef > () = mldp_pvxs_driver::query::TableRef{
+              .table_name = "<derived>", .alias = std::move(yystack_[0].value.as < std::optional<std::string> > ()),
+              .derived_query = std::make_shared<mldp_pvxs_driver::query::SelectStatement>(std::move(yystack_[2].value.as < mldp_pvxs_driver::query::SelectStatement > ()))
+          };
+      }
+#line 1359 "src/query/parser/generated/QueryBisonParser.cpp"
+    break;
+
+  case 23: // alias_opt: %empty
+#line 391 "src/query/parser/grammar/QueryBisonParser.y"
       { yylhs.value.as < std::optional<std::string> > () = std::nullopt; }
-#line 1270 "src/query/parser/generated/QueryBisonParser.cpp"
+#line 1365 "src/query/parser/generated/QueryBisonParser.cpp"
     break;
 
-  case 21: // alias_opt: AS IDENTIFIER
-#line 344 "src/query/parser/grammar/QueryBisonParser.y"
+  case 24: // alias_opt: AS IDENTIFIER
+#line 393 "src/query/parser/grammar/QueryBisonParser.y"
       { yylhs.value.as < std::optional<std::string> > () = std::optional<std::string>{yystack_[0].value.as < std::string > ()}; }
-#line 1276 "src/query/parser/generated/QueryBisonParser.cpp"
+#line 1371 "src/query/parser/generated/QueryBisonParser.cpp"
     break;
 
-  case 22: // alias_opt: IDENTIFIER
-#line 346 "src/query/parser/grammar/QueryBisonParser.y"
+  case 25: // alias_opt: IDENTIFIER
+#line 395 "src/query/parser/grammar/QueryBisonParser.y"
       { yylhs.value.as < std::optional<std::string> > () = std::optional<std::string>{yystack_[0].value.as < std::string > ()}; }
-#line 1282 "src/query/parser/generated/QueryBisonParser.cpp"
+#line 1377 "src/query/parser/generated/QueryBisonParser.cpp"
     break;
 
-  case 23: // join_clauses: %empty
-#line 351 "src/query/parser/grammar/QueryBisonParser.y"
+  case 26: // join_clauses: %empty
+#line 400 "src/query/parser/grammar/QueryBisonParser.y"
       { yylhs.value.as < std::vector<mldp_pvxs_driver::query::JoinClause> > () = {}; }
-#line 1288 "src/query/parser/generated/QueryBisonParser.cpp"
+#line 1383 "src/query/parser/generated/QueryBisonParser.cpp"
     break;
 
-  case 24: // join_clauses: join_clauses join_clause
-#line 353 "src/query/parser/grammar/QueryBisonParser.y"
+  case 27: // join_clauses: join_clauses join_clause
+#line 402 "src/query/parser/grammar/QueryBisonParser.y"
       {
           yystack_[1].value.as < std::vector<mldp_pvxs_driver::query::JoinClause> > ().push_back(std::move(yystack_[0].value.as < mldp_pvxs_driver::query::JoinClause > ()));
           yylhs.value.as < std::vector<mldp_pvxs_driver::query::JoinClause> > () = std::move(yystack_[1].value.as < std::vector<mldp_pvxs_driver::query::JoinClause> > ());
       }
-#line 1297 "src/query/parser/generated/QueryBisonParser.cpp"
+#line 1392 "src/query/parser/generated/QueryBisonParser.cpp"
     break;
 
-  case 25: // join_clause: JOIN table_ref ON column_ref EQ column_ref
-#line 361 "src/query/parser/grammar/QueryBisonParser.y"
-      {
-          yylhs.value.as < mldp_pvxs_driver::query::JoinClause > () = mldp_pvxs_driver::query::JoinClause{
-              .type = mldp_pvxs_driver::query::JoinType::INNER,
-              .table = std::move(yystack_[4].value.as < mldp_pvxs_driver::query::TableRef > ()),
-              .condition = mldp_pvxs_driver::query::JoinCondition{
-                  .left = std::move(yystack_[2].value.as < mldp_pvxs_driver::query::QualifiedColumn > ()),
-                  .right = std::move(yystack_[0].value.as < mldp_pvxs_driver::query::QualifiedColumn > ())
-              }
-          };
-      }
-#line 1312 "src/query/parser/generated/QueryBisonParser.cpp"
-    break;
-
-  case 26: // join_clause: INNER JOIN table_ref ON column_ref EQ column_ref
-#line 372 "src/query/parser/grammar/QueryBisonParser.y"
-      {
-          yylhs.value.as < mldp_pvxs_driver::query::JoinClause > () = mldp_pvxs_driver::query::JoinClause{
-              .type = mldp_pvxs_driver::query::JoinType::INNER,
-              .table = std::move(yystack_[4].value.as < mldp_pvxs_driver::query::TableRef > ()),
-              .condition = mldp_pvxs_driver::query::JoinCondition{
-                  .left = std::move(yystack_[2].value.as < mldp_pvxs_driver::query::QualifiedColumn > ()),
-                  .right = std::move(yystack_[0].value.as < mldp_pvxs_driver::query::QualifiedColumn > ())
-              }
-          };
-      }
-#line 1327 "src/query/parser/generated/QueryBisonParser.cpp"
-    break;
-
-  case 27: // join_clause: LEFT JOIN table_ref ON column_ref EQ column_ref
-#line 383 "src/query/parser/grammar/QueryBisonParser.y"
-      {
-          yylhs.value.as < mldp_pvxs_driver::query::JoinClause > () = mldp_pvxs_driver::query::JoinClause{
-              .type = mldp_pvxs_driver::query::JoinType::LEFT_OUTER,
-              .table = std::move(yystack_[4].value.as < mldp_pvxs_driver::query::TableRef > ()),
-              .condition = mldp_pvxs_driver::query::JoinCondition{
-                  .left = std::move(yystack_[2].value.as < mldp_pvxs_driver::query::QualifiedColumn > ()),
-                  .right = std::move(yystack_[0].value.as < mldp_pvxs_driver::query::QualifiedColumn > ())
-              }
-          };
-      }
-#line 1342 "src/query/parser/generated/QueryBisonParser.cpp"
-    break;
-
-  case 28: // join_clause: LEFT OUTER JOIN table_ref ON column_ref EQ column_ref
-#line 394 "src/query/parser/grammar/QueryBisonParser.y"
-      {
-          yylhs.value.as < mldp_pvxs_driver::query::JoinClause > () = mldp_pvxs_driver::query::JoinClause{
-              .type = mldp_pvxs_driver::query::JoinType::LEFT_OUTER,
-              .table = std::move(yystack_[4].value.as < mldp_pvxs_driver::query::TableRef > ()),
-              .condition = mldp_pvxs_driver::query::JoinCondition{
-                  .left = std::move(yystack_[2].value.as < mldp_pvxs_driver::query::QualifiedColumn > ()),
-                  .right = std::move(yystack_[0].value.as < mldp_pvxs_driver::query::QualifiedColumn > ())
-              }
-          };
-      }
-#line 1357 "src/query/parser/generated/QueryBisonParser.cpp"
-    break;
-
-  case 29: // where_opt: %empty
-#line 408 "src/query/parser/grammar/QueryBisonParser.y"
-      { yylhs.value.as < std::vector<mldp_pvxs_driver::query::WherePredicate> > () = {}; }
-#line 1363 "src/query/parser/generated/QueryBisonParser.cpp"
-    break;
-
-  case 30: // where_opt: WHERE predicate_list
+  case 28: // join_clause: JOIN table_ref ON column_ref EQ column_ref
 #line 410 "src/query/parser/grammar/QueryBisonParser.y"
-      { yylhs.value.as < std::vector<mldp_pvxs_driver::query::WherePredicate> > () = std::move(yystack_[0].value.as < std::vector<mldp_pvxs_driver::query::WherePredicate> > ()); }
-#line 1369 "src/query/parser/generated/QueryBisonParser.cpp"
-    break;
-
-  case 31: // predicate_list: predicate
-#line 415 "src/query/parser/grammar/QueryBisonParser.y"
-      { yylhs.value.as < std::vector<mldp_pvxs_driver::query::WherePredicate> > () = std::vector<mldp_pvxs_driver::query::WherePredicate>{std::move(yystack_[0].value.as < mldp_pvxs_driver::query::WherePredicate > ())}; }
-#line 1375 "src/query/parser/generated/QueryBisonParser.cpp"
-    break;
-
-  case 32: // predicate_list: predicate_list AND predicate
-#line 417 "src/query/parser/grammar/QueryBisonParser.y"
       {
-          yystack_[2].value.as < std::vector<mldp_pvxs_driver::query::WherePredicate> > ().push_back(std::move(yystack_[0].value.as < mldp_pvxs_driver::query::WherePredicate > ()));
-          yylhs.value.as < std::vector<mldp_pvxs_driver::query::WherePredicate> > () = std::move(yystack_[2].value.as < std::vector<mldp_pvxs_driver::query::WherePredicate> > ());
-      }
-#line 1384 "src/query/parser/generated/QueryBisonParser.cpp"
-    break;
-
-  case 33: // predicate: column_ref IN LPAREN literal_list RPAREN
-#line 425 "src/query/parser/grammar/QueryBisonParser.y"
-      {
-          yylhs.value.as < mldp_pvxs_driver::query::WherePredicate > () = mldp_pvxs_driver::query::InPredicate{
-              .column = std::move(yystack_[4].value.as < mldp_pvxs_driver::query::QualifiedColumn > ()),
-              .values = std::move(yystack_[1].value.as < std::vector<mldp_pvxs_driver::query::LiteralValue> > ())
-          };
-      }
-#line 1395 "src/query/parser/generated/QueryBisonParser.cpp"
-    break;
-
-  case 34: // predicate: column_ref BETWEEN literal AND literal
-#line 432 "src/query/parser/grammar/QueryBisonParser.y"
-      {
-          yylhs.value.as < mldp_pvxs_driver::query::WherePredicate > () = mldp_pvxs_driver::query::RangePredicate{
-              .column = std::move(yystack_[4].value.as < mldp_pvxs_driver::query::QualifiedColumn > ()),
-              .lower = std::move(yystack_[2].value.as < mldp_pvxs_driver::query::LiteralValue > ()),
-              .upper = std::move(yystack_[0].value.as < mldp_pvxs_driver::query::LiteralValue > ())
+          yylhs.value.as < mldp_pvxs_driver::query::JoinClause > () = mldp_pvxs_driver::query::JoinClause{
+              .type = mldp_pvxs_driver::query::JoinType::INNER,
+              .table = std::move(yystack_[4].value.as < mldp_pvxs_driver::query::TableRef > ()),
+              .condition = mldp_pvxs_driver::query::JoinCondition{
+                  .left = std::move(yystack_[2].value.as < mldp_pvxs_driver::query::QualifiedColumn > ()),
+                  .right = std::move(yystack_[0].value.as < mldp_pvxs_driver::query::QualifiedColumn > ())
+              }
           };
       }
 #line 1407 "src/query/parser/generated/QueryBisonParser.cpp"
     break;
 
-  case 35: // predicate: column_ref LIKE literal
-#line 440 "src/query/parser/grammar/QueryBisonParser.y"
+  case 29: // join_clause: INNER JOIN table_ref ON column_ref EQ column_ref
+#line 421 "src/query/parser/grammar/QueryBisonParser.y"
       {
-          yylhs.value.as < mldp_pvxs_driver::query::WherePredicate > () = mldp_pvxs_driver::query::OpPredicate{
-              .column = std::move(yystack_[2].value.as < mldp_pvxs_driver::query::QualifiedColumn > ()),
-              .op = mldp_pvxs_driver::query::PredicateBinaryOp::LIKE,
-              .value = std::move(yystack_[0].value.as < mldp_pvxs_driver::query::LiteralValue > ())
+          yylhs.value.as < mldp_pvxs_driver::query::JoinClause > () = mldp_pvxs_driver::query::JoinClause{
+              .type = mldp_pvxs_driver::query::JoinType::INNER,
+              .table = std::move(yystack_[4].value.as < mldp_pvxs_driver::query::TableRef > ()),
+              .condition = mldp_pvxs_driver::query::JoinCondition{
+                  .left = std::move(yystack_[2].value.as < mldp_pvxs_driver::query::QualifiedColumn > ()),
+                  .right = std::move(yystack_[0].value.as < mldp_pvxs_driver::query::QualifiedColumn > ())
+              }
           };
       }
-#line 1419 "src/query/parser/generated/QueryBisonParser.cpp"
+#line 1422 "src/query/parser/generated/QueryBisonParser.cpp"
     break;
 
-  case 36: // predicate: column_ref CONTAINS literal
-#line 448 "src/query/parser/grammar/QueryBisonParser.y"
+  case 30: // join_clause: LEFT JOIN table_ref ON column_ref EQ column_ref
+#line 432 "src/query/parser/grammar/QueryBisonParser.y"
       {
-          yylhs.value.as < mldp_pvxs_driver::query::WherePredicate > () = mldp_pvxs_driver::query::OpPredicate{
-              .column = std::move(yystack_[2].value.as < mldp_pvxs_driver::query::QualifiedColumn > ()),
-              .op = mldp_pvxs_driver::query::PredicateBinaryOp::CONTAINS,
-              .value = std::move(yystack_[0].value.as < mldp_pvxs_driver::query::LiteralValue > ())
+          yylhs.value.as < mldp_pvxs_driver::query::JoinClause > () = mldp_pvxs_driver::query::JoinClause{
+              .type = mldp_pvxs_driver::query::JoinType::LEFT_OUTER,
+              .table = std::move(yystack_[4].value.as < mldp_pvxs_driver::query::TableRef > ()),
+              .condition = mldp_pvxs_driver::query::JoinCondition{
+                  .left = std::move(yystack_[2].value.as < mldp_pvxs_driver::query::QualifiedColumn > ()),
+                  .right = std::move(yystack_[0].value.as < mldp_pvxs_driver::query::QualifiedColumn > ())
+              }
           };
       }
-#line 1431 "src/query/parser/generated/QueryBisonParser.cpp"
+#line 1437 "src/query/parser/generated/QueryBisonParser.cpp"
     break;
 
-  case 37: // predicate: column_ref PREFIX literal
-#line 456 "src/query/parser/grammar/QueryBisonParser.y"
+  case 31: // join_clause: LEFT OUTER JOIN table_ref ON column_ref EQ column_ref
+#line 443 "src/query/parser/grammar/QueryBisonParser.y"
       {
-          yylhs.value.as < mldp_pvxs_driver::query::WherePredicate > () = mldp_pvxs_driver::query::OpPredicate{
-              .column = std::move(yystack_[2].value.as < mldp_pvxs_driver::query::QualifiedColumn > ()),
-              .op = mldp_pvxs_driver::query::PredicateBinaryOp::PREFIX,
-              .value = std::move(yystack_[0].value.as < mldp_pvxs_driver::query::LiteralValue > ())
+          yylhs.value.as < mldp_pvxs_driver::query::JoinClause > () = mldp_pvxs_driver::query::JoinClause{
+              .type = mldp_pvxs_driver::query::JoinType::LEFT_OUTER,
+              .table = std::move(yystack_[4].value.as < mldp_pvxs_driver::query::TableRef > ()),
+              .condition = mldp_pvxs_driver::query::JoinCondition{
+                  .left = std::move(yystack_[2].value.as < mldp_pvxs_driver::query::QualifiedColumn > ()),
+                  .right = std::move(yystack_[0].value.as < mldp_pvxs_driver::query::QualifiedColumn > ())
+              }
           };
       }
-#line 1443 "src/query/parser/generated/QueryBisonParser.cpp"
+#line 1452 "src/query/parser/generated/QueryBisonParser.cpp"
     break;
 
-  case 38: // predicate: column_ref EQ literal
+  case 32: // where_opt: %empty
+#line 457 "src/query/parser/grammar/QueryBisonParser.y"
+      { yylhs.value.as < std::vector<mldp_pvxs_driver::query::WherePredicate> > () = {}; }
+#line 1458 "src/query/parser/generated/QueryBisonParser.cpp"
+    break;
+
+  case 33: // where_opt: WHERE predicate_list
+#line 459 "src/query/parser/grammar/QueryBisonParser.y"
+      { yylhs.value.as < std::vector<mldp_pvxs_driver::query::WherePredicate> > () = std::move(yystack_[0].value.as < std::vector<mldp_pvxs_driver::query::WherePredicate> > ()); }
+#line 1464 "src/query/parser/generated/QueryBisonParser.cpp"
+    break;
+
+  case 34: // predicate_list: predicate
 #line 464 "src/query/parser/grammar/QueryBisonParser.y"
-      {
-          yylhs.value.as < mldp_pvxs_driver::query::WherePredicate > () = mldp_pvxs_driver::query::EqPredicate{
-              .column = std::move(yystack_[2].value.as < mldp_pvxs_driver::query::QualifiedColumn > ()),
-              .value = std::move(yystack_[0].value.as < mldp_pvxs_driver::query::LiteralValue > ())
-          };
-      }
-#line 1454 "src/query/parser/generated/QueryBisonParser.cpp"
+      { yylhs.value.as < std::vector<mldp_pvxs_driver::query::WherePredicate> > () = std::vector<mldp_pvxs_driver::query::WherePredicate>{std::move(yystack_[0].value.as < mldp_pvxs_driver::query::WherePredicate > ())}; }
+#line 1470 "src/query/parser/generated/QueryBisonParser.cpp"
     break;
 
-  case 39: // predicate: column_ref NEQ literal
-#line 471 "src/query/parser/grammar/QueryBisonParser.y"
+  case 35: // predicate_list: predicate_list AND predicate
+#line 466 "src/query/parser/grammar/QueryBisonParser.y"
       {
-          yylhs.value.as < mldp_pvxs_driver::query::WherePredicate > () = mldp_pvxs_driver::query::OpPredicate{
-              .column = std::move(yystack_[2].value.as < mldp_pvxs_driver::query::QualifiedColumn > ()),
-              .op = mldp_pvxs_driver::query::PredicateBinaryOp::NEQ,
-              .value = std::move(yystack_[0].value.as < mldp_pvxs_driver::query::LiteralValue > ())
-          };
+          yystack_[2].value.as < std::vector<mldp_pvxs_driver::query::WherePredicate> > ().push_back(std::move(yystack_[0].value.as < mldp_pvxs_driver::query::WherePredicate > ()));
+          yylhs.value.as < std::vector<mldp_pvxs_driver::query::WherePredicate> > () = std::move(yystack_[2].value.as < std::vector<mldp_pvxs_driver::query::WherePredicate> > ());
       }
-#line 1466 "src/query/parser/generated/QueryBisonParser.cpp"
+#line 1479 "src/query/parser/generated/QueryBisonParser.cpp"
     break;
 
-  case 40: // predicate: column_ref LT literal
-#line 479 "src/query/parser/grammar/QueryBisonParser.y"
+  case 36: // predicate: column_ref IN LPAREN expression_list RPAREN
+#line 474 "src/query/parser/grammar/QueryBisonParser.y"
       {
-          yylhs.value.as < mldp_pvxs_driver::query::WherePredicate > () = mldp_pvxs_driver::query::OpPredicate{
-              .column = std::move(yystack_[2].value.as < mldp_pvxs_driver::query::QualifiedColumn > ()),
-              .op = mldp_pvxs_driver::query::PredicateBinaryOp::LT,
-              .value = std::move(yystack_[0].value.as < mldp_pvxs_driver::query::LiteralValue > ())
+          yylhs.value.as < mldp_pvxs_driver::query::WherePredicate > () = mldp_pvxs_driver::query::InPredicate{
+              .column = std::move(yystack_[4].value.as < mldp_pvxs_driver::query::QualifiedColumn > ()),
+              .values = legacyLiterals(yystack_[1].value.as < std::vector<mldp_pvxs_driver::query::ExpressionPtr> > ()),
+              .expressions = std::move(yystack_[1].value.as < std::vector<mldp_pvxs_driver::query::ExpressionPtr> > ())
           };
       }
-#line 1478 "src/query/parser/generated/QueryBisonParser.cpp"
+#line 1491 "src/query/parser/generated/QueryBisonParser.cpp"
     break;
 
-  case 41: // predicate: column_ref LTE literal
-#line 487 "src/query/parser/grammar/QueryBisonParser.y"
+  case 37: // predicate: column_ref IN LPAREN select_stmt RPAREN
+#line 482 "src/query/parser/grammar/QueryBisonParser.y"
       {
-          yylhs.value.as < mldp_pvxs_driver::query::WherePredicate > () = mldp_pvxs_driver::query::OpPredicate{
-              .column = std::move(yystack_[2].value.as < mldp_pvxs_driver::query::QualifiedColumn > ()),
-              .op = mldp_pvxs_driver::query::PredicateBinaryOp::LTE,
-              .value = std::move(yystack_[0].value.as < mldp_pvxs_driver::query::LiteralValue > ())
-          };
-      }
-#line 1490 "src/query/parser/generated/QueryBisonParser.cpp"
-    break;
-
-  case 42: // predicate: column_ref GT literal
-#line 495 "src/query/parser/grammar/QueryBisonParser.y"
-      {
-          yylhs.value.as < mldp_pvxs_driver::query::WherePredicate > () = mldp_pvxs_driver::query::OpPredicate{
-              .column = std::move(yystack_[2].value.as < mldp_pvxs_driver::query::QualifiedColumn > ()),
-              .op = mldp_pvxs_driver::query::PredicateBinaryOp::GT,
-              .value = std::move(yystack_[0].value.as < mldp_pvxs_driver::query::LiteralValue > ())
+          yylhs.value.as < mldp_pvxs_driver::query::WherePredicate > () = mldp_pvxs_driver::query::InPredicate{
+              .column = std::move(yystack_[4].value.as < mldp_pvxs_driver::query::QualifiedColumn > ()),
+              .subquery = std::make_shared<mldp_pvxs_driver::query::SelectStatement>(std::move(yystack_[1].value.as < mldp_pvxs_driver::query::SelectStatement > ()))
           };
       }
 #line 1502 "src/query/parser/generated/QueryBisonParser.cpp"
     break;
 
-  case 43: // predicate: column_ref GTE literal
-#line 503 "src/query/parser/grammar/QueryBisonParser.y"
+  case 38: // predicate: column_ref BETWEEN expression AND expression
+#line 489 "src/query/parser/grammar/QueryBisonParser.y"
+      {
+          yylhs.value.as < mldp_pvxs_driver::query::WherePredicate > () = mldp_pvxs_driver::query::RangePredicate{
+              .column = std::move(yystack_[4].value.as < mldp_pvxs_driver::query::QualifiedColumn > ()),
+              .lower = legacyLiteral(yystack_[2].value.as < mldp_pvxs_driver::query::ExpressionPtr > ()), .upper = legacyLiteral(yystack_[0].value.as < mldp_pvxs_driver::query::ExpressionPtr > ()),
+              .lower_expression = std::move(yystack_[2].value.as < mldp_pvxs_driver::query::ExpressionPtr > ()),
+              .upper_expression = std::move(yystack_[0].value.as < mldp_pvxs_driver::query::ExpressionPtr > ())
+          };
+      }
+#line 1515 "src/query/parser/generated/QueryBisonParser.cpp"
+    break;
+
+  case 39: // predicate: column_ref LIKE expression
+#line 498 "src/query/parser/grammar/QueryBisonParser.y"
+      {
+          yylhs.value.as < mldp_pvxs_driver::query::WherePredicate > () = mldp_pvxs_driver::query::OpPredicate{
+              .column = std::move(yystack_[2].value.as < mldp_pvxs_driver::query::QualifiedColumn > ()),
+              .op = mldp_pvxs_driver::query::PredicateBinaryOp::LIKE,
+              .value = legacyLiteral(yystack_[0].value.as < mldp_pvxs_driver::query::ExpressionPtr > ()),
+              .expression = std::move(yystack_[0].value.as < mldp_pvxs_driver::query::ExpressionPtr > ())
+          };
+      }
+#line 1528 "src/query/parser/generated/QueryBisonParser.cpp"
+    break;
+
+  case 40: // predicate: column_ref CONTAINS expression
+#line 507 "src/query/parser/grammar/QueryBisonParser.y"
+      {
+          yylhs.value.as < mldp_pvxs_driver::query::WherePredicate > () = mldp_pvxs_driver::query::OpPredicate{
+              .column = std::move(yystack_[2].value.as < mldp_pvxs_driver::query::QualifiedColumn > ()),
+              .op = mldp_pvxs_driver::query::PredicateBinaryOp::CONTAINS,
+              .value = legacyLiteral(yystack_[0].value.as < mldp_pvxs_driver::query::ExpressionPtr > ()),
+              .expression = std::move(yystack_[0].value.as < mldp_pvxs_driver::query::ExpressionPtr > ())
+          };
+      }
+#line 1541 "src/query/parser/generated/QueryBisonParser.cpp"
+    break;
+
+  case 41: // predicate: column_ref PREFIX expression
+#line 516 "src/query/parser/grammar/QueryBisonParser.y"
+      {
+          yylhs.value.as < mldp_pvxs_driver::query::WherePredicate > () = mldp_pvxs_driver::query::OpPredicate{
+              .column = std::move(yystack_[2].value.as < mldp_pvxs_driver::query::QualifiedColumn > ()),
+              .op = mldp_pvxs_driver::query::PredicateBinaryOp::PREFIX,
+              .value = legacyLiteral(yystack_[0].value.as < mldp_pvxs_driver::query::ExpressionPtr > ()),
+              .expression = std::move(yystack_[0].value.as < mldp_pvxs_driver::query::ExpressionPtr > ())
+          };
+      }
+#line 1554 "src/query/parser/generated/QueryBisonParser.cpp"
+    break;
+
+  case 42: // predicate: column_ref EQ expression
+#line 525 "src/query/parser/grammar/QueryBisonParser.y"
+      {
+          yylhs.value.as < mldp_pvxs_driver::query::WherePredicate > () = mldp_pvxs_driver::query::EqPredicate{
+              .column = std::move(yystack_[2].value.as < mldp_pvxs_driver::query::QualifiedColumn > ()),
+              .value = legacyLiteral(yystack_[0].value.as < mldp_pvxs_driver::query::ExpressionPtr > ()),
+              .expression = std::move(yystack_[0].value.as < mldp_pvxs_driver::query::ExpressionPtr > ())
+          };
+      }
+#line 1566 "src/query/parser/generated/QueryBisonParser.cpp"
+    break;
+
+  case 43: // predicate: column_ref NEQ expression
+#line 533 "src/query/parser/grammar/QueryBisonParser.y"
+      {
+          yylhs.value.as < mldp_pvxs_driver::query::WherePredicate > () = mldp_pvxs_driver::query::OpPredicate{
+              .column = std::move(yystack_[2].value.as < mldp_pvxs_driver::query::QualifiedColumn > ()),
+              .op = mldp_pvxs_driver::query::PredicateBinaryOp::NEQ,
+              .value = legacyLiteral(yystack_[0].value.as < mldp_pvxs_driver::query::ExpressionPtr > ()),
+              .expression = std::move(yystack_[0].value.as < mldp_pvxs_driver::query::ExpressionPtr > ())
+          };
+      }
+#line 1579 "src/query/parser/generated/QueryBisonParser.cpp"
+    break;
+
+  case 44: // predicate: column_ref LT expression
+#line 542 "src/query/parser/grammar/QueryBisonParser.y"
+      {
+          yylhs.value.as < mldp_pvxs_driver::query::WherePredicate > () = mldp_pvxs_driver::query::OpPredicate{
+              .column = std::move(yystack_[2].value.as < mldp_pvxs_driver::query::QualifiedColumn > ()),
+              .op = mldp_pvxs_driver::query::PredicateBinaryOp::LT,
+              .value = legacyLiteral(yystack_[0].value.as < mldp_pvxs_driver::query::ExpressionPtr > ()),
+              .expression = std::move(yystack_[0].value.as < mldp_pvxs_driver::query::ExpressionPtr > ())
+          };
+      }
+#line 1592 "src/query/parser/generated/QueryBisonParser.cpp"
+    break;
+
+  case 45: // predicate: column_ref LTE expression
+#line 551 "src/query/parser/grammar/QueryBisonParser.y"
+      {
+          yylhs.value.as < mldp_pvxs_driver::query::WherePredicate > () = mldp_pvxs_driver::query::OpPredicate{
+              .column = std::move(yystack_[2].value.as < mldp_pvxs_driver::query::QualifiedColumn > ()),
+              .op = mldp_pvxs_driver::query::PredicateBinaryOp::LTE,
+              .value = legacyLiteral(yystack_[0].value.as < mldp_pvxs_driver::query::ExpressionPtr > ()),
+              .expression = std::move(yystack_[0].value.as < mldp_pvxs_driver::query::ExpressionPtr > ())
+          };
+      }
+#line 1605 "src/query/parser/generated/QueryBisonParser.cpp"
+    break;
+
+  case 46: // predicate: column_ref GT expression
+#line 560 "src/query/parser/grammar/QueryBisonParser.y"
+      {
+          yylhs.value.as < mldp_pvxs_driver::query::WherePredicate > () = mldp_pvxs_driver::query::OpPredicate{
+              .column = std::move(yystack_[2].value.as < mldp_pvxs_driver::query::QualifiedColumn > ()),
+              .op = mldp_pvxs_driver::query::PredicateBinaryOp::GT,
+              .value = legacyLiteral(yystack_[0].value.as < mldp_pvxs_driver::query::ExpressionPtr > ()),
+              .expression = std::move(yystack_[0].value.as < mldp_pvxs_driver::query::ExpressionPtr > ())
+          };
+      }
+#line 1618 "src/query/parser/generated/QueryBisonParser.cpp"
+    break;
+
+  case 47: // predicate: column_ref GTE expression
+#line 569 "src/query/parser/grammar/QueryBisonParser.y"
       {
           yylhs.value.as < mldp_pvxs_driver::query::WherePredicate > () = mldp_pvxs_driver::query::OpPredicate{
               .column = std::move(yystack_[2].value.as < mldp_pvxs_driver::query::QualifiedColumn > ()),
               .op = mldp_pvxs_driver::query::PredicateBinaryOp::GTE,
-              .value = std::move(yystack_[0].value.as < mldp_pvxs_driver::query::LiteralValue > ())
+              .value = legacyLiteral(yystack_[0].value.as < mldp_pvxs_driver::query::ExpressionPtr > ()),
+              .expression = std::move(yystack_[0].value.as < mldp_pvxs_driver::query::ExpressionPtr > ())
           };
       }
-#line 1514 "src/query/parser/generated/QueryBisonParser.cpp"
+#line 1631 "src/query/parser/generated/QueryBisonParser.cpp"
     break;
 
-  case 44: // literal_list: literal
-#line 514 "src/query/parser/grammar/QueryBisonParser.y"
+  case 48: // expression_list: expression
+#line 581 "src/query/parser/grammar/QueryBisonParser.y"
       {
-          yylhs.value.as < std::vector<mldp_pvxs_driver::query::LiteralValue> > () = std::vector<mldp_pvxs_driver::query::LiteralValue>{std::move(yystack_[0].value.as < mldp_pvxs_driver::query::LiteralValue > ())};
+          yylhs.value.as < std::vector<mldp_pvxs_driver::query::ExpressionPtr> > () = std::vector<mldp_pvxs_driver::query::ExpressionPtr>{std::move(yystack_[0].value.as < mldp_pvxs_driver::query::ExpressionPtr > ())};
       }
-#line 1522 "src/query/parser/generated/QueryBisonParser.cpp"
+#line 1639 "src/query/parser/generated/QueryBisonParser.cpp"
     break;
 
-  case 45: // literal_list: literal_list COMMA literal
-#line 518 "src/query/parser/grammar/QueryBisonParser.y"
+  case 49: // expression_list: expression_list COMMA expression
+#line 585 "src/query/parser/grammar/QueryBisonParser.y"
       {
-          yystack_[2].value.as < std::vector<mldp_pvxs_driver::query::LiteralValue> > ().push_back(std::move(yystack_[0].value.as < mldp_pvxs_driver::query::LiteralValue > ()));
-          yylhs.value.as < std::vector<mldp_pvxs_driver::query::LiteralValue> > () = std::move(yystack_[2].value.as < std::vector<mldp_pvxs_driver::query::LiteralValue> > ());
+          yystack_[2].value.as < std::vector<mldp_pvxs_driver::query::ExpressionPtr> > ().push_back(std::move(yystack_[0].value.as < mldp_pvxs_driver::query::ExpressionPtr > ()));
+          yylhs.value.as < std::vector<mldp_pvxs_driver::query::ExpressionPtr> > () = std::move(yystack_[2].value.as < std::vector<mldp_pvxs_driver::query::ExpressionPtr> > ());
       }
-#line 1531 "src/query/parser/generated/QueryBisonParser.cpp"
+#line 1648 "src/query/parser/generated/QueryBisonParser.cpp"
     break;
 
-  case 46: // literal: STRING_LITERAL
-#line 526 "src/query/parser/grammar/QueryBisonParser.y"
+  case 50: // expression: literal
+#line 593 "src/query/parser/grammar/QueryBisonParser.y"
+      { yylhs.value.as < mldp_pvxs_driver::query::ExpressionPtr > () = makeExpression(ExpressionValue{std::move(yystack_[0].value.as < mldp_pvxs_driver::query::LiteralValue > ())}); }
+#line 1654 "src/query/parser/generated/QueryBisonParser.cpp"
+    break;
+
+  case 51: // expression: column_ref
+#line 595 "src/query/parser/grammar/QueryBisonParser.y"
+      { yylhs.value.as < mldp_pvxs_driver::query::ExpressionPtr > () = makeExpression(ExpressionValue{std::move(yystack_[0].value.as < mldp_pvxs_driver::query::QualifiedColumn > ())}); }
+#line 1660 "src/query/parser/generated/QueryBisonParser.cpp"
+    break;
+
+  case 52: // expression: IDENTIFIER LPAREN expression_list RPAREN
+#line 597 "src/query/parser/grammar/QueryBisonParser.y"
+      { yylhs.value.as < mldp_pvxs_driver::query::ExpressionPtr > () = makeExpression(ExpressionValue{FunctionCall{.name = std::move(yystack_[3].value.as < std::string > ()), .arguments = std::move(yystack_[1].value.as < std::vector<mldp_pvxs_driver::query::ExpressionPtr> > ())}}); }
+#line 1666 "src/query/parser/generated/QueryBisonParser.cpp"
+    break;
+
+  case 53: // literal: STRING_LITERAL
+#line 602 "src/query/parser/grammar/QueryBisonParser.y"
       { yylhs.value.as < mldp_pvxs_driver::query::LiteralValue > () = mldp_pvxs_driver::query::LiteralValue{yystack_[0].value.as < std::string > ()}; }
-#line 1537 "src/query/parser/generated/QueryBisonParser.cpp"
+#line 1672 "src/query/parser/generated/QueryBisonParser.cpp"
     break;
 
-  case 47: // literal: NUMBER_LITERAL
-#line 528 "src/query/parser/grammar/QueryBisonParser.y"
+  case 54: // literal: NUMBER_LITERAL
+#line 604 "src/query/parser/grammar/QueryBisonParser.y"
       { yylhs.value.as < mldp_pvxs_driver::query::LiteralValue > () = mldp_pvxs_driver::query::LiteralValue{yystack_[0].value.as < int64_t > ()}; }
-#line 1543 "src/query/parser/generated/QueryBisonParser.cpp"
+#line 1678 "src/query/parser/generated/QueryBisonParser.cpp"
     break;
 
-  case 48: // literal: now_literal
-#line 530 "src/query/parser/grammar/QueryBisonParser.y"
+  case 55: // literal: now_literal
+#line 606 "src/query/parser/grammar/QueryBisonParser.y"
       { yylhs.value.as < mldp_pvxs_driver::query::LiteralValue > () = std::move(yystack_[0].value.as < mldp_pvxs_driver::query::LiteralValue > ()); }
-#line 1549 "src/query/parser/generated/QueryBisonParser.cpp"
+#line 1684 "src/query/parser/generated/QueryBisonParser.cpp"
     break;
 
-  case 49: // now_literal: NOW
-#line 535 "src/query/parser/grammar/QueryBisonParser.y"
+  case 56: // now_literal: NOW
+#line 611 "src/query/parser/grammar/QueryBisonParser.y"
       { yylhs.value.as < mldp_pvxs_driver::query::LiteralValue > () = mldp_pvxs_driver::query::LiteralValue{mldp_pvxs_driver::query::NowLiteral{0}}; }
-#line 1555 "src/query/parser/generated/QueryBisonParser.cpp"
+#line 1690 "src/query/parser/generated/QueryBisonParser.cpp"
     break;
 
-  case 50: // now_literal: NOW signed_duration
-#line 537 "src/query/parser/grammar/QueryBisonParser.y"
+  case 57: // now_literal: NOW signed_duration
+#line 613 "src/query/parser/grammar/QueryBisonParser.y"
       { yylhs.value.as < mldp_pvxs_driver::query::LiteralValue > () = mldp_pvxs_driver::query::LiteralValue{mldp_pvxs_driver::query::NowLiteral{yystack_[0].value.as < int64_t > ()}}; }
-#line 1561 "src/query/parser/generated/QueryBisonParser.cpp"
+#line 1696 "src/query/parser/generated/QueryBisonParser.cpp"
     break;
 
-  case 51: // signed_duration: PLUS DURATION_LITERAL
-#line 542 "src/query/parser/grammar/QueryBisonParser.y"
+  case 58: // signed_duration: PLUS DURATION_LITERAL
+#line 618 "src/query/parser/grammar/QueryBisonParser.y"
       { yylhs.value.as < int64_t > () = durationToSeconds(yystack_[0].value.as < std::string > (), yystack_[0].location); }
-#line 1567 "src/query/parser/generated/QueryBisonParser.cpp"
+#line 1702 "src/query/parser/generated/QueryBisonParser.cpp"
     break;
 
-  case 52: // signed_duration: MINUS DURATION_LITERAL
-#line 544 "src/query/parser/grammar/QueryBisonParser.y"
+  case 59: // signed_duration: MINUS DURATION_LITERAL
+#line 620 "src/query/parser/grammar/QueryBisonParser.y"
       { yylhs.value.as < int64_t > () = -durationToSeconds(yystack_[0].value.as < std::string > (), yystack_[0].location); }
-#line 1573 "src/query/parser/generated/QueryBisonParser.cpp"
+#line 1708 "src/query/parser/generated/QueryBisonParser.cpp"
     break;
 
-  case 53: // column_ref: identifier_path
-#line 549 "src/query/parser/grammar/QueryBisonParser.y"
+  case 60: // column_ref: identifier_path
+#line 625 "src/query/parser/grammar/QueryBisonParser.y"
       {
           yylhs.value.as < mldp_pvxs_driver::query::QualifiedColumn > () = makeColumn(std::move(yystack_[0].value.as < std::vector<std::string> > ()));
       }
-#line 1581 "src/query/parser/generated/QueryBisonParser.cpp"
+#line 1716 "src/query/parser/generated/QueryBisonParser.cpp"
     break;
 
-  case 54: // identifier_path: IDENTIFIER
-#line 556 "src/query/parser/grammar/QueryBisonParser.y"
+  case 61: // identifier_path: IDENTIFIER
+#line 632 "src/query/parser/grammar/QueryBisonParser.y"
       { yylhs.value.as < std::vector<std::string> > () = std::vector<std::string>{yystack_[0].value.as < std::string > ()}; }
-#line 1587 "src/query/parser/generated/QueryBisonParser.cpp"
+#line 1722 "src/query/parser/generated/QueryBisonParser.cpp"
     break;
 
-  case 55: // identifier_path: identifier_path DOT IDENTIFIER
-#line 558 "src/query/parser/grammar/QueryBisonParser.y"
+  case 62: // identifier_path: identifier_path DOT IDENTIFIER
+#line 634 "src/query/parser/grammar/QueryBisonParser.y"
       {
           yystack_[2].value.as < std::vector<std::string> > ().push_back(yystack_[0].value.as < std::string > ());
           yylhs.value.as < std::vector<std::string> > () = std::move(yystack_[2].value.as < std::vector<std::string> > ());
       }
-#line 1596 "src/query/parser/generated/QueryBisonParser.cpp"
+#line 1731 "src/query/parser/generated/QueryBisonParser.cpp"
     break;
 
-  case 56: // limit_opt: %empty
-#line 566 "src/query/parser/grammar/QueryBisonParser.y"
+  case 63: // limit_opt: %empty
+#line 642 "src/query/parser/grammar/QueryBisonParser.y"
       { yylhs.value.as < std::optional<uint64_t> > () = std::nullopt; }
-#line 1602 "src/query/parser/generated/QueryBisonParser.cpp"
+#line 1737 "src/query/parser/generated/QueryBisonParser.cpp"
     break;
 
-  case 57: // limit_opt: LIMIT NUMBER_LITERAL
-#line 568 "src/query/parser/grammar/QueryBisonParser.y"
+  case 64: // limit_opt: LIMIT NUMBER_LITERAL
+#line 644 "src/query/parser/grammar/QueryBisonParser.y"
       {
           if (yystack_[0].value.as < int64_t > () < 0)
           {
@@ -1610,23 +1745,23 @@ namespace mldp_pvxs_driver { namespace query { namespace generated {
           }
           yylhs.value.as < std::optional<uint64_t> > () = std::optional<uint64_t>{static_cast<uint64_t>(yystack_[0].value.as < int64_t > ())};
       }
-#line 1614 "src/query/parser/generated/QueryBisonParser.cpp"
+#line 1749 "src/query/parser/generated/QueryBisonParser.cpp"
     break;
 
-  case 58: // page_opt: %empty
-#line 579 "src/query/parser/grammar/QueryBisonParser.y"
+  case 65: // page_opt: %empty
+#line 655 "src/query/parser/grammar/QueryBisonParser.y"
       { yylhs.value.as < std::optional<std::string> > () = std::nullopt; }
-#line 1620 "src/query/parser/generated/QueryBisonParser.cpp"
+#line 1755 "src/query/parser/generated/QueryBisonParser.cpp"
     break;
 
-  case 59: // page_opt: PAGE TOKEN STRING_LITERAL
-#line 581 "src/query/parser/grammar/QueryBisonParser.y"
+  case 66: // page_opt: PAGE TOKEN STRING_LITERAL
+#line 657 "src/query/parser/grammar/QueryBisonParser.y"
       { yylhs.value.as < std::optional<std::string> > () = std::optional<std::string>{yystack_[0].value.as < std::string > ()}; }
-#line 1626 "src/query/parser/generated/QueryBisonParser.cpp"
+#line 1761 "src/query/parser/generated/QueryBisonParser.cpp"
     break;
 
 
-#line 1630 "src/query/parser/generated/QueryBisonParser.cpp"
+#line 1765 "src/query/parser/generated/QueryBisonParser.cpp"
 
             default:
               break;
@@ -1817,10 +1952,11 @@ namespace mldp_pvxs_driver { namespace query { namespace generated {
   "STAR", "COMMA", "DOT", "LPAREN", "RPAREN", "PLUS", "MINUS", "EQ", "NEQ",
   "LT", "LTE", "GT", "GTE", "$accept", "input", "statement", "select_stmt",
   "order_by_opt", "order_by_list", "order_by_item", "select_list",
-  "column_list", "table_ref", "alias_opt", "join_clauses", "join_clause",
-  "where_opt", "predicate_list", "predicate", "literal_list", "literal",
-  "now_literal", "signed_duration", "column_ref", "identifier_path",
-  "limit_opt", "page_opt", YY_NULLPTR
+  "select_item_list", "select_item", "table_ref", "alias_opt",
+  "join_clauses", "join_clause", "where_opt", "predicate_list",
+  "predicate", "expression_list", "expression", "literal", "now_literal",
+  "signed_duration", "column_ref", "identifier_path", "limit_opt",
+  "page_opt", YY_NULLPTR
     };
     return yy_sname[yysymbol];
   }
@@ -1950,112 +2086,119 @@ namespace mldp_pvxs_driver { namespace query { namespace generated {
   }
 
 
-  const signed char QueryBisonParser::yypact_ninf_ = -49;
+  const signed char QueryBisonParser::yypact_ninf_ = -53;
 
   const signed char QueryBisonParser::yytable_ninf_ = -1;
 
   const signed char
   QueryBisonParser::yypact_[] =
   {
-      52,    17,    -3,    22,    25,    33,    55,   -49,   -49,   -49,
-      44,    21,   -49,    26,   -49,    26,   -49,   -49,   -49,    22,
-      22,    60,   -49,    14,   -49,   -49,    45,   -49,    61,   -49,
-      22,    40,    -2,    22,   -49,    28,   -49,    63,   -49,     0,
-      22,    49,    22,    50,    46,    64,    22,    38,    10,    10,
-      10,    10,    10,    10,    10,    10,    10,    10,    53,    22,
-      57,    22,    22,    75,    69,   -49,    10,   -49,   -49,    -9,
-     -49,   -49,    76,   -49,   -49,   -49,   -49,   -49,   -49,   -49,
-     -49,    22,    59,    22,    47,    54,   -49,     6,   -49,    71,
-     -49,   -14,   -49,    85,    86,   -49,    10,    51,    22,    62,
-      22,    22,   -49,   -49,    89,    10,   -49,   -49,   -49,   -49,
-      22,    65,    22,   -49,   -49,   -49,   -49,   -49,    22,   -49,
-     -49
+      10,    66,     3,     9,    49,     6,    14,   -53,     8,   -53,
+     -53,    -6,   -53,    50,    31,   -53,    47,   -53,   -53,   -53,
+      35,   -53,   -53,    35,   -53,   -53,   -53,    91,    69,    71,
+     -53,     7,    91,    76,    79,   -19,   -53,   -53,   -53,    49,
+     -53,    -1,   -53,   -53,   -53,    91,   -53,    48,    80,   -53,
+      88,   -53,   -53,     1,     9,    73,    38,     7,   -53,    81,
+     -53,   -53,    86,   -53,    -4,     7,    84,     7,    78,    68,
+      92,     9,    77,    91,    91,    91,    91,    91,    91,    91,
+      91,    91,    91,    87,     7,    89,     9,    91,   104,    97,
+     -53,    74,   -53,   106,   -53,   -53,   -53,   -53,   -53,   -53,
+     -53,   -53,     9,    93,     9,    82,    85,   -53,    75,   -53,
+     101,   -53,    83,   -12,    91,    90,     9,    94,     9,    91,
+     -53,   -53,   118,   -53,   -53,   -53,     9,    95,     9,   -53,
+     -53,   -53,   -53,     9,   -53,   -53
   };
 
   const signed char
   QueryBisonParser::yydefact_[] =
   {
-       0,     0,     0,     0,     0,     0,     0,     3,    54,    15,
-       0,    16,    17,    53,     4,     5,     6,     1,     2,     0,
-       0,     0,    23,    20,    18,    55,    29,    22,     0,    19,
-       0,     0,     0,     0,    24,     8,    21,    30,    31,     0,
-       0,     0,     0,     0,     0,    56,     0,     0,     0,     0,
-       0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
-       0,     0,     0,     0,    58,    32,     0,    46,    47,    49,
-      35,    48,     0,    37,    36,    38,    39,    40,    41,    42,
-      43,     0,     0,     0,     0,     9,    10,    12,    57,     0,
-       7,     0,    44,     0,     0,    50,     0,     0,     0,     0,
-       0,     0,    13,    14,     0,     0,    33,    51,    52,    34,
-       0,     0,     0,    25,    11,    59,    45,    26,     0,    27,
-      28
+       0,     0,     0,     0,     0,     0,     0,     3,    61,    53,
+      54,    56,    15,     0,    16,    17,    19,    50,    55,    51,
+      60,     4,    61,     5,     6,     1,     2,     0,     0,     0,
+      57,     0,     0,     0,     0,     0,    48,    58,    59,     0,
+      26,    23,    18,    20,    62,     0,    52,     0,    32,    25,
+       0,    21,    49,    23,     0,     0,     0,     0,    27,     8,
+      24,    22,    33,    34,     0,     0,     0,     0,     0,     0,
+      63,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+       0,     0,     0,     0,     0,     0,     0,     0,     0,    65,
+      35,     0,    39,     0,    41,    40,    42,    43,    44,    45,
+      46,    47,     0,     0,     0,     0,     9,    10,    12,    64,
+       0,     7,     0,     0,     0,     0,     0,     0,     0,     0,
+      13,    14,     0,    37,    36,    38,     0,     0,     0,    28,
+      11,    66,    29,     0,    30,    31
   };
 
   const signed char
   QueryBisonParser::yypgoto_[] =
   {
-     -49,   -49,   -49,    90,   -49,   -49,    -5,   -49,   -49,    -6,
-     -49,   -49,   -49,   -49,   -49,    56,   -49,   -48,   -49,   -49,
-      -1,     7,   -49,   -49
+     -53,   -53,   -53,    -3,   -53,   -53,     5,   -53,   -53,    96,
+     -52,    72,   -53,   -53,   -53,   -53,    55,    36,   -27,   -53,
+     -53,   -53,   -43,     0,   -53,   -53
   };
 
   const signed char
   QueryBisonParser::yydefgoto_[] =
   {
-      -1,     5,     6,     7,    45,    85,    86,    10,    11,    22,
-      29,    26,    34,    35,    37,    38,    91,    70,    71,    95,
-      39,    13,    64,    90
+      -1,     5,     6,     7,    70,   106,   107,    13,    14,    15,
+      40,    51,    48,    58,    59,    62,    63,    35,    16,    17,
+      18,    30,    19,    20,    89,   111
   };
 
-  const signed char
+  const unsigned char
   QueryBisonParser::yytable_[] =
   {
-      12,    72,    73,    74,    75,    76,    77,    78,    79,    80,
-      15,    47,    48,    49,    67,    14,    68,    27,    92,    24,
-       8,   105,    41,    42,   106,     8,    23,    43,    50,    51,
-      93,    94,     1,    17,    58,    28,    60,    69,   102,   103,
-      23,    52,    53,    54,    55,    56,    57,    23,   109,    23,
-      21,     9,    19,    82,    30,    18,    20,   116,    44,     1,
-      84,    87,    21,    25,    36,    40,    23,    31,    32,     2,
-      33,     3,     4,    46,    59,    66,    61,    62,    63,    81,
-      97,    88,    99,    83,    89,    98,    96,   104,   100,   101,
-     107,   108,   110,   115,    16,     0,   114,   111,     0,   113,
-      87,     0,    65,   112,     0,     0,   118,     0,     0,   117,
-       0,   119,     0,     0,     0,     0,     0,   120
+      36,    24,    49,    23,    49,    68,    25,    72,    73,    74,
+      22,    64,    22,    83,    26,    85,    45,     1,    52,    46,
+      50,    21,    50,    45,    75,    76,   124,     2,    64,     3,
+       4,    41,   103,    28,    29,    34,    47,    77,    78,    79,
+      80,    81,    82,   105,    39,    27,    92,    93,    94,    95,
+      96,    97,    98,    99,   100,   101,     1,    41,    31,   115,
+     108,   117,    66,    67,    36,    41,    32,    41,    33,     8,
+       9,    34,    10,   127,    37,   129,    38,     8,     9,    43,
+      10,     1,    44,   132,    41,   134,    53,   125,   112,    54,
+     135,    60,   108,    11,     8,     9,    71,    10,    65,    87,
+      12,    11,    55,    56,    86,    57,    88,   120,   121,    84,
+     109,    69,   110,   102,    91,   104,   114,   122,    11,   116,
+     119,   123,   131,   118,   130,    61,    90,   113,    42,     0,
+       0,   126,     0,     0,     0,   128,   133
   };
 
-  const signed char
+  const short
   QueryBisonParser::yycheck_[] =
   {
-       1,    49,    50,    51,    52,    53,    54,    55,    56,    57,
-       3,    11,    12,    13,     4,    18,     6,     3,    66,    20,
-       3,    35,    24,    25,    38,     3,    19,    33,    28,    29,
-      39,    40,     7,     0,    40,    21,    42,    27,    32,    33,
-      33,    41,    42,    43,    44,    45,    46,    40,    96,    42,
-      36,    34,     8,    59,     9,     0,    35,   105,    30,     7,
-      61,    62,    36,     3,     3,    25,    59,    22,    23,    17,
-      25,    19,    20,    10,    25,    37,    26,    31,    14,    26,
-      81,     6,    83,    26,    15,    26,    10,    16,    41,    35,
-       5,     5,    41,     4,     4,    -1,   101,    98,    -1,   100,
-     101,    -1,    46,    41,    -1,    -1,    41,    -1,    -1,   110,
-      -1,   112,    -1,    -1,    -1,    -1,    -1,   118
+      27,     4,     3,     3,     3,    57,     0,    11,    12,    13,
+       3,    54,     3,    65,     0,    67,    35,     7,    45,    38,
+      21,    18,    21,    35,    28,    29,    38,    17,    71,    19,
+      20,    31,    84,    39,    40,    36,    39,    41,    42,    43,
+      44,    45,    46,    86,    37,    37,    73,    74,    75,    76,
+      77,    78,    79,    80,    81,    82,     7,    57,     8,   102,
+      87,   104,    24,    25,    91,    65,    35,    67,    21,     3,
+       4,    36,     6,   116,     5,   118,     5,     3,     4,     3,
+       6,     7,     3,   126,    84,   128,    38,   114,    91,     9,
+     133,     3,   119,    27,     3,     4,    10,     6,    25,    31,
+      34,    27,    22,    23,    26,    25,    14,    32,    33,    25,
+       6,    30,    15,    26,    37,    26,    10,    16,    27,    26,
+      35,    38,     4,    41,   119,    53,    71,    91,    32,    -1,
+      -1,    41,    -1,    -1,    -1,    41,    41
   };
 
   const signed char
   QueryBisonParser::yystos_[] =
   {
-       0,     7,    17,    19,    20,    48,    49,    50,     3,    34,
-      54,    55,    67,    68,    18,    68,    50,     0,     0,     8,
-      35,    36,    56,    68,    67,     3,    58,     3,    21,    57,
-       9,    22,    23,    25,    59,    60,     3,    61,    62,    67,
-      25,    24,    25,    56,    30,    51,    10,    11,    12,    13,
-      28,    29,    41,    42,    43,    44,    45,    46,    56,    25,
-      56,    26,    31,    14,    69,    62,    37,     4,     6,    27,
-      64,    65,    64,    64,    64,    64,    64,    64,    64,    64,
-      64,    26,    56,    26,    67,    52,    53,    67,     6,    15,
-      70,    63,    64,    39,    40,    66,    10,    67,    26,    67,
-      41,    35,    32,    33,    16,    35,    38,     5,     5,    64,
-      41,    67,    41,    67,    53,     4,    64,    67,    41,    67,
-      67
+       0,     7,    17,    19,    20,    48,    49,    50,     3,     4,
+       6,    27,    34,    54,    55,    56,    65,    66,    67,    69,
+      70,    18,     3,    70,    50,     0,     0,    37,    39,    40,
+      68,     8,    35,    21,    36,    64,    65,     5,     5,    37,
+      57,    70,    56,     3,     3,    35,    38,    50,    59,     3,
+      21,    58,    65,    38,     9,    22,    23,    25,    60,    61,
+       3,    58,    62,    63,    69,    25,    24,    25,    57,    30,
+      51,    10,    11,    12,    13,    28,    29,    41,    42,    43,
+      44,    45,    46,    57,    25,    57,    26,    31,    14,    71,
+      63,    37,    65,    65,    65,    65,    65,    65,    65,    65,
+      65,    65,    26,    57,    26,    69,    52,    53,    65,     6,
+      15,    72,    50,    64,    10,    69,    26,    69,    41,    35,
+      32,    33,    16,    38,    38,    65,    41,    69,    41,    69,
+      53,     4,    69,    41,    69,    69
   };
 
   const signed char
@@ -2063,21 +2206,23 @@ namespace mldp_pvxs_driver { namespace query { namespace generated {
   {
        0,    47,    48,    49,    49,    49,    49,    50,    51,    51,
       52,    52,    53,    53,    53,    54,    54,    55,    55,    56,
-      57,    57,    57,    58,    58,    59,    59,    59,    59,    60,
-      60,    61,    61,    62,    62,    62,    62,    62,    62,    62,
-      62,    62,    62,    62,    63,    63,    64,    64,    64,    65,
-      65,    66,    66,    67,    68,    68,    69,    69,    70,    70
+      56,    57,    57,    58,    58,    58,    59,    59,    60,    60,
+      60,    60,    61,    61,    62,    62,    63,    63,    63,    63,
+      63,    63,    63,    63,    63,    63,    63,    63,    64,    64,
+      65,    65,    65,    66,    66,    66,    67,    67,    68,    68,
+      69,    70,    70,    71,    71,    72,    72
   };
 
   const signed char
   QueryBisonParser::yyr2_[] =
   {
        0,     2,     2,     1,     2,     2,     2,     9,     0,     3,
-       1,     3,     1,     2,     2,     1,     1,     1,     3,     2,
-       0,     2,     1,     0,     2,     6,     7,     7,     8,     0,
-       2,     1,     3,     5,     5,     3,     3,     3,     3,     3,
-       3,     3,     3,     3,     1,     3,     1,     1,     1,     1,
-       2,     2,     2,     1,     1,     3,     0,     2,     0,     3
+       1,     3,     1,     2,     2,     1,     1,     1,     3,     1,
+       3,     2,     4,     0,     2,     1,     0,     2,     6,     7,
+       7,     8,     0,     2,     1,     3,     5,     5,     5,     3,
+       3,     3,     3,     3,     3,     3,     3,     3,     1,     3,
+       1,     1,     4,     1,     1,     1,     1,     2,     2,     2,
+       1,     1,     3,     0,     2,     0,     3
   };
 
 
@@ -2087,12 +2232,13 @@ namespace mldp_pvxs_driver { namespace query { namespace generated {
   const short
   QueryBisonParser::yyrline_[] =
   {
-       0,   241,   241,   248,   250,   252,   256,   263,   280,   281,
-     286,   288,   293,   295,   297,   302,   309,   319,   323,   331,
-     342,   343,   345,   351,   352,   360,   371,   382,   393,   408,
-     409,   414,   416,   424,   431,   439,   447,   455,   463,   470,
-     478,   486,   494,   502,   513,   517,   525,   527,   529,   534,
-     536,   541,   543,   548,   555,   557,   566,   567,   579,   580
+       0,   265,   265,   272,   274,   276,   280,   287,   309,   310,
+     315,   317,   322,   328,   334,   343,   350,   355,   357,   362,
+     364,   369,   376,   391,   392,   394,   400,   401,   409,   420,
+     431,   442,   457,   458,   463,   465,   473,   481,   488,   497,
+     506,   515,   524,   532,   541,   550,   559,   568,   580,   584,
+     592,   594,   596,   601,   603,   605,   610,   612,   617,   619,
+     624,   631,   633,   642,   643,   655,   656
   };
 
   void
@@ -2125,7 +2271,7 @@ namespace mldp_pvxs_driver { namespace query { namespace generated {
 
 #line 5 "src/query/parser/grammar/QueryBisonParser.y"
 } } } // mldp_pvxs_driver::query::generated
-#line 2129 "src/query/parser/generated/QueryBisonParser.cpp"
+#line 2275 "src/query/parser/generated/QueryBisonParser.cpp"
 
-#line 584 "src/query/parser/grammar/QueryBisonParser.y"
+#line 660 "src/query/parser/grammar/QueryBisonParser.y"
 

@@ -185,6 +185,34 @@ TEST(QueryParserTest, ParsesMultiKeyOrderBy)
     EXPECT_EQ(*select.limit, 10);
 }
 
+TEST(QueryParserTest, ParsesNestedFunctionExpressionsInPredicateSelectAndOrderBy)
+{
+    const auto statement = parseQuery(
+        "SELECT to_utc('2026-07-23T09:00:00-07:00') AS utc "
+        "FROM mldp.time_series WHERE time >= to_utc('2026-07-23 09:00:00', '-07:00') "
+        "ORDER BY to_utc('2026-07-23T09:00:00-07:00') DESC");
+    const auto& select = std::get<SelectStatement>(statement);
+
+    ASSERT_EQ(select.select_items.size(), 1U);
+    ASSERT_TRUE(select.select_items.front().alias.has_value());
+    EXPECT_EQ(*select.select_items.front().alias, "utc");
+    const auto& select_function = std::get<FunctionCall>(select.select_items.front().expression->value);
+    EXPECT_EQ(select_function.name, "to_utc");
+    ASSERT_EQ(select_function.arguments.size(), 1U);
+
+    ASSERT_EQ(select.predicates.size(), 1U);
+    const auto& predicate = std::get<OpPredicate>(select.predicates.front());
+    ASSERT_NE(predicate.expression, nullptr);
+    const auto& predicate_function = std::get<FunctionCall>(predicate.expression->value);
+    EXPECT_EQ(predicate_function.name, "to_utc");
+    EXPECT_EQ(predicate_function.arguments.size(), 2U);
+
+    ASSERT_EQ(select.order_by.size(), 1U);
+    ASSERT_NE(select.order_by.front().expression, nullptr);
+    EXPECT_EQ(select.order_by.front().direction, SortDirection::DESCENDING);
+    EXPECT_TRUE(std::holds_alternative<FunctionCall>(select.order_by.front().expression->value));
+}
+
 TEST(QueryParserTest, ParsesSpecialTimeSeriesTableSelectStarAndMetadataFilters)
 {
     const auto statement = parseQuery(

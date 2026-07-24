@@ -12,6 +12,7 @@
 
 #include <query/QueryableFactory.h>
 #include <query/QueryTableCatalog.h>
+#include <query/ScalarFunctionRegistry.h>
 #include <query/plan/PlannerError.h>
 
 #include <arrow/type.h>
@@ -118,6 +119,15 @@ ResolvedColumn resolveColumnReference(const QualifiedColumn& column,
     return matches.front();
 }
 
+const QualifiedColumn& columnExpression(const ExpressionPtr& expression, const std::string_view clause)
+{
+    if (expression)
+    {
+        if (const auto* column = std::get_if<QualifiedColumn>(&expression->value)) return *column;
+    }
+    throw plan::PlannerException(plan::BindError{.message = std::string(clause) + " requires a column expression"});
+}
+
 PredicateOp mapBinaryOp(const PredicateBinaryOp op)
 {
     switch (op)
@@ -158,6 +168,14 @@ plan::PlannerLiteralValue toPlannerLiteral(const LiteralValue& value)
         return std::get<int64_t>(value);
     }
     return std::get<NowLiteral>(value);
+}
+
+LiteralValue constantExpression(const ExpressionPtr& expression)
+{
+    if (!expression) throw plan::PlannerException(plan::BindError{.message = "Missing predicate expression"});
+    if (const auto* literal = std::get_if<LiteralValue>(&expression->value)) return *literal;
+    if (const auto* function = std::get_if<FunctionCall>(&expression->value)) return ScalarFunctionRegistry{}.evaluateTimestamp(*function);
+    throw plan::PlannerException(plan::BindError{.message = "WHERE expression must be constant"});
 }
 
 plan::PlannerPredicate buildPredicate(const WherePredicate& where,
@@ -215,7 +233,7 @@ plan::PlannerPredicate buildPredicate(const WherePredicate& where,
             if constexpr (std::is_same_v<std::decay_t<decltype(predicate)>, EqPredicate>)
             {
                 bound.op = PredicateOp::EQ;
-                bound.values.push_back(toPlannerLiteral(predicate.value));
+                bound.values.push_back(toPlannerLiteral(predicate.expression ? constantExpression(predicate.expression) : predicate.value));
             }
             else if constexpr (std::is_same_v<std::decay_t<decltype(predicate)>, InPredicate>)
             {
@@ -225,7 +243,11 @@ plan::PlannerPredicate buildPredicate(const WherePredicate& where,
                         .message = "IN (SELECT ...) is supported only for mldp.time_series_table pv and window predicates"});
                 }
                 bound.op = PredicateOp::IN;
-                for (const auto& value : predicate.values)
+                if (!predicate.expressions.empty())
+                {
+                    for (const auto& value : predicate.expressions) bound.values.push_back(toPlannerLiteral(constantExpression(value)));
+                }
+                else for (const auto& value : predicate.values)
                 {
                     bound.values.push_back(toPlannerLiteral(value));
                 }
@@ -233,8 +255,8 @@ plan::PlannerPredicate buildPredicate(const WherePredicate& where,
             else if constexpr (std::is_same_v<std::decay_t<decltype(predicate)>, RangePredicate>)
             {
                 bound.op = PredicateOp::BETWEEN;
-                bound.values.push_back(toPlannerLiteral(predicate.lower));
-                bound.values.push_back(toPlannerLiteral(predicate.upper));
+                bound.values.push_back(toPlannerLiteral(predicate.lower_expression ? constantExpression(predicate.lower_expression) : predicate.lower));
+                bound.values.push_back(toPlannerLiteral(predicate.upper_expression ? constantExpression(predicate.upper_expression) : predicate.upper));
             }
             else if constexpr (std::is_same_v<std::decay_t<decltype(predicate)>, IsNotNullPredicate>)
             {
@@ -243,7 +265,7 @@ plan::PlannerPredicate buildPredicate(const WherePredicate& where,
             else
             {
                 bound.op = mapBinaryOp(predicate.op);
-                bound.values.push_back(toPlannerLiteral(predicate.value));
+                bound.values.push_back(toPlannerLiteral(predicate.expression ? constantExpression(predicate.expression) : predicate.value));
             }
 
             const bool pushable = bound.pushable_ops.contains(bound.op);
@@ -546,7 +568,7 @@ plan::BoundSelect mldp_pvxs_driver::query::planner::bindSelect(const SelectState
     bound.order_by.reserve(statement.order_by.size());
     for (const auto& item : statement.order_by)
     {
-        const auto resolved = resolveColumnReference(item.column, all_tables);
+        const auto resolved = resolveColumnReference(item.expression ? columnExpression(item.expression, "ORDER BY") : item.column, all_tables);
         const auto& schema = all_tables[table_index.at(resolved.table_alias)].schema;
         const bool dynamic_attribute = resolved.column_name.rfind("attributes.", 0) == 0 ||
                                        resolved.column_name.rfind("provenance.", 0) == 0;
@@ -564,18 +586,20 @@ plan::BoundSelect mldp_pvxs_driver::query::planner::bindSelect(const SelectState
 
     if (!statement.select_all)
     {
-        bound.select_columns.reserve(statement.columns.size());
-        for (const auto& column : statement.columns)
+        bound.select_columns.reserve(statement.select_items.empty() ? statement.columns.size() : statement.select_items.size());
+        const auto& items = statement.select_items;
+        if (!items.empty())
+        {
+            for (const auto& item : items)
+            {
+                const auto resolved = resolveColumnReference(columnExpression(item.expression, "SELECT"), all_tables);
+                bound.select_columns.push_back(multi_table ? qualify(resolved.table_alias, resolved.column_name) : resolved.column_name);
+            }
+        }
+        else for (const auto& column : statement.columns)
         {
             const auto resolved = resolveColumnReference(column, all_tables);
-            if (multi_table)
-            {
-                bound.select_columns.push_back(qualify(resolved.table_alias, resolved.column_name));
-            }
-            else
-            {
-                bound.select_columns.push_back(resolved.column_name);
-            }
+            bound.select_columns.push_back(multi_table ? qualify(resolved.table_alias, resolved.column_name) : resolved.column_name);
         }
     }
 

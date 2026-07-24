@@ -4,6 +4,30 @@ The `query` subcommand runs SQL statements — parse → plan → execute → re
 
 > **Related:** [Query Engine Architecture](../reference/query-engine-architecture.md) | [Configuration Reference](configuration.md#queryable-block) | [Tutorial: first queries with sample data](#tutorial-first-queries-with-sample-data)
 
+## Table of contents
+
+- [Command](#command)
+  - [Options](#options)
+  - [Interactive session](#interactive-session)
+  - [Stored query tables](#stored-query-tables)
+  - [Line editing and completion](#line-editing-and-completion)
+- [Quick-start examples](#quick-start-examples)
+  - [Scalar timestamp functions](#scalar-timestamp-functions)
+- [Query-only configuration](#query-only-configuration)
+  - [Config file](#config-file)
+  - [Inline dotted assignments](#inline-dotted-assignments-no-config-file)
+- [SQL syntax reference](#sql-syntax-reference)
+  - [Statement types](#statement-types)
+  - [SELECT grammar](#select-grammar)
+  - [Predicates](#predicates)
+  - [Time literals](#time-literals)
+  - [Joins](#joins)
+  - [Pagination](#pagination)
+- [Virtual table catalog](#virtual-table-catalog)
+- [Output formats](#output-formats)
+- [Tuning notes](#tuning-notes)
+- [Tutorial: first queries with sample data](#tutorial-first-queries-with-sample-data)
+
 ---
 
 ## Command
@@ -121,6 +145,21 @@ When input is redirected or supplied by a script, the REPL retains plain line-ba
 ---
 
 ## Quick-start examples
+
+### Scalar timestamp functions
+
+Scalar functions may be used in `WHERE` values. Function names are case-insensitive and calls may be nested. The built-in `to_utc` converts a user-facing timestamp into the query engine's UTC epoch-second timestamp value.
+
+```sql
+SELECT pv, time, value FROM mldp.time_series
+WHERE pv = 'MY:PV'
+  AND time >= to_utc('2026-07-23T09:00:00-07:00');
+
+SELECT pv FROM mldp.time_series
+WHERE time >= to_utc('2026-07-23 09:00:00', '-07:00');
+```
+
+The one-argument form requires `Z` or an explicit `+/-HH:MM` offset. The two-argument form currently accepts an explicit offset. Results are truncated to epoch-second precision.
 
 ```bash
 # Schema introspection — queryable config required

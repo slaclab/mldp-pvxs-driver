@@ -33,14 +33,35 @@ struct QualifiedColumn {
     std::vector<std::string>   path;
 };
 
+struct Expression;
+using ExpressionPtr = std::shared_ptr<Expression>;
+
+struct FunctionCall {
+    std::string                name;
+    std::vector<ExpressionPtr> arguments;
+};
+
+using ExpressionValue = std::variant<LiteralValue, QualifiedColumn, FunctionCall>;
+
+struct Expression {
+    ExpressionValue value;
+};
+
+struct SelectItem {
+    ExpressionPtr              expression;
+    std::optional<std::string> alias;
+};
+
 struct EqPredicate {
     QualifiedColumn column;
     LiteralValue    value;
+    ExpressionPtr   expression;
 };
 
 struct InPredicate {
     QualifiedColumn           column;
     std::vector<LiteralValue> values;
+    std::vector<ExpressionPtr> expressions;
     std::shared_ptr<SelectStatement> subquery;
 };
 
@@ -52,6 +73,8 @@ struct RangePredicate {
     QualifiedColumn column;
     LiteralValue    lower;
     LiteralValue    upper;
+    ExpressionPtr   lower_expression;
+    ExpressionPtr   upper_expression;
 };
 
 enum class PredicateBinaryOp { NEQ, LT, LTE, GT, GTE, LIKE, CONTAINS, PREFIX };
@@ -60,6 +83,7 @@ struct OpPredicate {
     QualifiedColumn    column;
     PredicateBinaryOp  op;
     LiteralValue       value;
+    ExpressionPtr      expression;
 };
 
 using WherePredicate = std::variant<EqPredicate, InPredicate, RangePredicate, OpPredicate, IsNotNullPredicate>;
@@ -87,12 +111,14 @@ enum class SortDirection { ASCENDING, DESCENDING };
 
 struct OrderByItem {
     QualifiedColumn column;
+    ExpressionPtr   expression;
     SortDirection   direction{SortDirection::ASCENDING};
 };
 
 struct SelectStatement {
     bool                         select_all{false};
     std::vector<QualifiedColumn> columns;
+    std::vector<SelectItem>      select_items;
     TableRef                     from;
     std::vector<JoinClause>      joins;
     std::vector<WherePredicate>  predicates;

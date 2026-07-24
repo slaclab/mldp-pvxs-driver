@@ -61,11 +61,12 @@
     struct SelectListValue {
         bool                                select_all{false};
         std::vector<QualifiedColumn>        columns;
+        std::vector<SelectItem>             items;
     };
 
     } // namespace mldp_pvxs_driver::query::generated
 
-#line 69 "src/query/parser/generated/QueryBisonParser.hpp"
+#line 70 "src/query/parser/generated/QueryBisonParser.hpp"
 
 
 # include <cstdlib> // std::abort
@@ -195,7 +196,7 @@
 
 #line 5 "src/query/parser/grammar/QueryBisonParser.y"
 namespace mldp_pvxs_driver { namespace query { namespace generated {
-#line 199 "src/query/parser/generated/QueryBisonParser.hpp"
+#line 200 "src/query/parser/generated/QueryBisonParser.hpp"
 
 
 
@@ -390,65 +391,71 @@ namespace mldp_pvxs_driver { namespace query { namespace generated {
       // signed_duration
       char dummy1[sizeof (int64_t)];
 
+      // expression
+      char dummy2[sizeof (mldp_pvxs_driver::query::ExpressionPtr)];
+
       // join_clause
-      char dummy2[sizeof (mldp_pvxs_driver::query::JoinClause)];
+      char dummy3[sizeof (mldp_pvxs_driver::query::JoinClause)];
 
       // literal
       // now_literal
-      char dummy3[sizeof (mldp_pvxs_driver::query::LiteralValue)];
+      char dummy4[sizeof (mldp_pvxs_driver::query::LiteralValue)];
 
       // order_by_item
-      char dummy4[sizeof (mldp_pvxs_driver::query::OrderByItem)];
+      char dummy5[sizeof (mldp_pvxs_driver::query::OrderByItem)];
 
       // column_ref
-      char dummy5[sizeof (mldp_pvxs_driver::query::QualifiedColumn)];
+      char dummy6[sizeof (mldp_pvxs_driver::query::QualifiedColumn)];
 
       // statement
-      char dummy6[sizeof (mldp_pvxs_driver::query::QueryStatement)];
+      char dummy7[sizeof (mldp_pvxs_driver::query::QueryStatement)];
+
+      // select_item
+      char dummy8[sizeof (mldp_pvxs_driver::query::SelectItem)];
 
       // select_stmt
-      char dummy7[sizeof (mldp_pvxs_driver::query::SelectStatement)];
+      char dummy9[sizeof (mldp_pvxs_driver::query::SelectStatement)];
 
       // table_ref
-      char dummy8[sizeof (mldp_pvxs_driver::query::TableRef)];
+      char dummy10[sizeof (mldp_pvxs_driver::query::TableRef)];
 
       // predicate
-      char dummy9[sizeof (mldp_pvxs_driver::query::WherePredicate)];
+      char dummy11[sizeof (mldp_pvxs_driver::query::WherePredicate)];
 
       // select_list
-      char dummy10[sizeof (mldp_pvxs_driver::query::generated::SelectListValue)];
+      char dummy12[sizeof (mldp_pvxs_driver::query::generated::SelectListValue)];
 
       // alias_opt
       // page_opt
-      char dummy11[sizeof (std::optional<std::string>)];
+      char dummy13[sizeof (std::optional<std::string>)];
 
       // limit_opt
-      char dummy12[sizeof (std::optional<uint64_t>)];
+      char dummy14[sizeof (std::optional<uint64_t>)];
 
       // IDENTIFIER
       // STRING_LITERAL
       // DURATION_LITERAL
-      char dummy13[sizeof (std::string)];
+      char dummy15[sizeof (std::string)];
+
+      // expression_list
+      char dummy16[sizeof (std::vector<mldp_pvxs_driver::query::ExpressionPtr>)];
 
       // join_clauses
-      char dummy14[sizeof (std::vector<mldp_pvxs_driver::query::JoinClause>)];
-
-      // literal_list
-      char dummy15[sizeof (std::vector<mldp_pvxs_driver::query::LiteralValue>)];
+      char dummy17[sizeof (std::vector<mldp_pvxs_driver::query::JoinClause>)];
 
       // order_by_opt
       // order_by_list
-      char dummy16[sizeof (std::vector<mldp_pvxs_driver::query::OrderByItem>)];
+      char dummy18[sizeof (std::vector<mldp_pvxs_driver::query::OrderByItem>)];
 
-      // column_list
-      char dummy17[sizeof (std::vector<mldp_pvxs_driver::query::QualifiedColumn>)];
+      // select_item_list
+      char dummy19[sizeof (std::vector<mldp_pvxs_driver::query::SelectItem>)];
 
       // where_opt
       // predicate_list
-      char dummy18[sizeof (std::vector<mldp_pvxs_driver::query::WherePredicate>)];
+      char dummy20[sizeof (std::vector<mldp_pvxs_driver::query::WherePredicate>)];
 
       // identifier_path
-      char dummy19[sizeof (std::vector<std::string>)];
+      char dummy21[sizeof (std::vector<std::string>)];
     };
 
     /// The size of the largest semantic type.
@@ -614,22 +621,24 @@ namespace mldp_pvxs_driver { namespace query { namespace generated {
         S_order_by_list = 52,                    // order_by_list
         S_order_by_item = 53,                    // order_by_item
         S_select_list = 54,                      // select_list
-        S_column_list = 55,                      // column_list
-        S_table_ref = 56,                        // table_ref
-        S_alias_opt = 57,                        // alias_opt
-        S_join_clauses = 58,                     // join_clauses
-        S_join_clause = 59,                      // join_clause
-        S_where_opt = 60,                        // where_opt
-        S_predicate_list = 61,                   // predicate_list
-        S_predicate = 62,                        // predicate
-        S_literal_list = 63,                     // literal_list
-        S_literal = 64,                          // literal
-        S_now_literal = 65,                      // now_literal
-        S_signed_duration = 66,                  // signed_duration
-        S_column_ref = 67,                       // column_ref
-        S_identifier_path = 68,                  // identifier_path
-        S_limit_opt = 69,                        // limit_opt
-        S_page_opt = 70                          // page_opt
+        S_select_item_list = 55,                 // select_item_list
+        S_select_item = 56,                      // select_item
+        S_table_ref = 57,                        // table_ref
+        S_alias_opt = 58,                        // alias_opt
+        S_join_clauses = 59,                     // join_clauses
+        S_join_clause = 60,                      // join_clause
+        S_where_opt = 61,                        // where_opt
+        S_predicate_list = 62,                   // predicate_list
+        S_predicate = 63,                        // predicate
+        S_expression_list = 64,                  // expression_list
+        S_expression = 65,                       // expression
+        S_literal = 66,                          // literal
+        S_now_literal = 67,                      // now_literal
+        S_signed_duration = 68,                  // signed_duration
+        S_column_ref = 69,                       // column_ref
+        S_identifier_path = 70,                  // identifier_path
+        S_limit_opt = 71,                        // limit_opt
+        S_page_opt = 72                          // page_opt
       };
     };
 
@@ -671,6 +680,10 @@ namespace mldp_pvxs_driver { namespace query { namespace generated {
         value.move< int64_t > (std::move (that.value));
         break;
 
+      case symbol_kind::S_expression: // expression
+        value.move< mldp_pvxs_driver::query::ExpressionPtr > (std::move (that.value));
+        break;
+
       case symbol_kind::S_join_clause: // join_clause
         value.move< mldp_pvxs_driver::query::JoinClause > (std::move (that.value));
         break;
@@ -690,6 +703,10 @@ namespace mldp_pvxs_driver { namespace query { namespace generated {
 
       case symbol_kind::S_statement: // statement
         value.move< mldp_pvxs_driver::query::QueryStatement > (std::move (that.value));
+        break;
+
+      case symbol_kind::S_select_item: // select_item
+        value.move< mldp_pvxs_driver::query::SelectItem > (std::move (that.value));
         break;
 
       case symbol_kind::S_select_stmt: // select_stmt
@@ -723,12 +740,12 @@ namespace mldp_pvxs_driver { namespace query { namespace generated {
         value.move< std::string > (std::move (that.value));
         break;
 
-      case symbol_kind::S_join_clauses: // join_clauses
-        value.move< std::vector<mldp_pvxs_driver::query::JoinClause> > (std::move (that.value));
+      case symbol_kind::S_expression_list: // expression_list
+        value.move< std::vector<mldp_pvxs_driver::query::ExpressionPtr> > (std::move (that.value));
         break;
 
-      case symbol_kind::S_literal_list: // literal_list
-        value.move< std::vector<mldp_pvxs_driver::query::LiteralValue> > (std::move (that.value));
+      case symbol_kind::S_join_clauses: // join_clauses
+        value.move< std::vector<mldp_pvxs_driver::query::JoinClause> > (std::move (that.value));
         break;
 
       case symbol_kind::S_order_by_opt: // order_by_opt
@@ -736,8 +753,8 @@ namespace mldp_pvxs_driver { namespace query { namespace generated {
         value.move< std::vector<mldp_pvxs_driver::query::OrderByItem> > (std::move (that.value));
         break;
 
-      case symbol_kind::S_column_list: // column_list
-        value.move< std::vector<mldp_pvxs_driver::query::QualifiedColumn> > (std::move (that.value));
+      case symbol_kind::S_select_item_list: // select_item_list
+        value.move< std::vector<mldp_pvxs_driver::query::SelectItem> > (std::move (that.value));
         break;
 
       case symbol_kind::S_where_opt: // where_opt
@@ -780,6 +797,20 @@ namespace mldp_pvxs_driver { namespace query { namespace generated {
       {}
 #else
       basic_symbol (typename Base::kind_type t, const int64_t& v, const location_type& l)
+        : Base (t)
+        , value (v)
+        , location (l)
+      {}
+#endif
+
+#if 201103L <= YY_CPLUSPLUS
+      basic_symbol (typename Base::kind_type t, mldp_pvxs_driver::query::ExpressionPtr&& v, location_type&& l)
+        : Base (t)
+        , value (std::move (v))
+        , location (std::move (l))
+      {}
+#else
+      basic_symbol (typename Base::kind_type t, const mldp_pvxs_driver::query::ExpressionPtr& v, const location_type& l)
         : Base (t)
         , value (v)
         , location (l)
@@ -850,6 +881,20 @@ namespace mldp_pvxs_driver { namespace query { namespace generated {
       {}
 #else
       basic_symbol (typename Base::kind_type t, const mldp_pvxs_driver::query::QueryStatement& v, const location_type& l)
+        : Base (t)
+        , value (v)
+        , location (l)
+      {}
+#endif
+
+#if 201103L <= YY_CPLUSPLUS
+      basic_symbol (typename Base::kind_type t, mldp_pvxs_driver::query::SelectItem&& v, location_type&& l)
+        : Base (t)
+        , value (std::move (v))
+        , location (std::move (l))
+      {}
+#else
+      basic_symbol (typename Base::kind_type t, const mldp_pvxs_driver::query::SelectItem& v, const location_type& l)
         : Base (t)
         , value (v)
         , location (l)
@@ -955,13 +1000,13 @@ namespace mldp_pvxs_driver { namespace query { namespace generated {
 #endif
 
 #if 201103L <= YY_CPLUSPLUS
-      basic_symbol (typename Base::kind_type t, std::vector<mldp_pvxs_driver::query::JoinClause>&& v, location_type&& l)
+      basic_symbol (typename Base::kind_type t, std::vector<mldp_pvxs_driver::query::ExpressionPtr>&& v, location_type&& l)
         : Base (t)
         , value (std::move (v))
         , location (std::move (l))
       {}
 #else
-      basic_symbol (typename Base::kind_type t, const std::vector<mldp_pvxs_driver::query::JoinClause>& v, const location_type& l)
+      basic_symbol (typename Base::kind_type t, const std::vector<mldp_pvxs_driver::query::ExpressionPtr>& v, const location_type& l)
         : Base (t)
         , value (v)
         , location (l)
@@ -969,13 +1014,13 @@ namespace mldp_pvxs_driver { namespace query { namespace generated {
 #endif
 
 #if 201103L <= YY_CPLUSPLUS
-      basic_symbol (typename Base::kind_type t, std::vector<mldp_pvxs_driver::query::LiteralValue>&& v, location_type&& l)
+      basic_symbol (typename Base::kind_type t, std::vector<mldp_pvxs_driver::query::JoinClause>&& v, location_type&& l)
         : Base (t)
         , value (std::move (v))
         , location (std::move (l))
       {}
 #else
-      basic_symbol (typename Base::kind_type t, const std::vector<mldp_pvxs_driver::query::LiteralValue>& v, const location_type& l)
+      basic_symbol (typename Base::kind_type t, const std::vector<mldp_pvxs_driver::query::JoinClause>& v, const location_type& l)
         : Base (t)
         , value (v)
         , location (l)
@@ -997,13 +1042,13 @@ namespace mldp_pvxs_driver { namespace query { namespace generated {
 #endif
 
 #if 201103L <= YY_CPLUSPLUS
-      basic_symbol (typename Base::kind_type t, std::vector<mldp_pvxs_driver::query::QualifiedColumn>&& v, location_type&& l)
+      basic_symbol (typename Base::kind_type t, std::vector<mldp_pvxs_driver::query::SelectItem>&& v, location_type&& l)
         : Base (t)
         , value (std::move (v))
         , location (std::move (l))
       {}
 #else
-      basic_symbol (typename Base::kind_type t, const std::vector<mldp_pvxs_driver::query::QualifiedColumn>& v, const location_type& l)
+      basic_symbol (typename Base::kind_type t, const std::vector<mldp_pvxs_driver::query::SelectItem>& v, const location_type& l)
         : Base (t)
         , value (v)
         , location (l)
@@ -1065,6 +1110,10 @@ switch (yykind)
         value.template destroy< int64_t > ();
         break;
 
+      case symbol_kind::S_expression: // expression
+        value.template destroy< mldp_pvxs_driver::query::ExpressionPtr > ();
+        break;
+
       case symbol_kind::S_join_clause: // join_clause
         value.template destroy< mldp_pvxs_driver::query::JoinClause > ();
         break;
@@ -1084,6 +1133,10 @@ switch (yykind)
 
       case symbol_kind::S_statement: // statement
         value.template destroy< mldp_pvxs_driver::query::QueryStatement > ();
+        break;
+
+      case symbol_kind::S_select_item: // select_item
+        value.template destroy< mldp_pvxs_driver::query::SelectItem > ();
         break;
 
       case symbol_kind::S_select_stmt: // select_stmt
@@ -1117,12 +1170,12 @@ switch (yykind)
         value.template destroy< std::string > ();
         break;
 
-      case symbol_kind::S_join_clauses: // join_clauses
-        value.template destroy< std::vector<mldp_pvxs_driver::query::JoinClause> > ();
+      case symbol_kind::S_expression_list: // expression_list
+        value.template destroy< std::vector<mldp_pvxs_driver::query::ExpressionPtr> > ();
         break;
 
-      case symbol_kind::S_literal_list: // literal_list
-        value.template destroy< std::vector<mldp_pvxs_driver::query::LiteralValue> > ();
+      case symbol_kind::S_join_clauses: // join_clauses
+        value.template destroy< std::vector<mldp_pvxs_driver::query::JoinClause> > ();
         break;
 
       case symbol_kind::S_order_by_opt: // order_by_opt
@@ -1130,8 +1183,8 @@ switch (yykind)
         value.template destroy< std::vector<mldp_pvxs_driver::query::OrderByItem> > ();
         break;
 
-      case symbol_kind::S_column_list: // column_list
-        value.template destroy< std::vector<mldp_pvxs_driver::query::QualifiedColumn> > ();
+      case symbol_kind::S_select_item_list: // select_item_list
+        value.template destroy< std::vector<mldp_pvxs_driver::query::SelectItem> > ();
         break;
 
       case symbol_kind::S_where_opt: // where_opt
@@ -2036,7 +2089,7 @@ switch (yykind)
 
 
     /// Stored state numbers (used for stacks).
-    typedef signed char state_type;
+    typedef unsigned char state_type;
 
     /// The arguments of the error message.
     int yy_syntax_error_arguments_ (const context& yyctx,
@@ -2087,9 +2140,9 @@ switch (yykind)
     // YYTABLE[YYPACT[STATE-NUM]] -- What to do in state STATE-NUM.  If
     // positive, shift that token.  If negative, reduce the rule whose
     // number is the opposite.  If YYTABLE_NINF, syntax error.
-    static const signed char yytable_[];
+    static const unsigned char yytable_[];
 
-    static const signed char yycheck_[];
+    static const short yycheck_[];
 
     // YYSTOS[STATE-NUM] -- The (internal number of the) accessing
     // symbol of state STATE-NUM.
@@ -2331,9 +2384,9 @@ switch (yykind)
     /// Constants.
     enum
     {
-      yylast_ = 117,     ///< Last index in yytable_.
-      yynnts_ = 24,  ///< Number of nonterminal symbols.
-      yyfinal_ = 17 ///< Termination state number.
+      yylast_ = 136,     ///< Last index in yytable_.
+      yynnts_ = 26,  ///< Number of nonterminal symbols.
+      yyfinal_ = 25 ///< Termination state number.
     };
 
 
@@ -2409,6 +2462,10 @@ switch (yykind)
         value.copy< int64_t > (YY_MOVE (that.value));
         break;
 
+      case symbol_kind::S_expression: // expression
+        value.copy< mldp_pvxs_driver::query::ExpressionPtr > (YY_MOVE (that.value));
+        break;
+
       case symbol_kind::S_join_clause: // join_clause
         value.copy< mldp_pvxs_driver::query::JoinClause > (YY_MOVE (that.value));
         break;
@@ -2428,6 +2485,10 @@ switch (yykind)
 
       case symbol_kind::S_statement: // statement
         value.copy< mldp_pvxs_driver::query::QueryStatement > (YY_MOVE (that.value));
+        break;
+
+      case symbol_kind::S_select_item: // select_item
+        value.copy< mldp_pvxs_driver::query::SelectItem > (YY_MOVE (that.value));
         break;
 
       case symbol_kind::S_select_stmt: // select_stmt
@@ -2461,12 +2522,12 @@ switch (yykind)
         value.copy< std::string > (YY_MOVE (that.value));
         break;
 
-      case symbol_kind::S_join_clauses: // join_clauses
-        value.copy< std::vector<mldp_pvxs_driver::query::JoinClause> > (YY_MOVE (that.value));
+      case symbol_kind::S_expression_list: // expression_list
+        value.copy< std::vector<mldp_pvxs_driver::query::ExpressionPtr> > (YY_MOVE (that.value));
         break;
 
-      case symbol_kind::S_literal_list: // literal_list
-        value.copy< std::vector<mldp_pvxs_driver::query::LiteralValue> > (YY_MOVE (that.value));
+      case symbol_kind::S_join_clauses: // join_clauses
+        value.copy< std::vector<mldp_pvxs_driver::query::JoinClause> > (YY_MOVE (that.value));
         break;
 
       case symbol_kind::S_order_by_opt: // order_by_opt
@@ -2474,8 +2535,8 @@ switch (yykind)
         value.copy< std::vector<mldp_pvxs_driver::query::OrderByItem> > (YY_MOVE (that.value));
         break;
 
-      case symbol_kind::S_column_list: // column_list
-        value.copy< std::vector<mldp_pvxs_driver::query::QualifiedColumn> > (YY_MOVE (that.value));
+      case symbol_kind::S_select_item_list: // select_item_list
+        value.copy< std::vector<mldp_pvxs_driver::query::SelectItem> > (YY_MOVE (that.value));
         break;
 
       case symbol_kind::S_where_opt: // where_opt
@@ -2521,6 +2582,10 @@ switch (yykind)
         value.move< int64_t > (YY_MOVE (s.value));
         break;
 
+      case symbol_kind::S_expression: // expression
+        value.move< mldp_pvxs_driver::query::ExpressionPtr > (YY_MOVE (s.value));
+        break;
+
       case symbol_kind::S_join_clause: // join_clause
         value.move< mldp_pvxs_driver::query::JoinClause > (YY_MOVE (s.value));
         break;
@@ -2540,6 +2605,10 @@ switch (yykind)
 
       case symbol_kind::S_statement: // statement
         value.move< mldp_pvxs_driver::query::QueryStatement > (YY_MOVE (s.value));
+        break;
+
+      case symbol_kind::S_select_item: // select_item
+        value.move< mldp_pvxs_driver::query::SelectItem > (YY_MOVE (s.value));
         break;
 
       case symbol_kind::S_select_stmt: // select_stmt
@@ -2573,12 +2642,12 @@ switch (yykind)
         value.move< std::string > (YY_MOVE (s.value));
         break;
 
-      case symbol_kind::S_join_clauses: // join_clauses
-        value.move< std::vector<mldp_pvxs_driver::query::JoinClause> > (YY_MOVE (s.value));
+      case symbol_kind::S_expression_list: // expression_list
+        value.move< std::vector<mldp_pvxs_driver::query::ExpressionPtr> > (YY_MOVE (s.value));
         break;
 
-      case symbol_kind::S_literal_list: // literal_list
-        value.move< std::vector<mldp_pvxs_driver::query::LiteralValue> > (YY_MOVE (s.value));
+      case symbol_kind::S_join_clauses: // join_clauses
+        value.move< std::vector<mldp_pvxs_driver::query::JoinClause> > (YY_MOVE (s.value));
         break;
 
       case symbol_kind::S_order_by_opt: // order_by_opt
@@ -2586,8 +2655,8 @@ switch (yykind)
         value.move< std::vector<mldp_pvxs_driver::query::OrderByItem> > (YY_MOVE (s.value));
         break;
 
-      case symbol_kind::S_column_list: // column_list
-        value.move< std::vector<mldp_pvxs_driver::query::QualifiedColumn> > (YY_MOVE (s.value));
+      case symbol_kind::S_select_item_list: // select_item_list
+        value.move< std::vector<mldp_pvxs_driver::query::SelectItem> > (YY_MOVE (s.value));
         break;
 
       case symbol_kind::S_where_opt: // where_opt
@@ -2662,7 +2731,7 @@ switch (yykind)
 
 #line 5 "src/query/parser/grammar/QueryBisonParser.y"
 } } } // mldp_pvxs_driver::query::generated
-#line 2666 "src/query/parser/generated/QueryBisonParser.hpp"
+#line 2735 "src/query/parser/generated/QueryBisonParser.hpp"
 
 
 

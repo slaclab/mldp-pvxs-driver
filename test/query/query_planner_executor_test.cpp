@@ -26,6 +26,7 @@
 #include <arrow/scalar.h>
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <set>
 #include <string_view>
 #include <variant>
@@ -355,6 +356,26 @@ TEST_F(PlannerExecutorTest, PushesBackendPredicateAndPrunesProjectionColumns)
     EXPECT_EQ(scan->pushable_predicates[0].column, "pv");
     EXPECT_EQ(scan->projection_hint, std::set<std::string>({"pv"}));
     EXPECT_EQ(query::plan::physicalPlanToString(plan).find("PhysicalFilter"), std::string::npos);
+}
+
+TEST_F(PlannerExecutorTest, FoldsToUtcPredicateToEpochSecondsBeforePushdown)
+{
+    query::QueryPlanner planner;
+    const auto plan = planner.plan(query::parseQuery(
+        "SELECT pv FROM fake.samples WHERE pv = 'A' AND time >= to_utc('1970-01-01T00:00:10Z')"));
+    const auto* scan = findScan(plan);
+    ASSERT_NE(scan, nullptr);
+    ASSERT_EQ(scan->pushable_predicates.size(), 2U);
+
+    const auto time = std::find_if(scan->pushable_predicates.begin(), scan->pushable_predicates.end(), [](const query::Predicate& predicate)
+    {
+        return predicate.column == "time";
+    });
+    ASSERT_NE(time, scan->pushable_predicates.end());
+    ASSERT_EQ(time->op, query::PredicateOp::GTE);
+    ASSERT_EQ(time->values.size(), 1U);
+    ASSERT_TRUE(std::holds_alternative<int64_t>(time->values.front()));
+    EXPECT_EQ(std::get<int64_t>(time->values.front()), 10);
 }
 
 TEST_F(PlannerExecutorTest, RetainsFilterableOnlyPredicateForLocalExecution)
