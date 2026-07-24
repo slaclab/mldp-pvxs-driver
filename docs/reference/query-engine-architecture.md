@@ -241,9 +241,12 @@ is attached to each generated PV Arrow field as key/value metadata: `tags`,
 runtime-shaped table: `SELECT *` is required, and projections, predicates,
 `ORDER BY`, and joins over generated PV fields are not supported.
 
-`pv IN (SELECT pv ...)` evaluates its child first and passes its ordered,
-non-null string output to the wide scan. `window IN (SELECT time, end_time
-...)` is exclusive to this table and evaluates to closed timestamp ranges.
+Any `IN`-capable column accepts `IN (SELECT ...)`. The executor evaluates the
+single-column child first, rejects null or type-incompatible values, and
+materializes compatible values as an ordinary `IN` predicate. Pushable values
+are included in the backend request; local-only values are filtered after the
+fetch. `window IN (SELECT time, end_time ...)` is exclusive to this table and
+evaluates to closed timestamp ranges.
 Ranges are sorted and coalesced when they overlap or directly touch; the
 executor issues one `QueryTableRequest` and returns one typed wide batch per
 normalized range. The window child must expose non-null timestamp outputs named

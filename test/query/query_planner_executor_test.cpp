@@ -73,7 +73,7 @@ public:
         return {
             {"pv", query::ColumnType::STRING, true, true, {query::PredicateOp::EQ, query::PredicateOp::IN}, {}, "PV"},
             {"time", query::ColumnType::TIMESTAMP, false, true, {query::PredicateOp::GTE, query::PredicateOp::LTE}, {}, "time"},
-            {"value", query::ColumnType::INT, false, true, {}, {query::PredicateOp::EQ}, "value"},
+            {"value", query::ColumnType::INT, false, true, {}, {query::PredicateOp::EQ, query::PredicateOp::IN}, "value"},
         };
     }
 
@@ -218,6 +218,19 @@ public:
                 {
                     return false;
                 }
+                if (predicate.column == "pv" && predicate.op == query::PredicateOp::IN)
+                {
+                    bool matched = false;
+                    for (const auto& value : predicate.values)
+                    {
+                        if (std::holds_alternative<std::string>(value) && std::get<std::string>(value) == pv)
+                        {
+                            matched = true;
+                            break;
+                        }
+                    }
+                    if (!matched) return false;
+                }
             }
             return true;
         };
@@ -322,7 +335,7 @@ public:
 
 const std::set<std::string_view> FakeQueryable::kVirtualTables = {"fake.samples", "fake.meta", "fake.paged"};
 const std::set<std::string_view> EmptyWideInputQueryable::kVirtualTables = {
-    "mldp.time_series_table", "mldp.pv_metadata", "mldp.configuration_activation"};
+    "mldp.time_series", "mldp.time_series_table", "mldp.pv_metadata", "mldp.configuration_activation"};
 
 class PlannerExecutorTest : public ::testing::Test
 {
@@ -363,6 +376,25 @@ TEST(EmptyWideInputTest, EmptyValidSubqueriesProduceNoWideTableRequest)
         {.pool = arrow::default_memory_pool()});
     EXPECT_TRUE(window_empty.batches.empty());
     EXPECT_EQ(window_empty.stats.rpc_calls, 1U);
+    EXPECT_EQ(EmptyWideInputQueryable::execute_calls, 1U);
+    query::QueryableFactory::instance().reset();
+}
+
+TEST(EmptyWideInputTest, EmptyPvSubqueryProducesNoNarrowTimeSeriesRequest)
+{
+    query::QueryableFactory::instance().reset();
+    EmptyWideInputQueryable::execute_calls = 0;
+    query::QueryableFactory::instance().prepare<EmptyWideInputQueryable>(config::Config::configFromYamlString("{}"));
+
+    query::QueryPlanner  planner;
+    query::QueryExecutor executor;
+    const auto result = executor.execute(
+        planner.plan(query::parseQuery(
+            "SELECT pv, time FROM mldp.time_series "
+            "WHERE pv IN (SELECT pv FROM mldp.pv_metadata WHERE pv = 'NO:PV')")),
+        {.pool = arrow::default_memory_pool()});
+    EXPECT_TRUE(result.batches.empty());
+    EXPECT_EQ(result.stats.rpc_calls, 1U);
     EXPECT_EQ(EmptyWideInputQueryable::execute_calls, 1U);
     query::QueryableFactory::instance().reset();
 }
@@ -477,6 +509,42 @@ TEST_F(PlannerExecutorTest, RetainsFilterableOnlyPredicateForLocalExecution)
     ASSERT_EQ(scan->pushable_predicates.size(), 1);
     EXPECT_EQ(scan->pushable_predicates[0].column, "pv");
     EXPECT_EQ(scan->projection_hint, std::set<std::string>({"pv", "value"}));
+}
+
+TEST_F(PlannerExecutorTest, ExecutesGenericPushableInSubqueryBeforeDependentScan)
+{
+    query::QueryPlanner  planner;
+    query::QueryExecutor executor;
+    const auto plan = planner.plan(query::parseQuery(
+        "SELECT pv FROM fake.samples WHERE pv IN (SELECT pv FROM fake.meta WHERE pv = 'A')"));
+    const auto* scan = findScan(plan);
+    ASSERT_NE(scan, nullptr);
+    ASSERT_EQ(scan->in_subqueries.size(), 1U);
+    EXPECT_TRUE(scan->in_subqueries.front().pushable);
+    EXPECT_EQ(scan->in_subqueries.front().predicate.column, "pv");
+
+    const auto result = executor.execute(plan, {.pool = arrow::default_memory_pool()});
+    ASSERT_EQ(result.batches.size(), 1U);
+    ASSERT_EQ(result.batches.front()->num_rows(), 1);
+    EXPECT_EQ(result.batches.front()->column(0)->GetScalar(0).ValueOrDie()->ToString(), "A");
+    EXPECT_EQ(result.stats.rpc_calls, 2U);
+}
+
+TEST_F(PlannerExecutorTest, AppliesGenericLocalInSubqueryAfterFetch)
+{
+    query::QueryPlanner  planner;
+    query::QueryExecutor executor;
+    const auto plan = planner.plan(query::parseQuery(
+        "SELECT pv FROM fake.samples WHERE pv = 'A' AND value IN (SELECT value FROM fake.samples WHERE pv = 'A')"));
+    const auto* scan = findScan(plan);
+    ASSERT_NE(scan, nullptr);
+    ASSERT_EQ(scan->in_subqueries.size(), 1U);
+    EXPECT_FALSE(scan->in_subqueries.front().pushable);
+
+    const auto result = executor.execute(plan, {.pool = arrow::default_memory_pool()});
+    ASSERT_EQ(result.batches.size(), 1U);
+    EXPECT_EQ(result.batches.front()->num_rows(), 1);
+    EXPECT_EQ(result.stats.rpc_calls, 2U);
 }
 
 TEST_F(PlannerExecutorTest, RetainsPushedMetadataPredicatesForLocalVerification)

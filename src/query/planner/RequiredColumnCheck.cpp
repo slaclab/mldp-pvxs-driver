@@ -12,6 +12,7 @@
 
 #include <query/plan/PlannerError.h>
 
+#include <algorithm>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -110,9 +111,11 @@ void mldp_pvxs_driver::query::planner::requiredColumnCheck(const plan::LogicalNo
                     break;
                 }
             }
-            if (!has_pushable_predicate && column.name == "pv" && scan->pv_subquery)
+            if (!has_pushable_predicate)
             {
-                has_pushable_predicate = true;
+                has_pushable_predicate = std::any_of(scan->in_subqueries.begin(), scan->in_subqueries.end(), [&column](const auto& subquery) {
+                    return subquery.predicate.column == column.name && subquery.predicate.pushable_ops.contains(PredicateOp::IN);
+                });
             }
             if (!has_pushable_predicate)
             {

@@ -86,9 +86,11 @@ DROP TABLE production_samples;
 `CREATE TABLE` fails if the name exists; explicitly `DROP TABLE` before recreating it. Persistent tables are immutable snapshots, not live gRPC views, and are never automatically refreshed. The catalog manages only its own `.mldp-query-tables` namespace inside the configured root and does not clean unrelated files. Use a shared mounted directory when multiple processes or hosts must share persistent tables.
 
 Parenthesized `SELECT` statements are valid statement-scoped derived sources in
-`FROM` and `JOIN` positions and require an alias. `IN (SELECT ...)` is reserved
-for the `pv` and `window` inputs of `mldp.time_series_table`; scalar subqueries
-remain unsupported.
+`FROM` and `JOIN` positions and require an alias. Any column that supports
+`IN` accepts literals or a single-column `SELECT`; the child output must be
+non-null and type-compatible with the target column. `mldp.time_series_table`
+retains `window IN (SELECT time, end_time ...)` as a table-specific interval
+input. Scalar subqueries remain unsupported.
 
 ```sql
 SELECT recent.pv, recent.value
@@ -772,7 +774,7 @@ python3 scripts/generate_mldp_sample_data.py
 
 This creates:
 - **20 PVs** cycling through four device families: `mldp_sample:MAGNET:01:VALUE`, `mldp_sample:RF:02:VALUE`, `mldp_sample:VACUUM:03:VALUE`, `mldp_sample:DIAGNOSTIC:04:VALUE`, `mldp_sample:MAGNET:05:VALUE`, …, `mldp_sample:DIAGNOSTIC:20:VALUE`
-- **3600 time-series samples** per PV (deterministic sine waves) at 1-second intervals ending roughly at "now"
+- **3600 time-series samples** per PV (deterministic sine waves) at 1-second intervals ending roughly at "now", written as **10 contiguous buckets of 360 samples** each (**200 archive buckets** across all 20 PVs)
 - PV metadata with tags (`sample`, `mldp_sample`, device family) and attributes (`namespace`, `device_group`, `ordinal`, `units`, `sample_period_seconds`)
 - **4 configurations:** two `beam_mode` (`mldp_sample_injector_tuning`, `mldp_sample_user_delivery`), one `rf` (`mldp_sample_rf_station_a`), one `vacuum` (`mldp_sample_vacuum_ready`)
 - **4 activation windows:** beam-mode activations are closed (the two most recent hours, adjacent); RF and vacuum activations are open (started within the last 30 and 15 minutes)
@@ -782,7 +784,7 @@ The script prints the exact PV names, time range, and an example query when it f
 ```
 Generated MLDP sample namespace: mldp_sample
 Provider: mldp_sample-sample-provider (<id>)
-Time series: 20 PVs x 3600 samples at 1-second intervals
+Time series: 20 PVs x 3600 samples at 1-second intervals (10 buckets per PV x 360 samples)
 Time range: [<start>, <start+3599>] UTC epoch seconds
 Configurations: mldp_sample_injector_tuning, mldp_sample_user_delivery, mldp_sample_rf_station_a, mldp_sample_vacuum_ready
 Activation IDs: mldp_sample_injector_tuning_activation, mldp_sample_user_delivery_activation, mldp_sample_rf_station_a_activation, mldp_sample_vacuum_ready_activation
@@ -866,19 +868,10 @@ mldp_pvxs_driver -c query-config.yaml query --format csv \
   > samples.csv
 ```
 
-```bash
-# Include provenance metadata attached to time-series samples
-mldp_pvxs_driver -c query-config.yaml query \
-  "SELECT pv, time, value, provenance.source, provenance.process, tags
-   FROM mldp.time_series
-   WHERE pv = 'mldp_sample:MAGNET:01:VALUE'
-     AND time >= NOW -5m
-     AND time <= NOW"
-```
-
 ### Step 5 — Check PV availability
 
 ```bash
+# A fresh generator run creates 10 buckets for each requested PV.
 mldp_pvxs_driver -c query-config.yaml query \
   "SELECT pv, first_timestamp, last_timestamp, num_buckets
    FROM mldp.pv_stats
@@ -942,15 +935,20 @@ mldp_pvxs_driver -c query-config.yaml query \
 
 ### Step 8 — Join time-series with metadata
 
+This query obtains the PV list from `mldp.pv_metadata` before querying samples.
+
 ```bash
 mldp_pvxs_driver -c query-config.yaml query \
   "SELECT ts.pv, ts.time, ts.value, m.description, m.attributes.units
    FROM mldp.time_series ts
    JOIN mldp.pv_metadata m ON ts.pv = m.pv
-   WHERE ts.pv PREFIX 'mldp_sample:MAGNET'
+   WHERE ts.pv IN (
+     SELECT pv
+     FROM mldp.pv_metadata
+     WHERE pv PREFIX 'mldp_sample:MAGNET'
+   )
      AND ts.time >= NOW -10m
-     AND ts.time <= NOW
-     AND m.pv PREFIX 'mldp_sample:MAGNET'"
+     AND ts.time <= NOW"
 ```
 
 ### Step 9 — Use EXPLAIN to inspect the query plan
@@ -974,7 +972,10 @@ SELECT ts.pv,
        m.description
 FROM mldp.time_series ts
 JOIN mldp.pv_metadata m ON ts.pv = m.pv
-WHERE ts.pv PREFIX 'mldp_sample'
+WHERE ts.pv IN ('mldp_sample:MAGNET:01:VALUE',
+                'mldp_sample:RF:02:VALUE',
+                'mldp_sample:VACUUM:03:VALUE',
+                'mldp_sample:DIAGNOSTIC:04:VALUE')
   AND ts.time >= NOW -1h
   AND ts.time <= NOW
   AND m.pv PREFIX 'mldp_sample'

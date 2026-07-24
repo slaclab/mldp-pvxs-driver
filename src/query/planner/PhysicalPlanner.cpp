@@ -70,6 +70,16 @@ plan::PhysicalNodePtr buildNode(const plan::LogicalNodePtr& node)
         {
             pushable_predicates.push_back(toExecutablePredicate(predicate));
         }
+        std::vector<plan::PhysicalInSubquery> in_subqueries;
+        in_subqueries.reserve(scan->in_subqueries.size());
+        for (const auto& subquery : scan->in_subqueries)
+        {
+            in_subqueries.push_back(plan::PhysicalInSubquery{
+                .predicate = toExecutablePredicate(subquery.predicate),
+                .column_type = subquery.predicate.column_type,
+                .pushable = subquery.predicate.pushable_ops.contains(PredicateOp::IN),
+                .child = subquery.child});
+        }
         return plan::makeNode(plan::PhysicalTableScan{
             .table_name = scan->table_name,
             .table_alias = scan->table_alias,
@@ -79,7 +89,7 @@ plan::PhysicalNodePtr buildNode(const plan::LogicalNodePtr& node)
             .ipc_path = scan->ipc_path,
             .arrow_ipc = scan->arrow_ipc,
             .derived_query = scan->derived_query,
-            .pv_subquery = scan->pv_subquery,
+            .in_subqueries = std::move(in_subqueries),
             .window_subquery = scan->window_subquery,
             .window_literal = scan->window_literal ? std::optional<std::array<int64_t, 2>>{
                 {std::get<int64_t>((*scan->window_literal)[0]), std::get<int64_t>((*scan->window_literal)[1])}} : std::nullopt});
@@ -196,9 +206,9 @@ void appendNode(std::ostringstream& out, const plan::PhysicalNodePtr& node, cons
     if (const auto* scan = std::get_if<plan::PhysicalTableScan>(&node->value))
     {
         out << indent(level) << (scan->arrow_ipc ? "PhysicalArrowIpcScan(table=" : "PhysicalTableScan(table=") << scan->table_name;
-        if (scan->pv_subquery || scan->window_subquery || scan->window_literal)
+        if (!scan->in_subqueries.empty() || scan->window_subquery || scan->window_literal)
         {
-            out << ", pv_subquery=" << (scan->pv_subquery ? "true" : "false")
+            out << ", in_subqueries=" << scan->in_subqueries.size()
                 << ", window_subquery=" << (scan->window_subquery ? "true" : "false")
                 << ", window_literal=" << (scan->window_literal ? "true" : "false");
         }
@@ -323,9 +333,9 @@ std::string mldp_pvxs_driver::query::plan::physicalPlanToString(const plan::Phys
         {
             out << std::string(static_cast<size_t>(level) * 2, ' ')
                 << (scan->arrow_ipc ? "PhysicalArrowIpcScan(table=" : "PhysicalTableScan(table=") << scan->table_name;
-            if (scan->pv_subquery || scan->window_subquery || scan->window_literal)
+            if (!scan->in_subqueries.empty() || scan->window_subquery || scan->window_literal)
             {
-                out << ", pv_subquery=" << (scan->pv_subquery ? "true" : "false")
+                out << ", in_subqueries=" << scan->in_subqueries.size()
                     << ", window_subquery=" << (scan->window_subquery ? "true" : "false")
                     << ", window_literal=" << (scan->window_literal ? "true" : "false");
             }

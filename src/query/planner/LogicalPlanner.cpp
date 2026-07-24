@@ -46,7 +46,7 @@ plan::LogicalNodePtr mldp_pvxs_driver::query::planner::buildLogicalPlan(const pl
             .ipc_path = table.ipc_path,
             .arrow_ipc = table.arrow_ipc,
             .derived_query = table.derived_query,
-            .pv_subquery = table.pv_subquery,
+            .in_subqueries = table.in_subqueries,
             .window_subquery = table.window_subquery,
             .window_literal = table.window_literal});
         if (!table.predicates.empty())

@@ -454,8 +454,36 @@ TEST(QuerySubcommandTest, PlansWideTablePvAndWindowSubqueries)
         "WHERE configuration.category = 'beam_mode' AND activation.end_time IS NOT NULL)"));
     const auto plan_text = query::plan::physicalPlanToString(plan);
     EXPECT_NE(plan_text.find("PhysicalTableScan(table=mldp.time_series_table"), std::string::npos);
-    EXPECT_NE(plan_text.find("pv_subquery=true"), std::string::npos);
+    EXPECT_NE(plan_text.find("in_subqueries=1"), std::string::npos);
     EXPECT_NE(plan_text.find("window_subquery=true"), std::string::npos);
+    query::QueryableFactory::instance().reset();
+}
+
+TEST(QuerySubcommandTest, PlansNarrowTimeSeriesPvSubqueryWithMetadataJoin)
+{
+    query::QueryableFactory::instance().reset();
+    const auto config = config::Config::configFromYamlString(
+        "queryable:\n"
+        "  mldp:\n"
+        "    query-url: localhost:2\n"
+        "    min-conn: 1\n"
+        "    max-conn: 1\n"
+        "  mldp-pv-metadata:\n"
+        "    annotation-url: localhost:3\n"
+        "    min-conn: 1\n"
+        "    max-conn: 1\n");
+    cli::QuerySubcommandPreparer preparer;
+    preparer.prepare(config);
+
+    const auto plan = query::QueryPlanner{}.plan(query::parseQuery(
+        "SELECT ts.pv, ts.time, ts.value, m.description "
+        "FROM mldp.time_series ts "
+        "JOIN mldp.pv_metadata m ON ts.pv = m.pv "
+        "WHERE ts.pv IN (SELECT pv FROM mldp.pv_metadata WHERE pv PREFIX 'mldp_sample:MAGNET') "
+        "AND ts.time >= NOW - 10m AND ts.time <= NOW"));
+    const auto plan_text = query::plan::physicalPlanToString(plan);
+    EXPECT_NE(plan_text.find("PhysicalTableScan(table=mldp.time_series"), std::string::npos);
+    EXPECT_NE(plan_text.find("in_subqueries=1"), std::string::npos);
     query::QueryableFactory::instance().reset();
 }
 

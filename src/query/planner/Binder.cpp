@@ -237,11 +237,6 @@ plan::PlannerPredicate buildPredicate(const WherePredicate& where,
             }
             else if constexpr (std::is_same_v<std::decay_t<decltype(predicate)>, InPredicate>)
             {
-                if (predicate.subquery)
-                {
-                    throw plan::PlannerException(plan::BindError{
-                        .message = "IN (SELECT ...) is supported only for mldp.time_series_table pv and window predicates"});
-                }
                 bound.op = PredicateOp::IN;
                 if (!predicate.expressions.empty())
                 {
@@ -403,12 +398,14 @@ void enforceTimeSeriesTableContract(const SelectStatement&              statemen
             throw plan::PlannerException(plan::BindError{
                 .message = "mldp.time_series_table does not support joins"});
         }
-        const bool has_pv_input = table.pv_subquery || std::any_of(table.predicates.begin(), table.predicates.end(), [](const auto& predicate)
-                                                                     { return predicate.column == "pv"; });
+        const bool has_pv_input = std::any_of(table.in_subqueries.begin(), table.in_subqueries.end(), [](const auto& subquery)
+                                               { return subquery.predicate.column == "pv"; }) ||
+                                  std::any_of(table.predicates.begin(), table.predicates.end(), [](const auto& predicate)
+                                              { return predicate.column == "pv"; });
         if (!has_pv_input)
         {
             throw plan::PlannerException(plan::BindError{
-                .message = "mldp.time_series_table requires pv = ..., pv IN (...), or pv IN (SELECT pv ...)"});
+                .message = "mldp.time_series_table requires a pv predicate"});
         }
     }
 }
@@ -483,33 +480,21 @@ plan::BoundSelect mldp_pvxs_driver::query::planner::bindSelect(const SelectState
 
     for (const auto& where : statement.predicates)
     {
-        if (const auto* in = std::get_if<InPredicate>(&where); in != nullptr && in->subquery)
+        if (const auto* in = std::get_if<InPredicate>(&where); in != nullptr && in->subquery && in->column.name == "window")
         {
-            if (all_tables.size() != 1 || all_tables.front().table_name != "mldp.time_series_table")
+            const auto resolved = resolveColumnReference(in->column, all_tables);
+            auto* const table = &all_tables[table_index.at(resolved.table_alias)];
+            const bool is_wide_time_series = table->table_name == "mldp.time_series_table";
+
+            if (!is_wide_time_series || resolved.column_name != "window")
             {
                 throw plan::PlannerException(plan::BindError{
-                    .message = "IN (SELECT ...) is supported only for mldp.time_series_table pv and window predicates"});
+                    .message = "IN (SELECT ...) window input is supported only for mldp.time_series_table"});
             }
-            if (in->column.qualifier.has_value() && in->column.qualifier.value() != all_tables.front().table_alias &&
-                in->column.qualifier.value() != all_tables.front().table_name)
-            {
-                throw plan::PlannerException(plan::BindError{.message = "Unknown column qualifier for mldp.time_series_table subquery predicate"});
-            }
-            if (in->column.name == "pv")
-            {
-                if (all_tables.front().pv_subquery)
-                    throw plan::PlannerException(plan::BindError{.message = "mldp.time_series_table accepts exactly one pv IN (SELECT ...) predicate"});
-                all_tables.front().pv_subquery = in->subquery;
-                continue;
-            }
-            if (in->column.name == "window")
-            {
-                if (all_tables.front().window_subquery || all_tables.front().window_literal)
-                    throw plan::PlannerException(plan::BindError{.message = "mldp.time_series_table accepts exactly one window input"});
-                all_tables.front().window_subquery = in->subquery;
-                continue;
-            }
-            throw plan::PlannerException(plan::BindError{.message = "mldp.time_series_table subquery predicates are limited to pv and window"});
+            if (table->window_subquery || table->window_literal)
+                throw plan::PlannerException(plan::BindError{.message = "mldp.time_series_table accepts exactly one window input"});
+            table->window_subquery = in->subquery;
+            continue;
         }
         if (const auto* in = std::get_if<InPredicate>(&where); in != nullptr && in->column.name == "window")
         {
@@ -538,18 +523,17 @@ plan::BoundSelect mldp_pvxs_driver::query::planner::bindSelect(const SelectState
             continue;
         }
         const auto predicate = buildPredicate(where, all_tables);
-        all_tables[table_index.at(predicate.table_alias)].predicates.push_back(predicate);
+        auto& table = all_tables[table_index.at(predicate.table_alias)];
+        if (const auto* in = std::get_if<InPredicate>(&where); in != nullptr && in->subquery)
+            table.in_subqueries.push_back(plan::BoundInSubquery{.predicate = predicate, .child = in->subquery});
+        else
+            table.predicates.push_back(predicate);
     }
 
     enforceTimeSeriesTableContract(statement, all_tables);
 
     for (const auto& table : all_tables)
     {
-        if (table.table_name == "mldp.time_series_table" && table.pv_subquery &&
-            std::any_of(table.predicates.begin(), table.predicates.end(), [](const auto& predicate) { return predicate.column == "pv"; }))
-        {
-            throw plan::PlannerException(plan::BindError{.message = "mldp.time_series_table accepts either literal pv predicates or pv IN (SELECT ...), not both"});
-        }
         if (table.table_name == "mldp.time_series_table" && table.window_subquery && table.window_literal)
         {
             throw plan::PlannerException(plan::BindError{.message = "mldp.time_series_table accepts either a literal window or window IN (SELECT ...), not both"});
@@ -564,10 +548,8 @@ plan::BoundSelect mldp_pvxs_driver::query::planner::bindSelect(const SelectState
         {
             covered_columns[table.table_alias].insert(predicate.column);
         }
-        if (table.pv_subquery)
-        {
-            covered_columns[table.table_alias].insert("pv");
-        }
+        for (const auto& subquery : table.in_subqueries)
+            if (subquery.predicate.pushable_ops.contains(PredicateOp::IN)) covered_columns[table.table_alias].insert(subquery.predicate.column);
     }
     for (const auto& [left, right] : join_required_columns)
     {

@@ -45,6 +45,19 @@ class SampleDataGeneratorTest(unittest.TestCase):
         self.assertEqual(len(values), 12)
         self.assertNotEqual(values[0], values[1])
 
+    def test_bucket_samples_cover_the_full_signal_without_overlap(self) -> None:
+        self.assertEqual(generator.BUCKET_COUNT * generator.SAMPLES_PER_BUCKET,
+                         generator.SAMPLE_COUNT)
+        bucket_values = [
+            generator.sample_values(3, generator.SAMPLES_PER_BUCKET,
+                                    bucket * generator.SAMPLES_PER_BUCKET)
+            for bucket in range(generator.BUCKET_COUNT)
+        ]
+        self.assertEqual(
+            [value for values in bucket_values for value in values],
+            generator.sample_values(3),
+        )
+
     def test_namespace_cleanup_deletes_activations_before_configurations_and_metadata(self) -> None:
         class Request:
             def __init__(self, **values: str) -> None:

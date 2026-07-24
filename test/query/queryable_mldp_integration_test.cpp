@@ -625,7 +625,10 @@ TEST_F(QueryableMldpIntegrationTest, AnnotationTablesAndJoinsReturnOnlySeededRec
     EXPECT_NE(std::find(active_activation_ids.begin(), active_activation_ids.end(), active_activation_id), active_activation_ids.end());
 
     const auto metadata_join = pollSql(
-        "SELECT ts.pv, ts.value, meta.description FROM mldp.time_series ts " "INNER JOIN mldp.pv_metadata meta ON ts.pv = meta.pv WHERE ts.pv = " + quote(source_pv) + " AND meta.pv = " + quote(source_pv) + " AND ts.time >= NOW-300s",
+        "SELECT ts.pv, ts.value, meta.description FROM mldp.time_series ts "
+        "INNER JOIN mldp.pv_metadata meta ON ts.pv = meta.pv "
+        "WHERE ts.pv IN (SELECT pv FROM mldp.pv_metadata WHERE pv = " + quote(source_pv) + ") "
+        "AND meta.pv = " + quote(source_pv) + " AND ts.time >= NOW-300s",
         "metadata/time-series join",
         [](const QueryExecutionResult& candidate)
         {

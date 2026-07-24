@@ -44,6 +44,15 @@ void collectReferencedColumns(const plan::LogicalNodePtr&                   node
         {
             columns[scan->table_alias].insert(predicate.column == "tag" ? "tags" : predicate.column);
         }
+        for (const auto& subquery : scan->in_subqueries)
+        {
+            // A local-only IN subquery needs the target field present in the
+            // backend result so the executor can apply the resolved predicate.
+            if (!subquery.predicate.pushable_ops.contains(PredicateOp::IN))
+            {
+                columns[scan->table_alias].insert(subquery.predicate.column == "tag" ? "tags" : subquery.predicate.column);
+            }
+        }
         return;
     }
     if (const auto* filter = std::get_if<plan::LogicalFilter>(&node->value))

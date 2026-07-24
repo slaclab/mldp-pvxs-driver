@@ -25,6 +25,13 @@ namespace mldp_pvxs_driver::query::plan {
 struct PhysicalNode;
 using PhysicalNodePtr = std::shared_ptr<PhysicalNode>;
 
+struct PhysicalInSubquery {
+    Predicate                        predicate;
+    ColumnType                       column_type{ColumnType::STRING};
+    bool                             pushable{false};
+    std::shared_ptr<SelectStatement> child;
+};
+
 struct PhysicalTableScan {
     std::string            table_name;
     std::string            table_alias;
@@ -34,7 +41,7 @@ struct PhysicalTableScan {
     std::string            ipc_path;
     bool                   arrow_ipc{false};
     std::shared_ptr<SelectStatement> derived_query;
-    std::shared_ptr<SelectStatement> pv_subquery;
+    std::vector<PhysicalInSubquery>  in_subqueries;
     std::shared_ptr<SelectStatement> window_subquery;
     std::optional<std::array<int64_t, 2>> window_literal;
 };

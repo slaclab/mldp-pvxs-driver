@@ -41,6 +41,8 @@ from typing import Sequence
 DEFAULT_NAMESPACE = "mldp_sample"
 PV_COUNT = 20
 SAMPLE_COUNT = 3600
+BUCKET_COUNT = 10
+SAMPLES_PER_BUCKET = SAMPLE_COUNT // BUCKET_COUNT
 SAMPLE_PERIOD_NANOS = 1_000_000_000
 DEVICE_FAMILIES = ("MAGNET", "RF", "VACUUM", "DIAGNOSTIC")
 
@@ -171,12 +173,13 @@ def activation_ids(namespace: str) -> list[str]:
     return [f"{name}_activation" for name in configuration_names(namespace)]
 
 
-def sample_values(index: int, count: int = SAMPLE_COUNT) -> list[float]:
+def sample_values(index: int, count: int = SAMPLE_COUNT, start_sample: int = 0) -> list[float]:
     """Return deterministic smooth values with a family-specific offset."""
     baseline = 10.0 * (index + 1)
     amplitude = 0.25 + (index % 5) * 0.15
     period = 60.0 + (index % 4) * 30.0
-    return [baseline + amplitude * math.sin(2.0 * math.pi * sample / period) for sample in range(count)]
+    return [baseline + amplitude * math.sin(2.0 * math.pi * sample / period)
+            for sample in range(start_sample, start_sample + count)]
 
 
 def add_attribute(target: object, name: str, value: str) -> None:
@@ -185,7 +188,8 @@ def add_attribute(target: object, name: str, value: str) -> None:
     attribute.value = value
 
 
-def make_ingest_request(bindings: Bindings, namespace: str, provider_id: str, start_time: int):
+def make_ingest_request(bindings: Bindings, namespace: str, provider_id: str,
+                        start_time: int, start_sample: int, count: int):
     request = bindings.ingestion.IngestDataRequest(
         providerId=provider_id,
         clientRequestId=f"{namespace}-samples-{start_time}",
@@ -194,11 +198,11 @@ def make_ingest_request(bindings: Bindings, namespace: str, provider_id: str, st
     clock.startTime.epochSeconds = start_time
     clock.startTime.nanoseconds = 0
     clock.periodNanos = SAMPLE_PERIOD_NANOS
-    clock.count = SAMPLE_COUNT
+    clock.count = count
     for index, pv_name in enumerate(pv_names(namespace)):
         column = request.ingestionDataFrame.doubleColumns.add()
         column.name = pv_name
-        column.values.extend(sample_values(index))
+        column.values.extend(sample_values(index, count, start_sample))
         column.metadata.provenance.source = f"sample-generator/{namespace}"
         column.metadata.provenance.process = "deterministic-sine"
         column.metadata.tags.extend(("sample", namespace.lower(), DEVICE_FAMILIES[index % len(DEVICE_FAMILIES)].lower()))
@@ -338,8 +342,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         ingestion_stub = bindings.ingestion_grpc.DpIngestionServiceStub(ingestion_channel)
         provider_id = register_provider(bindings, ingestion_stub, args.namespace, args.timeout_seconds)
         start_time = int(time.time()) - SAMPLE_COUNT
-        request = make_ingest_request(bindings, args.namespace, provider_id, start_time)
-        require_success("ingestData", call_rpc("ingestData", ingestion_stub.ingestData, request, args.timeout_seconds))
+        for bucket_index in range(BUCKET_COUNT):
+            bucket_start_sample = bucket_index * SAMPLES_PER_BUCKET
+            request = make_ingest_request(
+                bindings,
+                args.namespace,
+                provider_id,
+                start_time + bucket_start_sample,
+                bucket_start_sample,
+                SAMPLES_PER_BUCKET,
+            )
+            require_success("ingestData", call_rpc("ingestData", ingestion_stub.ingestData, request, args.timeout_seconds))
         save_metadata(bindings, annotation_stub, args.namespace, args.timeout_seconds)
         save_configurations(bindings, annotation_stub, args.namespace, int(time.time()), args.timeout_seconds)
         if args.verify:
@@ -347,7 +360,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         print(f"Generated MLDP sample namespace: {args.namespace}")
         print(f"Provider: {args.namespace}-sample-provider ({provider_id})")
-        print(f"Time series: {PV_COUNT} PVs x {SAMPLE_COUNT} samples at 1-second intervals")
+        print(f"Time series: {PV_COUNT} PVs x {SAMPLE_COUNT} samples at 1-second intervals "
+              f"({BUCKET_COUNT} buckets per PV x {SAMPLES_PER_BUCKET} samples)")
         print(f"Time range: [{start_time}, {start_time + SAMPLE_COUNT - 1}] UTC epoch seconds")
         print("Configurations: " + ", ".join(configuration_names(args.namespace)))
         print("Activation IDs: " + ", ".join(activation_ids(args.namespace)))

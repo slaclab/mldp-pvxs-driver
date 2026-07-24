@@ -40,7 +40,9 @@ Every spill file is opened/read/deleted through it. Swapping local → S3 = one 
 ### Core Concept
 
 Each queryable backend is modelled as a **virtual table** with a dotted namespace.
-The query language is a strict subset of SQL `SELECT`: no joins, no subqueries, no DDL.
+The query language is a strict subset of SQL `SELECT`: joins, derived sources, and
+uncorrelated `IN (SELECT ...)` predicates are supported; scalar subqueries and DDL
+are not part of the core query grammar.
 The parser is hand-written (no external SQL library dependency) — grammar is simple enough.
 
 ### Virtual Table Registry
@@ -91,7 +93,7 @@ join_condition ::= qualified_column '=' qualified_column  -- equi-join only
 predicate_list ::= predicate (AND predicate)*         -- only AND, no OR at top level
 
 predicate    ::= qualified_column op value
-               | qualified_column IN '(' value_list ')'
+               | qualified_column IN '(' (value_list | select_statement) ')'
                | qualified_column LIKE string_literal
                | qualified_column BETWEEN value AND value
 
@@ -101,7 +103,12 @@ duration     ::= number ('s' | 'm' | 'h')
 value_list   ::= value (',' value)*
 ```
 
-Only `AND` at top level. `OR` within a single criterion via `IN (...)`.
+Only `AND` at top level. `OR` within a single criterion via `IN (...)`. An
+`IN (SELECT ...)` child must return exactly one non-null column with values
+compatible with the target column. The child is evaluated once before its
+dependent scan. `mldp.time_series_table` keeps
+`window IN (SELECT time, end_time ...)` as a table-specific two-column interval
+input; it is not scalar membership.
 Only equi-joins (`ON t1.col = t2.col`) — no theta-joins, no cross-joins, no self-joins.
 Only `INNER JOIN` and `LEFT OUTER JOIN` — no RIGHT/FULL (all backends are ordered drive/probe).
 
@@ -752,6 +759,7 @@ using PhysicalNodePtr = std::shared_ptr<PhysicalNode>;
 - Loads `tableSchema(table_name)` → builds per-column lookup map
 - Validates each predicate column exists in schema; expands `attr.<key>` patterns
 - Validates each predicate operator is in `pushable_ops ∪ filterable_ops`; rejects unsupported ops with a typed error message: `"column 'pv' does not support operator '!='; supported: =, IN"`
+- Binds `IN (SELECT ...)` with the same column resolution and `IN` capability validation as a literal list. A required column is covered only when `IN` is pushable.
 - Validates `SELECT` column list against schema `is_output` columns; `*` expands to all output columns
 - Checks `required` columns: if not covered by any predicate → `BindError` listing which required columns are missing
 
@@ -769,6 +777,7 @@ using PhysicalNodePtr = std::shared_ptr<PhysicalNode>;
 - Walks all predicates from `LogicalScan`
 - Classifies each: `pushable_ops` membership → `PhysicalTableScan.pushable`; otherwise → `PhysicalFilter.predicates`
 - Predicates on different columns with the same pushable op can be merged into a single backend criterion where the backend supports it (e.g. `tag = 'a' AND tag = 'b'` → two `TagsCriterion` entries, each AND-combined)
+- For `IN (SELECT ...)`, the physical scan retains a typed child query. At execution, the child is materialized into ordinary `Predicate::values`; pushable membership goes into the backend request, while local-only membership filters fetched Arrow batches.
 
 **ConstantFolding**:
 - `pv = 'X' AND pv = 'X'` → single predicate (dedup)
@@ -777,10 +786,12 @@ using PhysicalNodePtr = std::shared_ptr<PhysicalNode>;
 
 **ColumnPruning**:
 - Builds the set of columns referenced by SELECT + PhysicalFilter predicates
+- Retains the target column for local-only `IN (SELECT ...)` filtering
 - Passes set to `PhysicalTableScan` so `execute()` can omit unrequested fields if the backend supports projection (optional hint — backends may ignore)
 
 **RequiredColumnCheck**:
 - Runs after PredicatePushdown; verifies every `required=true` column has at least one predicate in `PhysicalTableScan.pushable`
+- A subquery predicate satisfies this check only when its target column supports pushable `IN`
 - Fails with: `"table 'mldp.time_series' requires predicate on column 'pv'"`
 
 #### EXPLAIN Support

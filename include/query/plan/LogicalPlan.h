@@ -36,6 +36,12 @@ struct PlannerPredicate {
     std::set<PredicateOp>    filterable_ops;
 };
 
+// An IN predicate whose values are produced by a child SELECT at execution time.
+struct BoundInSubquery {
+    PlannerPredicate                 predicate;
+    std::shared_ptr<SelectStatement> child;
+};
+
 enum class LogicalJoinType { INNER, LEFT_OUTER };
 
 struct LogicalJoinCondition {
@@ -55,7 +61,7 @@ struct LogicalScan {
     std::string               ipc_path;
     bool                      arrow_ipc{false};
     std::shared_ptr<SelectStatement> derived_query;
-    std::shared_ptr<SelectStatement> pv_subquery;
+    std::vector<BoundInSubquery>     in_subqueries;
     std::shared_ptr<SelectStatement> window_subquery;
     std::optional<std::array<PlannerLiteralValue, 2>> window_literal;
 };
@@ -116,7 +122,7 @@ struct BoundTable {
     std::string                 ipc_path;
     bool                        arrow_ipc{false};
     std::shared_ptr<SelectStatement> derived_query;
-    std::shared_ptr<SelectStatement> pv_subquery;
+    std::vector<BoundInSubquery>     in_subqueries;
     std::shared_ptr<SelectStatement> window_subquery;
     std::optional<std::array<PlannerLiteralValue, 2>> window_literal;
 };

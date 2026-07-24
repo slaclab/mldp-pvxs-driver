@@ -112,22 +112,80 @@ int64_t timestampScalarValue(const std::shared_ptr<arrow::Scalar>& scalar, const
     return std::dynamic_pointer_cast<arrow::TimestampScalar>(scalar)->value;
 }
 
-std::vector<std::string> extractPvSubqueryValues(const std::vector<std::shared_ptr<arrow::RecordBatch>>& batches)
+int64_t timestampToEpochSeconds(const std::shared_ptr<arrow::TimestampScalar>& scalar)
 {
-    std::vector<std::string> pvs;
+    const auto type = std::dynamic_pointer_cast<arrow::TimestampType>(scalar->type);
+    switch (type->unit())
+    {
+        case arrow::TimeUnit::SECOND: return scalar->value;
+        case arrow::TimeUnit::MILLI: return scalar->value / 1'000;
+        case arrow::TimeUnit::MICRO: return scalar->value / 1'000'000;
+        case arrow::TimeUnit::NANO: return scalar->value / 1'000'000'000;
+    }
+    throw std::runtime_error("Unsupported Arrow timestamp unit");
+}
+
+std::vector<std::variant<std::string, int64_t, bool>> extractInSubqueryValues(
+    const std::vector<std::shared_ptr<arrow::RecordBatch>>& batches,
+    const ColumnType target_type,
+    const std::string_view target_column)
+{
+    std::vector<std::variant<std::string, int64_t, bool>> values;
     for (const auto& batch : batches)
     {
-        if (batch->num_columns() != 1 || batch->schema()->field(0)->name() != "pv" || batch->schema()->field(0)->type()->id() != arrow::Type::STRING)
-            throw std::runtime_error("mldp.time_series_table pv subquery must return exactly one non-null string column named 'pv'");
+        if (batch->num_columns() != 1)
+            throw std::runtime_error("IN (SELECT ...) for column '" + std::string(target_column) + "' must return exactly one column");
         for (int64_t row = 0; row < batch->num_rows(); ++row)
         {
             const auto scalar = batch->column(0)->GetScalar(row);
             if (!scalar.ok() || !(*scalar)->is_valid)
-                throw std::runtime_error("mldp.time_series_table pv subquery returned a null pv");
-            pvs.push_back(std::dynamic_pointer_cast<arrow::StringScalar>(*scalar)->ToString());
+                throw std::runtime_error("IN (SELECT ...) for column '" + std::string(target_column) + "' returned a null value");
+            switch (target_type)
+            {
+                case ColumnType::STRING:
+                    if ((*scalar)->type->id() != arrow::Type::STRING)
+                        throw std::runtime_error("IN (SELECT ...) for string column '" + std::string(target_column) + "' requires Arrow string output");
+                    values.emplace_back(std::dynamic_pointer_cast<arrow::StringScalar>(*scalar)->ToString());
+                    break;
+                case ColumnType::BOOL:
+                    if ((*scalar)->type->id() != arrow::Type::BOOL)
+                        throw std::runtime_error("IN (SELECT ...) for bool column '" + std::string(target_column) + "' requires Arrow boolean output");
+                    values.emplace_back(std::dynamic_pointer_cast<arrow::BooleanScalar>(*scalar)->value);
+                    break;
+                case ColumnType::INT:
+                case ColumnType::DURATION_SECONDS:
+                    switch ((*scalar)->type->id())
+                    {
+                        case arrow::Type::INT8:
+                        case arrow::Type::INT16:
+                        case arrow::Type::INT32:
+                        case arrow::Type::INT64:
+                        case arrow::Type::UINT8:
+                        case arrow::Type::UINT16:
+                        case arrow::Type::UINT32:
+                        case arrow::Type::UINT64:
+                            try
+                            {
+                                values.emplace_back(std::stoll((*scalar)->ToString()));
+                            }
+                            catch (const std::exception&)
+                            {
+                                throw std::runtime_error("IN (SELECT ...) value cannot be represented as int64 for column '" + std::string(target_column) + "'");
+                            }
+                            break;
+                        default:
+                            throw std::runtime_error("IN (SELECT ...) for integral column '" + std::string(target_column) + "' requires Arrow integral output");
+                    }
+                    break;
+                case ColumnType::TIMESTAMP:
+                    if ((*scalar)->type->id() != arrow::Type::TIMESTAMP)
+                        throw std::runtime_error("IN (SELECT ...) for timestamp column '" + std::string(target_column) + "' requires Arrow timestamp output");
+                    values.emplace_back(timestampToEpochSeconds(std::dynamic_pointer_cast<arrow::TimestampScalar>(*scalar)));
+                    break;
+            }
         }
     }
-    return pvs;
+    return values;
 }
 
 std::vector<std::pair<int64_t, int64_t>> extractNormalizedWindows(const std::vector<std::shared_ptr<arrow::RecordBatch>>& batches)
@@ -956,6 +1014,25 @@ executeNode(const plan::PhysicalNodePtr& node, QueryStats& stats, const Executio
         {
             QueryPlanner planner(context.table_catalog);
             auto child = executeNode(planner.plan(QueryStatement{*scan->derived_query}), stats, context);
+            if (!scan->in_subqueries.empty())
+            {
+                std::vector<Predicate> predicates;
+                predicates.reserve(scan->in_subqueries.size());
+                for (const auto& subquery : scan->in_subqueries)
+                {
+                    auto predicate = subquery.predicate;
+                    predicate.values = extractInSubqueryValues(
+                        executeNode(planner.plan(QueryStatement{*subquery.child}), stats, context), subquery.column_type, predicate.column);
+                    if (predicate.values.empty()) return {};
+                    predicates.push_back(std::move(predicate));
+                }
+                for (auto& batch : child)
+                {
+                    auto filtered = applyFilter(batch, predicates);
+                    if (!filtered.ok()) throw std::runtime_error(filtered.status().ToString());
+                    batch = *filtered;
+                }
+            }
             if (scan->qualify_output)
                 for (auto& batch : child) batch = qualifyBatchColumns(batch, scan->table_alias);
             return child;
@@ -968,21 +1045,78 @@ executeNode(const plan::PhysicalNodePtr& node, QueryStats& stats, const Executio
             if (table->path != scan->ipc_path) throw std::runtime_error("Stored table path changed during planning: " + scan->table_name);
             auto batches = context.table_catalog->read(*table);
             if (!batches.ok()) throw std::runtime_error(batches.status().ToString());
+            if (!scan->in_subqueries.empty())
+            {
+                QueryPlanner planner(context.table_catalog);
+                std::vector<Predicate> predicates;
+                predicates.reserve(scan->in_subqueries.size());
+                for (const auto& subquery : scan->in_subqueries)
+                {
+                    auto predicate = subquery.predicate;
+                    predicate.values = extractInSubqueryValues(
+                        executeNode(planner.plan(QueryStatement{*subquery.child}), stats, context), subquery.column_type, predicate.column);
+                    if (predicate.values.empty()) return {};
+                    predicates.push_back(std::move(predicate));
+                }
+                for (auto& batch : *batches)
+                {
+                    auto filtered = applyFilter(batch, predicates);
+                    if (!filtered.ok()) throw std::runtime_error(filtered.status().ToString());
+                    batch = *filtered;
+                }
+            }
             if (scan->qualify_output)
                 for (auto& batch : *batches) batch = qualifyBatchColumns(batch, scan->table_alias);
             return *batches;
         }
-        if (scan->pv_subquery || scan->window_subquery || scan->window_literal)
+        if (!scan->in_subqueries.empty() || scan->window_subquery || scan->window_literal)
         {
-            if (scan->table_name != "mldp.time_series_table")
-                throw std::runtime_error("Only mldp.time_series_table supports pv/window subquery inputs");
+            const bool is_wide_table = scan->table_name == "mldp.time_series_table";
             QueryPlanner planner(context.table_catalog);
-            std::vector<std::string> pvs;
-            if (scan->pv_subquery)
+            std::vector<Predicate> pushable_predicates = scan->pushable_predicates;
+            std::vector<Predicate> local_predicates;
+            for (const auto& subquery : scan->in_subqueries)
             {
-                const auto pv_batches = executeNode(planner.plan(QueryStatement{*scan->pv_subquery}), stats, context);
-                pvs = extractPvSubqueryValues(pv_batches);
+                auto predicate = subquery.predicate;
+                predicate.values = extractInSubqueryValues(
+                    executeNode(planner.plan(QueryStatement{*subquery.child}), stats, context), subquery.column_type, predicate.column);
+                if (predicate.values.empty()) return {};
+                if (subquery.pushable)
+                {
+                    pushable_predicates.push_back(std::move(predicate));
+                }
+                else
+                {
+                    local_predicates.push_back(std::move(predicate));
+                }
             }
+
+            auto queryable = QueryableFactory::instance().createByTable(scan->table_name);
+            if (!is_wide_table)
+            {
+                std::vector<std::shared_ptr<arrow::RecordBatch>> output;
+                std::string page_token;
+                do
+                {
+                    const auto result = queryable->execute(scan->table_name, pushable_predicates, scan->projection_hint, context, page_token);
+                    ++stats.rpc_calls;
+                    if (result.batch != nullptr)
+                    {
+                        auto batch = result.batch;
+                        if (!local_predicates.empty())
+                        {
+                            auto filtered = applyFilter(batch, local_predicates);
+                            if (!filtered.ok()) throw std::runtime_error(filtered.status().ToString());
+                            batch = *filtered;
+                        }
+                        output.push_back(scan->qualify_output ? qualifyBatchColumns(batch, scan->table_alias) : batch);
+                        stats.rows_from_backend += static_cast<uint64_t>(result.batch->num_rows());
+                    }
+                    page_token = result.next_page_token;
+                } while (!page_token.empty());
+                return output;
+            }
+
             std::vector<std::pair<int64_t, int64_t>> windows;
             if (scan->window_subquery)
                 windows = extractNormalizedWindows(executeNode(planner.plan(QueryStatement{*scan->window_subquery}), stats, context));
@@ -990,37 +1124,33 @@ executeNode(const plan::PhysicalNodePtr& node, QueryStats& stats, const Executio
                 windows.emplace_back((*scan->window_literal)[0] * 1'000'000'000LL, (*scan->window_literal)[1] * 1'000'000'000LL);
             else
                 windows.emplace_back(0, std::numeric_limits<int64_t>::max());
+            if (windows.empty()) return {};
 
-            if ((scan->pv_subquery && pvs.empty()) || windows.empty())
-            {
-                return {};
-            }
-
-            auto queryable = QueryableFactory::instance().createByTable(scan->table_name);
             std::vector<std::shared_ptr<arrow::RecordBatch>> output;
             for (const auto& [begin_ns, end_ns] : windows)
             {
-                std::vector<Predicate> predicates = scan->pushable_predicates;
-                predicates.erase(std::remove_if(predicates.begin(), predicates.end(), [scan](const Predicate& predicate) {
-                    return (scan->pv_subquery && predicate.column == "pv") ||
-                           ((scan->window_subquery || scan->window_literal) && predicate.column == "time");
-                }), predicates.end());
-                if (scan->pv_subquery)
-                {
-                    predicates.push_back(Predicate{.column = "pv", .op = PredicateOp::IN, .values = {}});
-                    for (const auto& pv : pvs) predicates.back().values.push_back(pv);
-                }
+                auto window_predicates = pushable_predicates;
+                window_predicates.erase(std::remove_if(window_predicates.begin(), window_predicates.end(), [scan](const Predicate& predicate) {
+                    return (scan->window_subquery || scan->window_literal) && predicate.column == "time";
+                }), window_predicates.end());
                 if (scan->window_subquery || scan->window_literal)
                 {
-                    predicates.push_back(Predicate{.column = "time", .op = PredicateOp::GTE, .values = {begin_ns / 1'000'000'000LL}});
-                    predicates.push_back(Predicate{.column = "time", .op = PredicateOp::LTE, .values = {end_ns / 1'000'000'000LL}});
+                    window_predicates.push_back(Predicate{.column = "time", .op = PredicateOp::GTE, .values = {begin_ns / 1'000'000'000LL}});
+                    window_predicates.push_back(Predicate{.column = "time", .op = PredicateOp::LTE, .values = {end_ns / 1'000'000'000LL}});
                 }
-                const auto result = queryable->execute(scan->table_name, predicates, scan->projection_hint, context);
+                const auto result = queryable->execute(scan->table_name, window_predicates, scan->projection_hint, context);
                 ++stats.rpc_calls;
                 if (result.batch)
                 {
                     stats.rows_from_backend += static_cast<uint64_t>(result.batch->num_rows());
-                    output.push_back(scan->qualify_output ? qualifyBatchColumns(result.batch, scan->table_alias) : result.batch);
+                    auto batch = result.batch;
+                    if (!local_predicates.empty())
+                    {
+                        auto filtered = applyFilter(batch, local_predicates);
+                        if (!filtered.ok()) throw std::runtime_error(filtered.status().ToString());
+                        batch = *filtered;
+                    }
+                    output.push_back(scan->qualify_output ? qualifyBatchColumns(batch, scan->table_alias) : batch);
                 }
             }
             return output;
