@@ -804,6 +804,20 @@ This tutorial walks from zero to running SQL queries against a live MLDP stack u
 
 - A built `mldp_pvxs_driver` binary (or the dev container with the binary on `$PATH`).
 
+To run the complete tutorial non-interactively against the live services, use
+the dedicated runner from the project root. It creates a unique namespace,
+feeds the SQL below to real REPL client processes using the inline queryable
+configuration, exercises the persistent-table walkthrough, and removes its
+generated annotation records afterward:
+
+```bash
+python3 scripts/run_query_cli_tutorial.py
+```
+
+Pass `--verify` to make the data generator read its annotation records back
+before the REPL starts. This check is optional; without it the runner still
+creates all tutorial time-series, metadata, configurations, and activations.
+
 ### Step 1 — Populate sample data
 
 Run the sample-data generator from the project root:
