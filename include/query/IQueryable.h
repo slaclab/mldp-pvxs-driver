@@ -29,6 +29,7 @@ enum class ColumnType
     TIMESTAMP,
     DURATION_SECONDS,
     INT,
+    NATIVE_VALUE,
     BOOL
 };
 enum class PredicateOp
@@ -51,7 +52,7 @@ struct Predicate
 {
     std::string                                           column;
     PredicateOp                                           op;
-    std::vector<std::variant<std::string, int64_t, bool>> values;
+    std::vector<std::variant<std::string, int64_t, double, bool>> values;
 };
 
 struct ColumnSchema

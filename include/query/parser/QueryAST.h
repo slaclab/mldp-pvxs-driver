@@ -25,7 +25,7 @@ struct NowLiteral {
     int64_t offset_seconds{0};
 };
 
-using LiteralValue = std::variant<std::string, int64_t, NowLiteral>;
+using LiteralValue = std::variant<std::string, int64_t, double, NowLiteral>;
 
 struct QualifiedColumn {
     std::optional<std::string> qualifier;

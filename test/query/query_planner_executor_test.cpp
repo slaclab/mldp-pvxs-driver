@@ -10,6 +10,7 @@
 
 #include <query/ExecutionContext.h>
 #include <query/QueryExecutor.h>
+#include <query/executor/ExecutionState.h>
 #include <query/QueryPlanner.h>
 #include <query/QueryResult.h>
 #include <query/QueryTableCatalog.h>
@@ -21,6 +22,7 @@
 
 #include <arrow/array/builder_binary.h>
 #include <arrow/array/builder_primitive.h>
+#include <arrow/array/builder_union.h>
 #include <arrow/memory_pool.h>
 #include <arrow/filesystem/mockfs.h>
 #include <arrow/scalar.h>
@@ -439,6 +441,51 @@ TEST_F(PlannerExecutorTest, PlansSelectWithBackboneNodes)
     EXPECT_NE(text.find("PhysicalTableScan"), std::string::npos);
 }
 
+TEST_F(PlannerExecutorTest, InitializesMatchingExecutionStateTree)
+{
+    const auto scan = plan::makeNode(plan::PhysicalTableScan{.table_name = "fake.samples"});
+    const auto filter = plan::makeNode(plan::PhysicalFilter{
+        .input = scan,
+        .predicates = {query::Predicate{.column = "pv", .op = query::PredicateOp::EQ, .values = {std::string("A")}}}});
+    const auto project = plan::makeNode(plan::PhysicalProject{.input = filter, .columns = {"pv"}});
+    query::QueryStats stats;
+    const auto state = query::executor::makeExecutionState(
+        project, {.pool = arrow::default_memory_pool()}, stats);
+
+    ASSERT_EQ(state->typeName(), "ProjectExecutionState");
+    ASSERT_EQ(state->children().size(), 1U);
+    EXPECT_EQ(state->children().front()->typeName(), "FilterExecutionState");
+    ASSERT_EQ(state->children().front()->children().size(), 1U);
+    EXPECT_EQ(state->children().front()->children().front()->typeName(), "TableScanExecutionState");
+}
+
+TEST_F(PlannerExecutorTest, ExecutionStateFactoryMapsAllPhysicalNodeTypes)
+{
+    const auto scan = plan::makeNode(plan::PhysicalTableScan{.table_name = "fake.samples"});
+    const std::vector<std::pair<plan::PhysicalNodePtr, std::string_view>> cases{
+        {scan, "TableScanExecutionState"},
+        {plan::makeNode(plan::PhysicalFilter{.input = scan}), "FilterExecutionState"},
+        {plan::makeNode(plan::PhysicalProject{.input = scan}), "ProjectExecutionState"},
+        {plan::makeNode(plan::PhysicalSort{.input = scan}), "SortExecutionState"},
+        {plan::makeNode(plan::PhysicalLimit{.input = scan}), "LimitExecutionState"},
+        {plan::makeNode(plan::PhysicalHashJoin{.left = scan, .right = scan}), "HashJoinExecutionState"},
+        {plan::makeNode(plan::PhysicalNestedLoopJoin{.outer = scan, .inner = scan}), "NestedLoopJoinExecutionState"},
+        {plan::makeNode(plan::PhysicalBlockNestedLoopJoin{.outer = scan, .inner = scan}), "BlockNestedLoopJoinExecutionState"},
+        {plan::makeNode(plan::PhysicalShowTables{}), "ShowTablesExecutionState"},
+        {plan::makeNode(plan::PhysicalDescribe{}), "DescribeExecutionState"},
+        {plan::makeNode(plan::PhysicalExplain{}), "ExplainExecutionState"},
+        {plan::makeNode(plan::PhysicalCreateTable{.query = scan}), "CreateTableExecutionState"},
+        {plan::makeNode(plan::PhysicalDropTable{}), "DropTableExecutionState"},
+    };
+    for (const auto& [physical, expected] : cases)
+    {
+        query::QueryStats stats;
+        const auto state = query::executor::makeExecutionState(
+            physical, {.pool = arrow::default_memory_pool()}, stats);
+        EXPECT_EQ(state->typeName(), expected);
+    }
+}
+
 TEST_F(PlannerExecutorTest, ExecutesDerivedSourceAndPlansItAsArrowIpcScan)
 {
     auto file_system = std::make_shared<arrow::fs::internal::MockFileSystem>(std::chrono::system_clock::now());
@@ -460,6 +507,128 @@ TEST_F(PlannerExecutorTest, ExecutesDerivedSourceAndPlansItAsArrowIpcScan)
     EXPECT_EQ(derived.stats.rpc_calls, 0U);
     ASSERT_EQ(derived.batches.size(), 1U);
     EXPECT_EQ(derived.batches.front()->num_rows(), 1);
+
+    const auto empty_create = planner.plan(query::parseQuery("CREATE TEMP TABLE empty_samples AS SELECT pv, value FROM fake.samples WHERE pv = 'missing'"));
+    const auto empty_created = executor.execute(empty_create, context);
+    EXPECT_EQ(empty_created.stats.rpc_calls, 1U);
+
+    const auto empty_stored = executor.execute(planner.plan(query::parseQuery("SELECT * FROM empty_samples")), context);
+    EXPECT_EQ(empty_stored.stats.rpc_calls, 0U);
+    ASSERT_EQ(empty_stored.batches.size(), 1U);
+    ASSERT_NE(empty_stored.batches.front(), nullptr);
+    EXPECT_EQ(empty_stored.batches.front()->num_rows(), 0);
+    EXPECT_EQ(empty_stored.batches.front()->schema()->field(0)->name(), "pv");
+    EXPECT_EQ(empty_stored.batches.front()->schema()->field(1)->name(), "value");
+}
+
+TEST_F(PlannerExecutorTest, FiltersMaterializedDenseUnionValuesNumerically)
+{
+    auto file_system = std::make_shared<arrow::fs::internal::MockFileSystem>(std::chrono::system_clock::now());
+    auto catalog = std::make_shared<query::QueryTableCatalog>(file_system, "catalog");
+    const auto value_type = arrow::dense_union({arrow::field("string", arrow::utf8()), arrow::field("double", arrow::float64())});
+    auto string_builder = std::make_shared<arrow::StringBuilder>();
+    auto double_builder = std::make_shared<arrow::DoubleBuilder>();
+    arrow::DenseUnionBuilder value_builder(arrow::default_memory_pool(), {string_builder, double_builder}, value_type);
+    ASSERT_TRUE(value_builder.Append(0).ok());
+    ASSERT_TRUE(string_builder->Append("not numeric").ok());
+    ASSERT_TRUE(value_builder.Append(1).ok());
+    ASSERT_TRUE(double_builder->Append(9.5).ok());
+    ASSERT_TRUE(value_builder.Append(1).ok());
+    ASSERT_TRUE(double_builder->Append(10.5).ok());
+    std::shared_ptr<arrow::Array> value;
+    ASSERT_TRUE(value_builder.Finish(&value).ok());
+    const auto batch = arrow::RecordBatch::Make(arrow::schema({arrow::field("value", value_type)}), 3, {value});
+    ASSERT_TRUE(catalog->create("magnet_samples", query::TableLifetime::Session, {batch}).ok());
+
+    query::ExecutionContext context{.pool = arrow::default_memory_pool(), .table_catalog = catalog};
+    query::QueryPlanner planner(catalog);
+    query::QueryExecutor executor;
+    const auto result = executor.execute(planner.plan(query::parseQuery("SELECT * FROM magnet_samples WHERE value > 10.0")), context);
+
+    EXPECT_EQ(result.stats.rpc_calls, 0U);
+    ASSERT_EQ(result.batches.size(), 1U);
+    EXPECT_EQ(result.batches.front()->num_rows(), 1);
+    EXPECT_EQ(result.batches.front()->schema()->field(0)->type()->id(), arrow::Type::DENSE_UNION);
+    const auto scalar = result.batches.front()->column(0)->GetScalar(0);
+    ASSERT_TRUE(scalar.ok());
+    EXPECT_EQ(std::dynamic_pointer_cast<arrow::UnionScalar>(*scalar)->child_value()->ToString(), "10.5");
+}
+
+TEST_F(PlannerExecutorTest, FiltersMaterializedNativeUnionValuesByActiveTypeWithoutUnionGather)
+{
+    auto file_system = std::make_shared<arrow::fs::internal::MockFileSystem>(std::chrono::system_clock::now());
+    auto catalog = std::make_shared<query::QueryTableCatalog>(file_system, "catalog");
+    const auto value_type = arrow::dense_union({arrow::field("string", arrow::utf8()), arrow::field("bool", arrow::boolean()),
+                                                arrow::field("int", arrow::int32()), arrow::field("float", arrow::float32()),
+                                                arrow::field("double", arrow::float64()), arrow::field("timestamp", arrow::timestamp(arrow::TimeUnit::NANO)),
+                                                arrow::field("binary", arrow::binary())});
+    auto string_builder = std::make_shared<arrow::StringBuilder>();
+    auto bool_builder = std::make_shared<arrow::BooleanBuilder>();
+    auto int_builder = std::make_shared<arrow::Int32Builder>();
+    auto float_builder = std::make_shared<arrow::FloatBuilder>();
+    auto double_builder = std::make_shared<arrow::DoubleBuilder>();
+    auto timestamp_builder = std::make_shared<arrow::TimestampBuilder>(
+        arrow::timestamp(arrow::TimeUnit::NANO), arrow::default_memory_pool());
+    auto binary_builder = std::make_shared<arrow::BinaryBuilder>();
+    arrow::DenseUnionBuilder value_builder(arrow::default_memory_pool(), {string_builder, bool_builder, int_builder, float_builder, double_builder, timestamp_builder, binary_builder}, value_type);
+    ASSERT_TRUE(value_builder.Append(0).ok()); ASSERT_TRUE(string_builder->Append("11").ok());
+    ASSERT_TRUE(value_builder.Append(1).ok()); ASSERT_TRUE(bool_builder->Append(true).ok());
+    ASSERT_TRUE(value_builder.Append(2).ok()); ASSERT_TRUE(int_builder->Append(10).ok());
+    ASSERT_TRUE(value_builder.Append(3).ok()); ASSERT_TRUE(float_builder->Append(10.5F).ok());
+    ASSERT_TRUE(value_builder.Append(4).ok()); ASSERT_TRUE(double_builder->Append(11.0).ok());
+    ASSERT_TRUE(value_builder.Append(5).ok()); ASSERT_TRUE(timestamp_builder->Append(11).ok());
+    ASSERT_TRUE(value_builder.Append(6).ok()); ASSERT_TRUE(binary_builder->Append("11").ok());
+    ASSERT_TRUE(value_builder.AppendNull().ok());
+    std::shared_ptr<arrow::Array> value;
+    ASSERT_TRUE(value_builder.Finish(&value).ok());
+
+    arrow::StringBuilder pv_builder;
+    arrow::Int64Builder time_builder;
+    for (int row = 0; row < 8; ++row)
+    {
+        ASSERT_TRUE(pv_builder.Append("PV:" + std::to_string(row)).ok());
+        ASSERT_TRUE(time_builder.Append(100 + row).ok());
+    }
+    std::shared_ptr<arrow::Array> pv;
+    std::shared_ptr<arrow::Array> time;
+    ASSERT_TRUE(pv_builder.Finish(&pv).ok());
+    ASSERT_TRUE(time_builder.Finish(&time).ok());
+    const auto batch = arrow::RecordBatch::Make(arrow::schema({arrow::field("pv", arrow::utf8()), arrow::field("time", arrow::int64()), arrow::field("value", value_type)}), 8, {pv, time, value});
+    ASSERT_TRUE(catalog->create("magnet_samples", query::TableLifetime::Session, {batch}).ok());
+
+    query::ExecutionContext context{.pool = arrow::default_memory_pool(), .table_catalog = catalog};
+    query::QueryPlanner planner(catalog);
+    query::QueryExecutor executor;
+    const auto execute = [&](const std::string_view sql)
+    {
+        const auto result = executor.execute(planner.plan(query::parseQuery(sql)), context);
+        EXPECT_EQ(result.stats.rpc_calls, 0U);
+        EXPECT_EQ(result.batches.size(), 1U);
+        return result.batches.empty() ? std::shared_ptr<arrow::RecordBatch>{} : result.batches.front();
+    };
+
+    const auto greater = execute("SELECT * FROM magnet_samples WHERE value > 10.0");
+    ASSERT_NE(greater, nullptr);
+    ASSERT_EQ(greater->num_rows(), 2);
+    EXPECT_EQ(std::dynamic_pointer_cast<arrow::StringScalar>(*greater->column(0)->GetScalar(0))->ToString(), "PV:3");
+    EXPECT_EQ(std::dynamic_pointer_cast<arrow::StringScalar>(*greater->column(0)->GetScalar(1))->ToString(), "PV:4");
+    EXPECT_EQ(std::dynamic_pointer_cast<arrow::Int64Scalar>(*greater->column(1)->GetScalar(0))->value, 103);
+    EXPECT_EQ(std::dynamic_pointer_cast<arrow::Int64Scalar>(*greater->column(1)->GetScalar(1))->value, 104);
+    EXPECT_EQ(std::dynamic_pointer_cast<arrow::UnionScalar>(*greater->column(2)->GetScalar(0))->child_value()->ToString(), "10.5");
+    EXPECT_EQ(std::dynamic_pointer_cast<arrow::UnionScalar>(*greater->column(2)->GetScalar(1))->child_value()->ToString(), "11");
+
+    const auto not_equal = execute("SELECT * FROM magnet_samples WHERE value != 10.0");
+    const auto in = execute("SELECT * FROM magnet_samples WHERE value IN (10.0, 11.0)");
+    const auto between = execute("SELECT * FROM magnet_samples WHERE value BETWEEN 10.0 AND 10.5");
+    const auto equal = execute("SELECT * FROM magnet_samples WHERE value = 11.0");
+    ASSERT_NE(not_equal, nullptr);
+    ASSERT_NE(in, nullptr);
+    ASSERT_NE(between, nullptr);
+    ASSERT_NE(equal, nullptr);
+    EXPECT_EQ(not_equal->num_rows(), 2);
+    EXPECT_EQ(in->num_rows(), 2);
+    EXPECT_EQ(between->num_rows(), 2);
+    EXPECT_EQ(equal->num_rows(), 1);
 }
 
 TEST_F(PlannerExecutorTest, PushesBackendPredicateAndPrunesProjectionColumns)

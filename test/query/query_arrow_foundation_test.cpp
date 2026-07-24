@@ -9,6 +9,7 @@
 #include <query/QueryExecutor.h>
 #include <query/QueryFormatter.h>
 #include <query/QueryPlanner.h>
+#include <query/QueryResult.h>
 #include <query/ArrowTypeMap.h>
 #include <query/QueryableFactory.h>
 #include <query/SpillManager.h>
@@ -33,6 +34,47 @@
 using namespace mldp_pvxs_driver;
 
 namespace {
+
+class ReplFakeQueryable final : public query::IQueryable
+{
+public:
+    static const std::set<std::string_view> kVirtualTables;
+
+    explicit ReplFakeQueryable(const config::Config&, std::shared_ptr<metrics::Metrics> = nullptr)
+    {
+    }
+
+    std::set<std::string_view> virtualTables() const override
+    {
+        return kVirtualTables;
+    }
+
+    std::vector<query::ColumnSchema> tableSchema(std::string_view) const override
+    {
+        return {{"pv", query::ColumnType::STRING, false, true, {}, {}, "PV"},
+                {"value", query::ColumnType::INT, false, true, {}, {}, "Value"}};
+    }
+
+    query::QueryResult execute(std::string_view,
+                               const std::vector<query::Predicate>&,
+                               const std::set<std::string>&,
+                               const query::ExecutionContext&,
+                               std::string_view = {}) override
+    {
+        arrow::StringBuilder pv_builder;
+        arrow::Int64Builder value_builder;
+        EXPECT_TRUE(pv_builder.Append("MAGNET:01").ok());
+        EXPECT_TRUE(value_builder.Append(42).ok());
+        std::shared_ptr<arrow::Array> pv;
+        std::shared_ptr<arrow::Array> value;
+        EXPECT_TRUE(pv_builder.Finish(&pv).ok());
+        EXPECT_TRUE(value_builder.Finish(&value).ok());
+        return {.batch = arrow::RecordBatch::Make(
+                    arrow::schema({arrow::field("pv", arrow::utf8()), arrow::field("value", arrow::int64())}), 1, {pv, value})};
+    }
+};
+
+const std::set<std::string_view> ReplFakeQueryable::kVirtualTables = {"fake.samples"};
 
 TEST(ArrowTypeMapTest, MapsEveryColumnType)
 {
@@ -611,6 +653,30 @@ TEST(QuerySubcommandTest, ReplShowsHelpAndExitsOnQuit)
     EXPECT_NE(output.str().find("Enter one SQL statement terminated by ';'."), std::string::npos);
     EXPECT_NE(output.str().find("Ctrl-L (clear screen)"), std::string::npos);
     EXPECT_TRUE(error.str().empty());
+}
+
+TEST(QuerySubcommandTest, ReplMaterializesMultilineCreateTableForFollowingSelect)
+{
+    char arg0[] = "query";
+    char* argv[] = {arg0};
+    query::QueryableFactory::instance().reset();
+    cli::QuerySubcommand querySubcommand([](const config::Config&)
+    {
+        query::QueryableFactory::instance().prepare<ReplFakeQueryable>(config::Config::configFromYamlString("{}"));
+    });
+    std::istringstream input(
+        "CREATE TEMP TABLE magnet_samples AS\n"
+        "SELECT pv, value FROM fake.samples;\n"
+        "SELECT * FROM magnet_samples;\n"
+        ".quit\n");
+    std::ostringstream output;
+    std::ostringstream error;
+
+    EXPECT_EQ(querySubcommand.run(1, argv, {}, input, output, error), 0);
+    EXPECT_TRUE(error.str().empty()) << error.str();
+    EXPECT_NE(output.str().find("MAGNET:01"), std::string::npos);
+    EXPECT_NE(output.str().find("42"), std::string::npos);
+    query::QueryableFactory::instance().reset();
 }
 
 TEST(QuerySubcommandTest, ReplFormatPersistsForFollowingStatements)

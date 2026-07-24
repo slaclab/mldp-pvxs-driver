@@ -33,6 +33,10 @@ std::string literalKey(const plan::PlannerLiteralValue& value)
             {
                 return "i:" + std::to_string(v);
             }
+            else if constexpr (std::is_same_v<T, double>)
+            {
+                return "d:" + std::to_string(v);
+            }
             else if constexpr (std::is_same_v<T, bool>)
             {
                 return std::string("b:") + (v ? "1" : "0");

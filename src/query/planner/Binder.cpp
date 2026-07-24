@@ -157,6 +157,12 @@ std::set<PredicateOp> defaultTextOps()
     return {PredicateOp::EQ, PredicateOp::NEQ, PredicateOp::IN, PredicateOp::PREFIX, PredicateOp::CONTAINS, PredicateOp::LIKE};
 }
 
+std::set<PredicateOp> defaultNativeValueOps()
+{
+    return {PredicateOp::EQ, PredicateOp::NEQ, PredicateOp::LT, PredicateOp::LTE,
+            PredicateOp::GT, PredicateOp::GTE, PredicateOp::IN, PredicateOp::BETWEEN};
+}
+
 plan::PlannerLiteralValue toPlannerLiteral(const LiteralValue& value)
 {
     if (std::holds_alternative<std::string>(value))
@@ -166,6 +172,10 @@ plan::PlannerLiteralValue toPlannerLiteral(const LiteralValue& value)
     if (std::holds_alternative<int64_t>(value))
     {
         return std::get<int64_t>(value);
+    }
+    if (std::holds_alternative<double>(value))
+    {
+        return std::get<double>(value);
     }
     return std::get<NowLiteral>(value);
 }
@@ -316,8 +326,9 @@ plan::BoundTable makeBoundTable(const TableRef& table_ref, const QueryTableCatal
                 else if (field->type()->id() == arrow::Type::BOOL) type = ColumnType::BOOL;
                 else if (field->type()->id() == arrow::Type::TIMESTAMP) type = ColumnType::TIMESTAMP;
                 else if (field->type()->id() == arrow::Type::DURATION) type = ColumnType::DURATION_SECONDS;
+                else if (field->type()->id() == arrow::Type::DENSE_UNION || field->type()->id() == arrow::Type::SPARSE_UNION) type = ColumnType::NATIVE_VALUE;
                 schema.push_back(ColumnSchema{.name = field->name(), .type = type, .required = false, .is_output = true,
-                                              .pushable_ops = {}, .filterable_ops = defaultTextOps(), .notes = "Arrow IPC snapshot"});
+                                              .pushable_ops = {}, .filterable_ops = type == ColumnType::NATIVE_VALUE ? defaultNativeValueOps() : defaultTextOps(), .notes = "Arrow IPC snapshot"});
             }
             return plan::BoundTable{.table_name = table_ref.table_name, .table_alias = table_ref.alias.value_or(table_ref.table_name),
                                     .schema = std::move(schema), .predicates = {}, .ipc_path = stored->path, .arrow_ipc = true};

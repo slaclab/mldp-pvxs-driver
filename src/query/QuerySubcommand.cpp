@@ -957,8 +957,15 @@ int mldp_pvxs_driver::cli::QuerySubcommand::run(int argc,
             ? mldp_pvxs_driver::config::Config::configFromYamlString("{}\n")
             : config::loadMergedConfigSources(global_config_sources);
 
-        QuerySubcommandPreparer preparer;
-        preparer.prepare(config);
+        if (queryable_preparer_)
+        {
+            queryable_preparer_(config);
+        }
+        else
+        {
+            QuerySubcommandPreparer preparer;
+            preparer.prepare(config);
+        }
         QueryRunner runner;
         if (interactive)
         {
@@ -971,4 +978,9 @@ int mldp_pvxs_driver::cli::QuerySubcommand::run(int argc,
         printQueryError(ex, error);
     }
     return 1;
+}
+
+mldp_pvxs_driver::cli::QuerySubcommand::QuerySubcommand(QueryablePreparer queryable_preparer)
+    : queryable_preparer_(std::move(queryable_preparer))
+{
 }

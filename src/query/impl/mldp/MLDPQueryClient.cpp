@@ -66,7 +66,7 @@ std::vector<ColumnSchema> MLDPQueryClient::tableSchema(std::string_view table_na
         std::vector<ColumnSchema> schema = {
             {"pv", ColumnType::STRING, true, !wide_table, {PredicateOp::EQ, PredicateOp::IN}, {}, "Source name"},
             {"time", ColumnType::TIMESTAMP, false, true, {PredicateOp::GTE, PredicateOp::LTE}, {}, "Sample timestamp"},
-            {"value", ColumnType::STRING, false, !wide_table, {}, {}, "Sample value"},
+            {"value", ColumnType::NATIVE_VALUE, false, !wide_table, {}, {PredicateOp::EQ, PredicateOp::NEQ, PredicateOp::LT, PredicateOp::LTE, PredicateOp::GT, PredicateOp::GTE, PredicateOp::IN, PredicateOp::BETWEEN}, "Native sample value"},
             {"column_type", ColumnType::STRING, false, !wide_table, {PredicateOp::EQ, PredicateOp::IN}, {PredicateOp::EQ, PredicateOp::IN}, "Native MLDP data-value type"},
             {"tags", ColumnType::STRING, false, !wide_table, {}, {}, "Bucket column-metadata tag collection; filter with tag = or tag IN locally"},
             {"attributes", ColumnType::STRING, false, !wide_table, {}, {}, "Bucket column-metadata dynamic attribute map; select/filter attributes.<key> locally"},

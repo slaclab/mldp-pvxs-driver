@@ -21,6 +21,7 @@
 #include <query/QueryFormatter.h>
 
 #include <cstdint>
+#include <functional>
 #include <iosfwd>
 #include <string>
 #include <string_view>
@@ -67,12 +68,19 @@ private:
 class QuerySubcommand
 {
 public:
+    using QueryablePreparer = std::function<void(const config::Config&)>;
+
+    explicit QuerySubcommand(QueryablePreparer queryable_preparer = {});
+
     int run(int argc,
             char** argv,
             const std::vector<std::string>& global_config_sources,
             std::istream&                     input,
             std::ostream&                    output,
             std::ostream&                    error) const;
+
+private:
+    QueryablePreparer queryable_preparer_;
 };
 
 namespace detail {

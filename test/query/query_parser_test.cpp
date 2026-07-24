@@ -132,6 +132,19 @@ TEST(QueryParserTest, ParsesSelectJoinPredicatesLimitAndPageToken)
     EXPECT_EQ(*select.page_token, "next-1");
 }
 
+TEST(QueryParserTest, ParsesDecimalAndSignedDecimalPredicateLiterals)
+{
+    const auto statement = parseQuery("SELECT * FROM samples WHERE value > 10.0 AND value >= -2.5e1");
+    const auto& select = std::get<SelectStatement>(statement);
+    ASSERT_EQ(select.predicates.size(), 2U);
+    const auto& greater = std::get<OpPredicate>(select.predicates[0]);
+    ASSERT_TRUE(std::holds_alternative<double>(greater.value));
+    EXPECT_DOUBLE_EQ(std::get<double>(greater.value), 10.0);
+    const auto& greater_equal = std::get<OpPredicate>(select.predicates[1]);
+    ASSERT_TRUE(std::holds_alternative<double>(greater_equal.value));
+    EXPECT_DOUBLE_EQ(std::get<double>(greater_equal.value), -25.0);
+}
+
 TEST(QueryParserTest, ParsesUnlimitedInPredicateLiteralsInOrder)
 {
     const auto statement = parseQuery(
@@ -280,6 +293,55 @@ TEST(QueryParserTest, ParsesCreateTempPersistentAndDropTableStatements)
     const auto drop = parseQuery("DROP TABLE production_samples");
     ASSERT_TRUE(std::holds_alternative<DropTableStatement>(drop));
     EXPECT_EQ(std::get<DropTableStatement>(drop).table_name, "production_samples");
+}
+
+TEST(QueryParserTest, ParsesMultilineCreateTableHeadersWithFlexibleWhitespace)
+{
+    const auto multiline = parseQuery(
+        "CREATE TEMP TABLE magnet_samples AS\n"
+        "SELECT pv, time, value FROM mldp.time_series WHERE pv = 'mldp_sample:MAGNET:01:VALUE'");
+    ASSERT_TRUE(std::holds_alternative<CreateTableStatement>(multiline));
+    EXPECT_TRUE(std::get<CreateTableStatement>(multiline).temporary);
+    EXPECT_EQ(std::get<CreateTableStatement>(multiline).table_name, "magnet_samples");
+    EXPECT_EQ(std::get<CreateTableStatement>(multiline).query.from.table_name, "mldp.time_series");
+
+    const auto whitespace = parseQuery("cReAtE\tTeMp\nTaBlE\trecent_samples\nAs\tSELECT pv FROM mldp.time_series");
+    ASSERT_TRUE(std::holds_alternative<CreateTableStatement>(whitespace));
+    EXPECT_TRUE(std::get<CreateTableStatement>(whitespace).temporary);
+    EXPECT_EQ(std::get<CreateTableStatement>(whitespace).table_name, "recent_samples");
+}
+
+TEST(QueryParserTest, RejectsMalformedCreateHeadersAndNonSelectChildren)
+{
+    for (const std::string_view sql : {
+             "CREATE TEMP TABLE AS SELECT pv FROM mldp.time_series",
+             "CREATE TABLE magnet_samples SELECT pv FROM mldp.time_series",
+             "CREATE TABLE magnet AS samples AS SELECT pv FROM mldp.time_series",
+             "CREATE TABLE magnetASsamples SELECT pv FROM mldp.time_series"})
+    {
+        try
+        {
+            (void)parseQuery(sql);
+            FAIL() << "Expected malformed CREATE header for " << sql;
+        }
+        catch (const ParseError& error)
+        {
+            EXPECT_NE(std::string_view(error.what()).find("CREATE TABLE header"), std::string_view::npos);
+        }
+    }
+
+    for (const std::string_view sql : {"CREATE TABLE magnet_samples AS", "CREATE TABLE magnet_samples AS SHOW TABLES"})
+    {
+        try
+        {
+            (void)parseQuery(sql);
+            FAIL() << "Expected missing or non-SELECT child query for " << sql;
+        }
+        catch (const ParseError& error)
+        {
+            EXPECT_NE(std::string_view(error.what()).find("SELECT query after AS"), std::string_view::npos);
+        }
+    }
 }
 
 TEST(QueryParserTest, ParsesDerivedTableSourcesAndRequiresAliases)

@@ -1,0 +1,9 @@
+//////////////////////////////////////////////////////////////////////////////
+// This file is part of 'mldp-pvxs-driver'.
+//////////////////////////////////////////////////////////////////////////////
+#include <query/executor/StateInternal.h>
+#include <query/QueryableFactory.h>
+#include <query/QueryTableCatalog.h>
+#include <arrow/array/builder_binary.h>
+#include <stdexcept>
+namespace mldp_pvxs_driver::query::executor { namespace { class State final : public ExecutionStateBase { public: State(const ExecutionContext& context, QueryStats& stats) : ExecutionStateBase(context, stats) {} std::string_view typeName() const noexcept override { return "ShowTablesExecutionState"; } RecordBatches execute() override { arrow::StringBuilder tables; for (const auto& table : QueryableFactory::instance().registeredTables()) if (!tables.Append(table).ok()) throw std::runtime_error("Failed to append SHOW TABLES row"); if (context().table_catalog) for (const auto& table : context().table_catalog->tables()) if (!tables.Append(table.name + (table.lifetime == TableLifetime::Session ? " [session Arrow IPC]" : " [persistent Arrow IPC]")).ok()) throw std::runtime_error("Failed to append stored SHOW TABLES row"); std::shared_ptr<arrow::Array> output; if (!tables.Finish(&output).ok()) throw std::runtime_error("Failed to build SHOW TABLES output"); auto batch = arrow::RecordBatch::Make(arrow::schema({arrow::field("table_name", arrow::utf8())}), output->length(), {output}); stats().rows_from_backend += static_cast<uint64_t>(batch->num_rows()); return {batch}; } }; } std::unique_ptr<IExecutionState> makeShowTablesExecutionState(const plan::PhysicalShowTables&, const plan::PhysicalNodePtr&, const ExecutionContext& context, QueryStats& stats) { return std::make_unique<State>(context, stats); } }

@@ -1004,6 +1004,22 @@ Pagination: `LIMIT N PAGE TOKEN 'tok'`.
 
 ---
 
+## Runtime Execution States
+
+`QueryPlanner` produces an immutable `PhysicalPlan` tree.  At the start of
+each `QueryExecutor::execute()` call, the executor recursively converts that
+tree into a matching, query-local execution-state tree.  The state tree owns
+its children with `std::unique_ptr`; states borrow the shared
+`ExecutionContext` and mutable `QueryStats`.  It is discarded after the query
+finishes, keeping planning free of live backend resources.
+
+The runtime implementation is organized under `src/query/executor/` in three
+families: scan states for table/catalog/derived scans and subquery
+materialization; relational states for filter, project, sort, limit, and the
+three joins; and statement states for SHOW, DESCRIBE, EXPLAIN, CREATE, and
+DROP.  The factory uses exhaustive `PhysicalNodeVariant` dispatch and rejects
+null plan nodes with an actionable error.
+
 ## Implementation Plan
 
 | Phase | File | Summary |

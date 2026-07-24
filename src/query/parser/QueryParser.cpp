@@ -16,6 +16,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <charconv>
+#include <optional>
 #include <unordered_map>
 using namespace mldp_pvxs_driver::query;
 
@@ -57,29 +59,158 @@ QueryStatement QueryParser::parse(const std::string_view sql)
         return result;
     };
     const auto text = trim(sql);
+    const auto parseDecimalLiteral = [](const std::string_view value) -> std::optional<double>
+    {
+        if (value.empty()) return std::nullopt;
+        double result = 0;
+        const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), result);
+        if (error != std::errc{} || end != value.data() + value.size()) return std::nullopt;
+        return result;
+    };
+    const auto rewriteDecimalLiterals = [&parseDecimalLiteral](const std::string_view value,
+                                                                std::unordered_map<std::string, double>& decimals)
+    {
+        std::string rewritten;
+        rewritten.reserve(value.size());
+        bool quoted = false;
+        char quote = '\0';
+        for (std::size_t index = 0; index < value.size();)
+        {
+            if (quoted)
+            {
+                rewritten += value[index];
+                if (value[index] == '\\' && index + 1 < value.size())
+                {
+                    rewritten += value[index + 1];
+                    index += 2;
+                    continue;
+                }
+                if (value[index++] == quote) quoted = false;
+                continue;
+            }
+            if (value[index] == '\'' || value[index] == '"')
+            {
+                quote = value[index];
+                quoted = true;
+                rewritten += value[index++];
+                continue;
+            }
+            const auto previous_non_space = [&value, index]() -> char
+            {
+                auto previous = index;
+                while (previous > 0 && std::isspace(static_cast<unsigned char>(value[previous - 1]))) --previous;
+                return previous == 0 ? '\0' : value[previous - 1];
+            };
+            const auto is_unary_sign = [&previous_non_space, &value, index]()
+            {
+                if (value[index] != '+' && value[index] != '-') return false;
+                const auto previous = previous_non_space();
+                return previous == '\0' || previous == '(' || previous == ',' || previous == '=' || previous == '!' ||
+                       previous == '<' || previous == '>' || previous == '+' || previous == '-';
+            };
+            const bool begins_number = std::isdigit(static_cast<unsigned char>(value[index])) ||
+                                       (value[index] == '.' && index + 1 < value.size() && std::isdigit(static_cast<unsigned char>(value[index + 1]))) ||
+                                       (is_unary_sign() && index + 1 < value.size() &&
+                                        (std::isdigit(static_cast<unsigned char>(value[index + 1])) ||
+                                         (value[index + 1] == '.' && index + 2 < value.size() && std::isdigit(static_cast<unsigned char>(value[index + 2])))));
+            if (!begins_number)
+            {
+                rewritten += value[index++];
+                continue;
+            }
+            std::size_t end = index;
+            while (end < value.size() && (std::isdigit(static_cast<unsigned char>(value[end])) || value[end] == '.' || value[end] == 'e' || value[end] == 'E' ||
+                                          ((value[end] == '+' || value[end] == '-') &&
+                                           (end == index || (end > index && (value[end - 1] == 'e' || value[end - 1] == 'E'))))))
+                ++end;
+            const auto candidate = value.substr(index, end - index);
+            const auto adjacent_identifier = [&value, index, end]()
+            {
+                const auto is_identifier_character = [](const char character)
+                {
+                    return std::isalnum(static_cast<unsigned char>(character)) || character == '_';
+                };
+                return (index > 0 && is_identifier_character(value[index - 1])) ||
+                       (end < value.size() && is_identifier_character(value[end]));
+            };
+            const auto decimal = parseDecimalLiteral(candidate);
+            if (adjacent_identifier() || candidate.find_first_of(".eE") == std::string_view::npos || !decimal)
+            {
+                rewritten.append(candidate);
+                index = end;
+                continue;
+            }
+            const auto marker = "decimal_literal_" + std::to_string(decimals.size());
+            decimals.emplace(marker, *decimal);
+            rewritten += "'" + marker + "'";
+            index = end;
+        }
+        return rewritten;
+    };
+    const auto equalsIgnoreCase = [](const std::string_view left, const std::string_view right)
+    {
+        if (left.size() != right.size()) return false;
+        return std::equal(left.begin(), left.end(), right.begin(), [](const char left, const char right)
+                          { return std::toupper(static_cast<unsigned char>(left)) == std::toupper(static_cast<unsigned char>(right)); });
+    };
+    const auto create_header_error = []
+    {
+        throw ParseError("CREATE TABLE header must be CREATE [TEMP] TABLE <name> AS SELECT ...", TokenPosition{});
+    };
+    const auto create_tokens = Lexer(text).tokenize();
+    const auto is_identifier = [&equalsIgnoreCase, &create_tokens](const std::size_t index, const std::string_view value)
+    {
+        return index < create_tokens.size() && create_tokens[index].type == TokenType::IDENTIFIER &&
+               equalsIgnoreCase(create_tokens[index].lexeme, value);
+    };
+    if (is_identifier(0, "CREATE"))
+    {
+        std::size_t index = 1;
+        const bool temporary = is_identifier(index, "TEMP");
+        if (temporary) ++index;
+        if (!is_identifier(index, "TABLE")) create_header_error();
+        ++index;
+
+        if (index >= create_tokens.size() || create_tokens[index].type != TokenType::IDENTIFIER) create_header_error();
+        std::string table_name = create_tokens[index++].lexeme;
+        while (index + 1 < create_tokens.size() && create_tokens[index].type == TokenType::DOT &&
+               create_tokens[index + 1].type == TokenType::IDENTIFIER)
+        {
+            table_name += "." + create_tokens[index + 1].lexeme;
+            index += 2;
+        }
+        if (index >= create_tokens.size() || create_tokens[index].type != TokenType::AS) create_header_error();
+        const auto as = create_tokens[index];
+        ++index;
+        if (index >= create_tokens.size() || create_tokens[index].type == TokenType::END_OF_INPUT)
+            throw ParseError("CREATE TABLE requires a SELECT query after AS", as.position);
+
+        for (std::size_t child_index = index; child_index < create_tokens.size(); ++child_index)
+        {
+            if (create_tokens[child_index].type == TokenType::SELECT) break;
+            if (create_tokens[child_index].type == TokenType::AS) create_header_error();
+        }
+
+        const auto child = trim(text.substr(as.position.offset + as.lexeme.size()));
+        QueryStatement parsed;
+        try
+        {
+            parsed = QueryParser::parse(child);
+        }
+        catch (const ParseError&)
+        {
+            throw ParseError("CREATE TABLE requires a SELECT query after AS", as.position);
+        }
+        if (!std::holds_alternative<SelectStatement>(parsed)) throw ParseError("CREATE TABLE requires a SELECT query after AS", as.position);
+        return CreateTableStatement{.table_name = std::move(table_name), .temporary = temporary,
+                                    .query = std::get<SelectStatement>(parsed)};
+    }
     const auto starts = [&text](const std::string_view prefix)
     {
         if (text.size() < prefix.size()) return false;
         return std::equal(prefix.begin(), prefix.end(), text.begin(), [](const char left, const char right)
                           { return std::toupper(static_cast<unsigned char>(left)) == std::toupper(static_cast<unsigned char>(right)); });
     };
-    const auto parseCreate = [&](const bool temporary) -> QueryStatement
-    {
-        const auto prefix = temporary ? std::string_view{"CREATE TEMP TABLE "} : std::string_view{"CREATE TABLE "};
-        const auto rest = trim(text.substr(prefix.size()));
-        std::string upper_rest(rest);
-        std::transform(upper_rest.begin(), upper_rest.end(), upper_rest.begin(), [](const unsigned char character)
-                       { return static_cast<char>(std::toupper(character)); });
-        const auto as = upper_rest.find(" AS ");
-        if (as == std::string_view::npos || as == 0) throw ParseError("CREATE TABLE requires name AS SELECT", TokenPosition{});
-        const auto child = trim(rest.substr(as + 4));
-        const auto parsed = QueryParser::parse(child);
-        if (!std::holds_alternative<SelectStatement>(parsed)) throw ParseError("CREATE TABLE requires a SELECT query", TokenPosition{});
-        return CreateTableStatement{.table_name = std::string(trim(rest.substr(0, as))), .temporary = temporary,
-                                    .query = std::get<SelectStatement>(parsed)};
-    };
-    if (starts("CREATE TEMP TABLE ")) return parseCreate(true);
-    if (starts("CREATE TABLE ")) return parseCreate(false);
     if (starts("DROP TABLE "))
     {
         const auto name = trim(text.substr(std::string_view{"DROP TABLE "}.size()));
@@ -160,11 +291,58 @@ QueryStatement QueryParser::parse(const std::string_view sql)
         rewritten.replace(null_search, std::string_view{" IS NOT NULL"}.size(), " != '" + marker + "'");
         null_search += marker.size() + 6;
     }
+    std::unordered_map<std::string, double> decimals;
+    const auto decimal_rewritten = rewriteDecimalLiterals(rewritten, decimals);
+    auto result = QueryParser(Lexer(decimal_rewritten).tokenize()).parse();
+    if (!std::holds_alternative<SelectStatement>(result)) return result;
+    auto& select = std::get<SelectStatement>(result);
+    const auto restore = [&decimals](LiteralValue& literal)
+    {
+        if (!std::holds_alternative<std::string>(literal)) return;
+        if (const auto it = decimals.find(std::get<std::string>(literal)); it != decimals.end()) literal = it->second;
+    };
+    const auto restore_expression = [&restore](const auto& self, ExpressionPtr& expression) -> void
+    {
+        if (!expression) return;
+        if (auto* literal = std::get_if<LiteralValue>(&expression->value))
+        {
+            restore(*literal);
+        }
+        else if (auto* function = std::get_if<FunctionCall>(&expression->value))
+        {
+            for (auto& argument : function->arguments) self(self, argument);
+        }
+    };
+    for (auto& item : select.select_items) restore_expression(restore_expression, item.expression);
+    for (auto& order_by : select.order_by) restore_expression(restore_expression, order_by.expression);
+    for (auto& predicate : select.predicates)
+    {
+        if (auto* equal = std::get_if<EqPredicate>(&predicate))
+        {
+            restore(equal->value);
+            restore_expression(restore_expression, equal->expression);
+        }
+        else if (auto* in = std::get_if<InPredicate>(&predicate))
+        {
+            for (auto& value : in->values) restore(value);
+            for (auto& expression : in->expressions) restore_expression(restore_expression, expression);
+        }
+        else if (auto* range = std::get_if<RangePredicate>(&predicate))
+        {
+            restore(range->lower);
+            restore(range->upper);
+            restore_expression(restore_expression, range->lower_expression);
+            restore_expression(restore_expression, range->upper_expression);
+        }
+        else if (auto* op = std::get_if<OpPredicate>(&predicate))
+        {
+            restore(op->value);
+            restore_expression(restore_expression, op->expression);
+        }
+    }
     if (!derived.empty() || !in_subqueries.empty() || !is_not_null.empty())
     {
-        auto result = QueryParser(Lexer(rewritten).tokenize()).parse();
         if (!std::holds_alternative<SelectStatement>(result)) return result;
-        auto& select = std::get<SelectStatement>(result);
         const auto attach = [&derived](TableRef& ref)
         {
             if (const auto it = derived.find(ref.table_name); it != derived.end()) ref.derived_query = it->second;
@@ -189,7 +367,7 @@ QueryStatement QueryParser::parse(const std::string_view sql)
         }
         return result;
     }
-    return QueryParser(Lexer(sql).tokenize()).parse();
+    return result;
 }
 
 mldp_pvxs_driver::query::QueryStatement mldp_pvxs_driver::query::parseQuery(const std::string_view sql)

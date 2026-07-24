@@ -19,10 +19,10 @@ using namespace mldp_pvxs_driver::query::planner;
 
 namespace {
 
-std::vector<std::variant<std::string, int64_t, bool>>
+std::vector<std::variant<std::string, int64_t, double, bool>>
 toExecutableValues(const std::vector<plan::PlannerLiteralValue>& values)
 {
-    std::vector<std::variant<std::string, int64_t, bool>> converted;
+    std::vector<std::variant<std::string, int64_t, double, bool>> converted;
     converted.reserve(values.size());
     for (const auto& value : values)
     {
@@ -38,6 +38,10 @@ toExecutableValues(const std::vector<plan::PlannerLiteralValue>& values)
         else if (std::holds_alternative<int64_t>(value))
         {
             converted.push_back(std::get<int64_t>(value));
+        }
+        else if (std::holds_alternative<double>(value))
+        {
+            converted.push_back(std::get<double>(value));
         }
         else
         {
