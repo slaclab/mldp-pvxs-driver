@@ -16,7 +16,6 @@
 
 #include <algorithm>
 #include <cctype>
-#include <sstream>
 #include <unordered_map>
 using namespace mldp_pvxs_driver::query;
 

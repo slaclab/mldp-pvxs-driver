@@ -53,6 +53,7 @@ std::string joinOps(const std::set<PredicateOp>& ops)
             case PredicateOp::CONTAINS: return "CONTAINS";
             case PredicateOp::LIKE: return "LIKE";
             case PredicateOp::BETWEEN: return "BETWEEN";
+            case PredicateOp::IS_NOT_NULL: return "IS NOT NULL";
         }
         return "unknown";
     };
