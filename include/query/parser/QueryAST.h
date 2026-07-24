@@ -41,6 +41,11 @@ struct EqPredicate {
 struct InPredicate {
     QualifiedColumn           column;
     std::vector<LiteralValue> values;
+    std::shared_ptr<SelectStatement> subquery;
+};
+
+struct IsNotNullPredicate {
+    QualifiedColumn column;
 };
 
 struct RangePredicate {
@@ -57,7 +62,7 @@ struct OpPredicate {
     LiteralValue       value;
 };
 
-using WherePredicate = std::variant<EqPredicate, InPredicate, RangePredicate, OpPredicate>;
+using WherePredicate = std::variant<EqPredicate, InPredicate, RangePredicate, OpPredicate, IsNotNullPredicate>;
 
 struct TableRef {
     std::string              table_name;

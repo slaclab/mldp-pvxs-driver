@@ -376,7 +376,8 @@ TEST(QuerySubcommandTest, PreparesNestedQueryablePoolsFromInlineConfiguration)
                                      "mldp.configuration_activation",
                                      "mldp.pv_metadata",
                                      "mldp.pv_stats",
-                                     "mldp.time_series"}));
+                                     "mldp.time_series",
+                                     "mldp.time_series_table"}));
     EXPECT_NE(query::QueryableFactory::instance().createByTable("mldp.configuration"), nullptr);
     EXPECT_NE(query::QueryableFactory::instance().createByTable("mldp.time_series"), nullptr);
     query::QueryableFactory::instance().reset();
@@ -392,6 +393,37 @@ TEST(QuerySubcommandTest, ReportsRegisteredClientInitializationFailureInsteadOfU
 
     const auto statement = query::parseQuery("SELECT * FROM mldp.configuration");
     EXPECT_NO_THROW(query::planner::bindSelect(std::get<query::SelectStatement>(statement)));
+    query::QueryableFactory::instance().reset();
+}
+
+TEST(QuerySubcommandTest, EnforcesTheSpecialTimeSeriesTableSelectStarContract)
+{
+    cli::QuerySubcommandPreparer preparer;
+    query::QueryableFactory::instance().reset();
+    const auto config = config::Config::configFromYamlString(
+        "queryable:\n" "  mldp:\n" "    query-url: localhost:2\n" "    min-conn: 1\n" "    max-conn: 1\n");
+    preparer.prepare(config);
+
+    EXPECT_NO_THROW(query::planner::bindSelect(std::get<query::SelectStatement>(
+        query::parseQuery("SELECT * FROM mldp.time_series_table WHERE pv = 'SYS:MAGNET:CURRENT'"))));
+
+    for (const std::string_view sql : {
+             "SELECT time FROM mldp.time_series_table WHERE pv = 'SYS:MAGNET:CURRENT'",
+             "SELECT * FROM mldp.time_series_table WHERE pv = 'SYS:MAGNET:CURRENT' ORDER BY time",
+             "SELECT * FROM mldp.time_series_table ts INNER JOIN mldp.pv_stats stats ON ts.time = stats.first_timestamp "
+             "WHERE ts.pv = 'SYS:MAGNET:CURRENT' AND stats.pv = 'SYS:MAGNET:CURRENT'"})
+    {
+        try
+        {
+            (void)query::planner::bindSelect(std::get<query::SelectStatement>(query::parseQuery(sql)));
+            FAIL() << "Expected special-table contract failure for " << sql;
+        }
+        catch (const query::plan::PlannerException& error)
+        {
+            const auto message = query::plan::plannerErrorWhat(error.error());
+            EXPECT_NE(message.find("mldp.time_series_table"), std::string::npos);
+        }
+    }
     query::QueryableFactory::instance().reset();
 }
 

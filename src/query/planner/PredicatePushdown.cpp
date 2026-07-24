@@ -57,8 +57,9 @@ plan::LogicalNodePtr rewrite(const plan::LogicalNodePtr& node)
                 // Metadata criteria are an optimization only.  Retain them as
                 // a local filter so deployments that ignore a supported
                 // criterion still observe SQL semantics.
-                if (predicate.column == "tag" || predicate.column.rfind("attributes.", 0) == 0 ||
-                    predicate.column.rfind("provenance.", 0) == 0)
+                if (scan->table_name != "mldp.time_series_table" &&
+                    (predicate.column == "tag" || predicate.column.rfind("attributes.", 0) == 0 ||
+                     predicate.column.rfind("provenance.", 0) == 0))
                 {
                     post_filter.push_back(predicate);
                 }

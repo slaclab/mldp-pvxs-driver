@@ -43,7 +43,8 @@ enum class PredicateOp
     PREFIX,
     CONTAINS,
     LIKE,
-    BETWEEN
+    BETWEEN,
+    IS_NOT_NULL
 };
 
 struct Predicate

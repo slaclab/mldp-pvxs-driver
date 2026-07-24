@@ -33,6 +33,8 @@ struct PhysicalTableScan {
     std::string            ipc_path;
     bool                   arrow_ipc{false};
     std::shared_ptr<SelectStatement> derived_query;
+    std::shared_ptr<SelectStatement> pv_subquery;
+    std::shared_ptr<SelectStatement> window_subquery;
 };
 
 struct PhysicalFilter {

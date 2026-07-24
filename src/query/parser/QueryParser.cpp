@@ -88,11 +88,13 @@ QueryStatement QueryParser::parse(const std::string_view sql)
         return DropTableStatement{.table_name = std::string(name)};
     }
 
-    // The generated grammar deliberately keeps scalar subqueries out of
-    // scope.  Recognize only parenthesized SELECTs in FROM/JOIN positions,
-    // parse their bodies recursively, and replace them with private table
-    // markers for the normal SELECT grammar.
+    // The generated grammar deliberately keeps subqueries out of scope.
+    // Recognize parenthesized SELECTs in FROM/JOIN and IN positions, parse
+    // their bodies recursively, and replace them with private markers for
+    // the normal SELECT grammar.
     std::unordered_map<std::string, std::shared_ptr<SelectStatement>> derived;
+    std::unordered_map<std::string, std::shared_ptr<SelectStatement>> in_subqueries;
+    std::unordered_map<std::string, bool> is_not_null;
     std::string rewritten(sql);
     std::size_t search = 0;
     unsigned int derived_number = 0;
@@ -101,7 +103,7 @@ QueryStatement QueryParser::parse(const std::string_view sql)
         const auto before = trim(std::string_view(rewritten).substr(0, search));
         const auto word_start = before.find_last_of(" \t\r\n");
         const auto previous = uppercase(before.substr(word_start == std::string_view::npos ? 0 : word_start + 1));
-        if (previous != "FROM" && previous != "JOIN")
+        if (previous != "FROM" && previous != "JOIN" && previous != "IN")
         {
             ++search;
             continue;
@@ -113,10 +115,23 @@ QueryStatement QueryParser::parse(const std::string_view sql)
             if (rewritten[end] == '(') ++depth;
             else if (rewritten[end] == ')') --depth;
         }
-        if (depth != 0) throw ParseError("Unclosed derived table query", TokenPosition{});
+        if (depth != 0) throw ParseError("Unclosed subquery", TokenPosition{});
         const auto child_sql = trim(std::string_view(rewritten).substr(search + 1, end - search - 2));
+        if (previous == "IN" && uppercase(child_sql).rfind("SELECT", 0) != 0)
+        {
+            search = end;
+            continue;
+        }
         const auto child = QueryParser::parse(child_sql);
-        if (!std::holds_alternative<SelectStatement>(child)) throw ParseError("Derived table must contain SELECT", TokenPosition{});
+        if (!std::holds_alternative<SelectStatement>(child)) throw ParseError("Subquery must contain SELECT", TokenPosition{});
+        if (previous == "IN")
+        {
+            const auto marker = "in_subquery_" + std::to_string(derived_number++);
+            in_subqueries.emplace(marker, std::make_shared<SelectStatement>(std::get<SelectStatement>(child)));
+            rewritten.replace(search, end - search, "('" + marker + "')");
+            search += marker.size() + 4;
+            continue;
+        }
         std::size_t alias_start = end;
         while (alias_start < rewritten.size() && std::isspace(static_cast<unsigned char>(rewritten[alias_start]))) ++alias_start;
         if (uppercase(std::string_view(rewritten).substr(alias_start, 3)) == "AS ")
@@ -132,7 +147,21 @@ QueryStatement QueryParser::parse(const std::string_view sql)
         rewritten.replace(search, end - search, marker);
         search = alias_end - (end - search) + marker.size();
     }
-    if (!derived.empty())
+    // IS NOT NULL is a local-filter-only predicate.  Rewrite it to an
+    // otherwise impossible string comparison and restore its AST form below.
+    std::size_t null_search = 0;
+    while (null_search < rewritten.size())
+    {
+        const auto upper_tail = uppercase(std::string_view(rewritten).substr(null_search));
+        const auto relative = upper_tail.find(" IS NOT NULL");
+        if (relative == std::string::npos) break;
+        null_search += relative;
+        const auto marker = "__is_not_null_" + std::to_string(is_not_null.size());
+        is_not_null.emplace(marker, true);
+        rewritten.replace(null_search, std::string_view{" IS NOT NULL"}.size(), " != '" + marker + "'");
+        null_search += marker.size() + 6;
+    }
+    if (!derived.empty() || !in_subqueries.empty() || !is_not_null.empty())
     {
         auto result = QueryParser(Lexer(rewritten).tokenize()).parse();
         if (!std::holds_alternative<SelectStatement>(result)) return result;
@@ -143,6 +172,22 @@ QueryStatement QueryParser::parse(const std::string_view sql)
         };
         attach(select.from);
         for (auto& join : select.joins) attach(join.table);
+        for (auto& predicate : select.predicates)
+        {
+            if (auto* in = std::get_if<InPredicate>(&predicate); in != nullptr && in->values.size() == 1 && std::holds_alternative<std::string>(in->values.front()))
+            {
+                const auto& marker = std::get<std::string>(in->values.front());
+                if (const auto it = in_subqueries.find(marker); it != in_subqueries.end())
+                {
+                    in->values.clear();
+                    in->subquery = it->second;
+                }
+            }
+            else if (const auto* op = std::get_if<OpPredicate>(&predicate); op != nullptr && op->op == PredicateBinaryOp::NEQ && std::holds_alternative<std::string>(op->value) && is_not_null.contains(std::get<std::string>(op->value)))
+            {
+                predicate = IsNotNullPredicate{.column = op->column};
+            }
+        }
         return result;
     }
     return QueryParser(Lexer(sql).tokenize()).parse();

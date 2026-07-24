@@ -45,7 +45,9 @@ plan::LogicalNodePtr mldp_pvxs_driver::query::planner::buildLogicalPlan(const pl
             .projection_hint = projectionHint(table),
             .ipc_path = table.ipc_path,
             .arrow_ipc = table.arrow_ipc,
-            .derived_query = table.derived_query});
+            .derived_query = table.derived_query,
+            .pv_subquery = table.pv_subquery,
+            .window_subquery = table.window_subquery});
         if (!table.predicates.empty())
         {
             node = plan::makeNode(plan::LogicalFilter{

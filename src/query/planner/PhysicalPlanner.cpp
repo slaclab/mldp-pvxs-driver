@@ -78,7 +78,9 @@ plan::PhysicalNodePtr buildNode(const plan::LogicalNodePtr& node)
             .projection_hint = scan->projection_hint,
             .ipc_path = scan->ipc_path,
             .arrow_ipc = scan->arrow_ipc,
-            .derived_query = scan->derived_query});
+            .derived_query = scan->derived_query,
+            .pv_subquery = scan->pv_subquery,
+            .window_subquery = scan->window_subquery});
     }
     if (const auto* filter = std::get_if<plan::LogicalFilter>(&node->value))
     {

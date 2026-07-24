@@ -25,6 +25,7 @@
 #include <arrow/array/builder_nested.h>
 #include <arrow/array/builder_primitive.h>
 #include <arrow/array/builder_union.h>
+#include <arrow/builder.h>
 #include <arrow/record_batch.h>
 #include <arrow/type.h>
 
@@ -47,6 +48,7 @@ using mldp_pvxs_driver::util::pool::MLDPGrpcQueryPool;
 
 const std::set<std::string_view> MLDPQueryClient::kVirtualTables = {
     "mldp.time_series",
+    "mldp.time_series_table",
     "mldp.pv_stats",
 };
 
@@ -57,15 +59,17 @@ std::set<std::string_view> MLDPQueryClient::virtualTables() const
 
 std::vector<ColumnSchema> MLDPQueryClient::tableSchema(std::string_view table_name) const
 {
-    if (table_name == "mldp.time_series")
+    if (table_name == "mldp.time_series" || table_name == "mldp.time_series_table")
     {
-        return {{"pv", ColumnType::STRING, true, true, {PredicateOp::EQ, PredicateOp::IN}, {}, "Source name"},
+        const bool wide_table = table_name == "mldp.time_series_table";
+        return {{"pv", ColumnType::STRING, true, !wide_table, {PredicateOp::EQ, PredicateOp::IN}, {}, "Source name"},
                 {"time", ColumnType::TIMESTAMP, false, true, {PredicateOp::GTE, PredicateOp::LTE}, {}, "Sample timestamp"},
-                {"value", ColumnType::STRING, false, true, {}, {}, "Sample value"},
-                {"tags", ColumnType::STRING, false, true, {}, {}, "Bucket column-metadata tag collection; filter with tag = or tag IN locally"},
-                {"attributes", ColumnType::STRING, false, true, {}, {}, "Bucket column-metadata dynamic attribute map; select/filter attributes.<key> locally"},
-                {"provenance", ColumnType::STRING, false, true, {}, {}, "Bucket column-metadata dynamic provenance map; select/filter provenance.<key> locally"},
-                {"tag", ColumnType::STRING, false, false, {}, {PredicateOp::EQ, PredicateOp::IN}, "Tag membership predicate shorthand for tags"},
+                {"value", ColumnType::STRING, false, !wide_table, {}, {}, "Sample value"},
+                {"column_type", ColumnType::STRING, false, !wide_table, {PredicateOp::EQ, PredicateOp::IN}, {PredicateOp::EQ, PredicateOp::IN}, "Native MLDP data-value type"},
+                {"tags", ColumnType::STRING, false, !wide_table, {}, {}, "Bucket column-metadata tag collection; filter with tag = or tag IN locally"},
+                {"attributes", ColumnType::STRING, false, !wide_table, {}, {}, "Bucket column-metadata dynamic attribute map; select/filter attributes.<key> locally"},
+                {"provenance", ColumnType::STRING, false, !wide_table, {}, {}, "Bucket column-metadata dynamic provenance map; select/filter provenance.<key> locally"},
+                {"tag", ColumnType::STRING, false, false, {PredicateOp::EQ, PredicateOp::IN}, {PredicateOp::EQ, PredicateOp::IN}, "Tag membership predicate shorthand for tags"},
                 {"timeout", ColumnType::DURATION_SECONDS, false, false, {PredicateOp::EQ}, {}, "Query timeout"},
                 {"rpc_deadline", ColumnType::DURATION_SECONDS, false, false, {PredicateOp::EQ}, {}, "RPC deadline"}};
     }
@@ -82,6 +86,7 @@ std::vector<ColumnSchema> MLDPQueryClient::tableSchema(std::string_view table_na
 namespace {
 
 constexpr std::string_view kTimeSeriesTable = "mldp.time_series";
+constexpr std::string_view kTimeSeriesWideTable = "mldp.time_series_table";
 constexpr std::string_view kPvStatsTable = "mldp.pv_stats";
 
 int64_t timestampToNanoseconds(const dp::service::common::Timestamp& timestamp)
@@ -98,7 +103,8 @@ void setTimestamp(dp::service::common::Timestamp* target, int64_t seconds)
 
 std::vector<std::string> requestedPvs(const std::vector<Predicate>& predicates)
 {
-    std::set<std::string> names;
+    std::vector<std::string> names;
+    std::set<std::string> seen;
     for (const auto& predicate : predicates)
     {
         if (predicate.column != "pv" || (predicate.op != PredicateOp::EQ && predicate.op != PredicateOp::IN))
@@ -107,12 +113,171 @@ std::vector<std::string> requestedPvs(const std::vector<Predicate>& predicates)
         {
             if (!std::holds_alternative<std::string>(value))
                 throw std::invalid_argument("MLDP query predicate pv requires string values");
-            names.insert(std::get<std::string>(value));
+            const auto& name = std::get<std::string>(value);
+            if (seen.insert(name).second)
+                names.push_back(name);
         }
     }
     if (names.empty())
         throw std::invalid_argument("MLDP query requires an explicit pv = or pv IN predicate");
-    return {names.begin(), names.end()};
+    return names;
+}
+
+std::string_view dataValueKind(const dp::service::common::DataValue& value)
+{
+    switch (value.value_case())
+    {
+    case dp::service::common::DataValue::kStringValue: return "string";
+    case dp::service::common::DataValue::kBooleanValue: return "bool";
+    case dp::service::common::DataValue::kUintValue: return "uint32";
+    case dp::service::common::DataValue::kUlongValue: return "uint64";
+    case dp::service::common::DataValue::kIntValue: return "int32";
+    case dp::service::common::DataValue::kLongValue: return "int64";
+    case dp::service::common::DataValue::kFloatValue: return "float";
+    case dp::service::common::DataValue::kDoubleValue: return "double";
+    case dp::service::common::DataValue::kByteArrayValue: return "binary";
+    case dp::service::common::DataValue::kTimestampValue: return "timestamp";
+    case dp::service::common::DataValue::kArrayValue: return "array";
+    case dp::service::common::DataValue::kStructureValue: return "structure";
+    case dp::service::common::DataValue::kImageValue: return "image";
+    case dp::service::common::DataValue::VALUE_NOT_SET: return "null";
+    }
+    return "null";
+}
+
+std::optional<std::string_view> columnValueKind(const dp::service::common::DataColumn& column)
+{
+    std::optional<std::string_view> kind;
+    for (const auto& value : column.datavalues())
+    {
+        if (value.value_case() == dp::service::common::DataValue::VALUE_NOT_SET)
+            continue;
+        const auto candidate = dataValueKind(value);
+        if (!kind)
+            kind = candidate;
+        else if (*kind != candidate)
+            throw std::runtime_error("MLDP queryTable PV column '" + column.name() + "' contains mixed data types");
+    }
+    return kind;
+}
+
+bool matchesStringPredicate(const Predicate& predicate, const std::string_view value)
+{
+    if (predicate.op != PredicateOp::EQ && predicate.op != PredicateOp::IN)
+        throw std::invalid_argument("MLDP metadata predicate '" + predicate.column + "' requires = or IN");
+    for (const auto& candidate : predicate.values)
+    {
+        if (!std::holds_alternative<std::string>(candidate))
+            throw std::invalid_argument("MLDP metadata predicate '" + predicate.column + "' requires string values");
+        if (std::get<std::string>(candidate) == value)
+            return true;
+    }
+    return false;
+}
+
+bool matchesColumnPredicates(const dp::service::common::DataColumn& column,
+                             const std::vector<Predicate>&           predicates)
+{
+    for (const auto& predicate : predicates)
+    {
+        if (predicate.column == "column_type")
+        {
+            const auto kind = columnValueKind(column);
+            if (!kind || !matchesStringPredicate(predicate, *kind))
+                return false;
+        }
+        else if (predicate.column == "tag")
+        {
+            bool matched = false;
+            for (const auto& tag : column.metadata().tags())
+            {
+                if (matchesStringPredicate(predicate, tag))
+                {
+                    matched = true;
+                    break;
+                }
+            }
+            if (!matched)
+                return false;
+        }
+        else if (predicate.column.rfind("attributes.", 0) == 0)
+        {
+            const auto key = predicate.column.substr(std::string("attributes.").size());
+            bool matched = false;
+            for (const auto& attribute : column.metadata().attributes())
+            {
+                if (attribute.name() == key && matchesStringPredicate(predicate, attribute.value()))
+                {
+                    matched = true;
+                    break;
+                }
+            }
+            if (!matched)
+                return false;
+        }
+        else if (predicate.column.rfind("provenance.", 0) == 0)
+        {
+            const auto key = predicate.column.substr(std::string("provenance.").size());
+            const auto& provenance = column.metadata().provenance();
+            const std::string value = key == "source" ? provenance.source() : key == "process" ? provenance.process() : "";
+            if (value.empty() || !matchesStringPredicate(predicate, value))
+                return false;
+        }
+    }
+    return true;
+}
+
+std::shared_ptr<arrow::DataType> dataValueArrowType(const dp::service::common::DataValue& value)
+{
+    switch (value.value_case())
+    {
+    case dp::service::common::DataValue::kStringValue: return arrow::utf8();
+    case dp::service::common::DataValue::kBooleanValue: return arrow::boolean();
+    case dp::service::common::DataValue::kUintValue: return arrow::uint32();
+    case dp::service::common::DataValue::kUlongValue: return arrow::uint64();
+    case dp::service::common::DataValue::kIntValue: return arrow::int32();
+    case dp::service::common::DataValue::kLongValue: return arrow::int64();
+    case dp::service::common::DataValue::kFloatValue: return arrow::float32();
+    case dp::service::common::DataValue::kDoubleValue: return arrow::float64();
+    case dp::service::common::DataValue::kByteArrayValue:
+    case dp::service::common::DataValue::kArrayValue:
+    case dp::service::common::DataValue::kStructureValue:
+    case dp::service::common::DataValue::kImageValue: return arrow::binary();
+    case dp::service::common::DataValue::kTimestampValue: return arrow::timestamp(arrow::TimeUnit::NANO, "UTC");
+    case dp::service::common::DataValue::VALUE_NOT_SET: return arrow::null();
+    }
+    return arrow::null();
+}
+
+void appendNativeValue(arrow::ArrayBuilder& builder, const dp::service::common::DataValue& value)
+{
+    const auto append_serialized = [&value](arrow::BinaryBuilder& binary, const google::protobuf::Message& message)
+    {
+        if (!binary.Append(message.SerializeAsString()).ok())
+            throw std::runtime_error("Failed to append serialized MLDP data value");
+    };
+    if (value.value_case() == dp::service::common::DataValue::VALUE_NOT_SET)
+    {
+        if (!builder.AppendNull().ok()) throw std::runtime_error("Failed to append null MLDP data value");
+        return;
+    }
+    switch (value.value_case())
+    {
+    case dp::service::common::DataValue::kStringValue: if (!dynamic_cast<arrow::StringBuilder&>(builder).Append(value.stringvalue()).ok()) throw std::runtime_error("Failed to append string"); break;
+    case dp::service::common::DataValue::kBooleanValue: if (!dynamic_cast<arrow::BooleanBuilder&>(builder).Append(value.booleanvalue()).ok()) throw std::runtime_error("Failed to append bool"); break;
+    case dp::service::common::DataValue::kUintValue: if (!dynamic_cast<arrow::UInt32Builder&>(builder).Append(value.uintvalue()).ok()) throw std::runtime_error("Failed to append uint32"); break;
+    case dp::service::common::DataValue::kUlongValue: if (!dynamic_cast<arrow::UInt64Builder&>(builder).Append(value.ulongvalue()).ok()) throw std::runtime_error("Failed to append uint64"); break;
+    case dp::service::common::DataValue::kIntValue: if (!dynamic_cast<arrow::Int32Builder&>(builder).Append(value.intvalue()).ok()) throw std::runtime_error("Failed to append int32"); break;
+    case dp::service::common::DataValue::kLongValue: if (!dynamic_cast<arrow::Int64Builder&>(builder).Append(value.longvalue()).ok()) throw std::runtime_error("Failed to append int64"); break;
+    case dp::service::common::DataValue::kFloatValue: if (!dynamic_cast<arrow::FloatBuilder&>(builder).Append(value.floatvalue()).ok()) throw std::runtime_error("Failed to append float"); break;
+    case dp::service::common::DataValue::kDoubleValue: if (!dynamic_cast<arrow::DoubleBuilder&>(builder).Append(value.doublevalue()).ok()) throw std::runtime_error("Failed to append double"); break;
+    case dp::service::common::DataValue::kByteArrayValue: if (!dynamic_cast<arrow::BinaryBuilder&>(builder).Append(value.bytearrayvalue()).ok()) throw std::runtime_error("Failed to append binary"); break;
+    case dp::service::common::DataValue::kTimestampValue: if (!dynamic_cast<arrow::TimestampBuilder&>(builder).Append(timestampToNanoseconds(value.timestampvalue())).ok()) throw std::runtime_error("Failed to append timestamp"); break;
+    case dp::service::common::DataValue::kArrayValue: append_serialized(dynamic_cast<arrow::BinaryBuilder&>(builder), value.arrayvalue()); break;
+    case dp::service::common::DataValue::kStructureValue: append_serialized(dynamic_cast<arrow::BinaryBuilder&>(builder), value.structurevalue()); break;
+    case dp::service::common::DataValue::kImageValue: append_serialized(dynamic_cast<arrow::BinaryBuilder&>(builder), value.imagevalue()); break;
+    case dp::service::common::DataValue::VALUE_NOT_SET: break;
+    }
 }
 
 std::pair<int64_t, int64_t> requestedTimeRange(const std::vector<Predicate>& predicates)
@@ -443,9 +608,9 @@ QueryResult MLDPQueryClient::execute(std::string_view              table_name,
                                      const ExecutionContext& context,
                                      std::string_view        page_token)
 {
-    if (table_name != kTimeSeriesTable && table_name != kPvStatsTable)
+    if (table_name != kTimeSeriesTable && table_name != kTimeSeriesWideTable && table_name != kPvStatsTable)
         throw std::invalid_argument("MLDPQueryClient: unknown virtual table '" + std::string(table_name) +
-                                    "'; supported tables: mldp.time_series, mldp.pv_stats");
+                                    "'; supported tables: mldp.time_series, mldp.time_series_table, mldp.pv_stats");
 
     const auto pvs = requestedPvs(pushable_predicates);
     if (table_name == kPvStatsTable)
@@ -543,6 +708,24 @@ QueryResult MLDPQueryClient::execute(std::string_view              table_name,
 
     const auto& col_table = response.tableresult().columntable();
 
+    std::unordered_map<std::string, const dp::service::common::DataColumn*> returned;
+    for (const auto& column : col_table.datacolumns())
+    {
+        if (!returned.emplace(column.name(), &column).second)
+            throw std::runtime_error("MLDP queryTable returned duplicate PV column '" + column.name() + "'");
+    }
+
+    std::vector<const dp::service::common::DataColumn*> columns;
+    columns.reserve(pvs.size());
+    for (const auto& requested_pv : pvs)
+    {
+        const auto found = returned.find(requested_pv);
+        if (found == returned.end())
+            throw std::runtime_error("MLDP queryTable response does not contain requested PV column '" + requested_pv + "'");
+        if (matchesColumnPredicates(*found->second, pushable_predicates))
+            columns.push_back(found->second);
+    }
+
     std::vector<int64_t> timestamps_ns;
     const auto&          dt = col_table.datatimestamps();
     if (dt.has_timestamplist())
@@ -559,6 +742,59 @@ QueryResult MLDPQueryClient::execute(std::string_view              table_name,
             timestamps_ns.push_back(start_ns + static_cast<int64_t>(i) * static_cast<int64_t>(clock.periodnanos()));
     }
 
+    if (table_name == kTimeSeriesWideTable)
+    {
+        if (!page_token.empty())
+            throw std::invalid_argument("MLDP time_series_table does not support continuation tokens");
+
+        auto* pool = context.pool != nullptr ? context.pool : arrow::default_memory_pool();
+        arrow::TimestampBuilder time_builder(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), pool);
+        for (const auto timestamp : timestamps_ns)
+            if (!time_builder.Append(timestamp).ok())
+                throw std::runtime_error("Failed to append Arrow time-series table timestamp");
+
+        std::shared_ptr<arrow::Array> time;
+        if (!time_builder.Finish(&time).ok())
+            throw std::runtime_error("Failed to finish Arrow time-series table timestamp column");
+
+        std::vector<std::shared_ptr<arrow::Field>> fields = {arrow::field("time", time->type())};
+        std::vector<std::shared_ptr<arrow::Array>> arrays = {time};
+        for (const auto* column : columns)
+        {
+            if (column->datavalues_size() > static_cast<int>(timestamps_ns.size()))
+                throw std::runtime_error("MLDP queryTable PV column '" + column->name() + "' has more values than timestamps");
+
+            std::shared_ptr<arrow::DataType> type = arrow::null();
+            for (const auto& value : column->datavalues())
+            {
+                if (value.value_case() == dp::service::common::DataValue::VALUE_NOT_SET)
+                    continue;
+                const auto candidate = dataValueArrowType(value);
+                if (type->id() == arrow::Type::NA)
+                    type = candidate;
+                else if (!type->Equals(candidate))
+                    throw std::runtime_error("MLDP queryTable PV column '" + column->name() + "' contains mixed data types");
+            }
+
+            std::unique_ptr<arrow::ArrayBuilder> builder;
+            const auto builder_status = arrow::MakeBuilder(pool, type, &builder);
+            if (!builder_status.ok())
+                throw std::runtime_error("Failed to create Arrow builder for MLDP PV column '" + column->name() + "': " + builder_status.ToString());
+            for (const auto& value : column->datavalues())
+                appendNativeValue(*builder, value);
+            for (int index = column->datavalues_size(); index < static_cast<int>(timestamps_ns.size()); ++index)
+                if (!builder->AppendNull().ok())
+                    throw std::runtime_error("Failed to append trailing null for MLDP PV column '" + column->name() + "'");
+
+            std::shared_ptr<arrow::Array> values;
+            if (!builder->Finish(&values).ok())
+                throw std::runtime_error("Failed to finish Arrow MLDP PV column '" + column->name() + "'");
+            fields.push_back(arrow::field(column->name(), values->type()));
+            arrays.push_back(std::move(values));
+        }
+        return {.batch = arrow::RecordBatch::Make(arrow::schema(std::move(fields)), time->length(), std::move(arrays)), .next_page_token = ""};
+    }
+
     struct Row
     {
         std::string                         pv_name;
@@ -568,12 +804,12 @@ QueryResult MLDPQueryClient::execute(std::string_view              table_name,
     };
 
     std::vector<Row> all_rows;
-    for (const auto& column : col_table.datacolumns())
+    for (const auto* column : columns)
     {
-        for (int i = 0; i < column.datavalues_size(); ++i)
+        for (int i = 0; i < column->datavalues_size(); ++i)
         {
             const int64_t ts = (i < static_cast<int>(timestamps_ns.size())) ? timestamps_ns[i] : 0;
-            all_rows.push_back({column.name(), ts, column.datavalues(i), column.metadata()});
+            all_rows.push_back({column->name(), ts, column->datavalues(i), column->metadata()});
         }
     }
     std::stable_sort(all_rows.begin(), all_rows.end(),
@@ -599,12 +835,15 @@ QueryResult MLDPQueryClient::execute(std::string_view              table_name,
     arrow::StringBuilder       pv_builder;
     arrow::TimestampBuilder    time_builder(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), pool);
     DataValueBuilder           value_builder(pool);
+    arrow::StringBuilder       type_builder(pool);
     TimeSeriesMetadataBuilders metadata(attributeKeys(all_metadata), provenanceKeys(all_metadata));
     for (std::size_t i = ts_offset; i < page_end; ++i)
     {
         if (!pv_builder.Append(all_rows[i].pv_name).ok() || !time_builder.Append(all_rows[i].time_ns).ok())
             throw std::runtime_error("Failed to build Arrow time-series batch");
         value_builder.append(all_rows[i].value);
+        if (!type_builder.Append(dataValueKind(all_rows[i].value)).ok())
+            throw std::runtime_error("Failed to build Arrow time-series column_type");
         metadata.append(all_rows[i].metadata);
     }
     std::shared_ptr<arrow::Array> pv;
@@ -612,8 +851,11 @@ QueryResult MLDPQueryClient::execute(std::string_view              table_name,
     if (!pv_builder.Finish(&pv).ok() || !time_builder.Finish(&time).ok())
         throw std::runtime_error("Failed to finish Arrow time-series batch");
     const auto                                 value = value_builder.finish();
-    std::vector<std::shared_ptr<arrow::Field>> fields = {arrow::field("pv", arrow::utf8()), arrow::field("time", time->type()), arrow::field("value", value->type())};
-    std::vector<std::shared_ptr<arrow::Array>> arrays = {pv, time, value};
+    std::shared_ptr<arrow::Array> type;
+    if (!type_builder.Finish(&type).ok())
+        throw std::runtime_error("Failed to finish Arrow time-series column_type");
+    std::vector<std::shared_ptr<arrow::Field>> fields = {arrow::field("pv", arrow::utf8()), arrow::field("time", time->type()), arrow::field("value", value->type()), arrow::field("column_type", type->type())};
+    std::vector<std::shared_ptr<arrow::Array>> arrays = {pv, time, value, type};
     metadata.finish(fields, arrays);
     return {.batch = arrow::RecordBatch::Make(arrow::schema(std::move(fields)), pv->length(), std::move(arrays)),
             .next_page_token = page_end < all_rows.size() ? "ts:" + std::to_string(page_end) : ""};

@@ -208,10 +208,38 @@ The planner splits `WHERE` predicates into pushable (sent to `execute`) and filt
 | `pv` | `=`, `IN` | **Required.** Translated to `QueryTableRequest.pvNameList`. |
 | `time` | `>=`, `<=` | Translated to `QueryTableRequest.beginTime` / `endTime`. |
 | `value` | — | Fetched only; dense-union Arrow type. |
+| `column_type` | — | Fetched native MLDP value-kind name; filterable locally. |
 | `timeout` | `=` | Sets gRPC query timeout. |
 | `rpc_deadline` | `=` | Sets gRPC deadline. |
 
 Time values are epoch seconds; the executor converts to nanoseconds internally. The backend returns column-format `QueryTableResponse`; rows are sorted by timestamp before pagination.
+
+### `mldp.time_series_table` — `MLDPQueryClient`
+
+| Column | Pushable ops | Notes |
+|---|---|---|
+| `pv` | `=`, `IN` | **Required.** Requested PVs are sent in SQL predicate order. |
+| `window` | `IN (SELECT time, end_time ...)` | Closed activation ranges used only to create wide-table requests. |
+| `time` | `>=`, `<=` | Translated to `QueryTableRequest.beginTime` / `endTime`. |
+| `column_type` | `=`, `IN` | Selects whole columns by native MLDP value kind. |
+| `tag`, `attributes.<key>`, `provenance.<key>` | `=`, `IN` | Select whole columns using MLDP column metadata. |
+| generated PV fields | — | One native typed Arrow column per returned requested PV, after `time`. |
+
+The query client maps one `TABLE_FORMAT_COLUMN` response directly to a wide
+Arrow batch. A shorter data vector is trailing-null padded; a vector longer
+than the shared timestamps or a duplicate returned PV is rejected. MLDP column
+metadata is not attached to Arrow field metadata in this phase. It is a special
+runtime-shaped table: `SELECT *` is required, and projections, predicates,
+`ORDER BY`, and joins over generated PV fields are not supported.
+
+`pv IN (SELECT pv ...)` evaluates its child first and passes its ordered,
+non-null string output to the wide scan. `window IN (SELECT time, end_time
+...)` is exclusive to this table and evaluates to closed timestamp ranges.
+Ranges are sorted and coalesced when they overlap or directly touch; the
+executor issues one `QueryTableRequest` and returns one typed wide batch per
+normalized range. The window child must expose non-null timestamp outputs named
+`time` and `end_time`; open, empty, malformed, or inverted windows fail before
+a wide request is made.
 
 ### `mldp.pv_stats` — `MLDPQueryClient`
 

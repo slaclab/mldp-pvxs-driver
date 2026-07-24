@@ -61,7 +61,10 @@ DROP TABLE production_samples;
 
 `CREATE TABLE` fails if the name exists; explicitly `DROP TABLE` before recreating it. Persistent tables are immutable snapshots, not live gRPC views, and are never automatically refreshed. The catalog manages only its own `.mldp-query-tables` namespace inside the configured root and does not clean unrelated files. Use a shared mounted directory when multiple processes or hosts must share persistent tables.
 
-Parenthesized `SELECT` statements are also valid statement-scoped derived sources in `FROM` and `JOIN` positions. They require an alias and are evaluated only for their enclosing statement; scalar subqueries and `IN (SELECT ...)` remain unsupported.
+Parenthesized `SELECT` statements are valid statement-scoped derived sources in
+`FROM` and `JOIN` positions and require an alias. `IN (SELECT ...)` is reserved
+for the `pv` and `window` inputs of `mldp.time_series_table`; scalar subqueries
+remain unsupported.
 
 ```sql
 SELECT recent.pv, recent.value
@@ -192,7 +195,7 @@ Two queryable types are available:
 
 | `type` key | Tables exposed | Backend |
 |---|---|---|
-| `mldp` | `mldp.time_series`, `mldp.pv_stats` | MLDP query gRPC service |
+| `mldp` | `mldp.time_series`, `mldp.time_series_table`, `mldp.pv_stats` | MLDP query gRPC service |
 | `mldp-annotation` / `mldp-pv-metadata` | `mldp.pv_metadata`, `mldp.configuration`, `mldp.configuration_activation`, `mldp.active_configurations` | MLDP annotation gRPC service |
 
 ---
@@ -397,6 +400,7 @@ Time-series samples from the MLDP query service.
 | `pv` | string | **yes** | `=`, `IN` | PV name. Must be constrained. |
 | `time` | timestamp | no | `>=`, `<=` | UTC epoch seconds. |
 | `value` | union | no | — | Typed sample value (see below). |
+| `column_type` | string | no | — | Native MLDP value kind: `string`, `bool`, integer, float, `double`, `binary`, `timestamp`, `array`, `structure`, or `image`. Filter locally with `=` or `IN`. |
 | `tags` | list&lt;string&gt; | no | — | Complete bucket column-metadata tag collection. Filter with `tag =` or `tag IN` locally. |
 | `attributes` | map&lt;string,string&gt; | no | — | Complete bucket column-metadata attributes. Select/filter `attributes.&lt;key&gt;` locally. |
 | `provenance` | map&lt;string,string&gt; | no | — | Complete bucket column-metadata provenance. Select/filter `provenance.&lt;key&gt;` locally. |
@@ -429,6 +433,31 @@ FROM mldp.time_series
 WHERE pv = 'MY:PV:CURRENT'
   AND attributes.namespace = 'mldp_sample'
   AND provenance.source = 'sample-generator/mldp_sample'
+```
+
+---
+
+### `mldp.time_series_table`
+
+Native wide time-series tables from one MLDP `TABLE_FORMAT_COLUMN` response.
+`pv =` or `pv IN (...)` is required and determines the requested PV columns.
+The result contains one shared `time` column followed by returned PV columns in
+the requested-PV order. Each PV column keeps its native Arrow type; shorter
+returned vectors are padded with trailing nulls. MLDP column metadata is not
+attached to Arrow field metadata in this phase. This is a special runtime-shaped
+table: it supports `SELECT *` only, does not support `ORDER BY` or joins, and
+does not accept projection or predicates on generated PV columns. Use `time`,
+`column_type`, `tag`, `attributes.<key>`, and `provenance.<key>` in `WHERE` to
+select whole PV columns.
+
+```sql
+SELECT *
+FROM mldp.time_series_table
+WHERE pv IN ('SYS:MAGNET:CURRENT', 'SYS:VACUUM:PRESSURE')
+  AND column_type = 'double'
+  AND attributes.namespace = 'mldp_sample'
+  AND time >= NOW -1h
+  AND time <= NOW
 ```
 
 ---
@@ -535,6 +564,7 @@ Time-windowed activation records for configurations.
 | Column | Type | Pushable operators | Notes |
 |---|---|---|---|
 | `time` | timestamp | `=`, `>=`, `<=` | Activation window start time. |
+| `end_time` | timestamp | `IS NOT NULL` (local) | Activation end time; null means the activation is open. |
 | `config_name` | string | `=`, `IN`, `LIKE` (local) | Configuration name. |
 | `activation_id` | string | `=`, `IN`, `LIKE` (local) | Client-assigned activation identifier. |
 | `description` | string | `LIKE` (local) | Free-text description. |
@@ -829,3 +859,82 @@ EOF
 
 mldp_pvxs_driver -c query-config.yaml query --file my_query.sql
 ```
+
+### Step 11 — Discover PVs and closed beam-mode windows in one query
+
+`mldp.time_series_table` also accepts its required `pv` input and an optional
+`window` input from subqueries. The metadata subquery is evaluated first to
+produce the ordered PV list, then the activation subquery produces closed time
+ranges. MLDP receives one wide-table request for each normalized range; overlap
+and directly adjacent ranges are coalesced, so no batch crosses a gap.
+
+```sql
+SELECT *
+FROM mldp.time_series_table
+WHERE pv IN (
+  SELECT pv
+  FROM mldp.pv_metadata
+  WHERE attributes.namespace = 'mldp_sample'
+    AND tag = 'magnet'
+)
+AND window IN (
+  SELECT activation.time, activation.end_time
+  FROM mldp.configuration_activation activation
+  JOIN mldp.configuration configuration
+    ON activation.config_name = configuration.name
+  WHERE activation.attributes.namespace = 'mldp_sample'
+    AND configuration.attributes.namespace = 'mldp_sample'
+    AND configuration.category = 'beam_mode'
+    AND activation.end_time IS NOT NULL
+)
+```
+
+The subquery output must be a single non-null string field named `pv`, and two
+non-null timestamp fields named `time` and `end_time` (qualified names such as
+`activation.time` are accepted). Open or inverted activation ranges are
+rejected. Each returned batch is `time` followed by the requested native PV
+columns in metadata-query order.
+
+### Step 12 — Materialize a table for this session or future clients
+
+Use `CREATE TEMP TABLE` when a materialized query result is needed only within
+the current interactive client session. The table is an immutable Arrow IPC
+snapshot: later statements in that session can select or join it, but the
+catalog removes it when the client exits. It is also removed by `DROP TABLE`.
+
+```sql
+CREATE TEMP TABLE magnet_samples AS
+SELECT pv, time, value
+FROM mldp.time_series
+WHERE pv = 'mldp_sample:MAGNET:01:VALUE'
+  AND time >= NOW -10m
+  AND time <= NOW;
+
+SELECT * FROM magnet_samples;
+DROP TABLE magnet_samples;
+```
+
+Use `CREATE TABLE` without `TEMP` for a persistent immutable snapshot. It is
+visible to later CLI runs that use the same catalog directory:
+
+```bash
+mldp_pvxs_driver -c query-config.yaml query \
+  --table-catalog-dir /var/lib/mldp/query-catalog \
+  "CREATE TABLE magnet_samples AS
+   SELECT pv, time, value
+   FROM mldp.time_series
+   WHERE pv = 'mldp_sample:MAGNET:01:VALUE'"
+
+mldp_pvxs_driver -c query-config.yaml query \
+  --table-catalog-dir /var/lib/mldp/query-catalog \
+  "SELECT * FROM magnet_samples"
+```
+
+Set the catalog location with `query --table-catalog-dir <path>`. If it is not
+specified, the CLI uses `<tmp>/mldp-query-catalog`; choose a stable, writable
+directory such as `/var/lib/mldp/query-catalog` for tables that must survive
+multiple client runs. The catalog stores its managed files only in
+`<path>/.mldp-query-tables/`; it does not clean unrelated files. `CREATE TABLE`
+fails if the name already exists, so run `DROP TABLE magnet_samples` before
+recreating a persistent snapshot. Use a shared mounted catalog directory when
+multiple processes or hosts need to access the same snapshots.

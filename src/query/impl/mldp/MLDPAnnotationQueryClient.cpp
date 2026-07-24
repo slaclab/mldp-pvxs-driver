@@ -80,6 +80,7 @@ std::vector<ColumnSchema> MLDPAnnotationQueryClient::tableSchema(std::string_vie
     if (table_name == "mldp.configuration_activation")
     {
         return {{"time", ColumnType::TIMESTAMP, false, true, {PredicateOp::EQ, PredicateOp::GTE, PredicateOp::LTE}, {}, "Activation time"},
+                {"end_time", ColumnType::TIMESTAMP, false, true, {}, {PredicateOp::IS_NOT_NULL}, "Activation end time; null while open"},
                 {"config_name", ColumnType::STRING, false, true, {PredicateOp::EQ, PredicateOp::IN}, stringFilter, "Configuration name"},
                 {"activation_id", ColumnType::STRING, false, true, {PredicateOp::EQ, PredicateOp::IN}, stringFilter, "Activation identifier"},
                 {"description", ColumnType::STRING, false, true, {}, stringFilter, "Description"},
@@ -452,21 +453,26 @@ QueryResult MLDPAnnotationQueryClient::execute(std::string_view              tab
                 return queryConfigurationActivations(page_request);
             });
         arrow::TimestampBuilder time(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), arrow::default_memory_pool());
+        arrow::TimestampBuilder end_time(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), arrow::default_memory_pool());
         arrow::StringBuilder    config, id, description;
         MetadataBuilders        metadata(dynamicAttributeKeys(records));
         for (const auto& record : records)
         {
             appendTimestamp(time, record.starttime());
+            if (record.has_endtime())
+                appendTimestamp(end_time, record.endtime());
+            else if (!end_time.AppendNull().ok())
+                throw std::runtime_error("Failed to append null Arrow configuration activation end time");
             appendString(config, record.configurationname());
             appendString(id, record.clientactivationid());
             appendString(description, record.description());
             metadata.append(record);
         }
-        std::shared_ptr<arrow::Array> a, b, c, d;
-        if (!time.Finish(&a).ok() || !config.Finish(&b).ok() || !id.Finish(&c).ok() || !description.Finish(&d).ok())
+        std::shared_ptr<arrow::Array> a, b, c, d, e;
+        if (!time.Finish(&a).ok() || !end_time.Finish(&b).ok() || !config.Finish(&c).ok() || !id.Finish(&d).ok() || !description.Finish(&e).ok())
             throw std::runtime_error("Failed to finish Arrow configuration_activation batch");
-        std::vector<std::shared_ptr<arrow::Field>> fields = {arrow::field("time", a->type()), arrow::field("config_name", b->type()), arrow::field("activation_id", c->type()), arrow::field("description", d->type())};
-        std::vector<std::shared_ptr<arrow::Array>> arrays = {a, b, c, d};
+        std::vector<std::shared_ptr<arrow::Field>> fields = {arrow::field("time", a->type()), arrow::field("end_time", b->type(), true), arrow::field("config_name", c->type()), arrow::field("activation_id", d->type()), arrow::field("description", e->type())};
+        std::vector<std::shared_ptr<arrow::Array>> arrays = {a, b, c, d, e};
         metadata.finish(fields, arrays);
         return {.batch = arrow::RecordBatch::Make(arrow::schema(std::move(fields)), a->length(), std::move(arrays)), .next_page_token = {}};
     }

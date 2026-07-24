@@ -936,309 +936,59 @@ if(MLDP_PVXS_DRIVER_TESTS)
         endif()
     endif()
 
-    include(GoogleTest)
-    gtest_discover_tests(${PROJECT_NAME}_test)
-
-    # Apache Arrow dependency smoke test. MockFileSystem remains test-only;
-    # production targets link only Arrow's supported core components above.
-    add_executable(arrow_dependency_test
+    # Build all GoogleTest sources into the single driver test executable.
+    # CTest discovery below still registers each Suite.Test case individually.
+    target_sources(${PROJECT_NAME}_test PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/test/query/arrow_dependency_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/query/queryable_factory_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/query/mldp_query_client_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/query/query_arrow_foundation_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/query/query_parser_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/query/query_planner_executor_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/query/mldp_annotation_query_client_integration_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/query/queryable_mldp_integration_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/query/QuerySubcommand.cpp"
     )
-    target_link_libraries(arrow_dependency_test PRIVATE
-        gtest_main
-        arrow_static
-    )
-    target_include_directories(arrow_dependency_test PRIVATE
+    target_include_directories(${PROJECT_NAME}_test PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/config"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/config"
+        "${CMAKE_CURRENT_SOURCE_DIR}/ext/rapidyaml/include"
+        "${CMAKE_CURRENT_BINARY_DIR}"
         "${arrow_BINARY_DIR}/src"
         "${arrow_SOURCE_DIR}/cpp/src"
         "${arrow_SOURCE_DIR}/cpp/src/generated"
     )
-    gtest_discover_tests(arrow_dependency_test)
+    target_link_libraries(${PROJECT_NAME}_test PRIVATE replxx)
 
-    # QueryableFactory unit tests
-    add_executable(queryable_factory_test
-        "${CMAKE_CURRENT_SOURCE_DIR}/test/query/queryable_factory_test.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/test/ryml_single_header_translation_unit.cpp"
-    )
-    target_include_directories(queryable_factory_test PRIVATE
-        "${CMAKE_CURRENT_SOURCE_DIR}/include"
-        "${CMAKE_CURRENT_SOURCE_DIR}/test"
-        "${CMAKE_CURRENT_BINARY_DIR}"
-    )
-    if(APPLE)
-        target_link_libraries(queryable_factory_test PRIVATE gtest_main
-            -Wl,-force_load $<TARGET_FILE:lib${PROJECT_NAME}>)
-    else()
-        target_link_libraries(queryable_factory_test PRIVATE gtest_main
-            -Wl,--whole-archive lib${PROJECT_NAME} -Wl,--no-whole-archive)
-    endif()
-    gtest_discover_tests(queryable_factory_test)
-
-    add_executable(mldp_query_client_test
-        "${CMAKE_CURRENT_SOURCE_DIR}/test/query/mldp_query_client_test.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/test/ryml_single_header_translation_unit.cpp"
-    )
-    target_include_directories(mldp_query_client_test PRIVATE
-        "${CMAKE_CURRENT_SOURCE_DIR}/include"
-        "${CMAKE_CURRENT_SOURCE_DIR}/test"
-        "${CMAKE_CURRENT_BINARY_DIR}"
-    )
-    if(APPLE)
-        target_link_libraries(mldp_query_client_test PRIVATE gtest_main
-            -Wl,-force_load $<TARGET_FILE:lib${PROJECT_NAME}>)
-    else()
-        target_link_libraries(mldp_query_client_test PRIVATE gtest_main
-            -Wl,--whole-archive lib${PROJECT_NAME} -Wl,--no-whole-archive)
-    endif()
-    gtest_discover_tests(mldp_query_client_test)
-
-    add_executable(query_arrow_foundation_test
-        "${CMAKE_CURRENT_SOURCE_DIR}/test/query/query_arrow_foundation_test.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/query/QuerySubcommand.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/test/ryml_single_header_translation_unit.cpp"
-    )
-    target_include_directories(query_arrow_foundation_test PRIVATE
-        "${CMAKE_CURRENT_SOURCE_DIR}/include"
-        "${CMAKE_CURRENT_SOURCE_DIR}/test"
-        "${CMAKE_CURRENT_BINARY_DIR}"
-    )
-    if(APPLE)
-        target_link_libraries(query_arrow_foundation_test PRIVATE gtest_main
-            replxx
-            -Wl,-force_load $<TARGET_FILE:lib${PROJECT_NAME}>)
-    else()
-        target_link_libraries(query_arrow_foundation_test PRIVATE gtest_main
-            replxx
-            -Wl,--whole-archive lib${PROJECT_NAME} -Wl,--no-whole-archive)
-    endif()
-    gtest_discover_tests(query_arrow_foundation_test)
-
-    add_executable(query_parser_test
-        "${CMAKE_CURRENT_SOURCE_DIR}/test/query/query_parser_test.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/test/ryml_single_header_translation_unit.cpp"
-    )
-    target_include_directories(query_parser_test PRIVATE
-        "${CMAKE_CURRENT_SOURCE_DIR}/include"
-        "${CMAKE_CURRENT_SOURCE_DIR}/test"
-        "${CMAKE_CURRENT_BINARY_DIR}"
-    )
-    if(APPLE)
-        target_link_libraries(query_parser_test PRIVATE gtest_main
-            -Wl,-force_load $<TARGET_FILE:lib${PROJECT_NAME}>)
-    else()
-        target_link_libraries(query_parser_test PRIVATE gtest_main
-            -Wl,--whole-archive lib${PROJECT_NAME} -Wl,--no-whole-archive)
-    endif()
-    gtest_discover_tests(query_parser_test)
-
-    add_executable(query_planner_executor_test
-        "${CMAKE_CURRENT_SOURCE_DIR}/test/query/query_planner_executor_test.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/test/ryml_single_header_translation_unit.cpp"
-    )
-    target_include_directories(query_planner_executor_test PRIVATE
-        "${CMAKE_CURRENT_SOURCE_DIR}/include"
-        "${CMAKE_CURRENT_SOURCE_DIR}/test"
-        "${CMAKE_CURRENT_BINARY_DIR}"
-    )
-    if(APPLE)
-        target_link_libraries(query_planner_executor_test PRIVATE gtest_main
-            -Wl,-force_load $<TARGET_FILE:lib${PROJECT_NAME}>)
-    else()
-        target_link_libraries(query_planner_executor_test PRIVATE gtest_main
-            -Wl,--whole-archive lib${PROJECT_NAME} -Wl,--no-whole-archive)
-    endif()
-    gtest_discover_tests(query_planner_executor_test)
-
-    # MLDPAnnotationQueryClient integration tests
-    add_executable(mldp_annotation_query_client_test
-        "${CMAKE_CURRENT_SOURCE_DIR}/test/query/mldp_annotation_query_client_integration_test.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/test/ryml_single_header_translation_unit.cpp"
-    )
-    target_include_directories(mldp_annotation_query_client_test PRIVATE
-        "${CMAKE_CURRENT_SOURCE_DIR}/include"
-        "${CMAKE_CURRENT_SOURCE_DIR}/test"
-        "${CMAKE_CURRENT_BINARY_DIR}"
-    )
-    if(APPLE)
-        target_link_libraries(mldp_annotation_query_client_test PRIVATE gtest_main
-            -Wl,-force_load $<TARGET_FILE:lib${PROJECT_NAME}>)
-    else()
-        target_link_libraries(mldp_annotation_query_client_test PRIVATE gtest_main
-            -Wl,--whole-archive lib${PROJECT_NAME} -Wl,--no-whole-archive)
-    endif()
-    gtest_discover_tests(mldp_annotation_query_client_test)
-
-    # Real MLDP stack query integration tests.  These intentionally use the
-    # Docker compose services rather than local mocks.
-    add_executable(queryable_mldp_integration_test
-        "${CMAKE_CURRENT_SOURCE_DIR}/test/query/queryable_mldp_integration_test.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/test/ryml_single_header_translation_unit.cpp"
-    )
-    target_include_directories(queryable_mldp_integration_test PRIVATE
-        "${CMAKE_CURRENT_SOURCE_DIR}/include"
-        "${CMAKE_CURRENT_SOURCE_DIR}/test"
-        "${CMAKE_CURRENT_BINARY_DIR}"
-    )
-    if(APPLE)
-        target_link_libraries(queryable_mldp_integration_test PRIVATE gtest_main
-            -Wl,-force_load $<TARGET_FILE:lib${PROJECT_NAME}>)
-    else()
-        target_link_libraries(queryable_mldp_integration_test PRIVATE gtest_main
-            -Wl,--whole-archive lib${PROJECT_NAME} -Wl,--no-whole-archive)
-    endif()
-    gtest_discover_tests(queryable_mldp_integration_test
-        PROPERTIES LABELS "integration;query")
-
-    # Wizard unit tests — link wizard lib directly for access to wizard_internal symbols
-    if(MLDP_WIZARD)
-        add_executable(mldp_pvxs_driver_wizard_test
+    if(MLDP_WIZARD AND MLDP_PVXS_DRIVER_MAIN)
+        target_sources(${PROJECT_NAME}_test PRIVATE
             "${CMAKE_CURRENT_SOURCE_DIR}/test/config/wizard_test.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/test/config/wizard_panel_test.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/src/config/validate.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/test/ryml_single_header_translation_unit.cpp"
-        )
-        target_include_directories(mldp_pvxs_driver_wizard_test
-            PRIVATE
-                "${CMAKE_CURRENT_SOURCE_DIR}/include"
-                "${CMAKE_CURRENT_SOURCE_DIR}/src/config"
-                "${CMAKE_CURRENT_SOURCE_DIR}/test/config"
-                "${CMAKE_CURRENT_SOURCE_DIR}/ext/rapidyaml/include"
-        )
-        target_compile_definitions(mldp_pvxs_driver_wizard_test PRIVATE MLDP_WIZARD_ENABLED)
-        if(APPLE)
-            target_link_libraries(mldp_pvxs_driver_wizard_test
-                PRIVATE gtest_main mldp_pvxs_driver_wizard_lib
-                -Wl,-force_load $<TARGET_FILE:lib${PROJECT_NAME}>)
-        else()
-            target_link_libraries(mldp_pvxs_driver_wizard_test
-                PRIVATE gtest_main mldp_pvxs_driver_wizard_lib
-                -Wl,--whole-archive lib${PROJECT_NAME} -Wl,--no-whole-archive)
-        endif()
-        gtest_discover_tests(mldp_pvxs_driver_wizard_test)
-    endif()
-
-    # Edit sub-command unit tests (list, add, remove) — no FTXUI needed
-    if(MLDP_WIZARD)
-        add_executable(mldp_pvxs_driver_edit_test
             "${CMAKE_CURRENT_SOURCE_DIR}/test/config/edit_test.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/src/config/validate.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/src/config/edit.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/test/ryml_single_header_translation_unit.cpp"
         )
-        target_include_directories(mldp_pvxs_driver_edit_test
-            PRIVATE
-                "${CMAKE_CURRENT_SOURCE_DIR}/include"
-                "${CMAKE_CURRENT_SOURCE_DIR}/src/config"
-                "${CMAKE_CURRENT_SOURCE_DIR}/test/config"
-                "${CMAKE_CURRENT_SOURCE_DIR}/ext/rapidyaml/include"
-        )
-        if(APPLE)
-            target_link_libraries(mldp_pvxs_driver_edit_test
-                PRIVATE gtest_main mldp_pvxs_driver_wizard_lib
-                -Wl,-force_load $<TARGET_FILE:lib${PROJECT_NAME}>)
-        else()
-            target_link_libraries(mldp_pvxs_driver_edit_test
-                PRIVATE gtest_main mldp_pvxs_driver_wizard_lib
-                -Wl,--whole-archive lib${PROJECT_NAME} -Wl,--no-whole-archive)
-        endif()
-        gtest_discover_tests(mldp_pvxs_driver_edit_test)
+        target_link_libraries(${PROJECT_NAME}_test PRIVATE mldp_pvxs_driver_wizard_lib)
+        target_compile_definitions(${PROJECT_NAME}_test PRIVATE MLDP_WIZARD_ENABLED)
     endif()
 
     if(MLDP_PVXS_ENABLE_HDF5)
-        # HDF5 writer unit and integration tests
-        add_executable(mldp_hdf5_writer_test
+        target_sources(${PROJECT_NAME}_test PRIVATE
             "${CMAKE_CURRENT_SOURCE_DIR}/test/writer/hdf5/hdf5_writer_config_test.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/test/writer/hdf5/hdf5_file_pool_test.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/test/writer/hdf5/hdf5_writer_test.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/test/writer/hdf5/hdf5_writer_metrics_test.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/test/writer/hdf5/hdf5_writer_backpressure_test.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/test/ryml_single_header_translation_unit.cpp"
-        )
-        target_include_directories(mldp_hdf5_writer_test PRIVATE
-            "${CMAKE_CURRENT_SOURCE_DIR}/include"
-            "${CMAKE_CURRENT_SOURCE_DIR}/test"
-            "${CMAKE_CURRENT_BINARY_DIR}"
-        )
-        if(APPLE)
-            target_link_libraries(mldp_hdf5_writer_test PRIVATE gtest_main
-                -Wl,-force_load $<TARGET_FILE:lib${PROJECT_NAME}>)
-        else()
-            target_link_libraries(mldp_hdf5_writer_test PRIVATE gtest_main
-                -Wl,--whole-archive lib${PROJECT_NAME} -Wl,--no-whole-archive)
-        endif()
-        gtest_discover_tests(mldp_hdf5_writer_test PROPERTIES LABELS "hdf5")
-
-        # BSAS Gen1 HDF5 reader tests
-        add_executable(mldp_hdf5_bsas_gen1_reader_test
             "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/hdf5_bsas_gen1/hdf5_bsas_gen1_reader_test.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/BsasGen1HDF5Mock.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/test/ryml_single_header_translation_unit.cpp"
-        )
-        target_include_directories(mldp_hdf5_bsas_gen1_reader_test PRIVATE
-            "${CMAKE_CURRENT_SOURCE_DIR}/include"
-            "${CMAKE_CURRENT_SOURCE_DIR}/test"
-            "${CMAKE_CURRENT_BINARY_DIR}"
-        )
-        if(APPLE)
-            target_link_libraries(mldp_hdf5_bsas_gen1_reader_test PRIVATE gtest_main
-                -Wl,-force_load $<TARGET_FILE:lib${PROJECT_NAME}>)
-        else()
-            target_link_libraries(mldp_hdf5_bsas_gen1_reader_test PRIVATE gtest_main
-                -Wl,--whole-archive lib${PROJECT_NAME} -Wl,--no-whole-archive)
-        endif()
-        target_compile_definitions(mldp_hdf5_bsas_gen1_reader_test PRIVATE
-            MLDP_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/data"
-        )
-        gtest_discover_tests(mldp_hdf5_bsas_gen1_reader_test PROPERTIES LABELS "hdf5;bsas-gen1")
-
-        # Controller → HDF5 end-to-end integration tests
-        add_executable(mldp_controller_hdf5_integration_test
             "${CMAKE_CURRENT_SOURCE_DIR}/test/controller/mldppvxs_controller_hdf5_integration_test.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/sioc.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/Gen1NTablePV.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/test/ryml_single_header_translation_unit.cpp"
-        )
-        target_include_directories(mldp_controller_hdf5_integration_test PRIVATE
-            "${CMAKE_CURRENT_SOURCE_DIR}/include"
-            "${CMAKE_CURRENT_SOURCE_DIR}/test"
-            "${CMAKE_CURRENT_BINARY_DIR}"
-        )
-        if(APPLE)
-            target_link_libraries(mldp_controller_hdf5_integration_test PRIVATE gtest_main
-                -Wl,-force_load $<TARGET_FILE:lib${PROJECT_NAME}>)
-        else()
-            target_link_libraries(mldp_controller_hdf5_integration_test PRIVATE gtest_main
-                -Wl,--whole-archive lib${PROJECT_NAME} -Wl,--no-whole-archive)
-        endif()
-        gtest_discover_tests(mldp_controller_hdf5_integration_test
-            PROPERTIES LABELS "hdf5;controller;integration")
-        target_compile_definitions(mldp_controller_hdf5_integration_test PRIVATE
-            MLDP_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/data"
-        )
-
-        add_executable(mldp_controller_hdf5_provenance_test
             "${CMAKE_CURRENT_SOURCE_DIR}/test/controller/mldppvxs_controller_hdf5_provenance_test.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/BsasGen1HDF5Mock.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/test/ryml_single_header_translation_unit.cpp"
-        )
-        target_include_directories(mldp_controller_hdf5_provenance_test PRIVATE
-            "${CMAKE_CURRENT_SOURCE_DIR}/include"
-            "${CMAKE_CURRENT_SOURCE_DIR}/test"
-            "${CMAKE_CURRENT_BINARY_DIR}"
-        )
-        if(APPLE)
-            target_link_libraries(mldp_controller_hdf5_provenance_test PRIVATE gtest_main
-                -Wl,-force_load $<TARGET_FILE:lib${PROJECT_NAME}>)
-        else()
-            target_link_libraries(mldp_controller_hdf5_provenance_test PRIVATE gtest_main
-                -Wl,--whole-archive lib${PROJECT_NAME} -Wl,--no-whole-archive)
-        endif()
-        gtest_discover_tests(mldp_controller_hdf5_provenance_test
-            PROPERTIES LABELS "hdf5;controller;integration;provenance")
-        target_compile_definitions(mldp_controller_hdf5_provenance_test PRIVATE
-            MLDP_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/data"
         )
     endif()
+
+    include(GoogleTest)
+    gtest_discover_tests(${PROJECT_NAME}_test)
+
 endif()
 
 # Mock IOC Server executable (standalone, always built if main is enabled)

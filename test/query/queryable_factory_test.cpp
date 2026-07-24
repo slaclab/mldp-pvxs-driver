@@ -65,7 +65,7 @@ TEST_F(QueryableFactoryTest, RegistersVirtualTablesAndCreatesByTable) {
     QueryableFactory::instance().prepare<MLDPQueryClient>(make_minimal_config());
 
     EXPECT_EQ(QueryableFactory::instance().registeredTables(),
-              (std::set<std::string>{"mldp.pv_stats", "mldp.time_series"}));
+              (std::set<std::string>{"mldp.pv_stats", "mldp.time_series", "mldp.time_series_table"}));
     EXPECT_NE(QueryableFactory::instance().createByTable("mldp.pv_stats"), nullptr);
 }
 

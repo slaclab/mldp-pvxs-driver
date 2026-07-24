@@ -185,6 +185,35 @@ TEST(QueryParserTest, ParsesMultiKeyOrderBy)
     EXPECT_EQ(*select.limit, 10);
 }
 
+TEST(QueryParserTest, ParsesSpecialTimeSeriesTableSelectStarAndMetadataFilters)
+{
+    const auto statement = parseQuery(
+        "SELECT * FROM mldp.time_series_table WHERE pv IN ('SYS:MAGNET:CURRENT', 'SYS:VACUUM:PRESSURE') "
+        "AND column_type = 'double' AND attributes.namespace = 'mldp_sample' AND time >= NOW-1h");
+    const auto& select = std::get<SelectStatement>(statement);
+    EXPECT_TRUE(select.select_all);
+    EXPECT_EQ(select.from.table_name, "mldp.time_series_table");
+    ASSERT_EQ(select.predicates.size(), 4);
+}
+
+TEST(QueryParserTest, ParsesWideTablePvAndWindowSubqueries)
+{
+    const auto statement = parseQuery(
+        "SELECT * FROM mldp.time_series_table "
+        "WHERE pv IN (SELECT pv FROM mldp.pv_metadata WHERE tag = 'magnet') "
+        "AND window IN (SELECT time, end_time FROM mldp.configuration_activation WHERE attributes.namespace = 'mldp_sample' "
+        "AND end_time IS NOT NULL)");
+    const auto& select = std::get<SelectStatement>(statement);
+    ASSERT_EQ(select.predicates.size(), 2);
+    const auto& pv = std::get<InPredicate>(select.predicates[0]);
+    ASSERT_NE(pv.subquery, nullptr);
+    EXPECT_EQ(pv.subquery->columns.front().name, "pv");
+    const auto& window = std::get<InPredicate>(select.predicates[1]);
+    ASSERT_NE(window.subquery, nullptr);
+    ASSERT_EQ(window.subquery->predicates.size(), 2);
+    EXPECT_TRUE(std::holds_alternative<IsNotNullPredicate>(window.subquery->predicates[1]));
+}
+
 TEST(QueryParserTest, ParsesShowTablesDescribeAndExplain)
 {
     auto show_tables = parseQuery("SHOW TABLES");
@@ -231,7 +260,13 @@ TEST(QueryParserTest, ParsesDerivedTableSourcesAndRequiresAliases)
     EXPECT_NE(join_select.joins.front().table.derived_query, nullptr);
 
     EXPECT_THROW((void)parseQuery("SELECT pv FROM (SELECT pv FROM mldp.time_series)"), ParseError);
-    EXPECT_THROW((void)parseQuery("SELECT pv FROM mldp.time_series WHERE pv IN (SELECT pv FROM mldp.time_series)"), ParseError);
+
+    const auto in_subquery = parseQuery("SELECT pv FROM mldp.time_series WHERE pv IN (SELECT pv FROM mldp.time_series)");
+    const auto& in_select = std::get<SelectStatement>(in_subquery);
+    ASSERT_EQ(in_select.predicates.size(), 1U);
+    const auto& in = std::get<InPredicate>(in_select.predicates.front());
+    EXPECT_NE(in.subquery, nullptr);
+    EXPECT_EQ(in.subquery->from.table_name, "mldp.time_series");
 }
 
 TEST(QueryParserTest, ParsesInnerLeftAndMultiJoinChains)

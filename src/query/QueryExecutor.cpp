@@ -30,6 +30,7 @@
 #include <stdexcept>
 #include <unordered_map>
 #include <numeric>
+#include <limits>
 
 using namespace mldp_pvxs_driver::query;
 
@@ -103,6 +104,84 @@ std::string scalarToString(const std::shared_ptr<arrow::Scalar>& scalar)
     return scalar->ToString();
 }
 
+int64_t timestampScalarValue(const std::shared_ptr<arrow::Scalar>& scalar, const std::string_view name)
+{
+    if (!scalar || !scalar->is_valid || scalar->type->id() != arrow::Type::TIMESTAMP)
+        throw std::runtime_error("mldp.time_series_table window subquery requires a non-null timestamp '" + std::string(name) + "' column");
+    return std::dynamic_pointer_cast<arrow::TimestampScalar>(scalar)->value;
+}
+
+std::vector<std::string> extractPvSubqueryValues(const std::vector<std::shared_ptr<arrow::RecordBatch>>& batches)
+{
+    std::vector<std::string> pvs;
+    for (const auto& batch : batches)
+    {
+        if (batch->num_columns() != 1 || batch->schema()->field(0)->name() != "pv" || batch->schema()->field(0)->type()->id() != arrow::Type::STRING)
+            throw std::runtime_error("mldp.time_series_table pv subquery must return exactly one non-null string column named 'pv'");
+        for (int64_t row = 0; row < batch->num_rows(); ++row)
+        {
+            const auto scalar = batch->column(0)->GetScalar(row);
+            if (!scalar.ok() || !(*scalar)->is_valid)
+                throw std::runtime_error("mldp.time_series_table pv subquery returned a null pv");
+            pvs.push_back(std::dynamic_pointer_cast<arrow::StringScalar>(*scalar)->ToString());
+        }
+    }
+    if (pvs.empty())
+        throw std::runtime_error("mldp.time_series_table pv subquery returned no PVs");
+    return pvs;
+}
+
+std::vector<std::pair<int64_t, int64_t>> extractNormalizedWindows(const std::vector<std::shared_ptr<arrow::RecordBatch>>& batches)
+{
+    std::vector<std::pair<int64_t, int64_t>> windows;
+    for (const auto& batch : batches)
+    {
+        const auto fieldIndex = [&batch](const std::string_view name)
+        {
+            const auto exact = batch->schema()->GetFieldIndex(std::string(name));
+            if (exact >= 0) return exact;
+            int index = -1;
+            const auto suffix = "." + std::string(name);
+            for (int field = 0; field < batch->num_columns(); ++field)
+            {
+                if (batch->schema()->field(field)->name().ends_with(suffix))
+                {
+                    if (index >= 0) return -1;
+                    index = field;
+                }
+            }
+            return index;
+        };
+        const auto time_index = fieldIndex("time");
+        const auto end_index = fieldIndex("end_time");
+        if (batch->num_columns() != 2 || time_index < 0 || end_index < 0)
+            throw std::runtime_error("mldp.time_series_table window subquery must return exactly timestamp columns named 'time' and 'end_time'");
+        for (int64_t row = 0; row < batch->num_rows(); ++row)
+        {
+            const auto time = batch->column(time_index)->GetScalar(row);
+            const auto end = batch->column(end_index)->GetScalar(row);
+            if (!time.ok() || !end.ok()) throw std::runtime_error("Failed to read mldp.time_series_table window subquery result");
+            const auto begin_ns = timestampScalarValue(*time, "time");
+            const auto end_ns = timestampScalarValue(*end, "end_time");
+            if (end_ns < begin_ns)
+                throw std::runtime_error("mldp.time_series_table window subquery returned end_time before time");
+            windows.emplace_back(begin_ns, end_ns);
+        }
+    }
+    if (windows.empty())
+        throw std::runtime_error("mldp.time_series_table window subquery returned no closed windows");
+    std::sort(windows.begin(), windows.end());
+    std::vector<std::pair<int64_t, int64_t>> normalized;
+    for (const auto& window : windows)
+    {
+        if (normalized.empty() || window.first > normalized.back().second + (normalized.back().second != std::numeric_limits<int64_t>::max()))
+            normalized.push_back(window);
+        else
+            normalized.back().second = std::max(normalized.back().second, window.second);
+    }
+    return normalized;
+}
+
 bool matchesLikePattern(std::string_view value, std::string_view pattern)
 {
     struct PatternToken {
@@ -174,6 +253,10 @@ bool matchesLikePattern(std::string_view value, std::string_view pattern)
 
 bool scalarMatchesPredicate(const std::shared_ptr<arrow::Scalar>& scalar, const Predicate& predicate)
 {
+    if (predicate.op == PredicateOp::IS_NOT_NULL)
+    {
+        return scalar && scalar->is_valid;
+    }
     if (!scalar || !scalar->is_valid)
     {
         return false;
@@ -853,6 +936,42 @@ executeNode(const plan::PhysicalNodePtr& node, QueryStats& stats, const Executio
             if (scan->qualify_output)
                 for (auto& batch : *batches) batch = qualifyBatchColumns(batch, scan->table_alias);
             return *batches;
+        }
+        if (scan->pv_subquery || scan->window_subquery)
+        {
+            if (scan->table_name != "mldp.time_series_table" || !scan->pv_subquery)
+                throw std::runtime_error("Only mldp.time_series_table supports pv/window subquery inputs");
+            QueryPlanner planner(context.table_catalog);
+            const auto pv_batches = executeNode(planner.plan(QueryStatement{*scan->pv_subquery}), stats, context);
+            const auto pvs = extractPvSubqueryValues(pv_batches);
+            std::vector<std::pair<int64_t, int64_t>> windows;
+            if (scan->window_subquery)
+                windows = extractNormalizedWindows(executeNode(planner.plan(QueryStatement{*scan->window_subquery}), stats, context));
+            else
+                windows.emplace_back(0, std::numeric_limits<int64_t>::max());
+
+            auto queryable = QueryableFactory::instance().createByTable(scan->table_name);
+            std::vector<std::shared_ptr<arrow::RecordBatch>> output;
+            for (const auto& [begin_ns, end_ns] : windows)
+            {
+                std::vector<Predicate> predicates = scan->pushable_predicates;
+                predicates.erase(std::remove_if(predicates.begin(), predicates.end(), [](const Predicate& predicate) { return predicate.column == "pv" || predicate.column == "time"; }), predicates.end());
+                predicates.push_back(Predicate{.column = "pv", .op = PredicateOp::IN, .values = {}});
+                for (const auto& pv : pvs) predicates.back().values.push_back(pv);
+                if (scan->window_subquery)
+                {
+                    predicates.push_back(Predicate{.column = "time", .op = PredicateOp::GTE, .values = {begin_ns / 1'000'000'000LL}});
+                    predicates.push_back(Predicate{.column = "time", .op = PredicateOp::LTE, .values = {end_ns / 1'000'000'000LL}});
+                }
+                const auto result = queryable->execute(scan->table_name, predicates, scan->projection_hint, context);
+                ++stats.rpc_calls;
+                if (result.batch)
+                {
+                    stats.rows_from_backend += static_cast<uint64_t>(result.batch->num_rows());
+                    output.push_back(result.batch);
+                }
+            }
+            return output;
         }
         auto                                             queryable = QueryableFactory::instance().createByTable(scan->table_name);
         std::vector<std::shared_ptr<arrow::RecordBatch>> output;
