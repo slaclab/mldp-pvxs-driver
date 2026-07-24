@@ -227,6 +227,7 @@
 %type <mldp_pvxs_driver::query::JoinClause> join_clause
 %type <std::vector<mldp_pvxs_driver::query::WherePredicate>> where_opt predicate_list
 %type <mldp_pvxs_driver::query::WherePredicate> predicate
+%type <std::vector<mldp_pvxs_driver::query::LiteralValue>> literal_list
 %type <mldp_pvxs_driver::query::LiteralValue> literal now_literal
 %type <int64_t> signed_duration
 %type <std::optional<uint64_t>> limit_opt
@@ -420,18 +421,11 @@ predicate_list
     ;
 
 predicate
-    : column_ref IN LPAREN literal RPAREN
+    : column_ref IN LPAREN literal_list RPAREN
       {
           $$ = mldp_pvxs_driver::query::InPredicate{
               .column = std::move($1),
-              .values = std::vector<mldp_pvxs_driver::query::LiteralValue>{std::move($4)}
-          };
-      }
-    | column_ref IN LPAREN literal COMMA literal RPAREN
-      {
-          $$ = mldp_pvxs_driver::query::InPredicate{
-              .column = std::move($1),
-              .values = std::vector<mldp_pvxs_driver::query::LiteralValue>{std::move($4), std::move($6)}
+              .values = std::move($4)
           };
       }
     | column_ref BETWEEN literal AND literal
@@ -512,6 +506,18 @@ predicate
               .op = mldp_pvxs_driver::query::PredicateBinaryOp::GTE,
               .value = std::move($3)
           };
+      }
+    ;
+
+literal_list
+    : literal
+      {
+          $$ = std::vector<mldp_pvxs_driver::query::LiteralValue>{std::move($1)};
+      }
+    | literal_list COMMA literal
+      {
+          $1.push_back(std::move($3));
+          $$ = std::move($1);
       }
     ;
 

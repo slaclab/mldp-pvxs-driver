@@ -51,6 +51,9 @@ struct LogicalScan {
     std::vector<ColumnSchema> schema;
     std::vector<PlannerPredicate> pushable_predicates;
     std::set<std::string>     projection_hint;
+    std::string               ipc_path;
+    bool                      arrow_ipc{false};
+    std::shared_ptr<SelectStatement> derived_query;
 };
 
 struct LogicalFilter {
@@ -106,6 +109,9 @@ struct BoundTable {
     std::string                 table_alias;
     std::vector<ColumnSchema>   schema;
     std::vector<PlannerPredicate> predicates;
+    std::string                 ipc_path;
+    bool                        arrow_ipc{false};
+    std::shared_ptr<SelectStatement> derived_query;
 };
 
 struct BoundJoinClause {

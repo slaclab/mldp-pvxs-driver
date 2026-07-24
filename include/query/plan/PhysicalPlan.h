@@ -30,6 +30,9 @@ struct PhysicalTableScan {
     bool                   qualify_output{false};
     std::vector<Predicate> pushable_predicates;
     std::set<std::string>  projection_hint;
+    std::string            ipc_path;
+    bool                   arrow_ipc{false};
+    std::shared_ptr<SelectStatement> derived_query;
 };
 
 struct PhysicalFilter {
@@ -98,6 +101,16 @@ struct PhysicalExplain {
     std::string plan_text;
 };
 
+struct PhysicalCreateTable {
+    std::string     table_name;
+    bool            temporary{false};
+    PhysicalNodePtr query;
+};
+
+struct PhysicalDropTable {
+    std::string table_name;
+};
+
 using PhysicalNodeVariant = std::variant<PhysicalTableScan,
                                          PhysicalFilter,
                                          PhysicalProject,
@@ -108,7 +121,9 @@ using PhysicalNodeVariant = std::variant<PhysicalTableScan,
                                          PhysicalBlockNestedLoopJoin,
                                          PhysicalShowTables,
                                          PhysicalDescribe,
-                                         PhysicalExplain>;
+                                         PhysicalExplain,
+                                         PhysicalCreateTable,
+                                         PhysicalDropTable>;
 
 struct PhysicalNode {
     PhysicalNodeVariant value;

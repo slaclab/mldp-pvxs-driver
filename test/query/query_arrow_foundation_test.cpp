@@ -10,6 +10,7 @@
 #include <query/ArrowTypeMap.h>
 #include <query/QueryableFactory.h>
 #include <query/SpillManager.h>
+#include <query/QueryTableCatalog.h>
 #include <query/impl/mldp/MLDPQueryClient.h>
 #include <query/parser/QueryParser.h>
 #include <config/ConfigSource.h>
@@ -18,6 +19,7 @@
 
 #include <arrow/api.h>
 #include <arrow/array/builder_nested.h>
+#include <arrow/array/builder_union.h>
 #include <arrow/filesystem/mockfs.h>
 #include <arrow/io/memory.h>
 #include <arrow/ipc/reader.h>
@@ -113,6 +115,50 @@ TEST(SpillManagerTest, ReaderDestructorDeletesUnconsumedFile)
     EXPECT_EQ(file_info->type(), arrow::fs::FileType::NotFound);
 }
 
+TEST(QueryTableCatalogTest, PersistentTableIsDiscoveredByANewCatalogAndDroppedSafely)
+{
+    auto file_system = std::make_shared<arrow::fs::internal::MockFileSystem>(std::chrono::system_clock::now());
+    arrow::Int64Builder builder;
+    ASSERT_TRUE(builder.AppendValues({4, 5}).ok());
+    std::shared_ptr<arrow::Array> values;
+    ASSERT_TRUE(builder.Finish(&values).ok());
+    const auto batch = arrow::RecordBatch::Make(arrow::schema({arrow::field("value", arrow::int64())}), 2, {values});
+
+    {
+        query::QueryTableCatalog catalog(file_system, "catalog-root");
+        ASSERT_TRUE(catalog.create("production_samples", query::TableLifetime::Persistent, {batch}).ok());
+        EXPECT_TRUE(catalog.find("production_samples").has_value());
+    }
+
+    query::QueryTableCatalog reopened(file_system, "catalog-root");
+    const auto discovered = reopened.find("production_samples");
+    ASSERT_TRUE(discovered.has_value());
+    EXPECT_EQ(discovered->row_count, 2);
+    const auto batches = reopened.read(*discovered);
+    ASSERT_TRUE(batches.ok()) << batches.status().ToString();
+    ASSERT_EQ(batches->size(), 1U);
+    EXPECT_EQ(batches->front()->num_rows(), 2);
+    ASSERT_TRUE(reopened.drop("production_samples").ok());
+    EXPECT_FALSE(reopened.find("production_samples").has_value());
+}
+
+TEST(QueryTableCatalogTest, SessionTableDoesNotOutliveItsCatalog)
+{
+    auto file_system = std::make_shared<arrow::fs::internal::MockFileSystem>(std::chrono::system_clock::now());
+    arrow::Int64Builder builder;
+    ASSERT_TRUE(builder.Append(4).ok());
+    std::shared_ptr<arrow::Array> values;
+    ASSERT_TRUE(builder.Finish(&values).ok());
+    const auto batch = arrow::RecordBatch::Make(arrow::schema({arrow::field("value", arrow::int64())}), 1, {values});
+    {
+        query::QueryTableCatalog catalog(file_system, "catalog-root");
+        ASSERT_TRUE(catalog.create("recent", query::TableLifetime::Session, {batch}).ok());
+        EXPECT_TRUE(catalog.find("recent").has_value());
+    }
+    query::QueryTableCatalog reopened(file_system, "catalog-root");
+    EXPECT_FALSE(reopened.find("recent").has_value());
+}
+
 TEST(QueryFormatterTest, FormatsJsonCsvTableAndArrowToTheSuppliedStream)
 {
     arrow::StringBuilder text_builder;
@@ -206,6 +252,96 @@ TEST(QueryFormatterTest, FormatsNativeMetadataCollectionsWithoutExpandingRows)
     EXPECT_NE(expanded.str().find("-[ RECORD 1 ]"), std::string::npos);
     EXPECT_NE(expanded.str().find("  - sample"), std::string::npos);
     EXPECT_NE(expanded.str().find("  namespace: mldp_sample"), std::string::npos);
+}
+
+TEST(QueryFormatterTest, DisplaysActiveDenseUnionMembersWithoutArrowDiagnostics)
+{
+    const auto value_type = arrow::dense_union({arrow::field("string", arrow::utf8()), arrow::field("double", arrow::float64())});
+    auto string_builder = std::make_shared<arrow::StringBuilder>();
+    auto double_builder = std::make_shared<arrow::DoubleBuilder>();
+    arrow::DenseUnionBuilder values_builder(
+        arrow::default_memory_pool(), {string_builder, double_builder}, value_type);
+    ASSERT_TRUE(values_builder.Append(0).ok());
+    ASSERT_TRUE(string_builder->Append("sample").ok());
+    ASSERT_TRUE(values_builder.Append(1).ok());
+    ASSERT_TRUE(double_builder->Append(10.0).ok());
+    ASSERT_TRUE(values_builder.AppendNull().ok());
+    std::shared_ptr<arrow::Array> values;
+    ASSERT_TRUE(values_builder.Finish(&values).ok());
+    const auto batch = arrow::RecordBatch::Make(
+        arrow::schema({arrow::field("value", value_type)}), 3, {values});
+    const query::QueryExecutionResult result{.batches = {batch}};
+
+    std::ostringstream table;
+    cli::formatQueryResult(result, cli::QueryOutputFormat::Table, table);
+    EXPECT_NE(table.str().find("sample"), std::string::npos);
+    EXPECT_NE(table.str().find("10"), std::string::npos);
+    EXPECT_EQ(table.str().find("union{"), std::string::npos);
+
+    std::ostringstream expanded;
+    cli::formatQueryResult(result, cli::QueryOutputFormat::Table, expanded, true);
+    EXPECT_NE(expanded.str().find("value: sample"), std::string::npos);
+    EXPECT_NE(expanded.str().find("value: 10"), std::string::npos);
+    EXPECT_EQ(expanded.str().find("union{"), std::string::npos);
+}
+
+TEST(QueryFormatterTest, FitsTableValuesAndHeadersToExplicitViewport)
+{
+    arrow::StringBuilder first_builder;
+    arrow::StringBuilder second_builder;
+    ASSERT_TRUE(first_builder.Append("prefix-that-needs-truncation-suffix").ok());
+    ASSERT_TRUE(second_builder.Append("another-long-value").ok());
+    std::shared_ptr<arrow::Array> first;
+    std::shared_ptr<arrow::Array> second;
+    ASSERT_TRUE(first_builder.Finish(&first).ok());
+    ASSERT_TRUE(second_builder.Finish(&second).ok());
+    const auto batch = arrow::RecordBatch::Make(
+        arrow::schema({arrow::field("first_very_long_column", arrow::utf8()), arrow::field("second_very_long_column", arrow::utf8())}),
+        1,
+        {first, second});
+    const query::QueryExecutionResult result{.batches = {batch}};
+
+    std::ostringstream output;
+    cli::formatQueryResult(result,
+                           cli::QueryOutputFormat::Table,
+                           output,
+                           false,
+                           cli::TableRenderOptions{.viewport_width = 25});
+
+    const auto rendered = output.str();
+    EXPECT_NE(rendered.find("firs...lumn"), std::string::npos);
+    EXPECT_NE(rendered.find("pref...ffix"), std::string::npos);
+    std::istringstream lines(rendered);
+    std::string line;
+    while (std::getline(lines, line))
+    {
+        EXPECT_LE(line.size(), 25U);
+    }
+}
+
+TEST(QueryFormatterTest, UsesStackedLayoutWhenViewportCannotFitAllColumns)
+{
+    arrow::StringBuilder first_builder;
+    arrow::StringBuilder second_builder;
+    ASSERT_TRUE(first_builder.Append("value").ok());
+    ASSERT_TRUE(second_builder.Append("value").ok());
+    std::shared_ptr<arrow::Array> first;
+    std::shared_ptr<arrow::Array> second;
+    ASSERT_TRUE(first_builder.Finish(&first).ok());
+    ASSERT_TRUE(second_builder.Finish(&second).ok());
+    const auto batch = arrow::RecordBatch::Make(
+        arrow::schema({arrow::field("first", arrow::utf8()), arrow::field("second", arrow::utf8())}), 1, {first, second});
+    const query::QueryExecutionResult result{.batches = {batch}};
+
+    std::ostringstream output;
+    cli::formatQueryResult(result,
+                           cli::QueryOutputFormat::Table,
+                           output,
+                           false,
+                           cli::TableRenderOptions{.viewport_width = 3});
+
+    EXPECT_NE(output.str().find("..."), std::string::npos);
+    EXPECT_EQ(output.str().find(" | "), std::string::npos);
 }
 
 TEST(QuerySubcommandTest, PreparesBothSupportedQueryableShapes)
@@ -348,6 +484,25 @@ TEST(QuerySubcommandTest, ReplFormatPersistsForFollowingStatements)
     EXPECT_NE(output.str().find("Output format: json"), std::string::npos);
     EXPECT_NE(output.str().find("{\"table_name\":\"mldp.time_series\"}"), std::string::npos);
     EXPECT_TRUE(error.str().empty());
+}
+
+TEST(QuerySubcommandTest, ReplTableFitCanBeChangedAndReported)
+{
+    char arg0[] = "query";
+    char* argv[] = {arg0};
+    cli::QuerySubcommand querySubcommand;
+    std::istringstream input(".table-fit\n.table-fit on\n.table-fit\n.table-fit invalid\n.quit\n");
+    std::ostringstream output;
+    std::ostringstream error;
+    const std::vector<std::string> config_sources{
+        "queryable.mldp.query-url=localhost:2",
+        "queryable.mldp.min-conn=1",
+        "queryable.mldp.max-conn=1"};
+
+    EXPECT_EQ(querySubcommand.run(1, argv, config_sources, input, output, error), 0);
+    EXPECT_NE(output.str().find("Table fit: off"), std::string::npos);
+    EXPECT_NE(output.str().find("Table fit: on"), std::string::npos);
+    EXPECT_NE(error.str().find(".table-fit accepts on or off"), std::string::npos);
 }
 
 TEST(QuerySubcommandTest, ReplRejectsInvalidFormatWithoutChangingTheSession)

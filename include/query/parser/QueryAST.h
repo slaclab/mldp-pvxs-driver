@@ -11,12 +11,15 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <variant>
 #include <vector>
 
 namespace mldp_pvxs_driver::query {
+
+struct SelectStatement;
 
 struct NowLiteral {
     int64_t offset_seconds{0};
@@ -59,6 +62,7 @@ using WherePredicate = std::variant<EqPredicate, InPredicate, RangePredicate, Op
 struct TableRef {
     std::string              table_name;
     std::optional<std::string> alias;
+    std::shared_ptr<SelectStatement> derived_query;
 };
 
 enum class JoinType { INNER, LEFT_OUTER };
@@ -103,6 +107,16 @@ struct ExplainStatement {
     SelectStatement query;
 };
 
-using QueryStatement = std::variant<SelectStatement, ShowTablesStatement, DescribeStatement, ExplainStatement>;
+struct CreateTableStatement {
+    std::string     table_name;
+    bool            temporary{false};
+    SelectStatement query;
+};
+
+struct DropTableStatement {
+    std::string table_name;
+};
+
+using QueryStatement = std::variant<SelectStatement, ShowTablesStatement, DescribeStatement, ExplainStatement, CreateTableStatement, DropTableStatement>;
 
 } // namespace mldp_pvxs_driver::query

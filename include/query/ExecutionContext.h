@@ -30,6 +30,7 @@ class FileSystem;
 namespace mldp_pvxs_driver::query {
 
 class SpillManager;
+class QueryTableCatalog;
 
 struct ExecutionContext {
     arrow::MemoryPool*                    pool{nullptr};
@@ -39,6 +40,7 @@ struct ExecutionContext {
     uint32_t                              join_batch_size{0};
     std::shared_ptr<arrow::fs::FileSystem> spill_fs;
     std::string                           spill_dir;
+    std::shared_ptr<QueryTableCatalog>    table_catalog;
 };
 
 } // namespace mldp_pvxs_driver::query

@@ -11,7 +11,10 @@
 #include <query/planner/Binder.h>
 
 #include <query/QueryableFactory.h>
+#include <query/QueryTableCatalog.h>
 #include <query/plan/PlannerError.h>
+
+#include <arrow/type.h>
 
 #include <sstream>
 #include <type_traits>
@@ -246,8 +249,54 @@ plan::PlannerPredicate buildPredicate(const WherePredicate& where,
         where);
 }
 
-plan::BoundTable makeBoundTable(const TableRef& table_ref)
+plan::BoundTable makeBoundTable(const TableRef& table_ref, const QueryTableCatalog* catalog)
 {
+    if (table_ref.derived_query)
+    {
+        const auto child = bindSelect(*table_ref.derived_query, catalog);
+        std::vector<ColumnSchema> schema;
+        const auto appendOutput = [&schema](const plan::BoundTable& table)
+        {
+            for (const auto& column : table.schema)
+                if (column.is_output) schema.push_back(ColumnSchema{.name = column.name, .type = column.type, .required = false,
+                                                                    .is_output = true, .pushable_ops = {}, .filterable_ops = defaultTextOps(), .notes = "Derived query output"});
+        };
+        appendOutput(child.from);
+        for (const auto& join : child.joins) appendOutput(join.table);
+        if (!child.select_all)
+        {
+            std::vector<ColumnSchema> selected;
+            for (const auto& name : child.select_columns)
+            {
+                const auto dot = name.find('.');
+                const auto local = name.substr(dot == std::string::npos ? 0 : dot + 1);
+                if (const auto* column = findColumnSchema(schema, local)) selected.push_back(*column);
+            }
+            schema = std::move(selected);
+        }
+        return plan::BoundTable{.table_name = "<derived>", .table_alias = table_ref.alias.value_or("derived"), .schema = std::move(schema),
+                                .predicates = {}, .derived_query = table_ref.derived_query};
+    }
+    if (catalog != nullptr)
+    {
+        if (const auto stored = catalog->find(table_ref.table_name))
+        {
+            std::vector<ColumnSchema> schema;
+            schema.reserve(stored->schema->num_fields());
+            for (const auto& field : stored->schema->fields())
+            {
+                ColumnType type = ColumnType::STRING;
+                if (field->type()->id() == arrow::Type::INT64) type = ColumnType::INT;
+                else if (field->type()->id() == arrow::Type::BOOL) type = ColumnType::BOOL;
+                else if (field->type()->id() == arrow::Type::TIMESTAMP) type = ColumnType::TIMESTAMP;
+                else if (field->type()->id() == arrow::Type::DURATION) type = ColumnType::DURATION_SECONDS;
+                schema.push_back(ColumnSchema{.name = field->name(), .type = type, .required = false, .is_output = true,
+                                              .pushable_ops = {}, .filterable_ops = defaultTextOps(), .notes = "Arrow IPC snapshot"});
+            }
+            return plan::BoundTable{.table_name = table_ref.table_name, .table_alias = table_ref.alias.value_or(table_ref.table_name),
+                                    .schema = std::move(schema), .predicates = {}, .ipc_path = stored->path, .arrow_ipc = true};
+        }
+    }
     const auto registered_tables = QueryableFactory::instance().registeredTables();
     if (!registered_tables.contains(table_ref.table_name))
     {
@@ -302,9 +351,9 @@ void ensureColumnCoveredForRequiredCheck(const plan::BoundTable& table,
 
 } // namespace
 
-plan::BoundSelect mldp_pvxs_driver::query::planner::bindSelect(const SelectStatement& statement)
+plan::BoundSelect mldp_pvxs_driver::query::planner::bindSelect(const SelectStatement& statement, const QueryTableCatalog* catalog)
 {
-    auto from = makeBoundTable(statement.from);
+    auto from = makeBoundTable(statement.from, catalog);
     std::vector<plan::BoundJoinClause> joins;
     std::vector<std::pair<ResolvedColumn, ResolvedColumn>> join_required_columns;
     joins.reserve(statement.joins.size());
@@ -318,7 +367,7 @@ plan::BoundSelect mldp_pvxs_driver::query::planner::bindSelect(const SelectState
     all_tables.push_back(from);
     for (const auto& join_clause : statement.joins)
     {
-        auto right_table = makeBoundTable(join_clause.table);
+        auto right_table = makeBoundTable(join_clause.table, catalog);
         requireUniqueAlias(right_table, aliases);
 
         std::vector<plan::BoundTable> join_scope = all_tables;

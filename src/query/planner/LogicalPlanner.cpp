@@ -42,7 +42,10 @@ plan::LogicalNodePtr mldp_pvxs_driver::query::planner::buildLogicalPlan(const pl
             .table_alias = table.table_alias,
             .schema = table.schema,
             .pushable_predicates = {},
-            .projection_hint = projectionHint(table)});
+            .projection_hint = projectionHint(table),
+            .ipc_path = table.ipc_path,
+            .arrow_ipc = table.arrow_ipc,
+            .derived_query = table.derived_query});
         if (!table.predicates.empty())
         {
             node = plan::makeNode(plan::LogicalFilter{

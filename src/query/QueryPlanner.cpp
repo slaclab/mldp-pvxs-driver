@@ -22,8 +22,14 @@
 #include <query/planner/TypeChecker.h>
 #include <query/plan/PlannerError.h>
 #include <query/QueryableFactory.h>
+#include <query/QueryTableCatalog.h>
 
 using namespace mldp_pvxs_driver::query;
+
+QueryPlanner::QueryPlanner(std::shared_ptr<QueryTableCatalog> catalog)
+    : catalog_(std::move(catalog))
+{
+}
 
 plan::PhysicalNodePtr QueryPlanner::plan(const QueryStatement& statement) const
 {
@@ -46,13 +52,27 @@ plan::PhysicalNodePtr QueryPlanner::plan(const QueryStatement& statement) const
             .plan_text = plan::physicalPlanToString(explained_plan)});
     }
 
+    if (std::holds_alternative<CreateTableStatement>(statement))
+    {
+        const auto& create = std::get<CreateTableStatement>(statement);
+        return plan::makeNode(plan::PhysicalCreateTable{
+            .table_name = create.table_name,
+            .temporary = create.temporary,
+            .query = plan(QueryStatement{create.query})});
+    }
+
+    if (std::holds_alternative<DropTableStatement>(statement))
+    {
+        return plan::makeNode(plan::PhysicalDropTable{.table_name = std::get<DropTableStatement>(statement).table_name});
+    }
+
     if (!std::holds_alternative<SelectStatement>(statement))
     {
         throw plan::PlannerException(plan::PlanError{.message = "Unsupported statement"});
     }
 
     const auto& select = std::get<SelectStatement>(statement);
-    auto bound = planner::bindSelect(select);
+    auto bound = planner::bindSelect(select, catalog_.get());
     bound = planner::typeCheckSelect(std::move(bound));
     auto logical = planner::buildLogicalPlan(bound);
     logical = planner::applyPredicatePushdown(std::move(logical));

@@ -75,7 +75,10 @@ plan::PhysicalNodePtr buildNode(const plan::LogicalNodePtr& node)
             .table_alias = scan->table_alias,
             .qualify_output = false,
             .pushable_predicates = std::move(pushable_predicates),
-            .projection_hint = scan->projection_hint});
+            .projection_hint = scan->projection_hint,
+            .ipc_path = scan->ipc_path,
+            .arrow_ipc = scan->arrow_ipc,
+            .derived_query = scan->derived_query});
     }
     if (const auto* filter = std::get_if<plan::LogicalFilter>(&node->value))
     {
@@ -188,7 +191,7 @@ void appendNode(std::ostringstream& out, const plan::PhysicalNodePtr& node, cons
     }
     if (const auto* scan = std::get_if<plan::PhysicalTableScan>(&node->value))
     {
-        out << indent(level) << "PhysicalTableScan(table=" << scan->table_name << ")\n";
+        out << indent(level) << (scan->arrow_ipc ? "PhysicalArrowIpcScan(table=" : "PhysicalTableScan(table=") << scan->table_name << ")\n";
         return;
     }
     if (const auto* filter = std::get_if<plan::PhysicalFilter>(&node->value))
@@ -261,6 +264,16 @@ void appendNode(std::ostringstream& out, const plan::PhysicalNodePtr& node, cons
     {
         out << indent(level) << "PhysicalExplain\n";
     }
+    if (const auto* create = std::get_if<plan::PhysicalCreateTable>(&node->value))
+    {
+        out << indent(level) << "PhysicalCreateTable(table=" << create->table_name << ", lifetime=" << (create->temporary ? "session" : "persistent") << ")\n";
+        appendNode(out, create->query, level + 1);
+        return;
+    }
+    if (const auto* drop = std::get_if<plan::PhysicalDropTable>(&node->value))
+    {
+        out << indent(level) << "PhysicalDropTable(table=" << drop->table_name << ")\n";
+    }
 }
 
 } // namespace
@@ -298,7 +311,7 @@ std::string mldp_pvxs_driver::query::plan::physicalPlanToString(const plan::Phys
         if (const auto* scan = std::get_if<PhysicalTableScan>(&node->value))
         {
             out << std::string(static_cast<size_t>(level) * 2, ' ')
-                << "PhysicalTableScan(table=" << scan->table_name << ")\n";
+                << (scan->arrow_ipc ? "PhysicalArrowIpcScan(table=" : "PhysicalTableScan(table=") << scan->table_name << ")\n";
             return;
         }
         if (const auto* filter = std::get_if<PhysicalFilter>(&node->value))
@@ -366,6 +379,17 @@ std::string mldp_pvxs_driver::query::plan::physicalPlanToString(const plan::Phys
         {
             out << std::string(static_cast<size_t>(level) * 2, ' ')
                 << "PhysicalDescribe(table=" << describe->table_name << ")\n";
+            return;
+        }
+        if (const auto* create = std::get_if<PhysicalCreateTable>(&node->value))
+        {
+            out << std::string(static_cast<size_t>(level) * 2, ' ') << "PhysicalCreateTable(table=" << create->table_name << ")\n";
+            append_ref(create->query, append_ref, level + 1);
+            return;
+        }
+        if (const auto* drop = std::get_if<PhysicalDropTable>(&node->value))
+        {
+            out << std::string(static_cast<size_t>(level) * 2, ' ') << "PhysicalDropTable(table=" << drop->table_name << ")\n";
             return;
         }
         out << std::string(static_cast<size_t>(level) * 2, ' ') << "PhysicalExplain\n";

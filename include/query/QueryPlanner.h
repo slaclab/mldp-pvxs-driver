@@ -13,12 +13,20 @@
 #include <query/parser/QueryAST.h>
 #include <query/plan/PhysicalPlan.h>
 
+#include <memory>
+
 namespace mldp_pvxs_driver::query {
+
+class QueryTableCatalog;
 
 class QueryPlanner
 {
 public:
+    explicit QueryPlanner(std::shared_ptr<QueryTableCatalog> catalog = nullptr);
     plan::PhysicalNodePtr plan(const QueryStatement& statement) const;
+
+private:
+    std::shared_ptr<QueryTableCatalog> catalog_;
 };
 
 } // namespace mldp_pvxs_driver::query

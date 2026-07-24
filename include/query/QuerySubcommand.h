@@ -26,6 +26,12 @@
 #include <string_view>
 #include <vector>
 
+#include <memory>
+
+namespace mldp_pvxs_driver::query {
+class QueryTableCatalog;
+}
+
 namespace mldp_pvxs_driver::cli {
 
 struct QueryCliOptions {
@@ -33,9 +39,11 @@ struct QueryCliOptions {
     std::string       sql_file{};
     QueryOutputFormat format{QueryOutputFormat::Table};
     bool              expanded{false};
+    bool              table_fit{false};
     bool              no_stats{false};
     uint64_t    memory_mb{256};
     std::string spill_dir{};
+    std::string table_catalog_dir{};
     uint32_t    spill_partitions{16};
     uint32_t    join_batch_size{100};
 };
@@ -50,6 +58,10 @@ class QueryRunner
 {
 public:
     int run(const QueryCliOptions& options, std::string_view sql, std::ostream& output) const;
+
+private:
+    mutable std::shared_ptr<query::QueryTableCatalog> table_catalog_;
+    mutable std::string                               table_catalog_dir_;
 };
 
 class QuerySubcommand

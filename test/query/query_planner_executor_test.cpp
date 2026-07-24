@@ -12,6 +12,7 @@
 #include <query/QueryExecutor.h>
 #include <query/QueryPlanner.h>
 #include <query/QueryResult.h>
+#include <query/QueryTableCatalog.h>
 #include <query/QueryableFactory.h>
 #include <query/parser/QueryParser.h>
 #include <query/plan/PlannerError.h>
@@ -21,6 +22,7 @@
 #include <arrow/array/builder_binary.h>
 #include <arrow/array/builder_primitive.h>
 #include <arrow/memory_pool.h>
+#include <arrow/filesystem/mockfs.h>
 #include <arrow/scalar.h>
 #include <gtest/gtest.h>
 
@@ -318,6 +320,29 @@ TEST_F(PlannerExecutorTest, PlansSelectWithBackboneNodes)
     EXPECT_NE(text.find("PhysicalLimit"), std::string::npos);
     EXPECT_NE(text.find("PhysicalProject"), std::string::npos);
     EXPECT_NE(text.find("PhysicalTableScan"), std::string::npos);
+}
+
+TEST_F(PlannerExecutorTest, ExecutesDerivedSourceAndPlansItAsArrowIpcScan)
+{
+    auto file_system = std::make_shared<arrow::fs::internal::MockFileSystem>(std::chrono::system_clock::now());
+    auto catalog = std::make_shared<query::QueryTableCatalog>(file_system, "catalog");
+    query::ExecutionContext context{.pool = arrow::default_memory_pool(), .table_catalog = catalog};
+    query::QueryPlanner planner(catalog);
+    query::QueryExecutor executor;
+
+    const auto create = planner.plan(query::parseQuery("CREATE TEMP TABLE samples AS SELECT pv, value FROM fake.samples WHERE pv = 'A'"));
+    const auto created = executor.execute(create, context);
+    EXPECT_EQ(created.stats.rpc_calls, 1U);
+
+    const auto stored = executor.execute(planner.plan(query::parseQuery("SELECT pv FROM samples WHERE value = 1")), context);
+    EXPECT_EQ(stored.stats.rpc_calls, 0U);
+    ASSERT_EQ(stored.batches.size(), 1U);
+    EXPECT_EQ(stored.batches.front()->num_rows(), 1);
+
+    const auto derived = executor.execute(planner.plan(query::parseQuery("SELECT recent.pv FROM (SELECT pv FROM samples) recent")), context);
+    EXPECT_EQ(derived.stats.rpc_calls, 0U);
+    ASSERT_EQ(derived.batches.size(), 1U);
+    EXPECT_EQ(derived.batches.front()->num_rows(), 1);
 }
 
 TEST_F(PlannerExecutorTest, PushesBackendPredicateAndPrunesProjectionColumns)

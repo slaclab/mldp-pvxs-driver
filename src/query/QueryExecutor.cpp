@@ -12,6 +12,8 @@
 
 #include <query/QueryResult.h>
 #include <query/QueryableFactory.h>
+#include <query/QueryTableCatalog.h>
+#include <query/QueryPlanner.h>
 #include <query/SpillManager.h>
 
 #include <algorithm>
@@ -78,6 +80,18 @@ std::string_view columnTypeName(const ColumnType type)
         case ColumnType::BOOL: return "bool";
     }
     return "unknown";
+}
+
+ColumnType columnTypeFromArrow(const std::shared_ptr<arrow::DataType>& type)
+{
+    switch (type->id())
+    {
+        case arrow::Type::INT64: return ColumnType::INT;
+        case arrow::Type::BOOL: return ColumnType::BOOL;
+        case arrow::Type::TIMESTAMP: return ColumnType::TIMESTAMP;
+        case arrow::Type::DURATION: return ColumnType::DURATION_SECONDS;
+        default: return ColumnType::STRING;
+    }
 }
 
 std::string scalarToString(const std::shared_ptr<arrow::Scalar>& scalar)
@@ -820,6 +834,26 @@ executeNode(const plan::PhysicalNodePtr& node, QueryStats& stats, const Executio
 
     if (const auto* scan = std::get_if<plan::PhysicalTableScan>(&node->value))
     {
+        if (scan->derived_query)
+        {
+            QueryPlanner planner(context.table_catalog);
+            auto child = executeNode(planner.plan(QueryStatement{*scan->derived_query}), stats, context);
+            if (scan->qualify_output)
+                for (auto& batch : child) batch = qualifyBatchColumns(batch, scan->table_alias);
+            return child;
+        }
+        if (scan->arrow_ipc)
+        {
+            if (!context.table_catalog) throw std::runtime_error("Arrow IPC table scan has no catalog");
+            const auto table = context.table_catalog->find(scan->table_name);
+            if (!table) throw std::runtime_error("Stored table disappeared: " + scan->table_name);
+            if (table->path != scan->ipc_path) throw std::runtime_error("Stored table path changed during planning: " + scan->table_name);
+            auto batches = context.table_catalog->read(*table);
+            if (!batches.ok()) throw std::runtime_error(batches.status().ToString());
+            if (scan->qualify_output)
+                for (auto& batch : *batches) batch = qualifyBatchColumns(batch, scan->table_alias);
+            return *batches;
+        }
         auto                                             queryable = QueryableFactory::instance().createByTable(scan->table_name);
         std::vector<std::shared_ptr<arrow::RecordBatch>> output;
         std::string                                      page_token;
@@ -931,6 +965,10 @@ executeNode(const plan::PhysicalNodePtr& node, QueryStats& stats, const Executio
                 throw std::runtime_error("Failed to append SHOW TABLES row");
             }
         }
+        if (context.table_catalog)
+            for (const auto& table : context.table_catalog->tables())
+                if (!table_builder.Append(table.name + (table.lifetime == TableLifetime::Session ? " [session Arrow IPC]" : " [persistent Arrow IPC]")).ok())
+                    throw std::runtime_error("Failed to append stored SHOW TABLES row");
         std::shared_ptr<arrow::Array> table_array;
         if (!table_builder.Finish(&table_array).ok())
         {
@@ -945,8 +983,19 @@ executeNode(const plan::PhysicalNodePtr& node, QueryStats& stats, const Executio
 
     if (const auto* describe = std::get_if<plan::PhysicalDescribe>(&node->value))
     {
-        auto       queryable = QueryableFactory::instance().createByTable(describe->table_name);
-        const auto schema = queryable->tableSchema(describe->table_name);
+        std::vector<ColumnSchema> schema;
+        if (context.table_catalog && context.table_catalog->find(describe->table_name))
+        {
+            const auto table = *context.table_catalog->find(describe->table_name);
+            for (const auto& field : table.schema->fields())
+                schema.push_back(ColumnSchema{.name = field->name(), .type = columnTypeFromArrow(field->type()), .required = false, .is_output = true,
+                                              .pushable_ops = {}, .filterable_ops = {}, .notes = "Arrow IPC snapshot"});
+        }
+        else
+        {
+            auto queryable = QueryableFactory::instance().createByTable(describe->table_name);
+            schema = queryable->tableSchema(describe->table_name);
+        }
 
         arrow::StringBuilder  col_name;
         arrow::StringBuilder  col_type;
@@ -1019,6 +1068,27 @@ executeNode(const plan::PhysicalNodePtr& node, QueryStats& stats, const Executio
                                               output->length(),
                                               {output});
         return {batch};
+    }
+
+    if (const auto* create = std::get_if<plan::PhysicalCreateTable>(&node->value))
+    {
+        if (!context.table_catalog) throw std::runtime_error("CREATE TABLE has no catalog");
+        const auto batches = executeNode(create->query, stats, context);
+        const auto status = context.table_catalog->create(create->table_name,
+                                                          create->temporary ? TableLifetime::Session : TableLifetime::Persistent,
+                                                          batches);
+        if (!status.ok()) throw std::runtime_error(status.ToString());
+        const auto table = context.table_catalog->find(create->table_name);
+        if (table) { stats.materialized_files++; stats.materialized_bytes += static_cast<uint64_t>(table->byte_count); }
+        return {};
+    }
+
+    if (const auto* drop = std::get_if<plan::PhysicalDropTable>(&node->value))
+    {
+        if (!context.table_catalog) throw std::runtime_error("DROP TABLE has no catalog");
+        const auto status = context.table_catalog->drop(drop->table_name);
+        if (!status.ok()) throw std::runtime_error(status.ToString());
+        return {};
     }
 
     return {};

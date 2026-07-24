@@ -12,7 +12,9 @@
 
 #include <query/QueryExecutor.h>
 
+#include <cstddef>
 #include <iosfwd>
+#include <optional>
 
 namespace mldp_pvxs_driver::cli {
 
@@ -24,10 +26,16 @@ enum class QueryOutputFormat
     Arrow
 };
 
+struct TableRenderOptions
+{
+    std::optional<std::size_t> viewport_width{};
+};
+
 void formatQueryResult(const query::QueryExecutionResult& result,
                        QueryOutputFormat                  format,
                        std::ostream&                      output,
-                       bool                               expanded = false);
+                       bool                               expanded = false,
+                       const TableRenderOptions&          table_options = {});
 
 void printQueryStats(const query::QueryStats& stats, std::ostream& output);
 

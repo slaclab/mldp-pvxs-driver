@@ -13,8 +13,12 @@
 #include <query/parser/QueryAST.h>
 #include <query/plan/LogicalPlan.h>
 
+namespace mldp_pvxs_driver::query {
+class QueryTableCatalog;
+}
+
 namespace mldp_pvxs_driver::query::planner {
 
-plan::BoundSelect bindSelect(const SelectStatement& statement);
+plan::BoundSelect bindSelect(const SelectStatement& statement, const QueryTableCatalog* catalog = nullptr);
 
 } // namespace mldp_pvxs_driver::query::planner

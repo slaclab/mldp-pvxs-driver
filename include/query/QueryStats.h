@@ -24,6 +24,8 @@ struct QueryStats {
     uint64_t                  rpc_calls{0};
     uint64_t                  bytes_spilled{0};
     uint64_t                  spill_files{0};
+    uint64_t                  materialized_bytes{0};
+    uint64_t                  materialized_files{0};
     uint64_t                  peak_memory_bytes{0};
     std::string               plan_summary;
     std::vector<std::string>  plan_warnings;

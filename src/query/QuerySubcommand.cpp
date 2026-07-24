@@ -15,6 +15,7 @@
 #include <query/QueryExecutor.h>
 #include <query/QueryFormatter.h>
 #include <query/QueryPlanner.h>
+#include <query/QueryTableCatalog.h>
 #include <query/QueryableFactory.h>
 #include <query/SpillManager.h>
 #include <query/impl/mldp/MLDPAnnotationQueryClient.h>
@@ -42,6 +43,8 @@
 #include <vector>
 
 #include <unistd.h>
+
+#include <sys/ioctl.h>
 
 using namespace mldp_pvxs_driver::cli;
 
@@ -178,7 +181,16 @@ bool isReplCommand(std::string_view command)
 {
     return command == ".help" || command == ".clear" || command == ".format" || command.starts_with(".format ") ||
            command.starts_with(".format\t") || command == ".history" || command == "history" || command == "\\x" ||
-           command == "\\expanded" || command.starts_with("\\expanded ") || command == ".quit" || command == ".exit";
+           command == "\\expanded" || command.starts_with("\\expanded ") || command == ".table-fit" ||
+           command.starts_with(".table-fit ") || command == ".quit" || command == ".exit";
+}
+
+std::optional<std::size_t> terminalWidth(const std::ostream& output)
+{
+    if (&output != &std::cout || ::isatty(STDOUT_FILENO) == 0) return std::nullopt;
+    winsize size{};
+    if (::ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) != 0 || size.ws_col == 0) return std::nullopt;
+    return size.ws_col;
 }
 
 std::string formatName(const QueryOutputFormat format)
@@ -219,7 +231,7 @@ bool isUserHistoryEntry(std::string_view entry)
 
     const auto first_space = command.find_first_of(" \t\r\n");
     const auto keyword = uppercase(command.substr(0, first_space));
-    return keyword == "SELECT" || keyword == "SHOW" || keyword == "DESCRIBE" || keyword == "EXPLAIN";
+    return keyword == "SELECT" || keyword == "SHOW" || keyword == "DESCRIBE" || keyword == "EXPLAIN" || keyword == "CREATE" || keyword == "DROP";
 }
 
 bool startsWithIgnoreCase(std::string_view value, std::string_view prefix)
@@ -540,7 +552,7 @@ int runRepl(QueryCliOptions                           options,
         {
             editor.addHistory(command);
             output << "Enter one SQL statement terminated by ';'.\n"
-                   << "Commands: .help, .clear, .format [table|json|csv|arrow], .history, .quit, .exit\n"
+                   << "Commands: .help, .clear, .format [table|json|csv|arrow], .table-fit [on|off], .history, .quit, .exit\n"
                    << "Display: \\expanded [on|off], \\x (toggle), or terminate a query with \\G for one expanded result.\n"
                    << "Editing: arrows, Ctrl-A/Ctrl-E, Ctrl-W, Ctrl-U/Ctrl-K, Ctrl-L (clear screen), history, and tab completion.\n";
             continue;
@@ -563,6 +575,21 @@ int runRepl(QueryCliOptions                           options,
             else if (argument == "off") options.expanded = false;
             else { error << "Query error: \\expanded accepts on or off\n"; continue; }
             output << "Expanded display: " << (options.expanded ? "on" : "off") << "\n";
+            continue;
+        }
+        if (buffer.empty() && (command == ".table-fit" || startsWithIgnoreCase(command, ".table-fit ") || startsWithIgnoreCase(command, ".table-fit\t")))
+        {
+            editor.addHistory(command);
+            const auto argument = trim(std::string_view(command).substr(std::string_view(".table-fit").size()));
+            if (argument.empty())
+            {
+                output << "Table fit: " << (options.table_fit ? "on" : "off") << "\n";
+                continue;
+            }
+            if (argument == "on") options.table_fit = true;
+            else if (argument == "off") options.table_fit = false;
+            else { error << "Query error: .table-fit accepts on or off\n"; continue; }
+            output << "Table fit: " << (options.table_fit ? "on" : "off") << "\n";
             continue;
         }
         if (buffer.empty() && (command == ".format" || startsWithIgnoreCase(command, ".format ") || startsWithIgnoreCase(command, ".format\t")))
@@ -703,6 +730,11 @@ void parseQueryArguments(int argc, char** argv, QueryCliOptions& options)
             options.no_stats = true;
             continue;
         }
+        if (arg == "--table-fit")
+        {
+            options.table_fit = true;
+            continue;
+        }
         if (arg == "--memory-mb")
         {
             if (++index >= argc)
@@ -719,6 +751,15 @@ void parseQueryArguments(int argc, char** argv, QueryCliOptions& options)
                 throw std::runtime_error("--spill-dir requires a path");
             }
             options.spill_dir = argv[index];
+            continue;
+        }
+        if (arg == "--table-catalog-dir")
+        {
+            if (++index >= argc)
+            {
+                throw std::runtime_error("--table-catalog-dir requires a path");
+            }
+            options.table_catalog_dir = argv[index];
             continue;
         }
         if (arg == "--spill-partitions")
@@ -781,7 +822,7 @@ std::vector<std::string> mldp_pvxs_driver::cli::detail::replCompletions(const st
     }
     else if (!token.empty() && token.front() == '.')
     {
-        candidates = {".help", ".clear", ".format", ".history", "\\expanded", "\\x", ".quit", ".exit"};
+        candidates = {".help", ".clear", ".format", ".table-fit", ".history", "\\expanded", "\\x", ".quit", ".exit"};
     }
     else if (expectsTable(words))
     {
@@ -800,7 +841,7 @@ std::vector<std::string> mldp_pvxs_driver::cli::detail::replCompletions(const st
     else
     {
         candidates = {"SELECT", "FROM", "WHERE", "AND", "OR", "IN", "LIKE", "BETWEEN", "ORDER", "BY", "ASC", "DESC", "LIMIT", "PAGE", "TOKEN",
-                      "SHOW", "TABLES", "DESCRIBE", "EXPLAIN", "AS", "INNER", "LEFT", "OUTER", "JOIN", "ON", "NOW", "PREFIX", "CONTAINS"};
+                      "SHOW", "TABLES", "DESCRIBE", "EXPLAIN", "CREATE", "DROP", "TEMP", "TABLE", "AS", "INNER", "LEFT", "OUTER", "JOIN", "ON", "NOW", "PREFIX", "CONTAINS"};
         const auto aliases = tableAliases(input);
         if (aliases.size() == 1)
             for (const auto& column : columnsForTable(aliases.front().second)) candidates.push_back(column);
@@ -856,6 +897,14 @@ int mldp_pvxs_driver::cli::QueryRunner::run(const QueryCliOptions& options, cons
     auto spill_file_system = std::make_shared<arrow::fs::LocalFileSystem>();
     auto spill = std::make_shared<query::SpillManager>(spill_file_system, spill_dir);
     SpillCleanupGuard cleanup{spill};
+    const auto catalog_dir = options.table_catalog_dir.empty()
+        ? (std::filesystem::temp_directory_path() / "mldp-query-catalog").string()
+        : options.table_catalog_dir;
+    if (!table_catalog_ || table_catalog_dir_ != catalog_dir)
+    {
+        table_catalog_ = std::make_shared<query::QueryTableCatalog>(spill_file_system, catalog_dir);
+        table_catalog_dir_ = catalog_dir;
+    }
 
     query::ExecutionContext context{
         .pool = arrow::default_memory_pool(),
@@ -865,14 +914,19 @@ int mldp_pvxs_driver::cli::QueryRunner::run(const QueryCliOptions& options, cons
         .join_batch_size = options.join_batch_size,
         .spill_fs = std::move(spill_file_system),
         .spill_dir = spill_dir,
+        .table_catalog = table_catalog_,
     };
 
-    const query::QueryPlanner planner;
+    const query::QueryPlanner planner(table_catalog_);
     const query::QueryExecutor executor;
     auto parsed = query::parseQuery(sql);
     auto physical = planner.plan(parsed);
     auto result = executor.execute(physical, context);
-    formatQueryResult(result, options.format, output, options.expanded);
+    formatQueryResult(result,
+                      options.format,
+                      output,
+                      options.expanded,
+                      TableRenderOptions{.viewport_width = options.table_fit ? terminalWidth(output) : std::nullopt});
     if (!options.no_stats)
     {
         printQueryStats(result.stats, output);

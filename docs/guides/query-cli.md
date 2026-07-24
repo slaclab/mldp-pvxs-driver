@@ -26,9 +26,11 @@ mldp_pvxs_driver -c config.yaml query "<SQL>"
 |---|---:|---|
 | `--file <path>` | — | Read SQL text from a file instead of the positional argument. |
 | `--format <fmt>` | `table` | Output format: `table`, `json`, `csv`, `arrow`. |
+| `--table-fit` | off | Fit table output to an interactive terminal viewport by truncating long headers and values with `...`; ignored when output is redirected or piped. |
 | `--no-stats` | off | Suppress the query-stats footer. |
 | `--memory-mb <n>` | `256` | Memory budget for the execution context (MiB). |
 | `--spill-dir <path>` | `<tmp>/mldp-query-spill` | Directory for spill files under memory pressure. |
+| `--table-catalog-dir <path>` | `<tmp>/mldp-query-catalog` | Root directory for durable Arrow IPC snapshots; separate from `--spill-dir`. |
 | `--spill-partitions <n>` | `16` | Spill partition count for join spill paths. |
 | `--join-batch-size <n>` | `100` | Batch size hint for join execution and pagination. |
 
@@ -42,6 +44,32 @@ mldp> SHOW TABLES;
 ```
 
 Terminate each statement with a semicolon. Statements can span lines; the prompt changes from `mldp> ` to `...> ` while a statement is buffered. A semicolon inside a quoted string does not terminate the statement. The session executes one statement at a time and remains open after parse, planning, or execution errors.
+
+### Stored query tables
+
+`CREATE TEMP TABLE name AS SELECT ...` materializes a read-only Arrow IPC snapshot for the current REPL/client session. It can be queried and joined by later statements, then is removed when the runner exits or when `DROP TABLE name` is issued. `CREATE TABLE name AS SELECT ...` writes an immutable persistent Arrow IPC snapshot below `--table-catalog-dir`; later clients using the same directory can select it, describe it, and discover it through `SHOW TABLES`.
+
+```sql
+CREATE TEMP TABLE recent_samples AS
+SELECT pv, time, value FROM mldp.time_series WHERE pv = 'BPMS:IN20:221:TMIT';
+
+CREATE TABLE production_samples AS
+SELECT pv, time, value FROM mldp.time_series WHERE pv = 'BPMS:IN20:221:TMIT';
+SELECT pv, value FROM production_samples;
+DROP TABLE production_samples;
+```
+
+`CREATE TABLE` fails if the name exists; explicitly `DROP TABLE` before recreating it. Persistent tables are immutable snapshots, not live gRPC views, and are never automatically refreshed. The catalog manages only its own `.mldp-query-tables` namespace inside the configured root and does not clean unrelated files. Use a shared mounted directory when multiple processes or hosts must share persistent tables.
+
+Parenthesized `SELECT` statements are also valid statement-scoped derived sources in `FROM` and `JOIN` positions. They require an alias and are evaluated only for their enclosing statement; scalar subqueries and `IN (SELECT ...)` remain unsupported.
+
+```sql
+SELECT recent.pv, recent.value
+FROM (
+  SELECT pv, value FROM mldp.time_series WHERE pv = 'BPMS:IN20:221:TMIT'
+) AS recent
+WHERE recent.value > 0;
+```
 
 For example:
 
@@ -65,6 +93,7 @@ SELECT * FROM mldp.configuration;
 | `.history`, `history` | Print the command history. In an interactive terminal this includes saved history from earlier sessions. |
 | `.format` | Print the current output style. |
 | `.format <table\|json\|csv\|arrow>` | Set the output style for subsequent statements in this REPL session. |
+| `.table-fit [on\|off]` | Show or change whether table output is fitted to the interactive terminal width for this REPL session. |
 | `.quit`, `.exit` | Exit the session. |
 
 ### Line editing and completion
@@ -242,6 +271,8 @@ ORDER BY attributes.device_group, attributes.ordinal;
 
 Table output keeps each result on one physical line. Lists and maps show their first two values followed by `+N` when values remain; map keys are sorted for a predictable display. Use the REPL controls below to inspect every value in a record:
 
+When enabled with `--table-fit` or `.table-fit on`, table output fits to the current interactive terminal width. Long headers and cell lines preserve their beginning and end with `...` between them. This display-only setting never truncates JSON, CSV, Arrow, expanded output, or redirected/piped output.
+
 ```text
 \expanded on     # persistently enable expanded records
 \expanded off    # return to compact table output
@@ -373,6 +404,8 @@ Time-series samples from the MLDP query service.
 | `rpc_deadline` | duration | no | `=` | RPC deadline in seconds. |
 
 `value` is a dense-union Arrow column that carries the native MLDP data type: `string`, `bool`, `uint32`, `uint64`, `int32`, `int64`, `float`, `double`, `binary`, `timestamp`, `array`, `structure`, or `image`.
+
+Table and expanded output display the active union member directly (for example, a double sample renders as `10`, not Arrow's `union{double: ...}` diagnostic). JSON, CSV, and Arrow output retain the underlying union representation for machine-readable consumers.
 
 **Required:** `pv` must be constrained with `=` or `IN`.
 

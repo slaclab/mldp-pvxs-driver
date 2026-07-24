@@ -13,6 +13,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdint>
 #include <string_view>
 #include <vector>
 
@@ -131,6 +132,37 @@ TEST(QueryParserTest, ParsesSelectJoinPredicatesLimitAndPageToken)
     EXPECT_EQ(*select.page_token, "next-1");
 }
 
+TEST(QueryParserTest, ParsesUnlimitedInPredicateLiteralsInOrder)
+{
+    const auto statement = parseQuery(
+        "SELECT pv, time, value FROM mldp.time_series "
+        "WHERE pv IN ('mldp_sample:MAGNET:01:VALUE', 'mldp_sample:RF:02:VALUE', 'mldp_sample:VACUUM:03:VALUE', 42, NOW-10h) "
+        "AND time >= NOW-10h AND time <= NOW");
+
+    const auto& select = std::get<SelectStatement>(statement);
+    ASSERT_EQ(select.predicates.size(), 3);
+    ASSERT_TRUE(std::holds_alternative<InPredicate>(select.predicates.front()));
+    const auto& in = std::get<InPredicate>(select.predicates.front());
+    ASSERT_EQ(in.values.size(), 5);
+    EXPECT_EQ(std::get<std::string>(in.values[0]), "mldp_sample:MAGNET:01:VALUE");
+    EXPECT_EQ(std::get<std::string>(in.values[1]), "mldp_sample:RF:02:VALUE");
+    EXPECT_EQ(std::get<std::string>(in.values[2]), "mldp_sample:VACUUM:03:VALUE");
+    EXPECT_EQ(std::get<int64_t>(in.values[3]), 42);
+    ASSERT_TRUE(std::holds_alternative<NowLiteral>(in.values[4]));
+    EXPECT_EQ(std::get<NowLiteral>(in.values[4]).offset_seconds, -36000);
+}
+
+TEST(QueryParserTest, RejectsEmptyAndMalformedInPredicateLists)
+{
+    for (const std::string_view sql : {
+             "SELECT pv FROM mldp.time_series WHERE pv IN ()",
+             "SELECT pv FROM mldp.time_series WHERE pv IN ('A',)",
+             "SELECT pv FROM mldp.time_series WHERE pv IN ('A',, 'B')"})
+    {
+        EXPECT_THROW((void)parseQuery(sql), ParseError) << sql;
+    }
+}
+
 TEST(QueryParserTest, PreservesLikeAsItsOwnPredicateOperator)
 {
     const auto statement = parseQuery("SELECT * FROM mldp.configuration WHERE name LIKE 'beam%'");
@@ -165,6 +197,41 @@ TEST(QueryParserTest, ParsesShowTablesDescribeAndExplain)
     auto explain = parseQuery("EXPLAIN SELECT * FROM mldp.pv_stats");
     ASSERT_TRUE(std::holds_alternative<ExplainStatement>(explain));
     EXPECT_TRUE(std::get<ExplainStatement>(explain).query.select_all);
+}
+
+TEST(QueryParserTest, ParsesCreateTempPersistentAndDropTableStatements)
+{
+    const auto temporary = parseQuery("CREATE TEMP TABLE recent_samples AS SELECT pv, value FROM mldp.time_series WHERE pv = 'A'");
+    ASSERT_TRUE(std::holds_alternative<CreateTableStatement>(temporary));
+    EXPECT_TRUE(std::get<CreateTableStatement>(temporary).temporary);
+    EXPECT_EQ(std::get<CreateTableStatement>(temporary).table_name, "recent_samples");
+    EXPECT_EQ(std::get<CreateTableStatement>(temporary).query.from.table_name, "mldp.time_series");
+
+    const auto persistent = parseQuery("CREATE TABLE production_samples AS SELECT pv FROM mldp.time_series");
+    ASSERT_TRUE(std::holds_alternative<CreateTableStatement>(persistent));
+    EXPECT_FALSE(std::get<CreateTableStatement>(persistent).temporary);
+    EXPECT_EQ(std::get<CreateTableStatement>(persistent).table_name, "production_samples");
+
+    const auto drop = parseQuery("DROP TABLE production_samples");
+    ASSERT_TRUE(std::holds_alternative<DropTableStatement>(drop));
+    EXPECT_EQ(std::get<DropTableStatement>(drop).table_name, "production_samples");
+}
+
+TEST(QueryParserTest, ParsesDerivedTableSourcesAndRequiresAliases)
+{
+    const auto statement = parseQuery("SELECT recent.pv FROM (SELECT pv FROM mldp.time_series WHERE pv = 'A') AS recent");
+    const auto& select = std::get<SelectStatement>(statement);
+    ASSERT_NE(select.from.derived_query, nullptr);
+    EXPECT_EQ(select.from.alias.value_or(""), "recent");
+    EXPECT_EQ(select.from.derived_query->from.table_name, "mldp.time_series");
+
+    const auto joined = parseQuery("SELECT r.pv FROM fake.meta m JOIN (SELECT pv FROM fake.samples) r ON m.pv = r.pv");
+    const auto& join_select = std::get<SelectStatement>(joined);
+    ASSERT_EQ(join_select.joins.size(), 1U);
+    EXPECT_NE(join_select.joins.front().table.derived_query, nullptr);
+
+    EXPECT_THROW((void)parseQuery("SELECT pv FROM (SELECT pv FROM mldp.time_series)"), ParseError);
+    EXPECT_THROW((void)parseQuery("SELECT pv FROM mldp.time_series WHERE pv IN (SELECT pv FROM mldp.time_series)"), ParseError);
 }
 
 TEST(QueryParserTest, ParsesInnerLeftAndMultiJoinChains)

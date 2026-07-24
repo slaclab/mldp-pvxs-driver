@@ -16,10 +16,10 @@
 #include <arrow/scalar.h>
 
 #include <algorithm>
-
 #include <iomanip>
 #include <sstream>
 #include <stdexcept>
+#include <string_view>
 
 using namespace mldp_pvxs_driver::cli;
 namespace query = mldp_pvxs_driver::query;
@@ -119,12 +119,28 @@ std::string jsonValue(const std::shared_ptr<arrow::Scalar>& scalar)
     return "\"" + escapeJson(scalar->ToString()) + "\"";
 }
 
+std::shared_ptr<arrow::Scalar> activeUnionValue(std::shared_ptr<arrow::Scalar> scalar)
+{
+    while (scalar && scalar->is_valid &&
+           (scalar->type->id() == arrow::Type::DENSE_UNION || scalar->type->id() == arrow::Type::SPARSE_UNION))
+    {
+        const auto union_scalar = std::dynamic_pointer_cast<arrow::UnionScalar>(scalar);
+        if (!union_scalar)
+        {
+            break;
+        }
+        scalar = union_scalar->child_value();
+    }
+    return scalar;
+}
+
 std::string tableValue(const std::shared_ptr<arrow::Scalar>& scalar)
 {
-    if (!scalar || !scalar->is_valid) return "";
-    if (scalar->type->id() == arrow::Type::LIST)
+    const auto display_scalar = activeUnionValue(scalar);
+    if (!display_scalar || !display_scalar->is_valid) return "";
+    if (display_scalar->type->id() == arrow::Type::LIST)
     {
-        const auto list = std::dynamic_pointer_cast<arrow::ListScalar>(scalar);
+        const auto list = std::dynamic_pointer_cast<arrow::ListScalar>(display_scalar);
         std::vector<std::string> values;
         values.reserve(static_cast<std::size_t>(list->value->length()));
         for (int64_t i = 0; i < list->value->length(); ++i)
@@ -143,9 +159,9 @@ std::string tableValue(const std::shared_ptr<arrow::Scalar>& scalar)
         if (values.size() > shown) out << ", +" << (values.size() - shown);
         return out.str();
     }
-    if (scalar->type->id() == arrow::Type::MAP)
+    if (display_scalar->type->id() == arrow::Type::MAP)
     {
-        const auto map = std::dynamic_pointer_cast<arrow::MapScalar>(scalar);
+        const auto map = std::dynamic_pointer_cast<arrow::MapScalar>(display_scalar);
         const auto entries = std::dynamic_pointer_cast<arrow::StructArray>(map->value);
         std::vector<std::string> values;
         for (int64_t i = 0; i < entries->length(); ++i)
@@ -161,7 +177,7 @@ std::string tableValue(const std::shared_ptr<arrow::Scalar>& scalar)
         if (values.size() > shown) out << ", +" << (values.size() - shown);
         return out.str();
     }
-    return scalar->ToString();
+    return display_scalar->ToString();
 }
 
 void writeExpanded(const query::QueryExecutionResult& result, std::ostream& output)
@@ -180,14 +196,15 @@ void writeExpanded(const query::QueryExecutionResult& result, std::ostream& outp
                 if (!scalar_result.ok()) throw std::runtime_error(scalar_result.status().ToString());
                 const auto scalar = *scalar_result;
                 const auto& name = batch->schema()->field(column)->name();
-                if (!scalar || !scalar->is_valid)
+                const auto display_scalar = activeUnionValue(scalar);
+                if (!display_scalar || !display_scalar->is_valid)
                 {
                     output << name << ":\n";
                     continue;
                 }
-                if (scalar->type->id() == arrow::Type::LIST)
+                if (display_scalar->type->id() == arrow::Type::LIST)
                 {
-                    const auto list = std::dynamic_pointer_cast<arrow::ListScalar>(scalar);
+                    const auto list = std::dynamic_pointer_cast<arrow::ListScalar>(display_scalar);
                     output << name << ":\n";
                     for (int64_t i = 0; i < list->value->length(); ++i)
                     {
@@ -197,9 +214,9 @@ void writeExpanded(const query::QueryExecutionResult& result, std::ostream& outp
                     }
                     continue;
                 }
-                if (scalar->type->id() == arrow::Type::MAP)
+                if (display_scalar->type->id() == arrow::Type::MAP)
                 {
-                    const auto map = std::dynamic_pointer_cast<arrow::MapScalar>(scalar);
+                    const auto map = std::dynamic_pointer_cast<arrow::MapScalar>(display_scalar);
                     const auto entries = std::dynamic_pointer_cast<arrow::StructArray>(map->value);
                     std::vector<std::string> values;
                     for (int64_t i = 0; i < entries->length(); ++i)
@@ -213,7 +230,7 @@ void writeExpanded(const query::QueryExecutionResult& result, std::ostream& outp
                     for (const auto& value : values) output << "  " << value << "\n";
                     continue;
                 }
-                output << name << ": " << scalar->ToString() << "\n";
+                output << name << ": " << display_scalar->ToString() << "\n";
             }
         }
     }
@@ -400,7 +417,70 @@ void writeArrowIpc(const query::QueryExecutionResult& result, std::ostream& outp
     }
 }
 
-void writeTable(const query::QueryExecutionResult& result, std::ostream& output)
+std::string truncateMiddle(const std::string_view value, const std::size_t width)
+{
+    if (value.size() <= width) return std::string(value);
+    if (width == 0) return {};
+    if (width <= 3) return std::string(width, '.');
+
+    const auto prefix_width = (width - 3 + 1) / 2;
+    const auto suffix_width = width - 3 - prefix_width;
+    return std::string(value.substr(0, prefix_width)) + "..." + std::string(value.substr(value.size() - suffix_width));
+}
+
+std::vector<std::size_t> fittedWidths(const std::vector<std::size_t>& natural_widths, const std::size_t viewport_width)
+{
+    const auto column_count = natural_widths.size();
+    const auto separator_width = column_count > 0 ? 3 * (column_count - 1) : 0;
+    if (viewport_width < separator_width + column_count) return {};
+
+    std::vector<std::size_t> widths;
+    widths.reserve(column_count);
+    std::size_t allocated = separator_width;
+    for (const auto natural : natural_widths)
+    {
+        const auto minimum = std::min<std::size_t>(4, natural);
+        widths.push_back(minimum);
+        allocated += minimum;
+    }
+
+    while (allocated < viewport_width)
+    {
+        bool grew = false;
+        for (std::size_t column = 0; column < column_count && allocated < viewport_width; ++column)
+        {
+            if (widths[column] < natural_widths[column])
+            {
+                ++widths[column];
+                ++allocated;
+                grew = true;
+            }
+        }
+        if (!grew) break;
+    }
+    return widths;
+}
+
+void writeStackedTable(const std::vector<std::string>&              headers,
+                       const std::vector<std::vector<std::string>>& rows,
+                       const std::size_t                            viewport_width,
+                       std::ostream&                                output)
+{
+    for (std::size_t row_index = 0; row_index < rows.size(); ++row_index)
+    {
+        if (row_index != 0) output << "\n";
+        for (std::size_t column = 0; column < headers.size(); ++column)
+        {
+            const auto value_end = rows[row_index][column].find('\n');
+            const auto value = rows[row_index][column].substr(0, value_end);
+            output << truncateMiddle(headers[column] + ": " + value, viewport_width) << "\n";
+        }
+    }
+}
+
+void writeTable(const query::QueryExecutionResult& result,
+                std::ostream&                      output,
+                const TableRenderOptions&          options)
 {
     if (result.batches.empty())
     {
@@ -458,6 +538,14 @@ void writeTable(const query::QueryExecutionResult& result, std::ostream& output)
         }
     }
 
+    const auto fitted_widths = options.viewport_width ? fittedWidths(widths, *options.viewport_width) : widths;
+    if (options.viewport_width && fitted_widths.empty())
+    {
+        writeStackedTable(headers, rows, *options.viewport_width, output);
+        output << truncateMiddle("(" + std::to_string(rows.size()) + " row" + (rows.size() != 1 ? "s" : "") + ")", *options.viewport_width) << "\n";
+        return;
+    }
+
     // Separator line: -...--+-...--+...
     auto separator = [&]() {
         for (int c = 0; c < num_cols; ++c)
@@ -466,7 +554,7 @@ void writeTable(const query::QueryExecutionResult& result, std::ostream& output)
             {
                 output << "-+-";
             }
-            output << std::string(widths[c], '-');
+            output << std::string(fitted_widths[c], '-');
         }
         output << "\n";
     };
@@ -478,7 +566,7 @@ void writeTable(const query::QueryExecutionResult& result, std::ostream& output)
         {
             output << " | ";
         }
-        output << std::left << std::setw(static_cast<int>(widths[c])) << headers[c];
+        output << std::left << std::setw(static_cast<int>(fitted_widths[c])) << truncateMiddle(headers[c], fitted_widths[c]);
     }
     output << "\n";
     separator();
@@ -496,7 +584,8 @@ void writeTable(const query::QueryExecutionResult& result, std::ostream& output)
                 if (c > 0) output << " | ";
                 const auto start = [&] { std::size_t offset = 0; for (std::size_t part = 0; part < line; ++part) { const auto pos = row[c].find('\n', offset); if (pos == std::string::npos) return row[c].size(); offset = pos + 1; } return offset; }();
                 const auto end = row[c].find('\n', start);
-                output << std::left << std::setw(static_cast<int>(widths[c])) << row[c].substr(start, end - start);
+                output << std::left << std::setw(static_cast<int>(fitted_widths[c]))
+                       << truncateMiddle(row[c].substr(start, end - start), fitted_widths[c]);
             }
             output << "\n";
         }
@@ -510,13 +599,14 @@ void writeTable(const query::QueryExecutionResult& result, std::ostream& output)
 void mldp_pvxs_driver::cli::formatQueryResult(const query::QueryExecutionResult& result,
                                               QueryOutputFormat                  format,
                                               std::ostream&                      output,
-                                              const bool                         expanded)
+                                              const bool                         expanded,
+                                              const TableRenderOptions&          table_options)
 {
     switch (format)
     {
         case QueryOutputFormat::Table:
             if (expanded) writeExpanded(result, output);
-            else writeTable(result, output);
+            else writeTable(result, output, table_options);
             break;
         case QueryOutputFormat::Json:
             writeJsonLines(result, output);
@@ -542,6 +632,7 @@ void mldp_pvxs_driver::cli::printQueryStats(const query::QueryStats& stats, std:
            << " filtered) in " << stats.elapsed.count()
            << "ms | " << stats.rpc_calls
            << " RPC | " << stats.bytes_spilled
-           << " bytes spilled | " << peak_mb
+           << " bytes spilled | " << stats.materialized_bytes
+           << " bytes materialized in " << stats.materialized_files << " file(s) | " << peak_mb
            << " MB peak\n";
 }
