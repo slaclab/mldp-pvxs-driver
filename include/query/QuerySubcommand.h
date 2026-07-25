@@ -20,9 +20,11 @@
 #include <config/Config.h>
 #include <query/QueryFormatter.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <iosfwd>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -30,6 +32,7 @@
 #include <memory>
 
 namespace mldp_pvxs_driver::query {
+class QueryProgressTracker;
 class QueryTableCatalog;
 }
 
@@ -58,7 +61,13 @@ public:
 class QueryRunner
 {
 public:
-    int run(const QueryCliOptions& options, std::string_view sql, std::ostream& output) const;
+    int run(const QueryCliOptions& options,
+            std::string_view       sql,
+            std::ostream&          output,
+            std::shared_ptr<query::QueryProgressTracker> progress = nullptr,
+            std::optional<std::size_t> viewport_width = std::nullopt,
+            bool                       print_stats = true,
+            query::QueryStats*         completed_stats = nullptr) const;
     std::shared_ptr<query::QueryTableCatalog> completionCatalog(const QueryCliOptions& options) const;
 
 private:

@@ -6,6 +6,7 @@
 //////////////////////////////////////////////////////////////////////////////
 
 #include <query/QuerySubcommand.h>
+#include <query/ConsoleFooter.h>
 #include <query/QueryExecutor.h>
 #include <query/QueryFormatter.h>
 #include <query/QueryPlanner.h>
@@ -28,6 +29,7 @@
 #include <arrow/ipc/reader.h>
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <sstream>
@@ -76,6 +78,33 @@ public:
 };
 
 const std::set<std::string_view> ReplFakeQueryable::kVirtualTables = {"fake.samples"};
+
+TEST(ConsoleFooterTest, RendersFixedWidthAsciiStatusWithPriority)
+{
+    cli::FooterRenderer renderer;
+    cli::ConsoleStatus status;
+    status.completed_stats = query::QueryStats{
+        .elapsed = std::chrono::milliseconds(17),
+        .rows_returned = 42,
+        .rpc_calls = 3,
+        .bytes_spilled = 2ULL * 1024ULL * 1024ULL,
+        .peak_memory_bytes = 4ULL * 1024ULL * 1024ULL};
+
+    const auto wide = renderer.render(status, 80);
+    EXPECT_EQ(wide.size(), 80U);
+    EXPECT_NE(wide.find("Query: ready | 42 rows | 17 ms | 3 RPCs | spill 2 MiB | peak 4 MiB"), std::string::npos);
+
+    status.query_running = true;
+    status.progress = query::QueryProgressSnapshot{.phase = query::QueryProgressPhase::Planning};
+    const auto narrow = renderer.render(status, 24);
+    EXPECT_EQ(narrow.size(), 24U);
+    EXPECT_NE(narrow.find("Running: planning"), std::string::npos);
+    EXPECT_EQ(narrow.find("spill"), std::string::npos);
+    EXPECT_TRUE(std::all_of(narrow.begin(), narrow.end(), [](const unsigned char character) { return character < 128; }));
+
+    const auto tiny = renderer.render(status, 5);
+    EXPECT_EQ(tiny, "Runni");
+}
 
 TEST(ArrowTypeMapTest, MapsEveryColumnType)
 {
@@ -235,6 +264,7 @@ TEST(QueryFormatterTest, FormatsJsonCsvTableAndArrowToTheSuppliedStream)
     std::ostringstream table;
     cli::formatQueryResult(result, cli::QueryOutputFormat::Table, table);
     EXPECT_NE(table.str().find("text"), std::string::npos);
+    EXPECT_EQ(table.str().find("(1 row)"), std::string::npos);
 
     std::ostringstream arrow_output;
     cli::formatQueryResult(result, cli::QueryOutputFormat::Arrow, arrow_output);
@@ -247,6 +277,23 @@ TEST(QueryFormatterTest, FormatsJsonCsvTableAndArrowToTheSuppliedStream)
     ASSERT_TRUE(read_batch.ok()) << read_batch.status().ToString();
     ASSERT_NE(*read_batch, nullptr);
     EXPECT_TRUE((*read_batch)->Equals(*batch));
+}
+
+TEST(QueryFormatterTest, FormatsQueryStatsFooterLine)
+{
+    query::QueryStats stats;
+    stats.elapsed = std::chrono::milliseconds(1);
+    stats.rows_from_backend = 10;
+    stats.rows_returned = 10;
+    stats.rpc_calls = 0;
+    stats.bytes_spilled = 0;
+    stats.materialized_bytes = 0;
+    stats.materialized_files = 0;
+    stats.peak_memory_bytes = 0;
+
+    EXPECT_EQ(cli::queryStatsLine(stats),
+              "-- 10 rows (10 from backend, 0 filtered) in 1ms | 0 RPC | 0 bytes spilled | "
+              "0 bytes materialized in 0 file(s) | 0 MB peak");
 }
 
 TEST(QueryFormatterTest, FormatsNativeMetadataCollectionsWithoutExpandingRows)
@@ -297,6 +344,7 @@ TEST(QueryFormatterTest, FormatsNativeMetadataCollectionsWithoutExpandingRows)
     EXPECT_NE(expanded.str().find("-[ RECORD 1 ]"), std::string::npos);
     EXPECT_NE(expanded.str().find("  - sample"), std::string::npos);
     EXPECT_NE(expanded.str().find("  namespace: mldp_sample"), std::string::npos);
+    EXPECT_EQ(expanded.str().find("(1 row)"), std::string::npos);
 }
 
 TEST(QueryFormatterTest, DisplaysActiveDenseUnionMembersWithoutArrowDiagnostics)
@@ -703,7 +751,10 @@ TEST(QuerySubcommandTest, ReplFormatPersistsForFollowingStatements)
     EXPECT_EQ(querySubcommand.run(1, argv, config_sources, input, output, error), 0);
     EXPECT_NE(output.str().find("Output format: table"), std::string::npos);
     EXPECT_NE(output.str().find("Output format: json"), std::string::npos);
-    EXPECT_NE(output.str().find("{\"table_name\":\"mldp.time_series\"}"), std::string::npos);
+    EXPECT_NE(output.str().find("{\"table_name\":\"mldp.time_series\",\"type\":\"virtual\",\"location\":\"\"}"),
+              std::string::npos);
+    EXPECT_NE(output.str().find("-- "), std::string::npos);
+    EXPECT_NE(output.str().find("rows ("), std::string::npos);
     EXPECT_TRUE(error.str().empty());
 }
 
@@ -834,6 +885,7 @@ TEST(QuerySubcommandTest, ReplRunsSubmittedStatementsAndRecoversFromParseErrors)
     EXPECT_EQ(querySubcommand.run(1, argv, config_sources, input, output, error), 0);
     EXPECT_NE(error.str().find("Parse error at "), std::string::npos);
     EXPECT_NE(output.str().find("mldp.time_series"), std::string::npos);
+    EXPECT_EQ(output.str().find("\033[K"), std::string::npos);
 }
 
 TEST(QuerySubcommandTest, ReplRecognisesSemicolonsOnlyOutsideQuotedStrings)

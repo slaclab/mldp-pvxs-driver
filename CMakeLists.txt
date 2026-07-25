@@ -969,6 +969,7 @@ if(MLDP_PVXS_DRIVER_TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/test/query/mldp_annotation_query_client_integration_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/query/queryable_mldp_integration_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/query/QuerySubcommand.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/query/ConsoleFooter.cpp"
     )
     target_include_directories(${PROJECT_NAME}_test PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/include"
@@ -1066,6 +1067,7 @@ if(MLDP_PVXS_DRIVER_MAIN)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/SpdlogLogger.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/ConfigPrinter.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/query/QuerySubcommand.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/query/ConsoleFooter.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/config/subcommand.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/config/validate.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/config/template.cpp"

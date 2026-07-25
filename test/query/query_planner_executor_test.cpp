@@ -10,6 +10,7 @@
 
 #include <query/ExecutionContext.h>
 #include <query/QueryExecutor.h>
+#include <query/QueryProgress.h>
 #include <query/executor/ExecutionState.h>
 #include <query/QueryPlanner.h>
 #include <query/QueryResult.h>
@@ -29,8 +30,11 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <chrono>
+#include <future>
 #include <set>
 #include <string_view>
+#include <thread>
 #include <variant>
 
 namespace plan = mldp_pvxs_driver::query::plan;
@@ -43,6 +47,7 @@ class FakeQueryable : public query::IQueryable
 {
 public:
     static const std::set<std::string_view> kVirtualTables;
+    inline static std::chrono::milliseconds execute_delay{0};
 
     explicit FakeQueryable(const config::Config&, std::shared_ptr<metrics::Metrics> = nullptr)
     {
@@ -85,6 +90,10 @@ public:
                                const query::ExecutionContext&,
                                std::string_view page_token = {}) override
     {
+        if (execute_delay.count() > 0)
+        {
+            std::this_thread::sleep_for(execute_delay);
+        }
         if (table_name == "fake.paged")
         {
             arrow::StringBuilder pv_builder;
@@ -350,6 +359,7 @@ protected:
 
     void TearDown() override
     {
+        FakeQueryable::execute_delay = std::chrono::milliseconds{0};
         query::QueryableFactory::instance().reset();
     }
 };
@@ -457,6 +467,50 @@ TEST_F(PlannerExecutorTest, InitializesMatchingExecutionStateTree)
     EXPECT_EQ(state->children().front()->typeName(), "FilterExecutionState");
     ASSERT_EQ(state->children().front()->children().size(), 1U);
     EXPECT_EQ(state->children().front()->children().front()->typeName(), "TableScanExecutionState");
+}
+
+TEST_F(PlannerExecutorTest, ProgressTrackerSnapshotsBackendRpcAndFinalStats)
+{
+    FakeQueryable::execute_delay = std::chrono::milliseconds{200};
+    query::QueryPlanner planner;
+    query::QueryExecutor executor;
+    auto progress = std::make_shared<query::QueryProgressTracker>();
+    auto future = std::async(std::launch::async,
+                             [&]
+                             {
+                                 return executor.execute(
+                                     planner.plan(query::parseQuery("SELECT pv FROM fake.paged")),
+                                     {.pool = arrow::default_memory_pool(), .progress = progress});
+                             });
+
+    query::QueryProgressSnapshot running;
+    bool saw_backend_rpc = false;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (std::chrono::steady_clock::now() < deadline)
+    {
+        running = progress->snapshot();
+        if (running.phase == query::QueryProgressPhase::BackendRpc)
+        {
+            saw_backend_rpc = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    EXPECT_TRUE(saw_backend_rpc);
+    EXPECT_EQ(running.table_name, "fake.paged");
+    EXPECT_EQ(running.rpc_calls_started, 1U);
+    EXPECT_EQ(running.rpc_calls_completed, 0U);
+
+    const auto result = future.get();
+    const auto complete = progress->snapshot();
+    EXPECT_EQ(result.stats.rpc_calls, 2U);
+    EXPECT_EQ(result.stats.rows_from_backend, 2U);
+    EXPECT_EQ(result.stats.rows_returned, 2U);
+    EXPECT_EQ(complete.rpc_calls_started, 2U);
+    EXPECT_EQ(complete.rpc_calls_completed, 2U);
+    EXPECT_EQ(complete.rows_from_backend, 2U);
+    EXPECT_EQ(complete.rows_returned, 2U);
 }
 
 TEST_F(PlannerExecutorTest, ExecutionStateFactoryMapsAllPhysicalNodeTypes)

@@ -15,6 +15,7 @@
 #include <cstddef>
 #include <iosfwd>
 #include <optional>
+#include <string>
 
 namespace mldp_pvxs_driver::cli {
 
@@ -38,5 +39,7 @@ void formatQueryResult(const query::QueryExecutionResult& result,
                        const TableRenderOptions&          table_options = {});
 
 void printQueryStats(const query::QueryStats& stats, std::ostream& output);
+
+std::string queryStatsLine(const query::QueryStats& stats);
 
 } // namespace mldp_pvxs_driver::cli

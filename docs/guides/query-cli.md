@@ -71,6 +71,8 @@ mldp> SHOW TABLES;
 
 Terminate each statement with a semicolon. Statements can span lines; the prompt changes from `mldp> ` to `...> ` while a statement is buffered. A semicolon inside a quoted string does not terminate the statement. The session executes one statement at a time and remains open after parse, planning, or execution errors.
 
+After each statement, redirected and plain-stream REPL sessions print a final statistics line with returned and backend rows, elapsed time, RPCs, spill/materialization counters, and peak memory. When both standard input and output are terminals, the REPL reserves the final row for a reverse-video status footer; the footer is the interactive query-statistics display and retains the latest query summary while result output scrolls above it. Redirected output and machine-readable formats remain free of terminal control sequences. The REPL leaves input editing and active-line resize redraws to `replxx`.
+
 ### Stored query tables
 
 `CREATE TEMP TABLE name AS SELECT ...` materializes a read-only Arrow IPC snapshot for the current REPL/client session. It can be queried and joined by later statements, then is removed when the runner exits or when `DROP TABLE name` is issued. `CREATE TABLE name AS SELECT ...` writes an immutable persistent Arrow IPC snapshot below `--table-catalog-dir`; later clients using the same directory can select it, describe it, and discover it through `SHOW TABLES`.
@@ -773,8 +775,7 @@ mldp.pv_stats                      virtual
 mldp.time_series                   virtual
 mldp.time_series_table             virtual
 magnet_samples                     persistent Arrow IPC  /var/lib/mldp/query-catalog/.mldp-query-tables/6d61676e65745f73616d706c6573.arrow
-(8 rows)
--- 8 rows (8 from backend, 0 filtered) in 0ms | 0 RPC | 0 bytes spilled | 0 MB peak
+-- 8 rows (8 from backend, 0 filtered) in 0ms | 0 RPC | 0 bytes spilled | 0 bytes materialized in 0 file(s) | 0 MB peak
 ```
 
 ---

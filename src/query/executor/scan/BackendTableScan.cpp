@@ -6,6 +6,7 @@
 #include <query/executor/ScanExecutionHelpers.h>
 
 #include <query/QueryResult.h>
+#include <query/QueryProgress.h>
 #include <query/QueryableFactory.h>
 
 #include <stdexcept>
@@ -35,11 +36,20 @@ RecordBatches fetchBackendPages(const plan::PhysicalTableScan& scan, const std::
     std::string page_token;
     do
     {
+        if (context.progress)
+        {
+            context.progress->beginBackendRpc(scan.table_name, page_token.empty() ? "page 1" : "continuation page");
+        }
         const auto result = queryable->execute(scan.table_name, pushable, scan.projection_hint, context, page_token);
         ++stats.rpc_calls;
+        const auto backend_rows = result.batch ? static_cast<uint64_t>(result.batch->num_rows()) : 0ULL;
+        if (context.progress)
+        {
+            context.progress->finishBackendRpc(backend_rows);
+        }
         page_token = result.next_page_token;
         if (!result.batch) continue;
-        stats.rows_from_backend += static_cast<uint64_t>(result.batch->num_rows());
+        stats.rows_from_backend += backend_rows;
         auto batch = applyLocal(result.batch, local);
         qualify(scan, batch);
         output.push_back(std::move(batch));

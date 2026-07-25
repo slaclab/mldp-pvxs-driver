@@ -542,7 +542,6 @@ void writeTable(const query::QueryExecutionResult& result,
     if (options.viewport_width && fitted_widths.empty())
     {
         writeStackedTable(headers, rows, *options.viewport_width, output);
-        output << truncateMiddle("(" + std::to_string(rows.size()) + " row" + (rows.size() != 1 ? "s" : "") + ")", *options.viewport_width) << "\n";
         return;
     }
 
@@ -591,7 +590,6 @@ void writeTable(const query::QueryExecutionResult& result,
         }
     }
 
-    output << "(" << rows.size() << " row" << (rows.size() != 1 ? "s" : "") << ")\n";
 }
 
 } // namespace
@@ -622,10 +620,16 @@ void mldp_pvxs_driver::cli::formatQueryResult(const query::QueryExecutionResult&
 
 void mldp_pvxs_driver::cli::printQueryStats(const query::QueryStats& stats, std::ostream& output)
 {
+    output << queryStatsLine(stats) << "\n";
+}
+
+std::string mldp_pvxs_driver::cli::queryStatsLine(const query::QueryStats& stats)
+{
     const auto filtered = stats.rows_from_backend >= stats.rows_returned
         ? (stats.rows_from_backend - stats.rows_returned)
         : 0ULL;
     const auto peak_mb = stats.peak_memory_bytes / (1024ULL * 1024ULL);
+    std::ostringstream output;
     output << "-- " << stats.rows_returned
            << " rows (" << stats.rows_from_backend
            << " from backend, " << filtered
@@ -634,5 +638,6 @@ void mldp_pvxs_driver::cli::printQueryStats(const query::QueryStats& stats, std:
            << " RPC | " << stats.bytes_spilled
            << " bytes spilled | " << stats.materialized_bytes
            << " bytes materialized in " << stats.materialized_files << " file(s) | " << peak_mb
-           << " MB peak\n";
+           << " MB peak";
+    return output.str();
 }

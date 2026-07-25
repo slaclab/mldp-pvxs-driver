@@ -31,6 +31,7 @@ namespace mldp_pvxs_driver::query {
 
 class SpillManager;
 class QueryTableCatalog;
+class QueryProgressTracker;
 
 struct ExecutionContext {
     arrow::MemoryPool*                    pool{nullptr};
@@ -41,6 +42,7 @@ struct ExecutionContext {
     std::shared_ptr<arrow::fs::FileSystem> spill_fs;
     std::string                           spill_dir;
     std::shared_ptr<QueryTableCatalog>    table_catalog;
+    std::shared_ptr<QueryProgressTracker> progress;
 };
 
 } // namespace mldp_pvxs_driver::query

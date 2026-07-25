@@ -6,6 +6,7 @@
 #include <query/executor/ScanExecutionHelpers.h>
 
 #include <query/QueryResult.h>
+#include <query/QueryProgress.h>
 #include <query/QueryableFactory.h>
 
 #include <algorithm>
@@ -33,10 +34,19 @@ RecordBatches fetchWideTableWindows(const plan::PhysicalTableScan& scan,
             predicates.push_back(Predicate{.column = "time", .op = PredicateOp::GTE, .values = {begin_ns / 1'000'000'000LL}});
             predicates.push_back(Predicate{.column = "time", .op = PredicateOp::LTE, .values = {end_ns / 1'000'000'000LL}});
         }
+        if (context.progress)
+        {
+            context.progress->beginBackendRpc(scan.table_name, "window");
+        }
         const auto result = queryable->execute(scan.table_name, predicates, scan.projection_hint, context);
         ++stats.rpc_calls;
+        const auto backend_rows = result.batch ? static_cast<uint64_t>(result.batch->num_rows()) : 0ULL;
+        if (context.progress)
+        {
+            context.progress->finishBackendRpc(backend_rows);
+        }
         if (!result.batch) continue;
-        stats.rows_from_backend += static_cast<uint64_t>(result.batch->num_rows());
+        stats.rows_from_backend += backend_rows;
         auto batch = result.batch;
         if (!local.empty())
         {

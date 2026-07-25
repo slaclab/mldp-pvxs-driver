@@ -11,10 +11,12 @@
 #include <query/QuerySubcommand.h>
 
 #include <config/ConfigSource.h>
+#include <query/ConsoleFooter.h>
 #include <query/ExecutionContext.h>
 #include <query/QueryExecutor.h>
 #include <query/QueryFormatter.h>
 #include <query/QueryPlanner.h>
+#include <query/QueryProgress.h>
 #include <query/QueryTableCatalog.h>
 #include <query/QueryableFactory.h>
 #include <query/SpillManager.h>
@@ -378,6 +380,7 @@ public:
         }
 
         repl_ = std::make_unique<replxx::Replxx>();
+        (void)repl_->install_window_change_handler();
         repl_->set_max_history_size(1000);
         repl_->set_word_break_characters(" \t\n,();=<>*\"'");
         repl_->set_double_tab_completion(false);
@@ -520,10 +523,26 @@ int runRepl(QueryCliOptions                           options,
             std::ostream&                             output,
             std::ostream&                             error)
 {
-    std::string    buffer;
+    std::string buffer;
     ReplLineEditor editor(input, runner.completionCatalog(options));
+    std::optional<TerminalLayout> terminal;
+    if (&input == &std::cin && &output == &std::cout && ::isatty(STDIN_FILENO) != 0 && ::isatty(STDOUT_FILENO) != 0)
+    {
+        terminal.emplace(output);
+        if (!terminal->initialize())
+        {
+            terminal.reset();
+        }
+    }
+    ConsoleStatus status;
     while (true)
     {
+        if (terminal)
+        {
+            terminal->refreshAtSafeBoundary();
+            terminal->setStatus(status);
+            terminal->redrawFooter();
+        }
         bool       interrupted = false;
         const auto line = editor.read(buffer.empty() ? "mldp> " : "...> ", output, interrupted);
         if (!line)
@@ -532,6 +551,7 @@ int runRepl(QueryCliOptions                           options,
             {
                 buffer.clear();
                 output << "\n";
+                status.error.clear();
                 continue;
             }
             if (!buffer.empty())
@@ -549,6 +569,10 @@ int runRepl(QueryCliOptions                           options,
             if (!editor.clearScreen())
             {
                 output << "Buffered statement cleared.\n";
+            }
+            if (terminal)
+            {
+                terminal->refreshAtSafeBoundary();
             }
             continue;
         }
@@ -677,15 +701,44 @@ int runRepl(QueryCliOptions                           options,
                 continue;
             }
             editor.addHistory(sql);
+            auto progress = std::make_shared<mldp_pvxs_driver::query::QueryProgressTracker>();
+            status.query_running = true;
+            status.progress = progress->snapshot();
+            status.error.clear();
+            if (terminal)
+            {
+                terminal->setStatus(status);
+                terminal->redrawFooter();
+            }
             try
             {
                 auto query_options = options;
                 query_options.expanded = options.expanded || expanded_once;
-                (void)runner.run(query_options, sql, output);
+                mldp_pvxs_driver::query::QueryStats completed_stats;
+                (void)runner.run(query_options,
+                                 sql,
+                                 output,
+                                 progress,
+                                 terminal ? std::optional<std::size_t>(static_cast<std::size_t>(terminal->columns())) : std::nullopt,
+                                 !terminal,
+                                 &completed_stats);
+                status.query_running = false;
+                status.progress = progress->snapshot();
+                status.completed_stats = std::move(completed_stats);
             }
             catch (const std::exception& ex)
             {
                 printQueryError(ex, error);
+                status.query_running = false;
+                status.progress = progress->snapshot();
+                status.error = ex.what();
+                status.completed_stats.reset();
+            }
+            if (terminal)
+            {
+                terminal->refreshAtSafeBoundary();
+                terminal->setStatus(status);
+                terminal->redrawFooter();
             }
             continue;
         }
@@ -912,7 +965,13 @@ void mldp_pvxs_driver::cli::QuerySubcommandPreparer::prepare(const mldp_pvxs_dri
     }
 }
 
-int mldp_pvxs_driver::cli::QueryRunner::run(const QueryCliOptions& options, const std::string_view sql, std::ostream& output) const
+int mldp_pvxs_driver::cli::QueryRunner::run(const QueryCliOptions& options,
+                                             const std::string_view sql,
+                                             std::ostream&          output,
+                                             std::shared_ptr<query::QueryProgressTracker> progress,
+                                             std::optional<std::size_t> viewport_width,
+                                             const bool print_stats,
+                                             query::QueryStats* completed_stats) const
 {
     const auto spill_dir = options.spill_dir.empty()
         ? (std::filesystem::temp_directory_path() / "mldp-query-spill").string()
@@ -938,21 +997,47 @@ int mldp_pvxs_driver::cli::QueryRunner::run(const QueryCliOptions& options, cons
         .spill_fs = std::move(spill_file_system),
         .spill_dir = spill_dir,
         .table_catalog = table_catalog_,
+        .progress = progress,
     };
 
+    if (progress)
+    {
+        progress->setPhase(query::QueryProgressPhase::Parsing);
+    }
+    auto parsed = query::parseQuery(sql);
+    if (progress)
+    {
+        progress->setPhase(query::QueryProgressPhase::Planning);
+    }
     const query::QueryPlanner planner(table_catalog_);
     const query::QueryExecutor executor;
-    auto parsed = query::parseQuery(sql);
     auto physical = planner.plan(parsed);
     auto result = executor.execute(physical, context);
+    if (completed_stats != nullptr)
+    {
+        *completed_stats = result.stats;
+    }
+    if (progress)
+    {
+        progress->setPhase(query::QueryProgressPhase::Formatting);
+    }
+    auto table_width = viewport_width;
+    if (options.table_fit && !table_width)
+    {
+        table_width = terminalWidth(output);
+    }
     formatQueryResult(result,
                       options.format,
                       output,
                       options.expanded,
-                      TableRenderOptions{.viewport_width = options.table_fit ? terminalWidth(output) : std::nullopt});
-    if (!options.no_stats)
+                      TableRenderOptions{.viewport_width = options.table_fit ? table_width : std::nullopt});
+    if (!options.no_stats && print_stats)
     {
         printQueryStats(result.stats, output);
+    }
+    if (progress)
+    {
+        progress->setPhase(query::QueryProgressPhase::Complete);
     }
     return 0;
 }

@@ -375,6 +375,12 @@ Execution returns `QueryResult` containing:
   - `plan_summary` — compact plan string.
   - `plan_warnings` — planner-emitted advisory messages.
 
+`ExecutionContext` may also carry an optional `QueryProgressTracker`. The REPL
+uses it to display a transient live status line while a statement is running.
+Scan execution updates the tracker around each `IQueryable::execute(...)` call,
+which makes long backend/gRPC waits visible without changing the `IQueryable`
+interface or polluting redirected result output.
+
 ---
 
 ## Memory and spill

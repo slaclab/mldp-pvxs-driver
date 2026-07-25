@@ -11,6 +11,7 @@
 
 
 #include <query/executor/ExecutionState.h>
+#include <query/QueryProgress.h>
 
 #include <arrow/memory_pool.h>
 
@@ -37,6 +38,10 @@ QueryExecutionResult QueryExecutor::execute(const plan::PhysicalNodePtr& root, c
 {
     QueryExecutionResult result;
     const auto start = std::chrono::steady_clock::now();
+    if (context.progress)
+    {
+        context.progress->setPhase(QueryProgressPhase::Executing);
+    }
     auto execution_state = executor::makeExecutionState(root, context, result.stats);
     result.batches = execution_state->execute();
     collectPlanWarnings(root, result.stats.plan_warnings);
@@ -44,5 +49,13 @@ QueryExecutionResult QueryExecutor::execute(const plan::PhysicalNodePtr& root, c
     if (context.pool != nullptr) result.stats.peak_memory_bytes = static_cast<uint64_t>(context.pool->max_memory());
     for (const auto& batch : result.batches) result.stats.rows_returned += static_cast<uint64_t>(batch->num_rows());
     result.stats.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
+    if (context.progress)
+    {
+        context.progress->updateStats(result.stats.rows_returned,
+                                      result.stats.bytes_spilled,
+                                      result.stats.materialized_bytes,
+                                      result.stats.materialized_files,
+                                      result.stats.peak_memory_bytes);
+    }
     return result;
 }
