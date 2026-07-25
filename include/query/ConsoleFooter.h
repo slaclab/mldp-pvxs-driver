@@ -46,6 +46,7 @@ public:
     void setStatus(ConsoleStatus status);
     void redrawFooter();
     void refreshAtSafeBoundary();
+    void positionInputCursor();
     void restore();
 
     bool active() const noexcept;

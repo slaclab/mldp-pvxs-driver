@@ -71,7 +71,7 @@ mldp> SHOW TABLES;
 
 Terminate each statement with a semicolon. Statements can span lines; the prompt changes from `mldp> ` to `...> ` while a statement is buffered. A semicolon inside a quoted string does not terminate the statement. The session executes one statement at a time and remains open after parse, planning, or execution errors.
 
-After each statement, redirected and plain-stream REPL sessions print a final statistics line with returned and backend rows, elapsed time, RPCs, spill/materialization counters, and peak memory. When both standard input and output are terminals, the REPL reserves the final row for a reverse-video status footer; the footer is the interactive query-statistics display and retains the latest query summary while result output scrolls above it. Redirected output and machine-readable formats remain free of terminal control sequences. The REPL leaves input editing and active-line resize redraws to `replxx`.
+After each statement, redirected and plain-stream REPL sessions print a final statistics line with returned and backend rows, elapsed time, RPCs, spill/materialization counters, and peak memory. When both standard input and output are terminals, the REPL clears the visible screen at startup, reserves the final row for a reverse-video status footer, and starts each new prompt immediately above it. The footer is the interactive query-statistics display and retains the latest query summary while result output scrolls above it. Redirected output and machine-readable formats remain free of terminal control sequences. The REPL leaves input editing and active-line resize redraws to `replxx`.
 
 ### Stored query tables
 

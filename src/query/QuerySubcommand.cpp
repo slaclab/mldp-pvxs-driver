@@ -542,6 +542,7 @@ int runRepl(QueryCliOptions                           options,
             terminal->refreshAtSafeBoundary();
             terminal->setStatus(status);
             terminal->redrawFooter();
+            terminal->positionInputCursor();
         }
         bool       interrupted = false;
         const auto line = editor.read(buffer.empty() ? "mldp> " : "...> ", output, interrupted);

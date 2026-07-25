@@ -113,8 +113,11 @@ bool TerminalLayout::initialize()
         return false;
     }
     initialized_ = true;
+    output_ << "\x1b[r\x1b[H\x1b[2J\x1b[0m";
     configureScrollRegion();
     drawFooter();
+    output_ << "\x1b[" << (rows_ - 1) << ";1H";
+    output_.flush();
     return true;
 }
 
@@ -140,6 +143,15 @@ void TerminalLayout::refreshAtSafeBoundary()
     output_ << "\x1b[r";
     configureScrollRegion();
     drawFooter();
+}
+
+void TerminalLayout::positionInputCursor()
+{
+    if (initialized_)
+    {
+        output_ << "\x1b[" << (rows_ - 1) << ";1H";
+        output_.flush();
+    }
 }
 
 void TerminalLayout::restore()
