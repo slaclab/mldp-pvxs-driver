@@ -7,9 +7,10 @@
 
 #include <query/executor/StateInternal.h>
 
-namespace mldp_pvxs_driver::query::executor {
+using namespace mldp_pvxs_driver::query;
+using namespace mldp_pvxs_driver::query::executor;
 
-std::unique_ptr<IExecutionState> makeStatementExecutionState(const plan::PhysicalNodeVariant& value, const plan::PhysicalNodePtr& physical, const ExecutionContext& context, QueryStats& stats)
+std::unique_ptr<IExecutionState> mldp_pvxs_driver::query::executor::makeStatementExecutionState(const plan::PhysicalNodeVariant& value, const plan::PhysicalNodePtr& physical, const ExecutionContext& context, QueryStats& stats)
 {
     if (const auto* node = std::get_if<plan::PhysicalShowTables>(&value)) return makeShowTablesExecutionState(*node, physical, context, stats);
     if (const auto* node = std::get_if<plan::PhysicalShowFunctions>(&value)) return makeShowFunctionsExecutionState(*node, physical, context, stats);
@@ -20,5 +21,3 @@ std::unique_ptr<IExecutionState> makeStatementExecutionState(const plan::Physica
     if (const auto* node = std::get_if<plan::PhysicalDropTable>(&value)) return makeDropTableExecutionState(*node, physical, context, stats);
     return nullptr;
 }
-
-} // namespace mldp_pvxs_driver::query::executor

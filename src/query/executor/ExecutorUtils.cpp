@@ -11,6 +11,7 @@
 #include <query/QueryExecutor.h>
 #include <query/ExpressionRegistry.h>
 
+#include <query/executor/ExecutorUtils.h>
 #include <query/executor/StateInternal.h>
 
 #include <query/QueryResult.h>
@@ -765,6 +766,17 @@ std::vector<std::shared_ptr<arrow::RecordBatch>> applyExpressionProjectionImpl(c
         std::vector<std::shared_ptr<arrow::Field>> fields;
         for (size_t index = 0; index < expressions.size(); ++index)
         {
+            if (const auto* column = std::get_if<QualifiedColumn>(&expressions[index]->value))
+            {
+                const auto field_index = batch->schema()->GetFieldIndex(column->name);
+                if (field_index < 0)
+                {
+                    throw std::runtime_error("Expression references unknown column: " + column->name);
+                }
+                arrays.push_back(batch->column(field_index));
+                fields.push_back(batch->schema()->field(field_index)->WithName(names.at(index)));
+                continue;
+            }
             std::shared_ptr<arrow::DataType> type;
             for (int64_t row = 0; row < batch->num_rows() && !type; ++row)
             {
@@ -1198,70 +1210,70 @@ std::shared_ptr<arrow::RecordBatch> joinBatchesImpl(const std::shared_ptr<arrow:
 
 } // namespace
 
-namespace mldp_pvxs_driver::query::executor {
+using namespace mldp_pvxs_driver::query::executor;
 
-std::string joinOps(const std::set<PredicateOp>& ops)
+std::string mldp_pvxs_driver::query::executor::joinOps(const std::set<PredicateOp>& ops)
 {
     return ::joinOpsImpl(ops);
 }
 
-std::string_view columnTypeName(const ColumnType type)
+std::string_view mldp_pvxs_driver::query::executor::columnTypeName(const ColumnType type)
 {
     return ::columnTypeNameImpl(type);
 }
 
-ColumnType columnTypeFromArrow(const std::shared_ptr<arrow::DataType>& type)
+ColumnType mldp_pvxs_driver::query::executor::columnTypeFromArrow(const std::shared_ptr<arrow::DataType>& type)
 {
     return ::columnTypeFromArrowImpl(type);
 }
 
-std::vector<ExecutableLiteralValue> extractInSubqueryValues(const RecordBatches& batches, const ColumnType type, const std::string_view column)
+std::vector<ExecutableLiteralValue> mldp_pvxs_driver::query::executor::extractInSubqueryValues(const RecordBatches& batches, const ColumnType type, const std::string_view column)
 {
     return ::extractInSubqueryValuesImpl(batches, type, column);
 }
 
-std::vector<std::pair<int64_t, int64_t>> extractNormalizedWindows(const RecordBatches& batches)
+std::vector<std::pair<int64_t, int64_t>> mldp_pvxs_driver::query::executor::extractNormalizedWindows(const RecordBatches& batches)
 {
     return ::extractNormalizedWindowsImpl(batches);
 }
 
-arrow::Result<std::shared_ptr<arrow::RecordBatch>> applyFilter(const std::shared_ptr<arrow::RecordBatch>& batch, const std::vector<Predicate>& predicates)
+arrow::Result<std::shared_ptr<arrow::RecordBatch>> mldp_pvxs_driver::query::executor::applyFilter(const std::shared_ptr<arrow::RecordBatch>& batch, const std::vector<Predicate>& predicates)
 {
     if (predicates.empty()) return batch;
     return ::applyFilterImpl(batch, predicates);
 }
 
-RecordBatches applyProjection(const RecordBatches& input, const std::vector<std::string>& columns)
+RecordBatches mldp_pvxs_driver::query::executor::applyProjection(const RecordBatches& input, const std::vector<std::string>& columns)
 {
     return ::applyProjectionImpl(input, columns);
 }
 
-RecordBatches applyProjection(const RecordBatches& input, const std::vector<ExpressionPtr>& expressions, const std::vector<std::string>& names)
+RecordBatches mldp_pvxs_driver::query::executor::applyProjection(const RecordBatches& input, const std::vector<ExpressionPtr>& expressions, const std::vector<std::string>& names)
 {
     return ::applyExpressionProjectionImpl(input, expressions, names);
 }
 
-RecordBatches applyLimit(const RecordBatches& input, const uint64_t limit)
+RecordBatches mldp_pvxs_driver::query::executor::applyLimit(const RecordBatches& input, const uint64_t limit)
 {
     return ::applyLimitImpl(input, limit);
 }
 
-RecordBatches applySort(const RecordBatches& input, const std::vector<plan::SortKey>& keys)
+RecordBatches mldp_pvxs_driver::query::executor::applySort(const RecordBatches& input, const std::vector<plan::SortKey>& keys)
 {
     return ::applySortImpl(input, keys);
 }
 
-std::shared_ptr<arrow::RecordBatch> combineBatches(const RecordBatches& batches)
+std::shared_ptr<arrow::RecordBatch> mldp_pvxs_driver::query::executor::combineBatches(const RecordBatches& batches)
 {
     return ::combineBatchesImpl(batches);
 }
 
-std::shared_ptr<arrow::RecordBatch> qualifyBatchColumns(const std::shared_ptr<arrow::RecordBatch>& batch, const std::string& alias)
+std::shared_ptr<arrow::RecordBatch> mldp_pvxs_driver::query::executor::qualifyBatchColumns(const std::shared_ptr<arrow::RecordBatch>& batch, const std::string& alias)
 {
     return ::qualifyBatchColumnsImpl(batch, alias);
 }
 
-std::shared_ptr<arrow::RecordBatch> joinBatches(const std::shared_ptr<arrow::RecordBatch>& left,
+std::shared_ptr<arrow::RecordBatch> mldp_pvxs_driver::query::executor::joinBatches(const std::shared_ptr<arrow::RecordBatch>& left,
                                                  const std::shared_ptr<arrow::RecordBatch>& right,
                                                  const std::string& left_key,
                                                  const std::string& right_key,
@@ -1271,5 +1283,3 @@ std::shared_ptr<arrow::RecordBatch> joinBatches(const std::shared_ptr<arrow::Rec
 {
     return ::joinBatchesImpl(left, right, left_key, right_key, type, context, stats);
 }
-
-} // namespace mldp_pvxs_driver::query::executor

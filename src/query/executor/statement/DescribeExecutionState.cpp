@@ -9,7 +9,8 @@
 #include <query/executor/StateInternal.h>
 #include <stdexcept>
 
-namespace mldp_pvxs_driver::query::executor {
+using namespace mldp_pvxs_driver::query;
+using namespace mldp_pvxs_driver::query::executor;
 namespace {
     class State final : public ExecutionStateBase
     {
@@ -50,8 +51,7 @@ namespace {
     };
 } // namespace
 
-std::unique_ptr<IExecutionState> makeDescribeExecutionState(const plan::PhysicalDescribe& node, const plan::PhysicalNodePtr&, const ExecutionContext& context, QueryStats& stats)
+std::unique_ptr<IExecutionState> mldp_pvxs_driver::query::executor::makeDescribeExecutionState(const plan::PhysicalDescribe& node, const plan::PhysicalNodePtr&, const ExecutionContext& context, QueryStats& stats)
 {
     return std::make_unique<State>(node, context, stats);
 }
-} // namespace mldp_pvxs_driver::query::executor

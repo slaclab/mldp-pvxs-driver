@@ -11,7 +11,8 @@
 
 #include <stdexcept>
 
-namespace mldp_pvxs_driver::query::executor {
+using namespace mldp_pvxs_driver::query;
+using namespace mldp_pvxs_driver::query::executor;
 namespace {
 
 std::shared_ptr<arrow::RecordBatch> applyLocal(const std::shared_ptr<arrow::RecordBatch>& batch, const std::vector<Predicate>& predicates)
@@ -29,7 +30,7 @@ void qualify(const plan::PhysicalTableScan& scan, std::shared_ptr<arrow::RecordB
 
 } // namespace
 
-RecordBatches fetchBackendPages(const plan::PhysicalTableScan& scan, const std::vector<Predicate>& pushable, const std::vector<Predicate>& local, const ExecutionContext& context, QueryStats& stats)
+RecordBatches mldp_pvxs_driver::query::executor::fetchBackendPages(const plan::PhysicalTableScan& scan, const std::vector<Predicate>& pushable, const std::vector<Predicate>& local, const ExecutionContext& context, QueryStats& stats)
 {
     auto queryable = QueryableFactory::instance().createByTable(scan.table_name);
     RecordBatches output;
@@ -56,5 +57,3 @@ RecordBatches fetchBackendPages(const plan::PhysicalTableScan& scan, const std::
     } while (!page_token.empty());
     return output;
 }
-
-} // namespace mldp_pvxs_driver::query::executor

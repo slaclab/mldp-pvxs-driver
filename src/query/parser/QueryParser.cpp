@@ -360,7 +360,6 @@ QueryStatement QueryParser::parse(const std::string_view sql)
         }
         std::size_t alias_end = alias_start;
         while (alias_end < rewritten.size() && (std::isalnum(static_cast<unsigned char>(rewritten[alias_end])) || rewritten[alias_end] == '_')) ++alias_end;
-        if (alias_end == alias_start) throw ParseError("Derived table requires an alias", TokenPosition{});
         const auto marker = "derivedsubquery" + std::to_string(derived_number++);
         derived.emplace(marker, std::make_shared<SelectStatement>(std::get<SelectStatement>(child)));
         rewritten.replace(search, end - search, marker);

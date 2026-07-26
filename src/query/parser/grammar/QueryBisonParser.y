@@ -395,10 +395,6 @@ table_ref
       }
     | LPAREN select_stmt RPAREN alias_opt
       {
-          if (!$4.has_value())
-          {
-              throw ParseError("Derived table sources require an alias", TokenPosition{0, static_cast<std::size_t>(@1.begin.line), static_cast<std::size_t>(@1.begin.column)});
-          }
           $$ = mldp_pvxs_driver::query::TableRef{
               .table_name = "<derived>", .alias = std::move($4),
               .derived_query = std::make_shared<mldp_pvxs_driver::query::SelectStatement>(std::move($2))

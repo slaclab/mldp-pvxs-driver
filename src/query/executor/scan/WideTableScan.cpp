@@ -12,9 +12,10 @@
 #include <algorithm>
 #include <stdexcept>
 
-namespace mldp_pvxs_driver::query::executor {
+using namespace mldp_pvxs_driver::query;
+using namespace mldp_pvxs_driver::query::executor;
 
-RecordBatches fetchWideTableWindows(const plan::PhysicalTableScan& scan,
+RecordBatches mldp_pvxs_driver::query::executor::fetchWideTableWindows(const plan::PhysicalTableScan& scan,
                                     const std::vector<Predicate>& pushable,
                                     const std::vector<Predicate>& local,
                                     const std::vector<std::pair<int64_t, int64_t>>& windows,
@@ -59,5 +60,3 @@ RecordBatches fetchWideTableWindows(const plan::PhysicalTableScan& scan,
     }
     return output;
 }
-
-} // namespace mldp_pvxs_driver::query::executor

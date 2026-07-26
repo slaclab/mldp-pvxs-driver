@@ -209,15 +209,24 @@ std::string renderExpression(const ExpressionPtr& expression)
     {
         using T = std::decay_t<decltype(value)>;
         if constexpr (std::is_same_v<T, QualifiedColumn>) return value.name;
+        else if constexpr (std::is_same_v<T, LiteralValue>)
+        {
+            return std::visit([](const auto& literal) -> std::string
+            {
+                using Literal = std::decay_t<decltype(literal)>;
+                if constexpr (std::is_same_v<Literal, int64_t>) return std::to_string(literal);
+                else if constexpr (std::is_same_v<Literal, std::string>) return literal;
+                else if constexpr (std::is_same_v<Literal, double>) return std::to_string(literal);
+                else if constexpr (std::is_same_v<Literal, bool>) return literal ? "true" : "false";
+                else if constexpr (std::is_same_v<Literal, DurationNsLiteral>) return std::to_string(literal.value) + "ns";
+                else if constexpr (std::is_same_v<Literal, TimestampNsLiteral>) return std::to_string(literal.value);
+                else return "now";
+            }, value);
+        }
         else if constexpr (std::is_same_v<T, FunctionCall>) return value.name;
         else if constexpr (std::is_same_v<T, UnaryExpression>) return value.operator_name + renderExpression(value.operand);
         else if constexpr (std::is_same_v<T, BinaryExpression>) return renderExpression(value.left) + " " + value.operator_name + " " + renderExpression(value.right);
-        else if constexpr (std::is_same_v<T, int64_t>) return std::to_string(value);
-        else if constexpr (std::is_same_v<T, std::string>) return value;
-        else if constexpr (std::is_same_v<T, bool>) return value ? "true" : "false";
-        else if constexpr (std::is_same_v<T, DurationNsLiteral>) return std::to_string(value.value) + "ns";
-        else if constexpr (std::is_same_v<T, TimestampNsLiteral>) return std::to_string(value.value);
-        else return "now";
+        else return "";
     }, expression->value);
 }
 
@@ -416,6 +425,8 @@ plan::BoundTable makeBoundTable(const TableRef& table_ref, const QueryTableCatal
             }
             schema = std::move(selected);
         }
+        // An alias-less derived source has an internal identity for planning;
+        // SQL may still reference its preserved output schema unqualified.
         return plan::BoundTable{.table_name = "<derived>", .table_alias = table_ref.alias.value_or("derived"), .schema = std::move(schema),
                                 .predicates = {}, .derived_query = table_ref.derived_query};
     }
@@ -747,8 +758,7 @@ plan::BoundSelect mldp_pvxs_driver::query::planner::bindSelect(const SelectState
         {
             for (const auto& item : items)
             {
-                const auto type = bindExpression(item.expression, all_tables, multi_table);
-                if (type == ColumnType::NATIVE_VALUE) throw plan::PlannerException(plan::TypeError{.message = "SELECT expressions cannot use native_value"});
+                bindExpression(item.expression, all_tables, multi_table);
                 bound.select_expressions.push_back(item.expression);
                 const auto generated = generatedExpressionName(item.expression);
                 if (std::holds_alternative<QualifiedColumn>(item.expression->value))

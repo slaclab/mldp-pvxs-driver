@@ -13,7 +13,8 @@
 #include <limits>
 #include <stdexcept>
 
-namespace mldp_pvxs_driver::query::executor {
+using namespace mldp_pvxs_driver::query;
+using namespace mldp_pvxs_driver::query::executor;
 namespace {
 
 class TableScanExecutionState final : public ExecutionStateBase
@@ -134,9 +135,7 @@ private:
 
 } // namespace
 
-std::unique_ptr<IExecutionState> makeScanExecutionState(const plan::PhysicalTableScan& scan, const plan::PhysicalNodePtr& physical, const ExecutionContext& context, QueryStats& stats)
+std::unique_ptr<IExecutionState> mldp_pvxs_driver::query::executor::makeScanExecutionState(const plan::PhysicalTableScan& scan, const plan::PhysicalNodePtr& physical, const ExecutionContext& context, QueryStats& stats)
 {
     return std::make_unique<TableScanExecutionState>(scan, physical, context, stats);
 }
-
-} // namespace mldp_pvxs_driver::query::executor

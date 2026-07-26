@@ -403,7 +403,7 @@ TEST(QueryParserTest, RejectsMalformedCreateHeadersAndNonSelectChildren)
     }
 }
 
-TEST(QueryParserTest, ParsesDerivedTableSourcesAndRequiresAliases)
+TEST(QueryParserTest, ParsesDerivedTableSourcesWithOptionalAliases)
 {
     const auto statement = parseQuery("SELECT recent.pv FROM (SELECT pv FROM mldp.time_series WHERE pv = 'A') AS recent");
     const auto& select = std::get<SelectStatement>(statement);
@@ -416,7 +416,10 @@ TEST(QueryParserTest, ParsesDerivedTableSourcesAndRequiresAliases)
     ASSERT_EQ(join_select.joins.size(), 1U);
     EXPECT_NE(join_select.joins.front().table.derived_query, nullptr);
 
-    EXPECT_THROW((void)parseQuery("SELECT pv FROM (SELECT pv FROM mldp.time_series)"), ParseError);
+    const auto aliasless = parseQuery("SELECT pv FROM (SELECT pv FROM mldp.time_series)");
+    const auto& aliasless_select = std::get<SelectStatement>(aliasless);
+    ASSERT_NE(aliasless_select.from.derived_query, nullptr);
+    EXPECT_FALSE(aliasless_select.from.alias.has_value());
 
     const auto in_subquery = parseQuery("SELECT pv FROM mldp.time_series WHERE pv IN (SELECT pv FROM mldp.time_series)");
     const auto& in_select = std::get<SelectStatement>(in_subquery);

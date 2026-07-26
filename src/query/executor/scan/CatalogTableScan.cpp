@@ -8,9 +8,10 @@
 
 #include <stdexcept>
 
-namespace mldp_pvxs_driver::query::executor {
+using namespace mldp_pvxs_driver::query;
+using namespace mldp_pvxs_driver::query::executor;
 
-RecordBatches readCatalogTable(const plan::PhysicalTableScan& scan, const ExecutionContext& context)
+RecordBatches mldp_pvxs_driver::query::executor::readCatalogTable(const plan::PhysicalTableScan& scan, const ExecutionContext& context)
 {
     if (!context.table_catalog) throw std::runtime_error("Arrow IPC table scan has no catalog");
     const auto table = context.table_catalog->find(scan.table_name);
@@ -20,5 +21,3 @@ RecordBatches readCatalogTable(const plan::PhysicalTableScan& scan, const Execut
     if (!batches.ok()) throw std::runtime_error(batches.status().ToString());
     return *batches;
 }
-
-} // namespace mldp_pvxs_driver::query::executor

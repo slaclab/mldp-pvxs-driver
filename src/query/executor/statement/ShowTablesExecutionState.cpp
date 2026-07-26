@@ -11,7 +11,8 @@
 
 #include <stdexcept>
 
-namespace mldp_pvxs_driver::query::executor {
+using namespace mldp_pvxs_driver::query;
+using namespace mldp_pvxs_driver::query::executor;
 namespace {
 
 class State final : public ExecutionStateBase
@@ -72,7 +73,7 @@ public:
 
 } // namespace
 
-std::unique_ptr<IExecutionState> makeShowTablesExecutionState(
+std::unique_ptr<IExecutionState> mldp_pvxs_driver::query::executor::makeShowTablesExecutionState(
     const plan::PhysicalShowTables&,
     const plan::PhysicalNodePtr&,
     const ExecutionContext& context,
@@ -80,5 +81,3 @@ std::unique_ptr<IExecutionState> makeShowTablesExecutionState(
 {
     return std::make_unique<State>(context, stats);
 }
-
-} // namespace mldp_pvxs_driver::query::executor

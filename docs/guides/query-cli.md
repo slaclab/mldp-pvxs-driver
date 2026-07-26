@@ -13,6 +13,7 @@ The `query` subcommand runs SQL statements — parse → plan → execute → re
   - [Line editing and completion](#line-editing-and-completion)
 - [Quick-start examples](#quick-start-examples)
   - [Scalar timestamp functions](#scalar-timestamp-functions)
+  - [Expressions and operators](#expressions-and-operators)
 - [Query-only configuration](#query-only-configuration)
   - [Config file](#config-file)
   - [Inline dotted assignments](#inline-dotted-assignments-no-config-file)
@@ -92,11 +93,14 @@ DROP TABLE production_samples;
 `CREATE TABLE` fails if the name exists; explicitly `DROP TABLE` before recreating it. Persistent tables are immutable snapshots, not live gRPC views, and are never automatically refreshed. The catalog manages only its own `.mldp-query-tables` namespace inside the configured root and does not clean unrelated files. Use a shared mounted directory when multiple processes or hosts must share persistent tables.
 
 Parenthesized `SELECT` statements are valid statement-scoped derived sources in
-`FROM` and `JOIN` positions and require an alias. Any column that supports
-`IN` accepts literals or a single-column `SELECT`; the child output must be
-non-null and type-compatible with the target column. `mldp.time_series_table`
-retains `window IN (SELECT time, end_time ...)` as a table-specific interval
-input. Scalar subqueries remain unsupported.
+`FROM` and `JOIN` positions. An alias is optional for a single unqualified
+source (`SELECT pv FROM (SELECT pv FROM ...)`), but is required when SQL needs
+to qualify its fields (`recent.pv`) or distinguish it from another source. Any
+column that supports `IN` accepts literals or a single-column `SELECT`; the
+child output is consumed by position, must be non-null, and must be
+type-compatible with the target column. `mldp.time_series_table` retains
+positional `window IN (SELECT start, end ...)` input. Scalar subqueries remain
+unsupported.
 
 ```sql
 SELECT recent.pv, recent.value
@@ -173,7 +177,47 @@ The one-argument form requires `Z` or an explicit `+/-HH:MM` offset. The two-arg
 
 `SHOW FUNCTIONS` and `SHOW OPERATORS` list the executable scalar-language catalog used by the planner. They are useful for feature discovery and return normal Arrow query results, so all output formats work consistently. Function rows contain `name`, `arguments`, `returns`, `description`, and `example`; operator rows contain `symbol`, `arity`, `arguments`, `returns`, `description`, and `example`.
 
-The catalog is sorted deterministically by function name or operator symbol and signature. Scalar call names are case-insensitive. Operator/function overloads exclude `native_value`; mismatched argument types fail during planning. Null behavior and full expression evaluation beyond constant predicate values are not currently exposed by this query CLI version.
+The catalog is sorted deterministically by function name or operator symbol and signature. Scalar call names are case-insensitive. Operator/function overloads exclude `native_value`; mismatched argument types fail during planning. `SHOW FUNCTIONS` currently lists `to_utc(string)` and `to_utc(string, string)`; use `SHOW OPERATORS` for the exact supported operator signatures.
+
+### Expressions and operators
+
+`SELECT` items and `ORDER BY` items accept column references, literals,
+functions, parenthesized expressions, unary signs, arithmetic, comparisons,
+and boolean operators. Operators bind with the following precedence, from
+highest to lowest:
+
+1. Unary `+`, `-`, `NOT`
+2. `*`, `/`
+3. `+`, `-`
+4. `=`, `!=`, `<`, `<=`, `>`, `>=`
+5. `AND`
+6. `OR`
+
+Duration literals use `s`, `m`, or `h` and retain nanosecond precision in
+expressions. For example, `activation.time + 2s` produces a timestamp two
+seconds after `activation.time`. Existing `NOW`, `NOW + 2s`, and `NOW - 10m`
+predicate syntax remains available.
+
+```sql
+SELECT value + 1 AS next_value,
+       activation.time + 2s AS interval_end
+FROM mldp.configuration_activation activation;
+
+SELECT value * 2, value + 1
+FROM mldp.time_series
+ORDER BY value + 1 DESC;
+```
+
+An unaliased computed projection receives a normalized name: lowercase the
+rendered expression, replace punctuation and whitespace runs with `_`, then
+trim outer `_`. For example, `activation.time + 2s` becomes
+`activation_time_2s`; `AS name` always takes precedence. Plain column output
+names are unchanged.
+
+Expression evaluation propagates null inputs to a null result. A filter keeps
+only `true`; `false` and null do not match. Invalid overloads, unsupported
+runtime value types, divide-by-zero, and malformed function inputs report an
+operator or callable-specific query error.
 
 ```bash
 # Schema introspection — queryable config required
@@ -550,14 +594,15 @@ PV has matching data, the query returns an empty result.
 
 `pv` and `window` are `WHERE` predicates; they are not table arguments. A
 window input accepts either one literal inclusive interval, `window IN (start,
-end)`, or a subquery that returns non-null timestamp columns named `time` and
-`end_time`. Literal endpoints must be timestamp-compatible expressions; `NOW`
-and `NOW +/- duration` are supported, and reversed endpoints are automatically
-normalized. A query cannot supply both forms. Subquery ranges must be closed;
-overlapping or adjacent ranges are coalesced before the driver requests the
-wide table. As with ordinary SQL filtering, a valid `pv` or `window` subquery
-that finds no rows returns an empty result; malformed subquery output remains
-an error.
+end)`, or a subquery that returns exactly two non-null timestamp outputs. The
+subquery outputs are positional: the first is the start and the second is the
+end, regardless of their names or aliases. Literal endpoints must be
+timestamp-compatible expressions; `NOW` and `NOW +/- duration` are supported,
+and reversed endpoints are automatically normalized. A query cannot supply
+both forms. Subquery ranges must be closed; overlapping or adjacent ranges are
+coalesced before the driver requests the wide table. As with ordinary SQL
+filtering, a valid `pv` or `window` subquery that finds no rows returns an empty
+result; malformed subquery output remains an error.
 
 ```sql
 SELECT *
@@ -587,7 +632,7 @@ WHERE pv IN (
     AND tag = 'magnet'
 )
 AND window IN (
-  SELECT activation.time, activation.end_time
+  SELECT activation.time, activation.time + 2s
   FROM mldp.configuration_activation activation
   JOIN mldp.configuration configuration
     ON activation.config_name = configuration.name

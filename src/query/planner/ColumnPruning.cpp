@@ -12,6 +12,7 @@
 
 #include <map>
 #include <set>
+#include <type_traits>
 
 using namespace mldp_pvxs_driver::query;
 using namespace mldp_pvxs_driver::query::planner;
@@ -27,6 +28,45 @@ std::pair<std::string, std::string> splitQualifiedColumn(const std::string&     
         return {"", value};
     }
     return {value.substr(0, dot), value.substr(dot + 1)};
+}
+
+void collectExpressionColumns(const ExpressionPtr&                              expression,
+                              std::map<std::string, std::set<std::string>>& columns,
+                              const std::set<std::string>&                     table_aliases)
+{
+    if (!expression)
+    {
+        return;
+    }
+
+    std::visit(
+        [&](const auto& value)
+        {
+            using T = std::decay_t<decltype(value)>;
+            if constexpr (std::is_same_v<T, QualifiedColumn>)
+            {
+                const auto name = value.qualifier ? *value.qualifier + "." + value.name : value.name;
+                const auto [alias, local] = splitQualifiedColumn(name, table_aliases);
+                columns[alias].insert(local);
+            }
+            else if constexpr (std::is_same_v<T, FunctionCall>)
+            {
+                for (const auto& argument : value.arguments)
+                {
+                    collectExpressionColumns(argument, columns, table_aliases);
+                }
+            }
+            else if constexpr (std::is_same_v<T, UnaryExpression>)
+            {
+                collectExpressionColumns(value.operand, columns, table_aliases);
+            }
+            else if constexpr (std::is_same_v<T, BinaryExpression>)
+            {
+                collectExpressionColumns(value.left, columns, table_aliases);
+                collectExpressionColumns(value.right, columns, table_aliases);
+            }
+        },
+        expression->value);
 }
 
 void collectReferencedColumns(const plan::LogicalNodePtr&                   node,
@@ -71,6 +111,10 @@ void collectReferencedColumns(const plan::LogicalNodePtr&                   node
         {
             const auto [alias, name] = splitQualifiedColumn(column, table_aliases);
             columns[alias].insert(name);
+        }
+        for (const auto& expression : project->expressions)
+        {
+            collectExpressionColumns(expression, columns, table_aliases);
         }
         collectReferencedColumns(project->input, columns, table_aliases);
         return;

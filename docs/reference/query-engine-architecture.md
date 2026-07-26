@@ -265,7 +265,7 @@ Time values are epoch seconds; the executor converts to nanoseconds internally. 
 | Column | Pushable ops | Notes |
 |---|---|---|
 | `pv` | `=`, `IN` | **Required.** Requested PVs are sent in SQL predicate order. |
-| `window` | `IN (start, end)` or `IN (SELECT time, end_time ...)` | One literal inclusive interval or closed activation ranges used only to create wide-table requests. |
+| `window` | `IN (start, end)` or `IN (SELECT start, end ...)` | One literal inclusive interval or closed activation ranges used only to create wide-table requests. |
 | `time` | `>=`, `<=` | Translated to `QueryTableRequest.beginTime` / `endTime`. |
 | `column_type` | `=`, `IN` | Selects whole columns by native MLDP value kind. |
 | `tag`, `attributes.<key>`, `provenance.<key>` | `=`, `IN` | Select whole columns using MLDP column metadata. |

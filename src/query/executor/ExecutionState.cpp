@@ -14,9 +14,10 @@
 
 #include <stdexcept>
 
-namespace mldp_pvxs_driver::query::executor {
+using namespace mldp_pvxs_driver::query;
+using namespace mldp_pvxs_driver::query::executor;
 
-std::unique_ptr<IExecutionState> makeExecutionState(const plan::PhysicalNodePtr& root,
+std::unique_ptr<IExecutionState> mldp_pvxs_driver::query::executor::makeExecutionState(const plan::PhysicalNodePtr& root,
                                                     const ExecutionContext&      context,
                                                     QueryStats&                  stats)
 {
@@ -38,5 +39,3 @@ std::unique_ptr<IExecutionState> makeExecutionState(const plan::PhysicalNodePtr&
     }
     throw std::runtime_error("Unsupported physical plan node while initializing execution state");
 }
-
-} // namespace mldp_pvxs_driver::query::executor

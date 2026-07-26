@@ -562,6 +562,11 @@ TEST_F(PlannerExecutorTest, ExecutesDerivedSourceAndPlansItAsArrowIpcScan)
     ASSERT_EQ(derived.batches.size(), 1U);
     EXPECT_EQ(derived.batches.front()->num_rows(), 1);
 
+    const auto aliasless_derived = executor.execute(planner.plan(query::parseQuery("SELECT pv FROM (SELECT pv FROM samples)")), context);
+    EXPECT_EQ(aliasless_derived.stats.rpc_calls, 0U);
+    ASSERT_EQ(aliasless_derived.batches.size(), 1U);
+    EXPECT_EQ(aliasless_derived.batches.front()->num_rows(), 1);
+
     const auto empty_create = planner.plan(query::parseQuery("CREATE TEMP TABLE empty_samples AS SELECT pv, value FROM fake.samples WHERE pv = 'missing'"));
     const auto empty_created = executor.execute(empty_create, context);
     EXPECT_EQ(empty_created.stats.rpc_calls, 1U);

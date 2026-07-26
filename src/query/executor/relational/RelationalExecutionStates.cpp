@@ -7,9 +7,10 @@
 
 #include <query/executor/StateInternal.h>
 
-namespace mldp_pvxs_driver::query::executor {
+using namespace mldp_pvxs_driver::query;
+using namespace mldp_pvxs_driver::query::executor;
 
-std::unique_ptr<IExecutionState> makeRelationalExecutionState(const plan::PhysicalNodeVariant& value, const plan::PhysicalNodePtr& physical, const ExecutionContext& context, QueryStats& stats)
+std::unique_ptr<IExecutionState> mldp_pvxs_driver::query::executor::makeRelationalExecutionState(const plan::PhysicalNodeVariant& value, const plan::PhysicalNodePtr& physical, const ExecutionContext& context, QueryStats& stats)
 {
     if (const auto* node = std::get_if<plan::PhysicalFilter>(&value)) return makeFilterExecutionState(*node, physical, context, stats);
     if (const auto* node = std::get_if<plan::PhysicalProject>(&value)) return makeProjectExecutionState(*node, physical, context, stats);
@@ -20,5 +21,3 @@ std::unique_ptr<IExecutionState> makeRelationalExecutionState(const plan::Physic
     if (const auto* node = std::get_if<plan::PhysicalBlockNestedLoopJoin>(&value)) return makeBlockNestedLoopJoinExecutionState(*node, physical, context, stats);
     return nullptr;
 }
-
-} // namespace mldp_pvxs_driver::query::executor
