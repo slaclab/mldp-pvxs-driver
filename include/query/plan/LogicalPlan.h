@@ -75,6 +75,8 @@ struct LogicalProject {
     LogicalNodePtr         input;
     bool                   select_all{false};
     std::vector<std::string> columns;
+    std::vector<ExpressionPtr> expressions;
+    std::vector<std::string> names;
 };
 
 struct LogicalLimit {
@@ -84,6 +86,7 @@ struct LogicalLimit {
 
 struct SortKey {
     std::string column;
+    ExpressionPtr expression;
     bool        descending{false};
 };
 
@@ -138,6 +141,8 @@ struct BoundSelect {
     std::vector<BoundJoinClause> joins;
     bool                        select_all{false};
     std::vector<std::string>    select_columns;
+    std::vector<ExpressionPtr>  select_expressions;
+    std::vector<std::string>    select_names;
     std::vector<SortKey>        order_by;
     std::optional<uint64_t>     limit;
     std::optional<std::string>  page_token;

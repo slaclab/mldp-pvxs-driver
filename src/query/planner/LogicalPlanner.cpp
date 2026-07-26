@@ -84,7 +84,9 @@ plan::LogicalNodePtr mldp_pvxs_driver::query::planner::buildLogicalPlan(const pl
         root = plan::makeNode(plan::LogicalProject{
             .input = root,
             .select_all = false,
-            .columns = bound.select_columns});
+            .columns = bound.select_columns,
+            .expressions = bound.select_expressions,
+            .names = bound.select_names});
     }
     else if (qualify_output)
     {

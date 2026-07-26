@@ -67,6 +67,8 @@ Run `query` without positional SQL or `--file` to start the REPL:
 ```bash
 mldp_pvxs_driver -c query-config.yaml query
 mldp> SHOW TABLES;
+mldp> SHOW FUNCTIONS;
+mldp> SHOW OPERATORS;
 ```
 
 Terminate each statement with a semicolon. Statements can span lines; the prompt changes from `mldp> ` to `...> ` while a statement is buffered. A semicolon inside a quoted string does not terminate the statement. The session executes one statement at a time and remains open after parse, planning, or execution errors.
@@ -166,6 +168,12 @@ WHERE time >= to_utc('2026-07-23 09:00:00', '-07:00');
 ```
 
 The one-argument form requires `Z` or an explicit `+/-HH:MM` offset. The two-argument form currently accepts an explicit offset. Results are truncated to epoch-second precision.
+
+### Callable discovery and type semantics
+
+`SHOW FUNCTIONS` and `SHOW OPERATORS` list the executable scalar-language catalog used by the planner. They are useful for feature discovery and return normal Arrow query results, so all output formats work consistently. Function rows contain `name`, `arguments`, `returns`, `description`, and `example`; operator rows contain `symbol`, `arity`, `arguments`, `returns`, `description`, and `example`.
+
+The catalog is sorted deterministically by function name or operator symbol and signature. Scalar call names are case-insensitive. Operator/function overloads exclude `native_value`; mismatched argument types fail during planning. Null behavior and full expression evaluation beyond constant predicate values are not currently exposed by this query CLI version.
 
 ```bash
 # Schema introspection — queryable config required
@@ -1060,11 +1068,13 @@ AND window IN (
 )
 ```
 
-The subquery output must be a single non-null string field named `pv`, and two
-non-null timestamp fields named `time` and `end_time` (qualified names such as
-`activation.time` are accepted). Open or inverted activation ranges are
-rejected. Each returned batch is `time` followed by the requested native PV
-columns in metadata-query order.
+The PV subquery output must be a single non-null string field named `pv`. The
+window subquery must return exactly two non-null timestamp fields: its first
+output is the interval start and its second output is the interval end. Field
+names and aliases are ignored, so expressions such as `activation.time + 2s`
+are valid endpoints. Open or inverted activation ranges are rejected. Each
+returned batch is `time` followed by the requested native PV columns in
+metadata-query order.
 
 ### Step 12 — Materialize a temporary table in this session
 

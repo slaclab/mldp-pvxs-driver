@@ -9,6 +9,7 @@
 //////////////////////////////////////////////////////////////////////////////
 
 #include <query/QueryExecutor.h>
+#include <query/ExpressionRegistry.h>
 
 #include <query/executor/StateInternal.h>
 
@@ -110,10 +111,10 @@ std::string scalarToString(const std::shared_ptr<arrow::Scalar>& scalar)
     return scalar->ToString();
 }
 
-int64_t timestampScalarValue(const std::shared_ptr<arrow::Scalar>& scalar, const std::string_view name)
+int64_t timestampScalarValue(const std::shared_ptr<arrow::Scalar>& scalar, const std::string_view endpoint)
 {
     if (!scalar || !scalar->is_valid || scalar->type->id() != arrow::Type::TIMESTAMP)
-        throw std::runtime_error("mldp.time_series_table window subquery requires a non-null timestamp '" + std::string(name) + "' column");
+        throw std::runtime_error("mldp.time_series_table window subquery requires a non-null timestamp at " + std::string(endpoint));
     return std::dynamic_pointer_cast<arrow::TimestampScalar>(scalar)->value;
 }
 
@@ -200,35 +201,17 @@ std::vector<std::pair<int64_t, int64_t>> extractNormalizedWindowsImpl(const std:
     std::vector<std::pair<int64_t, int64_t>> windows;
     for (const auto& batch : batches)
     {
-        const auto fieldIndex = [&batch](const std::string_view name)
-        {
-            const auto exact = batch->schema()->GetFieldIndex(std::string(name));
-            if (exact >= 0) return exact;
-            int index = -1;
-            const auto suffix = "." + std::string(name);
-            for (int field = 0; field < batch->num_columns(); ++field)
-            {
-                if (batch->schema()->field(field)->name().ends_with(suffix))
-                {
-                    if (index >= 0) return -1;
-                    index = field;
-                }
-            }
-            return index;
-        };
-        const auto time_index = fieldIndex("time");
-        const auto end_index = fieldIndex("end_time");
-        if (batch->num_columns() != 2 || time_index < 0 || end_index < 0)
-            throw std::runtime_error("mldp.time_series_table window subquery must return exactly timestamp columns named 'time' and 'end_time'");
+        if (batch->num_columns() != 2 || batch->column(0)->type_id() != arrow::Type::TIMESTAMP || batch->column(1)->type_id() != arrow::Type::TIMESTAMP)
+            throw std::runtime_error("mldp.time_series_table window subquery must return exactly two timestamp columns");
         for (int64_t row = 0; row < batch->num_rows(); ++row)
         {
-            const auto time = batch->column(time_index)->GetScalar(row);
-            const auto end = batch->column(end_index)->GetScalar(row);
+            const auto time = batch->column(0)->GetScalar(row);
+            const auto end = batch->column(1)->GetScalar(row);
             if (!time.ok() || !end.ok()) throw std::runtime_error("Failed to read mldp.time_series_table window subquery result");
-            const auto begin_ns = timestampScalarValue(*time, "time");
-            const auto end_ns = timestampScalarValue(*end, "end_time");
+            const auto begin_ns = timestampScalarValue(*time, "position 1");
+            const auto end_ns = timestampScalarValue(*end, "position 2");
             if (end_ns < begin_ns)
-                throw std::runtime_error("mldp.time_series_table window subquery returned end_time before time");
+                throw std::runtime_error("mldp.time_series_table window subquery returned an end timestamp before its start timestamp");
             windows.emplace_back(begin_ns, end_ns);
         }
     }
@@ -694,6 +677,121 @@ applyProjectionImpl(const std::vector<std::shared_ptr<arrow::RecordBatch>>& inpu
     return output;
 }
 
+std::shared_ptr<arrow::Scalar> evaluateExpression(const ExpressionPtr& expression, const std::shared_ptr<arrow::RecordBatch>& batch, const int64_t row)
+{
+    if (!expression) throw std::runtime_error("Missing expression");
+    return std::visit([&](const auto& value) -> std::shared_ptr<arrow::Scalar>
+    {
+        using T = std::decay_t<decltype(value)>;
+        if constexpr (std::is_same_v<T, QualifiedColumn>)
+        {
+            const auto index = batch->schema()->GetFieldIndex(value.name);
+            if (index < 0) throw std::runtime_error("Expression references unknown column: " + value.name);
+            auto scalar = batch->column(index)->GetScalar(row);
+            if (!scalar.ok()) throw std::runtime_error(scalar.status().ToString());
+            return *scalar;
+        }
+        else if constexpr (std::is_same_v<T, LiteralValue>)
+        {
+            if (std::holds_alternative<int64_t>(value)) return std::make_shared<arrow::Int64Scalar>(std::get<int64_t>(value));
+            if (std::holds_alternative<bool>(value)) return std::make_shared<arrow::BooleanScalar>(std::get<bool>(value));
+            if (std::holds_alternative<std::string>(value)) return std::make_shared<arrow::StringScalar>(std::get<std::string>(value));
+            if (std::holds_alternative<TimestampNsLiteral>(value)) return std::make_shared<arrow::TimestampScalar>(std::get<TimestampNsLiteral>(value).value, arrow::timestamp(arrow::TimeUnit::NANO));
+            if (std::holds_alternative<DurationNsLiteral>(value)) return std::make_shared<arrow::DurationScalar>(std::get<DurationNsLiteral>(value).value, arrow::duration(arrow::TimeUnit::NANO));
+            throw std::runtime_error("Unsupported literal in expression evaluator");
+        }
+        else if constexpr (std::is_same_v<T, UnaryExpression>)
+        {
+            const auto operand = evaluateExpression(value.operand, batch, row);
+            if (!operand->is_valid) return std::make_shared<arrow::NullScalar>();
+            if (value.operator_name == "NOT") return std::make_shared<arrow::BooleanScalar>(!std::static_pointer_cast<arrow::BooleanScalar>(operand)->value);
+            const auto integer = std::static_pointer_cast<arrow::Int64Scalar>(operand)->value;
+            return std::make_shared<arrow::Int64Scalar>(value.operator_name == "-" ? -integer : integer);
+        }
+        else if constexpr (std::is_same_v<T, BinaryExpression>)
+        {
+            const auto left = evaluateExpression(value.left, batch, row);
+            const auto right = evaluateExpression(value.right, batch, row);
+            if (!left->is_valid || !right->is_valid) return std::make_shared<arrow::NullScalar>();
+            if (left->type->id() == arrow::Type::BOOL && right->type->id() == arrow::Type::BOOL)
+            {
+                const auto lhs = std::static_pointer_cast<arrow::BooleanScalar>(left)->value;
+                const auto rhs = std::static_pointer_cast<arrow::BooleanScalar>(right)->value;
+                if (value.operator_name == "AND") return std::make_shared<arrow::BooleanScalar>(lhs && rhs);
+                if (value.operator_name == "OR") return std::make_shared<arrow::BooleanScalar>(lhs || rhs);
+            }
+            const auto integerValue = [&](const std::shared_ptr<arrow::Scalar>& scalar) -> int64_t
+            {
+                if (scalar->type->id() == arrow::Type::INT64) return std::static_pointer_cast<arrow::Int64Scalar>(scalar)->value;
+                if (scalar->type->id() == arrow::Type::TIMESTAMP) return std::static_pointer_cast<arrow::TimestampScalar>(scalar)->value;
+                if (scalar->type->id() == arrow::Type::DURATION) return std::static_pointer_cast<arrow::DurationScalar>(scalar)->value;
+                throw std::runtime_error("Expression operator " + value.operator_name + " requires numeric or temporal operands");
+            };
+            const auto lhs = integerValue(left);
+            const auto rhs = integerValue(right);
+            const auto temporalResult = [&](const int64_t result) -> std::shared_ptr<arrow::Scalar>
+            {
+                if (left->type->id() == arrow::Type::TIMESTAMP && right->type->id() == arrow::Type::DURATION && (value.operator_name == "+" || value.operator_name == "-"))
+                    return std::make_shared<arrow::TimestampScalar>(result, left->type);
+                if (left->type->id() == arrow::Type::TIMESTAMP && right->type->id() == arrow::Type::TIMESTAMP && value.operator_name == "-")
+                    return std::make_shared<arrow::DurationScalar>(result, arrow::duration(arrow::TimeUnit::NANO));
+                return std::make_shared<arrow::Int64Scalar>(result);
+            };
+            if (value.operator_name == "+") return temporalResult(lhs + rhs);
+            if (value.operator_name == "-") return temporalResult(lhs - rhs);
+            if (value.operator_name == "*") return std::make_shared<arrow::Int64Scalar>(lhs * rhs);
+            if (value.operator_name == "/") { if (rhs == 0) throw std::runtime_error("/ divide by zero"); return std::make_shared<arrow::Int64Scalar>(lhs / rhs); }
+            if (value.operator_name == "=") return std::make_shared<arrow::BooleanScalar>(lhs == rhs);
+            if (value.operator_name == "!=") return std::make_shared<arrow::BooleanScalar>(lhs != rhs);
+            if (value.operator_name == "<") return std::make_shared<arrow::BooleanScalar>(lhs < rhs);
+            if (value.operator_name == "<=") return std::make_shared<arrow::BooleanScalar>(lhs <= rhs);
+            if (value.operator_name == ">") return std::make_shared<arrow::BooleanScalar>(lhs > rhs);
+            if (value.operator_name == ">=") return std::make_shared<arrow::BooleanScalar>(lhs >= rhs);
+            throw std::runtime_error("Unsupported expression operator: " + value.operator_name);
+        }
+        else { throw std::runtime_error("Function evaluation is not implemented: " + value.name); }
+    }, expression->value);
+}
+
+std::vector<std::shared_ptr<arrow::RecordBatch>> applyExpressionProjectionImpl(const std::vector<std::shared_ptr<arrow::RecordBatch>>& input,
+                                                                                 const std::vector<ExpressionPtr>& expressions,
+                                                                                 const std::vector<std::string>& names)
+{
+    std::vector<std::shared_ptr<arrow::RecordBatch>> output;
+    output.reserve(input.size());
+    for (const auto& batch : input)
+    {
+        std::vector<std::shared_ptr<arrow::Array>> arrays;
+        std::vector<std::shared_ptr<arrow::Field>> fields;
+        for (size_t index = 0; index < expressions.size(); ++index)
+        {
+            std::shared_ptr<arrow::DataType> type;
+            for (int64_t row = 0; row < batch->num_rows() && !type; ++row)
+            {
+                const auto scalar = evaluateExpression(expressions[index], batch, row);
+                if (scalar->is_valid) type = scalar->type;
+            }
+            if (!type) type = arrow::null();
+            std::unique_ptr<arrow::ArrayBuilder> builder;
+            const auto builder_status = arrow::MakeBuilder(arrow::default_memory_pool(), type, &builder);
+            if (!builder_status.ok()) throw std::runtime_error(builder_status.ToString());
+            for (int64_t row = 0; row < batch->num_rows(); ++row)
+            {
+                const auto scalar = evaluateExpression(expressions[index], batch, row);
+                const auto append_status = builder->AppendScalar(*scalar);
+                if (!append_status.ok()) throw std::runtime_error(append_status.ToString());
+            }
+            std::shared_ptr<arrow::Array> array;
+            const auto finish_status = builder->Finish(&array);
+            if (!finish_status.ok()) throw std::runtime_error(finish_status.ToString());
+            arrays.push_back(std::move(array));
+            fields.push_back(arrow::field(names.at(index), type));
+        }
+        output.push_back(arrow::RecordBatch::Make(arrow::schema(std::move(fields)), batch->num_rows(), std::move(arrays)));
+    }
+    return output;
+}
+
 std::vector<std::shared_ptr<arrow::RecordBatch>>
 applyLimitImpl(const std::vector<std::shared_ptr<arrow::RecordBatch>>& input, const uint64_t limit)
 {
@@ -1136,6 +1234,11 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> applyFilter(const std::shared
 RecordBatches applyProjection(const RecordBatches& input, const std::vector<std::string>& columns)
 {
     return ::applyProjectionImpl(input, columns);
+}
+
+RecordBatches applyProjection(const RecordBatches& input, const std::vector<ExpressionPtr>& expressions, const std::vector<std::string>& names)
+{
+    return ::applyExpressionProjectionImpl(input, expressions, names);
 }
 
 RecordBatches applyLimit(const RecordBatches& input, const uint64_t limit)

@@ -388,10 +388,19 @@ namespace mldp_pvxs_driver { namespace query { namespace generated {
     union union_type
     {
       // NUMBER_LITERAL
+      // signed_integer
       // signed_duration
       char dummy1[sizeof (int64_t)];
 
       // expression
+      // legacy_expression
+      // or_expression
+      // and_expression
+      // comparison_expression
+      // additive_expression
+      // multiplicative_expression
+      // unary_expression
+      // primary_expression
       char dummy2[sizeof (mldp_pvxs_driver::query::ExpressionPtr)];
 
       // join_clause
@@ -511,43 +520,55 @@ namespace mldp_pvxs_driver { namespace query { namespace generated {
     SELECT = 262,                  // SELECT
     FROM = 263,                    // FROM
     WHERE = 264,                   // WHERE
-    AND = 265,                     // AND
-    IN = 266,                      // IN
-    LIKE = 267,                    // LIKE
-    BETWEEN = 268,                 // BETWEEN
-    LIMIT = 269,                   // LIMIT
-    PAGE = 270,                    // PAGE
-    TOKEN = 271,                   // TOKEN
-    SHOW = 272,                    // SHOW
-    TABLES = 273,                  // TABLES
-    DESCRIBE = 274,                // DESCRIBE
-    EXPLAIN = 275,                 // EXPLAIN
-    AS = 276,                      // AS
-    INNER = 277,                   // INNER
-    LEFT = 278,                    // LEFT
-    OUTER = 279,                   // OUTER
-    JOIN = 280,                    // JOIN
-    ON = 281,                      // ON
-    NOW = 282,                     // NOW
-    PREFIX = 283,                  // PREFIX
-    CONTAINS = 284,                // CONTAINS
-    ORDER = 285,                   // ORDER
-    BY = 286,                      // BY
-    ASC = 287,                     // ASC
-    DESC = 288,                    // DESC
-    STAR = 289,                    // STAR
-    COMMA = 290,                   // COMMA
-    DOT = 291,                     // DOT
-    LPAREN = 292,                  // LPAREN
-    RPAREN = 293,                  // RPAREN
-    PLUS = 294,                    // PLUS
-    MINUS = 295,                   // MINUS
-    EQ = 296,                      // EQ
-    NEQ = 297,                     // NEQ
-    LT = 298,                      // LT
-    LTE = 299,                     // LTE
-    GT = 300,                      // GT
-    GTE = 301                      // GTE
+    IS = 265,                      // IS
+    AND = 266,                     // AND
+    OR = 267,                      // OR
+    NOT = 268,                     // NOT
+    NULL_LITERAL = 269,            // NULL_LITERAL
+    IN = 270,                      // IN
+    LIKE = 271,                    // LIKE
+    BETWEEN = 272,                 // BETWEEN
+    LIMIT = 273,                   // LIMIT
+    PAGE = 274,                    // PAGE
+    TOKEN = 275,                   // TOKEN
+    SHOW = 276,                    // SHOW
+    TABLES = 277,                  // TABLES
+    FUNCTIONS = 278,               // FUNCTIONS
+    OPERATORS = 279,               // OPERATORS
+    DESCRIBE = 280,                // DESCRIBE
+    EXPLAIN = 281,                 // EXPLAIN
+    AS = 282,                      // AS
+    INNER = 283,                   // INNER
+    LEFT = 284,                    // LEFT
+    OUTER = 285,                   // OUTER
+    JOIN = 286,                    // JOIN
+    ON = 287,                      // ON
+    NOW = 288,                     // NOW
+    PREFIX = 289,                  // PREFIX
+    CONTAINS = 290,                // CONTAINS
+    ORDER = 291,                   // ORDER
+    BY = 292,                      // BY
+    ASC = 293,                     // ASC
+    DESC = 294,                    // DESC
+    TRUE = 295,                    // TRUE
+    FALSE = 296,                   // FALSE
+    TIMESTAMP_NS = 297,            // TIMESTAMP_NS
+    DURATION_NS = 298,             // DURATION_NS
+    STAR = 299,                    // STAR
+    SLASH = 300,                   // SLASH
+    COMMA = 301,                   // COMMA
+    DOT = 302,                     // DOT
+    LPAREN = 303,                  // LPAREN
+    RPAREN = 304,                  // RPAREN
+    PLUS = 305,                    // PLUS
+    MINUS = 306,                   // MINUS
+    EQ = 307,                      // EQ
+    NEQ = 308,                     // NEQ
+    LT = 309,                      // LT
+    LTE = 310,                     // LTE
+    GT = 311,                      // GT
+    GTE = 312,                     // GTE
+    NOW_LITERAL = 313              // NOW_LITERAL
       };
       /// Backward compatibility alias (Bison 3.6).
       typedef token_kind_type yytokentype;
@@ -564,7 +585,7 @@ namespace mldp_pvxs_driver { namespace query { namespace generated {
     {
       enum symbol_kind_type
       {
-        YYNTOKENS = 47, ///< Number of tokens.
+        YYNTOKENS = 59, ///< Number of tokens.
         S_YYEMPTY = -2,
         S_YYEOF = 0,                             // END_OF_INPUT
         S_YYerror = 1,                           // error
@@ -576,69 +597,90 @@ namespace mldp_pvxs_driver { namespace query { namespace generated {
         S_SELECT = 7,                            // SELECT
         S_FROM = 8,                              // FROM
         S_WHERE = 9,                             // WHERE
-        S_AND = 10,                              // AND
-        S_IN = 11,                               // IN
-        S_LIKE = 12,                             // LIKE
-        S_BETWEEN = 13,                          // BETWEEN
-        S_LIMIT = 14,                            // LIMIT
-        S_PAGE = 15,                             // PAGE
-        S_TOKEN = 16,                            // TOKEN
-        S_SHOW = 17,                             // SHOW
-        S_TABLES = 18,                           // TABLES
-        S_DESCRIBE = 19,                         // DESCRIBE
-        S_EXPLAIN = 20,                          // EXPLAIN
-        S_AS = 21,                               // AS
-        S_INNER = 22,                            // INNER
-        S_LEFT = 23,                             // LEFT
-        S_OUTER = 24,                            // OUTER
-        S_JOIN = 25,                             // JOIN
-        S_ON = 26,                               // ON
-        S_NOW = 27,                              // NOW
-        S_PREFIX = 28,                           // PREFIX
-        S_CONTAINS = 29,                         // CONTAINS
-        S_ORDER = 30,                            // ORDER
-        S_BY = 31,                               // BY
-        S_ASC = 32,                              // ASC
-        S_DESC = 33,                             // DESC
-        S_STAR = 34,                             // STAR
-        S_COMMA = 35,                            // COMMA
-        S_DOT = 36,                              // DOT
-        S_LPAREN = 37,                           // LPAREN
-        S_RPAREN = 38,                           // RPAREN
-        S_PLUS = 39,                             // PLUS
-        S_MINUS = 40,                            // MINUS
-        S_EQ = 41,                               // EQ
-        S_NEQ = 42,                              // NEQ
-        S_LT = 43,                               // LT
-        S_LTE = 44,                              // LTE
-        S_GT = 45,                               // GT
-        S_GTE = 46,                              // GTE
-        S_YYACCEPT = 47,                         // $accept
-        S_input = 48,                            // input
-        S_statement = 49,                        // statement
-        S_select_stmt = 50,                      // select_stmt
-        S_order_by_opt = 51,                     // order_by_opt
-        S_order_by_list = 52,                    // order_by_list
-        S_order_by_item = 53,                    // order_by_item
-        S_select_list = 54,                      // select_list
-        S_select_item_list = 55,                 // select_item_list
-        S_select_item = 56,                      // select_item
-        S_table_ref = 57,                        // table_ref
-        S_alias_opt = 58,                        // alias_opt
-        S_join_clauses = 59,                     // join_clauses
-        S_join_clause = 60,                      // join_clause
-        S_where_opt = 61,                        // where_opt
-        S_predicate_list = 62,                   // predicate_list
-        S_predicate = 63,                        // predicate
-        S_expression_list = 64,                  // expression_list
-        S_expression = 65,                       // expression
-        S_literal = 66,                          // literal
-        S_now_literal = 67,                      // now_literal
-        S_signed_duration = 68,                  // signed_duration
-        S_column_ref = 69,                       // column_ref
-        S_identifier_path = 70,                  // identifier_path
-        S_limit_opt = 71,                        // limit_opt
-        S_page_opt = 72                          // page_opt
+        S_IS = 10,                               // IS
+        S_AND = 11,                              // AND
+        S_OR = 12,                               // OR
+        S_NOT = 13,                              // NOT
+        S_NULL_LITERAL = 14,                     // NULL_LITERAL
+        S_IN = 15,                               // IN
+        S_LIKE = 16,                             // LIKE
+        S_BETWEEN = 17,                          // BETWEEN
+        S_LIMIT = 18,                            // LIMIT
+        S_PAGE = 19,                             // PAGE
+        S_TOKEN = 20,                            // TOKEN
+        S_SHOW = 21,                             // SHOW
+        S_TABLES = 22,                           // TABLES
+        S_FUNCTIONS = 23,                        // FUNCTIONS
+        S_OPERATORS = 24,                        // OPERATORS
+        S_DESCRIBE = 25,                         // DESCRIBE
+        S_EXPLAIN = 26,                          // EXPLAIN
+        S_AS = 27,                               // AS
+        S_INNER = 28,                            // INNER
+        S_LEFT = 29,                             // LEFT
+        S_OUTER = 30,                            // OUTER
+        S_JOIN = 31,                             // JOIN
+        S_ON = 32,                               // ON
+        S_NOW = 33,                              // NOW
+        S_PREFIX = 34,                           // PREFIX
+        S_CONTAINS = 35,                         // CONTAINS
+        S_ORDER = 36,                            // ORDER
+        S_BY = 37,                               // BY
+        S_ASC = 38,                              // ASC
+        S_DESC = 39,                             // DESC
+        S_TRUE = 40,                             // TRUE
+        S_FALSE = 41,                            // FALSE
+        S_TIMESTAMP_NS = 42,                     // TIMESTAMP_NS
+        S_DURATION_NS = 43,                      // DURATION_NS
+        S_STAR = 44,                             // STAR
+        S_SLASH = 45,                            // SLASH
+        S_COMMA = 46,                            // COMMA
+        S_DOT = 47,                              // DOT
+        S_LPAREN = 48,                           // LPAREN
+        S_RPAREN = 49,                           // RPAREN
+        S_PLUS = 50,                             // PLUS
+        S_MINUS = 51,                            // MINUS
+        S_EQ = 52,                               // EQ
+        S_NEQ = 53,                              // NEQ
+        S_LT = 54,                               // LT
+        S_LTE = 55,                              // LTE
+        S_GT = 56,                               // GT
+        S_GTE = 57,                              // GTE
+        S_NOW_LITERAL = 58,                      // NOW_LITERAL
+        S_YYACCEPT = 59,                         // $accept
+        S_input = 60,                            // input
+        S_statement = 61,                        // statement
+        S_select_stmt = 62,                      // select_stmt
+        S_order_by_opt = 63,                     // order_by_opt
+        S_order_by_list = 64,                    // order_by_list
+        S_order_by_item = 65,                    // order_by_item
+        S_select_list = 66,                      // select_list
+        S_select_item_list = 67,                 // select_item_list
+        S_select_item = 68,                      // select_item
+        S_table_ref = 69,                        // table_ref
+        S_alias_opt = 70,                        // alias_opt
+        S_join_clauses = 71,                     // join_clauses
+        S_join_clause = 72,                      // join_clause
+        S_where_opt = 73,                        // where_opt
+        S_predicate_list = 74,                   // predicate_list
+        S_predicate = 75,                        // predicate
+        S_expression_list = 76,                  // expression_list
+        S_expression = 77,                       // expression
+        S_legacy_expression = 78,                // legacy_expression
+        S_or_expression = 79,                    // or_expression
+        S_and_expression = 80,                   // and_expression
+        S_comparison_expression = 81,            // comparison_expression
+        S_additive_expression = 82,              // additive_expression
+        S_multiplicative_expression = 83,        // multiplicative_expression
+        S_unary_expression = 84,                 // unary_expression
+        S_primary_expression = 85,               // primary_expression
+        S_literal = 86,                          // literal
+        S_signed_integer = 87,                   // signed_integer
+        S_now_literal = 88,                      // now_literal
+        S_signed_duration = 89,                  // signed_duration
+        S_column_ref = 90,                       // column_ref
+        S_identifier_path = 91,                  // identifier_path
+        S_limit_opt = 92,                        // limit_opt
+        S_page_opt = 93                          // page_opt
       };
     };
 
@@ -676,11 +718,20 @@ namespace mldp_pvxs_driver { namespace query { namespace generated {
         switch (this->kind ())
     {
       case symbol_kind::S_NUMBER_LITERAL: // NUMBER_LITERAL
+      case symbol_kind::S_signed_integer: // signed_integer
       case symbol_kind::S_signed_duration: // signed_duration
         value.move< int64_t > (std::move (that.value));
         break;
 
       case symbol_kind::S_expression: // expression
+      case symbol_kind::S_legacy_expression: // legacy_expression
+      case symbol_kind::S_or_expression: // or_expression
+      case symbol_kind::S_and_expression: // and_expression
+      case symbol_kind::S_comparison_expression: // comparison_expression
+      case symbol_kind::S_additive_expression: // additive_expression
+      case symbol_kind::S_multiplicative_expression: // multiplicative_expression
+      case symbol_kind::S_unary_expression: // unary_expression
+      case symbol_kind::S_primary_expression: // primary_expression
         value.move< mldp_pvxs_driver::query::ExpressionPtr > (std::move (that.value));
         break;
 
@@ -1106,11 +1157,20 @@ namespace mldp_pvxs_driver { namespace query { namespace generated {
 switch (yykind)
     {
       case symbol_kind::S_NUMBER_LITERAL: // NUMBER_LITERAL
+      case symbol_kind::S_signed_integer: // signed_integer
       case symbol_kind::S_signed_duration: // signed_duration
         value.template destroy< int64_t > ();
         break;
 
       case symbol_kind::S_expression: // expression
+      case symbol_kind::S_legacy_expression: // legacy_expression
+      case symbol_kind::S_or_expression: // or_expression
+      case symbol_kind::S_and_expression: // and_expression
+      case symbol_kind::S_comparison_expression: // comparison_expression
+      case symbol_kind::S_additive_expression: // additive_expression
+      case symbol_kind::S_multiplicative_expression: // multiplicative_expression
+      case symbol_kind::S_unary_expression: // unary_expression
+      case symbol_kind::S_primary_expression: // primary_expression
         value.template destroy< mldp_pvxs_driver::query::ExpressionPtr > ();
         break;
 
@@ -1507,6 +1567,21 @@ switch (yykind)
 #if 201103L <= YY_CPLUSPLUS
       static
       symbol_type
+      make_IS (location_type l)
+      {
+        return symbol_type (token::IS, std::move (l));
+      }
+#else
+      static
+      symbol_type
+      make_IS (const location_type& l)
+      {
+        return symbol_type (token::IS, l);
+      }
+#endif
+#if 201103L <= YY_CPLUSPLUS
+      static
+      symbol_type
       make_AND (location_type l)
       {
         return symbol_type (token::AND, std::move (l));
@@ -1517,6 +1592,51 @@ switch (yykind)
       make_AND (const location_type& l)
       {
         return symbol_type (token::AND, l);
+      }
+#endif
+#if 201103L <= YY_CPLUSPLUS
+      static
+      symbol_type
+      make_OR (location_type l)
+      {
+        return symbol_type (token::OR, std::move (l));
+      }
+#else
+      static
+      symbol_type
+      make_OR (const location_type& l)
+      {
+        return symbol_type (token::OR, l);
+      }
+#endif
+#if 201103L <= YY_CPLUSPLUS
+      static
+      symbol_type
+      make_NOT (location_type l)
+      {
+        return symbol_type (token::NOT, std::move (l));
+      }
+#else
+      static
+      symbol_type
+      make_NOT (const location_type& l)
+      {
+        return symbol_type (token::NOT, l);
+      }
+#endif
+#if 201103L <= YY_CPLUSPLUS
+      static
+      symbol_type
+      make_NULL_LITERAL (location_type l)
+      {
+        return symbol_type (token::NULL_LITERAL, std::move (l));
+      }
+#else
+      static
+      symbol_type
+      make_NULL_LITERAL (const location_type& l)
+      {
+        return symbol_type (token::NULL_LITERAL, l);
       }
 #endif
 #if 201103L <= YY_CPLUSPLUS
@@ -1637,6 +1757,36 @@ switch (yykind)
       make_TABLES (const location_type& l)
       {
         return symbol_type (token::TABLES, l);
+      }
+#endif
+#if 201103L <= YY_CPLUSPLUS
+      static
+      symbol_type
+      make_FUNCTIONS (location_type l)
+      {
+        return symbol_type (token::FUNCTIONS, std::move (l));
+      }
+#else
+      static
+      symbol_type
+      make_FUNCTIONS (const location_type& l)
+      {
+        return symbol_type (token::FUNCTIONS, l);
+      }
+#endif
+#if 201103L <= YY_CPLUSPLUS
+      static
+      symbol_type
+      make_OPERATORS (location_type l)
+      {
+        return symbol_type (token::OPERATORS, std::move (l));
+      }
+#else
+      static
+      symbol_type
+      make_OPERATORS (const location_type& l)
+      {
+        return symbol_type (token::OPERATORS, l);
       }
 #endif
 #if 201103L <= YY_CPLUSPLUS
@@ -1867,6 +2017,66 @@ switch (yykind)
 #if 201103L <= YY_CPLUSPLUS
       static
       symbol_type
+      make_TRUE (location_type l)
+      {
+        return symbol_type (token::TRUE, std::move (l));
+      }
+#else
+      static
+      symbol_type
+      make_TRUE (const location_type& l)
+      {
+        return symbol_type (token::TRUE, l);
+      }
+#endif
+#if 201103L <= YY_CPLUSPLUS
+      static
+      symbol_type
+      make_FALSE (location_type l)
+      {
+        return symbol_type (token::FALSE, std::move (l));
+      }
+#else
+      static
+      symbol_type
+      make_FALSE (const location_type& l)
+      {
+        return symbol_type (token::FALSE, l);
+      }
+#endif
+#if 201103L <= YY_CPLUSPLUS
+      static
+      symbol_type
+      make_TIMESTAMP_NS (location_type l)
+      {
+        return symbol_type (token::TIMESTAMP_NS, std::move (l));
+      }
+#else
+      static
+      symbol_type
+      make_TIMESTAMP_NS (const location_type& l)
+      {
+        return symbol_type (token::TIMESTAMP_NS, l);
+      }
+#endif
+#if 201103L <= YY_CPLUSPLUS
+      static
+      symbol_type
+      make_DURATION_NS (location_type l)
+      {
+        return symbol_type (token::DURATION_NS, std::move (l));
+      }
+#else
+      static
+      symbol_type
+      make_DURATION_NS (const location_type& l)
+      {
+        return symbol_type (token::DURATION_NS, l);
+      }
+#endif
+#if 201103L <= YY_CPLUSPLUS
+      static
+      symbol_type
       make_STAR (location_type l)
       {
         return symbol_type (token::STAR, std::move (l));
@@ -1877,6 +2087,21 @@ switch (yykind)
       make_STAR (const location_type& l)
       {
         return symbol_type (token::STAR, l);
+      }
+#endif
+#if 201103L <= YY_CPLUSPLUS
+      static
+      symbol_type
+      make_SLASH (location_type l)
+      {
+        return symbol_type (token::SLASH, std::move (l));
+      }
+#else
+      static
+      symbol_type
+      make_SLASH (const location_type& l)
+      {
+        return symbol_type (token::SLASH, l);
       }
 #endif
 #if 201103L <= YY_CPLUSPLUS
@@ -2059,6 +2284,21 @@ switch (yykind)
         return symbol_type (token::GTE, l);
       }
 #endif
+#if 201103L <= YY_CPLUSPLUS
+      static
+      symbol_type
+      make_NOW_LITERAL (location_type l)
+      {
+        return symbol_type (token::NOW_LITERAL, std::move (l));
+      }
+#else
+      static
+      symbol_type
+      make_NOW_LITERAL (const location_type& l)
+      {
+        return symbol_type (token::NOW_LITERAL, l);
+      }
+#endif
 
 
     class context
@@ -2124,7 +2364,7 @@ switch (yykind)
     // Tables.
     // YYPACT[STATE-NUM] -- Index in YYTABLE of the portion describing
     // STATE-NUM.
-    static const signed char yypact_[];
+    static const short yypact_[];
 
     // YYDEFACT[STATE-NUM] -- Default reduction number in state STATE-NUM.
     // Performed when YYTABLE does not specify something else to do.  Zero
@@ -2132,10 +2372,10 @@ switch (yykind)
     static const signed char yydefact_[];
 
     // YYPGOTO[NTERM-NUM].
-    static const signed char yypgoto_[];
+    static const short yypgoto_[];
 
     // YYDEFGOTO[NTERM-NUM].
-    static const signed char yydefgoto_[];
+    static const short yydefgoto_[];
 
     // YYTABLE[YYPACT[STATE-NUM]] -- What to do in state STATE-NUM.  If
     // positive, shift that token.  If negative, reduce the rule whose
@@ -2384,9 +2624,9 @@ switch (yykind)
     /// Constants.
     enum
     {
-      yylast_ = 136,     ///< Last index in yytable_.
-      yynnts_ = 26,  ///< Number of nonterminal symbols.
-      yyfinal_ = 25 ///< Termination state number.
+      yylast_ = 224,     ///< Last index in yytable_.
+      yynnts_ = 35,  ///< Number of nonterminal symbols.
+      yyfinal_ = 43 ///< Termination state number.
     };
 
 
@@ -2435,10 +2675,11 @@ switch (yykind)
       15,    16,    17,    18,    19,    20,    21,    22,    23,    24,
       25,    26,    27,    28,    29,    30,    31,    32,    33,    34,
       35,    36,    37,    38,    39,    40,    41,    42,    43,    44,
-      45,    46
+      45,    46,    47,    48,    49,    50,    51,    52,    53,    54,
+      55,    56,    57,    58
     };
     // Last valid token kind.
-    const int code_max = 301;
+    const int code_max = 313;
 
     if (t <= 0)
       return symbol_kind::S_YYEOF;
@@ -2458,11 +2699,20 @@ switch (yykind)
     switch (this->kind ())
     {
       case symbol_kind::S_NUMBER_LITERAL: // NUMBER_LITERAL
+      case symbol_kind::S_signed_integer: // signed_integer
       case symbol_kind::S_signed_duration: // signed_duration
         value.copy< int64_t > (YY_MOVE (that.value));
         break;
 
       case symbol_kind::S_expression: // expression
+      case symbol_kind::S_legacy_expression: // legacy_expression
+      case symbol_kind::S_or_expression: // or_expression
+      case symbol_kind::S_and_expression: // and_expression
+      case symbol_kind::S_comparison_expression: // comparison_expression
+      case symbol_kind::S_additive_expression: // additive_expression
+      case symbol_kind::S_multiplicative_expression: // multiplicative_expression
+      case symbol_kind::S_unary_expression: // unary_expression
+      case symbol_kind::S_primary_expression: // primary_expression
         value.copy< mldp_pvxs_driver::query::ExpressionPtr > (YY_MOVE (that.value));
         break;
 
@@ -2578,11 +2828,20 @@ switch (yykind)
     switch (this->kind ())
     {
       case symbol_kind::S_NUMBER_LITERAL: // NUMBER_LITERAL
+      case symbol_kind::S_signed_integer: // signed_integer
       case symbol_kind::S_signed_duration: // signed_duration
         value.move< int64_t > (YY_MOVE (s.value));
         break;
 
       case symbol_kind::S_expression: // expression
+      case symbol_kind::S_legacy_expression: // legacy_expression
+      case symbol_kind::S_or_expression: // or_expression
+      case symbol_kind::S_and_expression: // and_expression
+      case symbol_kind::S_comparison_expression: // comparison_expression
+      case symbol_kind::S_additive_expression: // additive_expression
+      case symbol_kind::S_multiplicative_expression: // multiplicative_expression
+      case symbol_kind::S_unary_expression: // unary_expression
+      case symbol_kind::S_primary_expression: // primary_expression
         value.move< mldp_pvxs_driver::query::ExpressionPtr > (YY_MOVE (s.value));
         break;
 
@@ -2731,7 +2990,7 @@ switch (yykind)
 
 #line 5 "src/query/parser/grammar/QueryBisonParser.y"
 } } } // mldp_pvxs_driver::query::generated
-#line 2735 "src/query/parser/generated/QueryBisonParser.hpp"
+#line 2994 "src/query/parser/generated/QueryBisonParser.hpp"
 
 
 

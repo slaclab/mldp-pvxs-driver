@@ -27,6 +27,7 @@ std::vector<ExecutableLiteralValue> extractInSubqueryValues(const RecordBatches&
 std::vector<std::pair<int64_t, int64_t>> extractNormalizedWindows(const RecordBatches& batches);
 arrow::Result<std::shared_ptr<arrow::RecordBatch>> applyFilter(const std::shared_ptr<arrow::RecordBatch>& batch, const std::vector<Predicate>& predicates);
 RecordBatches applyProjection(const RecordBatches& input, const std::vector<std::string>& columns);
+RecordBatches applyProjection(const RecordBatches& input, const std::vector<ExpressionPtr>& expressions, const std::vector<std::string>& names);
 RecordBatches applyLimit(const RecordBatches& input, uint64_t limit);
 RecordBatches applySort(const RecordBatches& input, const std::vector<plan::SortKey>& keys);
 std::shared_ptr<arrow::RecordBatch> combineBatches(const RecordBatches& batches);

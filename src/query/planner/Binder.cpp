@@ -13,11 +13,13 @@
 #include <query/QueryableFactory.h>
 #include <query/QueryTableCatalog.h>
 #include <query/ScalarFunctionRegistry.h>
+#include <query/ExpressionRegistry.h>
 #include <query/plan/PlannerError.h>
 
 #include <arrow/type.h>
 
 #include <sstream>
+#include <cctype>
 #include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
@@ -198,6 +200,98 @@ LiteralValue constantExpression(const ExpressionPtr& expression)
     if (const auto* literal = std::get_if<LiteralValue>(&expression->value)) return *literal;
     if (const auto* function = std::get_if<FunctionCall>(&expression->value)) return ScalarFunctionRegistry{}.evaluateTimestamp(*function);
     throw plan::PlannerException(plan::BindError{.message = "WHERE expression must be constant"});
+}
+
+std::string renderExpression(const ExpressionPtr& expression)
+{
+    if (!expression) return "";
+    return std::visit([&](const auto& value) -> std::string
+    {
+        using T = std::decay_t<decltype(value)>;
+        if constexpr (std::is_same_v<T, QualifiedColumn>) return value.name;
+        else if constexpr (std::is_same_v<T, FunctionCall>) return value.name;
+        else if constexpr (std::is_same_v<T, UnaryExpression>) return value.operator_name + renderExpression(value.operand);
+        else if constexpr (std::is_same_v<T, BinaryExpression>) return renderExpression(value.left) + " " + value.operator_name + " " + renderExpression(value.right);
+        else if constexpr (std::is_same_v<T, int64_t>) return std::to_string(value);
+        else if constexpr (std::is_same_v<T, std::string>) return value;
+        else if constexpr (std::is_same_v<T, bool>) return value ? "true" : "false";
+        else if constexpr (std::is_same_v<T, DurationNsLiteral>) return std::to_string(value.value) + "ns";
+        else if constexpr (std::is_same_v<T, TimestampNsLiteral>) return std::to_string(value.value);
+        else return "now";
+    }, expression->value);
+}
+
+std::string generatedExpressionName(const ExpressionPtr& expression)
+{
+    const auto text = renderExpression(expression);
+    std::string output;
+    bool separator = true;
+    for (const auto ch : text)
+    {
+        if (std::isalnum(static_cast<unsigned char>(ch)))
+        {
+            output.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
+            separator = false;
+        }
+        else if (!separator)
+        {
+            output.push_back('_');
+            separator = true;
+        }
+    }
+    if (!output.empty() && output.back() == '_') output.pop_back();
+    return output.empty() ? "expression" : output;
+}
+
+ColumnType bindExpression(const ExpressionPtr& expression, const std::vector<plan::BoundTable>& tables, const bool multi_table)
+{
+    if (!expression) throw plan::PlannerException(plan::BindError{.message = "Missing expression"});
+    return std::visit([&](auto& value) -> ColumnType
+    {
+        using T = std::decay_t<decltype(value)>;
+        if constexpr (std::is_same_v<T, QualifiedColumn>)
+        {
+            const auto resolved = resolveColumnReference(value, tables);
+            const auto& schema = tables[std::find_if(tables.begin(), tables.end(), [&](const auto& table) { return table.table_alias == resolved.table_alias; }) - tables.begin()].schema;
+            const auto* column = findColumnSchema(schema, resolved.column_name);
+            if (!column)
+            {
+                if (resolved.column_name.rfind("attributes.", 0) != 0 && resolved.column_name.rfind("provenance.", 0) != 0)
+                    throw plan::PlannerException(plan::BindError{.message = "Unknown column '" + resolved.column_name + "'"});
+                value.name = multi_table ? qualify(resolved.table_alias, resolved.column_name) : resolved.column_name;
+                value.qualifier.reset();
+                return ColumnType::STRING;
+            }
+            value.name = multi_table ? qualify(resolved.table_alias, resolved.column_name) : resolved.column_name;
+            value.qualifier.reset();
+            return column->type;
+        }
+        else if constexpr (std::is_same_v<T, LiteralValue>)
+        {
+            if (std::holds_alternative<std::string>(value)) return ColumnType::STRING;
+            if (std::holds_alternative<int64_t>(value)) return ColumnType::INT;
+            if (std::holds_alternative<bool>(value)) return ColumnType::BOOL;
+            if (std::holds_alternative<TimestampNsLiteral>(value) || std::holds_alternative<NowLiteral>(value)) return ColumnType::TIMESTAMP;
+            if (std::holds_alternative<DurationNsLiteral>(value)) return ColumnType::DURATION_SECONDS;
+            return ColumnType::INT;
+        }
+        else if constexpr (std::is_same_v<T, FunctionCall>)
+        {
+            std::vector<ColumnType> args; for (const auto& argument : value.arguments) args.push_back(bindExpression(argument, tables, multi_table));
+            return ExpressionRegistry{}.resolveFunction(value.name, args).inferReturnType(args);
+        }
+        else if constexpr (std::is_same_v<T, UnaryExpression>)
+        {
+            const auto type = bindExpression(value.operand, tables, multi_table);
+            return ExpressionRegistry{}.resolveOperator(value.operator_name, ExpressionCallableKind::UNARY_OPERATOR, {type}).inferReturnType({type});
+        }
+        else
+        {
+            const auto left = bindExpression(value.left, tables, multi_table);
+            const auto right = bindExpression(value.right, tables, multi_table);
+            return ExpressionRegistry{}.resolveOperator(value.operator_name, ExpressionCallableKind::BINARY_OPERATOR, {left, right}).inferReturnType({left, right});
+        }
+    }, expression->value);
 }
 
 plan::PlannerPredicate buildPredicate(const WherePredicate& where,
@@ -456,8 +550,21 @@ plan::BoundSelect mldp_pvxs_driver::query::planner::bindSelect(const SelectState
 
         std::vector<plan::BoundTable> join_scope = all_tables;
         join_scope.push_back(right_table);
-        const auto left_ref = resolveColumnReference(join_clause.condition.left, join_scope);
-        const auto right_ref = resolveColumnReference(join_clause.condition.right, join_scope);
+        QualifiedColumn left_column = join_clause.condition.left;
+        QualifiedColumn right_column = join_clause.condition.right;
+        if (join_clause.condition.expression)
+        {
+            const auto* equality = std::get_if<BinaryExpression>(&join_clause.condition.expression->value);
+            if (equality == nullptr || equality->operator_name != "=" || !equality->left || !equality->right ||
+                !std::holds_alternative<QualifiedColumn>(equality->left->value) || !std::holds_alternative<QualifiedColumn>(equality->right->value))
+            {
+                throw plan::PlannerException(plan::BindError{.message = "JOIN ON currently requires a column equality expression"});
+            }
+            left_column = std::get<QualifiedColumn>(equality->left->value);
+            right_column = std::get<QualifiedColumn>(equality->right->value);
+        }
+        const auto left_ref = resolveColumnReference(left_column, join_scope);
+        const auto right_ref = resolveColumnReference(right_column, join_scope);
 
         const bool left_is_existing = aliases.contains(left_ref.table_alias);
         const bool right_is_existing = aliases.contains(right_ref.table_alias);
@@ -595,6 +702,8 @@ plan::BoundSelect mldp_pvxs_driver::query::planner::bindSelect(const SelectState
         .joins = std::move(joins),
         .select_all = statement.select_all,
         .select_columns = {},
+        .select_expressions = {},
+        .select_names = {},
         .order_by = {},
         .limit = statement.limit,
         .page_token = statement.page_token};
@@ -603,7 +712,16 @@ plan::BoundSelect mldp_pvxs_driver::query::planner::bindSelect(const SelectState
     bound.order_by.reserve(statement.order_by.size());
     for (const auto& item : statement.order_by)
     {
-        const auto resolved = resolveColumnReference(item.expression ? columnExpression(item.expression, "ORDER BY") : item.column, all_tables);
+        const auto expression = item.expression ? item.expression : std::make_shared<Expression>(Expression{.value = item.column});
+        const auto original_column = std::holds_alternative<QualifiedColumn>(expression->value) ? std::get<QualifiedColumn>(expression->value) : QualifiedColumn{};
+        const auto expression_type = bindExpression(expression, all_tables, multi_table);
+        if (expression_type == ColumnType::NATIVE_VALUE)
+        {
+            throw plan::PlannerException(plan::BindError{.message = "ORDER BY requires a scalar expression"});
+        }
+        const auto resolved = original_column.name.empty() ? ResolvedColumn{} : resolveColumnReference(original_column, all_tables);
+        if (!resolved.table_alias.empty())
+        {
         const auto& schema = all_tables[table_index.at(resolved.table_alias)].schema;
         const bool dynamic_attribute = resolved.column_name.rfind("attributes.", 0) == 0 ||
                                        resolved.column_name.rfind("provenance.", 0) == 0;
@@ -614,8 +732,10 @@ plan::BoundSelect mldp_pvxs_driver::query::planner::bindSelect(const SelectState
             throw plan::PlannerException(plan::BindError{
                 .message = "ORDER BY requires a scalar output column; collection columns such as tags and attributes are not sortable"});
         }
+        }
         bound.order_by.push_back(plan::SortKey{
-            .column = multi_table ? qualify(resolved.table_alias, resolved.column_name) : resolved.column_name,
+            .column = resolved.column_name,
+            .expression = expression,
             .descending = item.direction == SortDirection::DESCENDING});
     }
 
@@ -627,14 +747,28 @@ plan::BoundSelect mldp_pvxs_driver::query::planner::bindSelect(const SelectState
         {
             for (const auto& item : items)
             {
-                const auto resolved = resolveColumnReference(columnExpression(item.expression, "SELECT"), all_tables);
-                bound.select_columns.push_back(multi_table ? qualify(resolved.table_alias, resolved.column_name) : resolved.column_name);
+                const auto type = bindExpression(item.expression, all_tables, multi_table);
+                if (type == ColumnType::NATIVE_VALUE) throw plan::PlannerException(plan::TypeError{.message = "SELECT expressions cannot use native_value"});
+                bound.select_expressions.push_back(item.expression);
+                const auto generated = generatedExpressionName(item.expression);
+                if (std::holds_alternative<QualifiedColumn>(item.expression->value))
+                {
+                    bound.select_columns.push_back(std::get<QualifiedColumn>(item.expression->value).name);
+                    bound.select_names.push_back(item.alias.value_or(bound.select_columns.back()));
+                }
+                else
+                {
+                    bound.select_columns.push_back(generated);
+                    bound.select_names.push_back(item.alias.value_or(generated));
+                }
             }
         }
         else for (const auto& column : statement.columns)
         {
             const auto resolved = resolveColumnReference(column, all_tables);
             bound.select_columns.push_back(multi_table ? qualify(resolved.table_alias, resolved.column_name) : resolved.column_name);
+            bound.select_expressions.push_back(std::make_shared<Expression>(Expression{.value = QualifiedColumn{.name = bound.select_columns.back()}}));
+            bound.select_names.push_back(resolved.column_name);
         }
     }
 

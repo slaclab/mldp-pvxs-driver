@@ -102,7 +102,11 @@ static const std::unordered_map<std::string, TokenType> kKeywords = {
     {"SELECT", TokenType::SELECT},
     {"FROM", TokenType::FROM},
     {"WHERE", TokenType::WHERE},
+    {"IS", TokenType::IS},
     {"AND", TokenType::AND},
+    {"OR", TokenType::OR},
+    {"NOT", TokenType::NOT},
+    {"NULL", TokenType::NULL_LITERAL},
     {"IN", TokenType::IN},
     {"LIKE", TokenType::LIKE},
     {"BETWEEN", TokenType::BETWEEN},
@@ -111,6 +115,8 @@ static const std::unordered_map<std::string, TokenType> kKeywords = {
     {"TOKEN", TokenType::TOKEN},
     {"SHOW", TokenType::SHOW},
     {"TABLES", TokenType::TABLES},
+    {"FUNCTIONS", TokenType::FUNCTIONS},
+    {"OPERATORS", TokenType::OPERATORS},
     {"DESCRIBE", TokenType::DESCRIBE},
     {"EXPLAIN", TokenType::EXPLAIN},
     {"AS", TokenType::AS},
@@ -149,7 +155,7 @@ DOUBLE_QUOTE \"([^\\\n\"]|\\.)*\"
     mldp_pvxs_driver::query::advancePosition(extra, yytext, yyleng);
 }
 
-"!="|"<="|">="|"="|"<"|">"|"*"|","|"."|"("|")"|"+"|"-" {
+"!="|"<="|">="|"="|"<"|">"|"*"|"/"|","|"."|"("|")"|"+"|"-" {
     auto* extra = static_cast<mldp_pvxs_driver::query::FlexLexerExtra*>(yyget_extra(yyscanner));
     const auto start = mldp_pvxs_driver::query::TokenPosition{extra->offset, extra->line, extra->column};
     mldp_pvxs_driver::query::advancePosition(extra, yytext, yyleng);
@@ -162,6 +168,7 @@ DOUBLE_QUOTE \"([^\\\n\"]|\\.)*\"
     else if (text == "<") type = mldp_pvxs_driver::query::TokenType::LT;
     else if (text == ">") type = mldp_pvxs_driver::query::TokenType::GT;
     else if (text == "*") type = mldp_pvxs_driver::query::TokenType::STAR;
+    else if (text == "/") type = mldp_pvxs_driver::query::TokenType::SLASH;
     else if (text == ",") type = mldp_pvxs_driver::query::TokenType::COMMA;
     else if (text == ".") type = mldp_pvxs_driver::query::TokenType::DOT;
     else if (text == "(") type = mldp_pvxs_driver::query::TokenType::LPAREN;

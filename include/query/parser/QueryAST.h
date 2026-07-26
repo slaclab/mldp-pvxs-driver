@@ -43,7 +43,18 @@ struct FunctionCall {
     std::vector<ExpressionPtr> arguments;
 };
 
-using ExpressionValue = std::variant<LiteralValue, QualifiedColumn, FunctionCall>;
+struct UnaryExpression {
+    std::string operator_name;
+    ExpressionPtr operand;
+};
+
+struct BinaryExpression {
+    std::string operator_name;
+    ExpressionPtr left;
+    ExpressionPtr right;
+};
+
+using ExpressionValue = std::variant<LiteralValue, QualifiedColumn, FunctionCall, UnaryExpression, BinaryExpression>;
 
 struct Expression {
     ExpressionValue value;
@@ -101,6 +112,7 @@ enum class JoinType { INNER, LEFT_OUTER };
 struct JoinCondition {
     QualifiedColumn left;
     QualifiedColumn right;
+    ExpressionPtr   expression;
 };
 
 struct JoinClause {
@@ -132,6 +144,12 @@ struct SelectStatement {
 struct ShowTablesStatement {
 };
 
+struct ShowFunctionsStatement {
+};
+
+struct ShowOperatorsStatement {
+};
+
 struct DescribeStatement {
     std::string table_name;
 };
@@ -150,6 +168,6 @@ struct DropTableStatement {
     std::string table_name;
 };
 
-using QueryStatement = std::variant<SelectStatement, ShowTablesStatement, DescribeStatement, ExplainStatement, CreateTableStatement, DropTableStatement>;
+using QueryStatement = std::variant<SelectStatement, ShowTablesStatement, ShowFunctionsStatement, ShowOperatorsStatement, DescribeStatement, ExplainStatement, CreateTableStatement, DropTableStatement>;
 
 } // namespace mldp_pvxs_driver::query

@@ -9,20 +9,12 @@
 
 #include <query/plan/PlannerError.h>
 
-#include <algorithm>
 #include <charconv>
-#include <cctype>
 #include <stdexcept>
 
 using namespace mldp_pvxs_driver::query;
 
 namespace {
-
-std::string normalized(std::string value)
-{
-    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-    return value;
-}
 
 int decimal(const std::string& text, std::size_t offset, std::size_t length)
 {
@@ -70,18 +62,12 @@ int offsetSeconds(const std::string& text)
 } // namespace
 
 ScalarFunctionRegistry::ScalarFunctionRegistry()
-    : signatures_{{"to_utc", {{{ColumnType::STRING}, ColumnType::TIMESTAMP}, {{ColumnType::STRING, ColumnType::STRING}, ColumnType::TIMESTAMP}}}}
 {
 }
 
 ColumnType ScalarFunctionRegistry::returnType(const FunctionCall& call, const std::vector<ColumnType>& arguments) const
 {
-    const auto name = normalized(call.name);
-    const auto function = std::find_if(signatures_.begin(), signatures_.end(), [&name](const auto& item) { return item.first == name; });
-    if (function == signatures_.end()) throw plan::PlannerException(plan::TypeError{.message = "Unknown SQL function: " + call.name});
-    for (const auto& signature : function->second)
-        if (signature.arguments == arguments) return signature.return_type;
-    throw plan::PlannerException(plan::TypeError{.message = call.name + " has no matching overload"});
+    return registry_.resolveFunction(call.name, arguments).inferReturnType(arguments);
 }
 
 int64_t ScalarFunctionRegistry::evaluateTimestamp(const FunctionCall& call) const

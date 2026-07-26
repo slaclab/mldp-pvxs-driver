@@ -7,7 +7,7 @@
 
 #pragma once
 
-#include <query/IQueryable.h>
+#include <query/ExpressionRegistry.h>
 #include <query/parser/QueryAST.h>
 
 #include <string>
@@ -15,11 +15,6 @@
 #include <vector>
 
 namespace mldp_pvxs_driver::query {
-
-struct ScalarFunctionSignature {
-    std::vector<ColumnType> arguments;
-    ColumnType              return_type{ColumnType::STRING};
-};
 
 class ScalarFunctionRegistry
 {
@@ -29,7 +24,7 @@ public:
     int64_t evaluateTimestamp(const FunctionCall& call) const;
 
 private:
-    std::vector<std::pair<std::string, std::vector<ScalarFunctionSignature>>> signatures_;
+    ExpressionRegistry registry_;
 };
 
 } // namespace mldp_pvxs_driver::query

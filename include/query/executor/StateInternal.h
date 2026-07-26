@@ -75,6 +75,8 @@ std::unique_ptr<IExecutionState> makeHashJoinExecutionState(const plan::Physical
 std::unique_ptr<IExecutionState> makeNestedLoopJoinExecutionState(const plan::PhysicalNestedLoopJoin&, const plan::PhysicalNodePtr&, const ExecutionContext&, QueryStats&);
 std::unique_ptr<IExecutionState> makeBlockNestedLoopJoinExecutionState(const plan::PhysicalBlockNestedLoopJoin&, const plan::PhysicalNodePtr&, const ExecutionContext&, QueryStats&);
 std::unique_ptr<IExecutionState> makeShowTablesExecutionState(const plan::PhysicalShowTables&, const plan::PhysicalNodePtr&, const ExecutionContext&, QueryStats&);
+std::unique_ptr<IExecutionState> makeShowFunctionsExecutionState(const plan::PhysicalShowFunctions&, const plan::PhysicalNodePtr&, const ExecutionContext&, QueryStats&);
+std::unique_ptr<IExecutionState> makeShowOperatorsExecutionState(const plan::PhysicalShowOperators&, const plan::PhysicalNodePtr&, const ExecutionContext&, QueryStats&);
 std::unique_ptr<IExecutionState> makeDescribeExecutionState(const plan::PhysicalDescribe&, const plan::PhysicalNodePtr&, const ExecutionContext&, QueryStats&);
 std::unique_ptr<IExecutionState> makeExplainExecutionState(const plan::PhysicalExplain&, const plan::PhysicalNodePtr&, const ExecutionContext&, QueryStats&);
 std::unique_ptr<IExecutionState> makeCreateTableExecutionState(const plan::PhysicalCreateTable&, const plan::PhysicalNodePtr&, const ExecutionContext&, QueryStats&);

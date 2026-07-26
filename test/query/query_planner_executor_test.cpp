@@ -939,6 +939,22 @@ TEST_F(PlannerExecutorTest, ExecutesFilterProjectAndLimit)
     EXPECT_EQ(result.batches[0]->schema()->field(0)->name(), "pv");
 }
 
+TEST_F(PlannerExecutorTest, ProjectsComputedIntegerExpressionsWithGeneratedAndExplicitNames)
+{
+    query::QueryPlanner planner;
+    query::QueryExecutor executor;
+    const auto result = executor.execute(
+        planner.plan(query::parseQuery("SELECT value + 1, value * 2 AS doubled FROM fake.samples WHERE pv = 'A'")),
+        {.pool = arrow::default_memory_pool()});
+    ASSERT_EQ(result.batches.size(), 1U);
+    const auto& batch = result.batches.front();
+    ASSERT_EQ(batch->num_rows(), 1);
+    EXPECT_EQ(batch->schema()->field(0)->name(), "value_1");
+    EXPECT_EQ(batch->schema()->field(1)->name(), "doubled");
+    EXPECT_EQ(std::static_pointer_cast<arrow::Int64Array>(batch->column(0))->Value(0), 2);
+    EXPECT_EQ(std::static_pointer_cast<arrow::Int64Array>(batch->column(1))->Value(0), 2);
+}
+
 TEST_F(PlannerExecutorTest, AccumulatesBackendPagesAndTracksEveryRpc)
 {
     query::QueryPlanner  planner;
@@ -971,6 +987,36 @@ TEST_F(PlannerExecutorTest, ShowTablesReturnsRegisteredTables)
     EXPECT_EQ(result.batches[0]->schema()->field(2)->name(), "location");
     EXPECT_EQ(result.batches[0]->column(1)->GetScalar(0).ValueOrDie()->ToString(), "virtual");
     EXPECT_EQ(result.batches[0]->column(2)->GetScalar(0).ValueOrDie()->ToString(), "");
+}
+
+TEST_F(PlannerExecutorTest, ShowFunctionsAndOperatorsExposeSortedCallableCatalogs)
+{
+    query::QueryPlanner planner;
+    query::QueryExecutor executor;
+    const query::ExecutionContext context{.pool = arrow::default_memory_pool()};
+
+    const auto functions = executor.execute(planner.plan(query::parseQuery("SHOW FUNCTIONS")), context);
+    ASSERT_EQ(functions.batches.size(), 1U);
+    const auto& function_batch = functions.batches.front();
+    EXPECT_EQ(function_batch->schema()->field(0)->name(), "name");
+    EXPECT_EQ(function_batch->schema()->field(1)->name(), "arguments");
+    EXPECT_EQ(function_batch->schema()->field(2)->name(), "returns");
+    ASSERT_EQ(function_batch->num_rows(), 2);
+    EXPECT_EQ(function_batch->column(0)->GetScalar(0).ValueOrDie()->ToString(), "to_utc");
+    EXPECT_EQ(function_batch->column(1)->GetScalar(0).ValueOrDie()->ToString(), "(string)");
+    EXPECT_EQ(function_batch->column(1)->GetScalar(1).ValueOrDie()->ToString(), "(string, string)");
+
+    const auto operators = executor.execute(planner.plan(query::parseQuery("SHOW OPERATORS")), context);
+    ASSERT_EQ(operators.batches.size(), 1U);
+    const auto& operator_batch = operators.batches.front();
+    EXPECT_EQ(operator_batch->schema()->field(0)->name(), "symbol");
+    EXPECT_EQ(operator_batch->schema()->field(1)->name(), "arity");
+    EXPECT_EQ(operator_batch->schema()->field(2)->name(), "arguments");
+    ASSERT_GT(operator_batch->num_rows(), 1);
+    for (int64_t row = 1; row < operator_batch->num_rows(); ++row)
+    {
+        EXPECT_LE(operator_batch->column(0)->GetScalar(row - 1).ValueOrDie()->ToString(), operator_batch->column(0)->GetScalar(row).ValueOrDie()->ToString());
+    }
 }
 
 TEST_F(PlannerExecutorTest, DescribeUsesReadableTypesAndOperators)

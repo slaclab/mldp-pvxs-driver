@@ -913,7 +913,7 @@ std::vector<std::string> mldp_pvxs_driver::cli::detail::replCompletions(
     else
     {
         candidates = {"SELECT", "FROM", "WHERE", "AND", "OR", "IN", "LIKE", "BETWEEN", "ORDER", "BY", "ASC", "DESC", "LIMIT", "PAGE", "TOKEN",
-                      "SHOW", "TABLES", "DESCRIBE", "DESC", "EXPLAIN", "CREATE", "DROP", "TEMP", "TABLE", "AS", "INNER", "LEFT", "OUTER", "JOIN", "ON", "NOW", "PREFIX", "CONTAINS"};
+                      "SHOW", "TABLES", "FUNCTIONS", "OPERATORS", "DESCRIBE", "DESC", "EXPLAIN", "CREATE", "DROP", "TEMP", "TABLE", "AS", "INNER", "LEFT", "OUTER", "JOIN", "ON", "NOW", "PREFIX", "CONTAINS"};
         const auto aliases = tableAliases(input);
         if (aliases.size() == 1)
             for (const auto& column : columnsForTable(aliases.front().second, table_catalog)) candidates.push_back(column);

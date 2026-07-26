@@ -38,6 +38,16 @@ plan::PhysicalNodePtr QueryPlanner::plan(const QueryStatement& statement) const
         return plan::makeNode(plan::PhysicalShowTables{});
     }
 
+    if (std::holds_alternative<ShowFunctionsStatement>(statement))
+    {
+        return plan::makeNode(plan::PhysicalShowFunctions{});
+    }
+
+    if (std::holds_alternative<ShowOperatorsStatement>(statement))
+    {
+        return plan::makeNode(plan::PhysicalShowOperators{});
+    }
+
     if (std::holds_alternative<DescribeStatement>(statement))
     {
         const auto& describe = std::get<DescribeStatement>(statement);

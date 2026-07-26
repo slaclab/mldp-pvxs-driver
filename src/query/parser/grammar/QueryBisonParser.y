@@ -179,7 +179,11 @@
         case TokenType::SELECT: return QueryBisonParser::make_SELECT(location);
         case TokenType::FROM: return QueryBisonParser::make_FROM(location);
         case TokenType::WHERE: return QueryBisonParser::make_WHERE(location);
+        case TokenType::IS: return QueryBisonParser::make_IS(location);
         case TokenType::AND: return QueryBisonParser::make_AND(location);
+        case TokenType::OR: return QueryBisonParser::make_OR(location);
+        case TokenType::NOT: return QueryBisonParser::make_NOT(location);
+        case TokenType::NULL_LITERAL: return QueryBisonParser::make_NULL_LITERAL(location);
         case TokenType::IN: return QueryBisonParser::make_IN(location);
         case TokenType::LIKE: return QueryBisonParser::make_LIKE(location);
         case TokenType::BETWEEN: return QueryBisonParser::make_BETWEEN(location);
@@ -204,6 +208,7 @@
         case TokenType::ASC: return QueryBisonParser::make_ASC(location);
         case TokenType::DESC: return QueryBisonParser::make_DESC(location);
         case TokenType::STAR: return QueryBisonParser::make_STAR(location);
+        case TokenType::SLASH: return QueryBisonParser::make_SLASH(location);
         case TokenType::COMMA: return QueryBisonParser::make_COMMA(location);
         case TokenType::DOT: return QueryBisonParser::make_DOT(location);
         case TokenType::LPAREN: return QueryBisonParser::make_LPAREN(location);
@@ -238,8 +243,14 @@
 %token END_OF_INPUT 0
 %token <std::string> IDENTIFIER STRING_LITERAL DURATION_LITERAL
 %token <int64_t> NUMBER_LITERAL
-%token SELECT FROM WHERE AND IN LIKE BETWEEN LIMIT PAGE TOKEN SHOW TABLES DESCRIBE EXPLAIN AS INNER LEFT OUTER JOIN ON NOW PREFIX CONTAINS ORDER BY ASC DESC TRUE FALSE TIMESTAMP_NS DURATION_NS
-%token STAR COMMA DOT LPAREN RPAREN PLUS MINUS EQ NEQ LT LTE GT GTE
+%token SELECT FROM WHERE IS AND OR NOT NULL_LITERAL IN LIKE BETWEEN LIMIT PAGE TOKEN SHOW TABLES FUNCTIONS OPERATORS DESCRIBE EXPLAIN AS INNER LEFT OUTER JOIN ON NOW PREFIX CONTAINS ORDER BY ASC DESC TRUE FALSE TIMESTAMP_NS DURATION_NS
+%token STAR SLASH COMMA DOT LPAREN RPAREN PLUS MINUS EQ NEQ LT LTE GT GTE
+
+// Preserve NOW +/- duration convenience syntax while allowing ordinary
+// timestamp arithmetic.  A bare NOW reduces only after PLUS/MINUS have had
+// the opportunity to form NOW's historical signed-duration literal.
+%precedence NOW_LITERAL
+%left PLUS MINUS
 
 %type <mldp_pvxs_driver::query::QueryStatement> statement
 %type <mldp_pvxs_driver::query::SelectStatement> select_stmt
@@ -257,7 +268,7 @@
 %type <std::vector<mldp_pvxs_driver::query::ExpressionPtr>> expression_list
 %type <mldp_pvxs_driver::query::LiteralValue> literal now_literal
 %type <int64_t> signed_integer
-%type <mldp_pvxs_driver::query::ExpressionPtr> expression
+%type <mldp_pvxs_driver::query::ExpressionPtr> expression primary_expression unary_expression multiplicative_expression additive_expression comparison_expression and_expression or_expression legacy_expression
 %type <int64_t> signed_duration
 %type <std::optional<uint64_t>> limit_opt
 %type <std::optional<std::string>> page_opt
@@ -278,6 +289,10 @@ statement
       { $$ = std::move($1); }
     | SHOW TABLES
       { $$ = mldp_pvxs_driver::query::ShowTablesStatement{}; }
+    | SHOW FUNCTIONS
+      { $$ = mldp_pvxs_driver::query::ShowFunctionsStatement{}; }
+    | SHOW OPERATORS
+      { $$ = mldp_pvxs_driver::query::ShowOperatorsStatement{}; }
     | DESCRIBE identifier_path
       {
           $$ = mldp_pvxs_driver::query::DescribeStatement{ .table_name = joinPath($2, 0) };
@@ -490,7 +505,11 @@ predicate
               .subquery = std::make_shared<mldp_pvxs_driver::query::SelectStatement>(std::move($4))
           };
       }
-    | column_ref BETWEEN expression AND expression
+    | column_ref IS NOT NULL_LITERAL
+      {
+          $$ = mldp_pvxs_driver::query::IsNotNullPredicate{.column = std::move($1)};
+      }
+    | column_ref BETWEEN legacy_expression AND legacy_expression
       {
           $$ = mldp_pvxs_driver::query::RangePredicate{
               .column = std::move($1),
@@ -499,7 +518,7 @@ predicate
               .upper_expression = std::move($5)
           };
       }
-    | column_ref LIKE expression
+    | column_ref LIKE legacy_expression
       {
           $$ = mldp_pvxs_driver::query::OpPredicate{
               .column = std::move($1),
@@ -508,7 +527,7 @@ predicate
               .expression = std::move($3)
           };
       }
-    | column_ref CONTAINS expression
+    | column_ref CONTAINS legacy_expression
       {
           $$ = mldp_pvxs_driver::query::OpPredicate{
               .column = std::move($1),
@@ -517,7 +536,7 @@ predicate
               .expression = std::move($3)
           };
       }
-    | column_ref PREFIX expression
+    | column_ref PREFIX legacy_expression
       {
           $$ = mldp_pvxs_driver::query::OpPredicate{
               .column = std::move($1),
@@ -526,7 +545,7 @@ predicate
               .expression = std::move($3)
           };
       }
-    | column_ref EQ expression
+    | column_ref EQ legacy_expression
       {
           $$ = mldp_pvxs_driver::query::EqPredicate{
               .column = std::move($1),
@@ -534,7 +553,7 @@ predicate
               .expression = std::move($3)
           };
       }
-    | column_ref NEQ expression
+    | column_ref NEQ legacy_expression
       {
           $$ = mldp_pvxs_driver::query::OpPredicate{
               .column = std::move($1),
@@ -543,7 +562,7 @@ predicate
               .expression = std::move($3)
           };
       }
-    | column_ref LT expression
+    | column_ref LT legacy_expression
       {
           $$ = mldp_pvxs_driver::query::OpPredicate{
               .column = std::move($1),
@@ -552,7 +571,7 @@ predicate
               .expression = std::move($3)
           };
       }
-    | column_ref LTE expression
+    | column_ref LTE legacy_expression
       {
           $$ = mldp_pvxs_driver::query::OpPredicate{
               .column = std::move($1),
@@ -561,7 +580,7 @@ predicate
               .expression = std::move($3)
           };
       }
-    | column_ref GT expression
+    | column_ref GT legacy_expression
       {
           $$ = mldp_pvxs_driver::query::OpPredicate{
               .column = std::move($1),
@@ -570,7 +589,7 @@ predicate
               .expression = std::move($3)
           };
       }
-    | column_ref GTE expression
+    | column_ref GTE legacy_expression
       {
           $$ = mldp_pvxs_driver::query::OpPredicate{
               .column = std::move($1),
@@ -594,12 +613,84 @@ expression_list
     ;
 
 expression
+    : or_expression
+      { $$ = std::move($1); }
+    ;
+
+legacy_expression
+    : primary_expression
+      { $$ = std::move($1); }
+    ;
+
+or_expression
+    : and_expression
+      { $$ = std::move($1); }
+    | or_expression OR and_expression
+      { $$ = makeExpression(ExpressionValue{BinaryExpression{"OR", std::move($1), std::move($3)}}); }
+    ;
+
+and_expression
+    : comparison_expression
+      { $$ = std::move($1); }
+    | and_expression AND comparison_expression
+      { $$ = makeExpression(ExpressionValue{BinaryExpression{"AND", std::move($1), std::move($3)}}); }
+    ;
+
+comparison_expression
+    : additive_expression
+      { $$ = std::move($1); }
+    | additive_expression EQ additive_expression
+      { $$ = makeExpression(ExpressionValue{BinaryExpression{"=", std::move($1), std::move($3)}}); }
+    | additive_expression NEQ additive_expression
+      { $$ = makeExpression(ExpressionValue{BinaryExpression{"!=", std::move($1), std::move($3)}}); }
+    | additive_expression LT additive_expression
+      { $$ = makeExpression(ExpressionValue{BinaryExpression{"<", std::move($1), std::move($3)}}); }
+    | additive_expression LTE additive_expression
+      { $$ = makeExpression(ExpressionValue{BinaryExpression{"<=", std::move($1), std::move($3)}}); }
+    | additive_expression GT additive_expression
+      { $$ = makeExpression(ExpressionValue{BinaryExpression{">", std::move($1), std::move($3)}}); }
+    | additive_expression GTE additive_expression
+      { $$ = makeExpression(ExpressionValue{BinaryExpression{">=", std::move($1), std::move($3)}}); }
+    ;
+
+additive_expression
+    : multiplicative_expression
+      { $$ = std::move($1); }
+    | additive_expression PLUS multiplicative_expression
+      { $$ = makeExpression(ExpressionValue{BinaryExpression{"+", std::move($1), std::move($3)}}); }
+    | additive_expression MINUS multiplicative_expression
+      { $$ = makeExpression(ExpressionValue{BinaryExpression{"-", std::move($1), std::move($3)}}); }
+    ;
+
+multiplicative_expression
+    : unary_expression
+      { $$ = std::move($1); }
+    | multiplicative_expression STAR unary_expression
+      { $$ = makeExpression(ExpressionValue{BinaryExpression{"*", std::move($1), std::move($3)}}); }
+    | multiplicative_expression SLASH unary_expression
+      { $$ = makeExpression(ExpressionValue{BinaryExpression{"/", std::move($1), std::move($3)}}); }
+    ;
+
+unary_expression
+    : primary_expression
+      { $$ = std::move($1); }
+    | PLUS unary_expression
+      { $$ = makeExpression(ExpressionValue{UnaryExpression{"+", std::move($2)}}); }
+    | MINUS unary_expression
+      { $$ = makeExpression(ExpressionValue{UnaryExpression{"-", std::move($2)}}); }
+    | NOT unary_expression
+      { $$ = makeExpression(ExpressionValue{UnaryExpression{"NOT", std::move($2)}}); }
+    ;
+
+primary_expression
     : literal
       { $$ = makeExpression(ExpressionValue{std::move($1)}); }
     | column_ref
       { $$ = makeExpression(ExpressionValue{std::move($1)}); }
     | IDENTIFIER LPAREN expression_list RPAREN
       { $$ = makeExpression(ExpressionValue{FunctionCall{.name = std::move($1), .arguments = std::move($3)}}); }
+    | LPAREN expression RPAREN
+      { $$ = std::move($2); }
     ;
 
 literal
@@ -615,6 +706,8 @@ literal
       { $$ = mldp_pvxs_driver::query::LiteralValue{mldp_pvxs_driver::query::TimestampNsLiteral{$3}}; }
     | DURATION_NS LPAREN signed_integer RPAREN
       { $$ = mldp_pvxs_driver::query::LiteralValue{mldp_pvxs_driver::query::DurationNsLiteral{$3}}; }
+    | DURATION_LITERAL
+      { $$ = mldp_pvxs_driver::query::LiteralValue{mldp_pvxs_driver::query::DurationNsLiteral{durationToSeconds($1, @1) * 1000000000LL}}; }
     | now_literal
       { $$ = std::move($1); }
     ;
@@ -627,7 +720,7 @@ signed_integer
     ;
 
 now_literal
-    : NOW
+    : NOW %prec NOW_LITERAL
       { $$ = mldp_pvxs_driver::query::LiteralValue{mldp_pvxs_driver::query::NowLiteral{0}}; }
     | NOW signed_duration
       { $$ = mldp_pvxs_driver::query::LiteralValue{mldp_pvxs_driver::query::NowLiteral{$2}}; }

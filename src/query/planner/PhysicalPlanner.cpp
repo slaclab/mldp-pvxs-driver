@@ -122,7 +122,9 @@ plan::PhysicalNodePtr buildNode(const plan::LogicalNodePtr& node)
     {
         return plan::makeNode(plan::PhysicalProject{
             .input = buildNode(project->input),
-            .columns = project->columns});
+            .columns = project->columns,
+            .expressions = project->expressions,
+            .names = project->names});
     }
     if (const auto* sort = std::get_if<plan::LogicalSort>(&node->value))
     {
@@ -288,6 +290,16 @@ void appendNode(std::ostringstream& out, const plan::PhysicalNodePtr& node, cons
         out << indent(level) << "PhysicalShowTables\n";
         return;
     }
+    if (std::holds_alternative<plan::PhysicalShowFunctions>(node->value))
+    {
+        out << indent(level) << "PhysicalShowFunctions\n";
+        return;
+    }
+    if (std::holds_alternative<plan::PhysicalShowOperators>(node->value))
+    {
+        out << indent(level) << "PhysicalShowOperators\n";
+        return;
+    }
     if (const auto* describe = std::get_if<plan::PhysicalDescribe>(&node->value))
     {
         out << indent(level) << "PhysicalDescribe(table=" << describe->table_name << ")\n";
@@ -413,6 +425,16 @@ std::string mldp_pvxs_driver::query::plan::physicalPlanToString(const plan::Phys
         if (std::holds_alternative<PhysicalShowTables>(node->value))
         {
             out << std::string(static_cast<size_t>(level) * 2, ' ') << "PhysicalShowTables\n";
+            return;
+        }
+        if (std::holds_alternative<PhysicalShowFunctions>(node->value))
+        {
+            out << std::string(static_cast<size_t>(level) * 2, ' ') << "PhysicalShowFunctions\n";
+            return;
+        }
+        if (std::holds_alternative<PhysicalShowOperators>(node->value))
+        {
+            out << std::string(static_cast<size_t>(level) * 2, ' ') << "PhysicalShowOperators\n";
             return;
         }
         if (const auto* describe = std::get_if<PhysicalDescribe>(&node->value))

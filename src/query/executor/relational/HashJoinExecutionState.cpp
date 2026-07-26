@@ -3,4 +3,36 @@
 //////////////////////////////////////////////////////////////////////////////
 #include <query/executor/ExecutorUtils.h>
 #include <query/executor/StateInternal.h>
-namespace mldp_pvxs_driver::query::executor { namespace { class State final : public ExecutionStateBase { public: State(plan::PhysicalHashJoin node, const ExecutionContext& context, QueryStats& stats) : ExecutionStateBase(context, stats), node_(std::move(node)) { addChild(node_.left); addChild(node_.right); } std::string_view typeName() const noexcept override { return "HashJoinExecutionState"; } RecordBatches execute() override { auto joined = joinBatches(combineBatches(childAt(0).execute()), combineBatches(childAt(1).execute()), node_.condition.left_column, node_.condition.right_column, node_.type, context(), stats()); return joined ? RecordBatches{joined} : RecordBatches{}; } private: plan::PhysicalHashJoin node_; }; } std::unique_ptr<IExecutionState> makeHashJoinExecutionState(const plan::PhysicalHashJoin& node, const plan::PhysicalNodePtr&, const ExecutionContext& context, QueryStats& stats) { return std::make_unique<State>(node, context, stats); } }
+
+namespace mldp_pvxs_driver::query::executor {
+namespace {
+    class State final : public ExecutionStateBase
+    {
+    public:
+        State(plan::PhysicalHashJoin node, const ExecutionContext& context, QueryStats& stats) : ExecutionStateBase(context, stats), node_(std::move(node))
+        {
+            addChild(node_.left);
+            addChild(node_.right);
+        }
+
+        std::string_view typeName() const noexcept override
+        {
+            return "HashJoinExecutionState";
+        }
+
+        RecordBatches execute() override
+        {
+            auto joined = joinBatches(combineBatches(childAt(0).execute()), combineBatches(childAt(1).execute()), node_.condition.left_column, node_.condition.right_column, node_.type, context(), stats());
+            return joined ? RecordBatches{joined} : RecordBatches{};
+        }
+
+    private:
+        plan::PhysicalHashJoin node_;
+    };
+} // namespace
+
+std::unique_ptr<IExecutionState> makeHashJoinExecutionState(const plan::PhysicalHashJoin& node, const plan::PhysicalNodePtr&, const ExecutionContext& context, QueryStats& stats)
+{
+    return std::make_unique<State>(node, context, stats);
+}
+} // namespace mldp_pvxs_driver::query::executor

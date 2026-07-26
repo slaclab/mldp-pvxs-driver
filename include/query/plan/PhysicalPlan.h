@@ -54,6 +54,8 @@ struct PhysicalFilter {
 struct PhysicalProject {
     PhysicalNodePtr          input;
     std::vector<std::string> columns;
+    std::vector<ExpressionPtr> expressions;
+    std::vector<std::string> names;
 };
 
 struct PhysicalLimit {
@@ -104,6 +106,12 @@ struct PhysicalBlockNestedLoopJoin {
 struct PhysicalShowTables {
 };
 
+struct PhysicalShowFunctions {
+};
+
+struct PhysicalShowOperators {
+};
+
 struct PhysicalDescribe {
     std::string table_name;
 };
@@ -131,6 +139,8 @@ using PhysicalNodeVariant = std::variant<PhysicalTableScan,
                                          PhysicalNestedLoopJoin,
                                          PhysicalBlockNestedLoopJoin,
                                          PhysicalShowTables,
+                                         PhysicalShowFunctions,
+                                         PhysicalShowOperators,
                                          PhysicalDescribe,
                                          PhysicalExplain,
                                          PhysicalCreateTable,

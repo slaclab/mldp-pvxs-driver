@@ -61,12 +61,12 @@ TEST(QueryLexerTest, TokenizesEveryPunctuationAndOperatorClass)
 TEST(QueryLexerTest, TokenizesEveryKeywordCaseInsensitively)
 {
     const auto tokens = Lexer(
-        "select from where and in like between limit page token show tables describe explain as inner left outer join on now prefix contains")
+        "select from where and in like between limit page token show tables functions operators describe explain as inner left outer join on now prefix contains")
                             .tokenize();
     const std::vector<TokenType> expected = {
         TokenType::SELECT, TokenType::FROM, TokenType::WHERE, TokenType::AND, TokenType::IN,
         TokenType::LIKE, TokenType::BETWEEN, TokenType::LIMIT, TokenType::PAGE, TokenType::TOKEN,
-        TokenType::SHOW, TokenType::TABLES, TokenType::DESCRIBE, TokenType::EXPLAIN, TokenType::AS,
+        TokenType::SHOW, TokenType::TABLES, TokenType::FUNCTIONS, TokenType::OPERATORS, TokenType::DESCRIBE, TokenType::EXPLAIN, TokenType::AS,
         TokenType::INNER, TokenType::LEFT, TokenType::OUTER, TokenType::JOIN, TokenType::ON,
         TokenType::NOW, TokenType::PREFIX, TokenType::CONTAINS, TokenType::END_OF_INPUT};
     ASSERT_EQ(tokens.size(), expected.size());
@@ -74,6 +74,26 @@ TEST(QueryLexerTest, TokenizesEveryKeywordCaseInsensitively)
     {
         EXPECT_EQ(tokens[index].type, expected[index]) << index;
     }
+}
+
+TEST(QueryParserTest, ParsesCallableDiscoveryStatements)
+{
+    EXPECT_TRUE(std::holds_alternative<ShowFunctionsStatement>(parseQuery("SHOW FUNCTIONS")));
+    EXPECT_TRUE(std::holds_alternative<ShowOperatorsStatement>(parseQuery("SHOW OPERATORS")));
+}
+
+TEST(QueryParserTest, ParsesExpressionPrecedenceAndDurationLiterals)
+{
+    const auto statement = parseQuery("SELECT value + 2 * 3, activation.time + 2s FROM samples");
+    const auto& select = std::get<SelectStatement>(statement);
+    ASSERT_EQ(select.select_items.size(), 2U);
+    const auto& first = std::get<BinaryExpression>(select.select_items[0].expression->value);
+    EXPECT_EQ(first.operator_name, "+");
+    EXPECT_TRUE(std::holds_alternative<BinaryExpression>(first.right->value));
+    const auto& second = std::get<BinaryExpression>(select.select_items[1].expression->value);
+    EXPECT_EQ(second.operator_name, "+");
+    ASSERT_TRUE(std::holds_alternative<LiteralValue>(second.right->value));
+    EXPECT_EQ(std::get<DurationNsLiteral>(std::get<LiteralValue>(second.right->value)).value, 2000000000LL);
 }
 
 TEST(QueryLexerTest, TokenizesBooleanAndTypedTemporalLiteralKeywordsCaseInsensitively)

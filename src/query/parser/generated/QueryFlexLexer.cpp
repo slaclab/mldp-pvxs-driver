@@ -571,16 +571,16 @@ static const YY_CHAR yy_ec[256] =
         1,    1,    2,    1,    1,    1,    1,    1,    1,    1,
         1,    1,    1,    1,    1,    1,    1,    1,    1,    1,
         1,    2,    4,    5,    1,    1,    1,    1,    6,    7,
-        8,    9,   10,   11,   12,   13,    1,   14,   14,   14,
-       14,   14,   14,   14,   14,   14,   14,    1,    1,   15,
-       16,   17,    1,    1,   18,   18,   18,   18,   18,   18,
-       18,   19,   18,   18,   18,   18,   19,   18,   18,   18,
-       18,   18,   19,   18,   18,   18,   18,   18,   18,   18,
-        1,   20,    1,    1,   18,    1,   18,   18,   18,   18,
+        8,    9,   10,   11,   12,   13,   14,   15,   15,   15,
+       15,   15,   15,   15,   15,   15,   15,    1,    1,   16,
+       17,   18,    1,    1,   19,   19,   19,   19,   19,   19,
+       19,   20,   19,   19,   19,   19,   20,   19,   19,   19,
+       19,   19,   20,   19,   19,   19,   19,   19,   19,   19,
+        1,   21,    1,    1,   19,    1,   19,   19,   19,   19,
 
-       18,   18,   18,   19,   18,   18,   18,   18,   19,   18,
-       18,   18,   18,   18,   19,   18,   18,   18,   18,   18,
-       18,   18,    1,    1,    1,    1,    1,    1,    1,    1,
+       19,   19,   19,   20,   19,   19,   19,   19,   20,   19,
+       19,   19,   19,   19,   20,   19,   19,   19,   19,   19,
+       19,   19,    1,    1,    1,    1,    1,    1,    1,    1,
         1,    1,    1,    1,    1,    1,    1,    1,    1,    1,
         1,    1,    1,    1,    1,    1,    1,    1,    1,    1,
         1,    1,    1,    1,    1,    1,    1,    1,    1,    1,
@@ -597,48 +597,49 @@ static const YY_CHAR yy_ec[256] =
         1,    1,    1,    1,    1
     } ;
 
-static const YY_CHAR yy_meta[21] =
+static const YY_CHAR yy_meta[22] =
     {   0,
         1,    1,    2,    1,    1,    1,    1,    1,    1,    1,
-        1,    1,    1,    3,    1,    1,    1,    3,    3,    1
+        1,    1,    1,    1,    1,    1,    1,    1,    1,    1,
+        1
     } ;
 
-static const flex_int16_t yy_base[29] =
+static const flex_int16_t yy_base[28] =
     {   0,
-        0,    0,   39,   53,   19,   21,   21,   20,   21,   53,
-       12,   20,   19,    0,   26,   53,   25,   53,    0,   26,
-        0,   19,   53,    0,   53,   46,   49,   31
+        0,    0,   49,   53,   20,   22,   31,   21,   22,   53,
+       12,   30,   29,   14,   28,   53,   30,   53,    0,   31,
+        0,   21,   53,   25,   53,   38,   37
     } ;
 
-static const flex_int16_t yy_def[29] =
+static const flex_int16_t yy_def[28] =
     {   0,
        25,    1,   25,   25,   25,   25,   25,   26,   27,   25,
-       25,   25,   25,   28,   25,   25,   26,   25,   26,   27,
-       27,   25,   25,   28,    0,   25,   25,   25
+       25,   25,   25,   25,   25,   25,   26,   25,   26,   27,
+       27,   25,   25,   25,    0,   25,   25
     } ;
 
-static const flex_int16_t yy_nxt[74] =
+static const flex_int16_t yy_nxt[75] =
     {   0,
         4,    5,    6,    7,    8,    9,   10,   10,   10,   10,
-       10,   10,   10,   11,   12,   10,   13,   14,   14,    4,
-       15,   15,   15,   15,   18,   22,   18,   15,   15,   18,
-       23,   18,   22,   24,   16,   16,   16,   23,   25,   19,
-       21,   25,   25,   25,   19,   21,   17,   25,   17,   20,
-       25,   20,    3,   25,   25,   25,   25,   25,   25,   25,
+       10,   10,   10,   10,   11,   12,   10,   13,   14,   14,
+        4,   15,   15,   15,   15,   18,   22,   18,   24,   15,
+       15,   23,   24,   24,   18,   22,   18,   20,   17,   24,
+       23,   19,   21,   24,   24,   16,   16,   16,   25,   25,
+       19,   21,    3,   25,   25,   25,   25,   25,   25,   25,
        25,   25,   25,   25,   25,   25,   25,   25,   25,   25,
-       25,   25,   25
+       25,   25,   25,   25
     } ;
 
-static const flex_int16_t yy_chk[74] =
+static const flex_int16_t yy_chk[75] =
     {   0,
         1,    1,    1,    1,    1,    1,    1,    1,    1,    1,
         1,    1,    1,    1,    1,    1,    1,    1,    1,    1,
-        5,    5,    6,    6,    8,   11,    9,   15,   15,   17,
-       11,   20,   22,   28,   13,   12,    7,   22,    3,    8,
-        9,    0,    0,    0,   17,   20,   26,    0,   26,   27,
-        0,   27,   25,   25,   25,   25,   25,   25,   25,   25,
+        1,    5,    5,    6,    6,    8,   11,    9,   14,   15,
+       15,   11,   14,   14,   17,   22,   20,   27,   26,   24,
+       22,    8,    9,   24,   24,   13,   12,    7,    3,    0,
+       17,   20,   25,   25,   25,   25,   25,   25,   25,   25,
        25,   25,   25,   25,   25,   25,   25,   25,   25,   25,
-       25,   25,   25
+       25,   25,   25,   25
     } ;
 
 /* The intent behind this definition is that it'll catch
@@ -745,7 +746,11 @@ static const std::unordered_map<std::string, TokenType> kKeywords = {
     {"SELECT", TokenType::SELECT},
     {"FROM", TokenType::FROM},
     {"WHERE", TokenType::WHERE},
+    {"IS", TokenType::IS},
     {"AND", TokenType::AND},
+    {"OR", TokenType::OR},
+    {"NOT", TokenType::NOT},
+    {"NULL", TokenType::NULL_LITERAL},
     {"IN", TokenType::IN},
     {"LIKE", TokenType::LIKE},
     {"BETWEEN", TokenType::BETWEEN},
@@ -754,6 +759,8 @@ static const std::unordered_map<std::string, TokenType> kKeywords = {
     {"TOKEN", TokenType::TOKEN},
     {"SHOW", TokenType::SHOW},
     {"TABLES", TokenType::TABLES},
+    {"FUNCTIONS", TokenType::FUNCTIONS},
+    {"OPERATORS", TokenType::OPERATORS},
     {"DESCRIBE", TokenType::DESCRIBE},
     {"EXPLAIN", TokenType::EXPLAIN},
     {"AS", TokenType::AS},
@@ -776,8 +783,8 @@ static const std::unordered_map<std::string, TokenType> kKeywords = {
 };
 
 } // namespace mldp_pvxs_driver::query
-#line 775 "src/query/parser/generated/QueryFlexLexer.cpp"
-#line 776 "src/query/parser/generated/QueryFlexLexer.cpp"
+#line 786 "src/query/parser/generated/QueryFlexLexer.cpp"
+#line 787 "src/query/parser/generated/QueryFlexLexer.cpp"
 
 #define INITIAL 0
 
@@ -1035,10 +1042,10 @@ YY_DECL
 		}
 
 	{
-#line 141 "src/query/parser/grammar/QueryLexer.l"
+#line 151 "src/query/parser/grammar/QueryLexer.l"
 
 
-#line 1037 "src/query/parser/generated/QueryFlexLexer.cpp"
+#line 1048 "src/query/parser/generated/QueryFlexLexer.cpp"
 
 	while ( /*CONSTCOND*/1 )		/* loops until end-of-file is reached */
 		{
@@ -1098,7 +1105,7 @@ do_action:	/* This label is used only to access EOF actions. */
 case 1:
 /* rule 1 can match eol */
 YY_RULE_SETUP
-#line 143 "src/query/parser/grammar/QueryLexer.l"
+#line 153 "src/query/parser/grammar/QueryLexer.l"
 {
     auto* extra = static_cast<mldp_pvxs_driver::query::FlexLexerExtra*>(yyget_extra(yyscanner));
     mldp_pvxs_driver::query::advancePosition(extra, yytext, yyleng);
@@ -1106,7 +1113,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 2:
 YY_RULE_SETUP
-#line 148 "src/query/parser/grammar/QueryLexer.l"
+#line 158 "src/query/parser/grammar/QueryLexer.l"
 {
     auto* extra = static_cast<mldp_pvxs_driver::query::FlexLexerExtra*>(yyget_extra(yyscanner));
     const auto start = mldp_pvxs_driver::query::TokenPosition{extra->offset, extra->line, extra->column};
@@ -1120,6 +1127,7 @@ YY_RULE_SETUP
     else if (text == "<") type = mldp_pvxs_driver::query::TokenType::LT;
     else if (text == ">") type = mldp_pvxs_driver::query::TokenType::GT;
     else if (text == "*") type = mldp_pvxs_driver::query::TokenType::STAR;
+    else if (text == "/") type = mldp_pvxs_driver::query::TokenType::SLASH;
     else if (text == ",") type = mldp_pvxs_driver::query::TokenType::COMMA;
     else if (text == ".") type = mldp_pvxs_driver::query::TokenType::DOT;
     else if (text == "(") type = mldp_pvxs_driver::query::TokenType::LPAREN;
@@ -1131,7 +1139,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 3:
 YY_RULE_SETUP
-#line 170 "src/query/parser/grammar/QueryLexer.l"
+#line 181 "src/query/parser/grammar/QueryLexer.l"
 {
     auto* extra = static_cast<mldp_pvxs_driver::query::FlexLexerExtra*>(yyget_extra(yyscanner));
     const auto start = mldp_pvxs_driver::query::TokenPosition{extra->offset, extra->line, extra->column};
@@ -1142,7 +1150,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 4:
 YY_RULE_SETUP
-#line 178 "src/query/parser/grammar/QueryLexer.l"
+#line 189 "src/query/parser/grammar/QueryLexer.l"
 {
     auto* extra = static_cast<mldp_pvxs_driver::query::FlexLexerExtra*>(yyget_extra(yyscanner));
     const auto start = mldp_pvxs_driver::query::TokenPosition{extra->offset, extra->line, extra->column};
@@ -1153,7 +1161,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 5:
 YY_RULE_SETUP
-#line 186 "src/query/parser/grammar/QueryLexer.l"
+#line 197 "src/query/parser/grammar/QueryLexer.l"
 {
     auto* extra = static_cast<mldp_pvxs_driver::query::FlexLexerExtra*>(yyget_extra(yyscanner));
     const auto start = mldp_pvxs_driver::query::TokenPosition{extra->offset, extra->line, extra->column};
@@ -1173,7 +1181,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 6:
 YY_RULE_SETUP
-#line 203 "src/query/parser/grammar/QueryLexer.l"
+#line 214 "src/query/parser/grammar/QueryLexer.l"
 {
     auto* extra = static_cast<mldp_pvxs_driver::query::FlexLexerExtra*>(yyget_extra(yyscanner));
     const auto start = mldp_pvxs_driver::query::TokenPosition{extra->offset, extra->line, extra->column};
@@ -1184,7 +1192,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 7:
 YY_RULE_SETUP
-#line 211 "src/query/parser/grammar/QueryLexer.l"
+#line 222 "src/query/parser/grammar/QueryLexer.l"
 {
     auto* extra = static_cast<mldp_pvxs_driver::query::FlexLexerExtra*>(yyget_extra(yyscanner));
     const auto start = mldp_pvxs_driver::query::TokenPosition{extra->offset, extra->line, extra->column};
@@ -1196,17 +1204,17 @@ YY_RULE_SETUP
 }
 	YY_BREAK
 case YY_STATE_EOF(INITIAL):
-#line 221 "src/query/parser/grammar/QueryLexer.l"
+#line 232 "src/query/parser/grammar/QueryLexer.l"
 {
     return 0;
 }
 	YY_BREAK
 case 8:
 YY_RULE_SETUP
-#line 225 "src/query/parser/grammar/QueryLexer.l"
+#line 236 "src/query/parser/grammar/QueryLexer.l"
 YY_FATAL_ERROR( "flex scanner jammed" );
 	YY_BREAK
-#line 1205 "src/query/parser/generated/QueryFlexLexer.cpp"
+#line 1217 "src/query/parser/generated/QueryFlexLexer.cpp"
 
 	case YY_END_OF_BUFFER:
 		{
@@ -2335,5 +2343,6 @@ void yyfree (void * ptr , yyscan_t yyscanner)
 
 #define YYTABLES_NAME "yytables"
 
-#line 225 "src/query/parser/grammar/QueryLexer.l"
+#line 236 "src/query/parser/grammar/QueryLexer.l"
+
 

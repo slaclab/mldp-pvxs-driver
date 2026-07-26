@@ -8,6 +8,7 @@
 #include <query/QuerySubcommand.h>
 #include <query/ConsoleFooter.h>
 #include <query/QueryExecutor.h>
+#include <query/executor/ExecutorUtils.h>
 #include <query/QueryFormatter.h>
 #include <query/QueryPlanner.h>
 #include <query/QueryResult.h>
@@ -548,6 +549,22 @@ TEST(QuerySubcommandTest, PlansWideTablePvAndWindowSubqueries)
     EXPECT_NE(plan_text.find("in_subqueries=1"), std::string::npos);
     EXPECT_NE(plan_text.find("window_subquery=true"), std::string::npos);
     query::QueryableFactory::instance().reset();
+}
+
+TEST(QueryExecutorTest, ExtractsWindowEndpointsByPositionRatherThanName)
+{
+    arrow::TimestampBuilder start_builder(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), arrow::default_memory_pool());
+    arrow::TimestampBuilder end_builder(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), arrow::default_memory_pool());
+    ASSERT_TRUE(start_builder.Append(10).ok());
+    ASSERT_TRUE(end_builder.Append(20).ok());
+    std::shared_ptr<arrow::Array> start;
+    std::shared_ptr<arrow::Array> end;
+    ASSERT_TRUE(start_builder.Finish(&start).ok());
+    ASSERT_TRUE(end_builder.Finish(&end).ok());
+
+    const query::executor::RecordBatches batches{
+        arrow::RecordBatch::Make(arrow::schema({arrow::field("activation_time", start->type()), arrow::field("activation_time_2s", end->type())}), 1, {start, end})};
+    EXPECT_EQ(query::executor::extractNormalizedWindows(batches), (std::vector<std::pair<int64_t, int64_t>>{{10, 20}}));
 }
 
 TEST(QuerySubcommandTest, PlansNarrowTimeSeriesPvSubqueryWithMetadataJoin)
