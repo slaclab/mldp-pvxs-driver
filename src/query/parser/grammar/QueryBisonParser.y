@@ -84,6 +84,10 @@
         {
             return value * 60 * 60;
         }
+        if (unit == 'd' || unit == 'D')
+        {
+            return value * 24 * 60 * 60;
+        }
 
         throw ParseError(
             "Unsupported duration unit in: " + duration,

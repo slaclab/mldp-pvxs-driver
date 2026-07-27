@@ -144,7 +144,7 @@ static const std::unordered_map<std::string, TokenType> kKeywords = {
 WHITESPACE   [ \t\r\n]+
 IDENTIFIER   [A-Za-z_][A-Za-z0-9_]*
 NUMBER       [0-9]+
-DURATION     [0-9]+[sSmMhH]
+DURATION     [0-9]+[sSmMhHdD]
 SINGLE_QUOTE \'([^\\\n\']|\\.)*\'
 DOUBLE_QUOTE \"([^\\\n\"]|\\.)*\"
 

@@ -40,6 +40,17 @@ TEST(QueryLexerTest, TokenizesKeywordsAndDurationLiteralsCaseInsensitive)
     EXPECT_EQ(tokens[11].lexeme, "60s");
 }
 
+TEST(QueryLexerTest, TokenizesDayDurationLiteralsCaseInsensitively)
+{
+    const auto tokens = Lexer("1d 2D").tokenize();
+    ASSERT_EQ(tokens.size(), 3U);
+    EXPECT_EQ(tokens[0].type, TokenType::DURATION_LITERAL);
+    EXPECT_EQ(tokens[0].lexeme, "1d");
+    EXPECT_EQ(tokens[1].type, TokenType::DURATION_LITERAL);
+    EXPECT_EQ(tokens[1].lexeme, "2D");
+    EXPECT_EQ(tokens[2].type, TokenType::END_OF_INPUT);
+}
+
 TEST(QueryLexerTest, TokenizesEveryPunctuationAndOperatorClass)
 {
     const auto tokens = Lexer("* , . ( ) + - = != < <= > >= 123 45m 'single' \"double\"").tokenize();
@@ -94,7 +105,7 @@ TEST(QueryParserTest, ParsesNullPredicates)
 
 TEST(QueryParserTest, ParsesExpressionPrecedenceAndDurationLiterals)
 {
-    const auto statement = parseQuery("SELECT value + 2 * 3, activation.time + 2s FROM samples");
+    const auto statement = parseQuery("SELECT value + 2 * 3, activation.time + 2D FROM samples");
     const auto& select = std::get<SelectStatement>(statement);
     ASSERT_EQ(select.select_items.size(), 2U);
     const auto& first = std::get<BinaryExpression>(select.select_items[0].expression->value);
@@ -103,7 +114,14 @@ TEST(QueryParserTest, ParsesExpressionPrecedenceAndDurationLiterals)
     const auto& second = std::get<BinaryExpression>(select.select_items[1].expression->value);
     EXPECT_EQ(second.operator_name, "+");
     ASSERT_TRUE(std::holds_alternative<LiteralValue>(second.right->value));
-    EXPECT_EQ(std::get<DurationNsLiteral>(std::get<LiteralValue>(second.right->value)).value, 2000000000LL);
+    EXPECT_EQ(std::get<DurationNsLiteral>(std::get<LiteralValue>(second.right->value)).value, 172800000000000LL);
+}
+
+TEST(QueryParserTest, ParsesNowMinusDayDurationLiteral)
+{
+    const auto statement = parseQuery("SELECT * FROM samples WHERE time >= NOW - 1d");
+    const auto& predicate = std::get<OpPredicate>(std::get<SelectStatement>(statement).predicates.front());
+    EXPECT_EQ(std::get<NowLiteral>(predicate.value).offset_seconds, -86400);
 }
 
 TEST(QueryLexerTest, TokenizesBooleanAndTypedTemporalLiteralKeywordsCaseInsensitively)

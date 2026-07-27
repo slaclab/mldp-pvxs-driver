@@ -195,11 +195,11 @@ highest to lowest:
 
 Duration literals are a non-negative integer immediately followed by a
 case-insensitive unit suffix. The complete supported set is `s`/`S` for
-seconds, `m`/`M` for minutes, and `h`/`H` for hours. They retain nanosecond
-precision in expressions after conversion. Days, weeks, milliseconds, and
-compound forms such as `1h30m` are not duration literals; write their
-equivalent in one supported unit (for example, `36h`, `90m`, or `5s`).
-For example, `activation.time + 2s` produces a timestamp two seconds after
+seconds, `m`/`M` for minutes, `h`/`H` for hours, and `d`/`D` for fixed
+24-hour (86,400-second) days. They retain nanosecond precision in expressions
+after conversion. Weeks, milliseconds, and compound forms such as `1h30m` are
+not duration literals; write their equivalent in one supported unit (for
+example, `36h`, `2d`, `90m`, or `5s`). For example, `activation.time + 2s` produces a timestamp two seconds after
 `activation.time`. Existing `NOW`, `NOW + 2s`, and `NOW - 10m` predicate
 syntax remains available.
 
@@ -423,6 +423,7 @@ WHERE time >= NOW -1h AND time <= NOW
 WHERE time >= NOW -30m AND time <= NOW +5m
 WHERE time >= NOW -3600s AND time <= NOW
 WHERE time >= NOW -2H AND time <= NOW
+WHERE time >= NOW -1d AND time <= NOW
 ```
 
 Duration literals use the form `<non-negative-integer><unit>` with no space:
@@ -432,11 +433,13 @@ Duration literals use the form `<non-negative-integer><unit>` with no space:
 | `s` or `S` | seconds | `5s`, `3600S` |
 | `m` or `M` | minutes | `30m`, `90M` |
 | `h` or `H` | hours | `1h`, `36H` |
+| `d` or `D` | fixed 24-hour days | `1d`, `2D` |
 
-The parser does not accept `d` for days, `w` for weeks, `ms` for milliseconds,
-or compound durations such as `1h30m`. Express those intervals with a single
-supported unit instead: `24h` for one day, `168h` for one week, and `90m` for
-one hour and thirty minutes. For sub-second precision, use the explicit
+Each day is exactly 86,400 seconds, rather than a timezone-aware calendar day.
+The parser does not accept `w` for weeks, `ms` for milliseconds, or compound
+durations such as `1h30m`. Express those intervals with a single supported
+unit instead: `1d` for one day, `7d` for one week, and `90m` for one hour and
+thirty minutes. For sub-second precision, use the explicit
 `duration_ns(<signed-integer-nanoseconds>)` constructor where a duration value
 is accepted.
 
