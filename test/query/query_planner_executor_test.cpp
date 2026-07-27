@@ -738,6 +738,40 @@ TEST_F(PlannerExecutorTest, FiltersMaterializedNativeUnionValuesByActiveTypeWith
     EXPECT_EQ(equal->num_rows(), 1);
 }
 
+TEST_F(PlannerExecutorTest, FormatsUtcTimestampsInIanaZonesAndFixedOffsets)
+{
+    auto file_system = std::make_shared<arrow::fs::internal::MockFileSystem>(std::chrono::system_clock::now());
+    auto catalog = std::make_shared<query::QueryTableCatalog>(file_system, "catalog");
+    arrow::TimestampBuilder time(arrow::timestamp(arrow::TimeUnit::SECOND, "UTC"), arrow::default_memory_pool());
+    ASSERT_TRUE(time.Append(1'769'538'800).ok()); // 2026-01-27T18:33:20Z
+    ASSERT_TRUE(time.Append(1'753'978'800).ok()); // 2025-07-31T16:20:00Z
+    ASSERT_TRUE(time.AppendNull().ok());
+    std::shared_ptr<arrow::Array> timestamps;
+    ASSERT_TRUE(time.Finish(&timestamps).ok());
+    const auto batch = arrow::RecordBatch::Make(arrow::schema({arrow::field("time", timestamps->type())}), 3, {timestamps});
+    ASSERT_TRUE(catalog->create("utc_samples", query::TableLifetime::Session, {batch}).ok());
+
+    query::ExecutionContext context{.pool = arrow::default_memory_pool(), .table_catalog = catalog};
+    query::QueryPlanner planner(catalog);
+    query::QueryExecutor executor;
+    const auto result = executor.execute(planner.plan(query::parseQuery(
+        "SELECT from_utc(time, 'America/Los_Angeles') AS pacific, from_utc(time, '-07:00') AS fixed FROM utc_samples")), context);
+
+    ASSERT_EQ(result.batches.size(), 1U);
+    const auto& output = result.batches.front();
+    ASSERT_EQ(output->num_rows(), 3);
+    EXPECT_EQ(output->schema()->field(0)->type()->id(), arrow::Type::STRING);
+    EXPECT_EQ(output->column(0)->GetScalar(0).ValueOrDie()->ToString(), "2026-01-27T10:33:20-08:00");
+    EXPECT_EQ(output->column(0)->GetScalar(1).ValueOrDie()->ToString(), "2025-07-31T09:20:00-07:00");
+    EXPECT_EQ(output->column(1)->GetScalar(0).ValueOrDie()->ToString(), "2026-01-27T11:33:20-07:00");
+    EXPECT_FALSE(output->column(0)->GetScalar(2).ValueOrDie()->is_valid);
+
+    EXPECT_THROW(executor.execute(planner.plan(query::parseQuery(
+        "SELECT from_utc(time, '-7:00') FROM utc_samples")), context), std::invalid_argument);
+    EXPECT_THROW(executor.execute(planner.plan(query::parseQuery(
+        "SELECT from_utc(time, 'Not/AZone') FROM utc_samples")), context), std::invalid_argument);
+}
+
 TEST_F(PlannerExecutorTest, FiltersNativeTimestampAndDurationUnionValuesWithTypedLiterals)
 {
     auto file_system = std::make_shared<arrow::fs::internal::MockFileSystem>(std::chrono::system_clock::now());
@@ -1093,10 +1127,12 @@ TEST_F(PlannerExecutorTest, ShowFunctionsAndOperatorsExposeSortedCallableCatalog
     EXPECT_EQ(function_batch->schema()->field(0)->name(), "name");
     EXPECT_EQ(function_batch->schema()->field(1)->name(), "arguments");
     EXPECT_EQ(function_batch->schema()->field(2)->name(), "returns");
-    ASSERT_EQ(function_batch->num_rows(), 2);
-    EXPECT_EQ(function_batch->column(0)->GetScalar(0).ValueOrDie()->ToString(), "to_utc");
-    EXPECT_EQ(function_batch->column(1)->GetScalar(0).ValueOrDie()->ToString(), "(string)");
-    EXPECT_EQ(function_batch->column(1)->GetScalar(1).ValueOrDie()->ToString(), "(string, string)");
+    ASSERT_EQ(function_batch->num_rows(), 3);
+    EXPECT_EQ(function_batch->column(0)->GetScalar(0).ValueOrDie()->ToString(), "from_utc");
+    EXPECT_EQ(function_batch->column(1)->GetScalar(0).ValueOrDie()->ToString(), "(timestamp, string)");
+    EXPECT_EQ(function_batch->column(0)->GetScalar(1).ValueOrDie()->ToString(), "to_utc");
+    EXPECT_EQ(function_batch->column(1)->GetScalar(1).ValueOrDie()->ToString(), "(string)");
+    EXPECT_EQ(function_batch->column(1)->GetScalar(2).ValueOrDie()->ToString(), "(string, string)");
 
     const auto operators = executor.execute(planner.plan(query::parseQuery("SHOW OPERATORS")), context);
     ASSERT_EQ(operators.batches.size(), 1U);

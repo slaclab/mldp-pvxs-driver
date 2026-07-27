@@ -210,6 +210,7 @@ For developer information and contribution guidelines see [CONTRIBUTING.md](CONT
 - [spdlog](https://github.com/gabime/spdlog) v1.16.0 provides structured logging.
 - [prometheus-cpp](https://github.com/jupp0r/prometheus-cpp) v1.3.0 provides the metrics registry and HTTP exporter.
 - [argparse](https://github.com/p-ranav/argparse) v3.2 provides CLI argument parsing.
+- [date](https://github.com/HowardHinnant/date) v3.0.1 provides IANA timezone and daylight-saving conversion for query timestamp formatting.
 - [rapidyaml](https://github.com/biojppm/rapidyaml) 0.10.0 (vendored in `ext/rapidyaml`) parses the YAML configuration.
 - [BS::thread_pool](https://github.com/bshoshany/thread-pool) 5.0.0 (vendored in `ext/BS_thread_pool`) provides the controller worker thread pool.
 - libevent (system library; required when statically linking PVXS) supplies PVXS' event loop dependencies in static builds.

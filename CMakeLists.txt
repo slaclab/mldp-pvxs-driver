@@ -30,6 +30,7 @@ set(CPP_HTTPLIB_VERSION "v0.16.3")
 set(DP_GRPC_VERSION "rel-1.14.0")
 set(ARROW_VERSION "apache-arrow-18.1.0")
 set(REPLXX_VERSION "release-0.0.4")
+set(DATE_VERSION "v3.0.1")
 
 # Output directories
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
@@ -131,6 +132,22 @@ FetchContent_Declare(nlohmann_json
 set(JSON_BuildTests OFF CACHE BOOL "" FORCE)
 set(JSON_Install OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(nlohmann_json)
+
+# IANA timezone conversion for SQL from_utc().  Keep the library small and use
+# the host timezone database rather than downloading a separate copy at build
+# time.
+message(STATUS "Acquiring date/tz version ${DATE_VERSION}...")
+set(BUILD_TZ_LIB ON CACHE BOOL "" FORCE)
+set(USE_SYSTEM_TZ_DB ON CACHE BOOL "" FORCE)
+set(ENABLE_DATE_TESTING OFF CACHE BOOL "" FORCE)
+set(DATE_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+set(DATE_INSTALL OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(date
+    GIT_REPOSITORY https://github.com/HowardHinnant/date.git
+    GIT_TAG ${DATE_VERSION}
+    GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(date)
 
 # Acquire Apache Arrow for the query client. Keep the embedded build limited to
 # the core components required by the driver; Flight is explicitly opt-in.
@@ -665,6 +682,7 @@ add_library(lib${PROJECT_NAME}
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/QueryPlanner.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/ScalarFunctionRegistry.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/ExpressionRegistry.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/Timezone.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/QueryTableCatalog.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/QueryExecutor.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/ExecutionState.cpp"
@@ -751,6 +769,7 @@ target_link_libraries(lib${PROJECT_NAME} PUBLIC
     CURL::libcurl
     nlohmann_json::nlohmann_json
     arrow_static
+    date::date-tz
     $<$<BOOL:${MLDP_PVXS_ENABLE_HDF5}>:${_MLDP_HDF5_TARGET}>
 )
 if(MLDP_QUERY_CLIENT_FLIGHT)

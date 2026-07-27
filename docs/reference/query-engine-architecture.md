@@ -102,7 +102,7 @@ encoding either temporal value as a plain integer.
 
 The parser represents scalar calls as recursive `FunctionCall` expressions, so function syntax is generic and new built-ins do not require lexer changes. `ScalarFunctionRegistry` owns built-in signatures and constant evaluation. Predicate values must be constant so they can be type-checked and folded before existing backend predicate pushdown.
 
-`ExpressionRegistry` is the immutable catalog of typed scalar callables. It supplies `to_utc(STRING)` and `to_utc(STRING, STRING)`, whose calls return a UTC epoch-second timestamp. The first form accepts an ISO-8601 `Z` or explicit-offset instant; the second form accepts a local timestamp and explicit `+/-HH:MM` offset. The same catalog exposes arithmetic, comparison, boolean, and unary-sign operator descriptors through `SHOW OPERATORS`; only executable callables are listed. Named IANA zones and DST disambiguation require the pending `date/tz` runtime integration.
+`ExpressionRegistry` is the immutable catalog of typed scalar callables. It supplies `to_utc(STRING)` and `to_utc(STRING, STRING)`, whose calls return a UTC epoch-second timestamp. The first form accepts an ISO-8601 `Z` or explicit-offset instant; the second form accepts a local timestamp and explicit `+/-HH:MM` offset. `from_utc(TIMESTAMP, STRING)` evaluates in projection execution and renders the same instant as an ISO-8601 string in an IANA timezone or fixed `+/-HH:MM` offset. IANA resolution uses `date/tz` and the host timezone database, so its output applies daylight saving time at the source instant. The same catalog exposes arithmetic, comparison, boolean, and unary-sign operator descriptors through `SHOW OPERATORS`; only executable callables are listed.
 
 ---
 

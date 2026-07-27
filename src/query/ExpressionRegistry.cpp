@@ -40,6 +40,7 @@ private:
 
 // Concrete types deliberately make each language feature independently addressable.
 class ToUtcFunction final : public Callable { public: ToUtcFunction(std::vector<ColumnType> args, std::string example) : Callable({"to_utc", ExpressionCallableKind::FUNCTION, std::move(args), ColumnType::TIMESTAMP, "Convert an ISO-8601 timestamp to UTC epoch seconds.", std::move(example)}) {} };
+class FromUtcFunction final : public Callable { public: FromUtcFunction() : Callable({"from_utc", ExpressionCallableKind::FUNCTION, {ColumnType::TIMESTAMP, ColumnType::STRING}, ColumnType::STRING, "Format a UTC timestamp in an IANA timezone or fixed UTC offset.", "from_utc(time, 'America/Los_Angeles')"}) {} };
 class AddOperator final : public Callable { public: AddOperator(std::vector<ColumnType> args, ColumnType result, std::string example) : Callable({"+", ExpressionCallableKind::BINARY_OPERATOR, std::move(args), result, "Add numeric values or a duration to a timestamp.", std::move(example)}) {} };
 class SubtractOperator final : public Callable { public: SubtractOperator(std::vector<ColumnType> args, ColumnType result, std::string example) : Callable({"-", ExpressionCallableKind::BINARY_OPERATOR, std::move(args), result, "Subtract numeric values, timestamps, or durations.", std::move(example)}) {} };
 class MultiplyOperator final : public Callable { public: MultiplyOperator() : Callable({"*", ExpressionCallableKind::BINARY_OPERATOR, {ColumnType::INT, ColumnType::INT}, ColumnType::INT, "Multiply numeric values.", "2 * 3"}) {} };
@@ -69,6 +70,7 @@ ExpressionRegistry::ExpressionRegistry()
 {
     registerCallable(std::make_unique<ToUtcFunction>(std::vector<ColumnType>{ColumnType::STRING}, "to_utc('2026-07-23T09:00:00Z')"));
     registerCallable(std::make_unique<ToUtcFunction>(std::vector<ColumnType>{ColumnType::STRING, ColumnType::STRING}, "to_utc('2026-07-23 09:00:00', '-07:00')"));
+    registerCallable(std::make_unique<FromUtcFunction>());
     registerCallable(std::make_unique<AddOperator>(std::vector<ColumnType>{ColumnType::INT, ColumnType::INT}, ColumnType::INT, "1 + 2"));
     registerCallable(std::make_unique<AddOperator>(std::vector<ColumnType>{ColumnType::TIMESTAMP, ColumnType::DURATION_SECONDS}, ColumnType::TIMESTAMP, "time + duration_ns(2)"));
     registerCallable(std::make_unique<SubtractOperator>(std::vector<ColumnType>{ColumnType::INT, ColumnType::INT}, ColumnType::INT, "3 - 1"));

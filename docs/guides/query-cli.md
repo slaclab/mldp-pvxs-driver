@@ -160,7 +160,7 @@ When input is redirected or supplied by a script, the REPL retains plain line-ba
 
 ### Scalar timestamp functions
 
-Scalar functions may be used in `WHERE` values. Function names are case-insensitive and calls may be nested. The built-in `to_utc` converts a user-facing timestamp into the query engine's UTC epoch-second timestamp value.
+The query engine accepts scalar functions in constant `WHERE` values and `SELECT` projections. Function names are case-insensitive and calls may be nested. The built-in `to_utc` converts a user-facing timestamp into the query engine's UTC epoch-second timestamp value.
 
 ```sql
 SELECT pv, time, value FROM mldp.time_series
@@ -173,11 +173,23 @@ WHERE time >= to_utc('2026-07-23 09:00:00', '-07:00');
 
 The one-argument form requires `Z` or an explicit `+/-HH:MM` offset. The two-argument form currently accepts an explicit offset. Results are truncated to epoch-second precision.
 
+`from_utc(timestamp, zone_or_offset)` is a `SELECT` projection function that renders a UTC timestamp as an ISO-8601 string in an IANA timezone or a fixed numeric offset. IANA zones apply the offset in effect for each instant, including daylight saving time; fixed offsets do not change.
+
+```sql
+SELECT config_name,
+       from_utc(time, 'America/Los_Angeles') AS pacific_time,
+       from_utc(end_time, '-07:00') AS fixed_offset_end_time
+FROM mldp.configuration_activation
+WHERE time >= NOW-120d;
+```
+
+Numeric offsets must be quoted and use `+/-HH:MM` form, for example `'-07:00'` or `'+05:30'`. A bare `-7:00` is not a timezone argument. Null timestamps return null strings; unknown IANA zones and malformed offsets fail the query.
+
 ### Callable discovery and type semantics
 
 `SHOW FUNCTIONS` and `SHOW OPERATORS` list the executable scalar-language catalog used by the planner. They are useful for feature discovery and return normal Arrow query results, so all output formats work consistently. Function rows contain `name`, `arguments`, `returns`, `description`, and `example`; operator rows contain `symbol`, `arity`, `arguments`, `returns`, `description`, and `example`.
 
-The catalog is sorted deterministically by function name or operator symbol and signature. Scalar call names are case-insensitive. Operator/function overloads exclude `native_value`; mismatched argument types fail during planning. `SHOW FUNCTIONS` currently lists `to_utc(string)` and `to_utc(string, string)`; use `SHOW OPERATORS` for the exact supported operator signatures.
+The catalog is sorted deterministically by function name or operator symbol and signature. Scalar call names are case-insensitive. Operator/function overloads exclude `native_value`; mismatched argument types fail during planning. `SHOW FUNCTIONS` currently lists `from_utc(timestamp, string)`, `to_utc(string)`, and `to_utc(string, string)`; use `SHOW OPERATORS` for the exact supported operator signatures.
 
 ### Expressions and operators
 

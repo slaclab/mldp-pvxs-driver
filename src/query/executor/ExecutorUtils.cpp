@@ -10,6 +10,7 @@
 
 #include <query/QueryExecutor.h>
 #include <query/ExpressionRegistry.h>
+#include <query/Timezone.h>
 
 #include <query/executor/ExecutorUtils.h>
 #include <query/executor/StateInternal.h>
@@ -761,7 +762,22 @@ std::shared_ptr<arrow::Scalar> evaluateExpression(const ExpressionPtr& expressio
             if (value.operator_name == ">=") return std::make_shared<arrow::BooleanScalar>(lhs >= rhs);
             throw std::runtime_error("Unsupported expression operator: " + value.operator_name);
         }
-        else { throw std::runtime_error("Function evaluation is not implemented: " + value.name); }
+        else if constexpr (std::is_same_v<T, FunctionCall>)
+        {
+            std::string name = value.name;
+            std::transform(name.begin(), name.end(), name.begin(), [](const unsigned char character) { return static_cast<char>(std::tolower(character)); });
+            if (name == "from_utc")
+            {
+                if (value.arguments.size() != 2) throw std::runtime_error("from_utc has no matching overload");
+                const auto timestamp = evaluateExpression(value.arguments[0], batch, row);
+                const auto zone = evaluateExpression(value.arguments[1], batch, row);
+                if (!timestamp->is_valid || !zone->is_valid) return std::make_shared<arrow::StringScalar>();
+                if (timestamp->type->id() != arrow::Type::TIMESTAMP || zone->type->id() != arrow::Type::STRING)
+                    throw std::runtime_error("from_utc has no matching overload");
+                return std::make_shared<arrow::StringScalar>(fromUtc(*std::static_pointer_cast<arrow::TimestampScalar>(timestamp), std::static_pointer_cast<arrow::StringScalar>(zone)->value->ToString()));
+            }
+            throw std::runtime_error("Function evaluation is not implemented: " + value.name);
+        }
     }, expression->value);
 }
 
