@@ -82,6 +82,10 @@ struct IsNotNullPredicate {
     QualifiedColumn column;
 };
 
+struct IsNullPredicate {
+    QualifiedColumn column;
+};
+
 struct RangePredicate {
     QualifiedColumn column;
     LiteralValue    lower;
@@ -99,7 +103,7 @@ struct OpPredicate {
     ExpressionPtr      expression;
 };
 
-using WherePredicate = std::variant<EqPredicate, InPredicate, RangePredicate, OpPredicate, IsNotNullPredicate>;
+using WherePredicate = std::variant<EqPredicate, InPredicate, RangePredicate, OpPredicate, IsNullPredicate, IsNotNullPredicate>;
 
 struct TableRef {
     std::string              table_name;

@@ -382,6 +382,10 @@ plan::PlannerPredicate buildPredicate(const WherePredicate& where,
             {
                 bound.op = PredicateOp::IS_NOT_NULL;
             }
+            else if constexpr (std::is_same_v<std::decay_t<decltype(predicate)>, IsNullPredicate>)
+            {
+                bound.op = PredicateOp::IS_NULL;
+            }
             else
             {
                 bound.op = mapBinaryOp(predicate.op);

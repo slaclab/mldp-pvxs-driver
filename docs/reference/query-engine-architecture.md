@@ -331,11 +331,12 @@ An unfiltered query lists all configurations. Predicates narrow that list on the
 
 | Column | Pushable ops | Notes |
 |---|---|---|
-| `time` | `=`, `>=`, `<=` | Timestamp criterion on activation start time. |
+| `time` | `=`, `!=`, `<`, `<=`, `>`, `>=` | Activation start time; annotation-service candidates are locally verified. |
+| `end_time` | `=`, `!=`, `<`, `<=`, `>`, `>=`, `IS NULL`, `IS NOT NULL` (local) | Activation end time; null means open. |
 | `config_name` | `=`, `IN` | Configuration name criterion. |
 | `activation_id` | `=`, `IN` | Client activation ID criterion. |
 
-At least one pushable predicate is required.
+At least one predicate is required. Timestamp predicates are evaluated locally after fetching the annotation-service candidate set.
 
 ### `mldp.active_configurations` — `MLDPAnnotationQueryClient`
 

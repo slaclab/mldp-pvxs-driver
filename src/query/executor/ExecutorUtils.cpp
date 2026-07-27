@@ -57,6 +57,7 @@ std::string joinOpsImpl(const std::set<PredicateOp>& ops)
             case PredicateOp::CONTAINS: return "CONTAINS";
             case PredicateOp::LIKE: return "LIKE";
             case PredicateOp::BETWEEN: return "BETWEEN";
+            case PredicateOp::IS_NULL: return "IS NULL";
             case PredicateOp::IS_NOT_NULL: return "IS NOT NULL";
         }
         return "unknown";
@@ -370,6 +371,10 @@ NativeScalar nativeScalarFromLiteral(const ExecutableLiteralValue& literal)
 
 bool scalarMatchesPredicate(const std::shared_ptr<arrow::Scalar>& scalar, const Predicate& predicate)
 {
+    if (predicate.op == PredicateOp::IS_NULL)
+    {
+        return !scalar || !scalar->is_valid;
+    }
     if (predicate.op == PredicateOp::IS_NOT_NULL)
     {
         return scalar && scalar->is_valid;
@@ -400,6 +405,12 @@ bool scalarMatchesPredicate(const std::shared_ptr<arrow::Scalar>& scalar, const 
         {
             return kind == NativeScalar::Kind::SIGNED_INTEGER || kind == NativeScalar::Kind::UNSIGNED_INTEGER || kind == NativeScalar::Kind::FLOATING_POINT;
         };
+        if (native_value.kind == NativeScalar::Kind::TIMESTAMP && native_literal.kind == NativeScalar::Kind::SIGNED_INTEGER)
+        {
+            const auto lhs = std::get<int64_t>(native_value.value) / 1'000'000'000LL;
+            const auto rhs = std::get<int64_t>(native_literal.value);
+            return compareNumeric(lhs, rhs, op);
+        }
         if (native_value.kind != native_literal.kind && !(numeric_kind(native_value.kind) && numeric_kind(native_literal.kind)))
         {
             return false;

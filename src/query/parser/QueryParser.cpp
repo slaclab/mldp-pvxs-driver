@@ -365,18 +365,24 @@ QueryStatement QueryParser::parse(const std::string_view sql)
         rewritten.replace(search, end - search, marker);
         search = alias_end - (end - search) + marker.size();
     }
-    // IS NOT NULL is a local-filter-only predicate.  Rewrite it to an
-    // otherwise impossible string comparison and restore its AST form below.
+    // Null predicates are local-filter-only. Rewrite them to otherwise
+    // impossible string comparisons and restore their AST forms below.
     std::size_t null_search = 0;
     while (null_search < rewritten.size())
     {
         const auto upper_tail = uppercase(std::string_view(rewritten).substr(null_search));
-        const auto relative = upper_tail.find(" IS NOT NULL");
+        const auto null_relative = upper_tail.find(" IS NULL");
+        const auto not_null_relative = upper_tail.find(" IS NOT NULL");
+        const auto relative = null_relative == std::string::npos ? not_null_relative
+            : not_null_relative == std::string::npos ? null_relative
+                                                     : std::min(null_relative, not_null_relative);
         if (relative == std::string::npos) break;
         null_search += relative;
-        const auto marker = "__is_not_null_" + std::to_string(is_not_null.size());
-        is_not_null.emplace(marker, true);
-        rewritten.replace(null_search, std::string_view{" IS NOT NULL"}.size(), " != '" + marker + "'");
+        const bool negated = uppercase(std::string_view(rewritten).substr(null_search)).starts_with(" IS NOT NULL");
+        const auto marker = std::string(negated ? "__is_not_null_" : "__is_null_") + std::to_string(is_not_null.size());
+        is_not_null.emplace(marker, negated);
+        const auto length = negated ? std::string_view{" IS NOT NULL"}.size() : std::string_view{" IS NULL"}.size();
+        rewritten.replace(null_search, length, " != '" + marker + "'");
         null_search += marker.size() + 6;
     }
     std::unordered_map<std::string, double> decimals;
@@ -452,7 +458,9 @@ QueryStatement QueryParser::parse(const std::string_view sql)
             }
             else if (const auto* op = std::get_if<OpPredicate>(&predicate); op != nullptr && op->op == PredicateBinaryOp::NEQ && std::holds_alternative<std::string>(op->value) && is_not_null.contains(std::get<std::string>(op->value)))
             {
-                predicate = IsNotNullPredicate{.column = op->column};
+                predicate = is_not_null.at(std::get<std::string>(op->value))
+                    ? WherePredicate{IsNotNullPredicate{.column = op->column}}
+                    : WherePredicate{IsNullPredicate{.column = op->column}};
             }
         }
         return result;

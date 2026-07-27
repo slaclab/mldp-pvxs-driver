@@ -82,6 +82,16 @@ TEST(QueryParserTest, ParsesCallableDiscoveryStatements)
     EXPECT_TRUE(std::holds_alternative<ShowOperatorsStatement>(parseQuery("SHOW OPERATORS")));
 }
 
+TEST(QueryParserTest, ParsesNullPredicates)
+{
+    const auto statement = parseQuery("SELECT * FROM mldp.configuration_activation WHERE end_time IS NULL AND time >= NOW - 7m AND end_time IS NOT NULL");
+    const auto& select = std::get<SelectStatement>(statement);
+    ASSERT_EQ(select.predicates.size(), 3U);
+    EXPECT_TRUE(std::holds_alternative<IsNullPredicate>(select.predicates[0]));
+    EXPECT_EQ(std::get<IsNullPredicate>(select.predicates[0]).column.name, "end_time");
+    EXPECT_TRUE(std::holds_alternative<IsNotNullPredicate>(select.predicates[2]));
+}
+
 TEST(QueryParserTest, ParsesExpressionPrecedenceAndDurationLiterals)
 {
     const auto statement = parseQuery("SELECT value + 2 * 3, activation.time + 2s FROM samples");

@@ -348,6 +348,54 @@ const std::set<std::string_view> FakeQueryable::kVirtualTables = {"fake.samples"
 const std::set<std::string_view> EmptyWideInputQueryable::kVirtualTables = {
     "mldp.time_series", "mldp.time_series_table", "mldp.pv_metadata", "mldp.configuration_activation"};
 
+class ActivationTimestampQueryable final : public query::IQueryable
+{
+public:
+    static const std::set<std::string_view> kVirtualTables;
+    inline static std::vector<query::Predicate> received_predicates;
+
+    explicit ActivationTimestampQueryable(const config::Config&, std::shared_ptr<metrics::Metrics> = nullptr)
+    {
+    }
+
+    std::set<std::string_view> virtualTables() const override
+    {
+        return kVirtualTables;
+    }
+
+    std::vector<query::ColumnSchema> tableSchema(std::string_view) const override
+    {
+        const auto timestamp_ops = std::set<query::PredicateOp>{query::PredicateOp::EQ, query::PredicateOp::NEQ, query::PredicateOp::LT, query::PredicateOp::LTE, query::PredicateOp::GT, query::PredicateOp::GTE};
+        const auto end_time_ops = std::set<query::PredicateOp>{query::PredicateOp::EQ, query::PredicateOp::NEQ, query::PredicateOp::LT, query::PredicateOp::LTE, query::PredicateOp::GT, query::PredicateOp::GTE, query::PredicateOp::IS_NULL, query::PredicateOp::IS_NOT_NULL};
+        return {{"time", query::ColumnType::TIMESTAMP, false, true, timestamp_ops, timestamp_ops, "Activation start"},
+                {"end_time", query::ColumnType::TIMESTAMP, false, true, end_time_ops, end_time_ops, "Activation end"}};
+    }
+
+    query::QueryResult execute(std::string_view,
+                               const std::vector<query::Predicate>& predicates,
+                               const std::set<std::string>&,
+                               const query::ExecutionContext&,
+                               std::string_view = {}) override
+    {
+        received_predicates = predicates;
+        arrow::TimestampBuilder time(arrow::timestamp(arrow::TimeUnit::NANO), arrow::default_memory_pool());
+        arrow::TimestampBuilder end_time(arrow::timestamp(arrow::TimeUnit::NANO), arrow::default_memory_pool());
+        EXPECT_TRUE(time.Append(10'000'000'000LL).ok());
+        EXPECT_TRUE(time.Append(5'000'000'000LL).ok());
+        EXPECT_TRUE(end_time.Append(20'000'000'000LL).ok());
+        EXPECT_TRUE(end_time.AppendNull().ok());
+        std::shared_ptr<arrow::Array> starts;
+        std::shared_ptr<arrow::Array> ends;
+        EXPECT_TRUE(time.Finish(&starts).ok());
+        EXPECT_TRUE(end_time.Finish(&ends).ok());
+        return {.batch = arrow::RecordBatch::Make(
+                    arrow::schema({arrow::field("time", starts->type()), arrow::field("end_time", ends->type())}),
+                    starts->length(), {starts, ends})};
+    }
+};
+
+const std::set<std::string_view> ActivationTimestampQueryable::kVirtualTables = {"mldp.configuration_activation"};
+
 class PlannerExecutorTest : public ::testing::Test
 {
 protected:
@@ -777,6 +825,45 @@ TEST_F(PlannerExecutorTest, FoldsToUtcPredicateToEpochSecondsBeforePushdown)
     ASSERT_EQ(time->values.size(), 1U);
     ASSERT_TRUE(std::holds_alternative<int64_t>(time->values.front()));
     EXPECT_EQ(std::get<int64_t>(time->values.front()), 10);
+}
+
+TEST(ActivationTimestampPredicateTest, RetainsTimestampPredicatesForExactLocalFiltering)
+{
+    query::QueryableFactory::instance().reset();
+    query::QueryableFactory::instance().prepare<ActivationTimestampQueryable>(config::Config::configFromYamlString("{}"));
+    ActivationTimestampQueryable::received_predicates.clear();
+
+    query::QueryPlanner  planner;
+    query::QueryExecutor executor;
+    const auto result = executor.execute(
+        planner.plan(query::parseQuery(
+            "SELECT time, end_time FROM mldp.configuration_activation "
+            "WHERE time >= 7 AND end_time <= 20")),
+        {.pool = arrow::default_memory_pool()});
+
+    ASSERT_EQ(ActivationTimestampQueryable::received_predicates.size(), 2U);
+    EXPECT_EQ(ActivationTimestampQueryable::received_predicates[0].column, "time");
+    EXPECT_EQ(ActivationTimestampQueryable::received_predicates[1].column, "end_time");
+    ASSERT_EQ(result.batches.size(), 1U);
+    EXPECT_EQ(result.batches.front()->num_rows(), 1);
+    query::QueryableFactory::instance().reset();
+}
+
+TEST(ActivationTimestampPredicateTest, FiltersOpenActivationsWithIsNull)
+{
+    query::QueryableFactory::instance().reset();
+    query::QueryableFactory::instance().prepare<ActivationTimestampQueryable>(config::Config::configFromYamlString("{}"));
+
+    query::QueryPlanner  planner;
+    query::QueryExecutor executor;
+    const auto result = executor.execute(
+        planner.plan(query::parseQuery(
+            "SELECT time FROM mldp.configuration_activation WHERE end_time IS NULL")),
+        {.pool = arrow::default_memory_pool()});
+
+    ASSERT_EQ(result.batches.size(), 1U);
+    EXPECT_EQ(result.batches.front()->num_rows(), 1);
+    query::QueryableFactory::instance().reset();
 }
 
 TEST_F(PlannerExecutorTest, RetainsFilterableOnlyPredicateForLocalExecution)

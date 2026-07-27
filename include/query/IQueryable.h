@@ -47,6 +47,7 @@ enum class PredicateOp
     CONTAINS,
     LIKE,
     BETWEEN,
+    IS_NULL,
     IS_NOT_NULL
 };
 

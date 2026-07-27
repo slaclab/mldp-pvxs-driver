@@ -24,6 +24,7 @@
 #include <arrow/type.h>
 #include <grpcpp/grpcpp.h>
 
+#include <algorithm>
 #include <iterator>
 #include <map>
 #include <memory>
@@ -79,8 +80,10 @@ std::vector<ColumnSchema> MLDPAnnotationQueryClient::tableSchema(std::string_vie
     }
     if (table_name == "mldp.configuration_activation")
     {
-        return {{"time", ColumnType::TIMESTAMP, false, true, {PredicateOp::EQ, PredicateOp::GTE, PredicateOp::LTE}, {}, "Activation time"},
-                {"end_time", ColumnType::TIMESTAMP, false, true, {}, {PredicateOp::IS_NOT_NULL}, "Activation end time; null while open"},
+        const auto timestampOps = std::set<PredicateOp>{PredicateOp::EQ, PredicateOp::NEQ, PredicateOp::LT, PredicateOp::LTE, PredicateOp::GT, PredicateOp::GTE};
+        const auto nullableTimestampOps = std::set<PredicateOp>{PredicateOp::EQ, PredicateOp::NEQ, PredicateOp::LT, PredicateOp::LTE, PredicateOp::GT, PredicateOp::GTE, PredicateOp::IS_NULL, PredicateOp::IS_NOT_NULL};
+        return {{"time", ColumnType::TIMESTAMP, false, true, timestampOps, timestampOps, "Activation start time; backend candidate set is locally verified"},
+                {"end_time", ColumnType::TIMESTAMP, false, true, nullableTimestampOps, nullableTimestampOps, "Activation end time; null while open; backend candidate set is locally verified"},
                 {"config_name", ColumnType::STRING, false, true, {PredicateOp::EQ, PredicateOp::IN}, stringFilter, "Configuration name"},
                 {"activation_id", ColumnType::STRING, false, true, {PredicateOp::EQ, PredicateOp::IN}, stringFilter, "Activation identifier"},
                 {"description", ColumnType::STRING, false, true, {}, stringFilter, "Description"},
@@ -132,6 +135,41 @@ int64_t timestampValue(const Predicate& predicate)
     if (predicate.values.size() != 1 || !std::holds_alternative<int64_t>(predicate.values.front()))
         throw std::invalid_argument("Annotation timestamp predicate requires one integer timestamp");
     return std::get<int64_t>(predicate.values.front());
+}
+
+bool addActivationTimeRangeCriterion(
+    dp::service::annotation::QueryConfigurationActivationsRequest& request,
+    const std::vector<Predicate>& predicates)
+{
+    constexpr int64_t kMaximumTimestampSeconds = 253'402'300'799LL;
+    int64_t lower = 0;
+    int64_t upper = kMaximumTimestampSeconds;
+    bool    has_time_range = false;
+    for (const auto& predicate : predicates)
+    {
+        if (predicate.column != "time" ||
+            (predicate.op != PredicateOp::GTE && predicate.op != PredicateOp::GT &&
+             predicate.op != PredicateOp::LTE && predicate.op != PredicateOp::LT))
+            continue;
+        has_time_range = true;
+        const auto value = timestampValue(predicate);
+        if (predicate.op == PredicateOp::GTE || predicate.op == PredicateOp::GT)
+            lower = std::max(lower, value);
+        else if (value > 0)
+            upper = std::min(upper, predicate.op == PredicateOp::LTE ? value + 1 : value);
+    }
+    if (!has_time_range)
+    {
+        return false;
+    }
+    if (upper <= lower)
+    {
+        upper = lower == kMaximumTimestampSeconds ? kMaximumTimestampSeconds : lower + 1;
+    }
+    auto* range = request.add_criteria()->mutable_timerangecriterion();
+    setTimestamp(range->mutable_starttime(), lower);
+    setTimestamp(range->mutable_endtime(), upper);
+    return true;
 }
 
 void appendTimestamp(arrow::TimestampBuilder& builder, const dp::service::common::Timestamp& timestamp)
@@ -442,12 +480,18 @@ QueryResult MLDPAnnotationQueryClient::execute(std::string_view              tab
         dp::service::annotation::QueryConfigurationActivationsRequest request;
         request.set_limit(limit);
         request.set_pagetoken(std::string(page_token));
+        bool has_predicate = false;
         for (const auto& predicate : predicates)
         {
+            has_predicate = true;
+            if (predicate.column == "time" || predicate.column == "end_time")
+            {
+                if (predicate.op != PredicateOp::IS_NULL && predicate.op != PredicateOp::IS_NOT_NULL)
+                    (void)timestampValue(predicate);
+                continue;
+            }
             auto* criterion = request.add_criteria();
-            if (predicate.column == "time" && predicate.op == PredicateOp::EQ)
-                setTimestamp(criterion->mutable_timestampcriterion()->mutable_timestamp(), timestampValue(predicate));
-            else if (predicate.column == "config_name" && (predicate.op == PredicateOp::EQ || predicate.op == PredicateOp::IN))
+            if (predicate.column == "config_name" && (predicate.op == PredicateOp::EQ || predicate.op == PredicateOp::IN))
                 for (const auto& value : stringValues(predicate))
                     criterion->mutable_configurationnamecriterion()->add_values(value);
             else if (predicate.column == "activation_id" && (predicate.op == PredicateOp::EQ || predicate.op == PredicateOp::IN))
@@ -466,8 +510,11 @@ QueryResult MLDPAnnotationQueryClient::execute(std::string_view              tab
             else
                 throw std::invalid_argument("Unsupported mldp.configuration_activation predicate column or operator: " + predicate.column);
         }
-        if (request.criteria_size() == 0)
-            throw std::invalid_argument("mldp.configuration_activation requires at least one pushable predicate");
+        if (!has_predicate)
+            throw std::invalid_argument("mldp.configuration_activation requires at least one predicate");
+        // The annotation API range has overlap semantics, so it is only a
+        // candidate-set optimization. Exact endpoint semantics remain local.
+        addActivationTimeRangeCriterion(request, predicates);
         const auto records = queryAllPages<dp::service::common::ConfigurationActivation>(
             std::move(request),
             [this](const auto& page_request)

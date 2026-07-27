@@ -193,10 +193,15 @@ highest to lowest:
 5. `AND`
 6. `OR`
 
-Duration literals use `s`, `m`, or `h` and retain nanosecond precision in
-expressions. For example, `activation.time + 2s` produces a timestamp two
-seconds after `activation.time`. Existing `NOW`, `NOW + 2s`, and `NOW - 10m`
-predicate syntax remains available.
+Duration literals are a non-negative integer immediately followed by a
+case-insensitive unit suffix. The complete supported set is `s`/`S` for
+seconds, `m`/`M` for minutes, and `h`/`H` for hours. They retain nanosecond
+precision in expressions after conversion. Days, weeks, milliseconds, and
+compound forms such as `1h30m` are not duration literals; write their
+equivalent in one supported unit (for example, `36h`, `90m`, or `5s`).
+For example, `activation.time + 2s` produces a timestamp two seconds after
+`activation.time`. Existing `NOW`, `NOW + 2s`, and `NOW - 10m` predicate
+syntax remains available.
 
 ```sql
 SELECT value + 1 AS next_value,
@@ -417,9 +422,23 @@ WHERE time >= 1700000000 AND time <= 1700003600
 WHERE time >= NOW -1h AND time <= NOW
 WHERE time >= NOW -30m AND time <= NOW +5m
 WHERE time >= NOW -3600s AND time <= NOW
+WHERE time >= NOW -2H AND time <= NOW
 ```
 
-Duration suffixes: `s` = seconds, `m` = minutes, `h` = hours.
+Duration literals use the form `<non-negative-integer><unit>` with no space:
+
+| Unit | Meaning | Examples |
+|---|---|---|
+| `s` or `S` | seconds | `5s`, `3600S` |
+| `m` or `M` | minutes | `30m`, `90M` |
+| `h` or `H` | hours | `1h`, `36H` |
+
+The parser does not accept `d` for days, `w` for weeks, `ms` for milliseconds,
+or compound durations such as `1h30m`. Express those intervals with a single
+supported unit instead: `24h` for one day, `168h` for one week, and `90m` for
+one hour and thirty minutes. For sub-second precision, use the explicit
+`duration_ns(<signed-integer-nanoseconds>)` constructor where a duration value
+is accepted.
 
 ### Native value predicates
 
@@ -746,8 +765,8 @@ Time-windowed activation records for configurations.
 
 | Column | Type | Pushable operators | Notes |
 |---|---|---|---|
-| `time` | timestamp | `=`, `>=`, `<=` | Activation window start time. |
-| `end_time` | timestamp | `IS NOT NULL` (local) | Activation end time; null means the activation is open. |
+| `time` | timestamp | `=`, `!=`, `<`, `<=`, `>`, `>=` | Activation start time. The annotation-service candidate set is locally verified. |
+| `end_time` | timestamp | `=`, `!=`, `<`, `<=`, `>`, `>=`, `IS NULL`, `IS NOT NULL` (local) | Activation end time; null means the activation is open. |
 | `config_name` | string | `=`, `IN`, `LIKE` (local) | Configuration name. |
 | `activation_id` | string | `=`, `IN`, `LIKE` (local) | Client-assigned activation identifier. |
 | `description` | string | `LIKE` (local) | Free-text description. |
@@ -757,7 +776,7 @@ Time-windowed activation records for configurations.
 | `created_time` | timestamp | — | Record creation time. |
 | `updated_time` | timestamp | — | Last modification time. |
 
-At least one pushable predicate is required.
+At least one predicate is required. Timestamp predicates are evaluated locally after fetching the annotation-service candidate set.
 
 ```sql
 -- Activations for a specific configuration
@@ -768,7 +787,7 @@ WHERE config_name = 'injector_tuning'
 -- Activations in a time window
 SELECT time, config_name, activation_id
 FROM mldp.configuration_activation
-WHERE time >= NOW -2h AND time <= NOW
+WHERE time >= NOW -2h AND end_time <= NOW
 ```
 
 ---

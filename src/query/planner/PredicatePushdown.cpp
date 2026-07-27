@@ -59,7 +59,9 @@ plan::LogicalNodePtr rewrite(const plan::LogicalNodePtr& node)
                 // criterion still observe SQL semantics.
                 if (scan->table_name != "mldp.time_series_table" &&
                     (predicate.column == "tag" || predicate.column.rfind("attributes.", 0) == 0 ||
-                     predicate.column.rfind("provenance.", 0) == 0))
+                     predicate.column.rfind("provenance.", 0) == 0 ||
+                     (scan->table_name == "mldp.configuration_activation" &&
+                      (predicate.column == "time" || predicate.column == "end_time"))))
                 {
                     post_filter.push_back(predicate);
                 }

@@ -36,6 +36,7 @@
 #include <sstream>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -239,7 +240,9 @@ protected:
                            const std::string&          category,
                            const std::string&          activation_id,
                            const BusTimestamp&         start_time,
-                           std::optional<BusTimestamp> end_time = std::nullopt)
+                           std::optional<BusTimestamp> end_time = std::nullopt,
+                           std::optional<std::vector<std::string>> activation_tags = std::nullopt,
+                           std::unordered_map<std::string, std::string> activation_attributes = {})
     {
         auto writer = WriterFactory::create(
             "mldp-configuration",
@@ -259,6 +262,7 @@ protected:
         };
         ASSERT_TRUE(writer->push(std::move(configuration_batch)));
 
+        activation_attributes.insert({"namespace", nameSpace_});
         IDataBus::EventBatch activation_batch;
         activation_batch.payload = ConfigurationActivationPayload{
             .client_activation_id = activation_id,
@@ -266,7 +270,8 @@ protected:
             .start_time = start_time,
             .end_time = end_time,
             .description = "query integration activation",
-            .attributes = {{"namespace", nameSpace_}},
+            .tags = std::move(activation_tags),
+            .attributes = std::move(activation_attributes),
             .modified_by = "queryable_mldp_integration_test",
         };
         ASSERT_TRUE(writer->push(std::move(activation_batch)));
@@ -518,6 +523,49 @@ TEST_F(QueryableMldpIntegrationTest, WideTableUsesNormalizedLiteralWindow)
         EXPECT_GE(seconds, now_seconds - 1);
         EXPECT_LE(seconds, now_seconds + 4);
     }
+}
+
+TEST_F(QueryableMldpIntegrationTest, ConfigurationActivationsFilterByTagsAndAttributes)
+{
+    const auto now_seconds = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+    const auto configuration_name = configName("metadata_filter_configuration");
+    const auto activation_id = configName("metadata_filter_activation");
+    const auto activation_tag = configName("metadata_filter_tag");
+    const auto attribute_key = "query_filter";
+    const auto attribute_value = configName("metadata_filter_value");
+    seedConfiguration(configuration_name,
+                      "query-integration-category",
+                      activation_id,
+                      BusTimestamp{.epoch_seconds = now_seconds - 1, .nanoseconds = 0},
+                      BusTimestamp{.epoch_seconds = now_seconds + 1, .nanoseconds = 0},
+                      std::vector<std::string>{activation_tag},
+                      {{attribute_key, attribute_value}});
+
+    const auto expect_seeded_activation = [&](const std::string& sql, const std::string& description)
+    {
+        const auto result = pollSql(
+            sql,
+            description,
+            [&](const QueryExecutionResult& candidate)
+            {
+                return rowCount(candidate) == 1 && strings(candidate, 0) == std::vector<std::string>{activation_id};
+            });
+        ASSERT_EQ(rowCount(result), 1);
+        EXPECT_EQ(strings(result, 0), std::vector<std::string>{activation_id});
+        EXPECT_EQ(result.stats.rpc_calls, 1u);
+    };
+
+    expect_seeded_activation(
+        "SELECT activation_id FROM mldp.configuration_activation WHERE tag = " + quote(activation_tag),
+        "configuration activation selected by tag");
+    expect_seeded_activation(
+        std::string{"SELECT activation_id FROM mldp.configuration_activation WHERE attributes."} + attribute_key + " = " + quote(attribute_value),
+        "configuration activation selected by attribute");
+    expect_seeded_activation(
+        std::string{"SELECT activation_id FROM mldp.configuration_activation WHERE tag = "} + quote(activation_tag) +
+            " AND attributes." + attribute_key + " = " + quote(attribute_value),
+        "configuration activation selected by tag and attribute");
 }
 
 TEST_F(QueryableMldpIntegrationTest, AnnotationTablesAndJoinsReturnOnlySeededRecords)
