@@ -230,7 +230,7 @@ std::vector<std::pair<int64_t, int64_t>> extractNormalizedWindowsImpl(const std:
     return normalized;
 }
 
-bool matchesLikePattern(std::string_view value, std::string_view pattern)
+bool matchesLikePatternImpl(std::string_view value, std::string_view pattern)
 {
     struct PatternToken {
         enum class Type { LITERAL, ANY, SINGLE };
@@ -429,7 +429,7 @@ bool scalarMatchesPredicate(const std::shared_ptr<arrow::Scalar>& scalar, const 
             if (op == PredicateOp::CONTAINS)
                 return lhs.find(rhs) != std::string::npos;
             if (op == PredicateOp::LIKE)
-                return matchesLikePattern(lhs, rhs);
+                return matchesLikePatternImpl(lhs, rhs);
             if (op == PredicateOp::LT)
                 return lhs < rhs;
             if (op == PredicateOp::LTE)
@@ -1252,6 +1252,11 @@ std::string_view mldp_pvxs_driver::query::executor::columnTypeName(const ColumnT
 ColumnType mldp_pvxs_driver::query::executor::columnTypeFromArrow(const std::shared_ptr<arrow::DataType>& type)
 {
     return ::columnTypeFromArrowImpl(type);
+}
+
+bool mldp_pvxs_driver::query::executor::matchesLikePattern(const std::string_view value, const std::string_view pattern)
+{
+    return ::matchesLikePatternImpl(value, pattern);
 }
 
 std::vector<ExecutableLiteralValue> mldp_pvxs_driver::query::executor::extractInSubqueryValues(const RecordBatches& batches, const ColumnType type, const std::string_view column)

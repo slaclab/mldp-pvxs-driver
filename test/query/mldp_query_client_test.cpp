@@ -370,6 +370,47 @@ TEST(MLDPQueryClientTest, FiltersWholeNativeColumnsUsingTypeAndMetadataPredicate
     server->Shutdown();
 }
 
+TEST(MLDPQueryClientTest, SelectsWideCandidateColumnsWithMetadataTextPatterns)
+{
+    QueryService        service;
+    grpc::ServerBuilder builder;
+    int                 port = 0;
+    builder.AddListeningPort("127.0.0.1:0", grpc::InsecureServerCredentials(), &port);
+    builder.RegisterService(&service);
+    auto server = builder.BuildAndStart();
+    ASSERT_NE(server, nullptr);
+
+    MLDPQueryClient        client(makeQueryConfig("127.0.0.1:" + std::to_string(port)));
+    const ExecutionContext context{.pool = arrow::default_memory_pool(), .join_batch_size = 32};
+    const std::vector<Predicate> candidates = {
+        {.column = "pv", .op = PredicateOp::IN, .values = {std::string("RF:ONE"), std::string("MAG:ONE")}},
+    };
+    const auto expect_mag_one = [&](const Predicate predicate)
+    {
+        auto predicates = candidates;
+        predicates.push_back(predicate);
+        const auto result = client.execute("mldp.time_series_table", predicates, {}, context);
+        ASSERT_NE(result.batch, nullptr);
+        EXPECT_EQ(result.batch->schema()->field_names(), std::vector<std::string>({"time", "MAG:ONE"}));
+    };
+
+    expect_mag_one({.column = "attributes.device_group", .op = PredicateOp::PREFIX, .values = {std::string("MAG")}});
+    expect_mag_one({.column = "attributes.device_group", .op = PredicateOp::CONTAINS, .values = {std::string("AGNE")}});
+    expect_mag_one({.column = "provenance.process", .op = PredicateOp::LIKE, .values = {std::string("arch*")}});
+
+    const auto no_match = client.execute(
+        "mldp.time_series_table",
+        {{.column = "pv", .op = PredicateOp::IN, .values = {std::string("RF:ONE"), std::string("MAG:ONE")} },
+         {.column = "attributes.missing", .op = PredicateOp::PREFIX, .values = {std::string("anything")}},
+        },
+        {},
+        context);
+    EXPECT_EQ(no_match.batch, nullptr);
+    EXPECT_TRUE(no_match.next_page_token.empty());
+
+    server->Shutdown();
+}
+
 TEST(MLDPQueryClientTest, MaterializesAllNullWideColumnsAndHandlesEmptySelections)
 {
     QueryService        service;

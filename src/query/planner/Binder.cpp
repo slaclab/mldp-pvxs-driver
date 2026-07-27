@@ -351,10 +351,14 @@ plan::PlannerPredicate buildPredicate(const WherePredicate& where,
             else
             {
                 bound.column_type = ColumnType::STRING;
-                // Annotation services can match metadata attributes only by
-                // exact value. Other text operations run against the nullable
-                // Arrow virtual column after materialization.
-                bound.pushable_ops = {PredicateOp::EQ, PredicateOp::IN};
+                const bool time_series_metadata = bound_table->table_name == "mldp.time_series" ||
+                                                  bound_table->table_name == "mldp.time_series_table";
+                // The query client selects time-series candidate PVs with
+                // their returned metadata. Annotation services can push only
+                // exact attribute criteria; its text patterns run on Arrow.
+                bound.pushable_ops = time_series_metadata
+                                         ? std::set<PredicateOp>{PredicateOp::EQ, PredicateOp::IN, PredicateOp::PREFIX, PredicateOp::CONTAINS, PredicateOp::LIKE}
+                                         : std::set<PredicateOp>{PredicateOp::EQ, PredicateOp::IN};
                 bound.filterable_ops = defaultTextOps();
             }
 

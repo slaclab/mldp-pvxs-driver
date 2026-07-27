@@ -14,6 +14,7 @@
 
 #include <query/ExecutionContext.h>
 #include <query/QueryResult.h>
+#include <query/executor/ExecutorUtils.h>
 
 #include <util/log/Logger.h>
 
@@ -171,8 +172,19 @@ std::optional<std::string_view> columnValueKind(const dp::service::common::DataC
 
 bool matchesStringPredicate(const Predicate& predicate, const std::string_view value)
 {
+    if (predicate.op == PredicateOp::PREFIX || predicate.op == PredicateOp::CONTAINS || predicate.op == PredicateOp::LIKE)
+    {
+        if (predicate.values.size() != 1 || !std::holds_alternative<std::string>(predicate.values.front()))
+            throw std::invalid_argument("MLDP metadata predicate '" + predicate.column + "' requires one string value");
+        const auto& pattern = std::get<std::string>(predicate.values.front());
+        if (predicate.op == PredicateOp::PREFIX)
+            return value.rfind(pattern, 0) == 0;
+        if (predicate.op == PredicateOp::CONTAINS)
+            return value.find(pattern) != std::string_view::npos;
+        return executor::matchesLikePattern(value, pattern);
+    }
     if (predicate.op != PredicateOp::EQ && predicate.op != PredicateOp::IN)
-        throw std::invalid_argument("MLDP metadata predicate '" + predicate.column + "' requires = or IN");
+        throw std::invalid_argument("MLDP metadata predicate '" + predicate.column + "' requires =, IN, PREFIX, CONTAINS, or LIKE");
     for (const auto& candidate : predicate.values)
     {
         if (!std::holds_alternative<std::string>(candidate))

@@ -268,7 +268,8 @@ Time values are epoch seconds; the executor converts to nanoseconds internally. 
 | `window` | `IN (start, end)` or `IN (SELECT start, end ...)` | One literal inclusive interval or closed activation ranges used only to create wide-table requests. |
 | `time` | `>=`, `<=` | Translated to `QueryTableRequest.beginTime` / `endTime`. |
 | `column_type` | `=`, `IN` | Selects whole columns by native MLDP value kind. |
-| `tag`, `attributes.<key>`, `provenance.<key>` | `=`, `IN` | Select whole columns using MLDP column metadata. |
+| `tag` | `=`, `IN` | Select whole columns using exact tag membership. |
+| `attributes.<key>`, `provenance.<key>` | `=`, `IN`, `PREFIX`, `CONTAINS`, `LIKE` | Select candidate PV columns using returned MLDP column metadata. |
 | generated PV fields | — | One native typed Arrow column per returned requested PV, after `time`. |
 
 The query client maps one `TABLE_FORMAT_COLUMN` response directly to a wide
@@ -280,6 +281,8 @@ is attached to each generated PV Arrow field as key/value metadata: `tags`,
 `attributes.<key>`, `provenance.source`, and `provenance.process`. It is a special
 runtime-shaped table: `SELECT *` is required, and projections, predicates,
 `ORDER BY`, and joins over generated PV fields are not supported.
+
+Metadata text patterns are evaluated locally while selecting returned candidate PV columns; they do not change the gRPC request. A `pv =` or `pv IN (...)` candidate predicate is still required.
 
 Any `IN`-capable column accepts `IN (SELECT ...)`. The executor evaluates the
 single-column child first, rejects null or type-incompatible values, and

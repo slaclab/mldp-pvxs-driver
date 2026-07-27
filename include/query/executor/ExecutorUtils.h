@@ -23,6 +23,7 @@ namespace mldp_pvxs_driver::query::executor {
 std::string joinOps(const std::set<PredicateOp>& ops);
 std::string_view columnTypeName(ColumnType type);
 ColumnType columnTypeFromArrow(const std::shared_ptr<arrow::DataType>& type);
+bool matchesLikePattern(std::string_view value, std::string_view pattern);
 std::vector<ExecutableLiteralValue> extractInSubqueryValues(const RecordBatches& batches, ColumnType target_type, std::string_view target_column);
 std::vector<std::pair<int64_t, int64_t>> extractNormalizedWindows(const RecordBatches& batches);
 arrow::Result<std::shared_ptr<arrow::RecordBatch>> applyFilter(const std::shared_ptr<arrow::RecordBatch>& batch, const std::vector<Predicate>& predicates);
