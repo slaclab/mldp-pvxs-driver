@@ -1219,6 +1219,33 @@ TEST_F(PlannerExecutorTest, SelectsFiltersAndOrdersDynamicAttributeColumns)
     EXPECT_EQ(ordered.batches.front()->column(0)->GetScalar(0).ValueOrDie()->ToString(), "A");
 }
 
+TEST_F(PlannerExecutorTest, FiltersDynamicAttributePrefixLocallyAfterMaterialization)
+{
+    query::QueryPlanner  planner;
+    query::QueryExecutor executor;
+    const auto plan = planner.plan(query::parseQuery(
+        "SELECT pv FROM fake.meta WHERE pv IN ('A', 'C') AND attributes.device_group PREFIX 'M'"));
+
+    const auto* project = std::get_if<plan::PhysicalProject>(&plan->value);
+    ASSERT_NE(project, nullptr);
+    const auto* filter = std::get_if<plan::PhysicalFilter>(&project->input->value);
+    ASSERT_NE(filter, nullptr);
+    ASSERT_EQ(filter->predicates.size(), 1U);
+    EXPECT_EQ(filter->predicates.front().column, "attributes.device_group");
+    EXPECT_EQ(filter->predicates.front().op, query::PredicateOp::PREFIX);
+    const auto* scan = findScan(filter->input);
+    ASSERT_NE(scan, nullptr);
+    ASSERT_EQ(scan->pushable_predicates.size(), 1U);
+    EXPECT_EQ(scan->pushable_predicates.front().column, "pv");
+    EXPECT_EQ(scan->pushable_predicates.front().op, query::PredicateOp::IN);
+    EXPECT_TRUE(scan->projection_hint.contains("attributes.device_group"));
+
+    const auto result = executor.execute(plan, {.pool = arrow::default_memory_pool()});
+    ASSERT_EQ(result.batches.size(), 1U);
+    ASSERT_EQ(result.batches.front()->num_rows(), 1);
+    EXPECT_EQ(result.batches.front()->column(0)->GetScalar(0).ValueOrDie()->ToString(), "C");
+}
+
 TEST_F(PlannerExecutorTest, ExecutesLeftJoinWithNullRightSide)
 {
     query::QueryPlanner     planner;

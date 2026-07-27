@@ -58,7 +58,7 @@ std::vector<ColumnSchema> MLDPAnnotationQueryClient::tableSchema(std::string_vie
         return {{"pv", ColumnType::STRING, false, true, stringSearch, stringFilter, "PV name"},
                 {"alias", ColumnType::STRING, false, true, stringSearch, stringFilter, "PV alias"},
                 {"tags", ColumnType::STRING, false, true, {}, {}, "Complete tag collection; filter with tag = or tag IN (backend-pushed and locally verified)"},
-                {"attributes", ColumnType::STRING, false, true, {}, {}, "Dynamic attribute map; select or filter attributes.<key> (backend-pushed and locally verified)"},
+                {"attributes", ColumnType::STRING, false, false, {}, {}, "Dynamic attribute map; select explicitly when needed; use attributes.<key> virtual columns for scalar results and filters"},
                 {"tag", ColumnType::STRING, false, false, {PredicateOp::EQ, PredicateOp::IN}, {}, "Tag membership predicate shorthand for tags"},
                 {"description", ColumnType::STRING, false, true, {}, stringFilter, "Description"},
                 {"created_time", ColumnType::TIMESTAMP, false, true, {}, {}, "Created time"},
@@ -71,7 +71,7 @@ std::vector<ColumnSchema> MLDPAnnotationQueryClient::tableSchema(std::string_vie
                 {"category", ColumnType::STRING, false, true, {PredicateOp::EQ, PredicateOp::IN}, stringFilter, "Configuration category"},
                 {"parent", ColumnType::STRING, false, true, {PredicateOp::EQ, PredicateOp::IN}, stringFilter, "Parent configuration"},
                 {"tags", ColumnType::STRING, false, true, {}, {}, "Complete tag collection; filter with tag = or tag IN (backend-pushed and locally verified)"},
-                {"attributes", ColumnType::STRING, false, true, {}, {}, "Dynamic attribute map; select or filter attributes.<key> (backend-pushed and locally verified)"},
+                {"attributes", ColumnType::STRING, false, false, {}, {}, "Dynamic attribute map; select explicitly when needed; use attributes.<key> virtual columns for scalar results and filters"},
                 {"tag", ColumnType::STRING, false, false, {PredicateOp::EQ, PredicateOp::IN}, {}, "Tag membership predicate shorthand for tags"},
                 {"description", ColumnType::STRING, false, true, {}, stringFilter, "Description"},
                 {"created_time", ColumnType::TIMESTAMP, false, true, {}, {}, "Created time"},
@@ -88,7 +88,7 @@ std::vector<ColumnSchema> MLDPAnnotationQueryClient::tableSchema(std::string_vie
                 {"activation_id", ColumnType::STRING, false, true, {PredicateOp::EQ, PredicateOp::IN}, stringFilter, "Activation identifier"},
                 {"description", ColumnType::STRING, false, true, {}, stringFilter, "Description"},
                 {"tags", ColumnType::STRING, false, true, {}, {}, "Complete tag collection; filter with tag = or tag IN (backend-pushed and locally verified)"},
-                {"attributes", ColumnType::STRING, false, true, {}, {}, "Dynamic attribute map; select or filter attributes.<key> (backend-pushed and locally verified)"},
+                {"attributes", ColumnType::STRING, false, false, {}, {}, "Dynamic attribute map; select explicitly when needed; use attributes.<key> virtual columns for scalar results and filters"},
                 {"tag", ColumnType::STRING, false, false, {PredicateOp::EQ, PredicateOp::IN}, {}, "Tag membership predicate shorthand for tags"},
                 {"created_time", ColumnType::TIMESTAMP, false, true, {}, {}, "Created time"},
                 {"updated_time", ColumnType::TIMESTAMP, false, true, {}, {}, "Updated time"}};
@@ -276,7 +276,8 @@ public:
     }
 
     void finish(std::vector<std::shared_ptr<arrow::Field>>& fields,
-                std::vector<std::shared_ptr<arrow::Array>>& arrays)
+                std::vector<std::shared_ptr<arrow::Array>>& arrays,
+                const bool include_attributes)
     {
         std::shared_ptr<arrow::Array> tags;
         std::shared_ptr<arrow::Array> attributes;
@@ -284,8 +285,11 @@ public:
             throw std::runtime_error("Failed to finish Arrow metadata collections");
         fields.push_back(arrow::field("tags", tags->type()));
         arrays.push_back(std::move(tags));
-        fields.push_back(arrow::field("attributes", attributes->type()));
-        arrays.push_back(std::move(attributes));
+        if (include_attributes)
+        {
+            fields.push_back(arrow::field("attributes", attributes->type()));
+            arrays.push_back(std::move(attributes));
+        }
         for (auto& [key, builder] : values_)
         {
             std::shared_ptr<arrow::Array> value;
@@ -399,7 +403,7 @@ QueryResult MLDPAnnotationQueryClient::execute(std::string_view              tab
             throw std::runtime_error("Failed to finish Arrow pv_metadata batch");
         std::vector<std::shared_ptr<arrow::Field>> fields = {arrow::field("pv", a->type()), arrow::field("alias", b->type()), arrow::field("description", c->type()), arrow::field("modified_by", d->type()), arrow::field("created_time", e->type()), arrow::field("updated_time", f->type())};
         std::vector<std::shared_ptr<arrow::Array>> arrays = {a, b, c, d, e, f};
-        metadata.finish(fields, arrays);
+        metadata.finish(fields, arrays, projection_hint.contains("attributes"));
         return {.batch = arrow::RecordBatch::Make(arrow::schema(std::move(fields)), a->length(), std::move(arrays)), .next_page_token = {}};
     }
     if (table_name == "mldp.configuration")
@@ -472,7 +476,7 @@ QueryResult MLDPAnnotationQueryClient::execute(std::string_view              tab
             throw std::runtime_error("Failed to finish Arrow configuration batch");
         std::vector<std::shared_ptr<arrow::Field>> fields = {arrow::field("name", a->type()), arrow::field("category", b->type()), arrow::field("parent", c->type()), arrow::field("description", d->type()), arrow::field("modified_by", e->type()), arrow::field("created_time", f->type()), arrow::field("updated_time", g->type())};
         std::vector<std::shared_ptr<arrow::Array>> arrays = {a, b, c, d, e, f, g};
-        metadata.finish(fields, arrays);
+        metadata.finish(fields, arrays, projection_hint.contains("attributes"));
         return {.batch = arrow::RecordBatch::Make(arrow::schema(std::move(fields)), a->length(), std::move(arrays)), .next_page_token = {}};
     }
     if (table_name == "mldp.configuration_activation")
@@ -542,7 +546,7 @@ QueryResult MLDPAnnotationQueryClient::execute(std::string_view              tab
             throw std::runtime_error("Failed to finish Arrow configuration_activation batch");
         std::vector<std::shared_ptr<arrow::Field>> fields = {arrow::field("time", a->type()), arrow::field("end_time", b->type(), true), arrow::field("config_name", c->type()), arrow::field("activation_id", d->type()), arrow::field("description", e->type())};
         std::vector<std::shared_ptr<arrow::Array>> arrays = {a, b, c, d, e};
-        metadata.finish(fields, arrays);
+        metadata.finish(fields, arrays, projection_hint.contains("attributes"));
         return {.batch = arrow::RecordBatch::Make(arrow::schema(std::move(fields)), a->length(), std::move(arrays)), .next_page_token = {}};
     }
     if (table_name == "mldp.active_configurations")

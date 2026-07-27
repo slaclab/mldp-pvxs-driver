@@ -351,7 +351,10 @@ plan::PlannerPredicate buildPredicate(const WherePredicate& where,
             else
             {
                 bound.column_type = ColumnType::STRING;
-                bound.pushable_ops = defaultTextOps();
+                // Annotation services can match metadata attributes only by
+                // exact value. Other text operations run against the nullable
+                // Arrow virtual column after materialization.
+                bound.pushable_ops = {PredicateOp::EQ, PredicateOp::IN};
                 bound.filterable_ops = defaultTextOps();
             }
 

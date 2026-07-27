@@ -315,6 +315,8 @@ a wide request is made.
 | `updated_time` | — | Fetched only. |
 | `modified_by` | — | Fetched only. |
 
+`attributes.<key>` is a nullable virtual string column for each metadata attribute discovered in the result. `SELECT *` returns those scalar virtual columns and omits the duplicate collection-valued `attributes` map; select `attributes` explicitly when the complete map is required. Exact and `IN` attribute predicates are sent to the annotation service and locally verified. `PREFIX`, `CONTAINS`, and `LIKE` are evaluated locally after the Arrow batch is materialized, because the annotation API has no pattern-match attribute criterion.
+
 An unfiltered query lists all PV metadata records. Predicates narrow that list on the annotation service.
 
 ### `mldp.configuration` — `MLDPAnnotationQueryClient`

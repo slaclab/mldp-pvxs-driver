@@ -164,7 +164,7 @@ TEST_F(MLDPAnnotationQueryClientTest, MaterializesDiscoveredAttributesAcrossAllB
     ASSERT_NE(server, nullptr);
 
     MLDPAnnotationQueryClient client(make_annotation_config("127.0.0.1:" + std::to_string(port)));
-    const auto                result = client.execute("mldp.pv_metadata", {}, {"pv", "attributes.unrecorded"}, {.pool = arrow::default_memory_pool()});
+    const auto                result = client.execute("mldp.pv_metadata", {}, {"pv", "attributes", "attributes.unrecorded"}, {.pool = arrow::default_memory_pool()});
 
     ASSERT_NE(result.batch, nullptr);
     EXPECT_TRUE(result.next_page_token.empty());
@@ -232,7 +232,7 @@ TEST_F(MLDPAnnotationQueryClientTest, EmptySelectionProducesAnEmptyBatch)
     EXPECT_EQ(result.batch->num_rows(), 0);
     EXPECT_TRUE(result.next_page_token.empty());
     EXPECT_EQ(result.batch->schema()->field_names(),
-              std::vector<std::string>({"pv", "alias", "description", "modified_by", "created_time", "updated_time", "tags", "attributes"}));
+              std::vector<std::string>({"pv", "alias", "description", "modified_by", "created_time", "updated_time", "tags"}));
 
     server->Shutdown();
 }
