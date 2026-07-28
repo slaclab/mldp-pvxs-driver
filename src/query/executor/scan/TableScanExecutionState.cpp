@@ -45,6 +45,7 @@ public:
 
     RecordBatches execute() override
     {
+        throwIfCancelled();
         if (scan_.derived_query)
         {
             auto output = childAt(*derived_child_index_).execute();
@@ -92,6 +93,7 @@ private:
         if (predicates.empty()) return true;
         for (auto& batch : batches)
         {
+            throwIfCancelled();
             auto filtered = applyFilter(batch, predicates);
             if (!filtered.ok()) throw std::runtime_error(filtered.status().ToString());
             batch = *filtered;

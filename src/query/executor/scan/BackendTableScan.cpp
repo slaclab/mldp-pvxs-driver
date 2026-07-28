@@ -3,6 +3,7 @@
 //////////////////////////////////////////////////////////////////////////////
 
 #include <query/executor/ExecutorUtils.h>
+#include <query/QueryCancellation.h>
 #include <query/executor/ScanExecutionHelpers.h>
 
 #include <query/QueryResult.h>
@@ -37,11 +38,13 @@ RecordBatches mldp_pvxs_driver::query::executor::fetchBackendPages(const plan::P
     std::string page_token;
     do
     {
+        if (context.cancellation) context.cancellation->throwIfCancelled();
         if (context.progress)
         {
             context.progress->beginBackendRpc(scan.table_name, page_token.empty() ? "page 1" : "continuation page");
         }
         const auto result = queryable->execute(scan.table_name, pushable, scan.projection_hint, context, page_token);
+        if (context.cancellation) context.cancellation->throwIfCancelled();
         ++stats.rpc_calls;
         const auto backend_rows = result.batch ? static_cast<uint64_t>(result.batch->num_rows()) : 0ULL;
         if (context.progress)

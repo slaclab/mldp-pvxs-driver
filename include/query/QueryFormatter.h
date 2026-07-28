@@ -10,10 +10,12 @@
 
 #pragma once
 
+#include <query/QueryCancellation.h>
 #include <query/QueryExecutor.h>
 
 #include <cstddef>
 #include <iosfwd>
+#include <memory>
 #include <optional>
 #include <string>
 
@@ -36,7 +38,8 @@ void formatQueryResult(const query::QueryExecutionResult& result,
                        QueryOutputFormat                  format,
                        std::ostream&                      output,
                        bool                               expanded = false,
-                       const TableRenderOptions&          table_options = {});
+                       const TableRenderOptions&          table_options = {},
+                       std::shared_ptr<mldp_pvxs_driver::query::QueryCancellation> cancellation = nullptr);
 
 void printQueryStats(const query::QueryStats& stats, std::ostream& output);
 

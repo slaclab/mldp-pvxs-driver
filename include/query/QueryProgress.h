@@ -26,6 +26,7 @@ enum class QueryProgressPhase
     Executing,
     BackendRpc,
     Formatting,
+    Cancelling,
     Complete,
     Failed
 };
@@ -140,6 +141,7 @@ inline const char* queryProgressPhaseName(const QueryProgressPhase phase) noexce
         case QueryProgressPhase::Executing: return "executing";
         case QueryProgressPhase::BackendRpc: return "backend RPC";
         case QueryProgressPhase::Formatting: return "formatting";
+        case QueryProgressPhase::Cancelling: return "cancelling";
         case QueryProgressPhase::Complete: return "complete";
         case QueryProgressPhase::Failed: return "failed";
     }

@@ -14,6 +14,8 @@
 #include <query/QueryStats.h>
 
 #include <optional>
+#include <memory>
+#include <mutex>
 #include <ostream>
 #include <string>
 
@@ -36,7 +38,7 @@ public:
 class TerminalLayout
 {
 public:
-    explicit TerminalLayout(std::ostream& output);
+    explicit TerminalLayout(std::ostream& output, std::shared_ptr<std::mutex> output_mutex = nullptr);
     ~TerminalLayout();
 
     TerminalLayout(const TerminalLayout&) = delete;
@@ -58,6 +60,7 @@ private:
     void drawFooter();
 
     std::ostream&    output_;
+    std::shared_ptr<std::mutex> output_mutex_;
     FooterRenderer   footer_renderer_;
     ConsoleStatus    status_;
     int              rows_{0};

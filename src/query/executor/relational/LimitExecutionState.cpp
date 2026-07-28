@@ -19,6 +19,7 @@ namespace {
 
         RecordBatches execute() override
         {
+            throwIfCancelled();
             return applyLimit(childAt(0).execute(), node_.limit);
         }
 

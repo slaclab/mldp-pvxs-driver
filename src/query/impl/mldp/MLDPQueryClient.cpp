@@ -13,6 +13,7 @@
 #include <pool/MLDPGrpcQueryPoolConfig.h>
 
 #include <query/ExecutionContext.h>
+#include <query/QueryCancellation.h>
 #include <query/QueryResult.h>
 #include <query/executor/ExecutorUtils.h>
 
@@ -695,6 +696,7 @@ QueryResult MLDPQueryClient::execute(std::string_view              table_name,
     const auto pvs = requestedPvs(pushable_predicates);
     if (table_name == kPvStatsTable)
     {
+        if (context.cancellation) context.cancellation->throwIfCancelled();
         std::size_t offset = 0;
         if (!page_token.empty())
         {
@@ -720,9 +722,13 @@ QueryResult MLDPQueryClient::execute(std::string_view              table_name,
             request.mutable_pvnamelist()->add_pvnames(pvs[index]);
 
         auto                                     handle = pool_->acquire();
-        grpc::ClientContext                      rpc_context;
+        auto                                     rpc_context = std::make_shared<grpc::ClientContext>();
         dp::service::query::QueryPvStatsResponse response;
-        const auto                               status = handle->query_stub->queryPvStats(&rpc_context, request, &response);
+        auto cancellation_registration = context.cancellation
+            ? context.cancellation->onCancel([rpc_context] { rpc_context->TryCancel(); })
+            : QueryCancellation::Registration{};
+        const auto                               status = handle->query_stub->queryPvStats(rpc_context.get(), request, &response);
+        if (context.cancellation && context.cancellation->cancelled()) throw QueryCancelled{};
         if (!status.ok())
             throw std::runtime_error("MLDP queryPvStats failed: " + status.error_message());
         if (!response.has_statsresult())
@@ -734,6 +740,7 @@ QueryResult MLDPQueryClient::execute(std::string_view              table_name,
         arrow::Int64Builder     buckets_builder;
         for (const auto& stat : response.statsresult().pvstats())
         {
+            if (context.cancellation) context.cancellation->throwIfCancelled();
             if (!pv_builder.Append(stat.pvname()).ok() || !first_builder.Append(timestampToNanoseconds(stat.firstdatatimestamp())).ok() ||
                 !last_builder.Append(timestampToNanoseconds(stat.lastdatatimestamp())).ok() || !buckets_builder.Append(stat.numbuckets()).ok())
                 throw std::runtime_error("Failed to build Arrow pv_stats batch");
@@ -778,9 +785,14 @@ QueryResult MLDPQueryClient::execute(std::string_view              table_name,
         request.mutable_pvnamelist()->add_pvnames(pv_name);
 
     auto                                   handle = pool_->acquire();
-    grpc::ClientContext                    rpc_context;
+    auto                                   rpc_context = std::make_shared<grpc::ClientContext>();
     dp::service::query::QueryTableResponse response;
-    const auto                             status = handle->query_stub->queryTable(&rpc_context, request, &response);
+    auto cancellation_registration = context.cancellation
+        ? context.cancellation->onCancel([rpc_context] { rpc_context->TryCancel(); })
+        : QueryCancellation::Registration{};
+    if (context.cancellation) context.cancellation->throwIfCancelled();
+    const auto                             status = handle->query_stub->queryTable(rpc_context.get(), request, &response);
+    if (context.cancellation && context.cancellation->cancelled()) throw QueryCancelled{};
     if (!status.ok())
         throw std::runtime_error("MLDP queryTable failed: " + status.error_message());
     if (!response.has_tableresult())

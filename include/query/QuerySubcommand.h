@@ -23,6 +23,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <mutex>
 #include <iosfwd>
 #include <optional>
 #include <string>
@@ -33,6 +34,7 @@
 
 namespace mldp_pvxs_driver::query {
 class QueryProgressTracker;
+class QueryCancellation;
 class QueryTableCatalog;
 }
 
@@ -67,7 +69,9 @@ public:
             std::shared_ptr<query::QueryProgressTracker> progress = nullptr,
             std::optional<std::size_t> viewport_width = std::nullopt,
             bool                       print_stats = true,
-            query::QueryStats*         completed_stats = nullptr) const;
+            query::QueryStats*         completed_stats = nullptr,
+            std::shared_ptr<query::QueryCancellation> cancellation = nullptr,
+            std::shared_ptr<std::mutex> output_mutex = nullptr) const;
     std::shared_ptr<query::QueryTableCatalog> completionCatalog(const QueryCliOptions& options) const;
 
 private:

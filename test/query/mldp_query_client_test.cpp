@@ -9,6 +9,7 @@
 //////////////////////////////////////////////////////////////////////////////
 
 #include <query/ExecutionContext.h>
+#include <query/QueryCancellation.h>
 #include <query/QueryResult.h>
 #include <query/impl/mldp/MLDPQueryClient.h>
 
@@ -26,8 +27,12 @@
 #include <query.grpc.pb.h>
 
 #include <memory>
+#include <chrono>
+#include <condition_variable>
+#include <future>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 using namespace mldp_pvxs_driver::query;
@@ -56,15 +61,31 @@ public:
     bool                                  oversized_column{false};
     bool                                  scalar_columns{false};
     bool                                  all_null_column{false};
+    bool                                  block_query_table{false};
+    bool                                  query_started{false};
+    bool                                  client_cancelled{false};
     mutable std::mutex                    mutex;
+    std::condition_variable               condition;
 
-    grpc::Status queryTable(grpc::ServerContext*,
+    grpc::Status queryTable(grpc::ServerContext* context,
                             const dp::service::query::QueryTableRequest* request,
                             dp::service::query::QueryTableResponse* response) override
     {
         {
             const std::lock_guard lock(mutex);
             last_request = *request;
+            query_started = true;
+        }
+        condition.notify_all();
+        if (block_query_table)
+        {
+            while (!context->IsCancelled()) std::this_thread::sleep_for(std::chrono::milliseconds{5});
+            {
+                const std::lock_guard lock(mutex);
+                client_cancelled = true;
+            }
+            condition.notify_all();
+            return grpc::Status(grpc::StatusCode::CANCELLED, "client cancelled");
         }
         auto* table = response->mutable_tableresult()->mutable_columntable();
         auto* timestamps = table->mutable_datatimestamps()->mutable_timestamplist();
@@ -291,6 +312,36 @@ TEST(MLDPQueryClientTest, SendsLiteralWindowBoundsToWideTableRequest)
         const std::lock_guard lock(service.mutex);
         EXPECT_EQ(service.last_request.begintime().epochseconds(), 10);
         EXPECT_EQ(service.last_request.endtime().epochseconds(), 20);
+    }
+    server->Shutdown();
+}
+
+TEST(MLDPQueryClientTest, CancelsInFlightQueryTableRpc)
+{
+    QueryService service;
+    service.block_query_table = true;
+    grpc::ServerBuilder builder;
+    int port = 0;
+    builder.AddListeningPort("127.0.0.1:0", grpc::InsecureServerCredentials(), &port);
+    builder.RegisterService(&service);
+    auto server = builder.BuildAndStart();
+    ASSERT_NE(server, nullptr);
+
+    MLDPQueryClient client(makeQueryConfig("127.0.0.1:" + std::to_string(port)));
+    auto cancellation = std::make_shared<QueryCancellation>();
+    const ExecutionContext context{.pool = arrow::default_memory_pool(), .cancellation = cancellation};
+    const std::vector<Predicate> predicates = {{.column = "pv", .op = PredicateOp::EQ, .values = {std::string("MAG:ONE")}}};
+    auto query = std::async(std::launch::async,
+                            [&] { return client.execute("mldp.time_series_table", predicates, {}, context); });
+    {
+        std::unique_lock lock(service.mutex);
+        ASSERT_TRUE(service.condition.wait_for(lock, std::chrono::seconds{2}, [&] { return service.query_started; }));
+    }
+    cancellation->requestCancel();
+    EXPECT_THROW(query.get(), QueryCancelled);
+    {
+        std::unique_lock lock(service.mutex);
+        EXPECT_TRUE(service.condition.wait_for(lock, std::chrono::seconds{2}, [&] { return service.client_cancelled; }));
     }
     server->Shutdown();
 }

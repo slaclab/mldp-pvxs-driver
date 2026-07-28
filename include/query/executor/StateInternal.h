@@ -8,6 +8,7 @@
 #pragma once
 
 #include <query/executor/ExecutionState.h>
+#include <query/QueryCancellation.h>
 
 #include <stdexcept>
 #include <utility>
@@ -37,6 +38,11 @@ protected:
     QueryStats& stats() const noexcept
     {
         return stats_;
+    }
+
+    void throwIfCancelled() const
+    {
+        if (context_.cancellation) context_.cancellation->throwIfCancelled();
     }
 
     IExecutionState& childAt(const std::size_t index) const

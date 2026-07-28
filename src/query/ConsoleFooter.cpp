@@ -48,6 +48,12 @@ std::string bytes(const uint64_t value)
     return std::to_string(value / 1024ULL) + " KiB";
 }
 
+std::string elapsed(const std::chrono::milliseconds value)
+{
+    const auto seconds = value.count() / 1000;
+    return std::to_string(seconds / 60) + "m " + std::to_string(seconds % 60) + "s";
+}
+
 } // namespace
 
 std::string FooterRenderer::render(const ConsoleStatus& status, const int terminal_width) const
@@ -69,8 +75,17 @@ std::string FooterRenderer::render(const ConsoleStatus& status, const int termin
         {
             phase += ": ";
             phase += query::queryProgressPhaseName(status.progress->phase);
+            appendField(line, phase, terminal_width);
+            appendField(line, elapsed(status.progress->elapsed), terminal_width);
+            if (!status.progress->table_name.empty()) appendField(line, status.progress->table_name, terminal_width);
+            if (!status.progress->detail.empty()) appendField(line, status.progress->detail, terminal_width);
+            if (status.progress->rpc_calls_started > 0)
+                appendField(line, std::to_string(status.progress->rpc_calls_completed) + "/" + std::to_string(status.progress->rpc_calls_started) + " RPCs", terminal_width);
+            if (status.progress->rows_from_backend > 0)
+                appendField(line, std::to_string(status.progress->rows_from_backend) + " backend rows", terminal_width);
         }
-        appendField(line, phase, terminal_width);
+        else appendField(line, phase, terminal_width);
+        appendField(line, "Ctrl-C cancel", terminal_width);
     }
     else
     {
@@ -96,8 +111,9 @@ std::string FooterRenderer::render(const ConsoleStatus& status, const int termin
     return line;
 }
 
-TerminalLayout::TerminalLayout(std::ostream& output)
+TerminalLayout::TerminalLayout(std::ostream& output, std::shared_ptr<std::mutex> output_mutex)
     : output_(output)
+    , output_mutex_(std::move(output_mutex))
 {
 }
 
@@ -198,6 +214,9 @@ void TerminalLayout::configureScrollRegion()
 
 void TerminalLayout::drawFooter()
 {
+    static std::mutex fallback_output_mutex;
+    std::unique_lock lock(output_mutex_ ? *output_mutex_ : fallback_output_mutex, std::try_to_lock);
+    if (!lock.owns_lock()) return;
     output_ << "\x1b[s"
             << "\x1b[" << rows_ << ";1H"
             << "\x1b[2K"

@@ -9,7 +9,7 @@
 //////////////////////////////////////////////////////////////////////////////
 #include <query/QueryExecutor.h>
 
-
+#include <query/QueryCancellation.h>
 #include <query/executor/ExecutionState.h>
 #include <query/QueryProgress.h>
 
@@ -38,12 +38,14 @@ QueryExecutionResult QueryExecutor::execute(const plan::PhysicalNodePtr& root, c
 {
     QueryExecutionResult result;
     const auto start = std::chrono::steady_clock::now();
+    if (context.cancellation) context.cancellation->throwIfCancelled();
     if (context.progress)
     {
         context.progress->setPhase(QueryProgressPhase::Executing);
     }
     auto execution_state = executor::makeExecutionState(root, context, result.stats);
     result.batches = execution_state->execute();
+    if (context.cancellation) context.cancellation->throwIfCancelled();
     collectPlanWarnings(root, result.stats.plan_warnings);
     result.stats.plan_summary = plan::physicalPlanToString(root);
     if (context.pool != nullptr) result.stats.peak_memory_bytes = static_cast<uint64_t>(context.pool->max_memory());

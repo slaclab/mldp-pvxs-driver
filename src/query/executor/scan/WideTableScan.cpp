@@ -3,6 +3,7 @@
 //////////////////////////////////////////////////////////////////////////////
 
 #include <query/executor/ExecutorUtils.h>
+#include <query/QueryCancellation.h>
 #include <query/executor/ScanExecutionHelpers.h>
 
 #include <query/QueryResult.h>
@@ -26,6 +27,7 @@ RecordBatches mldp_pvxs_driver::query::executor::fetchWideTableWindows(const pla
     RecordBatches output;
     for (const auto& [begin_ns, end_ns] : windows)
     {
+        if (context.cancellation) context.cancellation->throwIfCancelled();
         auto predicates = pushable;
         predicates.erase(std::remove_if(predicates.begin(), predicates.end(), [&scan](const Predicate& predicate) {
             return (scan.window_subquery || scan.window_literal) && predicate.column == "time";
@@ -40,6 +42,7 @@ RecordBatches mldp_pvxs_driver::query::executor::fetchWideTableWindows(const pla
             context.progress->beginBackendRpc(scan.table_name, "window");
         }
         const auto result = queryable->execute(scan.table_name, predicates, scan.projection_hint, context);
+        if (context.cancellation) context.cancellation->throwIfCancelled();
         ++stats.rpc_calls;
         const auto backend_rows = result.batch ? static_cast<uint64_t>(result.batch->num_rows()) : 0ULL;
         if (context.progress)

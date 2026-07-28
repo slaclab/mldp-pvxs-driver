@@ -9,6 +9,7 @@
 //////////////////////////////////////////////////////////////////////////////
 
 #include <query/QueryFormatter.h>
+#include <query/QueryCancellation.h>
 
 #include <arrow/array.h>
 #include <arrow/io/memory.h>
@@ -25,6 +26,11 @@ using namespace mldp_pvxs_driver::cli;
 namespace query = mldp_pvxs_driver::query;
 
 namespace {
+
+void throwIfCancelled(const std::shared_ptr<query::QueryCancellation>& cancellation)
+{
+    if (cancellation) cancellation->throwIfCancelled();
+}
 
 std::string escapeJson(const std::string& input)
 {
@@ -180,14 +186,18 @@ std::string tableValue(const std::shared_ptr<arrow::Scalar>& scalar)
     return display_scalar->ToString();
 }
 
-void writeExpanded(const query::QueryExecutionResult& result, std::ostream& output)
+void writeExpanded(const query::QueryExecutionResult& result,
+                    std::ostream&                      output,
+                   const std::shared_ptr<query::QueryCancellation>& cancellation)
 {
     std::size_t record = 0;
     for (const auto& batch : result.batches)
     {
+        throwIfCancelled(cancellation);
         if (!batch) continue;
         for (int64_t row = 0; row < batch->num_rows(); ++row)
         {
+            throwIfCancelled(cancellation);
             ++record;
             output << "-[ RECORD " << record << " ]" << std::string(56, '-') << "\n";
             for (int column = 0; column < batch->num_columns(); ++column)
@@ -208,6 +218,7 @@ void writeExpanded(const query::QueryExecutionResult& result, std::ostream& outp
                     output << name << ":\n";
                     for (int64_t i = 0; i < list->value->length(); ++i)
                     {
+                        throwIfCancelled(cancellation);
                         const auto value = list->value->GetScalar(i);
                         if (!value.ok()) throw std::runtime_error(value.status().ToString());
                         output << "  - " << (*value)->ToString() << "\n";
@@ -221,6 +232,7 @@ void writeExpanded(const query::QueryExecutionResult& result, std::ostream& outp
                     std::vector<std::string> values;
                     for (int64_t i = 0; i < entries->length(); ++i)
                     {
+                        throwIfCancelled(cancellation);
                         const auto key = entries->field(0)->GetScalar(i); const auto value = entries->field(1)->GetScalar(i);
                         if (!key.ok() || !value.ok()) throw std::runtime_error("Failed to render Arrow map value");
                         values.push_back((*key)->ToString() + ": " + (*value)->ToString());
@@ -236,10 +248,13 @@ void writeExpanded(const query::QueryExecutionResult& result, std::ostream& outp
     }
 }
 
-void writeJsonLines(const query::QueryExecutionResult& result, std::ostream& output)
+void writeJsonLines(const query::QueryExecutionResult& result,
+                    std::ostream&                      output,
+                    const std::shared_ptr<query::QueryCancellation>& cancellation)
 {
     for (const auto& batch : result.batches)
     {
+        throwIfCancelled(cancellation);
         if (!batch)
         {
             continue;
@@ -247,6 +262,7 @@ void writeJsonLines(const query::QueryExecutionResult& result, std::ostream& out
         const auto schema = batch->schema();
         for (int64_t row = 0; row < batch->num_rows(); ++row)
         {
+            throwIfCancelled(cancellation);
             output << "{";
             for (int col = 0; col < batch->num_columns(); ++col)
             {
@@ -319,7 +335,9 @@ std::string csvValue(const std::shared_ptr<arrow::Scalar>& scalar)
     return scalar->ToString();
 }
 
-void writeCsv(const query::QueryExecutionResult& result, std::ostream& output)
+void writeCsv(const query::QueryExecutionResult& result,
+              std::ostream&                      output,
+              const std::shared_ptr<query::QueryCancellation>& cancellation)
 {
     if (result.batches.empty() || !result.batches.front())
     {
@@ -339,12 +357,14 @@ void writeCsv(const query::QueryExecutionResult& result, std::ostream& output)
 
     for (const auto& batch : result.batches)
     {
+        throwIfCancelled(cancellation);
         if (!batch)
         {
             continue;
         }
         for (int64_t row = 0; row < batch->num_rows(); ++row)
         {
+            throwIfCancelled(cancellation);
             for (int col = 0; col < batch->num_columns(); ++col)
             {
                 if (col > 0)
@@ -368,7 +388,9 @@ void writeCsv(const query::QueryExecutionResult& result, std::ostream& output)
     }
 }
 
-void writeArrowIpc(const query::QueryExecutionResult& result, std::ostream& output)
+void writeArrowIpc(const query::QueryExecutionResult& result,
+                   std::ostream&                      output,
+                   const std::shared_ptr<query::QueryCancellation>& cancellation)
 {
     if (result.batches.empty() || !result.batches.front())
     {
@@ -389,6 +411,7 @@ void writeArrowIpc(const query::QueryExecutionResult& result, std::ostream& outp
     auto writer = *writer_result;
     for (const auto& batch : result.batches)
     {
+        throwIfCancelled(cancellation);
         if (!batch)
         {
             continue;
@@ -464,10 +487,12 @@ std::vector<std::size_t> fittedWidths(const std::vector<std::size_t>& natural_wi
 void writeStackedTable(const std::vector<std::string>&              headers,
                        const std::vector<std::vector<std::string>>& rows,
                        const std::size_t                            viewport_width,
-                       std::ostream&                                output)
+                       std::ostream&                                output,
+                       const std::shared_ptr<query::QueryCancellation>& cancellation)
 {
     for (std::size_t row_index = 0; row_index < rows.size(); ++row_index)
     {
+        throwIfCancelled(cancellation);
         if (row_index != 0) output << "\n";
         for (std::size_t column = 0; column < headers.size(); ++column)
         {
@@ -480,7 +505,8 @@ void writeStackedTable(const std::vector<std::string>&              headers,
 
 void writeTable(const query::QueryExecutionResult& result,
                 std::ostream&                      output,
-                const TableRenderOptions&          options)
+                const TableRenderOptions&          options,
+                const std::shared_ptr<query::QueryCancellation>& cancellation)
 {
     if (result.batches.empty())
     {
@@ -506,12 +532,14 @@ void writeTable(const query::QueryExecutionResult& result,
     std::vector<std::vector<std::string>> rows;
     for (const auto& batch : result.batches)
     {
+        throwIfCancelled(cancellation);
         if (!batch)
         {
             continue;
         }
         for (int64_t row = 0; row < batch->num_rows(); ++row)
         {
+            throwIfCancelled(cancellation);
             std::vector<std::string> cells;
             cells.reserve(num_cols);
             for (int c = 0; c < batch->num_columns(); ++c)
@@ -541,7 +569,7 @@ void writeTable(const query::QueryExecutionResult& result,
     const auto fitted_widths = options.viewport_width ? fittedWidths(widths, *options.viewport_width) : widths;
     if (options.viewport_width && fitted_widths.empty())
     {
-        writeStackedTable(headers, rows, *options.viewport_width, output);
+        writeStackedTable(headers, rows, *options.viewport_width, output, cancellation);
         return;
     }
 
@@ -573,11 +601,13 @@ void writeTable(const query::QueryExecutionResult& result,
     // Data rows
     for (const auto& row : rows)
     {
+        throwIfCancelled(cancellation);
         std::size_t lines = 1;
         for (const auto& cell : row)
             lines = std::max(lines, static_cast<std::size_t>(1 + std::count(cell.begin(), cell.end(), '\n')));
         for (std::size_t line = 0; line < lines; ++line)
         {
+            throwIfCancelled(cancellation);
             for (int c = 0; c < num_cols; ++c)
             {
                 if (c > 0) output << " | ";
@@ -598,22 +628,23 @@ void mldp_pvxs_driver::cli::formatQueryResult(const query::QueryExecutionResult&
                                               QueryOutputFormat                  format,
                                               std::ostream&                      output,
                                               const bool                         expanded,
-                                              const TableRenderOptions&          table_options)
+                                              const TableRenderOptions&          table_options,
+                                              std::shared_ptr<mldp_pvxs_driver::query::QueryCancellation> cancellation)
 {
     switch (format)
     {
         case QueryOutputFormat::Table:
-            if (expanded) writeExpanded(result, output);
-            else writeTable(result, output, table_options);
+            if (expanded) writeExpanded(result, output, cancellation);
+            else writeTable(result, output, table_options, cancellation);
             break;
         case QueryOutputFormat::Json:
-            writeJsonLines(result, output);
+            writeJsonLines(result, output, cancellation);
             break;
         case QueryOutputFormat::Csv:
-            writeCsv(result, output);
+            writeCsv(result, output, cancellation);
             break;
         case QueryOutputFormat::Arrow:
-            writeArrowIpc(result, output);
+            writeArrowIpc(result, output, cancellation);
             break;
     }
 }

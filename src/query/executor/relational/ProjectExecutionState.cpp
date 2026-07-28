@@ -19,6 +19,7 @@ namespace {
 
         RecordBatches execute() override
         {
+            throwIfCancelled();
             return node_.expressions.empty() ? applyProjection(childAt(0).execute(), node_.columns) : applyProjection(childAt(0).execute(), node_.expressions, node_.names);
         }
 

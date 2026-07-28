@@ -7,6 +7,7 @@
 
 #include <query/QuerySubcommand.h>
 #include <query/ConsoleFooter.h>
+#include <query/QueryCancellation.h>
 #include <query/QueryExecutor.h>
 #include <query/executor/ExecutorUtils.h>
 #include <query/QueryFormatter.h>
@@ -96,15 +97,55 @@ TEST(ConsoleFooterTest, RendersFixedWidthAsciiStatusWithPriority)
     EXPECT_NE(wide.find("Query: ready | 42 rows | 17 ms | 3 RPCs | spill 2 MiB | peak 4 MiB"), std::string::npos);
 
     status.query_running = true;
-    status.progress = query::QueryProgressSnapshot{.phase = query::QueryProgressPhase::Planning};
+    status.progress = query::QueryProgressSnapshot{.phase = query::QueryProgressPhase::BackendRpc,
+                                                    .elapsed = std::chrono::milliseconds{12'000},
+                                                    .table_name = "mldp.time_series_table",
+                                                    .detail = "window",
+                                                    .rpc_calls_started = 2,
+                                                    .rpc_calls_completed = 1};
     const auto narrow = renderer.render(status, 24);
     EXPECT_EQ(narrow.size(), 24U);
-    EXPECT_NE(narrow.find("Running: planning"), std::string::npos);
+    EXPECT_NE(narrow.find("Running: backend RPC"), std::string::npos);
     EXPECT_EQ(narrow.find("spill"), std::string::npos);
     EXPECT_TRUE(std::all_of(narrow.begin(), narrow.end(), [](const unsigned char character) { return character < 128; }));
 
     const auto tiny = renderer.render(status, 5);
     EXPECT_EQ(tiny, "Runni");
+
+    const auto detailed = renderer.render(status, 120);
+    EXPECT_NE(detailed.find("0m 12s"), std::string::npos);
+    EXPECT_NE(detailed.find("mldp.time_series_table"), std::string::npos);
+    EXPECT_NE(detailed.find("1/2 RPCs"), std::string::npos);
+}
+
+TEST(QueryCancellationTest, RequestsCancellationOnceAndInvokesLateRegistration)
+{
+    query::QueryCancellation cancellation;
+    int calls = 0;
+    auto registration = cancellation.onCancel([&] { ++calls; });
+    cancellation.requestCancel();
+    cancellation.requestCancel();
+    EXPECT_EQ(calls, 1);
+    EXPECT_THROW(cancellation.throwIfCancelled(), query::QueryCancelled);
+    cancellation.onCancel([&] { ++calls; });
+    EXPECT_EQ(calls, 2);
+}
+
+TEST(QueryFormatterTest, StopsBeforeWritingWhenCancelled)
+{
+    arrow::Int64Builder values_builder;
+    ASSERT_TRUE(values_builder.Append(42).ok());
+    std::shared_ptr<arrow::Array> values;
+    ASSERT_TRUE(values_builder.Finish(&values).ok());
+    const query::QueryExecutionResult result{
+        .batches = {arrow::RecordBatch::Make(arrow::schema({arrow::field("value", arrow::int64())}), 1, {values})}};
+    auto cancellation = std::make_shared<query::QueryCancellation>();
+    cancellation->requestCancel();
+    std::ostringstream output;
+
+    EXPECT_THROW(cli::formatQueryResult(result, cli::QueryOutputFormat::Json, output, false, {}, cancellation),
+                 query::QueryCancelled);
+    EXPECT_TRUE(output.str().empty());
 }
 
 TEST(ArrowTypeMapTest, MapsEveryColumnType)

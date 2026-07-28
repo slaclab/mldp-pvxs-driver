@@ -11,6 +11,7 @@
 #include <query/impl/mldp/MLDPAnnotationQueryClient.h>
 
 #include <query/ExecutionContext.h>
+#include <query/QueryCancellation.h>
 #include <query/QueryResult.h>
 
 #include <pool/MLDPGrpcAnnotationPoolConfig.h>
@@ -221,12 +222,14 @@ std::set<std::string> metadataAttributeKeys(const std::vector<Metadata>& records
 }
 
 template <typename Record, typename Request, typename Query>
-std::vector<Record> queryAllPages(Request request, Query&& query)
+std::vector<Record> queryAllPages(Request request, Query&& query, const std::shared_ptr<QueryCancellation>& cancellation)
 {
     std::vector<Record> records;
     while (true)
     {
+        if (cancellation) cancellation->throwIfCancelled();
         auto [page, next_page_token] = query(request);
+        if (cancellation) cancellation->throwIfCancelled();
         records.insert(records.end(),
                        std::make_move_iterator(page.begin()),
                        std::make_move_iterator(page.end()));
@@ -374,10 +377,10 @@ QueryResult MLDPAnnotationQueryClient::execute(std::string_view              tab
             request.add_criteria()->mutable_pvnamecriterion()->add_prefix("");
         const auto records = queryAllPages<dp::service::common::PvMetadata>(
             std::move(request),
-            [this](const auto& page_request)
+            [this, cancellation = context.cancellation](const auto& page_request)
             {
-                return queryPvMetadata(page_request);
-            });
+                return queryPvMetadata(page_request, cancellation);
+            }, context.cancellation);
         arrow::StringBuilder    pv, alias, description, modified_by;
         arrow::TimestampBuilder created(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), arrow::default_memory_pool());
         arrow::TimestampBuilder updated(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), arrow::default_memory_pool());
@@ -451,10 +454,10 @@ QueryResult MLDPAnnotationQueryClient::execute(std::string_view              tab
             request.add_criteria()->mutable_namecriterion()->add_prefix("");
         const auto records = queryAllPages<dp::service::common::Configuration>(
             std::move(request),
-            [this](const auto& page_request)
+            [this, cancellation = context.cancellation](const auto& page_request)
             {
-                return queryConfigurations(page_request);
-            });
+                return queryConfigurations(page_request, cancellation);
+            }, context.cancellation);
         arrow::StringBuilder    name, category, parent, description, modified_by;
         arrow::TimestampBuilder created(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), arrow::default_memory_pool()), updated(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), arrow::default_memory_pool());
         MetadataBuilders        metadata(metadataAttributeKeys(records, projection_hint));
@@ -521,10 +524,10 @@ QueryResult MLDPAnnotationQueryClient::execute(std::string_view              tab
         addActivationTimeRangeCriterion(request, predicates);
         const auto records = queryAllPages<dp::service::common::ConfigurationActivation>(
             std::move(request),
-            [this](const auto& page_request)
+            [this, cancellation = context.cancellation](const auto& page_request)
             {
-                return queryConfigurationActivations(page_request);
-            });
+                return queryConfigurationActivations(page_request, cancellation);
+            }, context.cancellation);
         arrow::TimestampBuilder time(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), arrow::default_memory_pool());
         arrow::TimestampBuilder end_time(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), arrow::default_memory_pool());
         arrow::StringBuilder    config, id, description;
@@ -569,7 +572,7 @@ QueryResult MLDPAnnotationQueryClient::execute(std::string_view              tab
             throw std::invalid_argument("mldp.active_configurations requires exactly one at = predicate");
         dp::service::common::Timestamp timestamp;
         setTimestamp(&timestamp, timestampValue(*at));
-        const auto              records = getActiveConfigurations(timestamp);
+        const auto              records = getActiveConfigurations(timestamp, context.cancellation);
         arrow::StringBuilder    name, id;
         arrow::TimestampBuilder time(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), arrow::default_memory_pool());
         for (const auto& record : records)
@@ -653,14 +656,17 @@ MLDPAnnotationQueryClient::getPvMetadata(const std::string& pvNameOrAlias)
 
 std::pair<std::vector<dp::service::common::PvMetadata>, std::string>
 MLDPAnnotationQueryClient::queryPvMetadata(
-    const dp::service::annotation::QueryPvMetadataRequest& request)
+    const dp::service::annotation::QueryPvMetadataRequest& request,
+    std::shared_ptr<QueryCancellation> cancellation)
 {
     try
     {
         auto                                             handle = pool_->acquire();
-        grpc::ClientContext                              ctx;
+        auto                                             ctx = std::make_shared<grpc::ClientContext>();
         dp::service::annotation::QueryPvMetadataResponse resp;
-        const auto                                       status = handle->stub->queryPvMetadata(&ctx, request, &resp);
+        auto registration = cancellation ? cancellation->onCancel([ctx] { ctx->TryCancel(); }) : QueryCancellation::Registration{};
+        const auto                                       status = handle->stub->queryPvMetadata(ctx.get(), request, &resp);
+        if (cancellation && cancellation->cancelled()) throw QueryCancelled{};
         if (!status.ok())
         {
             errorf(*logger_, "queryPvMetadata failed: {}", status.error_message());
@@ -677,6 +683,7 @@ MLDPAnnotationQueryClient::queryPvMetadata(
     }
     catch (const std::exception& ex)
     {
+        if (cancellation && cancellation->cancelled()) throw;
         errorf(*logger_, "queryPvMetadata exception: {}", ex.what());
         return {{}, {}};
     }
@@ -722,14 +729,17 @@ MLDPAnnotationQueryClient::getConfiguration(const std::string& configurationName
 
 std::pair<std::vector<dp::service::common::Configuration>, std::string>
 MLDPAnnotationQueryClient::queryConfigurations(
-    const dp::service::annotation::QueryConfigurationsRequest& request)
+    const dp::service::annotation::QueryConfigurationsRequest& request,
+    std::shared_ptr<QueryCancellation> cancellation)
 {
     try
     {
         auto                                                 handle = pool_->acquire();
-        grpc::ClientContext                                  ctx;
+        auto                                                 ctx = std::make_shared<grpc::ClientContext>();
         dp::service::annotation::QueryConfigurationsResponse resp;
-        const auto                                           status = handle->stub->queryConfigurations(&ctx, request, &resp);
+        auto registration = cancellation ? cancellation->onCancel([ctx] { ctx->TryCancel(); }) : QueryCancellation::Registration{};
+        const auto                                           status = handle->stub->queryConfigurations(ctx.get(), request, &resp);
+        if (cancellation && cancellation->cancelled()) throw QueryCancelled{};
         if (!status.ok())
         {
             errorf(*logger_, "queryConfigurations failed: {}", status.error_message());
@@ -746,6 +756,7 @@ MLDPAnnotationQueryClient::queryConfigurations(
     }
     catch (const std::exception& ex)
     {
+        if (cancellation && cancellation->cancelled()) throw;
         errorf(*logger_, "queryConfigurations exception: {}", ex.what());
         return {{}, {}};
     }
@@ -790,15 +801,18 @@ MLDPAnnotationQueryClient::getConfigurationActivation(
 
 std::pair<std::vector<dp::service::common::ConfigurationActivation>, std::string>
 MLDPAnnotationQueryClient::queryConfigurationActivations(
-    const dp::service::annotation::QueryConfigurationActivationsRequest& request)
+    const dp::service::annotation::QueryConfigurationActivationsRequest& request,
+    std::shared_ptr<QueryCancellation> cancellation)
 {
     try
     {
         auto                                                           handle = pool_->acquire();
-        grpc::ClientContext                                            ctx;
+        auto                                                           ctx = std::make_shared<grpc::ClientContext>();
         dp::service::annotation::QueryConfigurationActivationsResponse resp;
+        auto registration = cancellation ? cancellation->onCancel([ctx] { ctx->TryCancel(); }) : QueryCancellation::Registration{};
         const auto                                                     status =
-            handle->stub->queryConfigurationActivations(&ctx, request, &resp);
+            handle->stub->queryConfigurationActivations(ctx.get(), request, &resp);
+        if (cancellation && cancellation->cancelled()) throw QueryCancelled{};
         if (!status.ok())
         {
             errorf(*logger_, "queryConfigurationActivations failed: {}", status.error_message());
@@ -815,6 +829,7 @@ MLDPAnnotationQueryClient::queryConfigurationActivations(
     }
     catch (const std::exception& ex)
     {
+        if (cancellation && cancellation->cancelled()) throw;
         errorf(*logger_, "queryConfigurationActivations exception: {}", ex.what());
         return {{}, {}};
     }
@@ -826,16 +841,19 @@ MLDPAnnotationQueryClient::queryConfigurationActivations(
 
 std::vector<dp::service::common::ConfigurationActivation>
 MLDPAnnotationQueryClient::getActiveConfigurations(
-    const dp::service::common::Timestamp& at)
+    const dp::service::common::Timestamp& at,
+    std::shared_ptr<QueryCancellation> cancellation)
 {
     try
     {
         auto                                                    handle = pool_->acquire();
-        grpc::ClientContext                                     ctx;
+        auto                                                    ctx = std::make_shared<grpc::ClientContext>();
         dp::service::annotation::GetActiveConfigurationsRequest req;
         *req.mutable_timestamp() = at;
         dp::service::annotation::GetActiveConfigurationsResponse resp;
-        const auto                                               status = handle->stub->getActiveConfigurations(&ctx, req, &resp);
+        auto registration = cancellation ? cancellation->onCancel([ctx] { ctx->TryCancel(); }) : QueryCancellation::Registration{};
+        const auto                                               status = handle->stub->getActiveConfigurations(ctx.get(), req, &resp);
+        if (cancellation && cancellation->cancelled()) throw QueryCancelled{};
         if (!status.ok())
         {
             errorf(*logger_, "getActiveConfigurations failed: {}", status.error_message());
@@ -853,6 +871,7 @@ MLDPAnnotationQueryClient::getActiveConfigurations(
     }
     catch (const std::exception& ex)
     {
+        if (cancellation && cancellation->cancelled()) throw;
         errorf(*logger_, "getActiveConfigurations exception: {}", ex.what());
         return {};
     }

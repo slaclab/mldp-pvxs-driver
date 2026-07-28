@@ -17,6 +17,7 @@
 #include <query/QueryFormatter.h>
 #include <query/QueryPlanner.h>
 #include <query/QueryProgress.h>
+#include <query/QueryCancellation.h>
 #include <query/QueryTableCatalog.h>
 #include <query/QueryableFactory.h>
 #include <query/SpillManager.h>
@@ -39,6 +40,7 @@
 #include <iostream>
 #include <iterator>
 #include <memory>
+#include <future>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -46,11 +48,40 @@
 
 #include <unistd.h>
 
+#include <csignal>
+
 #include <sys/ioctl.h>
 
 using namespace mldp_pvxs_driver::cli;
 
 namespace {
+
+volatile std::sig_atomic_t g_query_interrupt_requested = 0;
+std::mutex                 g_fallback_output_mutex;
+
+extern "C" void requestQueryInterrupt(int)
+{
+    g_query_interrupt_requested = 1;
+}
+
+class ScopedQueryInterruptHandler
+{
+public:
+    ScopedQueryInterruptHandler()
+        : previous_(std::signal(SIGINT, requestQueryInterrupt))
+    {
+        g_query_interrupt_requested = 0;
+    }
+
+    ~ScopedQueryInterruptHandler()
+    {
+        std::signal(SIGINT, previous_);
+    }
+
+private:
+    using Handler = void (*)(int);
+    Handler previous_;
+};
 
 mldp_pvxs_driver::config::Config selectQueryablePoolConfig(
     const std::string_view                  type,
@@ -525,10 +556,11 @@ int runRepl(QueryCliOptions                           options,
 {
     std::string buffer;
     ReplLineEditor editor(input, runner.completionCatalog(options));
+    auto output_mutex = std::make_shared<std::mutex>();
     std::optional<TerminalLayout> terminal;
     if (&input == &std::cin && &output == &std::cout && ::isatty(STDIN_FILENO) != 0 && ::isatty(STDOUT_FILENO) != 0)
     {
-        terminal.emplace(output);
+        terminal.emplace(output, output_mutex);
         if (!terminal->initialize())
         {
             terminal.reset();
@@ -703,29 +735,68 @@ int runRepl(QueryCliOptions                           options,
             }
             editor.addHistory(sql);
             auto progress = std::make_shared<mldp_pvxs_driver::query::QueryProgressTracker>();
+            auto cancellation = std::make_shared<mldp_pvxs_driver::query::QueryCancellation>();
             status.query_running = true;
             status.progress = progress->snapshot();
+            status.completed_stats.reset();
             status.error.clear();
             if (terminal)
             {
                 terminal->setStatus(status);
                 terminal->redrawFooter();
             }
+            auto query_options = options;
+            query_options.expanded = options.expanded || expanded_once;
+            mldp_pvxs_driver::query::QueryStats completed_stats;
+            ScopedQueryInterruptHandler interrupt_handler;
+            auto query = std::async(std::launch::async,
+                                    [&]
+                                    {
+                                        return runner.run(query_options,
+                                                          sql,
+                                                          output,
+                                                          progress,
+                                                          terminal ? std::optional<std::size_t>(static_cast<std::size_t>(terminal->columns())) : std::nullopt,
+                                                          !terminal,
+                                                          &completed_stats,
+                                                          cancellation,
+                                                          output_mutex);
+                                    });
             try
             {
-                auto query_options = options;
-                query_options.expanded = options.expanded || expanded_once;
-                mldp_pvxs_driver::query::QueryStats completed_stats;
-                (void)runner.run(query_options,
-                                 sql,
-                                 output,
-                                 progress,
-                                 terminal ? std::optional<std::size_t>(static_cast<std::size_t>(terminal->columns())) : std::nullopt,
-                                 !terminal,
-                                 &completed_stats);
+                status.progress = progress->snapshot();
+                if (terminal)
+                {
+                    terminal->setStatus(status);
+                    terminal->redrawFooter();
+                }
+                while (query.wait_for(std::chrono::milliseconds{250}) != std::future_status::ready)
+                {
+                    if (g_query_interrupt_requested != 0)
+                    {
+                        g_query_interrupt_requested = 0;
+                        progress->setPhase(mldp_pvxs_driver::query::QueryProgressPhase::Cancelling);
+                        cancellation->requestCancel();
+                    }
+                    if (terminal)
+                    {
+                        status.progress = progress->snapshot();
+                        terminal->setStatus(status);
+                        terminal->redrawFooter();
+                    }
+                }
+                (void)query.get();
                 status.query_running = false;
                 status.progress = progress->snapshot();
                 status.completed_stats = std::move(completed_stats);
+            }
+            catch (const mldp_pvxs_driver::query::QueryCancelled&)
+            {
+                status.query_running = false;
+                status.progress = progress->snapshot();
+                status.error.clear();
+                status.completed_stats.reset();
+                error << "Query cancelled\n";
             }
             catch (const std::exception& ex)
             {
@@ -972,7 +1043,9 @@ int mldp_pvxs_driver::cli::QueryRunner::run(const QueryCliOptions& options,
                                              std::shared_ptr<query::QueryProgressTracker> progress,
                                              std::optional<std::size_t> viewport_width,
                                              const bool print_stats,
-                                             query::QueryStats* completed_stats) const
+                                             query::QueryStats* completed_stats,
+                                             std::shared_ptr<query::QueryCancellation> cancellation,
+                                             std::shared_ptr<std::mutex> output_mutex) const
 {
     const auto spill_dir = options.spill_dir.empty()
         ? (std::filesystem::temp_directory_path() / "mldp-query-spill").string()
@@ -999,6 +1072,7 @@ int mldp_pvxs_driver::cli::QueryRunner::run(const QueryCliOptions& options,
         .spill_dir = spill_dir,
         .table_catalog = table_catalog_,
         .progress = progress,
+        .cancellation = std::move(cancellation),
     };
 
     if (progress)
@@ -1027,15 +1101,21 @@ int mldp_pvxs_driver::cli::QueryRunner::run(const QueryCliOptions& options,
     {
         table_width = terminalWidth(output);
     }
-    formatQueryResult(result,
-                      options.format,
-                      output,
-                      options.expanded,
-                      TableRenderOptions{.viewport_width = options.table_fit ? table_width : std::nullopt});
-    if (!options.no_stats && print_stats)
+    if (context.cancellation) context.cancellation->throwIfCancelled();
     {
-        printQueryStats(result.stats, output);
+        std::unique_lock lock(output_mutex ? *output_mutex : g_fallback_output_mutex);
+        formatQueryResult(result,
+                          options.format,
+                          output,
+                          options.expanded,
+                          TableRenderOptions{.viewport_width = options.table_fit ? table_width : std::nullopt},
+                          context.cancellation);
+        if (!options.no_stats && print_stats)
+        {
+            printQueryStats(result.stats, output);
+        }
     }
+    if (context.cancellation) context.cancellation->throwIfCancelled();
     if (progress)
     {
         progress->setPhase(query::QueryProgressPhase::Complete);
@@ -1094,7 +1174,27 @@ int mldp_pvxs_driver::cli::QuerySubcommand::run(int argc,
         {
             return runRepl(options, runner, input, output, error);
         }
-        return runner.run(options, sql, output);
+        auto cancellation = std::make_shared<query::QueryCancellation>();
+        ScopedQueryInterruptHandler interrupt_handler;
+        auto query = std::async(std::launch::async,
+                                [&]
+                                {
+                                    return runner.run(options, sql, output, nullptr, std::nullopt, true, nullptr, cancellation, nullptr);
+                                });
+        while (query.wait_for(std::chrono::milliseconds{100}) != std::future_status::ready)
+        {
+            if (g_query_interrupt_requested != 0)
+            {
+                g_query_interrupt_requested = 0;
+                cancellation->requestCancel();
+            }
+        }
+        return query.get();
+    }
+    catch (const query::QueryCancelled&)
+    {
+        error << "Query cancelled\n";
+        return 130;
     }
     catch (const std::exception& ex)
     {

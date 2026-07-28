@@ -25,6 +25,7 @@ namespace {
             output.reserve(input.size());
             for (const auto& batch : input)
             {
+                throwIfCancelled();
                 auto filtered = applyFilter(batch, node_.predicates);
                 if (!filtered.ok())
                     throw std::runtime_error(filtered.status().ToString());
