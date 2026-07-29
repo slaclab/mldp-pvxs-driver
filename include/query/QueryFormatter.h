@@ -41,6 +41,14 @@ void formatQueryResult(const query::QueryExecutionResult& result,
                        const TableRenderOptions&          table_options = {},
                        std::shared_ptr<mldp_pvxs_driver::query::QueryCancellation> cancellation = nullptr);
 
+/** Consume a pull stream and make each completed Arrow batch visible before requesting the next one. */
+void formatQueryStream(mldp_pvxs_driver::query::IRecordBatchStream& stream,
+                       QueryOutputFormat                            format,
+                       std::ostream&                                output,
+                       bool                                         expanded = false,
+                       const TableRenderOptions&                    table_options = {},
+                       std::shared_ptr<mldp_pvxs_driver::query::QueryCancellation> cancellation = nullptr);
+
 void printQueryStats(const query::QueryStats& stats, std::ostream& output);
 
 std::string queryStatsLine(const query::QueryStats& stats);

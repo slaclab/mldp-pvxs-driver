@@ -42,6 +42,7 @@
 #include <memory>
 #include <future>
 #include <optional>
+#include <random>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -556,6 +557,7 @@ int runRepl(QueryCliOptions                           options,
 {
     std::string buffer;
     ReplLineEditor editor(input, runner.completionCatalog(options));
+    QueryContinuationRegistry continuations;
     auto output_mutex = std::make_shared<std::mutex>();
     std::optional<TerminalLayout> terminal;
     if (&input == &std::cin && &output == &std::cout && ::isatty(STDIN_FILENO) != 0 && ::isatty(STDOUT_FILENO) != 0)
@@ -760,7 +762,8 @@ int runRepl(QueryCliOptions                           options,
                                                           !terminal,
                                                           &completed_stats,
                                                           cancellation,
-                                                          output_mutex);
+                                                          output_mutex,
+                                                          &continuations);
                                     });
             try
             {
@@ -943,7 +946,120 @@ struct SpillCleanupGuard
     }
 };
 
+class InteractivePageStream final : public mldp_pvxs_driver::query::IRecordBatchStream
+{
+public:
+    InteractivePageStream(mldp_pvxs_driver::query::IRecordBatchStreamUPtr input, const uint64_t limit)
+        : input_(std::move(input)), remaining_(limit)
+    {
+    }
+
+    void reset(const uint64_t limit)
+    {
+        remaining_ = limit;
+    }
+
+    [[nodiscard]] bool pageFull() const noexcept { return remaining_ == 0; }
+
+    std::shared_ptr<arrow::RecordBatch> next() override
+    {
+        if (remaining_ == 0) return nullptr;
+        if (!pending_) pending_ = input_->next();
+        if (!pending_) return nullptr;
+        const auto available = static_cast<uint64_t>(pending_->num_rows() - offset_);
+        const auto count = std::min(available, remaining_);
+        const auto result = pending_->Slice(offset_, static_cast<int64_t>(count));
+        offset_ += static_cast<int64_t>(count);
+        remaining_ -= count;
+        if (offset_ == pending_->num_rows())
+        {
+            pending_.reset();
+            offset_ = 0;
+        }
+        return result;
+    }
+
+private:
+    mldp_pvxs_driver::query::IRecordBatchStreamUPtr input_;
+    std::shared_ptr<arrow::RecordBatch> pending_;
+    int64_t offset_{0};
+    uint64_t remaining_{0};
+};
+
+std::string queryFingerprint(const std::string_view sql)
+{
+    const auto uppercase_sql = uppercase(sql);
+    const auto page = uppercase_sql.find(" PAGE TOKEN ");
+    return page == std::string::npos ? std::string(sql) : std::string(sql.substr(0, page));
+}
+
 } // namespace
+
+mldp_pvxs_driver::cli::QueryContinuationRegistry::QueryContinuationRegistry(const std::chrono::steady_clock::duration idle_timeout)
+    : idle_timeout_(idle_timeout)
+{
+}
+
+mldp_pvxs_driver::cli::QueryContinuationRegistry::~QueryContinuationRegistry()
+{
+    clear();
+}
+
+std::string mldp_pvxs_driver::cli::QueryContinuationRegistry::store(Entry entry)
+{
+    cleanupExpired();
+    std::random_device random_device;
+    std::mt19937_64 generator(random_device());
+    std::string token;
+    do
+    {
+        std::ostringstream token_stream;
+        token_stream << "p9:" << std::hex << generator() << generator();
+        token = token_stream.str();
+    } while (entries_.contains(token));
+    entry.expires_at = std::chrono::steady_clock::now() + idle_timeout_;
+    entries_.emplace(token, std::move(entry));
+    return token;
+}
+
+mldp_pvxs_driver::cli::QueryContinuationRegistry::Entry
+mldp_pvxs_driver::cli::QueryContinuationRegistry::take(const std::string& token,
+                                                        const std::string_view fingerprint)
+{
+    cleanupExpired();
+    const auto found = entries_.find(token);
+    if (found == entries_.end())
+        throw std::runtime_error("PAGE TOKEN is invalid, expired, or has already been consumed in this REPL session");
+    if (found->second.fingerprint != fingerprint)
+        throw std::runtime_error("PAGE TOKEN does not match this query in the current REPL session");
+    auto entry = std::move(found->second);
+    entries_.erase(found);
+    return entry;
+}
+
+void mldp_pvxs_driver::cli::QueryContinuationRegistry::cleanupExpired()
+{
+    const auto now = std::chrono::steady_clock::now();
+    for (auto entry = entries_.begin(); entry != entries_.end(); )
+    {
+        if (entry->second.expires_at > now)
+        {
+            ++entry;
+            continue;
+        }
+        if (entry->second.cancellation) entry->second.cancellation->requestCancel();
+        entry = entries_.erase(entry);
+    }
+}
+
+void mldp_pvxs_driver::cli::QueryContinuationRegistry::clear()
+{
+    for (auto& [token, entry] : entries_)
+    {
+        if (entry.cancellation) entry.cancellation->requestCancel();
+    }
+    entries_.clear();
+}
 
 std::vector<std::string> mldp_pvxs_driver::cli::detail::replCompletions(
     const std::string_view input,
@@ -1045,14 +1161,14 @@ int mldp_pvxs_driver::cli::QueryRunner::run(const QueryCliOptions& options,
                                              const bool print_stats,
                                              query::QueryStats* completed_stats,
                                              std::shared_ptr<query::QueryCancellation> cancellation,
-                                             std::shared_ptr<std::mutex> output_mutex) const
+                                             std::shared_ptr<std::mutex> output_mutex,
+                                             QueryContinuationRegistry* continuations) const
 {
     const auto spill_dir = options.spill_dir.empty()
         ? (std::filesystem::temp_directory_path() / "mldp-query-spill").string()
         : options.spill_dir;
     auto spill_file_system = std::make_shared<arrow::fs::LocalFileSystem>();
     auto spill = std::make_shared<query::SpillManager>(spill_file_system, spill_dir);
-    SpillCleanupGuard cleanup{spill};
     const auto catalog_dir = options.table_catalog_dir.empty()
         ? (std::filesystem::temp_directory_path() / "mldp-query-catalog").string()
         : options.table_catalog_dir;
@@ -1087,10 +1203,26 @@ int mldp_pvxs_driver::cli::QueryRunner::run(const QueryCliOptions& options,
     const query::QueryPlanner planner(table_catalog_);
     const query::QueryExecutor executor;
     auto physical = planner.plan(parsed);
-    auto result = executor.execute(physical, context);
-    if (completed_stats != nullptr)
+    const auto* select = std::get_if<query::SelectStatement>(&parsed);
+    if (select && select->page_token && continuations == nullptr)
+        throw std::runtime_error("PAGE TOKEN p9 continuations are available only in a live REPL session");
+    const bool interactive_page = continuations != nullptr && select != nullptr && select->limit.has_value();
+    const auto fingerprint = interactive_page ? queryFingerprint(sql) : std::string{};
+    std::optional<QueryContinuationRegistry::Entry> resumed;
+    if (interactive_page && select->page_token)
     {
-        *completed_stats = result.stats;
+        resumed.emplace(continuations->take(*select->page_token, fingerprint));
+        context.cancellation = resumed->cancellation;
+    }
+    std::optional<SpillCleanupGuard> cleanup;
+    if (!interactive_page)
+    {
+        cleanup.emplace(SpillCleanupGuard{spill});
+    }
+    if (interactive_page)
+    {
+        if (const auto* limit = std::get_if<query::plan::PhysicalLimit>(&physical->value))
+            physical = limit->input;
     }
     if (progress)
     {
@@ -1104,7 +1236,32 @@ int mldp_pvxs_driver::cli::QueryRunner::run(const QueryCliOptions& options,
     if (context.cancellation) context.cancellation->throwIfCancelled();
     {
         std::unique_lock lock(output_mutex ? *output_mutex : g_fallback_output_mutex);
-        formatQueryResult(result,
+        query::IRecordBatchStreamUPtr stream;
+        std::shared_ptr<query::QueryStats> stream_stats;
+        InteractivePageStream* page_stream = nullptr;
+        if (resumed)
+        {
+            stream = std::move(resumed->stream);
+            stream_stats = std::move(resumed->stats);
+            page_stream = dynamic_cast<InteractivePageStream*>(stream.get());
+            if (!page_stream) throw std::runtime_error("PAGE TOKEN has incompatible continuation state");
+            page_stream->reset(*select->limit);
+        }
+        else
+        {
+            auto streamed_result = executor.executeStream(physical, context);
+            stream_stats = std::move(streamed_result.stats);
+            if (interactive_page)
+            {
+                stream = std::make_unique<InteractivePageStream>(std::move(streamed_result.stream), *select->limit);
+                page_stream = static_cast<InteractivePageStream*>(stream.get());
+            }
+            else
+            {
+                stream = std::move(streamed_result.stream);
+            }
+        }
+        formatQueryStream(*stream,
                           options.format,
                           output,
                           options.expanded,
@@ -1112,7 +1269,20 @@ int mldp_pvxs_driver::cli::QueryRunner::run(const QueryCliOptions& options,
                           context.cancellation);
         if (!options.no_stats && print_stats)
         {
-            printQueryStats(result.stats, output);
+            printQueryStats(*stream_stats, output);
+        }
+        if (completed_stats != nullptr)
+        {
+            *completed_stats = *stream_stats;
+        }
+        if (interactive_page && page_stream && page_stream->pageFull())
+        {
+            const auto token = continuations->store(QueryContinuationRegistry::Entry{
+                .fingerprint = fingerprint,
+                .stream = std::move(stream),
+                .stats = std::move(stream_stats),
+                .cancellation = context.cancellation});
+            output << "-- continuation token: " << token << "\n";
         }
     }
     if (context.cancellation) context.cancellation->throwIfCancelled();

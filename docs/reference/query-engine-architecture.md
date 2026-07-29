@@ -259,7 +259,7 @@ children are non-comparable, apart from the existing `IS NOT NULL` check.
 | `timeout` | `=` | Sets gRPC query timeout. |
 | `rpc_deadline` | `=` | Sets gRPC deadline. |
 
-Time values are epoch seconds; the executor converts to nanoseconds internally. The backend returns column-format `QueryTableResponse`; rows are sorted by timestamp before pagination.
+Time values are epoch seconds; the executor converts to nanoseconds internally. Long-form scans use `queryDataBidiStream`, and rows are exposed as pull-driven Arrow batches.
 
 ### `mldp.time_series_table` — `MLDPQueryClient`
 
@@ -273,15 +273,12 @@ Time values are epoch seconds; the executor converts to nanoseconds internally. 
 | `attributes.<key>`, `provenance.<key>` | `=`, `IN`, `PREFIX`, `CONTAINS`, `LIKE` | Select candidate PV columns using returned MLDP column metadata. |
 | generated PV fields | — | One native typed Arrow column per returned requested PV, after `time`. |
 
-The query client maps one `TABLE_FORMAT_COLUMN` response directly to a wide
-Arrow batch. A shorter data vector is trailing-null padded; a vector longer
-than the shared timestamps or a duplicate returned PV is rejected. Requested
-PVs absent from a successful response are normal empty-selection results: they
-are omitted, and no returned PV produces an empty result. MLDP column metadata
-is attached to each generated PV Arrow field as key/value metadata: `tags`,
-`attributes.<key>`, `provenance.source`, and `provenance.process`. It is a special
-runtime-shaped table: `SELECT *` is required, and projections, predicates,
-`ORDER BY`, and joins over generated PV fields are not supported.
+Wide queries use bounded `queryDataBidiStream` long-form cursors, spill the
+`pv,time,value` batches to Arrow IPC, and pivot by timestamp after all shards
+finish. The resulting batch is globally time ordered, preserves requested PV
+order, writes missing cells as null, and rejects duplicate `(time,pv)` rows.
+It is a special runtime-shaped table: `SELECT *` is required, and projections,
+predicates, `ORDER BY`, and joins over generated PV fields are not supported.
 
 Metadata text patterns are evaluated locally while selecting returned candidate PV columns; they do not change the gRPC request. A `pv =` or `pv IN (...)` candidate predicate is still required.
 
@@ -290,10 +287,11 @@ single-column child first, rejects null or type-incompatible values, and
 materializes compatible values as an ordinary `IN` predicate. Pushable values
 are included in the backend request; local-only values are filtered after the
 fetch. `window IN (SELECT start, end ...)` is available on both MLDP time-series
-tables and evaluates to closed timestamp ranges.
-Ranges are sorted and coalesced when they overlap or directly touch; the
-executor issues one `QueryTableRequest` per normalized range, consuming all
-long-table continuation pages before advancing to the next range. The window
+tables and evaluates to closed timestamp ranges. Both MLDP time-series tables
+can append `; slice <duration>, pv_group <positive-integer>` to a window input;
+defaults are `slice 1s` and `pv_group 1`. Ranges are sorted and coalesced when
+they overlap or directly touch; the executor opens serial bidi server cursors
+in normalized-range, time-slice, then PV-group order. The window
 child must expose exactly two non-null timestamp
 outputs. Their names and aliases are ignored: the first output is the start and
 the second is the end. Open, empty, malformed, or inverted windows fail before

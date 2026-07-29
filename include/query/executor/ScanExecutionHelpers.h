@@ -26,6 +26,7 @@ RecordBatches fetchTimeSeriesWindows(const plan::PhysicalTableScan& scan,
                                      const std::vector<Predicate>& pushable,
                                      const std::vector<Predicate>& local,
                                      const std::vector<std::pair<int64_t, int64_t>>& windows,
+                                     const plan::WindowShardSpec& window_shards,
                                      const ExecutionContext& context,
                                      QueryStats& stats);
 

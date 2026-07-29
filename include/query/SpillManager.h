@@ -18,6 +18,7 @@
 #pragma once
 
 #include <arrow/filesystem/filesystem.h>
+#include <arrow/ipc/writer.h>
 #include <arrow/ipc/reader.h>
 #include <arrow/record_batch.h>
 #include <arrow/result.h>
@@ -37,6 +38,7 @@ struct SpillHandle {
 };
 
 class SpillManager;
+class SpillWriter;
 
 class SpillReader
 {
@@ -73,6 +75,8 @@ public:
 
     arrow::Result<SpillHandle> spill(const std::string& query_id,
                                      const std::vector<std::shared_ptr<arrow::RecordBatch>>& batches);
+    arrow::Result<SpillWriter> openWriter(const std::string& query_id,
+                                          std::shared_ptr<arrow::Schema> schema);
     arrow::Result<SpillReader> read(const SpillHandle& handle);
     arrow::Status cleanup();
 
@@ -80,6 +84,39 @@ private:
     friend class SpillReader;
     using State = SpillReader::State;
     std::shared_ptr<State> state_;
+};
+
+/** Incrementally writes one-schema Arrow IPC spill data and cleans up on abandonment. */
+class SpillWriter
+{
+public:
+    SpillWriter() = default;
+    ~SpillWriter();
+    SpillWriter(const SpillWriter&) = delete;
+    SpillWriter& operator=(const SpillWriter&) = delete;
+    SpillWriter(SpillWriter&&) noexcept = default;
+    SpillWriter& operator=(SpillWriter&&) noexcept = default;
+
+    arrow::Status append(const std::shared_ptr<arrow::RecordBatch>& batch);
+    arrow::Result<SpillHandle> finish();
+
+private:
+    friend class SpillManager;
+    SpillWriter(std::shared_ptr<SpillReader::State> state,
+                std::string path,
+                std::shared_ptr<arrow::Schema> schema,
+                std::shared_ptr<arrow::io::OutputStream> output,
+                std::shared_ptr<arrow::ipc::RecordBatchWriter> writer);
+
+    void abort();
+
+    std::shared_ptr<SpillReader::State> state_;
+    std::string path_;
+    std::shared_ptr<arrow::Schema> schema_;
+    std::shared_ptr<arrow::io::OutputStream> output_;
+    std::shared_ptr<arrow::ipc::RecordBatchWriter> writer_;
+    int batch_count_{0};
+    bool finished_{false};
 };
 
 } // namespace mldp_pvxs_driver::query

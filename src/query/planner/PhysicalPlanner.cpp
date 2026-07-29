@@ -104,7 +104,8 @@ plan::PhysicalNodePtr buildNode(const plan::LogicalNodePtr& node)
             .in_subqueries = std::move(in_subqueries),
             .window_subquery = scan->window_subquery,
             .window_literal = scan->window_literal ? std::optional<std::array<int64_t, 2>>{
-                {std::get<int64_t>((*scan->window_literal)[0]), std::get<int64_t>((*scan->window_literal)[1])}} : std::nullopt});
+                {std::get<int64_t>((*scan->window_literal)[0]), std::get<int64_t>((*scan->window_literal)[1])}} : std::nullopt,
+            .window_shards = scan->window_shards});
     }
     if (const auto* filter = std::get_if<plan::LogicalFilter>(&node->value))
     {

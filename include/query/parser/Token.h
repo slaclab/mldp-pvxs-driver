@@ -65,6 +65,7 @@ enum class TokenType {
     STAR,
     SLASH,
     COMMA,
+    SEMICOLON,
     DOT,
     LPAREN,
     RPAREN,

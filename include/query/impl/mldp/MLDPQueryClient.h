@@ -98,6 +98,11 @@ public:
                                        const std::set<std::string>&  projection_hint,
                                        const ExecutionContext&       context,
                                        std::string_view              page_token = {}) override;
+    IRecordBatchStreamUPtr     executeStream(std::string_view              table_name,
+                                             const std::vector<Predicate>& pushable_predicates,
+                                             const std::set<std::string>&  projection_hint,
+                                             const ExecutionContext&       context,
+                                             std::string_view              page_token = {}) override;
 
     /**
      * @brief Query MLDP metadata for a set of source identifiers.

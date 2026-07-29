@@ -605,7 +605,21 @@ another query. The interval is inclusive; literal endpoints may be reversed
 and are normalized. A window subquery must return exactly two non-null
 timestamp columns: start first and end second. Its output names and aliases do
 not matter. Overlapping or adjacent subquery intervals are coalesced, and the
-long-form table consumes every continuation page for each resulting range.
+long-form table opens serial MLDP server cursors for each resulting range.
+
+`mldp.time_series` also accepts optional shard controls after a semicolon
+inside the `window` input. `slice` is a positive duration (default `1s`) and
+`pv_group` is a positive PV-count bound (default `1`). The driver visits
+normalized windows, time slices, and requested-PV groups in that order. Each
+cursor receives one bounded range and group; adjacent inclusive backend ranges
+are locally made half-open so a boundary sample appears once.
+
+```sql
+SELECT pv, time, value
+FROM mldp.time_series
+WHERE pv IN ('SYS:MAGNET:CURRENT', 'SYS:VACUUM:PRESSURE')
+  AND window IN (NOW - 10m, NOW; slice 5s, pv_group 2)
+```
 
 ```sql
 SELECT pv, time, value
@@ -667,6 +681,13 @@ both forms. Subquery ranges must be closed; overlapping or adjacent ranges are
 coalesced before the driver issues the corresponding time-series requests. As with ordinary SQL
 filtering, a valid `pv` or `window` subquery that finds no rows returns an empty
 result; malformed subquery output remains an error.
+
+Shard options (`slice`, `pv_group`) apply to both MLDP time-series tables.
+Long-form `mldp.time_series` emits server-cursor batches directly.
+`mldp.time_series_table` consumes those same bounded long-form cursors into
+temporary Arrow spill storage and emits a globally time-ordered pivot only
+after preparation finishes. Missing `(time, pv)` cells are null; duplicate
+cells are an execution error.
 
 ```sql
 SELECT *

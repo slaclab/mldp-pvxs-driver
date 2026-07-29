@@ -48,7 +48,8 @@ plan::LogicalNodePtr mldp_pvxs_driver::query::planner::buildLogicalPlan(const pl
             .derived_query = table.derived_query,
             .in_subqueries = table.in_subqueries,
             .window_subquery = table.window_subquery,
-            .window_literal = table.window_literal});
+            .window_literal = table.window_literal,
+            .window_shards = table.window_shards});
         if (!table.predicates.empty())
         {
             node = plan::makeNode(plan::LogicalFilter{

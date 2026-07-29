@@ -35,6 +35,8 @@
 #include <chrono>
 #include <filesystem>
 #include <sstream>
+#include <utility>
+#include <vector>
 
 using namespace mldp_pvxs_driver;
 
@@ -79,7 +81,188 @@ public:
     }
 };
 
+class ObservingRecordBatchStream final : public query::IRecordBatchStream
+{
+public:
+    ObservingRecordBatchStream(std::vector<std::shared_ptr<arrow::RecordBatch>> batches, std::ostringstream& output)
+        : batches_(std::move(batches)), output_(output)
+    {
+    }
+
+    std::shared_ptr<arrow::RecordBatch> next() override
+    {
+        if (index_ == 1)
+        {
+            first_batch_visible_before_second_pull = output_.str().find("\"value\":1") != std::string::npos;
+        }
+        return index_ < batches_.size() ? batches_[index_++] : nullptr;
+    }
+
+    bool first_batch_visible_before_second_pull{false};
+
+private:
+    std::vector<std::shared_ptr<arrow::RecordBatch>> batches_;
+    std::ostringstream& output_;
+    std::size_t index_{0};
+};
+
+class EmptyRecordBatchStream final : public query::IRecordBatchStream
+{
+public:
+    std::shared_ptr<arrow::RecordBatch> next() override { return nullptr; }
+};
+
+class ContinuationPageQueryable final : public query::IQueryable
+{
+public:
+    static const std::set<std::string_view> kVirtualTables;
+    inline static uint64_t stream_creations{0};
+    inline static uint64_t next_calls{0};
+    inline static std::vector<std::vector<int64_t>> batches{{1, 2, 3}, {4, 5}};
+
+    explicit ContinuationPageQueryable(const config::Config&, std::shared_ptr<metrics::Metrics> = nullptr)
+    {
+    }
+
+    std::set<std::string_view> virtualTables() const override { return kVirtualTables; }
+
+    std::vector<query::ColumnSchema> tableSchema(std::string_view) const override
+    {
+        return {{"pv", query::ColumnType::STRING, true, true, {query::PredicateOp::EQ, query::PredicateOp::IN}, {}, "PV"},
+                {"time", query::ColumnType::TIMESTAMP, false, true, {query::PredicateOp::GTE, query::PredicateOp::LTE}, {}, "Time"},
+                {"value", query::ColumnType::INT, false, true, {}, {}, "Value"}};
+    }
+
+    query::QueryResult execute(std::string_view,
+                               const std::vector<query::Predicate>&,
+                               const std::set<std::string>&,
+                               const query::ExecutionContext&,
+                               std::string_view = {}) override
+    {
+        throw std::runtime_error("ContinuationPageQueryable requires executeStream");
+    }
+
+    query::IRecordBatchStreamUPtr executeStream(std::string_view,
+                                                 const std::vector<query::Predicate>&,
+                                                 const std::set<std::string>&,
+                                                 const query::ExecutionContext&,
+                                                 std::string_view = {}) override
+    {
+        ++stream_creations;
+        class Stream final : public query::IRecordBatchStream
+        {
+        public:
+            explicit Stream(std::vector<std::vector<int64_t>> batches)
+                : batches_(std::move(batches))
+            {
+            }
+
+            std::shared_ptr<arrow::RecordBatch> next() override
+            {
+                ++ContinuationPageQueryable::next_calls;
+                if (index_ >= batches_.size()) return nullptr;
+                arrow::StringBuilder pv_builder;
+                arrow::TimestampBuilder time_builder(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), arrow::default_memory_pool());
+                arrow::Int64Builder value_builder;
+                const auto& values = batches_[index_++];
+                for (const auto value : values)
+                {
+                    if (!pv_builder.Append("CONT:PV").ok() ||
+                        !time_builder.Append(value * 1'000'000'000LL).ok() ||
+                        !value_builder.Append(value).ok())
+                        throw std::runtime_error("Failed to build continuation test batch");
+                }
+                std::shared_ptr<arrow::Array> pv;
+                std::shared_ptr<arrow::Array> time;
+                std::shared_ptr<arrow::Array> value;
+                if (!pv_builder.Finish(&pv).ok() || !time_builder.Finish(&time).ok() || !value_builder.Finish(&value).ok())
+                    throw std::runtime_error("Failed to finish continuation test batch");
+                return arrow::RecordBatch::Make(
+                    arrow::schema({arrow::field("pv", pv->type()), arrow::field("time", time->type()), arrow::field("value", value->type())}),
+                    pv->length(), {pv, time, value});
+            }
+
+        private:
+            std::vector<std::vector<int64_t>> batches_;
+            std::size_t index_{0};
+        };
+        return std::make_unique<Stream>(batches);
+    }
+};
+
+class SustainedWindowQueryable final : public query::IQueryable
+{
+public:
+    struct Request { std::string pv; int64_t begin; int64_t end; };
+    static const std::set<std::string_view> kVirtualTables;
+    inline static std::vector<Request> requests;
+    inline static uint64_t stream_creations{0};
+    inline static uint64_t next_calls{0};
+
+    explicit SustainedWindowQueryable(const config::Config&, std::shared_ptr<metrics::Metrics> = nullptr) {}
+    std::set<std::string_view> virtualTables() const override { return kVirtualTables; }
+    std::vector<query::ColumnSchema> tableSchema(std::string_view) const override
+    {
+        return {{"pv", query::ColumnType::STRING, true, true, {query::PredicateOp::EQ, query::PredicateOp::IN}, {}, "PV"},
+                {"time", query::ColumnType::TIMESTAMP, false, true, {query::PredicateOp::GTE, query::PredicateOp::LTE}, {}, "Time"},
+                {"value", query::ColumnType::INT, false, true, {}, {}, "Value"}};
+    }
+    query::QueryResult execute(std::string_view, const std::vector<query::Predicate>&, const std::set<std::string>&,
+                               const query::ExecutionContext&, std::string_view = {}) override
+    {
+        throw std::runtime_error("SustainedWindowQueryable requires executeStream");
+    }
+    query::IRecordBatchStreamUPtr executeStream(std::string_view, const std::vector<query::Predicate>& predicates,
+                                                const std::set<std::string>&, const query::ExecutionContext&,
+                                                std::string_view = {}) override
+    {
+        std::string pv;
+        int64_t begin = 0;
+        int64_t end = 0;
+        for (const auto& predicate : predicates)
+        {
+            if (predicate.column == "pv") pv = std::get<std::string>(predicate.values.front());
+            if (predicate.column == "time" && predicate.op == query::PredicateOp::GTE) begin = std::get<int64_t>(predicate.values.front());
+            if (predicate.column == "time" && predicate.op == query::PredicateOp::LTE) end = std::get<int64_t>(predicate.values.front());
+        }
+        requests.push_back({pv, begin, end});
+        ++stream_creations;
+        class Stream final : public query::IRecordBatchStream
+        {
+        public:
+            Stream(std::string pv, const int64_t begin, const int64_t end) : pv_(std::move(pv)), begin_(begin), end_(end) {}
+            std::shared_ptr<arrow::RecordBatch> next() override
+            {
+                ++SustainedWindowQueryable::next_calls;
+                if (index_ == 2) return nullptr;
+                const auto timestamp = index_++ == 0 ? (begin_ + 1) : end_; // inclusive shard end exercises local filtering
+                const auto pv_number = pv_.back() - '0';
+                arrow::StringBuilder pv;
+                arrow::TimestampBuilder time(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), arrow::default_memory_pool());
+                arrow::Int64Builder value;
+                if (!pv.Append(pv_).ok() || !time.Append(timestamp * 1'000'000'000LL).ok() || !value.Append(pv_number * 100 + timestamp).ok())
+                    throw std::runtime_error("Failed to build sustained window batch");
+                std::shared_ptr<arrow::Array> pv_array;
+                std::shared_ptr<arrow::Array> time_array;
+                std::shared_ptr<arrow::Array> value_array;
+                if (!pv.Finish(&pv_array).ok() || !time.Finish(&time_array).ok() || !value.Finish(&value_array).ok())
+                    throw std::runtime_error("Failed to finish sustained window batch");
+                return arrow::RecordBatch::Make(arrow::schema({arrow::field("pv", pv_array->type()), arrow::field("time", time_array->type()), arrow::field("value", value_array->type())}),
+                                                1, {pv_array, time_array, value_array});
+            }
+        private:
+            std::string pv_;
+            int64_t begin_;
+            int64_t end_;
+            uint64_t index_{0};
+        };
+        return std::make_unique<Stream>(std::move(pv), begin, end);
+    }
+};
+
 const std::set<std::string_view> ReplFakeQueryable::kVirtualTables = {"fake.samples"};
+const std::set<std::string_view> ContinuationPageQueryable::kVirtualTables = {"mldp.time_series"};
+const std::set<std::string_view> SustainedWindowQueryable::kVirtualTables = {"mldp.time_series"};
 
 TEST(ConsoleFooterTest, RendersFixedWidthAsciiStatusWithPriority)
 {
@@ -148,6 +331,227 @@ TEST(QueryFormatterTest, StopsBeforeWritingWhenCancelled)
     EXPECT_TRUE(output.str().empty());
 }
 
+TEST(QueryFormatterTest, WritesCompletedStreamBatchBeforePullingTheNext)
+{
+    const auto schema = arrow::schema({arrow::field("value", arrow::int64())});
+    arrow::Int64Builder first_builder;
+    arrow::Int64Builder second_builder;
+    ASSERT_TRUE(first_builder.Append(1).ok());
+    ASSERT_TRUE(second_builder.Append(2).ok());
+    std::shared_ptr<arrow::Array> first;
+    std::shared_ptr<arrow::Array> second;
+    ASSERT_TRUE(first_builder.Finish(&first).ok());
+    ASSERT_TRUE(second_builder.Finish(&second).ok());
+    std::ostringstream output;
+    ObservingRecordBatchStream stream({arrow::RecordBatch::Make(schema, 1, {first}),
+                                       arrow::RecordBatch::Make(schema, 1, {second})},
+                                      output);
+
+    cli::formatQueryStream(stream, cli::QueryOutputFormat::Json, output);
+
+    EXPECT_TRUE(stream.first_batch_visible_before_second_pull);
+    EXPECT_NE(output.str().find("\"value\":2"), std::string::npos);
+}
+
+TEST(QueryContinuationRegistryTest, RotatesTokensAndRejectsMismatchedQueries)
+{
+    cli::QueryContinuationRegistry registry;
+    const auto token = registry.store(cli::QueryContinuationRegistry::Entry{
+        .fingerprint = "SELECT value FROM fake.samples LIMIT 1",
+        .stream = std::make_unique<EmptyRecordBatchStream>(),
+        .stats = std::make_shared<query::QueryStats>(),
+        .cancellation = std::make_shared<query::QueryCancellation>()});
+
+    EXPECT_TRUE(token.starts_with("p9:"));
+    EXPECT_THROW(registry.take(token, "SELECT value FROM another.samples LIMIT 1"), std::runtime_error);
+    auto entry = registry.take(token, "SELECT value FROM fake.samples LIMIT 1");
+    ASSERT_NE(entry.stream, nullptr);
+    EXPECT_THROW(registry.take(token, "SELECT value FROM fake.samples LIMIT 1"), std::runtime_error);
+}
+
+TEST(QueryContinuationRegistryTest, CancelsExpiredAndClearedContinuationWork)
+{
+    const auto make_entry = [] {
+        auto cancellation = std::make_shared<query::QueryCancellation>();
+        return std::pair{cancellation, cli::QueryContinuationRegistry::Entry{
+                                           .fingerprint = "SELECT value FROM fake.samples LIMIT 1",
+                                           .stream = std::make_unique<EmptyRecordBatchStream>(),
+                                           .stats = std::make_shared<query::QueryStats>(),
+                                           .cancellation = cancellation}};
+    };
+
+    cli::QueryContinuationRegistry expiring_registry(std::chrono::steady_clock::duration::zero());
+    auto [expired_cancellation, expired_entry] = make_entry();
+    const auto expired_token = expiring_registry.store(std::move(expired_entry));
+    expiring_registry.cleanupExpired();
+    EXPECT_TRUE(expired_cancellation->cancelled());
+    EXPECT_THROW(expiring_registry.take(expired_token, "SELECT value FROM fake.samples LIMIT 1"), std::runtime_error);
+
+    cli::QueryContinuationRegistry clearing_registry;
+    auto [cleared_cancellation, cleared_entry] = make_entry();
+    clearing_registry.store(std::move(cleared_entry));
+    clearing_registry.clear();
+    EXPECT_TRUE(cleared_cancellation->cancelled());
+}
+
+TEST(QueryRunnerTest, RetainsStreamingRowsAcrossRotatingInteractivePageTokens)
+{
+    query::QueryableFactory::instance().reset();
+    ContinuationPageQueryable::stream_creations = 0;
+    ContinuationPageQueryable::next_calls = 0;
+    ContinuationPageQueryable::batches = {{1, 2, 3}, {4, 5}};
+    query::QueryableFactory::instance().prepare<ContinuationPageQueryable>(config::Config::configFromYamlString("{}"));
+    cli::QueryRunner runner;
+    cli::QueryContinuationRegistry continuations;
+    cli::QueryCliOptions options{.format = cli::QueryOutputFormat::Json, .no_stats = true};
+    const std::string first_sql = "SELECT pv, time, value FROM mldp.time_series WHERE pv = 'CONT:PV' LIMIT 2";
+    std::ostringstream first_output;
+
+    ASSERT_EQ(runner.run(options, first_sql, first_output, nullptr, std::nullopt, false, nullptr, nullptr, nullptr, &continuations), 0);
+    EXPECT_NE(first_output.str().find("\"value\":1"), std::string::npos);
+    EXPECT_NE(first_output.str().find("\"value\":2"), std::string::npos);
+    EXPECT_EQ(first_output.str().find("\"value\":3"), std::string::npos);
+    ASSERT_EQ(ContinuationPageQueryable::stream_creations, 1U);
+    ASSERT_EQ(ContinuationPageQueryable::next_calls, 1U);
+
+    const auto first_token_marker = first_output.str().find("p9:");
+    ASSERT_NE(first_token_marker, std::string::npos);
+    const auto first_token = first_output.str().substr(first_token_marker, first_output.str().find('\n', first_token_marker) - first_token_marker);
+    const std::string resumed_sql = first_sql + " PAGE TOKEN '" + first_token + "'";
+    std::ostringstream second_output;
+
+    ASSERT_EQ(runner.run(options, resumed_sql, second_output, nullptr, std::nullopt, false, nullptr, nullptr, nullptr, &continuations), 0);
+    EXPECT_NE(second_output.str().find("\"value\":3"), std::string::npos);
+    EXPECT_NE(second_output.str().find("\"value\":4"), std::string::npos);
+    EXPECT_EQ(second_output.str().find("\"value\":5"), std::string::npos);
+    EXPECT_EQ(ContinuationPageQueryable::stream_creations, 1U);
+    EXPECT_EQ(ContinuationPageQueryable::next_calls, 2U);
+
+    const auto second_token_marker = second_output.str().find("p9:");
+    ASSERT_NE(second_token_marker, std::string::npos);
+    const auto second_token = second_output.str().substr(second_token_marker, second_output.str().find('\n', second_token_marker) - second_token_marker);
+    EXPECT_NE(second_token, first_token);
+    EXPECT_THROW(runner.run(options, resumed_sql, second_output, nullptr, std::nullopt, false, nullptr, nullptr, nullptr, &continuations), std::runtime_error);
+    const std::string mismatched_sql = "SELECT pv, time, value FROM mldp.time_series WHERE pv = 'OTHER:PV' LIMIT 2 PAGE TOKEN '" + second_token + "'";
+    EXPECT_THROW(runner.run(options, mismatched_sql, second_output, nullptr, std::nullopt, false, nullptr, nullptr, nullptr, &continuations),
+                 std::runtime_error);
+
+    std::ostringstream final_output;
+    const std::string final_sql = first_sql + " PAGE TOKEN '" + second_token + "'";
+    ASSERT_EQ(runner.run(options, final_sql, final_output, nullptr, std::nullopt, false, nullptr, nullptr, nullptr, &continuations), 0);
+    EXPECT_NE(final_output.str().find("\"value\":5"), std::string::npos);
+    EXPECT_EQ(final_output.str().find("p9:"), std::string::npos);
+    EXPECT_EQ(ContinuationPageQueryable::stream_creations, 1U);
+    EXPECT_EQ(ContinuationPageQueryable::next_calls, 3U);
+
+    EXPECT_THROW(runner.run(options,
+                            "SELECT pv, time, value FROM mldp.time_series WHERE pv = 'CONT:PV' LIMIT 2 PAGE TOKEN 'p9:other-process'",
+                            second_output),
+                 std::runtime_error);
+    query::QueryableFactory::instance().reset();
+}
+
+TEST(QueryRunnerTest, HandlesExactBackendPageBoundariesAndEmptyBatches)
+{
+    query::QueryableFactory::instance().reset();
+    ContinuationPageQueryable::stream_creations = 0;
+    ContinuationPageQueryable::next_calls = 0;
+    query::QueryableFactory::instance().prepare<ContinuationPageQueryable>(config::Config::configFromYamlString("{}"));
+    cli::QueryRunner runner;
+    cli::QueryContinuationRegistry continuations;
+    const cli::QueryCliOptions options{.format = cli::QueryOutputFormat::Json, .no_stats = true};
+    const std::string sql = "SELECT pv, time, value FROM mldp.time_series WHERE pv = 'CONT:PV' LIMIT 2";
+
+    ContinuationPageQueryable::batches = {{10, 11}, {12, 13}};
+    std::ostringstream first_output;
+    ASSERT_EQ(runner.run(options, sql, first_output, nullptr, std::nullopt, false, nullptr, nullptr, nullptr, &continuations), 0);
+    EXPECT_NE(first_output.str().find("\"value\":10"), std::string::npos);
+    EXPECT_NE(first_output.str().find("\"value\":11"), std::string::npos);
+    EXPECT_EQ(ContinuationPageQueryable::next_calls, 1U);
+    const auto first_marker = first_output.str().find("p9:");
+    ASSERT_NE(first_marker, std::string::npos);
+    const auto first_token = first_output.str().substr(first_marker, first_output.str().find('\n', first_marker) - first_marker);
+
+    std::ostringstream second_output;
+    ASSERT_EQ(runner.run(options, sql + " PAGE TOKEN '" + first_token + "'", second_output, nullptr, std::nullopt, false, nullptr, nullptr, nullptr, &continuations), 0);
+    EXPECT_NE(second_output.str().find("\"value\":12"), std::string::npos);
+    EXPECT_NE(second_output.str().find("\"value\":13"), std::string::npos);
+    EXPECT_EQ(ContinuationPageQueryable::stream_creations, 1U);
+    EXPECT_EQ(ContinuationPageQueryable::next_calls, 2U);
+    const auto second_marker = second_output.str().find("p9:");
+    ASSERT_NE(second_marker, std::string::npos);
+    const auto second_token = second_output.str().substr(second_marker, second_output.str().find('\n', second_marker) - second_marker);
+
+    std::ostringstream eof_output;
+    ASSERT_EQ(runner.run(options, sql + " PAGE TOKEN '" + second_token + "'", eof_output, nullptr, std::nullopt, false, nullptr, nullptr, nullptr, &continuations), 0);
+    EXPECT_TRUE(eof_output.str().empty());
+    EXPECT_EQ(ContinuationPageQueryable::next_calls, 3U);
+
+    ContinuationPageQueryable::batches = {{}, {21, 22}};
+    ContinuationPageQueryable::next_calls = 0;
+    cli::QueryContinuationRegistry empty_batch_continuations;
+    std::ostringstream empty_batch_output;
+    ASSERT_EQ(runner.run(options, sql, empty_batch_output, nullptr, std::nullopt, false, nullptr, nullptr, nullptr, &empty_batch_continuations), 0);
+    EXPECT_NE(empty_batch_output.str().find("\"value\":21"), std::string::npos);
+    EXPECT_NE(empty_batch_output.str().find("\"value\":22"), std::string::npos);
+    EXPECT_EQ(ContinuationPageQueryable::next_calls, 2U);
+    EXPECT_NE(empty_batch_output.str().find("p9:"), std::string::npos);
+    query::QueryableFactory::instance().reset();
+}
+
+TEST(QueryRunnerTest, PagesSustainedMultiPvWindowStreamWithoutLossOrDuplication)
+{
+    query::QueryableFactory::instance().reset();
+    SustainedWindowQueryable::requests.clear();
+    SustainedWindowQueryable::stream_creations = 0;
+    SustainedWindowQueryable::next_calls = 0;
+    query::QueryableFactory::instance().prepare<SustainedWindowQueryable>(config::Config::configFromYamlString("{}"));
+    cli::QueryRunner runner;
+    cli::QueryContinuationRegistry continuations;
+    const cli::QueryCliOptions options{.format = cli::QueryOutputFormat::Json, .no_stats = true};
+    const std::string sql = "SELECT pv, time, value FROM mldp.time_series WHERE pv IN ('PV1', 'PV2', 'PV3') AND window IN (0, 10; slice 5s, pv_group 1) LIMIT 2";
+    std::string token;
+    std::string output;
+    std::string final_page;
+    for (;;)
+    {
+        std::ostringstream page;
+        const auto page_sql = token.empty() ? sql : sql + " PAGE TOKEN '" + token + "'";
+        ASSERT_EQ(runner.run(options, page_sql, page, nullptr, std::nullopt, false, nullptr, nullptr, nullptr, &continuations), 0);
+        output += page.str();
+        const auto marker = page.str().find("p9:");
+        if (marker == std::string::npos)
+        {
+            final_page = page.str();
+            break;
+        }
+        token = page.str().substr(marker, page.str().find('\n', marker) - marker);
+    }
+
+    const std::vector<SustainedWindowQueryable::Request> expected{
+        {"PV1", 0, 5}, {"PV2", 0, 5}, {"PV3", 0, 5}, {"PV1", 5, 10}, {"PV2", 5, 10}, {"PV3", 5, 10}};
+    ASSERT_EQ(SustainedWindowQueryable::requests.size(), expected.size());
+    for (std::size_t index = 0; index < expected.size(); ++index)
+    {
+        EXPECT_EQ(SustainedWindowQueryable::requests[index].pv, expected[index].pv);
+        EXPECT_EQ(SustainedWindowQueryable::requests[index].begin, expected[index].begin);
+        EXPECT_EQ(SustainedWindowQueryable::requests[index].end, expected[index].end);
+    }
+    EXPECT_EQ(SustainedWindowQueryable::stream_creations, expected.size());
+    EXPECT_EQ(SustainedWindowQueryable::next_calls, expected.size() * 3U);
+    EXPECT_EQ(final_page.find("p9:"), std::string::npos);
+    for (const auto value : {101LL, 201LL, 301LL, 106LL, 110LL, 206LL, 210LL, 306LL, 310LL})
+    {
+        const auto needle = "\"value\":" + std::to_string(value);
+        std::size_t matches = 0;
+        for (std::size_t position = output.find(needle); position != std::string::npos; position = output.find(needle, position + needle.size())) ++matches;
+        EXPECT_EQ(matches, 1U);
+    }
+    for (const auto duplicate_boundary : {105LL, 205LL, 305LL})
+        EXPECT_EQ(output.find("\"value\":" + std::to_string(duplicate_boundary)), std::string::npos);
+    query::QueryableFactory::instance().reset();
+}
+
 TEST(ArrowTypeMapTest, MapsEveryColumnType)
 {
     EXPECT_TRUE(query::arrowType(query::ColumnType::STRING)->Equals(*arrow::utf8()));
@@ -186,6 +590,38 @@ TEST(SpillManagerTest, RoundTripsAndDeletesAfterConsumption)
     const auto file_info = file_system->GetFileInfo(handle.path);
     ASSERT_TRUE(file_info.ok()) << file_info.status().ToString();
     EXPECT_EQ(file_info->type(), arrow::fs::FileType::NotFound);
+}
+
+TEST(SpillManagerTest, IncrementalWriterRoundTripsEveryBatch)
+{
+    auto file_system = std::make_shared<arrow::fs::internal::MockFileSystem>(std::chrono::system_clock::now());
+    query::SpillManager manager(file_system, "spill");
+    const auto schema = arrow::schema({arrow::field("value", arrow::int64())});
+    arrow::Int64Builder first_builder;
+    arrow::Int64Builder second_builder;
+    ASSERT_TRUE(first_builder.Append(1).ok());
+    ASSERT_TRUE(second_builder.Append(2).ok());
+    std::shared_ptr<arrow::Array> first_values;
+    std::shared_ptr<arrow::Array> second_values;
+    ASSERT_TRUE(first_builder.Finish(&first_values).ok());
+    ASSERT_TRUE(second_builder.Finish(&second_values).ok());
+    auto writer_result = manager.openWriter("incremental", schema);
+    ASSERT_TRUE(writer_result.ok()) << writer_result.status().ToString();
+    auto writer = std::move(*writer_result);
+    ASSERT_TRUE(writer.append(arrow::RecordBatch::Make(schema, 1, {first_values})).ok());
+    ASSERT_TRUE(writer.append(arrow::RecordBatch::Make(schema, 1, {second_values})).ok());
+    auto spill = writer.finish();
+    ASSERT_TRUE(spill.ok()) << spill.status().ToString();
+    EXPECT_EQ(spill->batch_count, 2);
+    auto reader_result = manager.read(*spill);
+    ASSERT_TRUE(reader_result.ok()) << reader_result.status().ToString();
+    auto reader = std::move(*reader_result);
+    auto first = reader.next();
+    auto second = reader.next();
+    ASSERT_TRUE(first.ok()) << first.status().ToString();
+    ASSERT_TRUE(second.ok()) << second.status().ToString();
+    EXPECT_EQ(std::static_pointer_cast<arrow::Int64Array>((*first)->column(0))->Value(0), 1);
+    EXPECT_EQ(std::static_pointer_cast<arrow::Int64Array>((*second)->column(0))->Value(0), 2);
 }
 
 TEST(SpillManagerTest, CleanupDeletesOutstandingFiles)

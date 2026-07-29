@@ -78,7 +78,7 @@ public:
             windows.emplace_back((*scan_.window_literal)[0] * 1'000'000'000LL, (*scan_.window_literal)[1] * 1'000'000'000LL);
         if (windows.empty()) return {};
 
-        return fetchTimeSeriesWindows(scan_, pushable, local, windows, context(), stats());
+        return fetchTimeSeriesWindows(scan_, pushable, local, windows, scan_.window_shards, context(), stats());
     }
 
 private:

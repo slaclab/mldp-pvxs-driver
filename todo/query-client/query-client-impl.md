@@ -7,7 +7,7 @@ SQL parsing, multi-pass planning, columnar execution, disk-spill for large joins
 Future: expose a TCP port (`--serve-flight`) and the same engine becomes a network-accessible
 query service via Arrow Flight SQL — no architectural changes required.
 
-Implementation follow-up: [Phase 8 — Streamable `IQueryable` + Incremental Arrow IPC](phase-8-streamable-iqueryable.md).
+Implementation follow-up: [Phase 10 — Final Server-Cursor Streaming Acceptance](phase-10-final-streaming-acceptance.md).
 
 ---
 

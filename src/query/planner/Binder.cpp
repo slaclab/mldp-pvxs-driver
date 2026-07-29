@@ -630,23 +630,57 @@ plan::BoundSelect mldp_pvxs_driver::query::planner::bindSelect(const SelectState
         table_index[all_tables[index].table_alias] = index;
     }
 
+    const auto bindWindowShardOptions = [](plan::BoundTable& table, const InPredicate& input)
+    {
+        if (!input.window_options.empty() && table.table_name != "mldp.time_series" && table.table_name != "mldp.time_series_table")
+            throw plan::PlannerException(plan::BindError{.message = "Window shard options are supported only for MLDP time-series tables"});
+        std::set<std::string> seen;
+        for (const auto& option : input.window_options)
+        {
+            std::string name = option.name;
+            std::transform(name.begin(), name.end(), name.begin(), [](const unsigned char value) { return static_cast<char>(std::tolower(value)); });
+            if (!seen.insert(name).second)
+                throw plan::PlannerException(plan::BindError{.message = "MLDP time-series window shard option is duplicated: " + name});
+            if (name == "slice")
+            {
+                if (!std::holds_alternative<DurationNsLiteral>(option.value) || std::get<DurationNsLiteral>(option.value).value <= 0)
+                    throw plan::PlannerException(plan::BindError{.message = "MLDP time-series window slice must be a positive duration"});
+                table.window_shards.slice_ns = std::get<DurationNsLiteral>(option.value).value;
+            }
+            else if (name == "pv_group")
+            {
+                if (!std::holds_alternative<int64_t>(option.value) || std::get<int64_t>(option.value) <= 0)
+                    throw plan::PlannerException(plan::BindError{.message = "MLDP time-series window pv_group must be a positive integer"});
+                table.window_shards.pv_group = static_cast<uint64_t>(std::get<int64_t>(option.value));
+            }
+            else
+            {
+                throw plan::PlannerException(plan::BindError{.message = "Unknown MLDP time-series window shard option: " + name});
+            }
+        }
+    };
+
     for (const auto& where : statement.predicates)
     {
+        if (const auto* in = std::get_if<InPredicate>(&where); in != nullptr && !in->window_options.empty() && in->column.name != "window")
+        {
+            throw plan::PlannerException(plan::BindError{.message = "Window shard options are supported only for MLDP time-series window input"});
+        }
         if (const auto* in = std::get_if<InPredicate>(&where); in != nullptr && in->subquery && in->column.name == "window")
         {
-            const auto resolved = resolveColumnReference(in->column, all_tables);
-            auto* const table = &all_tables[table_index.at(resolved.table_alias)];
-            const bool is_time_series = table->table_name == "mldp.time_series" ||
-                                        table->table_name == "mldp.time_series_table";
-
-            if (!is_time_series || resolved.column_name != "window")
+            if (all_tables.size() != 1 ||
+                (all_tables.front().table_name != "mldp.time_series" && all_tables.front().table_name != "mldp.time_series_table") ||
+                (in->column.qualifier.has_value() && in->column.qualifier.value() != all_tables.front().table_alias &&
+                 in->column.qualifier.value() != all_tables.front().table_name))
             {
                 throw plan::PlannerException(plan::BindError{
                     .message = "IN (SELECT ...) window input is supported only for mldp.time_series or mldp.time_series_table"});
             }
+            auto* const table = &all_tables.front();
             if (table->window_subquery || table->window_literal)
                 throw plan::PlannerException(plan::BindError{.message = "MLDP time-series tables accept exactly one window input"});
             table->window_subquery = in->subquery;
+            bindWindowShardOptions(*table, *in);
             continue;
         }
         if (const auto* in = std::get_if<InPredicate>(&where); in != nullptr && in->column.name == "window")
@@ -674,6 +708,7 @@ plan::BoundSelect mldp_pvxs_driver::query::planner::bindSelect(const SelectState
             const auto first = expressions.empty() ? in->values[0] : constantExpression(expressions[0]);
             const auto second = expressions.empty() ? in->values[1] : constantExpression(expressions[1]);
             all_tables.front().window_literal = std::array<plan::PlannerLiteralValue, 2>{toPlannerLiteral(first), toPlannerLiteral(second)};
+            bindWindowShardOptions(all_tables.front(), *in);
             continue;
         }
         const auto predicate = buildPredicate(where, all_tables);

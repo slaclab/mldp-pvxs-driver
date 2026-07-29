@@ -346,7 +346,7 @@ protected:
     std::vector<std::string>                                            activationIds_;
 };
 
-TEST_F(QueryableMldpIntegrationTest, TimeSeriesReturnsEveryPageWithDenseIntegerUnion)
+TEST_F(QueryableMldpIntegrationTest, TimeSeriesReturnsAllBidiResponsesWithDenseIntegerUnion)
 {
     const auto source_pv = pv("time_series");
     seedTimeSeries(source_pv, 5, 100);
@@ -360,7 +360,11 @@ TEST_F(QueryableMldpIntegrationTest, TimeSeriesReturnsEveryPageWithDenseIntegerU
         });
 
     ASSERT_EQ(rowCount(result), 5);
-    EXPECT_GT(result.stats.rpc_calls, 1u);
+    // queryDataBidiStream response chunking is owned by MLDP.  The server may
+    // return this small result in one response or split it across several;
+    // unlike the retired local ts:<offset> pagination, join_batch_size does
+    // not dictate backend cursor response boundaries.
+    EXPECT_GE(result.stats.rpc_calls, 1u);
     std::vector<int64_t> actual_values;
     std::vector<int64_t> actual_times;
     for (const auto& batch : result.batches)

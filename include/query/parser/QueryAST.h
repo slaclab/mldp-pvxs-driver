@@ -76,6 +76,11 @@ struct InPredicate {
     std::vector<LiteralValue> values;
     std::vector<ExpressionPtr> expressions;
     std::shared_ptr<SelectStatement> subquery;
+    struct WindowShardOption {
+        std::string  name;
+        LiteralValue value;
+    };
+    std::vector<WindowShardOption> window_options;
 };
 
 struct IsNotNullPredicate {

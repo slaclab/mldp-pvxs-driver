@@ -53,9 +53,9 @@ TEST(QueryLexerTest, TokenizesDayDurationLiteralsCaseInsensitively)
 
 TEST(QueryLexerTest, TokenizesEveryPunctuationAndOperatorClass)
 {
-    const auto tokens = Lexer("* , . ( ) + - = != < <= > >= 123 45m 'single' \"double\"").tokenize();
+    const auto tokens = Lexer("* , ; . ( ) + - = != < <= > >= 123 45m 'single' \"double\"").tokenize();
     const std::vector<TokenType> expected = {
-        TokenType::STAR, TokenType::COMMA, TokenType::DOT, TokenType::LPAREN, TokenType::RPAREN,
+        TokenType::STAR, TokenType::COMMA, TokenType::SEMICOLON, TokenType::DOT, TokenType::LPAREN, TokenType::RPAREN,
         TokenType::PLUS, TokenType::MINUS, TokenType::EQ, TokenType::NEQ, TokenType::LT,
         TokenType::LTE, TokenType::GT, TokenType::GTE, TokenType::NUMBER_LITERAL,
         TokenType::DURATION_LITERAL, TokenType::STRING_LITERAL, TokenType::STRING_LITERAL,
@@ -65,8 +65,23 @@ TEST(QueryLexerTest, TokenizesEveryPunctuationAndOperatorClass)
     {
         EXPECT_EQ(tokens[index].type, expected[index]) << index;
     }
-    EXPECT_EQ(tokens[15].lexeme, "single");
-    EXPECT_EQ(tokens[16].lexeme, "double");
+    EXPECT_EQ(tokens[16].lexeme, "single");
+    EXPECT_EQ(tokens[17].lexeme, "double");
+}
+
+TEST(QueryParserTest, ParsesWindowShardOptions)
+{
+    const auto statement = parseQuery(
+        "SELECT * FROM mldp.time_series WHERE pv IN ('PV:A', 'PV:B') "
+        "AND window IN (NOW-5s, NOW; slice 1s, pv_group 2)");
+    const auto& predicates = std::get<SelectStatement>(statement).predicates;
+    ASSERT_EQ(predicates.size(), 2U);
+    const auto& window = std::get<InPredicate>(predicates[1]);
+    ASSERT_EQ(window.window_options.size(), 2U);
+    EXPECT_EQ(window.window_options[0].name, "slice");
+    EXPECT_EQ(std::get<DurationNsLiteral>(window.window_options[0].value).value, 1'000'000'000LL);
+    EXPECT_EQ(window.window_options[1].name, "pv_group");
+    EXPECT_EQ(std::get<int64_t>(window.window_options[1].value), 2);
 }
 
 TEST(QueryLexerTest, TokenizesEveryKeywordCaseInsensitively)
@@ -336,6 +351,22 @@ TEST(QueryParserTest, ParsesWideTablePvAndWindowSubqueries)
     ASSERT_NE(window.subquery, nullptr);
     ASSERT_EQ(window.subquery->predicates.size(), 2);
     EXPECT_TRUE(std::holds_alternative<IsNotNullPredicate>(window.subquery->predicates[1]));
+}
+
+TEST(QueryParserTest, ParsesWindowSubqueryShardOptions)
+{
+    const auto statement = parseQuery(
+        "SELECT * FROM mldp.time_series WHERE pv = 'PV:A' "
+        "AND window IN (SELECT time, end_time FROM mldp.configuration_activation; slice 5s, pv_group 2)");
+    const auto& select = std::get<SelectStatement>(statement);
+    ASSERT_EQ(select.predicates.size(), 2U);
+    const auto& window = std::get<InPredicate>(select.predicates[1]);
+    ASSERT_NE(window.subquery, nullptr);
+    ASSERT_EQ(window.window_options.size(), 2U);
+    EXPECT_EQ(window.window_options[0].name, "slice");
+    EXPECT_EQ(std::get<DurationNsLiteral>(window.window_options[0].value).value, 5'000'000'000LL);
+    EXPECT_EQ(window.window_options[1].name, "pv_group");
+    EXPECT_EQ(std::get<int64_t>(window.window_options[1].value), 2);
 }
 
 TEST(QueryParserTest, RequiresWhereBeforeWideTablePvPredicate)

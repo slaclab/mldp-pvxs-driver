@@ -12,6 +12,8 @@
 
 #include <query/LiteralValue.h>
 
+#include <arrow/record_batch.h>
+
 #include <cstdint>
 #include <memory>
 #include <set>
@@ -71,6 +73,16 @@ struct ColumnSchema
     std::string           notes;
 };
 
+/** Pull source of Arrow batches.  A null batch denotes clean EOF. */
+class IRecordBatchStream
+{
+public:
+    virtual ~IRecordBatchStream() = default;
+    virtual std::shared_ptr<arrow::RecordBatch> next() = 0;
+};
+
+using IRecordBatchStreamUPtr = std::unique_ptr<IRecordBatchStream>;
+
 class IQueryable
 {
 public:
@@ -91,6 +103,16 @@ public:
                                                const std::set<std::string>&  projection_hint,
                                                const ExecutionContext&       context,
                                                std::string_view              page_token = {}) = 0;
+
+    /**
+     * Execute as a pull stream.  Implementations with no native streaming
+     * transport use the continuation-token adapter in IQueryable.cpp.
+     */
+    virtual IRecordBatchStreamUPtr executeStream(std::string_view              table_name,
+                                                 const std::vector<Predicate>& pushable_predicates,
+                                                 const std::set<std::string>&  projection_hint,
+                                                 const ExecutionContext&       context,
+                                                 std::string_view              page_token = {});
 };
 
 using IQueryableUPtr = std::unique_ptr<IQueryable>;

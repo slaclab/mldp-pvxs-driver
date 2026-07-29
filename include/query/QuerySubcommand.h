@@ -19,6 +19,7 @@
 
 #include <config/Config.h>
 #include <query/QueryFormatter.h>
+#include <query/QueryStats.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -28,14 +29,17 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 #include <memory>
+#include <chrono>
 
 namespace mldp_pvxs_driver::query {
 class QueryProgressTracker;
 class QueryCancellation;
 class QueryTableCatalog;
+class IRecordBatchStream;
 }
 
 namespace mldp_pvxs_driver::cli {
@@ -52,6 +56,34 @@ struct QueryCliOptions {
     std::string table_catalog_dir{};
     uint32_t    spill_partitions{16};
     uint32_t    join_batch_size{100};
+};
+
+/** Live-REPL ownership for an incomplete interactive query. */
+class QueryContinuationRegistry
+{
+public:
+    struct Entry {
+        std::string                                      fingerprint;
+        std::unique_ptr<query::IRecordBatchStream>      stream;
+        std::shared_ptr<query::QueryStats>               stats;
+        std::shared_ptr<query::QueryCancellation>        cancellation;
+        std::chrono::steady_clock::time_point            expires_at;
+    };
+
+    explicit QueryContinuationRegistry(std::chrono::steady_clock::duration idle_timeout = std::chrono::minutes{5});
+    ~QueryContinuationRegistry();
+
+    QueryContinuationRegistry(const QueryContinuationRegistry&) = delete;
+    QueryContinuationRegistry& operator=(const QueryContinuationRegistry&) = delete;
+
+    std::string store(Entry entry);
+    Entry take(const std::string& token, std::string_view fingerprint);
+    void cleanupExpired();
+    void clear();
+
+private:
+    std::chrono::steady_clock::duration idle_timeout_;
+    std::unordered_map<std::string, Entry> entries_;
 };
 
 class QuerySubcommandPreparer
@@ -71,7 +103,8 @@ public:
             bool                       print_stats = true,
             query::QueryStats*         completed_stats = nullptr,
             std::shared_ptr<query::QueryCancellation> cancellation = nullptr,
-            std::shared_ptr<std::mutex> output_mutex = nullptr) const;
+            std::shared_ptr<std::mutex> output_mutex = nullptr,
+            QueryContinuationRegistry* continuations = nullptr) const;
     std::shared_ptr<query::QueryTableCatalog> completionCatalog(const QueryCliOptions& options) const;
 
 private:

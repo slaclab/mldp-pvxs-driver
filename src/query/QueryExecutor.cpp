@@ -10,14 +10,21 @@
 #include <query/QueryExecutor.h>
 
 #include <query/QueryCancellation.h>
+#include <query/QueryPlanner.h>
+#include <query/QueryableFactory.h>
+#include <query/QueryTableCatalog.h>
 #include <query/executor/ExecutionState.h>
+#include <query/executor/ExecutorUtils.h>
 #include <query/QueryProgress.h>
 
 #include <arrow/memory_pool.h>
 
+#include <algorithm>
 #include <chrono>
+#include <stdexcept>
 
 using namespace mldp_pvxs_driver::query;
+using mldp_pvxs_driver::query::executor::RecordBatches;
 
 namespace {
 
@@ -32,10 +39,390 @@ void collectPlanWarnings(const plan::PhysicalNodePtr& node, std::vector<std::str
     if (const auto* limit = std::get_if<plan::PhysicalLimit>(&node->value)) collectPlanWarnings(limit->input, warnings);
 }
 
+class MaterializedRecordBatchStream final : public IRecordBatchStream
+{
+public:
+    explicit MaterializedRecordBatchStream(RecordBatches batches)
+        : batches_(std::move(batches))
+    {
+    }
+
+    std::shared_ptr<arrow::RecordBatch> next() override
+    {
+        return index_ < batches_.size() ? batches_[index_++] : nullptr;
+    }
+
+private:
+    RecordBatches batches_;
+    std::size_t index_{0};
+};
+
+class BackendScanRecordBatchStream final : public IRecordBatchStream
+{
+public:
+    BackendScanRecordBatchStream(const plan::PhysicalTableScan& scan,
+                                 ExecutionContext               context,
+                                 std::shared_ptr<QueryStats>    stats)
+        : scan_(scan), context_(std::move(context)), stats_(std::move(stats)), queryable_(QueryableFactory::instance().createByTable(scan_.table_name))
+    {
+        if (context_.progress) context_.progress->beginBackendRpc(scan_.table_name, "server cursor");
+        stream_ = queryable_->executeStream(scan_.table_name, scan_.pushable_predicates, scan_.projection_hint, context_);
+    }
+
+    std::shared_ptr<arrow::RecordBatch> next() override
+    {
+        if (context_.cancellation) context_.cancellation->throwIfCancelled();
+        auto batch = stream_->next();
+        if (!batch) return nullptr;
+        ++stats_->rpc_calls;
+        const auto backend_rows = static_cast<uint64_t>(batch->num_rows());
+        stats_->rows_from_backend += backend_rows;
+        if (context_.progress) context_.progress->finishBackendRpc(backend_rows);
+        if (scan_.qualify_output) batch = executor::qualifyBatchColumns(batch, scan_.table_alias);
+        return batch;
+    }
+
+private:
+    plan::PhysicalTableScan scan_;
+    ExecutionContext context_;
+    std::shared_ptr<QueryStats> stats_;
+    IQueryableUPtr queryable_;
+    IRecordBatchStreamUPtr stream_;
+};
+
+class WindowBackendScanRecordBatchStream final : public IRecordBatchStream
+{
+public:
+    WindowBackendScanRecordBatchStream(const plan::PhysicalTableScan& scan,
+                                       ExecutionContext               context,
+                                       std::shared_ptr<QueryStats>    stats,
+                                       std::vector<std::pair<int64_t, int64_t>> windows)
+        : scan_(scan), context_(std::move(context)), stats_(std::move(stats)), queryable_(QueryableFactory::instance().createByTable(scan_.table_name))
+    {
+        if (windows.empty()) throw std::runtime_error("Streaming window scan requires at least one window");
+        windows_ = std::move(windows);
+        selectWindow();
+        for (const auto& predicate : scan_.pushable_predicates)
+        {
+            if (predicate.column != "pv" || (predicate.op != PredicateOp::EQ && predicate.op != PredicateOp::IN)) continue;
+            for (const auto& value : predicate.values)
+                if (std::holds_alternative<std::string>(value)) requested_pvs_.push_back(std::get<std::string>(value));
+        }
+        if (requested_pvs_.empty()) throw std::runtime_error("MLDP time-series window requires a PV predicate");
+        openNextShard();
+    }
+
+    std::shared_ptr<arrow::RecordBatch> next() override
+    {
+        while (stream_)
+        {
+            if (context_.cancellation) context_.cancellation->throwIfCancelled();
+            auto batch = stream_->next();
+            if (!batch)
+            {
+                openNextShard();
+                continue;
+            }
+            ++stats_->rpc_calls;
+            const auto backend_rows = static_cast<uint64_t>(batch->num_rows());
+            stats_->rows_from_backend += backend_rows;
+            if (context_.progress) context_.progress->finishBackendRpc(backend_rows);
+            if (!final_slice_)
+            {
+                const Predicate upper{.column = "time", .op = PredicateOp::LT, .values = {TimestampNsLiteral{slice_end_ns_}}};
+                auto filtered = executor::applyFilter(batch, {upper});
+                if (!filtered.ok()) throw std::runtime_error(filtered.status().ToString());
+                batch = *filtered;
+            }
+            if (scan_.qualify_output) batch = executor::qualifyBatchColumns(batch, scan_.table_alias);
+            return batch;
+        }
+        return nullptr;
+    }
+
+private:
+    void openNextShard()
+    {
+        stream_.reset();
+        while (window_index_ < windows_.size())
+        {
+            if (pv_offset_ >= requested_pvs_.size())
+            {
+                if (final_slice_)
+                {
+                    ++window_index_;
+                    if (window_index_ >= windows_.size()) return;
+                    selectWindow();
+                    continue;
+                }
+                slice_begin_ns_ += scan_.window_shards.slice_ns;
+                pv_offset_ = 0;
+                continue;
+            }
+            const auto remaining = window_end_ns_ - slice_begin_ns_;
+            slice_end_ns_ = remaining < scan_.window_shards.slice_ns
+                ? window_end_ns_
+                : slice_begin_ns_ + scan_.window_shards.slice_ns;
+            final_slice_ = slice_end_ns_ == window_end_ns_;
+            auto predicates = scan_.pushable_predicates;
+            predicates.erase(std::remove_if(predicates.begin(), predicates.end(), [](const Predicate& predicate) {
+                return predicate.column == "time" || predicate.column == "pv";
+            }), predicates.end());
+            std::vector<ExecutableLiteralValue> pv_values;
+            const auto pv_end = std::min(requested_pvs_.size(), pv_offset_ + static_cast<std::size_t>(scan_.window_shards.pv_group));
+            for (std::size_t index = pv_offset_; index < pv_end; ++index) pv_values.emplace_back(requested_pvs_[index]);
+            pv_offset_ = pv_end;
+            predicates.push_back(Predicate{.column = "pv", .op = PredicateOp::IN, .values = std::move(pv_values)});
+            predicates.push_back(Predicate{.column = "time", .op = PredicateOp::GTE, .values = {slice_begin_ns_ / 1'000'000'000LL}});
+            predicates.push_back(Predicate{.column = "time", .op = PredicateOp::LTE, .values = {slice_end_ns_ / 1'000'000'000LL}});
+            if (context_.progress)
+                context_.progress->beginBackendRpc(scan_.table_name,
+                                                   "shard open: window " + std::to_string(window_index_ + 1) + ", begin " +
+                                                       std::to_string(slice_begin_ns_) + " ns, PV group " +
+                                                       std::to_string((pv_offset_ - pv_values.size()) / static_cast<std::size_t>(scan_.window_shards.pv_group) + 1));
+            stream_ = queryable_->executeStream(scan_.table_name, predicates, scan_.projection_hint, context_);
+            return;
+        }
+    }
+
+    void selectWindow()
+    {
+        const auto& [begin, end] = windows_[window_index_];
+        window_begin_ns_ = begin;
+        window_end_ns_ = end;
+        slice_begin_ns_ = begin;
+        pv_offset_ = 0;
+        final_slice_ = false;
+    }
+
+    plan::PhysicalTableScan scan_;
+    ExecutionContext context_;
+    std::shared_ptr<QueryStats> stats_;
+    IQueryableUPtr queryable_;
+    IRecordBatchStreamUPtr stream_;
+    std::vector<std::string> requested_pvs_;
+    std::vector<std::pair<int64_t, int64_t>> windows_;
+    std::size_t window_index_{0};
+    int64_t window_begin_ns_{0};
+    int64_t window_end_ns_{0};
+    int64_t slice_begin_ns_{0};
+    int64_t slice_end_ns_{0};
+    std::size_t pv_offset_{0};
+    bool final_slice_{false};
+};
+
+class FilterRecordBatchStream final : public IRecordBatchStream
+{
+public:
+    FilterRecordBatchStream(IRecordBatchStreamUPtr input, std::vector<Predicate> predicates)
+        : input_(std::move(input)), predicates_(std::move(predicates))
+    {
+    }
+
+    std::shared_ptr<arrow::RecordBatch> next() override
+    {
+        while (auto batch = input_->next())
+        {
+            auto filtered = executor::applyFilter(batch, predicates_);
+            if (!filtered.ok()) throw std::runtime_error(filtered.status().ToString());
+            return *filtered;
+        }
+        return nullptr;
+    }
+
+private:
+    IRecordBatchStreamUPtr input_;
+    std::vector<Predicate> predicates_;
+};
+
+class ProjectRecordBatchStream final : public IRecordBatchStream
+{
+public:
+    ProjectRecordBatchStream(IRecordBatchStreamUPtr input, plan::PhysicalProject project)
+        : input_(std::move(input)), project_(std::move(project))
+    {
+    }
+
+    std::shared_ptr<arrow::RecordBatch> next() override
+    {
+        auto batch = input_->next();
+        if (!batch) return nullptr;
+        RecordBatches input{std::move(batch)};
+        auto output = project_.expressions.empty()
+            ? executor::applyProjection(input, project_.columns)
+            : executor::applyProjection(input, project_.expressions, project_.names);
+        return output.empty() ? nullptr : output.front();
+    }
+
+private:
+    IRecordBatchStreamUPtr input_;
+    plan::PhysicalProject project_;
+};
+
+class LimitRecordBatchStream final : public IRecordBatchStream
+{
+public:
+    LimitRecordBatchStream(IRecordBatchStreamUPtr input, const uint64_t limit)
+        : input_(std::move(input)), remaining_(limit)
+    {
+    }
+
+    std::shared_ptr<arrow::RecordBatch> next() override
+    {
+        if (remaining_ == 0) return nullptr;
+        while (auto batch = input_->next())
+        {
+            const auto rows = static_cast<uint64_t>(batch->num_rows());
+            if (rows == 0) continue;
+            if (rows <= remaining_)
+            {
+                remaining_ -= rows;
+                return batch;
+            }
+            const auto result = batch->Slice(0, static_cast<int64_t>(remaining_));
+            remaining_ = 0;
+            return result;
+        }
+        return nullptr;
+    }
+
+private:
+    IRecordBatchStreamUPtr input_;
+    uint64_t remaining_;
+};
+
+IRecordBatchStreamUPtr makeStreamingPlan(const plan::PhysicalNodePtr& root,
+                                          ExecutionContext           context,
+                                          const std::shared_ptr<QueryStats>& stats)
+{
+    if (!root) return nullptr;
+    if (const auto* scan = std::get_if<plan::PhysicalTableScan>(&root->value))
+    {
+        const bool direct_long_scan = scan->table_name == "mldp.time_series" &&
+                                      !scan->arrow_ipc && !scan->derived_query && scan->in_subqueries.empty();
+        if (!direct_long_scan) return nullptr;
+        if (scan->window_literal)
+        {
+            const auto& window = *scan->window_literal;
+            return std::make_unique<WindowBackendScanRecordBatchStream>(
+                *scan, std::move(context), stats,
+                std::vector<std::pair<int64_t, int64_t>>{{window[0] * 1'000'000'000LL, window[1] * 1'000'000'000LL}});
+        }
+        if (scan->window_subquery)
+        {
+            QueryPlanner planner(context.table_catalog);
+            QueryExecutor executor;
+            const auto windows = mldp_pvxs_driver::query::executor::extractNormalizedWindows(
+                executor.execute(planner.plan(QueryStatement{*scan->window_subquery}), context).batches);
+            if (windows.empty()) return std::make_unique<MaterializedRecordBatchStream>(RecordBatches{});
+            return std::make_unique<WindowBackendScanRecordBatchStream>(*scan, std::move(context), stats, windows);
+        }
+        return std::make_unique<BackendScanRecordBatchStream>(*scan, std::move(context), stats);
+    }
+    if (const auto* filter = std::get_if<plan::PhysicalFilter>(&root->value))
+    {
+        auto input = makeStreamingPlan(filter->input, std::move(context), stats);
+        return input ? std::make_unique<FilterRecordBatchStream>(std::move(input), filter->predicates) : nullptr;
+    }
+    if (const auto* project = std::get_if<plan::PhysicalProject>(&root->value))
+    {
+        auto input = makeStreamingPlan(project->input, std::move(context), stats);
+        return input ? std::make_unique<ProjectRecordBatchStream>(std::move(input), *project) : nullptr;
+    }
+    if (const auto* limit = std::get_if<plan::PhysicalLimit>(&root->value))
+    {
+        auto input = makeStreamingPlan(limit->input, std::move(context), stats);
+        return input ? std::make_unique<LimitRecordBatchStream>(std::move(input), limit->limit) : nullptr;
+    }
+    return nullptr;
+}
+
+class FinalizingRecordBatchStream final : public IRecordBatchStream
+{
+public:
+    FinalizingRecordBatchStream(IRecordBatchStreamUPtr stream,
+                                ExecutionContext context,
+                                std::shared_ptr<QueryStats> stats,
+                                std::chrono::steady_clock::time_point start)
+        : stream_(std::move(stream)), context_(std::move(context)), stats_(std::move(stats)), start_(start)
+    {
+    }
+
+    std::shared_ptr<arrow::RecordBatch> next() override
+    {
+        if (finished_) return nullptr;
+        if (context_.cancellation) context_.cancellation->throwIfCancelled();
+        auto batch = stream_->next();
+        if (batch)
+        {
+            stats_->rows_returned += static_cast<uint64_t>(batch->num_rows());
+            return batch;
+        }
+        finished_ = true;
+        stats_->elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_);
+        if (context_.pool != nullptr) stats_->peak_memory_bytes = static_cast<uint64_t>(context_.pool->max_memory());
+        if (context_.progress)
+        {
+            context_.progress->updateStats(stats_->rows_returned, stats_->bytes_spilled, stats_->materialized_bytes,
+                                           stats_->materialized_files, stats_->peak_memory_bytes);
+        }
+        return nullptr;
+    }
+
+private:
+    IRecordBatchStreamUPtr stream_;
+    ExecutionContext context_;
+    std::shared_ptr<QueryStats> stats_;
+    std::chrono::steady_clock::time_point start_;
+    bool finished_{false};
+};
+
+class CreateTableRecordBatchStream final : public IRecordBatchStream
+{
+public:
+    CreateTableRecordBatchStream(IRecordBatchStreamUPtr input,
+                                 const plan::PhysicalCreateTable& create,
+                                 ExecutionContext context,
+                                 std::shared_ptr<QueryStats> stats)
+        : input_(std::move(input)), create_(create), context_(std::move(context)), stats_(std::move(stats))
+    {
+    }
+
+    std::shared_ptr<arrow::RecordBatch> next() override
+    {
+        if (done_) return nullptr;
+        done_ = true;
+        if (!context_.table_catalog) throw std::runtime_error("CREATE TABLE has no catalog");
+        const auto status = context_.table_catalog->create(create_.table_name,
+                                                            create_.temporary ? TableLifetime::Session : TableLifetime::Persistent,
+                                                            *input_);
+        if (!status.ok()) throw std::runtime_error(status.ToString());
+        if (const auto table = context_.table_catalog->find(create_.table_name))
+        {
+            ++stats_->materialized_files;
+            stats_->materialized_bytes += static_cast<uint64_t>(table->byte_count);
+        }
+        return nullptr;
+    }
+
+private:
+    IRecordBatchStreamUPtr input_;
+    plan::PhysicalCreateTable create_;
+    ExecutionContext context_;
+    std::shared_ptr<QueryStats> stats_;
+    bool done_{false};
+};
+
 } // namespace
 
 QueryExecutionResult QueryExecutor::execute(const plan::PhysicalNodePtr& root, const ExecutionContext& context) const
 {
+    if (const auto* create = root ? std::get_if<plan::PhysicalCreateTable>(&root->value) : nullptr)
+    {
+        auto streamed = executeStream(root, context);
+        while (streamed.stream->next()) {}
+        return {.batches = {}, .stats = *streamed.stats};
+    }
     QueryExecutionResult result;
     const auto start = std::chrono::steady_clock::now();
     if (context.cancellation) context.cancellation->throwIfCancelled();
@@ -60,4 +447,33 @@ QueryExecutionResult QueryExecutor::execute(const plan::PhysicalNodePtr& root, c
                                       result.stats.peak_memory_bytes);
     }
     return result;
+}
+
+QueryStreamExecutionResult QueryExecutor::executeStream(const plan::PhysicalNodePtr& root,
+                                                         ExecutionContext           context) const
+{
+    const auto start = std::chrono::steady_clock::now();
+    if (context.cancellation) context.cancellation->throwIfCancelled();
+    if (context.progress) context.progress->setPhase(QueryProgressPhase::Executing);
+
+    auto stats = std::make_shared<QueryStats>();
+    collectPlanWarnings(root, stats->plan_warnings);
+    stats->plan_summary = plan::physicalPlanToString(root);
+    IRecordBatchStreamUPtr stream;
+    if (const auto* create = root ? std::get_if<plan::PhysicalCreateTable>(&root->value) : nullptr)
+    {
+        auto child = executeStream(create->query, context);
+        stats = std::move(child.stats);
+        stats->plan_summary = plan::physicalPlanToString(root);
+        stream = std::make_unique<CreateTableRecordBatchStream>(std::move(child.stream), *create, context, stats);
+    }
+    else stream = makeStreamingPlan(root, context, stats);
+    if (!stream)
+    {
+        auto execution_state = executor::makeExecutionState(root, context, *stats);
+        stream = std::make_unique<MaterializedRecordBatchStream>(execution_state->execute());
+    }
+    return QueryStreamExecutionResult{
+        .stream = std::make_unique<FinalizingRecordBatchStream>(std::move(stream), std::move(context), stats, start),
+        .stats = std::move(stats)};
 }

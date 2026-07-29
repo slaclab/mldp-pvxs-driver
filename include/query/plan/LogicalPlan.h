@@ -25,6 +25,11 @@ namespace mldp_pvxs_driver::query::plan {
 
 using PlannerLiteralValue = std::variant<std::string, int64_t, double, bool, TimestampNsLiteral, DurationNsLiteral, NowLiteral>;
 
+struct WindowShardSpec {
+    int64_t  slice_ns{1'000'000'000LL};
+    uint64_t pv_group{1};
+};
+
 struct PlannerPredicate {
     std::string              column;
     std::string              table_alias;
@@ -64,6 +69,7 @@ struct LogicalScan {
     std::vector<BoundInSubquery>     in_subqueries;
     std::shared_ptr<SelectStatement> window_subquery;
     std::optional<std::array<PlannerLiteralValue, 2>> window_literal;
+    WindowShardSpec           window_shards{};
 };
 
 struct LogicalFilter {
@@ -128,6 +134,7 @@ struct BoundTable {
     std::vector<BoundInSubquery>     in_subqueries;
     std::shared_ptr<SelectStatement> window_subquery;
     std::optional<std::array<PlannerLiteralValue, 2>> window_literal;
+    WindowShardSpec           window_shards{};
 };
 
 struct BoundJoinClause {

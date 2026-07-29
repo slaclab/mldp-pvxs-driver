@@ -14,6 +14,8 @@
 
 namespace mldp_pvxs_driver::query {
 
+class IRecordBatchStream;
+
 enum class TableLifetime { Session, Persistent };
 
 struct CatalogTable {
@@ -37,6 +39,8 @@ public:
 
     arrow::Status create(std::string name, TableLifetime lifetime,
                          const std::vector<std::shared_ptr<arrow::RecordBatch>>& batches);
+    /** Drain a pull stream into one Arrow IPC snapshot. */
+    arrow::Status create(std::string name, TableLifetime lifetime, IRecordBatchStream& stream);
     arrow::Status drop(const std::string& name);
     [[nodiscard]] std::optional<CatalogTable> find(const std::string& name) const;
     [[nodiscard]] std::vector<CatalogTable> tables() const;

@@ -313,6 +313,7 @@ QueryStatement QueryParser::parse(const std::string_view sql)
     // the normal SELECT grammar.
     std::unordered_map<std::string, std::shared_ptr<SelectStatement>> derived;
     std::unordered_map<std::string, std::shared_ptr<SelectStatement>> in_subqueries;
+    std::unordered_map<std::string, std::vector<InPredicate::WindowShardOption>> in_subquery_window_options;
     std::unordered_map<std::string, bool> is_not_null;
     std::string rewritten = rewriteTypedLiterals(text);
     std::size_t search = 0;
@@ -335,7 +336,48 @@ QueryStatement QueryParser::parse(const std::string_view sql)
             else if (rewritten[end] == ')') --depth;
         }
         if (depth != 0) throw ParseError("Unclosed subquery", TokenPosition{});
-        const auto child_sql = trim(std::string_view(rewritten).substr(search + 1, end - search - 2));
+        auto child_sql = trim(std::string_view(rewritten).substr(search + 1, end - search - 2));
+        std::vector<InPredicate::WindowShardOption> window_options;
+        if (previous == "IN" && uppercase(child_sql).rfind("SELECT", 0) == 0)
+        {
+            const auto option_separator = child_sql.find(';');
+            if (option_separator != std::string_view::npos)
+            {
+                const auto options_sql = trim(child_sql.substr(option_separator + 1));
+                child_sql = trim(child_sql.substr(0, option_separator));
+                for (std::size_t offset = 0; offset < options_sql.size();)
+                {
+                    const auto comma = options_sql.find(',', offset);
+                    const auto option = trim(options_sql.substr(offset, comma == std::string_view::npos ? std::string_view::npos : comma - offset));
+                    const auto separator = option.find_first_of(" \t\r\n");
+                    if (separator == std::string_view::npos) throw ParseError("Window option must have a name and value", TokenPosition{});
+                    const auto name = std::string(option.substr(0, separator));
+                    const auto value = trim(option.substr(separator + 1));
+                    if (name == "slice" || name == "SLICE")
+                    {
+                        const auto tokens = Lexer(value).tokenize();
+                        if (tokens.size() != 2 || tokens.front().type != TokenType::DURATION_LITERAL)
+                            throw ParseError("Window slice option requires a duration", TokenPosition{});
+                        const auto duration = tokens.front().lexeme;
+                        int64_t multiplier = 0;
+                        if (duration.ends_with('s') || duration.ends_with('S')) multiplier = 1;
+                        else if (duration.ends_with('m') || duration.ends_with('M')) multiplier = 60;
+                        else if (duration.ends_with('h') || duration.ends_with('H')) multiplier = 60 * 60;
+                        else if (duration.ends_with('d') || duration.ends_with('D')) multiplier = 24 * 60 * 60;
+                        else throw ParseError("Unsupported window slice duration", TokenPosition{});
+                        window_options.push_back({.name = "slice", .value = DurationNsLiteral{std::stoll(duration.substr(0, duration.size() - 1)) * multiplier * 1'000'000'000LL}});
+                    }
+                    else if (name == "pv_group" || name == "PV_GROUP")
+                    {
+                        try { window_options.push_back({.name = "pv_group", .value = static_cast<int64_t>(std::stoll(std::string(value)))}); }
+                        catch (const std::exception&) { throw ParseError("Window pv_group option requires an integer", TokenPosition{}); }
+                    }
+                    else throw ParseError("Unknown window option: " + name, TokenPosition{});
+                    if (comma == std::string_view::npos) break;
+                    offset = comma + 1;
+                }
+            }
+        }
         if (previous == "IN" && uppercase(child_sql).rfind("SELECT", 0) != 0)
         {
             search = end;
@@ -347,6 +389,7 @@ QueryStatement QueryParser::parse(const std::string_view sql)
         {
             const auto marker = "in_subquery_" + std::to_string(derived_number++);
             in_subqueries.emplace(marker, std::make_shared<SelectStatement>(std::get<SelectStatement>(child)));
+            if (!window_options.empty()) in_subquery_window_options.emplace(marker, std::move(window_options));
             rewritten.replace(search, end - search, "('" + marker + "')");
             search += marker.size() + 4;
             continue;
@@ -454,6 +497,8 @@ QueryStatement QueryParser::parse(const std::string_view sql)
                 {
                     in->values.clear();
                     in->subquery = it->second;
+                    if (const auto options = in_subquery_window_options.find(marker); options != in_subquery_window_options.end())
+                        in->window_options = options->second;
                 }
             }
             else if (const auto* op = std::get_if<OpPredicate>(&predicate); op != nullptr && op->op == PredicateBinaryOp::NEQ && std::holds_alternative<std::string>(op->value) && is_not_null.contains(std::get<std::string>(op->value)))

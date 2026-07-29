@@ -44,6 +44,7 @@ struct PhysicalTableScan {
     std::vector<PhysicalInSubquery>  in_subqueries;
     std::shared_ptr<SelectStatement> window_subquery;
     std::optional<std::array<int64_t, 2>> window_literal;
+    WindowShardSpec           window_shards{};
 };
 
 struct PhysicalFilter {

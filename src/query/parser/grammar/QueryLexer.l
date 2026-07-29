@@ -155,7 +155,7 @@ DOUBLE_QUOTE \"([^\\\n\"]|\\.)*\"
     mldp_pvxs_driver::query::advancePosition(extra, yytext, yyleng);
 }
 
-"!="|"<="|">="|"="|"<"|">"|"*"|"/"|","|"."|"("|")"|"+"|"-" {
+"!="|"<="|">="|"="|"<"|">"|"*"|"/"|","|";"|"."|"("|")"|"+"|"-" {
     auto* extra = static_cast<mldp_pvxs_driver::query::FlexLexerExtra*>(yyget_extra(yyscanner));
     const auto start = mldp_pvxs_driver::query::TokenPosition{extra->offset, extra->line, extra->column};
     mldp_pvxs_driver::query::advancePosition(extra, yytext, yyleng);
@@ -170,6 +170,7 @@ DOUBLE_QUOTE \"([^\\\n\"]|\\.)*\"
     else if (text == "*") type = mldp_pvxs_driver::query::TokenType::STAR;
     else if (text == "/") type = mldp_pvxs_driver::query::TokenType::SLASH;
     else if (text == ",") type = mldp_pvxs_driver::query::TokenType::COMMA;
+    else if (text == ";") type = mldp_pvxs_driver::query::TokenType::SEMICOLON;
     else if (text == ".") type = mldp_pvxs_driver::query::TokenType::DOT;
     else if (text == "(") type = mldp_pvxs_driver::query::TokenType::LPAREN;
     else if (text == ")") type = mldp_pvxs_driver::query::TokenType::RPAREN;

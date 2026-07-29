@@ -35,6 +35,24 @@ RecordBatches mldp_pvxs_driver::query::executor::fetchBackendPages(const plan::P
 {
     auto queryable = QueryableFactory::instance().createByTable(scan.table_name);
     RecordBatches output;
+    if (scan.table_name == "mldp.time_series")
+    {
+        if (context.progress) context.progress->beginBackendRpc(scan.table_name, "server cursor");
+        auto stream = queryable->executeStream(scan.table_name, pushable, scan.projection_hint, context);
+        while (auto batch = stream->next())
+        {
+            if (context.cancellation) context.cancellation->throwIfCancelled();
+            ++stats.rpc_calls;
+            const auto backend_rows = static_cast<uint64_t>(batch->num_rows());
+            stats.rows_from_backend += backend_rows;
+            if (context.progress) context.progress->finishBackendRpc(backend_rows);
+            batch = applyLocal(batch, local);
+            qualify(scan, batch);
+            output.push_back(std::move(batch));
+        }
+        return output;
+    }
+
     std::string page_token;
     do
     {
