@@ -571,6 +571,7 @@ applies when a requested PV is not returned for the selected time range.
 |---|---|---|---|---|
 | `pv` | string | **yes** | `=`, `IN` | PV name. Must be constrained. |
 | `time` | timestamp | no | `>=`, `<=` | UTC epoch seconds. |
+| `window` | timestamp | no | `IN (start, end)`, `IN (SELECT start, end ...)` | Closed interval input; each normalized range becomes a time-series request. |
 | `value` | union | no | — | Typed sample value (see below). |
 | `column_type` | string | no | — | Native MLDP value kind: `string`, `bool`, integer, float, `double`, `binary`, `timestamp`, `array`, `structure`, or `image`. Filter locally with `=` or `IN`. |
 | `tags` | list&lt;string&gt; | no | — | Complete bucket column-metadata tag collection. Filter with `tag =` or `tag IN` locally. |
@@ -597,6 +598,35 @@ FROM mldp.time_series
 WHERE pv IN ('PV:A', 'PV:B', 'PV:C')
   AND time >= 1700000000
   AND time <= 1700003600
+```
+
+Use `window` when the requested range is a literal interval or is produced by
+another query. The interval is inclusive; literal endpoints may be reversed
+and are normalized. A window subquery must return exactly two non-null
+timestamp columns: start first and end second. Its output names and aliases do
+not matter. Overlapping or adjacent subquery intervals are coalesced, and the
+long-form table consumes every continuation page for each resulting range.
+
+```sql
+SELECT pv, time, value
+FROM mldp.time_series
+WHERE pv = 'MY:PV:CURRENT'
+  AND window IN (NOW - 10m, NOW)
+```
+
+```sql
+SELECT pv, time, value
+FROM mldp.time_series
+WHERE pv IN (
+  SELECT pv
+  FROM mldp.pv_metadata
+  WHERE tag = 'magnet'
+)
+AND window IN (
+  SELECT activation.time, activation.end_time
+  FROM mldp.configuration_activation activation
+  WHERE activation.end_time IS NOT NULL
+)
 ```
 
 ```sql
@@ -627,14 +657,14 @@ A requested PV that has no data for the selection is omitted. If no requested
 PV has matching data, the query returns an empty result.
 
 `pv` and `window` are `WHERE` predicates; they are not table arguments. A
-window input accepts either one literal inclusive interval, `window IN (start,
+window input on either MLDP time-series table accepts either one literal inclusive interval, `window IN (start,
 end)`, or a subquery that returns exactly two non-null timestamp outputs. The
 subquery outputs are positional: the first is the start and the second is the
 end, regardless of their names or aliases. Literal endpoints must be
 timestamp-compatible expressions; `NOW` and `NOW +/- duration` are supported,
 and reversed endpoints are automatically normalized. A query cannot supply
 both forms. Subquery ranges must be closed; overlapping or adjacent ranges are
-coalesced before the driver requests the wide table. As with ordinary SQL
+coalesced before the driver issues the corresponding time-series requests. As with ordinary SQL
 filtering, a valid `pv` or `window` subquery that finds no rows returns an empty
 result; malformed subquery output remains an error.
 

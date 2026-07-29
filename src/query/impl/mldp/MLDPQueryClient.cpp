@@ -76,11 +76,8 @@ std::vector<ColumnSchema> MLDPQueryClient::tableSchema(std::string_view table_na
             {"tag", ColumnType::STRING, false, false, {PredicateOp::EQ, PredicateOp::IN}, {PredicateOp::EQ, PredicateOp::IN}, "Tag membership predicate shorthand for tags"},
             {"timeout", ColumnType::DURATION_SECONDS, false, false, {PredicateOp::EQ}, {}, "Query timeout"},
             {"rpc_deadline", ColumnType::DURATION_SECONDS, false, false, {PredicateOp::EQ}, {}, "RPC deadline"}};
-        if (wide_table)
-        {
-            schema.emplace_back("window", ColumnType::TIMESTAMP, false, false, std::set<PredicateOp>{PredicateOp::IN}, std::set<PredicateOp>{},
-                                "Wide-table interval input; accepts window IN (start, end) or window IN (SELECT time, end_time ...)");
-        }
+        schema.emplace_back("window", ColumnType::TIMESTAMP, false, false, std::set<PredicateOp>{PredicateOp::IN}, std::set<PredicateOp>{},
+                            "Time-series interval input; accepts window IN (start, end) or window IN (SELECT time, end_time ...)");
         return schema;
     }
     if (table_name == "mldp.pv_stats")

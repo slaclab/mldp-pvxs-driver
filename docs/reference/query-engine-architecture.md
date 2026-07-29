@@ -253,6 +253,7 @@ children are non-comparable, apart from the existing `IS NOT NULL` check.
 |---|---|---|
 | `pv` | `=`, `IN` | **Required.** Translated to `QueryTableRequest.pvNameList`. |
 | `time` | `>=`, `<=` | Translated to `QueryTableRequest.beginTime` / `endTime`. |
+| `window` | `IN (start, end)` or `IN (SELECT start, end ...)` | One literal inclusive interval or closed activation ranges used to create one or more long-form requests. |
 | `value` | — | Fetched only; dense-union Arrow type. |
 | `column_type` | — | Fetched native MLDP value-kind name; filterable locally. |
 | `timeout` | `=` | Sets gRPC query timeout. |
@@ -265,7 +266,7 @@ Time values are epoch seconds; the executor converts to nanoseconds internally. 
 | Column | Pushable ops | Notes |
 |---|---|---|
 | `pv` | `=`, `IN` | **Required.** Requested PVs are sent in SQL predicate order. |
-| `window` | `IN (start, end)` or `IN (SELECT start, end ...)` | One literal inclusive interval or closed activation ranges used only to create wide-table requests. |
+| `window` | `IN (start, end)` or `IN (SELECT start, end ...)` | One literal inclusive interval or closed activation ranges used to create one or more wide-table requests. |
 | `time` | `>=`, `<=` | Translated to `QueryTableRequest.beginTime` / `endTime`. |
 | `column_type` | `=`, `IN` | Selects whole columns by native MLDP value kind. |
 | `tag` | `=`, `IN` | Select whole columns using exact tag membership. |
@@ -288,14 +289,15 @@ Any `IN`-capable column accepts `IN (SELECT ...)`. The executor evaluates the
 single-column child first, rejects null or type-incompatible values, and
 materializes compatible values as an ordinary `IN` predicate. Pushable values
 are included in the backend request; local-only values are filtered after the
-fetch. `window IN (SELECT start, end ...)` is exclusive to this table and
-evaluates to closed timestamp ranges.
+fetch. `window IN (SELECT start, end ...)` is available on both MLDP time-series
+tables and evaluates to closed timestamp ranges.
 Ranges are sorted and coalesced when they overlap or directly touch; the
-executor issues one `QueryTableRequest` and returns one typed wide batch per
-normalized range. The window child must expose exactly two non-null timestamp
+executor issues one `QueryTableRequest` per normalized range, consuming all
+long-table continuation pages before advancing to the next range. The window
+child must expose exactly two non-null timestamp
 outputs. Their names and aliases are ignored: the first output is the start and
 the second is the end. Open, empty, malformed, or inverted windows fail before
-a wide request is made.
+a time-series request is made.
 
 ### `mldp.pv_stats` — `MLDPQueryClient`
 

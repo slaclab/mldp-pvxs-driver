@@ -437,6 +437,16 @@ TEST(EmptyWideInputTest, EmptyValidSubqueriesProduceNoWideTableRequest)
     EXPECT_TRUE(window_empty.batches.empty());
     EXPECT_EQ(window_empty.stats.rpc_calls, 1U);
     EXPECT_EQ(EmptyWideInputQueryable::execute_calls, 1U);
+
+    EmptyWideInputQueryable::execute_calls = 0;
+    const auto long_window_empty = executor.execute(
+        planner.plan(query::parseQuery(
+            "SELECT pv, time FROM mldp.time_series WHERE pv = 'PV:ONE' "
+            "AND window IN (SELECT time, end_time FROM mldp.configuration_activation WHERE activation_id = 'none')")),
+        {.pool = arrow::default_memory_pool()});
+    EXPECT_TRUE(long_window_empty.batches.empty());
+    EXPECT_EQ(long_window_empty.stats.rpc_calls, 1U);
+    EXPECT_EQ(EmptyWideInputQueryable::execute_calls, 1U);
     query::QueryableFactory::instance().reset();
 }
 

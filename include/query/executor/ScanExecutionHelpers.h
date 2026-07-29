@@ -22,11 +22,11 @@ RecordBatches fetchBackendPages(const plan::PhysicalTableScan& scan,
                                 const std::vector<Predicate>& local,
                                 const ExecutionContext& context,
                                 QueryStats& stats);
-RecordBatches fetchWideTableWindows(const plan::PhysicalTableScan& scan,
-                                    const std::vector<Predicate>& pushable,
-                                    const std::vector<Predicate>& local,
-                                    const std::vector<std::pair<int64_t, int64_t>>& windows,
-                                    const ExecutionContext& context,
-                                    QueryStats& stats);
+RecordBatches fetchTimeSeriesWindows(const plan::PhysicalTableScan& scan,
+                                     const std::vector<Predicate>& pushable,
+                                     const std::vector<Predicate>& local,
+                                     const std::vector<std::pair<int64_t, int64_t>>& windows,
+                                     const ExecutionContext& context,
+                                     QueryStats& stats);
 
 } // namespace mldp_pvxs_driver::query::executor

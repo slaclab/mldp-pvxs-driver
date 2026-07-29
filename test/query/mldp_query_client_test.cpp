@@ -316,6 +316,33 @@ TEST(MLDPQueryClientTest, SendsLiteralWindowBoundsToWideTableRequest)
     server->Shutdown();
 }
 
+TEST(MLDPQueryClientTest, SendsLiteralWindowBoundsToLongTableRequest)
+{
+    QueryService        service;
+    grpc::ServerBuilder builder;
+    int                 port = 0;
+    builder.AddListeningPort("127.0.0.1:0", grpc::InsecureServerCredentials(), &port);
+    builder.RegisterService(&service);
+    auto server = builder.BuildAndStart();
+    ASSERT_NE(server, nullptr);
+
+    MLDPQueryClient        client(makeQueryConfig("127.0.0.1:" + std::to_string(port)));
+    const ExecutionContext context{.pool = arrow::default_memory_pool(), .join_batch_size = 1};
+    const std::vector<Predicate> predicates = {
+        {.column = "pv", .op = PredicateOp::EQ, .values = {std::string("MAG:ONE")}},
+        {.column = "time", .op = PredicateOp::GTE, .values = {int64_t{10}}},
+        {.column = "time", .op = PredicateOp::LTE, .values = {int64_t{20}}},
+    };
+
+    ASSERT_NE(client.execute("mldp.time_series", predicates, {}, context).batch, nullptr);
+    {
+        const std::lock_guard lock(service.mutex);
+        EXPECT_EQ(service.last_request.begintime().epochseconds(), 10);
+        EXPECT_EQ(service.last_request.endtime().epochseconds(), 20);
+    }
+    server->Shutdown();
+}
+
 TEST(MLDPQueryClientTest, CancelsInFlightQueryTableRpc)
 {
     QueryService service;

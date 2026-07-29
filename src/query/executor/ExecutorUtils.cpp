@@ -117,7 +117,7 @@ std::string scalarToString(const std::shared_ptr<arrow::Scalar>& scalar)
 int64_t timestampScalarValue(const std::shared_ptr<arrow::Scalar>& scalar, const std::string_view endpoint)
 {
     if (!scalar || !scalar->is_valid || scalar->type->id() != arrow::Type::TIMESTAMP)
-        throw std::runtime_error("mldp.time_series_table window subquery requires a non-null timestamp at " + std::string(endpoint));
+        throw std::runtime_error("MLDP time-series window subquery requires a non-null timestamp at " + std::string(endpoint));
     return std::dynamic_pointer_cast<arrow::TimestampScalar>(scalar)->value;
 }
 
@@ -205,16 +205,16 @@ std::vector<std::pair<int64_t, int64_t>> extractNormalizedWindowsImpl(const std:
     for (const auto& batch : batches)
     {
         if (batch->num_columns() != 2 || batch->column(0)->type_id() != arrow::Type::TIMESTAMP || batch->column(1)->type_id() != arrow::Type::TIMESTAMP)
-            throw std::runtime_error("mldp.time_series_table window subquery must return exactly two timestamp columns");
+            throw std::runtime_error("MLDP time-series window subquery must return exactly two timestamp columns");
         for (int64_t row = 0; row < batch->num_rows(); ++row)
         {
             const auto time = batch->column(0)->GetScalar(row);
             const auto end = batch->column(1)->GetScalar(row);
-            if (!time.ok() || !end.ok()) throw std::runtime_error("Failed to read mldp.time_series_table window subquery result");
+            if (!time.ok() || !end.ok()) throw std::runtime_error("Failed to read MLDP time-series window subquery result");
             const auto begin_ns = timestampScalarValue(*time, "position 1");
             const auto end_ns = timestampScalarValue(*end, "position 2");
             if (end_ns < begin_ns)
-                throw std::runtime_error("mldp.time_series_table window subquery returned an end timestamp before its start timestamp");
+                throw std::runtime_error("MLDP time-series window subquery returned an end timestamp before its start timestamp");
             windows.emplace_back(begin_ns, end_ns);
         }
     }

@@ -10,7 +10,6 @@
 #include <query/executor/StateInternal.h>
 
 #include <query/QueryPlanner.h>
-#include <limits>
 #include <stdexcept>
 
 using namespace mldp_pvxs_driver::query;
@@ -65,9 +64,9 @@ public:
         std::vector<Predicate> pushable = scan_.pushable_predicates;
         std::vector<Predicate> local;
         if (!materializeMembershipPredicates(pushable, local)) return {};
-        const auto wide_table = scan_.table_name == "mldp.time_series_table" &&
-                                (!scan_.in_subqueries.empty() || scan_.window_subquery || scan_.window_literal);
-        if (!wide_table)
+        const auto time_series_window = (scan_.table_name == "mldp.time_series" || scan_.table_name == "mldp.time_series_table") &&
+                                        (scan_.window_subquery || scan_.window_literal);
+        if (!time_series_window)
         {
             return fetchBackendPages(scan_, pushable, local, context(), stats());
         }
@@ -77,11 +76,9 @@ public:
             windows = extractNormalizedWindows(childAt(*window_child_index_).execute());
         else if (scan_.window_literal)
             windows.emplace_back((*scan_.window_literal)[0] * 1'000'000'000LL, (*scan_.window_literal)[1] * 1'000'000'000LL);
-        else
-            windows.emplace_back(0, std::numeric_limits<int64_t>::max());
         if (windows.empty()) return {};
 
-        return fetchWideTableWindows(scan_, pushable, local, windows, context(), stats());
+        return fetchTimeSeriesWindows(scan_, pushable, local, windows, context(), stats());
     }
 
 private:
