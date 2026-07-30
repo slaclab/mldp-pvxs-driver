@@ -67,7 +67,11 @@ public:
                                  std::shared_ptr<QueryStats>    stats)
         : scan_(scan), context_(std::move(context)), stats_(std::move(stats)), queryable_(QueryableFactory::instance().createByTable(scan_.table_name))
     {
-        if (context_.progress) context_.progress->beginBackendRpc(scan_.table_name, "server cursor");
+        if (context_.progress)
+        {
+            context_.progress->setActivity(scan_.table_name, "backend scan", "opening server cursor");
+            context_.progress->beginBackendRpc(scan_.table_name, "server cursor");
+        }
         stream_ = queryable_->executeStream(scan_.table_name, scan_.pushable_predicates, scan_.projection_hint, context_);
     }
 
@@ -122,6 +126,7 @@ public:
             auto batch = stream_->next();
             if (!batch)
             {
+                if (context_.progress) context_.progress->completeShard();
                 openNextShard();
                 continue;
             }
@@ -166,6 +171,7 @@ private:
                 ? window_end_ns_
                 : slice_begin_ns_ + scan_.window_shards.slice_ns;
             final_slice_ = slice_end_ns_ == window_end_ns_;
+            const auto series_shard_index = pv_offset_ / static_cast<std::size_t>(scan_.window_shards.series_per_shard) + 1;
             auto predicates = scan_.pushable_predicates;
             predicates.erase(std::remove_if(predicates.begin(), predicates.end(), [](const Predicate& predicate) {
                 return predicate.column == "time" || predicate.column == "pv";
@@ -173,15 +179,23 @@ private:
             std::vector<ExecutableLiteralValue> pv_values;
             const auto pv_end = std::min(requested_pvs_.size(), pv_offset_ + static_cast<std::size_t>(scan_.window_shards.series_per_shard));
             for (std::size_t index = pv_offset_; index < pv_end; ++index) pv_values.emplace_back(requested_pvs_[index]);
+            const auto series_in_shard = static_cast<uint64_t>(pv_values.size());
             pv_offset_ = pv_end;
             predicates.push_back(Predicate{.column = "pv", .op = PredicateOp::IN, .values = std::move(pv_values)});
             predicates.push_back(Predicate{.column = "time", .op = PredicateOp::GTE, .values = {slice_begin_ns_ / 1'000'000'000LL}});
             predicates.push_back(Predicate{.column = "time", .op = PredicateOp::LTE, .values = {slice_end_ns_ / 1'000'000'000LL}});
             if (context_.progress)
+            {
+                context_.progress->setActivity(scan_.table_name, "windowed MLDP scan", "opening cursor shard");
+                context_.progress->setWindowShard(window_index_ + 1,
+                                                   static_cast<uint64_t>((slice_begin_ns_ - window_begin_ns_) / scan_.window_shards.slice_ns + 1),
+                                                   series_shard_index,
+                                                   series_in_shard);
                 context_.progress->beginBackendRpc(scan_.table_name,
                                                    "shard open: window " + std::to_string(window_index_ + 1) + ", begin " +
                                                        std::to_string(slice_begin_ns_) + " ns, PV group " +
-                                                       std::to_string((pv_offset_ - pv_values.size()) / static_cast<std::size_t>(scan_.window_shards.series_per_shard) + 1));
+                                                       std::to_string(series_shard_index));
+            }
             stream_ = queryable_->executeStream(scan_.table_name, predicates, scan_.projection_hint, context_);
             return;
         }
@@ -307,6 +321,7 @@ public:
         if (!prepared_)
         {
             prepared_ = true;
+            if (context_.progress) context_.progress->setActivity("mldp.time_series_table", "wide pivot", "preparing pivot");
             batches_ = executor::pivotLongStreamWithSpill(*input_, pivot_.row_key_column,
                                                            pivot_.pivot_key_column, pivot_.value_column,
                                                            pivot_.output_column_labels, pivot_.output_batch_size,

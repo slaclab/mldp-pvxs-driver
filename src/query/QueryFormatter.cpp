@@ -28,6 +28,8 @@ namespace query = mldp_pvxs_driver::query;
 
 namespace {
 
+std::mutex g_format_output_mutex;
+
 void throwIfCancelled(const std::shared_ptr<query::QueryCancellation>& cancellation)
 {
     if (cancellation) cancellation->throwIfCancelled();
@@ -693,7 +695,9 @@ void mldp_pvxs_driver::cli::formatQueryStream(query::IRecordBatchStream& stream,
                                                std::ostream& output,
                                                const bool expanded,
                                                const TableRenderOptions& table_options,
-                                               std::shared_ptr<query::QueryCancellation> cancellation)
+                                               std::shared_ptr<query::QueryCancellation> cancellation,
+                                               std::shared_ptr<query::QueryProgressTracker> progress,
+                                               std::shared_ptr<std::mutex> output_mutex)
 {
     bool header_written = false;
     std::unique_ptr<OstreamOutputStream> arrow_stream;
@@ -701,6 +705,7 @@ void mldp_pvxs_driver::cli::formatQueryStream(query::IRecordBatchStream& stream,
     while (auto batch = stream.next())
     {
         throwIfCancelled(cancellation);
+        std::unique_lock lock(output_mutex ? *output_mutex : g_format_output_mutex);
         query::QueryExecutionResult result{.batches = {batch}};
         switch (format)
         {
@@ -749,6 +754,7 @@ void mldp_pvxs_driver::cli::formatQueryStream(query::IRecordBatchStream& stream,
         header_written = true;
         output.flush();
         if (!output) throw std::runtime_error("Failed to write query output");
+        if (progress) progress->outputBatch(static_cast<uint64_t>(batch->num_rows()));
     }
     if (arrow_writer)
     {

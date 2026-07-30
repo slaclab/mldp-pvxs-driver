@@ -754,6 +754,7 @@ int runRepl(QueryCliOptions                           options,
             editor.addHistory(sql);
             auto progress = std::make_shared<mldp_pvxs_driver::query::QueryProgressTracker>();
             auto cancellation = std::make_shared<mldp_pvxs_driver::query::QueryCancellation>();
+            progress->setPhase(mldp_pvxs_driver::query::QueryProgressPhase::Parsing);
             status.query_running = true;
             status.progress = progress->snapshot();
             status.completed_stats.reset();
@@ -1225,11 +1226,14 @@ int mldp_pvxs_driver::cli::QueryRunner::run(const QueryCliOptions& options,
     const bool interactive_page = continuations != nullptr && select != nullptr && select->limit.has_value();
     const auto fingerprint = interactive_page ? queryFingerprint(sql) : std::string{};
     std::optional<QueryContinuationRegistry::Entry> resumed;
+    uint64_t result_page = 1;
     if (interactive_page && select->page_token)
     {
         resumed.emplace(continuations->take(*select->page_token, fingerprint));
         context.cancellation = resumed->cancellation;
+        result_page = resumed->result_page + 1;
     }
+    if (progress && interactive_page) progress->setResultPage(result_page);
     std::optional<SpillCleanupGuard> cleanup;
     if (!interactive_page)
     {
@@ -1251,7 +1255,6 @@ int mldp_pvxs_driver::cli::QueryRunner::run(const QueryCliOptions& options,
     }
     if (context.cancellation) context.cancellation->throwIfCancelled();
     {
-        std::unique_lock lock(output_mutex ? *output_mutex : g_fallback_output_mutex);
         query::IRecordBatchStreamUPtr stream;
         std::shared_ptr<query::QueryStats> stream_stats;
         InteractivePageStream* page_stream = nullptr;
@@ -1282,7 +1285,10 @@ int mldp_pvxs_driver::cli::QueryRunner::run(const QueryCliOptions& options,
                           output,
                           options.expanded,
                           TableRenderOptions{.viewport_width = options.table_fit ? table_width : std::nullopt},
-                          context.cancellation);
+                          context.cancellation,
+                          progress,
+                          output_mutex);
+        std::unique_lock lock(output_mutex ? *output_mutex : g_fallback_output_mutex);
         if (!options.no_stats && print_stats)
         {
             printQueryStats(*stream_stats, output);
@@ -1297,7 +1303,8 @@ int mldp_pvxs_driver::cli::QueryRunner::run(const QueryCliOptions& options,
                 .fingerprint = fingerprint,
                 .stream = std::move(stream),
                 .stats = std::move(stream_stats),
-                .cancellation = context.cancellation});
+                .cancellation = context.cancellation,
+                .result_page = result_page});
             output << "-- continuation token: " << token << "\n";
         }
     }

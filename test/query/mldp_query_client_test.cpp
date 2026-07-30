@@ -11,6 +11,7 @@
 #include <query/ExecutionContext.h>
 #include <query/QueryCancellation.h>
 #include <query/QueryFormatter.h>
+#include <query/QueryProgress.h>
 #include <query/QueryResult.h>
 #include <query/impl/mldp/MLDPQueryClient.h>
 
@@ -282,6 +283,40 @@ TEST(MLDPQueryClientTest, BidiStreamSendsInitialQuerySpecThenCursorNextAndPropag
         EXPECT_EQ(service.requests[1].cursorop().cursoroperationtype(),
                   dp::service::query::QueryDataRequest::CursorOperation::CURSOR_OP_NEXT);
     }
+    server->Shutdown();
+}
+
+TEST(MLDPQueryClientTest, BidiStreamReportsCursorProgress)
+{
+    BidiQueryService service;
+    grpc::ServerBuilder builder;
+    int port = 0;
+    builder.AddListeningPort("127.0.0.1:0", grpc::InsecureServerCredentials(), &port);
+    builder.RegisterService(&service);
+    auto server = builder.BuildAndStart();
+    ASSERT_NE(server, nullptr);
+
+    MLDPQueryClient client(makeQueryConfig("127.0.0.1:" + std::to_string(port)));
+    auto progress = std::make_shared<QueryProgressTracker>();
+    const ExecutionContext context{.pool = arrow::default_memory_pool(), .progress = progress};
+    auto stream = client.executeStream("mldp.time_series",
+                                       {{.column = "pv", .op = PredicateOp::EQ, .values = {std::string("TEST:PV")}}}, {}, context);
+    {
+        std::unique_lock lock(service.mutex);
+        ASSERT_TRUE(service.condition.wait_for(lock, std::chrono::seconds{2}, [&] { return service.initial_request_received; }));
+        service.release_response = true;
+    }
+    service.condition.notify_all();
+
+    ASSERT_NE(stream->next(), nullptr);
+    EXPECT_EQ(stream->next(), nullptr);
+
+    const auto snapshot = progress->snapshot();
+    EXPECT_EQ(snapshot.table_name, "mldp.time_series");
+    EXPECT_EQ(snapshot.operation, "MLDP bidi cursor");
+    EXPECT_EQ(snapshot.cursor_responses, 1U);
+    EXPECT_EQ(snapshot.cursor_next_requests, 1U);
+    EXPECT_EQ(snapshot.stream_batches, 1U);
     server->Shutdown();
 }
 

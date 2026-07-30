@@ -78,9 +78,22 @@ std::string FooterRenderer::render(const ConsoleStatus& status, const int termin
             appendField(line, phase, terminal_width);
             appendField(line, elapsed(status.progress->elapsed), terminal_width);
             if (!status.progress->table_name.empty()) appendField(line, status.progress->table_name, terminal_width);
+            if (!status.progress->operation.empty()) appendField(line, status.progress->operation, terminal_width);
             if (!status.progress->detail.empty()) appendField(line, status.progress->detail, terminal_width);
+            if (status.progress->result_page > 0)
+                appendField(line, "result page " + std::to_string(status.progress->result_page), terminal_width);
+            if (status.progress->window_index > 0)
+            {
+                std::string shard = "window " + std::to_string(status.progress->window_index);
+                if (status.progress->slice_index > 0) shard += ", slice " + std::to_string(status.progress->slice_index);
+                if (status.progress->series_shard_index > 0)
+                    shard += ", series shard " + std::to_string(status.progress->series_shard_index);
+                appendField(line, shard, terminal_width);
+            }
             if (status.progress->rpc_calls_started > 0)
                 appendField(line, std::to_string(status.progress->rpc_calls_completed) + "/" + std::to_string(status.progress->rpc_calls_started) + " RPCs", terminal_width);
+            if (status.progress->cursor_responses > 0)
+                appendField(line, "cursor " + std::to_string(status.progress->cursor_responses) + ", next " + std::to_string(status.progress->cursor_next_requests), terminal_width);
             if (status.progress->rows_from_backend > 0)
                 appendField(line, std::to_string(status.progress->rows_from_backend) + " backend rows", terminal_width);
         }
@@ -90,6 +103,12 @@ std::string FooterRenderer::render(const ConsoleStatus& status, const int termin
     else
     {
         appendField(line, "Query: ready", terminal_width);
+        if (status.progress && !status.progress->table_name.empty()) appendField(line, status.progress->table_name, terminal_width);
+        if (status.progress && !status.progress->operation.empty()) appendField(line, status.progress->operation, terminal_width);
+        if (status.progress && status.progress->cursor_responses > 0)
+            appendField(line, "cursor " + std::to_string(status.progress->cursor_responses) + ", next " + std::to_string(status.progress->cursor_next_requests), terminal_width);
+        if (status.progress && status.progress->completed_shards > 0)
+            appendField(line, std::to_string(status.progress->completed_shards) + " shards", terminal_width);
     }
 
     if (status.completed_stats)

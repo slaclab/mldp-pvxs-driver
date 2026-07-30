@@ -1,5 +1,6 @@
 #include <query/executor/ExecutorUtils.h>
 #include <query/executor/StateInternal.h>
+#include <query/QueryProgress.h>
 #include <stdexcept>
 
 using namespace mldp_pvxs_driver::query;
@@ -20,6 +21,7 @@ namespace {
 
         RecordBatches execute() override
         {
+            if (context().progress) context().progress->setActivity({}, "filter");
             const auto    input = childAt(0).execute();
             RecordBatches output;
             output.reserve(input.size());

@@ -12,10 +12,12 @@
 
 #include <query/QueryCancellation.h>
 #include <query/QueryExecutor.h>
+#include <query/QueryProgress.h>
 
 #include <cstddef>
 #include <iosfwd>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 
@@ -47,7 +49,9 @@ void formatQueryStream(mldp_pvxs_driver::query::IRecordBatchStream& stream,
                        std::ostream&                                output,
                        bool                                         expanded = false,
                        const TableRenderOptions&                    table_options = {},
-                       std::shared_ptr<mldp_pvxs_driver::query::QueryCancellation> cancellation = nullptr);
+                       std::shared_ptr<mldp_pvxs_driver::query::QueryCancellation> cancellation = nullptr,
+                       std::shared_ptr<mldp_pvxs_driver::query::QueryProgressTracker> progress = nullptr,
+                       std::shared_ptr<std::mutex> output_mutex = nullptr);
 
 void printQueryStats(const query::QueryStats& stats, std::ostream& output);
 

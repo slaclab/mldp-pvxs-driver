@@ -245,6 +245,7 @@ RecordBatches mldp_pvxs_driver::query::executor::pivotLongStreamWithSpill(
     std::unordered_map<std::string, std::shared_ptr<arrow::DataType>> value_types;
     while (auto batch = long_stream.next())
     {
+        if (context.progress) context.progress->setActivity("mldp.time_series_table", "wide pivot ingestion");
         if (context.cancellation) context.cancellation->throwIfCancelled();
         if (batch->num_rows() == 0) continue;
         const auto row_key_index = batch->schema()->GetFieldIndex(std::string(row_key_column));
@@ -286,13 +287,13 @@ RecordBatches mldp_pvxs_driver::query::executor::pivotLongStreamWithSpill(
         if (!status.ok()) throw std::runtime_error(status.ToString());
     }
     if (!writer) return {};
-    if (context.progress) context.progress->setPhase(QueryProgressPhase::Executing, "wide spill finalization");
+    if (context.progress) context.progress->setActivity("mldp.time_series_table", "wide pivot", "spill finalization");
     auto spilled = writer->finish();
     if (!spilled.ok()) throw std::runtime_error(spilled.status().ToString());
     stats.bytes_spilled += static_cast<uint64_t>(spilled->byte_count);
     ++stats.materialized_files;
     stats.materialized_bytes += static_cast<uint64_t>(spilled->byte_count);
-    if (context.progress) context.progress->setPhase(QueryProgressPhase::Executing, "wide external sort and pivot");
+    if (context.progress) context.progress->setActivity("mldp.time_series_table", "wide pivot", "external sort and merge");
     return readSortedPivotRuns(*spilled, spill_manager, row_key_column, pivot_key_column, value_column,
                                output_labels, value_types, context, stats);
 }

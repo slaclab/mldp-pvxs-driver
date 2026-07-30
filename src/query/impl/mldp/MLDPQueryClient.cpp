@@ -739,7 +739,11 @@ public:
         if (context_.cancellation) context_.cancellation->throwIfCancelled();
         if (request_next_)
         {
-            if (context_.progress) context_.progress->setPhase(QueryProgressPhase::Executing, "cursor next");
+            if (context_.progress)
+            {
+                context_.progress->setActivity("mldp.time_series", "MLDP bidi cursor", "cursor next");
+                context_.progress->cursorNext();
+            }
             dp::service::query::QueryDataRequest request;
             request.mutable_cursorop()->set_cursoroperationtype(dp::service::query::QueryDataRequest::CursorOperation::CURSOR_OP_NEXT);
             if (!stream_->Write(request))
@@ -767,12 +771,14 @@ public:
             return nullptr;
         }
         request_next_ = true;
-        if (context_.progress) context_.progress->setPhase(QueryProgressPhase::Executing, "stream response");
+        if (context_.progress) context_.progress->setActivity("mldp.time_series", "MLDP bidi cursor", "cursor response");
         if (response.has_exceptionalresult())
             throw std::runtime_error("MLDP queryDataBidiStream failed: " + response.exceptionalresult().message());
         if (!response.has_querydata())
             throw std::runtime_error("MLDP queryDataBidiStream returned neither data nor an error");
-        return makeBatch(response);
+        auto batch = makeBatch(response);
+        if (context_.progress) context_.progress->cursorResponse(static_cast<uint64_t>(batch->num_rows()));
+        return batch;
     }
 
 private:

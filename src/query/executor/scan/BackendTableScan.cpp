@@ -34,6 +34,7 @@ void qualify(const plan::PhysicalTableScan& scan, std::shared_ptr<arrow::RecordB
 RecordBatches mldp_pvxs_driver::query::executor::fetchBackendPages(const plan::PhysicalTableScan& scan, const std::vector<Predicate>& pushable, const std::vector<Predicate>& local, const ExecutionContext& context, QueryStats& stats)
 {
     auto queryable = QueryableFactory::instance().createByTable(scan.table_name);
+    if (context.progress) context.progress->setActivity(scan.table_name, "backend scan");
     RecordBatches output;
     if (scan.table_name == "mldp.time_series")
     {

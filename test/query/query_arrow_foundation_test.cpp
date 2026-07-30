@@ -13,6 +13,7 @@
 #include <query/executor/ScanExecutionHelpers.h>
 #include <query/QueryFormatter.h>
 #include <query/QueryPlanner.h>
+#include <query/QueryProgress.h>
 #include <query/QueryResult.h>
 #include <query/ArrowTypeMap.h>
 #include <query/QueryableFactory.h>
@@ -300,6 +301,23 @@ TEST(ConsoleFooterTest, RendersFixedWidthAsciiStatusWithPriority)
     EXPECT_NE(detailed.find("0m 12s"), std::string::npos);
     EXPECT_NE(detailed.find("mldp.time_series_table"), std::string::npos);
     EXPECT_NE(detailed.find("1/2 RPCs"), std::string::npos);
+
+    status.progress = query::QueryProgressSnapshot{
+        .phase = query::QueryProgressPhase::Executing,
+        .elapsed = std::chrono::milliseconds{12'000},
+        .table_name = "mldp.time_series_table",
+        .operation = "wide pivot",
+        .cursor_next_requests = 3,
+        .cursor_responses = 4,
+        .result_page = 2,
+        .window_index = 1,
+        .slice_index = 3,
+        .series_shard_index = 2};
+    const auto pagination = renderer.render(status, 200);
+    EXPECT_NE(pagination.find("wide pivot"), std::string::npos);
+    EXPECT_NE(pagination.find("result page 2"), std::string::npos);
+    EXPECT_NE(pagination.find("window 1, slice 3, series shard 2"), std::string::npos);
+    EXPECT_NE(pagination.find("cursor 4, next 3"), std::string::npos);
 }
 
 TEST(QueryCancellationTest, RequestsCancellationOnceAndInvokesLateRegistration)
@@ -352,6 +370,42 @@ TEST(QueryFormatterTest, WritesCompletedStreamBatchBeforePullingTheNext)
 
     EXPECT_TRUE(stream.first_batch_visible_before_second_pull);
     EXPECT_NE(output.str().find("\"value\":2"), std::string::npos);
+}
+
+TEST(QueryProgressTest, TracksWindowShardsAndFormattedOutput)
+{
+    query::QueryableFactory::instance().reset();
+    SustainedWindowQueryable::requests.clear();
+    SustainedWindowQueryable::stream_creations = 0;
+    SustainedWindowQueryable::next_calls = 0;
+    query::QueryableFactory::instance().prepare<SustainedWindowQueryable>(config::Config::configFromYamlString("{}"));
+
+    query::QueryPlanner planner;
+    query::QueryExecutor executor;
+    auto progress = std::make_shared<query::QueryProgressTracker>();
+    auto streamed = executor.executeStream(
+        planner.plan(query::parseQuery(
+            "SELECT pv, time, value FROM mldp.time_series WHERE pv IN ('PV1', 'PV2', 'PV3') "
+            "AND window IN (0, 10; slice 5s, series_per_shard 1)")),
+        {.pool = arrow::default_memory_pool(), .progress = progress});
+
+    std::ostringstream output;
+    cli::formatQueryStream(*streamed.stream, cli::QueryOutputFormat::Json, output, false, {}, nullptr, progress);
+
+    const auto snapshot = progress->snapshot();
+    EXPECT_EQ(snapshot.table_name, "mldp.time_series");
+    EXPECT_EQ(snapshot.operation, "windowed MLDP scan");
+    EXPECT_EQ(snapshot.window_index, 1U);
+    EXPECT_EQ(snapshot.slice_index, 2U);
+    EXPECT_EQ(snapshot.series_shard_index, 3U);
+    EXPECT_EQ(snapshot.series_in_shard, 1U);
+    EXPECT_EQ(snapshot.completed_shards, 6U);
+    EXPECT_EQ(snapshot.output_batches, 12U);
+    EXPECT_EQ(snapshot.rows_returned, 9U);
+    EXPECT_EQ(SustainedWindowQueryable::stream_creations, 6U);
+    EXPECT_NE(output.str().find("\"value\":310"), std::string::npos);
+
+    query::QueryableFactory::instance().reset();
 }
 
 TEST(QueryContinuationRegistryTest, RotatesTokensAndRejectsMismatchedQueries)

@@ -67,6 +67,7 @@ public:
         std::unique_ptr<query::IRecordBatchStream>      stream;
         std::shared_ptr<query::QueryStats>               stats;
         std::shared_ptr<query::QueryCancellation>        cancellation;
+        uint64_t                                         result_page{1};
         std::chrono::steady_clock::time_point            expires_at;
     };
 

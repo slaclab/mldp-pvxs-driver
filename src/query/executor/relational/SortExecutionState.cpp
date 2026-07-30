@@ -1,5 +1,6 @@
 #include <query/executor/ExecutorUtils.h>
 #include <query/executor/StateInternal.h>
+#include <query/QueryProgress.h>
 
 using namespace mldp_pvxs_driver::query;
 using namespace mldp_pvxs_driver::query::executor;
@@ -19,6 +20,7 @@ namespace {
 
         RecordBatches execute() override
         {
+            if (context().progress) context().progress->setActivity({}, "sort");
             throwIfCancelled();
             return applySort(childAt(0).execute(), node_.keys);
         }
