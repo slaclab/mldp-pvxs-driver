@@ -607,18 +607,51 @@ timestamp columns: start first and end second. Its output names and aliases do
 not matter. Overlapping or adjacent subquery intervals are coalesced, and the
 long-form table opens serial MLDP server cursors for each resulting range.
 
-`mldp.time_series` also accepts optional shard controls after a semicolon
-inside the `window` input. `slice` is a positive duration (default `1s`) and
-`pv_group` is a positive PV-count bound (default `1`). The driver visits
-normalized windows, time slices, and requested-PV groups in that order. Each
-cursor receives one bounded range and group; adjacent inclusive backend ranges
-are locally made half-open so a boundary sample appears once.
+### Window shard parameters
+
+Both MLDP time-series tables accept optional shard parameters after a semicolon
+inside a `window IN (...)` input:
+
+```sql
+window IN (start, end; slice <duration>, series_per_shard <positive-integer>)
+```
+
+The parameters are optional, may appear in either order, and each may appear
+at most once.
+
+| Parameter | Meaning | Default |
+|---|---|---|
+| `slice` | Maximum timestamp span for one backend cursor. It is a positive duration. | `1s` |
+| `series_per_shard` | Maximum number of requested PVs in one backend cursor. It is a positive integer. | `1` |
+
+The driver first coalesces normalized window ranges, then visits shards in this
+deterministic order: normalized range, time slice, and requested-PV group.
+Each cursor receives exactly one bounded time range and PV group. Backend time
+bounds are inclusive, so the driver locally makes every non-final slice
+half-open; a sample at a slice boundary appears once. `slice` and `series_per_shard`
+are supported only on `window` input for `mldp.time_series` and
+`mldp.time_series_table`. Duplicate names, unknown names, zero or negative
+values, and shard parameters on another table or predicate are rejected.
 
 ```sql
 SELECT pv, time, value
 FROM mldp.time_series
 WHERE pv IN ('SYS:MAGNET:CURRENT', 'SYS:VACUUM:PRESSURE')
-  AND window IN (NOW - 10m, NOW; slice 5s, pv_group 2)
+  AND window IN (NOW - 10m, NOW; slice 5s, series_per_shard 2)
+```
+
+The same options can follow a window subquery:
+
+```sql
+SELECT pv, time, value
+FROM mldp.time_series
+WHERE pv IN ('SYS:MAGNET:CURRENT', 'SYS:VACUUM:PRESSURE')
+  AND window IN (
+    SELECT activation.time, activation.end_time
+    FROM mldp.configuration_activation activation
+    WHERE activation.end_time IS NOT NULL;
+    series_per_shard 2, slice 5s
+  )
 ```
 
 ```sql
@@ -682,9 +715,9 @@ coalesced before the driver issues the corresponding time-series requests. As wi
 filtering, a valid `pv` or `window` subquery that finds no rows returns an empty
 result; malformed subquery output remains an error.
 
-Shard options (`slice`, `pv_group`) apply to both MLDP time-series tables.
-Long-form `mldp.time_series` emits server-cursor batches directly.
-`mldp.time_series_table` consumes those same bounded long-form cursors into
+The window shard parameters described above apply to both MLDP time-series
+tables. Long-form `mldp.time_series` emits server-cursor batches directly.
+`mldp.time_series_table` consumes the same bounded long-form cursors into
 temporary Arrow spill storage and emits a globally time-ordered pivot only
 after preparation finishes. Missing `(time, pv)` cells are null; duplicate
 cells are an execution error.
@@ -704,7 +737,7 @@ WHERE pv IN ('SYS:MAGNET:CURRENT', 'SYS:VACUUM:PRESSURE')
 SELECT *
 FROM mldp.time_series_table
 WHERE pv IN ('SYS:MAGNET:CURRENT', 'SYS:VACUUM:PRESSURE')
-  AND window IN (NOW - 10h, NOW)
+  AND window IN (NOW - 10h, NOW; slice 30s, series_per_shard 2)
 ```
 
 ```sql

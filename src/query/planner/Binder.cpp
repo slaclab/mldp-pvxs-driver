@@ -647,11 +647,11 @@ plan::BoundSelect mldp_pvxs_driver::query::planner::bindSelect(const SelectState
                     throw plan::PlannerException(plan::BindError{.message = "MLDP time-series window slice must be a positive duration"});
                 table.window_shards.slice_ns = std::get<DurationNsLiteral>(option.value).value;
             }
-            else if (name == "pv_group")
+            else if (name == "series_per_shard")
             {
                 if (!std::holds_alternative<int64_t>(option.value) || std::get<int64_t>(option.value) <= 0)
-                    throw plan::PlannerException(plan::BindError{.message = "MLDP time-series window pv_group must be a positive integer"});
-                table.window_shards.pv_group = static_cast<uint64_t>(std::get<int64_t>(option.value));
+                    throw plan::PlannerException(plan::BindError{.message = "MLDP time-series window series_per_shard must be a positive integer"});
+                table.window_shards.series_per_shard = static_cast<uint64_t>(std::get<int64_t>(option.value));
             }
             else
             {

@@ -721,14 +721,14 @@ TEST(QueryPlannerTest, ResolvesDefaultAndExplicitWindowShardOptions)
         "SELECT * FROM mldp.time_series WHERE pv = 'PV:ONE' AND window IN (1700000000, 1700000010)")));
     ASSERT_NE(defaults, nullptr);
     EXPECT_EQ(defaults->window_shards.slice_ns, 1'000'000'000LL);
-    EXPECT_EQ(defaults->window_shards.pv_group, 1U);
+    EXPECT_EQ(defaults->window_shards.series_per_shard, 1U);
 
     const auto explicit_options = findScan(planner.plan(query::parseQuery(
         "SELECT * FROM mldp.time_series WHERE pv IN ('PV:ONE', 'PV:TWO') "
-        "AND window IN (1700000000, 1700000010; slice 5s, pv_group 2)")));
+        "AND window IN (1700000000, 1700000010; slice 5s, series_per_shard 2)")));
     ASSERT_NE(explicit_options, nullptr);
     EXPECT_EQ(explicit_options->window_shards.slice_ns, 5'000'000'000LL);
-    EXPECT_EQ(explicit_options->window_shards.pv_group, 2U);
+    EXPECT_EQ(explicit_options->window_shards.series_per_shard, 2U);
     query::QueryableFactory::instance().reset();
 }
 
@@ -743,7 +743,7 @@ TEST(QueryPlannerExecutorTest, VisitsWindowShardsSeriallyBySliceThenPvGroup)
     query::QueryExecutor executor;
     (void)executor.execute(planner.plan(query::parseQuery(
         "SELECT pv, time FROM mldp.time_series WHERE pv IN ('PV:ONE', 'PV:TWO') "
-        "AND window IN (0, 10; slice 5s, pv_group 1)")),
+        "AND window IN (0, 10; slice 5s, series_per_shard 1)")),
                            {.pool = arrow::default_memory_pool()});
 
     ASSERT_EQ(EmptyWideInputQueryable::received_predicates.size(), 4U);
@@ -793,7 +793,7 @@ TEST(QueryPlannerTest, RejectsInvalidWindowShardOptions)
     query::QueryPlanner planner;
     for (const std::string_view sql : {
              "SELECT * FROM mldp.time_series WHERE pv = 'PV:ONE' AND window IN (1, 2; slice 0s)",
-             "SELECT * FROM mldp.time_series WHERE pv = 'PV:ONE' AND window IN (1, 2; pv_group 0)",
+             "SELECT * FROM mldp.time_series WHERE pv = 'PV:ONE' AND window IN (1, 2; series_per_shard 0)",
              "SELECT * FROM mldp.time_series WHERE pv = 'PV:ONE' AND window IN (1, 2; slice 1s, slice 2s)",
              "SELECT * FROM mldp.time_series WHERE pv = 'PV:ONE' AND window IN (1, 2; unknown 1)"})
     {
@@ -988,7 +988,7 @@ TEST(QueryPlannerExecutorTest, StreamsSubqueryWindowsAcrossNormalizedRanges)
     query::QueryExecutor executor;
     auto streamed = executor.executeStream(planner.plan(query::parseQuery(
         "SELECT pv, time, value FROM mldp.time_series WHERE pv IN ('SUB:ONE', 'SUB:TWO') "
-        "AND window IN (SELECT time, end_time FROM mldp.configuration_activation; slice 5s, pv_group 1) LIMIT 4")),
+        "AND window IN (SELECT time, end_time FROM mldp.configuration_activation; slice 5s, series_per_shard 1) LIMIT 4")),
                                          {.pool = arrow::default_memory_pool()});
     int64_t rows = 0;
     while (auto batch = streamed.stream->next()) rows += batch->num_rows();
@@ -1021,7 +1021,7 @@ TEST(QueryPlannerExecutorTest, AcceptsWindowShardOptionsForWideSubqueryWindows)
     query::QueryPlanner planner;
     EXPECT_NO_THROW((void)planner.plan(query::parseQuery(
         "SELECT * FROM mldp.time_series_table WHERE pv IN ('SUB:ONE', 'SUB:TWO') "
-        "AND window IN (SELECT time, end_time FROM mldp.configuration_activation; slice 5s, pv_group 2)")));
+        "AND window IN (SELECT time, end_time FROM mldp.configuration_activation; slice 5s, series_per_shard 2)")));
     query::QueryableFactory::instance().reset();
 }
 
@@ -1034,7 +1034,7 @@ TEST(QueryPlannerExecutorTest, WidePivotSortsSpilledBidiBatchesAndPreservesPvOrd
     query::QueryPlanner planner;
     query::QueryExecutor executor;
     const auto physical = planner.plan(query::parseQuery(
-        "SELECT * FROM mldp.time_series_table WHERE pv IN ('WIDE:ONE', 'WIDE:TWO') AND window IN (0, 1; slice 2s, pv_group 2)"));
+        "SELECT * FROM mldp.time_series_table WHERE pv IN ('WIDE:ONE', 'WIDE:TWO') AND window IN (0, 1; slice 2s, series_per_shard 2)"));
     const auto plan_text = query::plan::physicalPlanToString(physical);
     EXPECT_NE(plan_text.find("PhysicalPivot(columns=2, batch_size=4096)"), std::string::npos);
     EXPECT_NE(plan_text.find("PhysicalTableScan(table=mldp.time_series"), std::string::npos);

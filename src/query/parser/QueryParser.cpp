@@ -367,10 +367,10 @@ QueryStatement QueryParser::parse(const std::string_view sql)
                         else throw ParseError("Unsupported window slice duration", TokenPosition{});
                         window_options.push_back({.name = "slice", .value = DurationNsLiteral{std::stoll(duration.substr(0, duration.size() - 1)) * multiplier * 1'000'000'000LL}});
                     }
-                    else if (name == "pv_group" || name == "PV_GROUP")
+                    else if (name == "series_per_shard" || name == "SERIES_PER_SHARD")
                     {
-                        try { window_options.push_back({.name = "pv_group", .value = static_cast<int64_t>(std::stoll(std::string(value)))}); }
-                        catch (const std::exception&) { throw ParseError("Window pv_group option requires an integer", TokenPosition{}); }
+                        try { window_options.push_back({.name = "series_per_shard", .value = static_cast<int64_t>(std::stoll(std::string(value)))}); }
+                        catch (const std::exception&) { throw ParseError("Window series_per_shard option requires an integer", TokenPosition{}); }
                     }
                     else throw ParseError("Unknown window option: " + name, TokenPosition{});
                     if (comma == std::string_view::npos) break;

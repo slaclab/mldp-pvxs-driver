@@ -348,14 +348,14 @@ RecordBatches mldp_pvxs_driver::query::executor::fetchTimeSeriesWindows(const pl
             const auto remaining = window_end_ns - slice_begin_ns;
             const auto slice_end_ns = remaining < slice_ns ? window_end_ns : slice_begin_ns + slice_ns;
             const bool final_slice = slice_end_ns == window_end_ns;
-            for (std::size_t pv_offset = 0; pv_offset < requested_pvs.size(); pv_offset += window_shards.pv_group)
+            for (std::size_t pv_offset = 0; pv_offset < requested_pvs.size(); pv_offset += window_shards.series_per_shard)
             {
                 auto predicates = pushable;
                 predicates.erase(std::remove_if(predicates.begin(), predicates.end(), [&scan](const Predicate& predicate) {
                     return (scan.window_subquery || scan.window_literal) && (predicate.column == "time" || predicate.column == "pv");
                 }), predicates.end());
                 std::vector<ExecutableLiteralValue> pv_values;
-                const auto pv_end = std::min(requested_pvs.size(), pv_offset + static_cast<std::size_t>(window_shards.pv_group));
+                const auto pv_end = std::min(requested_pvs.size(), pv_offset + static_cast<std::size_t>(window_shards.series_per_shard));
                 for (std::size_t index = pv_offset; index < pv_end; ++index) pv_values.emplace_back(requested_pvs[index]);
                 predicates.push_back(Predicate{.column = "pv", .op = PredicateOp::IN, .values = std::move(pv_values)});
                 predicates.push_back(Predicate{.column = "time", .op = PredicateOp::GTE, .values = {slice_begin_ns / 1'000'000'000LL}});

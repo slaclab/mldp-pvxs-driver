@@ -36,12 +36,12 @@ before it emits wide batches.
 Extend the existing window input syntax with optional named shard parameters:
 
 ```sql
-window IN (start, end; slice 1s, pv_group 1)
+window IN (start, end; slice 1s, series_per_shard 1)
 ```
 
 - `slice` is a positive duration defining the maximum timestamp span of one
   backend cursor. Its default is `1s` when omitted.
-- `pv_group` is a positive integer defining the maximum number of PV names in
+- `series_per_shard` is a positive integer defining the maximum number of PV names in
   one backend cursor. Its default is `1` when omitted.
 - The existing forms remain valid and use both defaults:
 
@@ -57,7 +57,7 @@ window IN (start, end; slice 1s, pv_group 1)
     SELECT activation.time, activation.end_time
     FROM mldp.configuration_activation activation
     WHERE activation.end_time IS NOT NULL;
-    slice 5s, pv_group 4
+    slice 5s, series_per_shard 4
   )
   ```
 
@@ -73,12 +73,12 @@ window IN (start, end; slice 1s, pv_group 1)
 After existing window normalization, the executor partitions every closed
 range into consecutive half-open cursor slices `[begin, slice_end)`, except the
 final slice whose end equals the inclusive window end. It partitions requested
-PVs, in predicate order, into consecutive groups of at most `pv_group` names.
+PVs, in predicate order, into consecutive groups of at most `series_per_shard` names.
 It visits shards in this deterministic order: normalized window, time slice,
 then PV group. A cursor receives its exact shard bounds and PV group.
 
 ```text
-window [10:00:00, 10:00:03], slice 1s, pv_group 1
+window [10:00:00, 10:00:03], slice 1s, series_per_shard 1
 PVs [MAG:ONE, RF:ONE]
 
   [10:00:00, 10:00:01) MAG:ONE  ->  [10:00:00, 10:00:01) RF:ONE
@@ -91,7 +91,7 @@ the backend's inclusive timestamp bounds and applies a local half-open filter
 to every non-final slice; the final slice retains its inclusive end.
 
 The binder stores resolved values, not merely whether an option was written:
-an omitted `slice` becomes `1s` and an omitted `pv_group` becomes `1` in the
+an omitted `slice` becomes `1s` and an omitted `series_per_shard` becomes `1` in the
 logical and physical window specification. This makes defaults visible to the
 executor and testable without CLI-specific behavior.
 
@@ -116,7 +116,7 @@ p9:<random-id>
         v
 session continuation registry
   - canonical query fingerprint (including projection, predicates, window,
-    slice, pv_group, ordering, and limit-compatible output shape)
+    slice, series_per_shard, ordering, and limit-compatible output shape)
   - active bidi stream and its pooled gRPC handle / ClientContext
   - normalized-window index, current slice bounds, and PV-group index
   - unconsumed Arrow batch and in-batch row offset
@@ -129,7 +129,7 @@ The user continues with the same query shape and the token:
 SELECT pv, time, value
 FROM mldp.time_series
 WHERE pv IN ('MAG:ONE', 'RF:ONE')
-  AND window IN (NOW - 1m, NOW; slice 1s, pv_group 1)
+  AND window IN (NOW - 1m, NOW; slice 1s, series_per_shard 1)
 LIMIT 100 PAGE TOKEN 'p9:<random-id>'
 ```
 
@@ -208,7 +208,7 @@ Driver rebuilds all rows, skips 0..437, emits 438..875
 
 For `mldp.time_series`, the driver opens one bidirectional RPC for each
 deterministic `(normalized window, time slice, PV group)` shard. The backend
-retains cursor state for that bounded request. With `pv_group 1`, each cursor
+retains cursor state for that bounded request. With `series_per_shard 1`, each cursor
 contains exactly one PV; with a larger group, the cursor contains only that
 group's PV names. The driver completes a shard before it opens the next shard.
 It converts a server response and makes its Arrow batch available while the
@@ -434,7 +434,7 @@ artifact, not a user-visible completed table or output file.
   deterministic shard, exact shard timestamps and PV names, ordered
   `CURSOR_OP_NEXT` messages within a shard, no repeated full-range request,
   terminal status propagation, and cancellation via `TryCancel`.
-- Cover omitted window options (`slice = 1s`, `pv_group = 1`), explicit values,
+- Cover omitted window options (`slice = 1s`, `series_per_shard = 1`), explicit values,
   invalid/duplicate options, literal windows, and subquery windows. Verify
   boundary samples appear once across adjacent time slices and that shard order
   is normalized window, time slice, then PV group.

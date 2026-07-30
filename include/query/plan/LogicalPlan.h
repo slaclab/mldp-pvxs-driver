@@ -27,7 +27,7 @@ using PlannerLiteralValue = std::variant<std::string, int64_t, double, bool, Tim
 
 struct WindowShardSpec {
     int64_t  slice_ns{1'000'000'000LL};
-    uint64_t pv_group{1};
+    uint64_t series_per_shard{1};
 };
 
 struct PlannerPredicate {

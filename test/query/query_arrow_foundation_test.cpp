@@ -510,7 +510,7 @@ TEST(QueryRunnerTest, PagesSustainedMultiPvWindowStreamWithoutLossOrDuplication)
     cli::QueryRunner runner;
     cli::QueryContinuationRegistry continuations;
     const cli::QueryCliOptions options{.format = cli::QueryOutputFormat::Json, .no_stats = true};
-    const std::string sql = "SELECT pv, time, value FROM mldp.time_series WHERE pv IN ('PV1', 'PV2', 'PV3') AND window IN (0, 10; slice 5s, pv_group 1) LIMIT 2";
+    const std::string sql = "SELECT pv, time, value FROM mldp.time_series WHERE pv IN ('PV1', 'PV2', 'PV3') AND window IN (0, 10; slice 5s, series_per_shard 1) LIMIT 2";
     std::string token;
     std::string output;
     std::string final_page;
@@ -1504,6 +1504,33 @@ TEST(QuerySubcommandTest, ReplRecognisesSemicolonsOnlyOutsideQuotedStrings)
     EXPECT_EQ(querySubcommand.run(1, argv, config_sources, input, output, error), 0);
     EXPECT_EQ(error.str().find("Unexpected character ';'"), std::string::npos);
     EXPECT_NE(output.str().find("...> "), std::string::npos);
+}
+
+TEST(QuerySubcommandTest, ReplRecognisesWindowShardSeparatorInsideNestedParentheses)
+{
+    char arg0[] = "query";
+    char* argv[] = {arg0};
+    cli::QuerySubcommand querySubcommand;
+    std::istringstream input(
+        "SELECT *\n"
+        "FROM mldp.time_series_table\n"
+        "WHERE pv IN (SELECT pv FROM mldp.pv_metadata WHERE attributes.dname PREFIX 'USEG:UNDH' LIMIT 2)\n"
+        "AND window IN (SELECT time, time + 30s FROM mldp.configuration_activation "
+        "WHERE time >= NOW - 120d AND config_name = 'SPEAR User' LIMIT 1; slice 15s, series_per_shard 2);\n"
+        ".quit\n");
+    std::ostringstream output;
+    std::ostringstream error;
+    const std::vector<std::string> config_sources{
+        "queryable.mldp.mldp-pool.query-url=localhost:2",
+        "queryable.mldp.mldp-pool.min-conn=1",
+        "queryable.mldp.mldp-pool.max-conn=1",
+        "queryable.mldp-pv-metadata.mldp-pv-metadata-pool.annotation-url=localhost:2",
+        "queryable.mldp-pv-metadata.mldp-pv-metadata-pool.min-conn=1",
+        "queryable.mldp-pv-metadata.mldp-pv-metadata-pool.max-conn=1"};
+
+    EXPECT_EQ(querySubcommand.run(1, argv, config_sources, input, output, error), 0);
+    EXPECT_EQ(error.str().find("only one SQL statement may be submitted at a time"), std::string::npos);
+    EXPECT_EQ(error.str().find("Parse error"), std::string::npos);
 }
 
 TEST(QuerySubcommandTest, ReplClearAndUnknownCommandKeepSessionUsable)

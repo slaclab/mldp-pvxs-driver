@@ -180,6 +180,7 @@ std::optional<std::size_t> statementTerminator(std::string_view line)
 {
     char quote = '\0';
     bool escaped = false;
+    std::size_t parentheses = 0;
     for (std::size_t index = 0; index < line.size(); ++index)
     {
         const char character = line[index];
@@ -203,7 +204,15 @@ std::optional<std::size_t> statementTerminator(std::string_view line)
         {
             quote = character;
         }
-        else if (character == ';')
+        else if (character == '(')
+        {
+            ++parentheses;
+        }
+        else if (character == ')' && parentheses != 0)
+        {
+            --parentheses;
+        }
+        else if (character == ';' && parentheses == 0)
         {
             return index;
         }
@@ -713,7 +722,14 @@ int runRepl(QueryCliOptions                           options,
         }
         else
         {
-            terminator = statementTerminator(line_for_sql);
+            std::string pending_sql = buffer;
+            if (!pending_sql.empty()) pending_sql.push_back('\n');
+            const auto line_offset = pending_sql.size();
+            pending_sql.append(line_for_sql);
+            if (const auto pending_terminator = statementTerminator(pending_sql); pending_terminator && *pending_terminator >= line_offset)
+            {
+                terminator = *pending_terminator - line_offset;
+            }
         }
         if (terminator)
         {

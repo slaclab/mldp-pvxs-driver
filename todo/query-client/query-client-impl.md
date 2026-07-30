@@ -1035,3 +1035,4 @@ null plan nodes with an actionable error.
 | 5 | [phase-5-output-cli.md](phase-5-output-cli.md) | QueryFormatter (table/json/csv/arrow), CLI arg wiring |
 | 6 | [phase-6-tests.md](phase-6-tests.md) | Unit + integration test coverage |
 | 7 | [phase-7-flight-sql.md](phase-7-flight-sql.md) | Arrow Flight SQL server (future, not initial scope) |
+| 11 | [phase-11-unified-pull-executor.md](phase-11-unified-pull-executor.md) | One pull-based physical-operator framework for all query plans |

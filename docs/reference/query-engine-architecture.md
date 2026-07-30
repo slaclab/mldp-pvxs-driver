@@ -313,8 +313,8 @@ materializes compatible values as an ordinary `IN` predicate. Pushable values
 are included in the backend request; local-only values are filtered after the
 fetch. `window IN (SELECT start, end ...)` is available on both MLDP time-series
 tables and evaluates to closed timestamp ranges. Both MLDP time-series tables
-can append `; slice <duration>, pv_group <positive-integer>` to a window input;
-defaults are `slice 1s` and `pv_group 1`. Ranges are sorted and coalesced when
+can append `; slice <duration>, series_per_shard <positive-integer>` to a window input;
+defaults are `slice 1s` and `series_per_shard 1`. Ranges are sorted and coalesced when
 they overlap or directly touch; the executor opens serial bidi server cursors
 in normalized-range, time-slice, then PV-group order. The window
 child must expose exactly two non-null timestamp

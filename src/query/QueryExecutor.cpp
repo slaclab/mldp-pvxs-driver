@@ -171,7 +171,7 @@ private:
                 return predicate.column == "time" || predicate.column == "pv";
             }), predicates.end());
             std::vector<ExecutableLiteralValue> pv_values;
-            const auto pv_end = std::min(requested_pvs_.size(), pv_offset_ + static_cast<std::size_t>(scan_.window_shards.pv_group));
+            const auto pv_end = std::min(requested_pvs_.size(), pv_offset_ + static_cast<std::size_t>(scan_.window_shards.series_per_shard));
             for (std::size_t index = pv_offset_; index < pv_end; ++index) pv_values.emplace_back(requested_pvs_[index]);
             pv_offset_ = pv_end;
             predicates.push_back(Predicate{.column = "pv", .op = PredicateOp::IN, .values = std::move(pv_values)});
@@ -181,7 +181,7 @@ private:
                 context_.progress->beginBackendRpc(scan_.table_name,
                                                    "shard open: window " + std::to_string(window_index_ + 1) + ", begin " +
                                                        std::to_string(slice_begin_ns_) + " ns, PV group " +
-                                                       std::to_string((pv_offset_ - pv_values.size()) / static_cast<std::size_t>(scan_.window_shards.pv_group) + 1));
+                                                       std::to_string((pv_offset_ - pv_values.size()) / static_cast<std::size_t>(scan_.window_shards.series_per_shard) + 1));
             stream_ = queryable_->executeStream(scan_.table_name, predicates, scan_.projection_hint, context_);
             return;
         }
