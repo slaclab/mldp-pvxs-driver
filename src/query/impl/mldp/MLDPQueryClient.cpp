@@ -9,6 +9,7 @@
 //////////////////////////////////////////////////////////////////////////////
 
 #include <query/impl/mldp/MLDPQueryClient.h>
+#include <query/impl/mldp/ParallelSeriesRecordBatchStream.h>
 
 #include <pool/MLDPGrpcQueryPoolConfig.h>
 
@@ -36,6 +37,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <future>
 #include <limits>
 #include <map>
 #include <memory>
@@ -906,6 +908,9 @@ IRecordBatchStreamUPtr MLDPQueryClient::executeStream(const std::string_view tab
     if (!page_token.empty())
         throw std::invalid_argument("MLDP server cursor stream does not accept legacy continuation tokens");
     const auto pvs = requestedPvs(pushable_predicates);
+    if (context.series_per_shard != 0 && pvs.size() > context.series_per_shard)
+        return std::make_unique<ParallelSeriesRecordBatchStream>(*this, std::string(table_name), pushable_predicates,
+                                                                  projection_hint, context, pvs);
     const auto [begin, end] = requestedTimeRange(pushable_predicates);
     dp::service::query::QueryDataRequest request;
     auto* spec = request.mutable_queryspec();
@@ -926,6 +931,122 @@ QueryResult MLDPQueryClient::execute(std::string_view              table_name,
                                     "'; supported tables: mldp.time_series, mldp.time_series_table, mldp.pv_stats");
 
     const auto pvs = requestedPvs(pushable_predicates);
+    if (table_name == kTimeSeriesWideTable && page_token.empty() && context.series_per_shard != 0 && pvs.size() > context.series_per_shard)
+    {
+        const auto shard_size = static_cast<std::size_t>(context.series_per_shard);
+        const auto capability_limit = std::max<std::size_t>(1, maxConcurrentStreams());
+        const auto parallel_limit = context.max_parallel_requests == 0
+            ? capability_limit
+            : std::min<std::size_t>(capability_limit, context.max_parallel_requests);
+        struct WideShard { std::shared_ptr<arrow::RecordBatch> batch; };
+        const auto shard_count = (pvs.size() + shard_size - 1) / shard_size;
+        std::vector<std::future<WideShard>> futures;
+        std::vector<WideShard> shards;
+        futures.reserve(shard_count);
+        if (context.progress)
+        {
+            context.progress->setActivity(std::string(kTimeSeriesWideTable), "parallel series-shard scan", "querying wide series shards");
+            context.progress->setParallelShards(static_cast<uint64_t>(std::min(parallel_limit, shard_count)),
+                                                static_cast<uint64_t>(std::min(parallel_limit, shard_count)));
+        }
+        auto run_shard = [this, &context, &pushable_predicates, &projection_hint, &pvs](const std::size_t begin, const std::size_t end) {
+            auto predicates = pushable_predicates;
+            predicates.erase(std::remove_if(predicates.begin(), predicates.end(), [](const Predicate& predicate) {
+                return predicate.column == "pv";
+            }), predicates.end());
+            std::vector<ExecutableLiteralValue> shard_pvs;
+            for (std::size_t index = begin; index < end; ++index) shard_pvs.emplace_back(pvs[index]);
+            predicates.push_back(Predicate{.column = "pv", .op = PredicateOp::IN, .values = std::move(shard_pvs)});
+            auto shard_context = context;
+            shard_context.series_per_shard = 0;
+            auto result = execute(kTimeSeriesWideTable, predicates, projection_hint, shard_context);
+            return WideShard{.batch = std::move(result.batch)};
+        };
+        for (std::size_t begin = 0; begin < pvs.size(); begin += shard_size)
+        {
+            const auto end = std::min(pvs.size(), begin + shard_size);
+            futures.push_back(std::async(std::launch::async, run_shard, begin, end));
+            if (futures.size() == parallel_limit || end == pvs.size())
+            {
+                try
+                {
+                    for (auto& future : futures) shards.push_back(future.get());
+                }
+                catch (...)
+                {
+                    if (context.cancellation) context.cancellation->requestCancel();
+                    for (auto& future : futures) if (future.valid()) { try { future.get(); } catch (...) {} }
+                    throw;
+                }
+                futures.clear();
+            }
+        }
+        if (context.progress) context.progress->setParallelShards(0, static_cast<uint64_t>(std::min(parallel_limit, shard_count)));
+
+        std::set<int64_t> all_timestamps;
+        std::unordered_map<std::string, std::shared_ptr<arrow::Array>> values;
+        std::unordered_map<std::string, std::unordered_map<int64_t, int64_t>> value_rows;
+        for (const auto& shard : shards)
+        {
+            if (!shard.batch) continue;
+            const auto times = std::dynamic_pointer_cast<arrow::TimestampArray>(shard.batch->GetColumnByName("time"));
+            if (!times) throw std::runtime_error("MLDP time_series_table shard has no timestamp column");
+            for (int64_t row = 0; row < times->length(); ++row) all_timestamps.insert(times->Value(row));
+            for (int column = 1; column < shard.batch->num_columns(); ++column)
+            {
+                const auto& name = shard.batch->schema()->field(column)->name();
+                values.emplace(name, shard.batch->column(column));
+                auto& rows = value_rows[name];
+                for (int64_t row = 0; row < times->length(); ++row) rows.emplace(times->Value(row), row);
+            }
+        }
+        if (all_timestamps.empty()) return {.batch = nullptr, .next_page_token = ""};
+        auto* pool = context.pool != nullptr ? context.pool : arrow::default_memory_pool();
+        arrow::TimestampBuilder time_builder(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), pool);
+        for (const auto timestamp : all_timestamps)
+            if (!time_builder.Append(timestamp).ok()) throw std::runtime_error("Failed to append merged MLDP timestamp");
+        std::shared_ptr<arrow::Array> time;
+        if (!time_builder.Finish(&time).ok()) throw std::runtime_error("Failed to finish merged MLDP timestamp column");
+        std::vector<std::shared_ptr<arrow::Field>> fields = {arrow::field("time", time->type())};
+        std::vector<std::shared_ptr<arrow::Array>> arrays = {time};
+        for (const auto& pv : pvs)
+        {
+            const auto source = values.find(pv);
+            if (source == values.end())
+            {
+                arrow::NullBuilder builder(pool);
+                for (std::size_t index = 0; index < all_timestamps.size(); ++index)
+                    if (!builder.AppendNull().ok()) throw std::runtime_error("Failed to append merged MLDP null column");
+                std::shared_ptr<arrow::Array> array;
+                if (!builder.Finish(&array).ok()) throw std::runtime_error("Failed to finish merged MLDP null column");
+                fields.push_back(arrow::field(pv, array->type(), true));
+                arrays.push_back(std::move(array));
+                continue;
+            }
+            std::unique_ptr<arrow::ArrayBuilder> builder;
+            const auto status = arrow::MakeBuilder(pool, source->second->type(), &builder);
+            if (!status.ok()) throw std::runtime_error(status.ToString());
+            for (const auto timestamp : all_timestamps)
+            {
+                const auto row = value_rows[pv].find(timestamp);
+                if (row == value_rows[pv].end())
+                {
+                    if (!builder->AppendNull().ok()) throw std::runtime_error("Failed to append merged MLDP null");
+                }
+                else
+                {
+                    const auto scalar = source->second->GetScalar(row->second);
+                    if (!scalar.ok() || !builder->AppendScalar(**scalar).ok())
+                        throw std::runtime_error("Failed to append merged MLDP value");
+                }
+            }
+            std::shared_ptr<arrow::Array> array;
+            if (!builder->Finish(&array).ok()) throw std::runtime_error("Failed to finish merged MLDP value column");
+            fields.push_back(arrow::field(pv, array->type(), true));
+            arrays.push_back(std::move(array));
+        }
+        return {.batch = arrow::RecordBatch::Make(arrow::schema(std::move(fields)), time->length(), std::move(arrays)), .next_page_token = ""};
+    }
     if (table_name == kPvStatsTable)
     {
         if (context.cancellation) context.cancellation->throwIfCancelled();
@@ -949,28 +1070,63 @@ QueryResult MLDPQueryClient::execute(std::string_view              table_name,
 
         const auto                              page_size = context.join_batch_size == 0 ? pvs.size() : context.join_batch_size;
         const auto                              end = std::min(pvs.size(), offset + page_size);
-        dp::service::query::QueryPvStatsRequest request;
-        for (std::size_t index = offset; index < end; ++index)
-            request.mutable_pvnamelist()->add_pvnames(pvs[index]);
-
-        auto                                     handle = pool_->acquire();
-        auto                                     rpc_context = std::make_shared<grpc::ClientContext>();
-        dp::service::query::QueryPvStatsResponse response;
-        auto cancellation_registration = context.cancellation
-            ? context.cancellation->onCancel([rpc_context] { rpc_context->TryCancel(); })
-            : QueryCancellation::Registration{};
-        const auto                               status = handle->query_stub->queryPvStats(rpc_context.get(), request, &response);
-        if (context.cancellation && context.cancellation->cancelled()) throw QueryCancelled{};
-        if (!status.ok())
-            throw std::runtime_error("MLDP queryPvStats failed: " + status.error_message());
-        if (!response.has_statsresult())
-            throw std::runtime_error("MLDP queryPvStats failed: " + response.exceptionalresult().message());
+        const auto                              request_count = end - offset;
+        const auto                              shard_size = context.series_per_shard == 0
+            ? request_count
+            : std::min<std::size_t>(request_count, static_cast<std::size_t>(context.series_per_shard));
+        const auto                              capability_limit = std::max<std::size_t>(1, maxConcurrentStreams());
+        const auto                              parallel_limit = context.max_parallel_requests == 0
+            ? capability_limit
+            : std::min<std::size_t>(capability_limit, context.max_parallel_requests);
+        using PvStats = dp::service::query::QueryPvStatsResponse_StatsResult_PvStats;
+        struct StatsShard { std::vector<PvStats> stats; };
+        const auto shard_count = (request_count + shard_size - 1) / shard_size;
+        std::vector<std::future<StatsShard>> futures;
+        futures.reserve(shard_count);
+        if (context.progress)
+        {
+            context.progress->setActivity(std::string(kPvStatsTable), "parallel series-shard scan", "querying PV statistics");
+            context.progress->setParallelShards(static_cast<uint64_t>(std::min(parallel_limit, shard_count)),
+                                                static_cast<uint64_t>(std::min(parallel_limit, shard_count)));
+        }
+        auto run_shard = [this, &context, &pvs](const std::size_t shard_begin, const std::size_t shard_end) {
+            dp::service::query::QueryPvStatsRequest request;
+            for (std::size_t index = shard_begin; index < shard_end; ++index)
+                request.mutable_pvnamelist()->add_pvnames(pvs[index]);
+            auto handle = pool_->acquire();
+            auto rpc_context = std::make_shared<grpc::ClientContext>();
+            auto cancellation_registration = context.cancellation
+                ? context.cancellation->onCancel([rpc_context] { rpc_context->TryCancel(); })
+                : QueryCancellation::Registration{};
+            dp::service::query::QueryPvStatsResponse response;
+            const auto status = handle->query_stub->queryPvStats(rpc_context.get(), request, &response);
+            if (context.cancellation && context.cancellation->cancelled()) throw QueryCancelled{};
+            if (!status.ok()) throw std::runtime_error("MLDP queryPvStats failed: " + status.error_message());
+            if (!response.has_statsresult()) throw std::runtime_error("MLDP queryPvStats failed: " + response.exceptionalresult().message());
+            return StatsShard{.stats = {response.statsresult().pvstats().begin(), response.statsresult().pvstats().end()}};
+        };
+        std::vector<PvStats> ordered_stats;
+        for (std::size_t shard_begin = offset; shard_begin < end; shard_begin += shard_size)
+        {
+            const auto shard_end = std::min(end, shard_begin + shard_size);
+            futures.push_back(std::async(std::launch::async, run_shard, shard_begin, shard_end));
+            if (futures.size() == parallel_limit || shard_end == end)
+            {
+                for (auto& future : futures)
+                {
+                    auto shard = future.get();
+                    ordered_stats.insert(ordered_stats.end(), std::make_move_iterator(shard.stats.begin()), std::make_move_iterator(shard.stats.end()));
+                }
+                futures.clear();
+            }
+        }
+        if (context.progress) context.progress->setParallelShards(0, static_cast<uint64_t>(std::min(parallel_limit, shard_count)));
 
         arrow::StringBuilder    pv_builder;
         arrow::TimestampBuilder first_builder(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), arrow::default_memory_pool());
         arrow::TimestampBuilder last_builder(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), arrow::default_memory_pool());
         arrow::Int64Builder     buckets_builder;
-        for (const auto& stat : response.statsresult().pvstats())
+        for (const auto& stat : ordered_stats)
         {
             if (context.cancellation) context.cancellation->throwIfCancelled();
             if (!pv_builder.Append(stat.pvname()).ok() || !first_builder.Append(timestampToNanoseconds(stat.firstdatatimestamp())).ok() ||

@@ -9,6 +9,7 @@
 //////////////////////////////////////////////////////////////////////////////
 
 #include <query/QueryFormatter.h>
+#include <query/OstreamOutputStream.h>
 #include <query/QueryCancellation.h>
 
 #include <arrow/array.h>
@@ -628,40 +629,6 @@ void writeTable(const query::QueryExecutionResult& result,
     }
 
 }
-
-class OstreamOutputStream final : public arrow::io::OutputStream
-{
-public:
-    explicit OstreamOutputStream(std::ostream& output)
-        : output_(output)
-    {
-    }
-
-    arrow::Status Close() override
-    {
-        closed_ = true;
-        output_.flush();
-        return output_ ? arrow::Status::OK() : arrow::Status::IOError("Failed to flush Arrow IPC output");
-    }
-
-    bool closed() const override { return closed_; }
-
-    arrow::Result<int64_t> Tell() const override { return position_; }
-
-    arrow::Status Write(const void* data, const int64_t nbytes) override
-    {
-        if (closed_) return arrow::Status::Invalid("Cannot write to a closed Arrow IPC output stream");
-        output_.write(static_cast<const char*>(data), nbytes);
-        if (!output_) return arrow::Status::IOError("Failed to write Arrow IPC output");
-        position_ += nbytes;
-        return arrow::Status::OK();
-    }
-
-private:
-    std::ostream& output_;
-    int64_t position_{0};
-    bool closed_{false};
-};
 
 } // namespace
 
