@@ -10,6 +10,7 @@
 #include <query/QueryCancellation.h>
 #include <query/QueryExecutor.h>
 #include <query/executor/ExecutorUtils.h>
+#include <query/executor/ScanExecutionHelpers.h>
 #include <query/QueryFormatter.h>
 #include <query/QueryPlanner.h>
 #include <query/QueryResult.h>
@@ -667,6 +668,82 @@ TEST(SpillManagerTest, ReaderDestructorDeletesUnconsumedFile)
     EXPECT_EQ(file_info->type(), arrow::fs::FileType::NotFound);
 }
 
+TEST(SpillManagerTest, WriterDestructorDeletesAbandonedFile)
+{
+    auto file_system = std::make_shared<arrow::fs::internal::MockFileSystem>(std::chrono::system_clock::now());
+    query::SpillManager manager(file_system, "spill");
+    const auto schema = arrow::schema({arrow::field("value", arrow::int64())});
+    arrow::Int64Builder builder;
+    ASSERT_TRUE(builder.Append(7).ok());
+    std::shared_ptr<arrow::Array> values;
+    ASSERT_TRUE(builder.Finish(&values).ok());
+    std::string path;
+    {
+        auto writer_result = manager.openWriter("abandoned", schema);
+        ASSERT_TRUE(writer_result.ok()) << writer_result.status().ToString();
+        auto writer = std::move(*writer_result);
+        ASSERT_TRUE(writer.append(arrow::RecordBatch::Make(schema, 1, {values})).ok());
+        path = "spill/spill_abandoned_0.arrow";
+    }
+    const auto file_info = file_system->GetFileInfo(path);
+    ASSERT_TRUE(file_info.ok()) << file_info.status().ToString();
+    EXPECT_EQ(file_info->type(), arrow::fs::FileType::NotFound);
+}
+
+TEST(PivotExecutionTest, CancellationDuringSpillIngestionDeletesTemporaryFiles)
+{
+    class CancellingStream final : public query::IRecordBatchStream
+    {
+    public:
+        CancellingStream(std::shared_ptr<query::QueryCancellation> cancellation,
+                         std::shared_ptr<arrow::RecordBatch> batch)
+            : cancellation_(std::move(cancellation)), batch_(std::move(batch))
+        {
+        }
+
+        std::shared_ptr<arrow::RecordBatch> next() override
+        {
+            if (calls_++ == 0) return batch_;
+            cancellation_->requestCancel();
+            return nullptr;
+        }
+
+    private:
+        std::shared_ptr<query::QueryCancellation> cancellation_;
+        std::shared_ptr<arrow::RecordBatch> batch_;
+        int calls_{0};
+    };
+
+    auto file_system = std::make_shared<arrow::fs::internal::MockFileSystem>(std::chrono::system_clock::now());
+    auto spill = std::make_shared<query::SpillManager>(file_system, "spill");
+    auto cancellation = std::make_shared<query::QueryCancellation>();
+    arrow::StringBuilder keys;
+    arrow::TimestampBuilder times(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), arrow::default_memory_pool());
+    arrow::Int64Builder values;
+    ASSERT_TRUE(keys.Append("COLUMN").ok());
+    ASSERT_TRUE(times.Append(1).ok());
+    ASSERT_TRUE(values.Append(42).ok());
+    std::shared_ptr<arrow::Array> key_array;
+    std::shared_ptr<arrow::Array> time_array;
+    std::shared_ptr<arrow::Array> value_array;
+    ASSERT_TRUE(keys.Finish(&key_array).ok());
+    ASSERT_TRUE(times.Finish(&time_array).ok());
+    ASSERT_TRUE(values.Finish(&value_array).ok());
+    CancellingStream stream(cancellation, arrow::RecordBatch::Make(
+        arrow::schema({arrow::field("key", key_array->type()), arrow::field("row", time_array->type()), arrow::field("value", value_array->type())}),
+        1, {key_array, time_array, value_array}));
+    query::QueryStats stats;
+
+    EXPECT_THROW((void)query::executor::pivotLongStreamWithSpill(
+                     stream, "row", "key", "value", {"COLUMN"}, 4096,
+                     {.pool = arrow::default_memory_pool(), .spill = spill, .cancellation = cancellation}, stats),
+                 query::QueryCancelled);
+    ASSERT_TRUE(spill->cleanup().ok());
+    const auto file_info = file_system->GetFileInfo("spill/spill_wide-long_0.arrow");
+    ASSERT_TRUE(file_info.ok()) << file_info.status().ToString();
+    EXPECT_EQ(file_info->type(), arrow::fs::FileType::NotFound);
+}
+
 TEST(QueryTableCatalogTest, PersistentTableIsDiscoveredByANewCatalogAndDroppedSafely)
 {
     auto file_system = std::make_shared<arrow::fs::internal::MockFileSystem>(std::chrono::system_clock::now());
@@ -1022,7 +1099,8 @@ TEST(QuerySubcommandTest, PlansTimeSeriesPvAndWindowSubqueries)
         "INNER JOIN mldp.configuration configuration ON activation.config_name = configuration.name "
         "WHERE configuration.category = 'beam_mode' AND activation.end_time IS NOT NULL)"));
     const auto plan_text = query::plan::physicalPlanToString(plan);
-    EXPECT_NE(plan_text.find("PhysicalTableScan(table=mldp.time_series_table"), std::string::npos);
+    EXPECT_NE(plan_text.find("PhysicalPivot(columns=0, batch_size=4096)"), std::string::npos);
+    EXPECT_NE(plan_text.find("PhysicalTableScan(table=mldp.time_series"), std::string::npos);
     EXPECT_NE(plan_text.find("in_subqueries=1"), std::string::npos);
     EXPECT_NE(plan_text.find("window_subquery=true"), std::string::npos);
 

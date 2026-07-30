@@ -92,7 +92,7 @@ plan::PhysicalNodePtr buildNode(const plan::LogicalNodePtr& node)
                 .pushable = subquery.predicate.pushable_ops.contains(PredicateOp::IN),
                 .child = subquery.child});
         }
-        return plan::makeNode(plan::PhysicalTableScan{
+        auto physical_scan = plan::makeNode(plan::PhysicalTableScan{
             .table_name = scan->table_name,
             .table_alias = scan->table_alias,
             .qualify_output = false,
@@ -106,6 +106,22 @@ plan::PhysicalNodePtr buildNode(const plan::LogicalNodePtr& node)
             .window_literal = scan->window_literal ? std::optional<std::array<int64_t, 2>>{
                 {std::get<int64_t>((*scan->window_literal)[0]), std::get<int64_t>((*scan->window_literal)[1])}} : std::nullopt,
             .window_shards = scan->window_shards});
+        if (scan->table_name != "mldp.time_series_table") return physical_scan;
+
+        std::vector<std::string> output_column_labels;
+        for (const auto& predicate : scan->pushable_predicates)
+        {
+            if (predicate.column != "pv" || (predicate.op != PredicateOp::EQ && predicate.op != PredicateOp::IN)) continue;
+            for (const auto& value : predicate.values)
+                if (std::holds_alternative<std::string>(value)) output_column_labels.push_back(std::get<std::string>(value));
+        }
+        auto* long_scan = std::get_if<plan::PhysicalTableScan>(&physical_scan->value);
+        long_scan->table_name = "mldp.time_series";
+        return plan::makeNode(plan::PhysicalPivot{.input = std::move(physical_scan),
+                                                  .row_key_column = "time",
+                                                  .pivot_key_column = "pv",
+                                                  .value_column = "value",
+                                                  .output_column_labels = std::move(output_column_labels)});
     }
     if (const auto* filter = std::get_if<plan::LogicalFilter>(&node->value))
     {
@@ -187,6 +203,11 @@ void markJoinOutputQualification(const plan::PhysicalNodePtr& node, const bool u
         markJoinOutputQualification(limit->input, under_join);
         return;
     }
+    if (auto* pivot = std::get_if<plan::PhysicalPivot>(&node->value))
+    {
+        markJoinOutputQualification(pivot->input, under_join);
+        return;
+    }
     if (auto* join = std::get_if<plan::PhysicalHashJoin>(&node->value))
     {
         markJoinOutputQualification(join->left, true);
@@ -252,6 +273,13 @@ void appendNode(std::ostringstream& out, const plan::PhysicalNodePtr& node, cons
     {
         out << indent(level) << "PhysicalLimit(limit=" << limit->limit << ")\n";
         appendNode(out, limit->input, level + 1);
+        return;
+    }
+    if (const auto* pivot = std::get_if<plan::PhysicalPivot>(&node->value))
+    {
+        out << indent(level) << "PhysicalPivot(columns=" << pivot->output_column_labels.size()
+            << ", batch_size=" << pivot->output_batch_size << ")\n";
+        appendNode(out, pivot->input, level + 1);
         return;
     }
     if (const auto* join = std::get_if<plan::PhysicalHashJoin>(&node->value))
@@ -393,6 +421,13 @@ std::string mldp_pvxs_driver::query::plan::physicalPlanToString(const plan::Phys
             out << std::string(static_cast<size_t>(level) * 2, ' ')
                 << "PhysicalLimit(limit=" << limit->limit << ")\n";
             append_ref(limit->input, append_ref, level + 1);
+            return;
+        }
+        if (const auto* pivot = std::get_if<PhysicalPivot>(&node->value))
+        {
+            out << std::string(static_cast<size_t>(level) * 2, ' ') << "PhysicalPivot(columns="
+                << pivot->output_column_labels.size() << ", batch_size=" << pivot->output_batch_size << ")\n";
+            append_ref(pivot->input, append_ref, level + 1);
             return;
         }
         if (const auto* join = std::get_if<PhysicalHashJoin>(&node->value))

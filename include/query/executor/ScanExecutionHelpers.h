@@ -29,5 +29,21 @@ RecordBatches fetchTimeSeriesWindows(const plan::PhysicalTableScan& scan,
                                      const plan::WindowShardSpec& window_shards,
                                      const ExecutionContext& context,
                                      QueryStats& stats);
+RecordBatches pivotLongBatchesWithSpill(const RecordBatches& long_batches,
+                                        std::string_view row_key_column,
+                                        std::string_view pivot_key_column,
+                                        std::string_view value_column,
+                                        const std::vector<std::string>& output_column_labels,
+                                        uint32_t output_batch_size,
+                                        const ExecutionContext& context,
+                                        QueryStats& stats);
+RecordBatches pivotLongStreamWithSpill(IRecordBatchStream& long_stream,
+                                       std::string_view row_key_column,
+                                       std::string_view pivot_key_column,
+                                       std::string_view value_column,
+                                       const std::vector<std::string>& output_column_labels,
+                                       uint32_t output_batch_size,
+                                       const ExecutionContext& context,
+                                       QueryStats& stats);
 
 } // namespace mldp_pvxs_driver::query::executor

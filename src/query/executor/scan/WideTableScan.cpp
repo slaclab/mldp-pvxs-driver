@@ -12,6 +12,7 @@
 #include <query/SpillManager.h>
 
 #include <arrow/array.h>
+#include <arrow/array/data.h>
 #include <arrow/builder.h>
 #include <arrow/compute/api.h>
 #include <arrow/filesystem/localfs.h>
@@ -42,95 +43,12 @@ std::shared_ptr<arrow::Scalar> activeValue(std::shared_ptr<arrow::Scalar> value)
     return value;
 }
 
-RecordBatches pivotLongBatches(const RecordBatches& long_batches,
-                               const std::vector<std::string>& requested_pvs,
-                               arrow::MemoryPool* pool)
-{
-    struct Cell {
-        std::shared_ptr<arrow::Scalar> value;
-    };
-    std::map<int64_t, std::unordered_map<std::string, Cell>> rows;
-    std::unordered_map<std::string, std::shared_ptr<arrow::DataType>> value_types;
-
-    for (const auto& batch : long_batches)
-    {
-        if (!batch) continue;
-        const auto pv_index = batch->schema()->GetFieldIndex("pv");
-        const auto time_index = batch->schema()->GetFieldIndex("time");
-        const auto value_index = batch->schema()->GetFieldIndex("value");
-        if (pv_index < 0 || time_index < 0 || value_index < 0)
-            throw std::runtime_error("MLDP streamed wide pivot requires pv, time, and value columns");
-        const auto pvs = std::dynamic_pointer_cast<arrow::StringArray>(batch->column(pv_index));
-        const auto times = std::dynamic_pointer_cast<arrow::TimestampArray>(batch->column(time_index));
-        if (!pvs || !times) throw std::runtime_error("MLDP streamed wide pivot received invalid pv or time columns");
-        for (int64_t row = 0; row < batch->num_rows(); ++row)
-        {
-            if (pvs->IsNull(row) || times->IsNull(row))
-                throw std::runtime_error("MLDP streamed wide pivot received a null pv or time");
-            const auto pv = pvs->GetString(row);
-            if (std::find(requested_pvs.begin(), requested_pvs.end(), pv) == requested_pvs.end())
-                throw std::runtime_error("MLDP streamed wide pivot received an unexpected PV '" + pv + "'");
-            auto scalar_result = batch->column(value_index)->GetScalar(row);
-            if (!scalar_result.ok()) throw std::runtime_error(scalar_result.status().ToString());
-            auto value = activeValue(*scalar_result);
-            auto& cells = rows[times->Value(row)];
-            if (cells.contains(pv))
-                throw std::runtime_error("MLDP streamed wide pivot received duplicate (time, pv) data for '" + pv +
-                                         "' at " + std::to_string(times->Value(row)) + " ns");
-            if (value && value->is_valid)
-            {
-                const auto type = value_types.find(pv);
-                if (type == value_types.end()) value_types.emplace(pv, value->type);
-                else if (!type->second->Equals(*value->type))
-                    throw std::runtime_error("MLDP streamed wide pivot received mixed value types for '" + pv + "'");
-            }
-            cells.emplace(pv, Cell{.value = std::move(value)});
-        }
-    }
-
-    arrow::TimestampBuilder time_builder(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), pool);
-    std::vector<std::unique_ptr<arrow::ArrayBuilder>> value_builders;
-    std::vector<std::shared_ptr<arrow::Field>> fields{arrow::field("time", arrow::timestamp(arrow::TimeUnit::NANO, "UTC"))};
-    value_builders.reserve(requested_pvs.size());
-    for (const auto& pv : requested_pvs)
-    {
-        const auto type = value_types.contains(pv) ? value_types.at(pv) : arrow::null();
-        std::unique_ptr<arrow::ArrayBuilder> builder;
-        const auto status = arrow::MakeBuilder(pool, type, &builder);
-        if (!status.ok()) throw std::runtime_error(status.ToString());
-        fields.push_back(arrow::field(pv, type));
-        value_builders.push_back(std::move(builder));
-    }
-    for (const auto& [time, cells] : rows)
-    {
-        if (!time_builder.Append(time).ok()) throw std::runtime_error("Failed to append streamed wide pivot time");
-        for (std::size_t index = 0; index < requested_pvs.size(); ++index)
-        {
-            const auto found = cells.find(requested_pvs[index]);
-            const auto value = found == cells.end() ? nullptr : found->second.value;
-            const auto status = !value || !value->is_valid
-                ? value_builders[index]->AppendNull()
-                : value_builders[index]->AppendScalar(*value);
-            if (!status.ok()) throw std::runtime_error(status.ToString());
-        }
-    }
-    std::shared_ptr<arrow::Array> time;
-    if (!time_builder.Finish(&time).ok()) throw std::runtime_error("Failed to finish streamed wide pivot time");
-    std::vector<std::shared_ptr<arrow::Array>> arrays{time};
-    arrays.reserve(requested_pvs.size() + 1);
-    for (auto& builder : value_builders)
-    {
-        std::shared_ptr<arrow::Array> values;
-        const auto status = builder->Finish(&values);
-        if (!status.ok()) throw std::runtime_error(status.ToString());
-        arrays.push_back(std::move(values));
-    }
-    return {arrow::RecordBatch::Make(arrow::schema(std::move(fields)), time->length(), std::move(arrays))};
-}
-
 RecordBatches readSortedPivotRuns(const SpillHandle& long_spill,
                                   const std::shared_ptr<SpillManager>& spill_manager,
-                                  const std::vector<std::string>& requested_pvs,
+                                  const std::string_view row_key_column,
+                                  const std::string_view pivot_key_column,
+                                  const std::string_view value_column,
+                                  const std::vector<std::string>& output_column_labels,
                                   const std::unordered_map<std::string, std::shared_ptr<arrow::DataType>>& value_types,
                                   const ExecutionContext& context,
                                   QueryStats& stats)
@@ -146,23 +64,40 @@ RecordBatches readSortedPivotRuns(const SpillHandle& long_spill,
         if (!next.ok()) throw std::runtime_error(next.status().ToString());
         if (!*next) break;
         const auto& batch = *next;
-        const auto time_index = batch->schema()->GetFieldIndex("time");
-        if (time_index < 0) throw std::runtime_error("MLDP streamed wide pivot requires a time column");
-        const auto times = std::dynamic_pointer_cast<arrow::TimestampArray>(batch->column(time_index));
-        if (!times) throw std::runtime_error("MLDP streamed wide pivot received an invalid time column");
-        std::vector<int64_t> rows(static_cast<std::size_t>(batch->num_rows()));
-        std::iota(rows.begin(), rows.end(), 0);
-        std::stable_sort(rows.begin(), rows.end(), [&times](const int64_t left, const int64_t right) {
-            return times->Value(left) < times->Value(right);
+        const auto row_key_index = batch->schema()->GetFieldIndex(std::string(row_key_column));
+        if (row_key_index < 0) throw std::runtime_error("Physical pivot input has no row-key column");
+        const auto row_keys = std::dynamic_pointer_cast<arrow::TimestampArray>(batch->column(row_key_index));
+        if (!row_keys) throw std::runtime_error("Physical pivot row-key column must be a timestamp");
+        std::vector<int64_t> row_order(static_cast<std::size_t>(batch->num_rows()));
+        std::iota(row_order.begin(), row_order.end(), 0);
+        std::stable_sort(row_order.begin(), row_order.end(), [&row_keys](const int64_t left, const int64_t right) {
+            return row_keys->Value(left) < row_keys->Value(right);
         });
         arrow::Int64Builder indices;
-        if (!indices.AppendValues(rows).ok()) throw std::runtime_error("Failed to build wide pivot sort indices");
+        if (!indices.AppendValues(row_order).ok()) throw std::runtime_error("Failed to build physical pivot sort indices");
         std::shared_ptr<arrow::Array> index_array;
-        if (!indices.Finish(&index_array).ok()) throw std::runtime_error("Failed to finish wide pivot sort indices");
+        if (!indices.Finish(&index_array).ok()) throw std::runtime_error("Failed to finish physical pivot sort indices");
         std::vector<std::shared_ptr<arrow::Array>> sorted_columns;
         sorted_columns.reserve(batch->num_columns());
         for (const auto& column : batch->columns())
         {
+            if (column->type_id() == arrow::Type::DENSE_UNION || column->type_id() == arrow::Type::SPARSE_UNION)
+            {
+                std::unique_ptr<arrow::ArrayBuilder> builder;
+                const auto builder_status = arrow::MakeBuilder(context.pool != nullptr ? context.pool : arrow::default_memory_pool(), column->type(), &builder);
+                if (!builder_status.ok()) throw std::runtime_error(builder_status.ToString());
+                const arrow::ArraySpan source_span(*column->data());
+                for (const auto row : row_order)
+                {
+                    const auto append_status = builder->AppendArraySlice(source_span, row, 1);
+                    if (!append_status.ok()) throw std::runtime_error(append_status.ToString());
+                }
+                std::shared_ptr<arrow::Array> sorted;
+                const auto finish_status = builder->Finish(&sorted);
+                if (!finish_status.ok()) throw std::runtime_error(finish_status.ToString());
+                sorted_columns.push_back(std::move(sorted));
+                continue;
+            }
             auto taken = arrow::compute::Take(column, index_array);
             if (!taken.ok()) throw std::runtime_error(taken.status().ToString());
             sorted_columns.push_back(taken->make_array());
@@ -199,27 +134,27 @@ RecordBatches readSortedPivotRuns(const SpillHandle& long_spill,
     }
 
     auto* pool = context.pool != nullptr ? context.pool : arrow::default_memory_pool();
-    std::vector<std::shared_ptr<arrow::Field>> fields{arrow::field("time", arrow::timestamp(arrow::TimeUnit::NANO, "UTC"))};
+    std::vector<std::shared_ptr<arrow::Field>> fields{arrow::field(std::string(row_key_column), arrow::timestamp(arrow::TimeUnit::NANO, "UTC"))};
     std::vector<std::unique_ptr<arrow::ArrayBuilder>> builders;
-    builders.reserve(requested_pvs.size());
-    for (const auto& pv : requested_pvs)
+    builders.reserve(output_column_labels.size());
+    for (const auto& label : output_column_labels)
     {
-        const auto type = value_types.contains(pv) ? value_types.at(pv) : arrow::null();
+        const auto type = value_types.contains(label) ? value_types.at(label) : arrow::null();
         std::unique_ptr<arrow::ArrayBuilder> builder;
         const auto status = arrow::MakeBuilder(pool, type, &builder);
         if (!status.ok()) throw std::runtime_error(status.ToString());
-        fields.push_back(arrow::field(pv, type));
+        fields.push_back(arrow::field(label, type));
         builders.push_back(std::move(builder));
     }
     const auto schema = arrow::schema(fields);
-    arrow::TimestampBuilder time_builder(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), pool);
+    arrow::TimestampBuilder row_key_builder(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), pool);
     RecordBatches output;
     const auto flush = [&]()
     {
-        if (time_builder.length() == 0) return;
-        std::shared_ptr<arrow::Array> time;
-        if (!time_builder.Finish(&time).ok()) throw std::runtime_error("Failed to finish wide pivot time batch");
-        std::vector<std::shared_ptr<arrow::Array>> arrays{time};
+        if (row_key_builder.length() == 0) return;
+        std::shared_ptr<arrow::Array> row_keys;
+        if (!row_key_builder.Finish(&row_keys).ok()) throw std::runtime_error("Failed to finish physical pivot row-key batch");
+        std::vector<std::shared_ptr<arrow::Array>> arrays{row_keys};
         for (auto& builder : builders)
         {
             std::shared_ptr<arrow::Array> values;
@@ -227,7 +162,7 @@ RecordBatches readSortedPivotRuns(const SpillHandle& long_spill,
             if (!status.ok()) throw std::runtime_error(status.ToString());
             arrays.push_back(std::move(values));
         }
-        output.push_back(arrow::RecordBatch::Make(schema, time->length(), std::move(arrays)));
+        output.push_back(arrow::RecordBatch::Make(schema, row_keys->length(), std::move(arrays)));
     };
     const auto advance = [&](Cursor& cursor)
     {
@@ -241,49 +176,149 @@ RecordBatches readSortedPivotRuns(const SpillHandle& long_spill,
     while (!cursors.empty())
     {
         if (context.cancellation) context.cancellation->throwIfCancelled();
-        int64_t minimum_time = std::numeric_limits<int64_t>::max();
+        int64_t minimum_row_key = std::numeric_limits<int64_t>::max();
         for (const auto& cursor : cursors)
         {
-            const auto times = std::static_pointer_cast<arrow::TimestampArray>(cursor.batch->GetColumnByName("time"));
-            minimum_time = std::min(minimum_time, times->Value(cursor.row));
+            const auto row_keys = std::static_pointer_cast<arrow::TimestampArray>(cursor.batch->GetColumnByName(std::string(row_key_column)));
+            if (!row_keys || row_keys->IsNull(cursor.row)) throw std::runtime_error("Physical pivot received a null row key");
+            minimum_row_key = std::min(minimum_row_key, row_keys->Value(cursor.row));
         }
         std::unordered_map<std::string, std::shared_ptr<arrow::Scalar>> cells;
         for (std::size_t index = 0; index < cursors.size();)
         {
             auto& cursor = cursors[index];
-            const auto times = std::static_pointer_cast<arrow::TimestampArray>(cursor.batch->GetColumnByName("time"));
-            if (times->Value(cursor.row) != minimum_time)
+            const auto row_keys = std::static_pointer_cast<arrow::TimestampArray>(cursor.batch->GetColumnByName(std::string(row_key_column)));
+            if (!row_keys || row_keys->IsNull(cursor.row)) throw std::runtime_error("Physical pivot received a null row key");
+            if (row_keys->Value(cursor.row) != minimum_row_key)
             {
                 ++index;
                 continue;
             }
-            const auto pvs = std::static_pointer_cast<arrow::StringArray>(cursor.batch->GetColumnByName("pv"));
-            const auto pv = pvs->GetString(cursor.row);
-            if (std::find(requested_pvs.begin(), requested_pvs.end(), pv) == requested_pvs.end())
-                throw std::runtime_error("MLDP streamed wide pivot received an unexpected PV '" + pv + "'");
-            auto scalar = cursor.batch->GetColumnByName("value")->GetScalar(cursor.row);
+            const auto pivot_keys = std::static_pointer_cast<arrow::StringArray>(cursor.batch->GetColumnByName(std::string(pivot_key_column)));
+            if (!pivot_keys || pivot_keys->IsNull(cursor.row)) throw std::runtime_error("Physical pivot received a null pivot key");
+            const auto pivot_key = pivot_keys->GetString(cursor.row);
+            if (std::find(output_column_labels.begin(), output_column_labels.end(), pivot_key) == output_column_labels.end())
+                throw std::runtime_error("Physical pivot received an unexpected output-column label '" + pivot_key + "'");
+            auto scalar = cursor.batch->GetColumnByName(std::string(value_column))->GetScalar(cursor.row);
             if (!scalar.ok()) throw std::runtime_error(scalar.status().ToString());
-            if (!cells.emplace(pv, activeValue(*scalar)).second)
-                throw std::runtime_error("MLDP streamed wide pivot received duplicate (time, pv) data for '" + pv + "' at " + std::to_string(minimum_time) + " ns");
+            if (!cells.emplace(pivot_key, activeValue(*scalar)).second)
+                throw std::runtime_error("Physical pivot received a duplicate cell at row key " + std::to_string(minimum_row_key));
             advance(cursor);
             if (!cursor.batch) cursors.erase(cursors.begin() + static_cast<std::ptrdiff_t>(index));
         }
-        if (!time_builder.Append(minimum_time).ok()) throw std::runtime_error("Failed to append wide pivot time");
-        for (std::size_t index = 0; index < requested_pvs.size(); ++index)
+        if (!row_key_builder.Append(minimum_row_key).ok()) throw std::runtime_error("Failed to append physical pivot row key");
+        for (std::size_t index = 0; index < output_column_labels.size(); ++index)
         {
-            const auto found = cells.find(requested_pvs[index]);
+            const auto found = cells.find(output_column_labels[index]);
             const auto status = found == cells.end() || !found->second || !found->second->is_valid
                 ? builders[index]->AppendNull()
                 : builders[index]->AppendScalar(*found->second);
             if (!status.ok()) throw std::runtime_error(status.ToString());
         }
-        if (time_builder.length() == 4096) flush();
+        if (row_key_builder.length() == 4096) flush();
     }
     flush();
     return output;
 }
 
 } // namespace
+
+RecordBatches mldp_pvxs_driver::query::executor::pivotLongStreamWithSpill(
+    IRecordBatchStream& long_stream, const std::string_view row_key_column,
+    const std::string_view pivot_key_column, const std::string_view value_column,
+    const std::vector<std::string>& output_column_labels,
+    const uint32_t output_batch_size, const ExecutionContext& context, QueryStats& stats)
+{
+    static_cast<void>(output_batch_size);
+    const bool has_fixed_output_labels = !output_column_labels.empty();
+    std::vector<std::string> output_labels = output_column_labels;
+
+    auto spill_manager = context.spill;
+    if (!spill_manager)
+    {
+        spill_manager = std::make_shared<SpillManager>(
+            std::make_shared<arrow::fs::LocalFileSystem>(),
+            (std::filesystem::temp_directory_path() / "mldp-query-spill").string());
+    }
+
+    std::optional<SpillWriter> writer;
+    std::unordered_map<std::string, std::shared_ptr<arrow::DataType>> value_types;
+    while (auto batch = long_stream.next())
+    {
+        if (context.cancellation) context.cancellation->throwIfCancelled();
+        if (batch->num_rows() == 0) continue;
+        const auto row_key_index = batch->schema()->GetFieldIndex(std::string(row_key_column));
+        const auto pivot_key_index = batch->schema()->GetFieldIndex(std::string(pivot_key_column));
+        const auto value_index = batch->schema()->GetFieldIndex(std::string(value_column));
+        if (row_key_index < 0 || pivot_key_index < 0 || value_index < 0)
+            throw std::runtime_error("Physical pivot input does not contain the configured columns");
+        const auto row_keys = std::dynamic_pointer_cast<arrow::TimestampArray>(batch->column(row_key_index));
+        if (!row_keys) throw std::runtime_error("Physical pivot row-key column must be a timestamp");
+        const auto pivot_keys = std::dynamic_pointer_cast<arrow::StringArray>(batch->column(pivot_key_index));
+        if (!pivot_keys) throw std::runtime_error("Physical pivot key column must be a string");
+        for (int64_t row = 0; row < batch->num_rows(); ++row)
+        {
+            if (row_keys->IsNull(row)) throw std::runtime_error("Physical pivot received a null row key");
+            if (pivot_keys->IsNull(row)) throw std::runtime_error("Physical pivot received a null pivot key");
+            const auto pivot_key = pivot_keys->GetString(row);
+            if (has_fixed_output_labels && std::find(output_labels.begin(), output_labels.end(), pivot_key) == output_labels.end())
+                throw std::runtime_error("Physical pivot received an unexpected output-column label '" + pivot_key + "'");
+            if (std::find(output_labels.begin(), output_labels.end(), pivot_key) == output_labels.end())
+                output_labels.push_back(pivot_key);
+            auto scalar = batch->column(value_index)->GetScalar(row);
+            if (!scalar.ok()) throw std::runtime_error(scalar.status().ToString());
+            auto value = activeValue(*scalar);
+            if (!value || !value->is_valid) continue;
+            if (const auto found = value_types.find(pivot_key); found == value_types.end()) value_types.emplace(pivot_key, value->type);
+            else if (!found->second->Equals(*value->type))
+                throw std::runtime_error("Physical pivot received mixed value types for output-column label '" + pivot_key + "'");
+        }
+        auto projected = applyProjection(RecordBatches{batch},
+                                         {std::string(pivot_key_column), std::string(row_key_column), std::string(value_column)}).front();
+        if (projected->num_rows() == 0) continue;
+        if (!writer)
+        {
+            auto opened = spill_manager->openWriter("wide-long", projected->schema());
+            if (!opened.ok()) throw std::runtime_error(opened.status().ToString());
+            writer.emplace(std::move(*opened));
+        }
+        const auto status = writer->append(projected);
+        if (!status.ok()) throw std::runtime_error(status.ToString());
+    }
+    if (!writer) return {};
+    if (context.progress) context.progress->setPhase(QueryProgressPhase::Executing, "wide spill finalization");
+    auto spilled = writer->finish();
+    if (!spilled.ok()) throw std::runtime_error(spilled.status().ToString());
+    stats.bytes_spilled += static_cast<uint64_t>(spilled->byte_count);
+    ++stats.materialized_files;
+    stats.materialized_bytes += static_cast<uint64_t>(spilled->byte_count);
+    if (context.progress) context.progress->setPhase(QueryProgressPhase::Executing, "wide external sort and pivot");
+    return readSortedPivotRuns(*spilled, spill_manager, row_key_column, pivot_key_column, value_column,
+                               output_labels, value_types, context, stats);
+}
+
+RecordBatches mldp_pvxs_driver::query::executor::pivotLongBatchesWithSpill(
+    const RecordBatches& long_batches, const std::string_view row_key_column,
+    const std::string_view pivot_key_column, const std::string_view value_column,
+    const std::vector<std::string>& output_column_labels,
+    const uint32_t output_batch_size, const ExecutionContext& context, QueryStats& stats)
+{
+    class BatchStream final : public IRecordBatchStream
+    {
+    public:
+        explicit BatchStream(const RecordBatches& batches) : batches_(batches) {}
+        std::shared_ptr<arrow::RecordBatch> next() override
+        {
+            return index_ < batches_.size() ? batches_[index_++] : nullptr;
+        }
+    private:
+        const RecordBatches& batches_;
+        std::size_t index_{0};
+    };
+    BatchStream stream(long_batches);
+    return pivotLongStreamWithSpill(stream, row_key_column, pivot_key_column, value_column,
+                                    output_column_labels, output_batch_size, context, stats);
+}
 
 RecordBatches mldp_pvxs_driver::query::executor::fetchTimeSeriesWindows(const plan::PhysicalTableScan& scan,
                                      const std::vector<Predicate>& pushable,
@@ -303,113 +338,6 @@ RecordBatches mldp_pvxs_driver::query::executor::fetchTimeSeriesWindows(const pl
             if (std::holds_alternative<std::string>(value)) requested_pvs.push_back(std::get<std::string>(value));
     }
     if (requested_pvs.empty()) throw std::runtime_error("MLDP time-series window requires a PV predicate");
-
-    if (scan.table_name == "mldp.time_series_table")
-    {
-        auto temporary_spill = context.spill;
-        if (!temporary_spill)
-        {
-            temporary_spill = std::make_shared<SpillManager>(
-                std::make_shared<arrow::fs::LocalFileSystem>(),
-                (std::filesystem::temp_directory_path() / "mldp-query-spill").string());
-        }
-        std::vector<Predicate> long_filters;
-        for (const auto& predicate : pushable)
-            if (predicate.column != "pv" && predicate.column != "time") long_filters.push_back(predicate);
-        std::optional<SpillWriter> long_writer;
-        std::unordered_map<std::string, std::shared_ptr<arrow::DataType>> value_types;
-        for (const auto& [begin_ns, end_ns] : windows)
-        {
-            for (int64_t slice_begin_ns = begin_ns; slice_begin_ns <= end_ns; )
-            {
-                const auto remaining = end_ns - slice_begin_ns;
-                const auto slice_end_ns = remaining < window_shards.slice_ns ? end_ns : slice_begin_ns + window_shards.slice_ns;
-                const bool final_slice = slice_end_ns == end_ns;
-                for (std::size_t pv_offset = 0; pv_offset < requested_pvs.size(); pv_offset += window_shards.pv_group)
-                {
-                    auto predicates = pushable;
-                    predicates.erase(std::remove_if(predicates.begin(), predicates.end(), [](const Predicate& predicate) {
-                        return predicate.column == "time" || predicate.column == "pv";
-                    }), predicates.end());
-                    std::vector<ExecutableLiteralValue> pv_values;
-                    const auto pv_end = std::min(requested_pvs.size(), pv_offset + static_cast<std::size_t>(window_shards.pv_group));
-                    for (std::size_t index = pv_offset; index < pv_end; ++index) pv_values.emplace_back(requested_pvs[index]);
-                    predicates.push_back(Predicate{.column = "pv", .op = PredicateOp::IN, .values = std::move(pv_values)});
-                    predicates.push_back(Predicate{.column = "time", .op = PredicateOp::GTE, .values = {slice_begin_ns / 1'000'000'000LL}});
-                    predicates.push_back(Predicate{.column = "time", .op = PredicateOp::LTE, .values = {slice_end_ns / 1'000'000'000LL}});
-                    if (context.progress) context.progress->beginBackendRpc("mldp.time_series", "wide shard open");
-                    auto stream = queryable->executeStream("mldp.time_series", predicates, {}, context);
-                    while (auto batch = stream->next())
-                    {
-                        if (context.cancellation) context.cancellation->throwIfCancelled();
-                        ++stats.rpc_calls;
-                        const auto backend_rows = static_cast<uint64_t>(batch->num_rows());
-                        stats.rows_from_backend += backend_rows;
-                        if (context.progress) context.progress->finishBackendRpc(backend_rows);
-                        std::vector<Predicate> shard_bounds{
-                            Predicate{.column = "time", .op = PredicateOp::GTE, .values = {TimestampNsLiteral{slice_begin_ns}}}};
-                        if (!final_slice)
-                            shard_bounds.push_back(Predicate{.column = "time", .op = PredicateOp::LT, .values = {TimestampNsLiteral{slice_end_ns}}});
-                        auto bounded = applyFilter(batch, shard_bounds);
-                        if (!bounded.ok()) throw std::runtime_error(bounded.status().ToString());
-                        batch = *bounded;
-                        if (!long_filters.empty())
-                        {
-                            auto filtered = applyFilter(batch, long_filters);
-                            if (!filtered.ok()) throw std::runtime_error(filtered.status().ToString());
-                            batch = *filtered;
-                        }
-                        const auto pv_column = std::static_pointer_cast<arrow::StringArray>(batch->GetColumnByName("pv"));
-                        const auto value_column = batch->GetColumnByName("value");
-                        if (!pv_column || !value_column) throw std::runtime_error("MLDP streamed wide pivot requires pv and value columns");
-                        for (int64_t row = 0; row < batch->num_rows(); ++row)
-                        {
-                            auto scalar = value_column->GetScalar(row);
-                            if (!scalar.ok()) throw std::runtime_error(scalar.status().ToString());
-                            auto value = activeValue(*scalar);
-                            if (!value || !value->is_valid) continue;
-                            const auto pv = pv_column->GetString(row);
-                            if (const auto found = value_types.find(pv); found == value_types.end()) value_types.emplace(pv, value->type);
-                            else if (!found->second->Equals(*value->type))
-                                throw std::runtime_error("MLDP streamed wide pivot received mixed value types for '" + pv + "'");
-                        }
-                        auto projected = applyProjection(RecordBatches{std::move(batch)}, {"pv", "time", "value"}).front();
-                        if (!long_writer)
-                        {
-                            auto writer = temporary_spill->openWriter("wide-long", projected->schema());
-                            if (!writer.ok()) throw std::runtime_error(writer.status().ToString());
-                            long_writer.emplace(std::move(*writer));
-                        }
-                        const auto append_status = long_writer->append(projected);
-                        if (!append_status.ok()) throw std::runtime_error(append_status.ToString());
-                    }
-                }
-                if (final_slice) break;
-                slice_begin_ns = slice_end_ns;
-            }
-        }
-        if (!long_writer) return {};
-        if (context.progress) context.progress->setPhase(QueryProgressPhase::Executing, "wide spill finalization");
-        auto spilled = long_writer->finish();
-        if (!spilled.ok()) throw std::runtime_error(spilled.status().ToString());
-        stats.bytes_spilled += static_cast<uint64_t>(spilled->byte_count);
-        ++stats.materialized_files;
-        stats.materialized_bytes += static_cast<uint64_t>(spilled->byte_count);
-        if (context.progress) context.progress->setPhase(QueryProgressPhase::Executing, "wide external sort and pivot");
-        output = readSortedPivotRuns(*spilled, temporary_spill, requested_pvs, value_types, context, stats);
-        if (!local.empty())
-        {
-            for (auto& batch : output)
-            {
-                auto filtered = applyFilter(batch, local);
-                if (!filtered.ok()) throw std::runtime_error(filtered.status().ToString());
-                batch = *filtered;
-            }
-        }
-        if (scan.qualify_output)
-            for (auto& batch : output) batch = qualifyBatchColumns(batch, scan.table_alias);
-        return output;
-    }
 
     const auto slice_ns = window_shards.slice_ns;
     for (const auto& [window_begin_ns, window_end_ns] : windows)

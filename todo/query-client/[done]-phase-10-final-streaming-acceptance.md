@@ -1,4 +1,4 @@
-# Phase 10 — Final Server-Cursor Streaming Acceptance
+# Phase 10 — Final Server-Cursor Streaming Acceptance — Complete
 
 ← [Back to main plan](query-client-impl.md)
 
@@ -12,6 +12,30 @@ subquery window options, IPC spill, and externally merged wide output.
 Phase 10 proves cursor lifecycle behavior against a controllable gRPC service,
 proves cancellation cleanup through every long/wide stage, and extracts the
 wide pivot from the table scan into an explicit physical execution state.
+
+## Completion record
+
+- Implemented `PhysicalPivot` and `PivotExecutionState`; the physical pivot uses
+  generic row-key, pivot-key, value, and output-column-label fields.  The MLDP
+  planner maps the `pv,time,value` source shape at its boundary.
+- Wide pivot ingestion consumes the long-form pull stream directly into Arrow
+  IPC spill before external sorting and k-way merge; it no longer materializes
+  the long-form input batches before spill preparation.
+- Added the controllable `queryDataBidiStream` service tests for initial
+  `QuerySpec`, ordered cursor-next pull behavior, terminal `Finish()` failure,
+  destruction cancellation, and formatter backpressure.
+- Added spill abandonment and pivot-ingestion cancellation cleanup tests.
+- Verified in the devcontainer on 2026-07-29:
+
+  ```sh
+  ctest --test-dir /workspace/build \
+    -R "(MLDPQueryClientTest|QueryParserTest|QueryPlannerExecutorTest|QueryRunnerTest|QueryContinuationRegistryTest|QueryableMldpIntegrationTest|QueryFormatterTest)" \
+    --output-on-failure
+  ```
+
+  Result: 63/63 tests passed in 2.06 seconds.  The focused
+  `PivotExecutionTest.CancellationDuringSpillIngestionDeletesTemporaryFiles`
+  also passed.
 
 ## Scope
 

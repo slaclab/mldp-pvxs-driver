@@ -14,6 +14,7 @@
 #include <query/plan/LogicalPlan.h>
 
 #include <array>
+#include <cstdint>
 #include <memory>
 #include <set>
 #include <string>
@@ -62,6 +63,16 @@ struct PhysicalProject {
 struct PhysicalLimit {
     PhysicalNodePtr input;
     uint64_t       limit{0};
+};
+
+/** Materializing long-form MLDP data into ordered, bounded wide batches. */
+struct PhysicalPivot {
+    PhysicalNodePtr          input;
+    std::string              row_key_column;
+    std::string              pivot_key_column;
+    std::string              value_column;
+    std::vector<std::string> output_column_labels;
+    uint32_t                 output_batch_size{4096};
 };
 
 struct PhysicalSort {
@@ -136,6 +147,7 @@ using PhysicalNodeVariant = std::variant<PhysicalTableScan,
                                          PhysicalProject,
                                          PhysicalSort,
                                          PhysicalLimit,
+                                         PhysicalPivot,
                                          PhysicalHashJoin,
                                          PhysicalNestedLoopJoin,
                                          PhysicalBlockNestedLoopJoin,

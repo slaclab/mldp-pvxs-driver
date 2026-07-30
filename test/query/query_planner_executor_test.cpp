@@ -1033,8 +1033,12 @@ TEST(QueryPlannerExecutorTest, WidePivotSortsSpilledBidiBatchesAndPreservesPvOrd
     auto spill = std::make_shared<query::SpillManager>(file_system, "spill");
     query::QueryPlanner planner;
     query::QueryExecutor executor;
-    const auto result = executor.execute(planner.plan(query::parseQuery(
-        "SELECT * FROM mldp.time_series_table WHERE pv IN ('WIDE:ONE', 'WIDE:TWO') AND window IN (0, 1; slice 2s, pv_group 2)")),
+    const auto physical = planner.plan(query::parseQuery(
+        "SELECT * FROM mldp.time_series_table WHERE pv IN ('WIDE:ONE', 'WIDE:TWO') AND window IN (0, 1; slice 2s, pv_group 2)"));
+    const auto plan_text = query::plan::physicalPlanToString(physical);
+    EXPECT_NE(plan_text.find("PhysicalPivot(columns=2, batch_size=4096)"), std::string::npos);
+    EXPECT_NE(plan_text.find("PhysicalTableScan(table=mldp.time_series"), std::string::npos);
+    const auto result = executor.execute(physical,
                                          {.pool = arrow::default_memory_pool(), .spill = spill});
     ASSERT_EQ(result.batches.size(), 1U);
     const auto& batch = result.batches.front();

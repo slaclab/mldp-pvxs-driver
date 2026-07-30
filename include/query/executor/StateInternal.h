@@ -70,6 +70,7 @@ private:
 };
 
 std::unique_ptr<IExecutionState> makeScanExecutionState(const plan::PhysicalTableScan&, const plan::PhysicalNodePtr&, const ExecutionContext&, QueryStats&);
+std::unique_ptr<IExecutionState> makePivotExecutionState(const plan::PhysicalPivot&, const plan::PhysicalNodePtr&, const ExecutionContext&, QueryStats&);
 std::unique_ptr<IExecutionState> makeRelationalExecutionState(const plan::PhysicalNodeVariant&, const plan::PhysicalNodePtr&, const ExecutionContext&, QueryStats&);
 std::unique_ptr<IExecutionState> makeStatementExecutionState(const plan::PhysicalNodeVariant&, const plan::PhysicalNodePtr&, const ExecutionContext&, QueryStats&);
 

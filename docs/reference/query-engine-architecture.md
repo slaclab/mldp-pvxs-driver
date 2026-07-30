@@ -20,8 +20,8 @@ QueryParser        (Flex/Bison lexer + parser)
 QueryPlanner       (Binder → optimizer passes → PhysicalPlan)
   │  PhysicalPlan
   ▼
-QueryExecutor      (recursive tree evaluation)
-  │  QueryResult (Arrow RecordBatches + QueryStats)
+QueryExecutor      (pull-stream or materializing physical evaluation)
+  │  IRecordBatchStream / QueryResult (Arrow RecordBatches + QueryStats)
   ▼
 QueryFormatter     (table / json / csv / arrow)
 ```
@@ -32,7 +32,7 @@ Core source files:
 |---|---|
 | `src/query/QuerySubcommand.cpp` | CLI wiring, config loading, one-shot execution, and REPL loop |
 | `src/query/QueryPlanner.cpp` | Planning pipeline orchestration |
-| `src/query/QueryExecutor.cpp` | Physical tree evaluation |
+| `src/query/QueryExecutor.cpp` | Pull-stream construction and materializing physical-tree evaluation |
 | `src/query/QueryFormatter.cpp` | Result rendering |
 | `src/query/SpillManager.cpp` | Disk-spill coordination |
 | `include/query/plan/LogicalPlan.h` | Logical plan node types |
@@ -46,8 +46,8 @@ Core source files:
 2. `QuerySubcommandPreparer::prepare(config)` iterates the `queryable:` block and calls `QueryableFactory::instance().prepare<T>(cfg)` for each declared backend.
 3. Positional SQL or `--file` selects one-shot execution. With neither, the REPL prepares the configured backends once, buffers semicolon-terminated statements, and permits `.format table|json|csv|arrow` to update the session output style; each statement then follows the same parse → plan → execute path.
 4. `QueryPlanner::plan(parsed)` produces a `PhysicalPlan`.
-5. `QueryExecutor::execute(physical, context)` evaluates the physical tree and returns `QueryResult`.
-6. `formatQueryResult(...)` writes the result to stdout.
+5. `QueryExecutor::executeStream(physical, context)` uses pull execution for streamable scans, filters, projections, limits, and the physical pivot. Blocking operators retain the materializing execution-state path.
+6. `formatQueryStream(...)` writes and flushes each completed stream batch before requesting another one. Compatibility callers use `QueryExecutor::execute(...)` and `formatQueryResult(...)`.
 7. `printQueryStats(...)` writes the stats footer unless `--no-stats`.
 
 ---
@@ -170,10 +170,11 @@ PlanWarning: joining two unbounded sides; spill is expected under memory pressur
 
 | Node | Description |
 |---|---|
-| `PhysicalTableScan` | Calls `IQueryable::execute(...)` for one table |
+| `PhysicalTableScan` | Calls `IQueryable::executeStream(...)` when the scan is streamable; otherwise uses the compatibility materializing path |
 | `PhysicalFilter` | Arrow-based in-memory filter |
 | `PhysicalProject` | Arrow column selection |
 | `PhysicalLimit` | Row-count limit |
+| `PhysicalPivot` | Materializes a configured long-form stream through Arrow IPC spill, external timestamp sort, and k-way wide merge |
 | `PhysicalHashJoin` | Hash-join (build right side, probe left side) |
 | `PhysicalNestedLoopJoin` | Row-by-row nested-loop join |
 | `PhysicalBlockNestedLoopJoin` | Block nested-loop join for unbounded pairs |
@@ -195,8 +196,19 @@ public:
                                 const std::set<std::string>&  requested_columns,
                                 const ExecutionContext&        context,
                                 std::string_view              page_token) = 0;
+    virtual IRecordBatchStreamUPtr executeStream(std::string_view table_name,
+                                                 const std::vector<Predicate>& pushable_predicates,
+                                                 const std::set<std::string>&  requested_columns,
+                                                 const ExecutionContext&        context,
+                                                 std::string_view              page_token = {});
 };
 ```
+
+`IRecordBatchStream::next()` returns one shared `arrow::RecordBatch` and
+returns null at clean EOF. Native streaming providers implement
+`executeStream(...)`; the default `IQueryable` implementation adapts the
+legacy continuation-token API. A caller's next pull is the backpressure
+boundary for a server cursor.
 
 Each backend implementation registers through `QueryableFactory`:
 
@@ -273,10 +285,23 @@ Time values are epoch seconds; the executor converts to nanoseconds internally. 
 | `attributes.<key>`, `provenance.<key>` | `=`, `IN`, `PREFIX`, `CONTAINS`, `LIKE` | Select candidate PV columns using returned MLDP column metadata. |
 | generated PV fields | — | One native typed Arrow column per returned requested PV, after `time`. |
 
-Wide queries use bounded `queryDataBidiStream` long-form cursors, spill the
-`pv,time,value` batches to Arrow IPC, and pivot by timestamp after all shards
-finish. The resulting batch is globally time ordered, preserves requested PV
-order, writes missing cells as null, and rejects duplicate `(time,pv)` rows.
+Wide queries are planned as `PhysicalPivot(PhysicalTableScan(mldp.time_series))`.
+The MLDP planning boundary configures the generic pivot with `time` as its row
+key, `pv` as its pivot key, `value` as its cell value, and PV-predicate order
+as its output-column order. The pivot consumes bounded `queryDataBidiStream`
+long-form batches directly into Arrow IPC spill; it does not retain every
+long-form batch in memory before spilling. It externally sorts spill runs by
+row key and k-way merges them into globally ascending wide batches. Missing
+cells are null; duplicate `(time,pv)` cells and mixed active value types for a
+PV are execution errors. Spill writers/readers clean up temporary files on
+success, error, cancellation, and abandonment.
+
+Each deterministic normalized-range, time-slice, and PV-group shard opens one
+bidi cursor with one initial `QuerySpec`. The client sends `CURSOR_OP_NEXT`
+only after its consumer pulls beyond the prior response-derived batch. It calls
+`Finish()` at terminal EOF and propagates a non-OK terminal status. Query
+cancellation calls `ClientContext::TryCancel`; destroying an incomplete stream
+cancels and completes the RPC before releasing its pooled handle.
 It is a special runtime-shaped table: `SELECT *` is required, and projections,
 predicates, `ORDER BY`, and joins over generated PV fields are not supported.
 
@@ -403,7 +428,7 @@ Runtime controls flow from `QueryCliOptions` → `ExecutionContext`:
 | `--spill-partitions` | `spill_partitions` | Hash partition count for spill writes. |
 | `--join-batch-size` | `join_batch_size` | Batch page size for join build-side iteration. |
 
-`SpillManager` (`src/query/SpillManager.cpp`) is created in `QuerySubcommand::run(...)` and attached to the `ExecutionContext`. Join execution paths check `memory_limit_bytes` before materializing the build side; when the limit is exceeded, build-side batches are written to partitioned spill files on the Arrow `LocalFileSystem`. Spill activity is reflected in `QueryStats.bytes_spilled` and `QueryStats.spill_files`. Spill files are cleaned up automatically when `SpillManager` is destroyed (via `SpillCleanupGuard`).
+`SpillManager` (`src/query/SpillManager.cpp`) is created in `QuerySubcommand::run(...)` and attached to the `ExecutionContext`. Join execution paths check `memory_limit_bytes` before materializing the build side; when the limit is exceeded, build-side batches are written to partitioned spill files on the Arrow `LocalFileSystem`. `PhysicalPivot` uses the same manager for its long-form input and sorted runs. Spill activity is reflected in `QueryStats.bytes_spilled` and `QueryStats.spill_files`. `SpillWriter` and `SpillReader` are RAII cleanup boundaries: unfinished writers, abandoned readers, and manager cleanup remove temporary files.
 
 ---
 

@@ -14,6 +14,7 @@
 
 #include <query/ExecutionContext.h>
 #include <query/QueryCancellation.h>
+#include <query/QueryProgress.h>
 #include <query/QueryResult.h>
 #include <query/executor/ExecutorUtils.h>
 
@@ -738,6 +739,7 @@ public:
         if (context_.cancellation) context_.cancellation->throwIfCancelled();
         if (request_next_)
         {
+            if (context_.progress) context_.progress->setPhase(QueryProgressPhase::Executing, "cursor next");
             dp::service::query::QueryDataRequest request;
             request.mutable_cursorop()->set_cursoroperationtype(dp::service::query::QueryDataRequest::CursorOperation::CURSOR_OP_NEXT);
             if (!stream_->Write(request))
@@ -765,6 +767,7 @@ public:
             return nullptr;
         }
         request_next_ = true;
+        if (context_.progress) context_.progress->setPhase(QueryProgressPhase::Executing, "stream response");
         if (response.has_exceptionalresult())
             throw std::runtime_error("MLDP queryDataBidiStream failed: " + response.exceptionalresult().message());
         if (!response.has_querydata())

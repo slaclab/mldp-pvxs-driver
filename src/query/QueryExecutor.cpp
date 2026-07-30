@@ -15,6 +15,7 @@
 #include <query/QueryTableCatalog.h>
 #include <query/executor/ExecutionState.h>
 #include <query/executor/ExecutorUtils.h>
+#include <query/executor/ScanExecutionHelpers.h>
 #include <query/QueryProgress.h>
 
 #include <arrow/memory_pool.h>
@@ -37,6 +38,7 @@ void collectPlanWarnings(const plan::PhysicalNodePtr& node, std::vector<std::str
     if (const auto* filter = std::get_if<plan::PhysicalFilter>(&node->value)) { collectPlanWarnings(filter->input, warnings); return; }
     if (const auto* project = std::get_if<plan::PhysicalProject>(&node->value)) { collectPlanWarnings(project->input, warnings); return; }
     if (const auto* limit = std::get_if<plan::PhysicalLimit>(&node->value)) collectPlanWarnings(limit->input, warnings);
+    if (const auto* pivot = std::get_if<plan::PhysicalPivot>(&node->value)) collectPlanWarnings(pivot->input, warnings);
 }
 
 class MaterializedRecordBatchStream final : public IRecordBatchStream
@@ -291,6 +293,38 @@ private:
     uint64_t remaining_;
 };
 
+class PivotRecordBatchStream final : public IRecordBatchStream
+{
+public:
+    PivotRecordBatchStream(IRecordBatchStreamUPtr input, plan::PhysicalPivot pivot,
+                           ExecutionContext context, std::shared_ptr<QueryStats> stats)
+        : input_(std::move(input)), pivot_(std::move(pivot)), context_(std::move(context)), stats_(std::move(stats))
+    {
+    }
+
+    std::shared_ptr<arrow::RecordBatch> next() override
+    {
+        if (!prepared_)
+        {
+            prepared_ = true;
+            batches_ = executor::pivotLongStreamWithSpill(*input_, pivot_.row_key_column,
+                                                           pivot_.pivot_key_column, pivot_.value_column,
+                                                           pivot_.output_column_labels, pivot_.output_batch_size,
+                                                           context_, *stats_);
+        }
+        return index_ < batches_.size() ? batches_[index_++] : nullptr;
+    }
+
+private:
+    IRecordBatchStreamUPtr input_;
+    plan::PhysicalPivot pivot_;
+    ExecutionContext context_;
+    std::shared_ptr<QueryStats> stats_;
+    RecordBatches batches_;
+    std::size_t index_{0};
+    bool prepared_{false};
+};
+
 IRecordBatchStreamUPtr makeStreamingPlan(const plan::PhysicalNodePtr& root,
                                           ExecutionContext           context,
                                           const std::shared_ptr<QueryStats>& stats)
@@ -333,6 +367,11 @@ IRecordBatchStreamUPtr makeStreamingPlan(const plan::PhysicalNodePtr& root,
     {
         auto input = makeStreamingPlan(limit->input, std::move(context), stats);
         return input ? std::make_unique<LimitRecordBatchStream>(std::move(input), limit->limit) : nullptr;
+    }
+    if (const auto* pivot = std::get_if<plan::PhysicalPivot>(&root->value))
+    {
+        auto input = makeStreamingPlan(pivot->input, context, stats);
+        return input ? std::make_unique<PivotRecordBatchStream>(std::move(input), *pivot, context, stats) : nullptr;
     }
     return nullptr;
 }

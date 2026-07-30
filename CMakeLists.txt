@@ -692,6 +692,7 @@ add_library(lib${PROJECT_NAME}
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/scan/CatalogTableScan.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/scan/BackendTableScan.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/scan/WideTableScan.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/relational/PivotExecutionState.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/relational/RelationalExecutionStates.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/relational/FilterExecutionState.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/relational/ProjectExecutionState.cpp"

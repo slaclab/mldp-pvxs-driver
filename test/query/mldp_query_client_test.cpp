@@ -10,6 +10,7 @@
 
 #include <query/ExecutionContext.h>
 #include <query/QueryCancellation.h>
+#include <query/QueryFormatter.h>
 #include <query/QueryResult.h>
 #include <query/impl/mldp/MLDPQueryClient.h>
 
@@ -20,6 +21,8 @@
 #include <arrow/array.h>
 #include <arrow/type.h>
 #include <arrow/util/key_value_metadata.h>
+
+#include <atomic>
 #include <grpcpp/security/server_credentials.h>
 #include <grpcpp/server.h>
 #include <grpcpp/server_builder.h>
@@ -30,6 +33,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <future>
+#include <functional>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -154,7 +158,189 @@ public:
     }
 };
 
+class BidiQueryService final : public dp::service::query::DpQueryService::Service
+{
+public:
+    std::vector<dp::service::query::QueryDataRequest> requests;
+    grpc::Status terminal_status{grpc::Status::OK};
+    bool release_response{false};
+    bool initial_request_received{false};
+    bool client_cancelled{false};
+    std::function<void()> on_cursor_next;
+    std::mutex mutex;
+    std::condition_variable condition;
+
+    grpc::Status queryDataBidiStream(
+        grpc::ServerContext* context,
+        grpc::ServerReaderWriter<dp::service::query::QueryDataResponse,
+                                 dp::service::query::QueryDataRequest>* stream) override
+    {
+        dp::service::query::QueryDataRequest request;
+        if (!stream->Read(&request)) return grpc::Status::OK;
+        {
+            const std::lock_guard lock(mutex);
+            requests.push_back(request);
+            initial_request_received = true;
+        }
+        condition.notify_all();
+
+        {
+            std::unique_lock lock(mutex);
+            while (!release_response && !context->IsCancelled())
+            {
+                condition.wait_for(lock, std::chrono::milliseconds{10});
+            }
+        }
+        if (context->IsCancelled())
+        {
+            {
+                const std::lock_guard lock(mutex);
+                client_cancelled = true;
+            }
+            condition.notify_all();
+            return grpc::Status(grpc::StatusCode::CANCELLED, "client cancelled");
+        }
+
+        dp::service::query::QueryDataResponse response;
+        auto* bucket = response.mutable_querydata()->add_databuckets();
+        bucket->set_pvname("TEST:PV");
+        bucket->mutable_datatimestamps()->mutable_timestamplist()->add_timestamps()->set_epochseconds(1);
+        bucket->mutable_datavalues()->mutable_datacolumn()->add_datavalues()->set_intvalue(42);
+        if (!stream->Write(response)) return grpc::Status::OK;
+
+        if (stream->Read(&request))
+        {
+            {
+                const std::lock_guard lock(mutex);
+                requests.push_back(request);
+            }
+            if (on_cursor_next) on_cursor_next();
+            condition.notify_all();
+        }
+        return terminal_status;
+    }
+};
+
+class ObservingStreambuf final : public std::stringbuf
+{
+public:
+    std::atomic<bool> wrote{false};
+
+protected:
+    std::streamsize xsputn(const char* data, const std::streamsize count) override
+    {
+        wrote.store(count > 0, std::memory_order_release);
+        return std::stringbuf::xsputn(data, count);
+    }
+
+    int overflow(const int character) override
+    {
+        wrote.store(true, std::memory_order_release);
+        return std::stringbuf::overflow(character);
+    }
+};
+
 } // namespace
+
+TEST(MLDPQueryClientTest, BidiStreamSendsInitialQuerySpecThenCursorNextAndPropagatesFinishFailure)
+{
+    BidiQueryService service;
+    service.terminal_status = grpc::Status(grpc::StatusCode::INTERNAL, "terminal failure");
+    grpc::ServerBuilder builder;
+    int port = 0;
+    builder.AddListeningPort("127.0.0.1:0", grpc::InsecureServerCredentials(), &port);
+    builder.RegisterService(&service);
+    auto server = builder.BuildAndStart();
+    ASSERT_NE(server, nullptr);
+
+    MLDPQueryClient client(makeQueryConfig("127.0.0.1:" + std::to_string(port)));
+    const ExecutionContext context{.pool = arrow::default_memory_pool()};
+    const std::vector<Predicate> predicates = {
+        {.column = "pv", .op = PredicateOp::IN, .values = {std::string("TEST:PV")}},
+        {.column = "time", .op = PredicateOp::GTE, .values = {int64_t{10}}},
+        {.column = "time", .op = PredicateOp::LTE, .values = {int64_t{20}}},
+    };
+    auto stream = client.executeStream("mldp.time_series", predicates, {}, context);
+    {
+        std::unique_lock lock(service.mutex);
+        ASSERT_TRUE(service.condition.wait_for(lock, std::chrono::seconds{2}, [&] { return service.initial_request_received; }));
+        ASSERT_EQ(service.requests.size(), 1U);
+        EXPECT_TRUE(service.requests.front().has_queryspec());
+        EXPECT_EQ(service.requests.front().queryspec().begintime().epochseconds(), 10);
+        EXPECT_EQ(service.requests.front().queryspec().endtime().epochseconds(), 20);
+        ASSERT_EQ(service.requests.front().queryspec().pvnames_size(), 1);
+        EXPECT_EQ(service.requests.front().queryspec().pvnames(0), "TEST:PV");
+        service.release_response = true;
+    }
+    service.condition.notify_all();
+    ASSERT_NE(stream->next(), nullptr);
+    EXPECT_THROW((void)stream->next(), std::runtime_error);
+    {
+        std::unique_lock lock(service.mutex);
+        ASSERT_TRUE(service.condition.wait_for(lock, std::chrono::seconds{2}, [&] { return service.requests.size() == 2; }));
+        EXPECT_TRUE(service.requests[1].has_cursorop());
+        EXPECT_EQ(service.requests[1].cursorop().cursoroperationtype(),
+                  dp::service::query::QueryDataRequest::CursorOperation::CURSOR_OP_NEXT);
+    }
+    server->Shutdown();
+}
+
+TEST(MLDPQueryClientTest, BidiStreamDestructionCancelsBlockedServerCursor)
+{
+    BidiQueryService service;
+    grpc::ServerBuilder builder;
+    int port = 0;
+    builder.AddListeningPort("127.0.0.1:0", grpc::InsecureServerCredentials(), &port);
+    builder.RegisterService(&service);
+    auto server = builder.BuildAndStart();
+    ASSERT_NE(server, nullptr);
+
+    MLDPQueryClient client(makeQueryConfig("127.0.0.1:" + std::to_string(port)));
+    const ExecutionContext context{.pool = arrow::default_memory_pool()};
+    {
+        auto stream = client.executeStream("mldp.time_series",
+                                           {{.column = "pv", .op = PredicateOp::EQ, .values = {std::string("TEST:PV")}}}, {}, context);
+        std::unique_lock lock(service.mutex);
+        ASSERT_TRUE(service.condition.wait_for(lock, std::chrono::seconds{2}, [&] { return service.initial_request_received; }));
+    }
+    {
+        std::unique_lock lock(service.mutex);
+        EXPECT_TRUE(service.condition.wait_for(lock, std::chrono::seconds{2}, [&] { return service.client_cancelled; }));
+    }
+    server->Shutdown();
+}
+
+TEST(MLDPQueryClientTest, FormatterFlushesJsonBatchBeforeRequestingTheNextCursorResponse)
+{
+    BidiQueryService service;
+    ObservingStreambuf output_buffer;
+    std::ostream output(&output_buffer);
+    bool first_batch_visible = false;
+    service.on_cursor_next = [&]
+    {
+        first_batch_visible = output_buffer.wrote.load(std::memory_order_acquire);
+    };
+    grpc::ServerBuilder builder;
+    int port = 0;
+    builder.AddListeningPort("127.0.0.1:0", grpc::InsecureServerCredentials(), &port);
+    builder.RegisterService(&service);
+    auto server = builder.BuildAndStart();
+    ASSERT_NE(server, nullptr);
+
+    MLDPQueryClient client(makeQueryConfig("127.0.0.1:" + std::to_string(port)));
+    const ExecutionContext context{.pool = arrow::default_memory_pool()};
+    auto stream = client.executeStream("mldp.time_series",
+                                       {{.column = "pv", .op = PredicateOp::EQ, .values = {std::string("TEST:PV")}}}, {}, context);
+    {
+        std::unique_lock lock(service.mutex);
+        ASSERT_TRUE(service.condition.wait_for(lock, std::chrono::seconds{2}, [&] { return service.initial_request_received; }));
+        service.release_response = true;
+    }
+    service.condition.notify_all();
+    mldp_pvxs_driver::cli::formatQueryStream(*stream, mldp_pvxs_driver::cli::QueryOutputFormat::Json, output);
+    EXPECT_TRUE(first_batch_visible);
+    server->Shutdown();
+}
 
 TEST(MLDPQueryClientTest, MaterializesMetadataVirtualColumnsWithACommonPageSchema)
 {
