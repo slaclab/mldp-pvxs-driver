@@ -140,6 +140,10 @@ public:
                     scheduleFirst(groups_[next_group_to_start_]);
                     ++next_group_to_start_;
                 }
+                if (context_.progress)
+                    context_.progress->setParallelShards(
+                        static_cast<uint64_t>(next_group_to_start_ - group_index_),
+                        parallel_shard_limit_);
                 if (group_index_ == groups_.size()) prepareNextSlice();
                 continue;
             }
@@ -243,6 +247,7 @@ private:
                                         .predicates = std::move(predicates)});
             }
             const auto concurrency = std::min(groups_.size(), std::max<std::size_t>(1, queryable_->maxConcurrentStreams()));
+            parallel_shard_limit_ = static_cast<uint64_t>(concurrency);
             for (std::size_t index = 0; index < concurrency; ++index) scheduleFirst(groups_[index]);
             next_group_to_start_ = concurrency;
             if (context_.progress && !groups_.empty())
@@ -252,6 +257,7 @@ private:
                 context_.progress->setWindowShard(window_index_ + 1,
                                                    group.slice_index,
                                                    group.index, group.series_in_shard);
+                context_.progress->setParallelShards(static_cast<uint64_t>(concurrency), parallel_shard_limit_);
                 context_.progress->beginBackendRpc(scan_.table_name, "parallel shard cursors");
             }
             if (final_slice_) slice_begin_ns_ = window_end_ns_ + 1;
@@ -277,6 +283,7 @@ private:
     std::vector<Group> groups_;
     std::size_t group_index_{0};
     std::size_t next_group_to_start_{0};
+    uint64_t parallel_shard_limit_{0};
     std::vector<std::pair<int64_t, int64_t>> windows_;
     std::size_t window_index_{0};
     int64_t window_begin_ns_{0};

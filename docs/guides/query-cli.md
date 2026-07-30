@@ -80,7 +80,7 @@ After each statement, redirected and plain-stream REPL sessions print a final st
 
 The interactive footer is a single adaptive status line. It refreshes while a statement runs (at most four times per second), retains the most recent completed-query summary while the REPL is idle, and uses the available terminal width for the highest-priority fields first. A narrow terminal can therefore show only `Running: <state>`, elapsed time, and `Ctrl-C cancel`; omitted fields are informational, not an indication that work is stalled.
 
-While a query is running, the line begins with `Running: <state> | <elapsed>`. Depending on the active step and available width, it adds the source table, operation, detail, result page, window-shard position, RPC progress, cursor progress, and backend row count:
+While a query is running, the line begins with `Running: <state> | <elapsed>`. Depending on the active step and available width, it adds the source table, operation, detail, result page, window-shard position, parallel-shard capacity, RPC progress, cursor progress, and backend row count. `shards <active>/<limit>` means active PV-group cursors over the configured per-slice concurrency limit, which MLDP derives from `max-conn`.
 
 | State or step | Footer information |
 |---|---|

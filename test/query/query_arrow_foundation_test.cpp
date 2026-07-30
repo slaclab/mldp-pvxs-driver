@@ -312,11 +312,14 @@ TEST(ConsoleFooterTest, RendersFixedWidthAsciiStatusWithPriority)
         .result_page = 2,
         .window_index = 1,
         .slice_index = 3,
-        .series_shard_index = 2};
+        .series_shard_index = 2,
+        .active_parallel_shards = 2,
+        .parallel_shard_limit = 4};
     const auto pagination = renderer.render(status, 200);
     EXPECT_NE(pagination.find("wide pivot"), std::string::npos);
     EXPECT_NE(pagination.find("result page 2"), std::string::npos);
     EXPECT_NE(pagination.find("window 1, slice 3, series shard 2"), std::string::npos);
+    EXPECT_NE(pagination.find("shards 2/4"), std::string::npos);
     EXPECT_NE(pagination.find("cursor 4, next 3"), std::string::npos);
 }
 

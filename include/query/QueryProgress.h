@@ -55,6 +55,8 @@ struct QueryProgressSnapshot
     uint64_t                   slice_index{0};
     uint64_t                   series_shard_index{0};
     uint64_t                   series_in_shard{0};
+    uint64_t                   active_parallel_shards{0};
+    uint64_t                   parallel_shard_limit{0};
     uint64_t                   completed_shards{0};
 };
 
@@ -106,6 +108,13 @@ public:
         slice_index_ = slice_index;
         series_shard_index_ = series_shard_index;
         series_in_shard_ = series_in_shard;
+    }
+
+    void setParallelShards(const uint64_t active, const uint64_t limit)
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        active_parallel_shards_ = active;
+        parallel_shard_limit_ = limit;
     }
 
     void cursorNext()
@@ -181,6 +190,8 @@ public:
             .slice_index = slice_index_,
             .series_shard_index = series_shard_index_,
             .series_in_shard = series_in_shard_,
+            .active_parallel_shards = active_parallel_shards_,
+            .parallel_shard_limit = parallel_shard_limit_,
             .completed_shards = completed_shards_,
         };
     }
@@ -209,6 +220,8 @@ private:
     uint64_t                                    slice_index_{0};
     uint64_t                                    series_shard_index_{0};
     uint64_t                                    series_in_shard_{0};
+    uint64_t                                    active_parallel_shards_{0};
+    uint64_t                                    parallel_shard_limit_{0};
     uint64_t                                    completed_shards_{0};
 };
 
