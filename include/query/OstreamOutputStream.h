@@ -4,6 +4,7 @@
 #pragma once
 
 #include <arrow/io/interfaces.h>
+#include <arrow/result.h>
 
 #include <ostream>
 

@@ -667,7 +667,7 @@ void mldp_pvxs_driver::cli::formatQueryStream(query::IRecordBatchStream& stream,
                                                std::shared_ptr<std::mutex> output_mutex)
 {
     bool header_written = false;
-    std::unique_ptr<OstreamOutputStream> arrow_stream;
+    std::unique_ptr<query::OstreamOutputStream> arrow_stream;
     std::shared_ptr<arrow::ipc::RecordBatchWriter> arrow_writer;
     while (auto batch = stream.next())
     {
@@ -709,7 +709,7 @@ void mldp_pvxs_driver::cli::formatQueryStream(query::IRecordBatchStream& stream,
             case QueryOutputFormat::Arrow:
                 if (!arrow_writer)
                 {
-                    arrow_stream = std::make_unique<OstreamOutputStream>(output);
+                    arrow_stream = std::make_unique<query::OstreamOutputStream>(output);
                     const auto writer = arrow::ipc::MakeStreamWriter(arrow_stream.get(), batch->schema());
                     if (!writer.ok()) throw std::runtime_error(writer.status().ToString());
                     arrow_writer = *writer;

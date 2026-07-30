@@ -7,6 +7,7 @@
 
 #include <query/executor/WindowBackendScanRecordBatchStream.h>
 
+#include <query/QueryCancellation.h>
 #include <query/QueryProgress.h>
 #include <query/QueryableFactory.h>
 #include <query/executor/ExecutorUtils.h>

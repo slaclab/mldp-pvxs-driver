@@ -6,6 +6,7 @@
 #include <query/ExecutionContext.h>
 #include <query/IQueryable.h>
 #include <query/QueryStats.h>
+#include <query/executor/ExecutionState.h>
 #include <query/plan/PhysicalPlan.h>
 
 namespace mldp_pvxs_driver::query::executor {

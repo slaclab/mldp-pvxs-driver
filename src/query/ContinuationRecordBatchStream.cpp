@@ -7,7 +7,9 @@
 
 #include <query/ContinuationRecordBatchStream.h>
 
+#include <query/ExecutionContext.h>
 #include <query/QueryCancellation.h>
+#include <query/QueryResult.h>
 
 #include <utility>
 
