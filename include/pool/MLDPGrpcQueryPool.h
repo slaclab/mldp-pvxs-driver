@@ -39,6 +39,7 @@ public:
     void                         release(const ObjectShrdPtr& obj) override;
     std::size_t                  available() const override;
     std::size_t                  size() const;
+    std::size_t                  maxSize() const noexcept;
 
 private:
     struct Item

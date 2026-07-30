@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <future>
 #include <stdexcept>
 
 using namespace mldp_pvxs_driver::query;
@@ -115,19 +116,31 @@ public:
                 if (std::holds_alternative<std::string>(value)) requested_pvs_.push_back(std::get<std::string>(value));
         }
         if (requested_pvs_.empty()) throw std::runtime_error("MLDP time-series window requires a PV predicate");
-        openNextShard();
+        prepareNextSlice();
     }
 
     std::shared_ptr<arrow::RecordBatch> next() override
     {
-        while (stream_)
+        for (;;)
         {
+            if (group_index_ >= groups_.size()) return nullptr;
             if (context_.cancellation) context_.cancellation->throwIfCancelled();
-            auto batch = stream_->next();
+            auto& group = groups_[group_index_];
+            if (!group.next.valid()) scheduleNext(group);
+            auto result = group.next.get();
+            group.stream = std::move(result.stream);
+            auto batch = std::move(result.batch);
             if (!batch)
             {
                 if (context_.progress) context_.progress->completeShard();
-                openNextShard();
+                group.stream.reset();
+                ++group_index_;
+                if (next_group_to_start_ < groups_.size())
+                {
+                    scheduleFirst(groups_[next_group_to_start_]);
+                    ++next_group_to_start_;
+                }
+                if (group_index_ == groups_.size()) prepareNextSlice();
                 continue;
             }
             ++stats_->rpc_calls;
@@ -142,28 +155,67 @@ public:
                 batch = *filtered;
             }
             if (scan_.qualify_output) batch = executor::qualifyBatchColumns(batch, scan_.table_alias);
+            if (context_.progress)
+            {
+                context_.progress->setWindowShard(window_index_ + 1,
+                                                   group.slice_index,
+                                                   group.index,
+                                                   group.series_in_shard);
+            }
             return batch;
         }
         return nullptr;
     }
 
 private:
-    void openNextShard()
+    struct PullResult
     {
-        stream_.reset();
+        IRecordBatchStreamUPtr stream;
+        std::shared_ptr<arrow::RecordBatch> batch;
+    };
+
+    struct Group
+    {
+        std::size_t index{0};
+        uint64_t slice_index{0};
+        uint64_t series_in_shard{0};
+        std::vector<Predicate> predicates;
+        IRecordBatchStreamUPtr stream;
+        std::future<PullResult> next;
+    };
+
+    void scheduleFirst(Group& group)
+    {
+        const auto predicates = group.predicates;
+        group.next = std::async(std::launch::async, [this, predicates]
+        {
+            auto stream = queryable_->executeStream(scan_.table_name, predicates, scan_.projection_hint, context_);
+            auto batch = stream->next();
+            return PullResult{.stream = std::move(stream), .batch = std::move(batch)};
+        });
+    }
+
+    void scheduleNext(Group& group)
+    {
+        auto stream = std::move(group.stream);
+        group.next = std::async(std::launch::async, [stream = std::move(stream)]() mutable
+        {
+            auto batch = stream->next();
+            return PullResult{.stream = std::move(stream), .batch = std::move(batch)};
+        });
+    }
+
+    void prepareNextSlice()
+    {
+        groups_.clear();
+        group_index_ = 0;
         while (window_index_ < windows_.size())
         {
-            if (pv_offset_ >= requested_pvs_.size())
+            if (slice_begin_ns_ > window_end_ns_)
             {
-                if (final_slice_)
-                {
-                    ++window_index_;
-                    if (window_index_ >= windows_.size()) return;
-                    selectWindow();
-                    continue;
-                }
-                slice_begin_ns_ += scan_.window_shards.slice_ns;
-                pv_offset_ = 0;
+                ++window_index_;
+                if (window_index_ >= windows_.size()) return;
+                selectWindow();
                 continue;
             }
             const auto remaining = window_end_ns_ - slice_begin_ns_;
@@ -171,32 +223,39 @@ private:
                 ? window_end_ns_
                 : slice_begin_ns_ + scan_.window_shards.slice_ns;
             final_slice_ = slice_end_ns_ == window_end_ns_;
-            const auto series_shard_index = pv_offset_ / static_cast<std::size_t>(scan_.window_shards.series_per_shard) + 1;
-            auto predicates = scan_.pushable_predicates;
-            predicates.erase(std::remove_if(predicates.begin(), predicates.end(), [](const Predicate& predicate) {
-                return predicate.column == "time" || predicate.column == "pv";
-            }), predicates.end());
-            std::vector<ExecutableLiteralValue> pv_values;
-            const auto pv_end = std::min(requested_pvs_.size(), pv_offset_ + static_cast<std::size_t>(scan_.window_shards.series_per_shard));
-            for (std::size_t index = pv_offset_; index < pv_end; ++index) pv_values.emplace_back(requested_pvs_[index]);
-            const auto series_in_shard = static_cast<uint64_t>(pv_values.size());
-            pv_offset_ = pv_end;
-            predicates.push_back(Predicate{.column = "pv", .op = PredicateOp::IN, .values = std::move(pv_values)});
-            predicates.push_back(Predicate{.column = "time", .op = PredicateOp::GTE, .values = {slice_begin_ns_ / 1'000'000'000LL}});
-            predicates.push_back(Predicate{.column = "time", .op = PredicateOp::LTE, .values = {slice_end_ns_ / 1'000'000'000LL}});
-            if (context_.progress)
+            const auto slice_index = static_cast<uint64_t>((slice_begin_ns_ - window_begin_ns_) / scan_.window_shards.slice_ns + 1);
+            for (std::size_t pv_offset = 0; pv_offset < requested_pvs_.size(); pv_offset += scan_.window_shards.series_per_shard)
             {
-                context_.progress->setActivity(scan_.table_name, "windowed MLDP scan", "opening cursor shard");
-                context_.progress->setWindowShard(window_index_ + 1,
-                                                   static_cast<uint64_t>((slice_begin_ns_ - window_begin_ns_) / scan_.window_shards.slice_ns + 1),
-                                                   series_shard_index,
-                                                   series_in_shard);
-                context_.progress->beginBackendRpc(scan_.table_name,
-                                                   "shard open: window " + std::to_string(window_index_ + 1) + ", begin " +
-                                                       std::to_string(slice_begin_ns_) + " ns, PV group " +
-                                                       std::to_string(series_shard_index));
+                auto predicates = scan_.pushable_predicates;
+                predicates.erase(std::remove_if(predicates.begin(), predicates.end(), [](const Predicate& predicate) {
+                    return predicate.column == "time" || predicate.column == "pv";
+                }), predicates.end());
+                std::vector<ExecutableLiteralValue> pv_values;
+                const auto pv_end = std::min(requested_pvs_.size(), pv_offset + static_cast<std::size_t>(scan_.window_shards.series_per_shard));
+                for (std::size_t index = pv_offset; index < pv_end; ++index) pv_values.emplace_back(requested_pvs_[index]);
+                const auto series_in_shard = static_cast<uint64_t>(pv_values.size());
+                predicates.push_back(Predicate{.column = "pv", .op = PredicateOp::IN, .values = std::move(pv_values)});
+                predicates.push_back(Predicate{.column = "time", .op = PredicateOp::GTE, .values = {slice_begin_ns_ / 1'000'000'000LL}});
+                predicates.push_back(Predicate{.column = "time", .op = PredicateOp::LTE, .values = {slice_end_ns_ / 1'000'000'000LL}});
+                groups_.push_back(Group{.index = pv_offset / static_cast<std::size_t>(scan_.window_shards.series_per_shard) + 1,
+                                        .slice_index = slice_index,
+                                        .series_in_shard = series_in_shard,
+                                        .predicates = std::move(predicates)});
             }
-            stream_ = queryable_->executeStream(scan_.table_name, predicates, scan_.projection_hint, context_);
+            const auto concurrency = std::min(groups_.size(), std::max<std::size_t>(1, queryable_->maxConcurrentStreams()));
+            for (std::size_t index = 0; index < concurrency; ++index) scheduleFirst(groups_[index]);
+            next_group_to_start_ = concurrency;
+            if (context_.progress && !groups_.empty())
+            {
+                const auto& group = groups_.front();
+                context_.progress->setActivity(scan_.table_name, "windowed MLDP scan", "opening parallel cursor shards");
+                context_.progress->setWindowShard(window_index_ + 1,
+                                                   group.slice_index,
+                                                   group.index, group.series_in_shard);
+                context_.progress->beginBackendRpc(scan_.table_name, "parallel shard cursors");
+            }
+            if (final_slice_) slice_begin_ns_ = window_end_ns_ + 1;
+            else slice_begin_ns_ = slice_end_ns_;
             return;
         }
     }
@@ -207,7 +266,6 @@ private:
         window_begin_ns_ = begin;
         window_end_ns_ = end;
         slice_begin_ns_ = begin;
-        pv_offset_ = 0;
         final_slice_ = false;
     }
 
@@ -215,15 +273,16 @@ private:
     ExecutionContext context_;
     std::shared_ptr<QueryStats> stats_;
     IQueryableUPtr queryable_;
-    IRecordBatchStreamUPtr stream_;
     std::vector<std::string> requested_pvs_;
+    std::vector<Group> groups_;
+    std::size_t group_index_{0};
+    std::size_t next_group_to_start_{0};
     std::vector<std::pair<int64_t, int64_t>> windows_;
     std::size_t window_index_{0};
     int64_t window_begin_ns_{0};
     int64_t window_end_ns_{0};
     int64_t slice_begin_ns_{0};
     int64_t slice_end_ns_{0};
-    std::size_t pv_offset_{0};
     bool final_slice_{false};
 };
 

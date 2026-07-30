@@ -62,6 +62,11 @@ std::set<std::string_view> MLDPQueryClient::virtualTables() const
     return kVirtualTables;
 }
 
+std::size_t MLDPQueryClient::maxConcurrentStreams() const noexcept
+{
+    return pool_ ? pool_->maxSize() : 1;
+}
+
 std::vector<ColumnSchema> MLDPQueryClient::tableSchema(std::string_view table_name) const
 {
     if (table_name == "mldp.time_series" || table_name == "mldp.time_series_table")

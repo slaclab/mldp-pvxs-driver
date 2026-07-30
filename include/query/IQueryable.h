@@ -90,6 +90,12 @@ public:
 
     virtual std::set<std::string_view> virtualTables() const = 0;
     virtual std::vector<ColumnSchema>  tableSchema(std::string_view table_name) const = 0;
+
+    /**
+     * Maximum number of independent streams that this queryable can service
+     * concurrently for one query.  The default preserves serial execution.
+     */
+    virtual std::size_t maxConcurrentStreams() const noexcept { return 1; }
     /**
      * Execute a valid table selection.
      *

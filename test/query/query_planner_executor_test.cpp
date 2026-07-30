@@ -32,6 +32,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <condition_variable>
 #include <future>
 #include <limits>
 #include <set>
@@ -436,6 +437,7 @@ class SubqueryWindowQueryable final : public query::IQueryable
 public:
     static const std::set<std::string_view> kVirtualTables;
     inline static std::vector<std::vector<query::Predicate>> requests;
+    inline static std::mutex requests_mutex;
 
     explicit SubqueryWindowQueryable(const config::Config&, std::shared_ptr<metrics::Metrics> = nullptr) {}
     std::set<std::string_view> virtualTables() const override { return kVirtualTables; }
@@ -464,7 +466,10 @@ public:
     query::IRecordBatchStreamUPtr executeStream(std::string_view, const std::vector<query::Predicate>& predicates,
                                                 const std::set<std::string>&, const query::ExecutionContext&, std::string_view = {}) override
     {
-        requests.push_back(predicates);
+        {
+            const std::lock_guard lock(requests_mutex);
+            requests.push_back(predicates);
+        }
         class Stream final : public query::IRecordBatchStream
         {
         public:
@@ -555,7 +560,91 @@ public:
     }
 };
 
+class ConcurrentWindowQueryable final : public query::IQueryable
+{
+public:
+    static const std::set<std::string_view> kVirtualTables;
+    inline static std::mutex mutex;
+    inline static std::condition_variable condition;
+    inline static uint64_t active_streams{0};
+    inline static uint64_t peak_active_streams{0};
+    inline static uint64_t started_streams{0};
+
+    explicit ConcurrentWindowQueryable(const config::Config&, std::shared_ptr<metrics::Metrics> = nullptr) {}
+    std::set<std::string_view> virtualTables() const override { return kVirtualTables; }
+    std::size_t maxConcurrentStreams() const noexcept override { return 2; }
+    std::vector<query::ColumnSchema> tableSchema(std::string_view) const override
+    {
+        return {{"pv", query::ColumnType::STRING, true, true, {query::PredicateOp::EQ, query::PredicateOp::IN}, {}, "PV"},
+                {"time", query::ColumnType::TIMESTAMP, false, true, {query::PredicateOp::GTE, query::PredicateOp::LTE}, {}, "time"},
+                {"value", query::ColumnType::INT, false, true, {}, {}, "value"}};
+    }
+    query::QueryResult execute(std::string_view, const std::vector<query::Predicate>&, const std::set<std::string>&,
+                               const query::ExecutionContext&, std::string_view = {}) override
+    {
+        throw std::runtime_error("ConcurrentWindowQueryable requires executeStream");
+    }
+    query::IRecordBatchStreamUPtr executeStream(std::string_view, const std::vector<query::Predicate>& predicates,
+                                                const std::set<std::string>&, const query::ExecutionContext&,
+                                                std::string_view = {}) override
+    {
+        std::string pv;
+        for (const auto& predicate : predicates)
+            if (predicate.column == "pv") pv = std::get<std::string>(predicate.values.front());
+        class Stream final : public query::IRecordBatchStream
+        {
+        public:
+            explicit Stream(std::string pv) : pv_(std::move(pv)) {}
+            ~Stream() override
+            {
+                if (active_)
+                {
+                    const std::lock_guard lock(ConcurrentWindowQueryable::mutex);
+                    --ConcurrentWindowQueryable::active_streams;
+                    ConcurrentWindowQueryable::condition.notify_all();
+                }
+            }
+            std::shared_ptr<arrow::RecordBatch> next() override
+            {
+                if (sent_) return nullptr;
+                {
+                    std::unique_lock lock(ConcurrentWindowQueryable::mutex);
+                    if (!active_)
+                    {
+                        active_ = true;
+                        ++ConcurrentWindowQueryable::started_streams;
+                        ++ConcurrentWindowQueryable::active_streams;
+                        ConcurrentWindowQueryable::peak_active_streams = std::max(ConcurrentWindowQueryable::peak_active_streams,
+                                                                                     ConcurrentWindowQueryable::active_streams);
+                        ConcurrentWindowQueryable::condition.notify_all();
+                    }
+                    ConcurrentWindowQueryable::condition.wait(lock, [] { return ConcurrentWindowQueryable::started_streams >= 2; });
+                }
+                sent_ = true;
+                arrow::StringBuilder pv;
+                arrow::TimestampBuilder time(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), arrow::default_memory_pool());
+                arrow::Int64Builder value;
+                if (!pv.Append(pv_).ok() || !time.Append(1'000'000'000LL).ok() || !value.Append(pv_.back() - '0').ok())
+                    throw std::runtime_error("Failed to build concurrent window batch");
+                std::shared_ptr<arrow::Array> pv_array;
+                std::shared_ptr<arrow::Array> time_array;
+                std::shared_ptr<arrow::Array> value_array;
+                if (!pv.Finish(&pv_array).ok() || !time.Finish(&time_array).ok() || !value.Finish(&value_array).ok())
+                    throw std::runtime_error("Failed to finish concurrent window batch");
+                return arrow::RecordBatch::Make(arrow::schema({arrow::field("pv", pv_array->type()), arrow::field("time", time_array->type()), arrow::field("value", value_array->type())}),
+                                                1, {pv_array, time_array, value_array});
+            }
+        private:
+            std::string pv_;
+            bool active_{false};
+            bool sent_{false};
+        };
+        return std::make_unique<Stream>(std::move(pv));
+    }
+};
+
 const std::set<std::string_view> FakeQueryable::kVirtualTables = {"fake.samples", "fake.meta", "fake.paged"};
+const std::set<std::string_view> ConcurrentWindowQueryable::kVirtualTables = {"mldp.time_series"};
 const std::set<std::string_view> EmptyWideInputQueryable::kVirtualTables = {
     "mldp.time_series", "mldp.time_series_table", "mldp.pv_metadata", "mldp.configuration_activation"};
 const std::set<std::string_view> NativeCreateQueryable::kVirtualTables = {"mldp.time_series"};
@@ -982,7 +1071,10 @@ TEST(QueryPlannerExecutorTest, CreateTableDrainsEveryNativeStreamBatch)
 TEST(QueryPlannerExecutorTest, StreamsSubqueryWindowsAcrossNormalizedRanges)
 {
     query::QueryableFactory::instance().reset();
-    SubqueryWindowQueryable::requests.clear();
+    {
+        const std::lock_guard lock(SubqueryWindowQueryable::requests_mutex);
+        SubqueryWindowQueryable::requests.clear();
+    }
     query::QueryableFactory::instance().prepare<SubqueryWindowQueryable>(config::Config::configFromYamlString("{}"));
     query::QueryPlanner planner;
     query::QueryExecutor executor;
@@ -993,7 +1085,12 @@ TEST(QueryPlannerExecutorTest, StreamsSubqueryWindowsAcrossNormalizedRanges)
     int64_t rows = 0;
     while (auto batch = streamed.stream->next()) rows += batch->num_rows();
     EXPECT_EQ(rows, 4);
-    ASSERT_EQ(SubqueryWindowQueryable::requests.size(), 4U);
+    std::vector<std::vector<query::Predicate>> requests;
+    {
+        const std::lock_guard lock(SubqueryWindowQueryable::requests_mutex);
+        requests = SubqueryWindowQueryable::requests;
+    }
+    ASSERT_EQ(requests.size(), 4U);
     const auto shard = [](const std::vector<query::Predicate>& predicates)
     {
         std::string pv;
@@ -1007,10 +1104,41 @@ TEST(QueryPlannerExecutorTest, StreamsSubqueryWindowsAcrossNormalizedRanges)
         }
         return std::tuple{pv, begin, end};
     };
-    EXPECT_EQ(shard(SubqueryWindowQueryable::requests[0]), (std::tuple{"SUB:ONE", 0LL, 5LL}));
-    EXPECT_EQ(shard(SubqueryWindowQueryable::requests[1]), (std::tuple{"SUB:TWO", 0LL, 5LL}));
-    EXPECT_EQ(shard(SubqueryWindowQueryable::requests[2]), (std::tuple{"SUB:ONE", 10LL, 15LL}));
-    EXPECT_EQ(shard(SubqueryWindowQueryable::requests[3]), (std::tuple{"SUB:TWO", 10LL, 15LL}));
+    EXPECT_EQ(shard(requests[0]), (std::tuple{"SUB:ONE", 0LL, 5LL}));
+    EXPECT_EQ(shard(requests[1]), (std::tuple{"SUB:TWO", 0LL, 5LL}));
+    EXPECT_EQ(shard(requests[2]), (std::tuple{"SUB:ONE", 10LL, 15LL}));
+    EXPECT_EQ(shard(requests[3]), (std::tuple{"SUB:TWO", 10LL, 15LL}));
+    query::QueryableFactory::instance().reset();
+}
+
+TEST(QueryPlannerExecutorTest, StreamsPvGroupsConcurrentlyButPreservesRequestedOrder)
+{
+    query::QueryableFactory::instance().reset();
+    {
+        const std::lock_guard lock(ConcurrentWindowQueryable::mutex);
+        ConcurrentWindowQueryable::active_streams = 0;
+        ConcurrentWindowQueryable::peak_active_streams = 0;
+        ConcurrentWindowQueryable::started_streams = 0;
+    }
+    query::QueryableFactory::instance().prepare<ConcurrentWindowQueryable>(config::Config::configFromYamlString("{}"));
+    query::QueryPlanner planner;
+    query::QueryExecutor executor;
+    auto streamed = executor.executeStream(planner.plan(query::parseQuery(
+        "SELECT pv, time, value FROM mldp.time_series WHERE pv IN ('PV1', 'PV2', 'PV3') "
+        "AND window IN (0, 1; slice 2s, series_per_shard 1)")),
+                                         {.pool = arrow::default_memory_pool()});
+
+    std::vector<std::string> pvs;
+    while (const auto batch = streamed.stream->next())
+    {
+        const auto values = std::static_pointer_cast<arrow::StringArray>(batch->GetColumnByName("pv"));
+        ASSERT_NE(values, nullptr);
+        pvs.push_back(values->GetString(0));
+    }
+
+    EXPECT_EQ(pvs, (std::vector<std::string>{"PV1", "PV2", "PV3"}));
+    EXPECT_EQ(ConcurrentWindowQueryable::peak_active_streams, 2U);
+    EXPECT_EQ(ConcurrentWindowQueryable::started_streams, 3U);
     query::QueryableFactory::instance().reset();
 }
 

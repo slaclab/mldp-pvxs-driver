@@ -648,7 +648,10 @@ at most once.
 
 The driver first coalesces normalized window ranges, then visits shards in this
 deterministic order: normalized range, time slice, and requested-PV group.
-Each cursor receives exactly one bounded time range and PV group. Backend time
+Within one time slice, independent requested-PV groups can use concurrent MLDP
+cursors up to the configured query pool `max-conn`; result batches still emit
+in requested-PV-group order. Each cursor receives exactly one bounded time range
+and PV group. Backend time
 bounds are inclusive, so the driver locally makes every non-final slice
 half-open; a sample at a slice boundary appears once. `slice` and `series_per_shard`
 are supported only on `window` input for `mldp.time_series` and

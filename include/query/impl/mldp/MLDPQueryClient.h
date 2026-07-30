@@ -93,6 +93,7 @@ public:
 
     std::set<std::string_view> virtualTables() const override;
     std::vector<ColumnSchema>  tableSchema(std::string_view table_name) const override;
+    std::size_t                maxConcurrentStreams() const noexcept override;
     QueryResult                execute(std::string_view              table_name,
                                        const std::vector<Predicate>& pushable_predicates,
                                        const std::set<std::string>&  projection_hint,
