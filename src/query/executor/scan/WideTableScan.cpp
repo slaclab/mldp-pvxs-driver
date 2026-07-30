@@ -341,14 +341,16 @@ RecordBatches mldp_pvxs_driver::query::executor::fetchTimeSeriesWindows(const pl
     if (requested_pvs.empty()) throw std::runtime_error("MLDP time-series window requires a PV predicate");
 
     const auto slice_ns = window_shards.slice_ns;
-    for (const auto& [window_begin_ns, window_end_ns] : windows)
+    for (std::size_t window_offset = 0; window_offset < windows.size(); ++window_offset)
     {
+        const auto& [window_begin_ns, window_end_ns] = windows[window_offset];
         for (int64_t slice_begin_ns = window_begin_ns; slice_begin_ns <= window_end_ns; )
         {
             if (context.cancellation) context.cancellation->throwIfCancelled();
             const auto remaining = window_end_ns - slice_begin_ns;
             const auto slice_end_ns = remaining < slice_ns ? window_end_ns : slice_begin_ns + slice_ns;
             const bool final_slice = slice_end_ns == window_end_ns;
+            const auto slice_index = static_cast<uint64_t>((slice_begin_ns - window_begin_ns) / slice_ns + 1);
             for (std::size_t pv_offset = 0; pv_offset < requested_pvs.size(); pv_offset += window_shards.series_per_shard)
             {
                 auto predicates = pushable;
@@ -358,9 +360,18 @@ RecordBatches mldp_pvxs_driver::query::executor::fetchTimeSeriesWindows(const pl
                 std::vector<ExecutableLiteralValue> pv_values;
                 const auto pv_end = std::min(requested_pvs.size(), pv_offset + static_cast<std::size_t>(window_shards.series_per_shard));
                 for (std::size_t index = pv_offset; index < pv_end; ++index) pv_values.emplace_back(requested_pvs[index]);
+                const auto series_shard_index = pv_offset / static_cast<std::size_t>(window_shards.series_per_shard) + 1;
+                const auto series_in_shard = static_cast<uint64_t>(pv_values.size());
                 predicates.push_back(Predicate{.column = "pv", .op = PredicateOp::IN, .values = std::move(pv_values)});
                 predicates.push_back(Predicate{.column = "time", .op = PredicateOp::GTE, .values = {slice_begin_ns / 1'000'000'000LL}});
                 predicates.push_back(Predicate{.column = "time", .op = PredicateOp::LTE, .values = {slice_end_ns / 1'000'000'000LL}});
+                if (context.progress)
+                {
+                    context.progress->setActivity(scan.table_name, "windowed MLDP scan", "opening serial cursor shard");
+                    context.progress->setWindowShard(static_cast<uint64_t>(window_offset + 1), slice_index,
+                                                     series_shard_index, series_in_shard);
+                    context.progress->setParallelShards(1, 1);
+                }
                 if (scan.table_name == "mldp.time_series")
                 {
                     if (context.progress) context.progress->beginBackendRpc(scan.table_name, "window server cursor");
@@ -388,6 +399,11 @@ RecordBatches mldp_pvxs_driver::query::executor::fetchTimeSeriesWindows(const pl
                         if (scan.qualify_output) batch = qualifyBatchColumns(batch, scan.table_alias);
                         output.push_back(std::move(batch));
                     }
+                    if (context.progress)
+                    {
+                        context.progress->setParallelShards(0, 1);
+                        context.progress->completeShard();
+                    }
                     continue;
                 }
                 std::string page_token;
@@ -404,6 +420,11 @@ RecordBatches mldp_pvxs_driver::query::executor::fetchTimeSeriesWindows(const pl
                     if (scan.qualify_output) batch = qualifyBatchColumns(batch, scan.table_alias);
                     output.push_back(std::move(batch));
                 } while (!page_token.empty());
+                if (context.progress)
+                {
+                    context.progress->setParallelShards(0, 1);
+                    context.progress->completeShard();
+                }
             }
             if (final_slice) break;
             slice_begin_ns = slice_end_ns;

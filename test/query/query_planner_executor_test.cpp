@@ -1153,6 +1153,34 @@ TEST(QueryPlannerExecutorTest, AcceptsWindowShardOptionsForWideSubqueryWindows)
     query::QueryableFactory::instance().reset();
 }
 
+TEST(QueryPlannerExecutorTest, ReportsSerialWideWindowShardProgress)
+{
+    query::QueryableFactory::instance().reset();
+    query::QueryableFactory::instance().prepare<WideStreamingQueryable>(config::Config::configFromYamlString("{}"));
+    query::QueryPlanner planner;
+    query::QueryExecutor executor;
+    auto progress = std::make_shared<query::QueryProgressTracker>();
+    auto file_system = std::make_shared<arrow::fs::internal::MockFileSystem>(std::chrono::system_clock::now());
+    auto spill = std::make_shared<query::SpillManager>(file_system, "spill");
+
+    const auto result = executor.execute(planner.plan(query::parseQuery(
+        "SELECT * FROM mldp.time_series_table WHERE pv IN ('WIDE:ONE', 'WIDE:TWO') "
+        "AND window IN (0, 1; slice 2s, series_per_shard 2)")),
+                                         {.pool = arrow::default_memory_pool(), .spill = spill, .progress = progress});
+
+    ASSERT_FALSE(result.batches.empty());
+    const auto snapshot = progress->snapshot();
+    EXPECT_EQ(snapshot.table_name, "mldp.time_series_table");
+    EXPECT_EQ(snapshot.window_index, 1U);
+    EXPECT_EQ(snapshot.slice_index, 1U);
+    EXPECT_EQ(snapshot.series_shard_index, 1U);
+    EXPECT_EQ(snapshot.series_in_shard, 2U);
+    EXPECT_EQ(snapshot.parallel_shard_limit, 1U);
+    EXPECT_EQ(snapshot.active_parallel_shards, 0U);
+    EXPECT_EQ(snapshot.completed_shards, 1U);
+    query::QueryableFactory::instance().reset();
+}
+
 TEST(QueryPlannerExecutorTest, WidePivotSortsSpilledBidiBatchesAndPreservesPvOrder)
 {
     query::QueryableFactory::instance().reset();

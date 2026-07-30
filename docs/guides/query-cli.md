@@ -648,9 +648,11 @@ at most once.
 
 The driver first coalesces normalized window ranges, then visits shards in this
 deterministic order: normalized range, time slice, and requested-PV group.
-Within one time slice, independent requested-PV groups can use concurrent MLDP
-cursors up to the configured query pool `max-conn`; result batches still emit
-in requested-PV-group order. Each cursor receives exactly one bounded time range
+Within one time slice, the streaming long-form `mldp.time_series` path can use
+concurrent independent requested-PV groups up to the configured query pool
+`max-conn`; result batches still emit in requested-PV-group order. The current
+wide-table materialization path reports one active cursor (`shards 1/1`) before
+its pivot, then returns to `0/1` after each shard completes. Each cursor receives exactly one bounded time range
 and PV group. Backend time
 bounds are inclusive, so the driver locally makes every non-final slice
 half-open; a sample at a slice boundary appears once. `slice` and `series_per_shard`
