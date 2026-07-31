@@ -763,7 +763,9 @@ public:
                 const auto status = stream_->Finish();
                 finished_ = true;
                 if (context_.cancellation && context_.cancellation->cancelled()) throw QueryCancelled{};
-                if (!status.ok()) throw std::runtime_error("MLDP queryDataBidiStream failed to request cursor next: " + status.error_message());
+                if (!status.ok())
+                    throw std::runtime_error("MLDP queryDataBidiStream cursor-next failed (gRPC status " +
+                                             std::to_string(static_cast<int>(status.error_code())) + "): " + status.error_message());
                 return nullptr;
             }
         }
@@ -774,7 +776,9 @@ public:
             const auto status = stream_->Finish();
             finished_ = true;
             if (context_.cancellation && context_.cancellation->cancelled()) throw QueryCancelled{};
-            if (!status.ok()) throw std::runtime_error("MLDP queryDataBidiStream failed: " + status.error_message());
+            if (!status.ok())
+                throw std::runtime_error("MLDP queryDataBidiStream read failed (gRPC status " +
+                                         std::to_string(static_cast<int>(status.error_code())) + "): " + status.error_message());
             return nullptr;
         }
         request_next_ = true;

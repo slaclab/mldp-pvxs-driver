@@ -49,6 +49,35 @@ std::shared_ptr<arrow::Scalar> activeValue(std::shared_ptr<arrow::Scalar> value)
     return value;
 }
 
+std::shared_ptr<arrow::RecordBatch> canonicalizeLongPivotBatch(
+    const std::shared_ptr<arrow::RecordBatch>& projected,
+    const std::shared_ptr<arrow::Schema>& canonical_schema)
+{
+    if (!projected || projected->num_columns() != 3)
+        throw std::runtime_error("Wide pivot canonicalization requires pv, time, and value columns");
+
+    const auto& pv = projected->column(0);
+    const auto& time = projected->column(1);
+    const auto& value = projected->column(2);
+    if (pv->type_id() != arrow::Type::STRING || time->type_id() != arrow::Type::TIMESTAMP)
+    {
+        throw std::runtime_error("Wide pivot canonicalization requires string pv and timestamp time columns");
+    }
+    if (!canonical_schema)
+    {
+        return arrow::RecordBatch::Make(
+            arrow::schema({arrow::field("pv", pv->type()), arrow::field("time", time->type()), arrow::field("value", value->type())}),
+            projected->num_rows(), {pv, time, value});
+    }
+    if (!pv->type()->Equals(*canonical_schema->field(0)->type()) ||
+        !time->type()->Equals(*canonical_schema->field(1)->type()) ||
+        !value->type()->Equals(*canonical_schema->field(2)->type()))
+    {
+        throw std::runtime_error("Wide pivot canonicalization found incompatible pv, time, or value types between backend batches");
+    }
+    return arrow::RecordBatch::Make(canonical_schema, projected->num_rows(), {pv, time, value});
+}
+
 RecordBatches readSortedPivotRuns(const SpillHandle& long_spill,
                                   const std::shared_ptr<SpillManager>& spill_manager,
                                   const std::string_view row_key_column,
@@ -248,9 +277,12 @@ RecordBatches mldp_pvxs_driver::query::executor::pivotLongStreamWithSpill(
     }
 
     std::optional<SpillWriter> writer;
+    std::shared_ptr<arrow::Schema> canonical_schema;
     std::unordered_map<std::string, std::shared_ptr<arrow::DataType>> value_types;
+    uint64_t ingestion_batch_index = 0;
     while (auto batch = long_stream.next())
     {
+        ++ingestion_batch_index;
         if (context.progress) context.progress->setActivity("mldp.time_series_table", "wide pivot ingestion");
         if (context.cancellation) context.cancellation->throwIfCancelled();
         if (batch->num_rows() == 0) continue;
@@ -280,22 +312,26 @@ RecordBatches mldp_pvxs_driver::query::executor::pivotLongStreamWithSpill(
             else if (!found->second->Equals(*value->type))
                 throw std::runtime_error("Physical pivot received mixed value types for output-column label '" + pivot_key + "'");
         }
-        auto projected = applyProjection(RecordBatches{batch},
-                                         {std::string(pivot_key_column), std::string(row_key_column), std::string(value_column)}).front();
-        if (projected->num_rows() == 0) continue;
+        const auto projected = applyProjection(RecordBatches{batch},
+                                               {std::string(pivot_key_column), std::string(row_key_column), std::string(value_column)}).front();
+        const auto canonical = canonicalizeLongPivotBatch(projected, canonical_schema);
+        if (!canonical_schema) canonical_schema = canonical->schema();
+        if (canonical->num_rows() == 0) continue;
         if (!writer)
         {
-            auto opened = spill_manager->openWriter("wide-long", projected->schema());
-            if (!opened.ok()) throw std::runtime_error(opened.status().ToString());
+            auto opened = spill_manager->openWriter("wide-long", canonical_schema);
+            if (!opened.ok()) throw std::runtime_error("Wide pivot spill writer open failed: " + opened.status().ToString());
             writer.emplace(std::move(*opened));
         }
-        const auto status = writer->append(projected);
-        if (!status.ok()) throw std::runtime_error(status.ToString());
+        const auto status = writer->append(canonical);
+        if (!status.ok())
+            throw std::runtime_error("Wide pivot spill append failed for ingestion batch " + std::to_string(ingestion_batch_index) +
+                                     " (" + std::to_string(canonical->num_rows()) + " rows): " + status.ToString());
     }
     if (!writer) return {};
     if (context.progress) context.progress->setActivity("mldp.time_series_table", "wide pivot", "spill finalization");
     auto spilled = writer->finish();
-    if (!spilled.ok()) throw std::runtime_error(spilled.status().ToString());
+    if (!spilled.ok()) throw std::runtime_error("Wide pivot spill finalization failed: " + spilled.status().ToString());
     stats.bytes_spilled += static_cast<uint64_t>(spilled->byte_count);
     ++stats.materialized_files;
     stats.materialized_bytes += static_cast<uint64_t>(spilled->byte_count);

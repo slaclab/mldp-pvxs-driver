@@ -657,6 +657,7 @@ public:
     inline static uint64_t metadata_execute_calls{0};
     inline static uint64_t time_series_execute_calls{0};
     inline static bool require_parallel_wave{false};
+    inline static bool fail_stream_open{false};
     inline static std::vector<std::vector<query::Predicate>> requests;
 
     explicit ScaledWindowQueryable(const config::Config&, std::shared_ptr<metrics::Metrics> = nullptr) {}
@@ -751,6 +752,7 @@ public:
                 if (!opened_parallel_wave) throw std::runtime_error("Scaled window query did not open four parallel series shards");
             }
         }
+        if (fail_stream_open) throw std::invalid_argument("Invalid argument");
         class Stream final : public query::IRecordBatchStream
         {
         public:
@@ -771,10 +773,13 @@ public:
                 sent_ = true;
                 arrow::StringBuilder pv;
                 arrow::TimestampBuilder time(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), arrow::default_memory_pool());
-                arrow::Int64Builder value;
+                const auto value_type = arrow::dense_union({arrow::field("int64", arrow::int64())});
+                auto int64_values = std::make_shared<arrow::Int64Builder>();
+                arrow::DenseUnionBuilder value(arrow::default_memory_pool(), {int64_values}, value_type);
                 for (const auto& name : pvs_)
                 {
-                    if (!pv.Append(name).ok() || !time.Append((begin_seconds_ + 1) * 1'000'000'000LL).ok() || !value.Append(1).ok())
+                    if (!pv.Append(name).ok() || !time.Append((begin_seconds_ + 1) * 1'000'000'000LL).ok() ||
+                        !value.Append(0).ok() || !int64_values->Append(1).ok())
                         throw std::runtime_error("Failed to build scaled time-series batch");
                 }
                 std::shared_ptr<arrow::Array> pv_array;
@@ -1322,6 +1327,7 @@ TEST(QueryPlannerExecutorTest, ScalesProductionShapedWideWindowQueryToFourConcur
         ScaledWindowQueryable::metadata_execute_calls = 0;
         ScaledWindowQueryable::time_series_execute_calls = 0;
         ScaledWindowQueryable::require_parallel_wave = true;
+        ScaledWindowQueryable::fail_stream_open = false;
         ScaledWindowQueryable::requests.clear();
     }
     query::QueryableFactory::instance().prepare<ScaledWindowQueryable>(config::Config::configFromYamlString("{}"));
@@ -1392,6 +1398,7 @@ TEST(QueryPlannerExecutorTest, KeepsNonPushableInSubqueriesOnTheMaterializedPath
         ScaledWindowQueryable::metadata_execute_calls = 0;
         ScaledWindowQueryable::time_series_execute_calls = 0;
         ScaledWindowQueryable::require_parallel_wave = false;
+        ScaledWindowQueryable::fail_stream_open = false;
     }
     query::QueryableFactory::instance().prepare<ScaledWindowQueryable>(config::Config::configFromYamlString("{}"));
     query::QueryPlanner planner;
@@ -1417,6 +1424,41 @@ TEST(QueryPlannerExecutorTest, KeepsNonPushableInSubqueriesOnTheMaterializedPath
         ASSERT_NE(pv, ScaledWindowQueryable::requests.front().end());
         ASSERT_EQ(pv->values.size(), 1U);
         EXPECT_EQ(std::get<std::string>(pv->values.front()), "PV:01");
+    }
+    query::QueryableFactory::instance().reset();
+}
+
+TEST(QueryPlannerExecutorTest, ReportsWindowShardContextForAsynchronousStreamFailures)
+{
+    query::QueryableFactory::instance().reset();
+    {
+        const std::lock_guard lock(ScaledWindowQueryable::mutex);
+        ScaledWindowQueryable::require_parallel_wave = false;
+        ScaledWindowQueryable::fail_stream_open = true;
+    }
+    query::QueryableFactory::instance().prepare<ScaledWindowQueryable>(config::Config::configFromYamlString("{}"));
+    query::QueryPlanner planner;
+    query::QueryExecutor executor;
+
+    auto streamed = executor.executeStream(planner.plan(query::parseQuery(
+        "SELECT pv, time, value FROM mldp.time_series WHERE pv IN ('PV:01', 'PV:02') "
+        "AND window IN (0, 5; slice 5s, series_per_shard 2)")),
+                                         {.pool = arrow::default_memory_pool()});
+    try
+    {
+        (void)streamed.stream->next();
+        FAIL() << "Expected asynchronous stream opening to fail";
+    }
+    catch (const std::exception& error)
+    {
+        const std::string message = error.what();
+        EXPECT_NE(message.find("Window backend scan failed while opening window 1, slice 1, shard 1"), std::string::npos);
+        EXPECT_NE(message.find("PVs: PV:01, PV:02"), std::string::npos);
+        EXPECT_NE(message.find("Invalid argument"), std::string::npos);
+    }
+    {
+        const std::lock_guard lock(ScaledWindowQueryable::mutex);
+        ScaledWindowQueryable::fail_stream_open = false;
     }
     query::QueryableFactory::instance().reset();
 }

@@ -18,9 +18,37 @@
 
 #include <algorithm>
 #include <stdexcept>
+#include <string>
 #include <utility>
 
 using namespace mldp_pvxs_driver::query;
+
+namespace {
+
+std::string shardDescription(const uint64_t shard_index,
+                             const uint64_t slice_index,
+                             const std::vector<Predicate>& predicates,
+                             const std::size_t window_index)
+{
+    std::string result = "window " + std::to_string(window_index + 1) +
+                         ", slice " + std::to_string(slice_index) +
+                         ", shard " + std::to_string(shard_index) + " (PVs: ";
+    bool first = true;
+    for (const auto& predicate : predicates)
+    {
+        if (predicate.column != "pv") continue;
+        for (const auto& value : predicate.values)
+        {
+            if (!std::holds_alternative<std::string>(value)) continue;
+            if (!first) result += ", ";
+            result += std::get<std::string>(value);
+            first = false;
+        }
+    }
+    return result + ")";
+}
+
+} // namespace
 
 WindowBackendScanRecordBatchStream::WindowBackendScanRecordBatchStream(
     const plan::PhysicalTableScan& scan, ExecutionContext context,
@@ -48,7 +76,19 @@ std::shared_ptr<arrow::RecordBatch> WindowBackendScanRecordBatchStream::next()
         if (context_.cancellation) context_.cancellation->throwIfCancelled();
         auto& group = groups_[group_index_];
         if (!group.next.valid()) scheduleNext(group);
-        auto result = group.next.get();
+        PullResult result;
+        try
+        {
+            result = group.next.get();
+        }
+        catch (const QueryCancelled&)
+        {
+            throw;
+        }
+        catch (const std::exception& error)
+        {
+            throw std::runtime_error("Window backend scan failed while reading " + shardDescription(group.index, group.slice_index, group.predicates, window_index_) + ": " + error.what());
+        }
         group.stream = std::move(result.stream);
         auto batch = std::move(result.batch);
         if (!batch)
@@ -81,21 +121,45 @@ std::shared_ptr<arrow::RecordBatch> WindowBackendScanRecordBatchStream::next()
 void WindowBackendScanRecordBatchStream::scheduleFirst(Group& group)
 {
     const auto predicates = group.predicates;
+    const auto description = shardDescription(group.index, group.slice_index, group.predicates, window_index_);
     auto shard_context = context_;
     shard_context.series_per_shard = 0;
-    group.next = std::async(std::launch::async, [this, predicates, shard_context = std::move(shard_context)]() mutable {
-        auto stream = queryable_->executeStream(scan_.table_name, predicates, scan_.projection_hint, shard_context);
-        auto batch = stream->next();
-        return PullResult{.stream = std::move(stream), .batch = std::move(batch)};
+    group.next = std::async(std::launch::async, [this, predicates, description, shard_context = std::move(shard_context)]() mutable {
+        try
+        {
+            auto stream = queryable_->executeStream(scan_.table_name, predicates, scan_.projection_hint, shard_context);
+            auto batch = stream->next();
+            return PullResult{.stream = std::move(stream), .batch = std::move(batch)};
+        }
+        catch (const QueryCancelled&)
+        {
+            throw;
+        }
+        catch (const std::exception& error)
+        {
+            throw std::runtime_error("Window backend scan failed while opening " + description + ": " + error.what());
+        }
     });
 }
 
 void WindowBackendScanRecordBatchStream::scheduleNext(Group& group)
 {
+    const auto description = shardDescription(group.index, group.slice_index, group.predicates, window_index_);
     auto stream = std::move(group.stream);
-    group.next = std::async(std::launch::async, [stream = std::move(stream)]() mutable {
-        auto batch = stream->next();
-        return PullResult{.stream = std::move(stream), .batch = std::move(batch)};
+    group.next = std::async(std::launch::async, [description, stream = std::move(stream)]() mutable {
+        try
+        {
+            auto batch = stream->next();
+            return PullResult{.stream = std::move(stream), .batch = std::move(batch)};
+        }
+        catch (const QueryCancelled&)
+        {
+            throw;
+        }
+        catch (const std::exception& error)
+        {
+            throw std::runtime_error("Window backend scan failed while reading " + description + ": " + error.what());
+        }
     });
 }
 
