@@ -15,7 +15,6 @@
 #include <query/QueryCancellation.h>
 
 #include <stdexcept>
-#include <utility>
 
 namespace mldp_pvxs_driver::query::executor {
 
