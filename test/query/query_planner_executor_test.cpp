@@ -36,10 +36,12 @@
 #include <future>
 #include <limits>
 #include <set>
+#include <string>
 #include <string_view>
 #include <thread>
 #include <tuple>
 #include <variant>
+#include <vector>
 
 namespace plan = mldp_pvxs_driver::query::plan;
 
@@ -643,8 +645,153 @@ public:
     }
 };
 
+class ScaledWindowQueryable final : public query::IQueryable
+{
+public:
+    static const std::set<std::string_view> kVirtualTables;
+    inline static std::mutex mutex;
+    inline static std::condition_variable condition;
+    inline static uint64_t active_streams{0};
+    inline static uint64_t peak_active_streams{0};
+    inline static uint64_t started_streams{0};
+    inline static std::vector<std::vector<query::Predicate>> requests;
+
+    explicit ScaledWindowQueryable(const config::Config&, std::shared_ptr<metrics::Metrics> = nullptr) {}
+
+    std::set<std::string_view> virtualTables() const override { return kVirtualTables; }
+    std::size_t maxConcurrentStreams() const noexcept override { return 4; }
+
+    std::vector<query::ColumnSchema> tableSchema(const std::string_view table_name) const override
+    {
+        if (table_name == "mldp.pv_metadata")
+            return {{"pv", query::ColumnType::STRING, false, true, {}, {}, "PV"},
+                    {"attributes.dname", query::ColumnType::STRING, false, true, {}, {query::PredicateOp::PREFIX}, "display name"}};
+        if (table_name == "mldp.configuration_activation")
+            return {{"time", query::ColumnType::TIMESTAMP, false, true, {}, {}, "activation time"},
+                    {"config_name", query::ColumnType::STRING, false, true, {query::PredicateOp::EQ}, {}, "configuration name"}};
+        return {{"pv", query::ColumnType::STRING, true, true, {query::PredicateOp::EQ, query::PredicateOp::IN}, {}, "PV"},
+                {"time", query::ColumnType::TIMESTAMP, false, true, {query::PredicateOp::GTE, query::PredicateOp::LTE}, {}, "time"},
+                {"value", query::ColumnType::INT, false, true, {}, {}, "value"}};
+    }
+
+    query::QueryResult execute(const std::string_view table_name, const std::vector<query::Predicate>&,
+                               const std::set<std::string>&, const query::ExecutionContext&, std::string_view = {}) override
+    {
+        if (table_name == "mldp.pv_metadata")
+        {
+            arrow::StringBuilder pv;
+            arrow::StringBuilder dname;
+            for (const auto& name : pvs())
+            {
+                if (!pv.Append(name).ok() || !dname.Append(name).ok()) throw std::runtime_error("Failed to build scaled metadata batch");
+            }
+            std::shared_ptr<arrow::Array> pv_array;
+            std::shared_ptr<arrow::Array> dname_array;
+            if (!pv.Finish(&pv_array).ok() || !dname.Finish(&dname_array).ok()) throw std::runtime_error("Failed to finish scaled metadata batch");
+            return {.batch = arrow::RecordBatch::Make(arrow::schema({arrow::field("pv", pv_array->type()), arrow::field("attributes.dname", dname_array->type())}),
+                                                    pv_array->length(), {pv_array, dname_array})};
+        }
+        if (table_name == "mldp.configuration_activation")
+        {
+            arrow::TimestampBuilder time(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), arrow::default_memory_pool());
+            arrow::StringBuilder config_name;
+            if (!time.Append(0).ok() || !config_name.Append("SPEAR User").ok()) throw std::runtime_error("Failed to build scaled activation batch");
+            std::shared_ptr<arrow::Array> time_array;
+            std::shared_ptr<arrow::Array> config_name_array;
+            if (!time.Finish(&time_array).ok() || !config_name.Finish(&config_name_array).ok()) throw std::runtime_error("Failed to finish scaled activation batch");
+            return {.batch = arrow::RecordBatch::Make(arrow::schema({arrow::field("time", time_array->type()), arrow::field("config_name", config_name_array->type())}),
+                                                    1, {time_array, config_name_array})};
+        }
+        throw std::runtime_error("ScaledWindowQueryable requires executeStream for time series");
+    }
+
+    query::IRecordBatchStreamUPtr executeStream(std::string_view, const std::vector<query::Predicate>& predicates,
+                                                const std::set<std::string>&, const query::ExecutionContext&, std::string_view = {}) override
+    {
+        std::vector<std::string> shard_pvs;
+        int64_t begin_seconds = 0;
+        for (const auto& predicate : predicates)
+        {
+            if (predicate.column == "pv")
+                for (const auto& value : predicate.values) shard_pvs.push_back(std::get<std::string>(value));
+            if (predicate.column == "time" && predicate.op == query::PredicateOp::GTE)
+                begin_seconds = std::get<int64_t>(predicate.values.front());
+        }
+        {
+            std::unique_lock lock(mutex);
+            requests.push_back(predicates);
+            ++started_streams;
+            ++active_streams;
+            peak_active_streams = std::max(peak_active_streams, active_streams);
+            condition.notify_all();
+            const auto opened_parallel_wave = condition.wait_for(lock, std::chrono::seconds(1), [] {
+                return ScaledWindowQueryable::started_streams >= 4;
+            });
+            if (!opened_parallel_wave) throw std::runtime_error("Scaled window query did not open four parallel series shards");
+        }
+        class Stream final : public query::IRecordBatchStream
+        {
+        public:
+            Stream(std::vector<std::string> pvs, const int64_t begin_seconds)
+                : pvs_(std::move(pvs)), begin_seconds_(begin_seconds), active_(true) {}
+
+            ~Stream() override
+            {
+                if (!active_) return;
+                const std::lock_guard lock(ScaledWindowQueryable::mutex);
+                --ScaledWindowQueryable::active_streams;
+                ScaledWindowQueryable::condition.notify_all();
+            }
+
+            std::shared_ptr<arrow::RecordBatch> next() override
+            {
+                if (sent_) return nullptr;
+                sent_ = true;
+                arrow::StringBuilder pv;
+                arrow::TimestampBuilder time(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), arrow::default_memory_pool());
+                arrow::Int64Builder value;
+                for (const auto& name : pvs_)
+                {
+                    if (!pv.Append(name).ok() || !time.Append((begin_seconds_ + 1) * 1'000'000'000LL).ok() || !value.Append(1).ok())
+                        throw std::runtime_error("Failed to build scaled time-series batch");
+                }
+                std::shared_ptr<arrow::Array> pv_array;
+                std::shared_ptr<arrow::Array> time_array;
+                std::shared_ptr<arrow::Array> value_array;
+                if (!pv.Finish(&pv_array).ok() || !time.Finish(&time_array).ok() || !value.Finish(&value_array).ok())
+                    throw std::runtime_error("Failed to finish scaled time-series batch");
+                return arrow::RecordBatch::Make(arrow::schema({arrow::field("pv", pv_array->type()), arrow::field("time", time_array->type()), arrow::field("value", value_array->type())}),
+                                                pv_array->length(), {pv_array, time_array, value_array});
+            }
+
+        private:
+            std::vector<std::string> pvs_;
+            int64_t begin_seconds_{0};
+            bool active_{false};
+            bool sent_{false};
+        };
+        return std::make_unique<Stream>(std::move(shard_pvs), begin_seconds);
+    }
+
+    static const std::vector<std::string>& pvs()
+    {
+        static const std::vector<std::string> values{
+            "USEG:UNDH:1450:GapAct", "USEG:UNDH:1550:GapAct", "USEG:UNDH:1650:GapAct", "USEG:UNDH:1750:GapAct",
+            "USEG:UNDH:1850:GapAct", "USEG:UNDH:1950:GapAct", "USEG:UNDH:2050:GapAct", "USEG:UNDH:2250:GapAct",
+            "USEG:UNDH:2350:GapAct", "USEG:UNDH:2450:GapAct", "USEG:UNDH:2550:GapAct", "USEG:UNDH:2650:GapAct",
+            "USEG:UNDH:2750:GapAct", "USEG:UNDH:2950:GapAct", "USEG:UNDH:3050:GapAct", "USEG:UNDH:3150:GapAct",
+            "USEG:UNDH:3250:GapAct", "USEG:UNDH:3350:GapAct", "USEG:UNDH:3450:GapAct", "USEG:UNDH:3550:GapAct",
+            "USEG:UNDH:3650:GapAct", "USEG:UNDH:3750:GapAct", "USEG:UNDH:3850:GapAct", "USEG:UNDH:3950:GapAct",
+            "USEG:UNDH:4050:GapAct", "USEG:UNDH:4150:GapAct", "USEG:UNDH:4250:GapAct", "USEG:UNDH:4350:GapAct",
+            "USEG:UNDH:4450:GapAct", "USEG:UNDH:4550:GapAct", "USEG:UNDH:4650:GapAct", "USEG:UNDH:4750:GapAct"};
+        return values;
+    }
+};
+
 const std::set<std::string_view> FakeQueryable::kVirtualTables = {"fake.samples", "fake.meta", "fake.paged"};
 const std::set<std::string_view> ConcurrentWindowQueryable::kVirtualTables = {"mldp.time_series"};
+const std::set<std::string_view> ScaledWindowQueryable::kVirtualTables = {
+    "mldp.time_series", "mldp.time_series_table", "mldp.pv_metadata", "mldp.configuration_activation"};
 const std::set<std::string_view> EmptyWideInputQueryable::kVirtualTables = {
     "mldp.time_series", "mldp.time_series_table", "mldp.pv_metadata", "mldp.configuration_activation"};
 const std::set<std::string_view> NativeCreateQueryable::kVirtualTables = {"mldp.time_series"};
@@ -1139,6 +1286,65 @@ TEST(QueryPlannerExecutorTest, StreamsPvGroupsConcurrentlyButPreservesRequestedO
     EXPECT_EQ(pvs, (std::vector<std::string>{"PV1", "PV2", "PV3"}));
     EXPECT_EQ(ConcurrentWindowQueryable::peak_active_streams, 2U);
     EXPECT_EQ(ConcurrentWindowQueryable::started_streams, 3U);
+    query::QueryableFactory::instance().reset();
+}
+
+TEST(QueryPlannerExecutorTest, ScalesProductionShapedWideWindowQueryToFourConcurrentSeriesShards)
+{
+    query::QueryableFactory::instance().reset();
+    {
+        const std::lock_guard lock(ScaledWindowQueryable::mutex);
+        ScaledWindowQueryable::active_streams = 0;
+        ScaledWindowQueryable::peak_active_streams = 0;
+        ScaledWindowQueryable::started_streams = 0;
+        ScaledWindowQueryable::requests.clear();
+    }
+    query::QueryableFactory::instance().prepare<ScaledWindowQueryable>(config::Config::configFromYamlString("{}"));
+    query::QueryPlanner planner;
+    query::QueryExecutor executor;
+    const auto file_system = std::make_shared<arrow::fs::internal::MockFileSystem>(std::chrono::system_clock::now());
+    const auto spill = std::make_shared<query::SpillManager>(file_system, "spill");
+
+    const auto result = executor.execute(planner.plan(query::parseQuery(
+        "SELECT * FROM mldp.time_series_table "
+        "WHERE pv IN (SELECT pv FROM mldp.pv_metadata WHERE attributes.dname PREFIX 'USEG:UNDH') "
+        "AND window IN (SELECT time, time + 5s FROM mldp.configuration_activation "
+        "WHERE config_name = 'SPEAR User' LIMIT 1; slice 5s, series_per_shard 2)")),
+                                         {.pool = arrow::default_memory_pool(), .spill = spill});
+
+    std::vector<std::vector<query::Predicate>> requests;
+    {
+        const std::lock_guard lock(ScaledWindowQueryable::mutex);
+        requests = ScaledWindowQueryable::requests;
+    }
+    ASSERT_EQ(requests.size(), 16U);
+    EXPECT_EQ(ScaledWindowQueryable::peak_active_streams, 4U);
+    EXPECT_EQ(ScaledWindowQueryable::started_streams, 16U);
+
+    std::set<std::string> received_pvs;
+    for (const auto& predicates : requests)
+    {
+        const auto pv = std::find_if(predicates.begin(), predicates.end(), [](const query::Predicate& predicate) {
+            return predicate.column == "pv" && predicate.op == query::PredicateOp::IN;
+        });
+        ASSERT_NE(pv, predicates.end());
+        ASSERT_EQ(pv->values.size(), 2U);
+        for (const auto& value : pv->values) received_pvs.insert(std::get<std::string>(value));
+
+        const auto begin = std::find_if(predicates.begin(), predicates.end(), [](const query::Predicate& predicate) {
+            return predicate.column == "time" && predicate.op == query::PredicateOp::GTE;
+        });
+        const auto end = std::find_if(predicates.begin(), predicates.end(), [](const query::Predicate& predicate) {
+            return predicate.column == "time" && predicate.op == query::PredicateOp::LTE;
+        });
+        ASSERT_NE(begin, predicates.end());
+        ASSERT_NE(end, predicates.end());
+        EXPECT_EQ(std::get<int64_t>(begin->values.front()), 0);
+        EXPECT_EQ(std::get<int64_t>(end->values.front()), 5);
+    }
+    EXPECT_EQ(received_pvs, std::set<std::string>(ScaledWindowQueryable::pvs().begin(), ScaledWindowQueryable::pvs().end()));
+    ASSERT_FALSE(result.batches.empty());
+    EXPECT_EQ(result.batches.front()->num_columns(), 33);
     query::QueryableFactory::instance().reset();
 }
 
