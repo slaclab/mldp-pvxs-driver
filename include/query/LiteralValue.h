@@ -9,6 +9,8 @@
 //////////////////////////////////////////////////////////////////////////////
 
 
+/** @file LiteralValue.h
+ * @brief Defines strongly typed temporal query literal wrappers. */
 #pragma once
 
 #include <cstdint>
@@ -17,10 +19,12 @@ namespace mldp_pvxs_driver::query {
 
 // Explicit wrappers preserve temporal units and prevent timestamps and
 // durations from being confused with ordinary signed numeric literals.
+/** @brief Signed nanoseconds since the Unix epoch. */
 struct TimestampNsLiteral {
     int64_t value;
 };
 
+/** @brief Signed duration expressed in nanoseconds. */
 struct DurationNsLiteral {
     int64_t value;
 };

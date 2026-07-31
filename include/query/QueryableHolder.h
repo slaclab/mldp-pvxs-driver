@@ -8,11 +8,14 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
+/** @file QueryableHolder.h
+ * @brief Holds a queryable instance with its table registrations. */
 #pragma once
 #include <query/IQueryable.h>
 
 namespace mldp_pvxs_driver::query {
 
+/** @brief Associates one queryable instance with the tables it serves. */
 class QueryableHolder
 {
 public:

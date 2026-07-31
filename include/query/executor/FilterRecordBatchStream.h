@@ -9,12 +9,15 @@
 //////////////////////////////////////////////////////////////////////////////
 
 
+/** @file FilterRecordBatchStream.h
+ * @brief Filters batches from an upstream pull stream. */
 #pragma once
 
 #include <query/IQueryable.h>
 
 namespace mldp_pvxs_driver::query::executor {
 
+/** @brief Applies Arrow-local predicates as input batches are pulled. */
 class FilterRecordBatchStream final : public IRecordBatchStream
 {
 public:

@@ -90,7 +90,15 @@ std::string FooterRenderer::render(const ConsoleStatus& status, const int termin
                     shard += ", series shard " + std::to_string(status.progress->series_shard_index);
                 appendField(line, shard, terminal_width);
             }
-            if (status.progress->parallel_shard_limit > 0)
+            if (status.progress->parallel_shard_limit > 1)
+            {
+                appendField(line, "parallel " + std::to_string(status.progress->active_parallel_shards) + "/" +
+                                      std::to_string(status.progress->parallel_shard_limit), terminal_width);
+                if (status.progress->stage_total_shards > 0)
+                    appendField(line, "shards " + std::to_string(status.progress->stage_completed_shards) + "/" +
+                                          std::to_string(status.progress->stage_total_shards), terminal_width);
+            }
+            else if (status.progress->parallel_shard_limit > 0)
                 appendField(line, "shards " + std::to_string(status.progress->active_parallel_shards) + "/" +
                                       std::to_string(status.progress->parallel_shard_limit), terminal_width);
             if (status.progress->rpc_calls_started > 0)

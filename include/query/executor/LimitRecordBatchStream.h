@@ -9,6 +9,8 @@
 //////////////////////////////////////////////////////////////////////////////
 
 
+/** @file LimitRecordBatchStream.h
+ * @brief Caps rows emitted by an upstream pull stream. */
 #pragma once
 
 #include <query/IQueryable.h>
@@ -17,6 +19,7 @@
 
 namespace mldp_pvxs_driver::query::executor {
 
+/** @brief Emits no more than the requested number of rows from its input. */
 class LimitRecordBatchStream final : public IRecordBatchStream
 {
 public:

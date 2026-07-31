@@ -314,12 +314,15 @@ TEST(ConsoleFooterTest, RendersFixedWidthAsciiStatusWithPriority)
         .slice_index = 3,
         .series_shard_index = 2,
         .active_parallel_shards = 2,
-        .parallel_shard_limit = 4};
+        .parallel_shard_limit = 4,
+        .stage_completed_shards = 3,
+        .stage_total_shards = 16};
     const auto pagination = renderer.render(status, 200);
     EXPECT_NE(pagination.find("wide pivot"), std::string::npos);
     EXPECT_NE(pagination.find("result page 2"), std::string::npos);
     EXPECT_NE(pagination.find("window 1, slice 3, series shard 2"), std::string::npos);
-    EXPECT_NE(pagination.find("shards 2/4"), std::string::npos);
+    EXPECT_NE(pagination.find("parallel 2/4"), std::string::npos);
+    EXPECT_NE(pagination.find("shards 3/16"), std::string::npos);
     EXPECT_NE(pagination.find("cursor 4, next 3"), std::string::npos);
 }
 
@@ -403,6 +406,8 @@ TEST(QueryProgressTest, TracksWindowShardsAndFormattedOutput)
     EXPECT_EQ(snapshot.series_shard_index, 3U);
     EXPECT_EQ(snapshot.series_in_shard, 1U);
     EXPECT_EQ(snapshot.completed_shards, 6U);
+    EXPECT_EQ(snapshot.stage_completed_shards, 3U);
+    EXPECT_EQ(snapshot.stage_total_shards, 3U);
     EXPECT_EQ(snapshot.output_batches, 12U);
     EXPECT_EQ(snapshot.rows_returned, 9U);
     EXPECT_EQ(SustainedWindowQueryable::stream_creations, 6U);

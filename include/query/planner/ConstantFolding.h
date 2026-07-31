@@ -8,6 +8,8 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
+/** @file ConstantFolding.h
+ * @brief Declares compile-time expression simplification. */
 #pragma once
 
 #include <query/plan/LogicalPlan.h>

@@ -8,6 +8,8 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
+/** @file PhysicalPlan.h
+ * @brief Defines executable physical query-plan nodes. */
 #pragma once
 
 #include <query/IQueryable.h>
@@ -26,6 +28,7 @@ namespace mldp_pvxs_driver::query::plan {
 struct PhysicalNode;
 using PhysicalNodePtr = std::shared_ptr<PhysicalNode>;
 
+/** @brief Executable membership subquery and its pushdown classification. */
 struct PhysicalInSubquery {
     Predicate                        predicate;
     ColumnType                       column_type{ColumnType::STRING};
@@ -33,6 +36,7 @@ struct PhysicalInSubquery {
     std::shared_ptr<SelectStatement> child;
 };
 
+/** @brief Backend, catalog, or derived-table scan executable by the runtime. */
 struct PhysicalTableScan {
     std::string            table_name;
     std::string            table_alias;
@@ -48,11 +52,13 @@ struct PhysicalTableScan {
     WindowShardSpec           window_shards{};
 };
 
+/** @brief Executes residual predicates over a physical input. */
 struct PhysicalFilter {
     PhysicalNodePtr        input;
     std::vector<Predicate> predicates;
 };
 
+/** @brief Evaluates selected physical output columns and expressions. */
 struct PhysicalProject {
     PhysicalNodePtr          input;
     std::vector<std::string> columns;
@@ -60,6 +66,7 @@ struct PhysicalProject {
     std::vector<std::string> names;
 };
 
+/** @brief Limits rows emitted by a physical input. */
 struct PhysicalLimit {
     PhysicalNodePtr input;
     uint64_t       limit{0};
@@ -75,19 +82,24 @@ struct PhysicalPivot {
     uint32_t                 output_batch_size{4096};
 };
 
+/** @brief Sorts rows from a physical input using logical sort keys. */
 struct PhysicalSort {
     PhysicalNodePtr       input;
     std::vector<SortKey> keys;
 };
 
+/** @brief Join modes available to physical execution. */
 enum class JoinType { INNER, LEFT_OUTER };
+/** @brief Algorithms available to execute a physical join. */
 enum class JoinAlgorithm { HASH, NESTED_LOOP, BLOCK_NESTED_LOOP };
 
+/** @brief Pair of physical column names used as a join key. */
 struct JoinCondition {
     std::string left_column;
     std::string right_column;
 };
 
+/** @brief Join node executed by the hash-join algorithm. */
 struct PhysicalHashJoin {
     JoinType                  type{JoinType::INNER};
     JoinCondition             condition;
@@ -97,6 +109,7 @@ struct PhysicalHashJoin {
     std::vector<std::string>  warnings;
 };
 
+/** @brief Join node executed by nested-loop iteration. */
 struct PhysicalNestedLoopJoin {
     JoinType        type{JoinType::INNER};
     JoinCondition   condition;
@@ -106,6 +119,7 @@ struct PhysicalNestedLoopJoin {
     bool            correlated_push{false};
 };
 
+/** @brief Join node executed by bounded block nested-loop iteration. */
 struct PhysicalBlockNestedLoopJoin {
     JoinType                 type{JoinType::INNER};
     JoinCondition            condition;
@@ -115,29 +129,36 @@ struct PhysicalBlockNestedLoopJoin {
     std::vector<std::string> warnings;
 };
 
+/** @brief Physical command that lists registered and catalog tables. */
 struct PhysicalShowTables {
 };
 
+/** @brief Physical command that lists registered scalar functions. */
 struct PhysicalShowFunctions {
 };
 
+/** @brief Physical command that lists registered operators. */
 struct PhysicalShowOperators {
 };
 
+/** @brief Physical command that describes one table schema. */
 struct PhysicalDescribe {
     std::string table_name;
 };
 
+/** @brief Physical command that returns textual plan output. */
 struct PhysicalExplain {
     std::string plan_text;
 };
 
+/** @brief Materializes a child plan into a session or persistent catalog table. */
 struct PhysicalCreateTable {
     std::string     table_name;
     bool            temporary{false};
     PhysicalNodePtr query;
 };
 
+/** @brief Physical command that removes a catalog table. */
 struct PhysicalDropTable {
     std::string table_name;
 };
@@ -159,6 +180,7 @@ using PhysicalNodeVariant = std::variant<PhysicalTableScan,
                                          PhysicalCreateTable,
                                          PhysicalDropTable>;
 
+/** @brief Variant wrapper that forms an executable physical-plan tree. */
 struct PhysicalNode {
     PhysicalNodeVariant value;
 };

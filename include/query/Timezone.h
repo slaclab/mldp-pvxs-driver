@@ -9,6 +9,8 @@
 //////////////////////////////////////////////////////////////////////////////
 
 
+/** @file Timezone.h
+ * @brief Declares timezone parsing and UTC timestamp projection helpers. */
 #pragma once
 
 #include <arrow/scalar.h>

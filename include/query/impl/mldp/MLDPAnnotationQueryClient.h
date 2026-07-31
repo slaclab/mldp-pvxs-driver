@@ -8,6 +8,8 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
+/** @file MLDPAnnotationQueryClient.h
+ * @brief Declares the MLDP annotation-service queryable implementation. */
 #pragma once
 
 #include <annotation.grpc.pb.h>

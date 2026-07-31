@@ -15,6 +15,8 @@
 //    https://confluence.slac.stanford.edu/display/ppareg/LICENSE.html.
 //////////////////////////////////////////////////////////////////////////////
 
+/** @file ExecutionContext.h
+ * @brief Collects resources and per-query execution controls. */
 #pragma once
 
 #include <memory>
@@ -34,6 +36,7 @@ class QueryTableCatalog;
 class QueryProgressTracker;
 class QueryCancellation;
 
+/** @brief Non-owning and shared resources available to query execution. */
 struct ExecutionContext {
     arrow::MemoryPool*                    pool{nullptr};
     std::shared_ptr<SpillManager>         spill;

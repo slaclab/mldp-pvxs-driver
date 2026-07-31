@@ -9,12 +9,15 @@
 //////////////////////////////////////////////////////////////////////////////
 
 
+/** @file Callable.h
+ * @brief Provides a concrete immutable SQL expression callable. */
 #pragma once
 
 #include <query/ExpressionRegistry.h>
 
 namespace mldp_pvxs_driver::query {
 
+/** @brief Stores the descriptor for one registered expression callable. */
 class Callable final : public IExpressionCallable
 {
 public:

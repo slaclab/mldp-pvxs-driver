@@ -9,6 +9,8 @@
 //////////////////////////////////////////////////////////////////////////////
 
 
+/** @file ExecutorUtils.h
+ * @brief Declares shared Arrow and predicate helpers used by query execution. */
 #pragma once
 
 #include <query/ExecutionContext.h>

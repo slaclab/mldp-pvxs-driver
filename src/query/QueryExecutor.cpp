@@ -66,15 +66,35 @@ IRecordBatchStreamUPtr makeStreamingPlan(const plan::PhysicalNodePtr& root,
     if (!root) return nullptr;
     if (const auto* scan = std::get_if<plan::PhysicalTableScan>(&root->value))
     {
+        const bool has_only_pushable_in_subqueries = std::all_of(scan->in_subqueries.begin(), scan->in_subqueries.end(), [](const auto& subquery) {
+            return subquery.pushable;
+        });
         const bool direct_long_scan = scan->table_name == "mldp.time_series" &&
-                                      !scan->arrow_ipc && !scan->derived_query && scan->in_subqueries.empty();
+                                      !scan->arrow_ipc && !scan->derived_query && has_only_pushable_in_subqueries;
         if (!direct_long_scan) return nullptr;
+
+        auto resolved_scan = *scan;
+        if (!resolved_scan.in_subqueries.empty())
+        {
+            QueryPlanner planner(context.table_catalog);
+            QueryExecutor executor;
+            for (const auto& subquery : resolved_scan.in_subqueries)
+            {
+                auto predicate = subquery.predicate;
+                predicate.values = mldp_pvxs_driver::query::executor::extractInSubqueryValues(
+                    executor.execute(planner.plan(QueryStatement{*subquery.child}), context).batches,
+                    subquery.column_type, predicate.column);
+                if (predicate.values.empty()) return std::make_unique<MaterializedRecordBatchStream>(RecordBatches{});
+                resolved_scan.pushable_predicates.push_back(std::move(predicate));
+            }
+            resolved_scan.in_subqueries.clear();
+        }
         if (scan->window_literal)
         {
             const auto& window = *scan->window_literal;
             context.series_per_shard = scan->window_shards.series_per_shard;
             return std::make_unique<WindowBackendScanRecordBatchStream>(
-                *scan, std::move(context), stats,
+                resolved_scan, std::move(context), stats,
                 std::vector<std::pair<int64_t, int64_t>>{{window[0] * 1'000'000'000LL, window[1] * 1'000'000'000LL}});
         }
         if (scan->window_subquery)
@@ -85,9 +105,9 @@ IRecordBatchStreamUPtr makeStreamingPlan(const plan::PhysicalNodePtr& root,
                 executor.execute(planner.plan(QueryStatement{*scan->window_subquery}), context).batches);
             if (windows.empty()) return std::make_unique<MaterializedRecordBatchStream>(RecordBatches{});
             context.series_per_shard = scan->window_shards.series_per_shard;
-            return std::make_unique<WindowBackendScanRecordBatchStream>(*scan, std::move(context), stats, windows);
+            return std::make_unique<WindowBackendScanRecordBatchStream>(resolved_scan, std::move(context), stats, windows);
         }
-        return std::make_unique<BackendScanRecordBatchStream>(*scan, std::move(context), stats);
+        return std::make_unique<BackendScanRecordBatchStream>(resolved_scan, std::move(context), stats);
     }
     if (const auto* filter = std::get_if<plan::PhysicalFilter>(&root->value))
     {

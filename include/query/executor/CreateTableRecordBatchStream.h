@@ -8,6 +8,8 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
+/** @file CreateTableRecordBatchStream.h
+ * @brief Materializes a stream into a catalog table while preserving pull semantics. */
 #pragma once
 
 #include <query/ExecutionContext.h>
@@ -17,6 +19,7 @@
 
 namespace mldp_pvxs_driver::query::executor {
 
+/** @brief Drains input into a catalog table before reporting end of stream. */
 class CreateTableRecordBatchStream final : public IRecordBatchStream
 {
 public:

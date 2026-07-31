@@ -9,6 +9,8 @@
 //////////////////////////////////////////////////////////////////////////////
 
 
+/** @file QueryTableCatalog.h
+ * @brief Owns IPC-backed query tables created during a session. */
 #pragma once
 
 #include <arrow/filesystem/filesystem.h>
@@ -23,8 +25,10 @@ namespace mldp_pvxs_driver::query {
 
 class IRecordBatchStream;
 
+/** @brief Lifetime of an IPC-backed table stored by the query catalog. */
 enum class TableLifetime { Session, Persistent };
 
+/** @brief Stored table metadata and the path to its Arrow IPC snapshot. */
 struct CatalogTable {
     std::string                    name;
     TableLifetime                  lifetime{TableLifetime::Session};

@@ -8,6 +8,8 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
+/** @file FinalizingRecordBatchStream.h
+ * @brief Finalizes query statistics and progress when a stream terminates. */
 #pragma once
 
 #include <query/ExecutionContext.h>
@@ -18,6 +20,7 @@
 
 namespace mldp_pvxs_driver::query::executor {
 
+/** @brief Updates terminal statistics and progress when its input reaches EOF. */
 class FinalizingRecordBatchStream final : public IRecordBatchStream
 {
 public:

@@ -8,6 +8,8 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
+/** @file PhysicalPlanner.h
+ * @brief Declares conversion of logical plans to executable physical plans. */
 #pragma once
 
 #include <query/plan/LogicalPlan.h>

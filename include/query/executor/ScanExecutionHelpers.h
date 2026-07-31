@@ -9,6 +9,8 @@
 //////////////////////////////////////////////////////////////////////////////
 
 
+/** @file ScanExecutionHelpers.h
+ * @brief Declares helpers shared by backend and window scan execution. */
 #pragma once
 
 #include <query/ExecutionContext.h>

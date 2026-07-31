@@ -9,6 +9,8 @@
 //////////////////////////////////////////////////////////////////////////////
 
 
+/** @file ExpressionRegistry.h
+ * @brief Declares the typed catalog of SQL scalar functions and operators. */
 #pragma once
 
 #include <query/IQueryable.h>
@@ -20,8 +22,10 @@
 
 namespace mldp_pvxs_driver::query {
 
+/** @brief SQL callable categories used for resolution and discovery. */
 enum class ExpressionCallableKind { FUNCTION, BINARY_OPERATOR, UNARY_OPERATOR };
 
+/** @brief Immutable metadata for an executable scalar function or operator. */
 struct ExpressionCallableDescriptor {
     std::string                name;
     ExpressionCallableKind     kind{ExpressionCallableKind::FUNCTION};

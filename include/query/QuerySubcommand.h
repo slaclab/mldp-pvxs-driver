@@ -15,6 +15,8 @@
 //    https://confluence.slac.stanford.edu/display/ppareg/LICENSE.html.
 //////////////////////////////////////////////////////////////////////////////
 
+/** @file QuerySubcommand.h
+ * @brief Declares the query CLI subcommand and interactive REPL support. */
 #pragma once
 
 #include <config/Config.h>
@@ -44,6 +46,7 @@ class IRecordBatchStream;
 
 namespace mldp_pvxs_driver::cli {
 
+/** @brief Command-line configuration for one query invocation. */
 struct QueryCliOptions {
     std::string       sql{};
     std::string       sql_file{};
@@ -59,9 +62,11 @@ struct QueryCliOptions {
 };
 
 /** Live-REPL ownership for an incomplete interactive query. */
+/** @brief Owns resumable query streams for interactive continuation tokens. */
 class QueryContinuationRegistry
 {
 public:
+    /** @brief Stream state retained for one continuation token. */
     struct Entry {
         std::string                                      fingerprint;
         std::unique_ptr<query::IRecordBatchStream>      stream;
@@ -87,12 +92,14 @@ private:
     std::unordered_map<std::string, Entry> entries_;
 };
 
+/** @brief Registers queryable implementations required by the CLI. */
 class QuerySubcommandPreparer
 {
 public:
     void prepare(const config::Config& config) const;
 };
 
+/** @brief Executes parsed queries and formats their output for the CLI. */
 class QueryRunner
 {
 public:
@@ -113,6 +120,7 @@ private:
     mutable std::string                               table_catalog_dir_;
 };
 
+/** @brief Implements the query command and its interactive REPL mode. */
 class QuerySubcommand
 {
 public:

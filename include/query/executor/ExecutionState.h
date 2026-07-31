@@ -8,6 +8,8 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
+/** @file ExecutionState.h
+ * @brief Declares runtime state nodes for materialized physical-plan execution. */
 #pragma once
 
 #include <query/ExecutionContext.h>
@@ -25,6 +27,7 @@ namespace mldp_pvxs_driver::query::executor {
 using RecordBatches = std::vector<std::shared_ptr<arrow::RecordBatch>>;
 
 /** Runtime counterpart to one immutable physical-plan node. */
+/** @brief Materialized runtime counterpart for one physical-plan node. */
 class IExecutionState
 {
 public:

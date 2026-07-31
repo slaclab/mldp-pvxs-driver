@@ -8,6 +8,8 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
+/** @file QueryProgress.h
+ * @brief Defines thread-safe progress snapshots for query execution and formatting. */
 #pragma once
 
 #include <chrono>
@@ -18,6 +20,7 @@
 
 namespace mldp_pvxs_driver::query {
 
+/** @brief High-level lifecycle phase reported by a query. */
 enum class QueryProgressPhase
 {
     Idle,
@@ -31,6 +34,7 @@ enum class QueryProgressPhase
     Failed
 };
 
+/** @brief Immutable view of query activity and cumulative execution statistics. */
 struct QueryProgressSnapshot
 {
     QueryProgressPhase         phase{QueryProgressPhase::Idle};
@@ -57,9 +61,12 @@ struct QueryProgressSnapshot
     uint64_t                   series_in_shard{0};
     uint64_t                   active_parallel_shards{0};
     uint64_t                   parallel_shard_limit{0};
+    uint64_t                   stage_completed_shards{0};
+    uint64_t                   stage_total_shards{0};
     uint64_t                   completed_shards{0};
 };
 
+/** @brief Synchronizes progress updates from query execution threads. */
 class QueryProgressTracker
 {
 public:
@@ -117,6 +124,13 @@ public:
         parallel_shard_limit_ = limit;
     }
 
+    void beginShardStage(const uint64_t total)
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        stage_completed_shards_ = 0;
+        stage_total_shards_ = total;
+    }
+
     void cursorNext()
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -141,6 +155,7 @@ public:
     void completeShard()
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        if (stage_completed_shards_ < stage_total_shards_) ++stage_completed_shards_;
         ++completed_shards_;
     }
 
@@ -192,6 +207,8 @@ public:
             .series_in_shard = series_in_shard_,
             .active_parallel_shards = active_parallel_shards_,
             .parallel_shard_limit = parallel_shard_limit_,
+            .stage_completed_shards = stage_completed_shards_,
+            .stage_total_shards = stage_total_shards_,
             .completed_shards = completed_shards_,
         };
     }
@@ -222,6 +239,8 @@ private:
     uint64_t                                    series_in_shard_{0};
     uint64_t                                    active_parallel_shards_{0};
     uint64_t                                    parallel_shard_limit_{0};
+    uint64_t                                    stage_completed_shards_{0};
+    uint64_t                                    stage_total_shards_{0};
     uint64_t                                    completed_shards_{0};
 };
 

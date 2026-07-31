@@ -8,6 +8,8 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
+/** @file IQueryable.h
+ * @brief Declares the backend-independent queryable and streaming contracts. */
 #pragma once
 
 #include <query/LiteralValue.h>
@@ -27,6 +29,7 @@ namespace mldp_pvxs_driver::query {
 class ExecutionContext;
 struct QueryResult;
 
+/** @brief Logical scalar types supported by query schemas and predicates. */
 enum class ColumnType
 {
     STRING,
@@ -36,6 +39,7 @@ enum class ColumnType
     NATIVE_VALUE,
     BOOL
 };
+/** @brief Comparison and membership operators available to a queryable. */
 enum class PredicateOp
 {
     EQ,
@@ -55,6 +59,7 @@ enum class PredicateOp
 
 using ExecutableLiteralValue = std::variant<std::string, int64_t, double, bool, TimestampNsLiteral, DurationNsLiteral>;
 
+/** @brief Executable predicate with backend-ready literal values. */
 struct Predicate
 {
     std::string                                           column;
@@ -62,6 +67,7 @@ struct Predicate
     std::vector<ExecutableLiteralValue> values;
 };
 
+/** @brief Describes one queryable table column and its predicate capabilities. */
 struct ColumnSchema
 {
     std::string           name;
@@ -83,6 +89,7 @@ public:
 
 using IRecordBatchStreamUPtr = std::unique_ptr<IRecordBatchStream>;
 
+/** @brief Backend interface for table discovery, paged execution, and native streams. */
 class IQueryable
 {
 public:

@@ -15,6 +15,8 @@
 //    https://confluence.slac.stanford.edu/display/ppareg/LICENSE.html.
 //////////////////////////////////////////////////////////////////////////////
 
+/** @file QueryResult.h
+ * @brief Defines one backend page and its continuation token. */
 #pragma once
 
 #include <arrow/record_batch.h>
@@ -24,6 +26,7 @@
 
 namespace mldp_pvxs_driver::query {
 
+/** @brief One backend response page, optionally followed by a continuation token. */
 struct QueryResult {
     std::shared_ptr<arrow::RecordBatch> batch;
     std::string                          next_page_token;

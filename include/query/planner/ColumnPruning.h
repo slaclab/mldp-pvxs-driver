@@ -8,6 +8,8 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
+/** @file ColumnPruning.h
+ * @brief Declares logical-plan projection pruning. */
 #pragma once
 
 #include <query/plan/LogicalPlan.h>

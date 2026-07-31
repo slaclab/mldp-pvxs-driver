@@ -9,6 +9,8 @@
 //////////////////////////////////////////////////////////////////////////////
 
 
+/** @file StateInternal.h
+ * @brief Declares internal materialized-execution state helpers. */
 #pragma once
 
 #include <query/executor/ExecutionState.h>
@@ -19,6 +21,7 @@
 namespace mldp_pvxs_driver::query::executor {
 
 
+/** @brief Base implementation that owns child states and shared execution context. */
 class ExecutionStateBase : public IExecutionState
 {
 public:

@@ -9,6 +9,8 @@
 //////////////////////////////////////////////////////////////////////////////
 
 
+/** @file BackendScanRecordBatchStream.h
+ * @brief Streams pages from one backend table scan. */
 #pragma once
 
 #include <query/ExecutionContext.h>
@@ -18,6 +20,7 @@
 
 namespace mldp_pvxs_driver::query::executor {
 
+/** @brief Lazily opens and forwards the native stream for a single table scan. */
 class BackendScanRecordBatchStream final : public IRecordBatchStream
 {
 public:

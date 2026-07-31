@@ -9,6 +9,8 @@
 //////////////////////////////////////////////////////////////////////////////
 
 
+/** @file ProjectRecordBatchStream.h
+ * @brief Projects expressions and columns from an upstream pull stream. */
 #pragma once
 
 #include <query/IQueryable.h>
@@ -16,6 +18,7 @@
 
 namespace mldp_pvxs_driver::query::executor {
 
+/** @brief Evaluates a physical projection for each pulled input batch. */
 class ProjectRecordBatchStream final : public IRecordBatchStream
 {
 public:

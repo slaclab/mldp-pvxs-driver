@@ -8,6 +8,8 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
+/** @file OstreamOutputStream.h
+ * @brief Adapts a standard output stream to Arrow's OutputStream interface. */
 #pragma once
 
 #include <arrow/io/interfaces.h>
@@ -17,6 +19,7 @@
 
 namespace mldp_pvxs_driver::query {
 
+/** @brief Writes Arrow output directly to a caller-owned std::ostream. */
 class OstreamOutputStream final : public arrow::io::OutputStream
 {
 public:

@@ -8,6 +8,8 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
+/** @file QueryParser.h
+ * @brief Declares parsing of SQL text into query statements. */
 #pragma once
 
 #include <query/parser/QueryAST.h>
@@ -18,6 +20,7 @@
 
 namespace mldp_pvxs_driver::query {
 
+/** @brief Consumes lexer tokens and produces one validated query AST. */
 class QueryParser
 {
 public:

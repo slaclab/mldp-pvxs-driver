@@ -8,6 +8,8 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
+/** @file QueryStats.h
+ * @brief Defines execution statistics accumulated for a query. */
 #pragma once
 
 #include <chrono>
@@ -17,6 +19,7 @@
 
 namespace mldp_pvxs_driver::query {
 
+/** @brief Cumulative work and resource usage observed while executing one query. */
 struct QueryStats {
     std::chrono::milliseconds elapsed{0};
     uint64_t                  rows_from_backend{0};

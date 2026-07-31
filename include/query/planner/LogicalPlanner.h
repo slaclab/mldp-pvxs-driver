@@ -8,6 +8,8 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
+/** @file LogicalPlanner.h
+ * @brief Declares conversion of bound selections to logical plans. */
 #pragma once
 
 #include <query/plan/LogicalPlan.h>

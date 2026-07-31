@@ -8,6 +8,8 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
+/** @file Binder.h
+ * @brief Declares SQL binding against queryable schemas and catalog tables. */
 #pragma once
 
 #include <query/parser/QueryAST.h>

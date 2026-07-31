@@ -9,6 +9,8 @@
 //////////////////////////////////////////////////////////////////////////////
 
 
+/** @file QueryCancellation.h
+ * @brief Provides thread-safe, idempotent query cancellation and callbacks. */
 #pragma once
 
 #include <atomic>
@@ -22,6 +24,7 @@
 
 namespace mldp_pvxs_driver::query {
 
+/** @brief Exception thrown at cancellation checkpoints. */
 class QueryCancelled final : public std::runtime_error
 {
 public:
@@ -31,9 +34,11 @@ public:
     }
 };
 
+/** @brief Shares cancellation state and invokes registered cancellation callbacks once. */
 class QueryCancellation
 {
 public:
+    /** @brief RAII handle that unregisters a cancellation callback on destruction. */
     class Registration
     {
     public:

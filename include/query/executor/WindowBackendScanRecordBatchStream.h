@@ -9,6 +9,8 @@
 //////////////////////////////////////////////////////////////////////////////
 
 
+/** @file WindowBackendScanRecordBatchStream.h
+ * @brief Streams time-series window shards with bounded backend concurrency. */
 #pragma once
 
 #include <query/IQueryable.h>
@@ -23,6 +25,7 @@
 
 namespace mldp_pvxs_driver::query {
 
+/** @brief Schedules PV shards for each time window while respecting backend concurrency. */
 class WindowBackendScanRecordBatchStream final : public IRecordBatchStream
 {
 public:
@@ -33,7 +36,9 @@ public:
     std::shared_ptr<arrow::RecordBatch> next() override;
 
 private:
+    /** @brief Result of asynchronously pulling the next batch from one shard. */
     struct PullResult { IRecordBatchStreamUPtr stream; std::shared_ptr<arrow::RecordBatch> batch; };
+    /** @brief State for one PV shard in the current window slice. */
     struct Group {
         std::size_t index{0};
         uint64_t slice_index{0};

@@ -8,6 +8,8 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
+/** @file ConsoleFooter.h
+ * @brief Defines TTY-safe rendering and lifecycle management for the query footer. */
 #pragma once
 
 #include <query/QueryProgress.h>
@@ -21,6 +23,7 @@
 
 namespace mldp_pvxs_driver::cli {
 
+/** @brief Snapshot rendered by the interactive query footer. */
 struct ConsoleStatus
 {
     bool                                 query_running{false};
@@ -29,12 +32,14 @@ struct ConsoleStatus
     std::string                          error;
 };
 
+/** @brief Formats a status snapshot into a fixed-width terminal line. */
 class FooterRenderer
 {
 public:
     std::string render(const ConsoleStatus& status, int terminal_width) const;
 };
 
+/** @brief Manages the terminal region reserved for an interactive query footer. */
 class TerminalLayout
 {
 public:

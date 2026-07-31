@@ -142,6 +142,7 @@ void WindowBackendScanRecordBatchStream::prepareNextSlice()
             context_.progress->setActivity(scan_.table_name, "windowed MLDP scan", "opening parallel cursor shards");
             context_.progress->setWindowShard(window_index_ + 1, group.slice_index, group.index, group.series_in_shard);
             context_.progress->setParallelShards(static_cast<uint64_t>(concurrency), parallel_shard_limit_);
+            context_.progress->beginShardStage(static_cast<uint64_t>(groups_.size()));
             context_.progress->beginBackendRpc(scan_.table_name, "parallel shard cursors");
         }
         if (final_slice_) slice_begin_ns_ = window_end_ns_ + 1; else slice_begin_ns_ = slice_end_ns_;

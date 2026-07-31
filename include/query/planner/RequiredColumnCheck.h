@@ -8,6 +8,8 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
+/** @file RequiredColumnCheck.h
+ * @brief Declares validation of required scan predicates. */
 #pragma once
 
 #include <query/plan/LogicalPlan.h>

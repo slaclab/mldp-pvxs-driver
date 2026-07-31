@@ -8,6 +8,8 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
+/** @file PivotRecordBatchStream.h
+ * @brief Materializes and pivots long-form input into wide record batches. */
 #pragma once
 
 #include <query/ExecutionContext.h>
@@ -18,6 +20,7 @@
 
 namespace mldp_pvxs_driver::query::executor {
 
+/** @brief Lazily prepares and emits a wide-table pivot from long-form input. */
 class PivotRecordBatchStream final : public IRecordBatchStream
 {
 public:

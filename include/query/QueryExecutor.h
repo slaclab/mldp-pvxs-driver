@@ -8,6 +8,8 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
+/** @file QueryExecutor.h
+ * @brief Executes physical query plans as materialized results or pull streams. */
 #pragma once
 
 #include <query/ExecutionContext.h>
@@ -22,6 +24,7 @@
 
 namespace mldp_pvxs_driver::query {
 
+/** @brief Fully materialized batches and statistics from an executed plan. */
 struct QueryExecutionResult {
     std::vector<std::shared_ptr<arrow::RecordBatch>> batches;
     QueryStats                                       stats;
@@ -32,11 +35,13 @@ struct QueryExecutionResult {
  * with the stream so a cursor remains valid until its final batch is consumed
  * or the stream is destroyed.
  */
+/** @brief Pull stream and shared statistics from a lazily executable plan. */
 struct QueryStreamExecutionResult {
     IRecordBatchStreamUPtr      stream;
     std::shared_ptr<QueryStats> stats;
 };
 
+/** @brief Chooses streaming execution where possible and materialized execution otherwise. */
 class QueryExecutor
 {
 public:

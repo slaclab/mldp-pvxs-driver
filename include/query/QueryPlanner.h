@@ -8,6 +8,8 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
+/** @file QueryPlanner.h
+ * @brief Declares the SQL-to-physical-plan planning facade. */
 #pragma once
 
 #include <query/parser/QueryAST.h>
@@ -19,6 +21,7 @@ namespace mldp_pvxs_driver::query {
 
 class QueryTableCatalog;
 
+/** @brief Binds, rewrites, and lowers parsed statements into physical plans. */
 class QueryPlanner
 {
 public:

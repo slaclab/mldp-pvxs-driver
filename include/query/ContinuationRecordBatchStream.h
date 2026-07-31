@@ -9,6 +9,8 @@
 //////////////////////////////////////////////////////////////////////////////
 
 
+/** @file ContinuationRecordBatchStream.h
+ * @brief Adapts continuation-token query pages to a pull record-batch stream. */
 #pragma once
 
 #include <query/IQueryable.h>
@@ -17,6 +19,7 @@
 
 namespace mldp_pvxs_driver::query {
 
+/** @brief Pulls successive backend pages until the continuation token is exhausted. */
 class ContinuationRecordBatchStream final : public IRecordBatchStream
 {
 public:

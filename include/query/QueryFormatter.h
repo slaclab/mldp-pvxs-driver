@@ -8,6 +8,8 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
+/** @file QueryFormatter.h
+ * @brief Declares query-result formatting for interactive and machine-readable output. */
 #pragma once
 
 #include <query/QueryCancellation.h>
@@ -23,6 +25,7 @@
 
 namespace mldp_pvxs_driver::cli {
 
+/** @brief Output encodings supported by the query formatter. */
 enum class QueryOutputFormat
 {
     Table,
@@ -31,6 +34,7 @@ enum class QueryOutputFormat
     Arrow
 };
 
+/** @brief Presentation options for tabular terminal output. */
 struct TableRenderOptions
 {
     std::optional<std::size_t> viewport_width{};

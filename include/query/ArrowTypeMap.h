@@ -15,6 +15,8 @@
 //    https://confluence.slac.stanford.edu/display/ppareg/LICENSE.html.
 //////////////////////////////////////////////////////////////////////////////
 
+/** @file ArrowTypeMap.h
+ * @brief Maps query column types to their Arrow representations. */
 #pragma once
 
 #include <query/IQueryable.h>
@@ -23,6 +25,9 @@
 
 namespace mldp_pvxs_driver::query {
 
+/** @brief Returns the Arrow type used to represent a logical query column type.
+ * @param[in] type Logical query type to map.
+ * @return Matching Arrow type, or null when the logical type has no scalar Arrow mapping. */
 inline std::shared_ptr<arrow::DataType> arrowType(ColumnType type)
 {
     switch (type)

@@ -8,6 +8,8 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
+/** @file ParallelSeriesRecordBatchStream.h
+ * @brief Executes independent MLDP series streams concurrently in pull order. */
 #pragma once
 
 #include <query/ExecutionContext.h>
@@ -25,6 +27,7 @@ namespace mldp_pvxs_driver::query::impl::mldp {
 class MLDPQueryClient;
 
 /** Pull stream that executes independent PV shards concurrently in order. */
+/** @brief Pulls MLDP series shards concurrently while emitting them in request order. */
 class ParallelSeriesRecordBatchStream final : public mldp_pvxs_driver::query::IRecordBatchStream
 {
 public:
@@ -39,12 +42,14 @@ public:
     std::shared_ptr<arrow::RecordBatch> next() override;
 
 private:
+    /** @brief Result of asynchronously pulling one series-shard batch. */
     struct PullResult
     {
         mldp_pvxs_driver::query::IRecordBatchStreamUPtr stream;
         std::shared_ptr<arrow::RecordBatch> batch;
     };
 
+    /** @brief State for one concurrently scheduled series shard. */
     struct Group
     {
         std::size_t index{0};

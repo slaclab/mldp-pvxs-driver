@@ -9,12 +9,15 @@
 //////////////////////////////////////////////////////////////////////////////
 
 
+/** @file MaterializedRecordBatchStream.h
+ * @brief Exposes an already materialized batch sequence through the stream interface. */
 #pragma once
 
 #include <query/executor/ExecutionState.h>
 
 namespace mldp_pvxs_driver::query::executor {
 
+/** @brief Iterates a fixed sequence of already materialized record batches. */
 class MaterializedRecordBatchStream final : public IRecordBatchStream
 {
 public:

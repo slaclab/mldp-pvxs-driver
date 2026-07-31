@@ -8,6 +8,8 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
+/** @file CorrelatedPushOptimizer.h
+ * @brief Declares correlated-predicate push optimization for physical plans. */
 #pragma once
 
 #include <query/plan/PhysicalPlan.h>

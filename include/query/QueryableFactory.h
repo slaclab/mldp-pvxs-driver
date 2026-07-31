@@ -8,6 +8,8 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
+/** @file QueryableFactory.h
+ * @brief Creates configured queryable implementations by registered table. */
 #pragma once
 #include <config/Config.h>
 #include <metrics/Metrics.h>
@@ -23,6 +25,7 @@
 
 namespace mldp_pvxs_driver::query {
 
+/** @brief Thread-safe registry of configured queryable implementation factories. */
 class QueryableFactory
 {
 public:

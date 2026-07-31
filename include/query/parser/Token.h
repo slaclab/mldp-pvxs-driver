@@ -8,6 +8,8 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
+/** @file Token.h
+ * @brief Defines lexical token kinds and source locations. */
 #pragma once
 
 #include <cstddef>
@@ -17,6 +19,7 @@
 
 namespace mldp_pvxs_driver::query {
 
+/** @brief Lexical token categories accepted by the SQL grammar. */
 enum class TokenType {
     END_OF_INPUT,
     IDENTIFIER,
@@ -79,18 +82,21 @@ enum class TokenType {
     GTE
 };
 
+/** @brief Zero-based byte offset and one-based line and column location. */
 struct TokenPosition {
     std::size_t offset{0};
     std::size_t line{1};
     std::size_t column{1};
 };
 
+/** @brief A classified source lexeme with its original location. */
 struct Token {
     TokenType     type{TokenType::END_OF_INPUT};
     std::string   lexeme;
     TokenPosition position;
 };
 
+/** @brief Reports a syntax error together with its source position. */
 class ParseError : public std::runtime_error
 {
 public:

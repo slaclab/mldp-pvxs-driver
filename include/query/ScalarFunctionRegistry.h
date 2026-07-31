@@ -9,6 +9,8 @@
 //////////////////////////////////////////////////////////////////////////////
 
 
+/** @file ScalarFunctionRegistry.h
+ * @brief Declares SQL scalar-function discovery and evaluation metadata. */
 #pragma once
 
 #include <query/ExpressionRegistry.h>
@@ -18,6 +20,7 @@
 
 namespace mldp_pvxs_driver::query {
 
+/** @brief Resolves scalar function signatures and evaluates planner-supported timestamp calls. */
 class ScalarFunctionRegistry
 {
 public:

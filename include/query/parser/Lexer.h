@@ -8,6 +8,8 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
+/** @file Lexer.h
+ * @brief Declares the SQL lexer wrapper used by the query parser. */
 #pragma once
 
 #include <query/parser/Token.h>
@@ -17,6 +19,7 @@
 
 namespace mldp_pvxs_driver::query {
 
+/** @brief Tokenizes SQL source text while retaining token positions. */
 class Lexer
 {
 public:

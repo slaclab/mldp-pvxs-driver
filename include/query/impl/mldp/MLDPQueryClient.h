@@ -8,6 +8,8 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
+/** @file MLDPQueryClient.h
+ * @brief Declares the MLDP data-query service implementation. */
 #pragma once
 
 #include <common.pb.h>

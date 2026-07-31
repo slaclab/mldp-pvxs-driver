@@ -8,6 +8,8 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
+/** @file TypeChecker.h
+ * @brief Declares semantic type checking for bound selections. */
 #pragma once
 
 #include <query/plan/LogicalPlan.h>

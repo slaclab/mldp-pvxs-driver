@@ -8,6 +8,8 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
+/** @file PlannerError.h
+ * @brief Defines structured bind, type, and planning errors. */
 #pragma once
 
 #include <stdexcept>
@@ -16,6 +18,7 @@
 
 namespace mldp_pvxs_driver::query::plan {
 
+/** @brief Error produced while resolving SQL names and schema constraints. */
 struct BindError {
     std::string message;
 
@@ -25,6 +28,7 @@ struct BindError {
     }
 };
 
+/** @brief Error produced while checking expression types. */
 struct TypeError {
     std::string message;
 
@@ -34,6 +38,7 @@ struct TypeError {
     }
 };
 
+/** @brief Error produced while constructing or validating a query plan. */
 struct PlanError {
     std::string message;
 
@@ -50,6 +55,7 @@ inline std::string plannerErrorWhat(const PlannerError& error)
     return std::visit([](const auto& e) { return e.what(); }, error);
 }
 
+/** @brief Exception wrapper that retains the structured planner error. */
 class PlannerException : public std::runtime_error
 {
 public:

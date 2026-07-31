@@ -8,6 +8,8 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
+/** @file PredicatePushdown.h
+ * @brief Declares predicate pushdown from logical filters into scans. */
 #pragma once
 
 #include <query/plan/LogicalPlan.h>

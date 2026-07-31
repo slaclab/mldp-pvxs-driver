@@ -15,6 +15,8 @@
 //    https://confluence.slac.stanford.edu/display/ppareg/LICENSE.html.
 //////////////////////////////////////////////////////////////////////////////
 
+/** @file SpillManager.h
+ * @brief Manages temporary Arrow IPC storage used by bounded query execution. */
 #pragma once
 
 #include <arrow/filesystem/filesystem.h>
@@ -30,6 +32,7 @@
 
 namespace mldp_pvxs_driver::query {
 
+/** @brief Identifies one Arrow IPC spill artifact owned by a spill manager. */
 struct SpillHandle {
     std::string                    path;
     std::shared_ptr<arrow::Schema> schema;
@@ -40,6 +43,7 @@ struct SpillHandle {
 class SpillManager;
 class SpillWriter;
 
+/** @brief Reads batches from an Arrow IPC spill artifact. */
 class SpillReader
 {
 public:
@@ -68,6 +72,7 @@ private:
     int                                                         next_batch_{0};
 };
 
+/** @brief Creates and tracks temporary Arrow IPC files for one query. */
 class SpillManager
 {
 public:
@@ -87,6 +92,7 @@ private:
 };
 
 /** Incrementally writes one-schema Arrow IPC spill data and cleans up on abandonment. */
+/** @brief Incrementally writes batches into one spill artifact. */
 class SpillWriter
 {
 public:

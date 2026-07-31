@@ -8,6 +8,8 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
+/** @file JoinOrderOptimizer.h
+ * @brief Declares logical join-order optimization. */
 #pragma once
 
 #include <query/plan/LogicalPlan.h>
