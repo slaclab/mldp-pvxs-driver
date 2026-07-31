@@ -138,14 +138,14 @@ std::shared_ptr<arrow::RecordBatch> WindowBackendScanRecordBatchStream::next()
         stats_->rows_from_backend += static_cast<uint64_t>(batch->num_rows());
         if (context_.progress)
             context_.progress->finishBackendRpc(static_cast<uint64_t>(batch->num_rows()));
-        if (!final_slice_)
-        {
-            const Predicate upper{.column = "time", .op = PredicateOp::LT, .values = {TimestampNsLiteral{slice_end_ns_}}};
-            auto            filtered = executor::applyFilter(batch, {upper});
-            if (!filtered.ok())
-                throw std::runtime_error(filtered.status().ToString());
-            batch = *filtered;
-        }
+        const Predicate lower{.column = "time", .op = PredicateOp::GTE, .values = {TimestampNsLiteral{group.begin_ns}}};
+        const Predicate upper{.column = "time",
+                              .op = group.final_slice ? PredicateOp::LTE : PredicateOp::LT,
+                              .values = {TimestampNsLiteral{group.end_ns}}};
+        auto            filtered = executor::applyFilter(batch, {lower, upper});
+        if (!filtered.ok())
+            throw std::runtime_error(filtered.status().ToString());
+        batch = *filtered;
         if (scan_.qualify_output)
             batch = executor::qualifyBatchColumns(batch, scan_.table_alias);
         if (context_.progress)
@@ -164,7 +164,7 @@ void WindowBackendScanRecordBatchStream::scheduleFirst(Group& group)
     {
         group.trace_entry_index = context_.shard_trace->begin(
             window_index_ + 1, group.slice_index, group.index, shardPvs(group.predicates),
-            slice_begin_ns_ / 1'000'000'000LL, slice_end_ns_ / 1'000'000'000LL);
+            group.begin_seconds, group.end_seconds);
     }
     const auto trace = context_.shard_trace;
     const auto trace_entry_index = group.trace_entry_index;
@@ -265,6 +265,11 @@ void WindowBackendScanRecordBatchStream::prepareNextSlice()
             groups_.push_back(Group{.index = offset / static_cast<std::size_t>(scan_.window_shards.series_per_shard) + 1,
                                     .slice_index = slice_index,
                                     .series_in_shard = static_cast<uint64_t>(end - offset),
+                                    .begin_seconds = slice_begin_ns_ / 1'000'000'000LL,
+                                    .end_seconds = slice_end_ns_ / 1'000'000'000LL,
+                                    .begin_ns = slice_begin_ns_,
+                                    .end_ns = slice_end_ns_,
+                                    .final_slice = final_slice_,
                                     .predicates = std::move(predicates)});
         }
         const auto capability = std::max<std::size_t>(1, queryable_->maxConcurrentStreams());

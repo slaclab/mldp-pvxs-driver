@@ -1795,18 +1795,30 @@ TEST(QuerySubcommandTest, ReplStreamsProductionWideWindowAcrossStaggeredMockResp
     char                 arg0[] = "query";
     char                 arg1[] = "--no-stats";
     const auto           shard_trace_file = std::filesystem::temp_directory_path() / "mldp-query-staggered-shard-trace.log";
+    const auto           spill_directory = std::filesystem::temp_directory_path() / "mldp-query-staggered-spill";
+    const auto           catalog_directory = std::filesystem::temp_directory_path() / "mldp-query-staggered-catalog";
     std::filesystem::remove(shard_trace_file);
+    std::filesystem::remove_all(spill_directory);
+    std::filesystem::remove_all(catalog_directory);
     char              arg2[] = "--trace-shards-file";
     const auto        shard_trace_file_text = shard_trace_file.string();
     std::vector<char> arg3(shard_trace_file_text.begin(), shard_trace_file_text.end());
     arg3.push_back('\0');
-    char*              argv[] = {arg0, arg1, arg2, arg3.data()};
+    char              arg4[] = "--spill-dir";
+    const auto        spill_directory_text = spill_directory.string();
+    std::vector<char> arg5(spill_directory_text.begin(), spill_directory_text.end());
+    arg5.push_back('\0');
+    char              arg6[] = "--table-catalog-dir";
+    const auto        catalog_directory_text = catalog_directory.string();
+    std::vector<char> arg7(catalog_directory_text.begin(), catalog_directory_text.end());
+    arg7.push_back('\0');
+    char*              argv[] = {arg0, arg1, arg2, arg3.data(), arg4, arg5.data(), arg6, arg7.data()};
     std::istringstream input(
         ".format json\n" "SELECT * FROM mldp.time_series_table " "WHERE pv IN (SELECT pv FROM mldp.pv_metadata WHERE attributes.dname PREFIX 'USEG:UNDH') " "AND window IN (SELECT time, time + 5s FROM mldp.configuration_activation " "WHERE activation_id = 'delayed-wide-window'; slice 5s, series_per_shard 2);\n" ".quit\n");
     std::ostringstream output;
     std::ostringstream error;
 
-    ASSERT_EQ(query_subcommand.run(4, argv, {}, input, output, error), 0) << error.str();
+    ASSERT_EQ(query_subcommand.run(8, argv, {}, input, output, error), 0) << error.str();
 
     std::vector<std::vector<std::string>> requests;
     uint64_t                              peak_active_streams = 0;
@@ -1853,6 +1865,8 @@ TEST(QuerySubcommandTest, ReplStreamsProductionWideWindowAcrossStaggeredMockResp
     }
     query::QueryableFactory::instance().reset();
     std::filesystem::remove(shard_trace_file);
+    std::filesystem::remove_all(spill_directory);
+    std::filesystem::remove_all(catalog_directory);
 }
 
 TEST(QuerySubcommandTest, ReplClearAndUnknownCommandKeepSessionUsable)

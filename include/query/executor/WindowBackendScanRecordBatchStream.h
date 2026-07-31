@@ -48,6 +48,11 @@ private:
         std::size_t             index{0};
         uint64_t                slice_index{0};
         uint64_t                series_in_shard{0};
+        int64_t                 begin_seconds{0};
+        int64_t                 end_seconds{0};
+        int64_t                 begin_ns{0};
+        int64_t                 end_ns{0};
+        bool                    final_slice{false};
         std::vector<Predicate>  predicates;
         std::size_t             trace_entry_index{0};
         IRecordBatchStreamUPtr  stream;

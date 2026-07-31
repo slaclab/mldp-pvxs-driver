@@ -334,6 +334,10 @@ mldp_pvxs_driver -c query-config.yaml query --trace-shards-file shard-trace.log 
   "SELECT * FROM mldp.time_series_table WHERE pv IN (...) AND window IN (...; slice 5s, series_per_shard 2)"
 ```
 
+For a production-shaped wide-window investigation under GDB, use `scripts/show-arrow-table.sh`. It defaults to `build/bin/mldp_pvxs_driver`, `test-query.sql`, `host.docker.internal:50052`, a four-connection query pool, and writes `spear-user-wide-window-trace.log`. Override a default with environment variables such as `MLDP_QUERY_URL`, `MLDP_ANNOTATION_URL`, `MLDP_QUERY_MAX_CONN`, `MLDP_WIDE_WINDOW_QUERY_FILE`, or `MLDP_WIDE_WINDOW_TRACE_FILE`.
+
+To inspect an Arrow IPC spill file with pandas, run `python3 scripts/show-arrow-table.py <file-name>`. Add `--all` to inspect every `.arrow` file below a directory. The helper needs `pandas` and `pyarrow` in that Python environment.
+
 Override just the query URL when running against a different host:
 
 ```bash

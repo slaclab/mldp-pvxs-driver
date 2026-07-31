@@ -73,7 +73,7 @@ std::vector<ColumnSchema> MLDPQueryClient::tableSchema(std::string_view table_na
 {
     if (table_name == "mldp.time_series" || table_name == "mldp.time_series_table")
     {
-        const bool wide_table = table_name == "mldp.time_series_table";
+        const bool                wide_table = table_name == "mldp.time_series_table";
         std::vector<ColumnSchema> schema = {
             {"pv", ColumnType::STRING, true, !wide_table, {PredicateOp::EQ, PredicateOp::IN}, {}, "Source name"},
             {"time", ColumnType::TIMESTAMP, false, true, {PredicateOp::GTE, PredicateOp::LTE}, {}, "Sample timestamp"},
@@ -120,7 +120,7 @@ void setTimestamp(dp::service::common::Timestamp* target, int64_t seconds)
 std::vector<std::string> requestedPvs(const std::vector<Predicate>& predicates)
 {
     std::vector<std::string> names;
-    std::set<std::string> seen;
+    std::set<std::string>    seen;
     for (const auto& predicate : predicates)
     {
         if (predicate.column != "pv" || (predicate.op != PredicateOp::EQ && predicate.op != PredicateOp::IN))
@@ -203,7 +203,7 @@ bool matchesStringPredicate(const Predicate& predicate, const std::string_view v
 }
 
 bool matchesColumnPredicates(const dp::service::common::DataColumn& column,
-                             const std::vector<Predicate>&           predicates)
+                             const std::vector<Predicate>&          predicates)
 {
     for (const auto& predicate : predicates)
     {
@@ -230,7 +230,7 @@ bool matchesColumnPredicates(const dp::service::common::DataColumn& column,
         else if (predicate.column.rfind("attributes.", 0) == 0)
         {
             const auto key = predicate.column.substr(std::string("attributes.").size());
-            bool matched = false;
+            bool       matched = false;
             for (const auto& attribute : column.metadata().attributes())
             {
                 if (attribute.name() == key && matchesStringPredicate(predicate, attribute.value()))
@@ -244,9 +244,10 @@ bool matchesColumnPredicates(const dp::service::common::DataColumn& column,
         }
         else if (predicate.column.rfind("provenance.", 0) == 0)
         {
-            const auto key = predicate.column.substr(std::string("provenance.").size());
-            const auto& provenance = column.metadata().provenance();
-            const std::string value = key == "source" ? provenance.source() : key == "process" ? provenance.process() : "";
+            const auto        key = predicate.column.substr(std::string("provenance.").size());
+            const auto&       provenance = column.metadata().provenance();
+            const std::string value = key == "source" ? provenance.source() : key == "process" ? provenance.process()
+                                                                                               : "";
             if (value.empty() || !matchesStringPredicate(predicate, value))
                 return false;
         }
@@ -285,21 +286,52 @@ void appendNativeValue(arrow::ArrayBuilder& builder, const dp::service::common::
     };
     if (value.value_case() == dp::service::common::DataValue::VALUE_NOT_SET)
     {
-        if (!builder.AppendNull().ok()) throw std::runtime_error("Failed to append null MLDP data value");
+        if (!builder.AppendNull().ok())
+            throw std::runtime_error("Failed to append null MLDP data value");
         return;
     }
     switch (value.value_case())
     {
-    case dp::service::common::DataValue::kStringValue: if (!dynamic_cast<arrow::StringBuilder&>(builder).Append(value.stringvalue()).ok()) throw std::runtime_error("Failed to append string"); break;
-    case dp::service::common::DataValue::kBooleanValue: if (!dynamic_cast<arrow::BooleanBuilder&>(builder).Append(value.booleanvalue()).ok()) throw std::runtime_error("Failed to append bool"); break;
-    case dp::service::common::DataValue::kUintValue: if (!dynamic_cast<arrow::UInt32Builder&>(builder).Append(value.uintvalue()).ok()) throw std::runtime_error("Failed to append uint32"); break;
-    case dp::service::common::DataValue::kUlongValue: if (!dynamic_cast<arrow::UInt64Builder&>(builder).Append(value.ulongvalue()).ok()) throw std::runtime_error("Failed to append uint64"); break;
-    case dp::service::common::DataValue::kIntValue: if (!dynamic_cast<arrow::Int32Builder&>(builder).Append(value.intvalue()).ok()) throw std::runtime_error("Failed to append int32"); break;
-    case dp::service::common::DataValue::kLongValue: if (!dynamic_cast<arrow::Int64Builder&>(builder).Append(value.longvalue()).ok()) throw std::runtime_error("Failed to append int64"); break;
-    case dp::service::common::DataValue::kFloatValue: if (!dynamic_cast<arrow::FloatBuilder&>(builder).Append(value.floatvalue()).ok()) throw std::runtime_error("Failed to append float"); break;
-    case dp::service::common::DataValue::kDoubleValue: if (!dynamic_cast<arrow::DoubleBuilder&>(builder).Append(value.doublevalue()).ok()) throw std::runtime_error("Failed to append double"); break;
-    case dp::service::common::DataValue::kByteArrayValue: if (!dynamic_cast<arrow::BinaryBuilder&>(builder).Append(value.bytearrayvalue()).ok()) throw std::runtime_error("Failed to append binary"); break;
-    case dp::service::common::DataValue::kTimestampValue: if (!dynamic_cast<arrow::TimestampBuilder&>(builder).Append(timestampToNanoseconds(value.timestampvalue())).ok()) throw std::runtime_error("Failed to append timestamp"); break;
+    case dp::service::common::DataValue::kStringValue:
+        if (!dynamic_cast<arrow::StringBuilder&>(builder).Append(value.stringvalue()).ok())
+            throw std::runtime_error("Failed to append string");
+        break;
+    case dp::service::common::DataValue::kBooleanValue:
+        if (!dynamic_cast<arrow::BooleanBuilder&>(builder).Append(value.booleanvalue()).ok())
+            throw std::runtime_error("Failed to append bool");
+        break;
+    case dp::service::common::DataValue::kUintValue:
+        if (!dynamic_cast<arrow::UInt32Builder&>(builder).Append(value.uintvalue()).ok())
+            throw std::runtime_error("Failed to append uint32");
+        break;
+    case dp::service::common::DataValue::kUlongValue:
+        if (!dynamic_cast<arrow::UInt64Builder&>(builder).Append(value.ulongvalue()).ok())
+            throw std::runtime_error("Failed to append uint64");
+        break;
+    case dp::service::common::DataValue::kIntValue:
+        if (!dynamic_cast<arrow::Int32Builder&>(builder).Append(value.intvalue()).ok())
+            throw std::runtime_error("Failed to append int32");
+        break;
+    case dp::service::common::DataValue::kLongValue:
+        if (!dynamic_cast<arrow::Int64Builder&>(builder).Append(value.longvalue()).ok())
+            throw std::runtime_error("Failed to append int64");
+        break;
+    case dp::service::common::DataValue::kFloatValue:
+        if (!dynamic_cast<arrow::FloatBuilder&>(builder).Append(value.floatvalue()).ok())
+            throw std::runtime_error("Failed to append float");
+        break;
+    case dp::service::common::DataValue::kDoubleValue:
+        if (!dynamic_cast<arrow::DoubleBuilder&>(builder).Append(value.doublevalue()).ok())
+            throw std::runtime_error("Failed to append double");
+        break;
+    case dp::service::common::DataValue::kByteArrayValue:
+        if (!dynamic_cast<arrow::BinaryBuilder&>(builder).Append(value.bytearrayvalue()).ok())
+            throw std::runtime_error("Failed to append binary");
+        break;
+    case dp::service::common::DataValue::kTimestampValue:
+        if (!dynamic_cast<arrow::TimestampBuilder&>(builder).Append(timestampToNanoseconds(value.timestampvalue())).ok())
+            throw std::runtime_error("Failed to append timestamp");
+        break;
     case dp::service::common::DataValue::kArrayValue: append_serialized(dynamic_cast<arrow::BinaryBuilder&>(builder), value.arrayvalue()); break;
     case dp::service::common::DataValue::kStructureValue: append_serialized(dynamic_cast<arrow::BinaryBuilder&>(builder), value.structurevalue()); break;
     case dp::service::common::DataValue::kImageValue: append_serialized(dynamic_cast<arrow::BinaryBuilder&>(builder), value.imagevalue()); break;
@@ -371,7 +403,7 @@ std::set<std::string> requestedDynamicMetadataKeys(const std::set<std::string>& 
 
 void addRequestedDynamicMetadataKeys(std::set<std::string>&       keys,
                                      const std::set<std::string>& projection_hint,
-                                     const std::string_view        prefix)
+                                     const std::string_view       prefix)
 {
     const auto requested = requestedDynamicMetadataKeys(projection_hint, prefix);
     keys.insert(requested.begin(), requested.end());
@@ -692,7 +724,7 @@ std::vector<int64_t> bucketTimestamps(const dp::service::common::DataBucket& buc
     if (!bucket.has_datatimestamps())
         throw std::runtime_error("MLDP queryDataBidiStream bucket has no timestamps");
     std::vector<int64_t> timestamps;
-    const auto& source = bucket.datatimestamps();
+    const auto&          source = bucket.datatimestamps();
     if (source.has_timestamplist())
     {
         timestamps.reserve(source.timestamplist().timestamps_size());
@@ -718,13 +750,16 @@ class MldpBidiRecordBatchStream final : public IRecordBatchStream
 {
 public:
     MldpBidiRecordBatchStream(mldp_pvxs_driver::util::pool::PooledHandle<mldp_pvxs_driver::util::pool::MLDPGrpcObject> handle,
-                              dp::service::query::QueryDataRequest request,
-                              const std::set<std::string>& projection_hint,
-                              const ExecutionContext& context)
-        : handle_(std::move(handle)), context_(context), projection_hint_(projection_hint), rpc_context_(std::make_unique<grpc::ClientContext>())
+                              dp::service::query::QueryDataRequest                                                     request,
+                              const std::set<std::string>&                                                             projection_hint,
+                              ExecutionContext                                                                         context)
+        : handle_(std::move(handle)), context_(std::move(context)), projection_hint_(projection_hint), rpc_context_(std::make_shared<grpc::ClientContext>())
     {
         if (context_.cancellation)
-            cancellation_registration_ = context_.cancellation->onCancel([this] { rpc_context_->TryCancel(); });
+            cancellation_registration_ = context_.cancellation->onCancel([rpc_context = rpc_context_]
+                                                                         {
+                                                                             rpc_context->TryCancel();
+                                                                         });
         stream_ = handle_->query_stub->queryDataBidiStream(rpc_context_.get());
         if (!stream_->Write(request))
             throw std::runtime_error("MLDP queryDataBidiStream failed to send initial QuerySpec");
@@ -742,8 +777,10 @@ public:
 
     std::shared_ptr<arrow::RecordBatch> next() override
     {
-        if (finished_) return nullptr;
-        if (context_.cancellation) context_.cancellation->throwIfCancelled();
+        if (finished_)
+            return nullptr;
+        if (context_.cancellation)
+            context_.cancellation->throwIfCancelled();
         if (request_next_)
         {
             if (context_.progress)
@@ -762,7 +799,8 @@ public:
                 stream_->WritesDone();
                 const auto status = stream_->Finish();
                 finished_ = true;
-                if (context_.cancellation && context_.cancellation->cancelled()) throw QueryCancelled{};
+                if (context_.cancellation && context_.cancellation->cancelled())
+                    throw QueryCancelled{};
                 if (!status.ok())
                     throw std::runtime_error("MLDP queryDataBidiStream cursor-next failed (gRPC status " +
                                              std::to_string(static_cast<int>(status.error_code())) + "): " + status.error_message());
@@ -775,37 +813,48 @@ public:
             stream_->WritesDone();
             const auto status = stream_->Finish();
             finished_ = true;
-            if (context_.cancellation && context_.cancellation->cancelled()) throw QueryCancelled{};
+            if (context_.cancellation && context_.cancellation->cancelled())
+                throw QueryCancelled{};
             if (!status.ok())
                 throw std::runtime_error("MLDP queryDataBidiStream read failed (gRPC status " +
                                          std::to_string(static_cast<int>(status.error_code())) + "): " + status.error_message());
             return nullptr;
         }
         request_next_ = true;
-        if (context_.progress) context_.progress->setActivity("mldp.time_series", "MLDP bidi cursor", "cursor response");
+        if (context_.progress)
+            context_.progress->setActivity("mldp.time_series", "MLDP bidi cursor", "cursor response");
         if (response.has_exceptionalresult())
             throw std::runtime_error("MLDP queryDataBidiStream failed: " + response.exceptionalresult().message());
         if (!response.has_querydata())
             throw std::runtime_error("MLDP queryDataBidiStream returned neither data nor an error");
         auto batch = makeBatch(response);
-        if (context_.progress) context_.progress->cursorResponse(static_cast<uint64_t>(batch->num_rows()));
+        if (context_.progress)
+            context_.progress->cursorResponse(static_cast<uint64_t>(batch->num_rows()));
         return batch;
     }
 
 private:
     std::shared_ptr<arrow::RecordBatch> makeBatch(const dp::service::query::QueryDataResponse& response) const
     {
-        struct Row { std::string pv; int64_t timestamp; dp::service::common::DataValue value; dp::service::common::ColumnMetadata metadata; };
+        struct Row
+        {
+            std::string                         pv;
+            int64_t                             timestamp;
+            dp::service::common::DataValue      value;
+            dp::service::common::ColumnMetadata metadata;
+        };
+
         std::vector<Row> rows;
         for (const auto& bucket : response.querydata().databuckets())
         {
-            if (bucket.pvname().empty()) throw std::runtime_error("MLDP queryDataBidiStream bucket has no PV name");
+            if (bucket.pvname().empty())
+                throw std::runtime_error("MLDP queryDataBidiStream bucket has no PV name");
             const auto timestamps = bucketTimestamps(bucket);
             if (!bucket.has_datavalues())
                 throw std::runtime_error("MLDP queryDataBidiStream bucket has no values");
-            const auto& values = bucket.datavalues();
+            const auto&                                 values = bucket.datavalues();
             std::vector<dp::service::common::DataValue> decoded;
-            dp::service::common::ColumnMetadata metadata;
+            dp::service::common::ColumnMetadata         metadata;
             if (values.has_datacolumn())
             {
                 const auto& column = values.datacolumn();
@@ -817,37 +866,44 @@ private:
                 if (values.has_int64column())
                 {
                     decoded.reserve(static_cast<std::size_t>(values.int64column().values_size()));
-                    for (const auto value : values.int64column().values()) decoded.emplace_back().set_longvalue(value);
+                    for (const auto value : values.int64column().values())
+                        decoded.emplace_back().set_longvalue(value);
                 }
                 else if (values.has_int32column())
                 {
                     decoded.reserve(static_cast<std::size_t>(values.int32column().values_size()));
-                    for (const auto value : values.int32column().values()) decoded.emplace_back().set_intvalue(value);
+                    for (const auto value : values.int32column().values())
+                        decoded.emplace_back().set_intvalue(value);
                 }
                 else if (values.has_doublecolumn())
                 {
                     decoded.reserve(static_cast<std::size_t>(values.doublecolumn().values_size()));
-                    for (const auto value : values.doublecolumn().values()) decoded.emplace_back().set_doublevalue(value);
+                    for (const auto value : values.doublecolumn().values())
+                        decoded.emplace_back().set_doublevalue(value);
                 }
                 else if (values.has_floatcolumn())
                 {
                     decoded.reserve(static_cast<std::size_t>(values.floatcolumn().values_size()));
-                    for (const auto value : values.floatcolumn().values()) decoded.emplace_back().set_floatvalue(value);
+                    for (const auto value : values.floatcolumn().values())
+                        decoded.emplace_back().set_floatvalue(value);
                 }
                 else if (values.has_boolcolumn())
                 {
                     decoded.reserve(static_cast<std::size_t>(values.boolcolumn().values_size()));
-                    for (const auto value : values.boolcolumn().values()) decoded.emplace_back().set_booleanvalue(value);
+                    for (const auto value : values.boolcolumn().values())
+                        decoded.emplace_back().set_booleanvalue(value);
                 }
                 else if (values.has_stringcolumn())
                 {
                     decoded.reserve(static_cast<std::size_t>(values.stringcolumn().values_size()));
-                    for (const auto& value : values.stringcolumn().values()) decoded.emplace_back().set_stringvalue(value);
+                    for (const auto& value : values.stringcolumn().values())
+                        decoded.emplace_back().set_stringvalue(value);
                 }
                 else if (values.has_enumcolumn())
                 {
                     decoded.reserve(static_cast<std::size_t>(values.enumcolumn().values_size()));
-                    for (const auto value : values.enumcolumn().values()) decoded.emplace_back().set_intvalue(value);
+                    for (const auto value : values.enumcolumn().values())
+                        decoded.emplace_back().set_intvalue(value);
                 }
                 else
                 {
@@ -859,14 +915,15 @@ private:
             for (std::size_t index = 0; index < decoded.size(); ++index)
                 rows.push_back({bucket.pvname(), timestamps[index], std::move(decoded[index]), metadata});
         }
-        auto* pool = context_.pool != nullptr ? context_.pool : arrow::default_memory_pool();
-        arrow::StringBuilder pv_builder(pool);
-        arrow::TimestampBuilder time_builder(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), pool);
-        DataValueBuilder value_builder(pool);
-        arrow::StringBuilder type_builder(pool);
+        auto*                                            pool = context_.pool != nullptr ? context_.pool : arrow::default_memory_pool();
+        arrow::StringBuilder                             pv_builder(pool);
+        arrow::TimestampBuilder                          time_builder(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), pool);
+        DataValueBuilder                                 value_builder(pool);
+        arrow::StringBuilder                             type_builder(pool);
         std::vector<dp::service::common::ColumnMetadata> metadata_values;
         metadata_values.reserve(rows.size());
-        for (const auto& row : rows) metadata_values.push_back(row.metadata);
+        for (const auto& row : rows)
+            metadata_values.push_back(row.metadata);
         auto attribute_keys = attributeKeys(metadata_values);
         auto provenance_keys = provenanceKeys(metadata_values);
         addRequestedDynamicMetadataKeys(attribute_keys, projection_hint_, "attributes.");
@@ -882,30 +939,30 @@ private:
         std::shared_ptr<arrow::Array> pv, time, type;
         if (!pv_builder.Finish(&pv).ok() || !time_builder.Finish(&time).ok() || !type_builder.Finish(&type).ok())
             throw std::runtime_error("Failed to finish Arrow queryDataBidiStream batch");
-        const auto value = value_builder.finish();
+        const auto                                 value = value_builder.finish();
         std::vector<std::shared_ptr<arrow::Field>> fields = {arrow::field("pv", pv->type()), arrow::field("time", time->type()), arrow::field("value", value->type()), arrow::field("column_type", type->type())};
         std::vector<std::shared_ptr<arrow::Array>> arrays = {pv, time, value, type};
         metadata.finish(fields, arrays);
         return arrow::RecordBatch::Make(arrow::schema(std::move(fields)), pv->length(), std::move(arrays));
     }
 
-    mldp_pvxs_driver::util::pool::PooledHandle<mldp_pvxs_driver::util::pool::MLDPGrpcObject> handle_;
-    const ExecutionContext& context_;
-    std::set<std::string> projection_hint_;
-    std::unique_ptr<grpc::ClientContext> rpc_context_;
+    mldp_pvxs_driver::util::pool::PooledHandle<mldp_pvxs_driver::util::pool::MLDPGrpcObject>                               handle_;
+    ExecutionContext                                                                                                       context_;
+    std::set<std::string>                                                                                                  projection_hint_;
+    std::shared_ptr<grpc::ClientContext>                                                                                   rpc_context_;
     std::unique_ptr<grpc::ClientReaderWriter<dp::service::query::QueryDataRequest, dp::service::query::QueryDataResponse>> stream_;
-    QueryCancellation::Registration cancellation_registration_;
-    bool request_next_{false};
-    bool finished_{false};
+    QueryCancellation::Registration                                                                                        cancellation_registration_;
+    bool                                                                                                                   request_next_{false};
+    bool                                                                                                                   finished_{false};
 };
 
 } // namespace
 
-IRecordBatchStreamUPtr MLDPQueryClient::executeStream(const std::string_view table_name,
-                                                       const std::vector<Predicate>& pushable_predicates,
-                                                       const std::set<std::string>& projection_hint,
-                                                       const ExecutionContext& context,
-                                                       const std::string_view page_token)
+IRecordBatchStreamUPtr MLDPQueryClient::executeStream(const std::string_view        table_name,
+                                                      const std::vector<Predicate>& pushable_predicates,
+                                                      const std::set<std::string>&  projection_hint,
+                                                      const ExecutionContext&       context,
+                                                      const std::string_view        page_token)
 {
     if (table_name != kTimeSeriesTable)
         return IQueryable::executeStream(table_name, pushable_predicates, projection_hint, context, page_token);
@@ -914,21 +971,22 @@ IRecordBatchStreamUPtr MLDPQueryClient::executeStream(const std::string_view tab
     const auto pvs = requestedPvs(pushable_predicates);
     if (context.series_per_shard != 0 && pvs.size() > context.series_per_shard)
         return std::make_unique<ParallelSeriesRecordBatchStream>(*this, std::string(table_name), pushable_predicates,
-                                                                  projection_hint, context, pvs);
+                                                                 projection_hint, context, pvs);
     const auto [begin, end] = requestedTimeRange(pushable_predicates);
     dp::service::query::QueryDataRequest request;
-    auto* spec = request.mutable_queryspec();
+    auto*                                spec = request.mutable_queryspec();
     setTimestamp(spec->mutable_begintime(), begin);
     setTimestamp(spec->mutable_endtime(), end);
-    for (const auto& pv : pvs) spec->add_pvnames(pv);
+    for (const auto& pv : pvs)
+        spec->add_pvnames(pv);
     return std::make_unique<MldpBidiRecordBatchStream>(pool_->acquire(), std::move(request), projection_hint, context);
 }
 
 QueryResult MLDPQueryClient::execute(std::string_view              table_name,
                                      const std::vector<Predicate>& pushable_predicates,
                                      const std::set<std::string>&  projection_hint,
-                                     const ExecutionContext& context,
-                                     std::string_view        page_token)
+                                     const ExecutionContext&       context,
+                                     std::string_view              page_token)
 {
     if (table_name != kTimeSeriesTable && table_name != kTimeSeriesWideTable && table_name != kPvStatsTable)
         throw std::invalid_argument("MLDPQueryClient: unknown virtual table '" + std::string(table_name) +
@@ -940,12 +998,17 @@ QueryResult MLDPQueryClient::execute(std::string_view              table_name,
         const auto shard_size = static_cast<std::size_t>(context.series_per_shard);
         const auto capability_limit = std::max<std::size_t>(1, maxConcurrentStreams());
         const auto parallel_limit = context.max_parallel_requests == 0
-            ? capability_limit
-            : std::min<std::size_t>(capability_limit, context.max_parallel_requests);
-        struct WideShard { std::shared_ptr<arrow::RecordBatch> batch; };
-        const auto shard_count = (pvs.size() + shard_size - 1) / shard_size;
+                                        ? capability_limit
+                                        : std::min<std::size_t>(capability_limit, context.max_parallel_requests);
+
+        struct WideShard
+        {
+            std::shared_ptr<arrow::RecordBatch> batch;
+        };
+
+        const auto                          shard_count = (pvs.size() + shard_size - 1) / shard_size;
         std::vector<std::future<WideShard>> futures;
-        std::vector<WideShard> shards;
+        std::vector<WideShard>              shards;
         futures.reserve(shard_count);
         if (context.progress)
         {
@@ -953,13 +1016,17 @@ QueryResult MLDPQueryClient::execute(std::string_view              table_name,
             context.progress->setParallelShards(static_cast<uint64_t>(std::min(parallel_limit, shard_count)),
                                                 static_cast<uint64_t>(std::min(parallel_limit, shard_count)));
         }
-        auto run_shard = [this, &context, &pushable_predicates, &projection_hint, &pvs](const std::size_t begin, const std::size_t end) {
+        auto run_shard = [this, &context, &pushable_predicates, &projection_hint, &pvs](const std::size_t begin, const std::size_t end)
+        {
             auto predicates = pushable_predicates;
-            predicates.erase(std::remove_if(predicates.begin(), predicates.end(), [](const Predicate& predicate) {
-                return predicate.column == "pv";
-            }), predicates.end());
+            predicates.erase(std::remove_if(predicates.begin(), predicates.end(), [](const Predicate& predicate)
+                                            {
+                                                return predicate.column == "pv";
+                                            }),
+                             predicates.end());
             std::vector<ExecutableLiteralValue> shard_pvs;
-            for (std::size_t index = begin; index < end; ++index) shard_pvs.emplace_back(pvs[index]);
+            for (std::size_t index = begin; index < end; ++index)
+                shard_pvs.emplace_back(pvs[index]);
             predicates.push_back(Predicate{.column = "pv", .op = PredicateOp::IN, .values = std::move(shard_pvs)});
             auto shard_context = context;
             shard_context.series_per_shard = 0;
@@ -974,43 +1041,63 @@ QueryResult MLDPQueryClient::execute(std::string_view              table_name,
             {
                 try
                 {
-                    for (auto& future : futures) shards.push_back(future.get());
+                    for (auto& future : futures)
+                        shards.push_back(future.get());
                 }
                 catch (...)
                 {
-                    if (context.cancellation) context.cancellation->requestCancel();
-                    for (auto& future : futures) if (future.valid()) { try { future.get(); } catch (...) {} }
+                    if (context.cancellation)
+                        context.cancellation->requestCancel();
+                    for (auto& future : futures)
+                        if (future.valid())
+                        {
+                            try
+                            {
+                                future.get();
+                            }
+                            catch (...)
+                            {
+                            }
+                        }
                     throw;
                 }
                 futures.clear();
             }
         }
-        if (context.progress) context.progress->setParallelShards(0, static_cast<uint64_t>(std::min(parallel_limit, shard_count)));
+        if (context.progress)
+            context.progress->setParallelShards(0, static_cast<uint64_t>(std::min(parallel_limit, shard_count)));
 
-        std::set<int64_t> all_timestamps;
-        std::unordered_map<std::string, std::shared_ptr<arrow::Array>> values;
+        std::set<int64_t>                                                     all_timestamps;
+        std::unordered_map<std::string, std::shared_ptr<arrow::Array>>        values;
         std::unordered_map<std::string, std::unordered_map<int64_t, int64_t>> value_rows;
         for (const auto& shard : shards)
         {
-            if (!shard.batch) continue;
+            if (!shard.batch)
+                continue;
             const auto times = std::dynamic_pointer_cast<arrow::TimestampArray>(shard.batch->GetColumnByName("time"));
-            if (!times) throw std::runtime_error("MLDP time_series_table shard has no timestamp column");
-            for (int64_t row = 0; row < times->length(); ++row) all_timestamps.insert(times->Value(row));
+            if (!times)
+                throw std::runtime_error("MLDP time_series_table shard has no timestamp column");
+            for (int64_t row = 0; row < times->length(); ++row)
+                all_timestamps.insert(times->Value(row));
             for (int column = 1; column < shard.batch->num_columns(); ++column)
             {
                 const auto& name = shard.batch->schema()->field(column)->name();
                 values.emplace(name, shard.batch->column(column));
                 auto& rows = value_rows[name];
-                for (int64_t row = 0; row < times->length(); ++row) rows.emplace(times->Value(row), row);
+                for (int64_t row = 0; row < times->length(); ++row)
+                    rows.emplace(times->Value(row), row);
             }
         }
-        if (all_timestamps.empty()) return {.batch = nullptr, .next_page_token = ""};
-        auto* pool = context.pool != nullptr ? context.pool : arrow::default_memory_pool();
+        if (all_timestamps.empty())
+            return {.batch = nullptr, .next_page_token = ""};
+        auto*                   pool = context.pool != nullptr ? context.pool : arrow::default_memory_pool();
         arrow::TimestampBuilder time_builder(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), pool);
         for (const auto timestamp : all_timestamps)
-            if (!time_builder.Append(timestamp).ok()) throw std::runtime_error("Failed to append merged MLDP timestamp");
+            if (!time_builder.Append(timestamp).ok())
+                throw std::runtime_error("Failed to append merged MLDP timestamp");
         std::shared_ptr<arrow::Array> time;
-        if (!time_builder.Finish(&time).ok()) throw std::runtime_error("Failed to finish merged MLDP timestamp column");
+        if (!time_builder.Finish(&time).ok())
+            throw std::runtime_error("Failed to finish merged MLDP timestamp column");
         std::vector<std::shared_ptr<arrow::Field>> fields = {arrow::field("time", time->type())};
         std::vector<std::shared_ptr<arrow::Array>> arrays = {time};
         for (const auto& pv : pvs)
@@ -1020,22 +1107,26 @@ QueryResult MLDPQueryClient::execute(std::string_view              table_name,
             {
                 arrow::NullBuilder builder(pool);
                 for (std::size_t index = 0; index < all_timestamps.size(); ++index)
-                    if (!builder.AppendNull().ok()) throw std::runtime_error("Failed to append merged MLDP null column");
+                    if (!builder.AppendNull().ok())
+                        throw std::runtime_error("Failed to append merged MLDP null column");
                 std::shared_ptr<arrow::Array> array;
-                if (!builder.Finish(&array).ok()) throw std::runtime_error("Failed to finish merged MLDP null column");
+                if (!builder.Finish(&array).ok())
+                    throw std::runtime_error("Failed to finish merged MLDP null column");
                 fields.push_back(arrow::field(pv, array->type(), true));
                 arrays.push_back(std::move(array));
                 continue;
             }
             std::unique_ptr<arrow::ArrayBuilder> builder;
-            const auto status = arrow::MakeBuilder(pool, source->second->type(), &builder);
-            if (!status.ok()) throw std::runtime_error(status.ToString());
+            const auto                           status = arrow::MakeBuilder(pool, source->second->type(), &builder);
+            if (!status.ok())
+                throw std::runtime_error(status.ToString());
             for (const auto timestamp : all_timestamps)
             {
                 const auto row = value_rows[pv].find(timestamp);
                 if (row == value_rows[pv].end())
                 {
-                    if (!builder->AppendNull().ok()) throw std::runtime_error("Failed to append merged MLDP null");
+                    if (!builder->AppendNull().ok())
+                        throw std::runtime_error("Failed to append merged MLDP null");
                 }
                 else
                 {
@@ -1045,7 +1136,8 @@ QueryResult MLDPQueryClient::execute(std::string_view              table_name,
                 }
             }
             std::shared_ptr<arrow::Array> array;
-            if (!builder->Finish(&array).ok()) throw std::runtime_error("Failed to finish merged MLDP value column");
+            if (!builder->Finish(&array).ok())
+                throw std::runtime_error("Failed to finish merged MLDP value column");
             fields.push_back(arrow::field(pv, array->type(), true));
             arrays.push_back(std::move(array));
         }
@@ -1053,7 +1145,8 @@ QueryResult MLDPQueryClient::execute(std::string_view              table_name,
     }
     if (table_name == kPvStatsTable)
     {
-        if (context.cancellation) context.cancellation->throwIfCancelled();
+        if (context.cancellation)
+            context.cancellation->throwIfCancelled();
         std::size_t offset = 0;
         if (!page_token.empty())
         {
@@ -1072,19 +1165,24 @@ QueryResult MLDPQueryClient::execute(std::string_view              table_name,
         if (offset > pvs.size())
             throw std::invalid_argument("MLDP pv_stats continuation token is out of range");
 
-        const auto                              page_size = context.join_batch_size == 0 ? pvs.size() : context.join_batch_size;
-        const auto                              end = std::min(pvs.size(), offset + page_size);
-        const auto                              request_count = end - offset;
-        const auto                              shard_size = context.series_per_shard == 0
-            ? request_count
-            : std::min<std::size_t>(request_count, static_cast<std::size_t>(context.series_per_shard));
-        const auto                              capability_limit = std::max<std::size_t>(1, maxConcurrentStreams());
-        const auto                              parallel_limit = context.max_parallel_requests == 0
-            ? capability_limit
-            : std::min<std::size_t>(capability_limit, context.max_parallel_requests);
+        const auto page_size = context.join_batch_size == 0 ? pvs.size() : context.join_batch_size;
+        const auto end = std::min(pvs.size(), offset + page_size);
+        const auto request_count = end - offset;
+        const auto shard_size = context.series_per_shard == 0
+                                    ? request_count
+                                    : std::min<std::size_t>(request_count, static_cast<std::size_t>(context.series_per_shard));
+        const auto capability_limit = std::max<std::size_t>(1, maxConcurrentStreams());
+        const auto parallel_limit = context.max_parallel_requests == 0
+                                        ? capability_limit
+                                        : std::min<std::size_t>(capability_limit, context.max_parallel_requests);
         using PvStats = dp::service::query::QueryPvStatsResponse_StatsResult_PvStats;
-        struct StatsShard { std::vector<PvStats> stats; };
-        const auto shard_count = (request_count + shard_size - 1) / shard_size;
+
+        struct StatsShard
+        {
+            std::vector<PvStats> stats;
+        };
+
+        const auto                           shard_count = (request_count + shard_size - 1) / shard_size;
         std::vector<std::future<StatsShard>> futures;
         futures.reserve(shard_count);
         if (context.progress)
@@ -1093,20 +1191,27 @@ QueryResult MLDPQueryClient::execute(std::string_view              table_name,
             context.progress->setParallelShards(static_cast<uint64_t>(std::min(parallel_limit, shard_count)),
                                                 static_cast<uint64_t>(std::min(parallel_limit, shard_count)));
         }
-        auto run_shard = [this, &context, &pvs](const std::size_t shard_begin, const std::size_t shard_end) {
+        auto run_shard = [this, &context, &pvs](const std::size_t shard_begin, const std::size_t shard_end)
+        {
             dp::service::query::QueryPvStatsRequest request;
             for (std::size_t index = shard_begin; index < shard_end; ++index)
                 request.mutable_pvnamelist()->add_pvnames(pvs[index]);
-            auto handle = pool_->acquire();
-            auto rpc_context = std::make_shared<grpc::ClientContext>();
-            auto cancellation_registration = context.cancellation
-                ? context.cancellation->onCancel([rpc_context] { rpc_context->TryCancel(); })
-                : QueryCancellation::Registration{};
+            auto                                     handle = pool_->acquire();
+            auto                                     rpc_context = std::make_shared<grpc::ClientContext>();
+            auto                                     cancellation_registration = context.cancellation
+                                                                                     ? context.cancellation->onCancel([rpc_context]
+                                                                                                                      {
+                                                                                      rpc_context->TryCancel();
+                                                                                                                      })
+                                                                                     : QueryCancellation::Registration{};
             dp::service::query::QueryPvStatsResponse response;
-            const auto status = handle->query_stub->queryPvStats(rpc_context.get(), request, &response);
-            if (context.cancellation && context.cancellation->cancelled()) throw QueryCancelled{};
-            if (!status.ok()) throw std::runtime_error("MLDP queryPvStats failed: " + status.error_message());
-            if (!response.has_statsresult()) throw std::runtime_error("MLDP queryPvStats failed: " + response.exceptionalresult().message());
+            const auto                               status = handle->query_stub->queryPvStats(rpc_context.get(), request, &response);
+            if (context.cancellation && context.cancellation->cancelled())
+                throw QueryCancelled{};
+            if (!status.ok())
+                throw std::runtime_error("MLDP queryPvStats failed: " + status.error_message());
+            if (!response.has_statsresult())
+                throw std::runtime_error("MLDP queryPvStats failed: " + response.exceptionalresult().message());
             return StatsShard{.stats = {response.statsresult().pvstats().begin(), response.statsresult().pvstats().end()}};
         };
         std::vector<PvStats> ordered_stats;
@@ -1124,7 +1229,8 @@ QueryResult MLDPQueryClient::execute(std::string_view              table_name,
                 futures.clear();
             }
         }
-        if (context.progress) context.progress->setParallelShards(0, static_cast<uint64_t>(std::min(parallel_limit, shard_count)));
+        if (context.progress)
+            context.progress->setParallelShards(0, static_cast<uint64_t>(std::min(parallel_limit, shard_count)));
 
         arrow::StringBuilder    pv_builder;
         arrow::TimestampBuilder first_builder(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), arrow::default_memory_pool());
@@ -1132,7 +1238,8 @@ QueryResult MLDPQueryClient::execute(std::string_view              table_name,
         arrow::Int64Builder     buckets_builder;
         for (const auto& stat : ordered_stats)
         {
-            if (context.cancellation) context.cancellation->throwIfCancelled();
+            if (context.cancellation)
+                context.cancellation->throwIfCancelled();
             if (!pv_builder.Append(stat.pvname()).ok() || !first_builder.Append(timestampToNanoseconds(stat.firstdatatimestamp())).ok() ||
                 !last_builder.Append(timestampToNanoseconds(stat.lastdatatimestamp())).ok() || !buckets_builder.Append(stat.numbuckets()).ok())
                 throw std::runtime_error("Failed to build Arrow pv_stats batch");
@@ -1179,12 +1286,17 @@ QueryResult MLDPQueryClient::execute(std::string_view              table_name,
     auto                                   handle = pool_->acquire();
     auto                                   rpc_context = std::make_shared<grpc::ClientContext>();
     dp::service::query::QueryTableResponse response;
-    auto cancellation_registration = context.cancellation
-        ? context.cancellation->onCancel([rpc_context] { rpc_context->TryCancel(); })
-        : QueryCancellation::Registration{};
-    if (context.cancellation) context.cancellation->throwIfCancelled();
-    const auto                             status = handle->query_stub->queryTable(rpc_context.get(), request, &response);
-    if (context.cancellation && context.cancellation->cancelled()) throw QueryCancelled{};
+    auto                                   cancellation_registration = context.cancellation
+                                                                           ? context.cancellation->onCancel([rpc_context]
+                                                                                                            {
+                                                                              rpc_context->TryCancel();
+                                                                                                            })
+                                                                           : QueryCancellation::Registration{};
+    if (context.cancellation)
+        context.cancellation->throwIfCancelled();
+    const auto status = handle->query_stub->queryTable(rpc_context.get(), request, &response);
+    if (context.cancellation && context.cancellation->cancelled())
+        throw QueryCancelled{};
     if (!status.ok())
         throw std::runtime_error("MLDP queryTable failed: " + status.error_message());
     if (!response.has_tableresult())
@@ -1233,7 +1345,7 @@ QueryResult MLDPQueryClient::execute(std::string_view              table_name,
         if (columns.empty())
             return {.batch = nullptr, .next_page_token = ""};
 
-        auto* pool = context.pool != nullptr ? context.pool : arrow::default_memory_pool();
+        auto*                   pool = context.pool != nullptr ? context.pool : arrow::default_memory_pool();
         arrow::TimestampBuilder time_builder(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), pool);
         for (const auto timestamp : timestamps_ns)
             if (!time_builder.Append(timestamp).ok())
@@ -1263,7 +1375,7 @@ QueryResult MLDPQueryClient::execute(std::string_view              table_name,
             }
 
             std::unique_ptr<arrow::ArrayBuilder> builder;
-            const auto builder_status = arrow::MakeBuilder(pool, type, &builder);
+            const auto                           builder_status = arrow::MakeBuilder(pool, type, &builder);
             if (!builder_status.ok())
                 throw std::runtime_error("Failed to create Arrow builder for MLDP PV column '" + column->name() + "': " + builder_status.ToString());
             for (const auto& value : column->datavalues())
@@ -1317,13 +1429,13 @@ QueryResult MLDPQueryClient::execute(std::string_view              table_name,
     const auto page_sz = context.join_batch_size == 0 ? all_rows.size() : context.join_batch_size;
     const auto page_end = std::min(all_rows.size(), ts_offset + page_sz);
 
-    auto*                      pool = context.pool != nullptr ? context.pool : arrow::default_memory_pool();
-    arrow::StringBuilder       pv_builder;
-    arrow::TimestampBuilder    time_builder(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), pool);
-    DataValueBuilder           value_builder(pool);
-    arrow::StringBuilder       type_builder(pool);
-    auto attribute_keys = attributeKeys(all_metadata);
-    auto provenance_keys = provenanceKeys(all_metadata);
+    auto*                   pool = context.pool != nullptr ? context.pool : arrow::default_memory_pool();
+    arrow::StringBuilder    pv_builder;
+    arrow::TimestampBuilder time_builder(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), pool);
+    DataValueBuilder        value_builder(pool);
+    arrow::StringBuilder    type_builder(pool);
+    auto                    attribute_keys = attributeKeys(all_metadata);
+    auto                    provenance_keys = provenanceKeys(all_metadata);
     addRequestedDynamicMetadataKeys(attribute_keys, projection_hint, "attributes.");
     addRequestedDynamicMetadataKeys(provenance_keys, projection_hint, "provenance.");
     TimeSeriesMetadataBuilders metadata(attribute_keys, provenance_keys);
@@ -1340,7 +1452,7 @@ QueryResult MLDPQueryClient::execute(std::string_view              table_name,
     std::shared_ptr<arrow::Array> time;
     if (!pv_builder.Finish(&pv).ok() || !time_builder.Finish(&time).ok())
         throw std::runtime_error("Failed to finish Arrow time-series batch");
-    const auto                                 value = value_builder.finish();
+    const auto                    value = value_builder.finish();
     std::shared_ptr<arrow::Array> type;
     if (!type_builder.Finish(&type).ok())
         throw std::runtime_error("Failed to finish Arrow time-series column_type");
