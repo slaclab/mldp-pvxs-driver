@@ -14,8 +14,6 @@
 #include <query/ExpressionRegistry.h>
 #include <query/parser/QueryAST.h>
 
-#include <string>
-#include <utility>
 #include <vector>
 
 namespace mldp_pvxs_driver::query {
