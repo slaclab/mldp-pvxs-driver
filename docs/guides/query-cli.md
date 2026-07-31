@@ -55,6 +55,8 @@ mldp_pvxs_driver -c config.yaml query "<SQL>"
 | `--format <fmt>` | `table` | Output format: `table`, `json`, `csv`, `arrow`. |
 | `--table-fit` | off | Fit table output to an interactive terminal viewport by truncating long headers and values with `...`; ignored when output is redirected or piped. |
 | `--no-stats` | off | Suppress the query-stats footer. |
+| `--trace-shards` | off | Emit window-shard diagnostics to stderr. |
+| `--trace-shards-file <path>` | — | Enable window-shard diagnostics and write them to a newly truncated file. |
 | `--memory-mb <n>` | `256` | Memory budget for the execution context (MiB). |
 | `--spill-dir <path>` | `<tmp>/mldp-query-spill` | Directory for spill files under memory pressure. |
 | `--table-catalog-dir <path>` | `<tmp>/mldp-query-catalog` | Root directory for durable Arrow IPC snapshots; separate from `--spill-dir`. |
@@ -316,6 +318,20 @@ mldp_pvxs_driver \
   -c queryable.mldp-pv-metadata.mldp-pv-metadata-pool.min-conn=1 \
   -c queryable.mldp-pv-metadata.mldp-pv-metadata-pool.max-conn=2 \
   query "SHOW TABLES"
+```
+
+### Window shard trace
+
+Pass `--trace-shards` to emit one stderr diagnostic line for every windowed MLDP series shard after the query completes or fails. Each line reports driver-observed first-batch order, window/slice/shard identity, PV group, requested time range, first-batch and terminal-observation timing, batch and row counts. These are client-side asynchronous-pull timestamps, not server-side Mongo execution timestamps. Query results remain on stdout in the selected format.
+
+Pass `--trace-shards-file <path>` to enable the same trace and write it to a newly truncated file instead of stderr. The file is created before planning, so an invalid path fails the command before it issues a query.
+
+```bash
+mldp_pvxs_driver -c query-config.yaml query --trace-shards \
+  "SELECT * FROM mldp.time_series_table WHERE pv IN (...) AND window IN (...; slice 5s, series_per_shard 2)"
+
+mldp_pvxs_driver -c query-config.yaml query --trace-shards-file shard-trace.log \
+  "SELECT * FROM mldp.time_series_table WHERE pv IN (...) AND window IN (...; slice 5s, series_per_shard 2)"
 ```
 
 Override just the query URL when running against a different host:

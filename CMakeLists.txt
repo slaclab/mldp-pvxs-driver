@@ -687,6 +687,7 @@ add_library(lib${PROJECT_NAME}
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/Timezone.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/QueryTableCatalog.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/QueryExecutor.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/ShardTrace.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/WindowBackendScanRecordBatchStream.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/MaterializedRecordBatchStream.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/LimitRecordBatchStream.cpp"

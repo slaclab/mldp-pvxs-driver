@@ -24,8 +24,9 @@
 
 namespace arrow {
 class MemoryPool;
+
 namespace fs {
-class FileSystem;
+    class FileSystem;
 }
 } // namespace arrow
 
@@ -35,24 +36,27 @@ class SpillManager;
 class QueryTableCatalog;
 class QueryProgressTracker;
 class QueryCancellation;
+class ShardTraceCollector;
 
 /** @brief Non-owning and shared resources available to query execution. */
-struct ExecutionContext {
-    arrow::MemoryPool*                    pool{nullptr};
-    std::shared_ptr<SpillManager>         spill;
-    uint64_t                              memory_limit_bytes{0};
-    uint32_t                              spill_partitions{16};
-    uint32_t                              join_batch_size{0};
+struct ExecutionContext
+{
+    arrow::MemoryPool*            pool{nullptr};
+    std::shared_ptr<SpillManager> spill;
+    uint64_t                      memory_limit_bytes{0};
+    uint32_t                      spill_partitions{16};
+    uint32_t                      join_batch_size{0};
     // A non-zero value splits independent backend requests by PV/series.
     // Zero preserves the direct-client one-request compatibility contract.
-    uint64_t                              series_per_shard{0};
+    uint64_t series_per_shard{0};
     // Optional per-query cap.  Zero uses IQueryable::maxConcurrentStreams().
-    uint64_t                              max_parallel_requests{0};
+    uint64_t                               max_parallel_requests{0};
     std::shared_ptr<arrow::fs::FileSystem> spill_fs;
-    std::string                           spill_dir;
-    std::shared_ptr<QueryTableCatalog>    table_catalog;
-    std::shared_ptr<QueryProgressTracker> progress;
-    std::shared_ptr<QueryCancellation>    cancellation;
+    std::string                            spill_dir;
+    std::shared_ptr<QueryTableCatalog>     table_catalog;
+    std::shared_ptr<QueryProgressTracker>  progress;
+    std::shared_ptr<QueryCancellation>     cancellation;
+    std::shared_ptr<ShardTraceCollector>   shard_trace;
 };
 
 } // namespace mldp_pvxs_driver::query
