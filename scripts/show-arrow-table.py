@@ -8,6 +8,9 @@ Examples:
   python3 scripts/show-arrow-table.py --all query-dir
   python3 scripts/show-arrow-table.py --max-rows 100 query-dir/spill_wide-long_0.arrow
 
+Dense-union columns, including MLDP native ``value`` columns, are converted
+to their active Python values before the table is passed to pandas.
+
 Requires ``pyarrow`` and ``pandas`` in the Python environment that runs it.
 """
 
@@ -57,9 +60,20 @@ def read_ipc_table(path: Path):
                 raise RuntimeError(f"{path} is not a readable Arrow IPC file or stream: file reader: {file_error}; stream reader: {stream_error}") from stream_error
 
 
+def dataframe_compatible_frame(table):
+    """Build a pandas frame while keeping union members as Python objects."""
+    import pyarrow as pa
+    import pandas as pd
+
+    columns = {}
+    for field, column in zip(table.schema, table.columns):
+        columns[field.name] = column.to_pylist() if pa.types.is_union(field.type) else column.to_pandas()
+    return pd.DataFrame(columns)
+
+
 def print_table(path: Path, max_rows: int | None, show_index: bool) -> None:
     table = read_ipc_table(path)
-    frame = table.to_pandas()
+    frame = dataframe_compatible_frame(table)
     print(f"\n{path}: {table.num_rows} row(s), {table.num_columns} column(s)")
     print(f"schema: {table.schema}")
     if frame.empty:
