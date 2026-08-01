@@ -710,6 +710,7 @@ public:
     inline static uint64_t                                   time_series_execute_calls{0};
     inline static bool                                       require_parallel_wave{false};
     inline static bool                                       fail_stream_open{false};
+    inline static std::size_t                                emitted_pv_count{std::numeric_limits<std::size_t>::max()};
     inline static std::vector<std::vector<query::Predicate>> requests;
 
     explicit ScaledWindowQueryable(const config::Config&, std::shared_ptr<metrics::Metrics> = nullptr) {}
@@ -822,11 +823,12 @@ public:
         if (fail_stream_open)
             throw std::invalid_argument("Invalid argument");
 
+        const auto emitted_pv_count = ScaledWindowQueryable::emitted_pv_count;
         class Stream final : public query::IRecordBatchStream
         {
         public:
-            Stream(std::vector<std::string> pvs, const int64_t begin_seconds, const int64_t end_seconds)
-                : pvs_(std::move(pvs)), begin_seconds_(begin_seconds), end_seconds_(end_seconds), active_(true) {}
+            Stream(std::vector<std::string> pvs, const int64_t begin_seconds, const int64_t end_seconds, const std::size_t emitted_pv_count)
+                : pvs_(std::move(pvs)), begin_seconds_(begin_seconds), end_seconds_(end_seconds), emitted_pv_count_(emitted_pv_count), active_(true) {}
 
             ~Stream() override
             {
@@ -847,8 +849,9 @@ public:
                 const auto               value_type = arrow::dense_union({arrow::field("int64", arrow::int64())});
                 auto                     int64_values = std::make_shared<arrow::Int64Builder>();
                 arrow::DenseUnionBuilder value(arrow::default_memory_pool(), {int64_values}, value_type);
-                for (const auto& name : pvs_)
+                for (std::size_t index = 0; index < std::min(pvs_.size(), emitted_pv_count_); ++index)
                 {
+                    const auto& name = pvs_[index];
                     for (const auto seconds : {begin_seconds_ - 1, begin_seconds_ + 1, end_seconds_})
                     {
                         if (!pv.Append(name).ok() || !time.Append(seconds * 1'000'000'000LL).ok() ||
@@ -869,11 +872,12 @@ public:
             std::vector<std::string> pvs_;
             int64_t                  begin_seconds_{0};
             int64_t                  end_seconds_{0};
+            std::size_t              emitted_pv_count_{0};
             bool                     active_{false};
             bool                     sent_{false};
         };
 
-        return std::make_unique<Stream>(std::move(shard_pvs), begin_seconds, end_seconds);
+        return std::make_unique<Stream>(std::move(shard_pvs), begin_seconds, end_seconds, emitted_pv_count);
     }
 
     static const std::vector<std::string>& pvs()
@@ -1472,6 +1476,62 @@ TEST(QueryPlannerExecutorTest, ScalesProductionShapedWideWindowQueryToFourConcur
     {
         const std::lock_guard lock(ScaledWindowQueryable::mutex);
         ScaledWindowQueryable::require_parallel_wave = false;
+    }
+    query::QueryableFactory::instance().reset();
+}
+
+TEST(QueryPlannerExecutorTest, KeepsAllMetadataSelectedWideColumnsWhenSomeHaveNoSamples)
+{
+    query::QueryableFactory::instance().reset();
+    {
+        const std::lock_guard lock(ScaledWindowQueryable::mutex);
+        ScaledWindowQueryable::active_streams = 0;
+        ScaledWindowQueryable::peak_active_streams = 0;
+        ScaledWindowQueryable::started_streams = 0;
+        ScaledWindowQueryable::metadata_execute_calls = 0;
+        ScaledWindowQueryable::time_series_execute_calls = 0;
+        ScaledWindowQueryable::require_parallel_wave = false;
+        ScaledWindowQueryable::fail_stream_open = false;
+        ScaledWindowQueryable::emitted_pv_count = 1;
+        ScaledWindowQueryable::requests.clear();
+    }
+    query::QueryableFactory::instance().prepare<ScaledWindowQueryable>(config::Config::configFromYamlString("{}"));
+    query::QueryPlanner  planner;
+    query::QueryExecutor executor;
+    const auto           file_system = std::make_shared<arrow::fs::internal::MockFileSystem>(std::chrono::system_clock::now());
+    const auto           spill = std::make_shared<query::SpillManager>(file_system, "spill");
+
+    auto streamed = executor.executeStream(planner.plan(query::parseQuery(
+                                             "SELECT * FROM mldp.time_series_table "
+                                             "WHERE pv IN (SELECT pv FROM mldp.pv_metadata WHERE attributes.dname PREFIX 'USEG:UNDH' LIMIT 4) "
+                                             "AND window IN (SELECT time, time + 5s FROM mldp.configuration_activation "
+                                             "WHERE config_name = 'SPEAR User' LIMIT 1; slice 5s, series_per_shard 2)")),
+                                         {.pool = arrow::default_memory_pool(), .spill = spill});
+    const auto batch = streamed.stream->next();
+
+    ASSERT_NE(batch, nullptr);
+    EXPECT_EQ(batch->schema()->field_names(),
+              (std::vector<std::string>{"time", "USEG:UNDH:1450:GapAct", "USEG:UNDH:1550:GapAct", "USEG:UNDH:1650:GapAct", "USEG:UNDH:1750:GapAct"}));
+    for (const auto& pv : std::vector<std::string>{"USEG:UNDH:1550:GapAct", "USEG:UNDH:1750:GapAct"})
+    {
+        const auto values = batch->GetColumnByName(pv);
+        ASSERT_NE(values, nullptr);
+        EXPECT_EQ(values->null_count(), values->length());
+    }
+    {
+        const std::lock_guard lock(ScaledWindowQueryable::mutex);
+        EXPECT_EQ(ScaledWindowQueryable::metadata_execute_calls, 1U);
+        ASSERT_FALSE(ScaledWindowQueryable::requests.empty());
+        for (const auto& predicates : ScaledWindowQueryable::requests)
+        {
+            const auto pv = std::find_if(predicates.begin(), predicates.end(), [](const query::Predicate& predicate)
+                                         {
+                                             return predicate.column == "pv" && predicate.op == query::PredicateOp::IN;
+                                         });
+            ASSERT_NE(pv, predicates.end());
+            EXPECT_LE(pv->values.size(), 2U);
+        }
+        ScaledWindowQueryable::emitted_pv_count = std::numeric_limits<std::size_t>::max();
     }
     query::QueryableFactory::instance().reset();
 }

@@ -59,6 +59,44 @@ void collectPlanWarnings(const plan::PhysicalNodePtr& node, std::vector<std::str
     if (const auto* pivot = std::get_if<plan::PhysicalPivot>(&node->value)) collectPlanWarnings(pivot->input, warnings);
 }
 
+std::optional<plan::PhysicalTableScan> resolvePushableInSubqueries(const plan::PhysicalTableScan& scan,
+                                                                    const ExecutionContext&        context)
+{
+    auto resolved_scan = scan;
+    if (resolved_scan.in_subqueries.empty()) return resolved_scan;
+
+    QueryPlanner planner(context.table_catalog);
+    QueryExecutor executor;
+    for (const auto& subquery : resolved_scan.in_subqueries)
+    {
+        auto predicate = subquery.predicate;
+        predicate.values = mldp_pvxs_driver::query::executor::extractInSubqueryValues(
+            executor.execute(planner.plan(QueryStatement{*subquery.child}), context).batches,
+            subquery.column_type,
+            predicate.column);
+        if (predicate.values.empty()) return std::nullopt;
+        resolved_scan.pushable_predicates.push_back(std::move(predicate));
+    }
+    resolved_scan.in_subqueries.clear();
+    return resolved_scan;
+}
+
+std::vector<std::string> pivotLabels(const plan::PhysicalTableScan& scan)
+{
+    std::vector<std::string> labels;
+    for (const auto& predicate : scan.pushable_predicates)
+    {
+        if (predicate.column != "pv" || (predicate.op != PredicateOp::EQ && predicate.op != PredicateOp::IN)) continue;
+        for (const auto& value : predicate.values)
+        {
+            if (!std::holds_alternative<std::string>(value)) continue;
+            const auto& pv = std::get<std::string>(value);
+            if (std::find(labels.begin(), labels.end(), pv) == labels.end()) labels.push_back(pv);
+        }
+    }
+    return labels;
+}
+
 IRecordBatchStreamUPtr makeStreamingPlan(const plan::PhysicalNodePtr& root,
                                           ExecutionContext           context,
                                           const std::shared_ptr<QueryStats>& stats)
@@ -73,41 +111,27 @@ IRecordBatchStreamUPtr makeStreamingPlan(const plan::PhysicalNodePtr& root,
                                       !scan->arrow_ipc && !scan->derived_query && has_only_pushable_in_subqueries;
         if (!direct_long_scan) return nullptr;
 
-        auto resolved_scan = *scan;
-        if (!resolved_scan.in_subqueries.empty())
+        auto resolved_scan = resolvePushableInSubqueries(*scan, context);
+        if (!resolved_scan) return std::make_unique<MaterializedRecordBatchStream>(RecordBatches{});
+        if (resolved_scan->window_literal)
         {
-            QueryPlanner planner(context.table_catalog);
-            QueryExecutor executor;
-            for (const auto& subquery : resolved_scan.in_subqueries)
-            {
-                auto predicate = subquery.predicate;
-                predicate.values = mldp_pvxs_driver::query::executor::extractInSubqueryValues(
-                    executor.execute(planner.plan(QueryStatement{*subquery.child}), context).batches,
-                    subquery.column_type, predicate.column);
-                if (predicate.values.empty()) return std::make_unique<MaterializedRecordBatchStream>(RecordBatches{});
-                resolved_scan.pushable_predicates.push_back(std::move(predicate));
-            }
-            resolved_scan.in_subqueries.clear();
-        }
-        if (scan->window_literal)
-        {
-            const auto& window = *scan->window_literal;
-            context.series_per_shard = scan->window_shards.series_per_shard;
+            const auto& window = *resolved_scan->window_literal;
+            context.series_per_shard = resolved_scan->window_shards.series_per_shard;
             return std::make_unique<WindowBackendScanRecordBatchStream>(
-                resolved_scan, std::move(context), stats,
+                *resolved_scan, std::move(context), stats,
                 std::vector<std::pair<int64_t, int64_t>>{{window[0] * 1'000'000'000LL, window[1] * 1'000'000'000LL}});
         }
-        if (scan->window_subquery)
+        if (resolved_scan->window_subquery)
         {
             QueryPlanner planner(context.table_catalog);
             QueryExecutor executor;
             const auto windows = mldp_pvxs_driver::query::executor::extractNormalizedWindows(
-                executor.execute(planner.plan(QueryStatement{*scan->window_subquery}), context).batches);
+                executor.execute(planner.plan(QueryStatement{*resolved_scan->window_subquery}), context).batches);
             if (windows.empty()) return std::make_unique<MaterializedRecordBatchStream>(RecordBatches{});
-            context.series_per_shard = scan->window_shards.series_per_shard;
-            return std::make_unique<WindowBackendScanRecordBatchStream>(resolved_scan, std::move(context), stats, windows);
+            context.series_per_shard = resolved_scan->window_shards.series_per_shard;
+            return std::make_unique<WindowBackendScanRecordBatchStream>(*resolved_scan, std::move(context), stats, windows);
         }
-        return std::make_unique<BackendScanRecordBatchStream>(resolved_scan, std::move(context), stats);
+        return std::make_unique<BackendScanRecordBatchStream>(*resolved_scan, std::move(context), stats);
     }
     if (const auto* filter = std::get_if<plan::PhysicalFilter>(&root->value))
     {
@@ -126,8 +150,17 @@ IRecordBatchStreamUPtr makeStreamingPlan(const plan::PhysicalNodePtr& root,
     }
     if (const auto* pivot = std::get_if<plan::PhysicalPivot>(&root->value))
     {
-        auto input = makeStreamingPlan(pivot->input, context, stats);
-        return input ? std::make_unique<PivotRecordBatchStream>(std::move(input), *pivot, context, stats) : nullptr;
+        auto resolved_pivot = *pivot;
+        if (const auto* scan = pivot->input ? std::get_if<plan::PhysicalTableScan>(&pivot->input->value) : nullptr;
+            scan != nullptr && !scan->in_subqueries.empty())
+        {
+            const auto resolved_scan = resolvePushableInSubqueries(*scan, context);
+            if (!resolved_scan) return std::make_unique<MaterializedRecordBatchStream>(RecordBatches{});
+            resolved_pivot.input = plan::makeNode(*resolved_scan);
+            resolved_pivot.output_column_labels = pivotLabels(*resolved_scan);
+        }
+        auto input = makeStreamingPlan(resolved_pivot.input, context, stats);
+        return input ? std::make_unique<PivotRecordBatchStream>(std::move(input), std::move(resolved_pivot), context, stats) : nullptr;
     }
     return nullptr;
 }
