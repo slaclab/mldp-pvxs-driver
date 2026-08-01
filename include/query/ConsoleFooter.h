@@ -10,8 +10,6 @@
 #pragma once
 
 #include <query/QueryProgress.h>
-#include <query/QueryStats.h>
-
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -25,9 +23,6 @@ struct ConsoleStatus
 {
     bool                                 query_running{false};
     std::optional<query::QueryProgressSnapshot> progress;
-    std::optional<query::QueryStats>     completed_stats;
-    bool                                 cancelled{false};
-    std::string                          error;
 };
 
 /** @brief Formats query lifecycle state into a terminal footer line. */
@@ -37,7 +32,7 @@ public:
     std::string render(const ConsoleStatus& status, int terminal_width) const;
 };
 
-/** @brief Reserves the final terminal row for the lifetime of an interactive REPL. */
+/** @brief Temporarily reserves the final terminal row while a direct-output query runs. */
 class TerminalLayout
 {
 public:
@@ -49,10 +44,7 @@ public:
 
     bool initialize();
     void redraw(const ConsoleStatus& status);
-    void positionInputCursor();
     void restore() noexcept;
-
-    bool active() const noexcept;
 
 private:
     bool updateSize();

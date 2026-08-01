@@ -54,7 +54,7 @@ mldp_pvxs_driver -c config.yaml query "<SQL>"
 | `--file <path>` | — | Read SQL text from a file instead of the positional argument. |
 | `--format <fmt>` | `table` | Output format: `table`, `json`, `csv`, `arrow`. |
 | `--table-fit` | off | Fit table output to an interactive terminal viewport by truncating long headers and values with `...`; ignored when output is redirected or piped. |
-| `--no-stats` | off | Suppress the query-stats footer. |
+| `--no-stats` | off | Suppress the final textual query-statistics line. |
 | `--trace-shards` | off | Emit window-shard diagnostics to stderr. |
 | `--trace-shards-file <path>` | — | Enable window-shard diagnostics and write them to a newly truncated file. |
 | `--memory-mb <n>` | `256` | Memory budget for the execution context (MiB). |
@@ -76,11 +76,11 @@ mldp> SHOW OPERATORS;
 
 Terminate each statement with a semicolon. Statements can span lines; the prompt changes from `mldp> ` to `...> ` while a statement is buffered. A semicolon inside a quoted string does not terminate the statement. The session executes one statement at a time and remains open after parse, planning, or execution errors.
 
-In a real terminal, the persistent footer carries each completed query's returned/backend/filtered rows, elapsed time, RPC count, spill and materialization counters, and peak memory; no final `-- ...` statistics line follows the result. Table and expanded results use normal terminal scrollback, so SSH and container-attached terminals retain their native resize, copy/paste, and scroll behavior. Redirected/plain-stream REPL output and one-shot commands retain the textual final statistics line, and machine-readable formats remain free of terminal control sequences.
+Table and expanded results use normal terminal scrollback, so SSH and container-attached terminals retain their native resize, copy/paste, and scroll behavior. A direct-output query in a real terminal temporarily shows a progress footer with `Ctrl-C cancel`; it is removed before the next prompt. Completed results then end with the normal textual `-- ...` statistics line unless `--no-stats` is set. Redirected/plain-stream REPL output and one-shot commands retain the same textual statistics line, and machine-readable formats remain free of terminal control sequences.
 
 ### Pager and terminal controls
 
-The REPL uses `replxx` for all interactive terminal sessions. At startup and immediately before each submitted SQL statement, it clears the terminal exactly as `.clear` does, then shows a reverse-video footer in the final terminal row until exit. The footer shows `Query: ready` while idle, current progress plus `Ctrl-C cancel` while a direct-output query runs, and the latest completion, cancellation, or error state after the query returns. Results remain in normal terminal scrollback; completion statistics stay in the footer. `Ctrl-C` cancels an active query or abandons the current editor line; `Ctrl-Q`, `.quit`, and `.exit` leave the REPL. The footer temporarily yields the terminal to a pager and returns after the pager exits.
+The REPL uses `replxx` for all interactive terminal sessions. It clears the terminal immediately before each submitted SQL statement, exactly as `.clear` does. For direct table or expanded output, it temporarily reserves the final row for a reverse-video progress footer while the query runs, then restores the full terminal before printing the final statistics and returning to `mldp> `. Idle prompt editing is wholly owned by `replxx`; there is no pinned footer after completion, cancellation, or error. `Ctrl-C` cancels an active query or abandons the current editor line; `Ctrl-Q`, `.quit`, and `.exit` leave the REPL. Pager output does not activate the footer.
 
 Use `.pager on` to send table or expanded output from a real terminal to a pager. Paging is off by default. The pager command comes from `$PAGER`, or defaults to `less -FRSX` when `$PAGER` is unset. `.pager` reports the current setting and `.pager off` restores direct scrollback output. JSON, CSV, Arrow, one-shot SQL, and redirected sessions always use direct formatter output.
 
@@ -102,7 +102,7 @@ The active-query footer and command listeners receive query progress while a que
 
 For a paginated `LIMIT` query, the status can show `result page <n>`. This is the client result-page number, separate from MLDP cursor responses. The continuation token remains available for `PAGE TOKEN` in the plain-stream session.
 
-When a real-terminal query finishes, the footer retains its completion summary until another query changes it. On a query error it shows the error, and a cancelled query shows `Query cancelled` before returning to a usable prompt.
+When a real-terminal query finishes, the footer is removed and the normal result/statistics output remains in scrollback. Query errors and `Query cancelled` are likewise written to normal scrollback before the next usable prompt.
 
 ### Stored query tables
 
@@ -594,13 +594,13 @@ SELECT pv, time, value FROM mldp.time_series
 WHERE pv = 'MY:PV' AND time >= NOW -24h AND time <= NOW
 LIMIT 500
 
--- Next page — use the token from the stats footer
+-- Next page — use the token printed after the result statistics
 SELECT pv, time, value FROM mldp.time_series
 WHERE pv = 'MY:PV' AND time >= NOW -24h AND time <= NOW
 LIMIT 500 PAGE TOKEN '<token-from-previous-result>'
 ```
 
-The continuation token is printed in the stats footer after each paginated result.
+The continuation token is printed after the result statistics for each paginated result.
 
 ---
 

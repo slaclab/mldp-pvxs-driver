@@ -1106,30 +1106,10 @@ TEST(ConsoleFooterTest, TruncatesNarrowFooterWithoutTerminalEscapes)
     EXPECT_EQ(line.find('\x1b'), std::string::npos);
 }
 
-TEST(ConsoleFooterTest, RendersPersistentIdleCompletionCancellationAndErrorStates)
+TEST(ConsoleFooterTest, RendersOnlyActiveQueryState)
 {
     cli::FooterRenderer footer;
-    query::QueryStats stats;
-    stats.rows_from_backend = 10;
-    stats.rows_returned = 7;
-    stats.elapsed = std::chrono::milliseconds{12};
-    stats.rpc_calls = 3;
-    stats.bytes_spilled = 2048;
-    stats.materialized_bytes = 4096;
-    stats.materialized_files = 2;
-    stats.peak_memory_bytes = 8 * 1024 * 1024;
-
-    EXPECT_NE(footer.render({}, 120).find("Query: ready"), std::string::npos);
-    const auto completed = footer.render({.completed_stats = stats}, 240);
-    EXPECT_NE(completed.find("Query completed"), std::string::npos);
-    EXPECT_NE(completed.find("7/10 rows (3 filtered)"), std::string::npos);
-    EXPECT_NE(completed.find("12 ms"), std::string::npos);
-    EXPECT_NE(completed.find("3 RPC"), std::string::npos);
-    EXPECT_NE(completed.find("2.0 KiB spilled"), std::string::npos);
-    EXPECT_NE(completed.find("4.0 KiB materialized / 2 files"), std::string::npos);
-    EXPECT_NE(completed.find("8.0 MiB peak"), std::string::npos);
-    EXPECT_NE(footer.render({.cancelled = true}, 120).find("Query cancelled"), std::string::npos);
-    EXPECT_NE(footer.render({.error = "bad query"}, 120).find("Error: bad query"), std::string::npos);
+    EXPECT_EQ(footer.render({}, 120), std::string(120, ' '));
 }
 
 TEST(QueryRunnerTest, CapturesCompletedStatsWhenTextualStatsAreSuppressed)

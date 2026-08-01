@@ -7,11 +7,7 @@
 
 #include <query/ConsoleFooter.h>
 
-#include <array>
 #include <chrono>
-#include <cstdint>
-#include <iomanip>
-#include <sstream>
 #include <string_view>
 #include <utility>
 
@@ -42,44 +38,13 @@ std::string elapsed(const std::chrono::milliseconds value)
     return std::to_string(seconds / 60) + "m " + std::to_string(seconds % 60) + "s";
 }
 
-std::string formatBytes(const uint64_t bytes)
-{
-    constexpr std::array<std::string_view, 5> units{"B", "KiB", "MiB", "GiB", "TiB"};
-    double                                      value = static_cast<double>(bytes);
-    std::size_t                                 unit = 0;
-    while (value >= 1024.0 && unit + 1 < units.size())
-    {
-        value /= 1024.0;
-        ++unit;
-    }
-    std::ostringstream output;
-    if (unit == 0 || value >= 10.0)
-    {
-        output << std::fixed << std::setprecision(0);
-    }
-    else
-    {
-        output << std::fixed << std::setprecision(1);
-    }
-    output << value << ' ' << units[unit];
-    return output.str();
-}
-
 } // namespace
 
 std::string FooterRenderer::render(const ConsoleStatus& status, const int terminal_width) const
 {
     if (terminal_width <= 0) return {};
     std::string line;
-    if (!status.error.empty())
-    {
-        appendField(line, "Error: " + status.error, terminal_width);
-    }
-    else if (status.cancelled)
-    {
-        appendField(line, "Query cancelled", terminal_width);
-    }
-    else if (status.query_running)
+    if (status.query_running)
     {
         if (status.progress)
         {
@@ -103,29 +68,6 @@ std::string FooterRenderer::render(const ConsoleStatus& status, const int termin
         }
         else appendField(line, "Running", terminal_width);
         appendField(line, "Ctrl-C cancel", terminal_width);
-    }
-    else
-    {
-        appendField(line, "Query: ready", terminal_width);
-    }
-    if (status.completed_stats)
-    {
-        const auto& stats = *status.completed_stats;
-        const auto  filtered = stats.rows_from_backend >= stats.rows_returned
-                                   ? stats.rows_from_backend - stats.rows_returned
-                                   : 0;
-        appendField(line, "Query completed", terminal_width);
-        appendField(line,
-                    std::to_string(stats.rows_returned) + "/" + std::to_string(stats.rows_from_backend) + " rows (" +
-                        std::to_string(filtered) + " filtered)",
-                    terminal_width);
-        appendField(line, std::to_string(stats.elapsed.count()) + " ms", terminal_width);
-        appendField(line, std::to_string(stats.rpc_calls) + " RPC", terminal_width);
-        appendField(line, formatBytes(stats.bytes_spilled) + " spilled", terminal_width);
-        appendField(line,
-                    formatBytes(stats.materialized_bytes) + " materialized / " + std::to_string(stats.materialized_files) + " files",
-                    terminal_width);
-        appendField(line, formatBytes(stats.peak_memory_bytes) + " peak", terminal_width);
     }
     line.resize(static_cast<std::size_t>(terminal_width), ' ');
     return line;
@@ -163,13 +105,6 @@ void TerminalLayout::redraw(const ConsoleStatus& status)
     draw(status);
 }
 
-void TerminalLayout::positionInputCursor()
-{
-    if (!initialized_) return;
-    output_ << "\x1b[" << (rows_ - 1) << ";1H";
-    output_.flush();
-}
-
 void TerminalLayout::restore() noexcept
 {
     if (!initialized_) return;
@@ -183,11 +118,6 @@ void TerminalLayout::restore() noexcept
     {
     }
     initialized_ = false;
-}
-
-bool TerminalLayout::active() const noexcept
-{
-    return initialized_;
 }
 
 bool TerminalLayout::updateSize()
