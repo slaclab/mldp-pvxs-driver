@@ -60,7 +60,7 @@ Nested-loop is chosen only when correlated push is possible on the inner side jo
 - [ ] `--spill-dir PATH` (default system temp) — `SpillManager` root under `arrow::fs::LocalFileSystem`
 - [ ] `--spill-partitions N` (default 16) — grace-hash partitions for large joins
 - [ ] `--join-batch-size N` (default 100) — outer rows per inner RPC in correlated nested-loop join
-- [ ] Add all flags to `QuerySubcommand` arg parse; pack into `ExecutionContext`
+- [ ] Add all flags to `QueryCommand` arg parse; pack into `ExecutionContext`
 
 ## Correctness Requirements
 

@@ -14,7 +14,8 @@
 #include <query/QueryPlanner.h>
 #include <query/QueryProgress.h>
 #include <query/QueryResult.h>
-#include <query/QuerySubcommand.h>
+#include <query/QueryCommand.h>
+#include <query/NullQueryCommandListener.h>
 #include <query/QueryTableCatalog.h>
 #include <query/QueryableFactory.h>
 #include <query/SpillManager.h>
@@ -50,6 +51,8 @@
 using namespace mldp_pvxs_driver;
 
 namespace {
+
+mldp_pvxs_driver::cli::NullQueryCommandListener g_query_command_listener;
 
 class ReplFakeQueryable final : public query::IQueryable
 {
@@ -472,69 +475,6 @@ const std::set<std::string_view> ContinuationPageQueryable::kVirtualTables = {"m
 const std::set<std::string_view> SustainedWindowQueryable::kVirtualTables = {"mldp.time_series"};
 const std::set<std::string_view> DelayedWideWindowQueryable::kVirtualTables = {
     "mldp.time_series", "mldp.time_series_table", "mldp.pv_metadata", "mldp.configuration_activation"};
-
-TEST(ConsoleFooterTest, RendersFixedWidthAsciiStatusWithPriority)
-{
-    cli::FooterRenderer renderer;
-    cli::ConsoleStatus  status;
-    status.completed_stats = query::QueryStats{
-        .elapsed = std::chrono::milliseconds(17),
-        .rows_returned = 42,
-        .rpc_calls = 3,
-        .bytes_spilled = 2ULL * 1024ULL * 1024ULL,
-        .peak_memory_bytes = 4ULL * 1024ULL * 1024ULL};
-
-    const auto wide = renderer.render(status, 80);
-    EXPECT_EQ(wide.size(), 80U);
-    EXPECT_NE(wide.find("Query: ready | 42 rows | 17 ms | 3 RPCs | spill 2 MiB | peak 4 MiB"), std::string::npos);
-
-    status.query_running = true;
-    status.progress = query::QueryProgressSnapshot{.phase = query::QueryProgressPhase::BackendRpc,
-                                                   .elapsed = std::chrono::milliseconds{12'000},
-                                                   .table_name = "mldp.time_series_table",
-                                                   .detail = "window",
-                                                   .rpc_calls_started = 2,
-                                                   .rpc_calls_completed = 1};
-    const auto narrow = renderer.render(status, 24);
-    EXPECT_EQ(narrow.size(), 24U);
-    EXPECT_NE(narrow.find("Running: backend RPC"), std::string::npos);
-    EXPECT_EQ(narrow.find("spill"), std::string::npos);
-    EXPECT_TRUE(std::all_of(narrow.begin(), narrow.end(), [](const unsigned char character)
-                            {
-                                return character < 128;
-                            }));
-
-    const auto tiny = renderer.render(status, 5);
-    EXPECT_EQ(tiny, "Runni");
-
-    const auto detailed = renderer.render(status, 120);
-    EXPECT_NE(detailed.find("0m 12s"), std::string::npos);
-    EXPECT_NE(detailed.find("mldp.time_series_table"), std::string::npos);
-    EXPECT_NE(detailed.find("1/2 RPCs"), std::string::npos);
-
-    status.progress = query::QueryProgressSnapshot{
-        .phase = query::QueryProgressPhase::Executing,
-        .elapsed = std::chrono::milliseconds{12'000},
-        .table_name = "mldp.time_series_table",
-        .operation = "wide pivot",
-        .cursor_next_requests = 3,
-        .cursor_responses = 4,
-        .result_page = 2,
-        .window_index = 1,
-        .slice_index = 3,
-        .series_shard_index = 2,
-        .active_parallel_shards = 2,
-        .parallel_shard_limit = 4,
-        .stage_completed_shards = 3,
-        .stage_total_shards = 16};
-    const auto pagination = renderer.render(status, 200);
-    EXPECT_NE(pagination.find("wide pivot"), std::string::npos);
-    EXPECT_NE(pagination.find("result page 2"), std::string::npos);
-    EXPECT_NE(pagination.find("window 1, slice 3, series shard 2"), std::string::npos);
-    EXPECT_NE(pagination.find("parallel 2/4"), std::string::npos);
-    EXPECT_NE(pagination.find("shards 3/16"), std::string::npos);
-    EXPECT_NE(pagination.find("cursor 4, next 3"), std::string::npos);
-}
 
 TEST(QueryCancellationTest, RequestsCancellationOnceAndInvokesLateRegistration)
 {
@@ -1135,6 +1075,87 @@ TEST(QueryFormatterTest, FormatsQueryStatsFooterLine)
               "-- 10 rows (10 from backend, 0 filtered) in 1ms | 0 RPC | 0 bytes spilled | " "0 bytes materialized in 0 file(s) | 0 MB peak");
 }
 
+TEST(ConsoleFooterTest, RendersActiveQueryProgressWithoutCompletionState)
+{
+    cli::FooterRenderer footer;
+    query::QueryProgressSnapshot progress;
+    progress.phase = query::QueryProgressPhase::BackendRpc;
+    progress.elapsed = std::chrono::milliseconds{65000};
+    progress.table_name = "mldp.time_series";
+    progress.rpc_calls_started = 3;
+    progress.rpc_calls_completed = 2;
+    progress.rows_from_backend = 42;
+
+    const auto line = footer.render({.query_running = true, .progress = progress}, 120);
+    EXPECT_EQ(line.size(), 120U);
+    EXPECT_NE(line.find("Running: backend RPC"), std::string::npos);
+    EXPECT_NE(line.find("mldp.time_series"), std::string::npos);
+    EXPECT_NE(line.find("2/3 RPCs"), std::string::npos);
+    EXPECT_NE(line.find("Ctrl-C cancel"), std::string::npos);
+}
+
+TEST(ConsoleFooterTest, TruncatesNarrowFooterWithoutTerminalEscapes)
+{
+    cli::FooterRenderer footer;
+    query::QueryProgressSnapshot progress;
+    progress.phase = query::QueryProgressPhase::Executing;
+    progress.table_name = "mldp.time_series_table";
+
+    const auto line = footer.render({.query_running = true, .progress = progress}, 12);
+    EXPECT_EQ(line.size(), 12U);
+    EXPECT_EQ(line.find('\x1b'), std::string::npos);
+}
+
+TEST(ConsoleFooterTest, RendersPersistentIdleCompletionCancellationAndErrorStates)
+{
+    cli::FooterRenderer footer;
+    query::QueryStats stats;
+    stats.rows_from_backend = 10;
+    stats.rows_returned = 7;
+    stats.elapsed = std::chrono::milliseconds{12};
+    stats.rpc_calls = 3;
+    stats.bytes_spilled = 2048;
+    stats.materialized_bytes = 4096;
+    stats.materialized_files = 2;
+    stats.peak_memory_bytes = 8 * 1024 * 1024;
+
+    EXPECT_NE(footer.render({}, 120).find("Query: ready"), std::string::npos);
+    const auto completed = footer.render({.completed_stats = stats}, 240);
+    EXPECT_NE(completed.find("Query completed"), std::string::npos);
+    EXPECT_NE(completed.find("7/10 rows (3 filtered)"), std::string::npos);
+    EXPECT_NE(completed.find("12 ms"), std::string::npos);
+    EXPECT_NE(completed.find("3 RPC"), std::string::npos);
+    EXPECT_NE(completed.find("2.0 KiB spilled"), std::string::npos);
+    EXPECT_NE(completed.find("4.0 KiB materialized / 2 files"), std::string::npos);
+    EXPECT_NE(completed.find("8.0 MiB peak"), std::string::npos);
+    EXPECT_NE(footer.render({.cancelled = true}, 120).find("Query cancelled"), std::string::npos);
+    EXPECT_NE(footer.render({.error = "bad query"}, 120).find("Error: bad query"), std::string::npos);
+}
+
+TEST(QueryRunnerTest, CapturesCompletedStatsWhenTextualStatsAreSuppressed)
+{
+    query::QueryableFactory::instance().reset();
+    query::QueryableFactory::instance().prepare<ReplFakeQueryable>(config::Config::configFromYamlString("{}"));
+    cli::QueryRunner       runner;
+    cli::QueryCliOptions   options;
+    query::QueryStats      completed_stats;
+    std::ostringstream     output;
+
+    ASSERT_EQ(runner.run(options,
+                         "SELECT pv, value FROM fake.samples",
+                         output,
+                         nullptr,
+                         std::nullopt,
+                         false,
+                         &completed_stats),
+              0);
+    EXPECT_NE(output.str().find("MAGNET:01"), std::string::npos);
+    EXPECT_EQ(output.str().find("-- "), std::string::npos);
+    EXPECT_EQ(completed_stats.rows_returned, 1U);
+    EXPECT_EQ(completed_stats.rows_from_backend, 1U);
+    query::QueryableFactory::instance().reset();
+}
+
 TEST(QueryFormatterTest, FormatsNativeMetadataCollectionsWithoutExpandingRows)
 {
     auto               tag_values = std::make_shared<arrow::StringBuilder>();
@@ -1275,9 +1296,9 @@ TEST(QueryFormatterTest, UsesStackedLayoutWhenViewportCannotFitAllColumns)
     EXPECT_EQ(output.str().find(" | "), std::string::npos);
 }
 
-TEST(QuerySubcommandTest, PreparesBothSupportedQueryableShapes)
+TEST(QueryCommandTest, PreparesBothSupportedQueryableShapes)
 {
-    cli::QuerySubcommandPreparer preparer;
+    cli::QueryCommandPreparer preparer;
     query::QueryableFactory::instance().reset();
     const auto typed = config::Config::configFromYamlString("queryable:\n  - type: mldp\n    provider-name: test\n    ingestion-url: localhost:1\n    query-url: localhost:2\n");
     preparer.prepare(typed);
@@ -1289,9 +1310,9 @@ TEST(QuerySubcommandTest, PreparesBothSupportedQueryableShapes)
     query::QueryableFactory::instance().reset();
 }
 
-TEST(QuerySubcommandTest, PreparesNestedQueryablePoolsFromInlineConfiguration)
+TEST(QueryCommandTest, PreparesNestedQueryablePoolsFromInlineConfiguration)
 {
-    cli::QuerySubcommandPreparer preparer;
+    cli::QueryCommandPreparer preparer;
     query::QueryableFactory::instance().reset();
     const auto config = config::loadMergedConfigSources({"queryable.mldp.mldp-pool.query-url=localhost:2",
                                                          "queryable.mldp.mldp-pool.min-conn=1",
@@ -1314,9 +1335,9 @@ TEST(QuerySubcommandTest, PreparesNestedQueryablePoolsFromInlineConfiguration)
     query::QueryableFactory::instance().reset();
 }
 
-TEST(QuerySubcommandTest, ReportsRegisteredClientInitializationFailureInsteadOfUnknownTable)
+TEST(QueryCommandTest, ReportsRegisteredClientInitializationFailureInsteadOfUnknownTable)
 {
-    cli::QuerySubcommandPreparer preparer;
+    cli::QueryCommandPreparer preparer;
     query::QueryableFactory::instance().reset();
     const auto config = config::Config::configFromYamlString(
         "queryable:\n" "  mldp:\n" "    query-url: localhost:2\n" "    min-conn: 1\n" "    max-conn: 1\n" "  mldp-pv-metadata:\n" "    annotation-url: localhost:3\n" "    min-conn: 1\n" "    max-conn: 1\n");
@@ -1327,9 +1348,9 @@ TEST(QuerySubcommandTest, ReportsRegisteredClientInitializationFailureInsteadOfU
     query::QueryableFactory::instance().reset();
 }
 
-TEST(QuerySubcommandTest, EnforcesTheSpecialTimeSeriesTableSelectStarContract)
+TEST(QueryCommandTest, EnforcesTheSpecialTimeSeriesTableSelectStarContract)
 {
-    cli::QuerySubcommandPreparer preparer;
+    cli::QueryCommandPreparer preparer;
     query::QueryableFactory::instance().reset();
     const auto config = config::Config::configFromYamlString(
         "queryable:\n" "  mldp:\n" "    query-url: localhost:2\n" "    min-conn: 1\n" "    max-conn: 1\n");
@@ -1357,12 +1378,12 @@ TEST(QuerySubcommandTest, EnforcesTheSpecialTimeSeriesTableSelectStarContract)
     query::QueryableFactory::instance().reset();
 }
 
-TEST(QuerySubcommandTest, PlansTimeSeriesPvAndWindowSubqueries)
+TEST(QueryCommandTest, PlansTimeSeriesPvAndWindowSubqueries)
 {
     query::QueryableFactory::instance().reset();
     const auto config = config::Config::configFromYamlString(
         "queryable:\n" "  mldp:\n" "    query-url: localhost:2\n" "    min-conn: 1\n" "    max-conn: 1\n" "  mldp-pv-metadata:\n" "    annotation-url: localhost:3\n" "    min-conn: 1\n" "    max-conn: 1\n");
-    cli::QuerySubcommandPreparer preparer;
+    cli::QueryCommandPreparer preparer;
     preparer.prepare(config);
 
     const auto plan = query::QueryPlanner{}.plan(query::parseQuery(
@@ -1398,12 +1419,12 @@ TEST(QueryExecutorTest, ExtractsWindowEndpointsByPositionRatherThanName)
     EXPECT_EQ(query::executor::extractNormalizedWindows(batches), (std::vector<std::pair<int64_t, int64_t>>{{10, 20}}));
 }
 
-TEST(QuerySubcommandTest, PlansNarrowTimeSeriesPvSubqueryWithMetadataJoin)
+TEST(QueryCommandTest, PlansNarrowTimeSeriesPvSubqueryWithMetadataJoin)
 {
     query::QueryableFactory::instance().reset();
     const auto config = config::Config::configFromYamlString(
         "queryable:\n" "  mldp:\n" "    query-url: localhost:2\n" "    min-conn: 1\n" "    max-conn: 1\n" "  mldp-pv-metadata:\n" "    annotation-url: localhost:3\n" "    min-conn: 1\n" "    max-conn: 1\n");
-    cli::QuerySubcommandPreparer preparer;
+    cli::QueryCommandPreparer preparer;
     preparer.prepare(config);
 
     const auto plan = query::QueryPlanner{}.plan(query::parseQuery(
@@ -1414,12 +1435,12 @@ TEST(QuerySubcommandTest, PlansNarrowTimeSeriesPvSubqueryWithMetadataJoin)
     query::QueryableFactory::instance().reset();
 }
 
-TEST(QuerySubcommandTest, DescribesAndPlansLiteralTimeSeriesWindows)
+TEST(QueryCommandTest, DescribesAndPlansLiteralTimeSeriesWindows)
 {
     query::QueryableFactory::instance().reset();
     const auto config = config::Config::configFromYamlString(
         "queryable:\n" "  mldp:\n" "    query-url: localhost:2\n" "    min-conn: 1\n" "    max-conn: 1\n");
-    cli::QuerySubcommandPreparer preparer;
+    cli::QueryCommandPreparer preparer;
     preparer.prepare(config);
 
     query::QueryPlanner planner;
@@ -1482,9 +1503,9 @@ TEST(QuerySubcommandTest, DescribesAndPlansLiteralTimeSeriesWindows)
     query::QueryableFactory::instance().reset();
 }
 
-TEST(QuerySubcommandTest, ReportsAnnotationClientConfigurationErrorsWithoutHidingTheTable)
+TEST(QueryCommandTest, ReportsAnnotationClientConfigurationErrorsWithoutHidingTheTable)
 {
-    cli::QuerySubcommandPreparer preparer;
+    cli::QueryCommandPreparer preparer;
     query::QueryableFactory::instance().reset();
     const auto config = config::Config::configFromYamlString(
         "queryable:\n" "  mldp-pv-metadata:\n" "    min-conn: 1\n" "    max-conn: 1\n");
@@ -1506,12 +1527,12 @@ TEST(QuerySubcommandTest, ReportsAnnotationClientConfigurationErrorsWithoutHidin
     query::QueryableFactory::instance().reset();
 }
 
-TEST(QuerySubcommandTest, OneShotReportsPlanningOrExecutionErrors)
+TEST(QueryCommandTest, OneShotReportsPlanningOrExecutionErrors)
 {
     char                 arg0[] = "query";
     char                 arg1[] = "select * from mldp.pv_stats";
     char*                argv[] = {arg0, arg1};
-    cli::QuerySubcommand querySubcommand;
+    cli::QueryCommand querySubcommand(g_query_command_listener);
     std::ostringstream   output;
     std::ostringstream   error;
     std::istringstream   input;
@@ -1520,12 +1541,12 @@ TEST(QuerySubcommandTest, OneShotReportsPlanningOrExecutionErrors)
                 error.str().find("Query error:") != std::string::npos);
 }
 
-TEST(QuerySubcommandTest, OneShotReportsParseErrors)
+TEST(QueryCommandTest, OneShotReportsParseErrors)
 {
     char                 arg0[] = "query";
     char                 arg1[] = "select from mldp.pv_stats";
     char*                argv[] = {arg0, arg1};
-    cli::QuerySubcommand querySubcommand;
+    cli::QueryCommand querySubcommand(g_query_command_listener);
     std::ostringstream   output;
     std::ostringstream   error;
     std::istringstream   input;
@@ -1533,11 +1554,11 @@ TEST(QuerySubcommandTest, OneShotReportsParseErrors)
     EXPECT_NE(error.str().find("Parse error at "), std::string::npos);
 }
 
-TEST(QuerySubcommandTest, ReplShowsHelpAndExitsOnQuit)
+TEST(QueryCommandTest, ReplShowsHelpAndExitsOnQuit)
 {
     char                 arg0[] = "query";
     char*                argv[] = {arg0};
-    cli::QuerySubcommand querySubcommand;
+    cli::QueryCommand querySubcommand(g_query_command_listener);
     std::istringstream   input(".help\n.quit\n");
     std::ostringstream   output;
     std::ostringstream   error;
@@ -1550,10 +1571,74 @@ TEST(QuerySubcommandTest, ReplShowsHelpAndExitsOnQuit)
     EXPECT_NE(output.str().find("mldp> "), std::string::npos);
     EXPECT_NE(output.str().find("Enter one SQL statement terminated by ';'."), std::string::npos);
     EXPECT_NE(output.str().find("Ctrl-L (clear screen)"), std::string::npos);
+    EXPECT_NE(output.str().find(".pager [on|off]"), std::string::npos);
     EXPECT_TRUE(error.str().empty());
 }
 
-TEST(QuerySubcommandTest, ReplMaterializesMultilineCreateTableForFollowingSelect)
+TEST(QueryCommandTest, ReplPagerCanBeConfiguredWithoutChangingNonTtyOutput)
+{
+    char                 arg0[] = "query";
+    char*                argv[] = {arg0};
+    cli::QueryCommand querySubcommand(g_query_command_listener);
+    std::istringstream   input(".pager\n.pager on\n.pager\n.pager invalid\n.pager off\n.quit\n");
+    std::ostringstream   output;
+    std::ostringstream   error;
+    const std::vector<std::string> config_sources{
+        "queryable.mldp.query-url=localhost:2",
+        "queryable.mldp.min-conn=1",
+        "queryable.mldp.max-conn=1"};
+
+    EXPECT_EQ(querySubcommand.run(1, argv, config_sources, input, output, error), 0);
+    EXPECT_NE(output.str().find("Pager: off"), std::string::npos);
+    EXPECT_NE(output.str().find("Pager: on"), std::string::npos);
+    EXPECT_NE(error.str().find(".pager accepts on or off"), std::string::npos);
+}
+
+class RecordingQueryCommandListener final : public cli::QueryCommandListener
+{
+public:
+    void querySubmitted(std::string_view) override { ++submitted; }
+    void progressChanged(const query::QueryProgressSnapshot&) override { ++progress; }
+    void resultBatchAvailable(const cli::QueryResultBatchDescriptor&) override { ++batches; }
+    void queryCompleted(const query::QueryStats&) override { ++completed; }
+    void queryCancelled() override { ++cancelled; }
+    void queryFailed(std::string_view) override { ++failed; }
+    void queryIdle() override { ++idle; }
+
+    int submitted{0};
+    int progress{0};
+    int batches{0};
+    int completed{0};
+    int cancelled{0};
+    int failed{0};
+    int idle{0};
+};
+
+TEST(QueryCommandTest, ReplDoesNotPublishLifecycleEventsToTheConsoleListener)
+{
+    char                          arg0[] = "query";
+    char*                         argv[] = {arg0};
+    RecordingQueryCommandListener listener;
+    cli::QueryCommand             querySubcommand(listener);
+    std::istringstream            input("SHOW TABLES;\n.quit\n");
+    std::ostringstream            output;
+    std::ostringstream            error;
+    const std::vector<std::string> config_sources{
+        "queryable.mldp.query-url=localhost:2",
+        "queryable.mldp.min-conn=1",
+        "queryable.mldp.max-conn=1"};
+
+    EXPECT_EQ(querySubcommand.run(1, argv, config_sources, input, output, error), 0);
+    EXPECT_EQ(listener.submitted, 0);
+    EXPECT_EQ(listener.progress, 0);
+    EXPECT_EQ(listener.batches, 0);
+    EXPECT_EQ(listener.completed, 0);
+    EXPECT_EQ(listener.cancelled, 0);
+    EXPECT_EQ(listener.failed, 0);
+    EXPECT_EQ(listener.idle, 0);
+}
+
+TEST(QueryCommandTest, ReplMaterializesMultilineCreateTableForFollowingSelect)
 {
     const auto catalog_directory = std::filesystem::temp_directory_path() /
                                    ("mldp-query-repl-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
@@ -1562,7 +1647,7 @@ TEST(QuerySubcommandTest, ReplMaterializesMultilineCreateTableForFollowingSelect
     char       arg1[] = "--table-catalog-dir";
     char*      argv[] = {arg0, arg1, catalog_directory_string.data()};
     query::QueryableFactory::instance().reset();
-    cli::QuerySubcommand querySubcommand([](const config::Config&)
+    cli::QueryCommand querySubcommand(g_query_command_listener, [](const config::Config&)
                                          {
                                              query::QueryableFactory::instance().prepare<ReplFakeQueryable>(config::Config::configFromYamlString("{}"));
                                          });
@@ -1581,11 +1666,11 @@ TEST(QuerySubcommandTest, ReplMaterializesMultilineCreateTableForFollowingSelect
     query::QueryableFactory::instance().reset();
 }
 
-TEST(QuerySubcommandTest, ReplFormatPersistsForFollowingStatements)
+TEST(QueryCommandTest, ReplFormatPersistsForFollowingStatements)
 {
     char                           arg0[] = "query";
     char*                          argv[] = {arg0};
-    cli::QuerySubcommand           querySubcommand;
+    cli::QueryCommand           querySubcommand(g_query_command_listener);
     std::istringstream             input(".format\n.format json\nSHOW TABLES;\n.quit\n");
     std::ostringstream             output;
     std::ostringstream             error;
@@ -1604,11 +1689,11 @@ TEST(QuerySubcommandTest, ReplFormatPersistsForFollowingStatements)
     EXPECT_TRUE(error.str().empty());
 }
 
-TEST(QuerySubcommandTest, ReplTableFitCanBeChangedAndReported)
+TEST(QueryCommandTest, ReplTableFitCanBeChangedAndReported)
 {
     char                           arg0[] = "query";
     char*                          argv[] = {arg0};
-    cli::QuerySubcommand           querySubcommand;
+    cli::QueryCommand           querySubcommand(g_query_command_listener);
     std::istringstream             input(".table-fit\n.table-fit on\n.table-fit\n.table-fit invalid\n.quit\n");
     std::ostringstream             output;
     std::ostringstream             error;
@@ -1623,11 +1708,11 @@ TEST(QuerySubcommandTest, ReplTableFitCanBeChangedAndReported)
     EXPECT_NE(error.str().find(".table-fit accepts on or off"), std::string::npos);
 }
 
-TEST(QuerySubcommandTest, ReplRejectsInvalidFormatWithoutChangingTheSession)
+TEST(QueryCommandTest, ReplRejectsInvalidFormatWithoutChangingTheSession)
 {
     char                           arg0[] = "query";
     char*                          argv[] = {arg0};
-    cli::QuerySubcommand           querySubcommand;
+    cli::QueryCommand           querySubcommand(g_query_command_listener);
     std::istringstream             input(".format json\n.format invalid\n.format\n.quit\n");
     std::ostringstream             output;
     std::ostringstream             error;
@@ -1651,6 +1736,7 @@ TEST(QueryCompletionTest, CompletesCommandsKeywordsTablesAndColumns)
     EXPECT_EQ(cli::detail::replCompletions("sel"), std::vector<std::string>({"SELECT"}));
     EXPECT_EQ(cli::detail::replCompletions(".for"), std::vector<std::string>({".format"}));
     EXPECT_EQ(cli::detail::replCompletions(".format j"), std::vector<std::string>({"json"}));
+    EXPECT_EQ(cli::detail::replCompletions(".pager o"), std::vector<std::string>({"off", "on"}));
     const auto tables = cli::detail::replCompletions("SELECT * FROM mldp.t");
     EXPECT_NE(std::find(tables.begin(), tables.end(), "mldp.time_series"), tables.end());
     const auto columns = cli::detail::replCompletions("SELECT ts.p FROM mldp.time_series AS ts WHERE ts.p");
@@ -1698,11 +1784,11 @@ TEST(QueryCompletionTest, CompletesSessionAndPersistentCatalogTablesAndColumns)
     EXPECT_NE(std::find(unqualified.begin(), unqualified.end(), "sample_value"), unqualified.end());
 }
 
-TEST(QuerySubcommandTest, ReplReportsIncompleteStatementAtEndOfInput)
+TEST(QueryCommandTest, ReplReportsIncompleteStatementAtEndOfInput)
 {
     char                 arg0[] = "query";
     char*                argv[] = {arg0};
-    cli::QuerySubcommand querySubcommand;
+    cli::QueryCommand querySubcommand(g_query_command_listener);
     std::istringstream   input("SELECT *\nFROM mldp.pv_stats\n");
     std::ostringstream   output;
     std::ostringstream   error;
@@ -1715,11 +1801,11 @@ TEST(QuerySubcommandTest, ReplReportsIncompleteStatementAtEndOfInput)
     EXPECT_NE(error.str().find("incomplete SQL statement discarded"), std::string::npos);
 }
 
-TEST(QuerySubcommandTest, ReplRunsSubmittedStatementsAndRecoversFromParseErrors)
+TEST(QueryCommandTest, ReplRunsSubmittedStatementsAndRecoversFromParseErrors)
 {
     char                           arg0[] = "query";
     char*                          argv[] = {arg0};
-    cli::QuerySubcommand           querySubcommand;
+    cli::QueryCommand           querySubcommand(g_query_command_listener);
     std::istringstream             input("select from mldp.pv_stats;\nSHOW TABLES;\n.quit\n");
     std::ostringstream             output;
     std::ostringstream             error;
@@ -1734,11 +1820,11 @@ TEST(QuerySubcommandTest, ReplRunsSubmittedStatementsAndRecoversFromParseErrors)
     EXPECT_EQ(output.str().find("\033[K"), std::string::npos);
 }
 
-TEST(QuerySubcommandTest, ReplRecognisesSemicolonsOnlyOutsideQuotedStrings)
+TEST(QueryCommandTest, ReplRecognisesSemicolonsOnlyOutsideQuotedStrings)
 {
     char                           arg0[] = "query";
     char*                          argv[] = {arg0};
-    cli::QuerySubcommand           querySubcommand;
+    cli::QueryCommand           querySubcommand(g_query_command_listener);
     std::istringstream             input("SELECT *\nFROM mldp.pv_stats\nWHERE pv = 'A;B';\n.quit\n");
     std::ostringstream             output;
     std::ostringstream             error;
@@ -1752,11 +1838,11 @@ TEST(QuerySubcommandTest, ReplRecognisesSemicolonsOnlyOutsideQuotedStrings)
     EXPECT_NE(output.str().find("...> "), std::string::npos);
 }
 
-TEST(QuerySubcommandTest, ReplRecognisesWindowShardSeparatorInsideNestedParentheses)
+TEST(QueryCommandTest, ReplRecognisesWindowShardSeparatorInsideNestedParentheses)
 {
     char                 arg0[] = "query";
     char*                argv[] = {arg0};
-    cli::QuerySubcommand querySubcommand;
+    cli::QueryCommand querySubcommand(g_query_command_listener);
     std::istringstream   input(
         "SELECT *\n" "FROM mldp.time_series_table\n" "WHERE pv IN (SELECT pv FROM mldp.pv_metadata WHERE attributes.dname PREFIX 'USEG:UNDH' LIMIT 2)\n" "AND window IN (SELECT time, time + 30s FROM mldp.configuration_activation " "WHERE time >= NOW - 120d AND config_name = 'SPEAR User' LIMIT 1; slice 15s, series_per_shard 2);\n" ".quit\n");
     std::ostringstream             output;
@@ -1774,7 +1860,7 @@ TEST(QuerySubcommandTest, ReplRecognisesWindowShardSeparatorInsideNestedParenthe
     EXPECT_EQ(error.str().find("Parse error"), std::string::npos);
 }
 
-TEST(QuerySubcommandTest, ReplStreamsProductionWideWindowAcrossStaggeredMockResponses)
+TEST(QueryCommandTest, ReplStreamsProductionWideWindowAcrossStaggeredMockResponses)
 {
     query::QueryableFactory::instance().reset();
     {
@@ -1786,7 +1872,7 @@ TEST(QuerySubcommandTest, ReplStreamsProductionWideWindowAcrossStaggeredMockResp
         DelayedWideWindowQueryable::response_delays_seconds.clear();
     }
 
-    cli::QuerySubcommand query_subcommand([](const config::Config&)
+    cli::QueryCommand query_subcommand(g_query_command_listener, [](const config::Config&)
                                           {
                                               query::QueryableFactory::instance().reset();
                                               query::QueryableFactory::instance().prepare<DelayedWideWindowQueryable>(
@@ -1869,11 +1955,11 @@ TEST(QuerySubcommandTest, ReplStreamsProductionWideWindowAcrossStaggeredMockResp
     std::filesystem::remove_all(catalog_directory);
 }
 
-TEST(QuerySubcommandTest, ReplClearAndUnknownCommandKeepSessionUsable)
+TEST(QueryCommandTest, ReplClearAndUnknownCommandKeepSessionUsable)
 {
     char                           arg0[] = "query";
     char*                          argv[] = {arg0};
-    cli::QuerySubcommand           querySubcommand;
+    cli::QueryCommand           querySubcommand(g_query_command_listener);
     std::istringstream             input("SHOW TABLES;\nhistory\nSELECT *\n.clear\n.unknown\nSHOW TABLES;\n.quit\n");
     std::ostringstream             output;
     std::ostringstream             error;
@@ -1890,11 +1976,11 @@ TEST(QuerySubcommandTest, ReplClearAndUnknownCommandKeepSessionUsable)
     EXPECT_NE(output.str().find("mldp.time_series"), std::string::npos);
 }
 
-TEST(QuerySubcommandTest, ReplPlainStreamFallbackDoesNotWriteInteractiveHistory)
+TEST(QueryCommandTest, ReplPlainStreamFallbackDoesNotWriteInteractiveHistory)
 {
     char                           arg0[] = "query";
     char*                          argv[] = {arg0};
-    cli::QuerySubcommand           querySubcommand;
+    cli::QueryCommand           querySubcommand(g_query_command_listener);
     std::istringstream             input(".help\n.quit\n");
     std::ostringstream             output;
     std::ostringstream             error;
@@ -1908,14 +1994,14 @@ TEST(QuerySubcommandTest, ReplPlainStreamFallbackDoesNotWriteInteractiveHistory)
     EXPECT_TRUE(error.str().empty());
 }
 
-TEST(QuerySubcommandTest, RejectsLocalConfigFlag)
+TEST(QueryCommandTest, RejectsLocalConfigFlag)
 {
     char                 arg0[] = "query";
     char                 arg1[] = "-c";
     char                 arg2[] = "config.yaml";
     char                 arg3[] = "SHOW TABLES";
     char*                argv[] = {arg0, arg1, arg2, arg3};
-    cli::QuerySubcommand querySubcommand;
+    cli::QueryCommand querySubcommand(g_query_command_listener);
     std::ostringstream   output;
     std::ostringstream   error;
     std::istringstream   input;
@@ -1923,12 +2009,12 @@ TEST(QuerySubcommandTest, RejectsLocalConfigFlag)
     EXPECT_NE(error.str().find("global option"), std::string::npos);
 }
 
-TEST(QuerySubcommandTest, ShowTablesFailsWithoutQueryableConfig)
+TEST(QueryCommandTest, ShowTablesFailsWithoutQueryableConfig)
 {
     char                 arg0[] = "query";
     char                 arg1[] = "SHOW TABLES";
     char*                argv[] = {arg0, arg1};
-    cli::QuerySubcommand querySubcommand;
+    cli::QueryCommand querySubcommand(g_query_command_listener);
     std::ostringstream   output;
     std::ostringstream   error;
     std::istringstream   input;

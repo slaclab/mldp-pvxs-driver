@@ -73,11 +73,11 @@ FetchContent_Declare(replxx
 )
 FetchContent_MakeAvailable(replxx)
 
-# Optional: interactive config wizard (FTXUI TUI)
+# FTXUI is used only by the optional configuration wizard.
 option(MLDP_WIZARD "Build interactive config wizard (requires FTXUI)" ON)
 
 if(MLDP_WIZARD)
-    message(STATUS "Acquiring FTXUI for config wizard...")
+    message(STATUS "Acquiring FTXUI for the configuration wizard...")
     FetchContent_Declare(ftxui
         GIT_REPOSITORY https://github.com/ArthurSonzogni/FTXUI
         GIT_TAG        v5.0.0
@@ -1005,8 +1005,12 @@ if(MLDP_PVXS_DRIVER_TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/test/query/query_planner_executor_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/query/mldp_annotation_query_client_integration_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/query/queryable_mldp_integration_test.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/query/QuerySubcommand.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/query/QueryCommand.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/query/ConsoleFooter.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/query/QueryPager.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/query/NullQueryCommandListener.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/query/LoggingQueryCommandListener.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/query/ScopedQueryInterruptHandler.cpp"
     )
     target_include_directories(${PROJECT_NAME}_test PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/include"
@@ -1103,8 +1107,12 @@ if(MLDP_PVXS_DRIVER_MAIN)
         "${CMAKE_CURRENT_SOURCE_DIR}/ext/rapidyaml/include/rapidyaml-0.10.0.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/SpdlogLogger.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/ConfigPrinter.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/query/QuerySubcommand.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/query/QueryCommand.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/query/ConsoleFooter.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/query/QueryPager.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/query/NullQueryCommandListener.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/query/LoggingQueryCommandListener.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/query/ScopedQueryInterruptHandler.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/config/subcommand.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/config/validate.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/config/template.cpp"
@@ -1131,6 +1139,7 @@ if(MLDP_PVXS_DRIVER_MAIN)
         )
     endif()
     target_include_directories(${PROJECT_NAME} PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
         "${CMAKE_CURRENT_SOURCE_DIR}/ext/rapidyaml/include"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/config"
     )

@@ -76,15 +76,19 @@ mldp> SHOW OPERATORS;
 
 Terminate each statement with a semicolon. Statements can span lines; the prompt changes from `mldp> ` to `...> ` while a statement is buffered. A semicolon inside a quoted string does not terminate the statement. The session executes one statement at a time and remains open after parse, planning, or execution errors.
 
-After each statement, redirected and plain-stream REPL sessions print a final statistics line with returned and backend rows, elapsed time, RPCs, spill/materialization counters, and peak memory. When both standard input and output are terminals, the REPL clears the visible screen at startup, reserves the final row for a reverse-video status footer, and starts each new prompt immediately above it. Result output scrolls above the footer. Redirected output and machine-readable formats remain free of terminal control sequences. The REPL leaves input editing and active-line resize redraws to `replxx`.
+In a real terminal, the persistent footer carries each completed query's returned/backend/filtered rows, elapsed time, RPC count, spill and materialization counters, and peak memory; no final `-- ...` statistics line follows the result. Table and expanded results use normal terminal scrollback, so SSH and container-attached terminals retain their native resize, copy/paste, and scroll behavior. Redirected/plain-stream REPL output and one-shot commands retain the textual final statistics line, and machine-readable formats remain free of terminal control sequences.
 
-### Live REPL footer
+### Pager and terminal controls
 
-The interactive footer is a single adaptive status line. It refreshes while a statement runs (at most four times per second), retains the most recent completed-query summary while the REPL is idle, and uses the available terminal width for the highest-priority fields first. A narrow terminal can therefore show only `Running: <state>`, elapsed time, and `Ctrl-C cancel`; omitted fields are informational, not an indication that work is stalled.
+The REPL uses `replxx` for all interactive terminal sessions. At startup and immediately before each submitted SQL statement, it clears the terminal exactly as `.clear` does, then shows a reverse-video footer in the final terminal row until exit. The footer shows `Query: ready` while idle, current progress plus `Ctrl-C cancel` while a direct-output query runs, and the latest completion, cancellation, or error state after the query returns. Results remain in normal terminal scrollback; completion statistics stay in the footer. `Ctrl-C` cancels an active query or abandons the current editor line; `Ctrl-Q`, `.quit`, and `.exit` leave the REPL. The footer temporarily yields the terminal to a pager and returns after the pager exits.
 
-While a query is running, the line begins with `Running: <state> | <elapsed>`. Depending on the active step and available width, it adds the source table, operation, detail, result page, window-shard position, parallel-shard capacity, RPC progress, cursor progress, and backend row count. `shards <active>/<limit>` means active PV-group cursors over the configured per-slice concurrency limit, which MLDP derives from `max-conn`.
+Use `.pager on` to send table or expanded output from a real terminal to a pager. Paging is off by default. The pager command comes from `$PAGER`, or defaults to `less -FRSX` when `$PAGER` is unset. `.pager` reports the current setting and `.pager off` restores direct scrollback output. JSON, CSV, Arrow, one-shot SQL, and redirected sessions always use direct formatter output.
 
-| State or step | Footer information |
+### Query progress
+
+The active-query footer and command listeners receive query progress while a query runs. Depending on the active step, it identifies the source table, operation, detail, result page, window-shard position, parallel-shard capacity, RPC progress, cursor progress, and backend row count. `shards <active>/<limit>` means active PV-group cursors over the configured per-slice concurrency limit, which MLDP derives from `max-conn`.
+
+| State or step | Progress information |
 |---|---|
 | `parsing` | SQL statement parsing is in progress. |
 | `planning` | The logical and physical query plan is being prepared. |
@@ -94,11 +98,11 @@ While a query is running, the line begins with `Running: <state> | <elapsed>`. D
 | `executing` — windowed MLDP scan | Shows the active source plus `window <n>, slice <n>, series shard <n>`. Windows are visited in normalized-range, time-slice, then requested-series-group order. This corresponds to `window IN (...; slice ..., series_per_shard ...)`. |
 | `executing` — wide pivot | Shows `mldp.time_series_table` and a stage such as `wide pivot`, `wide pivot ingestion`, spill finalization, or external sort/merge while the long-form cursor data is converted to the wide result. |
 | `executing` — relational stage | Shows the local stage that is consuming batches, such as filter, projection, sort, limit, hash join, nested-loop join, or block nested-loop join. |
-| `cancelling` | `Ctrl-C` has requested cancellation; the footer remains active until the in-flight query releases its cursor or RPC. |
+| `cancelling` | `Ctrl-C` has requested cancellation until the in-flight query releases its cursor or RPC. |
 
-For a paginated `LIMIT` query in a live REPL, the footer can show `result page <n>`. This is the client result-page number, separate from MLDP cursor responses. The continuation token is still printed in the regular result output after a full page; use it with `PAGE TOKEN` for the next page.
+For a paginated `LIMIT` query, the status can show `result page <n>`. This is the client result-page number, separate from MLDP cursor responses. The continuation token remains available for `PAGE TOKEN` in the plain-stream session.
 
-When the query finishes, the footer changes to `Query: ready` and retains any available source, operation, cursor count, and completed-shard count. It appends the completed statistics: returned rows, elapsed milliseconds, RPC count, plus spill and peak-memory values when nonzero. On a query error, the footer shows `Error: <message>`; a cancelled query prints `Query cancelled` and returns to the prompt. `Ctrl-C cancel` is displayed only while a query is active.
+When a real-terminal query finishes, the footer retains its completion summary until another query changes it. On a query error it shows the error, and a cancelled query shows `Query cancelled` before returning to a usable prompt.
 
 ### Stored query tables
 

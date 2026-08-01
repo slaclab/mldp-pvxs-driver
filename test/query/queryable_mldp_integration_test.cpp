@@ -14,7 +14,8 @@
 #include <query/ExecutionContext.h>
 #include <query/QueryExecutor.h>
 #include <query/QueryPlanner.h>
-#include <query/QuerySubcommand.h>
+#include <query/QueryCommand.h>
+#include <query/NullQueryCommandListener.h>
 #include <query/QueryableFactory.h>
 #include <query/impl/mldp/MLDPAnnotationQueryClient.h>
 #include <query/impl/mldp/MLDPQueryClient.h>
@@ -652,7 +653,8 @@ TEST_F(QueryableMldpIntegrationTest, ControllerGeneratedProductionShapedWideWind
     char                           arg0[] = "query";
     char                           arg1[] = "--no-stats";
     char*                          argv[] = {arg0, arg1};
-    cli::QuerySubcommand           query_subcommand;
+    cli::NullQueryCommandListener query_listener;
+    cli::QueryCommand             query_subcommand(query_listener);
     std::istringstream             input(".format json\n" + sql + "\n.quit\n");
     std::ostringstream             output;
     std::ostringstream             error;

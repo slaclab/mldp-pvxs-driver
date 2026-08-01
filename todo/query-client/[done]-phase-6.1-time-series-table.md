@@ -142,7 +142,7 @@ Passed in the devcontainer on 2026-07-23:
 
 ```bash
 ctest --test-dir /workspace/build \
-  -R '^(QueryParserTest\.|QuerySubcommandTest\.EnforcesTheSpecialTimeSeriesTableSelectStarContract|MLDPQueryClientTest\.|PlannerExecutorTest\.|QueryableMldpIntegrationTest\.)' \
+  -R '^(QueryParserTest\.|QueryCommandTest\.EnforcesTheSpecialTimeSeriesTableSelectStarContract|MLDPQueryClientTest\.|PlannerExecutorTest\.|QueryableMldpIntegrationTest\.)' \
   --output-on-failure
 ```
 

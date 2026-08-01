@@ -8,10 +8,14 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
-#include <query/QuerySubcommand.h>
+#include <query/QueryCommand.h>
+
+#include <query/ConsoleFooter.h>
+#include <query/NullQueryCommandListener.h>
+#include <query/ScopedQueryInterruptHandler.h>
+#include <query/QueryPager.h>
 
 #include <config/ConfigSource.h>
-#include <query/ConsoleFooter.h>
 #include <query/ExecutionContext.h>
 #include <query/QueryCancellation.h>
 #include <query/QueryExecutor.h>
@@ -48,42 +52,14 @@
 #include <string>
 #include <vector>
 
-#include <unistd.h>
-
-#include <csignal>
-
 #include <sys/ioctl.h>
+#include <unistd.h>
 
 using namespace mldp_pvxs_driver::cli;
 
 namespace {
 
-volatile std::sig_atomic_t g_query_interrupt_requested = 0;
 std::mutex                 g_fallback_output_mutex;
-
-extern "C" void requestQueryInterrupt(int)
-{
-    g_query_interrupt_requested = 1;
-}
-
-class ScopedQueryInterruptHandler
-{
-public:
-    ScopedQueryInterruptHandler()
-        : previous_(std::signal(SIGINT, requestQueryInterrupt))
-    {
-        g_query_interrupt_requested = 0;
-    }
-
-    ~ScopedQueryInterruptHandler()
-    {
-        std::signal(SIGINT, previous_);
-    }
-
-private:
-    using Handler = void (*)(int);
-    Handler previous_;
-};
 
 mldp_pvxs_driver::config::Config selectQueryablePoolConfig(
     const std::string_view                  type,
@@ -224,7 +200,8 @@ std::optional<std::size_t> statementTerminator(std::string_view line)
 bool isReplCommand(std::string_view command)
 {
     return command == ".help" || command == ".clear" || command == ".format" || command.starts_with(".format ") ||
-           command.starts_with(".format\t") || command == ".history" || command == "history" || command == "\\x" ||
+           command.starts_with(".format\t") || command == ".pager" || command.starts_with(".pager ") || command.starts_with(".pager\t") ||
+           command == ".history" || command == "history" || command == "\\x" ||
            command == "\\expanded" || command.starts_with("\\expanded ") || command == ".table-fit" ||
            command.starts_with(".table-fit ") || command == ".quit" || command == ".exit";
 }
@@ -442,6 +419,11 @@ public:
         repl_->set_complete_on_empty(true);
         repl_->set_beep_on_ambiguous_completion(false);
         repl_->bind_key_internal(replxx::Replxx::KEY::TAB, "complete_line");
+        repl_->bind_key(replxx::Replxx::KEY::control('Q'), [this](char32_t)
+                        {
+                            quit_requested_ = true;
+                            return replxx::Replxx::ACTION_RESULT::BAIL;
+                        });
         repl_->set_completion_callback(
             [this](const std::string& context, int& context_length) -> replxx::Replxx::completions_t
             {
@@ -536,6 +518,13 @@ public:
         return true;
     }
 
+    bool consumeQuitRequested() noexcept
+    {
+        const auto requested = quit_requested_;
+        quit_requested_ = false;
+        return requested;
+    }
+
 private:
     void sanitizeHistory()
     {
@@ -568,54 +557,60 @@ private:
     std::filesystem::path                                       history_path_;
     std::vector<std::string>                                    session_history_;
     std::shared_ptr<mldp_pvxs_driver::query::QueryTableCatalog> table_catalog_;
+    bool                                                        quit_requested_{false};
 };
 
 QueryOutputFormat parseFormat(std::string_view value);
 
 int runRepl(QueryCliOptions                           options,
             const mldp_pvxs_driver::cli::QueryRunner& runner,
+            mldp_pvxs_driver::cli::QueryCommandListener& listener,
             std::istream&                             input,
             std::ostream&                             output,
             std::ostream&                             error)
 {
     std::string                   buffer;
     ReplLineEditor                editor(input, runner.completionCatalog(options));
+    QueryPager                    pager;
     QueryContinuationRegistry     continuations;
     auto                          output_mutex = std::make_shared<std::mutex>();
-    std::optional<TerminalLayout> terminal;
-    if (&input == &std::cin && &output == &std::cout && ::isatty(STDIN_FILENO) != 0 && ::isatty(STDOUT_FILENO) != 0)
+    ConsoleStatus                 status;
+    TerminalLayout                terminal(output, output_mutex);
+    const auto                     terminal_active = &input == &std::cin && &output == &std::cout &&
+                                              ::isatty(STDIN_FILENO) != 0 && ::isatty(STDOUT_FILENO) != 0 && terminal.initialize();
+    if (terminal_active)
     {
-        terminal.emplace(output, output_mutex);
-        if (!terminal->initialize())
-        {
-            terminal.reset();
-        }
+        editor.clearScreen();
+        terminal.redraw(status);
     }
-    ConsoleStatus status;
     while (true)
     {
-        if (terminal)
+        if (terminal_active)
         {
-            terminal->refreshAtSafeBoundary();
-            terminal->setStatus(status);
-            terminal->redrawFooter();
-            terminal->positionInputCursor();
+            terminal.redraw(status);
+            terminal.positionInputCursor();
         }
         bool       interrupted = false;
         const auto line = editor.read(buffer.empty() ? "mldp> " : "...> ", output, interrupted);
         if (!line)
         {
+            if (editor.consumeQuitRequested())
+            {
+                terminal.restore();
+                return 0;
+            }
             if (interrupted)
             {
                 buffer.clear();
+                status = {};
                 output << "\n";
-                status.error.clear();
                 continue;
             }
             if (!buffer.empty())
             {
                 error << "Query error: incomplete SQL statement discarded at end of input\n";
             }
+            terminal.restore();
             return 0;
         }
 
@@ -624,13 +619,10 @@ int runRepl(QueryCliOptions                           options,
         {
             editor.addHistory(command);
             buffer.clear();
+            status = {};
             if (!editor.clearScreen())
             {
                 output << "Buffered statement cleared.\n";
-            }
-            if (terminal)
-            {
-                terminal->refreshAtSafeBoundary();
             }
             continue;
         }
@@ -642,15 +634,40 @@ int runRepl(QueryCliOptions                           options,
         if (buffer.empty() && (command == ".quit" || command == ".exit"))
         {
             editor.addHistory(command);
+            terminal.restore();
             return 0;
         }
         if (buffer.empty() && command == ".help")
         {
             editor.addHistory(command);
             output << "Enter one SQL statement terminated by ';'.\n"
-                   << "Commands: .help, .clear, .format [table|json|csv|arrow], .table-fit [on|off], .history, .quit, .exit\n"
+                   << "Commands: .help, .clear, .format [table|json|csv|arrow], .pager [on|off], .table-fit [on|off], .history, .quit, .exit\n"
                    << "Display: \\expanded [on|off], \\x (toggle), or terminate a query with \\G for one expanded result.\n"
-                   << "Editing: arrows, Ctrl-A/Ctrl-E, Ctrl-W, Ctrl-U/Ctrl-K, Ctrl-L (clear screen), history, and tab completion.\n";
+                   << "Editing: arrows, Ctrl-A/Ctrl-E, Ctrl-W, Ctrl-U/Ctrl-K, Ctrl-L (clear screen), Ctrl-Q (exit), history, and tab completion.\n";
+            continue;
+        }
+        if (buffer.empty() && (command == ".pager" || startsWithIgnoreCase(command, ".pager ") || startsWithIgnoreCase(command, ".pager\t")))
+        {
+            editor.addHistory(command);
+            const auto argument = trim(std::string_view(command).substr(std::string_view(".pager").size()));
+            if (argument.empty())
+            {
+                output << "Pager: " << (options.pager ? "on" : "off") << "\n";
+            }
+            else if (argument == "on")
+            {
+                options.pager = true;
+                output << "Pager: on\n";
+            }
+            else if (argument == "off")
+            {
+                options.pager = false;
+                output << "Pager: off\n";
+            }
+            else
+            {
+                error << "Query error: .pager accepts on or off\n";
+            }
             continue;
         }
         if (buffer.empty() && (command == ".history" || command == "history"))
@@ -784,31 +801,34 @@ int runRepl(QueryCliOptions                           options,
                 continue;
             }
             editor.addHistory(sql);
+            if (terminal_active)
+            {
+                editor.clearScreen();
+                terminal.redraw({});
+            }
             auto progress = std::make_shared<mldp_pvxs_driver::query::QueryProgressTracker>();
             auto cancellation = std::make_shared<mldp_pvxs_driver::query::QueryCancellation>();
             progress->setPhase(mldp_pvxs_driver::query::QueryProgressPhase::Parsing);
-            status.query_running = true;
-            status.progress = progress->snapshot();
-            status.completed_stats.reset();
-            status.error.clear();
-            if (terminal)
-            {
-                terminal->setStatus(status);
-                terminal->redrawFooter();
-            }
+            listener.querySubmitted(sql);
             auto query_options = options;
             query_options.expanded = options.expanded || expanded_once;
             mldp_pvxs_driver::query::QueryStats completed_stats;
             ScopedQueryInterruptHandler         interrupt_handler;
+            const auto                           page_result = query_options.pager && pager.canPage(input, output, query_options.format);
+            std::ostringstream                   paged_output;
+            auto&                                 result_output = page_result ? static_cast<std::ostream&>(paged_output) : output;
+            status = {.query_running = true, .progress = progress->snapshot()};
+            if (terminal_active) terminal.redraw(status);
+            if (page_result) terminal.restore();
             auto                                query = std::async(std::launch::async,
                                                                    [&]
                                                                    {
                                         return runner.run(query_options,
                                                           sql,
-                                                          output,
+                                                          result_output,
                                                           progress,
-                                                          terminal ? std::optional<std::size_t>(static_cast<std::size_t>(terminal->columns())) : std::nullopt,
-                                                          !terminal,
+                                                          std::nullopt,
+                                                          !terminal_active,
                                                           &completed_stats,
                                                           cancellation,
                                                           output_mutex,
@@ -816,53 +836,49 @@ int runRepl(QueryCliOptions                           options,
                                                                    });
             try
             {
-                status.progress = progress->snapshot();
-                if (terminal)
-                {
-                    terminal->setStatus(status);
-                    terminal->redrawFooter();
-                }
                 while (query.wait_for(std::chrono::milliseconds{250}) != std::future_status::ready)
                 {
-                    if (g_query_interrupt_requested != 0)
+                    if (interrupt_handler.consumeInterrupt())
                     {
-                        g_query_interrupt_requested = 0;
                         progress->setPhase(mldp_pvxs_driver::query::QueryProgressPhase::Cancelling);
                         cancellation->requestCancel();
                     }
-                    if (terminal)
-                    {
-                        status.progress = progress->snapshot();
-                        terminal->setStatus(status);
-                        terminal->redrawFooter();
-                    }
+                    const auto snapshot = progress->snapshot();
+                    status.progress = snapshot;
+                    if (terminal_active) terminal.redraw(status);
+                    listener.progressChanged(snapshot);
                 }
                 (void)query.get();
-                status.query_running = false;
-                status.progress = progress->snapshot();
-                status.completed_stats = std::move(completed_stats);
+                if (page_result)
+                {
+                    std::string pager_error;
+                    if (!pager.write(paged_output.str(), pager_error))
+                    {
+                        error << "Query warning: " << pager_error << "; writing result directly\n";
+                        output << paged_output.str();
+                    }
+                    if (terminal_active) terminal.initialize();
+                }
+                status = {.completed_stats = completed_stats};
+                if (terminal_active) terminal.redraw(status);
+                listener.queryCompleted(completed_stats);
+                listener.queryIdle();
             }
             catch (const mldp_pvxs_driver::query::QueryCancelled&)
             {
-                status.query_running = false;
-                status.progress = progress->snapshot();
-                status.error.clear();
-                status.completed_stats.reset();
+                status = {.cancelled = true};
+                if (terminal_active) terminal.redraw(status);
+                listener.queryCancelled();
+                listener.queryIdle();
                 error << "Query cancelled\n";
             }
             catch (const std::exception& ex)
             {
+                status = {.error = ex.what()};
+                if (terminal_active) terminal.redraw(status);
                 printQueryError(ex, error);
-                status.query_running = false;
-                status.progress = progress->snapshot();
-                status.error = ex.what();
-                status.completed_stats.reset();
-            }
-            if (terminal)
-            {
-                terminal->refreshAtSafeBoundary();
-                terminal->setStatus(status);
-                terminal->redrawFooter();
+                listener.queryFailed(ex.what());
+                listener.queryIdle();
             }
             continue;
         }
@@ -1151,9 +1167,15 @@ std::vector<std::string> mldp_pvxs_driver::cli::detail::replCompletions(
                          ? std::vector<std::string>{".format"}
                          : std::vector<std::string>{"table", "json", "csv", "arrow"};
     }
+    else if (startsWithIgnoreCase(trimmed, ".pager"))
+    {
+        candidates = token.empty() || token.front() == '.'
+                         ? std::vector<std::string>{".pager"}
+                         : std::vector<std::string>{"on", "off"};
+    }
     else if (!token.empty() && token.front() == '.')
     {
-        candidates = {".help", ".clear", ".format", ".table-fit", ".history", "\\expanded", "\\x", ".quit", ".exit"};
+        candidates = {".help", ".clear", ".format", ".pager", ".table-fit", ".history", "\\expanded", "\\x", ".quit", ".exit"};
     }
     else if (expectsTable(words))
     {
@@ -1203,7 +1225,7 @@ int mldp_pvxs_driver::cli::detail::replCompletionContextLength(const std::string
     return static_cast<int>(completionToken(input).size());
 }
 
-void mldp_pvxs_driver::cli::QuerySubcommandPreparer::prepare(const mldp_pvxs_driver::config::Config& config) const
+void mldp_pvxs_driver::cli::QueryCommandPreparer::prepare(const mldp_pvxs_driver::config::Config& config) const
 {
     query::QueryableFactory::instance().reset();
     if (!config.hasChild("queryable"))
@@ -1241,7 +1263,8 @@ int mldp_pvxs_driver::cli::QueryRunner::run(const QueryCliOptions&              
                                             query::QueryStats*                           completed_stats,
                                             std::shared_ptr<query::QueryCancellation>    cancellation,
                                             std::shared_ptr<std::mutex>                  output_mutex,
-                                            QueryContinuationRegistry*                   continuations) const
+                                            QueryContinuationRegistry*                   continuations,
+                                            BatchConsumer                                batch_consumer) const
 {
     const auto shard_trace = options.trace_shards ? std::make_shared<query::ShardTraceCollector>() : nullptr;
     const auto spill_dir = options.spill_dir.empty()
@@ -1387,14 +1410,26 @@ int mldp_pvxs_driver::cli::QueryRunner::run(const QueryCliOptions&              
                     stream = std::move(streamed_result.stream);
                 }
             }
-            formatQueryStream(*stream,
-                              options.format,
-                              output,
-                              options.expanded,
-                              TableRenderOptions{.viewport_width = options.table_fit ? table_width : std::nullopt},
-                              context.cancellation,
-                              progress,
-                              output_mutex);
+            if (batch_consumer)
+            {
+                while (auto batch = stream->next())
+                {
+                    if (context.cancellation) context.cancellation->throwIfCancelled();
+                    batch_consumer(batch);
+                    if (progress) progress->outputBatch(static_cast<uint64_t>(batch->num_rows()));
+                }
+            }
+            else
+            {
+                formatQueryStream(*stream,
+                                  options.format,
+                                  output,
+                                  options.expanded,
+                                  TableRenderOptions{.viewport_width = options.table_fit ? table_width : std::nullopt},
+                                  context.cancellation,
+                                  progress,
+                                  output_mutex);
+            }
             std::unique_lock lock(output_mutex ? *output_mutex : g_fallback_output_mutex);
             if (!options.no_stats && print_stats)
             {
@@ -1445,7 +1480,7 @@ mldp_pvxs_driver::cli::QueryRunner::completionCatalog(const QueryCliOptions& opt
     return table_catalog_;
 }
 
-int mldp_pvxs_driver::cli::QuerySubcommand::run(int                             argc,
+int mldp_pvxs_driver::cli::QueryCommand::run(int                             argc,
                                                 char**                          argv,
                                                 const std::vector<std::string>& global_config_sources,
                                                 std::istream&                   input,
@@ -1488,13 +1523,14 @@ int mldp_pvxs_driver::cli::QuerySubcommand::run(int                             
         }
         else
         {
-            QuerySubcommandPreparer preparer;
+            QueryCommandPreparer preparer;
             preparer.prepare(config);
         }
         QueryRunner runner;
         if (interactive)
         {
-            return runRepl(options, runner, input, output, error);
+            NullQueryCommandListener repl_listener;
+            return runRepl(options, runner, repl_listener, input, output, error);
         }
         auto                        cancellation = std::make_shared<query::QueryCancellation>();
         ScopedQueryInterruptHandler interrupt_handler;
@@ -1505,9 +1541,8 @@ int mldp_pvxs_driver::cli::QuerySubcommand::run(int                             
                                                        });
         while (query.wait_for(std::chrono::milliseconds{100}) != std::future_status::ready)
         {
-            if (g_query_interrupt_requested != 0)
+            if (interrupt_handler.consumeInterrupt())
             {
-                g_query_interrupt_requested = 0;
                 cancellation->requestCancel();
             }
         }
@@ -1525,7 +1560,8 @@ int mldp_pvxs_driver::cli::QuerySubcommand::run(int                             
     return 1;
 }
 
-mldp_pvxs_driver::cli::QuerySubcommand::QuerySubcommand(QueryablePreparer queryable_preparer)
-    : queryable_preparer_(std::move(queryable_preparer))
+mldp_pvxs_driver::cli::QueryCommand::QueryCommand(QueryCommandListener& listener, QueryablePreparer queryable_preparer)
+    : listener_(listener)
+    , queryable_preparer_(std::move(queryable_preparer))
 {
 }

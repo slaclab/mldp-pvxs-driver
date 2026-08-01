@@ -30,7 +30,7 @@ Core source files:
 
 | File | Role |
 |---|---|
-| `src/query/QuerySubcommand.cpp` | CLI wiring, config loading, one-shot execution, and REPL loop |
+| `src/query/QueryCommand.cpp` | CLI wiring, config loading, one-shot execution, and REPL loop |
 | `src/query/QueryPlanner.cpp` | Planning pipeline orchestration |
 | `src/query/QueryExecutor.cpp` | Pull-stream construction and materializing physical-tree evaluation |
 | `src/query/QueryFormatter.cpp` | Result rendering |
@@ -42,13 +42,13 @@ Core source files:
 
 ## End-to-end flow
 
-1. `mldp_pvxs_driver query` parses global options and delegates to `QuerySubcommand::run(...)`.
-2. `QuerySubcommandPreparer::prepare(config)` iterates the `queryable:` block and calls `QueryableFactory::instance().prepare<T>(cfg)` for each declared backend.
-3. Positional SQL or `--file` selects one-shot execution. With neither, the REPL prepares the configured backends once, buffers semicolon-terminated statements, and permits `.format table|json|csv|arrow` to update the session output style; each statement then follows the same parse → plan → execute path.
+1. `mldp_pvxs_driver query` parses global options and delegates to `QueryCommand::run(...)`.
+2. `QueryCommandPreparer::prepare(config)` iterates the `queryable:` block and calls `QueryableFactory::instance().prepare<T>(cfg)` for each declared backend.
+3. Positional SQL or `--file` selects one-shot execution. With neither, the `replxx` REPL prepares the configured backends once, buffers semicolon-terminated statements, permits `.format table|json|csv|arrow` and `.pager on|off` to update the session display, and writes table output to normal terminal scrollback unless the explicitly enabled pager is active; each statement then follows the same parse → plan → execute path.
 4. `QueryPlanner::plan(parsed)` produces a `PhysicalPlan`.
 5. `QueryExecutor::executeStream(physical, context)` uses pull execution for streamable scans, filters, projections, limits, and the physical pivot. Blocking operators retain the materializing execution-state path.
 6. `formatQueryStream(...)` writes and flushes each completed stream batch before requesting another one. Compatibility callers use `QueryExecutor::execute(...)` and `formatQueryResult(...)`.
-7. `printQueryStats(...)` writes the stats footer unless `--no-stats`.
+7. `printQueryStats(...)` writes the textual final statistics line unless `--no-stats`; real-TTY REPL sessions instead render the captured completion statistics in `ConsoleFooter`.
 
 ---
 
@@ -428,7 +428,7 @@ Runtime controls flow from `QueryCliOptions` → `ExecutionContext`:
 | `--spill-partitions` | `spill_partitions` | Hash partition count for spill writes. |
 | `--join-batch-size` | `join_batch_size` | Batch page size for join build-side iteration. |
 
-`SpillManager` (`src/query/SpillManager.cpp`) is created in `QuerySubcommand::run(...)` and attached to the `ExecutionContext`. Join execution paths check `memory_limit_bytes` before materializing the build side; when the limit is exceeded, build-side batches are written to partitioned spill files on the Arrow `LocalFileSystem`. `PhysicalPivot` uses the same manager for its long-form input and sorted runs. Spill activity is reflected in `QueryStats.bytes_spilled` and `QueryStats.spill_files`. `SpillWriter` and `SpillReader` are RAII cleanup boundaries: unfinished writers, abandoned readers, and manager cleanup remove temporary files.
+`SpillManager` (`src/query/SpillManager.cpp`) is created in `QueryCommand::run(...)` and attached to the `ExecutionContext`. Join execution paths check `memory_limit_bytes` before materializing the build side; when the limit is exceeded, build-side batches are written to partitioned spill files on the Arrow `LocalFileSystem`. `PhysicalPivot` uses the same manager for its long-form input and sorted runs. Spill activity is reflected in `QueryStats.bytes_spilled` and `QueryStats.spill_files`. `SpillWriter` and `SpillReader` are RAII cleanup boundaries: unfinished writers, abandoned readers, and manager cleanup remove temporary files.
 
 ---
 
@@ -450,7 +450,7 @@ queryable:
       max-conn: 2
 ```
 
-Each `execute(...)` call acquires a pool handle, issues one gRPC call, then releases the handle. Channels are kept alive for the lifetime of the `QuerySubcommand`. TLS is supported by using `grpcs://` URLs; the pool uses `grpc::SslCredentials` in that case.
+Each `execute(...)` call acquires a pool handle, issues one gRPC call, then releases the handle. Channels are kept alive for the lifetime of the `QueryCommand`. TLS is supported by using `grpcs://` URLs; the pool uses `grpc::SslCredentials` in that case.
 
 ---
 
@@ -466,7 +466,7 @@ Each `execute(...)` call acquires a pool handle, issues one gRPC call, then rele
 
 1. Implement `IQueryable` in `src/query/impl/<name>/`.
 2. Add a `prepare<MyQueryable>` specialization in `QueryableFactory.cpp` that reads the config block.
-3. Register the type string in `QuerySubcommand.cpp:prepareQueryable(...)`.
+3. Register the type string in `QueryCommand.cpp:prepareQueryable(...)`.
 4. Add the new type key to the `queryable:` YAML schema.
 
 ### Adding parser syntax

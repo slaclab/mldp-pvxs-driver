@@ -15,11 +15,12 @@
 //    https://confluence.slac.stanford.edu/display/ppareg/LICENSE.html.
 //////////////////////////////////////////////////////////////////////////////
 
-/** @file QuerySubcommand.h
+/** @file QueryCommand.h
  * @brief Declares the query CLI subcommand and interactive REPL support. */
 #pragma once
 
 #include <config/Config.h>
+#include <query/QueryCommandListener.h>
 #include <query/QueryFormatter.h>
 #include <query/QueryStats.h>
 
@@ -54,6 +55,7 @@ struct QueryCliOptions
     QueryOutputFormat format{QueryOutputFormat::Table};
     bool              expanded{false};
     bool              table_fit{false};
+    bool              pager{false};
     bool              no_stats{false};
     bool              trace_shards{false};
     std::string       shard_trace_file{};
@@ -98,7 +100,7 @@ private:
 };
 
 /** @brief Registers queryable implementations required by the CLI. */
-class QuerySubcommandPreparer
+class QueryCommandPreparer
 {
 public:
     void prepare(const config::Config& config) const;
@@ -108,6 +110,8 @@ public:
 class QueryRunner
 {
 public:
+    using BatchConsumer = std::function<void(const std::shared_ptr<arrow::RecordBatch>&)>;
+
     int                                       run(const QueryCliOptions&                       options,
                                                   std::string_view                             sql,
                                                   std::ostream&                                output,
@@ -117,7 +121,8 @@ public:
                                                   query::QueryStats*                           completed_stats = nullptr,
                                                   std::shared_ptr<query::QueryCancellation>    cancellation = nullptr,
                                                   std::shared_ptr<std::mutex>                  output_mutex = nullptr,
-                                                  QueryContinuationRegistry*                   continuations = nullptr) const;
+                                                  QueryContinuationRegistry*                   continuations = nullptr,
+                                                  BatchConsumer                                batch_consumer = {}) const;
     std::shared_ptr<query::QueryTableCatalog> completionCatalog(const QueryCliOptions& options) const;
 
 private:
@@ -126,12 +131,12 @@ private:
 };
 
 /** @brief Implements the query command and its interactive REPL mode. */
-class QuerySubcommand
+class QueryCommand
 {
 public:
     using QueryablePreparer = std::function<void(const config::Config&)>;
 
-    explicit QuerySubcommand(QueryablePreparer queryable_preparer = {});
+    explicit QueryCommand(QueryCommandListener& listener, QueryablePreparer queryable_preparer = {});
 
     int run(int                             argc,
             char**                          argv,
@@ -141,6 +146,7 @@ public:
             std::ostream&                   error) const;
 
 private:
+    QueryCommandListener& listener_;
     QueryablePreparer queryable_preparer_;
 };
 

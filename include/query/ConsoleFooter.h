@@ -3,43 +3,41 @@
 // It is subject to the license terms in the LICENSE.txt file found in the
 // top-level directory of this distribution and at:
 //    https://confluence.slac.stanford.edu/display/ppareg/LICENSE.html.
-// No part of 'mldp-pvxs-driver', including this file,
-// may be copied, modified, propagated, or distributed except according to
-// the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
 /** @file ConsoleFooter.h
- * @brief Defines TTY-safe rendering and lifecycle management for the query footer. */
+ * @brief Declares the active-query terminal progress footer. */
 #pragma once
 
 #include <query/QueryProgress.h>
 #include <query/QueryStats.h>
 
-#include <optional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <ostream>
 #include <string>
 
 namespace mldp_pvxs_driver::cli {
 
-/** @brief Snapshot rendered by the interactive query footer. */
+/** @brief Captures the latest query lifecycle state displayed in the footer. */
 struct ConsoleStatus
 {
     bool                                 query_running{false};
     std::optional<query::QueryProgressSnapshot> progress;
     std::optional<query::QueryStats>     completed_stats;
+    bool                                 cancelled{false};
     std::string                          error;
 };
 
-/** @brief Formats a status snapshot into a fixed-width terminal line. */
+/** @brief Formats query lifecycle state into a terminal footer line. */
 class FooterRenderer
 {
 public:
     std::string render(const ConsoleStatus& status, int terminal_width) const;
 };
 
-/** @brief Manages the terminal region reserved for an interactive query footer. */
+/** @brief Reserves the final terminal row for the lifetime of an interactive REPL. */
 class TerminalLayout
 {
 public:
@@ -50,27 +48,23 @@ public:
     TerminalLayout& operator=(const TerminalLayout&) = delete;
 
     bool initialize();
-    void setStatus(ConsoleStatus status);
-    void redrawFooter();
-    void refreshAtSafeBoundary();
+    void redraw(const ConsoleStatus& status);
     void positionInputCursor();
-    void restore();
+    void restore() noexcept;
 
     bool active() const noexcept;
-    int columns() const noexcept;
 
 private:
     bool updateSize();
     void configureScrollRegion();
-    void drawFooter();
+    void draw(const ConsoleStatus& status);
 
-    std::ostream&    output_;
+    std::ostream&              output_;
     std::shared_ptr<std::mutex> output_mutex_;
-    FooterRenderer   footer_renderer_;
-    ConsoleStatus    status_;
-    int              rows_{0};
-    int              columns_{0};
-    bool             initialized_{false};
+    FooterRenderer             footer_renderer_;
+    int                        rows_{0};
+    int                        columns_{0};
+    bool                       initialized_{false};
 };
 
 } // namespace mldp_pvxs_driver::cli

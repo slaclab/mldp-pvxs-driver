@@ -21,7 +21,7 @@ Wire the `query` subcommand end-to-end (parse → plan → execute → render) a
   - `csv`: `arrow::csv::WriteCSV`
   - `arrow` (binary): `arrow::ipc::MakeStreamWriter` → raw Arrow IPC to stdout (pipe-friendly)
 - [ ] Print `QueryStats` footer unless `--no-stats`
-- [ ] `src/cli/QuerySubcommand.h/.cpp` — top-level arg parse (`-c`, `--file`, `--format`, `--memory-mb`, `--spill-dir`, `--spill-partitions`, `--join-batch-size`) + pipeline: parse → plan → execute → format; build `ExecutionContext`; call `SpillManager::cleanup()` in destructor
+- [ ] `src/cli/QueryCommand.h/.cpp` — top-level arg parse (`-c`, `--file`, `--format`, `--memory-mb`, `--spill-dir`, `--spill-partitions`, `--join-batch-size`) + pipeline: parse → plan → execute → format; build `ExecutionContext`; call `SpillManager::cleanup()` in destructor
 
 ## Required CLI Flags
 
