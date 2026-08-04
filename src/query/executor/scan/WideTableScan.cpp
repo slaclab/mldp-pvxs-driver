@@ -13,7 +13,6 @@
 #include <query/QueryCancellation.h>
 #include <query/executor/ScanExecutionHelpers.h>
 
-#include <query/QueryResult.h>
 #include <query/QueryProgress.h>
 #include <query/QueryableFactory.h>
 #include <query/SpillManager.h>
@@ -414,54 +413,39 @@ RecordBatches mldp_pvxs_driver::query::executor::fetchTimeSeriesWindows(const pl
                                                      series_shard_index, series_in_shard);
                     context.progress->setParallelShards(1, 1);
                 }
-                if (scan.table_name == "mldp.time_series")
+                auto     stream = queryable->executeStream(scan.table_name, predicates, scan.projection_hint, context);
+                uint64_t shard_batch_count = 0;
+                while (auto batch = stream->next())
                 {
+                    if (context.cancellation) context.cancellation->throwIfCancelled();
                     if (context.progress) context.progress->beginBackendRpc(scan.table_name, "window server cursor");
-                    auto stream = queryable->executeStream(scan.table_name, predicates, scan.projection_hint, context);
-                    while (auto batch = stream->next())
-                    {
-                        if (context.cancellation) context.cancellation->throwIfCancelled();
-                        ++stats.rpc_calls;
-                        const auto backend_rows = static_cast<uint64_t>(batch->num_rows());
-                        stats.rows_from_backend += backend_rows;
-                        if (context.progress) context.progress->finishBackendRpc(backend_rows);
-                        std::vector<Predicate> shard_bounds{
-                            Predicate{.column = "time", .op = PredicateOp::GTE, .values = {TimestampNsLiteral{slice_begin_ns}}}};
-                        if (!final_slice)
-                            shard_bounds.push_back(Predicate{.column = "time", .op = PredicateOp::LT, .values = {TimestampNsLiteral{slice_end_ns}}});
-                        auto bounded = applyFilter(batch, shard_bounds);
-                        if (!bounded.ok()) throw std::runtime_error(bounded.status().ToString());
-                        batch = *bounded;
-                        if (!local.empty())
-                        {
-                            auto filtered = applyFilter(batch, local);
-                            if (!filtered.ok()) throw std::runtime_error(filtered.status().ToString());
-                            batch = *filtered;
-                        }
-                        if (scan.qualify_output) batch = qualifyBatchColumns(batch, scan.table_alias);
-                        output.push_back(std::move(batch));
-                    }
-                    if (context.progress)
-                    {
-                        context.progress->setParallelShards(0, 1);
-                        context.progress->completeShard();
-                    }
-                    continue;
-                }
-                std::string page_token;
-                do
-                {
-                    if (context.progress) context.progress->beginBackendRpc(scan.table_name, page_token.empty() ? "window" : "window continuation page");
-                    const auto result = queryable->execute(scan.table_name, predicates, scan.projection_hint, context, page_token);
                     ++stats.rpc_calls;
-                    page_token = result.next_page_token;
-                    if (!result.batch) continue;
-                    stats.rows_from_backend += static_cast<uint64_t>(result.batch->num_rows());
-                    auto batch = result.batch;
-                    if (!local.empty()) { auto filtered = applyFilter(batch, local); if (!filtered.ok()) throw std::runtime_error(filtered.status().ToString()); batch = *filtered; }
+                    ++shard_batch_count;
+                    const auto backend_rows = static_cast<uint64_t>(batch->num_rows());
+                    stats.rows_from_backend += backend_rows;
+                    if (context.progress) context.progress->finishBackendRpc(backend_rows);
+                    std::vector<Predicate> shard_bounds{
+                        Predicate{.column = "time", .op = PredicateOp::GTE, .values = {TimestampNsLiteral{slice_begin_ns}}}};
+                    if (!final_slice)
+                        shard_bounds.push_back(Predicate{.column = "time", .op = PredicateOp::LT, .values = {TimestampNsLiteral{slice_end_ns}}});
+                    auto bounded = applyFilter(batch, shard_bounds);
+                    if (!bounded.ok()) throw std::runtime_error(bounded.status().ToString());
+                    batch = *bounded;
+                    if (!local.empty())
+                    {
+                        auto filtered = applyFilter(batch, local);
+                        if (!filtered.ok()) throw std::runtime_error(filtered.status().ToString());
+                        batch = *filtered;
+                    }
                     if (scan.qualify_output) batch = qualifyBatchColumns(batch, scan.table_alias);
                     output.push_back(std::move(batch));
-                } while (!page_token.empty());
+                }
+                if (shard_batch_count == 0)
+                {
+                    if (context.progress) context.progress->beginBackendRpc(scan.table_name, "window server cursor");
+                    ++stats.rpc_calls;
+                    if (context.progress) context.progress->finishBackendRpc(0);
+                }
                 if (context.progress)
                 {
                     context.progress->setParallelShards(0, 1);

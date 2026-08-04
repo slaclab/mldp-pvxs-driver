@@ -16,7 +16,6 @@
 #include <query/executor/StateInternal.h>
 
 #include <query/QueryPlanner.h>
-#include <query/QueryResult.h>
 #include <query/QueryTableCatalog.h>
 #include <query/QueryableFactory.h>
 #include <query/SpillManager.h>

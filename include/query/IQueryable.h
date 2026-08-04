@@ -27,7 +27,6 @@
 namespace mldp_pvxs_driver::query {
 
 class ExecutionContext;
-struct QueryResult;
 
 /** @brief Logical scalar types supported by query schemas and predicates. */
 enum class ColumnType
@@ -89,7 +88,12 @@ public:
 
 using IRecordBatchStreamUPtr = std::unique_ptr<IRecordBatchStream>;
 
-/** @brief Backend interface for table discovery, paged execution, and native streams. */
+/** @brief Backend interface for table discovery and streaming execution.
+ *
+ * All execution is streaming.  Backends that internally paginate must handle
+ * pagination themselves and return a pull stream over all pages.  Callers
+ * always drive a single IRecordBatchStream regardless of table or transport.
+ */
 class IQueryable
 {
 public:
@@ -103,29 +107,18 @@ public:
      * concurrently for one query.  The default preserves serial execution.
      */
     virtual std::size_t maxConcurrentStreams() const noexcept { return 1; }
-    /**
-     * Execute a valid table selection.
-     *
-     * A successful backend request that matches no records is represented by
-     * an empty result; it is not an execution error. Transport failures,
-     * backend exceptional responses, and malformed response payloads remain
-     * errors.
-     */
-    virtual QueryResult                execute(std::string_view              table_name,
-                                               const std::vector<Predicate>& pushable_predicates,
-                                               const std::set<std::string>&  projection_hint,
-                                               const ExecutionContext&       context,
-                                               std::string_view              page_token = {}) = 0;
 
     /**
-     * Execute as a pull stream.  Implementations with no native streaming
-     * transport use the continuation-token adapter in IQueryable.cpp.
+     * Execute a valid table selection and return a pull stream of Arrow batches.
+     *
+     * The implementation is responsible for fetching all pages from the backend,
+     * spilling to disk as needed, and exposing the result as a pull stream.
+     * A null batch from next() signals clean EOF.
      */
     virtual IRecordBatchStreamUPtr executeStream(std::string_view              table_name,
                                                  const std::vector<Predicate>& pushable_predicates,
                                                  const std::set<std::string>&  projection_hint,
-                                                 const ExecutionContext&       context,
-                                                 std::string_view              page_token = {});
+                                                 const ExecutionContext&       context) = 0;
 };
 
 using IQueryableUPtr = std::unique_ptr<IQueryable>;

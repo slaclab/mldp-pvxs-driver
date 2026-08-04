@@ -12,11 +12,11 @@
 #include <query/QueryExecutor.h>
 #include <query/QueryPlanner.h>
 #include <query/QueryProgress.h>
-#include <query/QueryResult.h>
 #include <query/QueryTableCatalog.h>
 #include <query/QueryableFactory.h>
 #include <query/SpillManager.h>
 #include <query/executor/ExecutionState.h>
+#include <query/executor/MaterializedRecordBatchStream.h>
 #include <query/parser/QueryParser.h>
 #include <query/plan/PlannerError.h>
 
@@ -91,11 +91,10 @@ public:
         };
     }
 
-    query::QueryResult execute(std::string_view                     table_name,
-                               const std::vector<query::Predicate>& pushable_predicates,
-                               const std::set<std::string>&         projection_hint,
-                               const query::ExecutionContext&,
-                               std::string_view page_token = {}) override
+    query::IRecordBatchStreamUPtr executeStream(std::string_view                     table_name,
+                                               const std::vector<query::Predicate>& pushable_predicates,
+                                               const std::set<std::string>&         projection_hint,
+                                               const query::ExecutionContext&) override
     {
         if (execute_delay.count() > 0)
         {
@@ -103,13 +102,16 @@ public:
         }
         if (table_name == "fake.paged")
         {
-            arrow::StringBuilder pv_builder;
-            EXPECT_TRUE(pv_builder.Append(page_token.empty() ? "A" : "B").ok());
-            std::shared_ptr<arrow::Array> pv;
-            EXPECT_TRUE(pv_builder.Finish(&pv).ok());
-            return query::QueryResult{
-                .batch = arrow::RecordBatch::Make(arrow::schema({arrow::field("pv", arrow::utf8())}), 1, {pv}),
-                .next_page_token = page_token.empty() ? "second-page" : ""};
+            query::executor::RecordBatches batches;
+            for (const char* pv_val : {"A", "B"})
+            {
+                arrow::StringBuilder pv_builder;
+                EXPECT_TRUE(pv_builder.Append(pv_val).ok());
+                std::shared_ptr<arrow::Array> pv;
+                EXPECT_TRUE(pv_builder.Finish(&pv).ok());
+                batches.push_back(arrow::RecordBatch::Make(arrow::schema({arrow::field("pv", arrow::utf8())}), 1, {pv}));
+            }
+            return std::make_unique<query::executor::MaterializedRecordBatchStream>(std::move(batches));
         }
         if (table_name == "fake.meta")
         {
@@ -207,9 +209,8 @@ public:
                 columns.push_back(device_group);
             }
 
-            return query::QueryResult{
-                .batch = arrow::RecordBatch::Make(arrow::schema(std::move(fields)), pv->length(), std::move(columns)),
-                .next_page_token = ""};
+            auto batch = arrow::RecordBatch::Make(arrow::schema(std::move(fields)), pv->length(), std::move(columns));
+            return std::make_unique<query::executor::MaterializedRecordBatchStream>(query::executor::RecordBatches{std::move(batch)});
         }
 
         arrow::StringBuilder pv_builder;
@@ -292,9 +293,8 @@ public:
             columns.push_back(value);
         }
 
-        return query::QueryResult{
-            .batch = arrow::RecordBatch::Make(arrow::schema(std::move(fields)), pv->length(), std::move(columns)),
-            .next_page_token = ""};
+        auto batch = arrow::RecordBatch::Make(arrow::schema(std::move(fields)), pv->length(), std::move(columns));
+        return std::make_unique<query::executor::MaterializedRecordBatchStream>(query::executor::RecordBatches{std::move(batch)});
     }
 };
 
@@ -335,11 +335,10 @@ public:
         };
     }
 
-    query::QueryResult execute(std::string_view                     table_name,
-                               const std::vector<query::Predicate>& predicates,
-                               const std::set<std::string>&,
-                               const query::ExecutionContext&,
-                               std::string_view = {}) override
+    query::IRecordBatchStreamUPtr executeStream(std::string_view                     table_name,
+                                               const std::vector<query::Predicate>& predicates,
+                                               const std::set<std::string>&,
+                                               const query::ExecutionContext&) override
     {
         ++execute_calls;
         received_predicates.push_back(predicates);
@@ -368,18 +367,12 @@ public:
             std::shared_ptr<arrow::Array> time;
             EXPECT_TRUE(pv_builder.Finish(&pv).ok());
             EXPECT_TRUE(time_builder.Finish(&time).ok());
-            return {.batch = arrow::RecordBatch::Make(
-                        arrow::schema({arrow::field("pv", pv->type()), arrow::field("time", time->type())}),
-                        pv->length(), {pv, time})};
+            auto batch = arrow::RecordBatch::Make(
+                arrow::schema({arrow::field("pv", pv->type()), arrow::field("time", time->type())}),
+                pv->length(), {pv, time});
+            return std::make_unique<query::executor::MaterializedRecordBatchStream>(query::executor::RecordBatches{std::move(batch)});
         }
-        for (const auto& predicate : predicates)
-        {
-            if (predicate.column == "activation_id" || predicate.column == "pv")
-            {
-                return {};
-            }
-        }
-        return {};
+        return std::make_unique<query::executor::MaterializedRecordBatchStream>(query::executor::RecordBatches{});
     }
 };
 
@@ -404,12 +397,7 @@ public:
                 {"value", query::ColumnType::INT, false, true, {}, {query::PredicateOp::IN}, "value"}};
     }
 
-    query::QueryResult execute(std::string_view, const std::vector<query::Predicate>&, const std::set<std::string>&, const query::ExecutionContext&, std::string_view = {}) override
-    {
-        throw std::runtime_error("NativeCreateQueryable requires executeStream");
-    }
-
-    query::IRecordBatchStreamUPtr executeStream(std::string_view, const std::vector<query::Predicate>&, const std::set<std::string>&, const query::ExecutionContext&, std::string_view = {}) override
+    query::IRecordBatchStreamUPtr executeStream(std::string_view, const std::vector<query::Predicate>&, const std::set<std::string>&, const query::ExecutionContext&) override
     {
         ++stream_creations;
 
@@ -468,23 +456,21 @@ public:
                 {"value", query::ColumnType::INT, false, true, {}, {query::PredicateOp::IN}, "value"}};
     }
 
-    query::QueryResult execute(const std::string_view table_name, const std::vector<query::Predicate>&, const std::set<std::string>&, const query::ExecutionContext&, std::string_view = {}) override
+    query::IRecordBatchStreamUPtr executeStream(const std::string_view table_name, const std::vector<query::Predicate>& predicates, const std::set<std::string>&, const query::ExecutionContext&) override
     {
-        if (table_name != "mldp.configuration_activation")
-            throw std::runtime_error("SubqueryWindowQueryable requires executeStream for time series");
-        arrow::TimestampBuilder start(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), arrow::default_memory_pool());
-        arrow::TimestampBuilder end(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), arrow::default_memory_pool());
-        if (!start.Append(0).ok() || !start.Append(10'000'000'000LL).ok() || !end.Append(5'000'000'000LL).ok() || !end.Append(15'000'000'000LL).ok())
-            throw std::runtime_error("Failed to build window subquery");
-        std::shared_ptr<arrow::Array> starts;
-        std::shared_ptr<arrow::Array> ends;
-        if (!start.Finish(&starts).ok() || !end.Finish(&ends).ok())
-            throw std::runtime_error("Failed to finish window subquery");
-        return {.batch = arrow::RecordBatch::Make(arrow::schema({arrow::field("time", starts->type()), arrow::field("end_time", ends->type())}), 2, {starts, ends})};
-    }
-
-    query::IRecordBatchStreamUPtr executeStream(std::string_view, const std::vector<query::Predicate>& predicates, const std::set<std::string>&, const query::ExecutionContext&, std::string_view = {}) override
-    {
+        if (table_name == "mldp.configuration_activation")
+        {
+            arrow::TimestampBuilder start(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), arrow::default_memory_pool());
+            arrow::TimestampBuilder end(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), arrow::default_memory_pool());
+            if (!start.Append(0).ok() || !start.Append(10'000'000'000LL).ok() || !end.Append(5'000'000'000LL).ok() || !end.Append(15'000'000'000LL).ok())
+                throw std::runtime_error("Failed to build window subquery");
+            std::shared_ptr<arrow::Array> starts;
+            std::shared_ptr<arrow::Array> ends;
+            if (!start.Finish(&starts).ok() || !end.Finish(&ends).ok())
+                throw std::runtime_error("Failed to finish window subquery");
+            auto batch = arrow::RecordBatch::Make(arrow::schema({arrow::field("time", starts->type()), arrow::field("end_time", ends->type())}), 2, {starts, ends});
+            return std::make_unique<query::executor::MaterializedRecordBatchStream>(query::executor::RecordBatches{std::move(batch)});
+        }
         {
             const std::lock_guard lock(requests_mutex);
             requests.push_back(predicates);
@@ -554,12 +540,7 @@ public:
                 {"value", query::ColumnType::INT, false, true, {}, {}, "value"}};
     }
 
-    query::QueryResult execute(std::string_view, const std::vector<query::Predicate>&, const std::set<std::string>&, const query::ExecutionContext&, std::string_view = {}) override
-    {
-        throw std::runtime_error("WideStreamingQueryable requires executeStream");
-    }
-
-    query::IRecordBatchStreamUPtr executeStream(std::string_view, const std::vector<query::Predicate>&, const std::set<std::string>&, const query::ExecutionContext&, std::string_view = {}) override
+    query::IRecordBatchStreamUPtr executeStream(std::string_view, const std::vector<query::Predicate>&, const std::set<std::string>&, const query::ExecutionContext&) override
     {
         class Stream final : public query::IRecordBatchStream
         {
@@ -625,12 +606,7 @@ public:
                 {"value", query::ColumnType::INT, false, true, {}, {}, "value"}};
     }
 
-    query::QueryResult execute(std::string_view, const std::vector<query::Predicate>&, const std::set<std::string>&, const query::ExecutionContext&, std::string_view = {}) override
-    {
-        throw std::runtime_error("ConcurrentWindowQueryable requires executeStream");
-    }
-
-    query::IRecordBatchStreamUPtr executeStream(std::string_view, const std::vector<query::Predicate>& predicates, const std::set<std::string>&, const query::ExecutionContext&, std::string_view = {}) override
+    query::IRecordBatchStreamUPtr executeStream(std::string_view, const std::vector<query::Predicate>& predicates, const std::set<std::string>&, const query::ExecutionContext&) override
     {
         std::string pv;
         for (const auto& predicate : predicates)
@@ -739,7 +715,7 @@ public:
                 {"value", query::ColumnType::INT, false, true, {}, {query::PredicateOp::IN}, "value"}};
     }
 
-    query::QueryResult execute(const std::string_view table_name, const std::vector<query::Predicate>&, const std::set<std::string>&, const query::ExecutionContext&, std::string_view = {}) override
+    query::IRecordBatchStreamUPtr executeStream(const std::string_view table_name, const std::vector<query::Predicate>& predicates, const std::set<std::string>&, const query::ExecutionContext&) override
     {
         if (table_name == "mldp.pv_metadata")
         {
@@ -757,8 +733,9 @@ public:
             std::shared_ptr<arrow::Array> value_array;
             if (!pv.Finish(&pv_array).ok() || !dname.Finish(&dname_array).ok() || !value.Finish(&value_array).ok())
                 throw std::runtime_error("Failed to finish scaled metadata batch");
-            return {.batch = arrow::RecordBatch::Make(arrow::schema({arrow::field("pv", pv_array->type()), arrow::field("attributes.dname", dname_array->type()), arrow::field("value", value_array->type())}),
-                                                      pv_array->length(), {pv_array, dname_array, value_array})};
+            auto batch = arrow::RecordBatch::Make(arrow::schema({arrow::field("pv", pv_array->type()), arrow::field("attributes.dname", dname_array->type()), arrow::field("value", value_array->type())}),
+                                                  pv_array->length(), {pv_array, dname_array, value_array});
+            return std::make_unique<query::executor::MaterializedRecordBatchStream>(query::executor::RecordBatches{std::move(batch)});
         }
         if (table_name == "mldp.configuration_activation")
         {
@@ -770,26 +747,28 @@ public:
             std::shared_ptr<arrow::Array> config_name_array;
             if (!time.Finish(&time_array).ok() || !config_name.Finish(&config_name_array).ok())
                 throw std::runtime_error("Failed to finish scaled activation batch");
-            return {.batch = arrow::RecordBatch::Make(arrow::schema({arrow::field("time", time_array->type()), arrow::field("config_name", config_name_array->type())}),
-                                                      1, {time_array, config_name_array})};
+            auto batch = arrow::RecordBatch::Make(arrow::schema({arrow::field("time", time_array->type()), arrow::field("config_name", config_name_array->type())}),
+                                                  1, {time_array, config_name_array});
+            return std::make_unique<query::executor::MaterializedRecordBatchStream>(query::executor::RecordBatches{std::move(batch)});
         }
-        ++time_series_execute_calls;
-        arrow::StringBuilder    pv;
-        arrow::TimestampBuilder time(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), arrow::default_memory_pool());
-        arrow::Int64Builder     value;
-        if (!pv.Append("PV:01").ok() || !time.Append(1'000'000'000LL).ok() || !value.Append(1).ok())
-            throw std::runtime_error("Failed to build materialized scaled time-series batch");
-        std::shared_ptr<arrow::Array> pv_array;
-        std::shared_ptr<arrow::Array> time_array;
-        std::shared_ptr<arrow::Array> value_array;
-        if (!pv.Finish(&pv_array).ok() || !time.Finish(&time_array).ok() || !value.Finish(&value_array).ok())
-            throw std::runtime_error("Failed to finish materialized scaled time-series batch");
-        return {.batch = arrow::RecordBatch::Make(arrow::schema({arrow::field("pv", pv_array->type()), arrow::field("time", time_array->type()), arrow::field("value", value_array->type())}),
-                                                  1, {pv_array, time_array, value_array})};
-    }
-
-    query::IRecordBatchStreamUPtr executeStream(std::string_view, const std::vector<query::Predicate>& predicates, const std::set<std::string>&, const query::ExecutionContext&, std::string_view = {}) override
-    {
+        if (table_name != "mldp.time_series" && table_name != "mldp.time_series_table")
+        {
+            ++time_series_execute_calls;
+            arrow::StringBuilder    pv;
+            arrow::TimestampBuilder time(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), arrow::default_memory_pool());
+            arrow::Int64Builder     value;
+            if (!pv.Append("PV:01").ok() || !time.Append(1'000'000'000LL).ok() || !value.Append(1).ok())
+                throw std::runtime_error("Failed to build materialized scaled time-series batch");
+            std::shared_ptr<arrow::Array> pv_array;
+            std::shared_ptr<arrow::Array> time_array;
+            std::shared_ptr<arrow::Array> value_array;
+            if (!pv.Finish(&pv_array).ok() || !time.Finish(&time_array).ok() || !value.Finish(&value_array).ok())
+                throw std::runtime_error("Failed to finish materialized scaled time-series batch");
+            auto batch = arrow::RecordBatch::Make(arrow::schema({arrow::field("pv", pv_array->type()), arrow::field("time", time_array->type()), arrow::field("value", value_array->type())}),
+                                                  1, {pv_array, time_array, value_array});
+            return std::make_unique<query::executor::MaterializedRecordBatchStream>(query::executor::RecordBatches{std::move(batch)});
+        }
+        // mldp.time_series / mldp.time_series_table: use native Stream below
         std::vector<std::string> shard_pvs;
         int64_t                  begin_seconds = 0;
         int64_t                  end_seconds = 0;
@@ -928,11 +907,10 @@ public:
                 {"end_time", query::ColumnType::TIMESTAMP, false, true, end_time_ops, end_time_ops, "Activation end"}};
     }
 
-    query::QueryResult execute(std::string_view,
-                               const std::vector<query::Predicate>& predicates,
-                               const std::set<std::string>&,
-                               const query::ExecutionContext&,
-                               std::string_view = {}) override
+    query::IRecordBatchStreamUPtr executeStream(std::string_view,
+                                               const std::vector<query::Predicate>& predicates,
+                                               const std::set<std::string>&,
+                                               const query::ExecutionContext&) override
     {
         received_predicates = predicates;
         arrow::TimestampBuilder time(arrow::timestamp(arrow::TimeUnit::NANO), arrow::default_memory_pool());
@@ -945,9 +923,10 @@ public:
         std::shared_ptr<arrow::Array> ends;
         EXPECT_TRUE(time.Finish(&starts).ok());
         EXPECT_TRUE(end_time.Finish(&ends).ok());
-        return {.batch = arrow::RecordBatch::Make(
-                    arrow::schema({arrow::field("time", starts->type()), arrow::field("end_time", ends->type())}),
-                    starts->length(), {starts, ends})};
+        auto batch = arrow::RecordBatch::Make(
+            arrow::schema({arrow::field("time", starts->type()), arrow::field("end_time", ends->type())}),
+            starts->length(), {starts, ends});
+        return std::make_unique<query::executor::MaterializedRecordBatchStream>(query::executor::RecordBatches{std::move(batch)});
     }
 };
 

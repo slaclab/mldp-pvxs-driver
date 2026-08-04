@@ -13,8 +13,8 @@
 #include <query/QueryFormatter.h>
 #include <query/QueryPlanner.h>
 #include <query/QueryProgress.h>
-#include <query/QueryResult.h>
 #include <query/QueryCommand.h>
+#include <query/executor/MaterializedRecordBatchStream.h>
 #include <query/NullQueryCommandListener.h>
 #include <query/QueryTableCatalog.h>
 #include <query/QueryableFactory.h>
@@ -74,11 +74,10 @@ public:
                 {"value", query::ColumnType::INT, false, true, {}, {}, "Value"}};
     }
 
-    query::QueryResult execute(std::string_view,
-                               const std::vector<query::Predicate>&,
-                               const std::set<std::string>&,
-                               const query::ExecutionContext&,
-                               std::string_view = {}) override
+    query::IRecordBatchStreamUPtr executeStream(std::string_view,
+                                               const std::vector<query::Predicate>&,
+                                               const std::set<std::string>&,
+                                               const query::ExecutionContext&) override
     {
         arrow::StringBuilder pv_builder;
         arrow::Int64Builder  value_builder;
@@ -88,8 +87,9 @@ public:
         std::shared_ptr<arrow::Array> value;
         EXPECT_TRUE(pv_builder.Finish(&pv).ok());
         EXPECT_TRUE(value_builder.Finish(&value).ok());
-        return {.batch = arrow::RecordBatch::Make(
-                    arrow::schema({arrow::field("pv", arrow::utf8()), arrow::field("value", arrow::int64())}), 1, {pv, value})};
+        auto batch = arrow::RecordBatch::Make(
+            arrow::schema({arrow::field("pv", arrow::utf8()), arrow::field("value", arrow::int64())}), 1, {pv, value});
+        return std::make_unique<query::executor::MaterializedRecordBatchStream>(query::executor::RecordBatches{std::move(batch)});
     }
 };
 
@@ -151,20 +151,10 @@ public:
                 {"value", query::ColumnType::INT, false, true, {}, {}, "Value"}};
     }
 
-    query::QueryResult execute(std::string_view,
-                               const std::vector<query::Predicate>&,
-                               const std::set<std::string>&,
-                               const query::ExecutionContext&,
-                               std::string_view = {}) override
-    {
-        throw std::runtime_error("ContinuationPageQueryable requires executeStream");
-    }
-
     query::IRecordBatchStreamUPtr executeStream(std::string_view,
-                                                const std::vector<query::Predicate>&,
-                                                const std::set<std::string>&,
-                                                const query::ExecutionContext&,
-                                                std::string_view = {}) override
+                                               const std::vector<query::Predicate>&,
+                                               const std::set<std::string>&,
+                                               const query::ExecutionContext&) override
     {
         ++stream_creations;
 
@@ -240,12 +230,7 @@ public:
                 {"value", query::ColumnType::INT, false, true, {}, {}, "Value"}};
     }
 
-    query::QueryResult execute(std::string_view, const std::vector<query::Predicate>&, const std::set<std::string>&, const query::ExecutionContext&, std::string_view = {}) override
-    {
-        throw std::runtime_error("SustainedWindowQueryable requires executeStream");
-    }
-
-    query::IRecordBatchStreamUPtr executeStream(std::string_view, const std::vector<query::Predicate>& predicates, const std::set<std::string>&, const query::ExecutionContext&, std::string_view = {}) override
+    query::IRecordBatchStreamUPtr executeStream(std::string_view, const std::vector<query::Predicate>& predicates, const std::set<std::string>&, const query::ExecutionContext&) override
     {
         std::string pv;
         int64_t     begin = 0;
@@ -335,11 +320,10 @@ public:
                 {"value", query::ColumnType::INT, false, true, {}, {}, "value"}};
     }
 
-    query::QueryResult execute(const std::string_view table_name,
-                               const std::vector<query::Predicate>&,
-                               const std::set<std::string>&,
-                               const query::ExecutionContext&,
-                               std::string_view = {}) override
+    query::IRecordBatchStreamUPtr executeStream(const std::string_view table_name,
+                                               const std::vector<query::Predicate>& predicates,
+                                               const std::set<std::string>&,
+                                               const query::ExecutionContext&) override
     {
         if (table_name == "mldp.pv_metadata")
         {
@@ -354,30 +338,27 @@ public:
             std::shared_ptr<arrow::Array> dname_array;
             if (!pv.Finish(&pv_array).ok() || !dname.Finish(&dname_array).ok())
                 throw std::runtime_error("Failed to finish delayed metadata batch");
-            return {.batch = arrow::RecordBatch::Make(
-                        arrow::schema({arrow::field("pv", pv_array->type()), arrow::field("attributes.dname", dname_array->type())}),
-                        pv_array->length(), {pv_array, dname_array})};
+            auto batch = arrow::RecordBatch::Make(
+                arrow::schema({arrow::field("pv", pv_array->type()), arrow::field("attributes.dname", dname_array->type())}),
+                pv_array->length(), {pv_array, dname_array});
+            return std::make_unique<query::executor::MaterializedRecordBatchStream>(query::executor::RecordBatches{std::move(batch)});
         }
-
-        arrow::TimestampBuilder time(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), arrow::default_memory_pool());
-        arrow::StringBuilder    activation_id;
-        if (!time.Append(0).ok() || !activation_id.Append("delayed-wide-window").ok())
-            throw std::runtime_error("Failed to build delayed activation batch");
-        std::shared_ptr<arrow::Array> time_array;
-        std::shared_ptr<arrow::Array> activation_id_array;
-        if (!time.Finish(&time_array).ok() || !activation_id.Finish(&activation_id_array).ok())
-            throw std::runtime_error("Failed to finish delayed activation batch");
-        return {.batch = arrow::RecordBatch::Make(
-                    arrow::schema({arrow::field("time", time_array->type()), arrow::field("activation_id", activation_id_array->type())}),
-                    1, {time_array, activation_id_array})};
-    }
-
-    query::IRecordBatchStreamUPtr executeStream(std::string_view,
-                                                const std::vector<query::Predicate>& predicates,
-                                                const std::set<std::string>&,
-                                                const query::ExecutionContext&,
-                                                std::string_view = {}) override
-    {
+        if (table_name == "mldp.configuration_activation")
+        {
+            arrow::TimestampBuilder time(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), arrow::default_memory_pool());
+            arrow::StringBuilder    activation_id;
+            if (!time.Append(0).ok() || !activation_id.Append("delayed-wide-window").ok())
+                throw std::runtime_error("Failed to build delayed activation batch");
+            std::shared_ptr<arrow::Array> time_array;
+            std::shared_ptr<arrow::Array> activation_id_array;
+            if (!time.Finish(&time_array).ok() || !activation_id.Finish(&activation_id_array).ok())
+                throw std::runtime_error("Failed to finish delayed activation batch");
+            auto batch = arrow::RecordBatch::Make(
+                arrow::schema({arrow::field("time", time_array->type()), arrow::field("activation_id", activation_id_array->type())}),
+                1, {time_array, activation_id_array});
+            return std::make_unique<query::executor::MaterializedRecordBatchStream>(query::executor::RecordBatches{std::move(batch)});
+        }
+        // mldp.time_series / mldp.time_series_table: use native Stream below
         std::vector<std::string> shard_pvs;
         for (const auto& predicate : predicates)
         {
