@@ -35,7 +35,7 @@ enum class ColumnType
     TIMESTAMP,        ///< Nanosecond-precision timestamp.
     DURATION_SECONDS, ///< Duration expressed as fractional seconds.
     INT,              ///< 64-bit signed integer.
-    NATIVE_VALUE,     ///< Backend-native numeric value (double).
+    NATIVE_VALUE,     ///< Backend-native sample value (dense-union of numeric, string, and binary variants).
     BOOL              ///< Boolean flag.
 };
 /** @brief Comparison and membership operators available to a queryable. */

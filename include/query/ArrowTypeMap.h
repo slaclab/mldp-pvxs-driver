@@ -20,8 +20,9 @@ namespace mldp_pvxs_driver::query {
 
 /** @brief Returns the Arrow type used to represent a logical query column type.
  * @param[in] type Logical query type to map.
- * @return Matching Arrow type, or null when the logical type has no scalar Arrow mapping. */
-inline std::shared_ptr<arrow::DataType> arrowType(ColumnType type)
+ * @return Matching Arrow type, or null for ColumnType::NATIVE_VALUE (a backend-specific
+ *         dense-union whose exact fields vary per table) and any unknown type. */
+[[nodiscard]] inline std::shared_ptr<arrow::DataType> arrowType(ColumnType type)
 {
     switch (type)
     {
@@ -35,6 +36,8 @@ inline std::shared_ptr<arrow::DataType> arrowType(ColumnType type)
         return arrow::int64();
     case ColumnType::BOOL:
         return arrow::boolean();
+    case ColumnType::NATIVE_VALUE:
+        return nullptr;
     }
     return nullptr;
 }
