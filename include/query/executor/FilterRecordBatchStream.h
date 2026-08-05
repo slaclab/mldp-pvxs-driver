@@ -21,13 +21,18 @@ namespace mldp_pvxs_driver::query::executor {
 class FilterRecordBatchStream final : public IRecordBatchStream
 {
 public:
+    /** @brief Constructs a filter stream that applies predicates to each pulled batch.
+     * @param[in] input Upstream pull stream.
+     * @param[in] predicates Arrow-local predicates to apply. */
     FilterRecordBatchStream(IRecordBatchStreamUPtr input, std::vector<Predicate> predicates);
 
+    /** @brief Returns the next batch that passes all predicates, or nullptr at EOF.
+     * @return Filtered batch or nullptr. */
     std::shared_ptr<arrow::RecordBatch> next() override;
 
 private:
-    IRecordBatchStreamUPtr input_;
-    std::vector<Predicate> predicates_;
+    IRecordBatchStreamUPtr input_;      ///< Upstream pull stream.
+    std::vector<Predicate> predicates_; ///< Predicates applied to each input batch.
 };
 
 } // namespace mldp_pvxs_driver::query::executor

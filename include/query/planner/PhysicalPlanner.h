@@ -17,6 +17,9 @@
 
 namespace mldp_pvxs_driver::query::planner {
 
+/** @brief Lowers a logical plan tree to an executable physical plan.
+ * @param[in] root Logical plan root node.
+ * @return Physical plan root node. */
 plan::PhysicalNodePtr buildPhysicalPlan(const plan::LogicalNodePtr& root);
 
 } // namespace mldp_pvxs_driver::query::planner

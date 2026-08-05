@@ -24,12 +24,24 @@ namespace mldp_pvxs_driver::query {
 class ScalarFunctionRegistry
 {
 public:
+    /** @brief Constructs the registry and registers all built-in scalar functions. */
     ScalarFunctionRegistry();
+
+    /** @brief Resolves the return type for a scalar function call.
+     * @param[in] call Parsed function call.
+     * @param[in] arguments Resolved argument types.
+     * @return Return type.
+     * @throws std::runtime_error If the function is unknown or the arguments are invalid. */
     ColumnType returnType(const FunctionCall& call, const std::vector<ColumnType>& arguments) const;
+
+    /** @brief Evaluates a constant scalar timestamp function at planning time.
+     * @param[in] call Function call whose arguments are all literals.
+     * @return Timestamp value in nanoseconds since the Unix epoch.
+     * @throws std::runtime_error If the function cannot be evaluated at planning time. */
     int64_t evaluateTimestamp(const FunctionCall& call) const;
 
 private:
-    ExpressionRegistry registry_;
+    ExpressionRegistry registry_;  ///< Underlying expression callable registry.
 };
 
 } // namespace mldp_pvxs_driver::query

@@ -16,6 +16,9 @@
 
 namespace mldp_pvxs_driver::query::planner {
 
+/** @brief Moves filter predicates as close to their source scans as possible.
+ * @param[in] root Logical plan root.
+ * @return Optimized plan root (may be the same node). */
 plan::LogicalNodePtr applyPredicatePushdown(plan::LogicalNodePtr root);
 
 } // namespace mldp_pvxs_driver::query::planner

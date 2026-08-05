@@ -35,7 +35,7 @@ public:
     std::shared_ptr<arrow::RecordBatch> next() override;
 
 private:
-    SpillReader reader_;
+    SpillReader reader_; ///< Spill reader backing this stream.
 };
 
 /** @brief Serves an in-memory batch vector via next(); no disk I/O. */
@@ -47,8 +47,8 @@ public:
     std::shared_ptr<arrow::RecordBatch> next() override;
 
 private:
-    std::vector<std::shared_ptr<arrow::RecordBatch>> batches_;
-    std::size_t                                       index_{0};
+    std::vector<std::shared_ptr<arrow::RecordBatch>> batches_; ///< Sequence of batches to serve.
+    std::size_t                                       index_{0}; ///< Index of the next batch to return.
 };
 
 /**

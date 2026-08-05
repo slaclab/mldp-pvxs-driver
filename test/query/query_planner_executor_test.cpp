@@ -1558,6 +1558,42 @@ TEST(QueryPlannerExecutorTest, KeepsNonPushableInSubqueriesOnTheMaterializedPath
     query::QueryableFactory::instance().reset();
 }
 
+TEST(QueryPlannerExecutorTest, EmitsPlanWarningWhenSeriesPerShardRequestedButSerialPathTaken)
+{
+    query::QueryableFactory::instance().reset();
+    {
+        const std::lock_guard lock(ScaledWindowQueryable::mutex);
+        ScaledWindowQueryable::active_streams = 0;
+        ScaledWindowQueryable::peak_active_streams = 0;
+        ScaledWindowQueryable::started_streams = 0;
+        ScaledWindowQueryable::requests.clear();
+        ScaledWindowQueryable::metadata_execute_calls = 0;
+        ScaledWindowQueryable::time_series_execute_calls = 0;
+        ScaledWindowQueryable::require_parallel_wave = false;
+        ScaledWindowQueryable::fail_stream_open = false;
+    }
+    query::QueryableFactory::instance().prepare<ScaledWindowQueryable>(config::Config::configFromYamlString("{}"));
+    query::QueryPlanner  planner;
+    query::QueryExecutor executor;
+
+    // Non-pushable IN subquery forces the materialized (serial) path even though series_per_shard 3 is requested.
+    auto streamed = executor.executeStream(
+        planner.plan(query::parseQuery(
+            "SELECT pv FROM mldp.time_series "
+            "WHERE pv = 'PV:01' AND value IN (SELECT value FROM mldp.pv_metadata) "
+            "AND window IN (0, 5; slice 5s, series_per_shard 3)")),
+        {.pool = arrow::default_memory_pool()});
+    while (streamed.stream->next()) {}
+
+    const auto& warnings = streamed.stats->plan_warnings;
+    ASSERT_FALSE(warnings.empty());
+    EXPECT_NE(std::find_if(warnings.begin(), warnings.end(), [](const std::string& w)
+                           { return w.find("series_per_shard 3") != std::string::npos &&
+                                    w.find("serial") != std::string::npos; }),
+              warnings.end());
+    query::QueryableFactory::instance().reset();
+}
+
 TEST(QueryPlannerExecutorTest, ReportsWindowShardContextForAsynchronousStreamFailures)
 {
     query::QueryableFactory::instance().reset();

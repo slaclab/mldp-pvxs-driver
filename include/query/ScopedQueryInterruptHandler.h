@@ -20,18 +20,23 @@ namespace mldp_pvxs_driver::cli {
 class ScopedQueryInterruptHandler
 {
 public:
+    /** @brief Installs a SIGINT handler that sets a pending interrupt flag. */
     ScopedQueryInterruptHandler();
+
+    /** @brief Restores the previous SIGINT handler. */
     ~ScopedQueryInterruptHandler();
 
     ScopedQueryInterruptHandler(const ScopedQueryInterruptHandler&) = delete;
     ScopedQueryInterruptHandler& operator=(const ScopedQueryInterruptHandler&) = delete;
 
+    /** @brief Returns true and clears the interrupt flag if SIGINT was received.
+     * @return True if an interrupt was pending. */
     bool consumeInterrupt() noexcept;
 
 private:
     using Handler = void (*)(int);
 
-    Handler previous_;
+    Handler previous_;  ///< SIGINT handler that was in place before this object was constructed.
 };
 
 } // namespace mldp_pvxs_driver::cli

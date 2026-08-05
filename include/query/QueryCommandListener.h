@@ -23,8 +23,8 @@ namespace mldp_pvxs_driver::cli {
 /** @brief Immutable metadata for a record batch made available to an interactive client. */
 struct QueryResultBatchDescriptor
 {
-    uint64_t rows{0};
-    uint64_t bytes{0};
+    uint64_t rows{0};   ///< Number of rows in the batch.
+    uint64_t bytes{0};  ///< Estimated byte size of the batch.
 };
 
 /** @brief Receives ordered immutable query lifecycle observations. */
@@ -33,12 +33,30 @@ class QueryCommandListener
 public:
     virtual ~QueryCommandListener() = default;
 
+    /** @brief Called when a query is submitted for execution.
+     * @param[in] sql  The submitted SQL text. */
     virtual void querySubmitted(std::string_view sql) = 0;
+
+    /** @brief Called when execution progress changes.
+     * @param[in] progress  Latest progress snapshot. */
     virtual void progressChanged(const query::QueryProgressSnapshot& progress) = 0;
+
+    /** @brief Called when a formatted output batch is ready.
+     * @param[in] descriptor  Metadata describing the batch. */
     virtual void resultBatchAvailable(const QueryResultBatchDescriptor& descriptor) = 0;
+
+    /** @brief Called when the query completes successfully.
+     * @param[in] stats  Final execution statistics. */
     virtual void queryCompleted(const query::QueryStats& stats) = 0;
+
+    /** @brief Called when the query is cancelled by the user. */
     virtual void queryCancelled() = 0;
+
+    /** @brief Called when the query fails with an error.
+     * @param[in] error  Human-readable error description. */
     virtual void queryFailed(std::string_view error) = 0;
+
+    /** @brief Called when the query subsystem returns to idle state. */
     virtual void queryIdle() = 0;
 };
 

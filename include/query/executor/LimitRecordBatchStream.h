@@ -23,13 +23,18 @@ namespace mldp_pvxs_driver::query::executor {
 class LimitRecordBatchStream final : public IRecordBatchStream
 {
 public:
+    /** @brief Constructs a limit stream that stops after emitting at most limit rows.
+     * @param[in] input Upstream pull stream.
+     * @param[in] limit Maximum rows to emit. */
     LimitRecordBatchStream(IRecordBatchStreamUPtr input, uint64_t limit);
 
+    /** @brief Returns the next batch from input, truncated to remaining row budget, or nullptr when exhausted.
+     * @return Batch or nullptr. */
     std::shared_ptr<arrow::RecordBatch> next() override;
 
 private:
-    IRecordBatchStreamUPtr input_;
-    uint64_t remaining_;
+    IRecordBatchStreamUPtr input_; ///< Upstream pull stream.
+    uint64_t remaining_;           ///< Remaining rows allowed before EOF is signaled.
 };
 
 } // namespace mldp_pvxs_driver::query::executor

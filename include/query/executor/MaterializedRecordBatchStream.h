@@ -21,13 +21,17 @@ namespace mldp_pvxs_driver::query::executor {
 class MaterializedRecordBatchStream final : public IRecordBatchStream
 {
 public:
+    /** @brief Constructs a stream that serves a fixed pre-materialized batch sequence.
+     * @param[in] batches Batch sequence to serve; drained front-to-back. */
     explicit MaterializedRecordBatchStream(RecordBatches batches);
 
+    /** @brief Returns the next batch from the pre-materialized sequence, or nullptr at EOF.
+     * @return Batch or nullptr. */
     std::shared_ptr<arrow::RecordBatch> next() override;
 
 private:
-    RecordBatches batches_;
-    std::size_t index_{0};
+    RecordBatches batches_;    ///< Pre-materialized output batches.
+    std::size_t index_{0};     ///< Index of the next batch to return.
 };
 
 } // namespace mldp_pvxs_driver::query::executor

@@ -16,6 +16,9 @@
 
 namespace mldp_pvxs_driver::query::planner {
 
+/** @brief Reorders joins to reduce intermediate result sizes.
+ * @param[in] root Logical plan root.
+ * @return Optimized plan root (may be the same node). */
 plan::LogicalNodePtr applyJoinOrderOptimizer(plan::LogicalNodePtr root);
 
 } // namespace mldp_pvxs_driver::query::planner

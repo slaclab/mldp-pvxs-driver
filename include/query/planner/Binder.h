@@ -21,6 +21,11 @@ class QueryTableCatalog;
 
 namespace mldp_pvxs_driver::query::planner {
 
+/** @brief Resolves column names and table schemas into a BoundSelect.
+ * @param[in] statement Parsed SELECT statement to bind.
+ * @param[in] catalog Optional catalog for user-created table resolution; null skips catalog lookup.
+ * @return Bound SELECT.
+ * @throws plan::PlannerException On binding errors (unknown columns, tables, etc.). */
 plan::BoundSelect bindSelect(const SelectStatement& statement, const QueryTableCatalog* catalog = nullptr);
 
 } // namespace mldp_pvxs_driver::query::planner

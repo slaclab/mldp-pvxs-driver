@@ -61,6 +61,7 @@ public:
         }
         ~Registration() { reset(); }
 
+        /** @brief Unregisters the callback before the Registration is destroyed. */
         void reset()
         {
             if (owner_) owner_->remove(id_);
@@ -73,10 +74,11 @@ public:
             : owner_(owner), id_(id)
         {
         }
-        QueryCancellation* owner_{nullptr};
-        std::size_t        id_{0};
+        QueryCancellation* owner_{nullptr}; ///< Owning QueryCancellation instance; null after reset().
+        std::size_t        id_{0};          ///< Registration identifier used to remove the callback.
     };
 
+    /** @brief Requests cancellation and invokes all registered callbacks exactly once. */
     void requestCancel()
     {
         bool expected = false;
@@ -89,13 +91,24 @@ public:
         for (const auto& callback : callbacks) callback();
     }
 
+    /** @brief Returns true if cancellation has been requested. */
     [[nodiscard]] bool cancelled() const noexcept { return cancelled_.load(); }
 
+    /**
+     * @brief Throws QueryCancelled if cancellation has been requested.
+     * @throws QueryCancelled If cancelled() is true.
+     */
     void throwIfCancelled() const
     {
         if (cancelled()) throw QueryCancelled{};
     }
 
+    /**
+     * @brief Registers a callback to invoke when cancellation is requested.
+     * @details If already cancelled, the callback is invoked immediately.
+     * @param[in] callback Callable invoked at most once on cancellation.
+     * @return RAII Registration that unregisters the callback on destruction.
+     */
     Registration onCancel(std::function<void()> callback)
     {
         bool invoke_now = false;
@@ -120,10 +133,10 @@ private:
         callbacks_.erase(id);
     }
 
-    std::atomic<bool>                       cancelled_{false};
-    mutable std::mutex                      mutex_;
-    std::size_t                               next_id_{1};
-    std::map<std::size_t, std::function<void()>> callbacks_;
+    std::atomic<bool>                            cancelled_{false}; ///< Set to true atomically on first requestCancel() call.
+    mutable std::mutex                           mutex_;            ///< Guards callbacks_ and next_id_.
+    std::size_t                                  next_id_{1};       ///< Monotonically increasing callback identifier.
+    std::map<std::size_t, std::function<void()>> callbacks_;        ///< Active callbacks keyed by registration ID.
 };
 
 } // namespace mldp_pvxs_driver::query

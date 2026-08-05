@@ -21,12 +21,12 @@ namespace mldp_pvxs_driver::query {
 // durations from being confused with ordinary signed numeric literals.
 /** @brief Signed nanoseconds since the Unix epoch. */
 struct TimestampNsLiteral {
-    int64_t value;
+    int64_t value;  ///< Nanoseconds since the Unix epoch (1970-01-01T00:00:00Z).
 };
 
 /** @brief Signed duration expressed in nanoseconds. */
 struct DurationNsLiteral {
-    int64_t value;
+    int64_t value;  ///< Duration in nanoseconds.
 };
 
 } // namespace mldp_pvxs_driver::query

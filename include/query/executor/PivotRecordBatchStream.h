@@ -24,18 +24,25 @@ namespace mldp_pvxs_driver::query::executor {
 class PivotRecordBatchStream final : public IRecordBatchStream
 {
 public:
+    /** @brief Constructs a pivot stream that materializes its input on the first next() call.
+     * @param[in] input Long-form input pull stream; fully consumed on the first next() call.
+     * @param[in] pivot Physical pivot descriptor.
+     * @param[in] context Execution context for spill and memory management.
+     * @param[in] stats Shared statistics accumulator. */
     PivotRecordBatchStream(IRecordBatchStreamUPtr input, plan::PhysicalPivot pivot, ExecutionContext context, std::shared_ptr<QueryStats> stats);
 
+    /** @brief Materializes and pivots input on the first call, then serves resulting wide batches.
+     * @return Wide batch or nullptr at EOF. */
     std::shared_ptr<arrow::RecordBatch> next() override;
 
 private:
-    IRecordBatchStreamUPtr input_;
-    plan::PhysicalPivot pivot_;
-    ExecutionContext context_;
-    std::shared_ptr<QueryStats> stats_;
-    RecordBatches batches_;
-    std::size_t index_{0};
-    bool prepared_{false};
+    IRecordBatchStreamUPtr input_;      ///< Long-form input stream; consumed on first next().
+    plan::PhysicalPivot pivot_;         ///< Pivot descriptor.
+    ExecutionContext context_;           ///< Execution context.
+    std::shared_ptr<QueryStats> stats_; ///< Shared statistics.
+    RecordBatches batches_;             ///< Pivoted output batches prepared on first next().
+    std::size_t index_{0};              ///< Current position in batches_.
+    bool prepared_{false};              ///< True after the input has been materialized and pivoted.
 };
 
 } // namespace mldp_pvxs_driver::query::executor

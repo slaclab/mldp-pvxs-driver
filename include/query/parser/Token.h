@@ -21,79 +21,79 @@ namespace mldp_pvxs_driver::query {
 
 /** @brief Lexical token categories accepted by the SQL grammar. */
 enum class TokenType {
-    END_OF_INPUT,
-    IDENTIFIER,
-    STRING_LITERAL,
-    NUMBER_LITERAL,
-    DURATION_LITERAL,
-    TRUE,
-    FALSE,
-    TIMESTAMP_NS,
-    DURATION_NS,
+    END_OF_INPUT,     ///< Sentinel token at end of input.
+    IDENTIFIER,       ///< Unquoted name or keyword not otherwise classified.
+    STRING_LITERAL,   ///< Single-quoted string literal.
+    NUMBER_LITERAL,   ///< Numeric literal (integer or floating-point).
+    DURATION_LITERAL, ///< Duration literal with a unit suffix (e.g. 5s, 100ms).
+    TRUE,             ///< Boolean true literal.
+    FALSE,            ///< Boolean false literal.
+    TIMESTAMP_NS,     ///< Nanosecond-precision timestamp literal.
+    DURATION_NS,      ///< Nanosecond-precision duration literal.
 
-    SELECT,
-    FROM,
-    WHERE,
-    IS,
-    AND,
-    OR,
-    NOT,
-    NULL_LITERAL,
-    IN,
-    LIKE,
-    BETWEEN,
-    LIMIT,
-    PAGE,
-    TOKEN,
-    SHOW,
-    TABLES,
-    FUNCTIONS,
-    OPERATORS,
-    DESCRIBE,
-    EXPLAIN,
-    AS,
-    INNER,
-    LEFT,
-    OUTER,
-    JOIN,
-    ON,
-    NOW,
-    PREFIX,
-    CONTAINS,
-    ORDER,
-    BY,
-    ASC,
-    DESC,
+    SELECT,       ///< SELECT keyword.
+    FROM,         ///< FROM keyword.
+    WHERE,        ///< WHERE keyword.
+    IS,           ///< IS keyword.
+    AND,          ///< AND keyword.
+    OR,           ///< OR keyword.
+    NOT,          ///< NOT keyword.
+    NULL_LITERAL, ///< NULL literal.
+    IN,           ///< IN keyword.
+    LIKE,         ///< LIKE keyword.
+    BETWEEN,      ///< BETWEEN keyword.
+    LIMIT,        ///< LIMIT keyword.
+    PAGE,         ///< PAGE keyword.
+    TOKEN,        ///< TOKEN keyword.
+    SHOW,         ///< SHOW keyword.
+    TABLES,       ///< TABLES keyword.
+    FUNCTIONS,    ///< FUNCTIONS keyword.
+    OPERATORS,    ///< OPERATORS keyword.
+    DESCRIBE,     ///< DESCRIBE keyword.
+    EXPLAIN,      ///< EXPLAIN keyword.
+    AS,           ///< AS keyword.
+    INNER,        ///< INNER keyword.
+    LEFT,         ///< LEFT keyword.
+    OUTER,        ///< OUTER keyword.
+    JOIN,         ///< JOIN keyword.
+    ON,           ///< ON keyword.
+    NOW,          ///< NOW() function keyword.
+    PREFIX,       ///< PREFIX keyword.
+    CONTAINS,     ///< CONTAINS keyword.
+    ORDER,        ///< ORDER keyword.
+    BY,           ///< BY keyword.
+    ASC,          ///< ASC keyword.
+    DESC,         ///< DESC keyword.
 
-    STAR,
-    SLASH,
-    COMMA,
-    SEMICOLON,
-    DOT,
-    LPAREN,
-    RPAREN,
-    PLUS,
-    MINUS,
-    EQ,
-    NEQ,
-    LT,
-    LTE,
-    GT,
-    GTE
+    STAR,      ///< Asterisk (*).
+    SLASH,     ///< Forward slash (/).
+    COMMA,     ///< Comma (,).
+    SEMICOLON, ///< Semicolon (;).
+    DOT,       ///< Dot (.).
+    LPAREN,    ///< Left parenthesis.
+    RPAREN,    ///< Right parenthesis.
+    PLUS,      ///< Plus sign (+).
+    MINUS,     ///< Minus sign (-).
+    EQ,        ///< Equality operator (=).
+    NEQ,       ///< Inequality operator (<>).
+    LT,        ///< Less-than operator (<).
+    LTE,       ///< Less-than-or-equal operator (<=).
+    GT,        ///< Greater-than operator (>).
+    GTE        ///< Greater-than-or-equal operator (>=).
 };
 
 /** @brief Zero-based byte offset and one-based line and column location. */
 struct TokenPosition {
-    std::size_t offset{0};
-    std::size_t line{1};
-    std::size_t column{1};
+    std::size_t offset{0}; ///< Zero-based byte offset in the source string.
+    std::size_t line{1};   ///< One-based line number.
+    std::size_t column{1}; ///< One-based column number within the line.
 };
 
 /** @brief A classified source lexeme with its original location. */
 struct Token {
-    TokenType     type{TokenType::END_OF_INPUT};
-    std::string   lexeme;
-    TokenPosition position;
+    TokenType     type{TokenType::END_OF_INPUT}; ///< Lexical category.
+    std::string   lexeme;                        ///< Original source text for this token.
+    TokenPosition position;                      ///< Source location of this token.
 };
 
 /** @brief Reports a syntax error together with its source position. */
@@ -106,15 +106,22 @@ public:
     {
     }
 
+    /** @brief Returns the zero-based byte offset of the error. @return Byte offset. */
     [[nodiscard]] std::size_t offset() const { return position_.offset; }
+    /** @brief Returns the one-based line number of the error. @return Line number. */
     [[nodiscard]] std::size_t line() const { return position_.line; }
+    /** @brief Returns the one-based column of the error. @return Column number. */
     [[nodiscard]] std::size_t column() const { return position_.column; }
+    /** @brief Returns the full source position of the error. @return Position struct. */
     [[nodiscard]] const TokenPosition& position() const { return position_; }
 
 private:
     TokenPosition position_;
 };
 
+/** @brief Returns a short human-readable label for a token type.
+ * @param[in] type Token type.
+ * @return Null-terminated string label. */
 std::string_view tokenTypeToString(TokenType type);
 
 } // namespace mldp_pvxs_driver::query

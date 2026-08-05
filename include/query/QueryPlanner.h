@@ -25,7 +25,18 @@ class QueryTableCatalog;
 class QueryPlanner
 {
 public:
+    /**
+     * @brief Constructs a planner with an optional persistent table catalog.
+     * @param[in] catalog Optional catalog for CREATE TABLE resolution; null uses schema-only planning.
+     */
     explicit QueryPlanner(std::shared_ptr<QueryTableCatalog> catalog = nullptr);
+
+    /**
+     * @brief Lowers a parsed SQL statement to an executable physical plan.
+     * @param[in] statement Parsed query statement.
+     * @return Physical plan root.
+     * @throws plan::PlannerException On bind, type, or planning errors.
+     */
     plan::PhysicalNodePtr plan(const QueryStatement& statement) const;
 
 private:

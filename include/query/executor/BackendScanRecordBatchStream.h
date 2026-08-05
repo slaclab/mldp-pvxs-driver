@@ -24,16 +24,23 @@ namespace mldp_pvxs_driver::query::executor {
 class BackendScanRecordBatchStream final : public IRecordBatchStream
 {
 public:
+    /** @brief Opens the backend scan lazily; the stream is not opened until the first next() call.
+     * @param[in] scan Physical scan node describing the table and predicates.
+     * @param[in] context Execution context.
+     * @param[in] stats Shared statistics accumulator. */
     BackendScanRecordBatchStream(const plan::PhysicalTableScan& scan, ExecutionContext context, std::shared_ptr<QueryStats> stats);
 
+    /** @brief Returns the next batch from the backend, or nullptr at EOF.
+     * @return Batch, or nullptr on clean EOF.
+     * @throws std::runtime_error On backend error. */
     std::shared_ptr<arrow::RecordBatch> next() override;
 
 private:
-    plan::PhysicalTableScan scan_;
-    ExecutionContext context_;
-    std::shared_ptr<QueryStats> stats_;
-    IQueryableUPtr queryable_;
-    IRecordBatchStreamUPtr stream_;
+    plan::PhysicalTableScan scan_;       ///< Physical scan parameters.
+    ExecutionContext context_;           ///< Execution context.
+    std::shared_ptr<QueryStats> stats_; ///< Shared statistics.
+    IQueryableUPtr queryable_;          ///< Backend queryable created on first next() call.
+    IRecordBatchStreamUPtr stream_;     ///< Underlying backend stream, opened lazily.
 };
 
 } // namespace mldp_pvxs_driver::query::executor

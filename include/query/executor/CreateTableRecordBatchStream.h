@@ -23,17 +23,26 @@ namespace mldp_pvxs_driver::query::executor {
 class CreateTableRecordBatchStream final : public IRecordBatchStream
 {
 public:
+    /** @brief Constructs a stream that drains input into a catalog table, then reports EOF.
+     * @param[in] input Source pull stream to drain.
+     * @param[in] create Physical CREATE TABLE descriptor.
+     * @param[in] context Execution context for catalog access.
+     * @param[in] stats Shared statistics accumulator. */
     CreateTableRecordBatchStream(IRecordBatchStreamUPtr input, const plan::PhysicalCreateTable& create,
                                  ExecutionContext context, std::shared_ptr<QueryStats> stats);
 
+    /** @brief On the first call, drains the input stream into the catalog table and returns nullptr.
+     * Subsequent calls also return nullptr.
+     * @return Always nullptr; the stream serves no output rows.
+     * @throws std::runtime_error On catalog write failure. */
     std::shared_ptr<arrow::RecordBatch> next() override;
 
 private:
-    IRecordBatchStreamUPtr input_;
-    plan::PhysicalCreateTable create_;
-    ExecutionContext context_;
-    std::shared_ptr<QueryStats> stats_;
-    bool done_{false};
+    IRecordBatchStreamUPtr input_;      ///< Source stream; fully consumed on first next().
+    plan::PhysicalCreateTable create_;  ///< CREATE TABLE descriptor.
+    ExecutionContext context_;           ///< Execution context.
+    std::shared_ptr<QueryStats> stats_; ///< Shared statistics.
+    bool done_{false};                  ///< True after the input has been drained.
 };
 
 } // namespace mldp_pvxs_driver::query::executor

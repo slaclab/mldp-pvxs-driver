@@ -20,7 +20,11 @@
 
 namespace mldp_pvxs_driver::query {
 
-/** Formats a UTC Arrow timestamp in an IANA timezone or fixed UTC offset. */
+/** @brief Formats a UTC Arrow timestamp as a local time string in the given IANA timezone or fixed UTC offset.
+ * @param[in] timestamp      UTC Arrow timestamp scalar.
+ * @param[in] zone_or_offset IANA timezone name (e.g. "America/Los_Angeles") or fixed offset (e.g. "+05:30").
+ * @return Formatted local time string.
+ * @throws std::runtime_error  If the timezone is unknown or the conversion fails. */
 [[nodiscard]] std::string fromUtc(const arrow::TimestampScalar& timestamp, const std::string& zone_or_offset);
 
 } // namespace mldp_pvxs_driver::query

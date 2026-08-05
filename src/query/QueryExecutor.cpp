@@ -109,7 +109,15 @@ IRecordBatchStreamUPtr makeStreamingPlan(const plan::PhysicalNodePtr& root,
         });
         const bool direct_long_scan = scan->table_name == "mldp.time_series" &&
                                       !scan->arrow_ipc && !scan->derived_query && has_only_pushable_in_subqueries;
-        if (!direct_long_scan) return nullptr;
+        if (!direct_long_scan)
+        {
+            if (scan->window_shards.series_per_shard > 1 && (scan->window_literal || scan->window_subquery))
+                stats->plan_warnings.push_back(
+                    "series_per_shard " + std::to_string(scan->window_shards.series_per_shard) +
+                    " requested but window scan falls back to the serial materialized path; "
+                    "parallel shard dispatch is unavailable for this query shape");
+            return nullptr;
+        }
 
         auto resolved_scan = resolvePushableInSubqueries(*scan, context);
         if (!resolved_scan) return std::make_unique<MaterializedRecordBatchStream>(RecordBatches{});

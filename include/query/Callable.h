@@ -21,12 +21,16 @@ namespace mldp_pvxs_driver::query {
 class Callable final : public IExpressionCallable
 {
 public:
+    /** @brief Constructs a callable from an immutable descriptor.
+     * @param[in] descriptor Callable descriptor. */
     explicit Callable(ExpressionCallableDescriptor descriptor);
 
+    /** @brief Returns the callable's immutable descriptor.
+     * @return Const reference to the stored descriptor. */
     const ExpressionCallableDescriptor& descriptor() const noexcept override;
 
 private:
-    ExpressionCallableDescriptor descriptor_;
+    ExpressionCallableDescriptor descriptor_;  ///< Stored callable descriptor.
 };
 
 } // namespace mldp_pvxs_driver::query

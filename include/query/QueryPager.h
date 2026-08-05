@@ -24,8 +24,21 @@ namespace mldp_pvxs_driver::cli {
 class QueryPager
 {
 public:
+    /** @brief Returns true if the given streams connect to a real TTY and the format is table.
+     * @param[in] input   Input stream to test.
+     * @param[in] output  Output stream to test.
+     * @param[in] format  Active output format.
+     * @return True when paging is appropriate. */
     bool canPage(const std::istream& input, const std::ostream& output, QueryOutputFormat format) const noexcept;
+
+    /** @brief Returns the system pager command string (e.g. "less -R").
+     * @return Pager command. */
     std::string command() const;
+
+    /** @brief Pipes text through the system pager.
+     * @param[in]  text   Text to display.
+     * @param[out] error  Receives an error message on failure.
+     * @return True on success. */
     bool write(std::string_view text, std::string& error) const;
 };
 

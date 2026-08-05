@@ -20,12 +20,30 @@ namespace mldp_pvxs_driver::cli {
 class NullQueryCommandListener final : public QueryCommandListener
 {
 public:
+    /** @brief Silently discards the query submitted notification.
+     * @param[in] sql  Unused. */
     void querySubmitted(std::string_view sql) override;
+
+    /** @brief Silently discards the progress update.
+     * @param[in] progress  Unused. */
     void progressChanged(const query::QueryProgressSnapshot& progress) override;
+
+    /** @brief Silently discards the batch notification.
+     * @param[in] descriptor  Unused. */
     void resultBatchAvailable(const QueryResultBatchDescriptor& descriptor) override;
+
+    /** @brief Silently discards the completion notification.
+     * @param[in] stats  Unused. */
     void queryCompleted(const query::QueryStats& stats) override;
+
+    /** @brief Silently discards the cancellation notification. */
     void queryCancelled() override;
+
+    /** @brief Silently discards the failure notification.
+     * @param[in] error  Unused. */
     void queryFailed(std::string_view error) override;
+
+    /** @brief Silently discards the idle notification. */
     void queryIdle() override;
 };
 

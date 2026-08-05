@@ -8,13 +8,6 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
-//////////////////////////////////////////////////////////////////////////////
-// This file is part of 'mldp-pvxs-driver'.
-// It is subject to the license terms in the LICENSE.txt file found in the
-// top-level directory of this distribution and at:
-//    https://confluence.slac.stanford.edu/display/ppareg/LICENSE.html.
-//////////////////////////////////////////////////////////////////////////////
-
 /** @file ArrowTypeMap.h
  * @brief Maps query column types to their Arrow representations. */
 #pragma once

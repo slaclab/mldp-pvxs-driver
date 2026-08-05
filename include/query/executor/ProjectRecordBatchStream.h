@@ -22,13 +22,18 @@ namespace mldp_pvxs_driver::query::executor {
 class ProjectRecordBatchStream final : public IRecordBatchStream
 {
 public:
+    /** @brief Constructs a projection stream that evaluates the physical project for each batch.
+     * @param[in] input Upstream pull stream.
+     * @param[in] project Physical projection descriptor. */
     ProjectRecordBatchStream(IRecordBatchStreamUPtr input, plan::PhysicalProject project);
 
+    /** @brief Returns the next projected batch, or nullptr at EOF.
+     * @return Projected batch or nullptr. */
     std::shared_ptr<arrow::RecordBatch> next() override;
 
 private:
-    IRecordBatchStreamUPtr input_;
-    plan::PhysicalProject project_;
+    IRecordBatchStreamUPtr input_; ///< Upstream pull stream.
+    plan::PhysicalProject project_; ///< Projection descriptor to apply.
 };
 
 } // namespace mldp_pvxs_driver::query::executor

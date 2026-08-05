@@ -20,12 +20,30 @@ namespace mldp_pvxs_driver::cli {
 class LoggingQueryCommandListener final : public QueryCommandListener
 {
 public:
+    /** @brief Logs the submitted SQL text via the driver logger.
+     * @param[in] sql  The submitted SQL text. */
     void querySubmitted(std::string_view sql) override;
+
+    /** @brief Logs progress changes at trace level.
+     * @param[in] progress  Latest progress snapshot. */
     void progressChanged(const query::QueryProgressSnapshot& progress) override;
+
+    /** @brief Logs batch availability at trace level.
+     * @param[in] descriptor  Batch metadata. */
     void resultBatchAvailable(const QueryResultBatchDescriptor& descriptor) override;
+
+    /** @brief Logs query completion with statistics.
+     * @param[in] stats  Final execution statistics. */
     void queryCompleted(const query::QueryStats& stats) override;
+
+    /** @brief Logs query cancellation. */
     void queryCancelled() override;
+
+    /** @brief Logs query failure with the error message.
+     * @param[in] error  Error description. */
     void queryFailed(std::string_view error) override;
+
+    /** @brief Logs return to idle state. */
     void queryIdle() override;
 };
 
