@@ -8,18 +8,23 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
-#include <query/QuerySubcommand.h>
+#include <query/QueryCommand.h>
+
+#include <query/ConsoleFooter.h>
+#include <query/NullQueryCommandListener.h>
+#include <query/ScopedQueryInterruptHandler.h>
+#include <query/QueryPager.h>
 
 #include <config/ConfigSource.h>
-#include <query/ConsoleFooter.h>
 #include <query/ExecutionContext.h>
+#include <query/QueryCancellation.h>
 #include <query/QueryExecutor.h>
 #include <query/QueryFormatter.h>
 #include <query/QueryPlanner.h>
 #include <query/QueryProgress.h>
-#include <query/QueryCancellation.h>
 #include <query/QueryTableCatalog.h>
 #include <query/QueryableFactory.h>
+#include <query/ShardTrace.h>
 #include <query/SpillManager.h>
 #include <query/impl/mldp/MLDPAnnotationQueryClient.h>
 #include <query/impl/mldp/MLDPQueryClient.h>
@@ -36,52 +41,25 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <iomanip>
 #include <iostream>
 #include <iterator>
 #include <memory>
-#include <future>
 #include <optional>
+#include <random>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
-#include <unistd.h>
-
-#include <csignal>
-
 #include <sys/ioctl.h>
+#include <unistd.h>
 
 using namespace mldp_pvxs_driver::cli;
 
 namespace {
 
-volatile std::sig_atomic_t g_query_interrupt_requested = 0;
 std::mutex                 g_fallback_output_mutex;
-
-extern "C" void requestQueryInterrupt(int)
-{
-    g_query_interrupt_requested = 1;
-}
-
-class ScopedQueryInterruptHandler
-{
-public:
-    ScopedQueryInterruptHandler()
-        : previous_(std::signal(SIGINT, requestQueryInterrupt))
-    {
-        g_query_interrupt_requested = 0;
-    }
-
-    ~ScopedQueryInterruptHandler()
-    {
-        std::signal(SIGINT, previous_);
-    }
-
-private:
-    using Handler = void (*)(int);
-    Handler previous_;
-};
 
 mldp_pvxs_driver::config::Config selectQueryablePoolConfig(
     const std::string_view                  type,
@@ -177,8 +155,9 @@ std::string trim(std::string_view value)
 
 std::optional<std::size_t> statementTerminator(std::string_view line)
 {
-    char quote = '\0';
-    bool escaped = false;
+    char        quote = '\0';
+    bool        escaped = false;
+    std::size_t parentheses = 0;
     for (std::size_t index = 0; index < line.size(); ++index)
     {
         const char character = line[index];
@@ -202,7 +181,15 @@ std::optional<std::size_t> statementTerminator(std::string_view line)
         {
             quote = character;
         }
-        else if (character == ';')
+        else if (character == '(')
+        {
+            ++parentheses;
+        }
+        else if (character == ')' && parentheses != 0)
+        {
+            --parentheses;
+        }
+        else if (character == ';' && parentheses == 0)
         {
             return index;
         }
@@ -213,16 +200,19 @@ std::optional<std::size_t> statementTerminator(std::string_view line)
 bool isReplCommand(std::string_view command)
 {
     return command == ".help" || command == ".clear" || command == ".format" || command.starts_with(".format ") ||
-           command.starts_with(".format\t") || command == ".history" || command == "history" || command == "\\x" ||
+           command.starts_with(".format\t") || command == ".pager" || command.starts_with(".pager ") || command.starts_with(".pager\t") ||
+           command == ".history" || command == "history" || command == "\\x" ||
            command == "\\expanded" || command.starts_with("\\expanded ") || command == ".table-fit" ||
            command.starts_with(".table-fit ") || command == ".quit" || command == ".exit";
 }
 
 std::optional<std::size_t> terminalWidth(const std::ostream& output)
 {
-    if (&output != &std::cout || ::isatty(STDOUT_FILENO) == 0) return std::nullopt;
+    if (&output != &std::cout || ::isatty(STDOUT_FILENO) == 0)
+        return std::nullopt;
     winsize size{};
-    if (::ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) != 0 || size.ws_col == 0) return std::nullopt;
+    if (::ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) != 0 || size.ws_col == 0)
+        return std::nullopt;
     return size.ws_col;
 }
 
@@ -230,10 +220,10 @@ std::string formatName(const QueryOutputFormat format)
 {
     switch (format)
     {
-        case QueryOutputFormat::Table: return "table";
-        case QueryOutputFormat::Json: return "json";
-        case QueryOutputFormat::Csv: return "csv";
-        case QueryOutputFormat::Arrow: return "arrow";
+    case QueryOutputFormat::Table: return "table";
+    case QueryOutputFormat::Json: return "json";
+    case QueryOutputFormat::Csv: return "csv";
+    case QueryOutputFormat::Arrow: return "arrow";
     }
     throw std::runtime_error("Unknown query output format");
 }
@@ -286,9 +276,12 @@ bool isInsideQuotedLiteral(std::string_view input)
     {
         if (quote != '\0')
         {
-            if (escaped) escaped = false;
-            else if (character == '\\') escaped = true;
-            else if (character == quote) quote = '\0';
+            if (escaped)
+                escaped = false;
+            else if (character == '\\')
+                escaped = true;
+            else if (character == quote)
+                quote = '\0';
         }
         else if (character == '\'' || character == '\"')
         {
@@ -307,9 +300,9 @@ std::string completionToken(std::string_view input)
 std::vector<std::string> wordsBeforeToken(std::string_view input)
 {
     std::vector<std::string> words;
-    std::string word;
-    const auto token = completionToken(input);
-    const auto preceding = input.substr(0, input.size() - token.size());
+    std::string              word;
+    const auto               token = completionToken(input);
+    const auto               preceding = input.substr(0, input.size() - token.size());
     for (const char character : preceding)
     {
         if (isCompletionBreak(character))
@@ -325,32 +318,36 @@ std::vector<std::string> wordsBeforeToken(std::string_view input)
             word.push_back(character);
         }
     }
-    if (!word.empty()) words.push_back(word);
+    if (!word.empty())
+        words.push_back(word);
     return words;
 }
 
 std::vector<std::pair<std::string, std::string>> tableAliases(std::string_view input)
 {
-    const auto words = wordsBeforeToken(input);
+    const auto                                       words = wordsBeforeToken(input);
     std::vector<std::pair<std::string, std::string>> aliases;
     for (std::size_t index = 0; index < words.size(); ++index)
     {
         const auto keyword = uppercase(words[index]);
-        if ((keyword != "FROM" && keyword != "JOIN") || index + 1 >= words.size()) continue;
+        if ((keyword != "FROM" && keyword != "JOIN") || index + 1 >= words.size())
+            continue;
         const auto& table = words[++index];
         std::string alias = table;
-        if (index + 2 < words.size() && uppercase(words[index + 1]) == "AS") alias = words[index += 2];
+        if (index + 2 < words.size() && uppercase(words[index + 1]) == "AS")
+            alias = words[index += 2];
         else if (index + 1 < words.size())
         {
             const auto next = uppercase(words[index + 1]);
-            if (next != "WHERE" && next != "INNER" && next != "LEFT" && next != "OUTER" && next != "JOIN" && next != "ON" && next != "LIMIT") alias = words[++index];
+            if (next != "WHERE" && next != "INNER" && next != "LEFT" && next != "OUTER" && next != "JOIN" && next != "ON" && next != "LIMIT")
+                alias = words[++index];
         }
         aliases.emplace_back(alias, table);
     }
     return aliases;
 }
 
-std::vector<std::string> columnsForTable(const std::string_view table,
+std::vector<std::string> columnsForTable(const std::string_view                                             table,
                                          const std::shared_ptr<mldp_pvxs_driver::query::QueryTableCatalog>& table_catalog)
 {
     if (table_catalog)
@@ -359,16 +356,18 @@ std::vector<std::string> columnsForTable(const std::string_view table,
         {
             std::vector<std::string> columns;
             columns.reserve(catalog_table->schema->num_fields());
-            for (const auto& field : catalog_table->schema->fields()) columns.push_back(field->name());
+            for (const auto& field : catalog_table->schema->fields())
+                columns.push_back(field->name());
             return columns;
         }
     }
     try
     {
-        auto queryable = mldp_pvxs_driver::query::QueryableFactory::instance().createByTable(std::string(table));
+        auto                     queryable = mldp_pvxs_driver::query::QueryableFactory::instance().createByTable(std::string(table));
         std::vector<std::string> columns;
         for (const auto& column : queryable->tableSchema(table))
-            if (column.is_output) columns.push_back(column.name);
+            if (column.is_output)
+                columns.push_back(column.name);
         return columns;
     }
     catch (const std::exception&)
@@ -379,9 +378,11 @@ std::vector<std::string> columnsForTable(const std::string_view table,
 
 bool expectsTable(const std::vector<std::string>& words)
 {
-    if (words.empty()) return false;
+    if (words.empty())
+        return false;
     const auto keyword = uppercase(words.back());
-    if (keyword == "FROM" || keyword == "JOIN" || keyword == "DESCRIBE" || keyword == "DESC") return true;
+    if (keyword == "FROM" || keyword == "JOIN" || keyword == "DESCRIBE" || keyword == "DESC")
+        return true;
     return keyword == "TABLE" && words.size() >= 2 && uppercase(words[words.size() - 2]) == "DROP";
 }
 
@@ -418,6 +419,11 @@ public:
         repl_->set_complete_on_empty(true);
         repl_->set_beep_on_ambiguous_completion(false);
         repl_->bind_key_internal(replxx::Replxx::KEY::TAB, "complete_line");
+        repl_->bind_key(replxx::Replxx::KEY::control('Q'), [this](char32_t)
+                        {
+                            quit_requested_ = true;
+                            return replxx::Replxx::ACTION_RESULT::BAIL;
+                        });
         repl_->set_completion_callback(
             [this](const std::string& context, int& context_length) -> replxx::Replxx::completions_t
             {
@@ -512,6 +518,13 @@ public:
         return true;
     }
 
+    bool consumeQuitRequested() noexcept
+    {
+        const auto requested = quit_requested_;
+        quit_requested_ = false;
+        return requested;
+    }
+
 private:
     void sanitizeHistory()
     {
@@ -539,58 +552,53 @@ private:
         (void)repl_->history_save(history_path_.string());
     }
 
-    std::istream&                   input_;
-    std::unique_ptr<replxx::Replxx> repl_;
-    std::filesystem::path           history_path_;
-    std::vector<std::string>        session_history_;
+    std::istream&                                               input_;
+    std::unique_ptr<replxx::Replxx>                             repl_;
+    std::filesystem::path                                       history_path_;
+    std::vector<std::string>                                    session_history_;
     std::shared_ptr<mldp_pvxs_driver::query::QueryTableCatalog> table_catalog_;
+    bool                                                        quit_requested_{false};
 };
 
 QueryOutputFormat parseFormat(std::string_view value);
 
 int runRepl(QueryCliOptions                           options,
             const mldp_pvxs_driver::cli::QueryRunner& runner,
+            mldp_pvxs_driver::cli::QueryCommandListener& listener,
             std::istream&                             input,
             std::ostream&                             output,
             std::ostream&                             error)
 {
-    std::string buffer;
-    ReplLineEditor editor(input, runner.completionCatalog(options));
-    auto output_mutex = std::make_shared<std::mutex>();
-    std::optional<TerminalLayout> terminal;
-    if (&input == &std::cin && &output == &std::cout && ::isatty(STDIN_FILENO) != 0 && ::isatty(STDOUT_FILENO) != 0)
-    {
-        terminal.emplace(output, output_mutex);
-        if (!terminal->initialize())
-        {
-            terminal.reset();
-        }
-    }
-    ConsoleStatus status;
+    std::string                   buffer;
+    ReplLineEditor                editor(input, runner.completionCatalog(options));
+    QueryPager                    pager;
+    QueryContinuationRegistry     continuations;
+    auto                          output_mutex = std::make_shared<std::mutex>();
+    TerminalLayout                terminal(output, output_mutex);
+    const auto                     real_terminal = &input == &std::cin && &output == &std::cout &&
+                                          ::isatty(STDIN_FILENO) != 0 && ::isatty(STDOUT_FILENO) != 0;
     while (true)
     {
-        if (terminal)
-        {
-            terminal->refreshAtSafeBoundary();
-            terminal->setStatus(status);
-            terminal->redrawFooter();
-            terminal->positionInputCursor();
-        }
         bool       interrupted = false;
         const auto line = editor.read(buffer.empty() ? "mldp> " : "...> ", output, interrupted);
         if (!line)
         {
+            if (editor.consumeQuitRequested())
+            {
+                terminal.restore();
+                return 0;
+            }
             if (interrupted)
             {
                 buffer.clear();
                 output << "\n";
-                status.error.clear();
                 continue;
             }
             if (!buffer.empty())
             {
                 error << "Query error: incomplete SQL statement discarded at end of input\n";
             }
+            terminal.restore();
             return 0;
         }
 
@@ -603,10 +611,6 @@ int runRepl(QueryCliOptions                           options,
             {
                 output << "Buffered statement cleared.\n";
             }
-            if (terminal)
-            {
-                terminal->refreshAtSafeBoundary();
-            }
             continue;
         }
         if (!buffer.empty() && isReplCommand(command))
@@ -617,15 +621,40 @@ int runRepl(QueryCliOptions                           options,
         if (buffer.empty() && (command == ".quit" || command == ".exit"))
         {
             editor.addHistory(command);
+            terminal.restore();
             return 0;
         }
         if (buffer.empty() && command == ".help")
         {
             editor.addHistory(command);
             output << "Enter one SQL statement terminated by ';'.\n"
-                   << "Commands: .help, .clear, .format [table|json|csv|arrow], .table-fit [on|off], .history, .quit, .exit\n"
+                   << "Commands: .help, .clear, .format [table|json|csv|arrow], .pager [on|off], .table-fit [on|off], .history, .quit, .exit\n"
                    << "Display: \\expanded [on|off], \\x (toggle), or terminate a query with \\G for one expanded result.\n"
-                   << "Editing: arrows, Ctrl-A/Ctrl-E, Ctrl-W, Ctrl-U/Ctrl-K, Ctrl-L (clear screen), history, and tab completion.\n";
+                   << "Editing: arrows, Ctrl-A/Ctrl-E, Ctrl-W, Ctrl-U/Ctrl-K, Ctrl-L (clear screen), Ctrl-Q (exit), history, and tab completion.\n";
+            continue;
+        }
+        if (buffer.empty() && (command == ".pager" || startsWithIgnoreCase(command, ".pager ") || startsWithIgnoreCase(command, ".pager\t")))
+        {
+            editor.addHistory(command);
+            const auto argument = trim(std::string_view(command).substr(std::string_view(".pager").size()));
+            if (argument.empty())
+            {
+                output << "Pager: " << (options.pager ? "on" : "off") << "\n";
+            }
+            else if (argument == "on")
+            {
+                options.pager = true;
+                output << "Pager: on\n";
+            }
+            else if (argument == "off")
+            {
+                options.pager = false;
+                output << "Pager: off\n";
+            }
+            else
+            {
+                error << "Query error: .pager accepts on or off\n";
+            }
             continue;
         }
         if (buffer.empty() && (command == ".history" || command == "history"))
@@ -640,11 +669,22 @@ int runRepl(QueryCliOptions                           options,
         if (buffer.empty() && (command == "\\x" || command == "\\expanded" || command.starts_with("\\expanded ")))
         {
             const auto argument = trim(std::string_view(command).substr(command == "\\x" ? 2 : std::string_view("\\expanded").size()));
-            if (command == "\\x") options.expanded = !options.expanded;
-            else if (argument.empty()) { output << "Expanded display: " << (options.expanded ? "on" : "off") << "\n"; continue; }
-            else if (argument == "on") options.expanded = true;
-            else if (argument == "off") options.expanded = false;
-            else { error << "Query error: \\expanded accepts on or off\n"; continue; }
+            if (command == "\\x")
+                options.expanded = !options.expanded;
+            else if (argument.empty())
+            {
+                output << "Expanded display: " << (options.expanded ? "on" : "off") << "\n";
+                continue;
+            }
+            else if (argument == "on")
+                options.expanded = true;
+            else if (argument == "off")
+                options.expanded = false;
+            else
+            {
+                error << "Query error: \\expanded accepts on or off\n";
+                continue;
+            }
             output << "Expanded display: " << (options.expanded ? "on" : "off") << "\n";
             continue;
         }
@@ -657,9 +697,15 @@ int runRepl(QueryCliOptions                           options,
                 output << "Table fit: " << (options.table_fit ? "on" : "off") << "\n";
                 continue;
             }
-            if (argument == "on") options.table_fit = true;
-            else if (argument == "off") options.table_fit = false;
-            else { error << "Query error: .table-fit accepts on or off\n"; continue; }
+            if (argument == "on")
+                options.table_fit = true;
+            else if (argument == "off")
+                options.table_fit = false;
+            else
+            {
+                error << "Query error: .table-fit accepts on or off\n";
+                continue;
+            }
             output << "Table fit: " << (options.table_fit ? "on" : "off") << "\n";
             continue;
         }
@@ -695,8 +741,8 @@ int runRepl(QueryCliOptions                           options,
             continue;
         }
 
-        auto line_for_sql = *line;
-        bool expanded_once = false;
+        auto                       line_for_sql = *line;
+        bool                       expanded_once = false;
         std::optional<std::size_t> terminator;
         if (const auto marker = line_for_sql.find("\\G"); marker != std::string::npos && trim(std::string_view(line_for_sql).substr(marker + 2)).empty())
         {
@@ -711,7 +757,15 @@ int runRepl(QueryCliOptions                           options,
         }
         else
         {
-            terminator = statementTerminator(line_for_sql);
+            std::string pending_sql = buffer;
+            if (!pending_sql.empty())
+                pending_sql.push_back('\n');
+            const auto line_offset = pending_sql.size();
+            pending_sql.append(line_for_sql);
+            if (const auto pending_terminator = statementTerminator(pending_sql); pending_terminator && *pending_terminator >= line_offset)
+            {
+                terminator = *pending_terminator - line_offset;
+            }
         }
         if (terminator)
         {
@@ -736,81 +790,84 @@ int runRepl(QueryCliOptions                           options,
             editor.addHistory(sql);
             auto progress = std::make_shared<mldp_pvxs_driver::query::QueryProgressTracker>();
             auto cancellation = std::make_shared<mldp_pvxs_driver::query::QueryCancellation>();
-            status.query_running = true;
-            status.progress = progress->snapshot();
-            status.completed_stats.reset();
-            status.error.clear();
-            if (terminal)
-            {
-                terminal->setStatus(status);
-                terminal->redrawFooter();
-            }
+            progress->setPhase(mldp_pvxs_driver::query::QueryProgressPhase::Parsing);
+            listener.querySubmitted(sql);
             auto query_options = options;
             query_options.expanded = options.expanded || expanded_once;
             mldp_pvxs_driver::query::QueryStats completed_stats;
-            ScopedQueryInterruptHandler interrupt_handler;
-            auto query = std::async(std::launch::async,
-                                    [&]
-                                    {
+            ScopedQueryInterruptHandler         interrupt_handler;
+            const auto                           page_result = query_options.pager && pager.canPage(input, output, query_options.format);
+            if (real_terminal)
+            {
+                editor.clearScreen();
+            }
+            const auto footer_active = real_terminal && !page_result && terminal.initialize();
+            std::ostringstream                   paged_output;
+            auto&                                 result_output = page_result ? static_cast<std::ostream&>(paged_output) : output;
+            ConsoleStatus                         status{.query_running = true, .progress = progress->snapshot()};
+            if (footer_active) terminal.redraw(status);
+            auto                                query = std::async(std::launch::async,
+                                                                   [&]
+                                                                   {
                                         return runner.run(query_options,
                                                           sql,
-                                                          output,
+                                                          result_output,
                                                           progress,
-                                                          terminal ? std::optional<std::size_t>(static_cast<std::size_t>(terminal->columns())) : std::nullopt,
-                                                          !terminal,
+                                                          std::nullopt,
+                                                          !footer_active,
                                                           &completed_stats,
                                                           cancellation,
-                                                          output_mutex);
-                                    });
+                                                          output_mutex,
+                                                          &continuations);
+                                                                   });
             try
             {
-                status.progress = progress->snapshot();
-                if (terminal)
-                {
-                    terminal->setStatus(status);
-                    terminal->redrawFooter();
-                }
                 while (query.wait_for(std::chrono::milliseconds{250}) != std::future_status::ready)
                 {
-                    if (g_query_interrupt_requested != 0)
+                    if (interrupt_handler.consumeInterrupt())
                     {
-                        g_query_interrupt_requested = 0;
                         progress->setPhase(mldp_pvxs_driver::query::QueryProgressPhase::Cancelling);
                         cancellation->requestCancel();
                     }
-                    if (terminal)
-                    {
-                        status.progress = progress->snapshot();
-                        terminal->setStatus(status);
-                        terminal->redrawFooter();
-                    }
+                    const auto snapshot = progress->snapshot();
+                    status.progress = snapshot;
+                    if (footer_active) terminal.redraw(status);
+                    listener.progressChanged(snapshot);
                 }
                 (void)query.get();
-                status.query_running = false;
-                status.progress = progress->snapshot();
-                status.completed_stats = std::move(completed_stats);
+                if (footer_active)
+                {
+                    terminal.restore();
+                    if (!query_options.no_stats)
+                    {
+                        printQueryStats(completed_stats, output);
+                    }
+                }
+                if (page_result)
+                {
+                    std::string pager_error;
+                    if (!pager.write(paged_output.str(), pager_error))
+                    {
+                        error << "Query warning: " << pager_error << "; writing result directly\n";
+                        output << paged_output.str();
+                    }
+                }
+                listener.queryCompleted(completed_stats);
+                listener.queryIdle();
             }
             catch (const mldp_pvxs_driver::query::QueryCancelled&)
             {
-                status.query_running = false;
-                status.progress = progress->snapshot();
-                status.error.clear();
-                status.completed_stats.reset();
+                if (footer_active) terminal.restore();
+                listener.queryCancelled();
+                listener.queryIdle();
                 error << "Query cancelled\n";
             }
             catch (const std::exception& ex)
             {
+                if (footer_active) terminal.restore();
                 printQueryError(ex, error);
-                status.query_running = false;
-                status.progress = progress->snapshot();
-                status.error = ex.what();
-                status.completed_stats.reset();
-            }
-            if (terminal)
-            {
-                terminal->refreshAtSafeBoundary();
-                terminal->setStatus(status);
-                terminal->redrawFooter();
+                listener.queryFailed(ex.what());
+                listener.queryIdle();
             }
             continue;
         }
@@ -867,6 +924,21 @@ void parseQueryArguments(int argc, char** argv, QueryCliOptions& options)
         if (arg == "--no-stats")
         {
             options.no_stats = true;
+            continue;
+        }
+        if (arg == "--trace-shards")
+        {
+            options.trace_shards = true;
+            continue;
+        }
+        if (arg == "--trace-shards-file")
+        {
+            if (++index >= argc)
+            {
+                throw std::runtime_error("--trace-shards-file requires a path");
+            }
+            options.trace_shards = true;
+            options.shard_trace_file = argv[index];
             continue;
         }
         if (arg == "--table-fit")
@@ -934,6 +1006,7 @@ void parseQueryArguments(int argc, char** argv, QueryCliOptions& options)
 struct SpillCleanupGuard
 {
     std::shared_ptr<mldp_pvxs_driver::query::SpillManager> spill;
+
     ~SpillCleanupGuard()
     {
         if (spill)
@@ -943,34 +1016,163 @@ struct SpillCleanupGuard
     }
 };
 
+class InteractivePageStream final : public mldp_pvxs_driver::query::IRecordBatchStream
+{
+public:
+    InteractivePageStream(mldp_pvxs_driver::query::IRecordBatchStreamUPtr input, const uint64_t limit)
+        : input_(std::move(input)), remaining_(limit)
+    {
+    }
+
+    void reset(const uint64_t limit)
+    {
+        remaining_ = limit;
+    }
+
+    [[nodiscard]] bool pageFull() const noexcept
+    {
+        return remaining_ == 0;
+    }
+
+    std::shared_ptr<arrow::RecordBatch> next() override
+    {
+        if (remaining_ == 0)
+            return nullptr;
+        if (!pending_)
+            pending_ = input_->next();
+        if (!pending_)
+            return nullptr;
+        const auto available = static_cast<uint64_t>(pending_->num_rows() - offset_);
+        const auto count = std::min(available, remaining_);
+        const auto result = pending_->Slice(offset_, static_cast<int64_t>(count));
+        offset_ += static_cast<int64_t>(count);
+        remaining_ -= count;
+        if (offset_ == pending_->num_rows())
+        {
+            pending_.reset();
+            offset_ = 0;
+        }
+        return result;
+    }
+
+private:
+    mldp_pvxs_driver::query::IRecordBatchStreamUPtr input_;
+    std::shared_ptr<arrow::RecordBatch>             pending_;
+    int64_t                                         offset_{0};
+    uint64_t                                        remaining_{0};
+};
+
+std::string queryFingerprint(const std::string_view sql)
+{
+    const auto uppercase_sql = uppercase(sql);
+    const auto page = uppercase_sql.find(" PAGE TOKEN ");
+    return page == std::string::npos ? std::string(sql) : std::string(sql.substr(0, page));
+}
+
 } // namespace
 
+mldp_pvxs_driver::cli::QueryContinuationRegistry::QueryContinuationRegistry(const std::chrono::steady_clock::duration idle_timeout)
+    : idle_timeout_(idle_timeout)
+{
+}
+
+mldp_pvxs_driver::cli::QueryContinuationRegistry::~QueryContinuationRegistry()
+{
+    clear();
+}
+
+std::string mldp_pvxs_driver::cli::QueryContinuationRegistry::store(Entry entry)
+{
+    cleanupExpired();
+    std::random_device random_device;
+    std::mt19937_64    generator(random_device());
+    std::string        token;
+    do
+    {
+        std::ostringstream token_stream;
+        token_stream << "p9:" << std::hex << generator() << generator();
+        token = token_stream.str();
+    } while (entries_.contains(token));
+    entry.expires_at = std::chrono::steady_clock::now() + idle_timeout_;
+    entries_.emplace(token, std::move(entry));
+    return token;
+}
+
+mldp_pvxs_driver::cli::QueryContinuationRegistry::Entry
+mldp_pvxs_driver::cli::QueryContinuationRegistry::take(const std::string&     token,
+                                                       const std::string_view fingerprint)
+{
+    cleanupExpired();
+    const auto found = entries_.find(token);
+    if (found == entries_.end())
+        throw std::runtime_error("PAGE TOKEN is invalid, expired, or has already been consumed in this REPL session");
+    if (found->second.fingerprint != fingerprint)
+        throw std::runtime_error("PAGE TOKEN does not match this query in the current REPL session");
+    auto entry = std::move(found->second);
+    entries_.erase(found);
+    return entry;
+}
+
+void mldp_pvxs_driver::cli::QueryContinuationRegistry::cleanupExpired()
+{
+    const auto now = std::chrono::steady_clock::now();
+    for (auto entry = entries_.begin(); entry != entries_.end();)
+    {
+        if (entry->second.expires_at > now)
+        {
+            ++entry;
+            continue;
+        }
+        if (entry->second.cancellation)
+            entry->second.cancellation->requestCancel();
+        entry = entries_.erase(entry);
+    }
+}
+
+void mldp_pvxs_driver::cli::QueryContinuationRegistry::clear()
+{
+    for (auto& [token, entry] : entries_)
+    {
+        if (entry.cancellation)
+            entry.cancellation->requestCancel();
+    }
+    entries_.clear();
+}
+
 std::vector<std::string> mldp_pvxs_driver::cli::detail::replCompletions(
-    const std::string_view input,
+    const std::string_view                           input,
     const std::shared_ptr<query::QueryTableCatalog>& table_catalog)
 {
-    if (isInsideQuotedLiteral(input)) return {};
+    if (isInsideQuotedLiteral(input))
+        return {};
 
-    const auto token = completionToken(input);
-    const auto words = wordsBeforeToken(input);
+    const auto               token = completionToken(input);
+    const auto               words = wordsBeforeToken(input);
     std::vector<std::string> candidates;
-    const auto trimmed = trim(input);
+    const auto               trimmed = trim(input);
     if (startsWithIgnoreCase(trimmed, ".format"))
     {
         candidates = token.empty() || token.front() == '.'
-            ? std::vector<std::string>{".format"}
-            : std::vector<std::string>{"table", "json", "csv", "arrow"};
+                         ? std::vector<std::string>{".format"}
+                         : std::vector<std::string>{"table", "json", "csv", "arrow"};
+    }
+    else if (startsWithIgnoreCase(trimmed, ".pager"))
+    {
+        candidates = token.empty() || token.front() == '.'
+                         ? std::vector<std::string>{".pager"}
+                         : std::vector<std::string>{"on", "off"};
     }
     else if (!token.empty() && token.front() == '.')
     {
-        candidates = {".help", ".clear", ".format", ".table-fit", ".history", "\\expanded", "\\x", ".quit", ".exit"};
+        candidates = {".help", ".clear", ".format", ".pager", ".table-fit", ".history", "\\expanded", "\\x", ".quit", ".exit"};
     }
     else if (expectsTable(words))
     {
         for (const auto& table : query::QueryableFactory::instance().registeredTables())
             candidates.push_back(table);
         if (table_catalog)
-            for (const auto& table : table_catalog->tableNames()) candidates.push_back(table);
+            for (const auto& table : table_catalog->tableNames())
+                candidates.push_back(table);
     }
     else if (const auto dot = token.find('.'); dot != std::string::npos)
     {
@@ -978,7 +1180,8 @@ std::vector<std::string> mldp_pvxs_driver::cli::detail::replCompletions(
         const auto column_prefix = token.substr(dot + 1);
         for (const auto& [candidate_alias, table] : tableAliases(input))
             if (startsWithIgnoreCase(candidate_alias, alias))
-                for (const auto& column : columnsForTable(table, table_catalog)) candidates.push_back(candidate_alias + "." + column);
+                for (const auto& column : columnsForTable(table, table_catalog))
+                    candidates.push_back(candidate_alias + "." + column);
         (void)column_prefix;
     }
     else
@@ -987,11 +1190,15 @@ std::vector<std::string> mldp_pvxs_driver::cli::detail::replCompletions(
                       "SHOW", "TABLES", "FUNCTIONS", "OPERATORS", "DESCRIBE", "DESC", "EXPLAIN", "CREATE", "DROP", "TEMP", "TABLE", "AS", "INNER", "LEFT", "OUTER", "JOIN", "ON", "NOW", "PREFIX", "CONTAINS"};
         const auto aliases = tableAliases(input);
         if (aliases.size() == 1)
-            for (const auto& column : columnsForTable(aliases.front().second, table_catalog)) candidates.push_back(column);
+            for (const auto& column : columnsForTable(aliases.front().second, table_catalog))
+                candidates.push_back(column);
     }
 
     candidates.erase(std::remove_if(candidates.begin(), candidates.end(), [&token](const std::string& candidate)
-                                    { return !startsWithIgnoreCase(candidate, token); }), candidates.end());
+                                    {
+                                        return !startsWithIgnoreCase(candidate, token);
+                                    }),
+                     candidates.end());
     std::sort(candidates.begin(), candidates.end());
     candidates.erase(std::unique(candidates.begin(), candidates.end()), candidates.end());
     return candidates;
@@ -1007,14 +1214,13 @@ int mldp_pvxs_driver::cli::detail::replCompletionContextLength(const std::string
     return static_cast<int>(completionToken(input).size());
 }
 
-void mldp_pvxs_driver::cli::QuerySubcommandPreparer::prepare(const mldp_pvxs_driver::config::Config& config) const
+void mldp_pvxs_driver::cli::QueryCommandPreparer::prepare(const mldp_pvxs_driver::config::Config& config) const
 {
     query::QueryableFactory::instance().reset();
     if (!config.hasChild("queryable"))
     {
         throw std::runtime_error(
-            "Missing 'queryable' configuration. "
-            "Provide one or more queryable entries via -c/--config before 'query'.");
+            "Missing 'queryable' configuration. " "Provide one or more queryable entries via -c/--config before 'query'.");
     }
 
     if (config.isSequence("queryable"))
@@ -1037,25 +1243,27 @@ void mldp_pvxs_driver::cli::QuerySubcommandPreparer::prepare(const mldp_pvxs_dri
     }
 }
 
-int mldp_pvxs_driver::cli::QueryRunner::run(const QueryCliOptions& options,
-                                             const std::string_view sql,
-                                             std::ostream&          output,
-                                             std::shared_ptr<query::QueryProgressTracker> progress,
-                                             std::optional<std::size_t> viewport_width,
-                                             const bool print_stats,
-                                             query::QueryStats* completed_stats,
-                                             std::shared_ptr<query::QueryCancellation> cancellation,
-                                             std::shared_ptr<std::mutex> output_mutex) const
+int mldp_pvxs_driver::cli::QueryRunner::run(const QueryCliOptions&                       options,
+                                            const std::string_view                       sql,
+                                            std::ostream&                                output,
+                                            std::shared_ptr<query::QueryProgressTracker> progress,
+                                            std::optional<std::size_t>                   viewport_width,
+                                            const bool                                   print_stats,
+                                            query::QueryStats*                           completed_stats,
+                                            std::shared_ptr<query::QueryCancellation>    cancellation,
+                                            std::shared_ptr<std::mutex>                  output_mutex,
+                                            QueryContinuationRegistry*                   continuations,
+                                            BatchConsumer                                batch_consumer) const
 {
+    const auto shard_trace = options.trace_shards ? std::make_shared<query::ShardTraceCollector>() : nullptr;
     const auto spill_dir = options.spill_dir.empty()
-        ? (std::filesystem::temp_directory_path() / "mldp-query-spill").string()
-        : options.spill_dir;
-    auto spill_file_system = std::make_shared<arrow::fs::LocalFileSystem>();
-    auto spill = std::make_shared<query::SpillManager>(spill_file_system, spill_dir);
-    SpillCleanupGuard cleanup{spill};
+                               ? (std::filesystem::temp_directory_path() / "mldp-query-spill").string()
+                               : options.spill_dir;
+    auto       spill_file_system = std::make_shared<arrow::fs::LocalFileSystem>();
+    auto       spill = std::make_shared<query::SpillManager>(spill_file_system, spill_dir);
     const auto catalog_dir = options.table_catalog_dir.empty()
-        ? (std::filesystem::temp_directory_path() / "mldp-query-catalog").string()
-        : options.table_catalog_dir;
+                                 ? (std::filesystem::temp_directory_path() / "mldp-query-catalog").string()
+                                 : options.table_catalog_dir;
     if (!table_catalog_ || table_catalog_dir_ != catalog_dir)
     {
         table_catalog_ = std::make_shared<query::QueryTableCatalog>(spill_file_system, catalog_dir);
@@ -1073,62 +1281,186 @@ int mldp_pvxs_driver::cli::QueryRunner::run(const QueryCliOptions& options,
         .table_catalog = table_catalog_,
         .progress = progress,
         .cancellation = std::move(cancellation),
+        .shard_trace = shard_trace,
     };
 
-    if (progress)
+    bool       trace_rendered = false;
+    const auto render_shard_trace = [&]()
     {
-        progress->setPhase(query::QueryProgressPhase::Parsing);
-    }
-    auto parsed = query::parseQuery(sql);
-    if (progress)
-    {
-        progress->setPhase(query::QueryProgressPhase::Planning);
-    }
-    const query::QueryPlanner planner(table_catalog_);
-    const query::QueryExecutor executor;
-    auto physical = planner.plan(parsed);
-    auto result = executor.execute(physical, context);
-    if (completed_stats != nullptr)
-    {
-        *completed_stats = result.stats;
-    }
-    if (progress)
-    {
-        progress->setPhase(query::QueryProgressPhase::Formatting);
-    }
-    auto table_width = viewport_width;
-    if (options.table_fit && !table_width)
-    {
-        table_width = terminalWidth(output);
-    }
-    if (context.cancellation) context.cancellation->throwIfCancelled();
-    {
-        std::unique_lock lock(output_mutex ? *output_mutex : g_fallback_output_mutex);
-        formatQueryResult(result,
-                          options.format,
-                          output,
-                          options.expanded,
-                          TableRenderOptions{.viewport_width = options.table_fit ? table_width : std::nullopt},
-                          context.cancellation);
-        if (!options.no_stats && print_stats)
+        if (!shard_trace || trace_rendered)
+            return;
+        trace_rendered = true;
+        auto& trace_output = options.shard_trace_output ? *options.shard_trace_output : std::cerr;
+        for (const auto& entry : shard_trace->entries())
         {
-            printQueryStats(result.stats, output);
+            const auto first_response = entry.first_response_at.time_since_epoch().count() == 0
+                                            ? std::chrono::milliseconds{0}
+                                            : std::chrono::duration_cast<std::chrono::milliseconds>(entry.first_response_at - entry.dispatched_at);
+            const auto completed_at = entry.completed_at.time_since_epoch().count() == 0
+                                          ? std::chrono::steady_clock::now()
+                                          : entry.completed_at;
+            const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(completed_at - entry.dispatched_at);
+            trace_output << "Shard trace #" << entry.first_response_sequence
+                         << " window=" << entry.window_index
+                         << " slice=" << entry.slice_index
+                         << " shard=" << entry.shard_index
+                         << " time=" << entry.begin_seconds << ".." << entry.end_seconds
+                         << " first_batch_observed_ms=" << first_response.count()
+                         << " terminal_observed_ms=" << elapsed.count()
+                         << " batches=" << entry.batches
+                         << " rows=" << entry.rows
+                         << " pvs=";
+            for (std::size_t index = 0; index < entry.pvs.size(); ++index)
+            {
+                if (index != 0)
+                    trace_output << ',';
+                trace_output << entry.pvs[index];
+            }
+            if (!entry.failure.empty())
+                trace_output << " failure=" << entry.failure;
+            trace_output << '\n';
         }
-    }
-    if (context.cancellation) context.cancellation->throwIfCancelled();
-    if (progress)
+    };
+
+    try
     {
-        progress->setPhase(query::QueryProgressPhase::Complete);
+        if (progress)
+        {
+            progress->setPhase(query::QueryProgressPhase::Parsing);
+        }
+        auto parsed = query::parseQuery(sql);
+        if (progress)
+        {
+            progress->setPhase(query::QueryProgressPhase::Planning);
+        }
+        const query::QueryPlanner  planner(table_catalog_);
+        const query::QueryExecutor executor;
+        auto                       physical = planner.plan(parsed);
+        const auto*                select = std::get_if<query::SelectStatement>(&parsed);
+        if (select && select->page_token && continuations == nullptr)
+            throw std::runtime_error("PAGE TOKEN p9 continuations are available only in a live REPL session");
+        const bool                                      interactive_page = continuations != nullptr && select != nullptr && select->limit.has_value();
+        const auto                                      fingerprint = interactive_page ? queryFingerprint(sql) : std::string{};
+        std::optional<QueryContinuationRegistry::Entry> resumed;
+        uint64_t                                        result_page = 1;
+        if (interactive_page && select->page_token)
+        {
+            resumed.emplace(continuations->take(*select->page_token, fingerprint));
+            context.cancellation = resumed->cancellation;
+            result_page = resumed->result_page + 1;
+        }
+        if (progress && interactive_page)
+            progress->setResultPage(result_page);
+        std::optional<SpillCleanupGuard> cleanup;
+        if (!interactive_page)
+        {
+            cleanup.emplace(SpillCleanupGuard{spill});
+        }
+        if (interactive_page)
+        {
+            if (const auto* limit = std::get_if<query::plan::PhysicalLimit>(&physical->value))
+                physical = limit->input;
+        }
+        if (progress)
+        {
+            progress->setPhase(query::QueryProgressPhase::Formatting);
+        }
+        auto table_width = viewport_width;
+        if (options.table_fit && !table_width)
+        {
+            table_width = terminalWidth(output);
+        }
+        if (context.cancellation)
+            context.cancellation->throwIfCancelled();
+        {
+            query::IRecordBatchStreamUPtr      stream;
+            std::shared_ptr<query::QueryStats> stream_stats;
+            InteractivePageStream*             page_stream = nullptr;
+            if (resumed)
+            {
+                stream = std::move(resumed->stream);
+                stream_stats = std::move(resumed->stats);
+                page_stream = dynamic_cast<InteractivePageStream*>(stream.get());
+                if (!page_stream)
+                    throw std::runtime_error("PAGE TOKEN has incompatible continuation state");
+                page_stream->reset(*select->limit);
+            }
+            else
+            {
+                auto streamed_result = executor.executeStream(physical, context);
+                stream_stats = std::move(streamed_result.stats);
+                if (interactive_page)
+                {
+                    stream = std::make_unique<InteractivePageStream>(std::move(streamed_result.stream), *select->limit);
+                    page_stream = static_cast<InteractivePageStream*>(stream.get());
+                }
+                else
+                {
+                    stream = std::move(streamed_result.stream);
+                }
+            }
+            if (batch_consumer)
+            {
+                while (auto batch = stream->next())
+                {
+                    if (context.cancellation) context.cancellation->throwIfCancelled();
+                    batch_consumer(batch);
+                    if (progress) progress->outputBatch(static_cast<uint64_t>(batch->num_rows()));
+                }
+            }
+            else
+            {
+                formatQueryStream(*stream,
+                                  options.format,
+                                  output,
+                                  options.expanded,
+                                  TableRenderOptions{.viewport_width = options.table_fit ? table_width : std::nullopt},
+                                  context.cancellation,
+                                  progress,
+                                  output_mutex);
+            }
+            std::unique_lock lock(output_mutex ? *output_mutex : g_fallback_output_mutex);
+            if (!options.no_stats && print_stats)
+            {
+                printQueryStats(*stream_stats, output);
+            }
+            if (completed_stats != nullptr)
+            {
+                *completed_stats = *stream_stats;
+            }
+            if (interactive_page && page_stream && page_stream->pageFull())
+            {
+                const auto token = continuations->store(QueryContinuationRegistry::Entry{
+                    .fingerprint = fingerprint,
+                    .stream = std::move(stream),
+                    .stats = std::move(stream_stats),
+                    .cancellation = context.cancellation,
+                    .result_page = result_page});
+                output << "-- continuation token: " << token << "\n";
+            }
+        }
+        if (context.cancellation)
+            context.cancellation->throwIfCancelled();
+        if (progress)
+        {
+            progress->setPhase(query::QueryProgressPhase::Complete);
+        }
+        render_shard_trace();
+        return 0;
     }
-    return 0;
+    catch (...)
+    {
+        render_shard_trace();
+        throw;
+    }
 }
 
 std::shared_ptr<mldp_pvxs_driver::query::QueryTableCatalog>
 mldp_pvxs_driver::cli::QueryRunner::completionCatalog(const QueryCliOptions& options) const
 {
     const auto catalog_dir = options.table_catalog_dir.empty()
-        ? (std::filesystem::temp_directory_path() / "mldp-query-catalog").string()
-        : options.table_catalog_dir;
+                                 ? (std::filesystem::temp_directory_path() / "mldp-query-catalog").string()
+                                 : options.table_catalog_dir;
     if (!table_catalog_ || table_catalog_dir_ != catalog_dir)
     {
         table_catalog_ = std::make_shared<query::QueryTableCatalog>(std::make_shared<arrow::fs::LocalFileSystem>(), catalog_dir);
@@ -1137,17 +1469,31 @@ mldp_pvxs_driver::cli::QueryRunner::completionCatalog(const QueryCliOptions& opt
     return table_catalog_;
 }
 
-int mldp_pvxs_driver::cli::QuerySubcommand::run(int argc,
-                                                 char** argv,
-                                                 const std::vector<std::string>& global_config_sources,
-                                                 std::istream&                     input,
-                                                 std::ostream&                    output,
-                                                 std::ostream&                    error) const
+int mldp_pvxs_driver::cli::QueryCommand::run(int                             argc,
+                                                char**                          argv,
+                                                const std::vector<std::string>& global_config_sources,
+                                                std::istream&                   input,
+                                                std::ostream&                   output,
+                                                std::ostream&                   error) const
 {
     try
     {
         QueryCliOptions options;
         parseQueryArguments(argc, argv, options);
+        std::ofstream shard_trace_file;
+        if (!options.shard_trace_file.empty())
+        {
+            shard_trace_file.open(options.shard_trace_file, std::ios::out | std::ios::trunc);
+            if (!shard_trace_file)
+            {
+                throw std::runtime_error("Unable to open shard trace file '" + options.shard_trace_file + "'");
+            }
+            options.shard_trace_output = &shard_trace_file;
+        }
+        else
+        {
+            options.shard_trace_output = &error;
+        }
         const bool interactive = options.sql.empty() && options.sql_file.empty();
         const auto sql = interactive ? std::string{} : loadSql(options);
         // Preserve one-shot error precedence: syntax errors are reported before
@@ -1157,8 +1503,8 @@ int mldp_pvxs_driver::cli::QuerySubcommand::run(int argc,
             (void)query::parseQuery(sql);
         }
         const auto config = global_config_sources.empty()
-            ? mldp_pvxs_driver::config::Config::configFromYamlString("{}\n")
-            : config::loadMergedConfigSources(global_config_sources);
+                                ? mldp_pvxs_driver::config::Config::configFromYamlString("{}\n")
+                                : config::loadMergedConfigSources(global_config_sources);
 
         if (queryable_preparer_)
         {
@@ -1166,26 +1512,26 @@ int mldp_pvxs_driver::cli::QuerySubcommand::run(int argc,
         }
         else
         {
-            QuerySubcommandPreparer preparer;
+            QueryCommandPreparer preparer;
             preparer.prepare(config);
         }
         QueryRunner runner;
         if (interactive)
         {
-            return runRepl(options, runner, input, output, error);
+            NullQueryCommandListener repl_listener;
+            return runRepl(options, runner, repl_listener, input, output, error);
         }
-        auto cancellation = std::make_shared<query::QueryCancellation>();
+        auto                        cancellation = std::make_shared<query::QueryCancellation>();
         ScopedQueryInterruptHandler interrupt_handler;
-        auto query = std::async(std::launch::async,
-                                [&]
-                                {
+        auto                        query = std::async(std::launch::async,
+                                                       [&]
+                                                       {
                                     return runner.run(options, sql, output, nullptr, std::nullopt, true, nullptr, cancellation, nullptr);
-                                });
+                                                       });
         while (query.wait_for(std::chrono::milliseconds{100}) != std::future_status::ready)
         {
-            if (g_query_interrupt_requested != 0)
+            if (interrupt_handler.consumeInterrupt())
             {
-                g_query_interrupt_requested = 0;
                 cancellation->requestCancel();
             }
         }
@@ -1203,7 +1549,8 @@ int mldp_pvxs_driver::cli::QuerySubcommand::run(int argc,
     return 1;
 }
 
-mldp_pvxs_driver::cli::QuerySubcommand::QuerySubcommand(QueryablePreparer queryable_preparer)
-    : queryable_preparer_(std::move(queryable_preparer))
+mldp_pvxs_driver::cli::QueryCommand::QueryCommand(QueryCommandListener& listener, QueryablePreparer queryable_preparer)
+    : listener_(listener)
+    , queryable_preparer_(std::move(queryable_preparer))
 {
 }

@@ -8,6 +8,8 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
+/** @file MLDPQueryClient.h
+ * @brief Declares the MLDP data-query service implementation. */
 #pragma once
 
 #include <common.pb.h>
@@ -93,11 +95,11 @@ public:
 
     std::set<std::string_view> virtualTables() const override;
     std::vector<ColumnSchema>  tableSchema(std::string_view table_name) const override;
-    QueryResult                execute(std::string_view              table_name,
-                                       const std::vector<Predicate>& pushable_predicates,
-                                       const std::set<std::string>&  projection_hint,
-                                       const ExecutionContext&       context,
-                                       std::string_view              page_token = {}) override;
+    std::size_t                maxConcurrentStreams() const noexcept override;
+    IRecordBatchStreamUPtr     executeStream(std::string_view              table_name,
+                                             const std::vector<Predicate>& pushable_predicates,
+                                             const std::set<std::string>&  projection_hint,
+                                             const ExecutionContext&       context) override;
 
     /**
      * @brief Query MLDP metadata for a set of source identifiers.

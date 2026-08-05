@@ -9,10 +9,12 @@
 //////////////////////////////////////////////////////////////////////////////
 
 #include <query/impl/mldp/MLDPAnnotationQueryClient.h>
+#include <query/impl/mldp/AnnotationMetadataBuilders.h>
+#include <query/impl/mldp/MldpTimestampUtils.h>
 
 #include <query/ExecutionContext.h>
 #include <query/QueryCancellation.h>
-#include <query/QueryResult.h>
+#include <query/SpillBackedStream.h>
 
 #include <pool/MLDPGrpcAnnotationPoolConfig.h>
 #include <util/log/Logger.h>
@@ -105,17 +107,6 @@ std::vector<ColumnSchema> MLDPAnnotationQueryClient::tableSchema(std::string_vie
 }
 
 namespace {
-
-int64_t timestampToNanoseconds(const dp::service::common::Timestamp& timestamp)
-{
-    return static_cast<int64_t>(timestamp.epochseconds()) * 1'000'000'000LL + static_cast<int64_t>(timestamp.nanoseconds());
-}
-
-void setTimestamp(dp::service::common::Timestamp* target, int64_t seconds)
-{
-    target->set_epochseconds(static_cast<uint64_t>(seconds));
-    target->set_nanoseconds(0);
-}
 
 std::vector<std::string> stringValues(const Predicate& predicate)
 {
@@ -241,77 +232,6 @@ std::vector<Record> queryAllPages(Request request, Query&& query, const std::sha
     }
 }
 
-class MetadataBuilders
-{
-public:
-    explicit MetadataBuilders(const std::set<std::string>& attribute_keys)
-        : tags_values_(std::make_shared<arrow::StringBuilder>())
-        , tags_(arrow::default_memory_pool(), tags_values_)
-        , attributes_keys_(std::make_shared<arrow::StringBuilder>())
-        , attributes_values_(std::make_shared<arrow::StringBuilder>())
-        , attributes_(arrow::default_memory_pool(), attributes_keys_, attributes_values_)
-    {
-        for (const auto& key : attribute_keys)
-            values_.emplace(key, std::make_unique<arrow::StringBuilder>());
-    }
-
-    template <typename Metadata>
-    void append(const Metadata& metadata)
-    {
-        if (!tags_.Append().ok() || !attributes_.Append().ok())
-            throw std::runtime_error("Failed to begin Arrow metadata collection");
-        for (const auto& tag : metadata.tags())
-            appendString(*tags_values_, tag);
-        std::unordered_map<std::string, std::string> attributes;
-        for (const auto& attribute : metadata.attributes())
-        {
-            attributes.insert_or_assign(attribute.name(), attribute.value());
-            appendString(*attributes_keys_, attribute.name());
-            appendString(*attributes_values_, attribute.value());
-        }
-        for (auto& [key, builder] : values_)
-        {
-            if (const auto it = attributes.find(key); it != attributes.end())
-                appendString(*builder, it->second);
-            else if (!builder->AppendNull().ok())
-                throw std::runtime_error("Failed to append null dynamic metadata value");
-        }
-    }
-
-    void finish(std::vector<std::shared_ptr<arrow::Field>>& fields,
-                std::vector<std::shared_ptr<arrow::Array>>& arrays,
-                const bool include_attributes)
-    {
-        std::shared_ptr<arrow::Array> tags;
-        std::shared_ptr<arrow::Array> attributes;
-        if (!tags_.Finish(&tags).ok() || !attributes_.Finish(&attributes).ok())
-            throw std::runtime_error("Failed to finish Arrow metadata collections");
-        fields.push_back(arrow::field("tags", tags->type()));
-        arrays.push_back(std::move(tags));
-        if (include_attributes)
-        {
-            fields.push_back(arrow::field("attributes", attributes->type()));
-            arrays.push_back(std::move(attributes));
-        }
-        for (auto& [key, builder] : values_)
-        {
-            std::shared_ptr<arrow::Array> value;
-            if (!builder->Finish(&value).ok())
-                throw std::runtime_error("Failed to finish dynamic metadata value");
-            fields.push_back(arrow::field("attributes." + key, arrow::utf8(), true));
-            arrays.push_back(std::move(value));
-        }
-    }
-
-private:
-    std::shared_ptr<arrow::StringBuilder>                        tags_values_;
-    arrow::ListBuilder                                           tags_;
-    std::shared_ptr<arrow::StringBuilder>                        attributes_keys_;
-    std::shared_ptr<arrow::StringBuilder>                        attributes_values_;
-    arrow::MapBuilder                                            attributes_;
-    std::map<std::string, std::unique_ptr<arrow::StringBuilder>> values_;
-};
-
 std::shared_ptr<mldp_pvxs_driver::util::log::ILogger> makeAnnotationQueryClientLogger()
 {
     std::string name = "mldp_annotation_query_client";
@@ -320,18 +240,16 @@ std::shared_ptr<mldp_pvxs_driver::util::log::ILogger> makeAnnotationQueryClientL
 
 } // namespace
 
-QueryResult MLDPAnnotationQueryClient::execute(std::string_view              table_name,
-                                               const std::vector<Predicate>& predicates,
-                                               const std::set<std::string>& projection_hint,
-                                               const ExecutionContext& context,
-                                               std::string_view        page_token)
+IRecordBatchStreamUPtr MLDPAnnotationQueryClient::executeStream(std::string_view              table_name,
+                                                               const std::vector<Predicate>& predicates,
+                                                               const std::set<std::string>&  projection_hint,
+                                                               const ExecutionContext&       context)
 {
     const auto limit = context.join_batch_size;
     if (table_name == "mldp.pv_metadata")
     {
         dp::service::annotation::QueryPvMetadataRequest request;
         request.set_limit(limit);
-        request.set_pagetoken(std::string(page_token));
         for (const auto& predicate : predicates)
         {
             auto*      criterion = request.add_criteria();
@@ -384,7 +302,7 @@ QueryResult MLDPAnnotationQueryClient::execute(std::string_view              tab
         arrow::StringBuilder    pv, alias, description, modified_by;
         arrow::TimestampBuilder created(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), arrow::default_memory_pool());
         arrow::TimestampBuilder updated(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), arrow::default_memory_pool());
-        MetadataBuilders        metadata(metadataAttributeKeys(records, projection_hint));
+        AnnotationMetadataBuilders        metadata(metadataAttributeKeys(records, projection_hint));
         for (const auto& record : records)
         {
             appendString(pv, record.pvname());
@@ -407,13 +325,13 @@ QueryResult MLDPAnnotationQueryClient::execute(std::string_view              tab
         std::vector<std::shared_ptr<arrow::Field>> fields = {arrow::field("pv", a->type()), arrow::field("alias", b->type()), arrow::field("description", c->type()), arrow::field("modified_by", d->type()), arrow::field("created_time", e->type()), arrow::field("updated_time", f->type())};
         std::vector<std::shared_ptr<arrow::Array>> arrays = {a, b, c, d, e, f};
         metadata.finish(fields, arrays, projection_hint.contains("attributes"));
-        return {.batch = arrow::RecordBatch::Make(arrow::schema(std::move(fields)), a->length(), std::move(arrays)), .next_page_token = {}};
+        auto batch = arrow::RecordBatch::Make(arrow::schema(std::move(fields)), a->length(), std::move(arrays));
+        return materializedStream({std::move(batch)});
     }
     if (table_name == "mldp.configuration")
     {
         dp::service::annotation::QueryConfigurationsRequest request;
         request.set_limit(limit);
-        request.set_pagetoken(std::string(page_token));
         for (const auto& predicate : predicates)
         {
             const auto values = stringValues(predicate);
@@ -460,7 +378,7 @@ QueryResult MLDPAnnotationQueryClient::execute(std::string_view              tab
             }, context.cancellation);
         arrow::StringBuilder    name, category, parent, description, modified_by;
         arrow::TimestampBuilder created(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), arrow::default_memory_pool()), updated(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), arrow::default_memory_pool());
-        MetadataBuilders        metadata(metadataAttributeKeys(records, projection_hint));
+        AnnotationMetadataBuilders        metadata(metadataAttributeKeys(records, projection_hint));
         for (const auto& record : records)
         {
             appendString(name, record.configurationname());
@@ -480,13 +398,13 @@ QueryResult MLDPAnnotationQueryClient::execute(std::string_view              tab
         std::vector<std::shared_ptr<arrow::Field>> fields = {arrow::field("name", a->type()), arrow::field("category", b->type()), arrow::field("parent", c->type()), arrow::field("description", d->type()), arrow::field("modified_by", e->type()), arrow::field("created_time", f->type()), arrow::field("updated_time", g->type())};
         std::vector<std::shared_ptr<arrow::Array>> arrays = {a, b, c, d, e, f, g};
         metadata.finish(fields, arrays, projection_hint.contains("attributes"));
-        return {.batch = arrow::RecordBatch::Make(arrow::schema(std::move(fields)), a->length(), std::move(arrays)), .next_page_token = {}};
+        auto batch = arrow::RecordBatch::Make(arrow::schema(std::move(fields)), a->length(), std::move(arrays));
+        return materializedStream({std::move(batch)});
     }
     if (table_name == "mldp.configuration_activation")
     {
         dp::service::annotation::QueryConfigurationActivationsRequest request;
         request.set_limit(limit);
-        request.set_pagetoken(std::string(page_token));
         bool has_predicate = false;
         for (const auto& predicate : predicates)
         {
@@ -531,7 +449,7 @@ QueryResult MLDPAnnotationQueryClient::execute(std::string_view              tab
         arrow::TimestampBuilder time(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), arrow::default_memory_pool());
         arrow::TimestampBuilder end_time(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), arrow::default_memory_pool());
         arrow::StringBuilder    config, id, description;
-        MetadataBuilders        metadata(metadataAttributeKeys(records, projection_hint));
+        AnnotationMetadataBuilders        metadata(metadataAttributeKeys(records, projection_hint));
         for (const auto& record : records)
         {
             appendTimestamp(time, record.starttime());
@@ -550,12 +468,11 @@ QueryResult MLDPAnnotationQueryClient::execute(std::string_view              tab
         std::vector<std::shared_ptr<arrow::Field>> fields = {arrow::field("time", a->type()), arrow::field("end_time", b->type(), true), arrow::field("config_name", c->type()), arrow::field("activation_id", d->type()), arrow::field("description", e->type())};
         std::vector<std::shared_ptr<arrow::Array>> arrays = {a, b, c, d, e};
         metadata.finish(fields, arrays, projection_hint.contains("attributes"));
-        return {.batch = arrow::RecordBatch::Make(arrow::schema(std::move(fields)), a->length(), std::move(arrays)), .next_page_token = {}};
+        auto batch = arrow::RecordBatch::Make(arrow::schema(std::move(fields)), a->length(), std::move(arrays));
+        return materializedStream({std::move(batch)});
     }
     if (table_name == "mldp.active_configurations")
     {
-        if (!page_token.empty())
-            throw std::invalid_argument("mldp.active_configurations does not support continuation tokens");
         const Predicate* at = nullptr;
         for (const auto& predicate : predicates)
         {
@@ -584,7 +501,8 @@ QueryResult MLDPAnnotationQueryClient::execute(std::string_view              tab
         std::shared_ptr<arrow::Array> a, b, c;
         if (!name.Finish(&a).ok() || !id.Finish(&b).ok() || !time.Finish(&c).ok())
             throw std::runtime_error("Failed to finish Arrow active_configurations batch");
-        return {.batch = arrow::RecordBatch::Make(arrow::schema({arrow::field("name", a->type()), arrow::field("activation_id", b->type()), arrow::field("time", c->type())}), a->length(), {a, b, c}), .next_page_token = {}};
+        auto batch = arrow::RecordBatch::Make(arrow::schema({arrow::field("name", a->type()), arrow::field("activation_id", b->type()), arrow::field("time", c->type())}), a->length(), {a, b, c});
+        return materializedStream({std::move(batch)});
     }
     throw std::invalid_argument("MLDPAnnotationQueryClient: unknown virtual table '" + std::string(table_name) + "'; supported tables: mldp.pv_metadata, mldp.configuration, mldp.configuration_activation, mldp.active_configurations");
 }

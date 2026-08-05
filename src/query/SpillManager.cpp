@@ -173,6 +173,23 @@ arrow::Result<SpillHandle> SpillManager::spill(
                        .batch_count = static_cast<int>(batches.size())};
 }
 
+arrow::Result<SpillWriter> SpillManager::openWriter(const std::string& query_id,
+                                                     std::shared_ptr<arrow::Schema> schema)
+{
+    if (!schema) return arrow::Status::Invalid("SpillManager::openWriter requires a schema");
+    RETURN_NOT_OK(state_->file_system->CreateDir(state_->spill_directory, true));
+    const auto sequence = state_->next_sequence.fetch_add(1);
+    const auto path = joinPath(state_->spill_directory,
+                               "spill_" + query_id + "_" + std::to_string(sequence) + ".arrow");
+    ARROW_ASSIGN_OR_RAISE(auto output, state_->file_system->OpenOutputStream(path));
+    ARROW_ASSIGN_OR_RAISE(auto writer, arrow::ipc::MakeFileWriter(output, schema));
+    {
+        std::lock_guard lock(state_->mutex);
+        state_->outstanding_paths.insert(path);
+    }
+    return SpillWriter(state_, path, std::move(schema), std::move(output), std::move(writer));
+}
+
 arrow::Result<SpillReader> SpillManager::read(const SpillHandle& handle)
 {
     {
@@ -199,4 +216,56 @@ arrow::Status SpillManager::cleanup()
         RETURN_NOT_OK(removePath(state_, path));
     }
     return arrow::Status::OK();
+}
+
+SpillWriter::SpillWriter(std::shared_ptr<SpillReader::State> state,
+                         std::string path,
+                         std::shared_ptr<arrow::Schema> schema,
+                         std::shared_ptr<arrow::io::OutputStream> output,
+                         std::shared_ptr<arrow::ipc::RecordBatchWriter> writer)
+    : state_(std::move(state))
+    , path_(std::move(path))
+    , schema_(std::move(schema))
+    , output_(std::move(output))
+    , writer_(std::move(writer))
+{
+}
+
+SpillWriter::~SpillWriter()
+{
+    abort();
+}
+
+arrow::Status SpillWriter::append(const std::shared_ptr<arrow::RecordBatch>& batch)
+{
+    if (finished_) return arrow::Status::Invalid("SpillWriter is already finished");
+    if (!batch || !batch->schema()->Equals(*schema_)) return arrow::Status::Invalid("SpillWriter batches must share one schema");
+    RETURN_NOT_OK(writer_->WriteRecordBatch(*batch));
+    ++batch_count_;
+    return arrow::Status::OK();
+}
+
+arrow::Result<SpillHandle> SpillWriter::finish()
+{
+    if (finished_) return arrow::Status::Invalid("SpillWriter is already finished");
+    if (batch_count_ == 0) return arrow::Status::Invalid("SpillWriter requires at least one record batch");
+    RETURN_NOT_OK(writer_->Close());
+    RETURN_NOT_OK(output_->Close());
+    ARROW_ASSIGN_OR_RAISE(auto info, state_->file_system->GetFileInfo(path_));
+    finished_ = true;
+    writer_.reset();
+    output_.reset();
+    return SpillHandle{.path = std::move(path_), .schema = std::move(schema_), .byte_count = info.size(), .batch_count = batch_count_};
+}
+
+void SpillWriter::abort()
+{
+    if (finished_) return;
+    if (writer_) (void)writer_->Close();
+    if (output_) (void)output_->Close();
+    writer_.reset();
+    output_.reset();
+    if (state_ && !path_.empty()) (void)removePath(state_, path_);
+    path_.clear();
+    finished_ = true;
 }

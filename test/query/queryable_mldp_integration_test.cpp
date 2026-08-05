@@ -10,9 +10,12 @@
 
 #include <annotation.grpc.pb.h>
 #include <config/Config.h>
+#include <controller/MLDPPVXSController.h>
 #include <query/ExecutionContext.h>
 #include <query/QueryExecutor.h>
 #include <query/QueryPlanner.h>
+#include <query/QueryCommand.h>
+#include <query/NullQueryCommandListener.h>
 #include <query/QueryableFactory.h>
 #include <query/impl/mldp/MLDPAnnotationQueryClient.h>
 #include <query/impl/mldp/MLDPQueryClient.h>
@@ -46,6 +49,7 @@ using namespace mldp_pvxs_driver::query;
 using namespace mldp_pvxs_driver::query::impl::mldp;
 using namespace mldp_pvxs_driver::util::bus;
 using namespace mldp_pvxs_driver::writer;
+using namespace mldp_pvxs_driver::controller;
 
 namespace {
 
@@ -82,10 +86,10 @@ std::string makeNamespace()
            std::to_string(gNamespaceSuffix.fetch_add(1, std::memory_order_relaxed));
 }
 
-config::Config makeQueryConfig()
+config::Config makeQueryConfig(const uint32_t max_connections = 1)
 {
     return config::makeConfigFromYaml(
-        "provider-name: queryable-mldp-integration\n" "provider-description: real MLDP query integration test\n" "ingestion-url: dp-ingestion:50051\n" "query-url: dp-query:50052\n" "annotation-url: dp-annotation:50053\n" "min-conn: 1\n" "max-conn: 1\n");
+        "provider-name: queryable-mldp-integration\n" "provider-description: real MLDP query integration test\n" "ingestion-url: dp-ingestion:50051\n" "query-url: dp-query:50052\n" "annotation-url: dp-annotation:50053\n" "min-conn: 1\n" "max-conn: " + std::to_string(max_connections) + "\n");
 }
 
 std::string makeMldpWriterConfig(const std::string& name)
@@ -97,6 +101,11 @@ std::string makeAnnotationWriterConfig(const std::string& name, const std::strin
 {
     return "name: " + name + "\n" "thread-pool: 1\n" "deadline-seconds: 10\n" +
            pool_key + ":\n" "  provider-name: " + name + "\n" "  provider-description: real MLDP query integration test\n" "  ingestion-url: dp-ingestion:50051\n" "  query-url: dp-query:50052\n" "  annotation-url: dp-annotation:50053\n" "  min-conn: 1\n" "  max-conn: 1\n";
+}
+
+std::string makeControllerConfig(const std::string& name)
+{
+    return "name: " + name + "\n" "writer:\n" "  mldp:\n" "    - name: " + name + "_time_series\n" "      thread-pool: 1\n" "      stream-max-age-ms: 1\n" "      mldp-pool:\n" "        provider-name: " + name + "\n" "        provider-description: controller wide-table integration test\n" "        ingestion-url: dp-ingestion:50051\n" "        query-url: dp-query:50052\n" "        min-conn: 1\n" "        max-conn: 1\n" "  mldp-pv-metadata:\n" "    - name: " + name + "_metadata\n" "      thread-pool: 1\n" "      deadline-seconds: 10\n" "      mldp-pv-metadata-pool:\n" "        provider-name: " + name + "\n" "        provider-description: controller wide-table integration test\n" "        ingestion-url: dp-ingestion:50051\n" "        query-url: dp-query:50052\n" "        annotation-url: dp-annotation:50053\n" "        min-conn: 1\n" "        max-conn: 1\n" "  mldp-configuration:\n" "    - name: " + name + "_configuration\n" "      thread-pool: 1\n" "      deadline-seconds: 10\n" "      mldp-annotation-pool:\n" "        provider-name: " + name + "\n" "        provider-description: controller wide-table integration test\n" "        ingestion-url: dp-ingestion:50051\n" "        query-url: dp-query:50052\n" "        annotation-url: dp-annotation:50053\n" "        min-conn: 1\n" "        max-conn: 1\n" "reader:\n" "  epics-pvxs:\n" "    - name: controller-wide-reader\n" "      pvs:\n" "        - name: test:counter\n";
 }
 
 class QueryableMldpIntegrationTest : public ::testing::Test
@@ -115,8 +124,28 @@ protected:
 
     void TearDown() override
     {
+        if (controller_)
+        {
+            controller_->stop();
+            controller_.reset();
+        }
         cleanupAnnotations();
         QueryableFactory::instance().reset();
+    }
+
+    void configureQueryables(const uint32_t max_connections)
+    {
+        QueryableFactory::instance().reset();
+        const auto query_config = makeQueryConfig(max_connections);
+        QueryableFactory::instance().prepare<MLDPQueryClient>(query_config);
+        QueryableFactory::instance().prepare<MLDPAnnotationQueryClient>(query_config);
+    }
+
+    void startController()
+    {
+        controller_ = MLDPPVXSController::create(config::makeConfigFromYaml(makeControllerConfig(nameSpace_)));
+        ASSERT_NE(controller_, nullptr);
+        ASSERT_NO_THROW(controller_->start());
     }
 
     std::string pv(const std::string& suffix) const
@@ -236,12 +265,12 @@ protected:
         writer->stop();
     }
 
-    void seedConfiguration(const std::string&          name,
-                           const std::string&          category,
-                           const std::string&          activation_id,
-                           const BusTimestamp&         start_time,
-                           std::optional<BusTimestamp> end_time = std::nullopt,
-                           std::optional<std::vector<std::string>> activation_tags = std::nullopt,
+    void seedConfiguration(const std::string&                           name,
+                           const std::string&                           category,
+                           const std::string&                           activation_id,
+                           const BusTimestamp&                          start_time,
+                           std::optional<BusTimestamp>                  end_time = std::nullopt,
+                           std::optional<std::vector<std::string>>      activation_tags = std::nullopt,
                            std::unordered_map<std::string, std::string> activation_attributes = {})
     {
         auto writer = WriterFactory::create(
@@ -344,9 +373,10 @@ protected:
     std::vector<std::string>                                            metadataPvs_;
     std::vector<std::string>                                            configurationNames_;
     std::vector<std::string>                                            activationIds_;
+    std::shared_ptr<MLDPPVXSController>                                 controller_;
 };
 
-TEST_F(QueryableMldpIntegrationTest, TimeSeriesReturnsEveryPageWithDenseIntegerUnion)
+TEST_F(QueryableMldpIntegrationTest, TimeSeriesReturnsAllBidiResponsesWithDenseIntegerUnion)
 {
     const auto source_pv = pv("time_series");
     seedTimeSeries(source_pv, 5, 100);
@@ -360,7 +390,11 @@ TEST_F(QueryableMldpIntegrationTest, TimeSeriesReturnsEveryPageWithDenseIntegerU
         });
 
     ASSERT_EQ(rowCount(result), 5);
-    EXPECT_GT(result.stats.rpc_calls, 1u);
+    // queryDataBidiStream response chunking is owned by MLDP.  The server may
+    // return this small result in one response or split it across several;
+    // unlike the retired local ts:<offset> pagination, join_batch_size does
+    // not dictate backend cursor response boundaries.
+    EXPECT_GE(result.stats.rpc_calls, 1u);
     std::vector<int64_t> actual_values;
     std::vector<int64_t> actual_times;
     for (const auto& batch : result.batches)
@@ -401,7 +435,7 @@ TEST_F(QueryableMldpIntegrationTest, PvStatsReturnsEveryDriverOwnedPage)
         });
 
     ASSERT_EQ(rowCount(result), static_cast<int64_t>(pvs.size()));
-    EXPECT_GT(result.stats.rpc_calls, 1u);
+    EXPECT_GE(result.stats.rpc_calls, 1u);
     const auto                            actual_values = strings(result, 0);
     const std::unordered_set<std::string> actual(actual_values.begin(), actual_values.end());
     EXPECT_EQ(actual, std::unordered_set<std::string>(pvs.begin(), pvs.end()));
@@ -418,7 +452,7 @@ TEST_F(QueryableMldpIntegrationTest, PvStatsReturnsEveryDriverOwnedPage)
 TEST_F(QueryableMldpIntegrationTest, WideTableUsesPvAndClosedWindowSubqueries)
 {
     const std::vector<std::string> source_pvs = {pv("magnet_1"), pv("magnet_2")};
-    const auto now_seconds = static_cast<uint64_t>(
+    const auto                     now_seconds = static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::seconds>(
             std::chrono::system_clock::now().time_since_epoch())
             .count());
@@ -447,10 +481,7 @@ TEST_F(QueryableMldpIntegrationTest, WideTableUsesPvAndClosedWindowSubqueries)
     ASSERT_EQ(rowCount(seeded_activation), 1);
 
     const auto window_sql =
-        "SELECT activation.time, activation.end_time "
-        "FROM mldp.configuration_activation activation "
-        "INNER JOIN mldp.configuration configuration ON activation.config_name = configuration.name "
-        "WHERE activation.activation_id = " + quote(activation_id) +
+        "SELECT activation.time, activation.end_time " "FROM mldp.configuration_activation activation " "INNER JOIN mldp.configuration configuration ON activation.config_name = configuration.name " "WHERE activation.activation_id = " + quote(activation_id) +
         " AND configuration.name = " + quote(configuration_name) +
         " AND configuration.category = " + quote(configuration_category) + " AND activation.end_time IS NOT NULL";
     const auto windows = pollSql(
@@ -470,9 +501,7 @@ TEST_F(QueryableMldpIntegrationTest, WideTableUsesPvAndClosedWindowSubqueries)
     EXPECT_EQ(window_ends->Value(0) / 1'000'000'000LL, static_cast<int64_t>(now_seconds + 4));
 
     const auto sql =
-        "SELECT * FROM mldp.time_series_table "
-        "WHERE pv IN (SELECT pv FROM mldp.pv_metadata WHERE pv IN (" + commaSeparatedQuoted(source_pvs) + ")) "
-        "AND window IN (" + window_sql + ")";
+        "SELECT * FROM mldp.time_series_table " "WHERE pv IN (SELECT pv FROM mldp.pv_metadata WHERE pv IN (" + commaSeparatedQuoted(source_pvs) + ")) " "AND window IN (" + window_sql + ")";
     const auto result = pollSql(
         sql,
         "wide table rows",
@@ -492,6 +521,162 @@ TEST_F(QueryableMldpIntegrationTest, WideTableUsesPvAndClosedWindowSubqueries)
         EXPECT_GE(seconds, static_cast<int64_t>(now_seconds - 1));
         EXPECT_LE(seconds, static_cast<int64_t>(now_seconds + 4));
     }
+}
+
+TEST_F(QueryableMldpIntegrationTest, ControllerGeneratedProductionShapedWideWindowQuery)
+{
+    constexpr int kPvCount = 32;
+    constexpr int kSampleCount = 5;
+    configureQueryables(4);
+    startController();
+
+    const auto now_seconds = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::system_clock::now().time_since_epoch())
+            .count());
+    const auto               metadata_prefix = "USEG:UNDH:" + nameSpace_;
+    const auto               configuration_name = configName("wide_window_configuration");
+    const auto               activation_id = configName("wide_window_activation");
+    std::vector<std::string> source_pvs;
+    source_pvs.reserve(kPvCount);
+
+    DataBatch frame;
+    for (int sample = 0; sample < kSampleCount; ++sample)
+    {
+        frame.timestamps.push_back(TimestampEntry{
+            .epoch_seconds = now_seconds + static_cast<uint64_t>(sample),
+            .nanoseconds = static_cast<uint64_t>(sample),
+        });
+    }
+    for (int pv_index = 0; pv_index < kPvCount; ++pv_index)
+    {
+        const auto source_pv = pv("wide_" + std::to_string(pv_index));
+        source_pvs.push_back(source_pv);
+        std::vector<int64_t> values;
+        values.reserve(kSampleCount);
+        for (int sample = 0; sample < kSampleCount; ++sample)
+        {
+            values.push_back(static_cast<int64_t>(pv_index * 100 + sample));
+        }
+        frame.columns.push_back(DataColumn{
+            .name = source_pv,
+            .values = std::move(values),
+        });
+    }
+
+    IDataBus::EventBatch time_series_batch;
+    time_series_batch.reader_name = "controller-wide-reader";
+    time_series_batch.payload = TimeSeriesPayload{
+        .root_source_name = nameSpace_,
+        .frames = {std::move(frame)},
+    };
+    ASSERT_TRUE(controller_->push(std::move(time_series_batch)));
+
+    SourceMetadataPayload metadata;
+    metadata.root_source_name = nameSpace_;
+    for (const auto& source_pv : source_pvs)
+    {
+        metadata.sources.emplace(source_pv, SourceMetadataEntry{
+                                                .aliases = std::vector<std::string>{source_pv + ":alias"},
+                                                .tags = std::vector<std::string>{nameSpace_, "wide-window"},
+                                                .attributes = {{"dname", metadata_prefix + ":" + source_pv}},
+                                                .description = "controller wide-window query metadata",
+                                                .modified_by = "queryable_mldp_integration_test",
+                                            });
+        metadataPvs_.push_back(source_pv);
+    }
+    IDataBus::EventBatch metadata_batch;
+    metadata_batch.reader_name = "controller-wide-reader";
+    metadata_batch.payload = std::move(metadata);
+    ASSERT_TRUE(controller_->push(std::move(metadata_batch)));
+
+    IDataBus::EventBatch configuration_batch;
+    configuration_batch.reader_name = "controller-wide-reader";
+    configuration_batch.payload = ConfigurationPayload{
+        .root_source_name = nameSpace_,
+        .configuration_name = configuration_name,
+        .category = configName("wide_window_category"),
+        .description = "controller wide-window query configuration",
+        .attributes = {{"namespace", nameSpace_}},
+        .modified_by = "queryable_mldp_integration_test",
+    };
+    ASSERT_TRUE(controller_->push(std::move(configuration_batch)));
+
+    IDataBus::EventBatch activation_batch;
+    activation_batch.reader_name = "controller-wide-reader";
+    activation_batch.payload = ConfigurationActivationPayload{
+        .client_activation_id = activation_id,
+        .configuration_name = configuration_name,
+        .start_time = BusTimestamp{.epoch_seconds = now_seconds, .nanoseconds = 0},
+        .end_time = BusTimestamp{.epoch_seconds = now_seconds + 5, .nanoseconds = 0},
+        .description = "controller wide-window query activation",
+        .tags = std::nullopt,
+        .attributes = {{"namespace", nameSpace_}},
+        .modified_by = "queryable_mldp_integration_test",
+    };
+    ASSERT_TRUE(controller_->push(std::move(activation_batch)));
+    configurationNames_.push_back(configuration_name);
+    activationIds_.push_back(activation_id);
+
+    const auto metadata_visible = pollSql(
+        "SELECT pv FROM mldp.pv_metadata WHERE attributes.dname PREFIX " + quote(metadata_prefix),
+        "controller-generated PV metadata",
+        [&](const QueryExecutionResult& candidate)
+        {
+            return rowCount(candidate) == kPvCount;
+        });
+    ASSERT_EQ(rowCount(metadata_visible), kPvCount);
+
+    const auto activation_visible = pollSql(
+        "SELECT activation_id FROM mldp.configuration_activation WHERE activation_id = " + quote(activation_id) +
+            " AND end_time IS NOT NULL",
+        "controller-generated closed activation",
+        [](const QueryExecutionResult& candidate)
+        {
+            return rowCount(candidate) == 1;
+        });
+    ASSERT_EQ(rowCount(activation_visible), 1);
+
+    const auto time_series_visible = pollSql(
+        "SELECT pv, time, value FROM mldp.time_series WHERE pv IN (" + commaSeparatedQuoted(source_pvs) +
+            ") AND time >= " + std::to_string(now_seconds),
+        "controller-generated time-series samples",
+        [&](const QueryExecutionResult& candidate)
+        {
+            return rowCount(candidate) == kPvCount * kSampleCount;
+        });
+    ASSERT_EQ(rowCount(time_series_visible), kPvCount * kSampleCount);
+
+    const auto sql =
+        "SELECT * FROM mldp.time_series_table " "WHERE pv IN (SELECT pv FROM mldp.pv_metadata WHERE attributes.dname PREFIX " + quote(metadata_prefix) + ") " "AND window IN (SELECT time, time + 5s FROM mldp.configuration_activation WHERE activation_id = " +
+        quote(activation_id) + "; slice 5s, series_per_shard 2);";
+    char                           arg0[] = "query";
+    char                           arg1[] = "--no-stats";
+    char*                          argv[] = {arg0, arg1};
+    cli::NullQueryCommandListener query_listener;
+    cli::QueryCommand             query_subcommand(query_listener);
+    std::istringstream             input(".format json\n" + sql + "\n.quit\n");
+    std::ostringstream             output;
+    std::ostringstream             error;
+    const std::vector<std::string> config_sources{
+        "queryable.mldp.mldp-pool.query-url=dp-query:50052",
+        "queryable.mldp.mldp-pool.min-conn=1",
+        "queryable.mldp.mldp-pool.max-conn=4",
+        "queryable.mldp-pv-metadata.mldp-pv-metadata-pool.annotation-url=dp-annotation:50053",
+        "queryable.mldp-pv-metadata.mldp-pv-metadata-pool.min-conn=1",
+        "queryable.mldp-pv-metadata.mldp-pv-metadata-pool.max-conn=4",
+    };
+
+    ASSERT_EQ(query_subcommand.run(2, argv, config_sources, input, output, error), 0) << error.str();
+    EXPECT_TRUE(error.str().empty()) << error.str();
+    const auto repl_output = output.str();
+    EXPECT_NE(repl_output.find("Output format: json"), std::string::npos);
+    for (const auto& source_pv : source_pvs)
+    {
+        EXPECT_NE(repl_output.find("\"" + source_pv + "\":"), std::string::npos)
+            << "REPL result omitted column '" << source_pv << "'";
+    }
+    EXPECT_NE(repl_output.find("\"time\":"), std::string::npos);
 }
 
 TEST_F(QueryableMldpIntegrationTest, WideTableUsesNormalizedLiteralWindow)
@@ -620,7 +805,9 @@ TEST_F(QueryableMldpIntegrationTest, AnnotationTablesAndJoinsReturnOnlySeededRec
         {
             const auto returned_pvs = strings(candidate, 0);
             return std::all_of(metadata_pvs.begin(), metadata_pvs.end(), [&](const std::string& pv)
-                               { return std::find(returned_pvs.begin(), returned_pvs.end(), pv) != returned_pvs.end(); });
+                               {
+                                   return std::find(returned_pvs.begin(), returned_pvs.end(), pv) != returned_pvs.end();
+                               });
         });
     const auto all_metadata_pvs = strings(all_metadata, 0);
     for (const auto& pv : metadata_pvs)
@@ -643,7 +830,9 @@ TEST_F(QueryableMldpIntegrationTest, AnnotationTablesAndJoinsReturnOnlySeededRec
         {
             const auto returned_names = strings(candidate, 0);
             return std::all_of(configuration_names.begin(), configuration_names.end(), [&](const std::string& name)
-                               { return std::find(returned_names.begin(), returned_names.end(), name) != returned_names.end(); }) &&
+                               {
+                                   return std::find(returned_names.begin(), returned_names.end(), name) != returned_names.end();
+                               }) &&
                    std::find(returned_names.begin(), returned_names.end(), active_configuration_name) != returned_names.end();
         });
     const auto all_configuration_names = strings(all_configurations, 0);
@@ -673,10 +862,7 @@ TEST_F(QueryableMldpIntegrationTest, AnnotationTablesAndJoinsReturnOnlySeededRec
     EXPECT_NE(std::find(active_activation_ids.begin(), active_activation_ids.end(), active_activation_id), active_activation_ids.end());
 
     const auto metadata_join = pollSql(
-        "SELECT ts.pv, ts.value, meta.description FROM mldp.time_series ts "
-        "INNER JOIN mldp.pv_metadata meta ON ts.pv = meta.pv "
-        "WHERE ts.pv IN (SELECT pv FROM mldp.pv_metadata WHERE pv = " + quote(source_pv) + ") "
-        "AND meta.pv = " + quote(source_pv) + " AND ts.time >= NOW-300s",
+        "SELECT ts.pv, ts.value, meta.description FROM mldp.time_series ts " "INNER JOIN mldp.pv_metadata meta ON ts.pv = meta.pv " "WHERE ts.pv IN (SELECT pv FROM mldp.pv_metadata WHERE pv = " + quote(source_pv) + ") " "AND meta.pv = " + quote(source_pv) + " AND ts.time >= NOW-300s",
         "metadata/time-series join",
         [](const QueryExecutionResult& candidate)
         {

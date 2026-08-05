@@ -1,8 +1,16 @@
 //////////////////////////////////////////////////////////////////////////////
 // This file is part of 'mldp-pvxs-driver'.
+// It is subject to the license terms in the LICENSE.txt file found in the
+// top-level directory of this distribution and at:
+//    https://confluence.slac.stanford.edu/display/ppareg/LICENSE.html.
+// No part of 'mldp-pvxs-driver', including this file,
+// may be copied, modified, propagated, or distributed except according to
+// the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
+
 #include <query/QueryTableCatalog.h>
+#include <query/IQueryable.h>
 
 #include <arrow/ipc/reader.h>
 #include <arrow/ipc/writer.h>
@@ -79,23 +87,42 @@ QueryTableCatalog::~QueryTableCatalog()
 arrow::Status QueryTableCatalog::create(std::string name, const TableLifetime lifetime,
                                         const std::vector<std::shared_ptr<arrow::RecordBatch>>& batches)
 {
+    class BatchStream final : public IRecordBatchStream
+    {
+    public:
+        explicit BatchStream(const std::vector<std::shared_ptr<arrow::RecordBatch>>& batches) : batches_(batches) {}
+        std::shared_ptr<arrow::RecordBatch> next() override { return index_ < batches_.size() ? batches_[index_++] : nullptr; }
+    private:
+        const std::vector<std::shared_ptr<arrow::RecordBatch>>& batches_;
+        std::size_t index_{0};
+    };
+    BatchStream stream(batches);
+    return create(std::move(name), lifetime, stream);
+}
+
+arrow::Status QueryTableCatalog::create(std::string name, const TableLifetime lifetime, IRecordBatchStream& stream)
+{
     if (name.empty())
         return arrow::Status::Invalid("Table name must not be empty");
-    if (batches.empty() || !batches.front()) return arrow::Status::Invalid("CREATE TABLE requires non-empty results");
     if (find(name).has_value()) return arrow::Status::AlreadyExists("Table already exists: ", name);
-    const auto schema = batches.front()->schema();
-    for (const auto& batch : batches)
-        if (!batch || !batch->schema()->Equals(*schema)) return arrow::Status::Invalid("Table batches must share one schema");
-    int64_t rows = 0;
-    for (const auto& batch : batches) rows += batch->num_rows();
 
     const auto directory = lifetime == TableLifetime::Persistent ? joinPath(root_directory_, ".mldp-query-tables") : session_directory_;
     RETURN_NOT_OK(file_system_->CreateDir(directory, true));
     const auto path = lifetime == TableLifetime::Persistent ? tablePath(root_directory_, name) : joinPath(directory, safeName(name) + ".arrow");
     const auto temporary_path = path + ".partial";
+    auto first = stream.next();
+    if (!first) return arrow::Status::Invalid("CREATE TABLE requires non-empty results");
+    const auto schema = first->schema();
     ARROW_ASSIGN_OR_RAISE(auto output, file_system_->OpenOutputStream(temporary_path));
     ARROW_ASSIGN_OR_RAISE(auto writer, arrow::ipc::MakeFileWriter(output, schema));
-    for (const auto& batch : batches) RETURN_NOT_OK(writer->WriteRecordBatch(*batch));
+    int64_t rows = 0;
+    auto write = [&writer, &schema, &rows](const std::shared_ptr<arrow::RecordBatch>& batch) -> arrow::Status {
+        if (!batch || !batch->schema()->Equals(*schema)) return arrow::Status::Invalid("Table batches must share one schema");
+        rows += batch->num_rows();
+        return writer->WriteRecordBatch(*batch);
+    };
+    RETURN_NOT_OK(write(first));
+    while (auto batch = stream.next()) RETURN_NOT_OK(write(batch));
     RETURN_NOT_OK(writer->Close());
     RETURN_NOT_OK(output->Close());
     ARROW_ASSIGN_OR_RAISE(auto temporary_info, file_system_->GetFileInfo(temporary_path));

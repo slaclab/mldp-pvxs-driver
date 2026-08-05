@@ -8,12 +8,18 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
+/** @file TypeChecker.h
+ * @brief Declares semantic type checking for bound selections. */
 #pragma once
 
 #include <query/plan/LogicalPlan.h>
 
 namespace mldp_pvxs_driver::query::planner {
 
+/** @brief Validates expression types in a bound SELECT and resolves any remaining ambiguities.
+ * @param[in] bound Bound SELECT to type-check.
+ * @return The type-checked BoundSelect (field types may be updated).
+ * @throws plan::PlannerException On type errors. */
 plan::BoundSelect typeCheckSelect(plan::BoundSelect bound);
 
 } // namespace mldp_pvxs_driver::query::planner

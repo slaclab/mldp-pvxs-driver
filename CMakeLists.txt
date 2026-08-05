@@ -73,11 +73,11 @@ FetchContent_Declare(replxx
 )
 FetchContent_MakeAvailable(replxx)
 
-# Optional: interactive config wizard (FTXUI TUI)
+# FTXUI is used only by the optional configuration wizard.
 option(MLDP_WIZARD "Build interactive config wizard (requires FTXUI)" ON)
 
 if(MLDP_WIZARD)
-    message(STATUS "Acquiring FTXUI for config wizard...")
+    message(STATUS "Acquiring FTXUI for the configuration wizard...")
     FetchContent_Declare(ftxui
         GIT_REPOSITORY https://github.com/ArthurSonzogni/FTXUI
         GIT_TAG        v5.0.0
@@ -664,7 +664,14 @@ add_library(lib${PROJECT_NAME}
     "${CMAKE_CURRENT_SOURCE_DIR}/src/pool/MLDPGrpcAnnotationPool.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/pool/MLDPGrpcQueryPoolConfig.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/impl/mldp/MLDPQueryClient.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/impl/mldp/ParallelSeriesRecordBatchStream.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/impl/mldp/MLDPAnnotationQueryClient.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/impl/mldp/TimeSeriesMetadataBuilders.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/impl/mldp/DataValueBuilder.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/impl/mldp/MldpBidiRecordBatchStream.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/impl/mldp/ColumnPredicateFilter.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/impl/mldp/AnnotationMetadataBuilders.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/impl/mldp/MetadataArrayBuilders.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/parser/Lexer.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/parser/QueryParser.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/parser/generated/QueryFlexLexer.cpp"
@@ -682,15 +689,28 @@ add_library(lib${PROJECT_NAME}
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/QueryPlanner.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/ScalarFunctionRegistry.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/ExpressionRegistry.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/Callable.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/Timezone.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/QueryTableCatalog.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/QueryExecutor.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/ShardTrace.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/WindowBackendScanRecordBatchStream.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/MaterializedRecordBatchStream.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/LimitRecordBatchStream.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/FilterRecordBatchStream.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/ProjectRecordBatchStream.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/BackendScanRecordBatchStream.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/PivotRecordBatchStream.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/FinalizingRecordBatchStream.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/CreateTableRecordBatchStream.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/OstreamOutputStream.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/ExecutionState.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/ExecutorUtils.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/scan/TableScanExecutionState.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/scan/CatalogTableScan.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/scan/BackendTableScan.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/scan/WideTableScan.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/relational/PivotExecutionState.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/relational/RelationalExecutionStates.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/relational/FilterExecutionState.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/relational/ProjectExecutionState.cpp"
@@ -708,6 +728,7 @@ add_library(lib${PROJECT_NAME}
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/statement/DropTableExecutionState.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/QueryFormatter.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/SpillManager.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/SpillBackedStream.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/controller/MLDPPVXSControllerConfig.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/controller/MLDPPVXSController.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/controller/RouteTable.cpp"
@@ -989,8 +1010,12 @@ if(MLDP_PVXS_DRIVER_TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/test/query/query_planner_executor_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/query/mldp_annotation_query_client_integration_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/query/queryable_mldp_integration_test.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/query/QuerySubcommand.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/query/QueryCommand.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/query/ConsoleFooter.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/query/QueryPager.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/query/NullQueryCommandListener.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/query/LoggingQueryCommandListener.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/query/ScopedQueryInterruptHandler.cpp"
     )
     target_include_directories(${PROJECT_NAME}_test PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/include"
@@ -1087,8 +1112,12 @@ if(MLDP_PVXS_DRIVER_MAIN)
         "${CMAKE_CURRENT_SOURCE_DIR}/ext/rapidyaml/include/rapidyaml-0.10.0.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/SpdlogLogger.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/ConfigPrinter.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/query/QuerySubcommand.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/query/QueryCommand.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/query/ConsoleFooter.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/query/QueryPager.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/query/NullQueryCommandListener.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/query/LoggingQueryCommandListener.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/query/ScopedQueryInterruptHandler.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/config/subcommand.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/config/validate.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/config/template.cpp"
@@ -1115,6 +1144,7 @@ if(MLDP_PVXS_DRIVER_MAIN)
         )
     endif()
     target_include_directories(${PROJECT_NAME} PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
         "${CMAKE_CURRENT_SOURCE_DIR}/ext/rapidyaml/include"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/config"
     )

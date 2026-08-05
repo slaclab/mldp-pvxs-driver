@@ -29,6 +29,10 @@ std::unique_ptr<IExecutionState> mldp_pvxs_driver::query::executor::makeExecutio
     {
         return makeScanExecutionState(*scan, root, context, stats);
     }
+    if (const auto* pivot = std::get_if<plan::PhysicalPivot>(&root->value))
+    {
+        return makePivotExecutionState(*pivot, root, context, stats);
+    }
     if (auto state = makeRelationalExecutionState(root->value, root, context, stats))
     {
         return state;

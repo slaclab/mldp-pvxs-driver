@@ -363,14 +363,23 @@ void MLDPPVXSController::start()
     }
 
     // -- Readers --
+    // Push each reader into readers_ before calling setLifecycleObserver so that
+    // removeCompletedReader() can always find it, even if the reader's worker
+    // completes and fires onReaderCompleted() before registration is done.
+    // setLifecycleObserver() re-fires the notification if signalCompleted() already
+    // ran (atomic completed_ flag on Reader).
     infof(*logger_, "Starting readers");
     for (const auto& entry : config_.readerEntries())
     {
         const auto& type = entry.first;
         const auto& readerConfig = entry.second;
         auto        reader = ReaderFactory::create(type, shared_from_this(), readerConfig, metrics_);
-        reader->setLifecycleObserver(shared_from_this());
-        readers_.push_back(std::move(reader));
+        auto*       raw    = reader.get();
+        {
+            std::lock_guard<std::mutex> lock(readers_mutex_);
+            readers_.push_back(std::move(reader));
+        }
+        raw->setLifecycleObserver(shared_from_this());
     }
 
     // -- Build route table from config --

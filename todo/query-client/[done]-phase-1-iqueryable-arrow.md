@@ -11,10 +11,10 @@
 - [ ] `include/query/SpillManager.h` + `src/cli/query/SpillManager.cpp` — `arrow::fs::FileSystem`-backed; `spill()`, `read()`, `cleanup()`; uses `arrow::ipc::MakeFileWriter` / `OpenFile`
 - [ ] Extend `QueryableFactory::prepare<T>()` to register `T::kVirtualTables`; add `createByTable()` and `registeredTables()`
 - [ ] Add `query` subcommand dispatch in `mldp_pvxs_driver_main.cpp`
-- [ ] `QuerySubcommand` builds `ExecutionContext` (Arrow memory pool + `LocalFileSystem` SpillManager); calls `QueryableFactory::prepare<T>(config)` only — no `MLDPPVXSController`
+- [ ] `QueryCommand` builds `ExecutionContext` (Arrow memory pool + `LocalFileSystem` SpillManager); calls `QueryableFactory::prepare<T>(config)` only — no `MLDPPVXSController`
 
 ## Notes
 
 - `ColumnType → arrow::DataType` mapping lives in `ArrowTypeMap.h` — used by both `IQueryable` implementations and the executor
 - `SpillManager` takes an injected `arrow::fs::FileSystem`; tests inject `MockFileSystem`
-- `QuerySubcommand` reads only `queryable:` config subtree — no readers/writers/routing keys required
+- `QueryCommand` reads only `queryable:` config subtree — no readers/writers/routing keys required

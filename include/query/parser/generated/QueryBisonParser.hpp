@@ -403,68 +403,74 @@ namespace mldp_pvxs_driver { namespace query { namespace generated {
       // primary_expression
       char dummy2[sizeof (mldp_pvxs_driver::query::ExpressionPtr)];
 
+      // window_option
+      char dummy3[sizeof (mldp_pvxs_driver::query::InPredicate::WindowShardOption)];
+
       // join_clause
-      char dummy3[sizeof (mldp_pvxs_driver::query::JoinClause)];
+      char dummy4[sizeof (mldp_pvxs_driver::query::JoinClause)];
 
       // literal
       // now_literal
-      char dummy4[sizeof (mldp_pvxs_driver::query::LiteralValue)];
+      char dummy5[sizeof (mldp_pvxs_driver::query::LiteralValue)];
 
       // order_by_item
-      char dummy5[sizeof (mldp_pvxs_driver::query::OrderByItem)];
+      char dummy6[sizeof (mldp_pvxs_driver::query::OrderByItem)];
 
       // column_ref
-      char dummy6[sizeof (mldp_pvxs_driver::query::QualifiedColumn)];
+      char dummy7[sizeof (mldp_pvxs_driver::query::QualifiedColumn)];
 
       // statement
-      char dummy7[sizeof (mldp_pvxs_driver::query::QueryStatement)];
+      char dummy8[sizeof (mldp_pvxs_driver::query::QueryStatement)];
 
       // select_item
-      char dummy8[sizeof (mldp_pvxs_driver::query::SelectItem)];
+      char dummy9[sizeof (mldp_pvxs_driver::query::SelectItem)];
 
       // select_stmt
-      char dummy9[sizeof (mldp_pvxs_driver::query::SelectStatement)];
+      char dummy10[sizeof (mldp_pvxs_driver::query::SelectStatement)];
 
       // table_ref
-      char dummy10[sizeof (mldp_pvxs_driver::query::TableRef)];
+      char dummy11[sizeof (mldp_pvxs_driver::query::TableRef)];
 
       // predicate
-      char dummy11[sizeof (mldp_pvxs_driver::query::WherePredicate)];
+      char dummy12[sizeof (mldp_pvxs_driver::query::WherePredicate)];
 
       // select_list
-      char dummy12[sizeof (mldp_pvxs_driver::query::generated::SelectListValue)];
+      char dummy13[sizeof (mldp_pvxs_driver::query::generated::SelectListValue)];
 
       // alias_opt
       // page_opt
-      char dummy13[sizeof (std::optional<std::string>)];
+      char dummy14[sizeof (std::optional<std::string>)];
 
       // limit_opt
-      char dummy14[sizeof (std::optional<uint64_t>)];
+      char dummy15[sizeof (std::optional<uint64_t>)];
 
       // IDENTIFIER
       // STRING_LITERAL
       // DURATION_LITERAL
-      char dummy15[sizeof (std::string)];
+      char dummy16[sizeof (std::string)];
 
       // expression_list
-      char dummy16[sizeof (std::vector<mldp_pvxs_driver::query::ExpressionPtr>)];
+      char dummy17[sizeof (std::vector<mldp_pvxs_driver::query::ExpressionPtr>)];
+
+      // window_option_list
+      char dummy18[sizeof (std::vector<mldp_pvxs_driver::query::InPredicate::WindowShardOption>)];
 
       // join_clauses
-      char dummy17[sizeof (std::vector<mldp_pvxs_driver::query::JoinClause>)];
+      char dummy19[sizeof (std::vector<mldp_pvxs_driver::query::JoinClause>)];
 
       // order_by_opt
       // order_by_list
-      char dummy18[sizeof (std::vector<mldp_pvxs_driver::query::OrderByItem>)];
+      char dummy20[sizeof (std::vector<mldp_pvxs_driver::query::OrderByItem>)];
 
       // select_item_list
-      char dummy19[sizeof (std::vector<mldp_pvxs_driver::query::SelectItem>)];
+      char dummy21[sizeof (std::vector<mldp_pvxs_driver::query::SelectItem>)];
 
       // where_opt
       // predicate_list
-      char dummy20[sizeof (std::vector<mldp_pvxs_driver::query::WherePredicate>)];
+      char dummy22[sizeof (std::vector<mldp_pvxs_driver::query::WherePredicate>)];
 
       // identifier_path
-      char dummy21[sizeof (std::vector<std::string>)];
+      char dummy23[sizeof (std::vector<std::string>)];
     };
 
     /// The size of the largest semantic type.
@@ -557,18 +563,19 @@ namespace mldp_pvxs_driver { namespace query { namespace generated {
     STAR = 299,                    // STAR
     SLASH = 300,                   // SLASH
     COMMA = 301,                   // COMMA
-    DOT = 302,                     // DOT
-    LPAREN = 303,                  // LPAREN
-    RPAREN = 304,                  // RPAREN
-    PLUS = 305,                    // PLUS
-    MINUS = 306,                   // MINUS
-    EQ = 307,                      // EQ
-    NEQ = 308,                     // NEQ
-    LT = 309,                      // LT
-    LTE = 310,                     // LTE
-    GT = 311,                      // GT
-    GTE = 312,                     // GTE
-    NOW_LITERAL = 313              // NOW_LITERAL
+    SEMICOLON = 302,               // SEMICOLON
+    DOT = 303,                     // DOT
+    LPAREN = 304,                  // LPAREN
+    RPAREN = 305,                  // RPAREN
+    PLUS = 306,                    // PLUS
+    MINUS = 307,                   // MINUS
+    EQ = 308,                      // EQ
+    NEQ = 309,                     // NEQ
+    LT = 310,                      // LT
+    LTE = 311,                     // LTE
+    GT = 312,                      // GT
+    GTE = 313,                     // GTE
+    NOW_LITERAL = 314              // NOW_LITERAL
       };
       /// Backward compatibility alias (Bison 3.6).
       typedef token_kind_type yytokentype;
@@ -585,7 +592,7 @@ namespace mldp_pvxs_driver { namespace query { namespace generated {
     {
       enum symbol_kind_type
       {
-        YYNTOKENS = 59, ///< Number of tokens.
+        YYNTOKENS = 60, ///< Number of tokens.
         S_YYEMPTY = -2,
         S_YYEOF = 0,                             // END_OF_INPUT
         S_YYerror = 1,                           // error
@@ -634,53 +641,56 @@ namespace mldp_pvxs_driver { namespace query { namespace generated {
         S_STAR = 44,                             // STAR
         S_SLASH = 45,                            // SLASH
         S_COMMA = 46,                            // COMMA
-        S_DOT = 47,                              // DOT
-        S_LPAREN = 48,                           // LPAREN
-        S_RPAREN = 49,                           // RPAREN
-        S_PLUS = 50,                             // PLUS
-        S_MINUS = 51,                            // MINUS
-        S_EQ = 52,                               // EQ
-        S_NEQ = 53,                              // NEQ
-        S_LT = 54,                               // LT
-        S_LTE = 55,                              // LTE
-        S_GT = 56,                               // GT
-        S_GTE = 57,                              // GTE
-        S_NOW_LITERAL = 58,                      // NOW_LITERAL
-        S_YYACCEPT = 59,                         // $accept
-        S_input = 60,                            // input
-        S_statement = 61,                        // statement
-        S_select_stmt = 62,                      // select_stmt
-        S_order_by_opt = 63,                     // order_by_opt
-        S_order_by_list = 64,                    // order_by_list
-        S_order_by_item = 65,                    // order_by_item
-        S_select_list = 66,                      // select_list
-        S_select_item_list = 67,                 // select_item_list
-        S_select_item = 68,                      // select_item
-        S_table_ref = 69,                        // table_ref
-        S_alias_opt = 70,                        // alias_opt
-        S_join_clauses = 71,                     // join_clauses
-        S_join_clause = 72,                      // join_clause
-        S_where_opt = 73,                        // where_opt
-        S_predicate_list = 74,                   // predicate_list
-        S_predicate = 75,                        // predicate
-        S_expression_list = 76,                  // expression_list
-        S_expression = 77,                       // expression
-        S_legacy_expression = 78,                // legacy_expression
-        S_or_expression = 79,                    // or_expression
-        S_and_expression = 80,                   // and_expression
-        S_comparison_expression = 81,            // comparison_expression
-        S_additive_expression = 82,              // additive_expression
-        S_multiplicative_expression = 83,        // multiplicative_expression
-        S_unary_expression = 84,                 // unary_expression
-        S_primary_expression = 85,               // primary_expression
-        S_literal = 86,                          // literal
-        S_signed_integer = 87,                   // signed_integer
-        S_now_literal = 88,                      // now_literal
-        S_signed_duration = 89,                  // signed_duration
-        S_column_ref = 90,                       // column_ref
-        S_identifier_path = 91,                  // identifier_path
-        S_limit_opt = 92,                        // limit_opt
-        S_page_opt = 93                          // page_opt
+        S_SEMICOLON = 47,                        // SEMICOLON
+        S_DOT = 48,                              // DOT
+        S_LPAREN = 49,                           // LPAREN
+        S_RPAREN = 50,                           // RPAREN
+        S_PLUS = 51,                             // PLUS
+        S_MINUS = 52,                            // MINUS
+        S_EQ = 53,                               // EQ
+        S_NEQ = 54,                              // NEQ
+        S_LT = 55,                               // LT
+        S_LTE = 56,                              // LTE
+        S_GT = 57,                               // GT
+        S_GTE = 58,                              // GTE
+        S_NOW_LITERAL = 59,                      // NOW_LITERAL
+        S_YYACCEPT = 60,                         // $accept
+        S_input = 61,                            // input
+        S_statement = 62,                        // statement
+        S_select_stmt = 63,                      // select_stmt
+        S_order_by_opt = 64,                     // order_by_opt
+        S_order_by_list = 65,                    // order_by_list
+        S_order_by_item = 66,                    // order_by_item
+        S_select_list = 67,                      // select_list
+        S_select_item_list = 68,                 // select_item_list
+        S_select_item = 69,                      // select_item
+        S_table_ref = 70,                        // table_ref
+        S_alias_opt = 71,                        // alias_opt
+        S_join_clauses = 72,                     // join_clauses
+        S_join_clause = 73,                      // join_clause
+        S_where_opt = 74,                        // where_opt
+        S_predicate_list = 75,                   // predicate_list
+        S_predicate = 76,                        // predicate
+        S_window_option_list = 77,               // window_option_list
+        S_window_option = 78,                    // window_option
+        S_expression_list = 79,                  // expression_list
+        S_expression = 80,                       // expression
+        S_legacy_expression = 81,                // legacy_expression
+        S_or_expression = 82,                    // or_expression
+        S_and_expression = 83,                   // and_expression
+        S_comparison_expression = 84,            // comparison_expression
+        S_additive_expression = 85,              // additive_expression
+        S_multiplicative_expression = 86,        // multiplicative_expression
+        S_unary_expression = 87,                 // unary_expression
+        S_primary_expression = 88,               // primary_expression
+        S_literal = 89,                          // literal
+        S_signed_integer = 90,                   // signed_integer
+        S_now_literal = 91,                      // now_literal
+        S_signed_duration = 92,                  // signed_duration
+        S_column_ref = 93,                       // column_ref
+        S_identifier_path = 94,                  // identifier_path
+        S_limit_opt = 95,                        // limit_opt
+        S_page_opt = 96                          // page_opt
       };
     };
 
@@ -733,6 +743,10 @@ namespace mldp_pvxs_driver { namespace query { namespace generated {
       case symbol_kind::S_unary_expression: // unary_expression
       case symbol_kind::S_primary_expression: // primary_expression
         value.move< mldp_pvxs_driver::query::ExpressionPtr > (std::move (that.value));
+        break;
+
+      case symbol_kind::S_window_option: // window_option
+        value.move< mldp_pvxs_driver::query::InPredicate::WindowShardOption > (std::move (that.value));
         break;
 
       case symbol_kind::S_join_clause: // join_clause
@@ -793,6 +807,10 @@ namespace mldp_pvxs_driver { namespace query { namespace generated {
 
       case symbol_kind::S_expression_list: // expression_list
         value.move< std::vector<mldp_pvxs_driver::query::ExpressionPtr> > (std::move (that.value));
+        break;
+
+      case symbol_kind::S_window_option_list: // window_option_list
+        value.move< std::vector<mldp_pvxs_driver::query::InPredicate::WindowShardOption> > (std::move (that.value));
         break;
 
       case symbol_kind::S_join_clauses: // join_clauses
@@ -862,6 +880,20 @@ namespace mldp_pvxs_driver { namespace query { namespace generated {
       {}
 #else
       basic_symbol (typename Base::kind_type t, const mldp_pvxs_driver::query::ExpressionPtr& v, const location_type& l)
+        : Base (t)
+        , value (v)
+        , location (l)
+      {}
+#endif
+
+#if 201103L <= YY_CPLUSPLUS
+      basic_symbol (typename Base::kind_type t, mldp_pvxs_driver::query::InPredicate::WindowShardOption&& v, location_type&& l)
+        : Base (t)
+        , value (std::move (v))
+        , location (std::move (l))
+      {}
+#else
+      basic_symbol (typename Base::kind_type t, const mldp_pvxs_driver::query::InPredicate::WindowShardOption& v, const location_type& l)
         : Base (t)
         , value (v)
         , location (l)
@@ -1065,6 +1097,20 @@ namespace mldp_pvxs_driver { namespace query { namespace generated {
 #endif
 
 #if 201103L <= YY_CPLUSPLUS
+      basic_symbol (typename Base::kind_type t, std::vector<mldp_pvxs_driver::query::InPredicate::WindowShardOption>&& v, location_type&& l)
+        : Base (t)
+        , value (std::move (v))
+        , location (std::move (l))
+      {}
+#else
+      basic_symbol (typename Base::kind_type t, const std::vector<mldp_pvxs_driver::query::InPredicate::WindowShardOption>& v, const location_type& l)
+        : Base (t)
+        , value (v)
+        , location (l)
+      {}
+#endif
+
+#if 201103L <= YY_CPLUSPLUS
       basic_symbol (typename Base::kind_type t, std::vector<mldp_pvxs_driver::query::JoinClause>&& v, location_type&& l)
         : Base (t)
         , value (std::move (v))
@@ -1174,6 +1220,10 @@ switch (yykind)
         value.template destroy< mldp_pvxs_driver::query::ExpressionPtr > ();
         break;
 
+      case symbol_kind::S_window_option: // window_option
+        value.template destroy< mldp_pvxs_driver::query::InPredicate::WindowShardOption > ();
+        break;
+
       case symbol_kind::S_join_clause: // join_clause
         value.template destroy< mldp_pvxs_driver::query::JoinClause > ();
         break;
@@ -1232,6 +1282,10 @@ switch (yykind)
 
       case symbol_kind::S_expression_list: // expression_list
         value.template destroy< std::vector<mldp_pvxs_driver::query::ExpressionPtr> > ();
+        break;
+
+      case symbol_kind::S_window_option_list: // window_option_list
+        value.template destroy< std::vector<mldp_pvxs_driver::query::InPredicate::WindowShardOption> > ();
         break;
 
       case symbol_kind::S_join_clauses: // join_clauses
@@ -2122,6 +2176,21 @@ switch (yykind)
 #if 201103L <= YY_CPLUSPLUS
       static
       symbol_type
+      make_SEMICOLON (location_type l)
+      {
+        return symbol_type (token::SEMICOLON, std::move (l));
+      }
+#else
+      static
+      symbol_type
+      make_SEMICOLON (const location_type& l)
+      {
+        return symbol_type (token::SEMICOLON, l);
+      }
+#endif
+#if 201103L <= YY_CPLUSPLUS
+      static
+      symbol_type
       make_DOT (location_type l)
       {
         return symbol_type (token::DOT, std::move (l));
@@ -2382,7 +2451,7 @@ switch (yykind)
     // number is the opposite.  If YYTABLE_NINF, syntax error.
     static const unsigned char yytable_[];
 
-    static const short yycheck_[];
+    static const unsigned char yycheck_[];
 
     // YYSTOS[STATE-NUM] -- The (internal number of the) accessing
     // symbol of state STATE-NUM.
@@ -2624,8 +2693,8 @@ switch (yykind)
     /// Constants.
     enum
     {
-      yylast_ = 224,     ///< Last index in yytable_.
-      yynnts_ = 35,  ///< Number of nonterminal symbols.
+      yylast_ = 233,     ///< Last index in yytable_.
+      yynnts_ = 37,  ///< Number of nonterminal symbols.
       yyfinal_ = 43 ///< Termination state number.
     };
 
@@ -2676,10 +2745,10 @@ switch (yykind)
       25,    26,    27,    28,    29,    30,    31,    32,    33,    34,
       35,    36,    37,    38,    39,    40,    41,    42,    43,    44,
       45,    46,    47,    48,    49,    50,    51,    52,    53,    54,
-      55,    56,    57,    58
+      55,    56,    57,    58,    59
     };
     // Last valid token kind.
-    const int code_max = 313;
+    const int code_max = 314;
 
     if (t <= 0)
       return symbol_kind::S_YYEOF;
@@ -2714,6 +2783,10 @@ switch (yykind)
       case symbol_kind::S_unary_expression: // unary_expression
       case symbol_kind::S_primary_expression: // primary_expression
         value.copy< mldp_pvxs_driver::query::ExpressionPtr > (YY_MOVE (that.value));
+        break;
+
+      case symbol_kind::S_window_option: // window_option
+        value.copy< mldp_pvxs_driver::query::InPredicate::WindowShardOption > (YY_MOVE (that.value));
         break;
 
       case symbol_kind::S_join_clause: // join_clause
@@ -2774,6 +2847,10 @@ switch (yykind)
 
       case symbol_kind::S_expression_list: // expression_list
         value.copy< std::vector<mldp_pvxs_driver::query::ExpressionPtr> > (YY_MOVE (that.value));
+        break;
+
+      case symbol_kind::S_window_option_list: // window_option_list
+        value.copy< std::vector<mldp_pvxs_driver::query::InPredicate::WindowShardOption> > (YY_MOVE (that.value));
         break;
 
       case symbol_kind::S_join_clauses: // join_clauses
@@ -2845,6 +2922,10 @@ switch (yykind)
         value.move< mldp_pvxs_driver::query::ExpressionPtr > (YY_MOVE (s.value));
         break;
 
+      case symbol_kind::S_window_option: // window_option
+        value.move< mldp_pvxs_driver::query::InPredicate::WindowShardOption > (YY_MOVE (s.value));
+        break;
+
       case symbol_kind::S_join_clause: // join_clause
         value.move< mldp_pvxs_driver::query::JoinClause > (YY_MOVE (s.value));
         break;
@@ -2903,6 +2984,10 @@ switch (yykind)
 
       case symbol_kind::S_expression_list: // expression_list
         value.move< std::vector<mldp_pvxs_driver::query::ExpressionPtr> > (YY_MOVE (s.value));
+        break;
+
+      case symbol_kind::S_window_option_list: // window_option_list
+        value.move< std::vector<mldp_pvxs_driver::query::InPredicate::WindowShardOption> > (YY_MOVE (s.value));
         break;
 
       case symbol_kind::S_join_clauses: // join_clauses
@@ -2990,7 +3075,7 @@ switch (yykind)
 
 #line 5 "src/query/parser/grammar/QueryBisonParser.y"
 } } } // mldp_pvxs_driver::query::generated
-#line 2994 "src/query/parser/generated/QueryBisonParser.hpp"
+#line 3079 "src/query/parser/generated/QueryBisonParser.hpp"
 
 
 

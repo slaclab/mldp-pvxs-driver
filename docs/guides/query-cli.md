@@ -54,7 +54,9 @@ mldp_pvxs_driver -c config.yaml query "<SQL>"
 | `--file <path>` | — | Read SQL text from a file instead of the positional argument. |
 | `--format <fmt>` | `table` | Output format: `table`, `json`, `csv`, `arrow`. |
 | `--table-fit` | off | Fit table output to an interactive terminal viewport by truncating long headers and values with `...`; ignored when output is redirected or piped. |
-| `--no-stats` | off | Suppress the query-stats footer. |
+| `--no-stats` | off | Suppress the final textual query-statistics line. |
+| `--trace-shards` | off | Emit window-shard diagnostics to stderr. |
+| `--trace-shards-file <path>` | — | Enable window-shard diagnostics and write them to a newly truncated file. |
 | `--memory-mb <n>` | `256` | Memory budget for the execution context (MiB). |
 | `--spill-dir <path>` | `<tmp>/mldp-query-spill` | Directory for spill files under memory pressure. |
 | `--table-catalog-dir <path>` | `<tmp>/mldp-query-catalog` | Root directory for durable Arrow IPC snapshots; separate from `--spill-dir`. |
@@ -74,7 +76,33 @@ mldp> SHOW OPERATORS;
 
 Terminate each statement with a semicolon. Statements can span lines; the prompt changes from `mldp> ` to `...> ` while a statement is buffered. A semicolon inside a quoted string does not terminate the statement. The session executes one statement at a time and remains open after parse, planning, or execution errors.
 
-After each statement, redirected and plain-stream REPL sessions print a final statistics line with returned and backend rows, elapsed time, RPCs, spill/materialization counters, and peak memory. When both standard input and output are terminals, the REPL clears the visible screen at startup, reserves the final row for a reverse-video status footer, and starts each new prompt immediately above it. The footer is the interactive query-statistics display and retains the latest query summary while result output scrolls above it. Redirected output and machine-readable formats remain free of terminal control sequences. The REPL leaves input editing and active-line resize redraws to `replxx`.
+Table and expanded results use normal terminal scrollback, so SSH and container-attached terminals retain their native resize, copy/paste, and scroll behavior. A direct-output query in a real terminal temporarily shows a progress footer with `Ctrl-C cancel`; it is removed before the next prompt. Completed results then end with the normal textual `-- ...` statistics line unless `--no-stats` is set. Redirected/plain-stream REPL output and one-shot commands retain the same textual statistics line, and machine-readable formats remain free of terminal control sequences.
+
+### Pager and terminal controls
+
+The REPL uses `replxx` for all interactive terminal sessions. It clears the terminal immediately before each submitted SQL statement, exactly as `.clear` does. For direct table or expanded output, it temporarily reserves the final row for a reverse-video progress footer while the query runs, then restores the full terminal before printing the final statistics and returning to `mldp> `. Idle prompt editing is wholly owned by `replxx`; there is no pinned footer after completion, cancellation, or error. `Ctrl-C` cancels an active query or abandons the current editor line; `Ctrl-Q`, `.quit`, and `.exit` leave the REPL. Pager output does not activate the footer.
+
+Use `.pager on` to send table or expanded output from a real terminal to a pager. Paging is off by default. The pager command comes from `$PAGER`, or defaults to `less -FRSX` when `$PAGER` is unset. `.pager` reports the current setting and `.pager off` restores direct scrollback output. JSON, CSV, Arrow, one-shot SQL, and redirected sessions always use direct formatter output.
+
+### Query progress
+
+The active-query footer and command listeners receive query progress while a query runs. Depending on the active step, it identifies the source table, operation, detail, result page, window-shard position, parallel-shard capacity, RPC progress, cursor progress, and backend row count. `shards <active>/<limit>` means active PV-group cursors over the configured per-slice concurrency limit, which MLDP derives from `max-conn`.
+
+| State or step | Progress information |
+|---|---|
+| `parsing` | SQL statement parsing is in progress. |
+| `planning` | The logical and physical query plan is being prepared. |
+| `formatting` | The result stream is being prepared for the selected table, JSON, CSV, or Arrow output format. |
+| `backend RPC` | A table scan or window shard has opened a server cursor. The footer can show `<completed>/<started> RPCs` and backend rows as batches arrive. |
+| `executing` — MLDP bidi cursor | Shows `mldp.time_series`, `MLDP bidi cursor`, `cursor response` or `cursor next`, and `cursor <responses>, next <requests>`. A response is an Arrow batch received from MLDP; `next` is a request for the next cursor batch. |
+| `executing` — windowed MLDP scan | Shows the active source plus `window <n>, slice <n>, series shard <n>`. Windows are visited in normalized-range, time-slice, then requested-series-group order. This corresponds to `window IN (...; slice ..., series_per_shard ...)`. |
+| `executing` — wide pivot | Shows `mldp.time_series_table` and a stage such as `wide pivot`, `wide pivot ingestion`, spill finalization, or external sort/merge while the long-form cursor data is converted to the wide result. |
+| `executing` — relational stage | Shows the local stage that is consuming batches, such as filter, projection, sort, limit, hash join, nested-loop join, or block nested-loop join. |
+| `cancelling` | `Ctrl-C` has requested cancellation until the in-flight query releases its cursor or RPC. |
+
+For a paginated `LIMIT` query, the status can show `result page <n>`. This is the client result-page number, separate from MLDP cursor responses. The continuation token remains available for `PAGE TOKEN` in the plain-stream session.
+
+When a real-terminal query finishes, the footer is removed and the normal result/statistics output remains in scrollback. Query errors and `Query cancelled` are likewise written to normal scrollback before the next usable prompt.
 
 ### Stored query tables
 
@@ -295,6 +323,24 @@ mldp_pvxs_driver \
   -c queryable.mldp-pv-metadata.mldp-pv-metadata-pool.max-conn=2 \
   query "SHOW TABLES"
 ```
+
+### Window shard trace
+
+Pass `--trace-shards` to emit one stderr diagnostic line for every windowed MLDP series shard after the query completes or fails. Each line reports driver-observed first-batch order, window/slice/shard identity, PV group, requested time range, first-batch and terminal-observation timing, batch and row counts. These are client-side asynchronous-pull timestamps, not server-side Mongo execution timestamps. Query results remain on stdout in the selected format.
+
+Pass `--trace-shards-file <path>` to enable the same trace and write it to a newly truncated file instead of stderr. The file is created before planning, so an invalid path fails the command before it issues a query.
+
+```bash
+mldp_pvxs_driver -c query-config.yaml query --trace-shards \
+  "SELECT * FROM mldp.time_series_table WHERE pv IN (...) AND window IN (...; slice 5s, series_per_shard 2)"
+
+mldp_pvxs_driver -c query-config.yaml query --trace-shards-file shard-trace.log \
+  "SELECT * FROM mldp.time_series_table WHERE pv IN (...) AND window IN (...; slice 5s, series_per_shard 2)"
+```
+
+For a production-shaped wide-window investigation under GDB, use `scripts/show-arrow-table.sh`. It defaults to `build/bin/mldp_pvxs_driver`, `test-query.sql`, `host.docker.internal:50052`, a four-connection query pool, and writes `spear-user-wide-window-trace.log`. Override a default with environment variables such as `MLDP_QUERY_URL`, `MLDP_ANNOTATION_URL`, `MLDP_QUERY_MAX_CONN`, `MLDP_WIDE_WINDOW_QUERY_FILE`, or `MLDP_WIDE_WINDOW_TRACE_FILE`.
+
+To inspect an Arrow IPC spill or catalog file with pandas, run `python3 scripts/show-arrow-table.py <file-name>`. Add `--all` to inspect every `.arrow` file below a directory. The helper converts dense-union columns such as the native time-series `value` field to their active Python values before rendering, so catalog snapshots can be inspected directly. It needs `pandas` and `pyarrow` in that Python environment.
 
 Override just the query URL when running against a different host:
 
@@ -548,13 +594,13 @@ SELECT pv, time, value FROM mldp.time_series
 WHERE pv = 'MY:PV' AND time >= NOW -24h AND time <= NOW
 LIMIT 500
 
--- Next page — use the token from the stats footer
+-- Next page — use the token printed after the result statistics
 SELECT pv, time, value FROM mldp.time_series
 WHERE pv = 'MY:PV' AND time >= NOW -24h AND time <= NOW
 LIMIT 500 PAGE TOKEN '<token-from-previous-result>'
 ```
 
-The continuation token is printed in the stats footer after each paginated result.
+The continuation token is printed after the result statistics for each paginated result.
 
 ---
 
@@ -605,7 +651,59 @@ another query. The interval is inclusive; literal endpoints may be reversed
 and are normalized. A window subquery must return exactly two non-null
 timestamp columns: start first and end second. Its output names and aliases do
 not matter. Overlapping or adjacent subquery intervals are coalesced, and the
-long-form table consumes every continuation page for each resulting range.
+long-form table opens serial MLDP server cursors for each resulting range.
+
+### Window shard parameters
+
+Both MLDP time-series tables accept optional shard parameters after a semicolon
+inside a `window IN (...)` input:
+
+```sql
+window IN (start, end; slice <duration>, series_per_shard <positive-integer>)
+```
+
+The parameters are optional, may appear in either order, and each may appear
+at most once.
+
+| Parameter | Meaning | Default |
+|---|---|---|
+| `slice` | Maximum timestamp span for one backend cursor. It is a positive duration. | `1s` |
+| `series_per_shard` | Maximum number of requested PVs in one backend cursor. It is a positive integer. | `1` |
+
+The driver first coalesces normalized window ranges, then visits shards in this
+deterministic order: normalized range, time slice, and requested-PV group.
+Within one time slice, the streaming long-form `mldp.time_series` path can use
+concurrent independent requested-PV groups up to the configured query pool
+`max-conn`; result batches still emit in requested-PV-group order. The current
+wide-table materialization path reports one active cursor (`shards 1/1`) before
+its pivot, then returns to `0/1` after each shard completes. Each cursor receives exactly one bounded time range
+and PV group. Backend time
+bounds are inclusive, so the driver locally makes every non-final slice
+half-open; a sample at a slice boundary appears once. `slice` and `series_per_shard`
+are supported only on `window` input for `mldp.time_series` and
+`mldp.time_series_table`. Duplicate names, unknown names, zero or negative
+values, and shard parameters on another table or predicate are rejected.
+
+```sql
+SELECT pv, time, value
+FROM mldp.time_series
+WHERE pv IN ('SYS:MAGNET:CURRENT', 'SYS:VACUUM:PRESSURE')
+  AND window IN (NOW - 10m, NOW; slice 5s, series_per_shard 2)
+```
+
+The same options can follow a window subquery:
+
+```sql
+SELECT pv, time, value
+FROM mldp.time_series
+WHERE pv IN ('SYS:MAGNET:CURRENT', 'SYS:VACUUM:PRESSURE')
+  AND window IN (
+    SELECT activation.time, activation.end_time
+    FROM mldp.configuration_activation activation
+    WHERE activation.end_time IS NOT NULL;
+    series_per_shard 2, slice 5s
+  )
+```
 
 ```sql
 SELECT pv, time, value
@@ -668,6 +766,13 @@ coalesced before the driver issues the corresponding time-series requests. As wi
 filtering, a valid `pv` or `window` subquery that finds no rows returns an empty
 result; malformed subquery output remains an error.
 
+The window shard parameters described above apply to both MLDP time-series
+tables. Long-form `mldp.time_series` emits server-cursor batches directly.
+`mldp.time_series_table` consumes the same bounded long-form cursors into
+temporary Arrow spill storage and emits a globally time-ordered pivot only
+after preparation finishes. Missing `(time, pv)` cells are null; duplicate
+cells are an execution error.
+
 ```sql
 SELECT *
 FROM mldp.time_series_table
@@ -683,7 +788,7 @@ WHERE pv IN ('SYS:MAGNET:CURRENT', 'SYS:VACUUM:PRESSURE')
 SELECT *
 FROM mldp.time_series_table
 WHERE pv IN ('SYS:MAGNET:CURRENT', 'SYS:VACUUM:PRESSURE')
-  AND window IN (NOW - 10h, NOW)
+  AND window IN (NOW - 10h, NOW; slice 30s, series_per_shard 2)
 ```
 
 ```sql

@@ -36,7 +36,8 @@
 #include <rapidyaml-0.10.0.hpp>
 
 #include <cli/ConfigPrinter.h>
-#include <query/QuerySubcommand.h>
+#include <query/LoggingQueryCommandListener.h>
+#include <query/QueryCommand.h>
 #include <config/Config.h>
 #include <config/ConfigOverride.h>
 #include <config/ConfigSource.h>
@@ -329,7 +330,8 @@ int main(int argc, char** argv)
 
         if (earlySubcommandIndex >= 0 && std::string_view{argv[earlySubcommandIndex]} == "query")
         {
-            mldp_pvxs_driver::cli::QuerySubcommand querySubcommand;
+            mldp_pvxs_driver::cli::LoggingQueryCommandListener queryListener;
+            mldp_pvxs_driver::cli::QueryCommand querySubcommand(queryListener);
             return querySubcommand.run(
                 argc - earlySubcommandIndex,
                 argv + earlySubcommandIndex,

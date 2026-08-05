@@ -8,12 +8,17 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
+/** @file ConstantFolding.h
+ * @brief Declares compile-time expression simplification. */
 #pragma once
 
 #include <query/plan/LogicalPlan.h>
 
 namespace mldp_pvxs_driver::query::planner {
 
+/** @brief Evaluates constant expressions at planning time.
+ * @param[in] root Logical plan root.
+ * @return Optimized plan root (may be the same node). */
 plan::LogicalNodePtr applyConstantFolding(plan::LogicalNodePtr root);
 
 } // namespace mldp_pvxs_driver::query::planner

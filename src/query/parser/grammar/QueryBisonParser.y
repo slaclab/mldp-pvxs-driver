@@ -214,6 +214,7 @@
         case TokenType::STAR: return QueryBisonParser::make_STAR(location);
         case TokenType::SLASH: return QueryBisonParser::make_SLASH(location);
         case TokenType::COMMA: return QueryBisonParser::make_COMMA(location);
+        case TokenType::SEMICOLON: return QueryBisonParser::make_SEMICOLON(location);
         case TokenType::DOT: return QueryBisonParser::make_DOT(location);
         case TokenType::LPAREN: return QueryBisonParser::make_LPAREN(location);
         case TokenType::RPAREN: return QueryBisonParser::make_RPAREN(location);
@@ -248,7 +249,7 @@
 %token <std::string> IDENTIFIER STRING_LITERAL DURATION_LITERAL
 %token <int64_t> NUMBER_LITERAL
 %token SELECT FROM WHERE IS AND OR NOT NULL_LITERAL IN LIKE BETWEEN LIMIT PAGE TOKEN SHOW TABLES FUNCTIONS OPERATORS DESCRIBE EXPLAIN AS INNER LEFT OUTER JOIN ON NOW PREFIX CONTAINS ORDER BY ASC DESC TRUE FALSE TIMESTAMP_NS DURATION_NS
-%token STAR SLASH COMMA DOT LPAREN RPAREN PLUS MINUS EQ NEQ LT LTE GT GTE
+%token STAR SLASH COMMA SEMICOLON DOT LPAREN RPAREN PLUS MINUS EQ NEQ LT LTE GT GTE
 
 // Preserve NOW +/- duration convenience syntax while allowing ordinary
 // timestamp arithmetic.  A bare NOW reduces only after PLUS/MINUS have had
@@ -269,6 +270,8 @@
 %type <mldp_pvxs_driver::query::JoinClause> join_clause
 %type <std::vector<mldp_pvxs_driver::query::WherePredicate>> where_opt predicate_list
 %type <mldp_pvxs_driver::query::WherePredicate> predicate
+%type <std::vector<mldp_pvxs_driver::query::InPredicate::WindowShardOption>> window_option_list
+%type <mldp_pvxs_driver::query::InPredicate::WindowShardOption> window_option
 %type <std::vector<mldp_pvxs_driver::query::ExpressionPtr>> expression_list
 %type <mldp_pvxs_driver::query::LiteralValue> literal now_literal
 %type <int64_t> signed_integer
@@ -505,6 +508,23 @@ predicate
               .subquery = std::make_shared<mldp_pvxs_driver::query::SelectStatement>(std::move($4))
           };
       }
+    | column_ref IN LPAREN expression_list SEMICOLON window_option_list RPAREN
+      {
+          $$ = mldp_pvxs_driver::query::InPredicate{
+              .column = std::move($1),
+              .values = legacyLiterals($4),
+              .expressions = std::move($4),
+              .window_options = std::move($6)
+          };
+      }
+    | column_ref IN LPAREN select_stmt SEMICOLON window_option_list RPAREN
+      {
+          $$ = mldp_pvxs_driver::query::InPredicate{
+              .column = std::move($1),
+              .subquery = std::make_shared<mldp_pvxs_driver::query::SelectStatement>(std::move($4)),
+              .window_options = std::move($6)
+          };
+      }
     | column_ref IS NOT NULL_LITERAL
       {
           $$ = mldp_pvxs_driver::query::IsNotNullPredicate{.column = std::move($1)};
@@ -598,6 +618,20 @@ predicate
               .expression = std::move($3)
           };
       }
+    ;
+
+window_option_list
+    : window_option
+      { $$ = std::vector<mldp_pvxs_driver::query::InPredicate::WindowShardOption>{std::move($1)}; }
+    | window_option_list COMMA window_option
+      { $1.push_back(std::move($3)); $$ = std::move($1); }
+    ;
+
+window_option
+    : IDENTIFIER DURATION_LITERAL
+      { $$ = mldp_pvxs_driver::query::InPredicate::WindowShardOption{.name = std::move($1), .value = mldp_pvxs_driver::query::DurationNsLiteral{durationToSeconds($2, @$) * 1000000000LL}}; }
+    | IDENTIFIER NUMBER_LITERAL
+      { $$ = mldp_pvxs_driver::query::InPredicate::WindowShardOption{.name = std::move($1), .value = $2}; }
     ;
 
 expression_list

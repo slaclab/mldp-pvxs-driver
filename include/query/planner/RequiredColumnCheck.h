@@ -8,12 +8,17 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
+/** @file RequiredColumnCheck.h
+ * @brief Declares validation of required scan predicates. */
 #pragma once
 
 #include <query/plan/LogicalPlan.h>
 
 namespace mldp_pvxs_driver::query::planner {
 
+/** @brief Verifies that all required scan predicates are present.
+ * @param[in] root Logical plan root.
+ * @throws plan::PlannerException If a required predicate is missing. */
 void requiredColumnCheck(const plan::LogicalNodePtr& root);
 
 } // namespace mldp_pvxs_driver::query::planner

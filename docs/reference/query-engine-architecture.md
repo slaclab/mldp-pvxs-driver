@@ -14,25 +14,65 @@ The query engine is a single-binary, embedded SQL engine that translates a subse
 SQL text
   │
   ▼
-QueryParser        (Flex/Bison lexer + parser)
+QueryParser              (Flex/Bison lexer + parser)
   │  ParsedStatement (AST)
   ▼
-QueryPlanner       (Binder → optimizer passes → PhysicalPlan)
+QueryPlanner             (Binder → optimizer passes → PhysicalPlan)
   │  PhysicalPlan
   ▼
-QueryExecutor      (recursive tree evaluation)
-  │  QueryResult (Arrow RecordBatches + QueryStats)
-  ▼
-QueryFormatter     (table / json / csv / arrow)
+QueryExecutor            (pull-stream physical-tree evaluation)
+  │
+  ├─── PhysicalFilter / PhysicalProject / PhysicalLimit
+  │      (in-memory Arrow compute; no I/O)
+  │
+  ├─── PhysicalHashJoin / PhysicalNestedLoopJoin
+  │      (build side materialized; probe side streamed)
+  │
+  ├─── PhysicalPivot
+  │      (long-form stream → IPC spill → external sort → k-way merge)
+  │
+  └─── PhysicalTableScan ──► IQueryable::executeStream()
+         │                          │
+         │              ┌───────────┴───────────────┐
+         │              │  Backend pulls all pages   │
+         │              │  internally; one stream    │
+         │              │  returned to caller        │
+         │              └───────────┬───────────────┘
+         │                          │
+         │         ┌────────────────▼──────────────────────────────┐
+         │         │  fetchBackendPages / fetchTimeSeriesWindows    │
+         │         │                                                │
+         │         │  beginBackendRpc()  ◄── fires before          │
+         │         │                        executeStream() call   │
+         │         │                                                │
+         │         │  stream->next() loop:                          │
+         │         │    batch 1 received → ++rpc_calls              │
+         │         │                    → finishBackendRpc(rows)    │
+         │         │                    → beginBackendRpc()  ◄──── │
+         │         │    batch 2 received → ++rpc_calls        next │
+         │         │                    → finishBackendRpc(rows)    │
+         │         │    ...                                         │
+         │         │    EOF (nullptr)                               │
+         │         │                                                │
+         │         │  empty stream (0 batches):                     │
+         │         │    → ++rpc_calls  (stream open still counted)  │
+         │         │    → finishBackendRpc(0)                       │
+         │         └────────────────┬──────────────────────────────┘
+         │                          │  RecordBatches
+         ▼                          ▼
+  IRecordBatchStream     QueryStats { rpc_calls, rows_from_backend, … }
+         │
+         ▼
+  QueryFormatter         (table / json / csv / arrow; batch-at-a-time)
 ```
 
 Core source files:
 
 | File | Role |
 |---|---|
-| `src/query/QuerySubcommand.cpp` | CLI wiring, config loading, one-shot execution, and REPL loop |
+| `src/query/QueryCommand.cpp` | CLI wiring, config loading, one-shot execution, and REPL loop |
 | `src/query/QueryPlanner.cpp` | Planning pipeline orchestration |
-| `src/query/QueryExecutor.cpp` | Physical tree evaluation |
+| `src/query/QueryExecutor.cpp` | Pull-stream construction and materializing physical-tree evaluation |
 | `src/query/QueryFormatter.cpp` | Result rendering |
 | `src/query/SpillManager.cpp` | Disk-spill coordination |
 | `include/query/plan/LogicalPlan.h` | Logical plan node types |
@@ -42,13 +82,13 @@ Core source files:
 
 ## End-to-end flow
 
-1. `mldp_pvxs_driver query` parses global options and delegates to `QuerySubcommand::run(...)`.
-2. `QuerySubcommandPreparer::prepare(config)` iterates the `queryable:` block and calls `QueryableFactory::instance().prepare<T>(cfg)` for each declared backend.
-3. Positional SQL or `--file` selects one-shot execution. With neither, the REPL prepares the configured backends once, buffers semicolon-terminated statements, and permits `.format table|json|csv|arrow` to update the session output style; each statement then follows the same parse → plan → execute path.
+1. `mldp_pvxs_driver query` parses global options and delegates to `QueryCommand::run(...)`.
+2. `QueryCommandPreparer::prepare(config)` iterates the `queryable:` block and calls `QueryableFactory::instance().prepare<T>(cfg)` for each declared backend.
+3. Positional SQL or `--file` selects one-shot execution. With neither, the `replxx` REPL prepares the configured backends once, buffers semicolon-terminated statements, permits `.format table|json|csv|arrow` and `.pager on|off` to update the session display, and writes table output to normal terminal scrollback unless the explicitly enabled pager is active; each statement then follows the same parse → plan → execute path.
 4. `QueryPlanner::plan(parsed)` produces a `PhysicalPlan`.
-5. `QueryExecutor::execute(physical, context)` evaluates the physical tree and returns `QueryResult`.
-6. `formatQueryResult(...)` writes the result to stdout.
-7. `printQueryStats(...)` writes the stats footer unless `--no-stats`.
+5. `QueryExecutor::executeStream(physical, context)` uses pull execution throughout: scans call `IQueryable::executeStream(...)` and drain the returned stream batch-by-batch; filters, projections, limits, and the physical pivot are wired inline. Each backend is responsible for all internal pagination — the executor always drives a single `IRecordBatchStream` regardless of table or transport.
+6. `formatQueryStream(...)` writes and flushes each completed batch before pulling the next one, keeping peak memory proportional to one batch rather than the full result set.
+7. `printQueryStats(...)` writes the textual final statistics line unless `--no-stats`; real-TTY REPL sessions instead render the captured completion statistics in `ConsoleFooter`.
 
 ---
 
@@ -170,10 +210,11 @@ PlanWarning: joining two unbounded sides; spill is expected under memory pressur
 
 | Node | Description |
 |---|---|
-| `PhysicalTableScan` | Calls `IQueryable::execute(...)` for one table |
+| `PhysicalTableScan` | Calls `IQueryable::executeStream(...)` when the scan is streamable; otherwise uses the compatibility materializing path |
 | `PhysicalFilter` | Arrow-based in-memory filter |
 | `PhysicalProject` | Arrow column selection |
 | `PhysicalLimit` | Row-count limit |
+| `PhysicalPivot` | Materializes a configured long-form stream through Arrow IPC spill, external timestamp sort, and k-way wide merge |
 | `PhysicalHashJoin` | Hash-join (build right side, probe left side) |
 | `PhysicalNestedLoopJoin` | Row-by-row nested-loop join |
 | `PhysicalBlockNestedLoopJoin` | Block nested-loop join for unbounded pairs |
@@ -190,13 +231,18 @@ class IQueryable {
 public:
     virtual std::set<std::string_view> virtualTables() const = 0;
     virtual std::vector<ColumnSchema>  tableSchema(std::string_view table_name) const = 0;
-    virtual QueryResult execute(std::string_view table_name,
-                                const std::vector<Predicate>& pushable_predicates,
-                                const std::set<std::string>&  requested_columns,
-                                const ExecutionContext&        context,
-                                std::string_view              page_token) = 0;
+    virtual IRecordBatchStreamUPtr executeStream(std::string_view table_name,
+                                                 const std::vector<Predicate>& pushable_predicates,
+                                                 const std::set<std::string>&  requested_columns,
+                                                 const ExecutionContext&        context) = 0;
 };
 ```
+
+`IRecordBatchStream::next()` returns one shared `arrow::RecordBatch` and returns
+null at clean EOF. All execution is streaming: `execute(...)` and the
+continuation-token paging API have been removed. Backends that internally
+paginate handle pagination themselves and expose the full result as a single pull
+stream. A caller's next pull is the backpressure boundary for a server cursor.
 
 Each backend implementation registers through `QueryableFactory`:
 
@@ -212,16 +258,105 @@ QueryableFactory::instance().prepare<MLDPAnnotationQueryClient>(cfg);
 ```cpp
 struct ColumnSchema {
     std::string           name;
-    ColumnType            type;            // STRING, TIMESTAMP, INT, DURATION_SECONDS
-    bool                  required;        // planner error if not covered
-    bool                  pushable;        // true = can be sent to the backend
-    std::set<PredicateOp> pushable_ops;    // operators the backend handles
-    std::set<PredicateOp> filterable_ops;  // operators applied in-memory post-fetch
-    std::string           description;
+    ColumnType            type;        // STRING, TIMESTAMP, INT, DURATION_SECONDS, NATIVE_VALUE
+    bool                  required;    // planner error if predicate absent for this column
+    bool                  is_output;   // true = column appears in SELECT * output
+    std::set<PredicateOp> pushable_ops;    // operators the backend can evaluate server-side
+    std::set<PredicateOp> filterable_ops;  // operators evaluated in-memory after fetch
+    std::string           notes;
 };
 ```
 
-The planner splits `WHERE` predicates into pushable (sent to `execute`) and filterable (evaluated in-memory in `PhysicalFilter`) based on `pushable_ops` and `filterable_ops`.
+#### `pushable_ops` — what the backend evaluates
+
+`pushable_ops` lists every `PredicateOp` the backend gRPC service understands for
+this column.  When a `WHERE` clause contains `column OP value`, the planner checks
+`pushable_ops`:
+
+- **Present** → predicate included in the `executeStream` call as a `Predicate`
+  struct; the backend filters rows before sending them over the wire.
+- **Absent** → predicate held back; the executor applies it locally in
+  `PhysicalFilter` after the batch arrives.
+
+Available operators:
+
+| `PredicateOp` | SQL syntax | Notes |
+|---|---|---|
+| `EQ` | `col = val` | Exact equality |
+| `NEQ` | `col != val` | Not equal |
+| `LT` | `col < val` | Less than |
+| `LTE` | `col <= val` | Less than or equal |
+| `GT` | `col > val` | Greater than |
+| `GTE` | `col >= val` | Greater than or equal |
+| `IN` | `col IN (v1, v2, …)` or `col IN (SELECT …)` | Membership; subquery values materialized first |
+| `PREFIX` | `col PREFIX 'abc'` | String starts-with |
+| `CONTAINS` | `col CONTAINS 'abc'` | String substring match |
+| `LIKE` | `col LIKE 'a%b'` | SQL LIKE pattern |
+| `BETWEEN` | `col BETWEEN a AND b` | Inclusive range; numeric or temporal |
+| `IS_NULL` | `col IS NULL` | Null check |
+| `IS_NOT_NULL` | `col IS NOT NULL` | Non-null check |
+
+#### `filterable_ops` — what the executor evaluates locally
+
+`filterable_ops` lists operators applied in-memory by `PhysicalFilter` after
+batches arrive from the backend.  A column may appear in both sets (e.g.,
+`column_type` in `mldp.time_series`), in which case the planner prefers pushing
+to avoid transferring unwanted rows.  A column with an empty `pushable_ops` but
+non-empty `filterable_ops` is fetch-first, filter-locally — useful when the
+backend API has no matching criterion.
+
+#### Predicate routing diagram
+
+```
+WHERE clause predicate
+        │
+        ▼
+  planner checks column's pushable_ops
+        │
+   ┌────┴──────────────────┐
+   │ op IN pushable_ops?   │
+   └────┬──────────────────┘
+        │
+      yes │                  no
+        ▼                    ▼
+  Predicate sent to    Predicate held as
+  executeStream()      local filter in
+  (backend filters)    PhysicalFilter
+                       (executor filters
+                        after fetch)
+```
+
+#### Real examples from `mldp.time_series`
+
+| Column | `pushable_ops` | `filterable_ops` | Meaning |
+|---|---|---|---|
+| `pv` | `{EQ, IN}` | `{}` | `pv = 'X'` → sent to gRPC; no local fallback |
+| `time` | `{GTE, LTE}` | `{}` | Time range → sent to gRPC as `beginTime`/`endTime` |
+| `value` | `{}` | `{EQ, NEQ, LT, LTE, GT, GTE, IN, BETWEEN}` | Backend returns all values; executor filters locally |
+| `column_type` | `{EQ, IN}` | `{EQ, IN}` | Can push to backend **or** filter locally |
+| `tag` | `{EQ, IN}` | `{EQ, IN}` | Tag membership; pushed when possible |
+| `timeout` | `{EQ}` | `{}` | Control-plane only; consumed by the client, not forwarded as a row filter |
+
+For `pv`, `pushable_ops = {EQ, IN}` means:
+
+```sql
+-- pushed: backend only returns rows for 'SOME:PV'
+WHERE pv = 'SOME:PV'
+
+-- pushed: backend returns rows for both PVs
+WHERE pv IN ('PV:ONE', 'PV:TWO')
+
+-- NOT pushed (NEQ not in pushable_ops): backend returns everything,
+-- executor drops rows where pv = 'X' locally
+WHERE pv != 'X'
+```
+
+For `value`, `pushable_ops = {}` means **every** value predicate stays local:
+
+```sql
+-- all rows fetched from backend; executor drops rows where value != 42
+WHERE value = 42
+```
 
 ### Native union predicate evaluation
 
@@ -259,7 +394,7 @@ children are non-comparable, apart from the existing `IS NOT NULL` check.
 | `timeout` | `=` | Sets gRPC query timeout. |
 | `rpc_deadline` | `=` | Sets gRPC deadline. |
 
-Time values are epoch seconds; the executor converts to nanoseconds internally. The backend returns column-format `QueryTableResponse`; rows are sorted by timestamp before pagination.
+Time values are epoch seconds; the executor converts to nanoseconds internally. Long-form scans use `queryDataBidiStream`, and rows are exposed as pull-driven Arrow batches.
 
 ### `mldp.time_series_table` — `MLDPQueryClient`
 
@@ -273,15 +408,25 @@ Time values are epoch seconds; the executor converts to nanoseconds internally. 
 | `attributes.<key>`, `provenance.<key>` | `=`, `IN`, `PREFIX`, `CONTAINS`, `LIKE` | Select candidate PV columns using returned MLDP column metadata. |
 | generated PV fields | — | One native typed Arrow column per returned requested PV, after `time`. |
 
-The query client maps one `TABLE_FORMAT_COLUMN` response directly to a wide
-Arrow batch. A shorter data vector is trailing-null padded; a vector longer
-than the shared timestamps or a duplicate returned PV is rejected. Requested
-PVs absent from a successful response are normal empty-selection results: they
-are omitted, and no returned PV produces an empty result. MLDP column metadata
-is attached to each generated PV Arrow field as key/value metadata: `tags`,
-`attributes.<key>`, `provenance.source`, and `provenance.process`. It is a special
-runtime-shaped table: `SELECT *` is required, and projections, predicates,
-`ORDER BY`, and joins over generated PV fields are not supported.
+Wide queries are planned as `PhysicalPivot(PhysicalTableScan(mldp.time_series))`.
+The MLDP planning boundary configures the generic pivot with `time` as its row
+key, `pv` as its pivot key, `value` as its cell value, and PV-predicate order
+as its output-column order. The pivot consumes bounded `queryDataBidiStream`
+long-form batches directly into Arrow IPC spill; it does not retain every
+long-form batch in memory before spilling. It externally sorts spill runs by
+row key and k-way merges them into globally ascending wide batches. Missing
+cells are null; duplicate `(time,pv)` cells and mixed active value types for a
+PV are execution errors. Spill writers/readers clean up temporary files on
+success, error, cancellation, and abandonment.
+
+Each deterministic normalized-range, time-slice, and PV-group shard opens one
+bidi cursor with one initial `QuerySpec`. The client sends `CURSOR_OP_NEXT`
+only after its consumer pulls beyond the prior response-derived batch. It calls
+`Finish()` at terminal EOF and propagates a non-OK terminal status. Query
+cancellation calls `ClientContext::TryCancel`; destroying an incomplete stream
+cancels and completes the RPC before releasing its pooled handle.
+It is a special runtime-shaped table: `SELECT *` is required, and projections,
+predicates, `ORDER BY`, and joins over generated PV fields are not supported.
 
 Metadata text patterns are evaluated locally while selecting returned candidate PV columns; they do not change the gRPC request. A `pv =` or `pv IN (...)` candidate predicate is still required.
 
@@ -290,10 +435,11 @@ single-column child first, rejects null or type-incompatible values, and
 materializes compatible values as an ordinary `IN` predicate. Pushable values
 are included in the backend request; local-only values are filtered after the
 fetch. `window IN (SELECT start, end ...)` is available on both MLDP time-series
-tables and evaluates to closed timestamp ranges.
-Ranges are sorted and coalesced when they overlap or directly touch; the
-executor issues one `QueryTableRequest` per normalized range, consuming all
-long-table continuation pages before advancing to the next range. The window
+tables and evaluates to closed timestamp ranges. Both MLDP time-series tables
+can append `; slice <duration>, series_per_shard <positive-integer>` to a window input;
+defaults are `slice 1s` and `series_per_shard 1`. Ranges are sorted and coalesced when
+they overlap or directly touch; the executor opens serial bidi server cursors
+in normalized-range, time-slice, then PV-group order. The window
 child must expose exactly two non-null timestamp
 outputs. Their names and aliases are ignored: the first output is the start and
 the second is the end. Open, empty, malformed, or inverted windows fail before
@@ -362,10 +508,10 @@ Exactly one `at = <epoch>` predicate required. Pagination not supported.
 
 `QueryExecutor::execute(physical, context)` recursively evaluates the physical tree:
 
-- **`PhysicalTableScan`** calls `QueryableFactory::createByTable(name)->execute(pushable_predicates, ...)` and returns `QueryResult { batch, next_page_token }`.
+- **`PhysicalTableScan`** calls `QueryableFactory::createByTable(name)->executeStream(pushable_predicates, ...)` and pulls all batches from the returned stream. Each `executeStream` call counts as one RPC; each batch returned from a multi-batch stream counts as one additional RPC.
 - **`PhysicalFilter`** applies Arrow compute kernels to filter batch rows in-memory.
 - **`PhysicalProject`** selects the requested columns from a batch.
-- **`PhysicalLimit`** truncates to `n` rows and threads the page token.
+- **`PhysicalLimit`** truncates to `n` rows.
 - **`PhysicalHashJoin`** materializes the right-side build into a hash map, then probes with left-side rows.
 - **`PhysicalNestedLoopJoin`** / **`PhysicalBlockNestedLoopJoin`** iterate row pairs; the block variant fetches left-side pages to bound peak memory.
 - **`PhysicalShowTables`** queries `QueryableFactory` for all registered virtual table names.
@@ -388,9 +534,10 @@ Execution returns `QueryResult` containing:
 
 `ExecutionContext` may also carry an optional `QueryProgressTracker`. The REPL
 uses it to display a transient live status line while a statement is running.
-Scan execution updates the tracker around each `IQueryable::execute(...)` call,
-which makes long backend/gRPC waits visible without changing the `IQueryable`
-interface or polluting redirected result output.
+Scan execution calls `beginBackendRpc` before `executeStream(...)` and
+`finishBackendRpc` after each batch, making long backend/gRPC waits visible.
+An empty stream (zero batches) still records one RPC call and one completion
+so that subqueries returning no results are reflected in `QueryStats.rpc_calls`.
 
 ---
 
@@ -405,7 +552,7 @@ Runtime controls flow from `QueryCliOptions` → `ExecutionContext`:
 | `--spill-partitions` | `spill_partitions` | Hash partition count for spill writes. |
 | `--join-batch-size` | `join_batch_size` | Batch page size for join build-side iteration. |
 
-`SpillManager` (`src/query/SpillManager.cpp`) is created in `QuerySubcommand::run(...)` and attached to the `ExecutionContext`. Join execution paths check `memory_limit_bytes` before materializing the build side; when the limit is exceeded, build-side batches are written to partitioned spill files on the Arrow `LocalFileSystem`. Spill activity is reflected in `QueryStats.bytes_spilled` and `QueryStats.spill_files`. Spill files are cleaned up automatically when `SpillManager` is destroyed (via `SpillCleanupGuard`).
+`SpillManager` (`src/query/SpillManager.cpp`) is created in `QueryCommand::run(...)` and attached to the `ExecutionContext`. Join execution paths check `memory_limit_bytes` before materializing the build side; when the limit is exceeded, build-side batches are written to partitioned spill files on the Arrow `LocalFileSystem`. `PhysicalPivot` uses the same manager for its long-form input and sorted runs. Spill activity is reflected in `QueryStats.bytes_spilled` and `QueryStats.spill_files`. `SpillWriter` and `SpillReader` are RAII cleanup boundaries: unfinished writers, abandoned readers, and manager cleanup remove temporary files.
 
 ---
 
@@ -427,7 +574,7 @@ queryable:
       max-conn: 2
 ```
 
-Each `execute(...)` call acquires a pool handle, issues one gRPC call, then releases the handle. Channels are kept alive for the lifetime of the `QuerySubcommand`. TLS is supported by using `grpcs://` URLs; the pool uses `grpc::SslCredentials` in that case.
+Each `execute(...)` call acquires a pool handle, issues one gRPC call, then releases the handle. Channels are kept alive for the lifetime of the `QueryCommand`. TLS is supported by using `grpcs://` URLs; the pool uses `grpc::SslCredentials` in that case.
 
 ---
 
@@ -443,7 +590,7 @@ Each `execute(...)` call acquires a pool handle, issues one gRPC call, then rele
 
 1. Implement `IQueryable` in `src/query/impl/<name>/`.
 2. Add a `prepare<MyQueryable>` specialization in `QueryableFactory.cpp` that reads the config block.
-3. Register the type string in `QuerySubcommand.cpp:prepareQueryable(...)`.
+3. Register the type string in `QueryCommand.cpp:prepareQueryable(...)`.
 4. Add the new type key to the `queryable:` YAML schema.
 
 ### Adding parser syntax

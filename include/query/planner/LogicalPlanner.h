@@ -8,12 +8,17 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
+/** @file LogicalPlanner.h
+ * @brief Declares conversion of bound selections to logical plans. */
 #pragma once
 
 #include <query/plan/LogicalPlan.h>
 
 namespace mldp_pvxs_driver::query::planner {
 
+/** @brief Constructs a logical plan tree from a bound SELECT.
+ * @param[in] bound Fully bound SELECT statement.
+ * @return Logical plan root node. */
 plan::LogicalNodePtr buildLogicalPlan(const plan::BoundSelect& bound);
 
 } // namespace mldp_pvxs_driver::query::planner

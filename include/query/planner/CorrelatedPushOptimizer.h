@@ -8,12 +8,17 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
+/** @file CorrelatedPushOptimizer.h
+ * @brief Declares correlated-predicate push optimization for physical plans. */
 #pragma once
 
 #include <query/plan/PhysicalPlan.h>
 
 namespace mldp_pvxs_driver::query::planner {
 
+/** @brief Pushes correlated predicates from nested-loop joins into inner scans.
+ * @param[in] root Physical plan root.
+ * @return Optimized plan root (may be the same node). */
 plan::PhysicalNodePtr applyCorrelatedPushOptimizer(plan::PhysicalNodePtr root);
 
 } // namespace mldp_pvxs_driver::query::planner

@@ -7,7 +7,7 @@ SQL parsing, multi-pass planning, columnar execution, disk-spill for large joins
 Future: expose a TCP port (`--serve-flight`) and the same engine becomes a network-accessible
 query service via Arrow Flight SQL — no architectural changes required.
 
-Implementation follow-up: [Phase 8 — Streamable `IQueryable` + Incremental Arrow IPC](phase-8-streamable-iqueryable.md).
+Implementation follow-up completed: [Phase 10 — Final Server-Cursor Streaming Acceptance]([done]-phase-10-final-streaming-acceptance.md).
 
 ---
 
@@ -484,7 +484,7 @@ returns `arrow::RecordBatch` streams, never `vector<string>` rows.
 ```
 mldp_pvxs_driver_main.cpp
   └─ dispatch "query" subcommand
-       └─ src/cli/query/QuerySubcommand.cpp            ← arg: -c config.yaml + SQL string
+       └─ src/cli/query/QueryCommand.cpp            ← arg: -c config.yaml + SQL string
             └─ include/query/ExecutionContext.h         ← MemoryPool + SpillManager + config
             └─ src/cli/query/SpillManager.h/.cpp        ← arrow::fs::FileSystem-backed spill
             └─ src/cli/query/QueryParser.cpp            ← tokeniser + recursive-descent parser
@@ -898,7 +898,7 @@ mldp_pvxs_driver query "DESCRIBE mldp.pv_metadata"
 
 ### Query-Only Config
 
-`QuerySubcommand` does **not** parse or validate readers, writers, routing, or metrics.
+`QueryCommand` does **not** parse or validate readers, writers, routing, or metrics.
 It extracts only the queryable connection config from the merged config tree — specifically
 the keys consumed by `MLDPGrpcPoolConfig` and `MLDPGrpcAnnotationPoolConfig`.
 
@@ -927,7 +927,7 @@ mldp_pvxs_driver query \
   "SELECT * FROM mldp.pv_stats WHERE pv IN ('MY:PV')"
 ```
 
-`QuerySubcommand` calls `loadMergedConfigSources()` (same as main driver) then constructs
+`QueryCommand` calls `loadMergedConfigSources()` (same as main driver) then constructs
 only queryable instances via `QueryableFactory::prepare<T>(config)` reading from
 `config.subConfig("queryable")` — never touching `MLDPPVXSController`. Config validation
 skips readers/writers/routing keys — their absence is not an error in query mode.
@@ -1035,3 +1035,4 @@ null plan nodes with an actionable error.
 | 5 | [phase-5-output-cli.md](phase-5-output-cli.md) | QueryFormatter (table/json/csv/arrow), CLI arg wiring |
 | 6 | [phase-6-tests.md](phase-6-tests.md) | Unit + integration test coverage |
 | 7 | [phase-7-flight-sql.md](phase-7-flight-sql.md) | Arrow Flight SQL server (future, not initial scope) |
+| 11 | [phase-11-unified-pull-executor.md](phase-11-unified-pull-executor.md) | One pull-based physical-operator framework for all query plans |

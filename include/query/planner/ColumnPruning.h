@@ -8,12 +8,17 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
+/** @file ColumnPruning.h
+ * @brief Declares logical-plan projection pruning. */
 #pragma once
 
 #include <query/plan/LogicalPlan.h>
 
 namespace mldp_pvxs_driver::query::planner {
 
+/** @brief Eliminates projected columns not referenced downstream.
+ * @param[in] root Logical plan root.
+ * @return Optimized plan root (may be the same node). */
 plan::LogicalNodePtr applyColumnPruning(plan::LogicalNodePtr root);
 
 } // namespace mldp_pvxs_driver::query::planner

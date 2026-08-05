@@ -3,9 +3,14 @@
 // It is subject to the license terms in the LICENSE.txt file found in the
 // top-level directory of this distribution and at:
 //    https://confluence.slac.stanford.edu/display/ppareg/LICENSE.html.
+// No part of 'mldp-pvxs-driver', including this file,
+// may be copied, modified, propagated, or distributed except according to
+// the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
+
 #include <query/ExpressionRegistry.h>
+#include <query/Callable.h>
 
 #include <query/plan/PlannerError.h>
 
@@ -24,39 +29,6 @@ std::string normalized(std::string_view value)
     return result;
 }
 
-class Callable : public IExpressionCallable
-{
-public:
-    explicit Callable(ExpressionCallableDescriptor descriptor)
-        : descriptor_(std::move(descriptor))
-    {
-    }
-
-    const ExpressionCallableDescriptor& descriptor() const noexcept override { return descriptor_; }
-
-private:
-    ExpressionCallableDescriptor descriptor_;
-};
-
-// Concrete types deliberately make each language feature independently addressable.
-class ToUtcFunction final : public Callable { public: ToUtcFunction(std::vector<ColumnType> args, std::string example) : Callable({"to_utc", ExpressionCallableKind::FUNCTION, std::move(args), ColumnType::TIMESTAMP, "Convert an ISO-8601 timestamp to UTC epoch seconds.", std::move(example)}) {} };
-class FromUtcFunction final : public Callable { public: FromUtcFunction() : Callable({"from_utc", ExpressionCallableKind::FUNCTION, {ColumnType::TIMESTAMP, ColumnType::STRING}, ColumnType::STRING, "Format a UTC timestamp in an IANA timezone or fixed UTC offset.", "from_utc(time, 'America/Los_Angeles')"}) {} };
-class AddOperator final : public Callable { public: AddOperator(std::vector<ColumnType> args, ColumnType result, std::string example) : Callable({"+", ExpressionCallableKind::BINARY_OPERATOR, std::move(args), result, "Add numeric values or a duration to a timestamp.", std::move(example)}) {} };
-class SubtractOperator final : public Callable { public: SubtractOperator(std::vector<ColumnType> args, ColumnType result, std::string example) : Callable({"-", ExpressionCallableKind::BINARY_OPERATOR, std::move(args), result, "Subtract numeric values, timestamps, or durations.", std::move(example)}) {} };
-class MultiplyOperator final : public Callable { public: MultiplyOperator() : Callable({"*", ExpressionCallableKind::BINARY_OPERATOR, {ColumnType::INT, ColumnType::INT}, ColumnType::INT, "Multiply numeric values.", "2 * 3"}) {} };
-class DivideOperator final : public Callable { public: DivideOperator() : Callable({"/", ExpressionCallableKind::BINARY_OPERATOR, {ColumnType::INT, ColumnType::INT}, ColumnType::INT, "Divide numeric values.", "6 / 2"}) {} };
-class EqualOperator final : public Callable { public: EqualOperator(ColumnType type) : Callable({"=", ExpressionCallableKind::BINARY_OPERATOR, {type, type}, ColumnType::BOOL, "Test values for equality.", "value = 1"}) {} };
-class NotEqualOperator final : public Callable { public: NotEqualOperator(ColumnType type) : Callable({"!=", ExpressionCallableKind::BINARY_OPERATOR, {type, type}, ColumnType::BOOL, "Test values for inequality.", "value != 1"}) {} };
-class LessOperator final : public Callable { public: LessOperator(ColumnType type) : Callable({"<", ExpressionCallableKind::BINARY_OPERATOR, {type, type}, ColumnType::BOOL, "Test whether the left value is smaller.", "time < timestamp_ns(1)"}) {} };
-class LessEqualOperator final : public Callable { public: LessEqualOperator(ColumnType type) : Callable({"<=", ExpressionCallableKind::BINARY_OPERATOR, {type, type}, ColumnType::BOOL, "Test whether the left value is not greater.", "value <= 1"}) {} };
-class GreaterOperator final : public Callable { public: GreaterOperator(ColumnType type) : Callable({">", ExpressionCallableKind::BINARY_OPERATOR, {type, type}, ColumnType::BOOL, "Test whether the left value is greater.", "value > 1"}) {} };
-class GreaterEqualOperator final : public Callable { public: GreaterEqualOperator(ColumnType type) : Callable({">=", ExpressionCallableKind::BINARY_OPERATOR, {type, type}, ColumnType::BOOL, "Test whether the left value is not smaller.", "value >= 1"}) {} };
-class AndOperator final : public Callable { public: AndOperator() : Callable({"AND", ExpressionCallableKind::BINARY_OPERATOR, {ColumnType::BOOL, ColumnType::BOOL}, ColumnType::BOOL, "Combine boolean values with logical AND.", "true AND false"}) {} };
-class OrOperator final : public Callable { public: OrOperator() : Callable({"OR", ExpressionCallableKind::BINARY_OPERATOR, {ColumnType::BOOL, ColumnType::BOOL}, ColumnType::BOOL, "Combine boolean values with logical OR.", "true OR false"}) {} };
-class NotOperator final : public Callable { public: NotOperator() : Callable({"NOT", ExpressionCallableKind::UNARY_OPERATOR, {ColumnType::BOOL}, ColumnType::BOOL, "Negate a boolean value.", "NOT true"}) {} };
-class UnaryPlusOperator final : public Callable { public: UnaryPlusOperator() : Callable({"+", ExpressionCallableKind::UNARY_OPERATOR, {ColumnType::INT}, ColumnType::INT, "Return a numeric value unchanged.", "+1"}) {} };
-class UnaryMinusOperator final : public Callable { public: UnaryMinusOperator() : Callable({"-", ExpressionCallableKind::UNARY_OPERATOR, {ColumnType::INT}, ColumnType::INT, "Negate a numeric value.", "-1"}) {} };
-
 } // namespace
 
 bool IExpressionCallable::accepts(const std::vector<ColumnType>& arguments) const noexcept { return descriptor().arguments == arguments; }
@@ -68,18 +40,20 @@ ColumnType IExpressionCallable::inferReturnType(const std::vector<ColumnType>& a
 
 ExpressionRegistry::ExpressionRegistry()
 {
-    registerCallable(std::make_unique<ToUtcFunction>(std::vector<ColumnType>{ColumnType::STRING}, "to_utc('2026-07-23T09:00:00Z')"));
-    registerCallable(std::make_unique<ToUtcFunction>(std::vector<ColumnType>{ColumnType::STRING, ColumnType::STRING}, "to_utc('2026-07-23 09:00:00', '-07:00')"));
-    registerCallable(std::make_unique<FromUtcFunction>());
-    registerCallable(std::make_unique<AddOperator>(std::vector<ColumnType>{ColumnType::INT, ColumnType::INT}, ColumnType::INT, "1 + 2"));
-    registerCallable(std::make_unique<AddOperator>(std::vector<ColumnType>{ColumnType::TIMESTAMP, ColumnType::DURATION_SECONDS}, ColumnType::TIMESTAMP, "time + duration_ns(2)"));
-    registerCallable(std::make_unique<SubtractOperator>(std::vector<ColumnType>{ColumnType::INT, ColumnType::INT}, ColumnType::INT, "3 - 1"));
-    registerCallable(std::make_unique<SubtractOperator>(std::vector<ColumnType>{ColumnType::TIMESTAMP, ColumnType::TIMESTAMP}, ColumnType::DURATION_SECONDS, "end_time - time"));
-    registerCallable(std::make_unique<SubtractOperator>(std::vector<ColumnType>{ColumnType::TIMESTAMP, ColumnType::DURATION_SECONDS}, ColumnType::TIMESTAMP, "time - duration_ns(2)"));
-    registerCallable(std::make_unique<MultiplyOperator>()); registerCallable(std::make_unique<DivideOperator>());
+    const auto add = [this](ExpressionCallableDescriptor descriptor) { registerCallable(std::make_unique<Callable>(std::move(descriptor))); };
+    add({"to_utc", ExpressionCallableKind::FUNCTION, {ColumnType::STRING}, ColumnType::TIMESTAMP, "Convert an ISO-8601 timestamp to UTC epoch seconds.", "to_utc('2026-07-23T09:00:00Z')"});
+    add({"to_utc", ExpressionCallableKind::FUNCTION, {ColumnType::STRING, ColumnType::STRING}, ColumnType::TIMESTAMP, "Convert an ISO-8601 timestamp to UTC epoch seconds.", "to_utc('2026-07-23 09:00:00', '-07:00')"});
+    add({"from_utc", ExpressionCallableKind::FUNCTION, {ColumnType::TIMESTAMP, ColumnType::STRING}, ColumnType::STRING, "Format a UTC timestamp in an IANA timezone or fixed UTC offset.", "from_utc(time, 'America/Los_Angeles')"});
+    add({"+", ExpressionCallableKind::BINARY_OPERATOR, {ColumnType::INT, ColumnType::INT}, ColumnType::INT, "Add numeric values or a duration to a timestamp.", "1 + 2"});
+    add({"+", ExpressionCallableKind::BINARY_OPERATOR, {ColumnType::TIMESTAMP, ColumnType::DURATION_SECONDS}, ColumnType::TIMESTAMP, "Add numeric values or a duration to a timestamp.", "time + duration_ns(2)"});
+    add({"-", ExpressionCallableKind::BINARY_OPERATOR, {ColumnType::INT, ColumnType::INT}, ColumnType::INT, "Subtract numeric values, timestamps, or durations.", "3 - 1"});
+    add({"-", ExpressionCallableKind::BINARY_OPERATOR, {ColumnType::TIMESTAMP, ColumnType::TIMESTAMP}, ColumnType::DURATION_SECONDS, "Subtract numeric values, timestamps, or durations.", "end_time - time"});
+    add({"-", ExpressionCallableKind::BINARY_OPERATOR, {ColumnType::TIMESTAMP, ColumnType::DURATION_SECONDS}, ColumnType::TIMESTAMP, "Subtract numeric values, timestamps, or durations.", "time - duration_ns(2)"});
+    add({"*", ExpressionCallableKind::BINARY_OPERATOR, {ColumnType::INT, ColumnType::INT}, ColumnType::INT, "Multiply numeric values.", "2 * 3"});
+    add({"/", ExpressionCallableKind::BINARY_OPERATOR, {ColumnType::INT, ColumnType::INT}, ColumnType::INT, "Divide numeric values.", "6 / 2"});
     for (const auto type : {ColumnType::STRING, ColumnType::INT, ColumnType::TIMESTAMP, ColumnType::DURATION_SECONDS, ColumnType::BOOL})
-    { registerCallable(std::make_unique<EqualOperator>(type)); registerCallable(std::make_unique<NotEqualOperator>(type)); registerCallable(std::make_unique<LessOperator>(type)); registerCallable(std::make_unique<LessEqualOperator>(type)); registerCallable(std::make_unique<GreaterOperator>(type)); registerCallable(std::make_unique<GreaterEqualOperator>(type)); }
-    registerCallable(std::make_unique<AndOperator>()); registerCallable(std::make_unique<OrOperator>()); registerCallable(std::make_unique<NotOperator>()); registerCallable(std::make_unique<UnaryPlusOperator>()); registerCallable(std::make_unique<UnaryMinusOperator>());
+    { add({"=", ExpressionCallableKind::BINARY_OPERATOR, {type, type}, ColumnType::BOOL, "Test values for equality.", "value = 1"}); add({"!=", ExpressionCallableKind::BINARY_OPERATOR, {type, type}, ColumnType::BOOL, "Test values for inequality.", "value != 1"}); add({"<", ExpressionCallableKind::BINARY_OPERATOR, {type, type}, ColumnType::BOOL, "Test whether the left value is smaller.", "time < timestamp_ns(1)"}); add({"<=", ExpressionCallableKind::BINARY_OPERATOR, {type, type}, ColumnType::BOOL, "Test whether the left value is not greater.", "value <= 1"}); add({">", ExpressionCallableKind::BINARY_OPERATOR, {type, type}, ColumnType::BOOL, "Test whether the left value is greater.", "value > 1"}); add({">=", ExpressionCallableKind::BINARY_OPERATOR, {type, type}, ColumnType::BOOL, "Test whether the left value is not smaller.", "value >= 1"}); }
+    add({"AND", ExpressionCallableKind::BINARY_OPERATOR, {ColumnType::BOOL, ColumnType::BOOL}, ColumnType::BOOL, "Combine boolean values with logical AND.", "true AND false"}); add({"OR", ExpressionCallableKind::BINARY_OPERATOR, {ColumnType::BOOL, ColumnType::BOOL}, ColumnType::BOOL, "Combine boolean values with logical OR.", "true OR false"}); add({"NOT", ExpressionCallableKind::UNARY_OPERATOR, {ColumnType::BOOL}, ColumnType::BOOL, "Negate a boolean value.", "NOT true"}); add({"+", ExpressionCallableKind::UNARY_OPERATOR, {ColumnType::INT}, ColumnType::INT, "Return a numeric value unchanged.", "+1"}); add({"-", ExpressionCallableKind::UNARY_OPERATOR, {ColumnType::INT}, ColumnType::INT, "Negate a numeric value.", "-1"});
 }
 
 void ExpressionRegistry::registerCallable(std::unique_ptr<IExpressionCallable> callable)

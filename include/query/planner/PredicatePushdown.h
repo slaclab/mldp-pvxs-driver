@@ -8,12 +8,17 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
+/** @file PredicatePushdown.h
+ * @brief Declares predicate pushdown from logical filters into scans. */
 #pragma once
 
 #include <query/plan/LogicalPlan.h>
 
 namespace mldp_pvxs_driver::query::planner {
 
+/** @brief Moves filter predicates as close to their source scans as possible.
+ * @param[in] root Logical plan root.
+ * @return Optimized plan root (may be the same node). */
 plan::LogicalNodePtr applyPredicatePushdown(plan::LogicalNodePtr root);
 
 } // namespace mldp_pvxs_driver::query::planner

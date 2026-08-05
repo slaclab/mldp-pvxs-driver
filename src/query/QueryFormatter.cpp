@@ -9,9 +9,11 @@
 //////////////////////////////////////////////////////////////////////////////
 
 #include <query/QueryFormatter.h>
+#include <query/OstreamOutputStream.h>
 #include <query/QueryCancellation.h>
 
 #include <arrow/array.h>
+#include <arrow/io/interfaces.h>
 #include <arrow/io/memory.h>
 #include <arrow/ipc/writer.h>
 #include <arrow/scalar.h>
@@ -26,6 +28,8 @@ using namespace mldp_pvxs_driver::cli;
 namespace query = mldp_pvxs_driver::query;
 
 namespace {
+
+std::mutex g_format_output_mutex;
 
 void throwIfCancelled(const std::shared_ptr<query::QueryCancellation>& cancellation)
 {
@@ -506,7 +510,8 @@ void writeStackedTable(const std::vector<std::string>&              headers,
 void writeTable(const query::QueryExecutionResult& result,
                 std::ostream&                      output,
                 const TableRenderOptions&          options,
-                const std::shared_ptr<query::QueryCancellation>& cancellation)
+                const std::shared_ptr<query::QueryCancellation>& cancellation,
+                const bool print_header = true)
 {
     if (result.batches.empty())
     {
@@ -586,17 +591,20 @@ void writeTable(const query::QueryExecutionResult& result,
         output << "\n";
     };
 
-    // Header
-    for (int c = 0; c < num_cols; ++c)
+    if (print_header)
     {
-        if (c > 0)
+        // Header
+        for (int c = 0; c < num_cols; ++c)
         {
-            output << " | ";
+            if (c > 0)
+            {
+                output << " | ";
+            }
+            output << std::left << std::setw(static_cast<int>(fitted_widths[c])) << truncateMiddle(headers[c], fitted_widths[c]);
         }
-        output << std::left << std::setw(static_cast<int>(fitted_widths[c])) << truncateMiddle(headers[c], fitted_widths[c]);
+        output << "\n";
+        separator();
     }
-    output << "\n";
-    separator();
 
     // Data rows
     for (const auto& row : rows)
@@ -646,6 +654,79 @@ void mldp_pvxs_driver::cli::formatQueryResult(const query::QueryExecutionResult&
         case QueryOutputFormat::Arrow:
             writeArrowIpc(result, output, cancellation);
             break;
+    }
+}
+
+void mldp_pvxs_driver::cli::formatQueryStream(query::IRecordBatchStream& stream,
+                                               const QueryOutputFormat format,
+                                               std::ostream& output,
+                                               const bool expanded,
+                                               const TableRenderOptions& table_options,
+                                               std::shared_ptr<query::QueryCancellation> cancellation,
+                                               std::shared_ptr<query::QueryProgressTracker> progress,
+                                               std::shared_ptr<std::mutex> output_mutex)
+{
+    bool header_written = false;
+    std::unique_ptr<query::OstreamOutputStream> arrow_stream;
+    std::shared_ptr<arrow::ipc::RecordBatchWriter> arrow_writer;
+    while (auto batch = stream.next())
+    {
+        throwIfCancelled(cancellation);
+        std::unique_lock lock(output_mutex ? *output_mutex : g_format_output_mutex);
+        query::QueryExecutionResult result{.batches = {batch}};
+        switch (format)
+        {
+            case QueryOutputFormat::Table:
+                if (expanded) writeExpanded(result, output, cancellation);
+                else writeTable(result, output, table_options, cancellation, !header_written);
+                break;
+            case QueryOutputFormat::Json:
+                writeJsonLines(result, output, cancellation);
+                break;
+            case QueryOutputFormat::Csv:
+                if (!header_written)
+                {
+                    const auto schema = batch->schema();
+                    for (int col = 0; col < schema->num_fields(); ++col)
+                    {
+                        if (col > 0) output << ",";
+                        output << escapeCsv(schema->field(col)->name());
+                    }
+                    output << "\n";
+                }
+                for (int64_t row = 0; row < batch->num_rows(); ++row)
+                {
+                    for (int col = 0; col < batch->num_columns(); ++col)
+                    {
+                        if (col > 0) output << ",";
+                        const auto scalar = batch->column(col)->GetScalar(row);
+                        if (!scalar.ok()) throw std::runtime_error(scalar.status().ToString());
+                        if (*scalar && (*scalar)->is_valid) output << escapeCsv(csvValue(*scalar));
+                    }
+                    output << "\n";
+                }
+                break;
+            case QueryOutputFormat::Arrow:
+                if (!arrow_writer)
+                {
+                    arrow_stream = std::make_unique<query::OstreamOutputStream>(output);
+                    const auto writer = arrow::ipc::MakeStreamWriter(arrow_stream.get(), batch->schema());
+                    if (!writer.ok()) throw std::runtime_error(writer.status().ToString());
+                    arrow_writer = *writer;
+                }
+                if (const auto status = arrow_writer->WriteRecordBatch(*batch); !status.ok())
+                    throw std::runtime_error(status.ToString());
+                break;
+        }
+        header_written = true;
+        output.flush();
+        if (!output) throw std::runtime_error("Failed to write query output");
+        if (progress) progress->outputBatch(static_cast<uint64_t>(batch->num_rows()));
+    }
+    if (arrow_writer)
+    {
+        if (const auto status = arrow_writer->Close(); !status.ok()) throw std::runtime_error(status.ToString());
+        if (const auto status = arrow_stream->Close(); !status.ok()) throw std::runtime_error(status.ToString());
     }
 }
 

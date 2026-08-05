@@ -3,7 +3,11 @@
 // It is subject to the license terms in the LICENSE.txt file found in the
 // top-level directory of this distribution and at:
 //    https://confluence.slac.stanford.edu/display/ppareg/LICENSE.html.
+// No part of 'mldp-pvxs-driver', including this file,
+// may be copied, modified, propagated, or distributed except according to
+// the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
+
 
 #include <query/executor/ExecutorUtils.h>
 #include <query/executor/ScanExecutionHelpers.h>
@@ -78,7 +82,7 @@ public:
             windows.emplace_back((*scan_.window_literal)[0] * 1'000'000'000LL, (*scan_.window_literal)[1] * 1'000'000'000LL);
         if (windows.empty()) return {};
 
-        return fetchTimeSeriesWindows(scan_, pushable, local, windows, context(), stats());
+        return fetchTimeSeriesWindows(scan_, pushable, local, windows, scan_.window_shards, context(), stats());
     }
 
 private:

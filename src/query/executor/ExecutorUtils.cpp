@@ -8,34 +8,33 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
-#include <query/QueryExecutor.h>
 #include <query/ExpressionRegistry.h>
+#include <query/QueryExecutor.h>
 #include <query/Timezone.h>
 
 #include <query/executor/ExecutorUtils.h>
 #include <query/executor/StateInternal.h>
 
-#include <query/QueryResult.h>
-#include <query/QueryableFactory.h>
-#include <query/QueryTableCatalog.h>
 #include <query/QueryPlanner.h>
+#include <query/QueryTableCatalog.h>
+#include <query/QueryableFactory.h>
 #include <query/SpillManager.h>
 
 #include <algorithm>
-#include <cctype>
-#include <arrow/array/data.h>
 #include <arrow/array/builder_binary.h>
 #include <arrow/array/builder_primitive.h>
+#include <arrow/array/data.h>
 #include <arrow/builder.h>
 #include <arrow/compute/api.h>
 #include <arrow/table.h>
 #include <arrow/type.h>
+#include <cctype>
 
+#include <limits>
+#include <numeric>
 #include <sstream>
 #include <stdexcept>
 #include <unordered_map>
-#include <numeric>
-#include <limits>
 
 using namespace mldp_pvxs_driver::query;
 
@@ -47,19 +46,19 @@ std::string joinOpsImpl(const std::set<PredicateOp>& ops)
     {
         switch (op)
         {
-            case PredicateOp::EQ: return "=";
-            case PredicateOp::NEQ: return "!=";
-            case PredicateOp::LT: return "<";
-            case PredicateOp::LTE: return "<=";
-            case PredicateOp::GT: return ">";
-            case PredicateOp::GTE: return ">=";
-            case PredicateOp::IN: return "IN";
-            case PredicateOp::PREFIX: return "PREFIX";
-            case PredicateOp::CONTAINS: return "CONTAINS";
-            case PredicateOp::LIKE: return "LIKE";
-            case PredicateOp::BETWEEN: return "BETWEEN";
-            case PredicateOp::IS_NULL: return "IS NULL";
-            case PredicateOp::IS_NOT_NULL: return "IS NOT NULL";
+        case PredicateOp::EQ: return "=";
+        case PredicateOp::NEQ: return "!=";
+        case PredicateOp::LT: return "<";
+        case PredicateOp::LTE: return "<=";
+        case PredicateOp::GT: return ">";
+        case PredicateOp::GTE: return ">=";
+        case PredicateOp::IN: return "IN";
+        case PredicateOp::PREFIX: return "PREFIX";
+        case PredicateOp::CONTAINS: return "CONTAINS";
+        case PredicateOp::LIKE: return "LIKE";
+        case PredicateOp::BETWEEN: return "BETWEEN";
+        case PredicateOp::IS_NULL: return "IS NULL";
+        case PredicateOp::IS_NOT_NULL: return "IS NOT NULL";
         }
         return "unknown";
     };
@@ -81,12 +80,12 @@ std::string_view columnTypeNameImpl(const ColumnType type)
 {
     switch (type)
     {
-        case ColumnType::STRING: return "string";
-        case ColumnType::TIMESTAMP: return "timestamp";
-        case ColumnType::DURATION_SECONDS: return "duration_seconds";
-        case ColumnType::INT: return "int";
-        case ColumnType::NATIVE_VALUE: return "native_value";
-        case ColumnType::BOOL: return "bool";
+    case ColumnType::STRING: return "string";
+    case ColumnType::TIMESTAMP: return "timestamp";
+    case ColumnType::DURATION_SECONDS: return "duration_seconds";
+    case ColumnType::INT: return "int";
+    case ColumnType::NATIVE_VALUE: return "native_value";
+    case ColumnType::BOOL: return "bool";
     }
     return "unknown";
 }
@@ -95,13 +94,13 @@ ColumnType columnTypeFromArrowImpl(const std::shared_ptr<arrow::DataType>& type)
 {
     switch (type->id())
     {
-        case arrow::Type::INT64: return ColumnType::INT;
-        case arrow::Type::BOOL: return ColumnType::BOOL;
-        case arrow::Type::TIMESTAMP: return ColumnType::TIMESTAMP;
-        case arrow::Type::DURATION: return ColumnType::DURATION_SECONDS;
-        case arrow::Type::DENSE_UNION:
-        case arrow::Type::SPARSE_UNION: return ColumnType::NATIVE_VALUE;
-        default: return ColumnType::STRING;
+    case arrow::Type::INT64: return ColumnType::INT;
+    case arrow::Type::BOOL: return ColumnType::BOOL;
+    case arrow::Type::TIMESTAMP: return ColumnType::TIMESTAMP;
+    case arrow::Type::DURATION: return ColumnType::DURATION_SECONDS;
+    case arrow::Type::DENSE_UNION:
+    case arrow::Type::SPARSE_UNION: return ColumnType::NATIVE_VALUE;
+    default: return ColumnType::STRING;
     }
 }
 
@@ -126,18 +125,18 @@ int64_t timestampToEpochSeconds(const std::shared_ptr<arrow::TimestampScalar>& s
     const auto type = std::dynamic_pointer_cast<arrow::TimestampType>(scalar->type);
     switch (type->unit())
     {
-        case arrow::TimeUnit::SECOND: return scalar->value;
-        case arrow::TimeUnit::MILLI: return scalar->value / 1'000;
-        case arrow::TimeUnit::MICRO: return scalar->value / 1'000'000;
-        case arrow::TimeUnit::NANO: return scalar->value / 1'000'000'000;
+    case arrow::TimeUnit::SECOND: return scalar->value;
+    case arrow::TimeUnit::MILLI: return scalar->value / 1'000;
+    case arrow::TimeUnit::MICRO: return scalar->value / 1'000'000;
+    case arrow::TimeUnit::NANO: return scalar->value / 1'000'000'000;
     }
     throw std::runtime_error("Unsupported Arrow timestamp unit");
 }
 
 std::vector<ExecutableLiteralValue> extractInSubqueryValuesImpl(
     const std::vector<std::shared_ptr<arrow::RecordBatch>>& batches,
-    const ColumnType target_type,
-    const std::string_view target_column)
+    const ColumnType                                        target_type,
+    const std::string_view                                  target_column)
 {
     std::vector<ExecutableLiteralValue> values;
     for (const auto& batch : batches)
@@ -151,48 +150,48 @@ std::vector<ExecutableLiteralValue> extractInSubqueryValuesImpl(
                 throw std::runtime_error("IN (SELECT ...) for column '" + std::string(target_column) + "' returned a null value");
             switch (target_type)
             {
-                case ColumnType::STRING:
-                    if ((*scalar)->type->id() != arrow::Type::STRING)
-                        throw std::runtime_error("IN (SELECT ...) for string column '" + std::string(target_column) + "' requires Arrow string output");
-                    values.emplace_back(std::dynamic_pointer_cast<arrow::StringScalar>(*scalar)->ToString());
-                    break;
-                case ColumnType::BOOL:
-                    if ((*scalar)->type->id() != arrow::Type::BOOL)
-                        throw std::runtime_error("IN (SELECT ...) for bool column '" + std::string(target_column) + "' requires Arrow boolean output");
-                    values.emplace_back(std::dynamic_pointer_cast<arrow::BooleanScalar>(*scalar)->value);
-                    break;
-                case ColumnType::INT:
-                case ColumnType::DURATION_SECONDS:
-                    switch ((*scalar)->type->id())
+            case ColumnType::STRING:
+                if ((*scalar)->type->id() != arrow::Type::STRING)
+                    throw std::runtime_error("IN (SELECT ...) for string column '" + std::string(target_column) + "' requires Arrow string output");
+                values.emplace_back(std::dynamic_pointer_cast<arrow::StringScalar>(*scalar)->ToString());
+                break;
+            case ColumnType::BOOL:
+                if ((*scalar)->type->id() != arrow::Type::BOOL)
+                    throw std::runtime_error("IN (SELECT ...) for bool column '" + std::string(target_column) + "' requires Arrow boolean output");
+                values.emplace_back(std::dynamic_pointer_cast<arrow::BooleanScalar>(*scalar)->value);
+                break;
+            case ColumnType::INT:
+            case ColumnType::DURATION_SECONDS:
+                switch ((*scalar)->type->id())
+                {
+                case arrow::Type::INT8:
+                case arrow::Type::INT16:
+                case arrow::Type::INT32:
+                case arrow::Type::INT64:
+                case arrow::Type::UINT8:
+                case arrow::Type::UINT16:
+                case arrow::Type::UINT32:
+                case arrow::Type::UINT64:
+                    try
                     {
-                        case arrow::Type::INT8:
-                        case arrow::Type::INT16:
-                        case arrow::Type::INT32:
-                        case arrow::Type::INT64:
-                        case arrow::Type::UINT8:
-                        case arrow::Type::UINT16:
-                        case arrow::Type::UINT32:
-                        case arrow::Type::UINT64:
-                            try
-                            {
-                                values.emplace_back(std::stoll((*scalar)->ToString()));
-                            }
-                            catch (const std::exception&)
-                            {
-                                throw std::runtime_error("IN (SELECT ...) value cannot be represented as int64 for column '" + std::string(target_column) + "'");
-                            }
-                            break;
-                        default:
-                            throw std::runtime_error("IN (SELECT ...) for integral column '" + std::string(target_column) + "' requires Arrow integral output");
+                        values.emplace_back(std::stoll((*scalar)->ToString()));
+                    }
+                    catch (const std::exception&)
+                    {
+                        throw std::runtime_error("IN (SELECT ...) value cannot be represented as int64 for column '" + std::string(target_column) + "'");
                     }
                     break;
-                case ColumnType::NATIVE_VALUE:
-                    throw std::runtime_error("IN (SELECT ...) is not supported for native value columns");
-                case ColumnType::TIMESTAMP:
-                    if ((*scalar)->type->id() != arrow::Type::TIMESTAMP)
-                        throw std::runtime_error("IN (SELECT ...) for timestamp column '" + std::string(target_column) + "' requires Arrow timestamp output");
-                    values.emplace_back(timestampToEpochSeconds(std::dynamic_pointer_cast<arrow::TimestampScalar>(*scalar)));
-                    break;
+                default:
+                    throw std::runtime_error("IN (SELECT ...) for integral column '" + std::string(target_column) + "' requires Arrow integral output");
+                }
+                break;
+            case ColumnType::NATIVE_VALUE:
+                throw std::runtime_error("IN (SELECT ...) is not supported for native value columns");
+            case ColumnType::TIMESTAMP:
+                if ((*scalar)->type->id() != arrow::Type::TIMESTAMP)
+                    throw std::runtime_error("IN (SELECT ...) for timestamp column '" + std::string(target_column) + "' requires Arrow timestamp output");
+                values.emplace_back(timestampToEpochSeconds(std::dynamic_pointer_cast<arrow::TimestampScalar>(*scalar)));
+                break;
             }
         }
     }
@@ -210,7 +209,8 @@ std::vector<std::pair<int64_t, int64_t>> extractNormalizedWindowsImpl(const std:
         {
             const auto time = batch->column(0)->GetScalar(row);
             const auto end = batch->column(1)->GetScalar(row);
-            if (!time.ok() || !end.ok()) throw std::runtime_error("Failed to read MLDP time-series window subquery result");
+            if (!time.ok() || !end.ok())
+                throw std::runtime_error("Failed to read MLDP time-series window subquery result");
             const auto begin_ns = timestampScalarValue(*time, "position 1");
             const auto end_ns = timestampScalarValue(*end, "position 2");
             if (end_ns < begin_ns)
@@ -232,8 +232,14 @@ std::vector<std::pair<int64_t, int64_t>> extractNormalizedWindowsImpl(const std:
 
 bool matchesLikePatternImpl(std::string_view value, std::string_view pattern)
 {
-    struct PatternToken {
-        enum class Type { LITERAL, ANY, SINGLE };
+    struct PatternToken
+    {
+        enum class Type
+        {
+            LITERAL,
+            ANY,
+            SINGLE
+        };
         Type type;
         char value{};
     };
@@ -314,7 +320,7 @@ struct NativeScalar
         UNSUPPORTED
     };
 
-    Kind kind{Kind::UNSUPPORTED};
+    Kind                                                                       kind{Kind::UNSUPPORTED};
     std::variant<std::monostate, std::string, bool, int64_t, uint64_t, double> value;
 };
 
@@ -337,36 +343,41 @@ NativeScalar nativeScalarFromArrow(std::shared_ptr<arrow::Scalar> scalar)
 
     switch (scalar->type->id())
     {
-        case arrow::Type::STRING:
+    case arrow::Type::STRING:
         {
             const auto value = std::dynamic_pointer_cast<arrow::StringScalar>(scalar)->value;
             return {.kind = NativeScalar::Kind::STRING,
                     .value = value ? std::string(reinterpret_cast<const char*>(value->data()), static_cast<std::size_t>(value->size())) : std::string{}};
         }
-        case arrow::Type::BOOL: return {.kind = NativeScalar::Kind::BOOLEAN, .value = std::dynamic_pointer_cast<arrow::BooleanScalar>(scalar)->value};
-        case arrow::Type::INT8: return {.kind = NativeScalar::Kind::SIGNED_INTEGER, .value = static_cast<int64_t>(std::dynamic_pointer_cast<arrow::Int8Scalar>(scalar)->value)};
-        case arrow::Type::INT16: return {.kind = NativeScalar::Kind::SIGNED_INTEGER, .value = static_cast<int64_t>(std::dynamic_pointer_cast<arrow::Int16Scalar>(scalar)->value)};
-        case arrow::Type::INT32: return {.kind = NativeScalar::Kind::SIGNED_INTEGER, .value = static_cast<int64_t>(std::dynamic_pointer_cast<arrow::Int32Scalar>(scalar)->value)};
-        case arrow::Type::INT64: return {.kind = NativeScalar::Kind::SIGNED_INTEGER, .value = std::dynamic_pointer_cast<arrow::Int64Scalar>(scalar)->value};
-        case arrow::Type::UINT8: return {.kind = NativeScalar::Kind::UNSIGNED_INTEGER, .value = static_cast<uint64_t>(std::dynamic_pointer_cast<arrow::UInt8Scalar>(scalar)->value)};
-        case arrow::Type::UINT16: return {.kind = NativeScalar::Kind::UNSIGNED_INTEGER, .value = static_cast<uint64_t>(std::dynamic_pointer_cast<arrow::UInt16Scalar>(scalar)->value)};
-        case arrow::Type::UINT32: return {.kind = NativeScalar::Kind::UNSIGNED_INTEGER, .value = static_cast<uint64_t>(std::dynamic_pointer_cast<arrow::UInt32Scalar>(scalar)->value)};
-        case arrow::Type::UINT64: return {.kind = NativeScalar::Kind::UNSIGNED_INTEGER, .value = std::dynamic_pointer_cast<arrow::UInt64Scalar>(scalar)->value};
-        case arrow::Type::FLOAT: return {.kind = NativeScalar::Kind::FLOATING_POINT, .value = static_cast<double>(std::dynamic_pointer_cast<arrow::FloatScalar>(scalar)->value)};
-        case arrow::Type::DOUBLE: return {.kind = NativeScalar::Kind::FLOATING_POINT, .value = std::dynamic_pointer_cast<arrow::DoubleScalar>(scalar)->value};
-        case arrow::Type::TIMESTAMP: return {.kind = NativeScalar::Kind::TIMESTAMP, .value = std::dynamic_pointer_cast<arrow::TimestampScalar>(scalar)->value};
-        case arrow::Type::DURATION: return {.kind = NativeScalar::Kind::DURATION, .value = std::dynamic_pointer_cast<arrow::DurationScalar>(scalar)->value};
-        default: return {};
+    case arrow::Type::BOOL: return {.kind = NativeScalar::Kind::BOOLEAN, .value = std::dynamic_pointer_cast<arrow::BooleanScalar>(scalar)->value};
+    case arrow::Type::INT8: return {.kind = NativeScalar::Kind::SIGNED_INTEGER, .value = static_cast<int64_t>(std::dynamic_pointer_cast<arrow::Int8Scalar>(scalar)->value)};
+    case arrow::Type::INT16: return {.kind = NativeScalar::Kind::SIGNED_INTEGER, .value = static_cast<int64_t>(std::dynamic_pointer_cast<arrow::Int16Scalar>(scalar)->value)};
+    case arrow::Type::INT32: return {.kind = NativeScalar::Kind::SIGNED_INTEGER, .value = static_cast<int64_t>(std::dynamic_pointer_cast<arrow::Int32Scalar>(scalar)->value)};
+    case arrow::Type::INT64: return {.kind = NativeScalar::Kind::SIGNED_INTEGER, .value = std::dynamic_pointer_cast<arrow::Int64Scalar>(scalar)->value};
+    case arrow::Type::UINT8: return {.kind = NativeScalar::Kind::UNSIGNED_INTEGER, .value = static_cast<uint64_t>(std::dynamic_pointer_cast<arrow::UInt8Scalar>(scalar)->value)};
+    case arrow::Type::UINT16: return {.kind = NativeScalar::Kind::UNSIGNED_INTEGER, .value = static_cast<uint64_t>(std::dynamic_pointer_cast<arrow::UInt16Scalar>(scalar)->value)};
+    case arrow::Type::UINT32: return {.kind = NativeScalar::Kind::UNSIGNED_INTEGER, .value = static_cast<uint64_t>(std::dynamic_pointer_cast<arrow::UInt32Scalar>(scalar)->value)};
+    case arrow::Type::UINT64: return {.kind = NativeScalar::Kind::UNSIGNED_INTEGER, .value = std::dynamic_pointer_cast<arrow::UInt64Scalar>(scalar)->value};
+    case arrow::Type::FLOAT: return {.kind = NativeScalar::Kind::FLOATING_POINT, .value = static_cast<double>(std::dynamic_pointer_cast<arrow::FloatScalar>(scalar)->value)};
+    case arrow::Type::DOUBLE: return {.kind = NativeScalar::Kind::FLOATING_POINT, .value = std::dynamic_pointer_cast<arrow::DoubleScalar>(scalar)->value};
+    case arrow::Type::TIMESTAMP: return {.kind = NativeScalar::Kind::TIMESTAMP, .value = std::dynamic_pointer_cast<arrow::TimestampScalar>(scalar)->value};
+    case arrow::Type::DURATION: return {.kind = NativeScalar::Kind::DURATION, .value = std::dynamic_pointer_cast<arrow::DurationScalar>(scalar)->value};
+    default: return {};
     }
 }
 
 NativeScalar nativeScalarFromLiteral(const ExecutableLiteralValue& literal)
 {
-    if (std::holds_alternative<std::string>(literal)) return {.kind = NativeScalar::Kind::STRING, .value = std::get<std::string>(literal)};
-    if (std::holds_alternative<int64_t>(literal)) return {.kind = NativeScalar::Kind::SIGNED_INTEGER, .value = std::get<int64_t>(literal)};
-    if (std::holds_alternative<double>(literal)) return {.kind = NativeScalar::Kind::FLOATING_POINT, .value = std::get<double>(literal)};
-    if (std::holds_alternative<bool>(literal)) return {.kind = NativeScalar::Kind::BOOLEAN, .value = std::get<bool>(literal)};
-    if (std::holds_alternative<TimestampNsLiteral>(literal)) return {.kind = NativeScalar::Kind::TIMESTAMP, .value = std::get<TimestampNsLiteral>(literal).value};
+    if (std::holds_alternative<std::string>(literal))
+        return {.kind = NativeScalar::Kind::STRING, .value = std::get<std::string>(literal)};
+    if (std::holds_alternative<int64_t>(literal))
+        return {.kind = NativeScalar::Kind::SIGNED_INTEGER, .value = std::get<int64_t>(literal)};
+    if (std::holds_alternative<double>(literal))
+        return {.kind = NativeScalar::Kind::FLOATING_POINT, .value = std::get<double>(literal)};
+    if (std::holds_alternative<bool>(literal))
+        return {.kind = NativeScalar::Kind::BOOLEAN, .value = std::get<bool>(literal)};
+    if (std::holds_alternative<TimestampNsLiteral>(literal))
+        return {.kind = NativeScalar::Kind::TIMESTAMP, .value = std::get<TimestampNsLiteral>(literal).value};
     return {.kind = NativeScalar::Kind::DURATION, .value = std::get<DurationNsLiteral>(literal).value};
 }
 
@@ -386,16 +397,23 @@ bool scalarMatchesPredicate(const std::shared_ptr<arrow::Scalar>& scalar, const 
     }
 
     const auto native_value = nativeScalarFromArrow(scalar);
-    if (native_value.kind == NativeScalar::Kind::NULL_VALUE || native_value.kind == NativeScalar::Kind::UNSUPPORTED) return false;
+    if (native_value.kind == NativeScalar::Kind::NULL_VALUE || native_value.kind == NativeScalar::Kind::UNSUPPORTED)
+        return false;
 
     const auto compareNumeric = [](const double lhs, const double rhs, const PredicateOp op)
     {
-        if (op == PredicateOp::EQ) return lhs == rhs;
-        if (op == PredicateOp::NEQ) return lhs != rhs;
-        if (op == PredicateOp::LT) return lhs < rhs;
-        if (op == PredicateOp::LTE) return lhs <= rhs;
-        if (op == PredicateOp::GT) return lhs > rhs;
-        if (op == PredicateOp::GTE) return lhs >= rhs;
+        if (op == PredicateOp::EQ)
+            return lhs == rhs;
+        if (op == PredicateOp::NEQ)
+            return lhs != rhs;
+        if (op == PredicateOp::LT)
+            return lhs < rhs;
+        if (op == PredicateOp::LTE)
+            return lhs <= rhs;
+        if (op == PredicateOp::GT)
+            return lhs > rhs;
+        if (op == PredicateOp::GTE)
+            return lhs >= rhs;
         return false;
     };
 
@@ -409,6 +427,12 @@ bool scalarMatchesPredicate(const std::shared_ptr<arrow::Scalar>& scalar, const 
         if (native_value.kind == NativeScalar::Kind::TIMESTAMP && native_literal.kind == NativeScalar::Kind::SIGNED_INTEGER)
         {
             const auto lhs = std::get<int64_t>(native_value.value) / 1'000'000'000LL;
+            const auto rhs = std::get<int64_t>(native_literal.value);
+            return compareNumeric(lhs, rhs, op);
+        }
+        if (native_value.kind == NativeScalar::Kind::TIMESTAMP && native_literal.kind == NativeScalar::Kind::TIMESTAMP)
+        {
+            const auto lhs = std::get<int64_t>(native_value.value);
             const auto rhs = std::get<int64_t>(native_literal.value);
             return compareNumeric(lhs, rhs, op);
         }
@@ -444,8 +468,10 @@ bool scalarMatchesPredicate(const std::shared_ptr<arrow::Scalar>& scalar, const 
         {
             const auto as_double = [](const NativeScalar& value)
             {
-                if (value.kind == NativeScalar::Kind::SIGNED_INTEGER) return static_cast<double>(std::get<int64_t>(value.value));
-                if (value.kind == NativeScalar::Kind::UNSIGNED_INTEGER) return static_cast<double>(std::get<uint64_t>(value.value));
+                if (value.kind == NativeScalar::Kind::SIGNED_INTEGER)
+                    return static_cast<double>(std::get<int64_t>(value.value));
+                if (value.kind == NativeScalar::Kind::UNSIGNED_INTEGER)
+                    return static_cast<double>(std::get<uint64_t>(value.value));
                 return std::get<double>(value.value);
             };
             return compareNumeric(as_double(native_value), as_double(native_literal), op);
@@ -498,13 +524,16 @@ bool scalarMatchesPredicate(const std::shared_ptr<arrow::Scalar>& scalar, const 
                 return std::get<int64_t>(native_value.value) >= std::get<DurationNsLiteral>(predicate.values[0]).value && std::get<int64_t>(native_value.value) <= std::get<DurationNsLiteral>(predicate.values[1]).value;
             return false;
         }
-        if (native_value.kind != NativeScalar::Kind::SIGNED_INTEGER && native_value.kind != NativeScalar::Kind::UNSIGNED_INTEGER && native_value.kind != NativeScalar::Kind::FLOATING_POINT) return false;
-        const auto numeric = [](const auto& value) { return std::holds_alternative<int64_t>(value) ? static_cast<double>(std::get<int64_t>(value)) : std::get<double>(value); };
+        if (native_value.kind != NativeScalar::Kind::SIGNED_INTEGER && native_value.kind != NativeScalar::Kind::UNSIGNED_INTEGER && native_value.kind != NativeScalar::Kind::FLOATING_POINT)
+            return false;
+        const auto numeric = [](const auto& value)
+        {
+            return std::holds_alternative<int64_t>(value) ? static_cast<double>(std::get<int64_t>(value)) : std::get<double>(value);
+        };
         const auto lo = numeric(predicate.values[0]);
         const auto hi = numeric(predicate.values[1]);
-        const auto value = native_value.kind == NativeScalar::Kind::SIGNED_INTEGER ? static_cast<double>(std::get<int64_t>(native_value.value)) :
-                           native_value.kind == NativeScalar::Kind::UNSIGNED_INTEGER ? static_cast<double>(std::get<uint64_t>(native_value.value)) :
-                                                                                       std::get<double>(native_value.value);
+        const auto value = native_value.kind == NativeScalar::Kind::SIGNED_INTEGER ? static_cast<double>(std::get<int64_t>(native_value.value)) : native_value.kind == NativeScalar::Kind::UNSIGNED_INTEGER ? static_cast<double>(std::get<uint64_t>(native_value.value))
+                                                                                                                                                                                                            : std::get<double>(native_value.value);
         return value >= lo && value <= hi;
     }
 
@@ -540,13 +569,14 @@ bool listContainsPredicateValue(const std::shared_ptr<arrow::Scalar>& scalar, co
 bool hasUnionColumn(const std::shared_ptr<arrow::RecordBatch>& batch)
 {
     return std::any_of(batch->columns().begin(), batch->columns().end(), [](const std::shared_ptr<arrow::Array>& column)
-    {
-        return column->type_id() == arrow::Type::DENSE_UNION || column->type_id() == arrow::Type::SPARSE_UNION;
-    });
+                       {
+                           return column->type_id() == arrow::Type::DENSE_UNION || column->type_id() == arrow::Type::SPARSE_UNION;
+                       });
 }
 
 arrow::Result<std::shared_ptr<arrow::RecordBatch>> selectUnionSafeRows(
-    const std::shared_ptr<arrow::RecordBatch>& batch, const std::vector<int64_t>& selected_rows)
+    const std::shared_ptr<arrow::RecordBatch>& batch,
+    const std::vector<int64_t>&                selected_rows)
 {
     std::vector<std::shared_ptr<arrow::Array>> columns;
     columns.reserve(batch->num_columns());
@@ -557,7 +587,7 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> selectUnionSafeRows(
         const arrow::ArraySpan source_span(*source->data());
         for (std::size_t begin = 0; begin < selected_rows.size();)
         {
-            const auto first_row = selected_rows[begin];
+            const auto  first_row = selected_rows[begin];
             std::size_t end = begin + 1;
             while (end < selected_rows.size() && selected_rows[end] == selected_rows[end - 1] + 1)
             {
@@ -574,10 +604,10 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> selectUnionSafeRows(
 }
 
 arrow::Result<std::shared_ptr<arrow::RecordBatch>> applyFilterImpl(const std::shared_ptr<arrow::RecordBatch>& batch,
-                                                               const std::vector<Predicate>&              predicates)
+                                                                   const std::vector<Predicate>&              predicates)
 {
     arrow::BooleanBuilder mask_builder;
-    std::vector<int64_t> selected_rows;
+    std::vector<int64_t>  selected_rows;
     for (int64_t row = 0; row < batch->num_rows(); ++row)
     {
         bool include = true;
@@ -657,7 +687,7 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> applyFilterImpl(const std::sh
 
 std::vector<std::shared_ptr<arrow::RecordBatch>>
 applyProjectionImpl(const std::vector<std::shared_ptr<arrow::RecordBatch>>& input,
-                const std::vector<std::string>&                         columns)
+                    const std::vector<std::string>&                         columns)
 {
     if (columns.empty())
     {
@@ -692,98 +722,134 @@ applyProjectionImpl(const std::vector<std::shared_ptr<arrow::RecordBatch>>& inpu
 
 std::shared_ptr<arrow::Scalar> evaluateExpression(const ExpressionPtr& expression, const std::shared_ptr<arrow::RecordBatch>& batch, const int64_t row)
 {
-    if (!expression) throw std::runtime_error("Missing expression");
+    if (!expression)
+        throw std::runtime_error("Missing expression");
     return std::visit([&](const auto& value) -> std::shared_ptr<arrow::Scalar>
-    {
-        using T = std::decay_t<decltype(value)>;
-        if constexpr (std::is_same_v<T, QualifiedColumn>)
-        {
-            const auto index = batch->schema()->GetFieldIndex(value.name);
-            if (index < 0) throw std::runtime_error("Expression references unknown column: " + value.name);
-            auto scalar = batch->column(index)->GetScalar(row);
-            if (!scalar.ok()) throw std::runtime_error(scalar.status().ToString());
-            return *scalar;
-        }
-        else if constexpr (std::is_same_v<T, LiteralValue>)
-        {
-            if (std::holds_alternative<int64_t>(value)) return std::make_shared<arrow::Int64Scalar>(std::get<int64_t>(value));
-            if (std::holds_alternative<bool>(value)) return std::make_shared<arrow::BooleanScalar>(std::get<bool>(value));
-            if (std::holds_alternative<std::string>(value)) return std::make_shared<arrow::StringScalar>(std::get<std::string>(value));
-            if (std::holds_alternative<TimestampNsLiteral>(value)) return std::make_shared<arrow::TimestampScalar>(std::get<TimestampNsLiteral>(value).value, arrow::timestamp(arrow::TimeUnit::NANO));
-            if (std::holds_alternative<DurationNsLiteral>(value)) return std::make_shared<arrow::DurationScalar>(std::get<DurationNsLiteral>(value).value, arrow::duration(arrow::TimeUnit::NANO));
-            throw std::runtime_error("Unsupported literal in expression evaluator");
-        }
-        else if constexpr (std::is_same_v<T, UnaryExpression>)
-        {
-            const auto operand = evaluateExpression(value.operand, batch, row);
-            if (!operand->is_valid) return std::make_shared<arrow::NullScalar>();
-            if (value.operator_name == "NOT") return std::make_shared<arrow::BooleanScalar>(!std::static_pointer_cast<arrow::BooleanScalar>(operand)->value);
-            const auto integer = std::static_pointer_cast<arrow::Int64Scalar>(operand)->value;
-            return std::make_shared<arrow::Int64Scalar>(value.operator_name == "-" ? -integer : integer);
-        }
-        else if constexpr (std::is_same_v<T, BinaryExpression>)
-        {
-            const auto left = evaluateExpression(value.left, batch, row);
-            const auto right = evaluateExpression(value.right, batch, row);
-            if (!left->is_valid || !right->is_valid) return std::make_shared<arrow::NullScalar>();
-            if (left->type->id() == arrow::Type::BOOL && right->type->id() == arrow::Type::BOOL)
-            {
-                const auto lhs = std::static_pointer_cast<arrow::BooleanScalar>(left)->value;
-                const auto rhs = std::static_pointer_cast<arrow::BooleanScalar>(right)->value;
-                if (value.operator_name == "AND") return std::make_shared<arrow::BooleanScalar>(lhs && rhs);
-                if (value.operator_name == "OR") return std::make_shared<arrow::BooleanScalar>(lhs || rhs);
-            }
-            const auto integerValue = [&](const std::shared_ptr<arrow::Scalar>& scalar) -> int64_t
-            {
-                if (scalar->type->id() == arrow::Type::INT64) return std::static_pointer_cast<arrow::Int64Scalar>(scalar)->value;
-                if (scalar->type->id() == arrow::Type::TIMESTAMP) return std::static_pointer_cast<arrow::TimestampScalar>(scalar)->value;
-                if (scalar->type->id() == arrow::Type::DURATION) return std::static_pointer_cast<arrow::DurationScalar>(scalar)->value;
-                throw std::runtime_error("Expression operator " + value.operator_name + " requires numeric or temporal operands");
-            };
-            const auto lhs = integerValue(left);
-            const auto rhs = integerValue(right);
-            const auto temporalResult = [&](const int64_t result) -> std::shared_ptr<arrow::Scalar>
-            {
-                if (left->type->id() == arrow::Type::TIMESTAMP && right->type->id() == arrow::Type::DURATION && (value.operator_name == "+" || value.operator_name == "-"))
-                    return std::make_shared<arrow::TimestampScalar>(result, left->type);
-                if (left->type->id() == arrow::Type::TIMESTAMP && right->type->id() == arrow::Type::TIMESTAMP && value.operator_name == "-")
-                    return std::make_shared<arrow::DurationScalar>(result, arrow::duration(arrow::TimeUnit::NANO));
-                return std::make_shared<arrow::Int64Scalar>(result);
-            };
-            if (value.operator_name == "+") return temporalResult(lhs + rhs);
-            if (value.operator_name == "-") return temporalResult(lhs - rhs);
-            if (value.operator_name == "*") return std::make_shared<arrow::Int64Scalar>(lhs * rhs);
-            if (value.operator_name == "/") { if (rhs == 0) throw std::runtime_error("/ divide by zero"); return std::make_shared<arrow::Int64Scalar>(lhs / rhs); }
-            if (value.operator_name == "=") return std::make_shared<arrow::BooleanScalar>(lhs == rhs);
-            if (value.operator_name == "!=") return std::make_shared<arrow::BooleanScalar>(lhs != rhs);
-            if (value.operator_name == "<") return std::make_shared<arrow::BooleanScalar>(lhs < rhs);
-            if (value.operator_name == "<=") return std::make_shared<arrow::BooleanScalar>(lhs <= rhs);
-            if (value.operator_name == ">") return std::make_shared<arrow::BooleanScalar>(lhs > rhs);
-            if (value.operator_name == ">=") return std::make_shared<arrow::BooleanScalar>(lhs >= rhs);
-            throw std::runtime_error("Unsupported expression operator: " + value.operator_name);
-        }
-        else if constexpr (std::is_same_v<T, FunctionCall>)
-        {
-            std::string name = value.name;
-            std::transform(name.begin(), name.end(), name.begin(), [](const unsigned char character) { return static_cast<char>(std::tolower(character)); });
-            if (name == "from_utc")
-            {
-                if (value.arguments.size() != 2) throw std::runtime_error("from_utc has no matching overload");
-                const auto timestamp = evaluateExpression(value.arguments[0], batch, row);
-                const auto zone = evaluateExpression(value.arguments[1], batch, row);
-                if (!timestamp->is_valid || !zone->is_valid) return std::make_shared<arrow::StringScalar>();
-                if (timestamp->type->id() != arrow::Type::TIMESTAMP || zone->type->id() != arrow::Type::STRING)
-                    throw std::runtime_error("from_utc has no matching overload");
-                return std::make_shared<arrow::StringScalar>(fromUtc(*std::static_pointer_cast<arrow::TimestampScalar>(timestamp), std::static_pointer_cast<arrow::StringScalar>(zone)->value->ToString()));
-            }
-            throw std::runtime_error("Function evaluation is not implemented: " + value.name);
-        }
-    }, expression->value);
+                      {
+                          using T = std::decay_t<decltype(value)>;
+                          if constexpr (std::is_same_v<T, QualifiedColumn>)
+                          {
+                              const auto index = batch->schema()->GetFieldIndex(value.name);
+                              if (index < 0)
+                                  throw std::runtime_error("Expression references unknown column: " + value.name);
+                              auto scalar = batch->column(index)->GetScalar(row);
+                              if (!scalar.ok())
+                                  throw std::runtime_error(scalar.status().ToString());
+                              return *scalar;
+                          }
+                          else if constexpr (std::is_same_v<T, LiteralValue>)
+                          {
+                              if (std::holds_alternative<int64_t>(value))
+                                  return std::make_shared<arrow::Int64Scalar>(std::get<int64_t>(value));
+                              if (std::holds_alternative<bool>(value))
+                                  return std::make_shared<arrow::BooleanScalar>(std::get<bool>(value));
+                              if (std::holds_alternative<std::string>(value))
+                                  return std::make_shared<arrow::StringScalar>(std::get<std::string>(value));
+                              if (std::holds_alternative<TimestampNsLiteral>(value))
+                                  return std::make_shared<arrow::TimestampScalar>(std::get<TimestampNsLiteral>(value).value, arrow::timestamp(arrow::TimeUnit::NANO));
+                              if (std::holds_alternative<DurationNsLiteral>(value))
+                                  return std::make_shared<arrow::DurationScalar>(std::get<DurationNsLiteral>(value).value, arrow::duration(arrow::TimeUnit::NANO));
+                              throw std::runtime_error("Unsupported literal in expression evaluator");
+                          }
+                          else if constexpr (std::is_same_v<T, UnaryExpression>)
+                          {
+                              const auto operand = evaluateExpression(value.operand, batch, row);
+                              if (!operand->is_valid)
+                                  return std::make_shared<arrow::NullScalar>();
+                              if (value.operator_name == "NOT")
+                                  return std::make_shared<arrow::BooleanScalar>(!std::static_pointer_cast<arrow::BooleanScalar>(operand)->value);
+                              const auto integer = std::static_pointer_cast<arrow::Int64Scalar>(operand)->value;
+                              return std::make_shared<arrow::Int64Scalar>(value.operator_name == "-" ? -integer : integer);
+                          }
+                          else if constexpr (std::is_same_v<T, BinaryExpression>)
+                          {
+                              const auto left = evaluateExpression(value.left, batch, row);
+                              const auto right = evaluateExpression(value.right, batch, row);
+                              if (!left->is_valid || !right->is_valid)
+                                  return std::make_shared<arrow::NullScalar>();
+                              if (left->type->id() == arrow::Type::BOOL && right->type->id() == arrow::Type::BOOL)
+                              {
+                                  const auto lhs = std::static_pointer_cast<arrow::BooleanScalar>(left)->value;
+                                  const auto rhs = std::static_pointer_cast<arrow::BooleanScalar>(right)->value;
+                                  if (value.operator_name == "AND")
+                                      return std::make_shared<arrow::BooleanScalar>(lhs && rhs);
+                                  if (value.operator_name == "OR")
+                                      return std::make_shared<arrow::BooleanScalar>(lhs || rhs);
+                              }
+                              const auto integerValue = [&](const std::shared_ptr<arrow::Scalar>& scalar) -> int64_t
+                              {
+                                  if (scalar->type->id() == arrow::Type::INT64)
+                                      return std::static_pointer_cast<arrow::Int64Scalar>(scalar)->value;
+                                  if (scalar->type->id() == arrow::Type::TIMESTAMP)
+                                      return std::static_pointer_cast<arrow::TimestampScalar>(scalar)->value;
+                                  if (scalar->type->id() == arrow::Type::DURATION)
+                                      return std::static_pointer_cast<arrow::DurationScalar>(scalar)->value;
+                                  throw std::runtime_error("Expression operator " + value.operator_name + " requires numeric or temporal operands");
+                              };
+                              const auto lhs = integerValue(left);
+                              const auto rhs = integerValue(right);
+                              const auto temporalResult = [&](const int64_t result) -> std::shared_ptr<arrow::Scalar>
+                              {
+                                  if (left->type->id() == arrow::Type::TIMESTAMP && right->type->id() == arrow::Type::DURATION && (value.operator_name == "+" || value.operator_name == "-"))
+                                      return std::make_shared<arrow::TimestampScalar>(result, left->type);
+                                  if (left->type->id() == arrow::Type::TIMESTAMP && right->type->id() == arrow::Type::TIMESTAMP && value.operator_name == "-")
+                                      return std::make_shared<arrow::DurationScalar>(result, arrow::duration(arrow::TimeUnit::NANO));
+                                  return std::make_shared<arrow::Int64Scalar>(result);
+                              };
+                              if (value.operator_name == "+")
+                                  return temporalResult(lhs + rhs);
+                              if (value.operator_name == "-")
+                                  return temporalResult(lhs - rhs);
+                              if (value.operator_name == "*")
+                                  return std::make_shared<arrow::Int64Scalar>(lhs * rhs);
+                              if (value.operator_name == "/")
+                              {
+                                  if (rhs == 0)
+                                      throw std::runtime_error("/ divide by zero");
+                                  return std::make_shared<arrow::Int64Scalar>(lhs / rhs);
+                              }
+                              if (value.operator_name == "=")
+                                  return std::make_shared<arrow::BooleanScalar>(lhs == rhs);
+                              if (value.operator_name == "!=")
+                                  return std::make_shared<arrow::BooleanScalar>(lhs != rhs);
+                              if (value.operator_name == "<")
+                                  return std::make_shared<arrow::BooleanScalar>(lhs < rhs);
+                              if (value.operator_name == "<=")
+                                  return std::make_shared<arrow::BooleanScalar>(lhs <= rhs);
+                              if (value.operator_name == ">")
+                                  return std::make_shared<arrow::BooleanScalar>(lhs > rhs);
+                              if (value.operator_name == ">=")
+                                  return std::make_shared<arrow::BooleanScalar>(lhs >= rhs);
+                              throw std::runtime_error("Unsupported expression operator: " + value.operator_name);
+                          }
+                          else if constexpr (std::is_same_v<T, FunctionCall>)
+                          {
+                              std::string name = value.name;
+                              std::transform(name.begin(), name.end(), name.begin(), [](const unsigned char character)
+                                             {
+                                                 return static_cast<char>(std::tolower(character));
+                                             });
+                              if (name == "from_utc")
+                              {
+                                  if (value.arguments.size() != 2)
+                                      throw std::runtime_error("from_utc has no matching overload");
+                                  const auto timestamp = evaluateExpression(value.arguments[0], batch, row);
+                                  const auto zone = evaluateExpression(value.arguments[1], batch, row);
+                                  if (!timestamp->is_valid || !zone->is_valid)
+                                      return std::make_shared<arrow::StringScalar>();
+                                  if (timestamp->type->id() != arrow::Type::TIMESTAMP || zone->type->id() != arrow::Type::STRING)
+                                      throw std::runtime_error("from_utc has no matching overload");
+                                  return std::make_shared<arrow::StringScalar>(fromUtc(*std::static_pointer_cast<arrow::TimestampScalar>(timestamp), std::static_pointer_cast<arrow::StringScalar>(zone)->value->ToString()));
+                              }
+                              throw std::runtime_error("Function evaluation is not implemented: " + value.name);
+                          }
+                      },
+                      expression->value);
 }
 
 std::vector<std::shared_ptr<arrow::RecordBatch>> applyExpressionProjectionImpl(const std::vector<std::shared_ptr<arrow::RecordBatch>>& input,
-                                                                                 const std::vector<ExpressionPtr>& expressions,
-                                                                                 const std::vector<std::string>& names)
+                                                                               const std::vector<ExpressionPtr>&                       expressions,
+                                                                               const std::vector<std::string>&                         names)
 {
     std::vector<std::shared_ptr<arrow::RecordBatch>> output;
     output.reserve(input.size());
@@ -808,21 +874,26 @@ std::vector<std::shared_ptr<arrow::RecordBatch>> applyExpressionProjectionImpl(c
             for (int64_t row = 0; row < batch->num_rows() && !type; ++row)
             {
                 const auto scalar = evaluateExpression(expressions[index], batch, row);
-                if (scalar->is_valid) type = scalar->type;
+                if (scalar->is_valid)
+                    type = scalar->type;
             }
-            if (!type) type = arrow::null();
+            if (!type)
+                type = arrow::null();
             std::unique_ptr<arrow::ArrayBuilder> builder;
-            const auto builder_status = arrow::MakeBuilder(arrow::default_memory_pool(), type, &builder);
-            if (!builder_status.ok()) throw std::runtime_error(builder_status.ToString());
+            const auto                           builder_status = arrow::MakeBuilder(arrow::default_memory_pool(), type, &builder);
+            if (!builder_status.ok())
+                throw std::runtime_error(builder_status.ToString());
             for (int64_t row = 0; row < batch->num_rows(); ++row)
             {
                 const auto scalar = evaluateExpression(expressions[index], batch, row);
                 const auto append_status = builder->AppendScalar(*scalar);
-                if (!append_status.ok()) throw std::runtime_error(append_status.ToString());
+                if (!append_status.ok())
+                    throw std::runtime_error(append_status.ToString());
             }
             std::shared_ptr<arrow::Array> array;
-            const auto finish_status = builder->Finish(&array);
-            if (!finish_status.ok()) throw std::runtime_error(finish_status.ToString());
+            const auto                    finish_status = builder->Finish(&array);
+            if (!finish_status.ok())
+                throw std::runtime_error(finish_status.ToString());
             arrays.push_back(std::move(array));
             fields.push_back(arrow::field(names.at(index), type));
         }
@@ -900,29 +971,31 @@ applySortImpl(const std::vector<std::shared_ptr<arrow::RecordBatch>>& input, con
     std::vector<int64_t> rows(static_cast<std::size_t>(batch->num_rows()));
     std::iota(rows.begin(), rows.end(), 0);
     std::stable_sort(rows.begin(), rows.end(), [&](const int64_t lhs_row, const int64_t rhs_row)
-    {
-        for (std::size_t key_index = 0; key_index < keys.size(); ++key_index)
-        {
-            const auto lhs = batch->column(indices[key_index])->GetScalar(lhs_row);
-            const auto rhs = batch->column(indices[key_index])->GetScalar(rhs_row);
-            if (!lhs.ok() || !rhs.ok())
-            {
-                throw std::runtime_error("Failed to read ORDER BY value");
-            }
-            const bool lhs_null = !*lhs || !(*lhs)->is_valid;
-            const bool rhs_null = !*rhs || !(*rhs)->is_valid;
-            if (lhs_null || rhs_null)
-            {
-                if (lhs_null != rhs_null) return !lhs_null;
-                continue;
-            }
-            const auto lhs_value = scalarToString(*lhs);
-            const auto rhs_value = scalarToString(*rhs);
-            if (lhs_value == rhs_value) continue;
-            return keys[key_index].descending ? lhs_value > rhs_value : lhs_value < rhs_value;
-        }
-        return false;
-    });
+                     {
+                         for (std::size_t key_index = 0; key_index < keys.size(); ++key_index)
+                         {
+                             const auto lhs = batch->column(indices[key_index])->GetScalar(lhs_row);
+                             const auto rhs = batch->column(indices[key_index])->GetScalar(rhs_row);
+                             if (!lhs.ok() || !rhs.ok())
+                             {
+                                 throw std::runtime_error("Failed to read ORDER BY value");
+                             }
+                             const bool lhs_null = !*lhs || !(*lhs)->is_valid;
+                             const bool rhs_null = !*rhs || !(*rhs)->is_valid;
+                             if (lhs_null || rhs_null)
+                             {
+                                 if (lhs_null != rhs_null)
+                                     return !lhs_null;
+                                 continue;
+                             }
+                             const auto lhs_value = scalarToString(*lhs);
+                             const auto rhs_value = scalarToString(*rhs);
+                             if (lhs_value == rhs_value)
+                                 continue;
+                             return keys[key_index].descending ? lhs_value > rhs_value : lhs_value < rhs_value;
+                         }
+                         return false;
+                     });
 
     arrow::Int64Builder index_builder;
     if (!index_builder.AppendValues(rows).ok())
@@ -939,7 +1012,8 @@ applySortImpl(const std::vector<std::shared_ptr<arrow::RecordBatch>>& input, con
     for (const auto& column : batch->columns())
     {
         const auto taken = arrow::compute::Take(column, index_array);
-        if (!taken.ok()) throw std::runtime_error(taken.status().ToString());
+        if (!taken.ok())
+            throw std::runtime_error(taken.status().ToString());
         arrays.push_back(taken->make_array());
     }
     return {arrow::RecordBatch::Make(batch->schema(), batch->num_rows(), std::move(arrays))};
@@ -1027,7 +1101,7 @@ std::shared_ptr<arrow::Array> buildArrayFromIndices(const std::shared_ptr<arrow:
 }
 
 std::shared_ptr<arrow::RecordBatch> qualifyBatchColumnsImpl(const std::shared_ptr<arrow::RecordBatch>& batch,
-                                                        const std::string&                         alias)
+                                                            const std::string&                         alias)
 {
     if (!batch)
     {
@@ -1044,12 +1118,12 @@ std::shared_ptr<arrow::RecordBatch> qualifyBatchColumnsImpl(const std::shared_pt
 }
 
 std::shared_ptr<arrow::RecordBatch> joinBatchesImpl(const std::shared_ptr<arrow::RecordBatch>& left,
-                                                const std::shared_ptr<arrow::RecordBatch>& right,
-                                                const std::string&                         left_key,
-                                                const std::string&                         right_key,
-                                                const plan::JoinType                       type,
-                                                const ExecutionContext&                    context,
-                                                QueryStats&                                stats)
+                                                    const std::shared_ptr<arrow::RecordBatch>& right,
+                                                    const std::string&                         left_key,
+                                                    const std::string&                         right_key,
+                                                    const plan::JoinType                       type,
+                                                    const ExecutionContext&                    context,
+                                                    QueryStats&                                stats)
 {
     const auto emptyLeft = left == nullptr || left->num_rows() == 0;
     const auto emptyRight = right == nullptr || right->num_rows() == 0;
@@ -1271,7 +1345,8 @@ std::vector<std::pair<int64_t, int64_t>> mldp_pvxs_driver::query::executor::extr
 
 arrow::Result<std::shared_ptr<arrow::RecordBatch>> mldp_pvxs_driver::query::executor::applyFilter(const std::shared_ptr<arrow::RecordBatch>& batch, const std::vector<Predicate>& predicates)
 {
-    if (predicates.empty()) return batch;
+    if (predicates.empty())
+        return batch;
     return ::applyFilterImpl(batch, predicates);
 }
 
@@ -1306,12 +1381,12 @@ std::shared_ptr<arrow::RecordBatch> mldp_pvxs_driver::query::executor::qualifyBa
 }
 
 std::shared_ptr<arrow::RecordBatch> mldp_pvxs_driver::query::executor::joinBatches(const std::shared_ptr<arrow::RecordBatch>& left,
-                                                 const std::shared_ptr<arrow::RecordBatch>& right,
-                                                 const std::string& left_key,
-                                                 const std::string& right_key,
-                                                 const plan::JoinType type,
-                                                 const ExecutionContext& context,
-                                                 QueryStats& stats)
+                                                                                   const std::shared_ptr<arrow::RecordBatch>& right,
+                                                                                   const std::string&                         left_key,
+                                                                                   const std::string&                         right_key,
+                                                                                   const plan::JoinType                       type,
+                                                                                   const ExecutionContext&                    context,
+                                                                                   QueryStats&                                stats)
 {
     return ::joinBatchesImpl(left, right, left_key, right_key, type, context, stats);
 }
