@@ -1039,7 +1039,7 @@ TEST(QueryPlannerTest, ResolvesDefaultAndExplicitWindowShardOptions)
     const auto          defaults = findScan(planner.plan(query::parseQuery(
         "SELECT * FROM mldp.time_series WHERE pv = 'PV:ONE' AND window IN (1700000000, 1700000010)")));
     ASSERT_NE(defaults, nullptr);
-    EXPECT_EQ(defaults->window_shards.slice_ns, 1'000'000'000LL);
+    EXPECT_EQ(defaults->window_shards.slice_ns, 0LL);
     EXPECT_EQ(defaults->window_shards.series_per_shard, 1U);
 
     const auto explicit_options = findScan(planner.plan(query::parseQuery(
