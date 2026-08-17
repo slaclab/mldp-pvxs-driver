@@ -124,9 +124,13 @@ IRecordBatchStreamUPtr makeStreamingPlan(const plan::PhysicalNodePtr& root,
         if (resolved_scan->window_literal)
         {
             const auto& window = *resolved_scan->window_literal;
-            context.series_per_shard = resolved_scan->window_shards.series_per_shard;
+            auto scan_with_slice = *resolved_scan;
+            if (scan_with_slice.window_shards.slice_ns == 0)
+                scan_with_slice.window_shards.slice_ns = mldp_pvxs_driver::query::executor::autoSliceNs(
+                    (window[1] - window[0]) * 1'000'000'000LL);
+            context.series_per_shard = scan_with_slice.window_shards.series_per_shard;
             return std::make_unique<WindowBackendScanRecordBatchStream>(
-                *resolved_scan, std::move(context), stats,
+                scan_with_slice, std::move(context), stats,
                 std::vector<std::pair<int64_t, int64_t>>{{window[0] * 1'000'000'000LL, window[1] * 1'000'000'000LL}});
         }
         if (resolved_scan->window_subquery)
@@ -136,8 +140,12 @@ IRecordBatchStreamUPtr makeStreamingPlan(const plan::PhysicalNodePtr& root,
             const auto windows = mldp_pvxs_driver::query::executor::extractNormalizedWindows(
                 executor.execute(planner.plan(QueryStatement{*resolved_scan->window_subquery}), context).batches);
             if (windows.empty()) return std::make_unique<MaterializedRecordBatchStream>(RecordBatches{});
-            context.series_per_shard = resolved_scan->window_shards.series_per_shard;
-            return std::make_unique<WindowBackendScanRecordBatchStream>(*resolved_scan, std::move(context), stats, windows);
+            auto scan_with_slice = *resolved_scan;
+            if (scan_with_slice.window_shards.slice_ns == 0)
+                scan_with_slice.window_shards.slice_ns = mldp_pvxs_driver::query::executor::autoSliceNs(
+                    windows[0].second - windows[0].first);
+            context.series_per_shard = scan_with_slice.window_shards.series_per_shard;
+            return std::make_unique<WindowBackendScanRecordBatchStream>(scan_with_slice, std::move(context), stats, windows);
         }
         return std::make_unique<BackendScanRecordBatchStream>(*resolved_scan, std::move(context), stats);
     }

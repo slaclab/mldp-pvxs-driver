@@ -1343,6 +1343,28 @@ std::vector<std::pair<int64_t, int64_t>> mldp_pvxs_driver::query::executor::extr
     return ::extractNormalizedWindowsImpl(batches);
 }
 
+int64_t mldp_pvxs_driver::query::executor::autoSliceNs(const int64_t window_ns)
+{
+    constexpr int64_t kMinSliceNs    = 5'000'000'000LL;
+    constexpr int64_t kTargetSlices  = 10;
+    constexpr int64_t kSteps[]       = {
+        5'000'000'000LL,
+        10'000'000'000LL,
+        30'000'000'000LL,
+        60'000'000'000LL,
+        300'000'000'000LL,
+        600'000'000'000LL,
+        1'800'000'000'000LL,
+        3'600'000'000'000LL,
+        86'400'000'000'000LL
+    };
+    const int64_t raw = std::max(kMinSliceNs, window_ns / kTargetSlices);
+    for (const auto step : kSteps)
+        if (step >= raw)
+            return step;
+    return kSteps[std::size(kSteps) - 1];
+}
+
 arrow::Result<std::shared_ptr<arrow::RecordBatch>> mldp_pvxs_driver::query::executor::applyFilter(const std::shared_ptr<arrow::RecordBatch>& batch, const std::vector<Predicate>& predicates)
 {
     if (predicates.empty())
