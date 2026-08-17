@@ -8,6 +8,8 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
+/** @file MLDPAnnotationQueryClient.h
+ * @brief Declares the MLDP annotation-service queryable implementation. */
 #pragma once
 
 #include <annotation.grpc.pb.h>
@@ -17,6 +19,7 @@
 #include <pool/MLDPGrpcAnnotationPoolConfig.h>
 #include <pool/MLDPGrpcPoolConfig.h>
 #include <query/IQueryable.h>
+#include <query/QueryCancellation.h>
 #include <util/log/Logger.h>
 
 #include <memory>
@@ -43,6 +46,8 @@ namespace mldp_pvxs_driver::query::impl::mldp {
 class MLDPAnnotationQueryClient : public IQueryable
 {
 public:
+    static const std::set<std::string_view> kVirtualTables;
+
     /**
      * @brief Construct and immediately initialise the underlying annotation pool.
      *
@@ -82,6 +87,13 @@ public:
     MLDPAnnotationQueryClient(MLDPAnnotationQueryClient&&) = default;
     MLDPAnnotationQueryClient& operator=(MLDPAnnotationQueryClient&&) = default;
 
+    std::set<std::string_view> virtualTables() const override;
+    std::vector<ColumnSchema>  tableSchema(std::string_view table_name) const override;
+    IRecordBatchStreamUPtr     executeStream(std::string_view              table_name,
+                                             const std::vector<Predicate>& pushable_predicates,
+                                             const std::set<std::string>&  projection_hint,
+                                             const ExecutionContext&       context) override;
+
     // -----------------------------------------------------------------------
     // PV metadata
     // -----------------------------------------------------------------------
@@ -103,7 +115,8 @@ public:
      *         (empty string when there are no more pages).
      */
     std::pair<std::vector<dp::service::common::PvMetadata>, std::string>
-    queryPvMetadata(const dp::service::annotation::QueryPvMetadataRequest& request);
+    queryPvMetadata(const dp::service::annotation::QueryPvMetadataRequest& request,
+                    std::shared_ptr<QueryCancellation> cancellation = nullptr);
 
     // -----------------------------------------------------------------------
     // Configuration
@@ -125,7 +138,8 @@ public:
      * @return Pair of matching Configuration records and a next-page token.
      */
     std::pair<std::vector<dp::service::common::Configuration>, std::string>
-    queryConfigurations(const dp::service::annotation::QueryConfigurationsRequest& request);
+    queryConfigurations(const dp::service::annotation::QueryConfigurationsRequest& request,
+                        std::shared_ptr<QueryCancellation> cancellation = nullptr);
 
     // -----------------------------------------------------------------------
     // Configuration activations
@@ -150,7 +164,8 @@ public:
      */
     std::pair<std::vector<dp::service::common::ConfigurationActivation>, std::string>
     queryConfigurationActivations(
-        const dp::service::annotation::QueryConfigurationActivationsRequest& request);
+        const dp::service::annotation::QueryConfigurationActivationsRequest& request,
+        std::shared_ptr<QueryCancellation> cancellation = nullptr);
 
     /**
      * @brief Retrieve all active configurations at a given point in time.
@@ -159,7 +174,8 @@ public:
      * @return Vector of active ConfigurationActivation records (empty on error).
      */
     std::vector<dp::service::common::ConfigurationActivation>
-    getActiveConfigurations(const dp::service::common::Timestamp& at);
+    getActiveConfigurations(const dp::service::common::Timestamp& at,
+                            std::shared_ptr<QueryCancellation> cancellation = nullptr);
 
 private:
     std::shared_ptr<util::log::ILogger>                               logger_;

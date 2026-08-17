@@ -103,7 +103,10 @@ docker compose -f docker-compose-test.yml up --build ci
 - PointerAlignment: Left (`int* p`)
 - ColumnLimit: 0 (no line length limit)
 - Namespace: `mldp_pvxs_driver::` with inner indentation
+- In `.cpp` files prefer `using namespace mldp_pvxs_driver::...;` instead of `namespace mldp_pvxs_driver::... { ... }`; only anonymous namespaces (`namespace { ... }`) should use block-style namespace declarations.
 - License header required on all `.h`/`.cpp` files — run `./scripts/add-licenses-include-h.sh` before committing
+- Every handwritten project class must have its own paired `.h` and `.cpp` files with the same class-oriented basename. Do not define standalone concrete classes inside another `.cpp`; extract them into the corresponding header/source tuple and list the `.cpp` in CMake. This rule excludes generated lexer/parser sources and their generated support types; data-only structs may remain grouped with their owning interface.
+- Place each class tuple in the directory that matches its responsibility and existing subsystem layout: for example, query execution streams/states under `query/executor/`, MLDP-specific query implementations under `query/impl/mldp/`, parser code under `query/parser/`, and generic query contracts/utilities directly under `query/`. Do not choose a location based only on filename convenience. If no existing directory owns the class's responsibility, create a focused new subdirectory, move the related class series there, and register all new `.cpp` files in CMake.
 
 ## Architecture
 

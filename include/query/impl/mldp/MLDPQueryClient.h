@@ -8,6 +8,8 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
+/** @file MLDPQueryClient.h
+ * @brief Declares the MLDP data-query service implementation. */
 #pragma once
 
 #include <common.pb.h>
@@ -15,6 +17,7 @@
 #include <metrics/Metrics.h>
 #include <pool/MLDPGrpcPoolConfig.h>
 #include <pool/MLDPGrpcQueryPool.h>
+#include <pool/MLDPGrpcQueryPoolConfig.h>
 #include <query/IQueryable.h>
 #include <util/bus/IDataBus.h>
 #include <util/log/Logger.h>
@@ -46,6 +49,8 @@ namespace mldp_pvxs_driver::query::impl::mldp {
 class MLDPQueryClient : public IQueryable
 {
 public:
+    static const std::set<std::string_view> kVirtualTables;
+
     /**
      * @brief Construct and immediately initialise the underlying query pool.
      *
@@ -56,9 +61,23 @@ public:
                              std::shared_ptr<metrics::Metrics>     metrics = nullptr);
 
     /**
+     * @brief Construct from a query-only pool config (no ingestion-url required).
+     *
+     * Preferred when the queryable: block does not include ingestion-url.
+     *
+     * @param poolConfig  Query-only connection parameters.
+     * @param metrics     Optional shared metrics collector.
+     */
+    explicit MLDPQueryClient(const util::pool::MLDPGrpcQueryPoolConfig& poolConfig,
+                             std::shared_ptr<metrics::Metrics>          metrics = nullptr);
+
+    /**
      * @brief Construct from a Config tree; delegates to the pool-config ctor.
      *
      * Required by QueryableFactory::prepare<MLDPQueryClient>(cfg).
+     * If ingestion-url is absent in cfg, uses MLDPGrpcQueryPoolConfig
+     * (query-url + min-conn + max-conn only).  If ingestion-url is present,
+     * falls back to the full MLDPGrpcPoolConfig for backwards compatibility.
      *
      * @param cfg     Root config containing pool parameters.
      * @param metrics Optional shared metrics collector.
@@ -73,6 +92,14 @@ public:
     MLDPQueryClient& operator=(const MLDPQueryClient&) = delete;
     MLDPQueryClient(MLDPQueryClient&&) = default;
     MLDPQueryClient& operator=(MLDPQueryClient&&) = default;
+
+    std::set<std::string_view> virtualTables() const override;
+    std::vector<ColumnSchema>  tableSchema(std::string_view table_name) const override;
+    std::size_t                maxConcurrentStreams() const noexcept override;
+    IRecordBatchStreamUPtr     executeStream(std::string_view              table_name,
+                                             const std::vector<Predicate>& pushable_predicates,
+                                             const std::set<std::string>&  projection_hint,
+                                             const ExecutionContext&       context) override;
 
     /**
      * @brief Query MLDP metadata for a set of source identifiers.

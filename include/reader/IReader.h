@@ -13,6 +13,7 @@
 
 #include <reader/IReaderLifecycle.h>
 
+#include <atomic>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -48,16 +49,29 @@ public:
     /** @brief Return the human-readable identifier for this reader instance. */
     virtual std::string name() const = 0;
 
-    /** @brief Register an optional observer for one-shot reader completion. */
+    /** @brief Register an optional observer for one-shot reader completion.
+     *
+     * If signalCompleted() was already called before this point (e.g. the
+     * reader's worker finished before the controller finished registering it),
+     * the observer is notified immediately so the completion is not lost.
+     */
     void setLifecycleObserver(std::weak_ptr<IReaderLifecycle> observer)
     {
-        lifecycle_ = std::move(observer);
+        lifecycle_ = observer;
+        if (completed_.load(std::memory_order_acquire))
+        {
+            if (auto obs = observer.lock())
+            {
+                obs->onReaderCompleted(name());
+            }
+        }
     }
 
 protected:
     /** @brief Notify the lifecycle observer that the reader completed its one-shot work. */
     void signalCompleted()
     {
+        completed_.store(true, std::memory_order_release);
         if (auto observer = lifecycle_.lock())
         {
             observer->onReaderCompleted(name());
@@ -83,6 +97,7 @@ protected:
 
 private:
     std::weak_ptr<IReaderLifecycle> lifecycle_;
+    std::atomic<bool>               completed_{false};
 };
 
 } // namespace mldp_pvxs_driver::reader

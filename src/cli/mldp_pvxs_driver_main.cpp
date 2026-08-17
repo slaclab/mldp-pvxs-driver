@@ -36,6 +36,8 @@
 #include <rapidyaml-0.10.0.hpp>
 
 #include <cli/ConfigPrinter.h>
+#include <query/LoggingQueryCommandListener.h>
+#include <query/QueryCommand.h>
 #include <config/Config.h>
 #include <config/ConfigOverride.h>
 #include <config/ConfigSource.h>
@@ -294,10 +296,49 @@ int main(int argc, char** argv)
 
     try
     {
-        // Dispatch "config" sub-command before argparse consumes argv.
-        if (argc >= 2 && std::string_view{argv[1]} == "config")
+        // Dispatch early subcommands before argparse consumes argv.
+        // Global -c/--config sources are accepted only before the subcommand.
+        std::vector<std::string> earlyConfigSources;
+        int                      earlySubcommandIndex = -1;
+        for (int index = 1; index < argc; ++index)
         {
-            return mldp_pvxs_driver::config::runConfigSubcommand(argc - 1, argv + 1);
+            const auto arg = std::string_view{argv[index]};
+            if (arg == "-c" || arg == "--config")
+            {
+                if (++index >= argc)
+                {
+                    throw std::runtime_error("Global -c/--config requires a source value");
+                }
+                earlyConfigSources.emplace_back(argv[index]);
+                continue;
+            }
+            if (arg == "config" || arg == "query")
+            {
+                earlySubcommandIndex = index;
+                break;
+            }
+            // Stop scanning once we hit a non-global option/argument.
+            break;
+        }
+
+        if (earlySubcommandIndex >= 0 && std::string_view{argv[earlySubcommandIndex]} == "config")
+        {
+            return mldp_pvxs_driver::config::runConfigSubcommand(
+                argc - earlySubcommandIndex,
+                argv + earlySubcommandIndex);
+        }
+
+        if (earlySubcommandIndex >= 0 && std::string_view{argv[earlySubcommandIndex]} == "query")
+        {
+            mldp_pvxs_driver::cli::LoggingQueryCommandListener queryListener;
+            mldp_pvxs_driver::cli::QueryCommand querySubcommand(queryListener);
+            return querySubcommand.run(
+                argc - earlySubcommandIndex,
+                argv + earlySubcommandIndex,
+                earlyConfigSources,
+                std::cin,
+                std::cout,
+                std::cerr);
         }
 
         // Parse command line arguments

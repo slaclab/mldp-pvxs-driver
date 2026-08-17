@@ -189,7 +189,9 @@ Readers collect data from configurable sources, push normalized batches onto a s
 - [Writers Overview](docs/writers/writers-implementation.md) - Writer pattern, factory registration, new writer guide
 - [MLDP Writer](docs/writers/mldp-writer.md) - gRPC ingestion writer details and configuration
 - [HDF5 Writer](docs/writers/hdf5-writer.md) - HDF5 storage writer details and configuration
+- [Query CLI Guide](docs/guides/query-cli.md) - SQL syntax reference, virtual table catalog, output formats, pagination, and step-by-step tutorial using the sample-data generator
 - [MLDP Query Client](docs/dev/query-client.md) - Standalone out-of-band query API
+- [Query Engine Architecture](docs/reference/query-engine-architecture.md) - IQueryable provider model, planner/executor internals, predicate-pushdown rules, and extension points
 - [Logging Abstraction Guide](docs/dev/logging.md) - How `util::log` works and custom logger implementation
 - [HTTP Transport Provider](docs/dev/http-provider.md) - Shared `util/http` abstraction for HTTP-based readers
 - [Metrics Export Guide](docs/metrics/metrics-export-guide.md) - Prometheus metrics and manual dump triggers
@@ -208,6 +210,7 @@ For developer information and contribution guidelines see [CONTRIBUTING.md](CONT
 - [spdlog](https://github.com/gabime/spdlog) v1.16.0 provides structured logging.
 - [prometheus-cpp](https://github.com/jupp0r/prometheus-cpp) v1.3.0 provides the metrics registry and HTTP exporter.
 - [argparse](https://github.com/p-ranav/argparse) v3.2 provides CLI argument parsing.
+- [date](https://github.com/HowardHinnant/date) v3.0.1 provides IANA timezone and daylight-saving conversion for query timestamp formatting.
 - [rapidyaml](https://github.com/biojppm/rapidyaml) 0.10.0 (vendored in `ext/rapidyaml`) parses the YAML configuration.
 - [BS::thread_pool](https://github.com/bshoshany/thread-pool) 5.0.0 (vendored in `ext/BS_thread_pool`) provides the controller worker thread pool.
 - libevent (system library; required when statically linking PVXS) supplies PVXS' event loop dependencies in static builds.

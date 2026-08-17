@@ -15,6 +15,8 @@
 #include <grpcpp/server.h>
 #include <grpcpp/server_builder.h>
 #include <grpcpp/server_context.h>
+#include <metrics/Metrics.h>
+#include <metrics/MetricsConfig.h>
 #include <util/bus/IDataBus.h>
 #include <writer/WriterFactory.h>
 #include <writer/mldp_configuration/MLDPConfigurationWriter.h>
@@ -51,6 +53,8 @@ class TestAnnotationService final
 public:
     std::atomic<int> save_configuration_count{0};
     std::atomic<int> save_configuration_activation_count{0};
+    bool             reject_configuration{false};
+    bool             reject_activation{false};
 
     std::vector<dp::service::annotation::SaveConfigurationRequest>           captured_config_requests;
     std::vector<dp::service::annotation::SaveConfigurationActivationRequest> captured_activation_requests;
@@ -59,22 +63,38 @@ public:
     grpc::Status saveConfiguration(
         grpc::ServerContext*,
         const dp::service::annotation::SaveConfigurationRequest* req,
-        dp::service::annotation::SaveConfigurationResponse*) override
+        dp::service::annotation::SaveConfigurationResponse* response) override
     {
         save_configuration_count.fetch_add(1, std::memory_order_relaxed);
         std::lock_guard<std::mutex> lock(captured_mutex);
         captured_config_requests.push_back(*req);
+        if (reject_configuration)
+        {
+            response->mutable_exceptionalresult()->set_message("configuration rejected for test");
+        }
+        else
+        {
+            response->mutable_saveconfigurationresult()->set_configurationname(req->configurationname());
+        }
         return grpc::Status::OK;
     }
 
     grpc::Status saveConfigurationActivation(
         grpc::ServerContext*,
         const dp::service::annotation::SaveConfigurationActivationRequest* req,
-        dp::service::annotation::SaveConfigurationActivationResponse*) override
+        dp::service::annotation::SaveConfigurationActivationResponse* response) override
     {
         save_configuration_activation_count.fetch_add(1, std::memory_order_relaxed);
         std::lock_guard<std::mutex> lock(captured_mutex);
         captured_activation_requests.push_back(*req);
+        if (reject_activation)
+        {
+            response->mutable_exceptionalresult()->set_message("activation rejected for test");
+        }
+        else
+        {
+            response->mutable_saveconfigurationactivationresult()->set_clientactivationid(req->clientactivationid());
+        }
         return grpc::Status::OK;
     }
 };
@@ -244,6 +264,67 @@ TEST(MLDPConfigurationWriterTest,
     }
 
     writer->stop();
+    server->Shutdown();
+}
+
+TEST(MLDPConfigurationWriterTest, ExceptionalActivationResponseCountsAsFailure)
+{
+    TestAnnotationService service;
+    service.reject_activation = true;
+    grpc::ServerBuilder builder;
+    int annotation_port = 0;
+    builder.AddListeningPort("127.0.0.1:0", grpc::InsecureServerCredentials(), &annotation_port);
+    builder.RegisterService(&service);
+    std::unique_ptr<grpc::Server> server(builder.BuildAndStart());
+    ASSERT_TRUE(server);
+
+    auto metrics = std::make_shared<mldp_pvxs_driver::metrics::Metrics>(mldp_pvxs_driver::metrics::MetricsConfig());
+    auto writer = WriterFactory::create("mldp-configuration", makeConfigFromYaml(makeWriterYaml(annotation_port, annotation_port + 1)), metrics);
+    ASSERT_NE(writer, nullptr);
+    writer->start();
+
+    IDataBus::EventBatch batch;
+    batch.payload = ConfigurationActivationPayload{
+        .client_activation_id = "rejected-activation",
+        .configuration_name = "MY_CONFIG",
+        .start_time = {.epoch_seconds = 1000, .nanoseconds = 0},
+    };
+    ASSERT_TRUE(writer->push(std::move(batch)));
+    ASSERT_TRUE(waitForCount(service.save_configuration_activation_count, 1, std::chrono::milliseconds(2000)));
+    writer->stop();
+
+    EXPECT_DOUBLE_EQ(metrics->writerPushTotal({{"writer", "cfg_writer_test"}}), 0.0);
+    EXPECT_DOUBLE_EQ(metrics->writerFailuresTotal({{"writer", "cfg_writer_test"}}), 1.0);
+    server->Shutdown();
+}
+
+TEST(MLDPConfigurationWriterTest, ExceptionalConfigurationResponseCountsAsFailure)
+{
+    TestAnnotationService service;
+    service.reject_configuration = true;
+    grpc::ServerBuilder builder;
+    int annotation_port = 0;
+    builder.AddListeningPort("127.0.0.1:0", grpc::InsecureServerCredentials(), &annotation_port);
+    builder.RegisterService(&service);
+    std::unique_ptr<grpc::Server> server(builder.BuildAndStart());
+    ASSERT_TRUE(server);
+
+    auto metrics = std::make_shared<mldp_pvxs_driver::metrics::Metrics>(mldp_pvxs_driver::metrics::MetricsConfig());
+    auto writer = WriterFactory::create("mldp-configuration", makeConfigFromYaml(makeWriterYaml(annotation_port, annotation_port + 1)), metrics);
+    ASSERT_NE(writer, nullptr);
+    writer->start();
+
+    IDataBus::EventBatch batch;
+    batch.payload = ConfigurationPayload{
+        .configuration_name = "MY_CONFIG",
+        .category = "test-category",
+    };
+    ASSERT_TRUE(writer->push(std::move(batch)));
+    ASSERT_TRUE(waitForCount(service.save_configuration_count, 1, std::chrono::milliseconds(2000)));
+    writer->stop();
+
+    EXPECT_DOUBLE_EQ(metrics->writerPushTotal({{"writer", "cfg_writer_test"}}), 0.0);
+    EXPECT_DOUBLE_EQ(metrics->writerFailuresTotal({{"writer", "cfg_writer_test"}}), 1.0);
     server->Shutdown();
 }
 
