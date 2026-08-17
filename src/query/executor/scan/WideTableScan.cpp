@@ -381,10 +381,12 @@ RecordBatches mldp_pvxs_driver::query::executor::fetchTimeSeriesWindows(const pl
     }
     if (requested_pvs.empty()) throw std::runtime_error("MLDP time-series window requires a PV predicate");
 
-    const auto slice_ns = window_shards.slice_ns;
     for (std::size_t window_offset = 0; window_offset < windows.size(); ++window_offset)
     {
         const auto& [window_begin_ns, window_end_ns] = windows[window_offset];
+        const auto slice_ns = window_shards.slice_ns == 0
+                                  ? mldp_pvxs_driver::query::executor::autoSliceNs(window_end_ns - window_begin_ns)
+                                  : window_shards.slice_ns;
         for (int64_t slice_begin_ns = window_begin_ns; slice_begin_ns <= window_end_ns; )
         {
             if (context.cancellation) context.cancellation->throwIfCancelled();

@@ -54,6 +54,12 @@ std::vector<ExecutableLiteralValue> extractInSubqueryValues(const RecordBatches&
  * @param[in] batches Result batches with begin/end timestamp columns.
  * @return Ordered vector of [begin_ns, end_ns] pairs. */
 std::vector<std::pair<int64_t, int64_t>> extractNormalizedWindows(const RecordBatches& batches);
+/** @brief Chooses a time-slice duration for a window of the given span.
+ * @details Targets ~10 slices per window, minimum 5 s, rounded up to the nearest step in a
+ *          fixed ladder (5s, 10s, 30s, 60s, 300s, 600s, 1800s, 3600s, 86400s).
+ * @param[in] window_ns Window duration in nanoseconds.
+ * @return Slice duration in nanoseconds (always > 0). */
+int64_t autoSliceNs(int64_t window_ns);
 /** @brief Applies a list of predicates to a single batch.
  * @param[in] batch Input batch.
  * @param[in] predicates Predicates to evaluate.

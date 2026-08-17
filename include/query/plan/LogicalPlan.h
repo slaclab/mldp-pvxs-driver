@@ -29,8 +29,8 @@ using PlannerLiteralValue = std::variant<std::string, int64_t, double, bool, Tim
 
 /** @brief Splits a time window into duration slices and PV shards. */
 struct WindowShardSpec {
-    int64_t  slice_ns{1'000'000'000LL};      ///< Time-slice duration in nanoseconds; default is 1 second.
-    uint64_t series_per_shard{1};             ///< PV series per backend shard; 1 = one request per series.
+    int64_t  slice_ns{0};         ///< Time-slice duration in nanoseconds; 0 = auto-choose from window duration.
+    uint64_t series_per_shard{1}; ///< PV series per backend shard; 1 = one request per series.
 };
 
 /** @brief Predicate after schema binding but before executable literal conversion. */
