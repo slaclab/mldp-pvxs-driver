@@ -75,23 +75,35 @@ plan::PhysicalNodePtr annotateExecutionHints(plan::PhysicalNodePtr root);
 
 Rules (applied bottom-up):
 
-| Node type | Hint |
-|---|---|
-| `PhysicalTableScan` | `IO_LEAF` |
-| Synthetic subquery leaf (see §4.2) | `IO_LEAF` |
-| `PhysicalFilter` | `CPU_PIPELINE` |
-| `PhysicalProject` | `CPU_PIPELINE` |
-| `PhysicalLimit` | `CPU_PIPELINE` |
-| `PhysicalSort` | `BLOCKING_AGGREGATE` |
-| `PhysicalPivot` | `BLOCKING_AGGREGATE` |
-| `PhysicalHashJoin` | `BLOCKING_AGGREGATE` |
-| `PhysicalBlockNestedLoopJoin` | `BLOCKING_AGGREGATE` |
-| `PhysicalNestedLoopJoin` (`correlated_push=false`) | `BLOCKING_AGGREGATE` |
-| `PhysicalNestedLoopJoin` inner when `correlated_push=true` | `CORRELATED_INNER` |
-| DDL statements | `CPU_PIPELINE` (run inline, trivial) |
+| Node type | Condition | Hint |
+|---|---|---|
+| `PhysicalTableScan` | `arrow_ipc=false`, no `derived_query` | `IO_LEAF` — backend gRPC |
+| `PhysicalTableScan` | `arrow_ipc=true` | `IO_LEAF` — Arrow IPC file read (disk/NFS) |
+| `PhysicalTableScan` | `derived_query != nullptr` | `IO_LEAF` — sub-DAG produces the scan input (see §4.2) |
+| Synthetic `in_subqueries` leaf (see §4.2) | — | `IO_LEAF` |
+| Synthetic `window_subquery` leaf (see §4.2) | — | `IO_LEAF` |
+| Synthetic `derived_query` leaf (see §4.2) | — | `IO_LEAF` |
+| `PhysicalCreateTable` | always | `IO_LEAF` — writes Arrow IPC file to disk/NFS |
+| `PhysicalFilter` | — | `CPU_PIPELINE` |
+| `PhysicalProject` | — | `CPU_PIPELINE` |
+| `PhysicalLimit` | — | `CPU_PIPELINE` |
+| `PhysicalSort` | — | `BLOCKING_AGGREGATE` |
+| `PhysicalPivot` | — | `BLOCKING_AGGREGATE` |
+| `PhysicalHashJoin` | — | `BLOCKING_AGGREGATE` |
+| `PhysicalBlockNestedLoopJoin` | — | `BLOCKING_AGGREGATE` |
+| `PhysicalNestedLoopJoin` | `correlated_push=false` | `BLOCKING_AGGREGATE` |
+| `PhysicalNestedLoopJoin` inner | `correlated_push=true` | `CORRELATED_INNER` |
+| `PhysicalShowTables/Functions/Operators` | — | `CPU_PIPELINE` — trivial catalog scan |
+| `PhysicalDescribe` / `PhysicalExplain` | — | `CPU_PIPELINE` — in-memory text |
+| `PhysicalDropTable` | — | `CPU_PIPELINE` — single metadata delete |
 
 `CPU_PIPELINE` nodes carry no separate `PlanTask` — they execute inside their
 nearest non-`CPU_PIPELINE` ancestor's task body.
+
+`PhysicalCreateTable` is `IO_LEAF` not DDL because `QueryTableCatalog::create()`
+opens an output stream on `arrow::fs::FileSystem` (blocking on NFS/S3) and
+streams all child batches to disk before the atomic rename.  It must own a pool
+task and must not start until its child SELECT sub-DAG completes.
 
 ### 1.3  Integration into `QueryPlanner::plan()`
 
@@ -257,22 +269,75 @@ struct PlanTask {
 };
 ```
 
-### 4.2  DAG build: subquery injection
+### 4.2  DAG build: implicit dependency injection
 
-`PhysicalTableScan` nodes carry implicit dependencies (`in_subqueries`,
-`window_subquery`).  During DAG build these become **synthetic `IO_LEAF`
-children** of the scan task:
+Three kinds of implicit dependency hang off `PhysicalTableScan` and
+`PhysicalCreateTable` nodes.  During DAG build each becomes a **synthetic
+`IO_LEAF` child task** that is submitted immediately; the parent waits until
+all synthetic children complete before it is submitted.
+
+#### `in_subqueries` and `window_subquery` — predicate resolution
 
 ```
-PhysicalTableScan [IO_LEAF, pending=2]
-  SyntheticSubqueryTask_IN_1  [IO_LEAF, pending=0] ← submit immediately
-  SyntheticSubqueryTask_WINDOW [IO_LEAF, pending=0] ← submit immediately
+PhysicalTableScan (backend) [IO_LEAF, pending=2]
+  SyntheticTask: IN subquery plan    [IO_LEAF, pending=0] ← submit now
+  SyntheticTask: window subquery plan [IO_LEAF, pending=0] ← submit now
 ```
 
-When a synthetic subquery task completes it injects its result as a resolved
-predicate into the parent scan's `PhysicalTableScan` node, then decrements
-`parent->pending_children`.  When `pending_children` reaches 0 the scan itself
-is submitted to the pool.
+On completion: result values injected as resolved predicate into parent
+`PhysicalTableScan.pushable_predicates` / `window_literal`.
+`--parent->pending_children`; when 0 → submit parent backend scan.
+
+#### `derived_query` — inline sub-SELECT
+
+A `PhysicalTableScan` with `derived_query != nullptr` represents
+`SELECT … FROM (SELECT …) AS alias`.  The inner SELECT is a full plan tree.
+During DAG build it is scheduled as a **nested `PlanScheduler` call**:
+
+```
+PhysicalTableScan (derived) [IO_LEAF, pending=1]
+  SyntheticTask: DerivedQuerySubDAG [IO_LEAF, pending=0] ← schedule sub-DAG now
+```
+
+`DerivedQuerySubDAG` task body:
+```cpp
+// Runs on pool worker — recursively schedules inner plan, waits for promise.
+auto sub_future = PlanScheduler(pool_, context_, stats_).schedule(derived_plan);
+task->result = sub_future.get();   // releases thread while inner DAG runs
+onTaskComplete(task);
+```
+
+On completion: `task->result` holds inner SELECT batches.  Parent scan task
+receives them as its input scan source (replaces `fetchBackendPages`) and
+applies any remaining predicates / qualify inline.
+
+#### `PhysicalCreateTable` — child SELECT must finish first
+
+```
+PhysicalCreateTable [IO_LEAF, pending=1]
+  SyntheticTask: source SELECT sub-DAG [IO_LEAF, pending=0] ← schedule now
+```
+
+`CreateTable` task body (runs after child completes):
+```cpp
+// child->result holds all source batches — write to Arrow IPC file.
+context_.table_catalog->create(create_.table_name, lifetime, child->result);
+// atomic rename .partial → final path happens inside create()
+// no output batches — DDL
+onTaskComplete(task);   // signals root_promise with empty RecordBatches
+```
+
+File write (`OpenOutputStream` + `IPC writer` + `Move`) is the I/O work that
+justifies the pool task — on NFS/S3 this can be hundreds of milliseconds.
+
+#### Summary table
+
+| Synthetic child type | Parent node | What it does on completion |
+|---|---|---|
+| `IN` subquery | `PhysicalTableScan` | injects resolved IN predicate values |
+| `window_subquery` | `PhysicalTableScan` | injects resolved window `[begin_ns, end_ns]` |
+| `derived_query` sub-DAG | `PhysicalTableScan` | delivers inner SELECT batches as scan input |
+| source SELECT sub-DAG | `PhysicalCreateTable` | delivers batches for IPC file write |
 
 ### 4.3  DAG build algorithm
 
@@ -311,17 +376,51 @@ Build steps:
 
 Each task runs on a pool worker.  Dispatch by `hint`:
 
-**`IO_LEAF` (BackendTableScan, synthetic subquery):**
+**`IO_LEAF` — backend gRPC scan (`arrow_ipc=false`, no `derived_query`):**
 ```cpp
-auto stream = makeAsyncStream(node, context_);  // returns async IRecordBatchStream
+// All in_subqueries + window_subquery already resolved into scan node by
+// synthetic child tasks before this task was submitted.
+auto stream = makeAsyncBackendStream(scan, context_); // AsyncMldpBidiRecordBatchStream etc.
 while (true) {
-    auto batch = stream->nextAsync().get();      // wait for gRPC callback
+    auto batch = stream->nextAsync().get();  // free thread during gRPC I/O
     if (!batch) break;
     task->result.push_back(batch);
 }
-// fold any CPU_PIPELINE children inline (filter, project, limit)
+task->result = applyCpuPipeline(node, task->result, context_); // fold Filter/Project/Limit
+onTaskComplete(task);
+```
+
+**`IO_LEAF` — Arrow IPC catalog scan (`arrow_ipc=true`):**
+```cpp
+// QueryTableCatalog::read() opens file on arrow::fs — may block on NFS/S3.
+// Runs on pool worker; thread held for file I/O duration (typically <50ms local).
+task->result = readCatalogTable(scan, context_);
 task->result = applyCpuPipeline(node, task->result, context_);
 onTaskComplete(task);
+```
+
+**`IO_LEAF` — derived-query scan (`derived_query != nullptr`, via synthetic child):**
+```cpp
+// SyntheticDerivedQueryTask runs first (see §4.2); its result is already in
+// synthetic_child->result when parent scan task is submitted.
+task->result = synthetic_child->result;
+applyPredicates(task->result, scan.pushable_predicates, context_);
+qualify(task->result, scan);
+task->result = applyCpuPipeline(node, task->result, context_);
+onTaskComplete(task);
+```
+
+**`IO_LEAF` — `PhysicalCreateTable` (via synthetic child):**
+```cpp
+// Source SELECT sub-DAG already complete; batches in synthetic_child->result.
+if (!context_.table_catalog) throw std::runtime_error("CREATE TABLE has no catalog");
+const auto status = context_.table_catalog->create(
+    create.table_name,
+    create.temporary ? TableLifetime::Session : TableLifetime::Persistent,
+    synthetic_child->result);   // streams batches to IPC file, atomic rename
+if (!status.ok()) throw std::runtime_error(status.ToString());
+// DDL — no output batches
+onTaskComplete(task);  // signals root_promise({})
 ```
 
 **`BLOCKING_AGGREGATE` (HashJoin, BlockNestedLoopJoin, Sort, Pivot):**
@@ -514,16 +613,16 @@ SQL query arrives
       │
       │  t=0: submit ALL leaves simultaneously to BS_thread_pool
       │
-  ┌───┴──────────────────────────────────────────────────────┐
-  │ IO_LEAF A        IO_LEAF B        IO_LEAF C (subquery)   │
-  │ (time_series)    (pv_metadata)    (IN subquery)          │
-  │   nextAsync()      nextAsync()      nextAsync()          │
-  │       │                │                │                │
-  │   gRPC callback    gRPC callback    gRPC callback        │
-  │   OnReadDone()     queryTable cb    queryPvMetadata cb   │
-  │       │                │                │                │
-  │   MLDP MongoDB     MLDP MongoDB     MLDP Annotation      │
-  └───┬──────────────────────────────────────────────────────┘
+  ┌────────────────────────────────────────────────────────────────────────┐
+  │ IO_LEAF A           IO_LEAF B        IO_LEAF C         IO_LEAF D       │
+  │ (time_series gRPC)  (pv_metadata)    (IN subquery)     (IPC file read) │
+  │   nextAsync()         nextAsync()      nextAsync()       readCatalog()  │
+  │       │                   │                │                 │          │
+  │   gRPC callback       gRPC callback    gRPC callback     arrow::fs      │
+  │   OnReadDone()        queryTable cb    queryPvMeta cb    OpenInput()    │
+  │       │                   │                │                 │          │
+  │   MLDP MongoDB        MLDP MongoDB     MLDP Annotation   local/NFS     │
+  └───┬────────────────────────────────────────────────────────────────────┘
       │
       │  A completes → stores result → --HashJoin.pending
       │  C completes → injects predicate into B scan → --B.pending → submit B
@@ -538,9 +637,11 @@ SQL query arrives
 ```
 
 Properties:
-- Zero threads blocked on MongoDB at any point
-- All independent backend scans and subqueries overlap in time
+- Zero threads blocked on MongoDB or local file I/O at any point
+- All independent leaves overlap in time: backend scans, subqueries, IPC reads, derived-query sub-DAGs
 - Join build + probe sides fetched concurrently
+- `CREATE TABLE` write starts the moment its source SELECT sub-DAG completes
+- `derived_query` inner SELECT runs as a full nested DAG — inherits all parallelism
 - CPU operators (filter, project, limit) never occupy a pool slot alone
 - `mldp-pool.max-conn` remains the hard MongoDB concurrency ceiling
 - 4 gRPC I/O threads serve 100+ concurrent Flight clients
@@ -563,17 +664,23 @@ Build bottom-up; each step is independently testable before the next.
 9. `AsyncAnnotationPageStream` (§3.5)
 10. Update `ParallelSeriesRecordBatchStream` (§3.6)
 11. `PlanTask` + `PlanScheduler` DAG build + leaf submission
-12. `IO_LEAF` task body (BackendTableScan + synthetic subquery tasks)
-13. `BLOCKING_AGGREGATE` task body (HashJoin, Sort, Pivot, NestedLoop)
-14. Correlated NestedLoop inner-driven body
-15. `FutureRecordBatchStream` wrapper
-16. `QueryExecutor::executeStream()` → `PlanScheduler` when `async_backend=true`
-17. `scheduleNext` loop + `QueueFlightDataStream`
-18. `FlightSqlServerBase` impl + CMake wiring + subcommand
+12. `IO_LEAF` task body — backend gRPC scan (calls async streams from Part 3)
+13. `IO_LEAF` task body — Arrow IPC catalog scan (`readCatalogTable` on pool worker)
+14. `IO_LEAF` task body — `derived_query` synthetic child (nested `PlanScheduler` call)
+15. `IO_LEAF` task body — `PhysicalCreateTable` (IPC file write after source sub-DAG)
+16. `BLOCKING_AGGREGATE` task body (HashJoin, Sort, Pivot, NestedLoop)
+17. Correlated NestedLoop inner-driven body
+18. `FutureRecordBatchStream` wrapper
+19. `QueryExecutor::executeStream()` → `PlanScheduler` when `async_backend=true`
+20. `scheduleNext` loop + `QueueFlightDataStream`
+21. `FlightSqlServerBase` impl + CMake wiring + subcommand
 
 Steps 1–10: validate with existing integration tests (`context.async_backend=true`).  
-Steps 11–16: validate with query planner/executor unit tests.  
-Steps 17–18: validate with Flight client smoke tests.
+Steps 11–19: validate with query planner/executor unit tests including:
+  - `SELECT * FROM (SELECT ...) AS t` — derived query DAG
+  - `CREATE TABLE t AS SELECT ...` followed by `SELECT * FROM t` — IPC write + read
+  - `SELECT ... WHERE pv IN (SELECT pv FROM ...)` — subquery injection
+Steps 20–21: validate with Flight client smoke tests.
 
 ---
 
@@ -620,7 +727,7 @@ cur.execute('SELECT * FROM mldp.pv_metadata LIMIT 5')
 print(cur.fetchall())
 "
 
-# join + subquery (exercises full DAG scheduler)
+# join + subquery (backend gRPC leaves + IN subquery synthetic leaf, all concurrent)
 python3 -c "
 import adbc_driver_flightsql.dbapi as flight
 conn = flight.connect('grpc://localhost:47470')
@@ -632,6 +739,25 @@ cur.execute('''
   WHERE a.pv IN (SELECT pv FROM mldp.pv_metadata WHERE tag = 'beam')
     AND a.time >= 1700000000 AND a.time <= 1700003600
 ''')
+print(cur.fetchall())
+"
+
+# CREATE TABLE then SELECT (IPC write IO_LEAF + IPC read IO_LEAF)
+python3 -c "
+import adbc_driver_flightsql.dbapi as flight
+conn = flight.connect('grpc://localhost:47470')
+cur = conn.cursor()
+cur.execute('CREATE TEMP TABLE beam_pvs AS SELECT pv FROM mldp.pv_metadata WHERE tag = \'beam\'')
+cur.execute('SELECT * FROM beam_pvs LIMIT 10')
+print(cur.fetchall())
+"
+
+# derived query (nested sub-DAG)
+python3 -c "
+import adbc_driver_flightsql.dbapi as flight
+conn = flight.connect('grpc://localhost:47470')
+cur = conn.cursor()
+cur.execute('SELECT pv FROM (SELECT pv, description FROM mldp.pv_metadata WHERE tag = \'beam\') AS t LIMIT 5')
 print(cur.fetchall())
 "
 
