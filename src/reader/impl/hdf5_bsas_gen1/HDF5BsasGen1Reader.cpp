@@ -208,6 +208,27 @@ std::unordered_map<std::string, std::string> readAllStringAttrs(H5::H5Object& ob
     return result;
 }
 
+// Read numRows starting at startRow from ds, handling both 1D (N,) and 2D (N,1) layouts.
+void selectRowRange(H5::DataSet& ds, hsize_t startRow, hsize_t numRows,
+                    H5::DataSpace& fspace, H5::DataSpace& mspace)
+{
+    fspace = ds.getSpace();
+    hsize_t mdims[1] = {numRows};
+    mspace = H5::DataSpace(1, mdims);
+    if (fspace.getSimpleExtentNdims() == 1)
+    {
+        hsize_t offset[1] = {startRow};
+        hsize_t count[1]  = {numRows};
+        fspace.selectHyperslab(H5S_SELECT_SET, count, offset);
+    }
+    else
+    {
+        hsize_t offset[2] = {startRow, 0};
+        hsize_t count[2]  = {numRows, 1};
+        fspace.selectHyperslab(H5S_SELECT_SET, count, offset);
+    }
+}
+
 } // anonymous namespace
 
 HDF5BsasGen1Reader::HDF5BsasGen1Reader(
@@ -396,21 +417,13 @@ void HDF5BsasGen1Reader::readFile()
                 std::vector<uint32_t> secData(numRows);
                 std::vector<uint32_t> nanoData(numRows);
                 {
-                    hsize_t       offset[2] = {startRow, 0};
-                    hsize_t       count[2] = {numRows, 1};
-                    H5::DataSpace fspace = secDs.getSpace();
-                    fspace.selectHyperslab(H5S_SELECT_SET, count, offset);
-                    hsize_t       mdims[1] = {numRows};
-                    H5::DataSpace mspace(1, mdims);
+                    H5::DataSpace fspace, mspace;
+                    selectRowRange(secDs, startRow, numRows, fspace, mspace);
                     secDs.read(secData.data(), H5::PredType::NATIVE_UINT32, mspace, fspace);
                 }
                 {
-                    hsize_t       offset[2] = {startRow, 0};
-                    hsize_t       count[2] = {numRows, 1};
-                    H5::DataSpace fspace = nanoDs.getSpace();
-                    fspace.selectHyperslab(H5S_SELECT_SET, count, offset);
-                    hsize_t       mdims[1] = {numRows};
-                    H5::DataSpace mspace(1, mdims);
+                    H5::DataSpace fspace, mspace;
+                    selectRowRange(nanoDs, startRow, numRows, fspace, mspace);
                     nanoDs.read(nanoData.data(), H5::PredType::NATIVE_UINT32, mspace, fspace);
                 }
 
@@ -425,12 +438,8 @@ void HDF5BsasGen1Reader::readFile()
                 std::vector<double> floatData(numRows * numFloatCols);
                 for (std::size_t c = 0; c < numFloatCols; ++c)
                 {
-                    hsize_t       offset[2] = {startRow, 0};
-                    hsize_t       count[2] = {numRows, 1};
-                    H5::DataSpace fspace = colDatasets[c].getSpace();
-                    fspace.selectHyperslab(H5S_SELECT_SET, count, offset);
-                    hsize_t       mdims[1] = {numRows};
-                    H5::DataSpace mspace(1, mdims);
+                    H5::DataSpace fspace, mspace;
+                    selectRowRange(colDatasets[c], startRow, numRows, fspace, mspace);
                     colDatasets[c].read(floatData.data() + c * numRows,
                                         H5::PredType::NATIVE_DOUBLE, mspace, fspace);
                 }
@@ -439,12 +448,8 @@ void HDF5BsasGen1Reader::readFile()
                 std::vector<int16_t> intData(numRows * numIntCols);
                 for (std::size_t c = 0; c < numIntCols; ++c)
                 {
-                    hsize_t       offset[2] = {startRow, 0};
-                    hsize_t       count[2] = {numRows, 1};
-                    H5::DataSpace fspace = colDatasets[numFloatCols + c].getSpace();
-                    fspace.selectHyperslab(H5S_SELECT_SET, count, offset);
-                    hsize_t       mdims[1] = {numRows};
-                    H5::DataSpace mspace(1, mdims);
+                    H5::DataSpace fspace, mspace;
+                    selectRowRange(colDatasets[numFloatCols + c], startRow, numRows, fspace, mspace);
                     colDatasets[numFloatCols + c].read(intData.data() + c * numRows,
                                                        H5::PredType::NATIVE_INT16, mspace, fspace);
                 }
