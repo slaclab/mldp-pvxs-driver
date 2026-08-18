@@ -176,9 +176,9 @@ blocks thread per bucket.
 - `OnDone(status)`: pushes `nullptr` EOF sentinel
 - `nextAsync()`: returns `queue_.popAsync()`
 
-Old `MldpBidiRecordBatchStream` retained for CLI/test path.
-`MLDPQueryClient::executeStream` selects via `context.async_backend` flag
-(default `true` when server enabled).
+Old `MldpBidiRecordBatchStream` retained for unit tests that construct a bare
+`ExecutionContext` without `pool_threads`.  `MLDPQueryClient::executeStream`
+selects impl based on `context.pool_threads != nullptr`.
 
 ### 3.2  `MLDPQueryClient` — `mldp.time_series_table` single-shard (unary)
 
@@ -458,32 +458,83 @@ void PlanScheduler::onTaskComplete(PlanTask* task) {
 }
 ```
 
-### 4.5  `IExecutionState` kept for CLI path
+### 4.5  `IExecutionState` kept for unit tests only
 
-`IExecutionState::execute()` is unchanged.  `QueryExecutor::execute()` (CLI,
-tests) still calls `makeExecutionState(root)` → synchronous recursive tree.
-`QueryExecutor::executeStream()` now delegates to `PlanScheduler::schedule()`
-when `context.async_backend = true` (default when server enabled).
+`IExecutionState::execute()` is unchanged and used only by low-level executor
+unit tests that need synchronous, deterministic execution without a thread pool.
+All production callers — CLI and Flight server — go through `PlanScheduler`.
+
+`QueryExecutor::execute()` (the fully-materializing variant) is also updated:
+it builds an `ExecutionContext` with `pool_threads` set and delegates to
+`executeStream()`, draining the resulting stream to collect all batches.  The
+separate `makeExecutionState` path is retired from production use.
 
 ---
 
-## Part 5 — `QueryExecutor` integration
+## Part 5 — `ExecutionContext` changes + `QueryExecutor` integration
 
-`QueryExecutor::executeStream()` (`src/query/QueryExecutor.cpp` line 220)
-becomes:
+### 5.1  `ExecutionContext` additions
+
+Add two fields to `include/query/ExecutionContext.h`:
+
+```cpp
+struct ExecutionContext
+{
+    // ... existing fields unchanged ...
+
+    /// Thread pool for DAG scheduler and async backend tasks.
+    /// Must be non-null for executeStream(); shared across concurrent queries.
+    BS::light_thread_pool* pool_threads{nullptr};
+};
+```
+
+`async_backend` is NOT a flag — the async engine is unconditional once
+`pool_threads` is set.  The synchronous legacy path is retained only when
+`pool_threads == nullptr` (unit tests that construct a bare `ExecutionContext`).
+
+### 5.2  CLI context wiring (`QueryCommand.cpp`)
+
+`QueryCommandPreparer::prepare()` (`src/query/QueryCommand.cpp` line 1217)
+already owns long-lived resources.  Add one `BS::light_thread_pool` member:
+
+```cpp
+class QueryCommandPreparer {
+    // ... existing ...
+    mutable BS::light_thread_pool query_pool_{
+        static_cast<BS::concurrency_t>(std::thread::hardware_concurrency())};
+};
+```
+
+In the context-building block (around line 1337):
+
+```cpp
+context.pool_threads = &preparer.query_pool_;
+```
+
+Single pool shared across all queries in the session — fair round-robin
+scheduling across concurrent interactive queries.  Pool size defaults to
+`cpu_count`; overridable via `--query-threads` (same flag as sql-server).
+
+### 5.3  `QueryExecutor::executeStream()`
+
+`src/query/QueryExecutor.cpp` line 220 becomes:
 
 ```cpp
 QueryStreamExecutionResult QueryExecutor::executeStream(
     const plan::PhysicalNodePtr& root, ExecutionContext context) const
 {
-    if (!context.async_backend)
-        return legacyExecuteStream(root, std::move(context)); // old path
+    auto stats = std::make_shared<QueryStats>();
+    collectPlanWarnings(root, stats->plan_warnings);
+    stats->plan_summary = plan::physicalPlanToString(root);
 
-    auto stats  = std::make_shared<QueryStats>();
+    if (!context.pool_threads) {
+        // Unit-test / bare-context fallback: synchronous legacy path.
+        return legacyExecuteStream(root, std::move(context), stats);
+    }
+
     auto sched  = std::make_shared<PlanScheduler>(*context.pool_threads, context, *stats);
     auto future = sched->schedule(root);
 
-    // Wrap future as IRecordBatchStream so callers (CLI, Flight server) are uniform.
     auto stream = std::make_unique<FutureRecordBatchStream>(std::move(future));
     return QueryStreamExecutionResult{
         .stream = std::make_unique<FinalizingRecordBatchStream>(
@@ -494,8 +545,19 @@ QueryStreamExecutionResult QueryExecutor::executeStream(
 ```
 
 `FutureRecordBatchStream` wraps `future<RecordBatches>`, yielding batches one
-at a time from the resolved vector.  `nextAsync()` on it returns immediately if
-the future is already resolved.
+at a time from the resolved vector.  `nextAsync()` returns immediately if the
+future is already resolved.
+
+### 5.4  CLI stream consumption — no change needed
+
+`QueryCommand.cpp` line 1404 already drains `stream->next()` in a loop.
+`FutureRecordBatchStream::next()` blocks until the DAG future resolves on the
+first call, then yields pre-computed batches one by one — same observable
+behaviour as before, zero code change at the call site.
+
+The interactive pagination path (`InteractivePageStream`, `continuations`)
+wraps the stream after `executeStream()` returns — unchanged, works over any
+`IRecordBatchStream` including `FutureRecordBatchStream`.
 
 ---
 
@@ -558,7 +620,7 @@ Implements `arrow::flight::sql::FlightSqlServerBase`:
 
 **`DoGetStatement(ticket)`**
 - Deserialize ticket → SQL
-- `context.async_backend = true`
+- `context.pool_threads = &query_pool_` (owned by `QueryFlightSqlServer`)
 - `QueryExecutor::executeStream()` → `PlanScheduler::schedule()` launches DAG
 - `BatchQueue(capacity=3)` fed by `scheduleNext()` loop (see Part 7)
 - Return `QueueFlightDataStream` backed by queue
@@ -671,16 +733,17 @@ Build bottom-up; each step is independently testable before the next.
 16. `BLOCKING_AGGREGATE` task body (HashJoin, Sort, Pivot, NestedLoop)
 17. Correlated NestedLoop inner-driven body
 18. `FutureRecordBatchStream` wrapper
-19. `QueryExecutor::executeStream()` → `PlanScheduler` when `async_backend=true`
-20. `scheduleNext` loop + `QueueFlightDataStream`
-21. `FlightSqlServerBase` impl + CMake wiring + subcommand
+19. `ExecutionContext::pool_threads` field + `QueryExecutor::executeStream()` DAG dispatch
+20. `QueryCommandPreparer` — add `BS::light_thread_pool` member, wire `context.pool_threads`
+21. `scheduleNext` loop + `QueueFlightDataStream`
+22. `FlightSqlServerBase` impl + CMake wiring + subcommand
 
-Steps 1–10: validate with existing integration tests (`context.async_backend=true`).  
-Steps 11–19: validate with query planner/executor unit tests including:
+Steps 1–10: validate with existing integration tests (bare `ExecutionContext` still uses sync path).  
+Steps 11–20: validate with query planner/executor unit tests including:
   - `SELECT * FROM (SELECT ...) AS t` — derived query DAG
   - `CREATE TABLE t AS SELECT ...` followed by `SELECT * FROM t` — IPC write + read
   - `SELECT ... WHERE pv IN (SELECT pv FROM ...)` — subquery injection
-Steps 20–21: validate with Flight client smoke tests.
+Steps 21–22: validate with Flight client smoke tests.
 
 ---
 
