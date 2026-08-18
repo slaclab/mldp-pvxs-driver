@@ -39,39 +39,97 @@ mldp_pvxs_driver sql-server [--config <yaml>] [--port 47470] [--bind 0.0.0.0]
 Dispatch from `mldp_pvxs_driver_main.cpp` (same early-subcommand pattern as `query`, lines 315-342).
 Guard with `#ifdef MLDP_QUERY_SERVER_FLIGHT`.
 
-## Concurrency model: async producer-consumer
+## Uniform cursor contract (prerequisite)
 
-gRPC I/O threads are **never blocked on MongoDB**. Each `DoGet` immediately offloads query
-execution to an internal worker pool, then streams completed batches back to the client as
-they arrive. This allows a small gRPC thread pool (4) to serve many concurrent clients.
+**The central design requirement:** `IRecordBatchStream::next()` must always mean
+"one bounded unit of forward progress" regardless of query shape. The caller
+(sql-server worker loop) never special-cases by query type.
+
+| Query shape | One `next()` unit |
+|---|---|
+| `mldp.time_series` bidi | one MongoDB bucket response |
+| `mldp.time_series_table` wide pivot | one window slice pivoted |
+| subquery resolution phase | one subquery evaluated |
+| JOIN / filter / project | one batch from upstream |
+
+Currently `mldp.time_series_table` violates this: `executeStream()` falls back to full
+materialization (all slices + spill file written) before the first `next()` returns.
+
+**Required fix (separate task, see `todo/lazy-cursor-contract.md`):**
+Extend `makeStreamingPlan` to return a true lazy stream for `mldp.time_series_table` where
+each `next()` = fetch+pivot one window slice. Once this is done the cooperative resubmission
+worker loop works uniformly for all query shapes.
+
+**Until that fix lands:** `mldp.time_series_table` queries still block one worker thread
+for the full query duration. The sql-server still works correctly — just with reduced
+parallelism for that query shape.
+
+## Concurrency model: cooperative resubmission
+
+gRPC I/O threads are **never blocked on MongoDB**. Query work runs on `BS_thread_pool`
+(already in codebase). After each `next()` call the worker **resubmits a continuation**
+back to the pool — it holds a thread only for one unit of work, then yields. All concurrent
+queries share the pool fairly.
 
 ```
 Client N  →  gRPC I/O thread (pool ~4)
-                  │  reads from per-query bounded channel (2-4 slots)
+                  │  reads from per-query bounded BatchQueue (capacity 3)
              [BatchQueue<RecordBatch>]
-                  ↑  pushes batches as they complete
-             Query worker thread (BS_thread_pool, default = cpu_count)
+                  ↑  one batch pushed per pool task
+             BS_thread_pool worker (detach_task, resubmits after each next())
                   │
-             QueryExecutor::executeStream() → MLDPGrpcQueryPool → MongoDB
+             IRecordBatchStream::next()  ← one bounded unit of work
+                  │
+             MLDPGrpcQueryPool → MongoDB
 ```
 
-**Flow per `DoGet`:**
-1. gRPC thread receives call, submits SQL to `BS_thread_pool` with a shared `BatchQueue`
-2. Worker runs `IRecordBatchStream::next()` in a loop, pushes each batch into the queue
-3. Worker pushes a sentinel (`nullptr`) on EOF or exception
-4. gRPC thread loops: `batch = queue.pop()` → `writer->Write(*batch)` → repeat until sentinel
-5. Bounded queue (capacity = 2-4) provides backpressure: slow client pauses the worker,
-   freeing the worker slot for other queries
+**Worker loop (cooperative resubmission):**
+```cpp
+void scheduleNext(BS::thread_pool& pool,
+                  std::shared_ptr<IRecordBatchStream> stream,
+                  std::shared_ptr<BatchQueue> queue)
+{
+    pool.detach_task([&pool, stream, queue]() {
+        try {
+            auto batch = stream->next();   // one unit of work, then releases thread
+            queue->push(batch);            // nullptr = EOF sentinel
+            if (batch)
+                scheduleNext(pool, stream, queue);  // resubmit continuation
+        } catch (...) {
+            queue->push_error(std::current_exception());
+        }
+    });
+}
+```
 
-**Result:**
+**`DoGet` entry point:**
+```cpp
+// 1. create bounded queue
+auto queue = std::make_shared<BatchQueue>(/*capacity=*/3);
+// 2. build stream (fast — no MongoDB I/O)
+auto stream = QueryExecutor{}.executeStream(sql, context);
+// 3. schedule first unit of work
+scheduleNext(pool_, stream, queue);
+// 4. return FlightDataStream that pops from queue
+return std::make_unique<QueueFlightDataStream>(queue);
+```
+
+**Properties:**
 - 4 gRPC threads serve 100+ concurrent clients
-- N worker threads multiplex all active queries (excess queries queue for a free worker)
-- No gRPC thread ever blocks on MongoDB or Arrow evaluation
-- `mldp-pool.max-conn` in driver config remains the ultimate concurrency ceiling
-  (set `max-conn = ceil(target_concurrent_queries / replica_count)`)
+- N worker threads round-robin across all active queries (one batch per pool task)
+- No query monopolizes the pool — slow queries yield after each slice
+- Bounded queue (cap=3) provides backpressure: slow client pauses worker resubmission
+- `mldp-pool.max-conn` remains the hard concurrency ceiling for MongoDB connections
 
 `BS_thread_pool` already compiled into `lib${PROJECT_NAME}` via
 `ext/BS_thread_pool/include/BS_thread_pool.hpp` — no extra dep needed.
+
+## Future: full async
+
+The cooperative resubmission structure is the natural precursor to full async.
+Once an async MongoDB C++ driver or C++20 coroutine support is available,
+`scheduleNext` becomes `co_await stream->nextAsync()` — the continuation structure
+is already in place, only the blocking call changes.
 
 ## New files
 
@@ -106,18 +164,10 @@ Implements `arrow::flight::sql::FlightSqlServerBase`:
 
 **`DoGet(ticket)`**
 - Deserialize ticket → SQL
-- Create `BatchQueue` (bounded, capacity 3)
-- Submit to `BS_thread_pool`:
-  ```cpp
-  pool_.detach_task([sql, queue]() {
-      auto stream = QueryExecutor{}.executeStream(...);
-      while (auto batch = stream->next())
-          queue->push(batch);
-      queue->push(nullptr);  // EOF sentinel
-  });
-  ```
-- Return custom `arrow::flight::FlightDataStream` that calls `queue->pop()` in `Next()`
-- On exception in worker: push error token to queue, `Next()` returns gRPC `INTERNAL`
+- Build stream via `QueryExecutor::executeStream()`
+- Kick off cooperative resubmission loop (see above)
+- Return `QueueFlightDataStream` backed by bounded `BatchQueue`
+- Exceptions in worker propagate via `BatchQueue::push_error()` → gRPC `INTERNAL`
 
 **`DoPutCommandStatementUpdate`** (optional)
 - Forward DDL (CREATE TABLE / DROP TABLE) to `QueryRunner::run()`
@@ -133,6 +183,7 @@ Implements `arrow::flight::sql::FlightSqlServerBase`:
 |--------|------|
 | `QueryCommandPreparer::prepare()` | `include/query/QueryCommand.h` |
 | `QueryExecutor::executeStream()` | `include/query/QueryExecutor.h` |
+| `IRecordBatchStream` | `include/query/IQueryable.h` |
 | `BS_thread_pool` | `ext/BS_thread_pool/include/BS_thread_pool.hpp` |
 
 ## k8s deployment
