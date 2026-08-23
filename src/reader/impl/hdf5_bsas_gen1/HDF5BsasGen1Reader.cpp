@@ -293,7 +293,9 @@ void HDF5BsasGen1Reader::readFile()
         for (const auto& filePath : files)
         {
             current_file_name = filePath.filename().string();
-            logger_->log(util::log::Level::Trace,
+            try
+            {
+                logger_->log(util::log::Level::Info,
                          "readFile: opening " + filePath.string());
             H5::H5File file(filePath.string(), H5F_ACC_RDONLY);
 
@@ -301,6 +303,7 @@ void HDF5BsasGen1Reader::readFile()
             // Enumerate root-level datasets. Identify timestamp vectors
             // (secondsPastEpoch, nanoseconds) and classify data columns
             // by HDF5 type (float64 or int16). Other types are skipped.
+            // Columns with zero-extent first dimension are skipped (warn logged).
             std::vector<ColumnInfo> columns;
             std::size_t             totalRows = 0;
             bool                    hasSeconds = false;
@@ -343,6 +346,16 @@ void HDF5BsasGen1Reader::readFile()
                     col.type = ColumnInfo::Type::Int16;
                 else
                     continue;
+
+                H5::DataSpace sp = ds.getSpace();
+                hsize_t       cdims[2]{0, 0};
+                sp.getSimpleExtentDims(cdims);
+                if (cdims[0] == 0)
+                {
+                    logger_->log(util::log::Level::Warn,
+                                 "readFile: skipping zero-extent column '" + dsName + "' in " + filePath.string());
+                    continue;
+                }
 
                 columns.push_back(std::move(col));
             }
@@ -530,6 +543,27 @@ void HDF5BsasGen1Reader::readFile()
             logger_->log(util::log::Level::Info,
                          "readFile: completed " + std::to_string(chunkIdx) +
                              " chunks for " + filePath.string());
+            } // end per-file try
+            catch (const H5::Exception& e)
+            {
+                const prometheus::Labels err_tag{{"source", current_file_name}};
+                metric_call(metrics_, [&](auto& m)
+                            {
+                                m.incrementReaderErrors(1.0, err_tag);
+                            });
+                logger_->log(util::log::Level::Error,
+                             "readFile: HDF5 error in " + filePath.string() + ": " + e.getCDetailMsg());
+            }
+            catch (const std::exception& e)
+            {
+                const prometheus::Labels err_tag{{"source", current_file_name}};
+                metric_call(metrics_, [&](auto& m)
+                            {
+                                m.incrementReaderErrors(1.0, err_tag);
+                            });
+                logger_->log(util::log::Level::Error,
+                             "readFile: error in " + filePath.string() + ": " + e.what());
+            }
         }
     }
     catch (const H5::Exception& e)
