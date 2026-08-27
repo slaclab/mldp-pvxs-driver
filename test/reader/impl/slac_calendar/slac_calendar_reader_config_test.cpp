@@ -316,6 +316,40 @@ end-date: "2025-12-31T23:59:59-08:00"
     EXPECT_TRUE(c.endDate().has_value());
 }
 
+TEST(SlacCalendarReaderConfigTest, ParsesCategoryField)
+{
+    const auto cfg = makeConfigFromYaml(R"yaml(
+name: r
+base-url: http://localhost
+experiments:
+  - lcls
+lookahead-days: 7
+category: "MY-CAT"
+)yaml");
+    ASSERT_NO_THROW(assertNoThrow(cfg));
+    SlacCalendarReaderConfig c(cfg);
+    ASSERT_TRUE(c.category().has_value());
+    EXPECT_EQ(*c.category(), "MY-CAT");
+}
+
+TEST(SlacCalendarReaderConfigTest, CategoryIsOptional)
+{
+    SlacCalendarReaderConfig c(makeConfigFromYaml(minimalYaml()));
+    EXPECT_FALSE(c.category().has_value());
+}
+
+TEST(SlacCalendarReaderConfigTest, ThrowsWhenCategoryEmpty)
+{
+    assertThrows(makeConfigFromYaml(R"yaml(
+name: r
+base-url: http://localhost
+experiments:
+  - lcls
+lookahead-days: 7
+category: ""
+)yaml"));
+}
+
 TEST(SlacCalendarReaderConfigTest, LookaheadDaysNotRequiredWhenEndDateSet)
 {
     const auto cfg = makeConfigFromYaml(R"yaml(

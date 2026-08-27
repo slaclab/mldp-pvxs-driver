@@ -169,6 +169,15 @@ std::string makeReaderYaml(const std::string& baseUrl,
     return ss.str();
 }
 
+std::string makeReaderYamlWithCategory(const std::string& baseUrl,
+                                       const std::string& experiments,
+                                       const std::string& category,
+                                       int                lookahead = 30)
+{
+    return makeReaderYaml(baseUrl, experiments, lookahead) +
+           "category: \"" + category + "\"\n";
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -221,6 +230,7 @@ TEST_F(SlacCalendarReaderTest, LclsEventProducesTwoBusMessages)
     EXPECT_EQ((*cp.tags)[0], "2nd");
     EXPECT_EQ(cp.attributes.at("tag_0"), "2nd");
     EXPECT_EQ(cp.attributes.at("experiment"), "lcls");
+    EXPECT_EQ(cp.attributes.at("calendar"), "NC-CXI");
     EXPECT_EQ(cp.attributes.at("note"), "13.213 GeV, 80 pC");
     EXPECT_EQ(cp.attributes.at("poc"), "Minitti");
     EXPECT_EQ(cp.attributes.at("config"), "15 keV");
@@ -259,6 +269,7 @@ TEST_F(SlacCalendarReaderTest, FacetEventHandlesReducedSchema)
 
     const auto& cp = std::get<ConfigurationPayload>(batches[0].payload);
     EXPECT_EQ(cp.configuration_name, "Single bunch matching S20");
+    EXPECT_EQ(cp.category, "FACET-MD");
     EXPECT_FALSE(cp.description.has_value());
     EXPECT_FALSE(cp.tags.has_value());
     EXPECT_FALSE(cp.attributes.count("note"));
@@ -267,6 +278,7 @@ TEST_F(SlacCalendarReaderTest, FacetEventHandlesReducedSchema)
     EXPECT_FALSE(cp.attributes.count("machine"));
     EXPECT_FALSE(cp.attributes.count("hutch_name"));
     EXPECT_EQ(cp.attributes.at("experiment"), "facet");
+    EXPECT_EQ(cp.attributes.at("calendar"), "FACET-MD");
 }
 
 TEST_F(SlacCalendarReaderTest, MultipleExperimentsAllFetched)
@@ -341,4 +353,95 @@ TEST_F(SlacCalendarReaderTest, UrlContainsEncodedTimestamps)
     EXPECT_NE(path.find("lcls/events.json"), std::string::npos);
     // colons should be percent-encoded
     EXPECT_EQ(path.find(':'), std::string::npos);
+}
+
+TEST_F(SlacCalendarReaderTest, ConfigCategoryOverridesApiCalendar)
+{
+    server_.setResponse("lcls", kLclsEvent);
+
+    const auto cfg = makeConfigFromYaml(
+        makeReaderYamlWithCategory(server_.baseUrl(), "  - lcls\n", "MY-FIXED"));
+    SlacCalendarReader reader(bus_, nullptr, cfg);
+
+    ASSERT_TRUE(bus_->waitForCount(2, std::chrono::milliseconds(5000)));
+    const auto batches = bus_->snapshot();
+    ASSERT_GE(batches.size(), 1u);
+
+    const auto& cp = std::get<ConfigurationPayload>(batches[0].payload);
+    EXPECT_EQ(cp.category, "MY-FIXED");
+    EXPECT_EQ(cp.attributes.at("calendar"), "NC-CXI");
+}
+
+TEST_F(SlacCalendarReaderTest, MissingCalendarFieldStillPushesConfig)
+{
+    static const char* kNoCalendar = R"json([
+      {
+        "url": "https://example.com/evt1",
+        "program_name": "Test Program",
+        "start": "2026-05-28T06:00:00-07:00",
+        "end": "2026-05-28T18:00:00-07:00"
+      }
+    ])json";
+    server_.setResponse("lcls", kNoCalendar);
+
+    const auto cfg = makeConfigFromYaml(
+        makeReaderYaml(server_.baseUrl(), "  - lcls\n"));
+    SlacCalendarReader reader(bus_, nullptr, cfg);
+
+    ASSERT_TRUE(bus_->waitForCount(2, std::chrono::milliseconds(5000)));
+    const auto batches = bus_->snapshot();
+    ASSERT_GE(batches.size(), 1u);
+
+    const auto& cp = std::get<ConfigurationPayload>(batches[0].payload);
+    EXPECT_EQ(cp.configuration_name, "Test Program");
+    EXPECT_FALSE(cp.attributes.count("calendar"));
+}
+
+TEST_F(SlacCalendarReaderTest, MissingUrlFieldStillPushesActivation)
+{
+    static const char* kNoUrl = R"json([
+      {
+        "program_name": "Test Program",
+        "calendar": "NC-TEST",
+        "start": "2026-05-28T06:00:00-07:00",
+        "end": "2026-05-28T18:00:00-07:00"
+      }
+    ])json";
+    server_.setResponse("lcls", kNoUrl);
+
+    const auto cfg = makeConfigFromYaml(
+        makeReaderYaml(server_.baseUrl(), "  - lcls\n"));
+    SlacCalendarReader reader(bus_, nullptr, cfg);
+
+    ASSERT_TRUE(bus_->waitForCount(2, std::chrono::milliseconds(5000)));
+    const auto batches = bus_->snapshot();
+    ASSERT_EQ(batches.size(), 2u);
+
+    const auto& act = std::get<ConfigurationActivationPayload>(batches[1].payload);
+    EXPECT_EQ(act.configuration_name, "Test Program");
+    EXPECT_FALSE(act.client_activation_id.has_value());
+}
+
+TEST_F(SlacCalendarReaderTest, MissingStartStillPushesConfig)
+{
+    static const char* kNoStart = R"json([
+      {
+        "url": "https://example.com/evt1",
+        "program_name": "Test Program",
+        "calendar": "NC-TEST",
+        "end": "2026-05-28T18:00:00-07:00"
+      }
+    ])json";
+    server_.setResponse("lcls", kNoStart);
+
+    const auto cfg = makeConfigFromYaml(
+        makeReaderYaml(server_.baseUrl(), "  - lcls\n"));
+    SlacCalendarReader reader(bus_, nullptr, cfg);
+
+    ASSERT_TRUE(bus_->waitForCount(1, std::chrono::milliseconds(5000)));
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    const auto batches = bus_->snapshot();
+    ASSERT_EQ(batches.size(), 1u);
+    EXPECT_TRUE(std::holds_alternative<ConfigurationPayload>(batches[0].payload));
 }

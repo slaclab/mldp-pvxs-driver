@@ -38,6 +38,7 @@ public:
     int lookbackDays() const noexcept { return lookback_days_; }
     const std::optional<std::string>& startDate() const noexcept { return start_date_; }
     const std::optional<std::string>& endDate() const noexcept { return end_date_; }
+    const std::optional<std::string>& category() const noexcept { return category_; }
     double rescanIntervalSec() const noexcept { return rescan_interval_sec_; }
     long connectTimeoutSec() const noexcept { return connect_timeout_sec_; }
     long totalTimeoutSec() const noexcept { return total_timeout_sec_; }
@@ -56,6 +57,7 @@ private:
     int                      lookback_days_{1};
     std::optional<std::string> start_date_;
     std::optional<std::string> end_date_;
+    std::optional<std::string> category_;
     double                   rescan_interval_sec_{0.0};
     long                     connect_timeout_sec_{30};
     long                     total_timeout_sec_{60};
