@@ -199,6 +199,14 @@ void SlacCalendarReader::pushEvent(const nlohmann::json& ev, const std::string& 
               config_.name(), experiment, missing_fields, desc, start_str, url);
 
     const std::string program_name = jsonStr(ev, "program_name");
+    if (program_name.empty())
+    {
+        warnf(*logger_,
+              "SlacCalendarReader '{}' experiment '{}': skipping event with empty program_name"
+              " (start='{}', url='{}')",
+              config_.name(), experiment, start_str, url);
+        return;
+    }
     const std::string calendar     = jsonStr(ev, "calendar");
     const std::string end_str      = jsonStr(ev, "end");
 

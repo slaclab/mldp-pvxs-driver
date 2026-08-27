@@ -372,7 +372,10 @@ bool BaseQueuedWriter<Item>::push(util::bus::IDataBus::EventBatch batch) noexcep
                 return enqueued;
         }
 
-        const auto idx = nextChannel_.fetch_add(1, std::memory_order_relaxed) % channels_.size();
+        const std::string rk  = itemRoutingKey(item);
+        const std::size_t idx = rk.empty()
+            ? nextChannel_.fetch_add(1, std::memory_order_relaxed) % channels_.size()
+            : std::hash<std::string>{}(rk) % channels_.size();
         {
             std::lock_guard lk(channels_[idx]->mutex);
             channels_[idx]->items.push_back(std::move(item));

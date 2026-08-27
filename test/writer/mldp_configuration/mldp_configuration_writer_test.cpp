@@ -399,4 +399,147 @@ TEST(MLDPConfigurationWriterTest, StartStopLifecycle)
     ASSERT_NO_THROW(writer->stop());
 }
 
+// ---------------------------------------------------------------------------
+// Test 8 — regression for the production race: without itemRoutingKey(),
+//           round-robin dispatch sends cfg to worker N and activation to
+//           worker N+1.  saveConfiguration intentionally sleeps to guarantee
+//           activation would win the race on buggy code.  With the fix,
+//           both items for the same name hash to the same channel and are
+//           processed FIFO, so cfg always completes first.
+//
+// This test is deterministic: it ALWAYS fails without the routing fix and
+// ALWAYS passes with it.
+// ---------------------------------------------------------------------------
+
+TEST(MLDPConfigurationWriterTest,
+     RoutingKeyEnsuresCfgBeforeActivationDespiteSlowCfgRpc)
+{
+    // Service that:
+    //   • sleeps 30 ms in saveConfiguration (guarantees activation wins the
+    //     race on unfixed code where both items run on different workers)
+    //   • records global monotonic sequence numbers keyed by config name
+    struct SlowSequencingService final
+        : dp::service::annotation::DpAnnotationService::Service
+    {
+        std::atomic<int>                     global_seq{0};
+        std::mutex                           mtx;
+        std::unordered_map<std::string, int> cfg_seq;
+        std::unordered_map<std::string, int> act_seq;
+        std::atomic<int>                     cfg_count{0};
+        std::atomic<int>                     act_count{0};
+
+        grpc::Status saveConfiguration(
+            grpc::ServerContext*,
+            const dp::service::annotation::SaveConfigurationRequest* req,
+            dp::service::annotation::SaveConfigurationResponse* resp) override
+        {
+            // Simulate a slow DB write — on buggy (round-robin) code this
+            // gives the activation worker a 30 ms head start, ensuring it
+            // arrives at the service first.
+            std::this_thread::sleep_for(std::chrono::milliseconds(30));
+            const int s = global_seq.fetch_add(1, std::memory_order_relaxed);
+            {
+                std::lock_guard<std::mutex> lk(mtx);
+                cfg_seq[req->configurationname()] = s;
+            }
+            cfg_count.fetch_add(1, std::memory_order_relaxed);
+            resp->mutable_saveconfigurationresult()->set_configurationname(
+                req->configurationname());
+            return grpc::Status::OK;
+        }
+
+        grpc::Status saveConfigurationActivation(
+            grpc::ServerContext*,
+            const dp::service::annotation::SaveConfigurationActivationRequest* req,
+            dp::service::annotation::SaveConfigurationActivationResponse* resp) override
+        {
+            const int s = global_seq.fetch_add(1, std::memory_order_relaxed);
+            {
+                std::lock_guard<std::mutex> lk(mtx);
+                act_seq[req->configurationname()] = s;
+            }
+            act_count.fetch_add(1, std::memory_order_relaxed);
+            resp->mutable_saveconfigurationactivationresult()->set_clientactivationid(
+                req->clientactivationid());
+            return grpc::Status::OK;
+        }
+    };
+
+    SlowSequencingService service;
+    grpc::ServerBuilder   builder;
+    int                   annotation_port = 0;
+    builder.AddListeningPort("127.0.0.1:0", grpc::InsecureServerCredentials(),
+                             &annotation_port);
+    builder.RegisterService(&service);
+    std::unique_ptr<grpc::Server> server(builder.BuildAndStart());
+    ASSERT_TRUE(server);
+    ASSERT_GT(annotation_port, 0);
+
+    // 4 workers: without routing fix, cfg→worker0 and act→worker1 for the
+    // same name; act would always win with the 30 ms cfg sleep.
+    std::ostringstream yaml;
+    yaml << "name: routing_regression_test\n"
+         << "thread-pool: 4\n"
+         << "deadline-seconds: 10\n"
+         << "mldp-annotation-pool:\n"
+         << "  provider-name: test-provider\n"
+         << "  ingestion-url: 127.0.0.1:" << annotation_port << "\n"
+         << "  query-url: 127.0.0.1:" << (annotation_port + 1) << "\n"
+         << "  annotation-url: 127.0.0.1:" << annotation_port << "\n"
+         << "  min-conn: 1\n"
+         << "  max-conn: 4\n";
+
+    auto writer = WriterFactory::create(
+        "mldp-configuration", makeConfigFromYaml(yaml.str()), nullptr);
+    ASSERT_NE(writer, nullptr);
+    ASSERT_NO_THROW(writer->start());
+
+    // Push cfg immediately followed by activation for each name — exactly
+    // the pattern the SlacCalendarReader uses per calendar event.
+    constexpr int kNames = 8;
+    for (int i = 0; i < kNames; ++i)
+    {
+        const std::string name = "SCHED_EVENT_" + std::to_string(i);
+
+        IDataBus::EventBatch cfg_batch;
+        cfg_batch.payload = ConfigurationPayload{
+            .root_source_name   = "slac-calendar",
+            .configuration_name = name,
+            .category           = "lcls",
+        };
+        ASSERT_TRUE(writer->push(std::move(cfg_batch)));
+
+        IDataBus::EventBatch act_batch;
+        act_batch.payload = ConfigurationActivationPayload{
+            .configuration_name = name,
+            .start_time         = {.epoch_seconds = static_cast<uint64_t>(1700000000 + i),
+                                   .nanoseconds   = 0},
+        };
+        ASSERT_TRUE(writer->push(std::move(act_batch)));
+    }
+
+    // 8 names × 30 ms cfg sleep + margin
+    EXPECT_TRUE(waitForCount(service.cfg_count, kNames, std::chrono::milliseconds(10000)));
+    EXPECT_TRUE(waitForCount(service.act_count, kNames, std::chrono::milliseconds(10000)));
+
+    writer->stop();
+    server->Shutdown();
+
+    // Core assertion: for every event name, saveConfiguration must have
+    // been issued (lower global seq#) before saveConfigurationActivation.
+    // Without itemRoutingKey this fails deterministically because the 30 ms
+    // sleep lets the activation worker lap the cfg worker every time.
+    std::lock_guard<std::mutex> lk(service.mtx);
+    for (int i = 0; i < kNames; ++i)
+    {
+        const std::string name = "SCHED_EVENT_" + std::to_string(i);
+        ASSERT_TRUE(service.cfg_seq.count(name))
+            << "saveConfiguration never called for " << name;
+        ASSERT_TRUE(service.act_seq.count(name))
+            << "saveConfigurationActivation never called for " << name;
+        EXPECT_LT(service.cfg_seq.at(name), service.act_seq.at(name))
+            << name << ": activation arrived before configuration (routing bug)";
+    }
+}
+
 } // namespace

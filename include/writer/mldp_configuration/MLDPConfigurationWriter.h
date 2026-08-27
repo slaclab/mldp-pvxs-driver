@@ -78,6 +78,13 @@ protected:
     void doStart() override;
     void doStop() noexcept override;
 
+    std::string itemRoutingKey(const ConfigItem& item) const override
+    {
+        return std::visit(
+            [](const auto& p) -> std::string { return p.configuration_name; },
+            item);
+    }
+
 private:
     void doSaveConfiguration(const util::bus::ConfigurationPayload& cfg);
     void doSaveConfigurationActivation(const util::bus::ConfigurationActivationPayload& act);

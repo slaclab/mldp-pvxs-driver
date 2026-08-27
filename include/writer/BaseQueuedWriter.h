@@ -20,8 +20,10 @@
 #include <chrono>
 #include <condition_variable>
 #include <deque>
+#include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -142,6 +144,18 @@ protected:
 
     /** Called after all threads are joined, inside stop(). */
     virtual void doStop() noexcept {}
+
+    /**
+     * @brief Returns a routing key for this item that pins it to a specific worker channel.
+     *
+     * When non-empty, the key is hashed to select a channel deterministically.
+     * Items with the same key always land on the same worker, preserving
+     * ordering between related items (e.g. cfg + activation for the same name).
+     * Return an empty string (default) to use round-robin dispatch.
+     *
+     * Called from push() on the caller's thread, once per Item.
+     */
+    virtual std::string itemRoutingKey(const Item& /*item*/) const { return {}; }
 
     /**
      * @brief Called on a worker thread after idle_check_ms with no new item.
