@@ -138,7 +138,6 @@ public:
 
 private:
     std::shared_ptr<Pool> pool_;
-    PoolObjectPtr obj_;
-    
+    PoolObjectPtr         obj_;
 };
 } // namespace mldp_pvxs_driver::util::pool

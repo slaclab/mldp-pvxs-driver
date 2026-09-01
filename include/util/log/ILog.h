@@ -104,8 +104,7 @@ inline Level parseLevel(std::string_view value)
         return Level::Off;
 
     throw std::invalid_argument(
-        "Invalid log level '" + std::string(value)
-        + "' (expected: trace, debug, info, warn, error, critical, off)");
+        "Invalid log level '" + std::string(value) + "' (expected: trace, debug, info, warn, error, critical, off)");
 }
 
 /**

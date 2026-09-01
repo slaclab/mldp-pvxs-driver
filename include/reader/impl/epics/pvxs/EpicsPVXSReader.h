@@ -21,14 +21,18 @@
 #pragma once
 
 #include <reader/ReaderFactory.h>
+#include <reader/impl/epics/pvxs/EpicsPVXSReaderConfig.h>
 #include <reader/impl/epics/shared/EpicsReaderBase.h>
 
 #include <pvxs/client.h>
 
 #include <prometheus/labels.h>
 
+#include <chrono>
 #include <mutex>
+#include <string>
 #include <string_view>
+#include <unordered_map>
 
 namespace mldp_pvxs_driver::reader::impl::epics {
 
@@ -89,8 +93,10 @@ public:
      * @throws EpicsReaderConfig::Error if configuration is invalid.
      */
     EpicsPVXSReader(std::shared_ptr<util::bus::IDataBus> bus,
-                    std::shared_ptr<metrics::Metrics>         metrics,
-                    const config::Config&                     cfg);
+                    std::shared_ptr<metrics::Metrics>    metrics,
+                    const config::Config&                cfg);
+
+    ~EpicsPVXSReader() override;
 
     /**
      * @brief Add PVs to the monitor.
@@ -114,9 +120,9 @@ private:
      *  Standard EPICS alarm severity values.
      *  @{
      */
-    static constexpr int kAlarmSeverityNone    = 0; ///< No alarm.
-    static constexpr int kAlarmSeverityMinor   = 1; ///< Minor alarm.
-    static constexpr int kAlarmSeverityMajor   = 2; ///< Major alarm.
+    static constexpr int kAlarmSeverityNone = 0;    ///< No alarm.
+    static constexpr int kAlarmSeverityMinor = 1;   ///< Minor alarm.
+    static constexpr int kAlarmSeverityMajor = 2;   ///< Major alarm.
     static constexpr int kAlarmSeverityInvalid = 3; ///< Invalid/disconnected.
     /** @} */
 
@@ -152,7 +158,8 @@ private:
      * @param epicsValue The PVXS Value to process.
      * @param[out] emitted Set to 1 if an event was successfully emitted, 0 otherwise.
      */
-    void processDefaultMode(const std::string& pvName, const pvxs::Value& epicsValue, std::size_t& emitted);
+    void processDefaultMode(const std::string& pvName, const pvxs::Value& epicsValue,
+                            const prometheus::Labels& sourceTag, std::size_t& emitted);
 
     /**
      * @brief Process a PV update in SLAC BSAS table mode.
@@ -164,16 +171,20 @@ private:
      * @param pvName Name of the PV.
      * @param epicsValue The PVXS Value containing the NTTable.
      * @param runtimeCfg Runtime configuration with timestamp field names.
+     * @param sourceTag Prometheus labels for metrics.
      * @param[out] emitted Number of events successfully emitted.
      */
     void processSlacBsasTableMode(const std::string&     pvName,
                                   const pvxs::Value&     epicsValue,
                                   const PVRuntimeConfig* runtimeCfg,
+                                  const prometheus::Labels& sourceTag,
                                   std::size_t&           emitted);
 
     mutable std::mutex                                          subscriptions_mutex_; ///< Protects subscription operations.
     pvxs::client::Context                                       pva_context_;         ///< PVXS client context.
     pvxs::MPMCFIFO<std::shared_ptr<pvxs::client::Subscription>> m_pva_subscriptions;  ///< Active subscriptions.
+    std::mutex                                                   last_event_time_mutex_;
+    std::unordered_map<std::string, std::chrono::steady_clock::time_point> last_event_time_;
 
     REGISTER_READER("epics-pvxs", EpicsPVXSReader)
 };

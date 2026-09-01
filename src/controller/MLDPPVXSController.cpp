@@ -10,19 +10,26 @@
 
 #include "util/log/Logger.h"
 #include <controller/MLDPPVXSController.h>
-#include <google/protobuf/arena.h>
+#include <future>
 #include <memory>
+#include <processor/ChannelProcessorFactory.h>
+#include <query/QueryableFactory.h>
+#include <query/impl/mldp/MLDPAnnotationQueryClient.h>
+#include <query/impl/mldp/MLDPQueryClient.h>
 #include <reader/ReaderFactory.h>
+#include <thread>
 #include <util/StringFormat.h>
+#include <writer/WriterFactory.h>
 
 #include <algorithm>
 #include <chrono>
-#include <cstdint>
-#include <grpcpp/grpcpp.h>
-#include <ranges>
-#include <set>
+#include <filesystem>
+#include <functional>
+#include <iterator>
+#include <sstream>
 #include <stdexcept>
-#include <thread>
+#include <unordered_map>
+#include <unordered_set>
 
 using namespace mldp_pvxs_driver::metrics;
 using namespace mldp_pvxs_driver::controller;
@@ -30,106 +37,165 @@ using namespace mldp_pvxs_driver::util::bus;
 using namespace mldp_pvxs_driver::config;
 using namespace mldp_pvxs_driver::reader;
 using namespace mldp_pvxs_driver::util::log;
-
-using mldp_pvxs_driver::util::pool::MLDPGrpcIngestionePool;
-using mldp_pvxs_driver::util::pool::MLDPGrpcQueryPool;
+using namespace mldp_pvxs_driver::writer;
 
 namespace {
-// Creates a dedicated logger for controller lifecycle, bus, and query operations.
-std::shared_ptr<mldp_pvxs_driver::util::log::ILogger> makeControllerLogger()
+// Creates a dedicated logger for controller lifecycle and bus operations.
+std::shared_ptr<mldp_pvxs_driver::util::log::ILogger> makeControllerLogger(const std::string& name)
 {
-    std::string loggerName = "controlller";
-    return mldp_pvxs_driver::util::log::newLogger(loggerName);
+    return mldp_pvxs_driver::util::log::newLogger("controller." + name);
 }
 
-using dp::service::common::DataTimestamps;
-using dp::service::common::Timestamp;
-
-SourceTimestamp makeSourceTimestamp(const Timestamp& ts)
+static void prepareQueryables(const MLDPPVXSControllerConfig&                     cfg,
+                              std::shared_ptr<mldp_pvxs_driver::metrics::Metrics> metrics)
 {
-    return SourceTimestamp{
-        ts.epochseconds(),
-        ts.nanoseconds()};
-}
+    using namespace mldp_pvxs_driver::query;
+    using namespace mldp_pvxs_driver::query::impl::mldp;
 
-bool isBefore(const SourceTimestamp& lhs, const SourceTimestamp& rhs)
-{
-    if (lhs.epoch_seconds != rhs.epoch_seconds)
+    using PrepFn = std::function<void(const mldp_pvxs_driver::config::Config&,
+                                      std::shared_ptr<mldp_pvxs_driver::metrics::Metrics>)>;
+    static const std::unordered_map<std::string, PrepFn> kDispatch = {
+        {"mldp",
+         [](const mldp_pvxs_driver::config::Config&             c,
+            std::shared_ptr<mldp_pvxs_driver::metrics::Metrics> m)
+         {
+             QueryableFactory::instance().prepare<MLDPQueryClient>(c, std::move(m));
+         }},
+        {"mldp-pv-metadata",
+         [](const mldp_pvxs_driver::config::Config&             c,
+            std::shared_ptr<mldp_pvxs_driver::metrics::Metrics> m)
+         {
+             QueryableFactory::instance().prepare<MLDPAnnotationQueryClient>(c, std::move(m));
+         }},
+    };
+    for (const auto& entry : cfg.queryableEntries())
     {
-        return lhs.epoch_seconds < rhs.epoch_seconds;
+        auto it = kDispatch.find(entry.type);
+        if (it == kDispatch.end())
+        {
+            throw std::runtime_error("Unknown queryable type: " + entry.type);
+        }
+        it->second(entry.cfg, metrics);
     }
-    return lhs.nanoseconds < rhs.nanoseconds;
 }
 
-std::optional<std::pair<SourceTimestamp, SourceTimestamp>> extractTimestampRange(const DataTimestamps& data_timestamps)
+void validateProcessorOutputSourceCollisions(
+    const std::unordered_set<std::string>&                                 reader_names,
+    const std::vector<mldp_pvxs_driver::processor::IChannelProcessorUPtr>& processors)
 {
-    // Metadata/query responses may carry timestamps either as an explicit list
-    // or as sampling-clock metadata. Normalize both formats into a [first,last]
-    // range so callers can merge bucket boundaries consistently.
-    if (data_timestamps.has_timestamplist())
+    for (const auto& processor : processors)
     {
-        const auto& list = data_timestamps.timestamplist();
-        if (list.timestamps_size() <= 0)
+        for (const auto& output_source : processor->outputSourceNames())
         {
-            return std::nullopt;
-        }
-
-        SourceTimestamp first = makeSourceTimestamp(list.timestamps(0));
-        SourceTimestamp last = first;
-        for (int i = 1; i < list.timestamps_size(); ++i)
-        {
-            const SourceTimestamp current = makeSourceTimestamp(list.timestamps(i));
-            if (isBefore(current, first))
+            if (reader_names.find(output_source) != reader_names.end())
             {
-                first = current;
-            }
-            if (isBefore(last, current))
-            {
-                last = current;
-            }
-        }
-        return std::make_pair(first, last);
-    }
-
-    if (data_timestamps.has_samplingclock())
-    {
-        const auto& clock = data_timestamps.samplingclock();
-        if (!clock.has_starttime())
-        {
-            return std::nullopt;
-        }
-
-        const SourceTimestamp first = makeSourceTimestamp(clock.starttime());
-        SourceTimestamp       last = first;
-        const auto            count = static_cast<uint64_t>(clock.count());
-        const auto            period_nanos = clock.periodnanos();
-        if (count > 1 && period_nanos > 0)
-        {
-            const auto steps = count - 1;
-            const auto offset_nanos = static_cast<unsigned __int128>(steps) * static_cast<unsigned __int128>(period_nanos);
-            const auto add_secs = static_cast<uint64_t>(offset_nanos / 1'000'000'000ULL);
-            const auto add_nanos = static_cast<uint64_t>(offset_nanos % 1'000'000'000ULL);
-            last.epoch_seconds += add_secs;
-            last.nanoseconds += add_nanos;
-            if (last.nanoseconds >= 1'000'000'000ULL)
-            {
-                last.epoch_seconds += 1;
-                last.nanoseconds -= 1'000'000'000ULL;
+                throw std::runtime_error("Controller: processor output source '" + output_source +
+                                         "' collides with reader name");
             }
         }
-        return std::make_pair(first, last);
+    }
+}
+
+std::string describeCycle(const std::vector<std::string>& stack, const std::string& name)
+{
+    auto it = std::find(stack.begin(), stack.end(), name);
+    if (it == stack.end())
+    {
+        return name;
     }
 
-    return std::nullopt;
+    std::ostringstream cycle;
+    for (auto current = it; current != stack.end(); ++current)
+    {
+        if (current != it)
+        {
+            cycle << " -> ";
+        }
+        cycle << *current;
+    }
+    cycle << " -> " << name;
+    return cycle.str();
 }
 
-bool hasTimestampList(const dp::service::common::DataFrame& frame)
+void validateProcessorGraphAcyclic(
+    const std::vector<mldp_pvxs_driver::processor::IChannelProcessorUPtr>& processors)
 {
-    return frame.has_datatimestamps() &&
-           frame.datatimestamps().has_timestamplist() &&
-           frame.datatimestamps().timestamplist().timestamps_size() > 0;
-}
+    std::unordered_map<std::string, std::vector<std::string>>        graph;
+    std::unordered_map<std::string, std::unordered_set<std::string>> outputs_by_processor;
 
+    for (const auto& processor : processors)
+    {
+        const auto output_sources = processor->outputSourceNames();
+        outputs_by_processor.emplace(processor->name(),
+                                     std::unordered_set<std::string>(output_sources.begin(),
+                                                                     output_sources.end()));
+        graph.emplace(processor->name(), std::vector<std::string>{});
+    }
+
+    for (const auto& producer : processors)
+    {
+        const auto& producer_outputs = outputs_by_processor.at(producer->name());
+        for (const auto& consumer : processors)
+        {
+            if (producer->name() == consumer->name())
+            {
+                continue;
+            }
+
+            const auto& inputs = consumer->inputSourceNames();
+            const auto  depends_on_producer = std::any_of(
+                inputs.begin(), inputs.end(),
+                [&](const std::string& input)
+                {
+                    return producer_outputs.find(input) != producer_outputs.end();
+                });
+            if (depends_on_producer)
+            {
+                graph[producer->name()].push_back(consumer->name());
+            }
+        }
+    }
+
+    enum class VisitState
+    {
+        NotVisited,
+        Visiting,
+        Visited,
+    };
+
+    std::unordered_map<std::string, VisitState> state;
+    std::vector<std::string>                    stack;
+
+    std::function<void(const std::string&)> dfs = [&](const std::string& node)
+    {
+        state[node] = VisitState::Visiting;
+        stack.push_back(node);
+
+        for (const auto& next : graph[node])
+        {
+            if (state[next] == VisitState::Visiting)
+            {
+                throw std::runtime_error("Controller: processor cycle detected: " + describeCycle(stack, next));
+            }
+            if (state[next] == VisitState::Visited)
+            {
+                continue;
+            }
+            dfs(next);
+        }
+
+        stack.pop_back();
+        state[node] = VisitState::Visited;
+    };
+
+    for (const auto& processor : processors)
+    {
+        if (state[processor->name()] == VisitState::NotVisited)
+        {
+            dfs(processor->name());
+        }
+    }
+}
 } // namespace
 
 std::shared_ptr<MLDPPVXSController> MLDPPVXSController::create(const config::Config& config)
@@ -138,28 +204,29 @@ std::shared_ptr<MLDPPVXSController> MLDPPVXSController::create(const config::Con
 }
 
 MLDPPVXSController::MLDPPVXSController(const config::Config& config)
-    : logger_(makeControllerLogger())
+    : raw_config_(config)
     , config_(config)
-    , thread_pool_(std::make_shared<BS::light_thread_pool>(config_.controllerThreadPoolSize()))
-    , metrics_(std::make_shared<metrics::Metrics>(*config_.metricsConfig()))
+    , logger_(makeControllerLogger(config_.name()))
+    , thread_pool_(std::make_shared<BS::light_thread_pool>(1)) // resized in start()
+    , metrics_(std::make_shared<metrics::Metrics>(*config_.metricsConfig(), config_.name()))
     , running_(false)
 {
-    // Constructor implementation
 }
 
 MLDPPVXSController::~MLDPPVXSController()
 {
-    // Destructor implementation
     if (running_.load())
     {
         stop();
     }
-    // clear pools
+    if (consumer_thread_.joinable())
+        consumer_thread_.join();
+    tracef(*logger_, "~MLDPPVXSController [tid={}]: resetting thread_pool", std::this_thread::get_id());
+    processor_pools_.clear();
     thread_pool_.reset();
-    mldp_ingestion_pool_.reset();
-    mldp_query_pool_.reset();
-    // clear metrics
+    tracef(*logger_, "~MLDPPVXSController [tid={}]: resetting metrics", std::this_thread::get_id());
     metrics_.reset();
+    tracef(*logger_, "~MLDPPVXSController [tid={}]: done", std::this_thread::get_id());
 }
 
 void MLDPPVXSController::start()
@@ -170,795 +237,393 @@ void MLDPPVXSController::start()
         return;
     }
 
-    // Start order matters:
-    // 1) mark running
-    // 2) initialize ingestion/query pools and register provider
-    // 3) spawn workers
-    // 4) construct readers (readers can immediately push to this bus)
+    // Validate minimal requirements before allocating any resources.
+    if (config_.writerEntries().empty())
+    {
+        throw std::runtime_error("Controller: no writers are configured; add at least one writer instance under 'writer:'");
+    }
+    if (config_.readerEntries().empty())
+    {
+        throw std::runtime_error("Controller: no readers are configured; add at least one reader instance under 'reader:'");
+    }
+
     running_.store(true);
     infof(*logger_, "Controller is starting");
-    // Start allocating mldp pool (constructor registers provider)
-    mldp_ingestion_pool_ = MLDPGrpcIngestionePool::create(config_.pool(), metrics_);
-    mldp_query_pool_ = MLDPGrpcQueryPool::create(config_.pool(), metrics_);
-    provider_id_ = mldp_ingestion_pool_->providerId();
-    if (provider_id_.empty())
+    infof(*logger_, "Controller config: name='{}' queue_capacity={} writers={} readers={}",
+          config_.name(),
+          config_.queueCapacity(),
+          config_.writerEntries().size(),
+          config_.readerEntries().size());
+
+    // Register queryable factories before any worker thread runs.
+    prepareQueryables(config_, metrics_);
+
+    // Global enrichers are constructed once and shared by every referenced writer.
+    enricher_registry_ = std::make_unique<enricher::EnricherRegistry>(raw_config_);
+
+    // Resize the fan-out thread pool to match the number of writer instances.
+    const std::size_t numWriters = config_.writerEntries().size();
+    thread_pool_ = std::make_shared<BS::light_thread_pool>(
+        std::max(numWriters, std::size_t{1}),
+        [](std::size_t i)
+        {
+            BS::this_thread::set_os_thread_name("ctrl-pool-" + std::to_string(i));
+        });
+
+    // -- Build writers via factory from configured entries --
+    for (const auto& [type, writerNode] : config_.writerEntries())
     {
-        running_ = false;
-        throw std::runtime_error("Failed to register provider with MLDP ingestion service");
+        auto w = WriterFactory::create(type, writerNode, metrics_);
+        w->setEnrichers(enricher_registry_->resolve(writerNode));
+        w->start();
+        writers_.push_back(std::move(w));
     }
 
-    const std::size_t worker_count = std::max<std::size_t>(1, static_cast<std::size_t>(config_.controllerThreadPoolSize()));
-    next_channel_.store(0, std::memory_order_relaxed);
-    queued_items_.store(0);
-    channels_.clear();
-    channels_.reserve(worker_count);
-    for (std::size_t i = 0; i < worker_count; ++i)
+    // Each processor gets its own dedicated 1-thread pool so algorithms run isolated
+    // and independently. Separate from thread_pool_ (writer fan-out) to prevent
+    // deadlock: processor tasks call bus_->push() which submits to thread_pool_ and
+    // blocks waiting for futures — sharing a pool would deadlock.
+    std::size_t proc_idx = 0;
+    for (const auto& [type, processorNode] : config_.processorEntries())
     {
-        channels_.push_back(std::make_unique<WorkerChannel>());
+        auto pool = std::make_shared<BS::light_thread_pool>(
+            1,
+            [proc_idx](std::size_t)
+            {
+                BS::this_thread::set_os_thread_name("proc-" + std::to_string(proc_idx));
+            });
+        processor_pools_.push_back(pool);
+        ++proc_idx;
+
+        auto resolved_type = type;
+        auto resolved_node = processorNode;
+#ifdef BUILD_PYTHON_PROCESSOR
+        if (!processor::ChannelProcessorFactory::isRegistered(type))
+        {
+            resolved_type = "python-script";
+            resolved_node = config::Config::configFromYamlString(config::ryml::emitrs_yaml<std::string>(processorNode.raw()));
+            if (!resolved_node.hasChild("type"))
+            {
+                const auto children = resolved_node.namedSubConfig();
+                if (children.size() != 1)
+                    throw std::runtime_error("could not copy Python processor configuration");
+                resolved_node = children.front().second;
+            }
+            auto root = resolved_node.mutableRaw();
+            if (!root.has_child("script-path"))
+                root[root.to_arena("script-path")].create();
+            auto       child = root[root.to_arena("script-path")];
+            const auto script_path = processorNode.hasChild("script-path")
+                                         ? std::filesystem::path{processorNode.get("script-path")}
+                                         : std::filesystem::path{config_.algorithmsPluginPath()} / (type + ".py");
+            child << child.to_arena(script_path.string());
+        }
+#endif
+        auto batch = processor::ChannelProcessorFactory::create(resolved_type, resolved_node, shared_from_this(), metrics_, std::move(pool));
+        processors_.insert(processors_.end(),
+                           std::make_move_iterator(batch.begin()),
+                           std::make_move_iterator(batch.end()));
     }
-    for (std::size_t i = 0; i < worker_count; ++i)
+    for (auto& processor : processors_)
     {
-        thread_pool_->detach_task([this, i]()
-                                  {
-                                      workerLoop(i);
-                                  });
+        if (processor->inputSourceNames().empty())
+        {
+            for (const auto& route : config_.routeEntries())
+            {
+                if (route.writer_name == processor->name())
+                {
+                    std::vector<std::string> effective;
+                    for (const auto& pat : route.include_patterns)
+                    {
+                        if (pat.find('*') == std::string::npos &&
+                            pat.find('?') == std::string::npos)
+                        {
+                            effective.push_back(pat);
+                        }
+                    }
+                    if (!effective.empty())
+                        processor->setEffectiveSources(std::move(effective));
+                    break;
+                }
+            }
+        }
     }
 
-    // Start readers (dispatch based on declared reader type)
+    {
+        std::unordered_set<std::string> reader_name_set;
+        for (const auto& entry : config_.readerEntries())
+            reader_name_set.insert(entry.second.get("name", ""));
+        validateProcessorOutputSourceCollisions(reader_name_set, processors_);
+    }
+    validateProcessorGraphAcyclic(processors_);
+
+    for (auto& processor : processors_)
+    {
+        processor->start();
+    }
+
+    // -- Readers --
+    // Push each reader into readers_ before calling setLifecycleObserver so that
+    // removeCompletedReader() can always find it, even if the reader's worker
+    // completes and fires onReaderCompleted() before registration is done.
+    // setLifecycleObserver() re-fires the notification if signalCompleted() already
+    // ran (atomic completed_ flag on Reader).
     infof(*logger_, "Starting readers");
     for (const auto& entry : config_.readerEntries())
     {
         const auto& type = entry.first;
         const auto& readerConfig = entry.second;
         auto        reader = ReaderFactory::create(type, shared_from_this(), readerConfig, metrics_);
-        readers_.push_back(std::move(reader));
+        auto*       raw    = reader.get();
+        {
+            std::lock_guard<std::mutex> lock(readers_mutex_);
+            readers_.push_back(std::move(reader));
+        }
+        raw->setLifecycleObserver(shared_from_this());
     }
+
+    // -- Build route table from config --
+    {
+        std::unordered_set<std::string> known_writers;
+        for (const auto& w : writers_)
+            known_writers.insert(w->name());
+        for (const auto& p : processors_)
+            known_writers.insert(p->name());
+
+        std::unordered_set<std::string> known_readers;
+        for (const auto& r : readers_)
+            known_readers.insert(r->name());
+        for (const auto& p : processors_)
+            known_readers.insert(p->outputReaderName());
+
+        route_table_ = RouteTable::build(config_.routeEntries(), known_readers, known_writers);
+
+        // Warn about orphan readers/writers
+        for (const auto& name : route_table_.orphanReaders(known_readers))
+            warnf(*logger_, "Reader '{}' not mentioned in any route — will not feed any writer", name);
+        for (const auto& name : route_table_.orphanWriters(known_writers))
+            warnf(*logger_, "Writer '{}' not mentioned in any route — will receive no data", name);
+    }
+
+    // Start consumer thread BEFORE readers so that onReaderCompleted → stop()
+    // can always find a joinable consumer_thread_.
+    consumer_thread_ = std::thread([this]
+                                   {
+                                       consumerLoop();
+                                   });
+
     infof(*logger_, "Controller started");
 }
 
 void MLDPPVXSController::stop()
 {
-    if (running_.load() == false)
+    if (stopping_.exchange(true))
     {
-        warnf(*logger_, "Controller already stopped");
+        while (!stopped_.load())
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
         return;
     }
-    infof(*logger_, "Controller is stopping");
-    // Stop order:
-    // 1) reject new pushes
-    // 2) tear down readers so no new events are produced
-    // 3) signal worker channels and wait for drain/exit
+
     running_.store(false);
-    // clear readers
-    readers_.clear();
-    // Signal all worker channels to shut down
-    for (auto& ch : channels_)
+    infof(*logger_, "Controller is stopping");
+
     {
-        {
-            std::lock_guard lk(ch->mutex);
-            ch->shutdown = true;
-        }
-        ch->cv.notify_one();
+        std::lock_guard<std::mutex> lock(readers_mutex_);
+        infof(*logger_, "Removing {} reader(s)", readers_.size());
+        readers_.clear();
     }
-    // Wait for all worker tasks to complete
-    thread_pool_->wait();
-    channels_.clear();
+
+    // Wake blocked pushers and consumer thread, then join consumer.
+    {
+        std::lock_guard<std::mutex> lk(queue_mutex_);
+        debugf(*logger_, "stop() — queue depth before drain: {}", queue_.size());
+    }
+    queue_not_full_.notify_all();
+    queue_not_empty_.notify_all();
+    if (consumer_thread_.joinable())
+        consumer_thread_.join();
+
+    infof(*logger_, "Consumer thread joined — queue drained");
+
+    for (auto& processor : processors_)
+    {
+        debugf(*logger_, "Stopping processor '{}'", processor->name());
+        processor->stop();
+    }
+    processors_.clear();
+
+    for (auto& w : writers_)
+    {
+        infof(*logger_, "Stopping writer '{}' — waiting for internal queue drain...", w->name());
+        w->stop();
+        infof(*logger_, "Writer '{}' stopped", w->name());
+    }
+    writers_.clear();
+
     infof(*logger_, "Controller stopped");
+    stopped_.store(true);
+}
+
+void MLDPPVXSController::forceStop()
+{
+    force_quit_.store(true, std::memory_order_release);
+    running_.store(false, std::memory_order_release);
+    {
+        std::lock_guard<std::mutex> lk(queue_mutex_);
+        infof(*logger_, "forceStop() — discarding {} queued batch(es)", queue_.size());
+        queue_.clear();
+    }
+    queue_not_full_.notify_all();
+    queue_not_empty_.notify_all();
+    for (auto& w : writers_)
+        w->forceStop();
+}
+
+void MLDPPVXSController::onReaderCompleted(const std::string& reader_name)
+{
+    if (!running_.load())
+    {
+        return;
+    }
+
+    std::thread([self = shared_from_this(), reader_name]
+                {
+                    if (!self->removeCompletedReader(reader_name))
+                    {
+                        return;
+                    }
+
+                    if (self->running_.load())
+                    {
+                        self->stop();
+                    }
+                })
+        .detach();
+}
+
+bool MLDPPVXSController::removeCompletedReader(const std::string& reader_name)
+{
+    std::lock_guard<std::mutex> lock(readers_mutex_);
+    auto                        it = std::find_if(readers_.begin(), readers_.end(),
+                                                  [&](const auto& reader)
+                                                  {
+                               return reader != nullptr && reader->name() == reader_name;
+                                                  });
+    if (it == readers_.end())
+    {
+        debugf(*logger_, "Ignoring completion for unknown reader '{}'", reader_name);
+        return false;
+    }
+
+    infof(*logger_, "Reader '{}' completed; removing it from the active lifecycle set", reader_name);
+    readers_.erase(it);
+    if (!readers_.empty())
+    {
+        return false;
+    }
+
+    infof(*logger_, "All readers completed; triggering controller shutdown");
+    return true;
 }
 
 bool MLDPPVXSController::push(EventBatch batch_values)
 {
     if (!running_.load())
     {
+        debugf(*logger_, "push() rejected — controller not running");
         return false;
     }
 
-    if (batch_values.root_source.empty())
+    const std::string rootSource = getRootSourceName(batch_values);
+
+    if (rootSource.empty())
     {
         warnf(*logger_, "Received batch with empty root source, skipping push.");
         return false;
     }
 
-    if (batch_values.frames.empty())
+    if (isTimeSeries(batch_values))
     {
-        warnf(*logger_, "Received empty batch for root source {}, skipping push.", batch_values.root_source);
-        return false;
-    }
-
-    auto tags = std::make_shared<const std::vector<std::string>>(batch_values.tags);
-
-    // Distribute frames in round-robin order and enqueue directly to worker
-    // queues to avoid building a temporary per-channel structure.
-    bool enqueued = false;
-    for (auto& frame : batch_values.frames)
-    {
-        if (!hasTimestampList(frame))
+        const auto& ts = asTimeSeries(batch_values);
+        if (ts.frames.empty() && !ts.end_of_batch_group)
         {
-            errorf(*logger_, "Dropping frame for root source {}: missing DataFrame.datatimestamps.timestamplist", batch_values.root_source);
-            metric_call(metrics_, [&](auto& m)
-                        {
-                            m.incrementBusFailures(1.0, {{"source", batch_values.root_source}});
-                        });
-            continue;
-        }
-
-        const auto idx = next_channel_.fetch_add(1, std::memory_order_relaxed) % channels_.size();
-        QueueItem  item{
-            batch_values.root_source,
-            tags,
-            std::move(frame)};
-        {
-            std::lock_guard lk(channels_[idx]->mutex);
-            channels_[idx]->items.push_back(std::move(item));
-        }
-        channels_[idx]->cv.notify_one();
-        queued_items_.fetch_add(1, std::memory_order_relaxed);
-        enqueued = true;
-    }
-
-    updateQueueDepthMetric();
-    return enqueued;
-}
-
-std::vector<IDataBus::SourceInfo> MLDPPVXSController::querySourcesInfo(const std::set<std::string>& source_names)
-{
-    // Preferred path is queryPvMetadata (direct metadata API).
-    // Compatibility fallback (older servers) is queryData + timestamp range
-    // extraction from returned buckets.
-    std::vector<IDataBus::SourceInfo> infos;
-    if (source_names.empty())
-    {
-        return infos;
-    }
-    if (!mldp_query_pool_)
-    {
-        warnf(*logger_, "querySourcesInfo called before MLDP query pool initialization");
-        return infos;
-    }
-
-    try
-    {
-        util::pool::PooledHandle<util::pool::MLDPGrpcObject> handle = mldp_query_pool_->acquire();
-        auto*                                                query_stub = handle->query_stub.get();
-        if (!query_stub)
-        {
-            handle->query_stub = handle->makeQueryStub();
-            query_stub = handle->query_stub.get();
-        }
-        if (!query_stub)
-        {
-            errorf(*logger_, "Failed to create query stub for source metadata request");
-            return infos;
-        }
-
-        dp::service::query::QueryPvMetadataRequest request;
-        auto*                                      pv_name_list = request.mutable_pvnamelist();
-        pv_name_list->mutable_pvnames()->Reserve(static_cast<int>(source_names.size()));
-        for (const auto& source : source_names)
-        {
-            if (!source.empty())
-            {
-                pv_name_list->add_pvnames(source);
-            }
-        }
-        if (pv_name_list->pvnames().empty())
-        {
-            return infos;
-        }
-
-        grpc::ClientContext                         context;
-        dp::service::query::QueryPvMetadataResponse response;
-        context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(5));
-        const auto status = query_stub->queryPvMetadata(&context, request, &response);
-        if (!status.ok())
-        {
-            const bool metadata_rpc_missing = status.error_code() == grpc::StatusCode::UNIMPLEMENTED ||
-                                              status.error_message().find("Method not found") != std::string::npos;
-            if (!metadata_rpc_missing)
-            {
-                errorf(*logger_, "queryPvMetadata RPC failed: {}", status.error_message());
-                return infos;
-            }
-
-            warnf(*logger_,
-                  "queryPvMetadata unavailable ({}). Falling back to queryData-derived timestamps.",
-                  status.error_message());
-
-            dp::service::query::QueryDataRequest data_request;
-            auto*                                spec = data_request.mutable_queryspec();
-            for (const auto& source : source_names)
-            {
-                if (!source.empty())
-                {
-                    spec->add_pvnames(source);
-                }
-            }
-            if (spec->pvnames().empty())
-            {
-                return infos;
-            }
-            auto* begin_ts = spec->mutable_begintime();
-            begin_ts->set_epochseconds(0);
-            auto* end_ts = spec->mutable_endtime();
-            end_ts->set_epochseconds(
-                static_cast<uint64_t>(
-                    std::chrono::duration_cast<std::chrono::seconds>(
-                        std::chrono::system_clock::now().time_since_epoch())
-                        .count()) +
-                1);
-
-            grpc::ClientContext                   data_context;
-            dp::service::query::QueryDataResponse data_response;
-            data_context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(5));
-            const auto data_status = query_stub->queryData(&data_context, data_request, &data_response);
-            if (!data_status.ok())
-            {
-                errorf(*logger_, "queryData fallback RPC failed: {}", data_status.error_message());
-                return infos;
-            }
-            if (!data_response.has_querydata() || data_response.has_exceptionalresult())
-            {
-                return infos;
-            }
-
-            // Merge bucket-level observations into one SourceInfo per pvname.
-            std::unordered_map<std::string, IDataBus::SourceInfo> merged_infos;
-            for (const auto& bucket : data_response.querydata().databuckets())
-            {
-                const auto& pvname = bucket.pvname();
-                if (pvname.empty() || !source_names.contains(pvname))
-                {
-                    continue;
-                }
-
-                auto& info = merged_infos[pvname];
-                if (info.source_name.empty())
-                {
-                    info.source_name = pvname;
-                    info.num_buckets = 0;
-                }
-                if (info.num_buckets.has_value())
-                {
-                    info.num_buckets = info.num_buckets.value() + 1;
-                }
-
-                if (!bucket.has_datatimestamps())
-                {
-                    continue;
-                }
-                const auto range = extractTimestampRange(bucket.datatimestamps());
-                if (!range.has_value())
-                {
-                    continue;
-                }
-
-                const auto& [bucket_first, bucket_last] = range.value();
-                if (!info.first_timestamp.has_value() || isBefore(bucket_first, info.first_timestamp.value()))
-                {
-                    info.first_timestamp = bucket_first;
-                }
-                if (!info.last_timestamp.has_value() || isBefore(info.last_timestamp.value(), bucket_last))
-                {
-                    info.last_timestamp = bucket_last;
-                }
-
-                const auto& data_timestamps = bucket.datatimestamps();
-                if (data_timestamps.has_samplingclock())
-                {
-                    const auto& clock = data_timestamps.samplingclock();
-                    info.last_bucket_sample_period = clock.periodnanos();
-                    info.last_bucket_sample_count = clock.count();
-                    info.last_bucket_data_timestamps_type = "SAMPLING_CLOCK";
-                }
-                else if (data_timestamps.has_timestamplist())
-                {
-                    info.last_bucket_sample_count = static_cast<uint32_t>(data_timestamps.timestamplist().timestamps_size());
-                    info.last_bucket_data_timestamps_type = "TIMESTAMP_LIST";
-                }
-            }
-
-            infos.reserve(merged_infos.size());
-            for (auto& [_, info] : merged_infos)
-            {
-                infos.push_back(std::move(info));
-            }
-            return infos;
-        }
-        if (response.has_exceptionalresult())
-        {
-            errorf(*logger_, "queryPvMetadata returned exceptional result: {}", response.exceptionalresult().message());
-            return infos;
-        }
-        if (!response.has_metadataresult())
-        {
-            return infos;
-        }
-
-        const auto& pv_infos = response.metadataresult().pvinfos();
-        infos.reserve(static_cast<std::size_t>(pv_infos.size()));
-        for (const auto& pv_info : pv_infos)
-        {
-            IDataBus::SourceInfo info;
-            info.source_name = pv_info.pvname();
-
-            if (pv_info.has_firstdatatimestamp())
-            {
-                info.first_timestamp = makeSourceTimestamp(pv_info.firstdatatimestamp());
-            }
-            if (pv_info.has_lastdatatimestamp())
-            {
-                info.last_timestamp = makeSourceTimestamp(pv_info.lastdatatimestamp());
-            }
-            if (!pv_info.lastproviderid().empty())
-            {
-                info.last_provider_id = pv_info.lastproviderid();
-            }
-            if (!pv_info.lastprovidername().empty())
-            {
-                info.last_provider_name = pv_info.lastprovidername();
-            }
-            if (!pv_info.lastbucketid().empty())
-            {
-                info.last_bucket_id = pv_info.lastbucketid();
-            }
-            if (!pv_info.lastbucketdatatype().empty())
-            {
-                info.last_bucket_data_type = pv_info.lastbucketdatatype();
-            }
-            if (!pv_info.lastbucketdatatimestampstype().empty())
-            {
-                info.last_bucket_data_timestamps_type = pv_info.lastbucketdatatimestampstype();
-            }
-            if (pv_info.lastbucketsampleperiod() > 0)
-            {
-                info.last_bucket_sample_period = pv_info.lastbucketsampleperiod();
-            }
-            if (pv_info.lastbucketsamplecount() > 0)
-            {
-                info.last_bucket_sample_count = pv_info.lastbucketsamplecount();
-            }
-            info.num_buckets = pv_info.numbuckets();
-
-            infos.push_back(std::move(info));
-        }
-    }
-    catch (const std::exception& ex)
-    {
-        errorf(*logger_, "querySourcesInfo failed: {}", ex.what());
-    }
-
-    return infos;
-}
-
-std::optional<std::unordered_map<std::string, std::vector<dp::service::common::DataValues>>> MLDPPVXSController::querySourcesData(
-    const std::set<std::string>&              source_names,
-    const util::bus::QuerySourcesDataOptions& options)
-{
-    // queryData is retried until timeout because read-after-write visibility is
-    // eventually consistent on some deployments. Success requires at least one
-    // collected bucket for every requested source.
-    if (source_names.empty())
-    {
-        return std::unordered_map<std::string, std::vector<dp::service::common::DataValues>>{};
-    }
-    if (!mldp_query_pool_)
-    {
-        warnf(*logger_, "querySourcesData called before MLDP query pool initialization");
-        return std::nullopt;
-    }
-    if (options.timeout <= std::chrono::milliseconds::zero())
-    {
-        warnf(*logger_, "querySourcesData timeout must be > 0");
-        return std::nullopt;
-    }
-
-    try
-    {
-        util::pool::PooledHandle<util::pool::MLDPGrpcObject> handle = mldp_query_pool_->acquire();
-        auto*                                                query_stub = handle->query_stub.get();
-        if (!query_stub)
-        {
-            handle->query_stub = handle->makeQueryStub();
-            query_stub = handle->query_stub.get();
-        }
-        if (!query_stub)
-        {
-            errorf(*logger_, "Failed to create query stub for source data request");
-            return std::nullopt;
-        }
-
-        const auto deadline = std::chrono::steady_clock::now() + options.timeout;
-        while (std::chrono::steady_clock::now() < deadline)
-        {
-            dp::service::query::QueryDataRequest request;
-            auto*                                spec = request.mutable_queryspec();
-            for (const auto& source : source_names)
-            {
-                if (!source.empty())
-                {
-                    spec->add_pvnames(source);
-                }
-            }
-            if (spec->pvnames().empty())
-            {
-                return std::unordered_map<std::string, std::vector<dp::service::common::DataValues>>{};
-            }
-
-            const auto now = std::chrono::system_clock::now();
-            const auto begin = now - options.lookback_window;
-            const auto end = now + options.forward_window;
-            auto*      begin_ts = spec->mutable_begintime();
-            begin_ts->set_epochseconds(std::chrono::duration_cast<std::chrono::seconds>(begin.time_since_epoch()).count());
-            auto* end_ts = spec->mutable_endtime();
-            end_ts->set_epochseconds(std::chrono::duration_cast<std::chrono::seconds>(end.time_since_epoch()).count());
-
-            grpc::ClientContext context;
-            context.set_deadline(std::chrono::system_clock::now() + options.rpc_deadline);
-
-            dp::service::query::QueryDataResponse response;
-            const auto                            status = query_stub->queryData(&context, request, &response);
-            if (status.ok() && response.has_querydata() && !response.has_exceptionalresult())
-            {
-                std::unordered_map<std::string, std::vector<dp::service::common::DataValues>> collected;
-                for (const auto& bucket : response.querydata().databuckets())
-                {
-                    const auto& pvname = bucket.pvname();
-                    if (pvname.empty() || !source_names.contains(pvname) || !bucket.has_datavalues())
-                    {
-                        continue;
-                    }
-
-                    collected[pvname].push_back(bucket.datavalues());
-                }
-
-                if (collected.size() == source_names.size())
-                {
-                    return collected;
-                }
-            }
-
-            std::this_thread::sleep_for(std::chrono::milliseconds(200));
-        }
-    }
-    catch (const std::exception& ex)
-    {
-        errorf(*logger_, "querySourcesData failed: {}", ex.what());
-        return std::nullopt;
-    }
-
-    return std::nullopt;
-}
-
-void MLDPPVXSController::workerLoop(std::size_t worker_index)
-{
-    // Worker threads block on the shared queue, build per-source ingestion
-    // requests, and write them into a gRPC client-streaming RPC. Each worker
-    // keeps a single stream open at a time and flushes (closes/reopens) when
-    // byte or age thresholds are reached or when a write fails.
-    auto&                                                                          ch = *channels_[worker_index];
-    std::optional<util::pool::PooledHandle<util::pool::MLDPGrpcObject>>            handle;
-    std::unique_ptr<grpc::ClientWriter<dp::service::ingestion::IngestDataRequest>> writer;
-    std::unique_ptr<grpc::ClientContext>                                           context;
-    dp::service::ingestion::IngestDataStreamResponse                               response;
-    std::chrono::steady_clock::time_point                                          stream_start;
-    std::size_t                                                                    stream_payload_bytes = 0;
-    std::uint64_t                                                                  request_counter = 0;
-
-    // Gracefully finalizes the current stream and releases pooled handle/stub
-    // ownership. Safe to call repeatedly.
-    const auto close_stream = [&](const char* reason)
-    {
-        if (!writer)
-        {
-            return;
-        }
-        writer->WritesDone();
-        auto    status = writer->Finish();
-        int64_t requested_requests = static_cast<int64_t>(request_counter);
-        if (status.ok())
-        {
-            if (response.has_ingestdatastreamresult())
-            {
-                const auto& result = response.ingestdatastreamresult();
-                if (result.numrequests() < 0)
-                {
-                    errorf(*logger_, "Ingestion stream finished with invalid numrequests ({}): {}", reason, result.numrequests());
-                }
-                else
-                {
-                    const char* status_str = nullptr;
-                    if (result.numrequests() < requested_requests)
-                    {
-                        status_str = "[INCOMPLETE - lost or skipped requests]";
-                        errorf(*logger_, "Ingestion stream finished with incomplete requests ({}): server accepted {} of {} sent",
-                               reason, result.numrequests(), requested_requests);
-                    }
-                    else if (result.numrequests() > requested_requests)
-                    {
-                        status_str = "[SERVER ERROR - extra requests acknowledged]";
-                        errorf(*logger_, "Ingestion stream finished with mismatch ({}): server reports {} but we sent {}",
-                               reason, result.numrequests(), requested_requests);
-                    }
-                    else
-                    {
-                        status_str = "OK";
-                        tracef(*logger_, "Ingestion stream finished successfully ({}): {} requests", reason, result.numrequests());
-                    }
-                    if (!status_str)
-                    {
-                        tracef(*logger_, "Ingestion stream finished successfully ({}): {} requests", reason, result.numrequests());
-                    }
-                    else
-                    {
-                        tracef(*logger_, "{}: {}", status_str, reason);
-                    }
-                }
-            }
-            if (response.has_exceptionalresult())
-            {
-                const auto& result = response.exceptionalresult();
-                errorf(*logger_, "Ingestion stream finished with exceptional result ({}): {}", reason, result.message());
-                metric_call(metrics_, [&](auto& m)
-                            {
-                                m.incrementBusFailures(1.0, {{"source", "unknown"}});
-                            });
-            }
-        }
-        else
-        {
-            errorf(*logger_, "Ingestion stream finished with error ({}): {}", reason, status.error_message());
-            metric_call(metrics_, [&](auto& m)
-                        {
-                            m.incrementBusFailures(1.0, {{"source", "unknown"}});
-                        });
-        }
-        writer.reset();
-        handle.reset();
-        context.reset();
-        stream_payload_bytes = 0;
-        request_counter = 0;
-    };
-
-    // Lazily opens a stream when work appears. Worker holds one active stream
-    // at a time to amortize connection overhead across many frames.
-    const auto ensure_stream = [&]()
-    {
-        if (writer)
-        {
-            return true;
-        }
-        try
-        {
-            context = std::make_unique<grpc::ClientContext>();
-            response = dp::service::ingestion::IngestDataStreamResponse();
-            handle.emplace(mldp_ingestion_pool_->acquire());
-            writer = (*handle)->stub->ingestDataStream(context.get(), &response);
-            if (!writer)
-            {
-                errorf(*logger_, "Failed to open ingestion stream for queued events");
-                metric_call(metrics_, [&](auto& m)
-                            {
-                                m.incrementBusFailures(1.0, {{"source", "unknown"}});
-                            });
-                handle.reset();
-                context.reset();
-                return false;
-            }
-            stream_start = std::chrono::steady_clock::now();
-            stream_payload_bytes = 0;
-            return true;
-        }
-        catch (const std::exception& ex)
-        {
-            errorf(*logger_, "Failed to acquire ingestion stream: {}", ex.what());
-            metric_call(metrics_, [&](auto& m)
-                        {
-                            m.incrementBusFailures(1.0, {{"source", "unknown"}});
-                        });
-            handle.reset();
-            writer.reset();
+            warnf(*logger_, "Received empty batch for root source {}, skipping push.", rootSource);
             return false;
         }
-    };
+    }
 
-    // Wait window doubles as an idle stream flush interval.
-    const auto dequeue_timeout = config_.controllerStreamMaxAge();
-    while (true)
+    if (!route_table_.isAllToAll() && batch_values.reader_name.empty())
     {
-        QueueItem item;
-        bool      has_item = false;
-        {
-            std::unique_lock lk(ch.mutex);
-            ch.cv.wait_for(lk, dequeue_timeout, [&]
-                           {
-                               return !ch.items.empty() || ch.shutdown;
-                           });
-            if (ch.shutdown && ch.items.empty())
-            {
-                lk.unlock();
-                break;
-            }
-            if (!ch.items.empty())
-            {
-                item = std::move(ch.items.front());
-                ch.items.pop_front();
-                has_item = true;
-            }
-        }
-        if (!has_item)
-        {
-            // No new work: close an old idle stream so bytes/age thresholds are
-            // enforced even during sparse traffic.
-            if (writer)
-            {
-                const auto elapsed = std::chrono::steady_clock::now() - stream_start;
-                if (elapsed >= config_.controllerStreamMaxAge())
-                {
-                    close_stream("stream age exceeded (idle)");
-                }
-            }
-            continue;
-        }
+        warnf(*logger_, "Batch from source '{}' has empty reader_name — routing may drop it", rootSource);
+    }
 
-        queued_items_.fetch_sub(1, std::memory_order_relaxed);
-        updateQueueDepthMetric();
-
-        const auto item_start = std::chrono::steady_clock::now();
-        const auto record_send_time = [this, item_start](prometheus::Labels tags)
+    // Processors are called inline — they are noexcept, fast (ingest + snapshot),
+    // and their fireCompute() calls bus_->push() recursively on the calling thread.
+    // Submitting them to the thread pool would cause deadlock when a pool thread
+    // re-enters push() and tries to wait on another pool task.
+    //
+    // Skip processor fan-out for batches emitted by processors themselves
+    // (reader_name matches a processor's outputReaderName) to prevent infinite recursion.
+    const bool from_processor = std::any_of(
+        processors_.begin(), processors_.end(),
+        [&](const auto& p)
         {
-            const auto   elapsed = std::chrono::steady_clock::now() - item_start;
-            const double elapsed_seconds = std::chrono::duration<double>(elapsed).count();
-            metric_call(metrics_, [&](auto& m)
-                        {
-                            m.observeControllerSendTimeSeconds(elapsed_seconds, std::move(tags));
-                        });
-        };
+            return p->outputReaderName() == batch_values.reader_name;
+        });
 
-        if (!ensure_stream())
+    if (!from_processor)
+    {
+        for (std::size_t i = 0; i < processors_.size(); ++i)
         {
-            record_send_time({{"source", "unknown"}});
-            continue;
-        }
-
-        const auto elapsed = std::chrono::steady_clock::now() - stream_start;
-        if (elapsed >= config_.controllerStreamMaxAge())
-        {
-            close_stream("stream age exceeded");
-            if (!ensure_stream())
-            {
-                record_send_time({{"source", "unknown"}});
+            if (!route_table_.accepts(processors_[i]->name(), batch_values.reader_name))
                 continue;
-            }
-        }
 
-        std::size_t accepted_events_total = 0;
-        std::size_t payload_bytes_total = 0;
-
-        const auto frame_elapsed = std::chrono::steady_clock::now() - stream_start;
-        if (frame_elapsed >= config_.controllerStreamMaxAge())
-        {
-            close_stream("stream age exceeded");
-            if (!ensure_stream())
-            {
-                record_send_time({{"source", "unknown"}});
+            if (!route_table_.acceptsSource(processors_[i]->name(), rootSource))
                 continue;
-            }
-        }
 
-        google::protobuf::Arena arena;
-        auto*                   request = google::protobuf::Arena::CreateMessage<dp::service::ingestion::IngestDataRequest>(&arena);
-        std::size_t             accepted_events = 0;
-        std::size_t             payload_bytes = 0;
-        const auto              request_id = util::format_string("pv_stream_{}_{}_{}", stream_start.time_since_epoch().count(), item.root_source, request_counter++);
-        if (!buildRequest(item.root_source, item.frame, request_id, *request, accepted_events, payload_bytes))
-        {
-            continue;
-        }
-
-        if ((stream_payload_bytes + payload_bytes) > config_.controllerStreamMaxBytes() && stream_payload_bytes > 0)
-        {
-            close_stream("max bytes exceeded");
-            if (!ensure_stream())
-            {
-                record_send_time({{"source", "unknown"}});
+            if (!processors_[i]->acceptsPayload(batch_values.payload))
                 continue;
-            }
-        }
 
-        if (!writer->Write(*request))
-        {
-            errorf(*logger_, "Failed to write source {} event to ingestion stream", item.root_source);
-            metric_call(metrics_, [&](auto& m)
-                        {
-                            m.incrementBusFailures(1.0, {{"source", item.root_source}});
-                        });
-            close_stream("write failed");
-            continue;
-        }
-
-        stream_payload_bytes += payload_bytes;
-        accepted_events_total += accepted_events;
-        payload_bytes_total += payload_bytes;
-
-        if (accepted_events_total > 0)
-        {
-            metric_call(metrics_, [&](auto& m)
-                        {
-                            m.incrementBusPushes(static_cast<double>(accepted_events_total), {{"source", item.root_source}});
-                        });
-        }
-        if (payload_bytes_total > 0)
-        {
-            metric_call(metrics_, [&](auto& m)
-                        {
-                            m.incrementBusPayloadBytes(static_cast<double>(payload_bytes_total), {{"source", item.root_source}});
-                        });
-            const auto   item_elapsed = std::chrono::steady_clock::now() - item_start;
-            const double elapsed_milliseconds = std::chrono::duration<double, std::milli>(item_elapsed).count();
-            if (elapsed_milliseconds > 0.0)
-            {
-                const double bytes_per_second = (static_cast<double>(payload_bytes_total) * 1000.0) / elapsed_milliseconds;
-                metric_call(metrics_, [&](auto& m)
-                            {
-                                m.setBusPayloadBytesPerSecond(bytes_per_second, {{"source", item.root_source}});
-                            });
-            }
-        }
-        record_send_time({{"source", item.root_source}});
-
-        const auto post_elapsed = std::chrono::steady_clock::now() - stream_start;
-        if (post_elapsed >= config_.controllerStreamMaxAge() || stream_payload_bytes >= config_.controllerStreamMaxBytes())
-        {
-            close_stream("threshold reached");
+            EventBatch batchCopy = batch_values;
+            processors_[i]->push(std::move(batchCopy));
         }
     }
 
-    close_stream("shutdown");
-}
-
-bool MLDPPVXSController::buildRequest(const std::string&                         source_name,
-                                      const dp::service::common::DataFrame&      frame,
-                                      const std::string&                         request_id,
-                                      dp::service::ingestion::IngestDataRequest& request,
-                                      std::size_t&                               accepted_events,
-                                      std::size_t&                               payload_bytes)
-{
-    // Build a self-contained request and validate minimum ingestion contract:
-    // - at least one populated column
-    // - timestamp list present
-    // Callers rely on false to skip bad frames without failing the worker loop.
-    request.set_providerid(provider_id_);
-    request.set_clientrequestid(request_id);
-
-    auto* data_frame = request.mutable_ingestiondataframe();
-    *data_frame = frame;
-
-    const bool has_columns = data_frame->doublecolumns_size() > 0 || data_frame->floatcolumns_size() > 0 ||
-                             data_frame->datacolumns_size() > 0 || data_frame->int32columns_size() > 0 ||
-                             data_frame->int64columns_size() > 0 || data_frame->boolcolumns_size() > 0 ||
-                             data_frame->stringcolumns_size() > 0 || data_frame->enumcolumns_size() > 0 ||
-                             data_frame->imagecolumns_size() > 0 || data_frame->structcolumns_size() > 0 ||
-                             data_frame->doublearraycolumns_size() > 0 || data_frame->floatarraycolumns_size() > 0 ||
-                             data_frame->int32arraycolumns_size() > 0 || data_frame->int64arraycolumns_size() > 0 ||
-                             data_frame->boolarraycolumns_size() > 0;
-    if (!has_columns)
+    // Enqueue with blocking backpressure — never drops while running_.
     {
-        warnf(*logger_, "No valid columns for source {}, skipping request", source_name);
-        return false;
-    }
+        std::unique_lock<std::mutex> lk(queue_mutex_);
+        const std::size_t            depthBefore = queue_.size();
+        if (depthBefore >= config_.queueCapacity())
+        {
+            debugf(*logger_, "push() blocking — queue full ({}/{}) for source '{}'",
+                   depthBefore, config_.queueCapacity(), rootSource);
+        }
+        queue_not_full_.wait(lk, [this]
+                             {
+                                 return queue_.size() < config_.queueCapacity() || !running_.load();
+                             });
+        if (!running_.load())
+        {
+            debugf(*logger_, "push() unblocked by stop — not running, source '{}'", rootSource);
+            return false;
+        }
 
-    if (!hasTimestampList(*data_frame))
-    {
-        errorf(*logger_, "Dropping frame for source {}: missing DataFrame.datatimestamps.timestamplist", source_name);
-        metric_call(metrics_, [&](auto& m)
-                    {
-                        m.incrementBusFailures(1.0, {{"source", source_name}});
-                    });
-        return false;
+        queue_.push_back(std::move(batch_values));
+        const std::size_t depthAfter = queue_.size();
+        if (metrics_)
+            metrics_->setControllerQueueDepth(static_cast<double>(depthAfter));
+        {
+            const auto                  now = std::chrono::steady_clock::now();
+            std::lock_guard<std::mutex> plk(push_log_mutex_);
+            if (now - last_push_log_time_ >= std::chrono::seconds(10))
+            {
+                last_push_log_time_ = now;
+                debugf(*logger_, "push() accepted — queue depth {}/{} source '{}'",
+                       depthAfter, config_.queueCapacity(), rootSource);
+            }
+        }
     }
-
-    accepted_events = static_cast<std::size_t>(data_frame->datatimestamps().timestamplist().timestamps_size());
-    payload_bytes = static_cast<std::size_t>(request.ByteSizeLong());
+    queue_not_empty_.notify_one();
     return true;
 }
 
@@ -971,11 +636,96 @@ Metrics& MLDPPVXSController::metrics() const
     return *metrics_;
 }
 
-void MLDPPVXSController::updateQueueDepthMetric()
+void MLDPPVXSController::consumerLoop()
 {
-    const double depth = static_cast<double>(queued_items_.load(std::memory_order_relaxed));
-    metric_call(metrics_, [&](auto& m)
+    infof(*logger_, "Consumer thread started");
+    while (true)
+    {
+        std::deque<EventBatch> local;
+        {
+            std::unique_lock<std::mutex> lk(queue_mutex_);
+            queue_not_empty_.wait(lk, [this]
+                                  {
+                                      return !queue_.empty() || !running_.load();
+                                  });
+
+            if (!running_.load() && queue_.empty())
+                break;
+
+            local.swap(queue_);
+            if (metrics_)
+                metrics_->setControllerQueueDepth(static_cast<double>(queue_.size()));
+            tracef(*logger_, "consumerLoop() dequeued {} batch(es), queue now empty", local.size());
+        }
+        queue_not_full_.notify_all();
+
+        for (auto& batch : local)
+        {
+            if (force_quit_.load())
+            {
+                debugf(*logger_, "consumerLoop() force_quit set — aborting drain, {} batch(es) discarded",
+                       local.size());
+                break;
+            }
+            dispatchToWriters(std::move(batch));
+        }
+
+        {
+            const auto                  now = std::chrono::steady_clock::now();
+            std::lock_guard<std::mutex> lk(queue_log_mutex_);
+            if (now - last_queue_log_time_ >= std::chrono::seconds(10))
+            {
+                last_queue_log_time_ = now;
+                std::size_t depth;
                 {
-                    m.setControllerQueueDepth(depth);
-                });
+                    std::lock_guard<std::mutex> qlk(queue_mutex_);
+                    depth = queue_.size();
+                }
+                infof(*logger_, "Controller main queue depth: {}", depth);
+            }
+        }
+    }
+    infof(*logger_, "Consumer thread exiting");
+}
+
+void MLDPPVXSController::dispatchToWriters(EventBatch batch_values)
+{
+    const std::string rootSource = getRootSourceName(batch_values);
+    const std::size_t n = writers_.size();
+
+    std::vector<std::future<bool>> futures;
+    std::vector<std::size_t>       writer_indices;
+    futures.reserve(n);
+    writer_indices.reserve(n);
+
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        if (!route_table_.accepts(writers_[i]->name(), batch_values.reader_name))
+            continue;
+
+        if (!route_table_.acceptsSource(writers_[i]->name(), rootSource))
+            continue;
+
+        if (!writers_[i]->acceptsPayload(batch_values.payload))
+            continue;
+
+        auto*      writerPtr = writers_[i].get();
+        EventBatch batchCopy = batch_values;
+        futures.push_back(
+            thread_pool_->submit_task([writerPtr, b = std::move(batchCopy)]() mutable -> bool
+                                      {
+                                          return writerPtr->push(std::move(b));
+                                      }));
+        writer_indices.push_back(i);
+    }
+
+    for (std::size_t fi = 0; fi < futures.size(); ++fi)
+    {
+        const bool ok = futures[fi].get();
+        if (!ok)
+        {
+            warnf(*logger_, "Writer '{}' rejected batch for source {}",
+                  writers_[writer_indices[fi]]->name(), rootSource);
+        }
+    }
 }

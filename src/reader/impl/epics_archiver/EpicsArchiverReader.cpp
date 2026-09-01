@@ -41,11 +41,56 @@ namespace {
 
 constexpr const char* kArchiverPbRawPath = "/retrieval/data/getData.raw";
 
-bool hasTimestampList(const dp::service::common::DataFrame& frame)
+bool hasTimestamps(const DataBatch& batch)
 {
-    return frame.has_datatimestamps() &&
-           frame.datatimestamps().has_timestamplist() &&
-           frame.datatimestamps().timestamplist().timestamps_size() > 0;
+    return !batch.timestamps.empty();
+}
+
+void appendToBatch(DataBatch& dst, const DataBatch& src)
+{
+    dst.timestamps.insert(dst.timestamps.end(), src.timestamps.begin(), src.timestamps.end());
+
+    if (dst.columns.empty())
+    {
+        dst.columns = src.columns;
+    }
+    else
+    {
+        const std::size_t n = std::min(dst.columns.size(), src.columns.size());
+        for (std::size_t i = 0; i < n; ++i)
+        {
+            std::visit(
+                [&](auto& dst_vals)
+                {
+                    using T = std::decay_t<decltype(dst_vals)>;
+                    if (const auto* src_vals = std::get_if<T>(&src.columns[i].values))
+                    {
+                        dst_vals.insert(dst_vals.end(), src_vals->begin(), src_vals->end());
+                    }
+                },
+                dst.columns[i].values);
+        }
+    }
+
+    if (dst.enum_columns.empty())
+    {
+        dst.enum_columns = src.enum_columns;
+    }
+    else
+    {
+        const std::size_t n = std::min(dst.enum_columns.size(), src.enum_columns.size());
+        for (std::size_t i = 0; i < n; ++i)
+        {
+            auto& d = dst.enum_columns[i].values;
+            const auto& s = src.enum_columns[i].values;
+            d.insert(d.end(), s.begin(), s.end());
+        }
+    }
+
+    if (dst.array_dims.empty())
+    {
+        dst.array_dims = src.array_dims;
+    }
 }
 
 std::string buildArchiverUrl(const EpicsArchiverReaderConfig&  cfg,
@@ -101,54 +146,71 @@ bool sampleTimeLessThan(uint64_t lhs_epoch, uint32_t lhs_nano, uint64_t rhs_epoc
     return (lhs_epoch < rhs_epoch) || (lhs_epoch == rhs_epoch && lhs_nano < rhs_nano);
 }
 
-uint64_t elapsedNanoseconds(uint64_t start_epoch, uint32_t start_nano, uint64_t end_epoch, uint32_t end_nano)
-{
-    uint64_t sec_delta = end_epoch - start_epoch;
-    if (end_nano >= start_nano)
-    {
-        return sec_delta * 1'000'000'000ULL + static_cast<uint64_t>(end_nano - start_nano);
-    }
-
-    return (sec_delta - 1ULL) * 1'000'000'000ULL + (1'000'000'000ULL + static_cast<uint64_t>(end_nano) - start_nano);
-}
-
 } // namespace
 
+// --- PVWorkQueue ---
+
+void EpicsArchiverReader::PVWorkQueue::populate(const std::vector<std::string>& pv_names)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::queue<std::string> empty;
+    pvs_.swap(empty);
+    for (const auto& pv : pv_names)
+    {
+        pvs_.push(pv);
+    }
+}
+
+std::optional<std::string> EpicsArchiverReader::PVWorkQueue::pop()
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (pvs_.empty())
+    {
+        return std::nullopt;
+    }
+    std::string pv = std::move(pvs_.front());
+    pvs_.pop();
+    return pv;
+}
+
+std::size_t EpicsArchiverReader::PVWorkQueue::size() const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return pvs_.size();
+}
+
+// --- EpicsArchiverReader ---
+
 EpicsArchiverReader::EpicsArchiverReader(
-    std::shared_ptr<IDataBus> bus,
-    std::shared_ptr<Metrics>         metrics,
-    const ::mldp_pvxs_driver::config::Config&                     cfg)
+    std::shared_ptr<IDataBus>                 bus,
+    std::shared_ptr<Metrics>                  metrics,
+    const ::mldp_pvxs_driver::config::Config& cfg)
     : ::mldp_pvxs_driver::reader::Reader(std::move(bus), std::move(metrics))
     , logger_(::mldp_pvxs_driver::util::log::newLogger("reader:epics-archiver:" + cfg.get("name")))
-    , http_client_(nullptr)
     , name_(cfg.get("name"))
     , config_(cfg)
 {
-    // Validate configuration
     if (!config_.valid())
     {
         throw EpicsArchiverReaderConfig::Error("Failed to parse Archiver reader configuration");
     }
 
-    // Initialize reusable HTTP transport for archiver communication
     try
     {
-        initializeHttpClient();
+        initializeHttpClients();
     }
     catch (const std::exception& e)
     {
-        throw EpicsArchiverReaderConfig::Error(std::string("Failed to initialize HTTP client: ") + e.what());
+        throw EpicsArchiverReaderConfig::Error(std::string("Failed to initialize HTTP clients: ") + e.what());
     }
 
-    startWorker();
+    startWorkers();
 }
 
 EpicsArchiverReader::~EpicsArchiverReader()
 {
-    // Stop worker before transport teardown so no background access races with
-    // HTTP client destruction.
-    stopWorker();
-    destroyHttpClient();
+    stopWorkers();
+    destroyHttpClients();
 }
 
 std::string EpicsArchiverReader::name() const
@@ -156,36 +218,48 @@ std::string EpicsArchiverReader::name() const
     return name_;
 }
 
-void EpicsArchiverReader::initializeHttpClient()
+void EpicsArchiverReader::initializeHttpClients()
 {
-    auto client = std::make_unique<::mldp_pvxs_driver::util::http::CurlHttpClient>(logger_);
+    const auto num_threads = static_cast<std::size_t>(config_.fetchThreads());
+    worker_contexts_.resize(num_threads);
 
-    HttpClientOptions options;
-    options.connect_timeout_sec = config_.connectTimeoutSec();
-    options.total_timeout_sec = config_.totalTimeoutSec();
-    options.tls.verify_peer = config_.tlsVerifyPeer();
-    options.tls.verify_host = config_.tlsVerifyHost();
-    options.user_agent = "MLDP Archiver Reader 1.0 (mldp-pvxs-driver)";
+    for (std::size_t i = 0; i < num_threads; ++i)
+    {
+        auto client = std::make_unique<CurlHttpClient>(logger_);
 
-    client->setDefaultOptions(options);
-    client->setDefaultHeaders({"Accept: application/octet-stream"});
+        HttpClientOptions options;
+        options.connect_timeout_sec = config_.connectTimeoutSec();
+        options.total_timeout_sec = 0;
+        options.low_speed_limit_bytes_per_sec = 0;
+        options.low_speed_time_sec = 0;
+        options.tls.verify_peer = config_.tlsVerifyPeer();
+        options.tls.verify_host = config_.tlsVerifyHost();
+        options.user_agent = "MLDP Archiver Reader 1.0 (mldp-pvxs-driver)";
 
-    http_client_ = std::move(client);
-    debugf(
-        *logger_,
-        "Initialized HTTP client for Archiver reader with options: connect_timeout={}s total_timeout={}s tls(peer={},host={})",
-        options.connect_timeout_sec,
-        options.total_timeout_sec,
-        options.tls.verify_peer,
-        options.tls.verify_host);
+        client->setDefaultOptions(options);
+        client->setDefaultHeaders({"Accept: application/octet-stream"});
+
+        worker_contexts_[i].http_client = std::move(client);
+    }
+
+    debugf(*logger_,
+           "Initialized {} HTTP clients for Archiver reader (connect_timeout={}s tls(peer={},host={}))",
+           num_threads,
+           config_.connectTimeoutSec(),
+           config_.tlsVerifyPeer(),
+           config_.tlsVerifyHost());
 }
 
-void EpicsArchiverReader::destroyHttpClient()
+void EpicsArchiverReader::destroyHttpClients()
 {
-    http_client_.reset();
+    for (auto& ctx : worker_contexts_)
+    {
+        ctx.http_client.reset();
+    }
+    worker_contexts_.clear();
 }
 
-void EpicsArchiverReader::startWorker()
+void EpicsArchiverReader::startWorkers()
 {
     running_.store(true);
     {
@@ -193,82 +267,165 @@ void EpicsArchiverReader::startWorker()
         worker_error_ = nullptr;
         worker_done_ = false;
     }
+    workers_completed_.store(0);
 
-    reader_thread_ = std::thread([this]()
-                                 {
-                                     runWorker();
-                                 });
+    if (config_.fetchMode() == EpicsArchiverReaderConfig::FetchMode::HistoricalOnce)
+    {
+        pv_queue_.populate(config_.pvNames());
+    }
+
+    const auto num_threads = static_cast<std::size_t>(config_.fetchThreads());
+    worker_threads_.reserve(num_threads);
+    for (std::size_t i = 0; i < num_threads; ++i)
+    {
+        worker_threads_.emplace_back([this, i]() { runWorker(i); });
+    }
 }
 
-void EpicsArchiverReader::stopWorker()
+void EpicsArchiverReader::stopWorkers()
 {
     running_.store(false);
     worker_cv_.notify_all();
-    if (http_client_)
+    cycle_cv_.notify_all();
+
+    for (auto& ctx : worker_contexts_)
     {
-        // Interrupt any blocking streamGet() so join() is not held until a long
-        // network timeout expires during destruction.
-        http_client_->cancelOngoingRequests();
+        if (ctx.http_client)
+        {
+            ctx.http_client->cancelOngoingRequests();
+        }
     }
 
-    if (reader_thread_.joinable())
+    for (auto& t : worker_threads_)
     {
-        reader_thread_.join();
+        if (t.joinable())
+        {
+            t.join();
+        }
     }
+    worker_threads_.clear();
 }
 
-void EpicsArchiverReader::runWorker()
+void EpicsArchiverReader::runWorker(std::size_t index)
 {
+    auto& ctx = worker_contexts_[index];
+
     try
     {
         switch (config_.fetchMode())
         {
         case EpicsArchiverReaderConfig::FetchMode::HistoricalOnce:
             {
-                // Historical archiver reader performs a one-shot fetch over the
-                // configured time window, but it runs on a dedicated reader thread to
-                // match the lifecycle model used by other readers.
-                if (running_.load())
+                while (running_.load())
                 {
-                    fetchConfiguredPVs();
+                    auto pv = pv_queue_.pop();
+                    if (!pv)
+                    {
+                        break;
+                    }
+                    infof(*logger_, "Worker {} starting PV '{}' (queue remaining: {})",
+                           index, *pv, pv_queue_.size());
+                    fetchSinglePV(ctx, *pv, config_.startDate(), config_.endDate());
+                }
+
+                if (running_.load() && config_.batchFlushIntervalMs() > 0)
+                {
+                    flushAllPendingBatches(ctx);
                 }
                 break;
             }
-        case EpicsArchiverReaderConfig::FetchMode::PeriodicTail: {
-            infof(*logger_,
-                  "Archiver reader '{}' running in periodic_tail mode (poll_interval={}s lookback={}s)",
-                  name_,
-                  config_.pollIntervalSec(),
-                  config_.lookbackSec());
-
-            std::optional<std::chrono::system_clock::time_point> previous_iteration_end;
-            const bool                                           contiguous_windows = (config_.lookbackSec() == config_.pollIntervalSec());
-
-            while (running_.load())
+        case EpicsArchiverReaderConfig::FetchMode::PeriodicTail:
             {
-                const auto iteration_end = DateTimeUtils::truncateToMilliseconds(std::chrono::system_clock::now());
-                auto       iteration_start = iteration_end - std::chrono::seconds(config_.lookbackSec());
-                if (contiguous_windows && previous_iteration_end.has_value())
+                infof(*logger_,
+                      "Archiver reader '{}' worker {} running in periodic_tail mode (poll_interval={}s lookback={}s)",
+                      name_, index,
+                      config_.pollIntervalSec(),
+                      config_.lookbackSec());
+
+                std::optional<std::chrono::system_clock::time_point> previous_iteration_end;
+                const bool contiguous_windows = (config_.lookbackSec() == config_.pollIntervalSec());
+                std::size_t last_cycle_seen = 0;
+
+                while (running_.load())
                 {
-                    iteration_start = *previous_iteration_end;
+                    if (index == 0)
+                    {
+                        const auto iteration_end = DateTimeUtils::truncateToMilliseconds(std::chrono::system_clock::now());
+                        auto       iteration_start = iteration_end - std::chrono::seconds(config_.lookbackSec());
+                        if (contiguous_windows && previous_iteration_end.has_value())
+                        {
+                            iteration_start = *previous_iteration_end;
+                        }
+
+                        {
+                            std::lock_guard<std::mutex> lock(cycle_mutex_);
+                            cycle_from_ = DateTimeUtils::formatIso8601UtcMillis(iteration_start);
+                            cycle_to_ = DateTimeUtils::formatIso8601UtcMillis(iteration_end);
+                        }
+                        debugf(*logger_, "Periodic tail fetch for '{}' window [{} -> {}]", name_, cycle_from_, *cycle_to_);
+
+                        pv_queue_.populate(config_.pvNames());
+                        previous_iteration_end = iteration_end;
+
+                        cycle_ready_.fetch_add(1);
+                        cycle_cv_.notify_all();
+                    }
+
+                    // All workers wait for the current cycle to be signaled.
+                    {
+                        std::unique_lock<std::mutex> lock(cycle_mutex_);
+                        cycle_cv_.wait(lock, [&]()
+                                       {
+                                           return cycle_ready_.load() > last_cycle_seen || !running_.load();
+                                       });
+                        if (!running_.load())
+                        {
+                            break;
+                        }
+                        last_cycle_seen = cycle_ready_.load();
+                    }
+
+                    std::string from;
+                    std::optional<std::string> to;
+                    {
+                        std::lock_guard<std::mutex> lock(cycle_mutex_);
+                        from = cycle_from_;
+                        to = cycle_to_;
+                    }
+
+                    while (running_.load())
+                    {
+                        auto pv = pv_queue_.pop();
+                        if (!pv)
+                        {
+                            break;
+                        }
+                        infof(*logger_, "Worker {} starting PV '{}' (queue remaining: {})",
+                               index, *pv, pv_queue_.size());
+                        fetchSinglePV(ctx, *pv, from, to);
+                    }
+
+                    if (running_.load() && config_.batchFlushIntervalMs() > 0)
+                    {
+                        flushAllPendingBatches(ctx);
+                    }
+
+                    if (index == 0)
+                    {
+                        // Coordinator sleeps for the poll interval then starts next cycle.
+                        std::unique_lock<std::mutex> lock(worker_mutex_);
+                        worker_cv_.wait_for(lock,
+                                            std::chrono::seconds(config_.pollIntervalSec()),
+                                            [this]()
+                                            {
+                                                return !running_.load();
+                                            });
+                    }
+                    // Non-coordinator workers loop back and block on cycle_cv_ until
+                    // the coordinator increments cycle_ready_ in the next iteration.
                 }
-
-                const std::string from = DateTimeUtils::formatIso8601UtcMillis(iteration_start);
-                const std::string to = DateTimeUtils::formatIso8601UtcMillis(iteration_end);
-                debugf(*logger_, "Periodic tail fetch for '{}' window [{} -> {}]", name_, from, to);
-                fetchConfiguredPVs(from, to);
-                previous_iteration_end = iteration_end;
-
-                std::unique_lock<std::mutex> lock(worker_mutex_);
-                worker_cv_.wait_for(lock,
-                                    std::chrono::seconds(config_.pollIntervalSec()),
-                                    [this]()
-                                    {
-                                        return !running_.load();
-                                    });
+                break;
             }
-            break;
-        }
         default:
             throw std::runtime_error("Unsupported fetch mode in Archiver reader configuration");
         }
@@ -277,44 +434,154 @@ void EpicsArchiverReader::runWorker()
     {
         if (!running_.load())
         {
-            debugf(*logger_, "Archiver reader worker '{}' stopped during shutdown: {}", name_, e.what());
+            debugf(*logger_, "Archiver reader worker '{}' [{}] stopped during shutdown: {}", name_, index, e.what());
         }
         else
         {
             {
                 std::lock_guard<std::mutex> lock(worker_mutex_);
-                worker_error_ = std::current_exception();
+                if (!worker_error_)
+                {
+                    worker_error_ = std::current_exception();
+                }
             }
-            errorf(*logger_, "Archiver reader worker '{}' failed: {}", name_, e.what());
+            errorf(*logger_, "Archiver reader worker '{}' [{}] failed: {}", name_, index, e.what());
         }
     }
     catch (...)
     {
         if (!running_.load())
         {
-            debugf(*logger_, "Archiver reader worker '{}' stopped during shutdown", name_);
+            debugf(*logger_, "Archiver reader worker '{}' [{}] stopped during shutdown", name_, index);
         }
         else
         {
             {
                 std::lock_guard<std::mutex> lock(worker_mutex_);
-                worker_error_ = std::current_exception();
+                if (!worker_error_)
+                {
+                    worker_error_ = std::current_exception();
+                }
             }
-            errorf(*logger_, "Archiver reader worker '{}' failed with unknown exception", name_);
+            errorf(*logger_, "Archiver reader worker '{}' [{}] failed with unknown exception", name_, index);
         }
     }
 
+    const auto completed = workers_completed_.fetch_add(1) + 1;
     {
         std::lock_guard<std::mutex> lock(worker_mutex_);
-        worker_done_ = true;
+        if (completed == static_cast<std::size_t>(config_.fetchThreads()))
+        {
+            worker_done_ = true;
+            if (config_.fetchMode() == EpicsArchiverReaderConfig::FetchMode::HistoricalOnce
+                && running_.load() && !worker_error_)
+            {
+                signalCompleted();
+            }
+        }
     }
 }
 
-void EpicsArchiverReader::flushChunk(PbChunkState& state)
+bool EpicsArchiverReader::pushBatch(IDataBus::EventBatch batch)
 {
-    // Flush only the currently accumulated output batch (events vector) while
-    // keeping the parsed PB/HTTP chunk header. This is used for time-based
-    // splitting inside a single PB/HTTP chunk.
+    if (!running_.load())
+    {
+        return false;
+    }
+    return bus_->push(std::move(batch));
+}
+
+void EpicsArchiverReader::submitPendingBatch(WorkerContext& ctx, const std::string& pv)
+{
+    auto it = ctx.pending_pv_batches.find(pv);
+    if (it == ctx.pending_pv_batches.end() || it->second.accumulated.timestamps.empty())
+    {
+        return;
+    }
+
+    PendingPvBatch& pending = it->second;
+    const prometheus::Labels source_tag{{"source", pv}};
+    const auto flush_start = std::chrono::steady_clock::now();
+
+    IDataBus::EventBatch batch;
+    batch.metadata = pending.metadata;
+    TimeSeriesPayload ts_payload;
+    ts_payload.root_source_name = pending.root_source_name;
+
+    if (hasTimestamps(pending.accumulated))
+    {
+        ts_payload.frames.push_back(std::move(pending.accumulated));
+    }
+    else
+    {
+        errorf(*logger_, "Dropping pending batch without timestamps for root source {}", pending.root_source_name);
+        metric_call(metrics_, [&](auto& m)
+                    {
+                        m.incrementReaderErrors(1.0, source_tag);
+                    });
+    }
+
+    ctx.pending_pv_batches.erase(it);
+
+    if (!ts_payload.frames.empty())
+    {
+        batch.payload = std::move(ts_payload);
+        batch.reader_name = name();
+        pushBatch(std::move(batch));
+
+        const double flush_ms = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - flush_start).count();
+        metric_call(metrics_, [&](auto& m)
+                    {
+                        m.observeReaderProcessingTimeMs(flush_ms, source_tag);
+                        m.incrementReaderEvents(1.0, source_tag);
+                    });
+    }
+}
+
+void EpicsArchiverReader::flushAllPendingBatches(WorkerContext& ctx)
+{
+    std::vector<std::string> pvs;
+    pvs.reserve(ctx.pending_pv_batches.size());
+    for (const auto& [pv, pending] : ctx.pending_pv_batches)
+    {
+        if (!pending.accumulated.timestamps.empty())
+        {
+            pvs.push_back(pv);
+        }
+    }
+    for (const auto& pv : pvs)
+    {
+        submitPendingBatch(ctx, pv);
+    }
+}
+
+void EpicsArchiverReader::flushExpiredPendingBatches(WorkerContext& ctx)
+{
+    if (config_.batchFlushIntervalMs() <= 0)
+    {
+        return;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    const auto threshold = std::chrono::milliseconds(config_.batchFlushIntervalMs());
+
+    std::vector<std::string> to_flush;
+    for (const auto& [pv, pending] : ctx.pending_pv_batches)
+    {
+        if (!pending.accumulated.timestamps.empty() && (now - pending.created_at) >= threshold)
+        {
+            to_flush.push_back(pv);
+        }
+    }
+    for (const auto& pv : to_flush)
+    {
+        submitPendingBatch(ctx, pv);
+    }
+}
+
+void EpicsArchiverReader::flushChunk(WorkerContext& ctx, PbChunkState& state)
+{
     if (!state.have_header)
     {
         return;
@@ -324,27 +591,41 @@ void EpicsArchiverReader::flushChunk(PbChunkState& state)
     if (!state.events.empty())
     {
         const prometheus::Labels source_tag{{"source", pv}};
-        const auto                flush_start = std::chrono::steady_clock::now();
+        const auto               flush_start = std::chrono::steady_clock::now();
 
         IDataBus::EventBatch batch;
-        batch.root_source = pv.empty() ? name_ : pv;
-        batch.tags.push_back(batch.root_source);
+        auto merged = config_.staticMetadata();
+        for (const auto& pv_cfg : config_.pvs())
+        {
+            if (pv_cfg.name == pv)
+            {
+                for (auto& [k, v] : pv_cfg.metadata)
+                    merged[k] = v;
+                break;
+            }
+        }
+        batch.metadata = std::move(merged);
+        const std::string root_name = pv.empty() ? name_ : pv;
+        TimeSeriesPayload ts_payload;
+        ts_payload.root_source_name = root_name;
         for (auto& frame : state.events)
         {
-            if (!hasTimestampList(frame))
+            if (!hasTimestamps(frame))
             {
-                errorf(*logger_, "Dropping archiver frame without timestamps for root source {}", batch.root_source);
+                errorf(*logger_, "Dropping archiver batch without timestamps for root source {}", root_name);
                 metric_call(metrics_, [&](auto& m)
                             {
                                 m.incrementReaderErrors(1.0, source_tag);
                             });
                 continue;
             }
-            batch.frames.push_back(std::move(frame));
+            ts_payload.frames.push_back(std::move(frame));
         }
-        if (!batch.frames.empty())
+        if (!ts_payload.frames.empty())
         {
-            bus_->push(std::move(batch));
+            batch.payload = std::move(ts_payload);
+            batch.reader_name = name();
+            pushBatch(std::move(batch));
         }
 
         const auto   flush_end = std::chrono::steady_clock::now();
@@ -357,82 +638,22 @@ void EpicsArchiverReader::flushChunk(PbChunkState& state)
                     });
     }
 
-    state.have_batch_start_time = false;
-    state.batch_start_epoch_seconds = 0;
-    state.batch_start_nanoseconds = 0;
+    state.events.clear();
 }
 
-void EpicsArchiverReader::finalizeChunk(PbChunkState& state)
+void EpicsArchiverReader::finalizeChunk(WorkerContext& ctx, PbChunkState& state)
 {
-    // Called at PB/HTTP chunk boundary (blank line) or end-of-stream. This
-    // flushes any pending events, then resets the full chunk state so the next
-    // non-empty line is interpreted as a new PayloadInfo header.
     if (!state.have_header)
     {
         return;
     }
 
-    flushChunk(state);
+    flushChunk(ctx, state);
     state = PbChunkState{};
 }
 
-void EpicsArchiverReader::splitBatchIfHistoricalWindowExceeded(PbChunkState& state,
-                                                               uint64_t      sample_epoch_seconds,
-                                                               uint32_t      sample_nanoseconds)
+void EpicsArchiverReader::parsePbHttpLineIntoState(WorkerContext& ctx, const std::string& line, PbChunkState& state)
 {
-    // Batch splitting is based on historical sample timestamps from the
-    // archiver payload, not wall-clock processing time. The first sample starts
-    // the batch window; later samples trigger a flush only when they exceed the
-    // configured threshold (strict overflow: elapsed > batch_duration_sec).
-    if (state.events.empty())
-    {
-        state.have_batch_start_time = true;
-        state.batch_start_epoch_seconds = sample_epoch_seconds;
-        state.batch_start_nanoseconds = sample_nanoseconds;
-        return;
-    }
-
-    if (!state.have_batch_start_time)
-    {
-        state.have_batch_start_time = true;
-        state.batch_start_epoch_seconds = sample_epoch_seconds;
-        state.batch_start_nanoseconds = sample_nanoseconds;
-        return;
-    }
-
-    if (sampleTimeLessThan(sample_epoch_seconds,
-                           sample_nanoseconds,
-                           state.batch_start_epoch_seconds,
-                           state.batch_start_nanoseconds))
-    {
-        // Recover safely from unexpected out-of-order data by publishing current batch first.
-        flushChunk(state);
-        state.have_batch_start_time = true;
-        state.batch_start_epoch_seconds = sample_epoch_seconds;
-        state.batch_start_nanoseconds = sample_nanoseconds;
-        return;
-    }
-
-    const uint64_t threshold_ns = static_cast<uint64_t>(config_.batchDurationSec()) * 1'000'000'000ULL;
-    const uint64_t elapsed_ns = elapsedNanoseconds(state.batch_start_epoch_seconds,
-                                                   state.batch_start_nanoseconds,
-                                                   sample_epoch_seconds,
-                                                   sample_nanoseconds);
-    if (elapsed_ns > threshold_ns)
-    {
-        flushChunk(state);
-        state.have_batch_start_time = true;
-        state.batch_start_epoch_seconds = sample_epoch_seconds;
-        state.batch_start_nanoseconds = sample_nanoseconds;
-    }
-}
-
-void EpicsArchiverReader::parsePbHttpLineIntoState(const std::string& line, PbChunkState& state)
-{
-    // PB/HTTP framing is line-based after transport streaming:
-    // - first line in a chunk: EPICS::PayloadInfo
-    // - following lines: sample payloads (ScalarDouble currently supported)
-    // - empty line: chunk terminator (handled by fetchConfiguredPVs)
     const std::string msg_bytes = unescapePbHttpLine(line);
 
     if (!state.have_header)
@@ -449,22 +670,19 @@ void EpicsArchiverReader::parsePbHttpLineIntoState(const std::string& line, PbCh
 
     const auto parsed = ArchiverPbHttpConversion::parseSample(state.header, msg_bytes);
 
-    // Record that we received a sample from the archiver
-    const std::string pv = state.header.pvname();
+    const std::string        pv = state.header.pvname();
     const prometheus::Labels source_tag{{"source", pv}};
     metric_call(metrics_, [&](auto& m)
                 {
                     m.incrementReaderEventsReceived(1.0, source_tag);
                 });
 
-    // --- Duplicate suppression (periodic_tail only) ---
     if (config_.fetchMode() == EpicsArchiverReaderConfig::FetchMode::PeriodicTail)
     {
-        auto it = last_published_ns_per_pv_.find(pv);
-        if (it != last_published_ns_per_pv_.end())
+        auto it = ctx.last_published_ns_per_pv.find(pv);
+        if (it != ctx.last_published_ns_per_pv.end())
         {
             const auto [wm_epoch, wm_nano] = it->second;
-            // Skip the sample if its timestamp does not strictly exceed the watermark.
             if (!sampleTimeLessThan(wm_epoch, wm_nano, parsed.epoch_seconds, parsed.nanoseconds))
             {
                 debugf(*logger_,
@@ -473,126 +691,146 @@ void EpicsArchiverReader::parsePbHttpLineIntoState(const std::string& line, PbCh
                 return;
             }
         }
-        // Update watermark as this sample is accepted.
-        last_published_ns_per_pv_[pv] = {parsed.epoch_seconds, parsed.nanoseconds};
+        ctx.last_published_ns_per_pv[pv] = {parsed.epoch_seconds, parsed.nanoseconds};
     }
 
-    // Decide whether the current sample starts a new output batch before
-    // appending it, so the sample that crosses the threshold belongs to the
-    // new batch.
-    splitBatchIfHistoricalWindowExceeded(state, parsed.epoch_seconds, parsed.nanoseconds);
-    state.events.emplace_back(std::move(parsed.frame));
-}
-
-void EpicsArchiverReader::fetchConfiguredPVs()
-{
-    fetchConfiguredPVs(config_.startDate(), config_.endDate());
-}
-
-void EpicsArchiverReader::fetchConfiguredPVs(const std::string& from, const std::optional<std::string>& to)
-{
-    // High-level flow:
-    // 1) Build Archiver Appliance PB/HTTP URL for each configured PV.
-    // 2) Stream HTTP bytes incrementally.
-    // 3) Reconstruct PB/HTTP lines from streamed bytes.
-    // 4) Parse header/sample lines into PbChunkState.
-    // 5) Flush batches either on historical time-window overflow or PB/HTTP
-    //    chunk/end-of-stream boundaries.
-    if (!http_client_)
+    if (config_.pvSamplesPerBatch() > 0)
     {
-        throw std::runtime_error("HTTP client not initialized");
+        auto& pending = ctx.pending_pv_batches[pv];
+        if (pending.accumulated.timestamps.empty())
+        {
+            auto merged = config_.staticMetadata();
+            for (const auto& pv_cfg : config_.pvs())
+            {
+                if (pv_cfg.name == pv)
+                {
+                    for (const auto& [k, v] : pv_cfg.metadata)
+                        merged[k] = v;
+                    break;
+                }
+            }
+            pending.metadata = std::move(merged);
+            pending.root_source_name = pv.empty() ? name_ : pv;
+            pending.created_at = std::chrono::steady_clock::now();
+        }
+        appendToBatch(pending.accumulated, parsed.batch);
+
+        if (static_cast<long>(pending.accumulated.timestamps.size()) >= config_.pvSamplesPerBatch())
+        {
+            submitPendingBatch(ctx, pv);
+        }
+    }
+    else
+    {
+        state.events.emplace_back(std::move(parsed.batch));
+    }
+}
+
+void EpicsArchiverReader::fetchSinglePV(WorkerContext& ctx,
+                                         const std::string& pv,
+                                         const std::string& from,
+                                         const std::optional<std::string>& to)
+{
+    if (!ctx.http_client)
+    {
+        throw std::runtime_error("HTTP client not initialized for worker");
     }
     if (!bus_)
     {
         throw std::runtime_error("Event bus is not available");
     }
 
-    for (const auto& pv : config_.pvNames())
-    {
-        if (!running_.load())
+    const std::string url = buildArchiverUrl(config_, pv, from, to);
+    infof(*logger_, "Fetching archiver PB/HTTP stream for PV '{}' from {}", pv, url);
+
+    PbChunkState     chunk_state;
+    std::string      line_buf;
+    std::size_t      total_bytes = 0;
+    const auto       fetch_start = std::chrono::steady_clock::now();
+    HttpResponseInfo response = ctx.http_client->streamGet(
+        HttpRequest{.url = url},
+        [&](const char* data, std::size_t size)
         {
-            break;
-        }
-
-        const std::string url = buildArchiverUrl(config_, pv, from, to);
-        infof(*logger_, "Fetching archiver PB/HTTP stream for PV '{}' from {}", pv, url);
-
-        PbChunkState     chunk_state;
-        std::string      line_buf;
-        HttpResponseInfo response = http_client_->streamGet(
-            HttpRequest{.url = url},
-            [&](const char* data, std::size_t size)
+            total_bytes += size;
+            for (std::size_t i = 0; i < size; ++i)
             {
-                // The HTTP client may deliver arbitrary byte fragment sizes.
-                // Reassemble newline-delimited PB/HTTP records before parsing.
-                for (std::size_t i = 0; i < size; ++i)
+                const char ch = data[i];
+                if (ch == '\n')
                 {
-                    const char ch = data[i];
-                    if (ch == '\n')
+                    if (line_buf.empty())
                     {
-                        if (line_buf.empty())
-                        {
-                            // Empty line marks PB/HTTP chunk end; publish any
-                            // remaining events and reset chunk/header state.
-                            finalizeChunk(chunk_state);
-                        }
-                        else
-                        {
-                            // Non-empty line belongs to the current PB/HTTP
-                            // chunk: parse header or sample and apply
-                            // historical time-based batch splitting.
-                            try
-                            {
-                                parsePbHttpLineIntoState(line_buf, chunk_state);
-                            }
-                            catch (const std::exception& e)
-                            {
-                                const prometheus::Labels source_tag{{"source", pv}};
-                                metric_call(metrics_, [&](auto& m)
-                                            {
-                                                m.incrementReaderErrors(1.0, source_tag);
-                                            });
-                                throw;
-                            }
-                            line_buf.clear();
-                        }
-                        continue;
+                        finalizeChunk(ctx, chunk_state);
                     }
-                    line_buf.push_back(ch);
+                    else
+                    {
+                        try
+                        {
+                            parsePbHttpLineIntoState(ctx, line_buf, chunk_state);
+                        }
+                        catch (const std::exception& e)
+                        {
+                            const prometheus::Labels source_tag{{"source", pv}};
+                            metric_call(metrics_, [&](auto& m)
+                                        {
+                                            m.incrementReaderErrors(1.0, source_tag);
+                                        });
+                            throw;
+                        }
+                        line_buf.clear();
+                    }
+                    continue;
                 }
-            });
+                line_buf.push_back(ch);
+            }
+        });
 
-        if (!line_buf.empty())
+    if (!line_buf.empty())
+    {
+        try
         {
-            // Support responses that do not end with a trailing newline.
-            try
-            {
-                parsePbHttpLineIntoState(line_buf, chunk_state);
-            }
-            catch (const std::exception& e)
-            {
-                const prometheus::Labels source_tag{{"source", pv}};
-                metric_call(metrics_, [&](auto& m)
-                            {
-                                m.incrementReaderErrors(1.0, source_tag);
-                            });
-                throw;
-            }
-            line_buf.clear();
+            parsePbHttpLineIntoState(ctx, line_buf, chunk_state);
         }
-        // Ensure the final partially accumulated chunk/batch is published.
-        finalizeChunk(chunk_state);
-
-        if (response.http_status != 200)
+        catch (const std::exception& e)
         {
             const prometheus::Labels source_tag{{"source", pv}};
             metric_call(metrics_, [&](auto& m)
                         {
                             m.incrementReaderErrors(1.0, source_tag);
                         });
-            throw std::runtime_error(
-                "archiver HTTP GET returned status " + std::to_string(response.http_status) + " for PV " + pv);
+            throw;
         }
-        infof(*logger_, "Completed fetch of archiver PB/HTTP stream for PV '{}'", pv);
+        line_buf.clear();
     }
+    finalizeChunk(ctx, chunk_state);
+
+    if (total_bytes > 0)
+    {
+        const prometheus::Labels source_tag{{"source", pv}};
+        const double fetch_ms = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - fetch_start).count();
+        metric_call(metrics_, [&](auto& m) {
+            m.incrementReaderDataBytesTotal(static_cast<double>(total_bytes), source_tag);
+        });
+        if (fetch_ms > 0.0)
+        {
+            const double bps = (static_cast<double>(total_bytes) * 1000.0) / fetch_ms;
+            metric_call(metrics_, [&](auto& m) {
+                m.setReaderDataBytesPerSecond(bps, source_tag);
+            });
+        }
+    }
+
+    if (response.http_status != 200)
+    {
+        const prometheus::Labels source_tag{{"source", pv}};
+        metric_call(metrics_, [&](auto& m)
+                    {
+                        m.incrementReaderErrors(1.0, source_tag);
+                    });
+        throw std::runtime_error(
+            "archiver HTTP GET returned status " + std::to_string(response.http_status) + " for PV " + pv);
+    }
+    infof(*logger_, "Completed fetch of archiver PB/HTTP stream for PV '{}'", pv);
+
+    flushExpiredPendingBatches(ctx);
 }

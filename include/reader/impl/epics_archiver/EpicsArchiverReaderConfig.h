@@ -25,6 +25,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace mldp_pvxs_driver::reader::impl::epics_archiver {
@@ -38,13 +39,17 @@ inline constexpr char EndDateKey[] = "end-date";
 inline constexpr char EndDateAliasKey[] = "endDate";
 inline constexpr char ConnectTimeoutSecKey[] = "connect-timeout-sec";
 inline constexpr char TotalTimeoutSecKey[] = "total-timeout-sec";
-inline constexpr char BatchDurationSecKey[] = "batch-duration-sec";
 inline constexpr char PollIntervalSecKey[] = "poll-interval-sec";
 inline constexpr char LookbackSecKey[] = "lookback-sec";
 inline constexpr char TlsVerifyPeerKey[] = "tls-verify-peer";
 inline constexpr char TlsVerifyHostKey[] = "tls-verify-host";
 inline constexpr char PvsKey[] = "pvs";
 inline constexpr char PvNameKey[] = "name";
+inline constexpr char PvSamplesPerBatchKey[] = "pv-samples-per-batch";
+inline constexpr char BatchFlushIntervalMsKey[] = "batch-flush-interval-ms";
+inline constexpr char FetchThreadsKey[] = "fetch-threads";
+
+static constexpr auto kMetadataKey = "metadata";
 
 /**
  * @brief Configuration parser for EPICS Archiver Appliance reader.
@@ -63,7 +68,6 @@ inline constexpr char PvNameKey[] = "name";
  *     end_date: "2026-01-02T00:00:00Z"   # optional
  *     connect_timeout_sec: 30 # optional, default: 30 seconds
  *     total_timeout_sec: 300  # optional, default: 300 seconds (5 minutes)
- *     batch_duration_sec: 1   # optional, default: 1 second (sample-time window for output batch splitting in both modes)
  *     tls_verify_peer: true   # optional, default: true
  *     tls_verify_host: true   # optional, default: true
  *     pvs:
@@ -76,6 +80,7 @@ inline constexpr char PvNameKey[] = "name";
  *     mode: "periodic_tail"
  *     poll_interval_sec: 5  # required in periodic_tail mode
  *     lookback_sec: 5       # optional, defaults to poll_interval_sec, must be <= poll_interval_sec
+ *     fetch-threads: 2      # optional, parallel PV fetch workers (default: 1)
  *     pvs:
  *       - name: "FACET:DL1:SBEN:1:BDES"
  * @endcode
@@ -106,7 +111,8 @@ public:
      */
     struct PVConfig
     {
-        std::string name; ///< PV name to retrieve from archiver.
+        std::string                                  name;     ///< PV name to retrieve from archiver.
+        std::unordered_map<std::string, std::string> metadata; ///< Per-PV static metadata key-value pairs.
     };
 
     /**
@@ -195,15 +201,6 @@ public:
     long totalTimeoutSec() const;
 
     /**
-     * @brief Get the max historical sample-time span for one published batch.
-     *
-     * Batches are split using archiver sample timestamps (not wall-clock read time).
-     * This applies to both historical_once and periodic_tail modes.
-     *
-     * @return Batch duration threshold in seconds (default: 1).
-     */
-    long batchDurationSec() const;
-    /**
      * @brief Get periodic tail poll interval in seconds.
      *
      * Valid only when mode is @ref FetchMode::PeriodicTail.
@@ -216,6 +213,27 @@ public:
      * @ref pollIntervalSec() when not explicitly configured.
      */
     long lookbackSec() const;
+
+    /**
+     * @brief Get max samples to accumulate per PV before flushing.
+     *
+     * @return Configured value, or 0 when this feature is disabled.
+     */
+    long pvSamplesPerBatch() const;
+
+    /**
+     * @brief Get the maximum time an incomplete PV batch may remain pending.
+     *
+     * @return Flush interval in milliseconds, or 0 when this feature is disabled.
+     */
+    long batchFlushIntervalMs() const;
+
+    /**
+     * @brief Get the number of parallel fetch threads.
+     *
+     * @return Number of worker threads (default: 1 for sequential behavior).
+     */
+    long fetchThreads() const;
 
     /**
      * @brief Whether to verify the server TLS certificate chain.
@@ -231,6 +249,16 @@ public:
      */
     bool tlsVerifyHost() const;
 
+    /**
+     * @brief Get the reader-level static metadata key-value pairs.
+     *
+     * @return Map of metadata keys to values as configured in YAML.
+     */
+    const std::unordered_map<std::string, std::string>& staticMetadata() const
+    {
+        return static_metadata_;
+    }
+
 private:
     /**
      * @brief Populate the typed fields from the raw YAML node.
@@ -240,21 +268,24 @@ private:
      */
     void parse(const ::mldp_pvxs_driver::config::Config& readerEntry);
 
-    bool                       valid_ = false;
-    std::string                name_;
-    std::string                hostname_;
-    FetchMode                  fetch_mode_ = FetchMode::HistoricalOnce;
-    std::string                start_date_;
-    std::optional<std::string> end_date_;
-    std::vector<PVConfig>      pvs_;
-    std::vector<std::string>   pvNames_;
-    long                       connect_timeout_sec_ = 30L; ///< Connection timeout in seconds
-    long                       total_timeout_sec_ = 300L;  ///< Total operation timeout in seconds
-    long                       batch_duration_sec_ = 1L;   ///< Max historical sample-time span per output batch.
-    long                       poll_interval_sec_ = 0L;    ///< Periodic tail poll interval (seconds).
-    long                       lookback_sec_ = 0L;         ///< Periodic tail lookback window (seconds).
-    bool                       tls_verify_peer_ = true;    ///< Verify TLS certificate chain.
-    bool                       tls_verify_host_ = true;    ///< Verify TLS host name.
+    bool                                         valid_ = false;
+    std::string                                  name_;
+    std::string                                  hostname_;
+    FetchMode                                    fetch_mode_ = FetchMode::HistoricalOnce;
+    std::string                                  start_date_;
+    std::optional<std::string>                   end_date_;
+    std::vector<PVConfig>                        pvs_;
+    std::vector<std::string>                     pvNames_;
+    long                                         connect_timeout_sec_ = 30L; ///< Connection timeout in seconds
+    long                                         total_timeout_sec_ = 300L;  ///< Total operation timeout in seconds
+    long                                         poll_interval_sec_ = 0L;        ///< Periodic tail poll interval (seconds).
+    long                                         lookback_sec_ = 0L;             ///< Periodic tail lookback window (seconds).
+    long                                         pv_samples_per_batch_ = 0L;     ///< Max samples per PV batch (0 = disabled).
+    long                                         batch_flush_interval_ms_ = 0L;  ///< Max pending batch age in ms (0 = disabled).
+    long                                         fetch_threads_ = 1L;            ///< Number of parallel fetch worker threads.
+    bool                                         tls_verify_peer_ = true;        ///< Verify TLS certificate chain.
+    bool                                         tls_verify_host_ = true;        ///< Verify TLS host name.
+    std::unordered_map<std::string, std::string> static_metadata_;           ///< Reader-level static metadata.
 };
 
 } // namespace mldp_pvxs_driver::reader::impl::epics_archiver

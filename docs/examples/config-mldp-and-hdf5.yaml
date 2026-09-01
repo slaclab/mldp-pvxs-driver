@@ -1,0 +1,54 @@
+# Dual-writer configuration: gRPC ingestion + local HDF5 storage
+#
+# Both writers receive every EventBatch concurrently.
+# HDF5 requires the build flag -DMLDP_PVXS_HDF5_ENABLED=ON.
+
+enrichers:
+  run-context:
+    type: static-metadata
+    metadata:
+      experiment_id: example-run
+
+writer:
+  mldp:
+    - name: mldp_primary
+      enrichers: [run-context]
+      thread-pool: 4
+      stream-max-bytes: 2097152
+      stream-max-age-ms: 200
+      mldp-pool:
+        provider-name: pvxs_dual_provider
+        ingestion-url: grpc://mldp-ingest.example.com:50051
+        min-conn: 2
+        max-conn: 8
+        credentials: ssl
+
+  hdf5:
+    - name: hdf5_local
+      enrichers: [run-context]
+      base-path: /data/hdf5
+      max-file-age-s: 3600       # rotate files every hour
+      max-file-size-mb: 512      # rotate files at 512 MiB
+      flush-interval-ms: 1000   # flush HDF5 buffers every second
+      compression-level: 1      # light DEFLATE compression
+
+reader:
+  epics-pvxs:
+    - name: pvxs_live
+      thread-pool: 4
+      pvs:
+        - name: SITE:SYS:PRESSURE
+        - name: SITE:SYS:TEMPERATURE
+
+  epics-base:
+    - name: base_legacy
+      thread-pool: 2
+      monitor-poll-threads: 2
+      monitor-poll-interval-ms: 5
+      pvs:
+        - name: LEGACY:CA:PV:1
+        - name: LEGACY:CA:PV:2
+
+metrics:
+  endpoint: "0.0.0.0:9464"
+  scan-interval-seconds: 1

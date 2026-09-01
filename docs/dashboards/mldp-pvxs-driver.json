@@ -1,0 +1,1984 @@
+{
+  "__inputs": [
+    {
+      "name": "DS_PROMETHEUS",
+      "label": "Prometheus",
+      "description": "",
+      "type": "datasource",
+      "pluginId": "prometheus",
+      "pluginName": "Prometheus"
+    }
+  ],
+  "__requires": [
+    {
+      "type": "grafana",
+      "id": "grafana",
+      "name": "Grafana",
+      "version": "9.0.0"
+    },
+    {
+      "type": "datasource",
+      "id": "prometheus",
+      "name": "Prometheus",
+      "version": "1.0.0"
+    },
+    {
+      "type": "panel",
+      "id": "timeseries",
+      "name": "Time series",
+      "version": ""
+    },
+    {
+      "type": "panel",
+      "id": "stat",
+      "name": "Stat",
+      "version": ""
+    },
+    {
+      "type": "panel",
+      "id": "gauge",
+      "name": "Gauge",
+      "version": ""
+    }
+  ],
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Full observability for the mldp-pvxs-driver: EPICS reader, MLDP bus/controller, gRPC pool, algorithm processor, HDF5 writer, and process health.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 100,
+      "title": "EPICS Reader",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10
+          },
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "description": "Rate of EPICS PV updates received from subscriptions (received) versus successfully converted and forwarded to the bus (processed). A gap between the two lines indicates events dropped during conversion.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 1
+      },
+      "id": 1,
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum(rate(mldp_pvxs_driver_reader_events_received_total{controller=~\"$controller\"}[$__rate_interval])) by (controller, source)",
+          "legendFormat": "received {{source}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum(rate(mldp_pvxs_driver_reader_events_total{controller=~\"$controller\"}[$__rate_interval])) by (controller, source)",
+          "legendFormat": "processed {{source}}",
+          "refId": "B"
+        }
+      ],
+      "title": "Reader Event Rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "fixedColor": "red",
+            "mode": "fixed"
+          },
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10
+          },
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "description": "Rate of errors encountered while processing EPICS PV updates, broken down by source PV. Sustained errors may indicate connectivity issues or unsupported PV types.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 1
+      },
+      "id": 2,
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum(rate(mldp_pvxs_driver_reader_errors_total{controller=~\"$controller\"}[$__rate_interval])) by (controller, source)",
+          "legendFormat": "errors {{source}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Reader Error Rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10
+          },
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "description": "Percentile latencies (p50/p90/p99) of the CPU time spent converting a single EPICS PV update into a DataBatch, broken down by source PV. High values indicate conversion bottlenecks, not network delays.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 9
+      },
+      "id": 3,
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "histogram_quantile(0.50, sum(rate(mldp_pvxs_driver_reader_processing_time_ms_bucket{controller=~\"$controller\"}[$__rate_interval])) by (le, controller, source))",
+          "legendFormat": "p50 {{source}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "histogram_quantile(0.90, sum(rate(mldp_pvxs_driver_reader_processing_time_ms_bucket{controller=~\"$controller\"}[$__rate_interval])) by (le, controller, source))",
+          "legendFormat": "p90 {{source}}",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "histogram_quantile(0.99, sum(rate(mldp_pvxs_driver_reader_processing_time_ms_bucket{controller=~\"$controller\"}[$__rate_interval])) by (le, controller, source))",
+          "legendFormat": "p99 {{source}}",
+          "refId": "C"
+        }
+      ],
+      "title": "Reader Processing Time (ms)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "description": "Current depth of the reader work queue (updates waiting to be dispatched) and the reader thread-pool queue (updates waiting for a worker thread). Sustained non-zero values indicate the reader is falling behind.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 9
+      },
+      "id": 4,
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "mldp_pvxs_driver_reader_queue_depth{controller=~\"$controller\"}",
+          "legendFormat": "work queue {{controller}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "mldp_pvxs_driver_reader_pool_queue_depth{controller=~\"$controller\"}",
+          "legendFormat": "pool queue {{controller}}",
+          "refId": "B"
+        }
+      ],
+      "title": "Reader Queue Depths",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10
+          },
+          "unit": "Bps"
+        },
+        "overrides": []
+      },
+      "description": "Raw DataBatch byte throughput at the reader. 'instant Bps' is the inter-arrival rate of the last two events; 'avg rate' is the time-averaged rate over the Prometheus scrape window. Both should match the actual PV update bandwidth.",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 17
+      },
+      "id": 26,
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "mldp_pvxs_driver_reader_data_bytes_per_second{controller=~\"$controller\"}",
+          "legendFormat": "instant Bps {{source}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum(rate(mldp_pvxs_driver_reader_data_bytes_total{controller=~\"$controller\"}[$__rate_interval])) by (controller, source)",
+          "legendFormat": "avg rate {{source}}",
+          "refId": "B"
+        }
+      ],
+      "title": "Reader Data Throughput",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 25
+      },
+      "id": 101,
+      "title": "MLDP Writer & Controller",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10
+          },
+          "unit": "reqps"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "failures"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "description": "Rate of successful event pushes to the MLDP ingestion service versus failures, broken down by writer and source. A rising failure rate with stable push rate indicates gRPC or network issues.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 26
+      },
+      "id": 5,
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum(rate(mldp_pvxs_driver_writer_push_total{controller=~\"$controller\",writer=~\"$writer\"}[$__rate_interval])) by (controller, writer)",
+          "legendFormat": "pushes {{controller}} {{writer}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum(rate(mldp_pvxs_driver_writer_failure_total{controller=~\"$controller\",writer=~\"$writer\"}[$__rate_interval])) by (controller, writer, source)",
+          "legendFormat": "failures {{source}}",
+          "refId": "B"
+        }
+      ],
+      "title": "Writer Push vs Failure Rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10
+          },
+          "unit": "Bps"
+        },
+        "overrides": []
+      },
+      "description": "Protobuf-serialized payload bytes per second sent to the MLDP ingestion service. 'instant Bps' uses write-latency as denominator; 'avg rate' is time-averaged. Reflects the actual wire bandwidth consumed by the gRPC stream.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 26
+      },
+      "id": 6,
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "mldp_pvxs_driver_writer_payload_bytes_per_second{controller=~\"$controller\",writer=~\"$writer\"}",
+          "legendFormat": "instant Bps {{controller}} {{writer}} {{source}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum(rate(mldp_pvxs_driver_writer_payload_bytes_total{controller=~\"$controller\",writer=~\"$writer\"}[$__rate_interval])) by (controller, writer)",
+          "legendFormat": "avg rate {{controller}} {{writer}}",
+          "refId": "B"
+        }
+      ],
+      "title": "Writer Payload Throughput",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "description": "Percentile latencies (p50/p90/p99) of the time the controller takes to route and dispatch a single event batch from readers to writers. Includes bus routing overhead but not writer I/O time.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 34
+      },
+      "id": 7,
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "histogram_quantile(0.50, sum(rate(mldp_pvxs_driver_controller_send_time_seconds_bucket{controller=~\"$controller\"}[$__rate_interval])) by (le, controller))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "histogram_quantile(0.90, sum(rate(mldp_pvxs_driver_controller_send_time_seconds_bucket{controller=~\"$controller\"}[$__rate_interval])) by (le, controller))",
+          "legendFormat": "p90",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "histogram_quantile(0.99, sum(rate(mldp_pvxs_driver_controller_send_time_seconds_bucket{controller=~\"$controller\"}[$__rate_interval])) by (le, controller))",
+          "legendFormat": "p99",
+          "refId": "C"
+        }
+      ],
+      "title": "Controller Send Time (s)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "description": "Current depth of the main controller task queue and the per-worker channel queues. Rising depths indicate writers or the network cannot keep up with incoming event batches.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 34
+      },
+      "id": 8,
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "mldp_pvxs_driver_controller_queue_depth{controller=~\"$controller\"}",
+          "legendFormat": "controller queue {{controller}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "mldp_pvxs_driver_controller_channel_queue_depth{controller=~\"$controller\"}",
+          "legendFormat": "channel queue {{controller}}",
+          "refId": "B"
+        }
+      ],
+      "title": "Controller Queue Depths",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10
+          },
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "description": "Rate of gRPC ingestion stream open/close cycles, labelled by the reason (e.g. threshold reached, error, shutdown). High rotation rate may increase connection overhead.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 42
+      },
+      "id": 9,
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum(rate(mldp_pvxs_driver_writer_stream_rotations_total{controller=~\"$controller\",writer=~\"$writer\"}[$__rate_interval])) by (controller, writer, reason)",
+          "legendFormat": "{{reason}} {{controller}} {{writer}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Writer Stream Rotations by Reason",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10
+          },
+          "unit": "Bps"
+        },
+        "overrides": []
+      },
+      "description": "Raw DataBatch bytes delivered to all writers from the bus, before any serialization. 'instant Bps' is inter-arrival rate; 'avg rate' is time-averaged. Compare with Reader Data Throughput to detect routing losses.",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 50
+      },
+      "id": 27,
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "mldp_pvxs_driver_writer_data_bytes_per_second{controller=~\"$controller\"}",
+          "legendFormat": "instant Bps {{source}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum(rate(mldp_pvxs_driver_writer_data_bytes_total{controller=~\"$controller\"}[$__rate_interval])) by (controller, source)",
+          "legendFormat": "avg rate {{source}}",
+          "refId": "B"
+        }
+      ],
+      "title": "Writer Data Throughput",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10
+          },
+          "unit": "Bps"
+        },
+        "overrides": []
+      },
+      "description": "Post-conversion output bytes/second per writer and source. Symmetric to Reader Data Throughput — compare input vs output rate to detect encoding expansion.",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 58
+      },
+      "id": 28,
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "mldp_pvxs_driver_writer_post_conv_data_bytes_per_second{controller=~\"$controller\",writer=~\"$writer\"}",
+          "legendFormat": "{{writer}} / {{source}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Writer Post-Conversion Output Rate",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 66
+      },
+      "id": 102,
+      "title": "gRPC Connection Pool",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 30,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "description": "Stacked view of gRPC connection pool utilization: connections currently in use (active writes) versus connections available (idle, ready for reuse). Helps size the pool and detect saturation.",
+      "gridPos": {
+        "h": 8,
+        "w": 16,
+        "x": 0,
+        "y": 67
+      },
+      "id": 10,
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "mldp_pvxs_driver_pool_connections_in_use{controller=~\"$controller\"}",
+          "legendFormat": "in use {{controller}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "mldp_pvxs_driver_pool_connections_available{controller=~\"$controller\"}",
+          "legendFormat": "available {{controller}}",
+          "refId": "B"
+        }
+      ],
+      "title": "Pool Connections (stacked)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 5
+              },
+              {
+                "color": "red",
+                "value": 10
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "description": "Current number of gRPC connections actively performing writes. A single stat gauge for at-a-glance pool pressure.",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 67
+      },
+      "id": 11,
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "background"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "mldp_pvxs_driver_pool_connections_in_use{controller=~\"$controller\"}",
+          "legendFormat": "{{controller}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Connections In Use (current)",
+      "type": "stat"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 67
+      },
+      "id": 103,
+      "title": "Processor / Algorithm",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10
+          },
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "description": "Rate at which the algorithm processor fires (computes outputs) versus snapshot misses (fires attempted but source data not yet available). High miss rate means the processor is firing faster than the readers can supply data.",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 68
+      },
+      "id": 12,
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum(rate(mldp_pvxs_driver_processor_fire_total{controller=~\"$controller\"}[$__rate_interval])) by (controller)",
+          "legendFormat": "fire {{controller}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum(rate(mldp_pvxs_driver_processor_snapshot_misses_total{controller=~\"$controller\"}[$__rate_interval])) by (controller)",
+          "legendFormat": "snapshot miss {{controller}}",
+          "refId": "B"
+        }
+      ],
+      "title": "Processor Fire Rate vs Snapshot Misses",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10
+          },
+          "unit": "\u00b5s"
+        },
+        "overrides": []
+      },
+      "description": "Percentile latencies (p50/p90/p99) of a single algorithm compute cycle in microseconds. Tracks the CPU cost of the user-supplied computation.",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 68
+      },
+      "id": 13,
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "histogram_quantile(0.50, sum(rate(mldp_pvxs_driver_processor_compute_latency_us_bucket{controller=~\"$controller\"}[$__rate_interval])) by (le, controller))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "histogram_quantile(0.90, sum(rate(mldp_pvxs_driver_processor_compute_latency_us_bucket{controller=~\"$controller\"}[$__rate_interval])) by (le, controller))",
+          "legendFormat": "p90",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "histogram_quantile(0.99, sum(rate(mldp_pvxs_driver_processor_compute_latency_us_bucket{controller=~\"$controller\"}[$__rate_interval])) by (le, controller))",
+          "legendFormat": "p99",
+          "refId": "C"
+        }
+      ],
+      "title": "Compute Latency (\u00b5s)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10
+          },
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "errors"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "description": "Current depth of per-source sample buffers retained for the next compute cycle (left axis) and rate of compute errors (right axis). Deep buffers indicate slow processing; errors indicate exceptions in the user algorithm.",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 68
+      },
+      "id": 14,
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "mldp_pvxs_driver_processor_buffer_depth{controller=~\"$controller\"}",
+          "legendFormat": "buffer depth {{controller}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum(rate(mldp_pvxs_driver_processor_compute_errors_total{controller=~\"$controller\"}[$__rate_interval])) by (controller)",
+          "legendFormat": "errors {{controller}}",
+          "refId": "B"
+        }
+      ],
+      "title": "Processor Buffer Depth & Compute Errors",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 76
+      },
+      "id": 104,
+      "title": "HDF5 Writer",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10
+          },
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "description": "Rate of HDF5 batch commits and individual data rows written per second, broken down by writer and source. Rows/s reflects the actual time-series density landing in HDF5 files.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 77
+      },
+      "id": 15,
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum(rate(mldp_pvxs_driver_hdf5_batches_written_total{controller=~\"$controller\",writer=~\"$writer\"}[$__rate_interval])) by (controller, writer)",
+          "legendFormat": "batches {{writer}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum(rate(mldp_pvxs_driver_hdf5_rows_written_total{controller=~\"$controller\",writer=~\"$writer\"}[$__rate_interval])) by (controller, writer, source)",
+          "legendFormat": "rows {{source}}",
+          "refId": "B"
+        }
+      ],
+      "title": "HDF5 Write Rate (batches & rows)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10
+          },
+          "unit": "Bps"
+        },
+        "overrides": []
+      },
+      "description": "Rate of estimated post-conversion bytes written to HDF5 files, calculated as rows × columns × 8 bytes. Reflects the raw file growth rate before any HDF5 compression.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 77
+      },
+      "id": 16,
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum(rate(mldp_pvxs_driver_hdf5_bytes_written_total{controller=~\"$controller\",writer=~\"$writer\"}[$__rate_interval])) by (controller, writer, source)",
+          "legendFormat": "{{source}}",
+          "refId": "A"
+        }
+      ],
+      "title": "HDF5 Bytes Written Rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10
+          },
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "drops"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "errors"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "dark-red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "description": "Current depth of the HDF5 write queue (batches waiting to be written), rate of queue drops (batches discarded because queue was full), and rate of HDF5 write errors. Rising drops mean the disk cannot keep up.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 85
+      },
+      "id": 17,
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "mldp_pvxs_driver_hdf5_queue_depth{controller=~\"$controller\",writer=~\"$writer\"}",
+          "legendFormat": "queue depth {{writer}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum(rate(mldp_pvxs_driver_hdf5_queue_drops_total{controller=~\"$controller\",writer=~\"$writer\"}[$__rate_interval])) by (controller, writer)",
+          "legendFormat": "drops {{writer}}",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum(rate(mldp_pvxs_driver_hdf5_write_errors_total{controller=~\"$controller\",writer=~\"$writer\"}[$__rate_interval])) by (controller, writer)",
+          "legendFormat": "errors {{writer}}",
+          "refId": "C"
+        }
+      ],
+      "title": "HDF5 Queue Depth, Drops & Write Errors",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10
+          },
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "description": "Percentile latencies (p50/p90/p99) of individual HDF5 frame write operations in milliseconds. High latency may indicate I/O saturation or large frame sizes.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 85
+      },
+      "id": 18,
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "histogram_quantile(0.50, sum(rate(mldp_pvxs_driver_hdf5_write_latency_ms_bucket{controller=~\"$controller\",writer=~\"$writer\"}[$__rate_interval])) by (le, controller, writer))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "histogram_quantile(0.90, sum(rate(mldp_pvxs_driver_hdf5_write_latency_ms_bucket{controller=~\"$controller\",writer=~\"$writer\"}[$__rate_interval])) by (le, controller, writer))",
+          "legendFormat": "p90",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "histogram_quantile(0.99, sum(rate(mldp_pvxs_driver_hdf5_write_latency_ms_bucket{controller=~\"$controller\",writer=~\"$writer\"}[$__rate_interval])) by (le, controller, writer))",
+          "legendFormat": "p99",
+          "refId": "C"
+        }
+      ],
+      "title": "HDF5 Write Latency (ms)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10
+          },
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "description": "Rate of HDF5 file rotations (old file closed, new file opened), broken down by writer and source. Rotations occur when a file reaches the configured max size or the writer is restarted.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 93
+      },
+      "id": 19,
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum(rate(mldp_pvxs_driver_hdf5_file_rotations_total{controller=~\"$controller\",writer=~\"$writer\"}[$__rate_interval])) by (controller, writer, source)",
+          "legendFormat": "{{source}}",
+          "refId": "A"
+        }
+      ],
+      "title": "HDF5 File Rotations Rate",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 101
+      },
+      "id": 105,
+      "title": "Process Health",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "description": "Linux /proc/stat CPU time consumed by the driver process in clock ticks per second, split into user, system, and children (user/system). Divide by sysconf(_SC_CLK_TCK) (typically 100) to convert to CPU seconds/second.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 102
+      },
+      "id": 20,
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "rate(mldp_pvxs_driver_process_cpu_user_ticks_total{controller=~\"$controller\"}[$__rate_interval])",
+          "legendFormat": "user ticks/s {{controller}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "rate(mldp_pvxs_driver_process_cpu_system_ticks_total{controller=~\"$controller\"}[$__rate_interval])",
+          "legendFormat": "sys ticks/s {{controller}}",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "rate(mldp_pvxs_driver_process_cpu_children_user_ticks_total{controller=~\"$controller\"}[$__rate_interval])",
+          "legendFormat": "children user {{controller}}",
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "rate(mldp_pvxs_driver_process_cpu_children_system_ticks_total{controller=~\"$controller\"}[$__rate_interval])",
+          "legendFormat": "children sys {{controller}}",
+          "refId": "D"
+        }
+      ],
+      "title": "CPU Usage (ticks/s)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "description": "Process memory breakdown from /proc/status: total RSS, virtual size, peak virtual size, and RSS split into anonymous, file-backed, and shared-memory pages. Useful for detecting memory leaks or unexpected growth.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 102
+      },
+      "id": 21,
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "mldp_pvxs_driver_process_memory_rss_total_bytes{controller=~\"$controller\"}",
+          "legendFormat": "RSS total {{controller}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "mldp_pvxs_driver_process_memory_rss_bytes{controller=~\"$controller\"}",
+          "legendFormat": "RSS {{controller}}",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "mldp_pvxs_driver_process_memory_virtual_bytes{controller=~\"$controller\"}",
+          "legendFormat": "virt {{controller}}",
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "mldp_pvxs_driver_process_memory_virtual_peak_bytes{controller=~\"$controller\"}",
+          "legendFormat": "virt peak {{controller}}",
+          "refId": "D"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "mldp_pvxs_driver_process_memory_rss_anon_bytes{controller=~\"$controller\"}",
+          "legendFormat": "RSS anon {{controller}}",
+          "refId": "E"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "mldp_pvxs_driver_process_memory_rss_file_bytes{controller=~\"$controller\"}",
+          "legendFormat": "RSS file {{controller}}",
+          "refId": "F"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "mldp_pvxs_driver_process_memory_rss_shmem_bytes{controller=~\"$controller\"}",
+          "legendFormat": "RSS shmem {{controller}}",
+          "refId": "G"
+        }
+      ],
+      "title": "Memory",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10
+          },
+          "unit": "Bps"
+        },
+        "overrides": []
+      },
+      "description": "Process I/O bytes per second from /proc/io: bytes read from and written to storage, plus cancelled writes (writes later invalidated before reaching disk).",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 110
+      },
+      "id": 22,
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "rate(mldp_pvxs_driver_process_io_read_bytes_total{controller=~\"$controller\"}[$__rate_interval])",
+          "legendFormat": "read {{controller}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "rate(mldp_pvxs_driver_process_io_write_bytes_total{controller=~\"$controller\"}[$__rate_interval])",
+          "legendFormat": "write {{controller}}",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "rate(mldp_pvxs_driver_process_io_cancelled_write_bytes_total{controller=~\"$controller\"}[$__rate_interval])",
+          "legendFormat": "cancelled write {{controller}}",
+          "refId": "C"
+        }
+      ],
+      "title": "I/O Throughput",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "description": "Current number of open file descriptors and active threads in the driver process. Rising FD count may indicate descriptor leaks; rising thread count may indicate runaway thread creation.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 110
+      },
+      "id": 23,
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "mldp_pvxs_driver_process_fds_open{controller=~\"$controller\"}",
+          "legendFormat": "FDs {{controller}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "mldp_pvxs_driver_process_threads{controller=~\"$controller\"}",
+          "legendFormat": "threads {{controller}}",
+          "refId": "B"
+        }
+      ],
+      "title": "File Descriptors & Threads",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10
+          },
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "description": "Rate of voluntary (process yielded the CPU) and involuntary (kernel preempted the process) context switches. High involuntary switches indicate CPU contention from other processes on the host.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 118
+      },
+      "id": 24,
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "rate(mldp_pvxs_driver_process_context_switches_voluntary_total{controller=~\"$controller\"}[$__rate_interval])",
+          "legendFormat": "voluntary {{controller}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "rate(mldp_pvxs_driver_process_context_switches_involuntary_total{controller=~\"$controller\"}[$__rate_interval])",
+          "legendFormat": "involuntary {{controller}}",
+          "refId": "B"
+        }
+      ],
+      "title": "Context Switches/s",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "description": "Current Linux scheduling priority and nice value of the driver process. Lower nice = higher CPU priority. Useful for confirming the driver runs at the expected scheduling tier.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 118
+      },
+      "id": 25,
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "mldp_pvxs_driver_process_priority{controller=~\"$controller\"}",
+          "legendFormat": "priority {{controller}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "mldp_pvxs_driver_process_nice{controller=~\"$controller\"}",
+          "legendFormat": "nice {{controller}}",
+          "refId": "B"
+        }
+      ],
+      "title": "Process Priority & Nice",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 38,
+  "tags": [
+    "mldp",
+    "pvxs",
+    "epics",
+    "hdf5"
+  ],
+  "templating": {
+    "list": [
+      {
+        "current": {},
+        "hide": 0,
+        "includeAll": false,
+        "label": "Prometheus",
+        "multi": false,
+        "name": "DS_PROMETHEUS",
+        "options": [],
+        "query": "prometheus",
+        "refresh": 1,
+        "type": "datasource"
+      },
+      {
+        "current": {},
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        },
+        "definition": "label_values(mldp_pvxs_driver_reader_events_total, controller)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Controller",
+        "multi": true,
+        "name": "controller",
+        "options": [],
+        "query": {
+          "query": "label_values(mldp_pvxs_driver_reader_events_total, controller)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 2,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "current": {},
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        },
+        "definition": "label_values(mldp_pvxs_driver_writer_push_total{controller=~\"$controller\"}, writer)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Writer",
+        "multi": true,
+        "name": "writer",
+        "options": [],
+        "query": {
+          "query": "label_values(mldp_pvxs_driver_writer_push_total{controller=~\"$controller\"}, writer)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 2,
+        "sort": 1,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "MLDP PVXS Driver",
+  "uid": "mldp-pvxs-driver",
+  "version": 1
+}

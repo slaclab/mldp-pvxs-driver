@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.15)
-project(mldp_pvxs_driver VERSION 0.2.3 LANGUAGES CXX)
+project(mldp_pvxs_driver VERSION 0.2.5 LANGUAGES CXX)
 
 # C++ Standard
 set(CMAKE_CXX_STANDARD 20)
@@ -10,6 +10,10 @@ option(MLDP_PVXS_DRIVER_MAIN "Build MLDP PVXS driver executable" ON)
 option(MLDP_PVXS_DRIVER_TESTS "Build MLDP PVXS driver tests" OFF)
 option(MLDP_PVXS_DRIVER_COVERAGE "Enable code coverage instrumentation" OFF)
 option(MLDP_PVXS_DRIVER_LINK_EPICS_PVXS_STATIC "Link EPICS and PVXS libraries statically (prefer .a over .so)" OFF)
+option(MLDP_PVXS_ENABLE_HDF5 "Build with HDF5 writer support" ON)
+option(BUILD_ECHO_PROCESSOR "Build echo pass-through processor (test/debug only)" ON)
+option(BUILD_PYTHON_PROCESSOR "Build Python script processor (requires CPython 3.x)" ON)
+option(MLDP_QUERY_CLIENT_FLIGHT "Enable Apache Arrow Flight and Flight SQL for query-client development" OFF)
 
 # Default to Release build
 if(NOT CMAKE_BUILD_TYPE)
@@ -21,10 +25,12 @@ include(FetchContent)
 set(PROMETHEUS_CPP_VERSION "v1.3.0")
 set(SPDLOG_VERSION "v1.16.0")
 set(ARGPARSE_VERSION "v3.2")
-set(METRIC_GRABBER_VERSION "v0.0.1")
 set(EPICSARCHIVERAP_VERSION "2.2.1")
 set(CPP_HTTPLIB_VERSION "v0.16.3")
-set(DP_GRPC_VERSION "v1.13")
+set(DP_GRPC_VERSION "rel-1.15.0")
+set(ARROW_VERSION "apache-arrow-18.1.0")
+set(REPLXX_VERSION "release-0.0.4")
+set(DATE_VERSION "v3.0.1")
 
 # Output directories
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
@@ -58,6 +64,27 @@ FetchContent_Declare(argparse
 )
 FetchContent_MakeAvailable(argparse)
 
+# Query REPL line editing, history, and completion.
+message(STATUS "Acquiring replxx version ${REPLXX_VERSION}...")
+FetchContent_Declare(replxx
+    GIT_REPOSITORY https://github.com/AmokHuginnsson/replxx.git
+    GIT_TAG ${REPLXX_VERSION}
+    GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(replxx)
+
+# FTXUI is used only by the optional configuration wizard.
+option(MLDP_WIZARD "Build interactive config wizard (requires FTXUI)" ON)
+
+if(MLDP_WIZARD)
+    message(STATUS "Acquiring FTXUI for the configuration wizard...")
+    FetchContent_Declare(ftxui
+        GIT_REPOSITORY https://github.com/ArthurSonzogni/FTXUI
+        GIT_TAG        v5.0.0
+    )
+    FetchContent_MakeAvailable(ftxui)
+endif()
+
 # Prometheus-cpp pulls its own GoogleTest dependency when ENABLE_TESTING is set.
 # Temporarily override the cached ENABLE_TESTING option so the dependency does
 # not try to define conflicting gmock targets when added as a subproject.
@@ -80,14 +107,6 @@ else()
     unset(ENABLE_TESTING CACHE)
 endif()
 
-# acquiring metric-grabber to enanceh mldp driver with systme metrics
-message(STATUS "Acquiring metric-grabber version ${METRIC_GRABBER_VERSION}...")
-FetchContent_Declare(metric_grabber
-    GIT_REPOSITORY https://github.com/slaclab/metrics-grabber.git
-    GIT_TAG ${METRIC_GRABBER_VERSION}
-    PATCH_COMMAND sed -i -e "/#include <memory>/a #include <vector>" include/metricsgrabber/MetricsCollector.hpp
-)
-FetchContent_MakeAvailable(metric_grabber)
 
 # Acquire epicsarchiverap for EPICSEvent proto
 message(STATUS "Acquiring epicsarchiverap for EPICSEvent.proto...")
@@ -105,6 +124,118 @@ FetchContent_Declare(dp_grpc
 )
 FetchContent_MakeAvailable(dp_grpc)
 
+# Acquire nlohmann/json for JSON parsing in SlacCalendarReader
+FetchContent_Declare(nlohmann_json
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG        v3.11.3
+    GIT_SHALLOW    TRUE)
+set(JSON_BuildTests OFF CACHE BOOL "" FORCE)
+set(JSON_Install OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(nlohmann_json)
+
+# IANA timezone conversion for SQL from_utc().  Keep the library small and use
+# the host timezone database rather than downloading a separate copy at build
+# time.
+message(STATUS "Acquiring date/tz version ${DATE_VERSION}...")
+set(BUILD_TZ_LIB ON CACHE BOOL "" FORCE)
+set(USE_SYSTEM_TZ_DB ON CACHE BOOL "" FORCE)
+set(ENABLE_DATE_TESTING OFF CACHE BOOL "" FORCE)
+set(DATE_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+set(DATE_INSTALL OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(date
+    GIT_REPOSITORY https://github.com/HowardHinnant/date.git
+    GIT_TAG ${DATE_VERSION}
+    GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(date)
+
+# Acquire Apache Arrow for the query client. Keep the embedded build limited to
+# the core components required by the driver; Flight is explicitly opt-in.
+message(STATUS "Acquiring Apache Arrow version ${ARROW_VERSION}...")
+set(ARROW_BUILD_STATIC ON CACHE BOOL "" FORCE)
+set(ARROW_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+set(ARROW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(ARROW_BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
+set(ARROW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(ARROW_BUILD_INTEGRATION OFF CACHE BOOL "" FORCE)
+set(ARROW_BUILD_UTILITIES OFF CACHE BOOL "" FORCE)
+set(ARROW_BUILD_INSTALL OFF CACHE BOOL "" FORCE)
+set(ARROW_BUILD_OPENMP_BENCHMARKS OFF CACHE BOOL "" FORCE)
+set(ARROW_COMPUTE ON CACHE BOOL "" FORCE)
+set(ARROW_FILESYSTEM ON CACHE BOOL "" FORCE)
+set(ARROW_IPC ON CACHE BOOL "" FORCE)
+set(ARROW_ACERO OFF CACHE BOOL "" FORCE)
+set(ARROW_CSV OFF CACHE BOOL "" FORCE)
+set(ARROW_DATASET OFF CACHE BOOL "" FORCE)
+set(ARROW_JSON OFF CACHE BOOL "" FORCE)
+set(ARROW_ORC OFF CACHE BOOL "" FORCE)
+set(ARROW_PARQUET OFF CACHE BOOL "" FORCE)
+set(ARROW_S3 OFF CACHE BOOL "" FORCE)
+set(ARROW_GCS OFF CACHE BOOL "" FORCE)
+set(ARROW_HDFS OFF CACHE BOOL "" FORCE)
+set(ARROW_AZURE OFF CACHE BOOL "" FORCE)
+set(ARROW_GANDIVA OFF CACHE BOOL "" FORCE)
+set(ARROW_PYTHON OFF CACHE BOOL "" FORCE)
+set(ARROW_SUBSTRAIT OFF CACHE BOOL "" FORCE)
+set(ARROW_WITH_BROTLI OFF CACHE BOOL "" FORCE)
+set(ARROW_WITH_BZ2 OFF CACHE BOOL "" FORCE)
+set(ARROW_WITH_LZ4 OFF CACHE BOOL "" FORCE)
+set(ARROW_WITH_SNAPPY OFF CACHE BOOL "" FORCE)
+set(ARROW_WITH_ZLIB OFF CACHE BOOL "" FORCE)
+set(ARROW_WITH_ZSTD OFF CACHE BOOL "" FORCE)
+set(ARROW_WITH_UTF8PROC OFF CACHE BOOL "" FORCE)
+set(ARROW_WITH_RE2 OFF CACHE BOOL "" FORCE)
+set(ARROW_WITH_OPENTELEMETRY OFF CACHE BOOL "" FORCE)
+set(ARROW_JEMALLOC OFF CACHE BOOL "" FORCE)
+set(ARROW_MIMALLOC OFF CACHE BOOL "" FORCE)
+set(ARROW_SIMD_LEVEL NONE CACHE STRING "" FORCE)
+set(ARROW_RUNTIME_SIMD_LEVEL NONE CACHE STRING "" FORCE)
+set(ARROW_WITH_GRPC ${MLDP_QUERY_CLIENT_FLIGHT} CACHE BOOL "" FORCE)
+set(ARROW_FLIGHT ${MLDP_QUERY_CLIENT_FLIGHT} CACHE BOOL "" FORCE)
+set(ARROW_FLIGHT_SQL ${MLDP_QUERY_CLIENT_FLIGHT} CACHE BOOL "" FORCE)
+FetchContent_Declare(arrow
+    GIT_REPOSITORY https://github.com/apache/arrow.git
+    GIT_TAG ${ARROW_VERSION}
+    GIT_SHALLOW TRUE
+    SOURCE_SUBDIR cpp
+)
+FetchContent_MakeAvailable(arrow)
+
+if(NOT TARGET arrow_static)
+    message(FATAL_ERROR "Apache Arrow ${ARROW_VERSION} did not provide its static core target")
+endif()
+
+set(_MLDP_ARROW_FLIGHT_TARGET "")
+set(_MLDP_ARROW_FLIGHT_SQL_TARGET "")
+if(MLDP_QUERY_CLIENT_FLIGHT)
+    foreach(_arrow_flight_target
+        ArrowFlight::arrow_flight_static
+        ArrowFlight::arrow_flight
+        Arrow::arrow_flight_static
+        Arrow::arrow_flight
+        arrow_flight_static
+        arrow_flight)
+        if(TARGET ${_arrow_flight_target})
+            set(_MLDP_ARROW_FLIGHT_TARGET ${_arrow_flight_target})
+            break()
+        endif()
+    endforeach()
+    foreach(_arrow_flight_sql_target
+        ArrowFlightSql::arrow_flight_sql_static
+        ArrowFlightSql::arrow_flight_sql
+        Arrow::arrow_flight_sql_static
+        Arrow::arrow_flight_sql
+        arrow_flight_sql_static
+        arrow_flight_sql)
+        if(TARGET ${_arrow_flight_sql_target})
+            set(_MLDP_ARROW_FLIGHT_SQL_TARGET ${_arrow_flight_sql_target})
+            break()
+        endif()
+    endforeach()
+    if(NOT _MLDP_ARROW_FLIGHT_TARGET OR NOT _MLDP_ARROW_FLIGHT_SQL_TARGET)
+        message(FATAL_ERROR "MLDP_QUERY_CLIENT_FLIGHT=ON requires Arrow Flight and Flight SQL targets")
+    endif()
+endif()
 
 # Find required packages
 find_package(Protobuf REQUIRED)
@@ -114,6 +245,58 @@ find_package(OpenSSL REQUIRED)
 find_package(gRPC REQUIRED)
 find_package(Threads REQUIRED)
 find_package(CURL REQUIRED)
+find_package(SQLite3 REQUIRED)
+
+# ---- HDF5 (optional writer back-end) ----
+if(MLDP_PVXS_ENABLE_HDF5)
+    set(HDF5_VERSION_TAG "hdf5_2_1_0")
+    message(STATUS "Acquiring HDF5 ${HDF5_VERSION_TAG} from GitHub HDFGroup/hdf5...")
+
+    # Disable HDF5's own tests and tools to keep the build lean.
+    # Force static-only so we always get hdf5_cpp-static (not hdf5_cpp-shared).
+    set(BUILD_SHARED_LIBS       OFF CACHE BOOL "" FORCE)
+    set(HDF5_BUILD_TOOLS       OFF CACHE BOOL "" FORCE)
+    set(HDF5_BUILD_EXAMPLES    OFF CACHE BOOL "" FORCE)
+    set(HDF5_BUILD_TESTING     OFF CACHE BOOL "" FORCE)
+    set(BUILD_TESTING          OFF CACHE BOOL "" FORCE)
+    set(HDF5_BUILD_HL_LIB      ON  CACHE BOOL "" FORCE)
+    set(HDF5_BUILD_CPP_LIB     ON  CACHE BOOL "" FORCE)
+    set(HDF5_ENABLE_ZLIB_SUPPORT ON CACHE BOOL "" FORCE)
+    set(HDF5_ALLOW_EXTERNAL_SUPPORT "NO" CACHE STRING "" FORCE)
+
+    # ZLIB must be found BEFORE HDF5 configures so the deflate filter is compiled in.
+    find_package(ZLIB REQUIRED)
+
+    FetchContent_Declare(hdf5
+        GIT_REPOSITORY https://github.com/HDFGroup/hdf5.git
+        GIT_TAG        ${HDF5_VERSION_TAG}
+        GIT_SHALLOW    TRUE
+    )
+    FetchContent_MakeAvailable(hdf5)
+
+    # HDFGroup's CMake (hdf5_2_1_0) names its targets:
+    #   hdf5_cpp-static  (static, always built when HDF5_BUILD_CPP_LIB=ON)
+    #   hdf5_cpp-shared  (shared, only when BUILD_SHARED_LIBS=ON)
+    # We default to static since we force BUILD_SHARED_LIBS=OFF above.
+    if(TARGET hdf5_cpp-shared)
+        set(_MLDP_HDF5_TARGET hdf5_cpp-shared)
+    elseif(TARGET hdf5_cpp-static)
+        set(_MLDP_HDF5_TARGET hdf5_cpp-static)
+    elseif(TARGET hdf5_cpp)
+        set(_MLDP_HDF5_TARGET hdf5_cpp)
+    else()
+        message(FATAL_ERROR "HDF5 FetchContent succeeded but no C++ target (hdf5_cpp-static / hdf5_cpp-shared / hdf5_cpp) was found")
+    endif()
+
+    message(STATUS "HDF5 writer enabled — using target ${_MLDP_HDF5_TARGET}")
+    add_compile_definitions(MLDP_PVXS_HDF5_ENABLED)
+    # Suppress a false-positive -Walloc-size-larger-than in HDF5's own C++ sources
+    # (H5Location.cpp new char[actual_name_len] with a range the analyser over-estimates).
+    target_compile_options(${_MLDP_HDF5_TARGET} PRIVATE -Wno-alloc-size-larger-than)
+    target_link_libraries(${_MLDP_HDF5_TARGET} INTERFACE ZLIB::ZLIB)
+else()
+    message(STATUS "MLDP_PVXS_ENABLE_HDF5=OFF — HDF5 writer excluded")
+endif()
 # The libcurl-devel RPM on Rocky Linux ships a cmake config that embeds the
 # Debian multiarch include path (/usr/include/x86_64-linux-gnu) which does not
 # exist on RPM-based systems.  Strip any such paths from the imported target so
@@ -380,6 +563,7 @@ set(PROTO_FILES
     ${DP_GRPC_PROTO_PATH}/common.proto
     ${DP_GRPC_PROTO_PATH}/query.proto
     ${DP_GRPC_PROTO_PATH}/ingestion.proto
+    ${DP_GRPC_PROTO_PATH}/annotation.proto
     ${EPICSARCHIVERAP_PROTO_PATH}/EPICSEvent.proto
 )
 
@@ -435,36 +619,165 @@ target_include_directories(lib${PROJECT_NAME}_proto PUBLIC
 # Base library
 add_library(lib${PROJECT_NAME}
     "${CMAKE_CURRENT_SOURCE_DIR}/ext/BS_thread_pool/include/BS_thread_pool.hpp"
+    # ReaderFactory.cpp and WriterFactory.cpp are thin wrappers; Factory.h is header-only (no registry .cpp needed)
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/ReaderFactory.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/util/log/CoutLogger.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/util/http/CurlHttpClient.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/util/http/HttpUrlUtils.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/util/fs/FSUtil.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/util/time/DateTimeUtils.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/config/Config.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/config/ConfigSource.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/config/ConfigOverride.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/enricher/EnricherFactory.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/enricher/EnricherRegistry.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/enricher/impl/StaticMetadataEnricher.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/enricher/impl/ColumnAttributesEnricher.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/enricher/impl/TimestampClampEnricher.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/enricher/impl/ShardSlotEnricher.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/processor/ChannelProcessorFactory.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/processor/ChannelProcessor.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/processor/InputBuffer.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/processor/MLDPChannelProcessorConfig.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/shared/EpicsReaderBase.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/shared/PvxsClientConfig.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/pvxs/EpicsPVXSReader.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/pvxs/EpicsPVXSReaderConfig.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/base/EpicsBaseReader.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/base/EpicsBaseReaderConfig.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/shared/EpicsReaderConfig.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/pvxs/EpicsMLDPConversion.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/pvxs/BSASEpicsMLDPConversion.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/base/EpicsPVDataConversion.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/pvxs/BSASEpicsDataBatchConversion.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/base/EpicsPVDataBatchConversion.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/base/EpicsBaseMonitorPoller.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics_archiver/ArchiverPbHttpConversion.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics_archiver/EpicsArchiverReader.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics_archiver/EpicsArchiverReaderConfig.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics_ds/EpicsDSMetadataReader.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics_ds/EpicsDSMetadataReaderConfig.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/slac_calendar/SlacCalendarReader.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/slac_calendar/SlacCalendarReaderConfig.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/pool/MLDPGrpcPoolConfig.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/pool/MLDPGrpcIngestionPool.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/pool/MLDPGrpcQueryPool.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/pool/MLDPGrpcAnnotationPoolConfig.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/pool/MLDPGrpcAnnotationPool.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/pool/MLDPGrpcQueryPoolConfig.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/impl/mldp/MLDPQueryClient.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/impl/mldp/ParallelSeriesRecordBatchStream.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/impl/mldp/MLDPAnnotationQueryClient.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/impl/mldp/TimeSeriesMetadataBuilders.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/impl/mldp/DataValueBuilder.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/impl/mldp/MldpBidiRecordBatchStream.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/impl/mldp/ColumnPredicateFilter.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/impl/mldp/AnnotationMetadataBuilders.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/impl/mldp/MetadataArrayBuilders.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/parser/Lexer.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/parser/QueryParser.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/parser/generated/QueryFlexLexer.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/parser/generated/QueryBisonParser.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/planner/Binder.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/planner/TypeChecker.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/planner/LogicalPlanner.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/planner/PredicatePushdown.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/planner/JoinOrderOptimizer.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/planner/ConstantFolding.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/planner/ColumnPruning.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/planner/RequiredColumnCheck.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/planner/PhysicalPlanner.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/planner/CorrelatedPushOptimizer.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/QueryPlanner.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/ScalarFunctionRegistry.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/ExpressionRegistry.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/Callable.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/Timezone.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/QueryTableCatalog.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/QueryExecutor.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/ShardTrace.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/WindowBackendScanRecordBatchStream.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/MaterializedRecordBatchStream.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/LimitRecordBatchStream.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/FilterRecordBatchStream.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/ProjectRecordBatchStream.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/BackendScanRecordBatchStream.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/PivotRecordBatchStream.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/FinalizingRecordBatchStream.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/CreateTableRecordBatchStream.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/OstreamOutputStream.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/ExecutionState.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/ExecutorUtils.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/scan/TableScanExecutionState.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/scan/CatalogTableScan.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/scan/BackendTableScan.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/scan/WideTableScan.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/relational/PivotExecutionState.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/relational/RelationalExecutionStates.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/relational/FilterExecutionState.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/relational/ProjectExecutionState.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/relational/SortExecutionState.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/relational/LimitExecutionState.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/relational/HashJoinExecutionState.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/relational/NestedLoopJoinExecutionState.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/relational/BlockNestedLoopJoinExecutionState.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/statement/StatementExecutionStates.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/statement/ShowTablesExecutionState.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/statement/ShowCallablesExecutionState.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/statement/DescribeExecutionState.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/statement/ExplainExecutionState.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/statement/CreateTableExecutionState.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/statement/DropTableExecutionState.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/QueryFormatter.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/SpillManager.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/SpillBackedStream.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/controller/MLDPPVXSControllerConfig.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/controller/MLDPPVXSController.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/controller/RouteTable.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/WriterConfig.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/WriterFactory.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/mldp/MLDPWriterConfig.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/mldp/MLDPWriter.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/mldp_pv_metadata/MLDPPVMetadataWriterConfig.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/mldp_pv_metadata/MLDPPVMetadataWriter.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/mldp_configuration/MLDPConfigurationWriterConfig.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/mldp_configuration/MLDPConfigurationWriter.cpp"
+    $<$<BOOL:${MLDP_PVXS_ENABLE_HDF5}>:
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/hdf5/HDF5WriterConfig.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/hdf5/HDF5FilePool.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/hdf5/HDF5WriterBase.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/hdf5/HDF5WriterPerSource.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/hdf5/HDF5WriterMerge.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/writer/hdf5/HDF5WriterMetrics.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/hdf5_bsas_gen1/HDF5BsasGen1Reader.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/hdf5_bsas_gen1/HDF5BsasGen1ReaderConfig.cpp"
+    >
     "${CMAKE_CURRENT_SOURCE_DIR}/src/metrics/Metrics.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/metrics/MetricsConfig.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/metrics/MetricsSnapshot.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/metrics/procmon/MetricsCollector.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/metrics/procmon/ProcReader.cpp"
 )
+
+if(BUILD_ECHO_PROCESSOR)
+    target_sources(lib${PROJECT_NAME} PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/processor/impl/EchoAlgorithm.cpp")
+    target_compile_definitions(lib${PROJECT_NAME} PRIVATE BUILD_ECHO_PROCESSOR=1)
+endif()
+
+if(BUILD_PYTHON_PROCESSOR)
+    find_package(Python3 REQUIRED COMPONENTS Development)
+    target_sources(lib${PROJECT_NAME} PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/processor/PythonScriptDirectoryLoader.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/processor/impl/PythonAlgorithm.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/enricher/PythonEnricher.cpp")
+    target_link_libraries(lib${PROJECT_NAME} PRIVATE Python3::Python)
+    target_compile_definitions(lib${PROJECT_NAME} PRIVATE BUILD_PYTHON_PROCESSOR=1)
+endif()
+
 target_link_libraries(lib${PROJECT_NAME} PUBLIC
     lib${PROJECT_NAME}_proto
     Threads::Threads
     pvxs
+    SQLite::SQLite3
     epics-pvaclient
     epics-pvaccess
     epics-pvaccessca
@@ -475,13 +788,29 @@ target_link_libraries(lib${PROJECT_NAME} PUBLIC
     prometheus-cpp::pull
     spdlog::spdlog
     CURL::libcurl
-    metricsgrabber
+    nlohmann_json::nlohmann_json
+    arrow_static
+    date::date-tz
+    $<$<BOOL:${MLDP_PVXS_ENABLE_HDF5}>:${_MLDP_HDF5_TARGET}>
 )
+if(MLDP_QUERY_CLIENT_FLIGHT)
+    target_link_libraries(lib${PROJECT_NAME} PUBLIC
+        ${_MLDP_ARROW_FLIGHT_TARGET}
+        ${_MLDP_ARROW_FLIGHT_SQL_TARGET}
+    )
+endif()
 target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/ext/BS_thread_pool/include")
+target_compile_definitions(lib${PROJECT_NAME} PUBLIC BS_THREAD_POOL_NATIVE_EXTENSIONS)
 target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/ext/rapidyaml/include")
 target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
+target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include/metrics")
 # Ensure the build tree's generated headers (e.g. config.h) are visible to users of the library
 target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_BINARY_DIR}")
+target_include_directories(lib${PROJECT_NAME} PUBLIC
+    "${arrow_BINARY_DIR}/src"
+    "${arrow_SOURCE_DIR}/cpp/src"
+    "${arrow_SOURCE_DIR}/cpp/src/generated"
+)
 set_target_properties(lib${PROJECT_NAME} PROPERTIES PREFIX "")
 
 if(MLDP_PVXS_DRIVER_COVERAGE)
@@ -549,33 +878,95 @@ if(MLDP_PVXS_DRIVER_TESTS)
     enable_testing()
     add_executable(${PROJECT_NAME}_test
         "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/sioc.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/Gen1NTablePV.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/config/epics_reader_config_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/config/mldppvxs_controller_config_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/config/config_source_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/config/config_override_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/enricher/enricher_registry_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/enricher/payload_enricher_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/cli/config_printer_test.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/test/controller/mldppvxs_controller_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/controller/mldppvxs_controller_mldp_writer_integration_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/controller/mldppvxs_controller_reader_lifecycle_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/controller/mldppvxs_controller_blocking_queue_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/controller/route_table_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/controller/mldppvxs_controller_epics_archiver_periodic_tail_integration_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/controller/route_table_config_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/ryml_single_header_translation_unit.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/test/pool/mldp_grpc_pool_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/writer/mldp/mldp_writer_integration_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/writer/mldp/mldp_writer_backpressure_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/writer/mldp_pv_metadata/mldp_pv_metadata_writer_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/writer/mldp_configuration/mldp_configuration_writer_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics/pvxs/epics_pvxs_reader_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics/base/epics_base_reader_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/reader_lifecycle_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_archiver/archiver_pbhttp_conversion_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_archiver/epics_archiver_reader_config_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/MockArchiverPbHttpServer.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_archiver/epics_archiver_pbhttp_integration_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_archiver/epics_archiver_reader_http_integration_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_archiver/epics_archiver_reader_periodic_tail_integration_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/MockDSServer.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_ds/epics_ds_metadata_reader_config_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_ds/epics_ds_metadata_reader_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_ds/epics_ds_metadata_reader_integration_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/controller/mldppvxs_controller_ds_metadata_writer_integration_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/controller/mldppvxs_controller_processor_integration_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/MockCalendarHttpServer.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/slac_calendar/slac_calendar_reader_config_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/slac_calendar/slac_calendar_reader_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/controller/mldppvxs_controller_slac_calendar_integration_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/util/http/curl_http_client_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/util/fs/fs_util_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/util/factory/factory_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/metrics/periodic_metrics_dumper_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/metrics/metrics_histogram_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/metrics/system_metrics_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/processor/ChannelProcessorTest.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/processor/InputBufferTest.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/processor/LinearTransformAlgorithmTest.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/algorithms/LinearTransformAlgorithm.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/processor/MLDPChannelProcessorConfigTest.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/config/validate.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/ConfigPrinter.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/PeriodicMetricsDumper.cpp"
     )
-    target_link_libraries(${PROJECT_NAME}_test PRIVATE gtest_main lib${PROJECT_NAME})
+    # The writer/reader implementations self-register via static initialization (REGISTER_WRITER,
+    # REGISTER_READER).  Without --whole-archive the linker drops those object files and the
+    # factory registrations never fire.
+    if(APPLE)
+        target_link_libraries(${PROJECT_NAME}_test PRIVATE gtest_main
+            -Wl,-force_load $<TARGET_FILE:lib${PROJECT_NAME}>)
+    else()
+        target_link_libraries(${PROJECT_NAME}_test PRIVATE gtest_main
+            -Wl,--whole-archive lib${PROJECT_NAME} -Wl,--no-whole-archive)
+    endif()
     if(TARGET httplib::httplib)
         target_link_libraries(${PROJECT_NAME}_test PRIVATE httplib::httplib)
     elseif(TARGET httplib)
         target_link_libraries(${PROJECT_NAME}_test PRIVATE httplib)
+    endif()
+    target_include_directories(${PROJECT_NAME}_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/test")
+    target_compile_definitions(${PROJECT_NAME}_test PRIVATE
+        MLDP_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/data"
+    )
+
+    if(BUILD_ECHO_PROCESSOR)
+        target_sources(${PROJECT_NAME}_test PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/test/processor/EchoAlgorithmTest.cpp")
+        target_compile_definitions(${PROJECT_NAME}_test PRIVATE BUILD_ECHO_PROCESSOR=1)
+    endif()
+
+    if(BUILD_PYTHON_PROCESSOR)
+        target_compile_definitions(lib${PROJECT_NAME} PRIVATE MLDP_PYTHON_ENRICHER_TEST_HOOKS=1)
+        target_sources(${PROJECT_NAME}_test PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/test/processor/PythonAlgorithmTest.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/test/processor/PythonScriptDirectoryLoaderTest.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/test/enricher/python_enricher_test.cpp")
+        target_compile_definitions(${PROJECT_NAME}_test PRIVATE
+            BUILD_PYTHON_PROCESSOR=1
+            MLDP_PYTHON_ENRICHER_TEST_HOOKS=1)
+        target_link_libraries(${PROJECT_NAME}_test PRIVATE Python3::Python)
     endif()
 
     if(MLDP_PVXS_DRIVER_COVERAGE)
@@ -608,8 +999,111 @@ if(MLDP_PVXS_DRIVER_TESTS)
         endif()
     endif()
 
+    # Build all GoogleTest sources into the single driver test executable.
+    # CTest discovery below still registers each Suite.Test case individually.
+    target_sources(${PROJECT_NAME}_test PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/query/arrow_dependency_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/query/queryable_factory_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/query/mldp_query_client_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/query/query_arrow_foundation_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/query/query_parser_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/query/query_planner_executor_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/query/mldp_annotation_query_client_integration_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/query/queryable_mldp_integration_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/query/QueryCommand.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/query/ConsoleFooter.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/query/QueryPager.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/query/NullQueryCommandListener.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/query/LoggingQueryCommandListener.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/query/ScopedQueryInterruptHandler.cpp"
+    )
+    target_include_directories(${PROJECT_NAME}_test PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/config"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/config"
+        "${CMAKE_CURRENT_SOURCE_DIR}/ext/rapidyaml/include"
+        "${CMAKE_CURRENT_BINARY_DIR}"
+        "${arrow_BINARY_DIR}/src"
+        "${arrow_SOURCE_DIR}/cpp/src"
+        "${arrow_SOURCE_DIR}/cpp/src/generated"
+    )
+    target_link_libraries(${PROJECT_NAME}_test PRIVATE replxx)
+
+    if(MLDP_WIZARD AND MLDP_PVXS_DRIVER_MAIN)
+        target_sources(${PROJECT_NAME}_test PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/test/config/wizard_test.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/test/config/wizard_panel_test.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/test/config/edit_test.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/config/edit.cpp"
+        )
+        target_link_libraries(${PROJECT_NAME}_test PRIVATE mldp_pvxs_driver_wizard_lib)
+        target_compile_definitions(${PROJECT_NAME}_test PRIVATE MLDP_WIZARD_ENABLED)
+    endif()
+
+    if(MLDP_PVXS_ENABLE_HDF5)
+        target_sources(${PROJECT_NAME}_test PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/test/writer/hdf5/hdf5_writer_config_test.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/test/writer/hdf5/hdf5_file_pool_test.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/test/writer/hdf5/hdf5_writer_test.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/test/writer/hdf5/hdf5_writer_metrics_test.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/test/writer/hdf5/hdf5_writer_backpressure_test.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/hdf5_bsas_gen1/hdf5_bsas_gen1_reader_test.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/test/controller/mldppvxs_controller_hdf5_integration_test.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/test/controller/mldppvxs_controller_hdf5_provenance_test.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/BsasGen1HDF5Mock.cpp"
+        )
+    endif()
+
     include(GoogleTest)
     gtest_discover_tests(${PROJECT_NAME}_test)
+
+endif()
+
+# Mock IOC Server executable (standalone, always built if main is enabled)
+if(MLDP_PVXS_DRIVER_MAIN)
+    add_executable(mock_sioc_server
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/sioc.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/Gen1NTablePV.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/sioc_main.cpp"
+    )
+    target_link_libraries(mock_sioc_server PRIVATE
+        pvxs
+        epics-pvaccess
+        epics-pvaccessca
+        epics-pvdata
+        epics-ca
+        epics-pvaclient
+        epics-com
+        Threads::Threads
+    )
+    target_include_directories(mock_sioc_server PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/mock"
+    )
+    target_compile_definitions(mock_sioc_server PRIVATE
+        MLDP_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/data"
+    )
+endif()
+
+# HDF5 dump tool — inspect driver-produced HDF5 files (head/tail rows, no full load)
+if(MLDP_PVXS_ENABLE_HDF5)
+    add_executable(hdf5_dump
+        "${CMAKE_CURRENT_SOURCE_DIR}/tools/hdf5_dump.cpp"
+    )
+    target_include_directories(hdf5_dump PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+        "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    target_link_libraries(hdf5_dump PRIVATE
+        ${_MLDP_HDF5_TARGET}
+        argparse::argparse
+        spdlog::spdlog
+    )
+    target_compile_definitions(hdf5_dump PRIVATE
+        MLDP_PVXS_HDF5_ENABLED
+    )
+    target_include_directories(hdf5_dump PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/ext/BS_thread_pool/include"
+    )
 endif()
 
 # Driver executable
@@ -618,6 +1112,16 @@ if(MLDP_PVXS_DRIVER_MAIN)
         "${CMAKE_CURRENT_SOURCE_DIR}/ext/rapidyaml/include/rapidyaml-0.10.0.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/SpdlogLogger.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/ConfigPrinter.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/query/QueryCommand.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/query/ConsoleFooter.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/query/QueryPager.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/query/NullQueryCommandListener.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/query/LoggingQueryCommandListener.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/query/ScopedQueryInterruptHandler.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/config/subcommand.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/config/validate.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/config/template.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/config/edit.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/PeriodicMetricsDumper.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/mldp_pvxs_driver_main.cpp"
     )
@@ -629,15 +1133,59 @@ if(MLDP_PVXS_DRIVER_MAIN)
         target_link_libraries(${PROJECT_NAME} PRIVATE
             -Wl,-force_load $<TARGET_FILE:lib${PROJECT_NAME}>
             argparse::argparse
+            replxx
         )
     else()
         target_link_libraries(${PROJECT_NAME} PRIVATE
             -Wl,--whole-archive lib${PROJECT_NAME} -Wl,--no-whole-archive
             argparse::argparse
+            replxx
             spdlog::spdlog
         )
     endif()
-    target_include_directories(${PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/ext/rapidyaml/include")
+    target_include_directories(${PROJECT_NAME} PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/ext/rapidyaml/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/config"
+    )
+
+    # edit.cpp needs wizard_internal symbols (generateYaml, loadFromConfig).
+    # When MLDP_WIZARD=ON those come from mldp_pvxs_driver_wizard_lib (linked below).
+    # When MLDP_WIZARD=OFF, compile wizard.cpp directly so the pure functions are available.
+    if(NOT MLDP_WIZARD)
+        target_sources(${PROJECT_NAME} PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/config/wizard.cpp"
+        )
+    endif()
+
+    if(MLDP_WIZARD AND MLDP_PVXS_DRIVER_MAIN)
+        add_library(mldp_pvxs_driver_wizard_lib STATIC
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/config/wizard.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/config/wizard_panel.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/config/edit_interactive.cpp"
+        )
+        target_link_libraries(mldp_pvxs_driver_wizard_lib
+            PRIVATE
+                lib${PROJECT_NAME}
+                ftxui::screen
+                ftxui::dom
+                ftxui::component
+                argparse::argparse
+        )
+        target_include_directories(mldp_pvxs_driver_wizard_lib
+            PRIVATE
+                "${CMAKE_CURRENT_SOURCE_DIR}/include"
+                "${CMAKE_CURRENT_SOURCE_DIR}/ext/rapidyaml/include"
+        )
+        target_compile_definitions(mldp_pvxs_driver_wizard_lib PRIVATE MLDP_WIZARD_ENABLED)
+        # Link wizard lib into the main executable so `config wizard` works
+        if(APPLE)
+            target_link_libraries(${PROJECT_NAME} PRIVATE mldp_pvxs_driver_wizard_lib)
+        else()
+            target_link_libraries(${PROJECT_NAME} PRIVATE mldp_pvxs_driver_wizard_lib)
+        endif()
+        target_compile_definitions(${PROJECT_NAME} PRIVATE MLDP_WIZARD_ENABLED)
+    endif()
 
     if(MLDP_PVXS_DRIVER_COVERAGE)
         target_compile_options(${PROJECT_NAME} PRIVATE -O0 -g --coverage)
@@ -645,15 +1193,19 @@ if(MLDP_PVXS_DRIVER_MAIN)
     endif()
 endif()
 
-find_package(Doxygen REQUIRED)
-set(DOXYGEN_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/docs")
-doxygen_add_docs(
-    docs
-    ${PROJECT_SOURCE_DIR}/include
-    ${PROJECT_SOURCE_DIR}/src
-    HTML_OUTPUT html
-    COMMENT "Generating documentation"
-)
+find_package(Doxygen QUIET)
+if(Doxygen_FOUND)
+    set(DOXYGEN_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/docs")
+    doxygen_add_docs(
+        docs
+        ${PROJECT_SOURCE_DIR}/include
+        ${PROJECT_SOURCE_DIR}/src
+        HTML_OUTPUT html
+        COMMENT "Generating documentation"
+    )
+else()
+    message(STATUS "Doxygen not found — 'docs' target disabled")
+endif()
 
 # Installation
 install(TARGETS lib${PROJECT_NAME}_proto
@@ -678,6 +1230,7 @@ install(FILES "${CMAKE_CURRENT_BINARY_DIR}/config.h"
 if(MLDP_PVXS_DRIVER_MAIN)
     install(TARGETS
         ${PROJECT_NAME}
+        mock_sioc_server
         RUNTIME DESTINATION bin
     )
 endif()

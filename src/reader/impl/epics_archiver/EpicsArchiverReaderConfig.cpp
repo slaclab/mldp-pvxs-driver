@@ -12,6 +12,8 @@
 
 #include <config/Config.h>
 
+#include <map>
+
 using namespace mldp_pvxs_driver::config;
 using namespace mldp_pvxs_driver::reader::impl::epics_archiver;
 
@@ -123,11 +125,6 @@ long EpicsArchiverReaderConfig::totalTimeoutSec() const
     return total_timeout_sec_;
 }
 
-long EpicsArchiverReaderConfig::batchDurationSec() const
-{
-    return batch_duration_sec_;
-}
-
 long EpicsArchiverReaderConfig::pollIntervalSec() const
 {
     return poll_interval_sec_;
@@ -136,6 +133,21 @@ long EpicsArchiverReaderConfig::pollIntervalSec() const
 long EpicsArchiverReaderConfig::lookbackSec() const
 {
     return lookback_sec_;
+}
+
+long EpicsArchiverReaderConfig::pvSamplesPerBatch() const
+{
+    return pv_samples_per_batch_;
+}
+
+long EpicsArchiverReaderConfig::batchFlushIntervalMs() const
+{
+    return batch_flush_interval_ms_;
+}
+
+long EpicsArchiverReaderConfig::fetchThreads() const
+{
+    return fetch_threads_;
 }
 
 bool EpicsArchiverReaderConfig::tlsVerifyPeer() const
@@ -254,13 +266,6 @@ void EpicsArchiverReaderConfig::parse(const Config& readerEntry)
         throw Error("total-timeout-sec must be >= connect-timeout-sec (or 0 for infinite)");
     }
 
-    // Parse optional historical batch duration threshold (default: 1 second)
-    batch_duration_sec_ = readerEntry.getInt(BatchDurationSecKey, 1L);
-    if (batch_duration_sec_ <= 0)
-    {
-        throw Error("batch-duration-sec must be positive (>0)");
-    }
-
     // Parse periodic tail polling controls
     if (fetch_mode_ == FetchMode::PeriodicTail)
     {
@@ -287,6 +292,35 @@ void EpicsArchiverReaderConfig::parse(const Config& readerEntry)
     if (tls_verify_host_ && !tls_verify_peer_)
     {
         throw Error("tls-verify-host=true requires tls-verify-peer=true");
+    }
+
+    // Parse optional per-PV sample count limit (default: 0 = disabled)
+    pv_samples_per_batch_ = readerEntry.getInt(PvSamplesPerBatchKey, 0L);
+    if (readerEntry.hasChild(PvSamplesPerBatchKey) && pv_samples_per_batch_ <= 0)
+    {
+        throw Error("pv-samples-per-batch must be positive (>0) when specified");
+    }
+
+    // Parse optional pending batch flush interval (default: 0 = disabled)
+    batch_flush_interval_ms_ = readerEntry.getInt(BatchFlushIntervalMsKey, 0L);
+    if (readerEntry.hasChild(BatchFlushIntervalMsKey) && batch_flush_interval_ms_ <= 0)
+    {
+        throw Error("batch-flush-interval-ms must be positive (>0) when specified");
+    }
+
+    // Parse optional parallel fetch thread count (default: 1 = sequential)
+    fetch_threads_ = readerEntry.getInt(FetchThreadsKey, 1L);
+    if (readerEntry.hasChild(FetchThreadsKey) && fetch_threads_ < 1)
+    {
+        throw Error("fetch-threads must be >= 1 when specified");
+    }
+
+    // Parse optional reader-level static metadata
+    if (readerEntry.hasChild(kMetadataKey))
+    {
+        std::map<std::string, std::string> m;
+        readerEntry.subConfig(kMetadataKey).front() >> m;
+        static_metadata_.insert(m.begin(), m.end());
     }
 
     // Parse PVs
@@ -338,7 +372,14 @@ void EpicsArchiverReaderConfig::parse(const Config& readerEntry)
             throw Error("pvs[].name must not be empty");
         }
 
-        pvs_.push_back({std::move(pvName)});
+        PVConfig pv{std::move(pvName), {}};
+        if (pvNode.hasChild(kMetadataKey))
+        {
+            std::map<std::string, std::string> m;
+            pvNode.subConfig(kMetadataKey).front() >> m;
+            pv.metadata.insert(m.begin(), m.end());
+        }
+        pvs_.push_back(std::move(pv));
         pvNames_.push_back(pvs_.back().name);
     }
 

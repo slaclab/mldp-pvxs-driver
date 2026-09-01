@@ -51,20 +51,20 @@ struct HttpClientOptions
     long low_speed_limit_bytes_per_sec = 1024L; ///< Stall threshold in bytes/sec.
     long low_speed_time_sec = 60L;              ///< Stall duration before abort.
 
-    bool tcp_keepalive = true;     ///< Enable TCP keepalive probes.
-    long tcp_keepidle_sec = 120L;  ///< Idle time before first keepalive probe.
-    long tcp_keepintvl_sec = 60L;  ///< Interval between keepalive probes.
+    bool tcp_keepalive = true;    ///< Enable TCP keepalive probes.
+    long tcp_keepidle_sec = 120L; ///< Idle time before first keepalive probe.
+    long tcp_keepintvl_sec = 60L; ///< Interval between keepalive probes.
 
     long buffer_size = 65536L; ///< Preferred receive buffer size hint (bytes).
 
     bool follow_redirects = true; ///< Follow HTTP redirects automatically.
     long max_redirects = 5L;      ///< Maximum redirects when following is enabled.
 
-    bool enable_compression = true;              ///< Enable response compression.
+    bool        enable_compression = true;         ///< Enable response compression.
     std::string accept_encoding = "gzip, deflate"; ///< Accepted encodings if compression is enabled.
 
     std::string user_agent = "mldp-pvxs-driver/http"; ///< HTTP User-Agent string.
-    TlsConfig tls;                                    ///< TLS verification behavior.
+    TlsConfig   tls;                                  ///< TLS verification behavior.
 };
 
 /**
@@ -81,8 +81,8 @@ struct HttpRequest
  */
 struct HttpResponseInfo
 {
-    long        http_status = 0;  ///< HTTP status code if available (0 if unavailable).
-    std::string effective_url;    ///< Final URL after redirects (if provided by backend).
+    long        http_status = 0; ///< HTTP status code if available (0 if unavailable).
+    std::string effective_url;   ///< Final URL after redirects (if provided by backend).
 };
 
 /**

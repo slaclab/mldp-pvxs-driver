@@ -260,7 +260,6 @@ TEST_F(EpicsArchiverReaderConfigTest, TlsVerificationDefaultsToEnabled)
     auto                      cfg = makeConfigFromYaml(yaml);
     EpicsArchiverReaderConfig config(cfg);
 
-    EXPECT_EQ(config.batchDurationSec(), 1L);
     EXPECT_EQ(config.fetchMode(), EpicsArchiverReaderConfig::FetchMode::HistoricalOnce);
     EXPECT_TRUE(config.tlsVerifyPeer());
     EXPECT_TRUE(config.tlsVerifyHost());
@@ -304,53 +303,6 @@ TEST_F(EpicsArchiverReaderConfigTest, PeriodicTailRejectsLookbackLargerThanPollI
     EXPECT_THROW(EpicsArchiverReaderConfig config(cfg), EpicsArchiverReaderConfig::Error);
 }
 
-// Verifies batch-duration-sec is parsed when explicitly configured.
-TEST_F(EpicsArchiverReaderConfigTest, AcceptsBatchDurationSec)
-{
-    const std::string yaml = R"(
-        name: test-archiver
-        hostname: "archiver.slac.stanford.edu:11200"
-        start-date: "2026-01-01T00:00:00Z"
-        batch-duration-sec: 3
-        pvs:
-          - name: "PV1"
-    )";
-
-    auto                      cfg = makeConfigFromYaml(yaml);
-    EpicsArchiverReaderConfig config(cfg);
-
-    EXPECT_TRUE(config.valid());
-    EXPECT_EQ(config.batchDurationSec(), 3L);
-}
-
-// Verifies batch-duration-sec rejects zero and negative values.
-TEST_F(EpicsArchiverReaderConfigTest, RejectsNonPositiveBatchDurationSec)
-{
-    const std::string yaml_zero = R"(
-        name: test-archiver
-        hostname: "archiver.slac.stanford.edu:11200"
-        start-date: "2026-01-01T00:00:00Z"
-        batch-duration-sec: 0
-        pvs:
-          - name: "PV1"
-    )";
-
-    auto cfg_zero = makeConfigFromYaml(yaml_zero);
-    EXPECT_THROW(EpicsArchiverReaderConfig config(cfg_zero), EpicsArchiverReaderConfig::Error);
-
-    const std::string yaml_negative = R"(
-        name: test-archiver
-        hostname: "archiver.slac.stanford.edu:11200"
-        start-date: "2026-01-01T00:00:00Z"
-        batch-duration-sec: -1
-        pvs:
-          - name: "PV1"
-    )";
-
-    auto cfg_negative = makeConfigFromYaml(yaml_negative);
-    EXPECT_THROW(EpicsArchiverReaderConfig config(cfg_negative), EpicsArchiverReaderConfig::Error);
-}
-
 // Verifies TLS verification can be disabled explicitly when both flags are false.
 TEST_F(EpicsArchiverReaderConfigTest, AllowsDisablingTlsVerificationExplicitly)
 {
@@ -386,4 +338,196 @@ TEST_F(EpicsArchiverReaderConfigTest, RejectsHostVerificationWithoutPeerVerifica
 
     auto cfg = makeConfigFromYaml(yaml);
     EXPECT_THROW(EpicsArchiverReaderConfig config(cfg), EpicsArchiverReaderConfig::Error);
+}
+
+// Verifies pv-samples-per-batch is parsed when explicitly configured.
+TEST_F(EpicsArchiverReaderConfigTest, AcceptsPvSamplesPerBatch)
+{
+    const std::string yaml = R"(
+        name: test-archiver
+        hostname: "archiver.slac.stanford.edu:11200"
+        start-date: "2026-01-01T00:00:00Z"
+        pv-samples-per-batch: 10
+        pvs:
+          - name: "PV1"
+    )";
+
+    auto                      cfg = makeConfigFromYaml(yaml);
+    EpicsArchiverReaderConfig config(cfg);
+
+    EXPECT_TRUE(config.valid());
+    EXPECT_EQ(config.pvSamplesPerBatch(), 10L);
+}
+
+// Verifies pv-samples-per-batch rejects zero and negative values.
+TEST_F(EpicsArchiverReaderConfigTest, RejectsNonPositivePvSamplesPerBatch)
+{
+    const std::string yaml_zero = R"(
+        name: test-archiver
+        hostname: "archiver.slac.stanford.edu:11200"
+        start-date: "2026-01-01T00:00:00Z"
+        pv-samples-per-batch: 0
+        pvs:
+          - name: "PV1"
+    )";
+
+    auto cfg_zero = makeConfigFromYaml(yaml_zero);
+    EXPECT_THROW(EpicsArchiverReaderConfig config(cfg_zero), EpicsArchiverReaderConfig::Error);
+
+    const std::string yaml_negative = R"(
+        name: test-archiver
+        hostname: "archiver.slac.stanford.edu:11200"
+        start-date: "2026-01-01T00:00:00Z"
+        pv-samples-per-batch: -1
+        pvs:
+          - name: "PV1"
+    )";
+
+    auto cfg_negative = makeConfigFromYaml(yaml_negative);
+    EXPECT_THROW(EpicsArchiverReaderConfig config(cfg_negative), EpicsArchiverReaderConfig::Error);
+}
+
+// Verifies pv-samples-per-batch defaults to 0 (disabled) when not configured.
+TEST_F(EpicsArchiverReaderConfigTest, PvSamplesPerBatchDefaultsToZero)
+{
+    const std::string yaml = R"(
+        name: test-archiver
+        hostname: "archiver.slac.stanford.edu:11200"
+        start-date: "2026-01-01T00:00:00Z"
+        pvs:
+          - name: "PV1"
+    )";
+
+    auto                      cfg = makeConfigFromYaml(yaml);
+    EpicsArchiverReaderConfig config(cfg);
+
+    EXPECT_EQ(config.pvSamplesPerBatch(), 0L);
+}
+
+// Verifies batch-flush-interval-ms is parsed when explicitly configured.
+TEST_F(EpicsArchiverReaderConfigTest, AcceptsBatchFlushIntervalMs)
+{
+    const std::string yaml = R"(
+        name: test-archiver
+        hostname: "archiver.slac.stanford.edu:11200"
+        start-date: "2026-01-01T00:00:00Z"
+        batch-flush-interval-ms: 500
+        pvs:
+          - name: "PV1"
+    )";
+
+    auto                      cfg = makeConfigFromYaml(yaml);
+    EpicsArchiverReaderConfig config(cfg);
+
+    EXPECT_TRUE(config.valid());
+    EXPECT_EQ(config.batchFlushIntervalMs(), 500L);
+}
+
+// Verifies batch-flush-interval-ms rejects zero and negative values.
+TEST_F(EpicsArchiverReaderConfigTest, RejectsNonPositiveBatchFlushIntervalMs)
+{
+    const std::string yaml_zero = R"(
+        name: test-archiver
+        hostname: "archiver.slac.stanford.edu:11200"
+        start-date: "2026-01-01T00:00:00Z"
+        batch-flush-interval-ms: 0
+        pvs:
+          - name: "PV1"
+    )";
+
+    auto cfg_zero = makeConfigFromYaml(yaml_zero);
+    EXPECT_THROW(EpicsArchiverReaderConfig config(cfg_zero), EpicsArchiverReaderConfig::Error);
+
+    const std::string yaml_negative = R"(
+        name: test-archiver
+        hostname: "archiver.slac.stanford.edu:11200"
+        start-date: "2026-01-01T00:00:00Z"
+        batch-flush-interval-ms: -100
+        pvs:
+          - name: "PV1"
+    )";
+
+    auto cfg_negative = makeConfigFromYaml(yaml_negative);
+    EXPECT_THROW(EpicsArchiverReaderConfig config(cfg_negative), EpicsArchiverReaderConfig::Error);
+}
+
+// Verifies batch-flush-interval-ms defaults to 0 (disabled) when not configured.
+TEST_F(EpicsArchiverReaderConfigTest, BatchFlushIntervalMsDefaultsToZero)
+{
+    const std::string yaml = R"(
+        name: test-archiver
+        hostname: "archiver.slac.stanford.edu:11200"
+        start-date: "2026-01-01T00:00:00Z"
+        pvs:
+          - name: "PV1"
+    )";
+
+    auto                      cfg = makeConfigFromYaml(yaml);
+    EpicsArchiverReaderConfig config(cfg);
+
+    EXPECT_EQ(config.batchFlushIntervalMs(), 0L);
+}
+
+// Verifies fetch-threads defaults to 1 (sequential) when not configured.
+TEST_F(EpicsArchiverReaderConfigTest, FetchThreadsDefaultsToOne)
+{
+    const std::string yaml = R"(
+        name: test-archiver
+        hostname: "archiver.slac.stanford.edu:11200"
+        start-date: "2026-01-01T00:00:00Z"
+        pvs:
+          - name: "PV1"
+    )";
+
+    auto                      cfg = makeConfigFromYaml(yaml);
+    EpicsArchiverReaderConfig config(cfg);
+
+    EXPECT_EQ(config.fetchThreads(), 1L);
+}
+
+// Verifies fetch-threads is parsed when explicitly configured.
+TEST_F(EpicsArchiverReaderConfigTest, AcceptsFetchThreads)
+{
+    const std::string yaml = R"(
+        name: test-archiver
+        hostname: "archiver.slac.stanford.edu:11200"
+        start-date: "2026-01-01T00:00:00Z"
+        fetch-threads: 4
+        pvs:
+          - name: "PV1"
+    )";
+
+    auto                      cfg = makeConfigFromYaml(yaml);
+    EpicsArchiverReaderConfig config(cfg);
+
+    EXPECT_TRUE(config.valid());
+    EXPECT_EQ(config.fetchThreads(), 4L);
+}
+
+// Verifies fetch-threads rejects values less than 1.
+TEST_F(EpicsArchiverReaderConfigTest, RejectsInvalidFetchThreads)
+{
+    const std::string yaml_zero = R"(
+        name: test-archiver
+        hostname: "archiver.slac.stanford.edu:11200"
+        start-date: "2026-01-01T00:00:00Z"
+        fetch-threads: 0
+        pvs:
+          - name: "PV1"
+    )";
+
+    auto cfg_zero = makeConfigFromYaml(yaml_zero);
+    EXPECT_THROW(EpicsArchiverReaderConfig config(cfg_zero), EpicsArchiverReaderConfig::Error);
+
+    const std::string yaml_negative = R"(
+        name: test-archiver
+        hostname: "archiver.slac.stanford.edu:11200"
+        start-date: "2026-01-01T00:00:00Z"
+        fetch-threads: -2
+        pvs:
+          - name: "PV1"
+    )";
+
+    auto cfg_negative = makeConfigFromYaml(yaml_negative);
+    EXPECT_THROW(EpicsArchiverReaderConfig config(cfg_negative), EpicsArchiverReaderConfig::Error);
 }

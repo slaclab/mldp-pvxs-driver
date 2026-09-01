@@ -24,6 +24,7 @@
 #include <any>
 #include <map>
 #include <memory>
+#include <utility>
 #include <rapidyaml-0.10.0.hpp>
 #include <sstream>
 #include <string>
@@ -37,7 +38,7 @@ using ConfigTreePtr = std::shared_ptr<ryml::Tree>;
 inline std::string makeMissingFieldMessage(const std::string& field)
 {
     std::ostringstream oss;
-    oss << "Missing required field '" << field << "' in epics reader config";
+    oss << "Missing required field '" << field << "' in configuration";
     return oss.str();
 }
 
@@ -53,8 +54,8 @@ inline std::string makeMissingFieldMessage(const std::string& field)
 class Config
 {
 public:
-
     [[nodiscard]] static Config configFromFile(const std::string& filename);
+    [[nodiscard]] static Config configFromYamlString(const std::string& yaml);
 
     /**
      * @brief Default-construct an empty (invalid) config.
@@ -83,6 +84,14 @@ public:
      * @return The wrapped `ryml::ConstNodeRef`.
      */
     ryml::ConstNodeRef raw() const;
+
+    /**
+     * @brief Access the underlying rapidyaml node with mutation support.
+     *
+     * This is intended for configuration transforms that need to update the
+     * in-memory YAML tree before typed parsing runs.
+     */
+    ryml::NodeRef mutableRaw();
 
     /**
      * @brief Check whether the wrapped node has a child with the given key.
@@ -132,6 +141,9 @@ public:
      * as the `ConfigTreePtr` that backs the root instance is alive.
      */
     std::vector<Config> subConfig(const std::string& key) const;
+
+    /** Return direct map children with their YAML keys. */
+    std::vector<std::pair<std::string, Config>> namedSubConfig() const;
 
     /**
      * @brief Retrieve an integer value for the given key.

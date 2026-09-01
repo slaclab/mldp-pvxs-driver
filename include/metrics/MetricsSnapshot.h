@@ -22,10 +22,24 @@ class Metrics;
  */
 struct ReaderMetrics
 {
-    std::string pv_name;           ///< PV identifier
-    long long   pushes = 0;        ///< Total number of pushes
-    double      bytes_total = 0.0; ///< Total bytes transferred
+    std::string pv_name;             ///< PV identifier
+    long long   pushes = 0;          ///< Total number of pushes
+    double      bytes_total = 0.0;   ///< Total bytes transferred
     double      bytes_per_sec = 0.0; ///< Current transfer rate (bytes/second)
+};
+
+/**
+ * @brief Per-writer snapshot data (distinct from WriterMetrics Prometheus class).
+ */
+struct WriterSnapshot
+{
+    std::string writer_name;              ///< Writer instance name
+    long long   queue_depth = 0;          ///< Current queue depth
+    long long   stream_rotations = 0;     ///< Total stream rotations
+    long long   failures = 0;             ///< Total write failures
+    double      payload_bytes_per_sec = 0.0; ///< Payload throughput (bytes/second)
+    double      data_bytes_per_sec    = 0.0; ///< Raw data throughput (bytes/second)
+    double      send_time_mean_ms     = 0.0; ///< Mean send latency (ms)
 };
 
 /**
@@ -33,10 +47,30 @@ struct ReaderMetrics
  */
 struct PoolMetrics
 {
-    long long in_use = 0;     ///< Connections currently in use
-    long long available = 0;  ///< Connections available in pool
-    
-    long long total() const { return in_use + available; }
+    long long in_use = 0;    ///< Connections currently in use
+    long long available = 0; ///< Connections available in pool
+
+    long long total() const
+    {
+        return in_use + available;
+    }
+};
+
+/**
+ * @brief Process-level CPU, memory, I/O, and thread metrics.
+ */
+struct ProcessMetrics
+{
+    double    cpu_user_ticks   = 0.0; ///< Cumulative user CPU ticks
+    double    cpu_system_ticks = 0.0; ///< Cumulative system CPU ticks
+    long long threads          = 0;   ///< Current thread count
+    long long fds_open         = 0;   ///< Open file descriptors
+    double    vm_size_bytes    = 0.0; ///< Virtual memory size (bytes)
+    double    vm_rss_bytes     = 0.0; ///< Resident set size (bytes)
+    double    vm_peak_bytes    = 0.0; ///< Peak virtual memory (bytes)
+    double    rss_total_bytes  = 0.0; ///< Total RSS (anon+file+shmem, bytes)
+    double    io_read_bytes    = 0.0; ///< Cumulative bytes read from storage
+    double    io_write_bytes   = 0.0; ///< Cumulative bytes written to storage
 };
 
 /**
@@ -45,7 +79,9 @@ struct PoolMetrics
 struct MetricsData
 {
     std::vector<ReaderMetrics> readers; ///< Per-reader statistics
+    std::vector<WriterSnapshot> writers; ///< Per-writer statistics
     PoolMetrics                pool;    ///< Connection pool statistics
+    ProcessMetrics             process; ///< Process-level CPU/memory/IO metrics
 };
 
 /**

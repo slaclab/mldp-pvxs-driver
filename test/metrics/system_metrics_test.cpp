@@ -15,10 +15,10 @@
 
 #include <prometheus/text_serializer.h>
 
+#include <chrono>
 #include <sstream>
 #include <string>
 #include <thread>
-#include <chrono>
 
 using mldp_pvxs_driver::metrics::Metrics;
 using mldp_pvxs_driver::metrics::MetricsConfig;
@@ -149,20 +149,27 @@ TEST_F(SystemMetricsTest, MemoryMetricsHaveValidValues)
 
     // Parse and check that RSS values are non-negative
     // The metric format is: mldp_pvxs_driver_process_memory_rss_bytes <value>
-    auto checkMetricPositive = [&text](const std::string& metric_name) {
+    auto checkMetricPositive = [&text](const std::string& metric_name)
+    {
         auto pos = text.find(metric_name);
-        if (pos != std::string::npos) {
+        if (pos != std::string::npos)
+        {
             // Find the newline after the metric
             auto endPos = text.find('\n', pos);
-            if (endPos == std::string::npos) endPos = text.length();
+            if (endPos == std::string::npos)
+                endPos = text.length();
             std::string line = text.substr(pos, endPos - pos);
             // Extract the value (after the last space)
             auto spacePos = line.rfind(' ');
-            if (spacePos != std::string::npos) {
-                try {
+            if (spacePos != std::string::npos)
+            {
+                try
+                {
                     double value = std::stod(line.substr(spacePos + 1));
                     EXPECT_GE(value, 0.0) << "Metric " << metric_name << " should be non-negative";
-                } catch (...) {
+                }
+                catch (...)
+                {
                     // Value might not be present yet, that's ok
                 }
             }
@@ -177,16 +184,16 @@ TEST_F(SystemMetricsTest, MemoryMetricsHaveValidValues)
 TEST_F(SystemMetricsTest, MetricsCollectionThreadIsRunning)
 {
     MetricsConfig config;
-    
+
     // Create metrics instance - this should start the collection thread
     {
         Metrics metrics(config);
-        
+
         // Wait for a couple of collection cycles
         std::this_thread::sleep_for(std::chrono::milliseconds(2500));
-        
+
         const auto text1 = serializeMetrics(metrics);
-        
+
         // Memory metrics should be present
         EXPECT_NE(text1.find("mldp_pvxs_driver_process_memory_rss_bytes"), std::string::npos);
     }
@@ -207,7 +214,7 @@ TEST_F(SystemMetricsTest, SystemMetricsHaveCorrectMetricTypes)
     // Counters should have _total suffix
     EXPECT_NE(text.find("# TYPE mldp_pvxs_driver_process_cpu_user_ticks_total counter"), std::string::npos);
     EXPECT_NE(text.find("# TYPE mldp_pvxs_driver_process_io_read_bytes_total counter"), std::string::npos);
-    
+
     // Gauges should not have _total suffix
     EXPECT_NE(text.find("# TYPE mldp_pvxs_driver_process_memory_rss_bytes gauge"), std::string::npos);
     EXPECT_NE(text.find("# TYPE mldp_pvxs_driver_process_threads gauge"), std::string::npos);

@@ -20,7 +20,7 @@
 
 #pragma once
 
-#include <reader/Reader.h>
+#include <reader/IReader.h>
 #include <reader/impl/epics/shared/EpicsReaderConfig.h>
 #include <util/bus/IDataBus.h>
 #include <util/log/Logger.h>
@@ -76,9 +76,9 @@ public:
      * @param logger Logger instance for diagnostic output.
      */
     EpicsReaderBase(std::shared_ptr<util::bus::IDataBus> bus,
-                    std::shared_ptr<metrics::Metrics>         metrics,
-                    const EpicsReaderConfig&                  cfg,
-                    std::shared_ptr<util::log::ILogger>       logger);
+                    std::shared_ptr<metrics::Metrics>    metrics,
+                    const EpicsReaderConfig&             cfg,
+                    std::shared_ptr<util::log::ILogger>  logger);
 
     /**
      * @brief Virtual destructor - stops the thread pool.
@@ -107,12 +107,6 @@ protected:
      */
     struct PVRuntimeConfig
     {
-        /**
-         * @brief Processing mode for PV updates.
-         */
-        /**
-         * @brief Processing mode for PV updates.
-         */
         enum class Mode
         {
             Default,       ///< Standard scalar/array processing with structure timestamp.
@@ -122,6 +116,7 @@ protected:
         Mode        mode = Mode::Default; ///< Selected processing mode.
         std::string tsSecondsField;       ///< Column name for epoch seconds (SlacBsasTable mode).
         std::string tsNanosField;         ///< Column name for nanoseconds (SlacBsasTable mode).
+        std::size_t columnBatchSize = 1;  ///< Columns grouped per DataBatch frame (SlacBsasTable mode).
     };
 
     /**
@@ -143,12 +138,15 @@ protected:
         return pvNames_;
     }
 
+    const std::unordered_map<std::string, std::string>& mergedMetadataFor(const std::string& pvName) const;
+
     std::shared_ptr<util::log::ILogger>              logger_;          ///< Logger instance.
     EpicsReaderConfig                                config_;          ///< Parsed reader configuration.
     std::string                                      name_;            ///< Reader name from configuration.
     std::atomic<bool>                                running_{true};   ///< Flag indicating reader is active.
     std::shared_ptr<BS::light_thread_pool>           reader_pool_;     ///< Thread pool for event processing.
     std::unordered_map<std::string, PVRuntimeConfig> pvRuntimeByName_; ///< Per-PV runtime configuration.
+    std::unordered_map<std::string, std::unordered_map<std::string, std::string>> pvMergedMetadata_;
     PVSet                                            pvNames_;         ///< Set of monitored PV names.
 };
 

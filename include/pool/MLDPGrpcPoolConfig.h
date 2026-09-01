@@ -18,50 +18,28 @@
 
 namespace mldp_pvxs_driver::util::pool {
 
-inline constexpr char ProviderNameKey[] = "provider-name";
+inline constexpr char ProviderNameKey[]       = "provider-name";
 inline constexpr char ProviderDescriptionKey[] = "provider-description";
-inline constexpr char IngestionUrlKey[] = "ingestion-url";
-inline constexpr char QueryUrlKey[] = "query-url";
-inline constexpr char MinConnKey[] = "min-conn";
-inline constexpr char MaxConnKey[] = "max-conn";
-inline constexpr char CredentialsKey[] = "credentials";
-inline constexpr char PemCertChainKey[] = "pem-cert-chain";
-inline constexpr char PemPrivateKeyKey[] = "pem-private-key";
-inline constexpr char PemRootCertsKey[] = "pem-root-certs";
+inline constexpr char IngestionUrlKey[]        = "ingestion-url";
+inline constexpr char QueryUrlKey[]            = "query-url";
+inline constexpr char AnnotationUrlKey[]       = "annotation-url";
+inline constexpr char MinConnKey[]             = "min-conn";
+inline constexpr char MaxConnKey[]             = "max-conn";
+inline constexpr char CredentialsKey[]         = "credentials";
+inline constexpr char PemCertChainKey[]        = "pem-cert-chain";
+inline constexpr char PemPrivateKeyKey[]       = "pem-private-key";
+inline constexpr char PemRootCertsKey[]        = "pem-root-certs";
 
 /**
- * @brief Typed view of the MLDP gRPC pool configuration.
+ * @brief Typed view of the MLDP gRPC pool configuration (ingestion + query + annotation).
  *
- * The driver expects the YAML block describing the pool to contain:
- * @code{.yaml}
- * mldp_pool:
- *   provider_name: pvxs_provider
- *   provider_description: "PVXS-based data provider"
- *   ingestion_url: https://mldp-ingestion.example:443
- *   query_url: https://mldp-query.example:443 # optional, defaults to ingestion_url
- *   min_conn: 1
- *   max_conn: 4
- *   credentials: ssl  # or 'none' for insecure, or a map for custom TLS
- * @endcode
+ * Requires provider-name, ingestion-url, min-conn, max-conn.
+ * query-url is optional (not used by the ingestion writer).
+ * annotation-url and credentials are optional.
  *
- * For custom TLS configuration, credentials can be a map with file paths:
- * @code{.yaml}
- * mldp_pool:
- *   provider_name: pvxs_provider
- *   provider_description: "PVXS-based data provider"
- *   ingestion_url: https://mldp-ingestion.example:443
- *   query_url: https://mldp-query.example:443 # optional
- *   min_conn: 1
- *   max_conn: 4
- *   credentials:
- *     pem_cert_chain: /etc/certs/client.crt   # optional; file contents are loaded
- *     pem_private_key: /etc/certs/client.key  # optional
- *     pem_root_certs: /etc/certs/ca.crt       # optional
- * @endcode
- *
- * This helper validates the schema and exposes strongly typed accessors.
- * File paths provided in the credentials map are read during parsing, and
- * their contents are stored in the SSL options structure.
+ * Subclasses (e.g. MLDPGrpcAnnotationPoolConfig) may call the protected
+ * default constructor and use the protected setters to populate only the
+ * fields they need.
  */
 class MLDPGrpcPoolConfig
 {
@@ -72,51 +50,51 @@ public:
         using std::runtime_error::runtime_error;
     };
 
-    /**
-     * @brief Credential configuration for gRPC connections.
-     *
-     * Credentials can be:
-     * - Insecure: no TLS (for development/testing)
-     * - SSL: with optional custom certificate paths
-     *
-     * When type is SSL and ssl_options contains file paths, the file
-     * contents are loaded during configuration parsing.
-     */
     struct Credentials
     {
-        enum class Type
-        {
-            Insecure, ///< No TLS encryption
-            Ssl       ///< TLS with optional custom certificates
-        };
-
+        enum class Type { Insecure, Ssl };
         Type                        type{Type::Insecure};
-        grpc::SslCredentialsOptions ssl_options{}; ///< Populated from file paths if provided
+        grpc::SslCredentialsOptions ssl_options{};
     };
 
-    MLDPGrpcPoolConfig();
+    /** Default ctor — produces an invalid (valid_==false) config. */
+    MLDPGrpcPoolConfig() = default;
+
+    /** Full constructor — parses all required fields from YAML. */
     explicit MLDPGrpcPoolConfig(const config::Config& root);
 
-    bool               valid() const;
-    const std::string& providerName() const;
+    bool               valid()               const;
+    const std::string& providerName()        const;
     const std::string& providerDescription() const;
-    const std::string& ingestionUrl() const;
-    const std::string& queryUrl() const;
-    int                minConnections() const;
-    int                maxConnections() const;
-    const Credentials& credentials() const;
+    const std::string& ingestionUrl()        const;
+    const std::string& queryUrl()            const;
+    const std::string& annotationUrl()       const;
+    int                minConnections()      const;
+    int                maxConnections()      const;
+    const Credentials& credentials()         const;
+
+    void setMinConnections(int v)        { min_conn_        = v; }
+    void setMaxConnections(int v)        { max_conn_        = v; }
+
+protected:
+    /** Protected setters — used by subclasses that populate only a subset of fields. */
+    void setValid(bool v)                { valid_           = v; }
+    void setQueryUrl(std::string u)      { query_url_       = std::move(u); }
+    void setAnnotationUrl(std::string u) { annotation_url_  = std::move(u); }
+    void setCredentials(Credentials c)   { credentials_     = std::move(c); }
 
 private:
     void               parse(const config::Config& root);
     static std::string readFile(const std::string& path);
 
-    bool        valid_ = false; ///< Tracks whether parsing succeeded.
+    bool        valid_{false};
     std::string provider_name_;
     std::string provider_description_;
     std::string ingestion_url_;
     std::string query_url_;
-    int         min_conn_ = 0;
-    int         max_conn_ = 0;
+    std::string annotation_url_;
+    int         min_conn_{0};
+    int         max_conn_{0};
     Credentials credentials_;
 };
 

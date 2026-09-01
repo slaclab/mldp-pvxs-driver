@@ -13,8 +13,8 @@ RUN dnf update -y && \
     dnf groupinstall -y "Development Tools" && \
     dnf install -y dnf-plugins-core epel-release && \
     dnf config-manager --set-enabled crb && \
-    dnf install -y doxygen cmake git tcl ninja-build protobuf-compiler grpc-plugins grpc-devel gdb openssl-devel cyrus-sasl-devel libcurl-devel libicu-devel jq file sudo clang libevent-devel ca-certificates perl perl-Pod-Html perl-podlators && \
-    (dnf install -y go-toolset lcov valgrind clang-tools-extra lldb lld || echo "Warning: optional packages unavailable on this Rocky target; continuing" >&2) && \
+    dnf install -y doxygen cmake git tcl ninja-build protobuf-compiler grpc-plugins grpc-devel gdb openssl-devel cyrus-sasl-devel libcurl-devel libicu-devel jq file sudo clang clang-tools-extra libevent-devel ca-certificates perl perl-Pod-Html perl-podlators python3 python3-devel python3-pip sqlite-devel && \
+    (dnf install -y go-toolset lcov valgrind lldb lld || echo "Warning: optional packages unavailable on this Rocky target; continuing" >&2) && \
     if [ ! -x /usr/bin/go ]; then \
       for p in /usr/lib/golang/bin/go /opt/rh/go-toolset/root/usr/bin/go /usr/local/go/bin/go; do \
         if [ -x "$p" ]; then ln -s "$p" /usr/bin/go; break; fi; \
@@ -22,6 +22,8 @@ RUN dnf update -y && \
     fi && \
     dnf clean all && \
     rm -rf /var/cache/dnf
+
+RUN clang --version && clang++ --version
 
 # Install NWA (License Header Management)
 RUN GO_BIN="$(command -v go || true)" && \
@@ -128,6 +130,7 @@ RUN arch=$(cat /etc/epics_host_arch) && \
 
 # Set PVXS environment variable
 ENV PVXS_BASE=/opt/local
+ENV Python3_ROOT_DIR=/usr
 
 # Set the working directory
 WORKDIR /workspace

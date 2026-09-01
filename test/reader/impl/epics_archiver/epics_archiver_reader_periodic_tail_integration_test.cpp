@@ -11,9 +11,9 @@
 #include <gtest/gtest.h>
 
 #include "../../../config/test_config_helpers.h"
+#include "../../../mock/EpicsArchiverTestUtils.h"
 #include "../../../mock/MockArchiverPbHttpServer.h"
 #include "../../../mock/MockDataBus.h"
-#include "../../../mock/EpicsArchiverTestUtils.h"
 
 #include <reader/impl/epics_archiver/EpicsArchiverReader.h>
 #include <util/bus/IDataBus.h>
@@ -22,7 +22,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <memory>
-#include <mutex>
 #include <optional>
 #include <string>
 #include <thread>
@@ -33,10 +32,9 @@ namespace {
 using mldp_pvxs_driver::config::makeConfigFromYaml;
 using mldp_pvxs_driver::reader::impl::epics_archiver::EpicsArchiverReader;
 using mldp_pvxs_driver::reader::impl::epics_archiver::MockArchiverPbHttpServer;
-using mldp_pvxs_driver::util::bus::IDataBus;
-using mldp_pvxs_driver::test::mock::waitForMockRequestStartAndCompletion;
-using mldp_pvxs_driver::test::mock::waitForMockRequestStart;
 using mldp_pvxs_driver::test::mock::waitForAtLeastPublishedBatches;
+using mldp_pvxs_driver::test::mock::waitForMockRequestStart;
+using mldp_pvxs_driver::test::mock::waitForMockRequestStartAndCompletion;
 // Backward compatibility alias
 using MockEventBusPush = mldp_pvxs_driver::test::mock::MockDataBus;
 
@@ -201,112 +199,6 @@ TEST(EpicsArchiverReaderPeriodicTailIntegrationTest, HonorsExplicitLookbackShort
     reader.reset();
 }
 
-// Verifies batch-duration-sec controls batch splitting in periodic_tail mode as well.
-TEST(EpicsArchiverReaderPeriodicTailIntegrationTest, UsesBatchDurationSecForPeriodicTailBatchSplitting)
-{
-    MockArchiverPbHttpServer::GenerationConfig gen_cfg;
-    gen_cfg.min_events_per_second = 4;
-    gen_cfg.max_events_per_second = 4;
-    MockArchiverPbHttpServer server(gen_cfg);
-    server.start();
-    ASSERT_GT(server.port(), 0);
-
-    auto bus = std::make_shared<MockEventBusPush>();
-
-    const std::string yaml = std::string(R"(
-        name: archiver-periodic-tail-batch-window
-        hostname: ")") + server.baseUrl() +
-                             R"("
-        mode: "periodic_tail"
-        poll-interval-sec: 2
-        lookback-sec: 2
-        batch-duration-sec: 1
-        pvs:
-          - name: "TEST:PV:DOUBLE"
-    )";
-
-    auto reader_cfg = makeConfigFromYaml(yaml);
-    auto reader = std::make_unique<EpicsArchiverReader>(bus, nullptr, reader_cfg);
-
-    ASSERT_TRUE(waitForMockRequestStartAndCompletion(server, std::chrono::seconds(3)));
-
-    const auto batches = bus->snapshot();
-    // A 2-second fetch window with 1-second batch_duration should split into
-    // multiple published batches based on historical sample timestamps.
-    ASSERT_GT(batches.size(), 1u);
-
-    reader.reset();
-}
-
-// Verifies periodic_tail batches respect batch-duration-sec, allowing the final
-// batch to be partial at iteration boundary.
-TEST(EpicsArchiverReaderPeriodicTailIntegrationTest, PeriodicTailBatchSpansMatchConfiguredWindowExceptFinalPartial)
-{
-    MockArchiverPbHttpServer::GenerationConfig gen_cfg;
-    gen_cfg.min_events_per_second = 4;
-    gen_cfg.max_events_per_second = 4;
-    MockArchiverPbHttpServer server(gen_cfg);
-    server.start();
-    ASSERT_GT(server.port(), 0);
-
-    auto bus = std::make_shared<MockEventBusPush>();
-
-    const std::string yaml = std::string(R"(
-        name: archiver-periodic-tail-batch-window-span-check
-        hostname: ")") + server.baseUrl() +
-                             R"("
-        mode: "periodic_tail"
-        poll-interval-sec: 10
-        lookback-sec: 2
-        batch-duration-sec: 1
-        pvs:
-          - name: "TEST:PV:DOUBLE"
-    )";
-
-    auto reader_cfg = makeConfigFromYaml(yaml);
-    auto reader = std::make_unique<EpicsArchiverReader>(bus, nullptr, reader_cfg);
-
-    // Only the immediate first fetch should run within this wait; poll interval
-    // is long enough to avoid a second iteration.
-    ASSERT_TRUE(waitForMockRequestStartAndCompletion(server, std::chrono::seconds(3)));
-
-    const auto batches = bus->snapshot();
-    ASSERT_GT(batches.size(), 1u);
-
-    size_t total_events = 0u;
-    for (size_t i = 0; i < batches.size(); ++i)
-    {
-        ASSERT_FALSE(batches[i].frames.empty());
-        total_events += batches[i].frames.size();
-        const auto& first_frame = batches[i].frames.front();
-        const auto& last_frame = batches[i].frames.back();
-        ASSERT_TRUE(first_frame.has_datatimestamps());
-        ASSERT_TRUE(last_frame.has_datatimestamps());
-        const auto& first_ts = first_frame.datatimestamps().timestamplist().timestamps(0);
-        const auto& last_ts = last_frame.datatimestamps().timestamplist().timestamps(0);
-
-        const uint64_t first_ns = first_ts.epochseconds() * 1'000'000'000ULL + first_ts.nanoseconds();
-        const uint64_t last_ns = last_ts.epochseconds() * 1'000'000'000ULL + last_ts.nanoseconds();
-        const uint64_t span_ns = last_ns - first_ns;
-
-        if (i + 1 < batches.size())
-        {
-            // Non-final batches must respect the configured 1-second window.
-            EXPECT_LE(span_ns, 1'000'000'000ULL);
-        }
-        else
-        {
-            // Final batch may be partial due to iteration/chunk boundary flush.
-            EXPECT_LE(span_ns, 1'000'000'000ULL);
-        }
-    }
-
-    // 2-second lookback with 4 events/sec deterministic mock -> 8 samples total.
-    EXPECT_EQ(total_events, 8u);
-
-    reader.reset();
-}
-
 // Verifies a 10s periodic tail poller covers 30s of data with three contiguous 10s fetch windows.
 TEST(EpicsArchiverReaderPeriodicTailIntegrationTest, TenSecondPollingCoversThirtySecondsWithContiguousWindows)
 {
@@ -325,7 +217,6 @@ TEST(EpicsArchiverReaderPeriodicTailIntegrationTest, TenSecondPollingCoversThirt
                              R"("
         mode: "periodic_tail"
         poll-interval-sec: 10
-        batch-duration-sec: 10
         pvs:
           - name: "TEST:PV:DOUBLE"
     )";
@@ -381,14 +272,9 @@ TEST(EpicsArchiverReaderPeriodicTailIntegrationTest, TenSecondPollingCoversThirt
     EXPECT_GE(total_covered_ms, 29999);
     EXPECT_LE(total_covered_ms, 31500);
 
-    // batch-duration-sec is set to 10s to align with the nominal fetch window,
-    // but a few milliseconds of jitter can push a request window slightly above
-    // 10s and trigger an extra split (split rule is strict `elapsed > threshold`).
-    // Assert we saw at least one published batch per fetch and no pathological explosion.
     ASSERT_TRUE(waitForAtLeastPublishedBatches(*bus, 3u, std::chrono::seconds(2)));
     const auto batches = bus->snapshot();
     EXPECT_GE(batches.size(), 3u);
-    EXPECT_LE(batches.size(), 6u);
 
     reader.reset();
 }

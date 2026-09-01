@@ -10,17 +10,17 @@
 
 #pragma once
 
-#include <string>
 #include <sstream>
+#include <string>
 
 // Check for C++20 <format> support
 #if __cplusplus >= 202002L && __has_include(<format>)
     #include <format>
     #define HAVE_STD_FORMAT 1
-    // Re-export format utilities for convenience
-    using std::format_error;
-    using std::vformat;
-    using std::make_format_args;
+// Re-export format utilities for convenience
+using std::format_error;
+using std::make_format_args;
+using std::vformat;
 #else
     #define HAVE_STD_FORMAT 0
 #endif
@@ -28,61 +28,65 @@
 namespace mldp_pvxs_driver::util {
 
 #if HAVE_STD_FORMAT
-    /**
-     * Use std::format when C++20 is available.
-     * Supports {} placeholders for format arguments.
-     * Example: auto msg = format_string("PV {} on reader {}", pvName, readerName);
-     */
-    template <typename... Args>
-    inline std::string format_string(std::format_string<Args...> fmt, Args&&... args)
-    {
-        return std::format(fmt, std::forward<Args>(args)...);
-    }
+/**
+ * Use std::format when C++20 is available.
+ * Supports {} placeholders for format arguments.
+ * Example: auto msg = format_string("PV {} on reader {}", pvName, readerName);
+ */
+template <typename... Args>
+inline std::string format_string(std::format_string<Args...> fmt, Args&&... args)
+{
+    return std::format(fmt, std::forward<Args>(args)...);
+}
 #else
-    /**
-     * Fallback for older C++ standards.
-     * Supports {} placeholders that are replaced with variadic arguments.
-     * Example: auto msg = format_string("PV {} on reader {}", pvName, readerName);
-     */
-    namespace detail {
-        template <typename T>
-        inline void append_to_stream(std::stringstream& ss, const T& value)
-        {
-            ss << value;
-        }
-
-        // Helper to replace {} placeholders with arguments
-        template <typename FirstArg, typename... RestArgs>
-        inline std::string replace_placeholders(const std::string& fmt, const FirstArg& first, const RestArgs&... rest)
-        {
-            std::stringstream ss;
-            ss << first;
-            std::string arg_str = ss.str();
-
-            size_t pos = fmt.find("{}");
-            if (pos == std::string::npos)
-            {
-                return fmt;
-            }
-
-            std::string result = fmt.substr(0, pos) + arg_str + fmt.substr(pos + 2);
-
-            if constexpr (sizeof...(rest) > 0) {
-                return replace_placeholders(result, rest...);
-            }
-            return result;
-        }
-    }
-
-    template <typename... Args>
-    inline std::string format_string(const std::string& fmt, Args&&... args)
+/**
+ * Fallback for older C++ standards.
+ * Supports {} placeholders that are replaced with variadic arguments.
+ * Example: auto msg = format_string("PV {} on reader {}", pvName, readerName);
+ */
+namespace detail {
+    template <typename T>
+    inline void append_to_stream(std::stringstream& ss, const T& value)
     {
-        if constexpr (sizeof...(args) == 0) {
-            return fmt;
-        } else {
-            return detail::replace_placeholders(fmt, std::forward<Args>(args)...);
-        }
+        ss << value;
     }
+
+    // Helper to replace {} placeholders with arguments
+    template <typename FirstArg, typename... RestArgs>
+    inline std::string replace_placeholders(const std::string& fmt, const FirstArg& first, const RestArgs&... rest)
+    {
+        std::stringstream ss;
+        ss << first;
+        std::string arg_str = ss.str();
+
+        size_t pos = fmt.find("{}");
+        if (pos == std::string::npos)
+        {
+            return fmt;
+        }
+
+        std::string result = fmt.substr(0, pos) + arg_str + fmt.substr(pos + 2);
+
+        if constexpr (sizeof...(rest) > 0)
+        {
+            return replace_placeholders(result, rest...);
+        }
+        return result;
+    }
+} // namespace detail
+
+template <typename... Args>
+inline std::string format_string(const std::string& fmt, Args&&... args)
+{
+    if constexpr (sizeof...(args) == 0)
+    {
+        return fmt;
+    }
+    else
+    {
+        return detail::replace_placeholders(fmt, std::forward<Args>(args)...);
+    }
+}
 #endif
 
 } // namespace mldp_pvxs_driver::util
