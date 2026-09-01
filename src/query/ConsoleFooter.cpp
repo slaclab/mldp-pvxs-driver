@@ -76,6 +76,37 @@ std::string FooterRenderer::render(const ConsoleStatus& status, const int termin
     return line;
 }
 
+InlineStatus::InlineStatus(std::ostream& out, std::shared_ptr<std::mutex> mtx)
+    : out_(out)
+    , mtx_(std::move(mtx))
+{
+}
+
+void InlineStatus::show(const ConsoleStatus& status, const int terminal_width)
+{
+    static std::mutex fallback;
+    std::unique_lock  lock(mtx_ ? *mtx_ : fallback);
+    auto text = renderer_.render(status, terminal_width > 0 ? terminal_width : 80);
+    // Strip trailing spaces added by FooterRenderer for the old fixed-bar style.
+    const auto last = text.find_last_not_of(' ');
+    if (last != std::string::npos)
+        text.resize(last + 1);
+    else
+        text.clear();
+    out_ << "\r\x1b[2K" << text << std::flush;
+    active_ = true;
+}
+
+void InlineStatus::clear()
+{
+    if (!active_)
+        return;
+    static std::mutex fallback;
+    std::unique_lock  lock(mtx_ ? *mtx_ : fallback);
+    out_ << "\r\x1b[2K" << std::flush;
+    active_ = false;
+}
+
 TerminalLayout::TerminalLayout(std::ostream& output, std::shared_ptr<std::mutex> output_mutex)
     : output_(output)
     , output_mutex_(std::move(output_mutex))
