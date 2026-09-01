@@ -21,6 +21,7 @@ static constexpr auto kLookaheadDaysKey      = "lookahead-days";
 static constexpr auto kLookbackDaysKey       = "lookback-days";
 static constexpr auto kStartDateKey          = "start-date";
 static constexpr auto kEndDateKey            = "end-date";
+static constexpr auto kCategoryKey           = "category";
 static constexpr auto kRescanIntervalSecKey  = "rescan-interval-sec";
 static constexpr auto kConnectTimeoutSecKey  = "connect-timeout-sec";
 static constexpr auto kTotalTimeoutSecKey    = "total-timeout-sec";
@@ -70,6 +71,14 @@ void SlacCalendarReaderConfig::parse(const config::Config& cfg)
         if (!std::regex_match(sd, kDateRe))
             throw Error("slac-calendar reader: 'start-date' must be YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS, got: " + sd);
         start_date_ = sd;
+    }
+
+    if (cfg.hasChild(kCategoryKey))
+    {
+        const std::string cat = cfg.get(kCategoryKey);
+        if (cat.empty())
+            throw Error("slac-calendar reader: 'category' must not be empty if specified");
+        category_ = cat;
     }
 
     if (cfg.hasChild(kEndDateKey))

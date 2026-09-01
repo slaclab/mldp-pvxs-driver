@@ -76,4 +76,30 @@ private:
     bool                        initialized_{false}; ///< True after a successful initialize() call.
 };
 
+/** @brief Renders a live status line inline, immediately below the submitted command.
+ *
+ * Replaces the previous TerminalLayout scroll-region approach with simple
+ * in-place overwrite: show() prints to the current line, clear() erases it so
+ * results can be printed starting on a fresh line. */
+class InlineStatus
+{
+public:
+    /** @param[in,out] out  Output stream (must be a real TTY for ANSI codes to work).
+     * @param[in]     mtx  Optional mutex protecting concurrent writes to out. */
+    explicit InlineStatus(std::ostream& out, std::shared_ptr<std::mutex> mtx = nullptr);
+
+    /** @brief Overwrites the current line with a formatted status string. */
+    void show(const ConsoleStatus& status, int terminal_width);
+
+    /** @brief Erases the status line, leaving cursor at column 0.
+     *  Call before printing results so they appear on the next fresh line. */
+    void clear();
+
+private:
+    std::ostream&               out_;
+    std::shared_ptr<std::mutex> mtx_;
+    FooterRenderer              renderer_;
+    bool                        active_{false};
+};
+
 } // namespace mldp_pvxs_driver::cli

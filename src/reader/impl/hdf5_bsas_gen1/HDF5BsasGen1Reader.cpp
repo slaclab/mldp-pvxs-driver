@@ -208,6 +208,27 @@ std::unordered_map<std::string, std::string> readAllStringAttrs(H5::H5Object& ob
     return result;
 }
 
+// Read numRows starting at startRow from ds, handling both 1D (N,) and 2D (N,1) layouts.
+void selectRowRange(H5::DataSet& ds, hsize_t startRow, hsize_t numRows,
+                    H5::DataSpace& fspace, H5::DataSpace& mspace)
+{
+    fspace = ds.getSpace();
+    hsize_t mdims[1] = {numRows};
+    mspace = H5::DataSpace(1, mdims);
+    if (fspace.getSimpleExtentNdims() == 1)
+    {
+        hsize_t offset[1] = {startRow};
+        hsize_t count[1]  = {numRows};
+        fspace.selectHyperslab(H5S_SELECT_SET, count, offset);
+    }
+    else
+    {
+        hsize_t offset[2] = {startRow, 0};
+        hsize_t count[2]  = {numRows, 1};
+        fspace.selectHyperslab(H5S_SELECT_SET, count, offset);
+    }
+}
+
 } // anonymous namespace
 
 HDF5BsasGen1Reader::HDF5BsasGen1Reader(
@@ -272,7 +293,9 @@ void HDF5BsasGen1Reader::readFile()
         for (const auto& filePath : files)
         {
             current_file_name = filePath.filename().string();
-            logger_->log(util::log::Level::Trace,
+            try
+            {
+                logger_->log(util::log::Level::Info,
                          "readFile: opening " + filePath.string());
             H5::H5File file(filePath.string(), H5F_ACC_RDONLY);
 
@@ -280,6 +303,7 @@ void HDF5BsasGen1Reader::readFile()
             // Enumerate root-level datasets. Identify timestamp vectors
             // (secondsPastEpoch, nanoseconds) and classify data columns
             // by HDF5 type (float64 or int16). Other types are skipped.
+            // Columns with zero-extent first dimension are skipped (warn logged).
             std::vector<ColumnInfo> columns;
             std::size_t             totalRows = 0;
             bool                    hasSeconds = false;
@@ -322,6 +346,16 @@ void HDF5BsasGen1Reader::readFile()
                     col.type = ColumnInfo::Type::Int16;
                 else
                     continue;
+
+                H5::DataSpace sp = ds.getSpace();
+                hsize_t       cdims[2]{0, 0};
+                sp.getSimpleExtentDims(cdims);
+                if (cdims[0] == 0)
+                {
+                    logger_->log(util::log::Level::Warn,
+                                 "readFile: skipping zero-extent column '" + dsName + "' in " + filePath.string());
+                    continue;
+                }
 
                 columns.push_back(std::move(col));
             }
@@ -396,21 +430,13 @@ void HDF5BsasGen1Reader::readFile()
                 std::vector<uint32_t> secData(numRows);
                 std::vector<uint32_t> nanoData(numRows);
                 {
-                    hsize_t       offset[2] = {startRow, 0};
-                    hsize_t       count[2] = {numRows, 1};
-                    H5::DataSpace fspace = secDs.getSpace();
-                    fspace.selectHyperslab(H5S_SELECT_SET, count, offset);
-                    hsize_t       mdims[1] = {numRows};
-                    H5::DataSpace mspace(1, mdims);
+                    H5::DataSpace fspace, mspace;
+                    selectRowRange(secDs, startRow, numRows, fspace, mspace);
                     secDs.read(secData.data(), H5::PredType::NATIVE_UINT32, mspace, fspace);
                 }
                 {
-                    hsize_t       offset[2] = {startRow, 0};
-                    hsize_t       count[2] = {numRows, 1};
-                    H5::DataSpace fspace = nanoDs.getSpace();
-                    fspace.selectHyperslab(H5S_SELECT_SET, count, offset);
-                    hsize_t       mdims[1] = {numRows};
-                    H5::DataSpace mspace(1, mdims);
+                    H5::DataSpace fspace, mspace;
+                    selectRowRange(nanoDs, startRow, numRows, fspace, mspace);
                     nanoDs.read(nanoData.data(), H5::PredType::NATIVE_UINT32, mspace, fspace);
                 }
 
@@ -425,12 +451,8 @@ void HDF5BsasGen1Reader::readFile()
                 std::vector<double> floatData(numRows * numFloatCols);
                 for (std::size_t c = 0; c < numFloatCols; ++c)
                 {
-                    hsize_t       offset[2] = {startRow, 0};
-                    hsize_t       count[2] = {numRows, 1};
-                    H5::DataSpace fspace = colDatasets[c].getSpace();
-                    fspace.selectHyperslab(H5S_SELECT_SET, count, offset);
-                    hsize_t       mdims[1] = {numRows};
-                    H5::DataSpace mspace(1, mdims);
+                    H5::DataSpace fspace, mspace;
+                    selectRowRange(colDatasets[c], startRow, numRows, fspace, mspace);
                     colDatasets[c].read(floatData.data() + c * numRows,
                                         H5::PredType::NATIVE_DOUBLE, mspace, fspace);
                 }
@@ -439,12 +461,8 @@ void HDF5BsasGen1Reader::readFile()
                 std::vector<int16_t> intData(numRows * numIntCols);
                 for (std::size_t c = 0; c < numIntCols; ++c)
                 {
-                    hsize_t       offset[2] = {startRow, 0};
-                    hsize_t       count[2] = {numRows, 1};
-                    H5::DataSpace fspace = colDatasets[numFloatCols + c].getSpace();
-                    fspace.selectHyperslab(H5S_SELECT_SET, count, offset);
-                    hsize_t       mdims[1] = {numRows};
-                    H5::DataSpace mspace(1, mdims);
+                    H5::DataSpace fspace, mspace;
+                    selectRowRange(colDatasets[numFloatCols + c], startRow, numRows, fspace, mspace);
                     colDatasets[numFloatCols + c].read(intData.data() + c * numRows,
                                                        H5::PredType::NATIVE_INT16, mspace, fspace);
                 }
@@ -525,6 +543,27 @@ void HDF5BsasGen1Reader::readFile()
             logger_->log(util::log::Level::Info,
                          "readFile: completed " + std::to_string(chunkIdx) +
                              " chunks for " + filePath.string());
+            } // end per-file try
+            catch (const H5::Exception& e)
+            {
+                const prometheus::Labels err_tag{{"source", current_file_name}};
+                metric_call(metrics_, [&](auto& m)
+                            {
+                                m.incrementReaderErrors(1.0, err_tag);
+                            });
+                logger_->log(util::log::Level::Error,
+                             "readFile: HDF5 error in " + filePath.string() + ": " + e.getCDetailMsg());
+            }
+            catch (const std::exception& e)
+            {
+                const prometheus::Labels err_tag{{"source", current_file_name}};
+                metric_call(metrics_, [&](auto& m)
+                            {
+                                m.incrementReaderErrors(1.0, err_tag);
+                            });
+                logger_->log(util::log::Level::Error,
+                             "readFile: error in " + filePath.string() + ": " + e.what());
+            }
         }
     }
     catch (const H5::Exception& e)

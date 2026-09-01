@@ -178,35 +178,30 @@ static std::string jsonStr(const nlohmann::json& ev, const std::string& key, con
 
 void SlacCalendarReader::pushEvent(const nlohmann::json& ev, const std::string& experiment)
 {
-    const std::string desc      = jsonStr(ev, "description");
-    const std::string start_str = jsonStr(ev, "start");
-    const std::string url       = jsonStr(ev, "url");
-
-    std::string missing_fields;
-    for (const auto& field : {"program_name", "calendar", "url", "start", "end"})
-    {
-        const std::string k(field);
-        if (!ev.contains(k) || ev[k].is_null() || !ev[k].is_string())
-        {
-            if (!missing_fields.empty()) missing_fields += ", ";
-            missing_fields += field;
-        }
-    }
-    if (!missing_fields.empty())
-        warnf(*logger_,
-              "SlacCalendarReader '{}' experiment '{}': null/missing fields [{}]"
-              " in event [description='{}', start='{}', url='{}'] — using empty defaults",
-              config_.name(), experiment, missing_fields, desc, start_str, url);
-
     const std::string program_name = jsonStr(ev, "program_name");
-    const std::string calendar     = jsonStr(ev, "calendar");
-    const std::string end_str      = jsonStr(ev, "end");
+    if (program_name.empty())
+    {
+        warnf(*logger_,
+              "SlacCalendarReader '{}' experiment '{}': skipping event with empty program_name"
+              " (start='{}', url='{}')",
+              config_.name(), experiment, jsonStr(ev, "start"), jsonStr(ev, "url"));
+        return;
+    }
+
+    const std::string calendar  = jsonStr(ev, "calendar");
+    const std::string url       = jsonStr(ev, "url");
+    const std::string start_str = jsonStr(ev, "start");
+    const std::string end_str   = jsonStr(ev, "end");
+    const std::string desc      = jsonStr(ev, "description");
 
     // --- ConfigurationPayload ---
     ConfigurationPayload cfg_payload;
     cfg_payload.root_source_name    = config_.name();
     cfg_payload.configuration_name = program_name;
-    cfg_payload.category           = calendar;
+    cfg_payload.category = config_.category().has_value() ? *config_.category() : calendar;
+
+    if (!calendar.empty())
+        cfg_payload.attributes["calendar"] = calendar;
 
     if (!desc.empty())
         cfg_payload.description = desc;
@@ -274,7 +269,8 @@ void SlacCalendarReader::pushEvent(const nlohmann::json& ev, const std::string& 
     }
 
     ConfigurationActivationPayload act_payload;
-    act_payload.client_activation_id = url;
+    if (!url.empty())
+        act_payload.client_activation_id = url;
     act_payload.configuration_name   = program_name;
     act_payload.start_time           = parseBusTimestamp(start_str);
     act_payload.end_time             = parseBusTimestamp(end_str);

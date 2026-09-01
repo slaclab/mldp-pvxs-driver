@@ -34,6 +34,7 @@
 #include <arrow/filesystem/localfs.h>
 #include <arrow/memory_pool.h>
 #include <replxx.hxx>
+#include <mldp_pvxs_driver_version.h>
 
 #include <algorithm>
 #include <cctype>
@@ -574,9 +575,19 @@ int runRepl(QueryCliOptions                           options,
     QueryPager                    pager;
     QueryContinuationRegistry     continuations;
     auto                          output_mutex = std::make_shared<std::mutex>();
-    TerminalLayout                terminal(output, output_mutex);
     const auto                     real_terminal = &input == &std::cin && &output == &std::cout &&
                                           ::isatty(STDIN_FILENO) != 0 && ::isatty(STDOUT_FILENO) != 0;
+    if (real_terminal)
+    {
+        output << "\x1b[2J\x1b[H"
+               << "mldp query REPL  v"
+               << MLDP_PVXS_DRIVER_VERSION_MAJOR << "."
+               << MLDP_PVXS_DRIVER_VERSION_MINOR << "."
+               << MLDP_PVXS_DRIVER_VERSION_PATCH
+               << "  \xe2\x80\x94  type .help for help, .quit to exit\n\n";
+        output.flush();
+    }
+    InlineStatus                  inline_status(output, output_mutex);
     while (true)
     {
         bool       interrupted = false;
@@ -585,7 +596,6 @@ int runRepl(QueryCliOptions                           options,
         {
             if (editor.consumeQuitRequested())
             {
-                terminal.restore();
                 return 0;
             }
             if (interrupted)
@@ -598,7 +608,6 @@ int runRepl(QueryCliOptions                           options,
             {
                 error << "Query error: incomplete SQL statement discarded at end of input\n";
             }
-            terminal.restore();
             return 0;
         }
 
@@ -621,7 +630,6 @@ int runRepl(QueryCliOptions                           options,
         if (buffer.empty() && (command == ".quit" || command == ".exit"))
         {
             editor.addHistory(command);
-            terminal.restore();
             return 0;
         }
         if (buffer.empty() && command == ".help")
@@ -797,15 +805,20 @@ int runRepl(QueryCliOptions                           options,
             mldp_pvxs_driver::query::QueryStats completed_stats;
             ScopedQueryInterruptHandler         interrupt_handler;
             const auto                           page_result = query_options.pager && pager.canPage(input, output, query_options.format);
-            if (real_terminal)
-            {
-                editor.clearScreen();
-            }
-            const auto footer_active = real_terminal && !page_result && terminal.initialize();
             std::ostringstream                   paged_output;
             auto&                                 result_output = page_result ? static_cast<std::ostream&>(paged_output) : output;
             ConsoleStatus                         status{.query_running = true, .progress = progress->snapshot()};
-            if (footer_active) terminal.redraw(status);
+            const auto tw = [&]() -> int {
+                if (!real_terminal) return 0;
+                winsize sz{};
+                if (::ioctl(STDOUT_FILENO, TIOCGWINSZ, &sz) != 0 || sz.ws_col == 0) return 80;
+                return static_cast<int>(sz.ws_col);
+            }();
+            if (real_terminal && !page_result)
+            {
+                output << "\n";
+                inline_status.show(status, tw);
+            }
             auto                                query = std::async(std::launch::async,
                                                                    [&]
                                                                    {
@@ -814,7 +827,7 @@ int runRepl(QueryCliOptions                           options,
                                                           result_output,
                                                           progress,
                                                           std::nullopt,
-                                                          !footer_active,
+                                                          !real_terminal || page_result,
                                                           &completed_stats,
                                                           cancellation,
                                                           output_mutex,
@@ -831,13 +844,15 @@ int runRepl(QueryCliOptions                           options,
                     }
                     const auto snapshot = progress->snapshot();
                     status.progress = snapshot;
-                    if (footer_active) terminal.redraw(status);
+                    if (real_terminal && !page_result)
+                        inline_status.show(status, tw);
                     listener.progressChanged(snapshot);
                 }
                 (void)query.get();
-                if (footer_active)
+                if (real_terminal && !page_result)
                 {
-                    terminal.restore();
+                    inline_status.clear();
+                    output << "\n";
                     if (!query_options.no_stats)
                     {
                         printQueryStats(completed_stats, output);
@@ -857,14 +872,14 @@ int runRepl(QueryCliOptions                           options,
             }
             catch (const mldp_pvxs_driver::query::QueryCancelled&)
             {
-                if (footer_active) terminal.restore();
+                inline_status.clear();
                 listener.queryCancelled();
                 listener.queryIdle();
                 error << "Query cancelled\n";
             }
             catch (const std::exception& ex)
             {
-                if (footer_active) terminal.restore();
+                inline_status.clear();
                 printQueryError(ex, error);
                 listener.queryFailed(ex.what());
                 listener.queryIdle();
