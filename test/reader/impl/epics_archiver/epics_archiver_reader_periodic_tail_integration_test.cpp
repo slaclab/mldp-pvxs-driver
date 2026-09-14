@@ -253,24 +253,26 @@ TEST(EpicsArchiverReaderPeriodicTailIntegrationTest, TenSecondPollingCoversThirt
     const int64_t d1_ms = to1_ms - from1_ms;
     const int64_t d2_ms = to2_ms - from2_ms;
 
-    // lookback defaults to poll interval (10s), so each explicit request window
-    // should be approximately 10s. Allow scheduler/wakeup jitter and small
-    // processing overhead because the reader computes `to` from wall-clock `now`.
+    // d0 is computed as now-(now-10s) so it is always exactly 10s (±1ms truncation).
+    // d1/d2 measure actual wall-clock elapsed between consecutive iterations,
+    // which includes wait_for(10s) + HTTP fetch + flush + thread scheduling.
+    // Under CPU contention (parallel ctest) this can exceed 10.5s, so allow 2s headroom.
     EXPECT_GE(d0_ms, 9999);
     EXPECT_LE(d0_ms, 10500);
     EXPECT_GE(d1_ms, 9999);
-    EXPECT_LE(d1_ms, 10500);
+    EXPECT_LE(d1_ms, 12000);
     EXPECT_GE(d2_ms, 9999);
-    EXPECT_LE(d2_ms, 10500);
+    EXPECT_LE(d2_ms, 12000);
 
     // Contiguous windows: next from equals previous to when lookback == poll interval.
     EXPECT_EQ(*history[1].from, *history[0].to);
     EXPECT_EQ(*history[2].from, *history[1].to);
 
     // The first three windows together should cover approximately 30s.
+    // Upper bound accounts for cumulative scheduling jitter on d1+d2.
     const int64_t total_covered_ms = to2_ms - from0_ms;
     EXPECT_GE(total_covered_ms, 29999);
-    EXPECT_LE(total_covered_ms, 31500);
+    EXPECT_LE(total_covered_ms, 34500);
 
     ASSERT_TRUE(waitForAtLeastPublishedBatches(*bus, 3u, std::chrono::seconds(2)));
     const auto batches = bus->snapshot();

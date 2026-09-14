@@ -26,6 +26,7 @@
 #include <sstream>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #include "../../config/test_config_helpers.h"
@@ -52,6 +53,30 @@ public:
     std::atomic<int>                                                    save_pv_metadata_count{0};
     std::vector<dp::service::annotation::SavePvMetadataRequest>         captured_requests;
     std::mutex                                                          captured_mutex;
+
+    std::mutex                                                          seed_mutex;
+    std::unordered_map<std::string, dp::service::common::PvMetadata>   seeded_metadata;
+
+    void seedPvMetadata(const std::string& pvName, const dp::service::common::PvMetadata& meta)
+    {
+        std::lock_guard<std::mutex> lock(seed_mutex);
+        seeded_metadata[pvName] = meta;
+    }
+
+    grpc::Status getPvMetadata(grpc::ServerContext*,
+                               const dp::service::annotation::GetPvMetadataRequest*  request,
+                               dp::service::annotation::GetPvMetadataResponse*       response) override
+    {
+        std::lock_guard<std::mutex> lock(seed_mutex);
+        auto it = seeded_metadata.find(request->pvnameoralias());
+        if (it == seeded_metadata.end())
+        {
+            response->mutable_exceptionalresult()->set_message("not found");
+            return grpc::Status::OK;
+        }
+        *response->mutable_getpvmetadataresult()->mutable_pvmetadata() = it->second;
+        return grpc::Status::OK;
+    }
 
     grpc::Status savePvMetadata(grpc::ServerContext*,
                                 const dp::service::annotation::SavePvMetadataRequest* request,
@@ -296,6 +321,202 @@ TEST(MLDPPVMetadataWriterTest, StopIsIdempotentAfterLifecycle)
     ASSERT_NO_THROW(writer->start());
     ASSERT_NO_THROW(writer->stop());
     ASSERT_NO_THROW(writer->stop());
+}
+
+// ---------------------------------------------------------------------------
+// 7. Merge: existing PV has tags/attrs; incoming has only new attrs →
+//    result preserves existing tags and merges attributes.
+// ---------------------------------------------------------------------------
+
+TEST(MLDPPVMetadataWriterTest, MergesWithExistingPvMetadata)
+{
+    TestAnnotationService service;
+
+    // Seed existing PV metadata on the fake server.
+    dp::service::common::PvMetadata existing;
+    existing.set_pvname("MY:PV");
+    existing.add_tags("existing-tag");
+    existing.set_description("original desc");
+    existing.set_modifiedby("original-user");
+    auto* attr1 = existing.add_attributes();
+    attr1->set_name("keep_me");
+    attr1->set_value("old_val");
+    auto* attr2 = existing.add_attributes();
+    attr2->set_name("overwrite_me");
+    attr2->set_value("old_val");
+    service.seedPvMetadata("MY:PV", existing);
+
+    grpc::ServerBuilder builder;
+    int                 port = 0;
+    builder.AddListeningPort("127.0.0.1:0", grpc::InsecureServerCredentials(), &port);
+    builder.RegisterService(&service);
+    auto server = builder.BuildAndStart();
+    ASSERT_TRUE(server);
+    ASSERT_GT(port, 0);
+
+    const auto cfg = makeConfigFromYaml(makeWriterYaml(
+        "127.0.0.1:" + std::to_string(port),
+        "127.0.0.1:" + std::to_string(port + 1),
+        "127.0.0.1:" + std::to_string(port + 2)));
+    auto writer = WriterFactory::create("mldp-pv-metadata", cfg, nullptr);
+    ASSERT_NE(writer, nullptr);
+    writer->start();
+
+    // Incoming entry: no tags, no aliases, new attr + overwrite one, new description.
+    SourceMetadataEntry entry;
+    entry.attributes = {{"overwrite_me", "new_val"}, {"new_key", "new_val"}};
+    entry.description = std::string("updated desc");
+    // tags intentionally absent → should preserve "existing-tag"
+    // modified_by intentionally absent → should preserve "original-user"
+
+    SourceMetadataPayload meta_payload;
+    meta_payload.root_source_name = "MY:PV";
+    meta_payload.sources["MY:PV"] = std::move(entry);
+
+    IDataBus::EventBatch batch;
+    batch.reader_name = "test_reader";
+    batch.payload     = std::move(meta_payload);
+
+    ASSERT_TRUE(writer->push(std::move(batch)));
+    ASSERT_TRUE(waitForCount(service.save_pv_metadata_count, 1, std::chrono::milliseconds(2000)));
+
+    writer->stop();
+    server->Shutdown();
+
+    std::lock_guard<std::mutex> lock(service.captured_mutex);
+    ASSERT_EQ(service.captured_requests.size(), 1u);
+    const auto& req = service.captured_requests[0];
+
+    // Tags preserved from existing.
+    ASSERT_EQ(req.tags_size(), 1);
+    EXPECT_EQ(req.tags(0), "existing-tag");
+
+    // Description overwritten by incoming.
+    EXPECT_EQ(req.description(), "updated desc");
+
+    // modified_by preserved from existing (incoming was absent).
+    EXPECT_EQ(req.modifiedby(), "original-user");
+
+    // Attributes merged: keep_me preserved, overwrite_me updated, new_key added.
+    std::unordered_map<std::string, std::string> attrs;
+    for (const auto& a : req.attributes())
+        attrs[a.name()] = a.value();
+
+    EXPECT_EQ(attrs.size(), 3u);
+    EXPECT_EQ(attrs["keep_me"], "old_val");
+    EXPECT_EQ(attrs["overwrite_me"], "new_val");
+    EXPECT_EQ(attrs["new_key"], "new_val");
+}
+
+// ---------------------------------------------------------------------------
+// 8. No existing record → standard create behavior (no merge side-effects).
+// ---------------------------------------------------------------------------
+
+TEST(MLDPPVMetadataWriterTest, NewPvWithoutExistingRecordUsesEntryAsIs)
+{
+    TestAnnotationService service;
+    // No seeded metadata — getPvMetadata will return "not found".
+
+    grpc::ServerBuilder builder;
+    int                 port = 0;
+    builder.AddListeningPort("127.0.0.1:0", grpc::InsecureServerCredentials(), &port);
+    builder.RegisterService(&service);
+    auto server = builder.BuildAndStart();
+    ASSERT_TRUE(server);
+    ASSERT_GT(port, 0);
+
+    const auto cfg = makeConfigFromYaml(makeWriterYaml(
+        "127.0.0.1:" + std::to_string(port),
+        "127.0.0.1:" + std::to_string(port + 1),
+        "127.0.0.1:" + std::to_string(port + 2)));
+    auto writer = WriterFactory::create("mldp-pv-metadata", cfg, nullptr);
+    ASSERT_NE(writer, nullptr);
+    writer->start();
+
+    SourceMetadataEntry entry;
+    entry.tags        = std::vector<std::string>{"new-tag"};
+    entry.description = std::string("brand new");
+    entry.attributes  = {{"a", "1"}};
+
+    SourceMetadataPayload meta_payload;
+    meta_payload.root_source_name   = "NEW:PV";
+    meta_payload.sources["NEW:PV"]  = std::move(entry);
+
+    IDataBus::EventBatch batch;
+    batch.reader_name = "test_reader";
+    batch.payload     = std::move(meta_payload);
+
+    ASSERT_TRUE(writer->push(std::move(batch)));
+    ASSERT_TRUE(waitForCount(service.save_pv_metadata_count, 1, std::chrono::milliseconds(2000)));
+
+    writer->stop();
+    server->Shutdown();
+
+    std::lock_guard<std::mutex> lock(service.captured_mutex);
+    ASSERT_EQ(service.captured_requests.size(), 1u);
+    const auto& req = service.captured_requests[0];
+
+    EXPECT_EQ(req.pvname(), "NEW:PV");
+    ASSERT_EQ(req.tags_size(), 1);
+    EXPECT_EQ(req.tags(0), "new-tag");
+    EXPECT_EQ(req.description(), "brand new");
+    ASSERT_EQ(req.attributes_size(), 1);
+    EXPECT_EQ(req.attributes(0).name(), "a");
+    EXPECT_EQ(req.attributes(0).value(), "1");
+}
+
+// ---------------------------------------------------------------------------
+// 9. Incoming tags override existing tags entirely when present.
+// ---------------------------------------------------------------------------
+
+TEST(MLDPPVMetadataWriterTest, IncomingTagsReplaceExistingTags)
+{
+    TestAnnotationService service;
+
+    dp::service::common::PvMetadata existing;
+    existing.set_pvname("MY:PV");
+    existing.add_tags("old-tag-1");
+    existing.add_tags("old-tag-2");
+    service.seedPvMetadata("MY:PV", existing);
+
+    grpc::ServerBuilder builder;
+    int                 port = 0;
+    builder.AddListeningPort("127.0.0.1:0", grpc::InsecureServerCredentials(), &port);
+    builder.RegisterService(&service);
+    auto server = builder.BuildAndStart();
+    ASSERT_TRUE(server);
+
+    const auto cfg = makeConfigFromYaml(makeWriterYaml(
+        "127.0.0.1:" + std::to_string(port),
+        "127.0.0.1:" + std::to_string(port + 1),
+        "127.0.0.1:" + std::to_string(port + 2)));
+    auto writer = WriterFactory::create("mldp-pv-metadata", cfg, nullptr);
+    ASSERT_NE(writer, nullptr);
+    writer->start();
+
+    SourceMetadataEntry entry;
+    entry.tags = std::vector<std::string>{"new-tag-only"};
+
+    SourceMetadataPayload meta_payload;
+    meta_payload.root_source_name = "MY:PV";
+    meta_payload.sources["MY:PV"] = std::move(entry);
+
+    IDataBus::EventBatch batch;
+    batch.reader_name = "test_reader";
+    batch.payload     = std::move(meta_payload);
+
+    ASSERT_TRUE(writer->push(std::move(batch)));
+    ASSERT_TRUE(waitForCount(service.save_pv_metadata_count, 1, std::chrono::milliseconds(2000)));
+
+    writer->stop();
+    server->Shutdown();
+
+    std::lock_guard<std::mutex> lock(service.captured_mutex);
+    ASSERT_EQ(service.captured_requests.size(), 1u);
+    const auto& req = service.captured_requests[0];
+
+    ASSERT_EQ(req.tags_size(), 1);
+    EXPECT_EQ(req.tags(0), "new-tag-only");
 }
 
 } // namespace

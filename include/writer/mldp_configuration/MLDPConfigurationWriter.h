@@ -10,6 +10,7 @@
 
 #pragma once
 
+#include <common.pb.h>
 #include <config/Config.h>
 #include <pool/MLDPGrpcAnnotationPool.h>
 #include <util/log/Logger.h>
@@ -18,6 +19,7 @@
 #include <writer/mldp_configuration/MLDPConfigurationWriterConfig.h>
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <variant>
 
@@ -88,6 +90,10 @@ protected:
 private:
     void doSaveConfiguration(const util::bus::ConfigurationPayload& cfg);
     void doSaveConfigurationActivation(const util::bus::ConfigurationActivationPayload& act);
+
+    std::optional<dp::service::common::Configuration>
+    fetchExistingConfiguration(const std::string&                          configurationName,
+                               util::pool::MLDPGrpcAnnotationObject&       conn);
 
     MLDPConfigurationWriterConfig                       config_;
     std::shared_ptr<metrics::Metrics>                   metrics_;

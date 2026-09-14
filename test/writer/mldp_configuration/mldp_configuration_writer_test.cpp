@@ -28,6 +28,7 @@
 #include <sstream>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #include "../../config/test_config_helpers.h"
@@ -59,6 +60,31 @@ public:
     std::vector<dp::service::annotation::SaveConfigurationRequest>           captured_config_requests;
     std::vector<dp::service::annotation::SaveConfigurationActivationRequest> captured_activation_requests;
     std::mutex                                                                captured_mutex;
+
+    std::mutex                                                                        seed_mutex;
+    std::unordered_map<std::string, dp::service::common::Configuration>               seeded_configs;
+
+    void seedConfiguration(const std::string& name, const dp::service::common::Configuration& cfg)
+    {
+        std::lock_guard<std::mutex> lock(seed_mutex);
+        seeded_configs[name] = cfg;
+    }
+
+    grpc::Status getConfiguration(
+        grpc::ServerContext*,
+        const dp::service::annotation::GetConfigurationRequest* req,
+        dp::service::annotation::GetConfigurationResponse*      response) override
+    {
+        std::lock_guard<std::mutex> lock(seed_mutex);
+        auto it = seeded_configs.find(req->configurationname());
+        if (it == seeded_configs.end())
+        {
+            response->mutable_exceptionalresult()->set_message("not found");
+            return grpc::Status::OK;
+        }
+        *response->mutable_getconfigurationresult()->mutable_configuration() = it->second;
+        return grpc::Status::OK;
+    }
 
     grpc::Status saveConfiguration(
         grpc::ServerContext*,
@@ -540,6 +566,140 @@ TEST(MLDPConfigurationWriterTest,
         EXPECT_LT(service.cfg_seq.at(name), service.act_seq.at(name))
             << name << ": activation arrived before configuration (routing bug)";
     }
+}
+
+// ---------------------------------------------------------------------------
+// Test 9 — Merge: existing config has tags/attrs; incoming has only new attrs →
+//           result preserves existing tags and merges attributes.
+// ---------------------------------------------------------------------------
+
+TEST(MLDPConfigurationWriterTest, MergesWithExistingConfiguration)
+{
+    TestAnnotationService service;
+
+    dp::service::common::Configuration existing;
+    existing.set_configurationname("MY_CONFIG");
+    existing.set_category("beam_params");
+    existing.set_description("original desc");
+    existing.set_parentconfigurationname("PARENT_CFG");
+    existing.add_tags("existing-tag");
+    existing.set_modifiedby("original-user");
+    auto* attr1 = existing.add_attributes();
+    attr1->set_name("keep_me");
+    attr1->set_value("old_val");
+    auto* attr2 = existing.add_attributes();
+    attr2->set_name("overwrite_me");
+    attr2->set_value("old_val");
+    service.seedConfiguration("MY_CONFIG", existing);
+
+    grpc::ServerBuilder builder;
+    int                 annotation_port = 0;
+    builder.AddListeningPort("127.0.0.1:0", grpc::InsecureServerCredentials(), &annotation_port);
+    builder.RegisterService(&service);
+    auto server = builder.BuildAndStart();
+    ASSERT_TRUE(server);
+
+    const auto cfg = makeConfigFromYaml(makeWriterYaml(annotation_port, annotation_port + 1));
+    auto writer = WriterFactory::create("mldp-configuration", cfg, nullptr);
+    ASSERT_NE(writer, nullptr);
+    writer->start();
+
+    ConfigurationPayload payload;
+    payload.root_source_name   = "test-root";
+    payload.configuration_name = "MY_CONFIG";
+    payload.category           = "beam_params";
+    payload.attributes         = {{"overwrite_me", "new_val"}, {"new_key", "new_val"}};
+    payload.description        = std::string("updated desc");
+    // tags absent → preserve existing
+    // parent_configuration_name absent → preserve existing
+    // modified_by absent → preserve existing
+
+    IDataBus::EventBatch batch;
+    batch.payload = std::move(payload);
+
+    ASSERT_TRUE(writer->push(std::move(batch)));
+    ASSERT_TRUE(waitForCount(service.save_configuration_count, 1, std::chrono::milliseconds(2000)));
+
+    writer->stop();
+    server->Shutdown();
+
+    std::lock_guard<std::mutex> lock(service.captured_mutex);
+    ASSERT_EQ(service.captured_config_requests.size(), 1u);
+    const auto& req = service.captured_config_requests[0];
+
+    // Tags preserved from existing.
+    ASSERT_EQ(req.tags_size(), 1);
+    EXPECT_EQ(req.tags(0), "existing-tag");
+
+    // Description overwritten.
+    EXPECT_EQ(req.description(), "updated desc");
+
+    // Parent preserved.
+    EXPECT_EQ(req.parentconfigurationname(), "PARENT_CFG");
+
+    // modified_by preserved.
+    EXPECT_EQ(req.modifiedby(), "original-user");
+
+    // Attributes merged.
+    std::unordered_map<std::string, std::string> attrs;
+    for (const auto& a : req.attributes())
+        attrs[a.name()] = a.value();
+
+    EXPECT_EQ(attrs.size(), 3u);
+    EXPECT_EQ(attrs["keep_me"], "old_val");
+    EXPECT_EQ(attrs["overwrite_me"], "new_val");
+    EXPECT_EQ(attrs["new_key"], "new_val");
+}
+
+// ---------------------------------------------------------------------------
+// Test 10 — New config without existing record uses payload as-is.
+// ---------------------------------------------------------------------------
+
+TEST(MLDPConfigurationWriterTest, NewConfigWithoutExistingRecordUsesPayloadAsIs)
+{
+    TestAnnotationService service;
+    // No seeded configs — getConfiguration returns "not found".
+
+    grpc::ServerBuilder builder;
+    int                 annotation_port = 0;
+    builder.AddListeningPort("127.0.0.1:0", grpc::InsecureServerCredentials(), &annotation_port);
+    builder.RegisterService(&service);
+    auto server = builder.BuildAndStart();
+    ASSERT_TRUE(server);
+
+    const auto cfg = makeConfigFromYaml(makeWriterYaml(annotation_port, annotation_port + 1));
+    auto writer = WriterFactory::create("mldp-configuration", cfg, nullptr);
+    ASSERT_NE(writer, nullptr);
+    writer->start();
+
+    ConfigurationPayload payload;
+    payload.root_source_name   = "test-root";
+    payload.configuration_name = "NEW_CONFIG";
+    payload.category           = "test";
+    payload.tags               = std::vector<std::string>{"new-tag"};
+    payload.description        = std::string("brand new");
+    payload.attributes         = {{"a", "1"}};
+
+    IDataBus::EventBatch batch;
+    batch.payload = std::move(payload);
+
+    ASSERT_TRUE(writer->push(std::move(batch)));
+    ASSERT_TRUE(waitForCount(service.save_configuration_count, 1, std::chrono::milliseconds(2000)));
+
+    writer->stop();
+    server->Shutdown();
+
+    std::lock_guard<std::mutex> lock(service.captured_mutex);
+    ASSERT_EQ(service.captured_config_requests.size(), 1u);
+    const auto& req = service.captured_config_requests[0];
+
+    EXPECT_EQ(req.configurationname(), "NEW_CONFIG");
+    ASSERT_EQ(req.tags_size(), 1);
+    EXPECT_EQ(req.tags(0), "new-tag");
+    EXPECT_EQ(req.description(), "brand new");
+    ASSERT_EQ(req.attributes_size(), 1);
+    EXPECT_EQ(req.attributes(0).name(), "a");
+    EXPECT_EQ(req.attributes(0).value(), "1");
 }
 
 } // namespace

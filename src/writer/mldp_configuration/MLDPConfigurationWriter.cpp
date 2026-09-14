@@ -18,6 +18,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <unordered_map>
 
 using namespace mldp_pvxs_driver::writer;
 using namespace mldp_pvxs_driver::util::log;
@@ -102,39 +103,104 @@ void MLDPConfigurationWriter::processItem(std::size_t /*workerIndex*/, ConfigIte
 // Private helpers
 // ---------------------------------------------------------------------------
 
+std::optional<dp::service::common::Configuration>
+MLDPConfigurationWriter::fetchExistingConfiguration(const std::string&        configurationName,
+                                                    MLDPGrpcAnnotationObject& conn)
+{
+    try
+    {
+        grpc::ClientContext ctx;
+        ctx.set_deadline(std::chrono::system_clock::now() +
+                         std::chrono::seconds(config_.deadlineSeconds));
+        dp::service::annotation::GetConfigurationRequest  req;
+        req.set_configurationname(configurationName);
+        dp::service::annotation::GetConfigurationResponse resp;
+        const auto status = conn.stub->getConfiguration(&ctx, req, &resp);
+        if (!status.ok() || !resp.has_getconfigurationresult())
+            return std::nullopt;
+        return resp.getconfigurationresult().configuration();
+    }
+    catch (const std::exception& ex)
+    {
+        tracef(logger(),
+               "MLDPConfigurationWriter fetchExistingConfiguration '{}': {}",
+               configurationName, ex.what());
+        return std::nullopt;
+    }
+}
+
 void MLDPConfigurationWriter::doSaveConfiguration(const ConfigurationPayload& cfg)
 {
     try
     {
         auto handle = pool_->acquire();
 
+        const auto existing = fetchExistingConfiguration(cfg.configuration_name, *handle);
+
         dp::service::annotation::SaveConfigurationRequest req;
         req.set_configurationname(cfg.configuration_name);
         req.set_category(cfg.category);
-        if (cfg.description)
+
+        if (existing)
         {
-            req.set_description(*cfg.description);
-        }
-        if (cfg.parent_configuration_name)
-        {
-            req.set_parentconfigurationname(*cfg.parent_configuration_name);
-        }
-        if (cfg.tags)
-        {
-            for (const auto& t : *cfg.tags)
+            // description: incoming if present, else existing
+            req.set_description(
+                cfg.description ? *cfg.description : existing->description());
+
+            // parent_configuration_name: incoming if present, else existing
+            req.set_parentconfigurationname(
+                cfg.parent_configuration_name
+                    ? *cfg.parent_configuration_name
+                    : existing->parentconfigurationname());
+
+            // tags: incoming wins if present, else preserve existing
+            if (cfg.tags)
             {
-                req.add_tags(t);
+                for (const auto& t : *cfg.tags)
+                    req.add_tags(t);
             }
+            else
+            {
+                for (const auto& t : existing->tags())
+                    req.add_tags(t);
+            }
+
+            // attributes: merge — existing as base, incoming overwrites/adds
+            std::unordered_map<std::string, std::string> merged;
+            for (const auto& attr : existing->attributes())
+                merged[attr.name()] = attr.value();
+            for (const auto& [k, v] : cfg.attributes)
+                merged[k] = v;
+            for (const auto& [k, v] : merged)
+            {
+                auto* attr = req.add_attributes();
+                attr->set_name(k);
+                attr->set_value(v);
+            }
+
+            // modified_by: incoming if present, else existing
+            req.set_modifiedby(
+                cfg.modified_by ? *cfg.modified_by : existing->modifiedby());
         }
-        for (const auto& [k, v] : cfg.attributes)
+        else
         {
-            auto* attr = req.add_attributes();
-            attr->set_name(k);
-            attr->set_value(v);
-        }
-        if (cfg.modified_by)
-        {
-            req.set_modifiedby(*cfg.modified_by);
+            if (cfg.description)
+                req.set_description(*cfg.description);
+            if (cfg.parent_configuration_name)
+                req.set_parentconfigurationname(*cfg.parent_configuration_name);
+            if (cfg.tags)
+            {
+                for (const auto& t : *cfg.tags)
+                    req.add_tags(t);
+            }
+            for (const auto& [k, v] : cfg.attributes)
+            {
+                auto* attr = req.add_attributes();
+                attr->set_name(k);
+                attr->set_value(v);
+            }
+            if (cfg.modified_by)
+                req.set_modifiedby(*cfg.modified_by);
         }
 
         dp::service::annotation::SaveConfigurationResponse resp;
