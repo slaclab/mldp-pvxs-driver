@@ -18,6 +18,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <unordered_map>
 
 using namespace mldp_pvxs_driver::writer;
 using namespace mldp_pvxs_driver::util::log;
@@ -100,6 +101,32 @@ void MLDPPVMetadataWriter::processItem(std::size_t /*workerIndex*/, WorkItem ite
 // saveSourceMetadata
 // ---------------------------------------------------------------------------
 
+std::optional<dp::service::common::PvMetadata>
+MLDPPVMetadataWriter::fetchExistingPvMetadata(const std::string&        pvName,
+                                              MLDPGrpcAnnotationObject& conn)
+{
+    try
+    {
+        grpc::ClientContext                          ctx;
+        ctx.set_deadline(std::chrono::system_clock::now() +
+                         std::chrono::seconds(config_.deadlineSeconds));
+        dp::service::annotation::GetPvMetadataRequest  req;
+        req.set_pvnameoralias(pvName);
+        dp::service::annotation::GetPvMetadataResponse resp;
+        const auto status = conn.stub->getPvMetadata(&ctx, req, &resp);
+        if (!status.ok() || !resp.has_getpvmetadataresult())
+            return std::nullopt;
+        return resp.getpvmetadataresult().pvmetadata();
+    }
+    catch (const std::exception& ex)
+    {
+        tracef(logger(),
+               "MLDPPVMetadataWriter fetchExistingPvMetadata '{}': {}",
+               pvName, ex.what());
+        return std::nullopt;
+    }
+}
+
 void MLDPPVMetadataWriter::saveSourceMetadata(const std::string&         sourceName,
                                               const SourceMetadataEntry& entry)
 {
@@ -107,40 +134,80 @@ void MLDPPVMetadataWriter::saveSourceMetadata(const std::string&         sourceN
     {
         auto handle = pool_->acquire();
 
+        const auto existing = fetchExistingPvMetadata(sourceName, *handle);
+
         dp::service::annotation::SavePvMetadataRequest req;
         req.set_pvname(sourceName);
 
-        if (entry.aliases)
+        if (existing)
         {
-            for (const auto& a : *entry.aliases)
+            // aliases: incoming wins if present, else preserve existing
+            if (entry.aliases)
             {
-                req.add_aliases(a);
+                for (const auto& a : *entry.aliases)
+                    req.add_aliases(a);
             }
-        }
-
-        if (entry.tags)
-        {
-            for (const auto& t : *entry.tags)
+            else
             {
-                req.add_tags(t);
+                for (const auto& a : existing->aliases())
+                    req.add_aliases(a);
             }
-        }
 
-        for (const auto& [k, v] : entry.attributes)
-        {
-            auto* attr = req.add_attributes();
-            attr->set_name(k);
-            attr->set_value(v);
-        }
+            // tags: incoming wins if present, else preserve existing
+            if (entry.tags)
+            {
+                for (const auto& t : *entry.tags)
+                    req.add_tags(t);
+            }
+            else
+            {
+                for (const auto& t : existing->tags())
+                    req.add_tags(t);
+            }
 
-        if (entry.description)
-        {
-            req.set_description(*entry.description);
-        }
+            // attributes: merge — existing as base, incoming overwrites/adds
+            std::unordered_map<std::string, std::string> merged;
+            for (const auto& attr : existing->attributes())
+                merged[attr.name()] = attr.value();
+            for (const auto& [k, v] : entry.attributes)
+                merged[k] = v;
+            for (const auto& [k, v] : merged)
+            {
+                auto* attr = req.add_attributes();
+                attr->set_name(k);
+                attr->set_value(v);
+            }
 
-        if (entry.modified_by)
+            // description: incoming if present, else existing
+            req.set_description(
+                entry.description ? *entry.description : existing->description());
+
+            // modified_by: incoming if present, else existing
+            req.set_modifiedby(
+                entry.modified_by ? *entry.modified_by : existing->modifiedby());
+        }
+        else
         {
-            req.set_modifiedby(*entry.modified_by);
+            if (entry.aliases)
+            {
+                for (const auto& a : *entry.aliases)
+                    req.add_aliases(a);
+            }
+            if (entry.tags)
+            {
+                for (const auto& t : *entry.tags)
+                    req.add_tags(t);
+            }
+            for (const auto& [k, v] : entry.attributes)
+            {
+                auto* attr = req.add_attributes();
+                attr->set_name(k);
+                attr->set_value(v);
+            }
+            if (entry.description)
+                req.set_description(*entry.description);
+            if (entry.modified_by)
+                req.set_modifiedby(*entry.modified_by);
         }
 
         dp::service::annotation::SavePvMetadataResponse resp;

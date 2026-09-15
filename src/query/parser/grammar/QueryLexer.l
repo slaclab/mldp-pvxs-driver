@@ -4,8 +4,6 @@
 %option nounput
 %option nodefault
 %option prefix="mldp_query_"
-%option outfile="src/query/parser/generated/QueryFlexLexer.cpp"
-%option header-file="include/query/parser/generated/QueryFlexLexer.h"
 
 %{
 #include <query/parser/Token.h>

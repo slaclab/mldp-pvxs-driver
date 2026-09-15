@@ -10,6 +10,7 @@
 
 #pragma once
 
+#include <common.pb.h>
 #include <config/Config.h>
 #include <pool/MLDPGrpcAnnotationPool.h>
 #include <util/log/Logger.h>
@@ -18,6 +19,7 @@
 #include <writer/mldp_pv_metadata/MLDPPVMetadataWriterConfig.h>
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -80,6 +82,10 @@ protected:
 private:
     void saveSourceMetadata(const std::string&                    sourceName,
                             const util::bus::SourceMetadataEntry& entry);
+
+    std::optional<dp::service::common::PvMetadata>
+    fetchExistingPvMetadata(const std::string&                         pvName,
+                            util::pool::MLDPGrpcAnnotationObject&      conn);
 
     MLDPPVMetadataWriterConfig                          config_;
     std::shared_ptr<metrics::Metrics>                   metrics_;

@@ -24,3 +24,5 @@ __pycache__
 __deps
 *.sql
 .DS_Store
+src/query/parser/generated/
+include/query/parser/generated/

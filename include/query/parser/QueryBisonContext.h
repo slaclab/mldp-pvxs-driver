@@ -14,7 +14,6 @@
 #include <query/parser/Token.h>
 
 #include <cstddef>
-#include <string>
 #include <vector>
 
 namespace mldp_pvxs_driver::query::generated {

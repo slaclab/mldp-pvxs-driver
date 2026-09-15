@@ -11,7 +11,7 @@
 #include <query/parser/QueryParser.h>
 
 #include <query/parser/Lexer.h>
-#include <query/parser/generated/QueryBisonContext.h>
+#include <query/parser/QueryBisonContext.h>
 #include <query/parser/generated/QueryBisonParser.hpp>
 
 #include <algorithm>
