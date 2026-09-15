@@ -12,7 +12,7 @@
 %code requires {
     #include <query/parser/QueryAST.h>
     #include <query/parser/Token.h>
-    #include <query/parser/generated/QueryBisonContext.h>
+    #include <query/parser/QueryBisonContext.h>
 
     #include <cstdint>
     #include <optional>
