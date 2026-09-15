@@ -20,6 +20,55 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
+# ---------------------------------------------------------------------------
+# Bison / Flex parser generation (runs at configure time)
+# Mirrors scripts/generate-query-parser.sh
+# ---------------------------------------------------------------------------
+find_package(BISON 3.7 REQUIRED)
+find_package(FLEX  REQUIRED)
+
+set(QUERY_PARSER_GRAMMAR_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src/query/parser/grammar")
+set(QUERY_PARSER_GEN_SRC_DIR "${CMAKE_CURRENT_BINARY_DIR}/query_parser_generated/src")
+set(QUERY_PARSER_GEN_INC_DIR "${CMAKE_CURRENT_BINARY_DIR}/query_parser_generated/include/query/parser/generated")
+
+file(MAKE_DIRECTORY "${QUERY_PARSER_GEN_SRC_DIR}")
+file(MAKE_DIRECTORY "${QUERY_PARSER_GEN_INC_DIR}")
+
+# 1. Bison: -d -o puts .cpp, .hpp, location.hh all in the src dir
+execute_process(
+    COMMAND ${BISON_EXECUTABLE} -d
+        -o ${QUERY_PARSER_GEN_SRC_DIR}/QueryBisonParser.cpp
+        ${QUERY_PARSER_GRAMMAR_DIR}/QueryBisonParser.y
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    RESULT_VARIABLE _bison_result
+    ERROR_VARIABLE  _bison_error
+)
+if(NOT _bison_result EQUAL 0)
+    message(FATAL_ERROR "Bison failed:\n${_bison_error}")
+endif()
+
+# 2. Copy bison headers to the include tree (same as generate-query-parser.sh)
+file(COPY "${QUERY_PARSER_GEN_SRC_DIR}/QueryBisonParser.hpp"
+     DESTINATION "${QUERY_PARSER_GEN_INC_DIR}")
+file(COPY "${QUERY_PARSER_GEN_SRC_DIR}/location.hh"
+     DESTINATION "${QUERY_PARSER_GEN_INC_DIR}")
+
+# 3. Flex: generate .cpp into src dir, .h into include dir
+execute_process(
+    COMMAND ${FLEX_EXECUTABLE}
+        --outfile=${QUERY_PARSER_GEN_SRC_DIR}/QueryFlexLexer.cpp
+        --header-file=${QUERY_PARSER_GEN_INC_DIR}/QueryFlexLexer.h
+        ${QUERY_PARSER_GRAMMAR_DIR}/QueryLexer.l
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    RESULT_VARIABLE _flex_result
+    ERROR_VARIABLE  _flex_error
+)
+if(NOT _flex_result EQUAL 0)
+    message(FATAL_ERROR "Flex failed:\n${_flex_error}")
+endif()
+
+message(STATUS "Query parser generated (Bison + Flex) into ${CMAKE_CURRENT_BINARY_DIR}/query_parser_generated")
+
 include(FetchContent)
 
 set(PROMETHEUS_CPP_VERSION "v1.3.0")
@@ -674,8 +723,8 @@ add_library(lib${PROJECT_NAME}
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/impl/mldp/MetadataArrayBuilders.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/parser/Lexer.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/parser/QueryParser.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/parser/generated/QueryFlexLexer.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/parser/generated/QueryBisonParser.cpp"
+    "${QUERY_PARSER_GEN_SRC_DIR}/QueryFlexLexer.cpp"
+    "${QUERY_PARSER_GEN_SRC_DIR}/QueryBisonParser.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/planner/Binder.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/planner/TypeChecker.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/planner/LogicalPlanner.cpp"
@@ -804,6 +853,7 @@ target_compile_definitions(lib${PROJECT_NAME} PUBLIC BS_THREAD_POOL_NATIVE_EXTEN
 target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/ext/rapidyaml/include")
 target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include/metrics")
+target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_BINARY_DIR}/query_parser_generated/include")
 # Ensure the build tree's generated headers (e.g. config.h) are visible to users of the library
 target_include_directories(lib${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_BINARY_DIR}")
 target_include_directories(lib${PROJECT_NAME} PUBLIC

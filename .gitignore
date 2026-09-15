@@ -24,3 +24,7 @@ __pycache__
 __deps
 *.sql
 .DS_Store
+src/query/parser/generated/
+include/query/parser/generated/QueryBisonParser.hpp
+include/query/parser/generated/QueryFlexLexer.h
+include/query/parser/generated/location.hh
