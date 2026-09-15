@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 580 200" width="580" height="200">
+  <rect width="580" height="200" fill="#f8f9fa" rx="4"/>
+  <rect x="60" y="25" width="480" height="140" fill="white" stroke="#ddd" stroke-width="1"/>
+  <text x="290" y="16" text-anchor="middle" font-family="monospace" font-size="11" fill="#444" font-weight="bold">Reader Ingress Rate  [BSAS:SYS0:1:CUHXR_TBL]</text>
+  <line x1="60" y1="165.0" x2="540" y2="165.0" stroke="#e8e8e8" stroke-width="1"/>
+  <text x="56" y="169.0" text-anchor="end" font-family="monospace" font-size="9" fill="#666">1.8</text>
+  <line x1="60" y1="109.0" x2="540" y2="109.0" stroke="#e8e8e8" stroke-width="1"/>
+  <text x="56" y="113.0" text-anchor="end" font-family="monospace" font-size="9" fill="#666">2.0</text>
+  <line x1="60" y1="53.0" x2="540" y2="53.0" stroke="#e8e8e8" stroke-width="1"/>
+  <text x="56" y="57.0" text-anchor="end" font-family="monospace" font-size="9" fill="#666">2.2</text>
+  <line x1="60" y1="165" x2="540" y2="165" stroke="#999" stroke-width="1"/>
+  <line x1="60.0" y1="165" x2="60.0" y2="169" stroke="#999" stroke-width="1"/>
+  <text x="60.0" y="179" text-anchor="middle" font-family="monospace" font-size="9" fill="#666">0s</text>
+  <line x1="156.0" y1="165" x2="156.0" y2="169" stroke="#999" stroke-width="1"/>
+  <text x="156.0" y="179" text-anchor="middle" font-family="monospace" font-size="9" fill="#666">15s</text>
+  <line x1="252.0" y1="165" x2="252.0" y2="169" stroke="#999" stroke-width="1"/>
+  <text x="252.0" y="179" text-anchor="middle" font-family="monospace" font-size="9" fill="#666">30s</text>
+  <line x1="348.0" y1="165" x2="348.0" y2="169" stroke="#999" stroke-width="1"/>
+  <text x="348.0" y="179" text-anchor="middle" font-family="monospace" font-size="9" fill="#666">45s</text>
+  <line x1="444.0" y1="165" x2="444.0" y2="169" stroke="#999" stroke-width="1"/>
+  <text x="444.0" y="179" text-anchor="middle" font-family="monospace" font-size="9" fill="#666">60s</text>
+  <line x1="540.0" y1="165" x2="540.0" y2="169" stroke="#999" stroke-width="1"/>
+  <text x="540.0" y="179" text-anchor="middle" font-family="monospace" font-size="9" fill="#666">75s</text>
+  <text x="300" y="197" text-anchor="middle" font-family="monospace" font-size="9" fill="#888">time (s)</text>
+  <text x="10" y="95" transform="rotate(-90,10,95)" text-anchor="middle" font-family="monospace" font-size="9" fill="#888">MB/s</text>
+  <polyline points="60.0,89.4 92.0,95.0 124.0,97.8 156.0,100.6 188.0,103.4 220.0,92.2 252.0,97.8 284.0,95.0 316.0,103.4 348.0,95.0 380.0,89.4 412.0,106.2 444.0,86.6 476.0,103.4 508.0,92.2 540.0,100.6" fill="none" stroke="#2563eb" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+  <circle cx="60.0" cy="89.4" r="2.5" fill="#2563eb"/>
+  <circle cx="92.0" cy="95.0" r="2.5" fill="#2563eb"/>
+  <circle cx="124.0" cy="97.8" r="2.5" fill="#2563eb"/>
+  <circle cx="156.0" cy="100.6" r="2.5" fill="#2563eb"/>
+  <circle cx="188.0" cy="103.4" r="2.5" fill="#2563eb"/>
+  <circle cx="220.0" cy="92.2" r="2.5" fill="#2563eb"/>
+  <circle cx="252.0" cy="97.8" r="2.5" fill="#2563eb"/>
+  <circle cx="284.0" cy="95.0" r="2.5" fill="#2563eb"/>
+  <circle cx="316.0" cy="103.4" r="2.5" fill="#2563eb"/>
+  <circle cx="348.0" cy="95.0" r="2.5" fill="#2563eb"/>
+  <circle cx="380.0" cy="89.4" r="2.5" fill="#2563eb"/>
+  <circle cx="412.0" cy="106.2" r="2.5" fill="#2563eb"/>
+  <circle cx="444.0" cy="86.6" r="2.5" fill="#2563eb"/>
+  <circle cx="476.0" cy="103.4" r="2.5" fill="#2563eb"/>
+  <circle cx="508.0" cy="92.2" r="2.5" fill="#2563eb"/>
+  <circle cx="540.0" cy="100.6" r="2.5" fill="#2563eb"/>
+</svg>

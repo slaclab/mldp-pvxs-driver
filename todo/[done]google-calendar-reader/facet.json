@@ -1,0 +1,62 @@
+[
+    {
+        "url": "https://www.google.com/calendar/event?eid=NGdiaGFyaGtuZXU1MzRrazhzOWFyYjVpaWogZmFjZXQuaWkuc2NoZWR1bGVAbQ",
+        "program_name": "Single bunch matching S20",
+        "description": "",
+        "note": null,
+        "calendar": "FACET-MD",
+        "details": null,
+        "start": "2026-05-28T12:00:00-07:00",
+        "end": "2026-05-28T14:00:00-07:00"
+    },
+    {
+        "url": "https://www.google.com/calendar/event?eid=NXM5bmcwOHB2azBpN3YyM2ozbzVxM2htNTkgZmFjZXQuaWkuc2NoZWR1bGVAbQ",
+        "program_name": "Setup for E308",
+        "description": "",
+        "note": null,
+        "calendar": "FACET-MD",
+        "details": null,
+        "start": "2026-05-28T14:00:00-07:00",
+        "end": "2026-05-28T16:00:00-07:00"
+    },
+    {
+        "url": "https://www.google.com/calendar/event?eid=MWVqOW01NWhhZWJiZWNzOW1vYzMwbDM2cnEgMDh0M2lkdDkzaWlqc28ybmxmcmJuMGJpMjRAZw",
+        "program_name": "E308 - plasma lens with single bunch",
+        "description": "",
+        "note": null,
+        "calendar": "FACET-USER",
+        "details": null,
+        "start": "2026-05-28T23:00:00Z",
+        "end": "2026-05-29T11:00:00Z"
+    },
+    {
+        "url": "https://www.google.com/calendar/event?eid=MHQ0djRucTIwcmJpYjdsY29qOXFlcTBqODAgZmFjZXQuaWkuc2NoZWR1bGVAbQ",
+        "program_name": "One-bunch tuning and characterization",
+        "description": "",
+        "note": null,
+        "calendar": "FACET-MD",
+        "details": null,
+        "start": "2026-05-29T04:00:00-07:00",
+        "end": "2026-05-29T08:00:00-07:00"
+    },
+    {
+        "url": "https://www.google.com/calendar/event?eid=NzE2aWNwNjNmYTk1MDFpYnYzamE0ZHBqY2wgZmFjZXQuaWkuc2NoZWR1bGVAbQ",
+        "program_name": "Beam characterization ",
+        "description": "",
+        "note": null,
+        "calendar": "FACET-MD",
+        "details": null,
+        "start": "2026-05-29T08:00:00-07:00",
+        "end": "2026-05-29T11:00:00-07:00"
+    },
+    {
+        "url": "https://www.google.com/calendar/event?eid=MnYyZXY2ZGhiMjZlN3FzdXZiZjRsMG5tMnAgMDh0M2lkdDkzaWlqc28ybmxmcmJuMGJpMjRAZw",
+        "program_name": "E308 - plasma lens with single bunch",
+        "description": "",
+        "note": null,
+        "calendar": "FACET-USER",
+        "details": null,
+        "start": "2026-05-29T18:00:00Z",
+        "end": "2026-05-30T06:00:00Z"
+    }
+]

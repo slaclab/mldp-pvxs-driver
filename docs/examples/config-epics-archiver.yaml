@@ -1,0 +1,62 @@
+# Archiver reader configuration examples
+#
+# Shows both fetch modes:
+#   1. historical_once — pull a fixed time window, then stop
+#   2. periodic_tail   — continuously poll for new archiver data
+
+writer:
+  mldp:
+    - name: mldp_main
+      thread-pool: 2
+      mldp-pool:
+        provider-name: archiver_provider
+        ingestion-url: grpc://mldp-ingest.example.com:50051
+        min-conn: 1
+        max-conn: 4
+        credentials: ssl
+
+reader:
+  # --- One-shot historical pull ---
+  epics-archiver:
+    - name: archiver_historical
+      hostname: archiver.example.com:11200
+      mode: historical_once
+      start-date: "2026-01-01T00:00:00Z"
+      end-date:   "2026-01-02T00:00:00Z"
+      fetch-threads: 3          # fetch 3 PVs in parallel
+      connect-timeout-sec: 30
+      total-timeout-sec: 600    # 10 minutes for large windows
+      tls-verify-peer: true
+      tls-verify-host: true
+      pvs:
+        - name: SLAC:GUNB:ELEC:LTU1:630:EPICS_PV
+        - name: FACET:DL1:SBEN:1:BDES
+        - name: SITE:SYS:BEAM_ENERGY
+
+    # --- Continuous tail polling ---
+    - name: archiver_tail
+      hostname: archiver.example.com:11200
+      mode: periodic_tail
+      poll-interval-sec: 10     # query archiver every 10 seconds
+      lookback-sec: 10          # request last 10 seconds of data each poll
+      connect-timeout-sec: 30
+      total-timeout-sec: 0      # infinite — allow long-running streaming sessions
+      pvs:
+        - name: FACET:DL1:SBEN:1:BDES
+
+    # --- Sample-count batching (historical_once) ---
+    # Accumulate 10 samples per PV before submitting; flush any incomplete
+    # batch after 5 seconds if the sample limit is not yet reached.
+    - name: archiver_batched
+      hostname: archiver.example.com:11200
+      mode: historical_once
+      start-date: "2026-01-01T00:00:00Z"
+      end-date:   "2026-01-02T00:00:00Z"
+      pv-samples-per-batch: 10      # submit after 10 samples per PV
+      batch-flush-interval-ms: 5000 # also flush after 5 s if batch not full
+      pvs:
+        - name: SITE:SYS:BEAM_ENERGY
+
+metrics:
+  endpoint: "0.0.0.0:9464"
+  scan-interval-seconds: 5

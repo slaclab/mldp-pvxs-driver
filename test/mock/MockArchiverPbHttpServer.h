@@ -83,18 +83,18 @@ public:
     /**
      * @brief Return the bound local TCP port after @ref start().
      */
-    [[nodiscard]] int                     port() const;
+    [[nodiscard]] int port() const;
     /**
      * @brief Return the base URL for tests (e.g. http://127.0.0.1:PORT).
      */
-    [[nodiscard]] std::string             baseUrl() const;
+    [[nodiscard]] std::string baseUrl() const;
     /**
      * @brief Return the most recently recorded request snapshot.
      *
      * This is non-blocking and may return an empty/default log if no request
      * has been handled yet.
      */
-    [[nodiscard]] RequestLog              lastRequest() const;
+    [[nodiscard]] RequestLog lastRequest() const;
     /**
      * @brief Return the recorded request history in arrival order.
      */
@@ -102,20 +102,20 @@ public:
     /**
      * @brief Wait until at least @p min_requests have been observed.
      */
-    bool                                  waitForRequestCount(size_t min_requests, std::chrono::milliseconds timeout) const;
+    bool waitForRequestCount(size_t min_requests, std::chrono::milliseconds timeout) const;
     /**
      * @brief Wait until the most recently recorded request has finished sending its response.
      *
      * Returns true when the response is fully sent (or otherwise completed),
      * false on timeout.
      */
-    bool                                  waitForLastResponseComplete(std::chrono::milliseconds timeout) const;
+    bool waitForLastResponseComplete(std::chrono::milliseconds timeout) const;
     /**
      * @brief Return whether the last response stream finished successfully.
      *
      * Returns std::nullopt if no response has completed yet.
      */
-    [[nodiscard]] std::optional<bool>     lastResponseSuccess() const;
+    [[nodiscard]] std::optional<bool> lastResponseSuccess() const;
     /**
      * @brief Return the sample generation settings used by this mock instance.
      */
@@ -135,18 +135,18 @@ private:
      */
     void markRequestCompleted(uint64_t request_id);
 
-    GenerationConfig   config_;
-    httplib::Server    server_;
-    mutable std::mutex mu_;
+    GenerationConfig                config_;
+    httplib::Server                 server_;
+    mutable std::mutex              mu_;
     mutable std::condition_variable cv_;
-    RequestLog         last_request_;
-    std::vector<RequestLog> request_history_;
-    std::optional<bool> last_response_success_;
-    uint64_t           last_request_id_ = 0;
-    uint64_t           last_completed_request_id_ = 0;
-    std::thread        thread_;
-    std::atomic<bool>  running_{false};
-    int                port_ = -1;
+    RequestLog                      last_request_;
+    std::vector<RequestLog>         request_history_;
+    std::optional<bool>             last_response_success_;
+    uint64_t                        last_request_id_ = 0;
+    uint64_t                        last_completed_request_id_ = 0;
+    std::thread                     thread_;
+    std::atomic<bool>               running_{false};
+    int                             port_ = -1;
 };
 
 } // namespace mldp_pvxs_driver::reader::impl::epics_archiver

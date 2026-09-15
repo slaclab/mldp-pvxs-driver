@@ -1,0 +1,294 @@
+# Writers — Implementation Guide
+
+> **Related:** [Architecture Overview](../reference/architecture.md) | [Reader Implementations](../readers/readers-implementation.md) | [MLDP Query Client](../dev/query-client.md)
+
+## Overview
+
+Writers are the sink-side components of the MLDP PVXS Driver. They receive `EventBatch` objects from the bus and forward them to a backend. The driver uses an **abstract Writer pattern** with a factory-based registration system; new writer types can be added without modifying the controller's dispatch logic.
+
+## Writer Interface
+
+All writers implement `IWriter`:
+
+```cpp
+class IWriter {
+public:
+    virtual ~IWriter() = default;
+    virtual std::string name() const = 0;
+    virtual void start() = 0;
+    virtual bool push(util::bus::IDataBus::EventBatch batch) noexcept = 0;
+    virtual void stop() noexcept = 0;
+    virtual bool isHealthy() const noexcept { return true; }
+    /// Returns true when this writer handles the given payload variant.
+    /// Default: always true (writer accepts all payload types).
+    virtual bool acceptsPayload(const util::bus::BatchPayload& p) const noexcept { return true; }
+};
+```
+
+`acceptsPayload()` lets the controller skip delivering a batch to writers that only handle specific payload types. For example `MLDPPVMetadataWriter` returns `true` only for `SourceMetadataPayload`, while `MLDPConfigurationWriter` returns `true` only for `ConfigurationPayload` and `ConfigurationActivationPayload`.
+
+### Lifecycle
+
+1. Construct from configuration.
+2. `start()` — allocate runtime resources (threads, connections).
+3. `push()` — called from controller/bus threads as batches arrive.
+4. `stop()` — drain work and release resources.
+
+### Threading Contract
+
+- `push()` must be safe to call concurrently.
+- `start()` and `stop()` are single-owner lifecycle operations.
+- `push()` returns `false` when applying back-pressure or dropping a batch.
+
+## BaseQueuedWriter — Shared Queue and Back-Pressure
+
+All production writers inherit `BaseQueuedWriter<Item>` (`include/writer/BaseQueuedWriter.h`) rather than implementing their own queues. This base class provides:
+
+- **Bounded MPSC queue** — items are distributed round-robin across per-worker channels (deque + mutex + CV each).
+- **Back-pressure** — `push()` blocks the caller when total queued items reaches `queue_capacity`. It returns `false` only when the writer is stopping (`stop()` / `forceStop()` called). Data is **never silently dropped**.
+- **Thread pool** — `BS::light_thread_pool` with `worker_count` threads; each thread runs the base `workerLoop`, which dequeues items and calls the subclass `processItem()` hook.
+- **Lifecycle finalisation** — `start()` and `stop()` are `final`; subclasses hook in via `doStart()` / `doStop()`.
+- **Payload enrichment** — before `toItems()`, the base runs the writer's ordered global enricher chain. The chain lock covers only enrichment, not conversion, back-pressure, queue admission, or worker processing.
+
+Enrichers are configured at top level and referenced by name from each writer; see the [Payload Enricher Guide](../enrichers/enrichers.md). A referenced enricher instance is shared across writers, and each instance serializes its own calls. A filter that returns `false` accepts the batch but prevents it from entering the queue; an enricher error rejects the batch.
+
+### Template hooks
+
+| Hook | Called by | Contract |
+|------|-----------|----------|
+| `toItems(EventBatch&)` | `push()` on caller thread | Convert one batch → zero or more `Item`s. Return empty to silently drop. |
+| `processItem(workerIndex, Item)` | Worker thread | Consume one item. Must not throw (exceptions are caught and logged). |
+| `doStart()` | `start()`, after threads are up | Allocate connections, pools, etc. |
+| `doStop()` | `stop()`, after threads join | Release connections, pools, etc. |
+
+### Configuration
+
+Passed via `BaseQueuedWriter::QueueConfig` from the subclass constructor:
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `queue_capacity` | 200 | Max queued items before `push()` blocks. |
+| `worker_count` | 8 | Number of worker threads. |
+| `push_timeout_ms` | 0 | 0 = block forever; >0 = timeout in ms before returning `false`. |
+
+Each concrete writer maps its own YAML `thread-pool` / `queue-capacity` keys into these fields.
+
+## Registration System
+
+Writers register at static-initialization time via `REGISTER_WRITER`:
+
+```cpp
+class MyWriter final : public IWriter {
+    REGISTER_WRITER("my-type", MyWriter)
+    ...
+};
+```
+
+The macro inserts a `static inline WriterRegistrator<T>` member. Before `main()` runs, `WriterRegistrator<MyWriter>` calls `WriterFactory::registerType(...)`.
+
+`WriterFactory::create(type, node, metrics)` then dispatches to the registered constructor.
+
+### Registration Flow
+
+1. `REGISTER_WRITER("my-type", MyWriter)` in class body.
+2. `WriterRegistrator<MyWriter>` runs at static init → calls `WriterFactory::registerType(...)`.
+3. Controller calls `WriterFactory::create("my-type", node, metrics)` → concrete writer constructed.
+
+## Controller Wiring
+
+`MLDPPVXSControllerConfig::writerEntries()` returns `(type, config-node)` pairs. The controller iterates them:
+
+```cpp
+for (const auto& [type, writerNode] : config_.writerEntries()) {
+    auto writer = WriterFactory::create(type, writerNode, metrics_);
+    writer->setEnrichers(enricherRegistry.resolve(writerNode));
+    ...
+}
+```
+
+The controller constructs the global `EnricherRegistry` before writers start, then resolves each writer's ordered name list into shared instances. No writer-specific `#ifdef` branches are needed; YAML determines which writers and enrichers are active.
+
+## Configuration Layout
+
+Writers are configured under the top-level `writer:` block. Each type owns a YAML sequence of instances:
+
+```yaml
+writer:
+  mldp:
+    - name: mldp_main
+      mldp-pool:
+        provider-name: pvxs_provider
+  hdf5:
+    - name: hdf5_local
+      base-path: /data/hdf5
+```
+
+`WriterConfig` validates the top-level structure; each concrete writer config parses its own sub-block.
+
+## Existing Writers
+
+| Type | Doc | Header | Payload |
+|------|-----|--------|---------|
+| `mldp` | [MLDP Writer](mldp-writer.md) | `include/writer/mldp/MLDPWriter.h` | `TimeSeriesPayload` |
+| `hdf5` | [HDF5 Writer](hdf5-writer.md) | `include/writer/hdf5/HDF5Writer.h` | `TimeSeriesPayload` |
+| `mldp-pv-metadata` | [MLDP PV Metadata Writer](mldp-pv-metadata-writer.md) | `include/writer/mldp_pv_metadata/MLDPPVMetadataWriter.h` | `SourceMetadataPayload` |
+| `mldp-configuration` | [MLDP Configuration Writer](mldp-configuration-writer.md) | `include/writer/mldp_configuration/MLDPConfigurationWriter.h` | `ConfigurationPayload`, `ConfigurationActivationPayload` |
+
+---
+
+## Implementing a New Writer
+
+### 1 — Create the config struct
+
+Add `src/writer/my_type/MyWriterConfig.h`:
+
+```cpp
+struct MyWriterConfig {
+    class Error : public std::runtime_error { using std::runtime_error::runtime_error; };
+
+    std::string name;         // required
+    // … type-specific fields …
+
+    static MyWriterConfig parse(const config::Config& node);
+};
+```
+
+`parse()` must throw `MyWriterConfig::Error` on validation failure.
+
+### 2 — Implement `BaseQueuedWriter`
+
+Add `include/writer/my_type/MyWriter.h`. Inherit `BaseQueuedWriter<MyItem>` — **do not** roll your own queue, mutex, or worker threads:
+
+```cpp
+#include <writer/BaseQueuedWriter.h>
+#include <writer/WriterFactory.h>
+#include <writer/my_type/MyWriterConfig.h>
+
+struct MyItem {
+    // smallest unit of work after converting one EventBatch
+};
+
+class MyWriter final : public BaseQueuedWriter<MyItem> {
+    REGISTER_WRITER("my-type", MyWriter)
+public:
+    // Factory constructor — called by WriterFactory
+    explicit MyWriter(const config::Config& root,
+                      std::shared_ptr<metrics::Metrics> metrics = nullptr);
+
+    // Typed constructor — for unit tests
+    explicit MyWriter(MyWriterConfig config,
+                      std::shared_ptr<metrics::Metrics> metrics = nullptr);
+
+    ~MyWriter() override;  // must call stop() while vtable is live
+
+    std::string name() const override { return config_.name; }
+
+    bool acceptsPayload(const util::bus::BatchPayload& p) const noexcept override;
+
+protected:
+    // Convert one EventBatch into zero or more MyItems.
+    // Return empty vector to silently drop.
+    std::vector<MyItem> toItems(util::bus::IDataBus::EventBatch& batch) override;
+
+    // Process one dequeued item on a worker thread. Must not throw.
+    void processItem(std::size_t workerIndex, MyItem item) override;
+
+    // Optional: open connections/pools after threads start.
+    void doStart() override;
+
+    // Optional: close connections/pools after threads join.
+    void doStop() noexcept override;
+
+private:
+    MyWriterConfig config_;
+    std::shared_ptr<metrics::Metrics> metrics_;
+    // connections, pools — no queue/thread/mutex members needed
+};
+```
+
+Delegate from the `config::Config` constructor to the typed one to avoid double-parsing:
+
+```cpp
+MyWriter::MyWriter(const config::Config& root, std::shared_ptr<Metrics> metrics)
+    : MyWriter(MyWriterConfig::parse(root), std::move(metrics)) {}
+
+MyWriter::MyWriter(MyWriterConfig config, std::shared_ptr<Metrics> metrics)
+    : BaseQueuedWriter<MyItem>(
+          QueueConfig{static_cast<int>(config.queueCapacity), config.threadPool, 0},
+          "my-type:" + config.name,
+          newLogger("my_writer:" + config.name))
+    , config_(std::move(config))
+    , metrics_(std::move(metrics))
+{}
+
+MyWriter::~MyWriter() { stop(); }
+```
+
+Key rules:
+- Back-pressure and thread lifecycle are owned by `BaseQueuedWriter` — do not override `start()`, `stop()`, or `push()` unless you have a very specific reason.
+- `processItem()` must be **noexcept** (exceptions are caught and logged by the base `workerLoop`).
+- The destructor **must** call `stop()` while the subclass vtable is still live.
+
+### 3 — Register with CMake
+
+Add the new `.cpp` files to `CMakeLists.txt`:
+
+```cmake
+target_sources(mldp_pvxs_driver PRIVATE
+    src/writer/my_type/MyWriter.cpp
+    src/writer/my_type/MyWriterConfig.cpp
+)
+```
+
+If the writer is optional (e.g. depends on an external library), guard with a CMake option and `#ifdef`:
+
+```cmake
+option(MLDP_PVXS_MYTYPE_ENABLED "Enable MyType writer" OFF)
+if(MLDP_PVXS_MYTYPE_ENABLED)
+    target_compile_definitions(mldp_pvxs_driver PRIVATE MLDP_PVXS_MYTYPE_ENABLED)
+    target_sources(mldp_pvxs_driver PRIVATE src/writer/my_type/MyWriter.cpp)
+    target_link_libraries(mldp_pvxs_driver PRIVATE my_type_lib)
+endif()
+```
+
+Wrap the class body and `REGISTER_WRITER` inside the same `#ifdef MLDP_PVXS_MYTYPE_ENABLED` guard so the factory type is absent when the option is off.
+
+### 4 — Extend YAML parsing
+
+In `WriterConfig` and `MLDPPVXSControllerConfig`, add a sub-block for the new type under `writer:`:
+
+```yaml
+writer:
+  my-type:
+    - name: my_instance
+      # … type-specific keys …
+```
+
+Update `WriterConfig::parse()` to recognise `"my-type"` and forward the node to `MyWriterConfig::parse()`.
+
+### 5 — Add a doc page
+
+Create `docs/writers/my-type-writer.md` following the pattern in [mldp-writer.md](mldp-writer.md):
+- Overview / architecture diagram
+- Config table with all YAML keys, types, defaults
+- Lifecycle table
+- Threading notes
+- Key files table
+
+Link it from the table in the **Existing Writers** section above.
+
+### Checklist
+
+- [ ] Inherits `BaseQueuedWriter<MyItem>` (not `IWriter` directly)
+- [ ] `toItems()`, `processItem()`, `doStart()`, `doStop()` implemented
+- [ ] `processItem()` is noexcept (no uncaught throws)
+- [ ] Destructor calls `stop()`
+- [ ] Factory constructor delegates to typed constructor (no double-parse)
+- [ ] `QueueConfig` populated from parsed config fields
+- [ ] `acceptsPayload()` overridden when the writer handles only specific payload variants
+- [ ] Factory constructor signature matches `(const config::Config&, std::shared_ptr<metrics::Metrics>)`
+- [ ] `REGISTER_WRITER("my-type", MyWriter)` inside class body
+- [ ] Sources added to `CMakeLists.txt`
+- [ ] YAML parsing updated in `WriterConfig` / `MLDPPVXSControllerConfig`
+- [ ] Unit tests for config parsing and lifecycle
+- [ ] Doc page added and linked here

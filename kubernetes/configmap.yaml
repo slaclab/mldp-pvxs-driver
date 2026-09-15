@@ -1,0 +1,42 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mldp-pvxs-driver-config
+  namespace: mldp-pvxs
+  labels:
+    app.kubernetes.io/name: mldp-pvxs-driver
+data:
+  config.yaml: |
+    writer:
+      grpc:
+        - name: grpc_main
+          thread-pool: 2
+          stream-max-bytes: 2097152     # 2 MiB
+          stream-max-age-ms: 200
+          mldp-pool:
+            provider-name: pvxs_provider
+            provider-description: "PVXS live data provider"
+            ingestion-url: dp-ingestion:50051
+            # query-url: dp-query:50052   # optional; not used by ingestion writer
+            min-conn: 1
+            max-conn: 4
+            # credentials:              # uncomment for TLS
+            #   pem-cert-chain: /etc/certs/client.crt
+            #   pem-private-key: /etc/certs/client.key
+            #   pem-root-certs: /etc/certs/ca.crt
+
+    reader:
+      - epics-pvxs:
+          - name: pvxs_main
+            thread-pool: 2
+            column-batch-size: 50
+            monitor-poll-threads: 2
+            monitor-poll-interval-ms: 5
+            pvs:
+              - name: "PV:NAME:1"
+              - name: "PV:NAME:2"
+              # Add your PVs here
+
+    metrics:
+      endpoint: "0.0.0.0:9464"
+      scan-interval-seconds: 5

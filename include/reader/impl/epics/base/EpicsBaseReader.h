@@ -22,9 +22,13 @@
 
 #include <reader/ReaderFactory.h>
 #include <reader/impl/epics/base/EpicsBaseMonitorPoller.h>
+#include <reader/impl/epics/base/EpicsBaseReaderConfig.h>
 #include <reader/impl/epics/shared/EpicsReaderBase.h>
 
+#include <chrono>
 #include <mutex>
+#include <string>
+#include <unordered_map>
 
 namespace mldp_pvxs_driver::reader::impl::epics {
 
@@ -76,8 +80,8 @@ public:
      * @throws EpicsReaderConfig::Error if configuration is invalid.
      */
     EpicsBaseReader(std::shared_ptr<util::bus::IDataBus> bus,
-                    std::shared_ptr<metrics::Metrics>         metrics,
-                    const config::Config&                     cfg);
+                    std::shared_ptr<metrics::Metrics>    metrics,
+                    const config::Config&                cfg);
 
     /**
      * @brief Destructor - stops monitoring and releases resources.
@@ -135,7 +139,7 @@ private:
     /**
      * @brief Handle a PV update in SlacBsasTable (NTTable row-timestamp) mode.
      *
-     * Delegates conversion to EpicsPVDataConversion::tryBuildNtTableRowTsBatch.
+     * Delegates conversion to EpicsPVDataBatchConversion::tryBuildNtTableRowTsBatch.
      * Columns are flushed to the bus in batches of at most
      * config_.columnBatchSize() entries to bound memory usage for wide tables.
      * @p emitted receives the total number of data rows published.
@@ -151,8 +155,11 @@ private:
                                   const PVRuntimeConfig*                 runtimeCfg,
                                   std::size_t&                           emitted);
 
-    std::unique_ptr<EpicsBaseMonitorPoller> epics_base_poller_;    ///< Underlying polling monitor.
+    EpicsBaseReaderConfig                   base_config_;            ///< Derived config with monitor-poll settings.
+    std::unique_ptr<EpicsBaseMonitorPoller> epics_base_poller_;      ///< Underlying polling monitor.
     std::mutex                              epics_base_drain_mutex_; ///< Serializes drain operations.
+    std::mutex                              last_event_time_mutex_;
+    std::unordered_map<std::string, std::chrono::steady_clock::time_point> last_event_time_;
 
     REGISTER_READER("epics-base", EpicsBaseReader)
 };

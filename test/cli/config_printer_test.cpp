@@ -9,30 +9,36 @@ using mldp_pvxs_driver::config::makeConfigFromYaml;
 TEST(ConfigPrinterTest, FormatsCompactSummaryAcrossReaderTypes)
 {
     const std::string yaml = R"(
-controller-thread-pool: 2
-controller-stream-max-bytes: 1048576
-controller-stream-max-age-ms: 250
 mldp-pool:
   provider-name: pvxs_provider
   ingestion-url: https://mldp-ingestion.example:443
   query-url: https://mldp-query.example:443
   min-conn: 1
   max-conn: 4
+writer:
+  mldp:
+    - name: mldp_main
+      mldp-pool:
+        provider-name: pvxs_provider
+        ingestion-url: https://mldp-ingestion.example:443
+        query-url: https://mldp-query.example:443
+        min-conn: 1
+        max-conn: 4
 reader:
-  - epics-pvxs:
-      - name: epics_live
-        pvs:
-          - name: SYS:PV:ONE
-          - name: SYS:PV:TWO
-          - name: SYS:PV:THREE
-          - name: SYS:PV:FOUR
-  - epics-archiver:
-      - name: arch_tail
-        hostname: https://archiver.example:17668
-        mode: periodic_tail
-        poll-interval-sec: 5
-        pvs:
-          - name: ARCH:PV:ONE
+  epics-pvxs:
+    - name: epics_live
+      pvs:
+        - name: SYS:PV:ONE
+        - name: SYS:PV:TWO
+        - name: SYS:PV:THREE
+        - name: SYS:PV:FOUR
+  epics-archiver:
+    - name: arch_tail
+      hostname: https://archiver.example:17668
+      mode: periodic_tail
+      poll-interval-sec: 5
+      pvs:
+        - name: ARCH:PV:ONE
 metrics:
   endpoint: 0.0.0.0:9464
   scan-interval-seconds: 3
@@ -57,13 +63,21 @@ metrics:
 TEST(ConfigPrinterTest, ShowsMetricsDisabledWhenNotConfigured)
 {
     const std::string yaml = R"(
-controller-thread-pool: 1
 mldp-pool:
   provider-name: test_provider
   ingestion-url: dp-ingestion:50051
   query-url: dp-query:50052
   min-conn: 1
   max-conn: 1
+writer:
+  mldp:
+    - name: mldp_main
+      mldp-pool:
+        provider-name: test_provider
+        ingestion-url: dp-ingestion:50051
+        query-url: dp-query:50052
+        min-conn: 1
+        max-conn: 1
 reader: []
 )";
 
@@ -77,3 +91,35 @@ reader: []
     EXPECT_NE(printed.find("readers: count=0"), std::string::npos);
 }
 
+#ifdef MLDP_PVXS_HDF5_ENABLED
+TEST(ConfigPrinterTest, PrintsHdf5BsasGen1ReaderDetails)
+{
+    const std::string yaml = R"(
+writer:
+  mldp:
+    - name: mldp_main
+      mldp-pool:
+        provider-name: test_provider
+        ingestion-url: dp-ingestion:50051
+        query-url: dp-query:50052
+        min-conn: 1
+        max-conn: 1
+reader:
+  hdf5-bsas-gen1:
+    - name: bsas_reader
+      file-path: /tmp/bsas-gen1.h5
+      group: data
+      chunk-size: 200
+)";
+
+    const auto cfg = makeConfigFromYaml(yaml);
+    ASSERT_TRUE(cfg.valid());
+
+    const std::string printed =
+        mldp_pvxs_driver::cli::formatStartupConfig(cfg, "config.yaml");
+
+    EXPECT_NE(printed.find("type=hdf5-bsas-gen1"), std::string::npos);
+    EXPECT_NE(printed.find("file-path=/tmp/bsas-gen1.h5"), std::string::npos);
+    EXPECT_NE(printed.find("chunk-size=200"), std::string::npos);
+}
+#endif

@@ -24,15 +24,19 @@
 #include <util/bus/IDataBus.h>
 #include <util/log/ILog.h>
 
-#include <cstdint>
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
+#include <cstdint>
 #include <exception>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
+#include <queue>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -41,6 +45,17 @@ class IHttpClient;
 }
 
 namespace mldp_pvxs_driver::reader::impl::epics_archiver {
+
+/**
+ * @brief Pending in-memory batch for one PV when pv-samples-per-batch is enabled.
+ */
+struct PendingPvBatch
+{
+    util::bus::DataBatch                         accumulated;      ///< Single DataBatch merging all pending samples for this PV.
+    std::unordered_map<std::string, std::string> metadata;         ///< Merged reader+PV metadata for the batch.
+    std::string                                  root_source_name; ///< PV name used as root source.
+    std::chrono::steady_clock::time_point        created_at;       ///< Wall-clock time of first sample in batch.
+};
 
 /**
  * @brief Incremental state while decoding one PB/HTTP chunk.
@@ -52,12 +67,9 @@ namespace mldp_pvxs_driver::reader::impl::epics_archiver {
  */
 struct PbChunkState
 {
-    bool                                              have_header = false;           ///< True after PayloadInfo has been parsed.
-    EPICS::PayloadInfo                                header;                        ///< Payload header for the current chunk.
-    std::vector<dp::service::common::DataFrame> events;                        ///< Converted sample frames for this chunk.
-    bool                                              have_batch_start_time = false; ///< True after first sample of current output batch.
-    uint64_t                                          batch_start_epoch_seconds = 0; ///< Historical batch start (seconds).
-    uint32_t                                          batch_start_nanoseconds = 0;   ///< Historical batch start (nanoseconds).
+    bool                              have_header = false; ///< True after PayloadInfo has been parsed.
+    EPICS::PayloadInfo                header;             ///< Payload header for the current chunk.
+    std::vector<util::bus::DataBatch> events;             ///< Converted sample batches for this chunk.
 };
 
 /**
@@ -76,9 +88,9 @@ public:
      * @param metrics Metrics collector for instrumentation (may be null).
      * @param cfg Reader configuration.
      */
-    EpicsArchiverReader(std::shared_ptr<util::bus::IDataBus> bus,
-                        std::shared_ptr<::mldp_pvxs_driver::metrics::Metrics>         metrics,
-                        const ::mldp_pvxs_driver::config::Config&                     cfg);
+    EpicsArchiverReader(std::shared_ptr<util::bus::IDataBus>                  bus,
+                        std::shared_ptr<::mldp_pvxs_driver::metrics::Metrics> metrics,
+                        const ::mldp_pvxs_driver::config::Config&             cfg);
 
     /**
      * @brief Destructor - stops reader and releases resources.
@@ -93,86 +105,63 @@ public:
     std::string name() const override;
 
 private:
-    std::shared_ptr<util::log::ILogger>                          logger_;      ///< Logger instance for this reader.
-    std::unique_ptr<::mldp_pvxs_driver::util::http::IHttpClient> http_client_; ///< Shared HTTP transport abstraction.
-    std::string                                                  name_;        ///< Reader name from configuration.
-    EpicsArchiverReaderConfig                                    config_;      ///< Parsed archiver reader configuration.
-    std::thread                                                  reader_thread_; ///< Background worker fetching archiver data.
-    std::atomic<bool>                                            running_{false}; ///< Worker loop/lifecycle flag.
-    mutable std::mutex                                           worker_mutex_;   ///< Protects worker status fields.
-    std::condition_variable                                      worker_cv_;      ///< Interruptible wakeup for periodic tail polling.
-    std::exception_ptr                                           worker_error_;   ///< Captures worker exception for diagnostics.
-    bool                                                         worker_done_ = false; ///< True after worker thread exits.
+    struct WorkerContext
+    {
+        std::unique_ptr<::mldp_pvxs_driver::util::http::IHttpClient> http_client;
+        std::unordered_map<std::string, PendingPvBatch>              pending_pv_batches;
+        std::map<std::string, std::pair<uint64_t, uint32_t>>         last_published_ns_per_pv;
+    };
 
-    /// Per-PV high-water mark: the last sample timestamp published in a previous
-    /// periodic-tail iteration. Used to skip boundary / overlap duplicates.
-    /// Only populated and consulted in PeriodicTail fetch mode.
-    std::map<std::string, std::pair<uint64_t, uint32_t>> last_published_ns_per_pv_;
+    class PVWorkQueue
+    {
+    public:
+        void populate(const std::vector<std::string>& pv_names);
+        std::optional<std::string> pop();
+        std::size_t size() const;
 
-    /**
-     * @brief Initialize reusable HTTP client for archiver API access.
-     */
-    void initializeHttpClient();
+    private:
+        mutable std::mutex      mutex_;
+        std::queue<std::string> pvs_;
+    };
 
-    /**
-     * @brief Clean up HTTP transport resources.
-     *
-     * Ensures that any transport state owned by this reader is released.
-     */
-    void destroyHttpClient();
+    std::shared_ptr<util::log::ILogger> logger_;
+    std::string                         name_;
+    EpicsArchiverReaderConfig           config_;
+    std::atomic<bool>                   running_{false};
+    mutable std::mutex                  worker_mutex_;
+    std::condition_variable             worker_cv_;
+    std::exception_ptr                  worker_error_;
+    bool                                worker_done_ = false;
+    std::vector<std::thread>            worker_threads_;
+    std::vector<WorkerContext>          worker_contexts_;
+    PVWorkQueue                         pv_queue_;
+    std::atomic<std::size_t>            workers_completed_{0};
 
-    /**
-     * @brief Flush the current accumulated output batch for a PB/HTTP chunk.
-     *
-     * Publishes the current events vector (if non-empty) while preserving the
-     * parsed PB/HTTP chunk header so parsing can continue within the same chunk.
-     */
-    void flushChunk(PbChunkState& state);
+    std::mutex                          cycle_mutex_;
+    std::condition_variable             cycle_cv_;
+    std::atomic<std::size_t>            cycle_ready_{0};
+    std::string                         cycle_from_;
+    std::optional<std::string>          cycle_to_;
 
-    /**
-     * @brief Finalize the current PB/HTTP chunk and reset chunk state.
-     *
-     * Used at PB/HTTP chunk boundaries (empty line) and end-of-stream.
-     */
-    void finalizeChunk(PbChunkState& state);
+    void initializeHttpClients();
+    void destroyHttpClients();
+    void startWorkers();
+    void stopWorkers();
+    void runWorker(std::size_t index);
 
-    /**
-     * @brief Split the current output batch when historical sample time exceeds the configured window.
-     */
-    void splitBatchIfHistoricalWindowExceeded(PbChunkState& state,
-                                              uint64_t      sample_epoch_seconds,
-                                              uint32_t      sample_nanoseconds);
+    void fetchSinglePV(WorkerContext& ctx,
+                       const std::string& pv,
+                       const std::string& from,
+                       const std::optional<std::string>& to);
 
-    /**
-     * @brief Parse one PB/HTTP line (header or sample) into the incremental chunk state.
-     */
-    void parsePbHttpLineIntoState(const std::string& line, PbChunkState& state);
+    void flushChunk(WorkerContext& ctx, PbChunkState& state);
+    void finalizeChunk(WorkerContext& ctx, PbChunkState& state);
+    void parsePbHttpLineIntoState(WorkerContext& ctx, const std::string& line, PbChunkState& state);
+    void submitPendingBatch(WorkerContext& ctx, const std::string& pv);
+    void flushAllPendingBatches(WorkerContext& ctx);
+    void flushExpiredPendingBatches(WorkerContext& ctx);
 
-    /**
-     * @brief Start the dedicated background worker thread for archiver fetch.
-     */
-    void startWorker();
-
-    /**
-     * @brief Request worker stop and join the background thread.
-     */
-    void stopWorker();
-
-    /**
-     * @brief Worker entrypoint that consumes historical data from the archiver.
-     */
-    void runWorker();
-
-    /**
-     * @brief Fetch and publish archived samples for configured PVs.
-     *
-     * Performs HTTP PB/HTTP retrieval requests against the configured archiver
-     * endpoint and publishes converted samples to the event bus.
-     *
-     * @throws std::runtime_error on transport, protocol, or parse failures.
-     */
-    void fetchConfiguredPVs();
-    void fetchConfiguredPVs(const std::string& from, const std::optional<std::string>& to);
+    bool pushBatch(util::bus::IDataBus::EventBatch batch);
 
     REGISTER_READER("epics-archiver", EpicsArchiverReader)
 };

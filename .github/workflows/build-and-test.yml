@@ -45,7 +45,7 @@ jobs:
             pvxs_version: 1.4.1
     steps:
       - name: Checkout source code
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
           ref: ${{ github.head_ref || github.ref }}
@@ -53,21 +53,23 @@ jobs:
 
       - name: License Header Check
         id: license_add
-        uses: B1NARY-GR0UP/nwa@main
-        with:
-          version: latest
-          cmd: check
-          path: .nwa-config.yaml
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL https://github.com/B1NARY-GR0UP/nwa/releases/download/v0.8.0/nwa_Linux_x86_64.tar.gz \
+            | tar -xz -C /usr/local/bin nwa
+          chmod +x /usr/local/bin/nwa
+          nwa config -c check .nwa-config.yaml
 
       - name: Log in to the Container registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Capture matrix settings
         id: matrix_info
@@ -100,7 +102,7 @@ jobs:
           echo "image=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/build:${safe}" >> "$GITHUB_OUTPUT"
 
       - name: Build dev image (cached)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           file: ${{ matrix.dockerfile }}
@@ -117,7 +119,7 @@ jobs:
             PVXS_VERSION=${{ env.PVXS_VERSION }}
 
       - name: Set up Docker Compose
-        uses: docker/setup-compose-action@v1
+        uses: docker/setup-compose-action@2fe291b7677a45ee1269ec56a42604c143505e7e # v1
 
       - name: Configure, build, test inside dev image
         id: build
@@ -129,7 +131,7 @@ jobs:
 
       - name: Publish test report
         if: always()
-        uses: dorny/test-reporter@v2
+        uses: dorny/test-reporter@df6247429542221bc30d46a036ee47af1102c451 # v2
         with:
           name: ctest
           path: build/test-results/junit.xml
@@ -137,7 +139,7 @@ jobs:
 
       - name: Upload test artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: test-results
           path: |
@@ -165,7 +167,7 @@ jobs:
 
       - name: Push builder image (buildcache)
         if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           file: ${{ matrix.dockerfile }}

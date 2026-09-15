@@ -63,6 +63,7 @@ WORKDIR /workspace
 
 ENV EPICS_BASE=/opt/local
 ENV PVXS_BASE=/opt/local
+ENV PATH=/opt/local/bin:$PATH
 
 RUN dnf update -y && \
     dnf install -y --setopt=install_weak_deps=False \
@@ -81,6 +82,7 @@ RUN dnf update -y && \
 COPY --from=builder /opt/local /opt/local
 COPY --from=builder /tmp/epics_host_arch /etc/epics_host_arch
 
-RUN echo /opt/local/lib/driver-deps > /etc/ld.so.conf.d/driver-deps.conf && ldconfig
+RUN echo /opt/local/lib/driver-deps > /etc/ld.so.conf.d/driver-deps.conf && ldconfig && \
+    ln -s /opt/local/bin/mldp_pvxs_driver /usr/local/bin/mldp-pvxs-driver
 
 CMD ["/opt/local/bin/mldp_pvxs_driver"]

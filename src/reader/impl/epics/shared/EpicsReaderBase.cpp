@@ -21,7 +21,12 @@ EpicsReaderBase::EpicsReaderBase(std::shared_ptr<util::bus::IDataBus> bus,
     , logger_(std::move(logger))
     , config_(cfg)
     , name_(config_.name())
-    , reader_pool_(std::make_shared<BS::light_thread_pool>(config_.threadPoolSize()))
+    , reader_pool_(std::make_shared<BS::light_thread_pool>(
+          config_.threadPoolSize(),
+          [n = config_.name()](std::size_t i)
+          {
+              BS::this_thread::set_os_thread_name(n.substr(0, 9) + "-" + std::to_string(i));
+          }))
 {
     for (const auto& pvConfig : config_.pvs())
     {
@@ -32,9 +37,22 @@ EpicsReaderBase::EpicsReaderBase(std::shared_ptr<util::bus::IDataBus> bus,
             runtime.mode = PVRuntimeConfig::Mode::SlacBsasTable;
             runtime.tsSecondsField = pvConfig.nttableRowTs->tsSecondsField;
             runtime.tsNanosField = pvConfig.nttableRowTs->tsNanosField;
+            runtime.columnBatchSize = pvConfig.nttableRowTs->columnBatchSize;
         }
         pvRuntimeByName_.emplace(pvConfig.name, std::move(runtime));
+
+        auto merged = config_.staticMetadata();
+        for (const auto& [k, v] : pvConfig.metadata)
+            merged[k] = v;
+        pvMergedMetadata_.emplace(pvConfig.name, std::move(merged));
     }
+}
+
+const std::unordered_map<std::string, std::string>& EpicsReaderBase::mergedMetadataFor(const std::string& pvName) const
+{
+    static const std::unordered_map<std::string, std::string> empty;
+    const auto it = pvMergedMetadata_.find(pvName);
+    return (it != pvMergedMetadata_.end()) ? it->second : empty;
 }
 
 EpicsReaderBase::~EpicsReaderBase()

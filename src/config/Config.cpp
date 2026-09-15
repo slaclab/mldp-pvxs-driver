@@ -51,7 +51,7 @@ bool parseToType(std::string_view input, T& value)
         // Use from_chars for numeric types
         const char* first = input.data();
         const char* last = input.data() + input.size();
-        auto res = std::from_chars(first, last, value);
+        auto        res = std::from_chars(first, last, value);
         return res.ec == std::errc() && res.ptr == last;
     }
 }
@@ -72,7 +72,11 @@ Config Config::configFromFile(const std::string& filename)
             throw std::runtime_error{"Could not read file"};
         }
     }
-    const std::string& yaml = contents.str();
+    return configFromYamlString(contents.str());
+}
+
+Config Config::configFromYamlString(const std::string& yaml)
+{
     return Config{std::make_shared<ryml::Tree>(ryml::parse_in_arena(c4::to_csubstr(yaml)))};
 }
 
@@ -87,6 +91,16 @@ Config::Config(ConfigTreePtr tree, ryml::ConstNodeRef node)
 c4::yml::ConstNodeRef Config::raw() const
 {
     return node_;
+}
+
+c4::yml::NodeRef Config::mutableRaw()
+{
+    if (!tree_ || node_.invalid())
+    {
+        return {};
+    }
+
+    return tree_->ref(node_.id());
 }
 
 bool Config::valid() const
@@ -141,6 +155,22 @@ std::vector<Config> Config::subConfig(const std::string& key) const
         children.emplace_back(Config{tree_, child});
     }
 
+    return children;
+}
+
+std::vector<std::pair<std::string, Config>> Config::namedSubConfig() const
+{
+    std::vector<std::pair<std::string, Config>> children;
+    if (!valid() || !node_.is_map())
+        return children;
+    children.reserve(node_.num_children());
+    for (const auto child : node_.children())
+    {
+        if (!child.has_key())
+            continue;
+        const auto key = child.key();
+        children.emplace_back(std::string(key.str, key.len), Config{tree_, child});
+    }
     return children;
 }
 

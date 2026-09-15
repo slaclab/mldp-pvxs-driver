@@ -16,8 +16,8 @@
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
 
-#include <util/log/Logger.h>
 #include <util/StringFormat.h>
+#include <util/log/Logger.h>
 
 #include <csignal>
 
@@ -35,11 +35,17 @@
 #include <prometheus/text_serializer.h>
 #include <rapidyaml-0.10.0.hpp>
 
+#include <cli/ConfigPrinter.h>
+#include <query/LoggingQueryCommandListener.h>
+#include <query/QueryCommand.h>
 #include <config/Config.h>
+#include <config/ConfigOverride.h>
+#include <config/ConfigSource.h>
+#include <config/subcommand.h>
+#include <config/validate.h>
 #include <controller/MLDPPVXSController.h>
 #include <metrics/MetricsSnapshot.h>
 #include <mldp_pvxs_driver_version.h>
-#include <cli/ConfigPrinter.h>
 
 #include "PeriodicMetricsDumper.h"
 #include "SpdlogLogger.h"
@@ -88,13 +94,16 @@ void restore_terminal()
 }
 
 // Configure command line argument parser.
-void configure_parameter(ArgumentParser& program)
+void configure_parameter(ArgumentParser& program,
+                         std::vector<std::string>& configSources)
 {
-    program.add_description("MLDP PVXS Driver - Forwards reader updates (e.g., EPICS PVs) to the MLDP ingestion API. Supports multiple reader implementations.");
+    program.add_description(
+        "MLDP PVXS Driver - Forwards reader updates (e.g., EPICS PVs) to the MLDP ingestion API.\n" "Supports multiple reader implementations.\n" "\n" "Configuration inputs:\n" "  Repeat -c/--config to accumulate one effective configuration.\n" "  Each -c value must be either an existing YAML file path or a dotted PATH=VALUE assignment.\n" "\n" "Config utilities (run without starting the driver):\n" "  config wizard   [--output PATH] [--from PATH]   Interactive TUI to generate config.yaml\n" "  config validate PATH                             Validate a YAML file and report errors\n" "  config template [--minimal|--full]               Print a YAML template to stdout\n" "  config list     PATH                             Show writers, readers, routing, metrics\n" "  config add      PATH (reader|writer|routing) …   Add an entry to an existing config\n" "  config remove   PATH (reader|writer|routing) --name NAME   Remove a named entry\n" "\n" "  Run 'mldp_pvxs_driver config <sub-command> --help' for per-command options.");
     program.add_argument("-c", "--config")
-        .help("Path to configuration YAML file")
-        .default_value(std::string("config.yaml"))
-        .metavar("FILE");
+        .help("Configuration source: YAML file path or dotted PATH=VALUE assignment (repeatable, merged in order)")
+        .metavar("SOURCE")
+        .append()
+        .store_into(configSources);
 
     program.add_argument("-l", "--log-level")
         .help("Logging level (trace, debug, info, warn, error, critical, off)")
@@ -122,16 +131,25 @@ void configure_parameter(ArgumentParser& program)
         .default_value(false)
         .implicit_value(true);
 
-    // add metrics help to epilog
     program.add_epilog(
         R"(Metrics:
+  - Press Ctrl+P in the foreground terminal to dump metrics.
+  - Or send SIGUSR1 / SIGQUIT to request a dump:
+      kill -USR1 <pid>
+      kill -QUIT <pid>
+  - Use --metrics-output to specify a file path for periodic metric dumps
+    (stored in JSON Lines format with configurable interval).
 
-     - Press Ctrl+P in the foreground terminal to dump metrics.
-     - Or send SIGUSR1 / SIGQUIT to request a dump:
-        kill -USR1 <pid>
-        kill -QUIT <pid>
-     - Use --metrics-output to specify a file path for periodic metric dumps
-       (stored in JSON Lines format with configurable interval).
+Examples:
+  mldp_pvxs_driver -c config.yaml --dry-run
+  mldp_pvxs_driver -c base.yaml -c site.yaml -c local.yaml --dry-run
+  mldp_pvxs_driver -c config.yaml -c metrics.endpoint=0.0.0.0:9464 --dry-run
+  mldp_pvxs_driver config validate config.yaml
+  mldp_pvxs_driver config template --minimal > config.yaml
+  mldp_pvxs_driver config wizard --output config.yaml
+  mldp_pvxs_driver config list config.yaml
+  mldp_pvxs_driver config add config.yaml reader --type epics-pvxs --name pvxs_extra
+  mldp_pvxs_driver config remove config.yaml writer --name old_writer
     )");
 }
 
@@ -200,6 +218,7 @@ std::string serializeMetricsText(const mldp_pvxs_driver::metrics::Metrics& metri
 
 // Global flags for signal handling
 volatile std::atomic<bool> quit = false;
+volatile std::atomic<bool> force_quit = false;
 volatile std::atomic<bool> metrics_requested = false;
 
 // Global driver instance
@@ -212,7 +231,16 @@ int main(int argc, char** argv)
     // process before we can restore terminal settings.
     const auto exitHandler = [](int)
     {
-        quit = true;
+        if (quit.load())
+        {
+            force_quit = true;
+            if (driver)
+                driver->forceStop();
+        }
+        else
+        {
+            quit = true;
+        }
     };
     std::signal(SIGINT, exitHandler);
     std::signal(SIGTERM, exitHandler);
@@ -233,7 +261,8 @@ int main(int argc, char** argv)
             MLDP_PVXS_DRIVER_VERSION_MINOR,
             MLDP_PVXS_DRIVER_VERSION_PATCH));
 
-    configure_parameter(program);
+    std::vector<std::string> configSources;
+    configure_parameter(program, configSources);
 
     const auto start_dumper = [&program](std::shared_ptr<PeriodicMetricsDumper>& metrics_dumper)
     {
@@ -267,6 +296,51 @@ int main(int argc, char** argv)
 
     try
     {
+        // Dispatch early subcommands before argparse consumes argv.
+        // Global -c/--config sources are accepted only before the subcommand.
+        std::vector<std::string> earlyConfigSources;
+        int                      earlySubcommandIndex = -1;
+        for (int index = 1; index < argc; ++index)
+        {
+            const auto arg = std::string_view{argv[index]};
+            if (arg == "-c" || arg == "--config")
+            {
+                if (++index >= argc)
+                {
+                    throw std::runtime_error("Global -c/--config requires a source value");
+                }
+                earlyConfigSources.emplace_back(argv[index]);
+                continue;
+            }
+            if (arg == "config" || arg == "query")
+            {
+                earlySubcommandIndex = index;
+                break;
+            }
+            // Stop scanning once we hit a non-global option/argument.
+            break;
+        }
+
+        if (earlySubcommandIndex >= 0 && std::string_view{argv[earlySubcommandIndex]} == "config")
+        {
+            return mldp_pvxs_driver::config::runConfigSubcommand(
+                argc - earlySubcommandIndex,
+                argv + earlySubcommandIndex);
+        }
+
+        if (earlySubcommandIndex >= 0 && std::string_view{argv[earlySubcommandIndex]} == "query")
+        {
+            mldp_pvxs_driver::cli::LoggingQueryCommandListener queryListener;
+            mldp_pvxs_driver::cli::QueryCommand querySubcommand(queryListener);
+            return querySubcommand.run(
+                argc - earlySubcommandIndex,
+                argv + earlySubcommandIndex,
+                earlyConfigSources,
+                std::cin,
+                std::cout,
+                std::cerr);
+        }
+
         // Parse command line arguments
         program.parse_args(argc, argv);
 
@@ -275,7 +349,7 @@ int main(int argc, char** argv)
         // Metrics printing can be triggered either by Ctrl+P (foreground terminal)
         // or by sending SIGUSR1/SIGQUIT to the process.
         mldp_pvxs_driver::metrics::MetricsSnapshot metrics_snapshot;
-        const auto metricHandler = [&metrics_snapshot]()
+        const auto                                 metricHandler = [&metrics_snapshot]()
         {
             if (driver)
             {
@@ -342,11 +416,11 @@ int main(int argc, char** argv)
             MLDP_PVXS_DRIVER_VERSION_PATCH);
 
         // Load configuration
-        auto config_path = program.get<std::string>("--config");
+        const auto config_path = configSources.empty() ? std::string("config.yaml") : configSources.front();
         spdlog::info("Loading configuration from {}", config_path);
         const bool dryRun = program.get<bool>("--dry-run");
         const bool printConfig = program.get<bool>("--print-config-startup");
-        auto config = Config::configFromFile(config_path);
+        auto       config = loadMergedConfigSources(configSources);
         if (printConfig)
         {
             if (dryRun)
@@ -374,6 +448,26 @@ int main(int argc, char** argv)
 
         if (dryRun)
         {
+            const auto diagnostics = validateConfig(config);
+            int        errorCount = 0;
+            for (const auto& diag : diagnostics)
+            {
+                if (diag.severity == ConfigDiagnostic::Severity::ERROR)
+                {
+                    ++errorCount;
+                    spdlog::error("{}: {}", diag.field_path, diag.message);
+                }
+            }
+
+            if (errorCount > 0)
+            {
+                spdlog::error("Dry-run validation failed with {} error(s).", errorCount);
+                setLogger(nullptr);
+                setLoggerFactory({});
+                spdlog::shutdown();
+                return EXIT_FAILURE;
+            }
+
             spdlog::info("Dry-run requested. Configuration validated; exiting without starting driver.");
             setLogger(nullptr);
             setLoggerFactory({});
@@ -391,7 +485,7 @@ int main(int argc, char** argv)
         pfd.fd = STDIN_FILENO;
         pfd.events = POLLIN;
 
-        while (!quit)
+        while (!quit && !driver->isStopped())
         {
             if (metrics_requested)
             {
@@ -439,6 +533,11 @@ int main(int argc, char** argv)
 
         // Stop the driver
         spdlog::info("Stopping driver...");
+
+        // Restore terminal BEFORE stopping the driver so the console is usable
+        // even if driver->stop() blocks (e.g. on a hung thread).
+        restore_terminal();
+
         driver->stop();
 
         // Stop periodic metrics dumper if it was started

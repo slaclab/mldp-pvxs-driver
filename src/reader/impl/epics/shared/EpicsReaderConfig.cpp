@@ -11,6 +11,7 @@
 #include <reader/impl/epics/shared/EpicsReaderConfig.h>
 
 #include <algorithm>
+#include <map>
 #include <utility>
 
 using namespace mldp_pvxs_driver::config;
@@ -88,6 +89,11 @@ std::optional<EpicsReaderConfig::PVConfig::NTTableRowTimestampOptions> parseNtTa
         throw EpicsReaderConfig::Error(optionContext + "." + std::string(SourceNameKey) + " is not supported for type 'slac-bsas-table'; source name always equals the column field name");
     }
 
+    if (optionCfg.hasChild(ColumnBatchSizeOptionKey))
+    {
+        opts.columnBatchSize = static_cast<std::size_t>(optionCfg.getInt(ColumnBatchSizeOptionKey, 1));
+    }
+
     return opts;
 }
 } // namespace
@@ -117,16 +123,6 @@ const std::string& EpicsReaderConfig::name() const
 unsigned int EpicsReaderConfig::threadPoolSize() const
 {
     return thread_pool_size_;
-}
-
-unsigned int EpicsReaderConfig::monitorPollThreads() const
-{
-    return monitor_poll_threads_;
-}
-
-unsigned int EpicsReaderConfig::monitorPollIntervalMs() const
-{
-    return monitor_poll_interval_ms_;
 }
 
 std::size_t EpicsReaderConfig::columnBatchSize() const
@@ -173,12 +169,18 @@ void EpicsReaderConfig::parse(const Config& readerEntry)
 
     thread_pool_size_ = static_cast<unsigned int>(readerEntry.getInt(ThreadPoolKey, 1));
     column_batch_size_ = static_cast<std::size_t>(readerEntry.getInt(ColumnBatchSizeKey, 50));
-    monitor_poll_threads_ = static_cast<unsigned int>(readerEntry.getInt(MonitorPollThreadsKey, 2));
-    monitor_poll_interval_ms_ = static_cast<unsigned int>(readerEntry.getInt(MonitorPollIntervalMsKey, 5));
 
     if (readerEntry.hasChild(BackendKey))
     {
         throw Error("backend is not supported; choose epics-pvxs or epics-base reader type");
+    }
+
+    // Parse optional reader-level static metadata
+    if (readerEntry.hasChild(kMetadataKey))
+    {
+        std::map<std::string, std::string> m;
+        readerEntry.subConfig(kMetadataKey).front() >> m;
+        static_metadata_.insert(m.begin(), m.end());
     }
 
     if (!readerEntry.hasChild(PvsKey))
@@ -257,7 +259,14 @@ void EpicsReaderConfig::parse(const Config& readerEntry)
             }
         }
 
-        pvs_.push_back({std::move(pvName), std::move(option), optionConfig, nttableRowTs});
+        std::unordered_map<std::string, std::string> pvMetadata;
+        if (pvNode.hasChild(kMetadataKey))
+        {
+            std::map<std::string, std::string> m;
+            pvNode.subConfig(kMetadataKey).front() >> m;
+            pvMetadata.insert(m.begin(), m.end());
+        }
+        pvs_.push_back({std::move(pvName), std::move(option), optionConfig, nttableRowTs, std::move(pvMetadata)});
         pvNames_.push_back(pvs_.back().name);
     }
 

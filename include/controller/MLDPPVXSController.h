@@ -12,23 +12,25 @@
 
 #include <BS_thread_pool.hpp>
 #include <config/Config.h>
+#include <enricher/EnricherRegistry.h>
 #include <controller/MLDPPVXSControllerConfig.h>
+#include <controller/RouteTable.h>
 #include <metrics/Metrics.h>
-#include <pool/MLDPGrpcPool.h>
-#include <pool/MLDPGrpcQueryPool.h>
-#include <reader/Reader.h>
+#include <processor/IChannelProcessor.h>
+#include <reader/IReader.h>
+#include <reader/IReaderLifecycle.h>
 #include <util/bus/IDataBus.h>
 #include <util/log/Logger.h>
+#include <writer/IWriter.h>
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <deque>
 #include <memory>
 #include <mutex>
-#include <optional>
-#include <set>
 #include <string>
-#include <unordered_map>
+#include <thread>
 #include <vector>
 
 namespace mldp_pvxs_driver::controller {
@@ -73,19 +75,19 @@ namespace mldp_pvxs_driver::controller {
  *   gauge showing the number of conversion tasks queued in the reader thread
  *   pool awaiting processing.
  *
- * Bus metrics:
- * - <tt>mldp_pvxs_driver_bus_payload_bytes_total</tt>:
+ * Writer metrics:
+ * - <tt>mldp_pvxs_driver_writer_payload_bytes_total</tt>:
  *   incremented for each successful gRPC <tt>Write()</tt> by the protobuf
  *   payload size (<tt>request.ByteSizeLong()</tt>). This is payload-only and
  *   does not include gRPC/HTTP2/TLS overhead.
- * - <tt>mldp_pvxs_driver_bus_payload_bytes_per_second</tt>:
+ * - <tt>mldp_pvxs_driver_writer_payload_bytes_per_second</tt>:
  *   gauge set after a successful batch finishes, computed as
  *   <tt>payload_bytes_in_batch / elapsed_seconds</tt> for each source.
- * - <tt>mldp_pvxs_driver_bus_push_total</tt>:
+ * - <tt>mldp_pvxs_driver_writer_push_total</tt>:
  *   incremented by the number of accepted events written for each source.
- * - <tt>mldp_pvxs_driver_bus_failure_total</tt>:
+ * - <tt>mldp_pvxs_driver_writer_failure_total</tt>:
  *   incremented when a streaming write/finish operation fails.
- * - <tt>mldp_pvxs_driver_bus_stream_rotations_total</tt>:
+ * - <tt>mldp_pvxs_driver_writer_stream_rotations_total</tt>:
  *   incremented each time a gRPC ingestion stream is closed, labeled with
  *   <tt>reason</tt> (idle, max_bytes, max_age, write_failed, shutdown,
  *   threshold).
@@ -108,7 +110,9 @@ namespace mldp_pvxs_driver::controller {
  *    items and worker threads batch them into gRPC streams.
  * 4. Call @ref stop to halt the workers and tear down resources.
  */
-class MLDPPVXSController : public util::bus::IDataBus, public std::enable_shared_from_this<MLDPPVXSController>
+class MLDPPVXSController : public util::bus::IDataBus,
+                           public reader::IReaderLifecycle,
+                           public std::enable_shared_from_this<MLDPPVXSController>
 {
 public:
     /**
@@ -149,36 +153,21 @@ public:
      * worker completion before returning.
      */
     void stop();
+    void forceStop();
 
     /**
-     * @brief Forward a batch of events produced by readers to the MLDP ingestion API.
+     * @brief Forward a batch of events produced by readers to the configured writers.
      *
      * Readers invoke this method with a collection of source/payload pairs and
-     * optional batch tags. The controller splits each source into a queue item
-     * and returns immediately after enqueueing; worker threads drain the queue,
-     * aggregate requests into gRPC streams, and flush based on configured byte
-     * and time thresholds. Network errors are logged and reported via metrics.
+     * optional batch tags. The controller fans the batch out to all active writers
+     * in a best-effort manner (copy for all-but-last, move for last).
      */
     bool push(EventBatch batch_values) override;
 
-    /**
-     * @brief Query source metadata from MLDP query API for a list of PV names.
-     *
-     * The method prefers the metadata RPC. If unavailable (older MLDP query
-     * servers), it falls back to queryData and derives first/last timestamps
-     * from returned bucket timestamp structures.
-     */
-    std::vector<SourceInfo> querySourcesInfo(const std::set<std::string>& source_names) override;
+    void onReaderCompleted(const std::string& reader_name) override;
 
-    /**
-     * @brief Query MLDP data values for a set of PV/source names.
-     *
-     * Retries until @p options.timeout expires because source visibility can
-     * be eventually consistent. Returns nullopt on hard failure/timeout.
-     */
-    std::optional<std::unordered_map<std::string, std::vector<dp::service::common::DataValues>>> querySourcesData(
-        const std::set<std::string>&              source_names,
-        const util::bus::QuerySourcesDataOptions& options = util::bus::QuerySourcesDataOptions{}) override;
+    bool isRunning() const { return running_.load(); }
+    bool isStopped() const { return stopped_.load(); }
 
     /**
      * @brief Access the shared metrics collector.
@@ -188,53 +177,39 @@ public:
     metrics::Metrics& metrics() const;
 
 private:
-    /**
-     * @brief Smallest unit of queued work for ingestion.
-     *
-     * Each item represents one frame plus shared batch metadata
-     * (root source and tags). Workers build one ingestion request per item.
-     */
-    struct QueueItem
-    {
-        std::string                                     root_source;
-        std::shared_ptr<const std::vector<std::string>> tags;
-        dp::service::common::DataFrame                  frame;
-    };
+    config::Config                                      raw_config_;  ///< Root YAML retained for global plugin definitions.
+    MLDPPVXSControllerConfig                              config_;      ///< Typed controller configuration.
+    std::shared_ptr<mldp_pvxs_driver::util::log::ILogger> logger_;      ///< Logger instance for controller logging.
+    std::shared_ptr<BS::light_thread_pool>                 thread_pool_;       ///< Writer fan-out pool.
+    std::vector<std::shared_ptr<BS::light_thread_pool>>   processor_pools_;   ///< One dedicated 1-thread pool per processor (each algorithm runs isolated).
+    std::shared_ptr<metrics::Metrics>                     metrics_;     ///< Shared metrics collector/exposer.
+    std::atomic<bool>                                     running_{false};
+    std::atomic<bool>                                     stopping_{false};
+    std::atomic<bool>                                     force_quit_{false};
+    std::atomic<bool>                                     stopped_{false};
+    mutable std::mutex                                    readers_mutex_; ///< Protects reader lifecycle mutations.
+    std::vector<reader::ReaderUPtr>                       readers_;     ///< Owned reader instances.
+    std::vector<writer::IWriterUPtr>                      writers_;     ///< Fan-out writer instances.
+    std::vector<processor::IChannelProcessorUPtr>         processors_;  ///< In-process virtual channel processors.
+    RouteTable                                            route_table_; ///< Selective reader→writer dispatch.
+    std::unique_ptr<enricher::EnricherRegistry>           enricher_registry_;
 
-    /// Per-worker channel: each worker has its own queue.
-    struct WorkerChannel
-    {
-        std::mutex              mutex;
-        std::condition_variable cv;
-        std::deque<QueueItem>   items;
-        bool                    shutdown{false};
-    };
+    mutable std::mutex              queue_mutex_;
+    std::condition_variable         queue_not_full_;
+    std::condition_variable         queue_not_empty_;
+    std::deque<EventBatch>          queue_;
+    std::thread                     consumer_thread_;
 
-    std::shared_ptr<mldp_pvxs_driver::util::log::ILogger>             logger_;              ///< Logger instance for controller logging.
-    MLDPPVXSControllerConfig                                          config_;              ///< Typed controller configuration.
-    std::shared_ptr<BS::light_thread_pool>                            thread_pool_;         ///< Shared worker pool executing bus pushes.
-    std::shared_ptr<metrics::Metrics>                                 metrics_;             ///< Shared metrics collector/exposer.
-    std::atomic<bool>                                                 running_{false};      ///< Tracks controller lifecycle state.
-    util::pool::MLDPGrpcIngestionePool::MLDPGrpcIngestionePoolShrdPtr mldp_ingestion_pool_; ///< MLDP ingestion gRPC connection pool.
-    util::pool::MLDPGrpcQueryPool::MLDPGrpcQueryPoolShrdPtr           mldp_query_pool_;     ///< MLDP query gRPC connection pool.
-    std::vector<reader::ReaderUPtr>                                   readers_;             ///< Owned ingestion reader instances.
-    std::string                                                       provider_id_;         ///< Provider identifier assigned by MLDP.
-    std::vector<std::unique_ptr<WorkerChannel>>                       channels_;            ///< Per-worker queues for round-robin dispatch.
-    std::atomic<std::size_t>                                          next_channel_{0};    ///< Global round-robin cursor used by push().
-    std::atomic<std::size_t>                                          queued_items_{0};     ///< Number of queued items.
+    std::mutex                                            queue_log_mutex_;
+    std::chrono::steady_clock::time_point                 last_queue_log_time_{};
+
+    std::mutex                                            push_log_mutex_;
+    std::chrono::steady_clock::time_point                 last_push_log_time_{};
 
     explicit MLDPPVXSController(const config::Config& config);
-    /// Worker loop draining one channel, writing frames into rolling gRPC streams.
-    void workerLoop(std::size_t worker_index);
-    /// Build and validate one ingestion request from a source frame.
-    bool buildRequest(const std::string&                         source_name,
-                      const dp::service::common::DataFrame&      frame,
-                      const std::string&                         request_id,
-                      dp::service::ingestion::IngestDataRequest& request,
-                      std::size_t&                               accepted_events,
-                      std::size_t&                               payload_bytes);
-    /// Publish aggregate queue depth metric for observability.
-    void updateQueueDepthMetric();
+    bool removeCompletedReader(const std::string& reader_name);
+    void consumerLoop();
+    void dispatchToWriters(EventBatch batch);
 };
 
 } // namespace mldp_pvxs_driver::controller

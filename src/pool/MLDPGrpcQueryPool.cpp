@@ -144,6 +144,11 @@ std::size_t MLDPGrpcQueryPool::size() const
     return current_size_;
 }
 
+std::size_t MLDPGrpcQueryPool::maxSize() const noexcept
+{
+    return static_cast<std::size_t>(config_.maxConnections());
+}
+
 std::size_t MLDPGrpcQueryPool::availableCountLocked() const
 {
     std::size_t count = 0;

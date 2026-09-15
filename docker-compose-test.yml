@@ -7,6 +7,7 @@ x-ci-common: &ci-common
       - mongodb
       - dp-ingestion
       - dp-query
+      - dp-annotation
     working_dir: /workspace
     entrypoint: []
     environment:

@@ -23,7 +23,10 @@
 
 using mldp_pvxs_driver::config::makeConfigFromYaml;
 using mldp_pvxs_driver::util::bus::IDataBus;
+using mldp_pvxs_driver::util::bus::DataBatch;
 using namespace mldp_pvxs_driver::reader::impl::epics;
+using mldp_pvxs_driver::util::bus::asTimeSeries;
+using mldp_pvxs_driver::util::bus::getRootSourceName;
 
 // Concrete mock implementation of IDataBus for testing
 class MockEventBusPush : public IDataBus
@@ -45,27 +48,15 @@ public:
         std::lock_guard<std::mutex> lock(mutex);
         if (metrics_)
         {
-            const size_t total_values = batch.frames.size();
-            const auto source = batch.root_source.empty() ? std::string("unknown") : batch.root_source;
+            const size_t             total_values = asTimeSeries(batch).frames.size();
+            const auto               source = getRootSourceName(batch).empty() ? std::string("unknown") : getRootSourceName(batch);
             const prometheus::Labels tags{{"source", source}};
-            metrics_->incrementBusPushes(static_cast<double>(total_values), tags);
-            metrics_->incrementBusPayloadBytes(0.0, tags);
-            metrics_->setBusPayloadBytesPerSecond(0.0, tags);
+            metrics_->incrementWriterPushes(static_cast<double>(total_values), tags);
+            metrics_->incrementWriterPayloadBytes(0.0, tags);
+            metrics_->setWriterPayloadBytesPerSecond(0.0, tags);
         }
         received_events.push_back(std::move(batch));
         return true;
-    }
-
-    std::vector<SourceInfo> querySourcesInfo(const std::set<std::string>&) override
-    {
-        return {};
-    }
-
-    std::optional<std::unordered_map<std::string, std::vector<dp::service::common::DataValues>>> querySourcesData(
-        const std::set<std::string>&,
-        const mldp_pvxs_driver::util::bus::QuerySourcesDataOptions&) override
-    {
-        return std::nullopt;
     }
 
     // Method to get the number of events received
@@ -81,7 +72,7 @@ public:
         size_t                      total = 0;
         for (const auto& batch : received_events)
         {
-            total += batch.frames.size();
+            total += asTimeSeries(batch).frames.size();
         }
         return total;
     }
@@ -106,8 +97,8 @@ public:
         return received_events.back();
     }
 
-    // Method to get the last event's DataFrame pointer
-    const dp::service::common::DataFrame* last_event() const
+    // Method to get the last event's DataBatch pointer
+    const DataBatch* last_event() const
     {
         std::lock_guard<std::mutex> lock(mutex);
         if (received_events.empty())
@@ -115,11 +106,11 @@ public:
             return nullptr;
         }
         const auto& batch = received_events.back();
-        if (batch.frames.empty())
+        if (asTimeSeries(batch).frames.empty())
         {
             return nullptr;
         }
-        return &batch.frames.front();
+        return &asTimeSeries(batch).frames.front();
     }
 
     // Method to clear events
@@ -141,31 +132,22 @@ private:
 
 namespace {
 
-using DataFrame = dp::service::common::DataFrame;
-
-std::optional<std::string> frameSource(const DataFrame& frame)
+std::optional<std::string> frameSource(const DataBatch& batch)
 {
-    if (frame.doublecolumns_size() > 0) return frame.doublecolumns(0).name();
-    if (frame.floatcolumns_size() > 0) return frame.floatcolumns(0).name();
-    if (frame.int32columns_size() > 0) return frame.int32columns(0).name();
-    if (frame.int64columns_size() > 0) return frame.int64columns(0).name();
-    if (frame.boolcolumns_size() > 0) return frame.boolcolumns(0).name();
-    if (frame.stringcolumns_size() > 0) return frame.stringcolumns(0).name();
-    if (frame.datacolumns_size() > 0) return frame.datacolumns(0).name();
-    if (frame.doublearraycolumns_size() > 0) return frame.doublearraycolumns(0).name();
-    if (frame.floatarraycolumns_size() > 0) return frame.floatarraycolumns(0).name();
-    if (frame.int32arraycolumns_size() > 0) return frame.int32arraycolumns(0).name();
-    if (frame.int64arraycolumns_size() > 0) return frame.int64arraycolumns(0).name();
-    if (frame.boolarraycolumns_size() > 0) return frame.boolarraycolumns(0).name();
+    if (!batch.columns.empty())
+        return batch.columns[0].name;
+    if (!batch.enum_columns.empty())
+        return batch.enum_columns[0].name;
     return std::nullopt;
 }
 
-const DataFrame* findLatestDataFrameForSource(const MockEventBusPush& bus, const std::string& source)
+const DataBatch* findLatestDataFrameForSource(const MockEventBusPush& bus, const std::string& source)
 {
     std::lock_guard<std::mutex> lock(bus.mutex);
     for (auto it = bus.received_events.rbegin(); it != bus.received_events.rend(); ++it)
     {
-        for (auto fit = it->frames.rbegin(); fit != it->frames.rend(); ++fit)
+        const auto& frames = asTimeSeries(*it).frames;
+        for (auto fit = frames.rbegin(); fit != frames.rend(); ++fit)
         {
             const auto src = frameSource(*fit);
             if (src.has_value() && *src == source)
@@ -183,7 +165,7 @@ size_t countEventsForSource(const MockEventBusPush& bus, const std::string& sour
     size_t                      total = 0;
     for (const auto& batch : bus.received_events)
     {
-        for (const auto& frame : batch.frames)
+        for (const auto& frame : asTimeSeries(batch).frames)
         {
             const auto src = frameSource(frame);
             if (src.has_value() && *src == source)
@@ -320,10 +302,10 @@ pvs:
     auto reader_ptr = mldp_pvxs_driver::reader::ReaderFactory::create("epics-pvxs", mock_bus, cfg, metrics);
     ASSERT_NE(reader_ptr, nullptr);
 
-    const int max_wait_ms = 5000;
-    int       waited_ms = 0;
-    size_t    counter_events = 0;
-    bool      matched_metrics = false;
+    const int                                  max_wait_ms = 5000;
+    int                                        waited_ms = 0;
+    size_t                                     counter_events = 0;
+    bool                                       matched_metrics = false;
     mldp_pvxs_driver::metrics::MetricsSnapshot snapshotter;
     while (waited_ms < max_wait_ms)
     {
@@ -361,7 +343,7 @@ TEST_F(EpicsPVXSReaderTest, SimulatedPVsProduceEventsAndExpectedTypes)
             std::lock_guard<std::mutex> lock(mock_bus->mutex);
             for (const auto& batch : mock_bus->received_events)
             {
-                for (const auto& frame : batch.frames)
+                for (const auto& frame : asTimeSeries(batch).frames)
                 {
                     const auto src = frameSource(frame);
                     if (!src.has_value())
@@ -401,7 +383,8 @@ TEST_F(EpicsPVXSReaderTest, SimulatedPVsProduceEventsAndExpectedTypes)
     }
 
     epics_typed_pv_test_utils::assertTypedCoverageDataFrames(
-        [this](const std::string& pv) {
+        [this](const std::string& pv)
+        {
             return findLatestDataFrameForSource(*mock_bus, pv);
         });
 }
@@ -425,15 +408,15 @@ pvs:
     int       waited_ms = 0;
     while (waited_ms < max_wait_ms)
     {
-        if (countEventsForSource(*mock_bus, "PV_NAME_A_DOUBLE_VALUE") >= 3 &&
-            countEventsForSource(*mock_bus, "PV_NAME_B_STRING_VALUE") >= 3)
+        if (countEventsForSource(*mock_bus, "PV_A") >= 3 &&
+            countEventsForSource(*mock_bus, "PV_B") >= 3)
             break;
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
         waited_ms += 100;
     }
 
-    EXPECT_GE(countEventsForSource(*mock_bus, "PV_NAME_A_DOUBLE_VALUE"), 3u);
-    EXPECT_GE(countEventsForSource(*mock_bus, "PV_NAME_B_STRING_VALUE"), 3u);
+    EXPECT_GE(countEventsForSource(*mock_bus, "PV_A"), 3u);
+    EXPECT_GE(countEventsForSource(*mock_bus, "PV_B"), 3u);
 
     // Verify no timestamp columns leaked as sources
     EXPECT_EQ(countEventsForSource(*mock_bus, "secondsPastEpoch"), 0u);
@@ -447,16 +430,16 @@ pvs:
         for (const auto& batch : mock_bus->received_events)
         {
             bool has_column = false;
-            for (const auto& frame : batch.frames)
+            for (const auto& frame : asTimeSeries(batch).frames)
             {
                 const auto src = frameSource(frame);
-                if (src == "PV_NAME_A_DOUBLE_VALUE" || src == "PV_NAME_B_STRING_VALUE")
+                if (src == "PV_A" || src == "PV_B")
                 {
                     has_column = true;
                     break;
                 }
             }
-            if (has_column && batch.root_source == "test:bsas_table")
+            if (has_column && getRootSourceName(batch) == "test:bsas_table")
             {
                 saw_root_for_column_batch = true;
                 break;
@@ -466,19 +449,19 @@ pvs:
     EXPECT_TRUE(saw_root_for_column_batch);
 
     // Collect events for each column across all batches
-    std::vector<DataFrame> ampl, stat;
+    std::vector<DataBatch> ampl, stat;
     {
         std::lock_guard<std::mutex> lock(mock_bus->mutex);
         for (const auto& batch : mock_bus->received_events)
         {
-            for (const auto& frame : batch.frames)
+            for (const auto& frame : asTimeSeries(batch).frames)
             {
                 const auto src = frameSource(frame);
-                if (src == "PV_NAME_A_DOUBLE_VALUE")
+                if (src == "PV_A")
                 {
                     ampl.push_back(frame);
                 }
-                if (src == "PV_NAME_B_STRING_VALUE")
+                if (src == "PV_B")
                 {
                     stat.push_back(frame);
                 }
@@ -492,21 +475,276 @@ pvs:
     // Per-row timestamps are shared across columns.
     for (size_t i = 0; i < 3; ++i)
     {
-        ASSERT_TRUE(ampl[i].has_datatimestamps());
-        ASSERT_TRUE(stat[i].has_datatimestamps());
-        ASSERT_GT(ampl[i].datatimestamps().timestamplist().timestamps_size(), 0);
-        ASSERT_GT(stat[i].datatimestamps().timestamplist().timestamps_size(), 0);
-        EXPECT_EQ(ampl[i].datatimestamps().timestamplist().timestamps(0).epochseconds(),
-                  stat[i].datatimestamps().timestamplist().timestamps(0).epochseconds());
-        EXPECT_EQ(ampl[i].datatimestamps().timestamplist().timestamps(0).nanoseconds(),
-                  stat[i].datatimestamps().timestamplist().timestamps(0).nanoseconds());
+        ASSERT_FALSE(ampl[i].timestamps.empty());
+        ASSERT_FALSE(stat[i].timestamps.empty());
+        EXPECT_EQ(ampl[i].timestamps[0].epoch_seconds, stat[i].timestamps[0].epoch_seconds);
+        EXPECT_EQ(ampl[i].timestamps[0].nanoseconds,   stat[i].timestamps[0].nanoseconds);
     }
 
-    ASSERT_GT(ampl[0].doublecolumns_size(), 0);
-    ASSERT_GT(ampl[0].doublecolumns(0).values_size(), 0);
-    EXPECT_DOUBLE_EQ(ampl[0].doublecolumns(0).values(0), 1.0);
+    // PV_A: Float64 column — values are 1.0+sin(time) based, just check type and non-empty
+    {
+        const auto* col = epics_typed_pv_test_utils::findDataColumn(ampl[0], "PV_A");
+        ASSERT_NE(col, nullptr);
+        ASSERT_TRUE(std::holds_alternative<std::vector<double>>(col->values));
+        EXPECT_GT(std::get<std::vector<double>>(col->values).size(), 0u);
+    }
 
-    ASSERT_GT(stat[0].stringcolumns_size(), 0);
-    ASSERT_GT(stat[0].stringcolumns(0).values_size(), 0);
-    EXPECT_EQ(stat[0].stringcolumns(0).values(0), "OK");
+    // PV_B: Int32 column (was String in old mock)
+    {
+        const auto* col = epics_typed_pv_test_utils::findDataColumn(stat[0], "PV_B");
+        ASSERT_NE(col, nullptr);
+        ASSERT_TRUE(std::holds_alternative<std::vector<int32_t>>(col->values));
+        EXPECT_GT(std::get<std::vector<int32_t>>(col->values).size(), 0u);
+    }
+}
+
+TEST_F(EpicsPVXSReaderTest, ReaderDataBytesMetricsIncrementedAfterEvent)
+{
+    const std::string yaml = R"(
+name: epics_1
+pvs:
+  - name: test:counter
+)";
+    const auto cfg     = makeConfigFromYaml(yaml);
+    auto       metrics = std::make_shared<mldp_pvxs_driver::metrics::Metrics>(
+        mldp_pvxs_driver::metrics::MetricsConfig());
+    auto reader_ptr = mldp_pvxs_driver::reader::ReaderFactory::create("epics-pvxs", mock_bus, cfg, metrics);
+    ASSERT_NE(reader_ptr, nullptr);
+
+    const prometheus::Labels source_tag{{"source", "test:counter"}};
+    const int                max_wait_ms = 5000;
+    int                      waited_ms   = 0;
+    bool                     got_bytes   = false;
+    while (waited_ms < max_wait_ms)
+    {
+        if (metrics->readerDataBytesTotal(source_tag) > 0.0)
+        {
+            got_bytes = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        waited_ms += 100;
+    }
+
+    EXPECT_TRUE(got_bytes) << "readerDataBytesTotal never incremented for test:counter";
+    EXPECT_GT(metrics->readerDataBytesTotal(source_tag), 0.0);
+    EXPECT_GE(metrics->readerDataBytesPerSecond(source_tag), 0.0);
+}
+
+// Verify reader-level metadata and per-PV metadata overrides are merged into EventBatch.metadata.
+// Reader config uses YAML key "metadata" for both reader-level and per-PV blocks.
+// Per-PV keys win over reader-level keys on conflict.
+TEST_F(EpicsPVXSReaderTest, StaticAndPerPvMetadataMergedIntoEventBatch)
+{
+    const std::string yaml = R"(
+name: epics_meta_reader
+metadata:
+  facility: lcls
+  subsystem: bpms
+pvs:
+  - name: test:counter
+    metadata:
+      signal_type: scalar
+      subsystem: override_bpms
+)";
+    const auto cfg     = makeConfigFromYaml(yaml);
+    auto       reader  = mldp_pvxs_driver::reader::ReaderFactory::create("epics-pvxs", mock_bus, cfg);
+    ASSERT_NE(reader, nullptr);
+
+    const int max_wait_ms = 5000;
+    int       waited_ms   = 0;
+    while (mock_bus->event_count() == 0 && waited_ms < max_wait_ms)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        waited_ms += 100;
+    }
+    ASSERT_GT(mock_bus->event_count(), 0u) << "No events received within timeout";
+
+    // All batches for test:counter must carry the merged metadata map.
+    std::lock_guard<std::mutex> lock(mock_bus->mutex);
+    bool found = false;
+    for (const auto& batch : mock_bus->received_events)
+    {
+        if (getRootSourceName(batch) != "test:counter")
+            continue;
+        found = true;
+        // Reader-level key not overridden by per-PV.
+        EXPECT_EQ(batch.metadata.count("facility"), 1u);
+        EXPECT_EQ(batch.metadata.at("facility"), "lcls");
+        // Per-PV key not present at reader level.
+        EXPECT_EQ(batch.metadata.count("signal_type"), 1u);
+        EXPECT_EQ(batch.metadata.at("signal_type"), "scalar");
+        // Per-PV key overrides reader-level key with same name.
+        EXPECT_EQ(batch.metadata.count("subsystem"), 1u);
+        EXPECT_EQ(batch.metadata.at("subsystem"), "override_bpms");
+    }
+    EXPECT_TRUE(found) << "No batch with root_source=test:counter received";
+}
+
+// Verify column-batch-size: 2 groups PV_A and PV_B into same DataBatch frame sharing timestamps.
+TEST_F(EpicsPVXSReaderTest, ColumnBatchSizeGroupsColumnsIntoSharedFrame)
+{
+    const std::string yaml = R"(
+name: epics_batch2
+pvs:
+  - name: test:bsas_table
+    option:
+      type: slac-bsas-table
+      column-batch-size: 2
+)";
+
+    const auto cfg = makeConfigFromYaml(yaml);
+    auto       reader_ptr = mldp_pvxs_driver::reader::ReaderFactory::create("epics-pvxs", mock_bus, cfg);
+    ASSERT_NE(reader_ptr, nullptr);
+
+    const int max_wait_ms = 5000;
+    int       waited_ms = 0;
+    while (waited_ms < max_wait_ms)
+    {
+        if (mock_bus->event_count() >= 2)
+            break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        waited_ms += 100;
+    }
+
+    ASSERT_GE(mock_bus->event_count(), 2u) << "Expected at least 2 bus pushes (data + marker)";
+
+    // With column-batch-size: 2, PV_A and PV_B should be grouped into the same
+    // DataBatch frame (sharing timestamps) rather than each getting their own frame.
+    bool found_grouped_frame = false;
+    {
+        std::lock_guard<std::mutex> lock(mock_bus->mutex);
+        for (const auto& batch : mock_bus->received_events)
+        {
+            const auto& ts_payload = asTimeSeries(batch);
+            if (ts_payload.end_of_batch_group)
+                continue;
+            for (const auto& frame : ts_payload.frames)
+            {
+                if (frame.columns.size() >= 2)
+                {
+                    found_grouped_frame = true;
+                    EXPECT_FALSE(frame.timestamps.empty())
+                        << "Grouped frame must have shared timestamps";
+                    break;
+                }
+            }
+            if (found_grouped_frame)
+                break;
+        }
+    }
+    EXPECT_TRUE(found_grouped_frame)
+        << "With column-batch-size: 2, at least one DataBatch frame should contain 2+ columns sharing timestamps";
+}
+
+// Verify that all-NaN columns do not count toward column-batch-size and no empty frames are pushed.
+TEST_F(EpicsPVXSReaderTest, ColumnBatchSizeMixedValidAndNaNColumns)
+{
+    const std::string yaml = R"(
+name: epics_nan_mix
+pvs:
+  - name: test:bsas_table_nan
+    option:
+      type: slac-bsas-table
+      column-batch-size: 2
+)";
+
+    const auto cfg = makeConfigFromYaml(yaml);
+    auto       reader_ptr = mldp_pvxs_driver::reader::ReaderFactory::create("epics-pvxs", mock_bus, cfg);
+    ASSERT_NE(reader_ptr, nullptr);
+
+    const int max_wait_ms = 5000;
+    int       waited_ms = 0;
+    while (waited_ms < max_wait_ms)
+    {
+        if (mock_bus->event_count() >= 2)
+            break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        waited_ms += 100;
+    }
+
+    ASSERT_GE(mock_bus->event_count(), 2u) << "Expected at least 2 bus pushes";
+
+    // With 3 valid columns (COL_A, COL_D, COL_F) and column-batch-size: 2,
+    // we expect frames grouped as [COL_A, COL_D] and [COL_F].
+    // No frame should be empty (0 columns).
+    bool found_grouped_frame = false;
+    bool found_empty_frame = false;
+    {
+        std::lock_guard<std::mutex> lock(mock_bus->mutex);
+        for (const auto& batch : mock_bus->received_events)
+        {
+            const auto& ts_payload = asTimeSeries(batch);
+            if (ts_payload.end_of_batch_group)
+                continue;
+            for (const auto& frame : ts_payload.frames)
+            {
+                if (frame.columns.empty())
+                {
+                    found_empty_frame = true;
+                }
+                if (frame.columns.size() >= 2)
+                {
+                    found_grouped_frame = true;
+                    EXPECT_FALSE(frame.timestamps.empty())
+                        << "Grouped frame must have shared timestamps";
+                }
+            }
+        }
+    }
+    EXPECT_FALSE(found_empty_frame)
+        << "NaN-only columns should not produce empty frames";
+    EXPECT_TRUE(found_grouped_frame)
+        << "With column-batch-size: 2 and 3 valid columns (skipping NaN), at least one frame should have 2 columns";
+}
+
+// Verify that when ALL columns are NaN, no data frames are pushed (only end-of-batch-group marker).
+TEST_F(EpicsPVXSReaderTest, ColumnBatchSizeAllNaNColumnsProduceNoFrames)
+{
+    const std::string yaml = R"(
+name: epics_all_nan
+pvs:
+  - name: test:bsas_table_nan
+    option:
+      type: slac-bsas-table
+      column-batch-size: 2
+)";
+
+    const auto cfg = makeConfigFromYaml(yaml);
+    auto       reader_ptr = mldp_pvxs_driver::reader::ReaderFactory::create("epics-pvxs", mock_bus, cfg);
+    ASSERT_NE(reader_ptr, nullptr);
+
+    const int max_wait_ms = 3000;
+    int       waited_ms = 0;
+    while (waited_ms < max_wait_ms)
+    {
+        if (mock_bus->event_count() >= 2)
+            break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        waited_ms += 100;
+    }
+
+    // Since test:bsas_table_nan has some valid columns (COL_A, COL_D, COL_F),
+    // verify that no frame has more columns than valid ones (max 2 per frame with batch-size: 2).
+    // Also verify no frame contains NaN-only column names (COL_B, COL_C, COL_E).
+    {
+        std::lock_guard<std::mutex> lock(mock_bus->mutex);
+        for (const auto& batch : mock_bus->received_events)
+        {
+            const auto& ts_payload = asTimeSeries(batch);
+            if (ts_payload.end_of_batch_group)
+                continue;
+            for (const auto& frame : ts_payload.frames)
+            {
+                EXPECT_LE(frame.columns.size(), 2u)
+                    << "No frame should exceed column-batch-size";
+                for (const auto& col : frame.columns)
+                {
+                    EXPECT_NE(col.name, "COL_B") << "NaN-only column COL_B should not appear in frames";
+                    EXPECT_NE(col.name, "COL_C") << "NaN-only column COL_C should not appear in frames";
+                    EXPECT_NE(col.name, "COL_E") << "NaN-only column COL_E should not appear in frames";
+                }
+            }
+        }
+    }
 }

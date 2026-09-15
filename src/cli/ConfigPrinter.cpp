@@ -12,8 +12,14 @@
 
 #include <controller/MLDPPVXSControllerConfig.h>
 #include <pool/MLDPGrpcPoolConfig.h>
+#include <reader/impl/epics/base/EpicsBaseReaderConfig.h>
 #include <reader/impl/epics/shared/EpicsReaderConfig.h>
 #include <reader/impl/epics_archiver/EpicsArchiverReaderConfig.h>
+#ifdef MLDP_PVXS_HDF5_ENABLED
+    #include <reader/impl/hdf5_bsas_gen1/HDF5BsasGen1ReaderConfig.h>
+#endif
+#include <writer/hdf5/HDF5WriterConfig.h>
+#include <writer/mldp/MLDPWriterConfig.h>
 
 #include <algorithm>
 #include <iomanip>
@@ -22,8 +28,12 @@
 #include <vector>
 
 using mldp_pvxs_driver::controller::MLDPPVXSControllerConfig;
+using mldp_pvxs_driver::reader::impl::epics::EpicsBaseReaderConfig;
 using mldp_pvxs_driver::reader::impl::epics::EpicsReaderConfig;
 using mldp_pvxs_driver::reader::impl::epics_archiver::EpicsArchiverReaderConfig;
+#ifdef MLDP_PVXS_HDF5_ENABLED
+using mldp_pvxs_driver::reader::impl::hdf5_bsas_gen1::HDF5BsasGen1ReaderConfig;
+#endif
 using mldp_pvxs_driver::util::pool::MLDPGrpcPoolConfig;
 
 namespace {
@@ -31,6 +41,7 @@ namespace {
 constexpr const char* kEpicsPvxsType = "epics-pvxs";
 constexpr const char* kEpicsBaseType = "epics-base";
 constexpr const char* kEpicsArchiverType = "epics-archiver";
+constexpr const char* kHdf5BsasGen1Type = "hdf5-bsas-gen1";
 
 std::string previewList(const std::vector<std::string>& values, std::size_t maxItems = 3)
 {
@@ -87,17 +98,56 @@ std::string mldp_pvxs_driver::cli::formatStartupConfig(
     std::ostringstream out;
     out << "=== Effective Startup Configuration ===\n";
     out << "file: " << configPath << "\n";
-    out << "controller: threads=" << controllerConfig.controllerThreadPoolSize()
-        << " stream_max_bytes=" << controllerConfig.controllerStreamMaxBytes()
-        << " stream_max_age_ms=" << controllerConfig.controllerStreamMaxAge().count() << "\n";
 
-    const auto& pool = controllerConfig.pool();
-    out << "mldp-pool: provider=" << pool.providerName()
-        << " conn=" << pool.minConnections() << ".." << pool.maxConnections()
-        << " ingestion=" << pool.ingestionUrl()
-        << " query=" << pool.queryUrl()
-        << " credentials=" << credentialsSummary(pool.credentials())
-        << "\n";
+    for (const auto& [type, writerNode] : controllerConfig.writerEntries())
+    {
+        if (type == "mldp")
+        {
+            try
+            {
+                const auto mldpCfg = writer::MLDPWriterConfig::parse(writerNode);
+                out << "writer.mldp[" << mldpCfg.name << "]: threads=" << mldpCfg.threadPoolSize
+                    << " stream_max_bytes=" << mldpCfg.streamMaxBytes
+                    << " stream_max_age_ms=" << mldpCfg.streamMaxAge.count() << "\n";
+
+                const auto& pool = mldpCfg.poolConfig;
+                out << "  mldp-pool: provider=" << pool.providerName()
+                    << " conn=" << pool.minConnections() << ".." << pool.maxConnections()
+                    << " ingestion=" << pool.ingestionUrl()
+                    << " query=" << pool.queryUrl()
+                    << " credentials=" << credentialsSummary(pool.credentials())
+                    << "\n";
+            }
+            catch (const writer::MLDPWriterConfig::Error& e)
+            {
+                out << "writer.mldp[?]: parse error: " << e.what() << "\n";
+            }
+        }
+        else if (type == "hdf5")
+        {
+            try
+            {
+                const auto hdf5Cfg = writer::HDF5WriterConfig::parse(writerNode);
+                out << "writer.hdf5[" << hdf5Cfg.name << "]: base-path=" << hdf5Cfg.basePath << "\n";
+            }
+            catch (const writer::HDF5WriterConfig::Error& e)
+            {
+                out << "writer.hdf5[?]: parse error: " << e.what() << "\n";
+            }
+        }
+        else if (type == "hdf5-merge")
+        {
+            try
+            {
+                const auto hdf5Cfg = writer::HDF5WriterConfig::parse(writerNode);
+                out << "writer.hdf5-merge[" << hdf5Cfg.name << "]: base-path=" << hdf5Cfg.basePath << "\n";
+            }
+            catch (const writer::HDF5WriterConfig::Error& e)
+            {
+                out << "writer.hdf5-merge[?]: parse error: " << e.what() << "\n";
+            }
+        }
+    }
 
     if (controllerConfig.metricsConfig().has_value() && controllerConfig.metricsConfig()->valid())
     {
@@ -116,14 +166,23 @@ std::string mldp_pvxs_driver::cli::formatStartupConfig(
         const auto& [type, cfg] = readers[i];
         out << "  [" << (i + 1) << "] type=" << type << " ";
 
-        if (type == kEpicsPvxsType || type == kEpicsBaseType)
+        if (type == kEpicsBaseType)
         {
-            const EpicsReaderConfig reader(cfg);
+            const EpicsBaseReaderConfig reader(cfg);
             out << "name=" << reader.name()
                 << " pvs=" << reader.pvs().size()
                 << " thread_pool=" << reader.threadPoolSize()
                 << " monitor_poll_threads=" << reader.monitorPollThreads()
                 << " monitor_poll_ms=" << reader.monitorPollIntervalMs()
+                << " column_batch_size=" << reader.columnBatchSize()
+                << " pv_preview=[" << previewList(reader.pvNames()) << "]";
+        }
+        else if (type == kEpicsPvxsType)
+        {
+            const EpicsReaderConfig reader(cfg);
+            out << "name=" << reader.name()
+                << " pvs=" << reader.pvs().size()
+                << " thread_pool=" << reader.threadPoolSize()
                 << " column_batch_size=" << reader.columnBatchSize()
                 << " pv_preview=[" << previewList(reader.pvNames()) << "]";
         }
@@ -133,8 +192,7 @@ std::string mldp_pvxs_driver::cli::formatStartupConfig(
             out << "name=" << reader.name()
                 << " mode=" << archiverModeSummary(reader.fetchMode())
                 << " host=" << reader.hostname()
-                << " pvs=" << reader.pvs().size()
-                << " batch_duration_s=" << reader.batchDurationSec();
+                << " pvs=" << reader.pvs().size();
             if (reader.fetchMode() == EpicsArchiverReaderConfig::FetchMode::PeriodicTail)
             {
                 out << " poll_interval_s=" << reader.pollIntervalSec()
@@ -146,6 +204,15 @@ std::string mldp_pvxs_driver::cli::formatStartupConfig(
             }
             out << " pv_preview=[" << previewList(reader.pvNames()) << "]";
         }
+#ifdef MLDP_PVXS_HDF5_ENABLED
+        else if (type == kHdf5BsasGen1Type)
+        {
+            const HDF5BsasGen1ReaderConfig reader(cfg);
+            out << "name=" << reader.name()
+                << " file-path=" << reader.filePath()
+                << " chunk-size=" << reader.chunkSize();
+        }
+#endif
         else
         {
             out << "summary=unavailable";
@@ -160,8 +227,8 @@ std::string mldp_pvxs_driver::cli::formatStartupConfig(
 
 namespace {
 void collectFlatRows(const mldp_pvxs_driver::config::ryml::ConstNodeRef& node,
-                     const std::string&                                   path,
-                     std::vector<std::pair<std::string, std::string>>&    rows)
+                     const std::string&                                  path,
+                     std::vector<std::pair<std::string, std::string>>&   rows)
 {
     if (node.invalid())
     {
@@ -176,7 +243,7 @@ void collectFlatRows(const mldp_pvxs_driver::config::ryml::ConstNodeRef& node,
             {
                 continue;
             }
-            const auto keyView = child.key();
+            const auto        keyView = child.key();
             const std::string key{keyView.str, keyView.len};
             const std::string nextPath = path.empty() ? key : (path + "." + key);
             collectFlatRows(child, nextPath, rows);

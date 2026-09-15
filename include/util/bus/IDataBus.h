@@ -13,30 +13,190 @@
  */
 
 #pragma once
-#include "common.pb.h"
 #include <chrono>
 #include <cstdint>
-#include <ingestion.grpc.pb.h>
 #include <optional>
-#include <set>
 #include <string>
 #include <unordered_map>
+#include <util/bus/DataBatch.h>
+#include <variant>
 #include <vector>
 
 namespace mldp_pvxs_driver::util::bus {
 
 /**
+ * @brief Payload carrying time-series data frames for ingestion.
+ *
+ * Replaces the flat frame fields that were previously on EventBatchStruct.
+ * @ref frames holds the individual payloads grouped by signal name.
+ */
+struct TimeSeriesPayload
+{
+    std::string                       root_source_name;          ///< Primary PV/signal identifier for this batch (used for routing and metrics).
+    std::vector<util::bus::DataBatch> frames;                    ///< One DataBatch per ingestion payload; each batch must include timestamps.
+    bool                              end_of_batch_group{false}; ///< Flush sentinel. Signals that all column batches for one logical row-synchronized group have been emitted. Writers should flush any accumulated tabular state when this is true.
+    bool                              is_tabular{false};         ///< True when this batch carries column frames for a multi-column, row-synchronized table. Writers that support tabular layout accumulate column batches before flushing.
+};
+
+/**
+ * @brief Metadata record for a single source/signal.
+ *
+ * All fields are optional to accommodate providers that only supply partial metadata.
+ */
+struct SourceMetadataEntry
+{
+    std::optional<std::vector<std::string>>      aliases;     ///< Alternative names for the source.
+    std::optional<std::vector<std::string>>      tags;        ///< Descriptive tags attached to the source.
+    std::unordered_map<std::string, std::string> attributes;  ///< Arbitrary key/value attributes.
+    std::optional<std::string>                   description; ///< Human-readable description.
+    std::optional<std::string>                   modified_by; ///< Identity of last modifier.
+};
+
+/**
+ * @brief Payload carrying per-source metadata records.
+ */
+struct SourceMetadataPayload
+{
+    std::string                                          root_source_name; ///< Primary identity of this metadata batch (e.g. the queried PV or reader name).
+    std::unordered_map<std::string, SourceMetadataEntry> sources;          ///< Map of source name to its metadata record.
+};
+
+/**
+ * @brief Nanosecond-resolution timestamp used inside bus payloads.
+ */
+struct BusTimestamp
+{
+    uint64_t epoch_seconds{0}; ///< Unix epoch seconds.
+    uint64_t nanoseconds{0};   ///< Nanoseconds fraction within the second.
+};
+
+/**
+ * @brief Payload describing a named configuration object and its attributes.
+ */
+struct ConfigurationPayload
+{
+    std::string                                  root_source_name;          ///< Primary identity of this configuration batch (e.g. the reader or calendar name).
+    std::string                                  configuration_name;        ///< Unique name of the configuration.
+    std::string                                  category;                  ///< Logical category/grouping.
+    std::optional<std::string>                   description;               ///< Human-readable description.
+    std::optional<std::string>                   parent_configuration_name; ///< Parent configuration name, if hierarchical.
+    std::optional<std::vector<std::string>>      tags;                      ///< Descriptive tags.
+    std::unordered_map<std::string, std::string> attributes;                ///< Arbitrary key/value attributes.
+    std::optional<std::string>                   modified_by;               ///< Identity of last modifier.
+};
+
+/**
+ * @brief Payload describing a configuration activation window.
+ *
+ * Records which configuration was activated, for how long, and optional
+ * annotation fields (description, tags, attributes).
+ */
+struct ConfigurationActivationPayload
+{
+    std::optional<std::string>                   client_activation_id; ///< Caller-supplied idempotency key.
+    std::string                                  configuration_name;   ///< Name of the activated configuration.
+    BusTimestamp                                 start_time;           ///< Activation start (inclusive).
+    std::optional<BusTimestamp>                  end_time;             ///< Activation end; absent means open-ended.
+    std::optional<std::string>                   description;          ///< Human-readable description.
+    std::optional<std::vector<std::string>>      tags;                 ///< Descriptive tags.
+    std::unordered_map<std::string, std::string> attributes;           ///< Arbitrary key/value attributes.
+    std::optional<std::string>                   modified_by;          ///< Identity of last modifier.
+};
+
+/**
+ * @brief Discriminated union of all payload types that can travel on the bus.
+ */
+using BatchPayload = std::variant<TimeSeriesPayload,
+                                  SourceMetadataPayload,
+                                  ConfigurationPayload,
+                                  ConfigurationActivationPayload>;
+
+/**
  * @brief Container describing a batch of events to ingest.
  *
- * Tags provide additional metadata that should accompany the entire batch,
- * while @ref values holds the individual payloads grouped by their signal name.
+ * Metadata provides key/value annotations that accompany the entire batch.
+ * The concrete payload is carried by @ref payload as a @ref BatchPayload variant.
  */
 struct EventBatchStruct
 {
-    std::string                                 root_source; ///< Root PV identifier used for batch-level metrics/correlation.
-    std::vector<std::string>                    tags;        ///< Optional metadata attached to the batch.
-    std::vector<dp::service::common::DataFrame> frames;      ///< One frame per ingestion payload; each frame must include timestamps.
+    /// Identity of the producing reader (set by reader before push).
+    std::string                                  reader_name;
+    std::unordered_map<std::string, std::string> metadata;    ///< Key/value metadata annotations attached to the batch (e.g. "source" -> PV name).
+    BatchPayload                                 payload;     ///< Variant payload; inspect with isTimeSeries() / asTimeSeries() helpers etc.
 };
+
+/// @name BatchPayload type-query and accessor helpers
+///@{
+
+/// Returns true when @p b carries a TimeSeriesPayload.
+inline bool isTimeSeries(const EventBatchStruct& b)
+{
+    return std::holds_alternative<TimeSeriesPayload>(b.payload);
+}
+
+/// Returns true when @p b carries a SourceMetadataPayload.
+inline bool isSourceMetadata(const EventBatchStruct& b)
+{
+    return std::holds_alternative<SourceMetadataPayload>(b.payload);
+}
+
+/// Returns true when @p b carries a ConfigurationPayload.
+inline bool isConfiguration(const EventBatchStruct& b)
+{
+    return std::holds_alternative<ConfigurationPayload>(b.payload);
+}
+
+/// Returns true when @p b carries a ConfigurationActivationPayload.
+inline bool isConfigurationActivation(const EventBatchStruct& b)
+{
+    return std::holds_alternative<ConfigurationActivationPayload>(b.payload);
+}
+
+/// Returns the TimeSeriesPayload; throws std::bad_variant_access if not the active alternative.
+inline const TimeSeriesPayload& asTimeSeries(const EventBatchStruct& b)
+{
+    return std::get<TimeSeriesPayload>(b.payload);
+}
+
+/// Returns the SourceMetadataPayload; throws std::bad_variant_access if not the active alternative.
+inline const SourceMetadataPayload& asSourceMetadata(const EventBatchStruct& b)
+{
+    return std::get<SourceMetadataPayload>(b.payload);
+}
+
+/// Returns the ConfigurationPayload; throws std::bad_variant_access if not the active alternative.
+inline const ConfigurationPayload& asConfiguration(const EventBatchStruct& b)
+{
+    return std::get<ConfigurationPayload>(b.payload);
+}
+
+/// Returns the ConfigurationActivationPayload; throws std::bad_variant_access if not the active alternative.
+inline const ConfigurationActivationPayload& asConfigurationActivation(const EventBatchStruct& b)
+{
+    return std::get<ConfigurationActivationPayload>(b.payload);
+}
+
+/**
+ * @brief Returns the canonical identity string for any payload type.
+ *
+ * TimeSeriesPayload, SourceMetadataPayload, ConfigurationPayload → root_source_name.
+ * ConfigurationActivationPayload → configuration_name (its natural primary key).
+ * Returns an empty string if the payload holds no active alternative.
+ */
+inline std::string getRootSourceName(const EventBatchStruct& b)
+{
+    if (const auto* p = std::get_if<TimeSeriesPayload>(&b.payload))
+        return p->root_source_name;
+    if (const auto* p = std::get_if<SourceMetadataPayload>(&b.payload))
+        return p->root_source_name;
+    if (const auto* p = std::get_if<ConfigurationPayload>(&b.payload))
+        return p->root_source_name;
+    if (const auto* p = std::get_if<ConfigurationActivationPayload>(&b.payload))
+        return p->configuration_name;
+    return {};
+}
+
+///@}
 
 /**
  * @brief Normalized timestamp payload returned by source-metadata queries.
@@ -104,43 +264,14 @@ public:
      * Each entry in @p batch_values.frames represents one ingestion payload.
      * Implementations may forward all entries in a single call to the back-end
      * to minimize network round-trips.
-     * When @p batch_values.tags is empty, implementations may add their own
-     * default tags before forwarding the batch.
+     * When @p batch_values.metadata is empty, implementations may add their own
+     * default metadata before forwarding the batch.
      *
      * @param batch_values Aggregated batch describing tags and payloads. Each
      *                     payload is shared with the bus implementation.
      * @return true if the batch was accepted for delivery.
      */
     virtual bool push(EventBatch batch_values) = 0;
-
-    /**
-     * @brief Query MLDP metadata for a set of source identifiers.
-     *
-     * The default implementation returns an empty list; concrete backends may
-     * override it when they can query metadata services (for example
-     * `DpQueryService::queryPvMetadata`).
-     *
-     * @param source_names Source/PV identifiers to query.
-     * @return Metadata rows for the sources known to the backend.
-     */
-    virtual std::vector<SourceInfo> querySourcesInfo(const std::set<std::string>& source_names) = 0;
-
-    /**
-     * @brief Query MLDP data values for sources over a relative time window.
-     *
-     * This mirrors the query shape used by integration tests: `queryData`
-     * with `pvNames`, `beginTime = now - lookback_window`, and
-     * `endTime = now + forward_window`.
-     *
-     * @param source_names Source/PV identifiers to query.
-     * @param options Query tuning options (timeouts and relative query window).
-     * @return Map keyed by source name with one DataValues entry per returned
-     *         data bucket (preserves bucket boundaries from queryData).
-     *         Returns std::nullopt on transport/protocol failures.
-     */
-    virtual std::optional<std::unordered_map<std::string, std::vector<dp::service::common::DataValues>>> querySourcesData(
-        const std::set<std::string>&   source_names,
-        const QuerySourcesDataOptions& options = QuerySourcesDataOptions{}) = 0;
 };
 
 } // namespace mldp_pvxs_driver::util::bus

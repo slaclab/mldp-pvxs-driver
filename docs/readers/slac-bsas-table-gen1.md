@@ -107,21 +107,23 @@ pvs:
       type: slac-bsas-table
       tsSeconds: secondsPastEpoch   # omit to use this default
       tsNanos:   nanoseconds        # omit to use this default
+      column-batch-size: 1          # columns per batch push (0 = all at once)
 ```
 
-Key         | Default            | Description
------------ | ------------------ | ----------------------------------------------
-`type`      | *(required)*       | Must be `slac-bsas-table` to activate this mode
-`tsSeconds` | `secondsPastEpoch` | Name of the per-row epoch-seconds column
-`tsNanos`   | `nanoseconds`      | Name of the per-row nanoseconds column
+Key                 | Default            | Description
+------------------- | ------------------ | ----------------------------------------------
+`type`              | *(required)*       | Must be `slac-bsas-table` to activate this mode
+`tsSeconds`         | `secondsPastEpoch` | Name of the per-row epoch-seconds column
+`tsNanos`           | `nanoseconds`      | Name of the per-row nanoseconds column
+`column-batch-size` | `1`                | Max columns per bus push; 0 means push all at once
 
 ## Implementation References
 
 Component                   | File
 --------------------------- | -----------------------------------------------------------
-PVXS conversion class       | `include/reader/impl/epics/pvxs/BSASEpicsMLDPConversion.h`
-PVXS conversion impl        | `src/reader/impl/epics/pvxs/BSASEpicsMLDPConversion.cpp`
-EPICS Base conversion       | `include/reader/impl/epics/base/EpicsPVDataConversion.h`
+PVXS conversion class       | `include/reader/impl/epics/pvxs/BSASEpicsDataBatchConversion.h`
+PVXS conversion impl        | `src/reader/impl/epics/pvxs/BSASEpicsDataBatchConversion.cpp`
+EPICS Base conversion       | `include/reader/impl/epics/base/EpicsPVDataBatchConversion.h`
 PVXS reader dispatch        | `src/reader/impl/epics/pvxs/EpicsPVXSReader.cpp`
 EPICS Base reader dispatch  | `src/reader/impl/epics/base/EpicsBaseReader.cpp`
 Mock IOC (concrete example) | `test/mock/sioc.cpp`

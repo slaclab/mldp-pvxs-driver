@@ -1,0 +1,557 @@
+#include <gtest/gtest.h>
+
+#include <controller/MLDPPVXSController.h>
+#include <metrics/MetricsSnapshot.h>
+
+#include <grpcpp/security/server_credentials.h>
+#include <grpcpp/server.h>
+#include <grpcpp/server_builder.h>
+#include <grpcpp/server_context.h>
+#include <ingestion.grpc.pb.h>
+
+#include <chrono>
+#include <optional>
+#include <thread>
+#include <type_traits>
+#include <unistd.h>
+
+#include "../common/MldpMetricsTestUtils.h"
+#include "../config/test_config_helpers.h"
+#include "../mock/sioc.h"
+
+using namespace mldp_pvxs_driver::controller;
+using namespace mldp_pvxs_driver::testutil;
+
+using mldp_pvxs_driver::config::makeConfigFromYaml;
+using mldp_pvxs_driver::util::bus::IDataBus;
+using mldp_pvxs_driver::util::bus::DataBatch;
+using mldp_pvxs_driver::util::bus::DataColumn;
+using mldp_pvxs_driver::util::bus::TimeSeriesPayload;
+
+namespace {
+
+constexpr std::string_view kMinimalControllerConfig = R"(
+writer:
+  mldp:
+    - name: mldp_main
+      mldp-pool:
+        provider-name: test_provider
+        ingestion-url: dp-ingestion:50051
+        query-url: dp-query:50052
+        min-conn: 1
+        max-conn: 1
+reader:
+  epics-pvxs:
+    - name: epics_reader_1
+      pvs:
+        - name: test:counter
+)";
+
+constexpr std::string_view kEpicsControllerConfig = R"(
+writer:
+  mldp:
+    - name: mldp_main
+      mldp-pool:
+        provider-name: test_provider
+        ingestion-url: dp-ingestion:50051
+        query-url: dp-query:50052
+        min-conn: 1
+        max-conn: 1
+reader:
+  epics-pvxs:
+    - name: epics_reader_1
+      pvs:
+        - name: test:counter
+)";
+
+constexpr std::string_view kBsasNtTableRowTsControllerConfig = R"(
+writer:
+  mldp:
+    - name: mldp_main
+      mldp-pool:
+        provider-name: test_provider
+        ingestion-url: dp-ingestion:50051
+        query-url: dp-query:50052
+        min-conn: 1
+        max-conn: 1
+reader:
+  epics-pvxs:
+    - name: epics_reader_1
+      pvs:
+        - name: test:bsas_table
+          option:
+            type: slac-bsas-table
+)";
+
+class TestIngestionService final : public dp::service::ingestion::DpIngestionService::Service
+{
+public:
+    std::atomic<int> stream_count{0};
+    std::atomic<int> request_count{0};
+    std::atomic<int> stream_close_count{0};
+
+    std::vector<dp::service::ingestion::IngestDataRequest> captured_requests;
+    std::mutex                                             captured_mutex;
+
+    grpc::Status registerProvider(grpc::ServerContext*,
+                                  const dp::service::ingestion::RegisterProviderRequest* request,
+                                  dp::service::ingestion::RegisterProviderResponse*      response) override
+    {
+        auto* result = response->mutable_registrationresult();
+        result->set_providerid("test-provider-id");
+        result->set_providername(request->providername());
+        result->set_isnewprovider(true);
+        return grpc::Status::OK;
+    }
+
+    grpc::Status ingestDataStream(grpc::ServerContext*,
+                                  grpc::ServerReader<dp::service::ingestion::IngestDataRequest>* reader,
+                                  dp::service::ingestion::IngestDataStreamResponse*) override
+    {
+        stream_count.fetch_add(1, std::memory_order_relaxed);
+        dp::service::ingestion::IngestDataRequest request;
+        while (reader->Read(&request))
+        {
+            request_count.fetch_add(1, std::memory_order_relaxed);
+            {
+                std::lock_guard<std::mutex> lock(captured_mutex);
+                captured_requests.push_back(request);
+            }
+        }
+        stream_close_count.fetch_add(1, std::memory_order_relaxed);
+        return grpc::Status::OK;
+    }
+};
+
+bool waitForCount(std::atomic<int>& counter, int target, std::chrono::milliseconds timeout)
+{
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (std::chrono::steady_clock::now() < deadline)
+    {
+        if (counter.load(std::memory_order_relaxed) >= target)
+        {
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    return counter.load(std::memory_order_relaxed) >= target;
+}
+
+} // namespace
+
+TEST(MLDPPVXSControllerTest, ImplementsEventBusPushContract)
+{
+    static_assert(std::is_base_of_v<IDataBus, MLDPPVXSController>);
+    SUCCEED();
+}
+
+TEST(MLDPPVXSControllerTest, StartAndStopDoNotThrowWithValidConfig)
+{
+    const auto config = makeConfigFromYaml(std::string(kMinimalControllerConfig));
+
+    ASSERT_TRUE(config.valid());
+    auto controller = MLDPPVXSController::create(config);
+    ASSERT_TRUE(controller);
+    ASSERT_NO_THROW(controller->start(););
+    sleep(1); // Allow some time for the reader to start
+    ASSERT_NO_THROW(controller->stop(););
+}
+
+TEST(MLDPPVXSControllerTest, StartAndStopDoNotThrowWithEpicsConfig)
+{
+    const auto config = makeConfigFromYaml(std::string(kEpicsControllerConfig));
+
+    ASSERT_TRUE(config.valid());
+
+    {
+        // strart pv mocker
+        PVServer pvServer;
+        auto     controller = MLDPPVXSController::create(config);
+        ASSERT_TRUE(controller);
+        ASSERT_NO_THROW(controller->start(););
+        sleep(1); // Allow some time for the reader to start
+        ASSERT_NO_THROW(controller->stop(););
+        // chgeck on metric if the event has been pushed
+        auto& metrics = controller->metrics();
+        EXPECT_GE(metrics.writerPushTotal({}), 0);
+    }
+}
+
+TEST(MLDPPVXSControllerTest, BsasNtTableRowTsAggregatesPushAndBandwidthMetrics)
+{
+    const auto config = makeConfigFromYaml(std::string(kBsasNtTableRowTsControllerConfig));
+    ASSERT_TRUE(config.valid());
+
+    PVServer pvServer;
+    auto     controller = MLDPPVXSController::create(config);
+    ASSERT_TRUE(controller);
+
+    ASSERT_NO_THROW(controller->start(););
+
+    const int                                             max_wait_ms = 8000;
+    int                                                   waited_ms = 0;
+    const mldp_pvxs_driver::metrics::MetricsSnapshot      snapshotter;
+    std::optional<mldp_pvxs_driver::metrics::MetricsData> snapshot;
+    std::string                                           metrics_text;
+    double                                                table_send_sum = 0.0;
+    double                                                table_send_count = 0.0;
+    double                                                queue_depth = 0.0;
+
+    while (waited_ms < max_wait_ms)
+    {
+        snapshot = snapshotter.getSnapshot(controller->metrics());
+        metrics_text = serializeMetricsText(controller->metrics());
+        const auto aggregated = aggregateReaderMetrics(*snapshot);
+        table_send_sum = getMetricValueForSource(metrics_text,
+                                                 "mldp_pvxs_driver_controller_send_time_seconds_sum",
+                                                 "test:bsas_table");
+        table_send_count = getMetricValueForSource(metrics_text,
+                                                   "mldp_pvxs_driver_controller_send_time_seconds_count",
+                                                   "test:bsas_table");
+        queue_depth = getGaugeValue(metrics_text, "mldp_pvxs_driver_controller_queue_depth");
+        if (!snapshot->readers.empty())
+        {
+            const bool has_pushes = aggregated.pushes > 0;
+            const bool has_bytes = aggregated.bytes_total > 0.0;
+            const bool has_rates = aggregated.bytes_per_sec > 0.0;
+            const bool has_send_metrics = table_send_sum > 0.0 && table_send_count > 0.0;
+            if (has_pushes && has_bytes && has_rates && has_send_metrics)
+            {
+                break;
+            }
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        waited_ms += 200;
+    }
+
+    ASSERT_TRUE(snapshot.has_value()) << "Metrics snapshot missing";
+    ASSERT_FALSE(snapshot->readers.empty()) << "Missing reader metrics";
+    const auto aggregated = aggregateReaderMetrics(*snapshot);
+
+    EXPECT_GT(aggregated.pushes, 0);
+    EXPECT_GT(aggregated.bytes_total, 0.0);
+    EXPECT_GT(aggregated.bytes_per_sec, 0.0);
+    EXPECT_GT(table_send_sum, 0.0);
+    EXPECT_GT(table_send_count, 0.0);
+    EXPECT_GE(queue_depth, 0.0);
+
+    ASSERT_NO_THROW(controller->stop(););
+}
+
+TEST(MLDPPVXSControllerTest, BsasNtTableColumnsHaveProvenanceSourceSetToRootSource)
+{
+    TestIngestionService service;
+    grpc::ServerBuilder  builder;
+    int                  port = 0;
+    builder.AddListeningPort("127.0.0.1:0", grpc::InsecureServerCredentials(), &port);
+    builder.RegisterService(&service);
+    std::unique_ptr<grpc::Server> server(builder.BuildAndStart());
+    ASSERT_TRUE(server);
+    ASSERT_GT(port, 0);
+
+    std::ostringstream yaml;
+    yaml << "writer:\n"
+         << "  mldp:\n"
+         << "    - name: mldp_main\n"
+         << "      mldp-pool:\n"
+         << "        provider-name: test_provider\n"
+         << "        ingestion-url: 127.0.0.1:" << port << "\n"
+         << "        query-url: localhost:" << port << "\n"
+         << "        min-conn: 1\n"
+         << "        max-conn: 1\n"
+         << "reader:\n"
+         << "  - epics-pvxs:\n"
+         << "      - name: epics_reader_1\n"
+         << "        pvs:\n"
+         << "          - name: test:bsas_table\n"
+         << "            option:\n"
+         << "              type: slac-bsas-table\n";
+
+    const auto config = makeConfigFromYaml(yaml.str());
+    ASSERT_TRUE(config.valid());
+
+    auto controller = MLDPPVXSController::create(config);
+    ASSERT_TRUE(controller);
+    controller->start();
+
+    IDataBus::EventBatch batch;
+    batch.metadata     = {};
+    DataBatch frame;
+    frame.timestamps.push_back({1000000000, 0});
+    DataColumn col;
+    col.name   = "signal";
+    col.values = std::vector<double>{3.14};
+    frame.columns.push_back(std::move(col));
+    batch.payload = TimeSeriesPayload{.root_source_name = "test:bsas_table", .is_tabular = true};
+    std::get<TimeSeriesPayload>(batch.payload).frames.push_back(std::move(frame));
+
+    ASSERT_TRUE(controller->push(std::move(batch)));
+    ASSERT_TRUE(waitForCount(service.request_count, 1, std::chrono::milliseconds(5000)));
+
+    std::vector<dp::service::ingestion::IngestDataRequest> captured;
+    {
+        std::lock_guard<std::mutex> lock(service.captured_mutex);
+        captured = service.captured_requests;
+    }
+    ASSERT_FALSE(captured.empty()) << "No IngestDataRequest was captured";
+
+    for (const auto& req : captured)
+    {
+        const auto& df = req.ingestiondataframe();
+        for (int i = 0; i < df.doublecolumns_size(); ++i)
+        {
+            EXPECT_EQ(df.doublecolumns(i).metadata().provenance().source(), "test:bsas_table")
+                << "doublecolumns[" << i << "] provenance.source mismatch";
+        }
+        for (int i = 0; i < df.floatcolumns_size(); ++i)
+        {
+            EXPECT_EQ(df.floatcolumns(i).metadata().provenance().source(), "test:bsas_table")
+                << "floatcolumns[" << i << "] provenance.source mismatch";
+        }
+        for (int i = 0; i < df.int64columns_size(); ++i)
+        {
+            EXPECT_EQ(df.int64columns(i).metadata().provenance().source(), "test:bsas_table")
+                << "int64columns[" << i << "] provenance.source mismatch";
+        }
+        for (int i = 0; i < df.int32columns_size(); ++i)
+        {
+            EXPECT_EQ(df.int32columns(i).metadata().provenance().source(), "test:bsas_table")
+                << "int32columns[" << i << "] provenance.source mismatch";
+        }
+        for (int i = 0; i < df.boolcolumns_size(); ++i)
+        {
+            EXPECT_EQ(df.boolcolumns(i).metadata().provenance().source(), "test:bsas_table")
+                << "boolcolumns[" << i << "] provenance.source mismatch";
+        }
+        for (int i = 0; i < df.stringcolumns_size(); ++i)
+        {
+            EXPECT_EQ(df.stringcolumns(i).metadata().provenance().source(), "test:bsas_table")
+                << "stringcolumns[" << i << "] provenance.source mismatch";
+        }
+        for (int i = 0; i < df.enumcolumns_size(); ++i)
+        {
+            EXPECT_EQ(df.enumcolumns(i).metadata().provenance().source(), "test:bsas_table")
+                << "enumcolumns[" << i << "] provenance.source mismatch";
+        }
+    }
+
+    controller->stop();
+    server->Shutdown();
+}
+
+TEST(MLDPPVXSControllerTest, EpicsCounterEmitsSingleReaderMetric)
+{
+    const auto config = makeConfigFromYaml(std::string(kEpicsControllerConfig));
+    ASSERT_TRUE(config.valid());
+
+    PVServer pvServer;
+    auto     controller = MLDPPVXSController::create(config);
+    ASSERT_TRUE(controller);
+
+    ASSERT_NO_THROW(controller->start(););
+
+    const int                                             max_wait_ms = 8000;
+    int                                                   waited_ms = 0;
+    const mldp_pvxs_driver::metrics::MetricsSnapshot      snapshotter;
+    std::optional<mldp_pvxs_driver::metrics::MetricsData> snapshot;
+
+    while (waited_ms < max_wait_ms)
+    {
+        snapshot = snapshotter.getSnapshot(controller->metrics());
+        const auto counter = findReaderMetrics(*snapshot, "test:counter");
+        const auto aggregated = aggregateReaderMetrics(*snapshot);
+        if ((counter.has_value() && counter->pushes > 0) ||
+            (!snapshot->readers.empty() && aggregated.pushes > 0))
+        {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        waited_ms += 200;
+    }
+
+    ASSERT_TRUE(snapshot.has_value()) << "Metrics snapshot missing";
+    const auto counter = findReaderMetrics(*snapshot, "test:counter");
+    ASSERT_FALSE(snapshot->readers.empty()) << "Missing reader metrics";
+    if (counter.has_value())
+    {
+        EXPECT_GT(counter->pushes, 0);
+    }
+    else
+    {
+        const auto aggregated = aggregateReaderMetrics(*snapshot);
+        EXPECT_GT(aggregated.pushes, 0);
+    }
+
+    ASSERT_NO_THROW(controller->stop(););
+}
+
+TEST(MLDPPVXSControllerTest, IdleStreamRotationStartsNewStreamAfterMaxAge)
+{
+    TestIngestionService service;
+    grpc::ServerBuilder  builder;
+    int                  port = 0;
+    builder.AddListeningPort("127.0.0.1:0", grpc::InsecureServerCredentials(), &port);
+    builder.RegisterService(&service);
+    std::unique_ptr<grpc::Server> server(builder.BuildAndStart());
+    ASSERT_TRUE(server);
+    ASSERT_GT(port, 0);
+
+    std::ostringstream yaml;
+    yaml << "writer:\n"
+         << "  mldp:\n"
+         << "    - name: mldp_main\n"
+         << "      stream-max-age-ms: 150\n"
+         << "      mldp-pool:\n"
+         << "        provider-name: test_provider\n"
+         << "        ingestion-url: 127.0.0.1:" << port << "\n"
+         << "        query-url: localhost:" << port << "\n"
+         << "        min-conn: 1\n"
+         << "        max-conn: 1\n"
+         << "reader:\n"
+         << "  - epics-pvxs:\n"
+         << "      - name: epics_reader_1\n"
+         << "        pvs:\n"
+         << "          - name: test:counter\n";
+
+    const auto config = makeConfigFromYaml(yaml.str());
+    ASSERT_TRUE(config.valid());
+
+    auto controller = MLDPPVXSController::create(config);
+    ASSERT_TRUE(controller);
+    controller->start();
+
+    IDataBus::EventBatch batch;
+    batch.metadata = {{"source", "test"}};
+    DataBatch frame1;
+    frame1.timestamps.push_back({1, 0});
+    DataColumn col1;
+    col1.name   = "value";
+    col1.values = std::vector<int32_t>{1};
+    frame1.columns.push_back(std::move(col1));
+    batch.payload = TimeSeriesPayload{.root_source_name = "test-root"};
+    std::get<TimeSeriesPayload>(batch.payload).frames.push_back(std::move(frame1));
+
+    ASSERT_TRUE(controller->push(std::move(batch)));
+    ASSERT_TRUE(waitForCount(service.stream_count, 1, std::chrono::milliseconds(1000)));
+    ASSERT_TRUE(waitForCount(service.request_count, 1, std::chrono::milliseconds(1000)));
+
+    ASSERT_TRUE(waitForCount(service.stream_close_count, 1, std::chrono::milliseconds(1000)));
+
+    IDataBus::EventBatch batch2;
+    batch2.metadata = {{"source", "test"}};
+    DataBatch frame2;
+    frame2.timestamps.push_back({2, 0});
+    DataColumn col2;
+    col2.name   = "value";
+    col2.values = std::vector<int32_t>{2};
+    frame2.columns.push_back(std::move(col2));
+    batch2.payload = TimeSeriesPayload{.root_source_name = "test-root"};
+    std::get<TimeSeriesPayload>(batch2.payload).frames.push_back(std::move(frame2));
+
+    ASSERT_TRUE(controller->push(std::move(batch2)));
+    ASSERT_TRUE(waitForCount(service.stream_count, 2, std::chrono::milliseconds(1000)));
+    ASSERT_TRUE(waitForCount(service.request_count, 2, std::chrono::milliseconds(1000)));
+
+    controller->stop();
+    server->Shutdown();
+}
+
+// Verify that metadata set on an EventBatch flows end-to-end through the controller and
+// MLDPWriter into the gRPC IngestDataRequest as per-column ColumnMetadata attributes.
+// The test pushes a batch with metadata directly to the controller (bypassing the reader)
+// to isolate the MLDPWriter path. A companion reader-level test lives in
+// epics_pvxs_reader_test.cpp (StaticAndPerPvMetadataMergedIntoEventBatch).
+TEST(MLDPPVXSControllerTest, BatchMetadataAppearsAsGrpcColumnAttributes)
+{
+    TestIngestionService service;
+    grpc::ServerBuilder  builder;
+    int                  port = 0;
+    builder.AddListeningPort("127.0.0.1:0", grpc::InsecureServerCredentials(), &port);
+    builder.RegisterService(&service);
+    std::unique_ptr<grpc::Server> server(builder.BuildAndStart());
+    ASSERT_TRUE(server);
+    ASSERT_GT(port, 0);
+
+    std::ostringstream yaml;
+    yaml << "writer:\n"
+         << "  mldp:\n"
+         << "    - name: mldp_main\n"
+         << "      mldp-pool:\n"
+         << "        provider-name: test_provider\n"
+         << "        ingestion-url: 127.0.0.1:" << port << "\n"
+         << "        query-url: localhost:" << port << "\n"
+         << "        min-conn: 1\n"
+         << "        max-conn: 1\n"
+         << "reader:\n"
+         << "  - epics-pvxs:\n"
+         << "      - name: epics_reader_1\n"
+         << "        pvs:\n"
+         << "          - name: test:counter\n";
+
+    const auto config = makeConfigFromYaml(yaml.str());
+    ASSERT_TRUE(config.valid());
+
+    auto controller = MLDPPVXSController::create(config);
+    ASSERT_TRUE(controller);
+    controller->start();
+
+    // Build a batch carrying reader-merged metadata (facility + signal_type).
+    IDataBus::EventBatch batch;
+    batch.metadata    = {{"facility", "lcls"}, {"signal_type", "scalar"}};
+
+    DataBatch frame;
+    frame.timestamps.push_back({1000000000, 0});
+    DataColumn col;
+    col.name   = "value";
+    col.values = std::vector<double>{42.0};
+    frame.columns.push_back(std::move(col));
+
+    TimeSeriesPayload ts;
+    ts.root_source_name = "test:counter";
+    ts.frames.push_back(std::move(frame));
+    batch.payload = std::move(ts);
+
+    ASSERT_TRUE(controller->push(std::move(batch)));
+    ASSERT_TRUE(waitForCount(service.request_count, 1, std::chrono::milliseconds(5000)));
+
+    std::vector<dp::service::ingestion::IngestDataRequest> captured;
+    {
+        std::lock_guard<std::mutex> lock(service.captured_mutex);
+        captured = service.captured_requests;
+    }
+    ASSERT_FALSE(captured.empty()) << "No IngestDataRequest captured";
+
+    // Helper: return true when the attribute list contains the expected key/value pair.
+    const auto hasAttr = [](const google::protobuf::RepeatedPtrField<dp::service::common::Attribute>& attrs,
+                             const std::string& key,
+                             const std::string& value) -> bool
+    {
+        for (const auto& a : attrs)
+        {
+            if (a.name() == key && a.value() == value)
+                return true;
+        }
+        return false;
+    };
+
+    bool checked = false;
+    for (const auto& req : captured)
+    {
+        const auto& df = req.ingestiondataframe();
+        for (int i = 0; i < df.doublecolumns_size(); ++i)
+        {
+            const auto& attrs = df.doublecolumns(i).metadata().attributes();
+            EXPECT_TRUE(hasAttr(attrs, "facility",    "lcls"))
+                << "doublecolumns[" << i << "] missing facility attribute";
+            EXPECT_TRUE(hasAttr(attrs, "signal_type", "scalar"))
+                << "doublecolumns[" << i << "] missing signal_type attribute";
+            // Provenance source is set from root_source, independent of metadata.
+            EXPECT_EQ(df.doublecolumns(i).metadata().provenance().source(), "test:counter");
+            checked = true;
+        }
+    }
+    EXPECT_TRUE(checked) << "No double columns found in captured requests to verify";
+
+    controller->stop();
+    server->Shutdown();
+}

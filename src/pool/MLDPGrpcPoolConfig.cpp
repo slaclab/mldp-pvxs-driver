@@ -16,8 +16,6 @@
 using namespace mldp_pvxs_driver::config;
 using namespace mldp_pvxs_driver::util::pool;
 
-MLDPGrpcPoolConfig::MLDPGrpcPoolConfig() = default;
-
 MLDPGrpcPoolConfig::MLDPGrpcPoolConfig(const config::Config& root)
 {
     parse(root);
@@ -41,6 +39,11 @@ const std::string& MLDPGrpcPoolConfig::ingestionUrl() const
 const std::string& MLDPGrpcPoolConfig::queryUrl() const
 {
     return query_url_;
+}
+
+const std::string& MLDPGrpcPoolConfig::annotationUrl() const
+{
+    return annotation_url_;
 }
 
 const std::string& MLDPGrpcPoolConfig::providerDescription() const
@@ -98,40 +101,34 @@ void MLDPGrpcPoolConfig::parse(const config::Config& root)
     {
         throw Error(std::string("mldp-pool.") + IngestionUrlKey + " must not be empty");
     }
-    if (!root.hasChild(QueryUrlKey))
-    {
-        throw Error(makeMissingFieldMessage(QueryUrlKey));
-    }
-    query_url_ = root.get(QueryUrlKey);
-    if (query_url_.empty())
-    {
-        throw Error(std::string("mldp-pool.") + QueryUrlKey + " must not be empty");
-    }
-    if (query_url_ == ingestion_url_)
+    // query-url is optional: the ingestion writer does not use the query service.
+    // Required only when a query/annotation pool is constructed from this config.
+    query_url_ = root.get(QueryUrlKey, "");
+    if (!query_url_.empty() && query_url_ == ingestion_url_)
     {
         throw Error(std::string("mldp-pool.") + QueryUrlKey + " must not be equal to ingestion-url");
     }
 
-    if (!root.hasChild(MinConnKey))
+    annotation_url_ = root.get(AnnotationUrlKey, "");
+
+    if (root.hasChild(MinConnKey))
     {
-        throw Error(makeMissingFieldMessage(MinConnKey));
-    }
-    min_conn_ = root.getInt(MinConnKey);
-    if (min_conn_ <= 0)
-    {
-        throw Error(std::string("mldp-pool.") + MinConnKey + " must be greater than zero");
+        min_conn_ = root.getInt(MinConnKey);
+        if (min_conn_ <= 0)
+        {
+            throw Error(std::string("mldp-pool.") + MinConnKey + " must be greater than zero");
+        }
     }
 
-    if (!root.hasChild(MaxConnKey))
+    if (root.hasChild(MaxConnKey))
     {
-        throw Error(makeMissingFieldMessage(MaxConnKey));
+        max_conn_ = root.getInt(MaxConnKey);
+        if (max_conn_ <= 0)
+        {
+            throw Error(std::string("mldp-pool.") + MaxConnKey + " must be greater than zero");
+        }
     }
-    max_conn_ = root.getInt(MaxConnKey);
-    if (max_conn_ <= 0)
-    {
-        throw Error(std::string("mldp-pool.") + MaxConnKey + " must be greater than zero");
-    }
-    if (max_conn_ < min_conn_)
+    if (max_conn_ > 0 && min_conn_ > 0 && max_conn_ < min_conn_)
     {
         throw Error(std::string("mldp-pool.") + MaxConnKey + " must be greater than or equal to " + MinConnKey);
     }

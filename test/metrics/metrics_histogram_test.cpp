@@ -26,14 +26,14 @@ std::string serializeMetrics(const Metrics& metrics)
 TEST(MetricsHistogramTest, RecordsReaderProcessingTimeWithSourceTag)
 {
     MetricsConfig config;
-    Metrics       metrics(config);
+    Metrics       metrics(config, "test_ctrl");
 
     metrics.observeReaderProcessingTimeMs(2.0, {{"source", "pv:test"}});
 
-    const auto text = serializeMetrics(metrics);
-    const std::string count_line = "mldp_pvxs_driver_reader_processing_time_ms_count{source=\"pv:test\"} 1";
-    const std::string sum_line = "mldp_pvxs_driver_reader_processing_time_ms_sum{source=\"pv:test\"}";
-    const std::string bucket_prefix = "mldp_pvxs_driver_reader_processing_time_ms_bucket{source=\"pv:test\"";
+    const auto        text = serializeMetrics(metrics);
+    const std::string count_line = "mldp_pvxs_driver_reader_processing_time_ms_count{controller=\"test_ctrl\",source=\"pv:test\"} 1";
+    const std::string sum_line = "mldp_pvxs_driver_reader_processing_time_ms_sum{controller=\"test_ctrl\",source=\"pv:test\"}";
+    const std::string bucket_prefix = "mldp_pvxs_driver_reader_processing_time_ms_bucket{controller=\"test_ctrl\",source=\"pv:test\"";
 
     EXPECT_NE(text.find(count_line), std::string::npos);
     EXPECT_NE(text.find(sum_line), std::string::npos);

@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 580 200" width="580" height="200">
+  <rect width="580" height="200" fill="#f8f9fa" rx="4"/>
+  <rect x="60" y="25" width="480" height="140" fill="white" stroke="#ddd" stroke-width="1"/>
+  <text x="290" y="16" text-anchor="middle" font-family="monospace" font-size="11" fill="#444" font-weight="bold">Controller Queue Depth  (all connections in-use)</text>
+  <rect x="156.0" y="25" width="64.0" height="140" fill="#fee2e2" opacity="0.4"/>
+  <rect x="380.0" y="25" width="96.0" height="140" fill="#fee2e2" opacity="0.4"/>
+  <line x1="60" y1="165.0" x2="540" y2="165.0" stroke="#e8e8e8" stroke-width="1"/>
+  <text x="56" y="169.0" text-anchor="end" font-family="monospace" font-size="9" fill="#666">0</text>
+  <line x1="60" y1="118.3" x2="540" y2="118.3" stroke="#e8e8e8" stroke-width="1"/>
+  <text x="56" y="122.3" text-anchor="end" font-family="monospace" font-size="9" fill="#666">250</text>
+  <line x1="60" y1="71.7" x2="540" y2="71.7" stroke="#e8e8e8" stroke-width="1"/>
+  <text x="56" y="75.7" text-anchor="end" font-family="monospace" font-size="9" fill="#666">500</text>
+  <line x1="60" y1="25.0" x2="540" y2="25.0" stroke="#e8e8e8" stroke-width="1"/>
+  <text x="56" y="29.0" text-anchor="end" font-family="monospace" font-size="9" fill="#666">750</text>
+  <line x1="60" y1="165" x2="540" y2="165" stroke="#999" stroke-width="1"/>
+  <line x1="60.0" y1="165" x2="60.0" y2="169" stroke="#999" stroke-width="1"/>
+  <text x="60.0" y="179" text-anchor="middle" font-family="monospace" font-size="9" fill="#666">0s</text>
+  <line x1="156.0" y1="165" x2="156.0" y2="169" stroke="#999" stroke-width="1"/>
+  <text x="156.0" y="179" text-anchor="middle" font-family="monospace" font-size="9" fill="#666">15s</text>
+  <line x1="252.0" y1="165" x2="252.0" y2="169" stroke="#999" stroke-width="1"/>
+  <text x="252.0" y="179" text-anchor="middle" font-family="monospace" font-size="9" fill="#666">30s</text>
+  <line x1="348.0" y1="165" x2="348.0" y2="169" stroke="#999" stroke-width="1"/>
+  <text x="348.0" y="179" text-anchor="middle" font-family="monospace" font-size="9" fill="#666">45s</text>
+  <line x1="444.0" y1="165" x2="444.0" y2="169" stroke="#999" stroke-width="1"/>
+  <text x="444.0" y="179" text-anchor="middle" font-family="monospace" font-size="9" fill="#666">60s</text>
+  <line x1="540.0" y1="165" x2="540.0" y2="169" stroke="#999" stroke-width="1"/>
+  <text x="540.0" y="179" text-anchor="middle" font-family="monospace" font-size="9" fill="#666">75s</text>
+  <text x="300" y="197" text-anchor="middle" font-family="monospace" font-size="9" fill="#888">time (s)</text>
+  <text x="10" y="95" transform="rotate(-90,10,95)" text-anchor="middle" font-family="monospace" font-size="9" fill="#888">items</text>
+  <polyline points="60.0,165.0 92.0,165.0 124.0,165.0 156.0,40.9 188.0,96.5 220.0,165.0 252.0,165.0 284.0,165.0 316.0,165.0 348.0,165.0 380.0,55.8 412.0,98.4 444.0,153.1 476.0,165.0 508.0,165.0 540.0,165.0" fill="none" stroke="#dc2626" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+  <circle cx="60.0" cy="165.0" r="2.5" fill="#dc2626"/>
+  <circle cx="92.0" cy="165.0" r="2.5" fill="#dc2626"/>
+  <circle cx="124.0" cy="165.0" r="2.5" fill="#dc2626"/>
+  <circle cx="156.0" cy="40.9" r="2.5" fill="#dc2626"/>
+  <circle cx="188.0" cy="96.5" r="2.5" fill="#dc2626"/>
+  <circle cx="220.0" cy="165.0" r="2.5" fill="#dc2626"/>
+  <circle cx="252.0" cy="165.0" r="2.5" fill="#dc2626"/>
+  <circle cx="284.0" cy="165.0" r="2.5" fill="#dc2626"/>
+  <circle cx="316.0" cy="165.0" r="2.5" fill="#dc2626"/>
+  <circle cx="348.0" cy="165.0" r="2.5" fill="#dc2626"/>
+  <circle cx="380.0" cy="55.8" r="2.5" fill="#dc2626"/>
+  <circle cx="412.0" cy="98.4" r="2.5" fill="#dc2626"/>
+  <circle cx="444.0" cy="153.1" r="2.5" fill="#dc2626"/>
+  <circle cx="476.0" cy="165.0" r="2.5" fill="#dc2626"/>
+  <circle cx="508.0" cy="165.0" r="2.5" fill="#dc2626"/>
+  <circle cx="540.0" cy="165.0" r="2.5" fill="#dc2626"/>
+</svg>

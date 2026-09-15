@@ -8,6 +8,9 @@ nwa:
   # Skip files that NWA can't handle (or shouldn't touch)
   skip:
     - "src/version.h.in"
+    - "include/query/parser/generated/QueryFlexLexer.h"
+    - "src/query/parser/generated/QueryBisonParser.cpp"
+    - "src/query/parser/generated/QueryFlexLexer.cpp"
 
   # Use a raw template so NWA does not generate comment wrappers.
   tmpltype: raw

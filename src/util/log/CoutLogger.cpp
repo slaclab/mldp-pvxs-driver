@@ -17,45 +17,45 @@ namespace mldp_pvxs_driver::util::log {
 
 namespace {
 
-const char* toString(Level level)
-{
-    switch (level)
+    const char* toString(Level level)
     {
-    case Level::Trace: return "trace";
-    case Level::Debug: return "debug";
-    case Level::Info: return "info";
-    case Level::Warn: return "warn";
-    case Level::Error: return "error";
-    case Level::Critical: return "critical";
-    case Level::Off: return "off";
-    }
-    return "unknown";
-}
-
-std::mutex& globalMutex()
-{
-    static std::mutex mu;
-    return mu;
-}
-
-std::shared_ptr<ILogger>& globalLogger()
-{
-    static std::shared_ptr<ILogger> logger = std::make_shared<CoutLogger>();
-    return logger;
-}
-
-LoggerFactory& globalFactory()
-{
-    static LoggerFactory factory = [](std::string_view name) -> std::shared_ptr<ILogger>
-    {
-        if (name.empty())
+        switch (level)
         {
-            return globalLogger();
+        case Level::Trace: return "trace";
+        case Level::Debug: return "debug";
+        case Level::Info: return "info";
+        case Level::Warn: return "warn";
+        case Level::Error: return "error";
+        case Level::Critical: return "critical";
+        case Level::Off: return "off";
         }
-        return std::static_pointer_cast<ILogger>(std::make_shared<CoutLogger>(std::string(name)));
-    };
-    return factory;
-}
+        return "unknown";
+    }
+
+    std::mutex& globalMutex()
+    {
+        static std::mutex mu;
+        return mu;
+    }
+
+    std::shared_ptr<ILogger>& globalLogger()
+    {
+        static std::shared_ptr<ILogger> logger = std::make_shared<CoutLogger>();
+        return logger;
+    }
+
+    LoggerFactory& globalFactory()
+    {
+        static LoggerFactory factory = [](std::string_view name) -> std::shared_ptr<ILogger>
+        {
+            if (name.empty())
+            {
+                return globalLogger();
+            }
+            return std::static_pointer_cast<ILogger>(std::make_shared<CoutLogger>(std::string(name)));
+        };
+        return factory;
+    }
 
 } // namespace
 
