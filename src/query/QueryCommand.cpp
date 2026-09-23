@@ -908,6 +908,29 @@ QueryOutputFormat parseFormat(std::string_view value)
     throw std::runtime_error("Invalid --format value '" + std::string(value) + "' (expected: table,json,csv,arrow)");
 }
 
+void printQueryUsage(std::ostream& output)
+{
+        output << R"(Usage: mldp_pvxs_driver [global options] query [query options] ["SQL"]
+
+Run without SQL or --file to start an interactive query session.
+Global -c/--config options must appear before 'query'.
+
+Query options:
+    -h, --help                    Show this help message and exit
+    --file PATH                   Read SQL text from PATH
+    --format FORMAT               Output format: table, json, csv, arrow
+    --table-fit                   Fit table output to the terminal width
+    --no-stats                    Suppress the query statistics footer
+    --trace-shards                Write window-shard diagnostics to stderr
+    --trace-shards-file PATH      Write window-shard diagnostics to PATH
+    --memory-mb N                 Set the memory budget in MiB (default: 256)
+    --spill-dir PATH              Set the spill-file directory
+    --table-catalog-dir PATH      Set the persistent table catalog directory
+    --spill-partitions N          Set spill partitions (default: 16)
+    --join-batch-size N           Set join batch size (default: 100)
+)";
+}
+
 void parseQueryArguments(int argc, char** argv, QueryCliOptions& options)
 {
     // argv[0] is "query"
@@ -1493,6 +1516,15 @@ int mldp_pvxs_driver::cli::QueryCommand::run(int                             arg
 {
     try
     {
+        for (int index = 1; index < argc; ++index)
+        {
+            const auto arg = std::string_view{argv[index]};
+            if (arg == "-h" || arg == "--help")
+            {
+                printQueryUsage(output);
+                return 0;
+            }
+        }
         QueryCliOptions options;
         parseQueryArguments(argc, argv, options);
         std::ofstream shard_trace_file;
