@@ -1,4 +1,11 @@
 cmake_minimum_required(VERSION 3.15)
+
+# Silence cmake_minimum_required() deprecation warnings from FetchContent
+# dependencies (e.g. replxx, date) that still declare old CMake minimums.
+if(NOT DEFINED CMAKE_POLICY_VERSION_MINIMUM)
+    set(CMAKE_POLICY_VERSION_MINIMUM 3.15)
+endif()
+
 project(mldp_pvxs_driver VERSION 0.2.5 LANGUAGES CXX)
 
 # C++ Standard
@@ -76,7 +83,7 @@ set(SPDLOG_VERSION "v1.16.0")
 set(ARGPARSE_VERSION "v3.2")
 set(EPICSARCHIVERAP_VERSION "2.2.1")
 set(CPP_HTTPLIB_VERSION "v0.16.3")
-set(DP_GRPC_VERSION "rel-1.15.0")
+set(DP_GRPC_VERSION "rel-1.16.0")
 set(ARROW_VERSION "apache-arrow-18.1.0")
 set(REPLXX_VERSION "release-0.0.4")
 set(DATE_VERSION "v3.0.1")

@@ -98,7 +98,7 @@ void configure_parameter(ArgumentParser& program,
                          std::vector<std::string>& configSources)
 {
     program.add_description(
-        "MLDP PVXS Driver - Forwards reader updates (e.g., EPICS PVs) to the MLDP ingestion API.\n" "Supports multiple reader implementations.\n" "\n" "Configuration inputs:\n" "  Repeat -c/--config to accumulate one effective configuration.\n" "  Each -c value must be either an existing YAML file path or a dotted PATH=VALUE assignment.\n" "\n" "Config utilities (run without starting the driver):\n" "  config wizard   [--output PATH] [--from PATH]   Interactive TUI to generate config.yaml\n" "  config validate PATH                             Validate a YAML file and report errors\n" "  config template [--minimal|--full]               Print a YAML template to stdout\n" "  config list     PATH                             Show writers, readers, routing, metrics\n" "  config add      PATH (reader|writer|routing) …   Add an entry to an existing config\n" "  config remove   PATH (reader|writer|routing) --name NAME   Remove a named entry\n" "\n" "  Run 'mldp_pvxs_driver config <sub-command> --help' for per-command options.");
+        "MLDP PVXS Driver - Forwards reader updates (e.g., EPICS PVs) to the MLDP ingestion API.\n" "Supports multiple reader implementations.\n" "\n" "Configuration inputs:\n" "  Repeat -c/--config to accumulate one effective configuration.\n" "  Each -c value must be either an existing YAML file path or a dotted PATH=VALUE assignment.\n" "\n" "Query:\n" "  query [options] [\"SQL\"]                       Execute SQL or start an interactive session\n" "\n" "Config utilities (run without starting the driver):\n" "  config wizard   [--output PATH] [--from PATH]   Interactive TUI to generate config.yaml\n" "  config validate PATH                             Validate a YAML file and report errors\n" "  config template [--minimal|--full]               Print a YAML template to stdout\n" "  config list     PATH                             Show writers, readers, routing, metrics\n" "  config add      PATH (reader|writer|routing) …   Add an entry to an existing config\n" "  config remove   PATH (reader|writer|routing) --name NAME   Remove a named entry\n" "\n" "  Run 'mldp_pvxs_driver query --help' or 'mldp_pvxs_driver config <sub-command> --help' for per-command options.");
     program.add_argument("-c", "--config")
         .help("Configuration source: YAML file path or dotted PATH=VALUE assignment (repeatable, merged in order)")
         .metavar("SOURCE")
@@ -144,6 +144,8 @@ Examples:
   mldp_pvxs_driver -c config.yaml --dry-run
   mldp_pvxs_driver -c base.yaml -c site.yaml -c local.yaml --dry-run
   mldp_pvxs_driver -c config.yaml -c metrics.endpoint=0.0.0.0:9464 --dry-run
+    mldp_pvxs_driver -c query-config.yaml query --help
+    mldp_pvxs_driver -c query-config.yaml query "SHOW TABLES;"
   mldp_pvxs_driver config validate config.yaml
   mldp_pvxs_driver config template --minimal > config.yaml
   mldp_pvxs_driver config wizard --output config.yaml

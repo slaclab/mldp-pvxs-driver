@@ -289,8 +289,9 @@ IRecordBatchStreamUPtr MLDPAnnotationQueryClient::executeStream(std::string_view
             else
                 throw std::invalid_argument("Unsupported mldp.pv_metadata predicate column or operator: " + predicate.column);
         }
-        // The annotation API requires at least one criterion.  Its PV-name
-        // prefix criterion accepts an empty prefix, which matches every PV.
+        // Empty criteria does not reliably match all records against the
+        // live annotation service despite 1.16.0 docs; keep sending an
+        // always-true PV-name prefix criterion when nothing else was pushed.
         if (request.criteria_size() == 0)
             request.add_criteria()->mutable_pvnamecriterion()->add_prefix("");
         const auto records = queryAllPages<dp::service::common::PvMetadata>(
@@ -365,9 +366,9 @@ IRecordBatchStreamUPtr MLDPAnnotationQueryClient::executeStream(std::string_view
             else
                 throw std::invalid_argument("Unsupported mldp.configuration predicate column or operator: " + predicate.column);
         }
-        // The annotation API requires at least one criterion.  Its name-prefix
-        // criterion accepts an empty prefix, which Mongo translates to the
-        // anchored expression "^" and therefore matches every configuration.
+        // Empty criteria does not reliably match all records against the
+        // live annotation service despite 1.16.0 docs; keep sending an
+        // always-true name-prefix criterion when nothing else was pushed.
         if (request.criteria_size() == 0)
             request.add_criteria()->mutable_namecriterion()->add_prefix("");
         const auto records = queryAllPages<dp::service::common::Configuration>(

@@ -1515,6 +1515,22 @@ TEST(QueryCommandTest, OneShotReportsParseErrors)
     EXPECT_NE(error.str().find("Parse error at "), std::string::npos);
 }
 
+TEST(QueryCommandTest, ShowsHelpWithoutLoadingConfiguration)
+{
+    char                 arg0[] = "query";
+    char                 arg1[] = "--help";
+    char*                argv[] = {arg0, arg1};
+    cli::QueryCommand querySubcommand(g_query_command_listener);
+    std::istringstream   input;
+    std::ostringstream   output;
+    std::ostringstream   error;
+
+    EXPECT_EQ(querySubcommand.run(2, argv, {}, input, output, error), 0);
+    EXPECT_NE(output.str().find("Usage: mldp_pvxs_driver"), std::string::npos);
+    EXPECT_NE(output.str().find("--format FORMAT"), std::string::npos);
+    EXPECT_TRUE(error.str().empty());
+}
+
 TEST(QueryCommandTest, ReplShowsHelpAndExitsOnQuit)
 {
     char                 arg0[] = "query";
