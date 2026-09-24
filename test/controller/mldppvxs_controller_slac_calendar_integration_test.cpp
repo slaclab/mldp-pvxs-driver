@@ -115,7 +115,7 @@ bool waitForCount(std::atomic<int>& counter, int target, std::chrono::millisecon
 
 std::string makeControllerYaml(const std::string& annotation_url,
                                 const std::string& base_url,
-                                const std::string& experiments_yaml)
+                                const std::string& accel_yaml)
 {
     std::ostringstream ss;
     ss << "writer:\n"
@@ -131,10 +131,11 @@ std::string makeControllerYaml(const std::string& annotation_url,
        << "  - slac-calendar:\n"
        << "      - name: cal-reader-test\n"
        << "        base-url: " << base_url << "\n"
-       << "        experiments:\n"
-       << experiments_yaml
+       << "        accel:\n"
+       << accel_yaml
        << "        lookahead-days: 30\n"
        << "        lookback-days: 1\n"
+       << "        fetch-window-days: 32\n"
        << "        rescan-interval-sec: 0.0\n"
        << "        connect-timeout-sec: 5\n"
        << "        total-timeout-sec: 15\n"
@@ -229,11 +230,11 @@ protected:
         return "127.0.0.1:" + std::to_string(grpc_port_);
     }
 
-    void startController(const std::string& experiments_yaml)
+    void startController(const std::string& accel_yaml)
     {
         controller_ = MLDPPVXSController::create(
             makeConfigFromYaml(makeControllerYaml(
-                annotationUrl(), calendar_server_.baseUrl(), experiments_yaml)));
+                annotationUrl(), calendar_server_.baseUrl(), accel_yaml)));
         controller_->start();
     }
 };
@@ -255,7 +256,7 @@ TEST_F(SlacCalendarIntegrationTest, ThreeEventsProduceSixGrpcCalls)
 }
 
 // ---------------------------------------------------------------------------
-// TEST 2 — Attributes forwarded correctly (experiment, hutch, tags)
+// TEST 2 — Attributes forwarded correctly (accel, hutch, tags)
 // ---------------------------------------------------------------------------
 
 TEST_F(SlacCalendarIntegrationTest, AttributesForwardedCorrectly)
@@ -281,21 +282,21 @@ TEST_F(SlacCalendarIntegrationTest, AttributesForwardedCorrectly)
     }
     ASSERT_NE(tmo_req, nullptr) << "TMO Run 3 config request not found";
 
-    EXPECT_EQ(tmo_req->category(), "NC-TMO");
+    EXPECT_EQ(tmo_req->category(), "TMO Run 3");
     EXPECT_EQ(tmo_req->description(), "Third run");
     ASSERT_EQ(tmo_req->tags_size(), 2);
 
-    bool found_experiment = false, found_poc = false, found_details = false;
+    bool found_accel = false, found_poc = false, found_details = false;
     for (const auto& attr : tmo_req->attributes())
     {
-        if (attr.name() == "experiment" && attr.value() == "lcls")
-            found_experiment = true;
+        if (attr.name() == "accel" && attr.value() == "lcls")
+            found_accel = true;
         if (attr.name() == "poc" && attr.value() == "Doe")
             found_poc = true;
         if (attr.name() == "details" && attr.value() == "https://example.com")
             found_details = true;
     }
-    EXPECT_TRUE(found_experiment) << "attribute experiment=lcls not found";
+    EXPECT_TRUE(found_accel) << "attribute accel=lcls not found";
     EXPECT_TRUE(found_poc)        << "attribute poc=Doe not found";
     EXPECT_TRUE(found_details)    << "attribute details=https://example.com not found";
 }

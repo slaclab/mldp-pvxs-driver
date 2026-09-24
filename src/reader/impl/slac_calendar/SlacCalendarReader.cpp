@@ -20,6 +20,8 @@
 
 #include <util/log/Logger.h>
 
+#include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstdio>
 #include <ctime>
@@ -125,29 +127,45 @@ void SlacCalendarReader::runWorker()
 
 void SlacCalendarReader::fetchAndPublish(const std::string& startIso, const std::string& endIso)
 {
-    for (const auto& exp : config_.experiments())
+    for (const auto& accel : config_.accels())
     {
         try
         {
-            const auto body = fetchExperiment(exp, startIso, endIso);
-            parseAndPush(body, exp);
+            SeenActivationMap             seen;
+            std::vector<PendingActivation> pending;
+
+            const int64_t range_start = static_cast<int64_t>(parseBusTimestamp(startIso).epoch_seconds);
+            const int64_t range_end   = static_cast<int64_t>(parseBusTimestamp(endIso).epoch_seconds);
+            const int64_t window_sec  = static_cast<int64_t>(config_.fetchWindowDays()) * 86400;
+
+            for (int64_t win_start = range_start; win_start < range_end; win_start += window_sec)
+            {
+                const int64_t win_end = std::min(win_start + window_sec, range_end);
+                const std::string win_start_iso = epochToIso(win_start);
+                const std::string win_end_iso   = epochToIso(win_end);
+
+                const auto body = fetchAccel(accel, win_start_iso, win_end_iso);
+                parseAndPush(body, accel, seen, pending);
+            }
+
+            mergeAndPushActivations(pending);
         }
         catch (const std::exception& e)
         {
             errorf(*logger_,
-                   "SlacCalendarReader '{}' experiment '{}' error: {}",
+                   "SlacCalendarReader '{}' accel '{}' error: {}",
                    config_.name(),
-                   exp,
+                   accel,
                    e.what());
         }
     }
 }
 
-std::string SlacCalendarReader::fetchExperiment(const std::string& experiment,
-                                                const std::string& startIso,
-                                                const std::string& endIso)
+std::string SlacCalendarReader::fetchAccel(const std::string& accel,
+                                           const std::string& startIso,
+                                           const std::string& endIso)
 {
-    const std::string url = buildUrl(experiment, startIso, endIso);
+    const std::string url = buildUrl(accel, startIso, endIso);
     HttpRequest       req{url, {}};
     const auto        result = http_client_.get(req);
 
@@ -159,14 +177,15 @@ std::string SlacCalendarReader::fetchExperiment(const std::string& experiment,
     return std::string(result.body.begin(), result.body.end());
 }
 
-void SlacCalendarReader::parseAndPush(const std::string& jsonBody, const std::string& experiment)
+void SlacCalendarReader::parseAndPush(const std::string& jsonBody, const std::string& accel,
+                                       SeenActivationMap& seen, std::vector<PendingActivation>& pending)
 {
     const auto events = nlohmann::json::parse(jsonBody);
     if (!events.is_array())
         throw std::runtime_error("expected JSON array from SLAC calendar API");
 
     for (const auto& ev : events)
-        pushEvent(ev, experiment);
+        pushEvent(ev, accel, seen, pending);
 }
 
 static std::string jsonStr(const nlohmann::json& ev, const std::string& key, const std::string& def = "")
@@ -176,29 +195,94 @@ static std::string jsonStr(const nlohmann::json& ev, const std::string& key, con
     return ev[key].get<std::string>();
 }
 
-void SlacCalendarReader::pushEvent(const nlohmann::json& ev, const std::string& experiment)
+// Collapses runs of whitespace to a single space and trims the ends. The calendar API
+// sometimes returns the same event's program_name with inconsistent spacing between two
+// fetches/edits (e.g. "NC Linac BCSChecks" vs "NC Linac BCS Checks"), which otherwise
+// produces two distinct configurationName strings for what MLDP's overlap check treats
+// as the same key server-side.
+static std::string normalizeWhitespace(const std::string& s)
 {
-    const std::string program_name = jsonStr(ev, "program_name");
+    std::string out;
+    out.reserve(s.size());
+    bool prev_space = true; // drop leading spaces
+    for (const char c : s)
+    {
+        const bool is_space = std::isspace(static_cast<unsigned char>(c)) != 0;
+        if (is_space)
+        {
+            if (!prev_space)
+                out += ' ';
+            prev_space = true;
+        }
+        else
+        {
+            out += c;
+            prev_space = false;
+        }
+    }
+    while (!out.empty() && out.back() == ' ')
+        out.pop_back();
+    return out;
+}
+
+void SlacCalendarReader::pushEvent(const nlohmann::json& ev, const std::string& accel,
+                                    SeenActivationMap& seen, std::vector<PendingActivation>& pending)
+{
+    const std::string program_name = normalizeWhitespace(jsonStr(ev, "program_name"));
     if (program_name.empty())
     {
         warnf(*logger_,
-              "SlacCalendarReader '{}' experiment '{}': skipping event with empty program_name"
+              "SlacCalendarReader '{}' accel '{}': skipping event with empty program_name"
               " (start='{}', url='{}')",
-              config_.name(), experiment, jsonStr(ev, "start"), jsonStr(ev, "url"));
+              config_.name(), accel, jsonStr(ev, "start"), jsonStr(ev, "url"));
         return;
     }
 
-    const std::string calendar  = jsonStr(ev, "calendar");
+    const std::string calendar  = normalizeWhitespace(jsonStr(ev, "calendar"));
     const std::string url       = jsonStr(ev, "url");
     const std::string start_str = jsonStr(ev, "start");
     const std::string end_str   = jsonStr(ev, "end");
     const std::string desc      = jsonStr(ev, "description");
 
+    // Same activity is sometimes cross-posted under multiple Google Calendars
+    // (identical program_name/time window, different source calendar/url).
+    // Disambiguate the 2nd+ occurrence so it doesn't collide with the first one on
+    // the server's per-configurationName overlap check.
+    std::string configuration_name = program_name;
+    if (!start_str.empty() && !end_str.empty())
+    {
+        const std::string key = program_name + "|" + start_str + "|" + end_str;
+        const auto        it  = seen.find(key);
+        if (it == seen.end())
+        {
+            seen.emplace(key, calendar);
+        }
+        else if (it->second != calendar)
+        {
+            configuration_name = calendar.empty()
+                                ? program_name + " [" + accel + "]"
+                                : program_name + " [" + calendar + "]";
+        }
+    }
+
+    // category is a required field on the server and the server independently
+    // rejects overlapping activations that share a category (same rule as for
+    // configurationName - see annotation.proto SaveConfigurationActivationRequest).
+    // Using the source calendar (e.g. NC-MEC, NC-PAMM) as category groups every
+    // concurrent-but-unrelated activity in that hutch/area together and makes
+    // that rule trigger on events that don't actually represent the same
+    // activity. Default category to configuration_name instead, so the
+    // category-overlap rule collapses onto the name-overlap rule instead of
+    // adding false collisions; the source calendar is still preserved verbatim
+    // in the "calendar" attribute below. A configured category override still
+    // takes precedence when present.
+    const std::string category = config_.category().has_value() ? *config_.category() : configuration_name;
+
     // --- ConfigurationPayload ---
     ConfigurationPayload cfg_payload;
     cfg_payload.root_source_name    = config_.name();
-    cfg_payload.configuration_name = program_name;
-    cfg_payload.category = config_.category().has_value() ? *config_.category() : calendar;
+    cfg_payload.configuration_name = configuration_name;
+    cfg_payload.category = category;
 
     if (!calendar.empty())
         cfg_payload.attributes["calendar"] = calendar;
@@ -213,14 +297,11 @@ void SlacCalendarReader::pushEvent(const nlohmann::json& ev, const std::string& 
             if (t.is_string())
                 tags.push_back(t.get<std::string>());
         if (!tags.empty())
-        {
             cfg_payload.tags = tags;
-            for (size_t i = 0; i < tags.size(); ++i)
-                cfg_payload.attributes["tag_" + std::to_string(i)] = tags[i];
-        }
     }
 
-    cfg_payload.attributes["experiment"] = experiment;
+    cfg_payload.attributes["accel"] = accel;
+    cfg_payload.modified_by = "slac-calendar-reader";
 
     for (const auto& [key, attr] :
          std::vector<std::pair<std::string, std::string>>{
@@ -263,15 +344,15 @@ void SlacCalendarReader::pushEvent(const nlohmann::json& ev, const std::string& 
     if (start_str.empty() || end_str.empty())
     {
         warnf(*logger_,
-              "SlacCalendarReader '{}' experiment '{}': skipping activation for '{}' (missing start/end)",
-              config_.name(), experiment, program_name);
+              "SlacCalendarReader '{}' accel '{}': skipping activation for '{}' (missing start/end)",
+              config_.name(), accel, program_name);
         return;
     }
 
     ConfigurationActivationPayload act_payload;
     if (!url.empty())
         act_payload.client_activation_id = url;
-    act_payload.configuration_name   = program_name;
+    act_payload.configuration_name   = configuration_name;
     act_payload.start_time           = parseBusTimestamp(start_str);
     act_payload.end_time             = parseBusTimestamp(end_str);
     if (!desc.empty())
@@ -285,16 +366,58 @@ void SlacCalendarReader::pushEvent(const nlohmann::json& ev, const std::string& 
         if (!tags.empty())
             act_payload.tags = tags;
     }
-    act_payload.attributes["experiment"] = experiment;
+    act_payload.attributes["accel"] = accel;
     if (!calendar.empty())
         act_payload.attributes["calendar"] = calendar;
+    act_payload.modified_by = "slac-calendar-reader";
 
+    pending.push_back(PendingActivation{category, std::move(act_payload)});
+}
+
+void SlacCalendarReader::mergeAndPushActivations(std::vector<PendingActivation>& pending)
+{
+    // Group by configurationName+category (the server's overlap-check key), then merge
+    // chronologically touching/overlapping occurrences into a single spanning activation —
+    // the server rejects a new activation whose range merely touches an existing one under
+    // the same key, which happens naturally for multi-day events split by the calendar API
+    // into consecutive daily/shift blocks.
+    std::unordered_map<std::string, std::vector<size_t>> groups;
+    for (size_t i = 0; i < pending.size(); ++i)
+        groups[pending[i].category + "|" + pending[i].payload.configuration_name].push_back(i);
+
+    for (auto& [key, idxs] : groups)
     {
-        IDataBus::EventBatch b;
-        b.reader_name = config_.name();
-        b.payload     = std::move(act_payload);
-        bus_->push(std::move(b));
-        ++act_pushed_;
+        std::sort(idxs.begin(), idxs.end(), [&](size_t a, size_t b) {
+            return pending[a].payload.start_time.epoch_seconds < pending[b].payload.start_time.epoch_seconds;
+        });
+
+        size_t run_start = 0;
+        while (run_start < idxs.size())
+        {
+            auto& merged = pending[idxs[run_start]].payload;
+            size_t j = run_start + 1;
+            while (j < idxs.size())
+            {
+                auto& next = pending[idxs[j]].payload;
+                const uint64_t merged_end = merged.end_time.has_value()
+                                           ? merged.end_time->epoch_seconds
+                                           : merged.start_time.epoch_seconds;
+                if (next.start_time.epoch_seconds > merged_end)
+                    break;
+                if (next.end_time.has_value() &&
+                    (!merged.end_time.has_value() || next.end_time->epoch_seconds > merged.end_time->epoch_seconds))
+                    merged.end_time = next.end_time;
+                ++j;
+            }
+
+            IDataBus::EventBatch b;
+            b.reader_name = config_.name();
+            b.payload     = merged;
+            bus_->push(std::move(b));
+            ++act_pushed_;
+
+            run_start = j;
+        }
     }
 }
 
@@ -330,7 +453,7 @@ BusTimestamp SlacCalendarReader::parseBusTimestamp(const std::string& iso)
     return BusTimestamp{static_cast<uint64_t>(epoch), 0};
 }
 
-std::string SlacCalendarReader::buildUrl(const std::string& experiment,
+std::string SlacCalendarReader::buildUrl(const std::string& accel,
                                          const std::string& startIso,
                                          const std::string& endIso)
 {
@@ -345,11 +468,10 @@ std::string SlacCalendarReader::buildUrl(const std::string& experiment,
         return out;
     };
 
-    return config_.baseUrl() + "/" + experiment + "/events.json" +
+    return config_.baseUrl() + "/" + accel + "/events.json" +
            "?non_program_events=false" +
            "&start_time=" + encode(startIso) +
-           "&end_time="   + encode(endIso) +
-           "&limit="      + std::to_string(config_.eventLimit());
+           "&end_time="   + encode(endIso);
 }
 
 std::string SlacCalendarReader::nowOffsetIso(int offsetDays)
@@ -374,6 +496,16 @@ std::string SlacCalendarReader::nowOffsetIso(int offsetDays)
 std::string SlacCalendarReader::nowIso()
 {
     return nowOffsetIso(0);
+}
+
+std::string SlacCalendarReader::epochToIso(int64_t epoch)
+{
+    const time_t t = static_cast<time_t>(epoch);
+    struct tm    u{};
+    gmtime_r(&t, &u);
+    char buf[64];
+    std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%S", &u);
+    return std::string(buf) + "+00:00";
 }
 
 std::string SlacCalendarReader::dateToIso(const std::string& s)

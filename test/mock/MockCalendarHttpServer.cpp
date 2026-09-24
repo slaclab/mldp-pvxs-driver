@@ -18,12 +18,12 @@ MockCalendarHttpServer::MockCalendarHttpServer()
 {
     server_.Get(R"(/([^/]+)/events\.json)",
                 [this](const httplib::Request& req, httplib::Response& res) {
-                    std::string exp;
+                    std::string acc;
                     if (!req.matches.empty())
-                        exp = req.matches[1].str();
+                        acc = req.matches[1].str();
 
                     CalendarRequestLog log;
-                    log.experiment  = exp;
+                    log.accel       = acc;
                     log.path        = req.path;
                     log.start_time  = req.get_param_value("start_time");
                     log.end_time    = req.get_param_value("end_time");
@@ -35,10 +35,10 @@ MockCalendarHttpServer::MockCalendarHttpServer()
                     {
                         std::lock_guard<std::mutex> lk(mu_);
                         history_.push_back(log);
-                        const auto sc_it = status_codes_.find(exp);
+                        const auto sc_it = status_codes_.find(acc);
                         if (sc_it != status_codes_.end())
                             status_code = sc_it->second;
-                        const auto body_it = responses_.find(exp);
+                        const auto body_it = responses_.find(acc);
                         if (body_it != responses_.end())
                             body = body_it->second;
                     }
@@ -93,17 +93,17 @@ std::string MockCalendarHttpServer::baseUrl() const
     return "http://127.0.0.1:" + std::to_string(port_);
 }
 
-void MockCalendarHttpServer::setResponse(const std::string& experiment,
+void MockCalendarHttpServer::setResponse(const std::string& accel,
                                          const std::string& json_body)
 {
     std::lock_guard<std::mutex> lk(mu_);
-    responses_[experiment] = json_body;
+    responses_[accel] = json_body;
 }
 
-void MockCalendarHttpServer::setStatusCode(const std::string& experiment, int code)
+void MockCalendarHttpServer::setStatusCode(const std::string& accel, int code)
 {
     std::lock_guard<std::mutex> lk(mu_);
-    status_codes_[experiment] = code;
+    status_codes_[accel] = code;
 }
 
 std::vector<CalendarRequestLog> MockCalendarHttpServer::requestHistory() const

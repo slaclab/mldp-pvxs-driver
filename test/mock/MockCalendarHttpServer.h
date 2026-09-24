@@ -25,7 +25,7 @@ namespace mldp_pvxs_driver::test::mock {
 
 struct CalendarRequestLog
 {
-    std::string experiment;
+    std::string accel;
     std::string start_time;
     std::string end_time;
     std::string limit;
@@ -44,8 +44,8 @@ public:
     [[nodiscard]] int         port() const;
     [[nodiscard]] std::string baseUrl() const;
 
-    void setResponse(const std::string& experiment, const std::string& json_body);
-    void setStatusCode(const std::string& experiment, int code);
+    void setResponse(const std::string& accel, const std::string& json_body);
+    void setStatusCode(const std::string& accel, int code);
 
     [[nodiscard]] std::vector<CalendarRequestLog> requestHistory() const;
     bool waitForRequestCount(size_t min_requests, std::chrono::milliseconds timeout) const;

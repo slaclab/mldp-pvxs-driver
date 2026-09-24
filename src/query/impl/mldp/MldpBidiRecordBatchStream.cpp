@@ -89,6 +89,123 @@ std::vector<int64_t> bucketTimestamps(const dp::service::common::DataBucket& buc
 
 } // namespace
 
+std::shared_ptr<arrow::RecordBatch> mldp_pvxs_driver::query::impl::mldp::decodeDataBucketsToBatch(
+    const ::google::protobuf::RepeatedPtrField<dp::service::common::DataBucket>& buckets,
+    const std::vector<mldp_pvxs_driver::query::Predicate>&                            column_predicates,
+    const std::set<std::string>&                                                      projection_hint,
+    arrow::MemoryPool*                                                                pool)
+{
+    struct Row
+    {
+        std::string                         pv;
+        int64_t                             timestamp;
+        dp::service::common::DataValue      value;
+        dp::service::common::ColumnMetadata metadata;
+    };
+
+    std::vector<Row> rows;
+    for (const auto& bucket : buckets)
+    {
+        if (bucket.pvname().empty())
+            throw std::runtime_error("MLDP bucket query has no PV name");
+        const auto timestamps = bucketTimestamps(bucket);
+        if (!bucket.has_datavalues())
+            throw std::runtime_error("MLDP bucket query has no values");
+        const auto&                                 values = bucket.datavalues();
+        std::vector<dp::service::common::DataValue> decoded;
+        dp::service::common::ColumnMetadata         metadata;
+        if (values.has_datacolumn())
+        {
+            const auto& column = values.datacolumn();
+            decoded.assign(column.datavalues().begin(), column.datavalues().end());
+            metadata = column.metadata();
+        }
+        else
+        {
+            if (values.has_int64column())
+            {
+                decoded.reserve(static_cast<std::size_t>(values.int64column().values_size()));
+                for (const auto value : values.int64column().values())
+                    decoded.emplace_back().set_longvalue(value);
+            }
+            else if (values.has_int32column())
+            {
+                decoded.reserve(static_cast<std::size_t>(values.int32column().values_size()));
+                for (const auto value : values.int32column().values())
+                    decoded.emplace_back().set_intvalue(value);
+            }
+            else if (values.has_doublecolumn())
+            {
+                decoded.reserve(static_cast<std::size_t>(values.doublecolumn().values_size()));
+                for (const auto value : values.doublecolumn().values())
+                    decoded.emplace_back().set_doublevalue(value);
+            }
+            else if (values.has_floatcolumn())
+            {
+                decoded.reserve(static_cast<std::size_t>(values.floatcolumn().values_size()));
+                for (const auto value : values.floatcolumn().values())
+                    decoded.emplace_back().set_floatvalue(value);
+            }
+            else if (values.has_boolcolumn())
+            {
+                decoded.reserve(static_cast<std::size_t>(values.boolcolumn().values_size()));
+                for (const auto value : values.boolcolumn().values())
+                    decoded.emplace_back().set_booleanvalue(value);
+            }
+            else if (values.has_stringcolumn())
+            {
+                decoded.reserve(static_cast<std::size_t>(values.stringcolumn().values_size()));
+                for (const auto& value : values.stringcolumn().values())
+                    decoded.emplace_back().set_stringvalue(value);
+            }
+            else if (values.has_enumcolumn())
+            {
+                decoded.reserve(static_cast<std::size_t>(values.enumcolumn().values_size()));
+                for (const auto value : values.enumcolumn().values())
+                    decoded.emplace_back().set_intvalue(value);
+            }
+            else
+            {
+                throw std::runtime_error("MLDP bucket query has unsupported serialized values");
+            }
+        }
+        if (timestamps.size() != decoded.size())
+            throw std::runtime_error("MLDP bucket query timestamp/value cardinality mismatch for '" + bucket.pvname() + "'");
+        if (!matchesColumnMetadataPredicates(metadata, dataValuesKind(decoded), column_predicates))
+            continue;
+        for (std::size_t index = 0; index < decoded.size(); ++index)
+            rows.push_back({bucket.pvname(), timestamps[index], std::move(decoded[index]), metadata});
+    }
+    arrow::StringBuilder                             pv_builder(pool);
+    arrow::TimestampBuilder                          time_builder(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), pool);
+    DataValueBuilder                                 value_builder(pool);
+    arrow::StringBuilder                             type_builder(pool);
+    std::vector<dp::service::common::ColumnMetadata> metadata_values;
+    metadata_values.reserve(rows.size());
+    for (const auto& row : rows)
+        metadata_values.push_back(row.metadata);
+    auto attribute_keys_set = attributeKeys(metadata_values);
+    auto provenance_keys_set = provenanceKeys(metadata_values);
+    addRequestedDynamicMetadataKeys(attribute_keys_set, projection_hint, "attributes.");
+    addRequestedDynamicMetadataKeys(provenance_keys_set, projection_hint, "provenance.");
+    TimeSeriesMetadataBuilders metadata(attribute_keys_set, provenance_keys_set);
+    for (const auto& row : rows)
+    {
+        if (!pv_builder.Append(row.pv).ok() || !time_builder.Append(row.timestamp).ok() || !type_builder.Append(dataValueKind(row.value)).ok())
+            throw std::runtime_error("Failed to build Arrow bucket-query batch");
+        value_builder.append(row.value);
+        metadata.append(row.metadata);
+    }
+    std::shared_ptr<arrow::Array> pv, time, type;
+    if (!pv_builder.Finish(&pv).ok() || !time_builder.Finish(&time).ok() || !type_builder.Finish(&type).ok())
+        throw std::runtime_error("Failed to finish Arrow bucket-query batch");
+    const auto                                 value = value_builder.finish();
+    std::vector<std::shared_ptr<arrow::Field>> fields = {arrow::field("pv", pv->type()), arrow::field("time", time->type()), arrow::field("value", value->type()), arrow::field("column_type", type->type())};
+    std::vector<std::shared_ptr<arrow::Array>> arrays = {pv, time, value, type};
+    metadata.finish(fields, arrays);
+    return arrow::RecordBatch::Make(arrow::schema(std::move(fields)), pv->length(), std::move(arrays));
+}
+
 MldpBidiRecordBatchStream::MldpBidiRecordBatchStream(
     mldp_pvxs_driver::util::pool::PooledHandle<mldp_pvxs_driver::util::pool::MLDPGrpcObject> handle,
     dp::service::query::QueryDataRequest                                                     request,
@@ -178,114 +295,6 @@ std::shared_ptr<arrow::RecordBatch> MldpBidiRecordBatchStream::next()
 
 std::shared_ptr<arrow::RecordBatch> MldpBidiRecordBatchStream::makeBatch(const dp::service::query::QueryDataResponse& response) const
 {
-    struct Row
-    {
-        std::string                         pv;
-        int64_t                             timestamp;
-        dp::service::common::DataValue      value;
-        dp::service::common::ColumnMetadata metadata;
-    };
-
-    std::vector<Row> rows;
-    for (const auto& bucket : response.querydata().databuckets())
-    {
-        if (bucket.pvname().empty())
-            throw std::runtime_error("MLDP queryDataBidiStream bucket has no PV name");
-        const auto timestamps = bucketTimestamps(bucket);
-        if (!bucket.has_datavalues())
-            throw std::runtime_error("MLDP queryDataBidiStream bucket has no values");
-        const auto&                                 values = bucket.datavalues();
-        std::vector<dp::service::common::DataValue> decoded;
-        dp::service::common::ColumnMetadata         metadata;
-        if (values.has_datacolumn())
-        {
-            const auto& column = values.datacolumn();
-            decoded.assign(column.datavalues().begin(), column.datavalues().end());
-            metadata = column.metadata();
-        }
-        else
-        {
-            if (values.has_int64column())
-            {
-                decoded.reserve(static_cast<std::size_t>(values.int64column().values_size()));
-                for (const auto value : values.int64column().values())
-                    decoded.emplace_back().set_longvalue(value);
-            }
-            else if (values.has_int32column())
-            {
-                decoded.reserve(static_cast<std::size_t>(values.int32column().values_size()));
-                for (const auto value : values.int32column().values())
-                    decoded.emplace_back().set_intvalue(value);
-            }
-            else if (values.has_doublecolumn())
-            {
-                decoded.reserve(static_cast<std::size_t>(values.doublecolumn().values_size()));
-                for (const auto value : values.doublecolumn().values())
-                    decoded.emplace_back().set_doublevalue(value);
-            }
-            else if (values.has_floatcolumn())
-            {
-                decoded.reserve(static_cast<std::size_t>(values.floatcolumn().values_size()));
-                for (const auto value : values.floatcolumn().values())
-                    decoded.emplace_back().set_floatvalue(value);
-            }
-            else if (values.has_boolcolumn())
-            {
-                decoded.reserve(static_cast<std::size_t>(values.boolcolumn().values_size()));
-                for (const auto value : values.boolcolumn().values())
-                    decoded.emplace_back().set_booleanvalue(value);
-            }
-            else if (values.has_stringcolumn())
-            {
-                decoded.reserve(static_cast<std::size_t>(values.stringcolumn().values_size()));
-                for (const auto& value : values.stringcolumn().values())
-                    decoded.emplace_back().set_stringvalue(value);
-            }
-            else if (values.has_enumcolumn())
-            {
-                decoded.reserve(static_cast<std::size_t>(values.enumcolumn().values_size()));
-                for (const auto value : values.enumcolumn().values())
-                    decoded.emplace_back().set_intvalue(value);
-            }
-            else
-            {
-                throw std::runtime_error("MLDP queryDataBidiStream bucket has unsupported serialized values");
-            }
-        }
-        if (timestamps.size() != decoded.size())
-            throw std::runtime_error("MLDP queryDataBidiStream bucket timestamp/value cardinality mismatch for '" + bucket.pvname() + "'");
-        if (!matchesColumnMetadataPredicates(metadata, dataValuesKind(decoded), column_predicates_))
-            continue;
-        for (std::size_t index = 0; index < decoded.size(); ++index)
-            rows.push_back({bucket.pvname(), timestamps[index], std::move(decoded[index]), metadata});
-    }
-    auto*                                            pool = context_.pool != nullptr ? context_.pool : arrow::default_memory_pool();
-    arrow::StringBuilder                             pv_builder(pool);
-    arrow::TimestampBuilder                          time_builder(arrow::timestamp(arrow::TimeUnit::NANO, "UTC"), pool);
-    DataValueBuilder                                 value_builder(pool);
-    arrow::StringBuilder                             type_builder(pool);
-    std::vector<dp::service::common::ColumnMetadata> metadata_values;
-    metadata_values.reserve(rows.size());
-    for (const auto& row : rows)
-        metadata_values.push_back(row.metadata);
-    auto attribute_keys_set = attributeKeys(metadata_values);
-    auto provenance_keys_set = provenanceKeys(metadata_values);
-    addRequestedDynamicMetadataKeys(attribute_keys_set, projection_hint_, "attributes.");
-    addRequestedDynamicMetadataKeys(provenance_keys_set, projection_hint_, "provenance.");
-    TimeSeriesMetadataBuilders metadata(attribute_keys_set, provenance_keys_set);
-    for (const auto& row : rows)
-    {
-        if (!pv_builder.Append(row.pv).ok() || !time_builder.Append(row.timestamp).ok() || !type_builder.Append(dataValueKind(row.value)).ok())
-            throw std::runtime_error("Failed to build Arrow queryDataBidiStream batch");
-        value_builder.append(row.value);
-        metadata.append(row.metadata);
-    }
-    std::shared_ptr<arrow::Array> pv, time, type;
-    if (!pv_builder.Finish(&pv).ok() || !time_builder.Finish(&time).ok() || !type_builder.Finish(&type).ok())
-        throw std::runtime_error("Failed to finish Arrow queryDataBidiStream batch");
-    const auto                                 value = value_builder.finish();
-    std::vector<std::shared_ptr<arrow::Field>> fields = {arrow::field("pv", pv->type()), arrow::field("time", time->type()), arrow::field("value", value->type()), arrow::field("column_type", type->type())};
-    std::vector<std::shared_ptr<arrow::Array>> arrays = {pv, time, value, type};
-    metadata.finish(fields, arrays);
-    return arrow::RecordBatch::Make(arrow::schema(std::move(fields)), pv->length(), std::move(arrays));
+    auto* pool = context_.pool != nullptr ? context_.pool : arrow::default_memory_pool();
+    return decodeDataBucketsToBatch(response.querydata().databuckets(), column_predicates_, projection_hint_, pool);
 }

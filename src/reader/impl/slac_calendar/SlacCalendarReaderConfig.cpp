@@ -16,7 +16,7 @@ namespace mldp_pvxs_driver::reader::impl::slac_calendar {
 
 static constexpr auto kNameKey               = "name";
 static constexpr auto kBaseUrlKey            = "base-url";
-static constexpr auto kExperimentsKey        = "experiments";
+static constexpr auto kAccelKey               = "accel";
 static constexpr auto kLookaheadDaysKey      = "lookahead-days";
 static constexpr auto kLookbackDaysKey       = "lookback-days";
 static constexpr auto kStartDateKey          = "start-date";
@@ -27,7 +27,7 @@ static constexpr auto kConnectTimeoutSecKey  = "connect-timeout-sec";
 static constexpr auto kTotalTimeoutSecKey    = "total-timeout-sec";
 static constexpr auto kTlsVerifyPeerKey      = "tls-verify-peer";
 static constexpr auto kTlsVerifyHostKey      = "tls-verify-host";
-static constexpr auto kEventLimitKey         = "event-limit";
+static constexpr auto kFetchWindowDaysKey    = "fetch-window-days";
 
 SlacCalendarReaderConfig::SlacCalendarReaderConfig(const config::Config& cfg)
 {
@@ -48,20 +48,20 @@ void SlacCalendarReaderConfig::parse(const config::Config& cfg)
     if (base_url_.empty())
         throw Error("slac-calendar reader: 'base-url' must not be empty");
 
-    if (!cfg.hasChild(kExperimentsKey))
-        throw Error("slac-calendar reader: 'experiments' is required");
-    const auto exp_nodes = cfg.subConfig(kExperimentsKey);
-    if (exp_nodes.empty())
-        throw Error("slac-calendar reader: 'experiments' must not be empty");
-    for (const auto& node : exp_nodes)
+    if (!cfg.hasChild(kAccelKey))
+        throw Error("slac-calendar reader: 'accel' is required");
+    const auto accel_nodes = cfg.subConfig(kAccelKey);
+    if (accel_nodes.empty())
+        throw Error("slac-calendar reader: 'accel' must not be empty");
+    for (const auto& node : accel_nodes)
     {
         std::string val;
         node >> val;
         if (!val.empty())
-            experiments_.push_back(val);
+            accels_.push_back(val);
     }
-    if (experiments_.empty())
-        throw Error("slac-calendar reader: 'experiments' must contain at least one entry");
+    if (accels_.empty())
+        throw Error("slac-calendar reader: 'accel' must contain at least one entry");
 
     static const std::regex kDateRe(R"(\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}(Z|[+-]\d{2}:\d{2})?)?)");
 
@@ -120,7 +120,9 @@ void SlacCalendarReaderConfig::parse(const config::Config& cfg)
 
     tls_verify_peer_ = cfg.getBool(kTlsVerifyPeerKey, true);
     tls_verify_host_ = cfg.getBool(kTlsVerifyHostKey, true);
-    event_limit_     = cfg.getInt(kEventLimitKey, 1000);
+    fetch_window_days_ = cfg.getInt(kFetchWindowDaysKey, 7);
+    if (fetch_window_days_ <= 0)
+        throw Error("slac-calendar reader: 'fetch-window-days' must be > 0");
 
     valid_ = true;
 }
