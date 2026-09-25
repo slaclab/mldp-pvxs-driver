@@ -58,7 +58,11 @@ When `rescan-interval-sec` is `0.0` (the default), the reader:
 1. Computes `[now - lookback-days, now + lookahead-days]` time window (or uses `start-date`/`end-date` on first run).
 2. Splits that window into consecutive `fetch-window-days`-sized day windows and issues
    one HTTP GET per window per configured accel (the endpoint has no pagination/cursor
-   protocol, so requesting a large range in one call risks silent server-side truncation).
+   protocol, so requesting a large range in one call risks silent server-side truncation),
+   pacing requests `fetch-window-delay-ms` apart and sending `Cache-Control`/`Pragma: no-cache`
+   headers — back-to-back requests were observed to hit an upstream/proxy cache that served
+   a stale body for later windows, silently dropping their events even though every call
+   returned HTTP 200.
 3. Parses the JSON array for each window — each event becomes one `ConfigurationPayload` + one
    `ConfigurationActivationPayload` pushed to the bus.
 4. Worker thread exits and calls `signalCompleted()` to support [controller auto-close](readers.md#reader-lifecycle--auto-close); reader stays alive but idle.
@@ -74,6 +78,7 @@ reader:
         lookahead-days: 30
         lookback-days: 1
         fetch-window-days: 7
+        fetch-window-delay-ms: 200
 ```
 
 ### Periodic Rescan
@@ -118,6 +123,7 @@ Parameter              | Type   | Default | Description
 `tls-verify-peer`      | bool   | `true`  | Verify TLS peer certificate.
 `tls-verify-host`      | bool   | `true`  | Verify TLS hostname against certificate.
 `fetch-window-days`    | int    | `7`     | Days of calendar requested per HTTP call. The endpoint has no pagination/cursor, so the whole span is walked in windows of this size instead of one request for the full range.
+`fetch-window-delay-ms` | int   | `200`   | Delay between window HTTP requests. Guards against an upstream/proxy cache serving a stale body for a later window when requests fire too fast (observed at sub-15ms spacing). Must be >= 0.
 
 **Validation rules:**
 
@@ -126,6 +132,7 @@ Parameter              | Type   | Default | Description
 - `lookback-days` must be >= 0.
 - `total-timeout-sec` must be >= `connect-timeout-sec`.
 - `fetch-window-days` must be > 0.
+- `fetch-window-delay-ms` must be >= 0.
 - `start-date`/`end-date` (if provided) must match `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM:SS[Z|±HH:MM]` format.
 
 ## Published Payloads
@@ -170,6 +177,9 @@ Both batches carry `root_source = reader_name` and `reader_name = reader_name`.
 - **Multi-accel**: Fetches multiple accelerator/machine calendars in a single scan pass.
 - **Day-windowed pagination**: Walks the requested date range in `fetch-window-days` chunks
   instead of one large request, avoiding silent server-side truncation.
+- **Request pacing**: Paces window requests `fetch-window-delay-ms` apart and sends
+  `Cache-Control`/`Pragma: no-cache` headers to avoid an upstream/proxy cache serving a
+  stale body for a later window when requests fire too fast.
 - **Cross-calendar duplicate disambiguation**: When the same `program_name`+`category`+time
   window is cross-posted under two different source calendars, the second occurrence's
   `configuration_name` is suffixed with the source calendar so both are pushed instead of

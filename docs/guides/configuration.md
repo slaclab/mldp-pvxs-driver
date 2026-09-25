@@ -481,6 +481,7 @@ Fetches beamline accel/experiment schedule events from the SLAC calendar HTTP AP
       tls-verify-peer: true             # optional; default: true
       tls-verify-host: true             # optional; default: true
       fetch-window-days: 7              # optional; default: 7
+      fetch-window-delay-ms: 200        # optional; default: 200
 ```
 
 | Key | Type | Default | Description |
@@ -499,6 +500,7 @@ Fetches beamline accel/experiment schedule events from the SLAC calendar HTTP AP
 | `tls-verify-peer` | bool | `true` | Verify TLS peer certificate. |
 | `tls-verify-host` | bool | `true` | Verify TLS hostname against certificate. |
 | `fetch-window-days` | int | `7` | Days of calendar requested per HTTP call; the span is walked in windows of this size (no pagination cursor exists). |
+| `fetch-window-delay-ms` | int | `200` | Delay between window HTTP requests. Avoids upstream/proxy response caching from serving a stale body when windows are requested too fast. Must be >= 0. |
 
 → [SlacCalendarReader Documentation](../readers/slac-calendar-reader.md)
 

@@ -254,7 +254,9 @@ TEST_F(SlacCalendarReaderTest, LclsEventProducesTwoBusMessages)
     const auto& act = std::get<ConfigurationActivationPayload>(batches[1].payload);
     EXPECT_EQ(act.configuration_name, "CXI 1013443 Bain");
     ASSERT_TRUE(act.client_activation_id.has_value());
-    EXPECT_EQ(*act.client_activation_id, "https://www.google.com/calendar/event?eid=abc123");
+    EXPECT_EQ(*act.client_activation_id,
+              "https://www.google.com/calendar/event?eid=abc123"
+              "|2026-05-28T06:00:00-07:00|2026-05-28T18:00:00-07:00");
     EXPECT_EQ(act.start_time.epoch_seconds, static_cast<uint64_t>(1779973200));
     EXPECT_EQ(act.attributes.at("accel"), "lcls");
     EXPECT_EQ(act.attributes.at("calendar"), "NC-CXI");

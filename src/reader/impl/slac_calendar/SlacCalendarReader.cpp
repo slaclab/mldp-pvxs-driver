@@ -129,6 +129,9 @@ void SlacCalendarReader::fetchAndPublish(const std::string& startIso, const std:
 {
     for (const auto& accel : config_.accels())
     {
+        if (!running_.load())
+            break;
+
         try
         {
             SeenActivationMap             seen;
@@ -138,17 +141,34 @@ void SlacCalendarReader::fetchAndPublish(const std::string& startIso, const std:
             const int64_t range_end   = static_cast<int64_t>(parseBusTimestamp(endIso).epoch_seconds);
             const int64_t window_sec  = static_cast<int64_t>(config_.fetchWindowDays()) * 86400;
 
+            bool first_window = true;
             for (int64_t win_start = range_start; win_start < range_end; win_start += window_sec)
             {
+                if (!running_.load())
+                    break;
+
+                if (!first_window && config_.fetchWindowDelayMs() > 0)
+                {
+                    std::unique_lock<std::mutex> lk(worker_mutex_);
+                    worker_cv_.wait_for(lk,
+                                        std::chrono::milliseconds(config_.fetchWindowDelayMs()),
+                                        [this] { return !running_.load(); });
+                }
+                first_window = false;
+
+                if (!running_.load())
+                    break;
+
                 const int64_t win_end = std::min(win_start + window_sec, range_end);
                 const std::string win_start_iso = epochToIso(win_start);
                 const std::string win_end_iso   = epochToIso(win_end);
 
                 const auto body = fetchAccel(accel, win_start_iso, win_end_iso);
                 parseAndPush(body, accel, seen, pending);
-            }
 
-            mergeAndPushActivations(pending);
+                const bool is_last_window = (win_end >= range_end);
+                pending = mergeAndPushActivations(pending, is_last_window);
+            }
         }
         catch (const std::exception& e)
         {
@@ -166,8 +186,10 @@ std::string SlacCalendarReader::fetchAccel(const std::string& accel,
                                            const std::string& endIso)
 {
     const std::string url = buildUrl(accel, startIso, endIso);
-    HttpRequest       req{url, {}};
-    const auto        result = http_client_.get(req);
+    // Defeat any reverse-proxy/CDN response caching in front of the calendar
+    // server — see fetch_window_delay_ms_ comment in SlacCalendarReaderConfig.
+    HttpRequest req{url, {"Cache-Control: no-cache, no-store", "Pragma: no-cache"}};
+    const auto  result = http_client_.get(req);
 
     if (result.info.http_status != 200)
     {
@@ -350,8 +372,14 @@ void SlacCalendarReader::pushEvent(const nlohmann::json& ev, const std::string& 
     }
 
     ConfigurationActivationPayload act_payload;
+    // The server upserts an activation keyed on clientActivationId when present
+    // (see annotation.proto saveConfigurationActivation doc), so this must be unique
+    // per *occurrence*. The calendar API's "url" (Google Calendar eid) is often the
+    // same for every instance of a recurring series, which otherwise makes each new
+    // weekly/monthly occurrence silently overwrite the previous one in Mongo instead
+    // of creating a distinct record. Fold start/end into the id to disambiguate.
     if (!url.empty())
-        act_payload.client_activation_id = url;
+        act_payload.client_activation_id = url + "|" + start_str + "|" + end_str;
     act_payload.configuration_name   = configuration_name;
     act_payload.start_time           = parseBusTimestamp(start_str);
     act_payload.end_time             = parseBusTimestamp(end_str);
@@ -374,16 +402,26 @@ void SlacCalendarReader::pushEvent(const nlohmann::json& ev, const std::string& 
     pending.push_back(PendingActivation{category, std::move(act_payload)});
 }
 
-void SlacCalendarReader::mergeAndPushActivations(std::vector<PendingActivation>& pending)
+std::vector<SlacCalendarReader::PendingActivation>
+SlacCalendarReader::mergeAndPushActivations(std::vector<PendingActivation>& pending, bool flush_all)
 {
     // Group by configurationName+category (the server's overlap-check key), then merge
     // chronologically touching/overlapping occurrences into a single spanning activation —
     // the server rejects a new activation whose range merely touches an existing one under
     // the same key, which happens naturally for multi-day events split by the calendar API
     // into consecutive daily/shift blocks.
+    //
+    // Called once per fetch window (not just once at the end) so activations aren't all
+    // delayed until the whole date range has been fetched. Since events arrive from the
+    // calendar API roughly in chronological order, only the LAST merge run of each group
+    // might still be extended by an occurrence in a later window — that run is held back
+    // and returned as carry-over instead of being pushed, unless flush_all is set (the
+    // final window), in which case everything is pushed.
     std::unordered_map<std::string, std::vector<size_t>> groups;
     for (size_t i = 0; i < pending.size(); ++i)
         groups[pending[i].category + "|" + pending[i].payload.configuration_name].push_back(i);
+
+    std::vector<PendingActivation> carry_over;
 
     for (auto& [key, idxs] : groups)
     {
@@ -394,6 +432,7 @@ void SlacCalendarReader::mergeAndPushActivations(std::vector<PendingActivation>&
         size_t run_start = 0;
         while (run_start < idxs.size())
         {
+            const std::string& category = pending[idxs[run_start]].category;
             auto& merged = pending[idxs[run_start]].payload;
             size_t j = run_start + 1;
             while (j < idxs.size())
@@ -410,15 +449,25 @@ void SlacCalendarReader::mergeAndPushActivations(std::vector<PendingActivation>&
                 ++j;
             }
 
-            IDataBus::EventBatch b;
-            b.reader_name = config_.name();
-            b.payload     = merged;
-            bus_->push(std::move(b));
-            ++act_pushed_;
+            const bool is_last_run_in_group = (j >= idxs.size());
+            if (is_last_run_in_group && !flush_all)
+            {
+                carry_over.push_back(PendingActivation{category, merged});
+            }
+            else
+            {
+                IDataBus::EventBatch b;
+                b.reader_name = config_.name();
+                b.payload     = merged;
+                bus_->push(std::move(b));
+                ++act_pushed_;
+            }
 
             run_start = j;
         }
     }
+
+    return carry_over;
 }
 
 BusTimestamp SlacCalendarReader::parseBusTimestamp(const std::string& iso)

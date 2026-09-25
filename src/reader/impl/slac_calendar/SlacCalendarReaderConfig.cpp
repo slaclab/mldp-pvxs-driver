@@ -28,6 +28,7 @@ static constexpr auto kTotalTimeoutSecKey    = "total-timeout-sec";
 static constexpr auto kTlsVerifyPeerKey      = "tls-verify-peer";
 static constexpr auto kTlsVerifyHostKey      = "tls-verify-host";
 static constexpr auto kFetchWindowDaysKey    = "fetch-window-days";
+static constexpr auto kFetchWindowDelayMsKey = "fetch-window-delay-ms";
 
 SlacCalendarReaderConfig::SlacCalendarReaderConfig(const config::Config& cfg)
 {
@@ -123,6 +124,15 @@ void SlacCalendarReaderConfig::parse(const config::Config& cfg)
     fetch_window_days_ = cfg.getInt(kFetchWindowDaysKey, 7);
     if (fetch_window_days_ <= 0)
         throw Error("slac-calendar reader: 'fetch-window-days' must be > 0");
+
+    // Back-to-back windowed GETs against the real SLAC calendar server can be served
+    // from an upstream/proxy cache when fired too fast (observed: sub-15ms spacing in
+    // prod produced repeated bodies for later windows, silently swallowed by the
+    // per-event `seen` dedup as "already recorded", causing whole months to go
+    // missing even though every HTTP call returned 200). Pacing requests avoids it.
+    fetch_window_delay_ms_ = cfg.getInt(kFetchWindowDelayMsKey, 200);
+    if (fetch_window_delay_ms_ < 0)
+        throw Error("slac-calendar reader: 'fetch-window-delay-ms' must be >= 0");
 
     valid_ = true;
 }

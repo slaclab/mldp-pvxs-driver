@@ -45,6 +45,7 @@ public:
     bool tlsVerifyPeer() const noexcept { return tls_verify_peer_; }
     bool tlsVerifyHost() const noexcept { return tls_verify_host_; }
     int fetchWindowDays() const noexcept { return fetch_window_days_; }
+    int fetchWindowDelayMs() const noexcept { return fetch_window_delay_ms_; }
 
 private:
     void parse(const config::Config& cfg);
@@ -64,6 +65,7 @@ private:
     bool                     tls_verify_peer_{true};
     bool                     tls_verify_host_{true};
     int                      fetch_window_days_{7};
+    int                      fetch_window_delay_ms_{200};
 };
 
 } // namespace mldp_pvxs_driver::reader::impl::slac_calendar

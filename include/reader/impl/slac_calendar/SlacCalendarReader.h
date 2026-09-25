@@ -54,11 +54,13 @@ private:
     // colliding on the server's overlap check.
     using SeenActivationMap = std::unordered_map<std::string, std::string>;
 
-    // An activation built from one calendar event, held back until all windows for the
-    // accel are fetched so back-to-back (touching/overlapping) occurrences of the same
-    // configuration can be merged into one span before being pushed — the server rejects
-    // a new activation whose range merely touches an existing one under the same
-    // configurationName+category.
+    // An activation built from one calendar event, held back so back-to-back
+    // (touching/overlapping) occurrences of the same configuration can be merged into one
+    // span before being pushed — the server rejects a new activation whose range merely
+    // touches an existing one under the same configurationName+category. Flushed after
+    // every fetch window (not just once at the end) so activations aren't all delayed
+    // until the whole date range has been fetched; only a merge run that is still
+    // extendable by a later window is carried forward instead of being pushed.
     struct PendingActivation
     {
         std::string                                category;
@@ -75,7 +77,8 @@ private:
                              SeenActivationMap& seen, std::vector<PendingActivation>& pending);
     void        pushEvent(const nlohmann::json& event, const std::string& accel,
                           SeenActivationMap& seen, std::vector<PendingActivation>& pending);
-    void        mergeAndPushActivations(std::vector<PendingActivation>& pending);
+    std::vector<PendingActivation> mergeAndPushActivations(std::vector<PendingActivation>& pending,
+                                                            bool flush_all);
 
     util::bus::BusTimestamp parseBusTimestamp(const std::string& iso8601);
     std::string buildUrl(const std::string& accel,

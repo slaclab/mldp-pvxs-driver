@@ -319,7 +319,9 @@ TEST_F(SlacCalendarIntegrationTest, ActivationClientIdMatchesEventUrl)
     bool found_ev1 = false;
     for (const auto& a : acts)
     {
-        if (a.clientactivationid() == "https://www.google.com/calendar/event?eid=ev1")
+        if (a.clientactivationid() ==
+            "https://www.google.com/calendar/event?eid=ev1"
+            "|2026-05-28T06:00:00-07:00|2026-05-28T18:00:00-07:00")
         {
             found_ev1 = true;
             break;
