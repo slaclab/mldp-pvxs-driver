@@ -519,4 +519,120 @@ TEST(MLDPPVMetadataWriterTest, IncomingTagsReplaceExistingTags)
     EXPECT_EQ(req.tags(0), "new-tag-only");
 }
 
+// ---------------------------------------------------------------------------
+// 10. Empty-valued attributes must not be sent (new-record path).
+// ---------------------------------------------------------------------------
+
+TEST(MLDPPVMetadataWriterTest, EmptyAttributesOmittedOnNewRecord)
+{
+    TestAnnotationService service;
+    // No seeded metadata — getPvMetadata will return "not found".
+
+    grpc::ServerBuilder builder;
+    int                 port = 0;
+    builder.AddListeningPort("127.0.0.1:0", grpc::InsecureServerCredentials(), &port);
+    builder.RegisterService(&service);
+    auto server = builder.BuildAndStart();
+    ASSERT_TRUE(server);
+    ASSERT_GT(port, 0);
+
+    const auto cfg = makeConfigFromYaml(makeWriterYaml(
+        "127.0.0.1:" + std::to_string(port),
+        "127.0.0.1:" + std::to_string(port + 1),
+        "127.0.0.1:" + std::to_string(port + 2)));
+    auto writer = WriterFactory::create("mldp-pv-metadata", cfg, nullptr);
+    ASSERT_NE(writer, nullptr);
+    writer->start();
+
+    SourceMetadataEntry entry;
+    entry.attributes = {{"dname", ""}, {"ename", ""}, {"z", "some_z"}};
+
+    SourceMetadataPayload meta_payload;
+    meta_payload.root_source_name              = "WIRE_LI28_144_POSNCUSBR";
+    meta_payload.sources["WIRE_LI28_144_POSNCUSBR"] = std::move(entry);
+
+    IDataBus::EventBatch batch;
+    batch.reader_name = "test_reader";
+    batch.payload     = std::move(meta_payload);
+
+    ASSERT_TRUE(writer->push(std::move(batch)));
+    ASSERT_TRUE(waitForCount(service.save_pv_metadata_count, 1, std::chrono::milliseconds(2000)));
+
+    writer->stop();
+    server->Shutdown();
+
+    std::lock_guard<std::mutex> lock(service.captured_mutex);
+    ASSERT_EQ(service.captured_requests.size(), 1u);
+    const auto& req = service.captured_requests[0];
+
+    // Only the non-empty attribute should be present.
+    ASSERT_EQ(req.attributes_size(), 1);
+    EXPECT_EQ(req.attributes(0).name(), "z");
+    EXPECT_EQ(req.attributes(0).value(), "some_z");
+}
+
+// ---------------------------------------------------------------------------
+// 11. Empty-valued attributes must not be sent when merging with existing.
+// ---------------------------------------------------------------------------
+
+TEST(MLDPPVMetadataWriterTest, EmptyAttributesOmittedOnMerge)
+{
+    TestAnnotationService service;
+
+    dp::service::common::PvMetadata existing;
+    existing.set_pvname("MY:PV");
+    auto* attr1 = existing.add_attributes();
+    attr1->set_name("keep_me");
+    attr1->set_value("old_val");
+    service.seedPvMetadata("MY:PV", existing);
+
+    grpc::ServerBuilder builder;
+    int                 port = 0;
+    builder.AddListeningPort("127.0.0.1:0", grpc::InsecureServerCredentials(), &port);
+    builder.RegisterService(&service);
+    auto server = builder.BuildAndStart();
+    ASSERT_TRUE(server);
+    ASSERT_GT(port, 0);
+
+    const auto cfg = makeConfigFromYaml(makeWriterYaml(
+        "127.0.0.1:" + std::to_string(port),
+        "127.0.0.1:" + std::to_string(port + 1),
+        "127.0.0.1:" + std::to_string(port + 2)));
+    auto writer = WriterFactory::create("mldp-pv-metadata", cfg, nullptr);
+    ASSERT_NE(writer, nullptr);
+    writer->start();
+
+    // Incoming clears keep_me's value to empty and adds another empty attr.
+    SourceMetadataEntry entry;
+    entry.attributes = {{"keep_me", ""}, {"blank_attr", ""}, {"real_attr", "val"}};
+
+    SourceMetadataPayload meta_payload;
+    meta_payload.root_source_name = "MY:PV";
+    meta_payload.sources["MY:PV"] = std::move(entry);
+
+    IDataBus::EventBatch batch;
+    batch.reader_name = "test_reader";
+    batch.payload     = std::move(meta_payload);
+
+    ASSERT_TRUE(writer->push(std::move(batch)));
+    ASSERT_TRUE(waitForCount(service.save_pv_metadata_count, 1, std::chrono::milliseconds(2000)));
+
+    writer->stop();
+    server->Shutdown();
+
+    std::lock_guard<std::mutex> lock(service.captured_mutex);
+    ASSERT_EQ(service.captured_requests.size(), 1u);
+    const auto& req = service.captured_requests[0];
+
+    std::unordered_map<std::string, std::string> attrs;
+    for (const auto& a : req.attributes())
+        attrs[a.name()] = a.value();
+
+    // keep_me and blank_attr overwritten/added with empty value → must be omitted.
+    EXPECT_EQ(attrs.size(), 1u);
+    EXPECT_EQ(attrs.count("keep_me"), 0u);
+    EXPECT_EQ(attrs.count("blank_attr"), 0u);
+    EXPECT_EQ(attrs["real_attr"], "val");
+}
+
 } // namespace

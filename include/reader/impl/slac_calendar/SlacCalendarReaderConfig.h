@@ -33,7 +33,7 @@ public:
 
     const std::string& name() const noexcept { return name_; }
     const std::string& baseUrl() const noexcept { return base_url_; }
-    const std::vector<std::string>& experiments() const noexcept { return experiments_; }
+    const std::vector<std::string>& accels() const noexcept { return accels_; }
     int lookaheadDays() const noexcept { return lookahead_days_; }
     int lookbackDays() const noexcept { return lookback_days_; }
     const std::optional<std::string>& startDate() const noexcept { return start_date_; }
@@ -44,7 +44,8 @@ public:
     long totalTimeoutSec() const noexcept { return total_timeout_sec_; }
     bool tlsVerifyPeer() const noexcept { return tls_verify_peer_; }
     bool tlsVerifyHost() const noexcept { return tls_verify_host_; }
-    int eventLimit() const noexcept { return event_limit_; }
+    int fetchWindowDays() const noexcept { return fetch_window_days_; }
+    int fetchWindowDelayMs() const noexcept { return fetch_window_delay_ms_; }
 
 private:
     void parse(const config::Config& cfg);
@@ -52,7 +53,7 @@ private:
     bool                     valid_{false};
     std::string              name_;
     std::string              base_url_;
-    std::vector<std::string> experiments_;
+    std::vector<std::string> accels_;
     int                      lookahead_days_{30};
     int                      lookback_days_{1};
     std::optional<std::string> start_date_;
@@ -63,7 +64,8 @@ private:
     long                     total_timeout_sec_{60};
     bool                     tls_verify_peer_{true};
     bool                     tls_verify_host_{true};
-    int                      event_limit_{1000};
+    int                      fetch_window_days_{7};
+    int                      fetch_window_delay_ms_{200};
 };
 
 } // namespace mldp_pvxs_driver::reader::impl::slac_calendar

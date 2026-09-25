@@ -12,6 +12,8 @@
 #include <query/impl/mldp/ColumnPredicateFilter.h>
 #include <query/impl/mldp/DataValueBuilder.h>
 #include <query/impl/mldp/MldpBidiRecordBatchStream.h>
+#include <query/impl/mldp/MldpQueryBucketsPagedStream.h>
+#include <query/impl/mldp/MldpQuerySamplesPagedStream.h>
 #include <query/impl/mldp/MldpTimestampUtils.h>
 #include <query/impl/mldp/ParallelSeriesRecordBatchStream.h>
 
@@ -375,13 +377,12 @@ IRecordBatchStreamUPtr MLDPQueryClient::executeStream(const std::string_view    
         else
         {
             const auto [begin, end] = requestedTimeRange(pushable_predicates);
-            dp::service::query::QueryDataRequest request;
-            auto*                                spec = request.mutable_queryspec();
-            setTimestamp(spec->mutable_begintime(), begin);
-            setTimestamp(spec->mutable_endtime(), end);
+            dp::service::query::QuerySpec spec;
+            setTimestamp(spec.mutable_timerange()->mutable_begintime(), begin);
+            setTimestamp(spec.mutable_timerange()->mutable_endtime(), end);
             for (const auto& pv : pvs)
-                spec->add_pvnames(pv);
-            raw_stream = std::make_unique<MldpBidiRecordBatchStream>(pool_->acquire(), std::move(request), pushable_predicates, projection_hint, context);
+                spec.mutable_pvselector()->mutable_pvnamelist()->add_pvnames(pv);
+            raw_stream = std::make_unique<MldpQueryBucketsPagedStream>(pool_->acquire(), std::move(spec), pushable_predicates, projection_hint, context);
         }
         std::vector<std::shared_ptr<arrow::RecordBatch>> batches;
         while (auto batch = raw_stream->next())
@@ -641,66 +642,44 @@ IRecordBatchStreamUPtr MLDPQueryClient::executeStream(const std::string_view    
         return materializedStream({std::move(merged)});
     }
 
-    // Single-shard wide table: queryTable RPC
+    // Single-shard wide table: backend-paged querySamples RPCs (dp-grpc V2), merged into one wide batch.
     const auto [begin, end] = requestedTimeRange(pushable_predicates);
-    dp::service::query::QueryTableRequest request;
-    request.set_format(dp::service::query::QueryTableRequest::TABLE_FORMAT_COLUMN);
-    setTimestamp(request.mutable_begintime(), begin);
-    setTimestamp(request.mutable_endtime(), end);
+    dp::service::query::QuerySpec spec;
+    setTimestamp(spec.mutable_timerange()->mutable_begintime(), begin);
+    setTimestamp(spec.mutable_timerange()->mutable_endtime(), end);
     for (const auto& pv_name : pvs)
-        request.mutable_pvnamelist()->add_pvnames(pv_name);
+        spec.mutable_pvselector()->mutable_pvnamelist()->add_pvnames(pv_name);
 
-    auto handle = pool_->acquire();
-    auto rpc_context = std::make_shared<grpc::ClientContext>();
-    dp::service::query::QueryTableResponse response;
-    auto cancellation_registration = context.cancellation
-                                         ? context.cancellation->onCancel([rpc_context]
-                                                                          { rpc_context->TryCancel(); })
-                                         : QueryCancellation::Registration{};
-    if (context.cancellation)
-        context.cancellation->throwIfCancelled();
-    const auto status = handle->query_stub->queryTable(rpc_context.get(), request, &response);
-    if (context.cancellation && context.cancellation->cancelled())
-        throw QueryCancelled{};
-    if (!status.ok())
-        throw std::runtime_error("MLDP queryTable failed: " + status.error_message());
-    if (!response.has_tableresult())
-        throw std::runtime_error("MLDP queryTable failed: " + response.exceptionalresult().message());
+    MldpQuerySamplesPagedStream paged_stream(pool_->acquire(), std::move(spec), context);
 
-    const auto& col_table = response.tableresult().columntable();
-
-    std::unordered_map<std::string, const dp::service::common::DataColumn*> returned;
-    for (const auto& column : col_table.datacolumns())
+    std::vector<int64_t>                                              timestamps_ns;
+    std::unordered_map<std::string, dp::service::common::DataColumn> merged_columns;
+    while (auto page = paged_stream.next())
     {
-        if (!returned.emplace(column.name(), &column).second)
-            throw std::runtime_error("MLDP queryTable returned duplicate PV column '" + column.name() + "'");
+        for (const auto& ts : page->timestamplist().timestamps())
+            timestamps_ns.push_back(timestampToNanoseconds(ts));
+        for (const auto& column : page->datacolumns())
+        {
+            auto& merged = merged_columns[column.name()];
+            if (merged.name().empty())
+            {
+                merged.set_name(column.name());
+                *merged.mutable_metadata() = column.metadata();
+            }
+            for (const auto& value : column.datavalues())
+                *merged.add_datavalues() = value;
+        }
     }
 
     std::vector<const dp::service::common::DataColumn*> columns;
     columns.reserve(pvs.size());
     for (const auto& requested_pv : pvs)
     {
-        const auto found = returned.find(requested_pv);
-        if (found == returned.end())
+        const auto found = merged_columns.find(requested_pv);
+        if (found == merged_columns.end())
             continue;
-        if (matchesColumnPredicates(*found->second, pushable_predicates))
-            columns.push_back(found->second);
-    }
-
-    std::vector<int64_t> timestamps_ns;
-    const auto&          dt = col_table.datatimestamps();
-    if (dt.has_timestamplist())
-    {
-        for (const auto& ts : dt.timestamplist().timestamps())
-            timestamps_ns.push_back(timestampToNanoseconds(ts));
-    }
-    else if (dt.has_samplingclock())
-    {
-        const auto&   clock = dt.samplingclock();
-        const int64_t start_ns = static_cast<int64_t>(clock.starttime().epochseconds()) * 1'000'000'000LL +
-                                 static_cast<int64_t>(clock.starttime().nanoseconds());
-        for (uint64_t i = 0; i < static_cast<uint64_t>(clock.count()); ++i)
-            timestamps_ns.push_back(start_ns + static_cast<int64_t>(i) * static_cast<int64_t>(clock.periodnanos()));
+        if (matchesColumnPredicates(found->second, pushable_predicates))
+            columns.push_back(&found->second);
     }
 
     if (columns.empty())

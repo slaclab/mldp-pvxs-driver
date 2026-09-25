@@ -462,7 +462,7 @@ persist the metadata to the MLDP annotation service.
 
 ### `slac-calendar` Reader {#slac-calendar-reader}
 
-Fetches beamline experiment schedule events from the SLAC calendar HTTP API and publishes
+Fetches beamline accel/experiment schedule events from the SLAC calendar HTTP API and publishes
 `ConfigurationPayload` + `ConfigurationActivationPayload` pairs onto the bus. Pair with an
 `mldp-configuration` writer to persist schedule data to the MLDP annotation service.
 
@@ -470,33 +470,37 @@ Fetches beamline experiment schedule events from the SLAC calendar HTTP API and 
 - slac-calendar:
     - name: cal_reader                  # required
       base-url: https://calendar.slac.stanford.edu  # required
-      experiments:                      # required
+      accel:                            # required
         - lcls
         - facet
-      lookahead-days: 30                # required — must be > 0
+      lookahead-days: 30                # required unless end-date is set — must be > 0
       lookback-days: 1                  # optional; default: 1
       rescan-interval-sec: 3600.0       # optional; default: 0.0 (run once)
       connect-timeout-sec: 30           # optional; default: 30
       total-timeout-sec: 60             # optional; default: 60
       tls-verify-peer: true             # optional; default: true
       tls-verify-host: true             # optional; default: true
-      event-limit: 1000                 # optional; default: 1000
+      fetch-window-days: 7              # optional; default: 7
+      fetch-window-delay-ms: 200        # optional; default: 200
 ```
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `name` | string | — | **Required.** Unique reader instance name. |
 | `base-url` | string | — | **Required.** Base URL of the SLAC calendar API (no trailing slash). |
-| `experiments` | sequence | — | **Required.** Experiment names to fetch (e.g. `lcls`, `facet`). |
-| `lookahead-days` | int | — | **Required.** Days into the future to include. Must be > 0. |
+| `accel` | sequence | — | **Required.** Accelerator/machine complex names to fetch (e.g. `lcls`, `facet`). |
+| `lookahead-days` | int | — | **Required unless `end-date` is set.** Days into the future to include. Must be > 0. |
 | `lookback-days` | int | `1` | Days into the past to include. Must be >= 0. |
-| `start-date` | string | — | First-run start override (`YYYY-MM-DD`). Used only on the first fetch. |
+| `start-date` | string | — | First-run start override (`YYYY-MM-DD` or ISO 8601). Used only on the first fetch. |
+| `end-date` | string | — | Fixed-window end date; requires `start-date`. Incompatible with `lookahead-days`/`lookback-days`/`rescan-interval-sec`. |
+| `category` | string | — | Overrides the per-event `calendar` field as the pushed `category`. |
 | `rescan-interval-sec` | double | `0.0` | Repeat fetch interval in seconds. `0` = run once. |
 | `connect-timeout-sec` | int | `30` | HTTP connection timeout (seconds). |
 | `total-timeout-sec` | int | `60` | HTTP total request timeout. Must be >= `connect-timeout-sec`. |
 | `tls-verify-peer` | bool | `true` | Verify TLS peer certificate. |
 | `tls-verify-host` | bool | `true` | Verify TLS hostname against certificate. |
-| `event-limit` | int | `1000` | Maximum events per API request. |
+| `fetch-window-days` | int | `7` | Days of calendar requested per HTTP call; the span is walked in windows of this size (no pagination cursor exists). |
+| `fetch-window-delay-ms` | int | `200` | Delay between window HTTP requests. Avoids upstream/proxy response caching from serving a stale body when windows are requested too fast. Must be >= 0. |
 
 → [SlacCalendarReader Documentation](../readers/slac-calendar-reader.md)
 

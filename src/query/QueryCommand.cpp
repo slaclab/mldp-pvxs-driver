@@ -806,7 +806,8 @@ int runRepl(QueryCliOptions                           options,
             ScopedQueryInterruptHandler         interrupt_handler;
             const auto                           page_result = query_options.pager && pager.canPage(input, output, query_options.format);
             std::ostringstream                   paged_output;
-            auto&                                 result_output = page_result ? static_cast<std::ostream&>(paged_output) : output;
+            const bool                            buffer_result = page_result || real_terminal;
+            auto&                                 result_output = buffer_result ? static_cast<std::ostream&>(paged_output) : output;
             ConsoleStatus                         status{.query_running = true, .progress = progress->snapshot()};
             const auto tw = [&]() -> int {
                 if (!real_terminal) return 0;
@@ -853,6 +854,7 @@ int runRepl(QueryCliOptions                           options,
                 {
                     inline_status.clear();
                     output << "\n";
+                    output << paged_output.str();
                     if (!query_options.no_stats)
                     {
                         printQueryStats(completed_stats, output);
