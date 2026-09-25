@@ -93,8 +93,8 @@ void addAttribute(dp::service::common::DataColumn* column, const std::string& na
 class QueryService final : public dp::service::query::DpQueryService::Service
 {
 public:
-    dp::service::query::QueryTableRequest last_request;
-    dp::service::query::QueryDataRequest  last_bidi_request;
+    dp::service::query::QuerySamplesRequest last_request;
+    dp::service::query::QueryBucketsRequest last_bidi_request;
     bool                                  duplicate_column{false};
     bool                                  oversized_column{false};
     bool                                  scalar_columns{false};
@@ -137,9 +137,13 @@ public:
 
         if (duplicate_column)
         {
+            // querySamples merges same-named columns across pages by accumulating
+            // datavalues, so a duplicate column only surfaces as an error once the
+            // merged value count exceeds the shared timestamp axis.
             dp::service::common::DataColumn duplicate;
             duplicate.set_name("RF:ONE");
-            duplicate.add_datavalues()->set_stringvalue("duplicate");
+            duplicate.add_datavalues()->set_stringvalue("duplicate-1");
+            duplicate.add_datavalues()->set_stringvalue("duplicate-2");
             columns.push_back(duplicate);
         }
         if (oversized_column)
@@ -179,9 +183,10 @@ public:
         return columns;
     }
 
-    grpc::Status queryTable(grpc::ServerContext* context,
-                            const dp::service::query::QueryTableRequest* request,
-                            dp::service::query::QueryTableResponse* response) override
+    // Single-page querySamples response: the wide, null-padded shared axis.
+    grpc::Status querySamples(grpc::ServerContext* context,
+                              const dp::service::query::QuerySamplesRequest* request,
+                              dp::service::query::QuerySamplesResponse* response) override
     {
         {
             const std::lock_guard lock(mutex);
@@ -199,8 +204,8 @@ public:
             condition.notify_all();
             return grpc::Status(grpc::StatusCode::CANCELLED, "client cancelled");
         }
-        auto* table = response->mutable_tableresult()->mutable_columntable();
-        auto* timestamps = table->mutable_datatimestamps()->mutable_timestamplist();
+        auto* table = response->mutable_samplequeryresult()->mutable_columntable();
+        auto* timestamps = table->mutable_timestamplist();
         timestamps->add_timestamps()->set_epochseconds(1);
         timestamps->add_timestamps()->set_epochseconds(2);
         for (auto& column : buildColumns())
@@ -208,27 +213,23 @@ public:
         return grpc::Status::OK;
     }
 
-    // Mirrors queryTable's fixed dataset over the native bidi cursor RPC:
+    // Mirrors querySamples' fixed dataset over the paged queryBuckets RPC:
     // one DataBucket per requested PV that exists in the dataset, each with
     // its own per-value timestamp list (epochs 1, 2, 0, 0, ... by index)
-    // instead of queryTable's shared null-padded axis.
-    grpc::Status queryDataBidiStream(
-        grpc::ServerContext* /*context*/,
-        grpc::ServerReaderWriter<dp::service::query::QueryDataResponse,
-                                 dp::service::query::QueryDataRequest>* stream) override
+    // instead of querySamples' shared null-padded axis.
+    grpc::Status queryBuckets(grpc::ServerContext* /*context*/,
+                              const dp::service::query::QueryBucketsRequest* request,
+                              dp::service::query::QueryBucketsResponse* response) override
     {
-        dp::service::query::QueryDataRequest request;
-        if (!stream->Read(&request)) return grpc::Status::OK;
         {
             const std::lock_guard lock(mutex);
-            last_bidi_request = request;
+            last_bidi_request = *request;
         }
         condition.notify_all();
 
-        const auto              columns = buildColumns();
-        dp::service::query::QueryDataResponse response;
-        auto*                    query_data = response.mutable_querydata();
-        for (const auto& pv_name : request.queryspec().pvnames())
+        const auto columns = buildColumns();
+        auto*      result = response->mutable_bucketqueryresult();
+        for (const auto& pv_name : request->queryspec().pvselector().pvnamelist().pvnames())
         {
             const auto found = std::find_if(columns.begin(), columns.end(), [&](const dp::service::common::DataColumn& column)
                                             {
@@ -236,16 +237,13 @@ public:
                                             });
             if (found == columns.end())
                 continue;
-            auto* bucket = query_data->add_databuckets();
+            auto* bucket = result->add_databuckets();
             bucket->set_pvname(found->name());
             auto* timestamp_list = bucket->mutable_datatimestamps()->mutable_timestamplist();
             for (int index = 0; index < found->datavalues_size(); ++index)
                 timestamp_list->add_timestamps()->set_epochseconds(index == 0 ? 1 : index == 1 ? 2 : 0);
             *bucket->mutable_datavalues()->mutable_datacolumn() = *found;
         }
-        if (!stream->Write(response)) return grpc::Status::OK;
-
-        (void)stream->Read(&request);
         return grpc::Status::OK;
     }
 };
@@ -253,7 +251,7 @@ public:
 class BidiQueryService final : public dp::service::query::DpQueryService::Service
 {
 public:
-    std::vector<dp::service::query::QueryDataRequest> requests;
+    std::vector<dp::service::query::QueryBucketsRequest> requests;
     grpc::Status terminal_status{grpc::Status::OK};
     bool release_response{false};
     bool initial_request_received{false};
@@ -262,54 +260,58 @@ public:
     std::mutex mutex;
     std::condition_variable condition;
 
-    grpc::Status queryDataBidiStream(
-        grpc::ServerContext* context,
-        grpc::ServerReaderWriter<dp::service::query::QueryDataResponse,
-                                 dp::service::query::QueryDataRequest>* stream) override
+    // Paged unary queryBuckets: first call (empty pageToken) blocks until
+    // release_response (or cancellation), then returns one page carrying a
+    // nextPageToken; the second call (driven by the client's paging loop)
+    // either returns terminal_status (failure propagation test) or a final
+    // empty page.
+    grpc::Status queryBuckets(grpc::ServerContext* context,
+                              const dp::service::query::QueryBucketsRequest* request,
+                              dp::service::query::QueryBucketsResponse* response) override
     {
-        dp::service::query::QueryDataRequest request;
-        if (!stream->Read(&request)) return grpc::Status::OK;
+        const bool is_first_page = request->executionoptions().pagetoken().empty();
         {
             const std::lock_guard lock(mutex);
-            requests.push_back(request);
-            initial_request_received = true;
+            requests.push_back(*request);
+            if (is_first_page)
+                initial_request_received = true;
         }
         condition.notify_all();
 
-        {
-            std::unique_lock lock(mutex);
-            while (!release_response && !context->IsCancelled())
-            {
-                condition.wait_for(lock, std::chrono::milliseconds{10});
-            }
-        }
-        if (context->IsCancelled())
+        if (is_first_page)
         {
             {
-                const std::lock_guard lock(mutex);
-                client_cancelled = true;
+                std::unique_lock lock(mutex);
+                while (!release_response && !context->IsCancelled())
+                {
+                    condition.wait_for(lock, std::chrono::milliseconds{10});
+                }
             }
-            condition.notify_all();
-            return grpc::Status(grpc::StatusCode::CANCELLED, "client cancelled");
+            if (context->IsCancelled())
+            {
+                {
+                    const std::lock_guard lock(mutex);
+                    client_cancelled = true;
+                }
+                condition.notify_all();
+                return grpc::Status(grpc::StatusCode::CANCELLED, "client cancelled");
+            }
+
+            auto* result = response->mutable_bucketqueryresult();
+            auto* bucket = result->add_databuckets();
+            bucket->set_pvname("TEST:PV");
+            bucket->mutable_datatimestamps()->mutable_timestamplist()->add_timestamps()->set_epochseconds(1);
+            bucket->mutable_datavalues()->mutable_datacolumn()->add_datavalues()->set_intvalue(42);
+            result->set_nextpagetoken("page2");
+            return grpc::Status::OK;
         }
 
-        dp::service::query::QueryDataResponse response;
-        auto* bucket = response.mutable_querydata()->add_databuckets();
-        bucket->set_pvname("TEST:PV");
-        bucket->mutable_datatimestamps()->mutable_timestamplist()->add_timestamps()->set_epochseconds(1);
-        bucket->mutable_datavalues()->mutable_datacolumn()->add_datavalues()->set_intvalue(42);
-        if (!stream->Write(response)) return grpc::Status::OK;
-
-        if (stream->Read(&request))
-        {
-            {
-                const std::lock_guard lock(mutex);
-                requests.push_back(request);
-            }
-            if (on_cursor_next) on_cursor_next();
-            condition.notify_all();
-        }
-        return terminal_status;
+        if (on_cursor_next) on_cursor_next();
+        condition.notify_all();
+        if (!terminal_status.ok())
+            return terminal_status;
+        response->mutable_bucketqueryresult();
+        return grpc::Status::OK;
     }
 };
 
@@ -362,10 +364,10 @@ TEST(MLDPQueryClientTest, BidiStreamSendsInitialQuerySpecThenCursorNextAndPropag
                             ASSERT_TRUE(service.condition.wait_for(lock, std::chrono::seconds{2}, [&] { return service.initial_request_received; }));
                             ASSERT_EQ(service.requests.size(), 1U);
                             EXPECT_TRUE(service.requests.front().has_queryspec());
-                            EXPECT_EQ(service.requests.front().queryspec().begintime().epochseconds(), 10);
-                            EXPECT_EQ(service.requests.front().queryspec().endtime().epochseconds(), 20);
-                            ASSERT_EQ(service.requests.front().queryspec().pvnames_size(), 1);
-                            EXPECT_EQ(service.requests.front().queryspec().pvnames(0), "TEST:PV");
+                            EXPECT_EQ(service.requests.front().queryspec().timerange().begintime().epochseconds(), 10);
+                            EXPECT_EQ(service.requests.front().queryspec().timerange().endtime().epochseconds(), 20);
+                            ASSERT_EQ(service.requests.front().queryspec().pvselector().pvnamelist().pvnames_size(), 1);
+                            EXPECT_EQ(service.requests.front().queryspec().pvselector().pvnamelist().pvnames(0), "TEST:PV");
                             service.release_response = true;
                             lock.unlock();
                             service.condition.notify_all();
@@ -375,9 +377,7 @@ TEST(MLDPQueryClientTest, BidiStreamSendsInitialQuerySpecThenCursorNextAndPropag
     {
         std::unique_lock lock(service.mutex);
         ASSERT_TRUE(service.condition.wait_for(lock, std::chrono::seconds{2}, [&] { return service.requests.size() == 2; }));
-        EXPECT_TRUE(service.requests[1].has_cursorop());
-        EXPECT_EQ(service.requests[1].cursorop().cursoroperationtype(),
-                  dp::service::query::QueryDataRequest::CursorOperation::CURSOR_OP_NEXT);
+        EXPECT_EQ(service.requests[1].executionoptions().pagetoken(), "page2");
     }
     server->Shutdown();
 }
@@ -412,9 +412,9 @@ TEST(MLDPQueryClientTest, BidiStreamReportsCursorProgress)
 
     const auto snapshot = progress->snapshot();
     EXPECT_EQ(snapshot.table_name, "mldp.time_series");
-    EXPECT_EQ(snapshot.operation, "MLDP bidi cursor");
+    EXPECT_EQ(snapshot.operation, "MLDP queryBuckets (paged)");
     EXPECT_EQ(snapshot.cursor_responses, 1U);
-    EXPECT_EQ(snapshot.cursor_next_requests, 1U);
+    EXPECT_EQ(snapshot.cursor_next_requests, 2U);
     EXPECT_EQ(snapshot.stream_batches, 1U);
     server->Shutdown();
 }
@@ -599,12 +599,12 @@ TEST(MLDPQueryClientTest, MaterializesNativeWideTableInRequestedPvOrderWithField
     EXPECT_EQ(time->Value(1), 2'000'000'000);
     {
         const std::lock_guard lock(service.mutex);
-        EXPECT_EQ(service.last_request.format(), dp::service::query::QueryTableRequest::TABLE_FORMAT_COLUMN);
-        ASSERT_EQ(service.last_request.pvnamelist().pvnames_size(), 2);
-        EXPECT_EQ(service.last_request.pvnamelist().pvnames(0), "MAG:ONE");
-        EXPECT_EQ(service.last_request.pvnamelist().pvnames(1), "RF:ONE");
-        EXPECT_EQ(service.last_request.begintime().epochseconds(), 0);
-        EXPECT_EQ(service.last_request.endtime().epochseconds(), 3);
+        const auto& pvnames = service.last_request.queryspec().pvselector().pvnamelist().pvnames();
+        ASSERT_EQ(pvnames.size(), 2);
+        EXPECT_EQ(pvnames.Get(0), "MAG:ONE");
+        EXPECT_EQ(pvnames.Get(1), "RF:ONE");
+        EXPECT_EQ(service.last_request.queryspec().timerange().begintime().epochseconds(), 0);
+        EXPECT_EQ(service.last_request.queryspec().timerange().endtime().epochseconds(), 3);
     }
 
     server->Shutdown();
@@ -631,8 +631,8 @@ TEST(MLDPQueryClientTest, SendsLiteralWindowBoundsToWideTableRequest)
     ASSERT_NE(executeAll(client, "mldp.time_series_table", predicates, {}, context), nullptr);
     {
         const std::lock_guard lock(service.mutex);
-        EXPECT_EQ(service.last_request.begintime().epochseconds(), 10);
-        EXPECT_EQ(service.last_request.endtime().epochseconds(), 20);
+        EXPECT_EQ(service.last_request.queryspec().timerange().begintime().epochseconds(), 10);
+        EXPECT_EQ(service.last_request.queryspec().timerange().endtime().epochseconds(), 20);
     }
     server->Shutdown();
 }
@@ -659,8 +659,8 @@ TEST(MLDPQueryClientTest, SendsLiteralWindowBoundsToLongTableRequest)
     {
         const std::lock_guard lock(service.mutex);
         ASSERT_TRUE(service.last_bidi_request.has_queryspec());
-        EXPECT_EQ(service.last_bidi_request.queryspec().begintime().epochseconds(), 10);
-        EXPECT_EQ(service.last_bidi_request.queryspec().endtime().epochseconds(), 20);
+        EXPECT_EQ(service.last_bidi_request.queryspec().timerange().begintime().epochseconds(), 10);
+        EXPECT_EQ(service.last_bidi_request.queryspec().timerange().endtime().epochseconds(), 20);
     }
     server->Shutdown();
 }
@@ -839,10 +839,7 @@ TEST(MLDPQueryClientTest, MaterializesAllNullWideColumnsAndHandlesEmptySelection
     EXPECT_EQ(empty_wide, nullptr);
 
     const auto empty_long = executeAll(client, "mldp.time_series", missing, {"pv", "provenance.source"}, context);
-    ASSERT_NE(empty_long, nullptr);
-    EXPECT_EQ(empty_long->num_rows(), 0);
-    EXPECT_GE(empty_long->schema()->GetFieldIndex("pv"), 0);
-    EXPECT_GE(empty_long->schema()->GetFieldIndex("provenance.source"), 0);
+    EXPECT_EQ(empty_long, nullptr);
 
     const std::vector<Predicate> partial = {
         {.column = "pv", .op = PredicateOp::IN, .values = {std::string("RF:ONE"), std::string("MISSING:PV")}},
