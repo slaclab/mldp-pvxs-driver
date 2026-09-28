@@ -427,6 +427,8 @@ persist the metadata to the MLDP annotation service.
       pv-show-columns: "dname,ename,etype"    # optional; default: dname,ename,etype,lname,ioc,scheme,z
       pvs:                                    # required; must contain at least one entry
         - name: BPMS:LI20:2445:X
+          alias: BPMS_LI20_2445_X             # optional; extra MLDP alias
+          original-name: BPM-LI20-2445-X     # optional; MLDP record name override
           metadata:
             system: bpm
 ```
@@ -443,7 +445,9 @@ persist the metadata to the MLDP annotation service.
 | `rescan-interval-sec` | double | `0.0` | Repeat fetch interval in seconds. `0` = run once and participates in controller auto-close. |
 | `worker-thread-count` | int | `1` | `1` = single-thread inline; `N > 1` = 1 producer + N-1 consumers. Range: `1..64`. |
 | `max-queue-depth` | int | `16` | Bounded queue depth in producer/consumer mode. Ignored when `worker-thread-count` is `1`. Range: `1..1024`. |
-| `pvs` | list | — | **Required.** Per-PV enrichment entries for targeted DS lookups. Must contain at least one entry. Each entry requires `name`; `metadata` map is optional. |
+| `pvs` | list | — | **Required.** Per-PV enrichment entries for targeted DS lookups. Must contain at least one entry. Each entry requires `name`; `alias`, `original-name` and `metadata` are optional. |
+| `pvs[].alias` | string | `""` | Extra alias registered for the PV in MLDP. Single scalar value. |
+| `pvs[].original-name` | string | `""` | Name the record is stored under in MLDP instead of the real PV name; the real PV name is auto-added as an alias. The DS query always uses the real `name`. |
 | `pv-show-columns` | string | `"dname,ename,etype,lname,ioc,scheme,z"` | DS `show=` columns fetched per PV in PV-list mode. Duplicate values are rejected. |
 
 **Validation rules:**
@@ -454,6 +458,7 @@ persist the metadata to the MLDP annotation service.
 - `worker-thread-count` must be in range `1..64`.
 - `max-queue-depth` must be in range `1..1024`.
 - `pvs` is required and must contain at least one entry.
+- `pvs[].alias` and `pvs[].original-name` are optional, but when present must not be blank.
 - `pv-show-columns` must not contain duplicate column names.
 
 → [EpicsDSMetadataReader Documentation](../readers/epics-ds-metadata-reader.md)

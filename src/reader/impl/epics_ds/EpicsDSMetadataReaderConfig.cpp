@@ -30,6 +30,8 @@ namespace {
 
     constexpr auto kPvsKey = "pvs";
     constexpr auto kPvNameKey = "name";
+    constexpr auto kPvAliasKey = "alias";
+    constexpr auto kPvOriginalNameKey = "original-name";
     constexpr auto kPvMetadataKey = "metadata";
     constexpr auto kPvShowColumnsKey = "pv-show-columns";
     constexpr auto kDefaultPvShowColumns = "dname,ename,etype,lname,ioc,scheme,z";
@@ -135,6 +137,20 @@ void EpicsDSMetadataReaderConfig::parse(const config::Config& cfg)
         entry.name = trim(pvCfg.get(kPvNameKey));
         if (entry.name.empty())
             throw Error("epics-ds-metadata reader: 'pvs[].name' must not be empty");
+
+        if (pvCfg.hasChild(kPvAliasKey))
+        {
+            entry.alias = trim(pvCfg.get(kPvAliasKey, ""));
+            if (entry.alias.empty())
+                throw Error("epics-ds-metadata reader: 'pvs[].alias' must not be empty when specified");
+        }
+
+        if (pvCfg.hasChild(kPvOriginalNameKey))
+        {
+            entry.original_name = trim(pvCfg.get(kPvOriginalNameKey, ""));
+            if (entry.original_name.empty())
+                throw Error("epics-ds-metadata reader: 'pvs[].original-name' must not be empty when specified");
+        }
 
         if (pvCfg.hasChild(kPvMetadataKey))
         {
