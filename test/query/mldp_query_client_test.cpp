@@ -354,10 +354,10 @@ TEST(MLDPQueryClientTest, BidiStreamSendsInitialQuerySpecThenCursorNextAndPropag
         {.column = "time", .op = PredicateOp::GTE, .values = {int64_t{10}}},
         {.column = "time", .op = PredicateOp::LTE, .values = {int64_t{20}}},
     };
-    // executeStream() now eagerly drains the bidi cursor to completion before
-    // returning, so the server-side driving (release the buffered response,
-    // then let the failed cursor-next Finish propagate) must happen on a
-    // separate thread while the main thread is blocked inside the call.
+    // executeStream() returns a lazy stream: the RPC is issued by next(), so the
+    // server-side driving (release the buffered first page, then let the failed
+    // cursor-next status propagate) happens on a separate thread while the main
+    // thread is blocked pulling from the stream.
     std::thread driver([&]
                         {
                             std::unique_lock lock(service.mutex);
@@ -372,7 +372,9 @@ TEST(MLDPQueryClientTest, BidiStreamSendsInitialQuerySpecThenCursorNextAndPropag
                             lock.unlock();
                             service.condition.notify_all();
                         });
-    EXPECT_THROW((void)client.executeStream("mldp.time_series", predicates, {}, context), std::runtime_error);
+    auto stream = client.executeStream("mldp.time_series", predicates, {}, context);
+    ASSERT_NE(stream->next(), nullptr);
+    EXPECT_THROW((void)stream->next(), std::runtime_error);
     driver.join();
     {
         std::unique_lock lock(service.mutex);
@@ -405,10 +407,10 @@ TEST(MLDPQueryClientTest, BidiStreamReportsCursorProgress)
                         });
     auto stream = client.executeStream("mldp.time_series",
                                        {{.column = "pv", .op = PredicateOp::EQ, .values = {std::string("TEST:PV")}}}, {}, context);
-    driver.join();
 
     ASSERT_NE(stream->next(), nullptr);
     EXPECT_EQ(stream->next(), nullptr);
+    driver.join();
 
     const auto snapshot = progress->snapshot();
     EXPECT_EQ(snapshot.table_name, "mldp.time_series");
@@ -433,9 +435,8 @@ TEST(MLDPQueryClientTest, BidiStreamDestructionCancelsBlockedServerCursor)
     auto cancellation = std::make_shared<QueryCancellation>();
     const ExecutionContext context{.pool = arrow::default_memory_pool(), .cancellation = cancellation};
 
-    // executeStream() now blocks inside the RPC until the whole cursor drains,
-    // so the only way to observe the server-side cancel is to request it from
-    // another thread while executeStream() is still blocked on the server.
+    // The server holds the first page until released, so the cancel is requested
+    // from another thread while next() is blocked inside the RPC.
     std::thread canceller([&]
                            {
                                std::unique_lock lock(service.mutex);
@@ -443,9 +444,9 @@ TEST(MLDPQueryClientTest, BidiStreamDestructionCancelsBlockedServerCursor)
                                lock.unlock();
                                cancellation->requestCancel();
                            });
-    EXPECT_THROW((void)client.executeStream("mldp.time_series",
-                                            {{.column = "pv", .op = PredicateOp::EQ, .values = {std::string("TEST:PV")}}}, {}, context),
-                 QueryCancelled);
+    auto stream = client.executeStream("mldp.time_series",
+                                       {{.column = "pv", .op = PredicateOp::EQ, .values = {std::string("TEST:PV")}}}, {}, context);
+    EXPECT_THROW((void)stream->next(), QueryCancelled);
     canceller.join();
     {
         std::unique_lock lock(service.mutex);
@@ -454,13 +455,11 @@ TEST(MLDPQueryClientTest, BidiStreamDestructionCancelsBlockedServerCursor)
     server->Shutdown();
 }
 
-TEST(MLDPQueryClientTest, FormatterWritesJsonForEagerlyDrainedBidiStream)
+TEST(MLDPQueryClientTest, FormatterWritesJsonForLazilyPagedBidiStream)
 {
-    // executeStream() eagerly drains the whole bidi cursor into memory before
-    // returning, so formatQueryStream() no longer observes per-batch
-    // interleaving with cursor-next requests; it just replays the
-    // materialized result. This test verifies the formatter still produces
-    // output for it.
+    // executeStream() hands back a lazy stream, so formatQueryStream() drives the
+    // cursor itself, one backend page per next(). This test verifies the formatter
+    // still produces output for it.
     BidiQueryService service;
     ObservingStreambuf output_buffer;
     std::ostream output(&output_buffer);
@@ -483,8 +482,8 @@ TEST(MLDPQueryClientTest, FormatterWritesJsonForEagerlyDrainedBidiStream)
                         });
     auto stream = client.executeStream("mldp.time_series",
                                        {{.column = "pv", .op = PredicateOp::EQ, .values = {std::string("TEST:PV")}}}, {}, context);
-    driver.join();
     mldp_pvxs_driver::cli::formatQueryStream(*stream, mldp_pvxs_driver::cli::QueryOutputFormat::Json, output);
+    driver.join();
     EXPECT_TRUE(output_buffer.wrote.load(std::memory_order_acquire));
     server->Shutdown();
 }
