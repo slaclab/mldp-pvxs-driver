@@ -50,6 +50,8 @@ struct PhysicalTableScan {
     std::shared_ptr<SelectStatement> window_subquery;        ///< Window range SELECT resolved at execution time.
     std::optional<std::array<int64_t, 2>> window_literal;    ///< Literal [begin_ns, end_ns] window bounds.
     WindowShardSpec           window_shards{};               ///< Slice and shard settings for windowed scans.
+    bool                   projection_explicit{false};       ///< True when projection_hint came from an explicit select list.
+    uint64_t               row_limit{0};                     ///< Maximum rows the backend may return; 0 = unlimited.
 };
 
 /** @brief Executes residual predicates over a physical input. */

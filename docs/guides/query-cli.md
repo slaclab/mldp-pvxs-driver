@@ -153,6 +153,28 @@ SELECT * FROM mldp.pv_metadata;
 SELECT * FROM mldp.configuration;
 ```
 
+### LIMIT on annotation tables
+
+The annotation service paginates `queryPvMetadata`, `queryConfigurations` and
+`queryConfigurationActivations`. `LIMIT` is pushed into those requests when the
+plan between the limit and the scan preserves cardinality — that is, when the
+query has no residual filter, join, sort, pivot or aggregate. `EXPLAIN` shows
+the pushed value as `row_limit=` on the scan node.
+
+Two cases deliberately keep the full fetch:
+
+- Predicates on `tag`, `attributes.<key>` and on `mldp.configuration_activation`
+  `time` / `end_time` are re-verified locally (the backend criteria are a
+  candidate-set optimization only), so they leave a residual filter above the
+  scan and suppress the pushdown.
+- `SELECT *`, or any query that selects the whole `attributes` map, derives its
+  `attributes.<key>` columns from the union of every returned row, so all pages
+  must be read before the first batch can be emitted. An explicit select list
+  that does not project `attributes` streams one gRPC page at a time instead.
+
+`mldp.active_configurations` has no paginated RPC, so `LIMIT` there is always
+applied locally.
+
 | Command | Purpose |
 |---|---|
 | `.help` | Show statement, command, and editing usage. |
@@ -563,8 +585,8 @@ string scalars. `tag` is predicate-only membership shorthand.
 
 | Field family | Access | Available on | Source and filtering |
 |---|---|---|---|
-| Tags | Select `tags`; filter with `tag =` or `tag IN` | `mldp.time_series`, `mldp.pv_metadata`, `mldp.configuration`, `mldp.configuration_activation` | Annotation-table criteria are sent to the annotation service and locally verified. Time-series tags come from returned bucket `dataColumn.metadata` and are filtered locally. |
-| Attributes | Select `attributes`; select/filter `attributes.<key>` with `=` or `IN` | `mldp.time_series`, `mldp.pv_metadata`, `mldp.configuration`, `mldp.configuration_activation` | Same execution path as tags. |
+| Tags | Select `tags`; filter with `tag =` or `tag IN` | `mldp.time_series`, `mldp.pv_metadata`, `mldp.configuration`, `mldp.configuration_activation` | Annotation-table criteria are sent to the annotation service and locally verified. That local verification suppresses `LIMIT` pushdown. Time-series tags come from returned bucket `dataColumn.metadata` and are filtered locally. |
+| Attributes | Select `attributes`; select/filter `attributes.<key>` with `=` or `IN` | `mldp.time_series`, `mldp.pv_metadata`, `mldp.configuration`, `mldp.configuration_activation` | Same execution path as tags. Selecting the whole `attributes` map forces annotation tables to read every page before emitting a batch. |
 | Provenance | Select `provenance`; select/filter `provenance.<key>` with `=` or `IN` | `mldp.time_series` only | Returned bucket `dataColumn.metadata`; filtered locally. |
 
 Every selected dynamic key projects as a nullable string column, whether or not

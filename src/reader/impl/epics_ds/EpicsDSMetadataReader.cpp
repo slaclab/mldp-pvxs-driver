@@ -262,12 +262,27 @@ void EpicsDSMetadataReader::runPVListSweep(std::stop_token st) noexcept
         for (const auto& [key, value] : pv.metadata)
             attributes[key] = value;
 
+        // The DS RPC always uses the real PV name; 'original-name' only changes the
+        // identity the record is published (and stored in MLDP) under.
+        const std::string& sourceName =
+            pv.original_name.empty() ? pv.name : pv.original_name;
+
+        std::vector<std::string> aliases;
+        if (!pv.original_name.empty())
+            aliases.push_back(pv.name);     // keep the real PV name resolvable in MLDP
+        if (!pv.alias.empty() && pv.alias != sourceName)
+            aliases.push_back(pv.alias);
+
         util::bus::SourceMetadataEntry entry;
         entry.attributes = std::move(attributes);
+        // Leave 'aliases' unset when there is nothing to publish: the MLDP writer treats a
+        // present-but-empty list as an explicit overwrite and would drop server-side aliases.
+        if (!aliases.empty())
+            entry.aliases = std::move(aliases);
 
         SourceMetadataPayload payload;
-        payload.root_source_name = pv.name;
-        payload.sources.emplace(pv.name, std::move(entry));
+        payload.root_source_name = sourceName;
+        payload.sources.emplace(sourceName, std::move(entry));
 
         bus_->push(IDataBus::EventBatch{
             .reader_name = config_.name(),

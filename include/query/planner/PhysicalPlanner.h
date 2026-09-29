@@ -15,11 +15,24 @@
 #include <query/plan/LogicalPlan.h>
 #include <query/plan/PhysicalPlan.h>
 
+#include <cstdint>
+#include <optional>
+
 namespace mldp_pvxs_driver::query::planner {
 
 /** @brief Lowers a logical plan tree to an executable physical plan.
  * @param[in] root Logical plan root node.
  * @return Physical plan root node. */
 plan::PhysicalNodePtr buildPhysicalPlan(const plan::LogicalNodePtr& root);
+
+/** @brief Rewrites the backend row limit carried by every scan under @p root.
+ *
+ * The budget descends only through cardinality-preserving nodes (LIMIT, projection);
+ * any other node resets it. Scans reached with no budget have their row limit cleared,
+ * so passing std::nullopt undoes a limit pushed by an earlier run of this pass.
+ *
+ * @param[in] root   Physical plan root node; may be null.
+ * @param[in] budget Initial row budget, or std::nullopt to clear. */
+void propagateScanRowLimit(const plan::PhysicalNodePtr& root, std::optional<uint64_t> budget);
 
 } // namespace mldp_pvxs_driver::query::planner

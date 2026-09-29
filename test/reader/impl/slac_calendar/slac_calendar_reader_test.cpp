@@ -151,16 +151,19 @@ static const char* kFacetEvent = R"json([
 // ---------------------------------------------------------------------------
 
 std::string makeReaderYaml(const std::string& baseUrl,
-                           const std::string& experiments,
+                           const std::string& accels,
                            int                lookahead = 30)
 {
     std::ostringstream ss;
     ss << "name: test-cal-reader\n"
        << "base-url: " << baseUrl << "\n"
-       << "experiments:\n"
-       << experiments
+       << "accel:\n"
+       << accels
        << "lookahead-days: " << lookahead << "\n"
        << "lookback-days: 1\n"
+       // Keep the whole [lookback, lookahead] span in a single HTTP window so the mock
+       // server (which does not filter by date) isn't hit multiple times for one event.
+       << "fetch-window-days: " << (lookahead + 2) << "\n"
        << "rescan-interval-sec: 0.0\n"
        << "connect-timeout-sec: 5\n"
        << "total-timeout-sec: 15\n"
@@ -170,11 +173,11 @@ std::string makeReaderYaml(const std::string& baseUrl,
 }
 
 std::string makeReaderYamlWithCategory(const std::string& baseUrl,
-                                       const std::string& experiments,
+                                       const std::string& accels,
                                        const std::string& category,
                                        int                lookahead = 30)
 {
-    return makeReaderYaml(baseUrl, experiments, lookahead) +
+    return makeReaderYaml(baseUrl, accels, lookahead) +
            "category: \"" + category + "\"\n";
 }
 
@@ -222,14 +225,16 @@ TEST_F(SlacCalendarReaderTest, LclsEventProducesTwoBusMessages)
     ASSERT_TRUE(std::holds_alternative<ConfigurationPayload>(batches[0].payload));
     const auto& cp = std::get<ConfigurationPayload>(batches[0].payload);
     EXPECT_EQ(cp.configuration_name, "CXI 1013443 Bain");
-    EXPECT_EQ(cp.category, "NC-CXI");
+    EXPECT_EQ(cp.category, "CXI 1013443 Bain");
     ASSERT_TRUE(cp.description.has_value());
     EXPECT_EQ(*cp.description, "Deliver to CXI");
     ASSERT_TRUE(cp.tags.has_value());
     ASSERT_EQ(cp.tags->size(), 1u);
     EXPECT_EQ((*cp.tags)[0], "2nd");
-    EXPECT_EQ(cp.attributes.at("tag_0"), "2nd");
-    EXPECT_EQ(cp.attributes.at("experiment"), "lcls");
+    EXPECT_FALSE(cp.attributes.count("tag_0"));
+    ASSERT_TRUE(cp.modified_by.has_value());
+    EXPECT_EQ(*cp.modified_by, "slac-calendar-reader");
+    EXPECT_EQ(cp.attributes.at("accel"), "lcls");
     EXPECT_EQ(cp.attributes.at("calendar"), "NC-CXI");
     EXPECT_EQ(cp.attributes.at("note"), "13.213 GeV, 80 pC");
     EXPECT_EQ(cp.attributes.at("poc"), "Minitti");
@@ -249,9 +254,11 @@ TEST_F(SlacCalendarReaderTest, LclsEventProducesTwoBusMessages)
     const auto& act = std::get<ConfigurationActivationPayload>(batches[1].payload);
     EXPECT_EQ(act.configuration_name, "CXI 1013443 Bain");
     ASSERT_TRUE(act.client_activation_id.has_value());
-    EXPECT_EQ(*act.client_activation_id, "https://www.google.com/calendar/event?eid=abc123");
+    EXPECT_EQ(*act.client_activation_id,
+              "https://www.google.com/calendar/event?eid=abc123"
+              "|2026-05-28T06:00:00-07:00|2026-05-28T18:00:00-07:00");
     EXPECT_EQ(act.start_time.epoch_seconds, static_cast<uint64_t>(1779973200));
-    EXPECT_EQ(act.attributes.at("experiment"), "lcls");
+    EXPECT_EQ(act.attributes.at("accel"), "lcls");
     EXPECT_EQ(act.attributes.at("calendar"), "NC-CXI");
 }
 
@@ -269,7 +276,7 @@ TEST_F(SlacCalendarReaderTest, FacetEventHandlesReducedSchema)
 
     const auto& cp = std::get<ConfigurationPayload>(batches[0].payload);
     EXPECT_EQ(cp.configuration_name, "Single bunch matching S20");
-    EXPECT_EQ(cp.category, "FACET-MD");
+    EXPECT_EQ(cp.category, "Single bunch matching S20");
     EXPECT_FALSE(cp.description.has_value());
     EXPECT_FALSE(cp.tags.has_value());
     EXPECT_FALSE(cp.attributes.count("note"));
@@ -277,11 +284,11 @@ TEST_F(SlacCalendarReaderTest, FacetEventHandlesReducedSchema)
     EXPECT_FALSE(cp.attributes.count("config"));
     EXPECT_FALSE(cp.attributes.count("machine"));
     EXPECT_FALSE(cp.attributes.count("hutch_name"));
-    EXPECT_EQ(cp.attributes.at("experiment"), "facet");
+    EXPECT_EQ(cp.attributes.at("accel"), "facet");
     EXPECT_EQ(cp.attributes.at("calendar"), "FACET-MD");
 }
 
-TEST_F(SlacCalendarReaderTest, MultipleExperimentsAllFetched)
+TEST_F(SlacCalendarReaderTest, MultipleAccelsAllFetched)
 {
     server_.setResponse("lcls", kLclsEvent);
     server_.setResponse("facet", kFacetEvent);
@@ -290,7 +297,7 @@ TEST_F(SlacCalendarReaderTest, MultipleExperimentsAllFetched)
         makeReaderYaml(server_.baseUrl(), "  - lcls\n  - facet\n"));
     SlacCalendarReader reader(bus_, nullptr, cfg);
 
-    // 2 payloads per event × 2 experiments = 4 total
+    // 2 payloads per event × 2 accels = 4 total
     ASSERT_TRUE(bus_->waitForCount(4, std::chrono::milliseconds(5000)));
 
     ASSERT_TRUE(server_.waitForRequestCount(2, std::chrono::milliseconds(3000)));
@@ -301,8 +308,8 @@ TEST_F(SlacCalendarReaderTest, MultipleExperimentsAllFetched)
     bool found_facet = false;
     for (const auto& h : history)
     {
-        if (h.experiment == "lcls")  found_lcls  = true;
-        if (h.experiment == "facet") found_facet = true;
+        if (h.accel == "lcls")  found_lcls  = true;
+        if (h.accel == "facet") found_facet = true;
     }
     EXPECT_TRUE(found_lcls);
     EXPECT_TRUE(found_facet);

@@ -184,7 +184,8 @@ void collectTableAliases(const plan::LogicalNodePtr& node, std::set<std::string>
 }
 
 void applyProjectionHint(const plan::LogicalNodePtr&                         node,
-                         const std::map<std::string, std::set<std::string>>& columns)
+                         const std::map<std::string, std::set<std::string>>& columns,
+                         const bool                                          select_all)
 {
     if (!node)
     {
@@ -203,6 +204,7 @@ void applyProjectionHint(const plan::LogicalNodePtr&                         nod
         {
             scan->projection_hint.insert(default_match->second.begin(), default_match->second.end());
         }
+        scan->projection_explicit = !select_all && !scan->projection_hint.empty();
         if (scan->projection_hint.empty())
         {
             for (const auto& column : scan->schema)
@@ -217,28 +219,28 @@ void applyProjectionHint(const plan::LogicalNodePtr&                         nod
     }
     if (const auto* filter = std::get_if<plan::LogicalFilter>(&node->value))
     {
-        applyProjectionHint(filter->input, columns);
+        applyProjectionHint(filter->input, columns, select_all);
         return;
     }
     if (const auto* project = std::get_if<plan::LogicalProject>(&node->value))
     {
-        applyProjectionHint(project->input, columns);
+        applyProjectionHint(project->input, columns, project->select_all);
         return;
     }
     if (const auto* sort = std::get_if<plan::LogicalSort>(&node->value))
     {
-        applyProjectionHint(sort->input, columns);
+        applyProjectionHint(sort->input, columns, select_all);
         return;
     }
     if (const auto* limit = std::get_if<plan::LogicalLimit>(&node->value))
     {
-        applyProjectionHint(limit->input, columns);
+        applyProjectionHint(limit->input, columns, select_all);
         return;
     }
     if (const auto* join = std::get_if<plan::LogicalJoin>(&node->value))
     {
-        applyProjectionHint(join->left, columns);
-        applyProjectionHint(join->right, columns);
+        applyProjectionHint(join->left, columns, select_all);
+        applyProjectionHint(join->right, columns, select_all);
     }
 }
 
@@ -250,6 +252,6 @@ plan::LogicalNodePtr mldp_pvxs_driver::query::planner::applyColumnPruning(plan::
     std::set<std::string>                        table_aliases;
     collectTableAliases(root, table_aliases);
     collectReferencedColumns(root, columns, table_aliases);
-    applyProjectionHint(root, columns);
+    applyProjectionHint(root, columns, true);
     return root;
 }

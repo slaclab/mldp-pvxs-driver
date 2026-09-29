@@ -725,6 +725,8 @@ add_library(lib${PROJECT_NAME}
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/impl/mldp/TimeSeriesMetadataBuilders.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/impl/mldp/DataValueBuilder.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/impl/mldp/MldpBidiRecordBatchStream.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/impl/mldp/MldpQueryBucketsPagedStream.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/impl/mldp/MldpQuerySamplesPagedStream.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/impl/mldp/ColumnPredicateFilter.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/impl/mldp/AnnotationMetadataBuilders.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/impl/mldp/MetadataArrayBuilders.cpp"

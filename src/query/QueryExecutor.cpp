@@ -107,9 +107,11 @@ IRecordBatchStreamUPtr makeStreamingPlan(const plan::PhysicalNodePtr& root,
         const bool has_only_pushable_in_subqueries = std::all_of(scan->in_subqueries.begin(), scan->in_subqueries.end(), [](const auto& subquery) {
             return subquery.pushable;
         });
-        const bool direct_long_scan = scan->table_name == "mldp.time_series" &&
-                                      !scan->arrow_ipc && !scan->derived_query && has_only_pushable_in_subqueries;
-        if (!direct_long_scan)
+        // Any plain backend scan streams. Catalog (Arrow IPC) tables, derived tables and
+        // scans whose IN subqueries must be verified locally still need the materialized
+        // path, which can hold the child results.
+        const bool direct_backend_scan = !scan->arrow_ipc && !scan->derived_query && has_only_pushable_in_subqueries;
+        if (!direct_backend_scan)
         {
             if (scan->window_shards.series_per_shard > 1 && (scan->window_literal || scan->window_subquery))
                 stats->plan_warnings.push_back(
