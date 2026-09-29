@@ -43,7 +43,12 @@ RecordBatches mldp_pvxs_driver::query::executor::fetchBackendPages(const plan::P
     if (context.progress) context.progress->setActivity(scan.table_name, "backend scan");
     RecordBatches output;
     if (context.progress) context.progress->beginBackendRpc(scan.table_name, "server cursor");
-    auto     stream = queryable->executeStream(scan.table_name, pushable, scan.projection_hint, context);
+    auto scan_context = context;
+    // A local post-filter can drop rows the backend counted, so only an unfiltered
+    // scan may be bounded by the plan's row limit.
+    scan_context.scan_row_limit = local.empty() ? scan.row_limit : 0;
+    scan_context.scan_projection_explicit = scan.projection_explicit;
+    auto     stream = queryable->executeStream(scan.table_name, pushable, scan.projection_hint, scan_context);
     uint64_t batch_count = 0;
     std::shared_ptr<arrow::RecordBatch> batch;
     for (bool first = true; (batch = stream->next()) != nullptr; first = false)

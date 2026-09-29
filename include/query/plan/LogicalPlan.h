@@ -77,6 +77,7 @@ struct LogicalScan {
     std::shared_ptr<SelectStatement> window_subquery;        ///< Time-series window range produced by a child SELECT.
     std::optional<std::array<PlannerLiteralValue, 2>> window_literal; ///< Literal [begin, end] time-series window in planner values.
     WindowShardSpec           window_shards{};               ///< Slice and series-per-shard settings for windowed scans.
+    bool                      projection_explicit{false};    ///< True when projection_hint came from an explicit select list.
 };
 
 /** @brief Applies predicates that remain after scan pushdown. */

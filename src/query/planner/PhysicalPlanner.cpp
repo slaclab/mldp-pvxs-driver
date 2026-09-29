@@ -12,6 +12,8 @@
 
 #include <query/plan/PlannerError.h>
 
+#include <algorithm>
+#include <optional>
 #include <sstream>
 
 using namespace mldp_pvxs_driver::query;
@@ -105,7 +107,8 @@ plan::PhysicalNodePtr buildNode(const plan::LogicalNodePtr& node)
             .window_subquery = scan->window_subquery,
             .window_literal = scan->window_literal ? std::optional<std::array<int64_t, 2>>{
                 {std::get<int64_t>((*scan->window_literal)[0]), std::get<int64_t>((*scan->window_literal)[1])}} : std::nullopt,
-            .window_shards = scan->window_shards});
+            .window_shards = scan->window_shards,
+            .projection_explicit = scan->projection_explicit});
         if (scan->table_name != "mldp.time_series_table") return physical_scan;
 
         std::vector<std::string> output_column_labels;
@@ -227,6 +230,78 @@ void markJoinOutputQualification(const plan::PhysicalNodePtr& node, const bool u
     }
 }
 
+/** @brief Propagates a LIMIT row budget down to backend scans through cardinality-preserving nodes.
+ *
+ *  A budget only survives nodes that neither add nor drop rows.  Filters, sorts, joins,
+ *  pivots and statement nodes reset it, so a residual post-fetch predicate (see
+ *  PredicatePushdown) always suppresses the pushdown and SQL semantics are preserved.
+ */
+void propagateScanRowLimit(const plan::PhysicalNodePtr& node, const std::optional<uint64_t> budget)
+{
+    if (!node)
+    {
+        return;
+    }
+    if (auto* scan = std::get_if<plan::PhysicalTableScan>(&node->value))
+    {
+        const bool plain = !scan->arrow_ipc && !scan->derived_query && scan->in_subqueries.empty() &&
+                           !scan->window_subquery && !scan->window_literal;
+        if (budget && plain)
+        {
+            scan->row_limit = *budget;
+        }
+        return;
+    }
+    if (auto* limit = std::get_if<plan::PhysicalLimit>(&node->value))
+    {
+        propagateScanRowLimit(limit->input, budget ? std::min(*budget, limit->limit) : limit->limit);
+        return;
+    }
+    if (auto* project = std::get_if<plan::PhysicalProject>(&node->value))
+    {
+        // Projection never changes cardinality, so the budget passes through unchanged.
+        propagateScanRowLimit(project->input, budget);
+        return;
+    }
+    if (auto* filter = std::get_if<plan::PhysicalFilter>(&node->value))
+    {
+        propagateScanRowLimit(filter->input, std::nullopt);
+        return;
+    }
+    if (auto* sort = std::get_if<plan::PhysicalSort>(&node->value))
+    {
+        propagateScanRowLimit(sort->input, std::nullopt);
+        return;
+    }
+    if (auto* pivot = std::get_if<plan::PhysicalPivot>(&node->value))
+    {
+        propagateScanRowLimit(pivot->input, std::nullopt);
+        return;
+    }
+    if (auto* join = std::get_if<plan::PhysicalHashJoin>(&node->value))
+    {
+        propagateScanRowLimit(join->left, std::nullopt);
+        propagateScanRowLimit(join->right, std::nullopt);
+        return;
+    }
+    if (auto* join = std::get_if<plan::PhysicalNestedLoopJoin>(&node->value))
+    {
+        propagateScanRowLimit(join->outer, std::nullopt);
+        propagateScanRowLimit(join->inner, std::nullopt);
+        return;
+    }
+    if (auto* join = std::get_if<plan::PhysicalBlockNestedLoopJoin>(&node->value))
+    {
+        propagateScanRowLimit(join->outer, std::nullopt);
+        propagateScanRowLimit(join->inner, std::nullopt);
+        return;
+    }
+    if (auto* create = std::get_if<plan::PhysicalCreateTable>(&node->value))
+    {
+        propagateScanRowLimit(create->query, std::nullopt);
+    }
+}
+
 std::string indent(const int level)
 {
     return std::string(static_cast<size_t>(level) * 2, ' ');
@@ -247,6 +322,10 @@ void appendNode(std::ostringstream& out, const plan::PhysicalNodePtr& node, cons
             out << ", in_subqueries=" << scan->in_subqueries.size()
                 << ", window_subquery=" << (scan->window_subquery ? "true" : "false")
                 << ", window_literal=" << (scan->window_literal ? "true" : "false");
+        }
+        if (scan->row_limit != 0)
+        {
+            out << ", row_limit=" << scan->row_limit;
         }
         out << ")\n";
         return;
@@ -356,6 +435,7 @@ plan::PhysicalNodePtr mldp_pvxs_driver::query::planner::buildPhysicalPlan(const 
 {
     auto physical = buildNode(root);
     markJoinOutputQualification(physical, false);
+    propagateScanRowLimit(physical, std::nullopt);
     return physical;
 }
 
@@ -391,6 +471,10 @@ std::string mldp_pvxs_driver::query::plan::physicalPlanToString(const plan::Phys
                 out << ", in_subqueries=" << scan->in_subqueries.size()
                     << ", window_subquery=" << (scan->window_subquery ? "true" : "false")
                     << ", window_literal=" << (scan->window_literal ? "true" : "false");
+            }
+            if (scan->row_limit != 0)
+            {
+                out << ", row_limit=" << scan->row_limit;
             }
             out << ")\n";
             return;

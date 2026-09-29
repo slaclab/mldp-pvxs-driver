@@ -791,9 +791,9 @@ TEST_F(QueryableMldpIntegrationTest, AnnotationTablesAndJoinsReturnOnlySeededRec
             return rowCount(candidate) == static_cast<int64_t>(metadata_pvs.size());
         });
     ASSERT_EQ(rowCount(metadata), static_cast<int64_t>(metadata_pvs.size()));
-    // Annotation query clients consume backend continuation pages internally,
-    // so the executor performs one queryable call for this table scan.
-    EXPECT_EQ(metadata.stats.rpc_calls, 1u);
+    // An explicit select list that does not project the attributes map streams one
+    // batch per backend continuation page, so the executor sees one call per page.
+    EXPECT_EQ(metadata.stats.rpc_calls, static_cast<uint64_t>(metadata_pvs.size()));
     const auto metadata_rows = strings(metadata, 0);
     EXPECT_EQ(std::unordered_set<std::string>(metadata_rows.begin(), metadata_rows.end()),
               std::unordered_set<std::string>(metadata_pvs.begin(), metadata_pvs.end()));
@@ -821,7 +821,7 @@ TEST_F(QueryableMldpIntegrationTest, AnnotationTablesAndJoinsReturnOnlySeededRec
             return rowCount(candidate) == static_cast<int64_t>(configuration_names.size());
         });
     ASSERT_EQ(rowCount(configuration), static_cast<int64_t>(configuration_names.size()));
-    EXPECT_EQ(configuration.stats.rpc_calls, 1u);
+    EXPECT_EQ(configuration.stats.rpc_calls, static_cast<uint64_t>(configuration_names.size()));
 
     const auto all_configurations = pollSql(
         "SELECT name FROM mldp.configuration",
@@ -848,7 +848,7 @@ TEST_F(QueryableMldpIntegrationTest, AnnotationTablesAndJoinsReturnOnlySeededRec
             return rowCount(candidate) == static_cast<int64_t>(activation_ids.size());
         });
     ASSERT_EQ(rowCount(activation), static_cast<int64_t>(activation_ids.size()));
-    EXPECT_EQ(activation.stats.rpc_calls, 1u);
+    EXPECT_EQ(activation.stats.rpc_calls, static_cast<uint64_t>(activation_ids.size()));
 
     const auto active = pollSql(
         "SELECT name, activation_id FROM mldp.active_configurations WHERE at = NOW",

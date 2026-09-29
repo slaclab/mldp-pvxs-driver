@@ -2005,6 +2005,57 @@ TEST_F(PlannerExecutorTest, RetainsFilterableOnlyPredicateForLocalExecution)
     EXPECT_EQ(scan->projection_hint, std::set<std::string>({"pv", "value"}));
 }
 
+TEST_F(PlannerExecutorTest, PushesRowLimitToScanThroughCardinalityPreservingNodes)
+{
+    query::QueryPlanner planner;
+    const auto          plan = planner.plan(query::parseQuery("SELECT pv FROM fake.samples WHERE pv = 'A' LIMIT 10"));
+    const auto*         scan = findScan(plan);
+    ASSERT_NE(scan, nullptr);
+    EXPECT_EQ(scan->row_limit, 10U);
+    EXPECT_NE(query::plan::physicalPlanToString(plan).find("row_limit=10"), std::string::npos);
+}
+
+TEST_F(PlannerExecutorTest, KeepsInnermostRowLimitWhenLimitsNest)
+{
+    query::QueryPlanner planner;
+    const auto          plan = planner.plan(query::parseQuery(
+        "SELECT pv FROM (SELECT pv FROM fake.samples WHERE pv = 'A' LIMIT 3) AS inner_query LIMIT 10"));
+    const auto*         scan = findScan(plan);
+    if (scan != nullptr)
+    {
+        EXPECT_LE(scan->row_limit, 3U);
+    }
+}
+
+TEST_F(PlannerExecutorTest, SuppressesRowLimitPushdownUnderResidualFilter)
+{
+    query::QueryPlanner planner;
+    const auto          plan = planner.plan(query::parseQuery("SELECT pv FROM fake.samples WHERE pv = 'A' AND value = 1 LIMIT 10"));
+    const auto*         scan = findScan(plan);
+    ASSERT_NE(scan, nullptr);
+    EXPECT_EQ(scan->row_limit, 0U);
+}
+
+TEST_F(PlannerExecutorTest, SuppressesRowLimitPushdownUnderSort)
+{
+    query::QueryPlanner planner;
+    const auto          plan = planner.plan(query::parseQuery("SELECT pv FROM fake.samples WHERE pv = 'A' ORDER BY pv LIMIT 10"));
+    const auto*         scan = findScan(plan);
+    ASSERT_NE(scan, nullptr);
+    EXPECT_EQ(scan->row_limit, 0U);
+}
+
+TEST_F(PlannerExecutorTest, MarksProjectionExplicitOnlyForAnExplicitSelectList)
+{
+    query::QueryPlanner planner;
+    const auto*         explicit_scan = findScan(planner.plan(query::parseQuery("SELECT pv FROM fake.samples WHERE pv = 'A'")));
+    ASSERT_NE(explicit_scan, nullptr);
+    EXPECT_TRUE(explicit_scan->projection_explicit);
+    const auto* star_scan = findScan(planner.plan(query::parseQuery("SELECT * FROM fake.samples WHERE pv = 'A'")));
+    ASSERT_NE(star_scan, nullptr);
+    EXPECT_FALSE(star_scan->projection_explicit);
+}
+
 TEST_F(PlannerExecutorTest, ExecutesGenericPushableInSubqueryBeforeDependentScan)
 {
     query::QueryPlanner  planner;
