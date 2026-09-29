@@ -236,7 +236,7 @@ void markJoinOutputQualification(const plan::PhysicalNodePtr& node, const bool u
  *  pivots and statement nodes reset it, so a residual post-fetch predicate (see
  *  PredicatePushdown) always suppresses the pushdown and SQL semantics are preserved.
  */
-void propagateScanRowLimit(const plan::PhysicalNodePtr& node, const std::optional<uint64_t> budget)
+void propagateScanRowLimitImpl(const plan::PhysicalNodePtr& node, const std::optional<uint64_t> budget)
 {
     if (!node)
     {
@@ -246,59 +246,58 @@ void propagateScanRowLimit(const plan::PhysicalNodePtr& node, const std::optiona
     {
         const bool plain = !scan->arrow_ipc && !scan->derived_query && scan->in_subqueries.empty() &&
                            !scan->window_subquery && !scan->window_literal;
-        if (budget && plain)
-        {
-            scan->row_limit = *budget;
-        }
+        // Assign unconditionally so that re-running the pass with an empty budget
+        // clears a previously pushed limit.
+        scan->row_limit = budget && plain ? *budget : 0;
         return;
     }
     if (auto* limit = std::get_if<plan::PhysicalLimit>(&node->value))
     {
-        propagateScanRowLimit(limit->input, budget ? std::min(*budget, limit->limit) : limit->limit);
+        propagateScanRowLimitImpl(limit->input, budget ? std::min(*budget, limit->limit) : limit->limit);
         return;
     }
     if (auto* project = std::get_if<plan::PhysicalProject>(&node->value))
     {
         // Projection never changes cardinality, so the budget passes through unchanged.
-        propagateScanRowLimit(project->input, budget);
+        propagateScanRowLimitImpl(project->input, budget);
         return;
     }
     if (auto* filter = std::get_if<plan::PhysicalFilter>(&node->value))
     {
-        propagateScanRowLimit(filter->input, std::nullopt);
+        propagateScanRowLimitImpl(filter->input, std::nullopt);
         return;
     }
     if (auto* sort = std::get_if<plan::PhysicalSort>(&node->value))
     {
-        propagateScanRowLimit(sort->input, std::nullopt);
+        propagateScanRowLimitImpl(sort->input, std::nullopt);
         return;
     }
     if (auto* pivot = std::get_if<plan::PhysicalPivot>(&node->value))
     {
-        propagateScanRowLimit(pivot->input, std::nullopt);
+        propagateScanRowLimitImpl(pivot->input, std::nullopt);
         return;
     }
     if (auto* join = std::get_if<plan::PhysicalHashJoin>(&node->value))
     {
-        propagateScanRowLimit(join->left, std::nullopt);
-        propagateScanRowLimit(join->right, std::nullopt);
+        propagateScanRowLimitImpl(join->left, std::nullopt);
+        propagateScanRowLimitImpl(join->right, std::nullopt);
         return;
     }
     if (auto* join = std::get_if<plan::PhysicalNestedLoopJoin>(&node->value))
     {
-        propagateScanRowLimit(join->outer, std::nullopt);
-        propagateScanRowLimit(join->inner, std::nullopt);
+        propagateScanRowLimitImpl(join->outer, std::nullopt);
+        propagateScanRowLimitImpl(join->inner, std::nullopt);
         return;
     }
     if (auto* join = std::get_if<plan::PhysicalBlockNestedLoopJoin>(&node->value))
     {
-        propagateScanRowLimit(join->outer, std::nullopt);
-        propagateScanRowLimit(join->inner, std::nullopt);
+        propagateScanRowLimitImpl(join->outer, std::nullopt);
+        propagateScanRowLimitImpl(join->inner, std::nullopt);
         return;
     }
     if (auto* create = std::get_if<plan::PhysicalCreateTable>(&node->value))
     {
-        propagateScanRowLimit(create->query, std::nullopt);
+        propagateScanRowLimitImpl(create->query, std::nullopt);
     }
 }
 
@@ -430,6 +429,12 @@ void appendNode(std::ostringstream& out, const plan::PhysicalNodePtr& node, cons
 }
 
 } // namespace
+
+void mldp_pvxs_driver::query::planner::propagateScanRowLimit(const plan::PhysicalNodePtr&  root,
+                                                             const std::optional<uint64_t> budget)
+{
+    propagateScanRowLimitImpl(root, budget);
+}
 
 plan::PhysicalNodePtr mldp_pvxs_driver::query::planner::buildPhysicalPlan(const plan::LogicalNodePtr& root)
 {

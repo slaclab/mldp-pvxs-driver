@@ -134,6 +134,7 @@ public:
     inline static uint64_t                          stream_creations{0};
     inline static uint64_t                          next_calls{0};
     inline static std::vector<std::vector<int64_t>> batches{{1, 2, 3}, {4, 5}};
+    inline static std::vector<uint64_t>             scan_row_limits{};
 
     explicit ContinuationPageQueryable(const config::Config&, std::shared_ptr<metrics::Metrics> = nullptr)
     {
@@ -154,9 +155,10 @@ public:
     query::IRecordBatchStreamUPtr executeStream(std::string_view,
                                                const std::vector<query::Predicate>&,
                                                const std::set<std::string>&,
-                                               const query::ExecutionContext&) override
+                                               const query::ExecutionContext& context) override
     {
         ++stream_creations;
+        scan_row_limits.push_back(context.scan_row_limit);
 
         class Stream final : public query::IRecordBatchStream
         {
@@ -696,6 +698,42 @@ TEST(QueryRunnerTest, HandlesExactBackendPageBoundariesAndEmptyBatches)
     EXPECT_NE(empty_batch_output.str().find("\"value\":22"), std::string::npos);
     EXPECT_EQ(ContinuationPageQueryable::next_calls, 2U);
     EXPECT_NE(empty_batch_output.str().find("p9:"), std::string::npos);
+    query::QueryableFactory::instance().reset();
+}
+
+TEST(QueryRunnerTest, KeepsBackendStreamUnboundedWhileInteractivePagingAndBoundsItOtherwise)
+{
+    query::QueryableFactory::instance().reset();
+    ContinuationPageQueryable::scan_row_limits.clear();
+    ContinuationPageQueryable::batches = {{1, 2}, {3, 4}};
+    query::QueryableFactory::instance().prepare<ContinuationPageQueryable>(config::Config::configFromYamlString("{}"));
+    cli::QueryRunner           runner;
+    const cli::QueryCliOptions options{.format = cli::QueryOutputFormat::Json, .no_stats = true};
+    const std::string          sql = "SELECT pv, time, value FROM mldp.time_series WHERE pv = 'CONT:PV' LIMIT 2";
+
+    // In the REPL, LIMIT is a page size: the backend stream must stay unbounded so the
+    // continuation token can resume it, and page two must still deliver rows.
+    cli::QueryContinuationRegistry continuations;
+    std::ostringstream             first_output;
+    ASSERT_EQ(runner.run(options, sql, first_output, nullptr, std::nullopt, false, nullptr, nullptr, nullptr, &continuations), 0);
+    ASSERT_EQ(ContinuationPageQueryable::scan_row_limits.size(), 1U);
+    EXPECT_EQ(ContinuationPageQueryable::scan_row_limits.front(), 0U);
+    const auto marker = first_output.str().find("p9:");
+    ASSERT_NE(marker, std::string::npos);
+    const auto token = first_output.str().substr(marker, first_output.str().find('\n', marker) - marker);
+
+    std::ostringstream second_output;
+    ASSERT_EQ(runner.run(options, sql + " PAGE TOKEN '" + token + "'", second_output, nullptr, std::nullopt, false, nullptr, nullptr, nullptr, &continuations), 0);
+    EXPECT_NE(second_output.str().find("\"value\":3"), std::string::npos);
+    EXPECT_NE(second_output.str().find("\"value\":4"), std::string::npos);
+    EXPECT_EQ(ContinuationPageQueryable::scan_row_limits.size(), 1U);
+
+    // Without a continuation registry, LIMIT is a row cap and reaches the backend.
+    ContinuationPageQueryable::scan_row_limits.clear();
+    std::ostringstream one_shot_output;
+    ASSERT_EQ(runner.run(options, sql, one_shot_output, nullptr, std::nullopt, false, nullptr, nullptr, nullptr, nullptr), 0);
+    ASSERT_EQ(ContinuationPageQueryable::scan_row_limits.size(), 1U);
+    EXPECT_EQ(ContinuationPageQueryable::scan_row_limits.front(), 2U);
     query::QueryableFactory::instance().reset();
 }
 

@@ -10,6 +10,8 @@
 
 #include <query/QueryCommand.h>
 
+#include <query/planner/PhysicalPlanner.h>
+
 #include <query/ConsoleFooter.h>
 #include <query/NullQueryCommandListener.h>
 #include <query/ScopedQueryInterruptHandler.h>
@@ -1398,8 +1400,12 @@ int mldp_pvxs_driver::cli::QueryRunner::run(const QueryCliOptions&              
         }
         if (interactive_page)
         {
+            // In the REPL, LIMIT is a page size rather than a row cap: the stream stays
+            // live across continuation tokens. Drop the limit node and clear any row
+            // limit the planner pushed into the scans, which would end the stream early.
             if (const auto* limit = std::get_if<query::plan::PhysicalLimit>(&physical->value))
                 physical = limit->input;
+            query::planner::propagateScanRowLimit(physical, std::nullopt);
         }
         if (progress)
         {
