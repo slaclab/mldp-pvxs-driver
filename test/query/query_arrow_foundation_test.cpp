@@ -453,7 +453,69 @@ public:
     }
 };
 
+/** @brief Annotation-style table whose stream counts how many pages the executor pulls. */
+class LazyMetadataQueryable final : public query::IQueryable
+{
+public:
+    static const std::set<std::string_view> kVirtualTables;
+    inline static uint64_t                  next_calls{0};
+    inline static std::size_t               page_count{8};
+
+    explicit LazyMetadataQueryable(const config::Config&, std::shared_ptr<metrics::Metrics> = nullptr)
+    {
+    }
+
+    std::set<std::string_view> virtualTables() const override
+    {
+        return kVirtualTables;
+    }
+
+    std::vector<query::ColumnSchema> tableSchema(std::string_view) const override
+    {
+        return {{"pv", query::ColumnType::STRING, false, true, {query::PredicateOp::EQ}, {}, "PV"},
+                {"alias", query::ColumnType::STRING, false, true, {}, {}, "Alias"}};
+    }
+
+    query::IRecordBatchStreamUPtr executeStream(std::string_view,
+                                               const std::vector<query::Predicate>&,
+                                               const std::set<std::string>&,
+                                               const query::ExecutionContext&) override
+    {
+        class Stream final : public query::IRecordBatchStream
+        {
+        public:
+            std::shared_ptr<arrow::RecordBatch> next() override
+            {
+                ++LazyMetadataQueryable::next_calls;
+                if (page_++ >= LazyMetadataQueryable::page_count)
+                    return nullptr;
+                arrow::StringBuilder pv_builder;
+                arrow::StringBuilder alias_builder;
+                for (int index = 0; index < 2; ++index)
+                {
+                    const auto suffix = std::to_string(page_ * 10 + index);
+                    if (!pv_builder.Append("PV:" + suffix).ok() || !alias_builder.Append("ALIAS:" + suffix).ok())
+                        throw std::runtime_error("Failed to build metadata test batch");
+                }
+                std::shared_ptr<arrow::Array> pv;
+                std::shared_ptr<arrow::Array> alias;
+                if (!pv_builder.Finish(&pv).ok() || !alias_builder.Finish(&alias).ok())
+                    throw std::runtime_error("Failed to finish metadata test batch");
+                return arrow::RecordBatch::Make(arrow::schema({arrow::field("pv", pv->type()), arrow::field("alias", alias->type())}),
+                                                pv->length(),
+                                                {pv, alias});
+            }
+
+        private:
+            std::size_t page_{0};
+        };
+
+        return std::make_unique<Stream>();
+    }
+};
+
 const std::set<std::string_view> ReplFakeQueryable::kVirtualTables = {"fake.samples"};
+const std::set<std::string_view> LazyMetadataQueryable::kVirtualTables = {"mldp.pv_metadata"};
 const std::set<std::string_view> ContinuationPageQueryable::kVirtualTables = {"mldp.time_series"};
 const std::set<std::string_view> SustainedWindowQueryable::kVirtualTables = {"mldp.time_series"};
 const std::set<std::string_view> DelayedWideWindowQueryable::kVirtualTables = {
@@ -734,6 +796,36 @@ TEST(QueryRunnerTest, KeepsBackendStreamUnboundedWhileInteractivePagingAndBounds
     ASSERT_EQ(runner.run(options, sql, one_shot_output, nullptr, std::nullopt, false, nullptr, nullptr, nullptr, nullptr), 0);
     ASSERT_EQ(ContinuationPageQueryable::scan_row_limits.size(), 1U);
     EXPECT_EQ(ContinuationPageQueryable::scan_row_limits.front(), 2U);
+    query::QueryableFactory::instance().reset();
+}
+
+TEST(QueryRunnerTest, StreamsPlainBackendScansOnNonTimeSeriesTablesInsteadOfDrainingEveryPage)
+{
+    query::QueryableFactory::instance().reset();
+    LazyMetadataQueryable::next_calls = 0;
+    LazyMetadataQueryable::page_count = 8;
+    query::QueryableFactory::instance().prepare<LazyMetadataQueryable>(config::Config::configFromYamlString("{}"));
+    cli::QueryRunner               runner;
+    cli::QueryContinuationRegistry continuations;
+    const cli::QueryCliOptions     options{.format = cli::QueryOutputFormat::Json, .no_stats = true};
+    const std::string              sql = "SELECT pv, alias FROM mldp.pv_metadata LIMIT 2";
+
+    std::ostringstream first_output;
+    ASSERT_EQ(runner.run(options, sql, first_output, nullptr, std::nullopt, false, nullptr, nullptr, nullptr, &continuations), 0);
+    // One page satisfies the two requested rows, so the remaining seven are never fetched.
+    EXPECT_EQ(LazyMetadataQueryable::next_calls, 1U);
+    EXPECT_NE(first_output.str().find("PV:10"), std::string::npos);
+    EXPECT_NE(first_output.str().find("PV:11"), std::string::npos);
+    EXPECT_EQ(first_output.str().find("PV:20"), std::string::npos);
+
+    const auto marker = first_output.str().find("p9:");
+    ASSERT_NE(marker, std::string::npos);
+    const auto token = first_output.str().substr(marker, first_output.str().find('\n', marker) - marker);
+
+    std::ostringstream second_output;
+    ASSERT_EQ(runner.run(options, sql + " PAGE TOKEN '" + token + "'", second_output, nullptr, std::nullopt, false, nullptr, nullptr, nullptr, &continuations), 0);
+    EXPECT_EQ(LazyMetadataQueryable::next_calls, 2U);
+    EXPECT_NE(second_output.str().find("PV:20"), std::string::npos);
     query::QueryableFactory::instance().reset();
 }
 

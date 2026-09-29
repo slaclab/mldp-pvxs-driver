@@ -363,7 +363,8 @@ IRecordBatchStreamUPtr MLDPQueryClient::executeStream(const std::string_view    
                                     "'; supported tables: mldp.time_series, mldp.time_series_table, mldp.pv_stats");
 
     // -----------------------------------------------------------------------
-    // mldp.time_series — native bidi stream; drain all batches, spill, replay
+    // mldp.time_series — native bidi stream, returned lazily so a LIMIT or an
+    // interactive page stops pulling backend pages once it is satisfied
     // -----------------------------------------------------------------------
     if (table_name == kTimeSeriesTable)
     {
@@ -384,10 +385,7 @@ IRecordBatchStreamUPtr MLDPQueryClient::executeStream(const std::string_view    
                 spec.mutable_pvselector()->mutable_pvnamelist()->add_pvnames(pv);
             raw_stream = std::make_unique<MldpQueryBucketsPagedStream>(pool_->acquire(), std::move(spec), pushable_predicates, projection_hint, context);
         }
-        std::vector<std::shared_ptr<arrow::RecordBatch>> batches;
-        while (auto batch = raw_stream->next())
-            batches.push_back(std::move(batch));
-        return materializedStream(std::move(batches));
+        return raw_stream;
     }
 
     // -----------------------------------------------------------------------
