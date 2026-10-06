@@ -42,6 +42,7 @@
 #include <mutex>
 #include <random>
 #include <set>
+#include <regex>
 #include <sstream>
 #include <thread>
 #include <unordered_set>
@@ -1362,6 +1363,47 @@ TEST(QueryFormatterTest, FitsTableValuesAndHeadersToExplicitViewport)
     }
 }
 
+TEST(QueryFormatterTest, ColorTableKeepsPlainLayoutWhenEscapesStripped)
+{
+    arrow::StringBuilder builder;
+    ASSERT_TRUE(builder.Append("value").ok());
+    ASSERT_TRUE(builder.AppendNull().ok());
+    std::shared_ptr<arrow::Array> column;
+    ASSERT_TRUE(builder.Finish(&column).ok());
+    const auto batch = arrow::RecordBatch::Make(
+        arrow::schema({arrow::field("name", arrow::utf8()), arrow::field("other", arrow::utf8())}), 2, {column, column});
+    const query::QueryExecutionResult result{.batches = {batch}};
+
+    std::ostringstream plain;
+    cli::formatQueryResult(result, cli::QueryOutputFormat::Table, plain, false, cli::TableRenderOptions{});
+    std::ostringstream colored;
+    cli::formatQueryResult(result, cli::QueryOutputFormat::Table, colored, false, cli::TableRenderOptions{.color = true});
+
+    EXPECT_EQ(plain.str().find('\x1b'), std::string::npos);
+    EXPECT_NE(colored.str().find("\x1b[1;36mname "), std::string::npos);
+    const auto stripped = std::regex_replace(colored.str(), std::regex("\x1b\\[[0-9;]*m"), "");
+    EXPECT_EQ(stripped, plain.str());
+}
+
+TEST(ReplHighlightTest, ClassifiesSqlTokens)
+{
+    using Kind = cli::detail::ReplHighlight;
+    const std::string sql = "select count(*) from t where x = 'a b' and y > 42 -- note";
+    const auto        kinds = cli::detail::replHighlight(sql);
+    ASSERT_EQ(kinds.size(), sql.size());
+    EXPECT_EQ(kinds[sql.find("select")], Kind::Keyword);
+    EXPECT_EQ(kinds[sql.find("count")], Kind::Function);
+    EXPECT_EQ(kinds[sql.find("from")], Kind::Keyword);
+    EXPECT_EQ(kinds[sql.find(" t ") + 1], Kind::Default);
+    EXPECT_EQ(kinds[sql.find("'a b'") + 2], Kind::String);
+    EXPECT_EQ(kinds[sql.find("42")], Kind::Number);
+    EXPECT_EQ(kinds[sql.find("note")], Kind::Comment);
+    const auto command = cli::detail::replHighlight(".color on");
+    EXPECT_EQ(command.back(), Kind::Command);
+    const auto unterminated = cli::detail::replHighlight("x = 'abc");
+    EXPECT_EQ(unterminated.back(), Kind::String);
+}
+
 TEST(QueryFormatterTest, UsesStackedLayoutWhenViewportCannotFitAllColumns)
 {
     arrow::StringBuilder first_builder;
@@ -1850,6 +1892,7 @@ TEST(QueryCompletionTest, CompletesCommandsKeywordsTablesAndColumns)
     EXPECT_NE(std::find(columns.begin(), columns.end(), "ts.pv"), columns.end());
     EXPECT_TRUE(cli::detail::replCompletions("SELECT 'sel").empty());
     EXPECT_EQ(cli::detail::replCompletionContextLength("SELECT ts.p"), 4);
+    EXPECT_EQ(cli::detail::replCompletions(".color o"), std::vector<std::string>({"off", "on"}));
 
     query::QueryableFactory::instance().reset();
 }

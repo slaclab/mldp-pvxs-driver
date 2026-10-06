@@ -9,6 +9,7 @@
 //////////////////////////////////////////////////////////////////////////////
 
 #include <query/QueryFormatter.h>
+#include <query/TerminalStyle.h>
 #include <query/OstreamOutputStream.h>
 #include <query/QueryCancellation.h>
 
@@ -192,7 +193,8 @@ std::string tableValue(const std::shared_ptr<arrow::Scalar>& scalar)
 
 void writeExpanded(const query::QueryExecutionResult& result,
                     std::ostream&                      output,
-                   const std::shared_ptr<query::QueryCancellation>& cancellation)
+                   const std::shared_ptr<query::QueryCancellation>& cancellation,
+                   const bool color = false)
 {
     std::size_t record = 0;
     for (const auto& batch : result.batches)
@@ -203,13 +205,13 @@ void writeExpanded(const query::QueryExecutionResult& result,
         {
             throwIfCancelled(cancellation);
             ++record;
-            output << "-[ RECORD " << record << " ]" << std::string(56, '-') << "\n";
+            output << style::paint(color, style::dim, "-[ RECORD " + std::to_string(record) + " ]" + std::string(56, '-')) << "\n";
             for (int column = 0; column < batch->num_columns(); ++column)
             {
                 const auto scalar_result = batch->column(column)->GetScalar(row);
                 if (!scalar_result.ok()) throw std::runtime_error(scalar_result.status().ToString());
                 const auto scalar = *scalar_result;
-                const auto& name = batch->schema()->field(column)->name();
+                const auto name = style::paint(color, style::cyan, batch->schema()->field(column)->name());
                 const auto display_scalar = activeUnionValue(scalar);
                 if (!display_scalar || !display_scalar->is_valid)
                 {
@@ -492,7 +494,8 @@ void writeStackedTable(const std::vector<std::string>&              headers,
                        const std::vector<std::vector<std::string>>& rows,
                        const std::size_t                            viewport_width,
                        std::ostream&                                output,
-                       const std::shared_ptr<query::QueryCancellation>& cancellation)
+                       const std::shared_ptr<query::QueryCancellation>& cancellation,
+                       const bool                                   color)
 {
     for (std::size_t row_index = 0; row_index < rows.size(); ++row_index)
     {
@@ -502,7 +505,10 @@ void writeStackedTable(const std::vector<std::string>&              headers,
         {
             const auto value_end = rows[row_index][column].find('\n');
             const auto value = rows[row_index][column].substr(0, value_end);
-            output << truncateMiddle(headers[column] + ": " + value, viewport_width) << "\n";
+            const auto line = truncateMiddle(headers[column] + ": " + value, viewport_width);
+            const auto label_end = std::min(line.size(), headers[column].size() + 1);
+            output << style::paint(color, style::cyan, std::string_view(line).substr(0, label_end))
+                   << std::string_view(line).substr(label_end) << "\n";
         }
     }
 }
@@ -574,21 +580,28 @@ void writeTable(const query::QueryExecutionResult& result,
     const auto fitted_widths = options.viewport_width ? fittedWidths(widths, *options.viewport_width) : widths;
     if (options.viewport_width && fitted_widths.empty())
     {
-        writeStackedTable(headers, rows, *options.viewport_width, output, cancellation);
+        writeStackedTable(headers, rows, *options.viewport_width, output, cancellation, options.color);
         return;
     }
 
     // Separator line: -...--+-...--+...
     auto separator = [&]() {
+        std::string line;
         for (int c = 0; c < num_cols; ++c)
         {
             if (c > 0)
             {
-                output << "-+-";
+                line += "-+-";
             }
-            output << std::string(fitted_widths[c], '-');
+            line += std::string(fitted_widths[c], '-');
         }
-        output << "\n";
+        output << style::paint(options.color, style::dim, line) << "\n";
+    };
+    const auto column_divider = style::paint(options.color, style::dim, " | ");
+    // Pad before styling so escape sequences do not count toward column width.
+    auto padded = [](std::string value, const std::size_t width) {
+        if (value.size() < width) value.append(width - value.size(), ' ');
+        return value;
     };
 
     if (print_header)
@@ -598,9 +611,9 @@ void writeTable(const query::QueryExecutionResult& result,
         {
             if (c > 0)
             {
-                output << " | ";
+                output << column_divider;
             }
-            output << std::left << std::setw(static_cast<int>(fitted_widths[c])) << truncateMiddle(headers[c], fitted_widths[c]);
+            output << style::paint(options.color, style::cyan, padded(truncateMiddle(headers[c], fitted_widths[c]), fitted_widths[c]));
         }
         output << "\n";
         separator();
@@ -618,7 +631,7 @@ void writeTable(const query::QueryExecutionResult& result,
             throwIfCancelled(cancellation);
             for (int c = 0; c < num_cols; ++c)
             {
-                if (c > 0) output << " | ";
+                if (c > 0) output << column_divider;
                 const auto start = [&] { std::size_t offset = 0; for (std::size_t part = 0; part < line; ++part) { const auto pos = row[c].find('\n', offset); if (pos == std::string::npos) return row[c].size(); offset = pos + 1; } return offset; }();
                 const auto end = row[c].find('\n', start);
                 output << std::left << std::setw(static_cast<int>(fitted_widths[c]))
@@ -642,7 +655,7 @@ void mldp_pvxs_driver::cli::formatQueryResult(const query::QueryExecutionResult&
     switch (format)
     {
         case QueryOutputFormat::Table:
-            if (expanded) writeExpanded(result, output, cancellation);
+            if (expanded) writeExpanded(result, output, cancellation, table_options.color);
             else writeTable(result, output, table_options, cancellation);
             break;
         case QueryOutputFormat::Json:
@@ -677,7 +690,7 @@ void mldp_pvxs_driver::cli::formatQueryStream(query::IRecordBatchStream& stream,
         switch (format)
         {
             case QueryOutputFormat::Table:
-                if (expanded) writeExpanded(result, output, cancellation);
+                if (expanded) writeExpanded(result, output, cancellation, table_options.color);
                 else writeTable(result, output, table_options, cancellation, !header_written);
                 break;
             case QueryOutputFormat::Json:

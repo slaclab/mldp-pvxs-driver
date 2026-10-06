@@ -38,6 +38,7 @@ enum class QueryOutputFormat
 struct TableRenderOptions
 {
     std::optional<std::size_t> viewport_width{};  ///< Terminal width in columns for wrapping; empty = no width limit.
+    bool                       color{false};      ///< True to style headers, borders and NULLs with ANSI colors.
 };
 
 /** @brief Formats materialized query batches to the given stream.

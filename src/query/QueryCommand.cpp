@@ -25,6 +25,7 @@
 #include <query/QueryPlanner.h>
 #include <query/QueryProgress.h>
 #include <query/QueryTableCatalog.h>
+#include <query/TerminalStyle.h>
 #include <query/QueryableFactory.h>
 #include <query/ShardTrace.h>
 #include <query/SpillManager.h>
@@ -128,21 +129,22 @@ std::string loadSql(const QueryCliOptions& options)
     return std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
 }
 
-void printQueryError(const std::exception& ex, std::ostream& error)
+void printQueryError(const std::exception& ex, std::ostream& error, const bool color = false)
 {
+    namespace style = mldp_pvxs_driver::cli::style;
     if (const auto* parse_error = dynamic_cast<const mldp_pvxs_driver::query::ParseError*>(&ex))
     {
-        error << "Parse error at " << parse_error->line()
+        error << style::paint(color, style::red, "Parse error") << " at " << parse_error->line()
               << ":" << parse_error->column()
               << " - " << parse_error->what() << "\n";
         return;
     }
     if (const auto* planner_error = dynamic_cast<const mldp_pvxs_driver::query::plan::PlannerException*>(&ex))
     {
-        error << mldp_pvxs_driver::query::plan::plannerErrorWhat(planner_error->error()) << "\n";
+        error << style::paint(color, style::red, mldp_pvxs_driver::query::plan::plannerErrorWhat(planner_error->error())) << "\n";
         return;
     }
-    error << "Query error: " << ex.what() << "\n";
+    error << style::paint(color, style::red, "Query error:") << " " << ex.what() << "\n";
 }
 
 std::string trim(std::string_view value)
@@ -206,7 +208,7 @@ bool isReplCommand(std::string_view command)
            command.starts_with(".format\t") || command == ".pager" || command.starts_with(".pager ") || command.starts_with(".pager\t") ||
            command == ".history" || command == "history" || command == "\\x" ||
            command == "\\expanded" || command.starts_with("\\expanded ") || command == ".table-fit" ||
-           command.starts_with(".table-fit ") || command == ".quit" || command == ".exit";
+           command.starts_with(".table-fit ") || command == ".color" || command.starts_with(".color ") || command == ".quit" || command == ".exit";
 }
 
 std::optional<std::size_t> terminalWidth(const std::ostream& output)
@@ -436,6 +438,33 @@ public:
                     completions.emplace_back(candidate);
                 return completions;
             });
+        repl_->set_highlighter_callback(
+            [this](const std::string& context, replxx::Replxx::colors_t& colors)
+            {
+                if (!color_)
+                    return;
+                using Kind = mldp_pvxs_driver::cli::detail::ReplHighlight;
+                using Color = replxx::Replxx::Color;
+                const auto  kinds = mldp_pvxs_driver::cli::detail::replHighlight(context);
+                std::size_t code_point = 0;
+                for (std::size_t byte = 0; byte < kinds.size() && code_point < colors.size(); ++byte)
+                {
+                    // colors_t is indexed by code point; skip UTF-8 continuation bytes.
+                    if ((static_cast<unsigned char>(context[byte]) & 0xC0) == 0x80)
+                        continue;
+                    switch (kinds[byte])
+                    {
+                    case Kind::Keyword: colors[code_point] = Color::BRIGHTBLUE; break;
+                    case Kind::Function: colors[code_point] = Color::BRIGHTCYAN; break;
+                    case Kind::String: colors[code_point] = Color::GREEN; break;
+                    case Kind::Number: colors[code_point] = Color::MAGENTA; break;
+                    case Kind::Comment: colors[code_point] = Color::GRAY; break;
+                    case Kind::Command: colors[code_point] = Color::YELLOW; break;
+                    case Kind::Default: break;
+                    }
+                    ++code_point;
+                }
+            });
 
         history_path_ = replHistoryPath();
         if (!history_path_.empty())
@@ -448,6 +477,11 @@ public:
                 sanitizeHistory();
             }
         }
+    }
+
+    void setColor(const bool color)
+    {
+        color_ = color;
     }
 
     ~ReplLineEditor()
@@ -561,6 +595,7 @@ private:
     std::vector<std::string>                                    session_history_;
     std::shared_ptr<mldp_pvxs_driver::query::QueryTableCatalog> table_catalog_;
     bool                                                        quit_requested_{false};
+    bool                                                        color_{false};
 };
 
 QueryOutputFormat parseFormat(std::string_view value);
@@ -579,21 +614,29 @@ int runRepl(QueryCliOptions                           options,
     auto                          output_mutex = std::make_shared<std::mutex>();
     const auto                     real_terminal = &input == &std::cin && &output == &std::cout &&
                                           ::isatty(STDIN_FILENO) != 0 && ::isatty(STDOUT_FILENO) != 0;
+    namespace style = mldp_pvxs_driver::cli::style;
+    options.color = real_terminal && style::colorEnabledByDefault(output);
+    editor.setColor(options.color);
+    const auto error_color = [&] { return options.color && style::colorEnabledByDefault(error); };
+    const auto errorLabel = [&] { return style::paint(error_color(), style::red, "Query error:"); };
     if (real_terminal)
     {
+        const auto version = std::to_string(MLDP_PVXS_DRIVER_VERSION_MAJOR) + "." +
+                             std::to_string(MLDP_PVXS_DRIVER_VERSION_MINOR) + "." +
+                             std::to_string(MLDP_PVXS_DRIVER_VERSION_PATCH);
         output << "\x1b[2J\x1b[H"
-               << "mldp query REPL  v"
-               << MLDP_PVXS_DRIVER_VERSION_MAJOR << "."
-               << MLDP_PVXS_DRIVER_VERSION_MINOR << "."
-               << MLDP_PVXS_DRIVER_VERSION_PATCH
-               << "  \xe2\x80\x94  type .help for help, .quit to exit\n\n";
+               << style::paint(options.color, style::cyan, "mldp query REPL")
+               << style::paint(options.color, style::dim, "  v" + version + "  \xe2\x80\x94  type .help for help, .quit to exit")
+               << "\n\n";
         output.flush();
     }
     InlineStatus                  inline_status(output, output_mutex);
     while (true)
     {
         bool       interrupted = false;
-        const auto line = editor.read(buffer.empty() ? "mldp> " : "...> ", output, interrupted);
+        const auto prompt = buffer.empty() ? style::paint(options.color, style::green, "mldp") + "> "
+                                           : style::paint(options.color, style::dim, "...> ");
+        const auto line = editor.read(prompt, output, interrupted);
         if (!line)
         {
             if (editor.consumeQuitRequested())
@@ -608,7 +651,7 @@ int runRepl(QueryCliOptions                           options,
             }
             if (!buffer.empty())
             {
-                error << "Query error: incomplete SQL statement discarded at end of input\n";
+                error << errorLabel() << " incomplete SQL statement discarded at end of input\n";
             }
             return 0;
         }
@@ -626,7 +669,7 @@ int runRepl(QueryCliOptions                           options,
         }
         if (!buffer.empty() && isReplCommand(command))
         {
-            error << "Query error: REPL commands are only available when no SQL is buffered\n";
+            error << errorLabel() << " REPL commands are only available when no SQL is buffered\n";
             continue;
         }
         if (buffer.empty() && (command == ".quit" || command == ".exit"))
@@ -638,7 +681,7 @@ int runRepl(QueryCliOptions                           options,
         {
             editor.addHistory(command);
             output << "Enter one SQL statement terminated by ';'.\n"
-                   << "Commands: .help, .clear, .format [table|json|csv|arrow], .pager [on|off], .table-fit [on|off], .history, .quit, .exit\n"
+                   << "Commands: .help, .clear, .format [table|json|csv|arrow], .pager [on|off], .table-fit [on|off], .color [on|off], .history, .quit, .exit\n"
                    << "Display: \\expanded [on|off], \\x (toggle), or terminate a query with \\G for one expanded result.\n"
                    << "Editing: arrows, Ctrl-A/Ctrl-E, Ctrl-W, Ctrl-U/Ctrl-K, Ctrl-L (clear screen), Ctrl-Q (exit), history, and tab completion.\n"
                    << "String matching:\n"
@@ -674,7 +717,7 @@ int runRepl(QueryCliOptions                           options,
             }
             else
             {
-                error << "Query error: .pager accepts on or off\n";
+                error << errorLabel() << " .pager accepts on or off\n";
             }
             continue;
         }
@@ -703,7 +746,7 @@ int runRepl(QueryCliOptions                           options,
                 options.expanded = false;
             else
             {
-                error << "Query error: \\expanded accepts on or off\n";
+                error << errorLabel() << " \\expanded accepts on or off\n";
                 continue;
             }
             output << "Expanded display: " << (options.expanded ? "on" : "off") << "\n";
@@ -724,10 +767,27 @@ int runRepl(QueryCliOptions                           options,
                 options.table_fit = false;
             else
             {
-                error << "Query error: .table-fit accepts on or off\n";
+                error << errorLabel() << " .table-fit accepts on or off\n";
                 continue;
             }
             output << "Table fit: " << (options.table_fit ? "on" : "off") << "\n";
+            continue;
+        }
+        if (buffer.empty() && (command == ".color" || startsWithIgnoreCase(command, ".color ") || startsWithIgnoreCase(command, ".color\t")))
+        {
+            editor.addHistory(command);
+            const auto argument = trim(std::string_view(command).substr(std::string_view(".color").size()));
+            if (argument == "on")
+                options.color = true;
+            else if (argument == "off")
+                options.color = false;
+            else if (!argument.empty())
+            {
+                error << errorLabel() << " .color accepts on or off\n";
+                continue;
+            }
+            editor.setColor(options.color);
+            output << "Color: " << (options.color ? "on" : "off") << "\n";
             continue;
         }
         if (buffer.empty() && (command == ".format" || startsWithIgnoreCase(command, ".format ") || startsWithIgnoreCase(command, ".format\t")))
@@ -741,7 +801,7 @@ int runRepl(QueryCliOptions                           options,
             }
             if (argument.find_first_of(" \t\r\n") != std::string::npos)
             {
-                error << "Query error: .format accepts exactly one style: table,json,csv,arrow\n";
+                error << errorLabel() << " .format accepts exactly one style: table,json,csv,arrow\n";
                 continue;
             }
             try
@@ -751,14 +811,14 @@ int runRepl(QueryCliOptions                           options,
             }
             catch (const std::exception& ex)
             {
-                error << "Query error: " << ex.what() << "\n";
+                error << errorLabel() << " " << ex.what() << "\n";
             }
             continue;
         }
         if (buffer.empty() && !command.empty() && command.front() == '.')
         {
             editor.addHistory(command);
-            error << "Query error: unknown REPL command '" << command << "'\n";
+            error << errorLabel() << " unknown REPL command '" << command << "'\n";
             continue;
         }
 
@@ -797,7 +857,7 @@ int runRepl(QueryCliOptions                           options,
             buffer.append(line_for_sql, 0, *terminator);
             if (!expanded_once && !trim(std::string_view(line_for_sql).substr(*terminator + 1)).empty())
             {
-                error << "Query error: only one SQL statement may be submitted at a time\n";
+                error << errorLabel() << " only one SQL statement may be submitted at a time\n";
                 buffer.clear();
                 continue;
             }
@@ -805,7 +865,7 @@ int runRepl(QueryCliOptions                           options,
             buffer.clear();
             if (sql.empty())
             {
-                error << "Query error: empty SQL statement\n";
+                error << errorLabel() << " empty SQL statement\n";
                 continue;
             }
             editor.addHistory(sql);
@@ -870,7 +930,7 @@ int runRepl(QueryCliOptions                           options,
                     output << paged_output.str();
                     if (!query_options.no_stats)
                     {
-                        printQueryStats(completed_stats, output);
+                        output << style::paint(options.color, style::dim, queryStatsLine(completed_stats)) << "\n";
                     }
                 }
                 if (page_result)
@@ -878,7 +938,7 @@ int runRepl(QueryCliOptions                           options,
                     std::string pager_error;
                     if (!pager.write(paged_output.str(), pager_error))
                     {
-                        error << "Query warning: " << pager_error << "; writing result directly\n";
+                        error << style::paint(error_color(), style::yellow, "Query warning:") << " " << pager_error << "; writing result directly\n";
                         output << paged_output.str();
                     }
                 }
@@ -890,12 +950,12 @@ int runRepl(QueryCliOptions                           options,
                 inline_status.clear();
                 listener.queryCancelled();
                 listener.queryIdle();
-                error << "Query cancelled\n";
+                error << style::paint(error_color(), style::yellow, "Query cancelled") << "\n";
             }
             catch (const std::exception& ex)
             {
                 inline_status.clear();
-                printQueryError(ex, error);
+                printQueryError(ex, error, error_color());
                 listener.queryFailed(ex.what());
                 listener.queryIdle();
             }
@@ -1215,9 +1275,15 @@ std::vector<std::string> mldp_pvxs_driver::cli::detail::replCompletions(
                          ? std::vector<std::string>{".pager"}
                          : std::vector<std::string>{"on", "off"};
     }
+    else if (startsWithIgnoreCase(trimmed, ".color"))
+    {
+        candidates = token.empty() || token.front() == '.'
+                         ? std::vector<std::string>{".color"}
+                         : std::vector<std::string>{"on", "off"};
+    }
     else if (!token.empty() && token.front() == '.')
     {
-        candidates = {".help", ".clear", ".format", ".pager", ".table-fit", ".history", "\\expanded", "\\x", ".quit", ".exit"};
+        candidates = {".help", ".clear", ".format", ".pager", ".table-fit", ".color", ".history", "\\expanded", "\\x", ".quit", ".exit"};
     }
     else if (expectsTable(words))
     {
@@ -1266,6 +1332,72 @@ std::vector<std::string> mldp_pvxs_driver::cli::detail::replCompletions(const st
 int mldp_pvxs_driver::cli::detail::replCompletionContextLength(const std::string_view input)
 {
     return static_cast<int>(completionToken(input).size());
+}
+
+std::vector<mldp_pvxs_driver::cli::detail::ReplHighlight> mldp_pvxs_driver::cli::detail::replHighlight(const std::string_view input)
+{
+    static const std::vector<std::string_view> keywords = {
+        "SELECT", "DISTINCT", "FROM", "WHERE", "GROUP", "HAVING", "AND", "OR", "NOT", "IN", "IS", "NULL", "LIKE", "BETWEEN",
+        "ORDER", "BY", "ASC", "DESC", "LIMIT", "PAGE", "TOKEN", "SHOW", "TABLES", "FUNCTIONS", "OPERATORS", "DESCRIBE",
+        "EXPLAIN", "CREATE", "DROP", "TEMP", "TABLE", "AS", "INNER", "LEFT", "OUTER", "JOIN", "ON", "PREFIX", "CONTAINS",
+        "TRUE", "FALSE"};
+    static const std::vector<std::string_view> functions = {"COUNT", "SUM", "AVG", "MIN", "MAX", "FIRST", "LAST", "NOW"};
+    const auto is_word = [](const char c) { return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_'; };
+
+    std::vector<ReplHighlight> kinds(input.size(), ReplHighlight::Default);
+    const auto first = input.find_first_not_of(" \t");
+    if (first != std::string_view::npos && (input[first] == '.' || input[first] == '\\'))
+    {
+        std::fill(kinds.begin() + static_cast<std::ptrdiff_t>(first), kinds.end(), ReplHighlight::Command);
+        return kinds;
+    }
+    const auto mark = [&](const std::size_t from, const std::size_t to, const ReplHighlight kind)
+    { std::fill(kinds.begin() + static_cast<std::ptrdiff_t>(from), kinds.begin() + static_cast<std::ptrdiff_t>(to), kind); };
+
+    for (std::size_t i = 0; i < input.size();)
+    {
+        const char c = input[i];
+        if (c == '\'')
+        {
+            auto end = i + 1;
+            while (end < input.size())
+            {
+                if (input[end] == '\'' && end + 1 < input.size() && input[end + 1] == '\'') { end += 2; continue; }
+                if (input[end++] == '\'') break;
+            }
+            mark(i, end, ReplHighlight::String);
+            i = end;
+        }
+        else if (c == '-' && i + 1 < input.size() && input[i + 1] == '-')
+        {
+            const auto end = std::min(input.find('\n', i), input.size());
+            mark(i, end, ReplHighlight::Comment);
+            i = end;
+        }
+        else if (std::isdigit(static_cast<unsigned char>(c)) != 0 && (i == 0 || !is_word(input[i - 1])))
+        {
+            auto end = i;
+            while (end < input.size() && (is_word(input[end]) || input[end] == '.')) ++end;
+            mark(i, end, ReplHighlight::Number);
+            i = end;
+        }
+        else if (is_word(c))
+        {
+            auto end = i;
+            while (end < input.size() && is_word(input[end])) ++end;
+            const auto word = uppercase(input.substr(i, end - i));
+            if (std::find(keywords.begin(), keywords.end(), word) != keywords.end())
+                mark(i, end, ReplHighlight::Keyword);
+            else if (std::find(functions.begin(), functions.end(), word) != functions.end())
+                mark(i, end, ReplHighlight::Function);
+            i = end;
+        }
+        else
+        {
+            ++i;
+        }
+    }
+    return kinds;
 }
 
 void mldp_pvxs_driver::cli::QueryCommandPreparer::prepare(const mldp_pvxs_driver::config::Config& config) const
@@ -1472,7 +1604,7 @@ int mldp_pvxs_driver::cli::QueryRunner::run(const QueryCliOptions&              
                                   options.format,
                                   output,
                                   options.expanded,
-                                  TableRenderOptions{.viewport_width = options.table_fit ? table_width : std::nullopt},
+                                  TableRenderOptions{.viewport_width = options.table_fit ? table_width : std::nullopt, .color = options.color},
                                   context.cancellation,
                                   progress,
                                   output_mutex);
