@@ -18,6 +18,7 @@
  * gRPC calls.
  */
 
+#include <map>
 #include <gtest/gtest.h>
 
 #include <annotation.grpc.pb.h>
@@ -324,6 +325,55 @@ TEST_F(SlacCalendarIntegrationTest, AttributesForwardedCorrectly)
     }
     EXPECT_TRUE(found_poc)     << "activation attribute poc=Doe not found";
     EXPECT_TRUE(found_details) << "activation attribute details=https://example.com not found";
+}
+
+TEST_F(SlacCalendarIntegrationTest, CustomAttributeMappingReachesAnnotationService)
+{
+    calendar_server_.setResponse("lcls", kThreeLclsEvents);
+
+    // attributes is a sibling key of accel in the reader map
+    ASSERT_NO_THROW(startController("          - lcls\n"
+                                    "        attributes:\n"
+                                    "          - field: poc\n"
+                                    "            name: person_on_shift\n"
+                                    "            target: both\n"
+                                    "          - field: details\n"
+                                    "            target: none\n"
+                                    "          - field: hutch.text_color\n"
+                                    "            name: hutch_text_color\n"
+                                    "            target: activation\n"));
+
+    ASSERT_TRUE(waitForCount(svc_.save_configuration_count, 3, std::chrono::milliseconds(8000)));
+    ASSERT_TRUE(waitForCount(svc_.save_activation_count, 3, std::chrono::milliseconds(8000)));
+
+    const auto toMap = [](const auto& attrs) {
+        std::map<std::string, std::string> m;
+        for (const auto& a : attrs)
+            m[a.name()] = a.value();
+        return m;
+    };
+
+    std::map<std::string, std::string> cfg_attrs, act_attrs;
+    for (const auto& r : svc_.cfgRequests())
+        if (r.configurationname() == "TMO Run 3")
+            cfg_attrs = toMap(r.attributes());
+    for (const auto& a : svc_.actRequests())
+        if (a.configurationname() == "TMO Run 3")
+            act_attrs = toMap(a.attributes());
+    ASSERT_FALSE(cfg_attrs.empty()) << "TMO Run 3 config request not found";
+    ASSERT_FALSE(act_attrs.empty()) << "TMO Run 3 activation request not found";
+
+    EXPECT_EQ(cfg_attrs["person_on_shift"], "Doe");
+    EXPECT_EQ(act_attrs["person_on_shift"], "Doe");
+    EXPECT_FALSE(cfg_attrs.count("poc"));
+    EXPECT_FALSE(act_attrs.count("poc"));
+    EXPECT_FALSE(cfg_attrs.count("details"));
+    EXPECT_FALSE(act_attrs.count("details"));
+    EXPECT_EQ(act_attrs["hutch_text_color"], "white");
+    EXPECT_FALSE(cfg_attrs.count("hutch_text_color"));
+    // untouched defaults
+    EXPECT_EQ(act_attrs["config"], "800 eV");
+    EXPECT_EQ(cfg_attrs["hutch_color"], "#0000a0");
 }
 
 // ---------------------------------------------------------------------------

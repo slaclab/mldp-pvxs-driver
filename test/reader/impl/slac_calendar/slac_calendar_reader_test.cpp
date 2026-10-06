@@ -8,6 +8,8 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
+#include <map>
+#include <tuple>
 #include <gtest/gtest.h>
 
 #include <reader/IReaderLifecycle.h>
@@ -315,6 +317,230 @@ TEST_F(SlacCalendarReaderTest, AttributeMappingRejectsBadTarget)
         "attributes:\n  - field: poc\n    target: everywhere\n");
     using mldp_pvxs_driver::reader::impl::slac_calendar::SlacCalendarReaderConfig;
     EXPECT_THROW(SlacCalendarReaderConfig{cfg}, SlacCalendarReaderConfig::Error);
+}
+
+TEST_F(SlacCalendarReaderTest, AttributeMappingDefaults)
+{
+    using mldp_pvxs_driver::reader::impl::slac_calendar::SlacCalendarReaderConfig;
+    using T = SlacCalendarReaderConfig::AttributeTarget;
+    const SlacCalendarReaderConfig cfg{
+        makeConfigFromYaml(makeReaderYaml(server_.baseUrl(), "  - lcls\n"))};
+
+    const std::vector<std::tuple<std::string, std::string, T>> expected{
+        {"calendar", "calendar", T::Both},
+        {"machine", "machine", T::Configuration},
+        {"hutch.name", "hutch_name", T::Both},
+        {"hutch.line", "hutch_line", T::Both},
+        {"hutch.color", "hutch_color", T::Configuration},
+        {"note", "note", T::Activation},
+        {"config", "config", T::Activation},
+        {"poc", "poc", T::Activation},
+        {"details", "details", T::Activation},
+    };
+    const auto& m = cfg.attributeMappings();
+    ASSERT_EQ(m.size(), expected.size());
+    for (size_t i = 0; i < m.size(); ++i)
+    {
+        EXPECT_EQ(m[i].field, std::get<0>(expected[i]));
+        EXPECT_EQ(m[i].name, std::get<1>(expected[i]));
+        EXPECT_EQ(m[i].target, std::get<2>(expected[i])) << m[i].field;
+    }
+}
+
+TEST_F(SlacCalendarReaderTest, AttributeMappingParsesAllTargets)
+{
+    using mldp_pvxs_driver::reader::impl::slac_calendar::SlacCalendarReaderConfig;
+    using T = SlacCalendarReaderConfig::AttributeTarget;
+    const SlacCalendarReaderConfig cfg{makeConfigFromYaml(
+        makeReaderYaml(server_.baseUrl(), "  - lcls\n") +
+        "attributes:\n"
+        "  - field: note\n    target: configuration\n"
+        "  - field: poc\n    target: both\n"
+        "  - field: machine\n    target: activation\n"
+        "  - field: calendar\n    target: none\n")};
+
+    const auto find = [&](const std::string& f) {
+        for (const auto& m : cfg.attributeMappings())
+            if (m.field == f)
+                return m;
+        ADD_FAILURE() << "missing mapping for " << f;
+        return SlacCalendarReaderConfig::AttributeMapping{};
+    };
+    EXPECT_EQ(find("note").target, T::Configuration);
+    EXPECT_EQ(find("poc").target, T::Both);
+    EXPECT_EQ(find("machine").target, T::Activation);
+    EXPECT_EQ(find("calendar").target, T::None);
+    // overriding a default replaces it in place, no duplicate appended
+    EXPECT_EQ(cfg.attributeMappings().size(), 9u);
+}
+
+TEST_F(SlacCalendarReaderTest, AttributeMappingRejectsInvalidEntries)
+{
+    using mldp_pvxs_driver::reader::impl::slac_calendar::SlacCalendarReaderConfig;
+    const std::vector<std::pair<std::string, std::string>> bad{
+        {"missing field", "attributes:\n  - name: foo\n"},
+        {"empty field", "attributes:\n  - field: \"\"\n"},
+        {"empty name", "attributes:\n  - field: poc\n    name: \"\"\n"},
+        {"accel not remappable", "attributes:\n  - field: accel\n    target: none\n"},
+        {"unknown target", "attributes:\n  - field: poc\n    target: Both\n"},
+    };
+    for (const auto& [label, yaml] : bad)
+    {
+        const auto cfg = makeConfigFromYaml(makeReaderYaml(server_.baseUrl(), "  - lcls\n") + yaml);
+        EXPECT_THROW(SlacCalendarReaderConfig{cfg}, SlacCalendarReaderConfig::Error) << label;
+    }
+}
+
+TEST_F(SlacCalendarReaderTest, AttributeMappingNewFieldDefaultsToFieldNameOnBoth)
+{
+    server_.setResponse("lcls", kLclsEvent);
+    const auto cfg = makeConfigFromYaml(
+        makeReaderYaml(server_.baseUrl(), "  - lcls\n") +
+        "attributes:\n  - field: hutch.text_color\n");
+    SlacCalendarReader reader(bus_, nullptr, cfg);
+
+    ASSERT_TRUE(bus_->waitForCount(2, std::chrono::milliseconds(5000)));
+    const auto batches = bus_->snapshot();
+    const auto& cp  = std::get<ConfigurationPayload>(batches[0].payload);
+    const auto& act = std::get<ConfigurationActivationPayload>(batches[1].payload);
+    EXPECT_EQ(cp.attributes.at("hutch.text_color"), "white");
+    EXPECT_EQ(act.attributes.at("hutch.text_color"), "white");
+}
+
+TEST_F(SlacCalendarReaderTest, AttributeMappingRenamePreservesValueProcessing)
+{
+    // details keeps HTML stripping and calendar keeps whitespace normalization
+    // regardless of the configured attribute name/target.
+    server_.setResponse("lcls", R"json([{
+        "url": "https://www.google.com/calendar/event?eid=p1",
+        "program_name": "XPP Run",
+        "calendar": "  NC   XPP ",
+        "details": "<b>Actual start</b>: 18:06",
+        "start": "2026-05-28T06:00:00-07:00",
+        "end":   "2026-05-28T18:00:00-07:00"
+    }])json");
+    const auto cfg = makeConfigFromYaml(
+        makeReaderYaml(server_.baseUrl(), "  - lcls\n") +
+        "attributes:\n"
+        "  - field: details\n    name: shift_details\n    target: both\n"
+        "  - field: calendar\n    name: source_calendar\n    target: configuration\n");
+    SlacCalendarReader reader(bus_, nullptr, cfg);
+
+    ASSERT_TRUE(bus_->waitForCount(2, std::chrono::milliseconds(5000)));
+    const auto batches = bus_->snapshot();
+    const auto& cp  = std::get<ConfigurationPayload>(batches[0].payload);
+    const auto& act = std::get<ConfigurationActivationPayload>(batches[1].payload);
+    EXPECT_EQ(cp.attributes.at("shift_details"), "Actual start: 18:06");
+    EXPECT_EQ(act.attributes.at("shift_details"), "Actual start: 18:06");
+    EXPECT_EQ(cp.attributes.at("source_calendar"), "NC XPP");
+    EXPECT_FALSE(act.attributes.count("source_calendar"));
+    EXPECT_FALSE(cp.attributes.count("calendar"));
+    EXPECT_FALSE(act.attributes.count("calendar"));
+}
+
+TEST_F(SlacCalendarReaderTest, AttributeMappingAllNoneLeavesOnlyAccel)
+{
+    server_.setResponse("lcls", kLclsEvent);
+    std::string yaml = makeReaderYaml(server_.baseUrl(), "  - lcls\n") + "attributes:\n";
+    for (const char* f : {"calendar", "machine", "hutch.name", "hutch.line", "hutch.color",
+                          "note", "config", "poc", "details"})
+        yaml += std::string("  - field: ") + f + "\n    target: none\n";
+    SlacCalendarReader reader(bus_, nullptr, makeConfigFromYaml(yaml));
+
+    ASSERT_TRUE(bus_->waitForCount(2, std::chrono::milliseconds(5000)));
+    const auto batches = bus_->snapshot();
+    const auto& cp  = std::get<ConfigurationPayload>(batches[0].payload);
+    const auto& act = std::get<ConfigurationActivationPayload>(batches[1].payload);
+    ASSERT_EQ(cp.attributes.size(), 1u);
+    EXPECT_EQ(cp.attributes.at("accel"), "lcls");
+    ASSERT_EQ(act.attributes.size(), 1u);
+    EXPECT_EQ(act.attributes.at("accel"), "lcls");
+    // category disambiguation still uses the calendar value even when not emitted
+    EXPECT_EQ(cp.configuration_name, "CXI 1013443 Bain");
+}
+
+TEST_F(SlacCalendarReaderTest, AttributeMappingSkipsMissingAndNonStringValues)
+{
+    server_.setResponse("lcls", kLclsEvent);
+    const auto cfg = makeConfigFromYaml(
+        makeReaderYaml(server_.baseUrl(), "  - lcls\n") +
+        "attributes:\n"
+        "  - field: does_not_exist\n"     // absent key
+        "  - field: hutch.missing\n"      // absent nested key
+        "  - field: machine.sub\n"        // parent is a string, not an object
+        "  - field: a.b.c\n"              // absent multi-level path
+        "  - field: tags\n"               // array value
+        "  - field: hutch\n");            // object value
+    SlacCalendarReader reader(bus_, nullptr, cfg);
+
+    ASSERT_TRUE(bus_->waitForCount(2, std::chrono::milliseconds(5000)));
+    const auto batches = bus_->snapshot();
+    const auto& cp  = std::get<ConfigurationPayload>(batches[0].payload);
+    const auto& act = std::get<ConfigurationActivationPayload>(batches[1].payload);
+    for (const char* k : {"does_not_exist", "hutch.missing", "machine.sub", "a.b.c", "tags", "hutch"})
+    {
+        EXPECT_FALSE(cp.attributes.count(k)) << k;
+        EXPECT_FALSE(act.attributes.count(k)) << k;
+    }
+    // defaults unaffected
+    EXPECT_EQ(cp.attributes.at("hutch_name"), "CXI");
+    EXPECT_EQ(act.attributes.at("poc"), "Minitti");
+}
+
+TEST_F(SlacCalendarReaderTest, AttributeMappingDuplicateEntryLastWins)
+{
+    server_.setResponse("lcls", kLclsEvent);
+    const auto cfg = makeConfigFromYaml(
+        makeReaderYaml(server_.baseUrl(), "  - lcls\n") +
+        "attributes:\n"
+        "  - field: poc\n    name: first_name\n    target: configuration\n"
+        "  - field: poc\n    name: second_name\n");   // keeps target from previous entry
+    SlacCalendarReader reader(bus_, nullptr, cfg);
+
+    ASSERT_TRUE(bus_->waitForCount(2, std::chrono::milliseconds(5000)));
+    const auto batches = bus_->snapshot();
+    const auto& cp  = std::get<ConfigurationPayload>(batches[0].payload);
+    const auto& act = std::get<ConfigurationActivationPayload>(batches[1].payload);
+    EXPECT_EQ(cp.attributes.at("second_name"), "Minitti");
+    EXPECT_FALSE(cp.attributes.count("first_name"));
+    EXPECT_FALSE(act.attributes.count("second_name"));
+    EXPECT_FALSE(act.attributes.count("poc"));
+}
+
+// Mirrors "Full Example with Attribute Customization" in
+// docs/readers/slac-calendar-reader.md; keep both in sync.
+TEST_F(SlacCalendarReaderTest, AttributeMappingDocumentedFullExample)
+{
+    server_.setResponse("lcls", kLclsEvent);
+    const auto cfg = makeConfigFromYaml(
+        makeReaderYaml(server_.baseUrl(), "  - lcls\n") +
+        "attributes:\n"
+        "  - field: poc\n    name: person_on_shift\n"
+        "  - field: note\n    name: electron_energy\n    target: both\n"
+        "  - field: config\n    name: photon_energy\n    target: both\n"
+        "  - field: machine\n    target: both\n"
+        "  - field: hutch.color\n    target: none\n"
+        "  - field: hutch.text_color\n    name: hutch_text_color\n    target: configuration\n");
+    SlacCalendarReader reader(bus_, nullptr, cfg);
+
+    ASSERT_TRUE(bus_->waitForCount(2, std::chrono::milliseconds(5000)));
+    const auto batches = bus_->snapshot();
+    const auto& cp  = std::get<ConfigurationPayload>(batches[0].payload);
+    const auto& act = std::get<ConfigurationActivationPayload>(batches[1].payload);
+
+    const std::map<std::string, std::string> expected_cfg{
+        {"accel", "lcls"}, {"calendar", "NC-CXI"}, {"machine", "NC"},
+        {"hutch_name", "CXI"}, {"hutch_line", "HXR"}, {"hutch_text_color", "white"},
+        {"electron_energy", "13.213 GeV, 80 pC"}, {"photon_energy", "15 keV"}};
+    const std::map<std::string, std::string> expected_act{
+        {"accel", "lcls"}, {"calendar", "NC-CXI"}, {"machine", "NC"},
+        {"hutch_name", "CXI"}, {"hutch_line", "HXR"},
+        {"electron_energy", "13.213 GeV, 80 pC"}, {"photon_energy", "15 keV"},
+        {"person_on_shift", "Minitti"}, {"details", "https://pswww.slac.stanford.edu/foo"}};
+
+    using AttrMap = std::map<std::string, std::string>;
+    EXPECT_EQ(AttrMap(cp.attributes.begin(), cp.attributes.end()), expected_cfg);
+    EXPECT_EQ(AttrMap(act.attributes.begin(), act.attributes.end()), expected_act);
 }
 
 TEST_F(SlacCalendarReaderTest, FacetEventHandlesReducedSchema)
