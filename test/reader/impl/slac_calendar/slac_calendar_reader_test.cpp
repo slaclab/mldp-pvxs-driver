@@ -236,18 +236,16 @@ TEST_F(SlacCalendarReaderTest, LclsEventProducesTwoBusMessages)
     EXPECT_EQ(*cp.modified_by, "slac-calendar-reader");
     EXPECT_EQ(cp.attributes.at("accel"), "lcls");
     EXPECT_EQ(cp.attributes.at("calendar"), "NC-CXI");
-    EXPECT_EQ(cp.attributes.at("note"), "13.213 GeV, 80 pC");
-    EXPECT_EQ(cp.attributes.at("poc"), "Minitti");
-    EXPECT_EQ(cp.attributes.at("config"), "15 keV");
+    // Per-shift fields live on the activation, not the configuration
+    EXPECT_FALSE(cp.attributes.count("note"));
+    EXPECT_FALSE(cp.attributes.count("poc"));
+    EXPECT_FALSE(cp.attributes.count("config"));
+    EXPECT_FALSE(cp.attributes.count("details"));
     EXPECT_EQ(cp.attributes.at("machine"), "NC");
     EXPECT_EQ(cp.attributes.at("hutch_name"), "CXI");
     EXPECT_EQ(cp.attributes.at("hutch_color"), "#a00000");
     EXPECT_EQ(cp.attributes.at("hutch_line"), "HXR");
     EXPECT_FALSE(cp.attributes.count("text_color"));
-
-    // details should be inner-text of the anchor
-    ASSERT_TRUE(cp.attributes.count("details"));
-    EXPECT_EQ(cp.attributes.at("details"), "https://pswww.slac.stanford.edu/foo");
 
     // Second batch: ConfigurationActivationPayload
     ASSERT_TRUE(std::holds_alternative<ConfigurationActivationPayload>(batches[1].payload));
@@ -260,6 +258,63 @@ TEST_F(SlacCalendarReaderTest, LclsEventProducesTwoBusMessages)
     EXPECT_EQ(act.start_time.epoch_seconds, static_cast<uint64_t>(1779973200));
     EXPECT_EQ(act.attributes.at("accel"), "lcls");
     EXPECT_EQ(act.attributes.at("calendar"), "NC-CXI");
+    EXPECT_EQ(act.attributes.at("note"), "13.213 GeV, 80 pC");
+    EXPECT_EQ(act.attributes.at("poc"), "Minitti");
+    EXPECT_EQ(act.attributes.at("config"), "15 keV");
+    EXPECT_EQ(act.attributes.at("hutch_name"), "CXI");
+    EXPECT_EQ(act.attributes.at("hutch_line"), "HXR");
+    EXPECT_FALSE(act.attributes.count("hutch_color"));
+    EXPECT_FALSE(act.attributes.count("machine"));
+    // details should be inner-text of the anchor
+    EXPECT_EQ(act.attributes.at("details"), "https://pswww.slac.stanford.edu/foo");
+}
+
+TEST_F(SlacCalendarReaderTest, AttributeMappingOverridesRenameAndRetarget)
+{
+    server_.setResponse("lcls", kLclsEvent);
+
+    const auto cfg = makeConfigFromYaml(
+        makeReaderYaml(server_.baseUrl(), "  - lcls\n") +
+        "attributes:\n"
+        "  - field: poc\n"            // rename, keep default target (activation)
+        "    name: person_on_shift\n"
+        "  - field: note\n"           // retarget to both payloads
+        "    target: both\n"
+        "  - field: hutch.color\n"    // drop entirely
+        "    target: none\n"
+        "  - field: hutch.text_color\n" // new field, explicit name/target
+        "    name: hutch_text_color\n"
+        "    target: configuration\n");
+    SlacCalendarReader reader(bus_, nullptr, cfg);
+
+    ASSERT_TRUE(bus_->waitForCount(2, std::chrono::milliseconds(5000)));
+    const auto batches = bus_->snapshot();
+    const auto& cp  = std::get<ConfigurationPayload>(batches[0].payload);
+    const auto& act = std::get<ConfigurationActivationPayload>(batches[1].payload);
+
+    EXPECT_FALSE(act.attributes.count("poc"));
+    EXPECT_EQ(act.attributes.at("person_on_shift"), "Minitti");
+    EXPECT_FALSE(cp.attributes.count("person_on_shift"));
+
+    EXPECT_EQ(cp.attributes.at("note"), "13.213 GeV, 80 pC");
+    EXPECT_EQ(act.attributes.at("note"), "13.213 GeV, 80 pC");
+
+    EXPECT_FALSE(cp.attributes.count("hutch_color"));
+    EXPECT_EQ(cp.attributes.at("hutch_text_color"), "white");
+    EXPECT_FALSE(act.attributes.count("hutch_text_color"));
+
+    // Untouched defaults still apply
+    EXPECT_EQ(act.attributes.at("config"), "15 keV");
+    EXPECT_EQ(cp.attributes.at("machine"), "NC");
+}
+
+TEST_F(SlacCalendarReaderTest, AttributeMappingRejectsBadTarget)
+{
+    const auto cfg = makeConfigFromYaml(
+        makeReaderYaml(server_.baseUrl(), "  - lcls\n") +
+        "attributes:\n  - field: poc\n    target: everywhere\n");
+    using mldp_pvxs_driver::reader::impl::slac_calendar::SlacCalendarReaderConfig;
+    EXPECT_THROW(SlacCalendarReaderConfig{cfg}, SlacCalendarReaderConfig::Error);
 }
 
 TEST_F(SlacCalendarReaderTest, FacetEventHandlesReducedSchema)

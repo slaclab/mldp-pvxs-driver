@@ -116,7 +116,7 @@ Parameter              | Type   | Default | Description
 `lookback-days`        | int    | `1`     | Days into the past to include. Must be >= 0.
 `start-date`           | string | —       | First-run start date override (`YYYY-MM-DD[THH:MM:SS[Z\|±HH:MM]]`). Used only on the first fetch.
 `end-date`             | string | —       | Fixed-window end date; requires `start-date`. Incompatible with `lookahead-days`/`lookback-days`/`rescan-interval-sec`.
-`category`             | string | —       | Overrides the per-event `calendar` field as the pushed `category`.
+`category`             | string | —       | Fixed `category` for every pushed configuration. Default: the event's `configuration_name`.
 `rescan-interval-sec`  | double | `0.0`   | Repeat fetch interval in seconds. `0` = run once.
 `connect-timeout-sec`  | int    | `30`    | HTTP connection timeout (seconds).
 `total-timeout-sec`    | int    | `60`    | HTTP total request timeout (seconds). Must be >= `connect-timeout-sec`.
@@ -124,6 +124,99 @@ Parameter              | Type   | Default | Description
 `tls-verify-host`      | bool   | `true`  | Verify TLS hostname against certificate.
 `fetch-window-days`    | int    | `7`     | Days of calendar requested per HTTP call. The endpoint has no pagination/cursor, so the whole span is walked in windows of this size instead of one request for the full range.
 `fetch-window-delay-ms` | int   | `200`   | Delay between window HTTP requests. Guards against an upstream/proxy cache serving a stale body for a later window when requests fire too fast (observed at sub-15ms spacing). Must be >= 0.
+`attributes`           | list   | see below | Overrides of the JSON field → attribute association (name and target payload).
+
+### Attribute Mapping
+
+Each calendar JSON field is copied to an attribute on the configuration, the
+activation, both, or neither. Defaults:
+
+JSON field     | Attribute     | Target
+-------------- | ------------- | -------------
+`calendar`     | `calendar`    | both
+`machine`      | `machine`     | configuration
+`hutch.name`   | `hutch_name`  | both
+`hutch.line`   | `hutch_line`  | both
+`hutch.color`  | `hutch_color` | configuration
+`note`         | `note`        | activation
+`config`       | `config`      | activation
+`poc`          | `poc`         | activation
+`details`      | `details`     | activation (HTML stripped)
+
+`accel` is always written to both payloads and is not remappable.
+
+Each `attributes` entry has:
+
+- `field` (required): JSON key; a dotted path (`hutch.text_color`) reads a nested object key.
+- `name` (optional): attribute key to write. Defaults to the default mapping's name, or `field` for a new field.
+- `target` (optional): `configuration` | `activation` | `both` | `none`. Defaults to the default mapping's target, or `both` for a new field.
+
+An entry for a default field replaces that default; a new field is added.
+
+```yaml
+attributes:
+  - field: poc
+    name: person_on_shift      # rename, keep target
+  - field: note
+    target: both               # also keep on configuration
+  - field: hutch.color
+    target: none               # drop
+  - field: hutch.text_color    # add a field not mapped by default
+    target: configuration
+```
+
+#### Full Example with Attribute Customization
+
+```yaml
+reader:
+  - slac-calendar:
+      - name: cal_reader_custom_attrs
+        base-url: https://aosd.slac.stanford.edu/program_calendar
+        accel:
+          - lcls
+        lookahead-days: 30
+        lookback-days: 1
+        rescan-interval-sec: 3600.0
+        fetch-window-days: 7
+        fetch-window-delay-ms: 200
+        attributes:
+          # rename: poc stays on the activation, written as "person_on_shift"
+          - field: poc
+            name: person_on_shift
+          # retarget: beam energy on both configuration and activation
+          - field: note
+            name: electron_energy
+            target: both
+          # retarget: photon energy also on both
+          - field: config
+            name: photon_energy
+            target: both
+          # move machine to the activation too
+          - field: machine
+            target: both
+          # drop hutch color
+          - field: hutch.color
+            target: none
+          # add a field not mapped by default (nested key)
+          - field: hutch.text_color
+            name: hutch_text_color
+            target: configuration
+```
+
+Resulting attributes on each event (when the JSON field is present):
+
+Attribute           | Configuration | Activation
+------------------- | ------------- | ----------
+`accel`             | yes           | yes
+`calendar`          | yes           | yes
+`machine`           | yes           | yes
+`hutch_name`        | yes           | yes
+`hutch_line`        | yes           | yes
+`hutch_text_color`  | yes           | —
+`electron_energy`   | yes           | yes
+`photon_energy`     | yes           | yes
+`person_on_shift`   | —             | yes
+`details`           | —             | yes
 
 **Validation rules:**
 
@@ -133,6 +226,7 @@ Parameter              | Type   | Default | Description
 - `total-timeout-sec` must be >= `connect-timeout-sec`.
 - `fetch-window-days` must be > 0.
 - `fetch-window-delay-ms` must be >= 0.
+- each `attributes` entry needs a non-empty `field` (not `accel`); `name`, if set, must be non-empty; `target` must be `configuration|activation|both|none`.
 - `start-date`/`end-date` (if provided) must match `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM:SS[Z|±HH:MM]` format.
 
 ## Published Payloads
@@ -144,31 +238,24 @@ For each calendar event the reader pushes **two** `EventBatch` items to the bus:
 Field                    | Source in JSON
 ------------------------ | -----------------------------------------
 `configuration_name`     | `program_name` (suffixed with the source calendar if a duplicate program_name/start/end is seen from a different calendar in the same fetch window)
-`category`               | `category` config override, else `calendar`
+`category`               | `category` config override, else `configuration_name`
 `description`            | `description`
 `tags`                   | `tags[]`
 `attributes["accel"]`     | accel name (from config)
-`attributes["poc"]`       | `poc` (if present)
-`attributes["note"]`      | `note` (if present)
-`attributes["config"]`    | `config` (if present)
-`attributes["machine"]`   | `machine` (if present)
-`attributes["details"]`   | inner text extracted from `details` HTML (if present)
-`attributes["hutch_name"]`| `hutch.name` (if present)
-`attributes["hutch_color"]`| `hutch.color` (if present)
-`attributes["hutch_line"]`| `hutch.line` (if present)
+`attributes[...]`         | fields whose mapping target is `configuration` or `both` (see [Attribute Mapping](#attribute-mapping))
 
 ### 2. `ConfigurationActivationPayload`
 
 Field                    | Source in JSON
 ------------------------ | -----------------------------------------
-`client_activation_id`   | `url`
+`client_activation_id`   | `url\|start\|end` (unique per occurrence of a recurring event)
 `configuration_name`     | `program_name` (same disambiguation as above)
 `start_time`             | `start` (ISO 8601 with timezone)
 `end_time`               | `end` (ISO 8601 with timezone)
 `description`            | `description`
 `tags`                   | `tags[]`
 `attributes["accel"]`     | accel name
-`attributes["calendar"]` | `calendar`
+`attributes[...]`         | fields whose mapping target is `activation` or `both` (see [Attribute Mapping](#attribute-mapping))
 
 Both batches carry `root_source = reader_name` and `reader_name = reader_name`.
 
@@ -180,7 +267,7 @@ Both batches carry `root_source = reader_name` and `reader_name = reader_name`.
 - **Request pacing**: Paces window requests `fetch-window-delay-ms` apart and sends
   `Cache-Control`/`Pragma: no-cache` headers to avoid an upstream/proxy cache serving a
   stale body for a later window when requests fire too fast.
-- **Cross-calendar duplicate disambiguation**: When the same `program_name`+`category`+time
+- **Cross-calendar duplicate disambiguation**: When the same `program_name`+time
   window is cross-posted under two different source calendars, the second occurrence's
   `configuration_name` is suffixed with the source calendar so both are pushed instead of
   colliding on the server's overlap check.

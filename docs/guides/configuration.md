@@ -498,7 +498,7 @@ Fetches beamline accel/experiment schedule events from the SLAC calendar HTTP AP
 | `lookback-days` | int | `1` | Days into the past to include. Must be >= 0. |
 | `start-date` | string | — | First-run start override (`YYYY-MM-DD` or ISO 8601). Used only on the first fetch. |
 | `end-date` | string | — | Fixed-window end date; requires `start-date`. Incompatible with `lookahead-days`/`lookback-days`/`rescan-interval-sec`. |
-| `category` | string | — | Overrides the per-event `calendar` field as the pushed `category`. |
+| `category` | string | — | Fixed `category` for every pushed configuration. Default: the event's `configuration_name`. |
 | `rescan-interval-sec` | double | `0.0` | Repeat fetch interval in seconds. `0` = run once. |
 | `connect-timeout-sec` | int | `30` | HTTP connection timeout (seconds). |
 | `total-timeout-sec` | int | `60` | HTTP total request timeout. Must be >= `connect-timeout-sec`. |
@@ -506,6 +506,7 @@ Fetches beamline accel/experiment schedule events from the SLAC calendar HTTP AP
 | `tls-verify-host` | bool | `true` | Verify TLS hostname against certificate. |
 | `fetch-window-days` | int | `7` | Days of calendar requested per HTTP call; the span is walked in windows of this size (no pagination cursor exists). |
 | `fetch-window-delay-ms` | int | `200` | Delay between window HTTP requests. Avoids upstream/proxy response caching from serving a stale body when windows are requested too fast. Must be >= 0. |
+| `attributes` | list | defaults | Overrides of the JSON field → attribute association: entries `{field, name?, target?}`, target `configuration\|activation\|both\|none`. See reader doc. |
 
 → [SlacCalendarReader Documentation](../readers/slac-calendar-reader.md)
 

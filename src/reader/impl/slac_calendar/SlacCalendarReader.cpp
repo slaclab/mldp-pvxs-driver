@@ -217,6 +217,24 @@ static std::string jsonStr(const nlohmann::json& ev, const std::string& key, con
     return ev[key].get<std::string>();
 }
 
+// Reads a string field; a dotted path ("hutch.name") descends into nested objects.
+static std::string jsonField(const nlohmann::json& ev, const std::string& path)
+{
+    const nlohmann::json* node = &ev;
+    size_t pos = 0;
+    while (true)
+    {
+        const size_t dot = path.find('.', pos);
+        if (dot == std::string::npos)
+            return jsonStr(*node, path.substr(pos));
+        const std::string key = path.substr(pos, dot - pos);
+        if (!node->contains(key) || !(*node)[key].is_object())
+            return "";
+        node = &(*node)[key];
+        pos  = dot + 1;
+    }
+}
+
 // Collapses runs of whitespace to a single space and trims the ends. The calendar API
 // sometimes returns the same event's program_name with inconsistent spacing between two
 // fetches/edits (e.g. "NC Linac BCSChecks" vs "NC Linac BCS Checks"), which otherwise
@@ -306,9 +324,6 @@ void SlacCalendarReader::pushEvent(const nlohmann::json& ev, const std::string& 
     cfg_payload.configuration_name = configuration_name;
     cfg_payload.category = category;
 
-    if (!calendar.empty())
-        cfg_payload.attributes["calendar"] = calendar;
-
     if (!desc.empty())
         cfg_payload.description = desc;
 
@@ -325,33 +340,24 @@ void SlacCalendarReader::pushEvent(const nlohmann::json& ev, const std::string& 
     cfg_payload.attributes["accel"] = accel;
     cfg_payload.modified_by = "slac-calendar-reader";
 
-    for (const auto& [key, attr] :
-         std::vector<std::pair<std::string, std::string>>{
-             {"note", "note"}, {"poc", "poc"}, {"config", "config"}, {"machine", "machine"}})
+    // Configurable field -> attribute association (see SlacCalendarReaderConfig).
+    // Collected once; applied to the configuration now and the activation below.
+    std::vector<std::pair<std::string, std::string>> act_attrs;
+    for (const auto& m : config_.attributeMappings())
     {
-        const std::string val = jsonStr(ev, key);
-        if (!val.empty())
-            cfg_payload.attributes[attr] = val;
-    }
-
-    if (ev.contains("details") && !ev["details"].is_null() && ev["details"].is_string())
-    {
-        const std::string raw = ev["details"].get<std::string>();
-        const std::string det = extractHtmlInnerText(raw);
-        if (!det.empty())
-            cfg_payload.attributes["details"] = det;
-    }
-
-    if (ev.contains("hutch") && !ev["hutch"].is_null() && ev["hutch"].is_object())
-    {
-        const auto& h = ev["hutch"];
-        for (const auto& [hk, ha] : std::vector<std::pair<std::string,std::string>>{
-                 {"name","hutch_name"},{"color","hutch_color"},{"line","hutch_line"}})
-        {
-            const std::string val = jsonStr(h, hk);
-            if (!val.empty())
-                cfg_payload.attributes[ha] = val;
-        }
+        if (m.target == SlacCalendarReaderConfig::AttributeTarget::None)
+            continue;
+        std::string val = jsonField(ev, m.field);
+        if (m.field == "details")
+            val = extractHtmlInnerText(val);
+        else if (m.field == "calendar")
+            val = calendar;
+        if (val.empty())
+            continue;
+        if (m.target != SlacCalendarReaderConfig::AttributeTarget::Activation)
+            cfg_payload.attributes[m.name] = val;
+        if (m.target != SlacCalendarReaderConfig::AttributeTarget::Configuration)
+            act_attrs.emplace_back(m.name, std::move(val));
     }
 
     {
@@ -395,8 +401,8 @@ void SlacCalendarReader::pushEvent(const nlohmann::json& ev, const std::string& 
             act_payload.tags = tags;
     }
     act_payload.attributes["accel"] = accel;
-    if (!calendar.empty())
-        act_payload.attributes["calendar"] = calendar;
+    for (auto& [name, val] : act_attrs)
+        act_payload.attributes[name] = std::move(val);
     act_payload.modified_by = "slac-calendar-reader";
 
     pending.push_back(PendingActivation{category, std::move(act_payload)});

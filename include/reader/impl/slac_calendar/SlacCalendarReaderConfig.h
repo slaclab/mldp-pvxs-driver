@@ -27,6 +27,28 @@ public:
         using std::runtime_error::runtime_error;
     };
 
+    /** Which payload(s) a calendar JSON field is copied to as an attribute. */
+    enum class AttributeTarget
+    {
+        None,
+        Configuration,
+        Activation,
+        Both
+    };
+
+    /**
+     * @brief Maps one calendar event JSON field to an MLDP attribute.
+     *
+     * `field` is the JSON key; a dotted path (e.g. "hutch.name") reads a key of a
+     * nested object. `name` is the attribute key written on the payload(s).
+     */
+    struct AttributeMapping
+    {
+        std::string     field;
+        std::string     name;
+        AttributeTarget target{AttributeTarget::None};
+    };
+
     explicit SlacCalendarReaderConfig(const config::Config& cfg);
 
     bool valid() const noexcept { return valid_; }
@@ -46,6 +68,8 @@ public:
     bool tlsVerifyHost() const noexcept { return tls_verify_host_; }
     int fetchWindowDays() const noexcept { return fetch_window_days_; }
     int fetchWindowDelayMs() const noexcept { return fetch_window_delay_ms_; }
+    /** Default mapping merged with the `attributes` overrides, in a stable order. */
+    const std::vector<AttributeMapping>& attributeMappings() const noexcept { return attribute_mappings_; }
 
 private:
     void parse(const config::Config& cfg);
@@ -66,6 +90,7 @@ private:
     bool                     tls_verify_host_{true};
     int                      fetch_window_days_{7};
     int                      fetch_window_delay_ms_{200};
+    std::vector<AttributeMapping> attribute_mappings_;
 };
 
 } // namespace mldp_pvxs_driver::reader::impl::slac_calendar

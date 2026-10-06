@@ -286,19 +286,44 @@ TEST_F(SlacCalendarIntegrationTest, AttributesForwardedCorrectly)
     EXPECT_EQ(tmo_req->description(), "Third run");
     ASSERT_EQ(tmo_req->tags_size(), 2);
 
-    bool found_accel = false, found_poc = false, found_details = false;
+    bool found_accel = false, cfg_has_poc = false, cfg_has_details = false;
     for (const auto& attr : tmo_req->attributes())
     {
         if (attr.name() == "accel" && attr.value() == "lcls")
             found_accel = true;
+        if (attr.name() == "poc")
+            cfg_has_poc = true;
+        if (attr.name() == "details")
+            cfg_has_details = true;
+    }
+    EXPECT_TRUE(found_accel) << "attribute accel=lcls not found";
+    // Per-shift fields live on the activation, not the configuration
+    EXPECT_FALSE(cfg_has_poc)     << "poc must not be on configuration";
+    EXPECT_FALSE(cfg_has_details) << "details must not be on configuration";
+
+    ASSERT_TRUE(waitForCount(svc_.save_activation_count, 3, std::chrono::milliseconds(8000)));
+    const auto acts = svc_.actRequests();
+    const dp::service::annotation::SaveConfigurationActivationRequest* tmo_act = nullptr;
+    for (const auto& a : acts)
+    {
+        if (a.configurationname() == "TMO Run 3")
+        {
+            tmo_act = &a;
+            break;
+        }
+    }
+    ASSERT_NE(tmo_act, nullptr) << "TMO Run 3 activation request not found";
+
+    bool found_poc = false, found_details = false;
+    for (const auto& attr : tmo_act->attributes())
+    {
         if (attr.name() == "poc" && attr.value() == "Doe")
             found_poc = true;
         if (attr.name() == "details" && attr.value() == "https://example.com")
             found_details = true;
     }
-    EXPECT_TRUE(found_accel) << "attribute accel=lcls not found";
-    EXPECT_TRUE(found_poc)        << "attribute poc=Doe not found";
-    EXPECT_TRUE(found_details)    << "attribute details=https://example.com not found";
+    EXPECT_TRUE(found_poc)     << "activation attribute poc=Doe not found";
+    EXPECT_TRUE(found_details) << "activation attribute details=https://example.com not found";
 }
 
 // ---------------------------------------------------------------------------
