@@ -61,6 +61,7 @@ enum class TokenType {
     PREFIX,       ///< PREFIX keyword.
     CONTAINS,     ///< CONTAINS keyword.
     ORDER,        ///< ORDER keyword.
+    DISTINCT,     ///< DISTINCT keyword.
     BY,           ///< BY keyword.
     ASC,          ///< ASC keyword.
     DESC,         ///< DESC keyword.

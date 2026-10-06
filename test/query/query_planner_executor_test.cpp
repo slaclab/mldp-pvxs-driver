@@ -1698,6 +1698,56 @@ TEST(QueryPlannerExecutorTest, WidePivotSortsSpilledBidiBatchesAndPreservesPvOrd
     query::QueryableFactory::instance().reset();
 }
 
+TEST_F(PlannerExecutorTest, SelectDistinctDropsDuplicateRowsOnCatalogAndVirtualTables)
+{
+    auto file_system = std::make_shared<arrow::fs::internal::MockFileSystem>(std::chrono::system_clock::now());
+    auto catalog = std::make_shared<query::QueryTableCatalog>(file_system, "catalog");
+
+    arrow::StringBuilder pv_builder;
+    arrow::Int64Builder  value_builder;
+    ASSERT_TRUE(pv_builder.AppendValues({"A", "A", "B", "A", "B"}).ok());
+    ASSERT_TRUE(value_builder.AppendValues({1, 1, 2, 3, 2}).ok());
+    std::shared_ptr<arrow::Array> pv;
+    std::shared_ptr<arrow::Array> value;
+    ASSERT_TRUE(pv_builder.Finish(&pv).ok());
+    ASSERT_TRUE(value_builder.Finish(&value).ok());
+    const auto schema = arrow::schema({arrow::field("pv", arrow::utf8()), arrow::field("value", arrow::int64())});
+    // Duplicates span both batches, so de-duplication must remember rows across batches.
+    const auto first = arrow::RecordBatch::Make(schema, 3, {pv->Slice(0, 3), value->Slice(0, 3)});
+    const auto second = arrow::RecordBatch::Make(schema, 2, {pv->Slice(3, 2), value->Slice(3, 2)});
+    ASSERT_TRUE(catalog->create("dup_samples", query::TableLifetime::Session, {first, second}).ok());
+
+    query::ExecutionContext context{.pool = arrow::default_memory_pool(), .table_catalog = catalog};
+    query::QueryPlanner     planner(catalog);
+    query::QueryExecutor    executor;
+    const auto              rowCount = [](const query::QueryExecutionResult& result)
+    {
+        int64_t rows = 0;
+        for (const auto& batch : result.batches) rows += batch ? batch->num_rows() : 0;
+        return rows;
+    };
+
+    EXPECT_EQ(rowCount(executor.execute(planner.plan(query::parseQuery("SELECT pv FROM dup_samples")), context)), 5);
+    EXPECT_EQ(rowCount(executor.execute(planner.plan(query::parseQuery("SELECT DISTINCT pv FROM dup_samples")), context)), 2);
+    EXPECT_EQ(rowCount(executor.execute(planner.plan(query::parseQuery("SELECT DISTINCT pv, value FROM dup_samples")), context)), 3);
+    EXPECT_EQ(rowCount(executor.execute(planner.plan(query::parseQuery("SELECT DISTINCT * FROM dup_samples")), context)), 3);
+    EXPECT_EQ(rowCount(executor.execute(planner.plan(query::parseQuery("SELECT DISTINCT pv FROM dup_samples LIMIT 1")), context)), 1);
+
+    const auto ordered = executor.execute(planner.plan(query::parseQuery("SELECT DISTINCT pv FROM dup_samples ORDER BY pv DESC")), context);
+    ASSERT_EQ(rowCount(ordered), 2);
+    EXPECT_EQ((*ordered.batches.front()->column(0)->GetScalar(0))->ToString(), "B");
+
+    const auto virtual_all = executor.execute(planner.plan(query::parseQuery("SELECT pv FROM fake.samples WHERE pv IN ('A', 'B')")), context);
+    const auto virtual_distinct = executor.execute(planner.plan(query::parseQuery("SELECT DISTINCT pv FROM fake.samples WHERE pv IN ('A', 'B')")), context);
+    EXPECT_GT(rowCount(virtual_distinct), 0);
+    EXPECT_LE(rowCount(virtual_distinct), rowCount(virtual_all));
+
+    // A LIMIT above DISTINCT must not be pushed to the scan: it bounds distinct rows, not input rows.
+    const auto explained = query::plan::physicalPlanToString(planner.plan(query::parseQuery("SELECT DISTINCT pv FROM fake.samples WHERE pv IN ('A', 'B') LIMIT 1")));
+    EXPECT_NE(explained.find("distinct=true"), std::string::npos);
+    EXPECT_EQ(explained.find("row_limit="), std::string::npos);
+}
+
 TEST_F(PlannerExecutorTest, FiltersMaterializedDenseUnionValuesNumerically)
 {
     auto                     file_system = std::make_shared<arrow::fs::internal::MockFileSystem>(std::chrono::system_clock::now());

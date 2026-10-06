@@ -421,7 +421,7 @@ where the response contract does not guarantee identical filtering semantics.
 ### SELECT grammar
 
 ```
-SELECT { * | column [, column ...] }
+SELECT [DISTINCT] { * | column [, column ...] }
 FROM   <table> [AS <alias>]
        [JOIN <table> [AS <alias>] ON <col> = <col>] ...
 [WHERE <predicate> [AND <predicate>] ...]
@@ -451,6 +451,12 @@ Multiple predicates are combined with `AND`.
 SELECT pv, alias, attributes.device_group, attributes.ordinal, tags
 FROM mldp.pv_metadata
 ORDER BY attributes.device_group, attributes.ordinal;
+```
+
+`SELECT DISTINCT` drops duplicate output rows, comparing every projected column (a `NULL` equals another `NULL`). It works on virtual tables, stored tables, derived tables and joins, and the first occurrence of each row is kept, so `ORDER BY` order is preserved. `LIMIT` counts distinct rows, so it is not pushed to the backend scan when `DISTINCT` is present. In the interactive pager, de-duplication spans every page of one query.
+
+```sql
+SELECT DISTINCT attributes.device_group FROM mldp.pv_metadata;
 ```
 
 `GROUP BY`, aggregates, and `HAVING` are not currently supported.

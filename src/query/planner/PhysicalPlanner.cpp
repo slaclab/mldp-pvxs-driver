@@ -144,7 +144,8 @@ plan::PhysicalNodePtr buildNode(const plan::LogicalNodePtr& node)
             .input = buildNode(project->input),
             .columns = project->columns,
             .expressions = project->expressions,
-            .names = project->names});
+            .names = project->names,
+            .distinct = project->distinct});
     }
     if (const auto* sort = std::get_if<plan::LogicalSort>(&node->value))
     {
@@ -259,7 +260,8 @@ void propagateScanRowLimitImpl(const plan::PhysicalNodePtr& node, const std::opt
     if (auto* project = std::get_if<plan::PhysicalProject>(&node->value))
     {
         // Projection never changes cardinality, so the budget passes through unchanged.
-        propagateScanRowLimitImpl(project->input, budget);
+        // DISTINCT drops rows, so the scan must not stop after `budget` input rows.
+        propagateScanRowLimitImpl(project->input, project->distinct ? std::nullopt : budget);
         return;
     }
     if (auto* filter = std::get_if<plan::PhysicalFilter>(&node->value))
@@ -337,7 +339,12 @@ void appendNode(std::ostringstream& out, const plan::PhysicalNodePtr& node, cons
     }
     if (const auto* project = std::get_if<plan::PhysicalProject>(&node->value))
     {
-        out << indent(level) << "PhysicalProject(columns=" << project->columns.size() << ")\n";
+        out << indent(level) << "PhysicalProject(columns=" << project->columns.size();
+        if (project->distinct)
+        {
+            out << ", distinct=true";
+        }
+        out << ")\n";
         appendNode(out, project->input, level + 1);
         return;
     }
@@ -494,7 +501,8 @@ std::string mldp_pvxs_driver::query::plan::physicalPlanToString(const plan::Phys
         if (const auto* project = std::get_if<PhysicalProject>(&node->value))
         {
             out << std::string(static_cast<size_t>(level) * 2, ' ')
-                << "PhysicalProject(columns=" << project->columns.size() << ")\n";
+                << "PhysicalProject(columns=" << project->columns.size()
+                << (project->distinct ? ", distinct=true" : "") << ")\n";
             append_ref(project->input, append_ref, level + 1);
             return;
         }

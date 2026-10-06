@@ -102,6 +102,21 @@ TEST(QueryLexerTest, TokenizesEveryKeywordCaseInsensitively)
     }
 }
 
+TEST(QueryParserTest, ParsesSelectDistinct)
+{
+    const auto& distinct = std::get<SelectStatement>(parseQuery("select distinct pv, value FROM fake.samples"));
+    EXPECT_TRUE(distinct.distinct);
+    EXPECT_FALSE(distinct.select_all);
+    ASSERT_EQ(distinct.columns.size(), 2U);
+    EXPECT_EQ(distinct.columns[0].name, "pv");
+
+    const auto& distinct_all = std::get<SelectStatement>(parseQuery("SELECT DISTINCT * FROM fake.samples"));
+    EXPECT_TRUE(distinct_all.distinct);
+    EXPECT_TRUE(distinct_all.select_all);
+
+    EXPECT_FALSE(std::get<SelectStatement>(parseQuery("SELECT pv FROM fake.samples")).distinct);
+}
+
 TEST(QueryParserTest, ParsesCallableDiscoveryStatements)
 {
     EXPECT_TRUE(std::holds_alternative<ShowFunctionsStatement>(parseQuery("SHOW FUNCTIONS")));

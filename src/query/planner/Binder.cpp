@@ -760,6 +760,7 @@ plan::BoundSelect mldp_pvxs_driver::query::planner::bindSelect(const SelectState
     plan::BoundSelect bound{
         .from = std::move(from),
         .joins = std::move(joins),
+        .distinct = statement.distinct,
         .select_all = statement.select_all,
         .select_columns = {},
         .select_expressions = {},

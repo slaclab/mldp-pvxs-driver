@@ -93,6 +93,7 @@ struct LogicalProject {
     std::vector<std::string> columns;               ///< Explicit output column names.
     std::vector<ExpressionPtr> expressions;         ///< Computed expressions for derived columns.
     std::vector<std::string> names;                 ///< Output names corresponding to expressions.
+    bool                   distinct{false};          ///< True for SELECT DISTINCT: drop duplicate output rows.
 };
 
 /** @brief Restricts the number of rows emitted by a logical input. */
@@ -167,6 +168,7 @@ struct BoundJoinClause {
 struct BoundSelect {
     BoundTable                  from;                        ///< Primary FROM table.
     std::vector<BoundJoinClause> joins;                     ///< JOIN clauses.
+    bool                        distinct{false};             ///< True for SELECT DISTINCT.
     bool                        select_all{false};           ///< True for SELECT *.
     std::vector<std::string>    select_columns;              ///< Explicit output column names.
     std::vector<ExpressionPtr>  select_expressions;         ///< Computed expressions for derived columns.

@@ -1412,3 +1412,72 @@ std::shared_ptr<arrow::RecordBatch> mldp_pvxs_driver::query::executor::joinBatch
 {
     return ::joinBatchesImpl(left, right, left_key, right_key, type, context, stats);
 }
+
+std::shared_ptr<arrow::RecordBatch> RowDeduplicator::filter(const std::shared_ptr<arrow::RecordBatch>& batch)
+{
+    if (!batch) return nullptr;
+    std::vector<int64_t> selected_rows;
+    selected_rows.reserve(static_cast<std::size_t>(batch->num_rows()));
+    std::string key;
+    for (int64_t row = 0; row < batch->num_rows(); ++row)
+    {
+        key.clear();
+        for (const auto& column : batch->columns())
+        {
+            if (column->IsNull(row))
+            {
+                key += 'N';
+                continue;
+            }
+            auto scalar = column->GetScalar(row);
+            if (!scalar.ok()) throw std::runtime_error("DISTINCT failed to read row value: " + scalar.status().ToString());
+            // Length-prefix every value so adjacent columns cannot alias each other.
+            const auto text = (*scalar)->ToString();
+            key += 'V';
+            key += std::to_string(text.size());
+            key += ':';
+            key += text;
+        }
+        if (seen_.insert(key).second) selected_rows.push_back(row);
+    }
+    if (selected_rows.size() == static_cast<std::size_t>(batch->num_rows())) return batch;
+
+    arrow::Result<std::shared_ptr<arrow::RecordBatch>> result;
+    if (hasUnionColumn(batch))
+    {
+        result = selectUnionSafeRows(batch, selected_rows);
+    }
+    else
+    {
+        arrow::BooleanBuilder mask_builder;
+        auto status = mask_builder.Reserve(batch->num_rows());
+        std::size_t next = 0;
+        for (int64_t row = 0; status.ok() && row < batch->num_rows(); ++row)
+        {
+            const bool keep = next < selected_rows.size() && selected_rows[next] == row;
+            if (keep) ++next;
+            mask_builder.UnsafeAppend(keep);
+        }
+        std::shared_ptr<arrow::Array> mask;
+        if (status.ok()) status = mask_builder.Finish(&mask);
+        if (!status.ok()) throw std::runtime_error("DISTINCT failed to build row mask: " + status.ToString());
+        auto filtered = arrow::compute::Filter(batch, mask);
+        if (!filtered.ok()) throw std::runtime_error("DISTINCT failed to filter rows: " + filtered.status().ToString());
+        result = filtered->record_batch();
+    }
+    if (!result.ok()) throw std::runtime_error("DISTINCT failed to select rows: " + result.status().ToString());
+    return *result;
+}
+
+RecordBatches mldp_pvxs_driver::query::executor::applyDistinct(const RecordBatches& input)
+{
+    RowDeduplicator deduplicator;
+    RecordBatches   output;
+    output.reserve(input.size());
+    for (const auto& batch : input)
+    {
+        auto unique = deduplicator.filter(batch);
+        if (unique && unique->num_rows() > 0) output.push_back(std::move(unique));
+    }
+    return output;
+}

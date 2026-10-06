@@ -22,7 +22,9 @@
 #include <arrow/record_batch.h>
 
 #include <set>
+#include <string>
 #include <string_view>
+#include <unordered_set>
 
 namespace mldp_pvxs_driver::query::executor {
 
@@ -105,5 +107,26 @@ std::shared_ptr<arrow::RecordBatch> qualifyBatchColumns(const std::shared_ptr<ar
  * @param[in,out] stats Statistics accumulator.
  * @return Joined record batch. */
 std::shared_ptr<arrow::RecordBatch> joinBatches(const std::shared_ptr<arrow::RecordBatch>& left, const std::shared_ptr<arrow::RecordBatch>& right, const std::string& left_key, const std::string& right_key, plan::JoinType type, const ExecutionContext& context, QueryStats& stats);
+
+/** @brief Removes duplicate rows across a sequence of batches (SELECT DISTINCT).
+ *
+ *  Remembers every row seen so far, so rows repeated in later batches are dropped too.
+ *  The first occurrence of each row is kept, which preserves any upstream ordering. */
+class RowDeduplicator
+{
+public:
+    /** @brief Returns the rows of a batch that were not seen before.
+     * @param[in] batch Input batch; may be null.
+     * @return Batch with only first-seen rows (possibly zero rows), or null for null input. */
+    std::shared_ptr<arrow::RecordBatch> filter(const std::shared_ptr<arrow::RecordBatch>& batch);
+
+private:
+    std::unordered_set<std::string> seen_; ///< Encoded keys of every row already emitted.
+};
+
+/** @brief Removes duplicate rows across a batch vector, keeping first occurrences.
+ * @param[in] input Input batches.
+ * @return Batches without duplicate rows; empty batches are dropped. */
+RecordBatches applyDistinct(const RecordBatches& input);
 
 } // namespace mldp_pvxs_driver::query::executor

@@ -66,6 +66,7 @@ struct PhysicalProject {
     std::vector<std::string> columns;               ///< Pass-through output column names.
     std::vector<ExpressionPtr> expressions;         ///< Computed output expressions.
     std::vector<std::string> names;                 ///< Output names for computed columns.
+    bool                     distinct{false};        ///< True to drop duplicate output rows (SELECT DISTINCT).
 };
 
 /** @brief Limits rows emitted by a physical input. */

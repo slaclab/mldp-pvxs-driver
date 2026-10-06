@@ -87,7 +87,8 @@ plan::LogicalNodePtr mldp_pvxs_driver::query::planner::buildLogicalPlan(const pl
             .select_all = false,
             .columns = bound.select_columns,
             .expressions = bound.select_expressions,
-            .names = bound.select_names});
+            .names = bound.select_names,
+            .distinct = bound.distinct});
     }
     else if (qualify_output)
     {
@@ -113,7 +114,22 @@ plan::LogicalNodePtr mldp_pvxs_driver::query::planner::buildLogicalPlan(const pl
         root = plan::makeNode(plan::LogicalProject{
             .input = root,
             .select_all = true,
-            .columns = std::move(columns)});
+            .columns = std::move(columns),
+            .expressions = {},
+            .names = {},
+            .distinct = bound.distinct});
+    }
+    else if (bound.distinct)
+    {
+        // SELECT DISTINCT * on a single table: an empty column list passes every
+        // column through, the project node only carries the duplicate removal.
+        root = plan::makeNode(plan::LogicalProject{
+            .input = root,
+            .select_all = true,
+            .columns = {},
+            .expressions = {},
+            .names = {},
+            .distinct = true});
     }
 
     if (bound.limit.has_value())

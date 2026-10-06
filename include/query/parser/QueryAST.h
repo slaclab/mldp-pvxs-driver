@@ -163,6 +163,7 @@ struct OrderByItem {
 
 /** @brief Parsed SELECT statement and its relational clauses. */
 struct SelectStatement {
+    bool                         distinct{false};   ///< True for SELECT DISTINCT.
     bool                         select_all{false}; ///< True for SELECT *.
     std::vector<QualifiedColumn> columns;           ///< Explicit selected columns (qualified form).
     std::vector<SelectItem>      select_items;      ///< Computed selected items with optional aliases.

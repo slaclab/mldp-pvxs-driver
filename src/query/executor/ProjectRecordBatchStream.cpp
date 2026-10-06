@@ -25,11 +25,17 @@ ProjectRecordBatchStream::ProjectRecordBatchStream(IRecordBatchStreamUPtr input,
 
 std::shared_ptr<arrow::RecordBatch> ProjectRecordBatchStream::next()
 {
-    auto batch = input_->next();
-    if (!batch) return nullptr;
-    RecordBatches input{std::move(batch)};
-    auto output = project_.expressions.empty()
-        ? applyProjection(input, project_.columns)
-        : applyProjection(input, project_.expressions, project_.names);
-    return output.empty() ? nullptr : output.front();
+    while (auto batch = input_->next())
+    {
+        RecordBatches input{std::move(batch)};
+        auto output = project_.expressions.empty()
+            ? applyProjection(input, project_.columns)
+            : applyProjection(input, project_.expressions, project_.names);
+        if (output.empty()) return nullptr;
+        if (!project_.distinct) return output.front();
+        // Skip batches whose rows were all emitted before, so a non-null batch always
+        // carries at least one row while the stream is live.
+        if (auto unique = deduplicator_.filter(output.front()); unique && unique->num_rows() > 0) return unique;
+    }
+    return nullptr;
 }
