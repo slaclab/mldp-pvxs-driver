@@ -1413,9 +1413,29 @@ std::shared_ptr<arrow::RecordBatch> mldp_pvxs_driver::query::executor::joinBatch
     return ::joinBatchesImpl(left, right, left_key, right_key, type, context, stats);
 }
 
+namespace {
+std::shared_ptr<arrow::RecordBatch> takeSelectedRows(const std::shared_ptr<arrow::RecordBatch>& batch, const std::vector<int64_t>& selected_rows);
+}
+
 std::shared_ptr<arrow::RecordBatch> RowDeduplicator::filter(const std::shared_ptr<arrow::RecordBatch>& batch)
 {
     if (!batch) return nullptr;
+    return takeSelectedRows(batch, selectNewRows(batch));
+}
+
+std::shared_ptr<arrow::RecordBatch> RowDeduplicator::filterOn(const std::shared_ptr<arrow::RecordBatch>& batch, const std::vector<ExpressionPtr>& keys)
+{
+    if (!batch) return nullptr;
+    std::vector<std::string> names;
+    names.reserve(keys.size());
+    for (std::size_t index = 0; index < keys.size(); ++index) names.push_back("__distinct_on_" + std::to_string(index));
+    const auto key_batches = applyProjection(RecordBatches{batch}, keys, names);
+    if (key_batches.empty() || !key_batches.front()) return takeSelectedRows(batch, {});
+    return takeSelectedRows(batch, selectNewRows(key_batches.front()));
+}
+
+std::vector<int64_t> RowDeduplicator::selectNewRows(const std::shared_ptr<arrow::RecordBatch>& batch)
+{
     std::vector<int64_t> selected_rows;
     selected_rows.reserve(static_cast<std::size_t>(batch->num_rows()));
     std::string key;
@@ -1440,6 +1460,12 @@ std::shared_ptr<arrow::RecordBatch> RowDeduplicator::filter(const std::shared_pt
         }
         if (seen_.insert(key).second) selected_rows.push_back(row);
     }
+    return selected_rows;
+}
+
+namespace {
+std::shared_ptr<arrow::RecordBatch> takeSelectedRows(const std::shared_ptr<arrow::RecordBatch>& batch, const std::vector<int64_t>& selected_rows)
+{
     if (selected_rows.size() == static_cast<std::size_t>(batch->num_rows())) return batch;
 
     arrow::Result<std::shared_ptr<arrow::RecordBatch>> result;
@@ -1468,6 +1494,7 @@ std::shared_ptr<arrow::RecordBatch> RowDeduplicator::filter(const std::shared_pt
     if (!result.ok()) throw std::runtime_error("DISTINCT failed to select rows: " + result.status().ToString());
     return *result;
 }
+} // namespace
 
 RecordBatches mldp_pvxs_driver::query::executor::applyDistinct(const RecordBatches& input)
 {
@@ -1480,4 +1507,22 @@ RecordBatches mldp_pvxs_driver::query::executor::applyDistinct(const RecordBatch
         if (unique && unique->num_rows() > 0) output.push_back(std::move(unique));
     }
     return output;
+}
+
+RecordBatches mldp_pvxs_driver::query::executor::applyDistinctOn(const RecordBatches& input, const std::vector<ExpressionPtr>& keys)
+{
+    RowDeduplicator deduplicator;
+    RecordBatches   output;
+    output.reserve(input.size());
+    for (const auto& batch : input)
+    {
+        auto unique = deduplicator.filterOn(batch, keys);
+        if (unique && unique->num_rows() > 0) output.push_back(std::move(unique));
+    }
+    return output;
+}
+
+std::shared_ptr<arrow::RecordBatch> mldp_pvxs_driver::query::executor::selectRows(const std::shared_ptr<arrow::RecordBatch>& batch, const std::vector<int64_t>& rows)
+{
+    return takeSelectedRows(batch, rows);
 }

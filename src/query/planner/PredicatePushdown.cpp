@@ -10,6 +10,8 @@
 
 #include <query/planner/PredicatePushdown.h>
 
+#include <query/plan/PlanVisit.h>
+
 using namespace mldp_pvxs_driver::query;
 using namespace mldp_pvxs_driver::query::planner;
 
@@ -22,25 +24,11 @@ plan::LogicalNodePtr rewrite(const plan::LogicalNodePtr& node)
         return node;
     }
 
-    if (auto* limit = std::get_if<plan::LogicalLimit>(&node->value))
-    {
-        limit->input = rewrite(limit->input);
-        return node;
-    }
-    if (auto* join = std::get_if<plan::LogicalJoin>(&node->value))
-    {
-        join->left = rewrite(join->left);
-        join->right = rewrite(join->right);
-        return node;
-    }
-    if (auto* project = std::get_if<plan::LogicalProject>(&node->value))
-    {
-        project->input = rewrite(project->input);
-        return node;
-    }
+    plan::forEachChild(*node, [](plan::LogicalNodePtr& child) { child = rewrite(child); });
+
+    // A filter directly over a scan pushes its predicates into the scan.
     if (auto* filter = std::get_if<plan::LogicalFilter>(&node->value))
     {
-        filter->input = rewrite(filter->input);
         auto* scan = std::get_if<plan::LogicalScan>(&filter->input->value);
         if (!scan)
         {

@@ -19,6 +19,7 @@ std::unique_ptr<IExecutionState> mldp_pvxs_driver::query::executor::makeRelation
     if (const auto* node = std::get_if<plan::PhysicalFilter>(&value)) return makeFilterExecutionState(*node, physical, context, stats);
     if (const auto* node = std::get_if<plan::PhysicalProject>(&value)) return makeProjectExecutionState(*node, physical, context, stats);
     if (const auto* node = std::get_if<plan::PhysicalSort>(&value)) return makeSortExecutionState(*node, physical, context, stats);
+    if (const auto* node = std::get_if<plan::PhysicalAggregate>(&value)) return makeAggregateExecutionState(*node, physical, context, stats);
     if (const auto* node = std::get_if<plan::PhysicalLimit>(&value)) return makeLimitExecutionState(*node, physical, context, stats);
     if (const auto* node = std::get_if<plan::PhysicalHashJoin>(&value)) return makeHashJoinExecutionState(*node, physical, context, stats);
     if (const auto* node = std::get_if<plan::PhysicalNestedLoopJoin>(&value)) return makeNestedLoopJoinExecutionState(*node, physical, context, stats);

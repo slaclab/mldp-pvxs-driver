@@ -20,6 +20,8 @@ The `query` subcommand runs SQL statements — parse → plan → execute → re
 - [SQL syntax reference](#sql-syntax-reference)
   - [Statement types](#statement-types)
   - [SELECT grammar](#select-grammar)
+  - [One row per key: `DISTINCT ON`](#one-row-per-key-distinct-on)
+  - [Grouping and aggregates: `GROUP BY` / `HAVING`](#grouping-and-aggregates-group-by--having)
   - [Predicates](#predicates)
   - [Time literals](#time-literals)
   - [Native value predicates](#native-value-predicates)
@@ -60,7 +62,7 @@ mldp_pvxs_driver -c config.yaml query "<SQL>"
 | `--memory-mb <n>` | `256` | Memory budget for the execution context (MiB). |
 | `--spill-dir <path>` | `<tmp>/mldp-query-spill` | Directory for spill files under memory pressure. |
 | `--table-catalog-dir <path>` | `<tmp>/mldp-query-catalog` | Root directory for durable Arrow IPC snapshots; separate from `--spill-dir`. |
-| `--spill-partitions <n>` | `16` | Spill partition count for join spill paths. |
+| `--spill-partitions <n>` | `16` | Spill partition count for join and `GROUP BY` spill paths. |
 | `--join-batch-size <n>` | `100` | Batch size hint for join execution and pagination. |
 
 ### Interactive session
@@ -421,11 +423,13 @@ where the response contract does not guarantee identical filtering semantics.
 ### SELECT grammar
 
 ```
-SELECT [DISTINCT] { * | column [, column ...] }
+SELECT [DISTINCT | DISTINCT ON (expr [, expr ...])] { * | expr [AS alias] [, ...] }
 FROM   <table> [AS <alias>]
        [JOIN <table> [AS <alias>] ON <col> = <col>] ...
 [WHERE <predicate> [AND <predicate>] ...]
-[ORDER BY column [ASC|DESC] [, column [ASC|DESC] ...]]
+[GROUP BY expr [, expr ...]]
+[HAVING <condition>]
+[ORDER BY expr [ASC|DESC] [, expr [ASC|DESC] ...]]
 [LIMIT <n>]
 [PAGE TOKEN '<token>']
 ```
@@ -459,7 +463,86 @@ ORDER BY attributes.device_group, attributes.ordinal;
 SELECT DISTINCT attributes.device_group FROM mldp.pv_metadata;
 ```
 
-`GROUP BY`, aggregates, and `HAVING` are not currently supported.
+### One row per key: `DISTINCT ON`
+
+`DISTINCT` compares *every* selected column, and `distinct(col)` is not a
+function — the parentheses do not limit it to `col`. To keep one row per key
+while showing other columns, use `DISTINCT ON (keys)`: it keeps the first row
+for each distinct key combination and returns all selected columns. The keys
+need not be selected. Combine it with `ORDER BY` to choose which row is kept.
+
+```sql
+-- One line per configuration, with its description
+SELECT DISTINCT ON (config_name) config_name, description
+FROM mldp.configuration_activation;
+
+-- Most recent activation per configuration
+SELECT DISTINCT ON (config_name) config_name, time, activation_id
+FROM mldp.configuration_activation
+ORDER BY time DESC;
+```
+
+### Grouping and aggregates: `GROUP BY` / `HAVING`
+
+`GROUP BY` collapses rows with equal keys into one row and computes aggregates
+over each group. Without `GROUP BY`, aggregates in the select list compute one
+row over the whole result (and still return one row for empty input).
+
+| Aggregate | Result | Notes |
+|---|---|---|
+| `COUNT(*)` | int | Rows in the group, including nulls. |
+| `COUNT(x)` / `COUNT(DISTINCT x)` | int | Non-null values / distinct non-null values. |
+| `SUM(x)` | int or double | Numeric only; double when any value is floating point. |
+| `AVG(x)` | double | Numeric only. |
+| `MIN(x)` / `MAX(x)` | type of `x` | Numbers, strings, timestamps; native `value` compares numerically. |
+| `FIRST(x)` / `LAST(x)` | type of `x` | First / last non-null value in input order. |
+
+Rules:
+
+- Every selected column must be a `GROUP BY` key or appear inside an aggregate
+  (`SELECT config_name, description ... GROUP BY config_name` is an error; use
+  `FIRST(description)` or `DISTINCT ON`).
+- `SELECT *` cannot be combined with `GROUP BY`.
+- `HAVING` filters groups and may use aggregates; `WHERE` filters input rows
+  before grouping and cannot.
+- `ORDER BY` may reference a group key, an aggregate, a select alias, or a
+  select position (`ORDER BY 2 DESC`).
+- Output names: aggregates are named `count`, `max_time`, `count_distinct_pv`,
+  … unless given an `AS` alias.
+- Groups are returned in first-appearance order unless `ORDER BY` is given.
+
+Grouping runs **locally on the downloaded rows**: MLDP has no server-side
+aggregation, so `GROUP BY` over `mldp.time_series` still fetches every sample
+in the selection. Narrow the query with `pv`, `time`/`window`, and `config_*`
+predicates first. `LIMIT` applies to groups and is not pushed to the backend.
+
+Execution is streaming: each backend page is folded into the groups and then
+released, so memory follows the number of groups, not the number of samples.
+When group state exceeds `--memory-mb` (256 MiB by default), new keys are
+hash-partitioned to spill files in `--spill-dir` (`--spill-partitions` files)
+and aggregated one partition at a time; results are identical, only group
+order changes.
+`EXPLAIN` shows the step as `PhysicalAggregate(keys=…, aggregates=…)`, and
+`SHOW FUNCTIONS` lists the aggregates with `kind = aggregate`.
+
+```sql
+-- Activation count and span per configuration, busiest first
+SELECT config_name, COUNT(*) AS n, MIN(time), MAX(time)
+FROM mldp.configuration_activation
+GROUP BY config_name
+HAVING COUNT(*) > 1
+ORDER BY n DESC
+LIMIT 10;
+
+-- Per-PV sample statistics over the last hour
+SELECT pv, COUNT(*), AVG(value), MIN(value), MAX(value)
+FROM mldp.time_series
+WHERE pv PREFIX 'RF:' AND time >= NOW - 1h
+GROUP BY pv;
+
+-- Whole-table totals
+SELECT COUNT(*), COUNT(DISTINCT config_name) FROM mldp.configuration_activation;
+```
 
 ### Compact and expanded table output
 
@@ -714,6 +797,11 @@ backend: by `pv_tag`/`pv_attributes.<key>` when present, else by the PV-name
 pattern, else every PV (`.*`). Different `config_*` columns are ANDed; values
 within one are ORed. Series sharding applies only to explicit PV lists.
 
+`config_*` and `status_*` predicates are exact per sample, so a query that uses
+them runs on MLDP's sample-oriented `querySamples` instead of `queryBuckets`
+(bucket queries would return every bucket overlapping a matching activation
+whole). Results keep the normal long-form columns.
+
 ```sql
 SELECT pv, time, value
 FROM mldp.time_series
@@ -835,8 +923,10 @@ pattern, `pv_tag`, `pv_attributes.<key>`, and `config_*` predicates of
 followed by returned PV columns in the requested-PV order (sorted by name when
 the backend selects the PVs).
 
-Sample-status filtering (`status_*`, predicate-only) uses the sample-oriented
-MLDP query, which this table runs natively instead of pivoting bucket cursors:
+Sample-status filtering (`status_*`, predicate-only, also accepted by
+`mldp.time_series`) uses the sample-oriented MLDP query. With `status_*` or
+`config_*` predicates this table runs that query natively instead of pivoting
+bucket cursors:
 
 | Column | Pushable operators | Notes |
 |---|---|---|
@@ -846,7 +936,7 @@ MLDP query, which this table runs natively instead of pivoting bucket cursors:
 | `status_mode` | `=` | `'include'` (default) keeps only samples with a matching status; `'exclude'` drops them. |
 
 Filtered-out samples become nulls; timestamps where every PV is filtered out
-are omitted. `status_*` on `mldp.time_series` is rejected. Each PV column keeps its native Arrow type; shorter
+are omitted. Each PV column keeps its native Arrow type; shorter
 returned vectors are padded with trailing nulls. Each generated PV Arrow field
 carries its archived column metadata as key/value entries (`tags`,
 `attributes.<key>`, `provenance.source`, and `provenance.process`). This is a special runtime-shaped

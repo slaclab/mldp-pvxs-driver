@@ -94,6 +94,7 @@ struct LogicalProject {
     std::vector<ExpressionPtr> expressions;         ///< Computed expressions for derived columns.
     std::vector<std::string> names;                 ///< Output names corresponding to expressions.
     bool                   distinct{false};          ///< True for SELECT DISTINCT: drop duplicate output rows.
+    std::vector<ExpressionPtr> distinct_on;         ///< DISTINCT ON keys evaluated on the input; empty compares whole output rows.
 };
 
 /** @brief Restricts the number of rows emitted by a logical input. */
@@ -107,6 +108,37 @@ struct SortKey {
     std::string column;             ///< Output column name to sort by.
     ExpressionPtr expression;       ///< Optional computed sort expression.
     bool        descending{false};  ///< True for descending order.
+};
+
+/** @brief One aggregate computed per group. */
+struct AggregateCall {
+    std::string   function;        ///< Lower-case AggregateRegistry function name (count, sum, ...).
+    ExpressionPtr argument;        ///< Input expression; null for COUNT(*).
+    bool          distinct{false}; ///< True for COUNT(DISTINCT x).
+    std::string   name;            ///< Internal output column name.
+};
+
+/** @brief One GROUP BY key evaluated on the aggregate input. */
+struct GroupKey {
+    ExpressionPtr expression; ///< Key expression bound against the input tables.
+    std::string   name;       ///< Internal output column name.
+};
+
+/** @brief GROUP BY / aggregate specification.
+ *
+ *  The aggregate output holds one column per key followed by one per aggregate,
+ *  named by GroupKey::name and AggregateCall::name.  HAVING and the ORDER BY /
+ *  projection above the aggregate reference those internal names. */
+struct AggregateSpec {
+    std::vector<GroupKey>      keys;       ///< GROUP BY keys; empty for a single global group.
+    std::vector<AggregateCall> aggregates; ///< Aggregates computed per group.
+    ExpressionPtr              having;     ///< Boolean HAVING condition over the aggregate output; may be null.
+};
+
+/** @brief Groups input rows and computes aggregates (GROUP BY). */
+struct LogicalAggregate {
+    LogicalNodePtr input; ///< Input plan node (scan, filter or join).
+    AggregateSpec  spec;  ///< Keys, aggregates and HAVING condition.
 };
 
 /** @brief Orders rows from a logical input by one or more sort keys. */
@@ -127,7 +159,7 @@ struct LogicalJoin {
     std::vector<std::string>    warnings;                     ///< Planner-generated warnings about this join.
 };
 
-using LogicalNodeVariant = std::variant<LogicalScan, LogicalFilter, LogicalProject, LogicalSort, LogicalLimit, LogicalJoin>;
+using LogicalNodeVariant = std::variant<LogicalScan, LogicalFilter, LogicalProject, LogicalSort, LogicalLimit, LogicalJoin, LogicalAggregate>;
 
 /** @brief Variant wrapper that forms a logical-plan tree. */
 struct LogicalNode {
@@ -169,6 +201,8 @@ struct BoundSelect {
     BoundTable                  from;                        ///< Primary FROM table.
     std::vector<BoundJoinClause> joins;                     ///< JOIN clauses.
     bool                        distinct{false};             ///< True for SELECT DISTINCT.
+    std::vector<ExpressionPtr>  distinct_on;                 ///< DISTINCT ON key expressions.
+    std::shared_ptr<const AggregateSpec> aggregate;          ///< Grouping step for aggregate queries; null otherwise.
     bool                        select_all{false};           ///< True for SELECT *.
     std::vector<std::string>    select_columns;              ///< Explicit output column names.
     std::vector<ExpressionPtr>  select_expressions;         ///< Computed expressions for derived columns.

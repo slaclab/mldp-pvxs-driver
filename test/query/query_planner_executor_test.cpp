@@ -1746,6 +1746,114 @@ TEST_F(PlannerExecutorTest, SelectDistinctDropsDuplicateRowsOnCatalogAndVirtualT
     const auto explained = query::plan::physicalPlanToString(planner.plan(query::parseQuery("SELECT DISTINCT pv FROM fake.samples WHERE pv IN ('A', 'B') LIMIT 1")));
     EXPECT_NE(explained.find("distinct=true"), std::string::npos);
     EXPECT_EQ(explained.find("row_limit="), std::string::npos);
+
+    // DISTINCT ON keeps the first row per key while projecting other columns.
+    const auto on_pv = executor.execute(planner.plan(query::parseQuery("SELECT DISTINCT ON (pv) pv, value FROM dup_samples")), context);
+    ASSERT_EQ(rowCount(on_pv), 2);
+    EXPECT_EQ((*on_pv.batches.front()->column(1)->GetScalar(0))->ToString(), "1");
+    // With ORDER BY the kept row is the first in that order (here the largest value).
+    const auto latest = executor.execute(planner.plan(query::parseQuery("SELECT DISTINCT ON (pv) pv, value FROM dup_samples ORDER BY value DESC")), context);
+    ASSERT_EQ(rowCount(latest), 2);
+    EXPECT_EQ((*latest.batches.front()->column(1)->GetScalar(0))->ToString(), "3");
+    // The key need not be projected.
+    const auto key_hidden = executor.execute(planner.plan(query::parseQuery("SELECT DISTINCT ON (pv) value FROM dup_samples")), context);
+    ASSERT_EQ(rowCount(key_hidden), 2);
+    ASSERT_EQ(key_hidden.batches.front()->num_columns(), 1);
+    EXPECT_EQ(rowCount(executor.execute(planner.plan(query::parseQuery("SELECT DISTINCT ON (pv) * FROM dup_samples")), context)), 2);
+    EXPECT_EQ(rowCount(executor.execute(planner.plan(query::parseQuery("SELECT DISTINCT ON (value) pv FROM dup_samples")), context)), 3);
+}
+
+TEST_F(PlannerExecutorTest, GroupByComputesAggregatesOnCatalogAndVirtualTables)
+{
+    auto file_system = std::make_shared<arrow::fs::internal::MockFileSystem>(std::chrono::system_clock::now());
+    auto catalog = std::make_shared<query::QueryTableCatalog>(file_system, "catalog");
+
+    arrow::StringBuilder pv_builder;
+    arrow::Int64Builder  value_builder;
+    ASSERT_TRUE(pv_builder.AppendValues({"A", "A", "B", "A", "B"}).ok());
+    ASSERT_TRUE(value_builder.AppendValues({1, 4, 2, 3, 2}).ok());
+    ASSERT_TRUE(value_builder.AppendNull().ok());
+    ASSERT_TRUE(pv_builder.Append("C").ok());
+    std::shared_ptr<arrow::Array> pv;
+    std::shared_ptr<arrow::Array> value;
+    ASSERT_TRUE(pv_builder.Finish(&pv).ok());
+    ASSERT_TRUE(value_builder.Finish(&value).ok());
+    const auto schema = arrow::schema({arrow::field("pv", arrow::utf8()), arrow::field("value", arrow::int64())});
+    // Groups span both batches, so accumulators must persist across batches.
+    const auto first = arrow::RecordBatch::Make(schema, 3, {pv->Slice(0, 3), value->Slice(0, 3)});
+    const auto second = arrow::RecordBatch::Make(schema, 3, {pv->Slice(3, 3), value->Slice(3, 3)});
+    ASSERT_TRUE(catalog->create("grp_samples", query::TableLifetime::Session, {first, second}).ok());
+
+    query::ExecutionContext context{.pool = arrow::default_memory_pool(), .table_catalog = catalog};
+    query::QueryPlanner     planner(catalog);
+    query::QueryExecutor    executor;
+    const auto run = [&](const std::string& sql)
+    {
+        const auto result = executor.execute(planner.plan(query::parseQuery(sql)), context);
+        query::executor::RecordBatches batches;
+        for (const auto& batch : result.batches)
+            if (batch && batch->num_rows() > 0) batches.push_back(batch);
+        return batches.empty() ? std::shared_ptr<arrow::RecordBatch>{} : batches.front();
+    };
+    const auto cell = [](const std::shared_ptr<arrow::RecordBatch>& batch, const int column, const int64_t row)
+    {
+        return (*batch->column(column)->GetScalar(row))->ToString();
+    };
+
+    const auto grouped = run("SELECT pv, COUNT(*), COUNT(value), SUM(value), AVG(value), MIN(value), MAX(value), FIRST(value), LAST(value) FROM grp_samples GROUP BY pv");
+    ASSERT_NE(grouped, nullptr);
+    ASSERT_EQ(grouped->num_rows(), 3);
+    EXPECT_EQ(grouped->schema()->field(1)->name(), "count");
+    EXPECT_EQ(grouped->schema()->field(3)->name(), "sum_value");
+    // Groups keep first-appearance order: A, B, C.
+    EXPECT_EQ(cell(grouped, 0, 0), "A");
+    EXPECT_EQ(cell(grouped, 1, 0), "3");
+    EXPECT_EQ(cell(grouped, 3, 0), "8");
+    EXPECT_EQ(cell(grouped, 5, 0), "1");
+    EXPECT_EQ(cell(grouped, 6, 0), "4");
+    EXPECT_EQ(cell(grouped, 7, 0), "1");
+    EXPECT_EQ(cell(grouped, 8, 0), "3");
+    // C has only a null value: COUNT(*) counts it, the value aggregates do not.
+    EXPECT_EQ(cell(grouped, 1, 2), "1");
+    EXPECT_EQ(cell(grouped, 2, 2), "0");
+    EXPECT_FALSE(grouped->column(3)->IsValid(2));
+    EXPECT_FALSE(grouped->column(4)->IsValid(2));
+
+    const auto having = run("SELECT pv, COUNT(*) AS n FROM grp_samples GROUP BY pv HAVING COUNT(*) > 1 ORDER BY n DESC");
+    ASSERT_NE(having, nullptr);
+    ASSERT_EQ(having->num_rows(), 2);
+    EXPECT_EQ(cell(having, 0, 0), "A");
+    EXPECT_EQ(cell(having, 0, 1), "B");
+    const auto positional = run("SELECT pv, MAX(value) FROM grp_samples GROUP BY pv ORDER BY 2 DESC LIMIT 1");
+    ASSERT_NE(positional, nullptr);
+    ASSERT_EQ(positional->num_rows(), 1);
+    EXPECT_EQ(cell(positional, 0, 0), "A");
+
+    const auto global = run("SELECT COUNT(*), COUNT(DISTINCT pv), SUM(value) + 1 AS total FROM grp_samples");
+    ASSERT_NE(global, nullptr);
+    ASSERT_EQ(global->num_rows(), 1);
+    EXPECT_EQ(cell(global, 0, 0), "6");
+    EXPECT_EQ(cell(global, 1, 0), "3");
+    EXPECT_EQ(cell(global, 2, 0), "13");
+
+    // An empty input still yields one global row.
+    const auto empty = run("SELECT COUNT(*) FROM grp_samples WHERE pv = 'Z'");
+    ASSERT_NE(empty, nullptr);
+    EXPECT_EQ(cell(empty, 0, 0), "0");
+
+    const auto virtual_grouped = run("SELECT pv, COUNT(*) FROM fake.samples WHERE pv IN ('A', 'B') GROUP BY pv");
+    ASSERT_NE(virtual_grouped, nullptr);
+    EXPECT_GT(virtual_grouped->num_rows(), 0);
+
+    // Aggregation reads every input row, so LIMIT is not pushed to the scan.
+    const auto explained = query::plan::physicalPlanToString(planner.plan(query::parseQuery("SELECT pv, COUNT(*) FROM fake.samples WHERE pv IN ('A', 'B') GROUP BY pv LIMIT 1")));
+    EXPECT_NE(explained.find("PhysicalAggregate(keys=1, aggregates=1)"), std::string::npos);
+    EXPECT_EQ(explained.find("row_limit="), std::string::npos);
+
+    EXPECT_THROW(planner.plan(query::parseQuery("SELECT pv, value FROM grp_samples GROUP BY pv")), query::plan::PlannerException);
+    EXPECT_THROW(planner.plan(query::parseQuery("SELECT * FROM grp_samples GROUP BY pv")), query::plan::PlannerException);
+    EXPECT_THROW(planner.plan(query::parseQuery("SELECT SUM(pv) FROM grp_samples")), query::plan::PlannerException);
+    EXPECT_THROW(planner.plan(query::parseQuery("SELECT MAX(*) FROM grp_samples")), query::plan::PlannerException);
 }
 
 TEST_F(PlannerExecutorTest, FiltersMaterializedDenseUnionValuesNumerically)
@@ -2329,12 +2437,22 @@ TEST_F(PlannerExecutorTest, ShowFunctionsAndOperatorsExposeSortedCallableCatalog
     EXPECT_EQ(function_batch->schema()->field(0)->name(), "name");
     EXPECT_EQ(function_batch->schema()->field(1)->name(), "arguments");
     EXPECT_EQ(function_batch->schema()->field(2)->name(), "returns");
-    ASSERT_EQ(function_batch->num_rows(), 3);
-    EXPECT_EQ(function_batch->column(0)->GetScalar(0).ValueOrDie()->ToString(), "from_utc");
-    EXPECT_EQ(function_batch->column(1)->GetScalar(0).ValueOrDie()->ToString(), "(timestamp, string)");
-    EXPECT_EQ(function_batch->column(0)->GetScalar(1).ValueOrDie()->ToString(), "to_utc");
-    EXPECT_EQ(function_batch->column(1)->GetScalar(1).ValueOrDie()->ToString(), "(string)");
-    EXPECT_EQ(function_batch->column(1)->GetScalar(2).ValueOrDie()->ToString(), "(string, string)");
+    // Scalar functions and the aggregate registry, sorted by name.
+    std::vector<std::string> names;
+    std::map<std::string, std::string> kinds;
+    const auto kind_index = function_batch->schema()->GetFieldIndex("kind");
+    ASSERT_GE(kind_index, 0);
+    for (int64_t row = 0; row < function_batch->num_rows(); ++row)
+    {
+        names.push_back(function_batch->column(0)->GetScalar(row).ValueOrDie()->ToString());
+        kinds[names.back()] = function_batch->column(kind_index)->GetScalar(row).ValueOrDie()->ToString();
+    }
+    EXPECT_TRUE(std::is_sorted(names.begin(), names.end()));
+    EXPECT_EQ(names, (std::vector<std::string>{"avg", "count", "first", "from_utc", "last", "max", "min", "sum", "to_utc", "to_utc"}));
+    EXPECT_EQ(kinds["count"], "aggregate");
+    EXPECT_EQ(kinds["from_utc"], "scalar");
+    const auto from_utc = std::find(names.begin(), names.end(), "from_utc") - names.begin();
+    EXPECT_EQ(function_batch->column(1)->GetScalar(from_utc).ValueOrDie()->ToString(), "(timestamp, string)");
 
     const auto operators = executor.execute(planner.plan(query::parseQuery("SHOW OPERATORS")), context);
     ASSERT_EQ(operators.batches.size(), 1U);

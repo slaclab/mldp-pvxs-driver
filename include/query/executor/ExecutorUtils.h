@@ -120,6 +120,17 @@ public:
      * @return Batch with only first-seen rows (possibly zero rows), or null for null input. */
     std::shared_ptr<arrow::RecordBatch> filter(const std::shared_ptr<arrow::RecordBatch>& batch);
 
+    /** @brief Returns the indexes of batch rows that were not seen before, recording them as seen.
+     * @param[in] batch Input batch; must not be null. Every column is part of the row key.
+     * @return Ascending row indexes of first-seen rows. */
+    std::vector<int64_t> selectNewRows(const std::shared_ptr<arrow::RecordBatch>& batch);
+
+    /** @brief Keeps rows of @p batch whose DISTINCT ON key (evaluated on that batch) was not seen before.
+     * @param[in] batch Input batch; may be null.
+     * @param[in] keys  DISTINCT ON key expressions evaluated against @p batch.
+     * @return Batch with first-seen key rows (possibly zero rows), or null for null input. */
+    std::shared_ptr<arrow::RecordBatch> filterOn(const std::shared_ptr<arrow::RecordBatch>& batch, const std::vector<ExpressionPtr>& keys);
+
 private:
     std::unordered_set<std::string> seen_; ///< Encoded keys of every row already emitted.
 };
@@ -128,5 +139,17 @@ private:
  * @param[in] input Input batches.
  * @return Batches without duplicate rows; empty batches are dropped. */
 RecordBatches applyDistinct(const RecordBatches& input);
+
+/** @brief Returns the given rows of a batch, in order; safe for dense-union columns.
+ * @param[in] batch Input batch.
+ * @param[in] rows  Ascending row indexes to keep.
+ * @return Batch with only the selected rows. */
+std::shared_ptr<arrow::RecordBatch> selectRows(const std::shared_ptr<arrow::RecordBatch>& batch, const std::vector<int64_t>& rows);
+
+/** @brief Keeps the first row for each DISTINCT ON key across a batch vector.
+ * @param[in] input Input batches (before projection).
+ * @param[in] keys  Key expressions evaluated on the input batches.
+ * @return Batches with one row per key; empty batches are dropped. */
+RecordBatches applyDistinctOn(const RecordBatches& input, const std::vector<ExpressionPtr>& keys);
 
 } // namespace mldp_pvxs_driver::query::executor

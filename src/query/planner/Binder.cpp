@@ -13,11 +13,15 @@
 #include <query/QueryableFactory.h>
 #include <query/QueryTableCatalog.h>
 #include <query/ScalarFunctionRegistry.h>
+#include <query/AggregateRegistry.h>
 #include <query/ExpressionRegistry.h>
 #include <query/plan/PlannerError.h>
 
 #include <arrow/type.h>
 
+#include <algorithm>
+#include <map>
+#include <optional>
 #include <sstream>
 #include <cctype>
 #include <type_traits>
@@ -301,6 +305,283 @@ ColumnType bindExpression(const ExpressionPtr& expression, const std::vector<pla
             return ExpressionRegistry{}.resolveOperator(value.operator_name, ExpressionCallableKind::BINARY_OPERATOR, {left, right}).inferReturnType({left, right});
         }
     }, expression->value);
+}
+
+// ---------------------------------------------------------------------------
+// GROUP BY / aggregate binding
+// ---------------------------------------------------------------------------
+
+const IAggregateFunction* aggregateFunction(std::string_view name)
+{
+    return AggregateRegistry::instance().find(name);
+}
+
+bool isAggregateCall(const ExpressionPtr& expression)
+{
+    const auto* call = expression ? std::get_if<FunctionCall>(&expression->value) : nullptr;
+    return call != nullptr && aggregateFunction(call->name) != nullptr;
+}
+
+bool containsAggregate(const ExpressionPtr& expression)
+{
+    if (!expression) return false;
+    return std::visit([](const auto& value) -> bool
+    {
+        using T = std::decay_t<decltype(value)>;
+        if constexpr (std::is_same_v<T, FunctionCall>)
+        {
+            if (aggregateFunction(value.name)) return true;
+            return std::any_of(value.arguments.begin(), value.arguments.end(), containsAggregate);
+        }
+        else if constexpr (std::is_same_v<T, UnaryExpression>) return containsAggregate(value.operand);
+        else if constexpr (std::is_same_v<T, BinaryExpression>) return containsAggregate(value.left) || containsAggregate(value.right);
+        else return false;
+    }, expression->value);
+}
+
+ExpressionPtr cloneExpression(const ExpressionPtr& expression)
+{
+    if (!expression) return nullptr;
+    return std::visit([](const auto& value) -> ExpressionPtr
+    {
+        using T = std::decay_t<decltype(value)>;
+        if constexpr (std::is_same_v<T, FunctionCall>)
+        {
+            FunctionCall copy = value;
+            for (auto& argument : copy.arguments) argument = cloneExpression(argument);
+            return std::make_shared<Expression>(Expression{.value = std::move(copy)});
+        }
+        else if constexpr (std::is_same_v<T, UnaryExpression>)
+            return std::make_shared<Expression>(Expression{.value = UnaryExpression{value.operator_name, cloneExpression(value.operand)}});
+        else if constexpr (std::is_same_v<T, BinaryExpression>)
+            return std::make_shared<Expression>(Expression{.value = BinaryExpression{value.operator_name, cloneExpression(value.left), cloneExpression(value.right)}});
+        else
+            return std::make_shared<Expression>(Expression{.value = value});
+    }, expression->value);
+}
+
+// Unambiguous rendering used to match a select expression to a GROUP BY key.
+std::string canonicalExpression(const ExpressionPtr& expression)
+{
+    if (!expression) return "";
+    return std::visit([](const auto& value) -> std::string
+    {
+        using T = std::decay_t<decltype(value)>;
+        if constexpr (std::is_same_v<T, FunctionCall>)
+        {
+            std::string lower(value.name);
+            std::transform(lower.begin(), lower.end(), lower.begin(), [](const unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+            std::string text = lower + "(" + (value.distinct ? "distinct " : "") + (value.star ? "*" : "");
+            for (std::size_t index = 0; index < value.arguments.size(); ++index)
+                text += (index == 0 ? "" : ",") + canonicalExpression(value.arguments[index]);
+            return text + ")";
+        }
+        else if constexpr (std::is_same_v<T, LiteralValue>)
+        {
+            if (const auto* text = std::get_if<std::string>(&value)) return "'" + *text + "'";
+            return renderExpression(std::make_shared<Expression>(Expression{.value = value}));
+        }
+        else if constexpr (std::is_same_v<T, UnaryExpression>) return "(" + value.operator_name + " " + canonicalExpression(value.operand) + ")";
+        else if constexpr (std::is_same_v<T, BinaryExpression>)
+            return "(" + canonicalExpression(value.left) + " " + value.operator_name + " " + canonicalExpression(value.right) + ")";
+        else return "col:" + value.name;
+    }, expression->value);
+}
+
+// Display name for an aggregate output, e.g. count, max_time, count_distinct_pv.
+std::string aggregateDisplayName(const FunctionCall& call)
+{
+    std::string lower(call.name);
+    std::transform(lower.begin(), lower.end(), lower.begin(), [](const unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    if (call.star || call.arguments.empty()) return lower;
+    return lower + (call.distinct ? "_distinct_" : "_") + generatedExpressionName(call.arguments.front());
+}
+
+std::string selectItemName(const SelectItem& item, const bool multi_table, const std::vector<plan::BoundTable>& tables)
+{
+    if (item.alias) return *item.alias;
+    if (const auto* column = std::get_if<QualifiedColumn>(&item.expression->value))
+    {
+        const auto resolved = resolveColumnReference(*column, tables);
+        return multi_table ? qualify(resolved.table_alias, resolved.column_name) : resolved.column_name;
+    }
+    if (const auto* call = std::get_if<FunctionCall>(&item.expression->value); call && aggregateFunction(call->name))
+        return aggregateDisplayName(*call);
+    return generatedExpressionName(item.expression);
+}
+
+/** Rewrites select / HAVING / ORDER BY expressions of an aggregate query so
+ *  they reference only the aggregate output (group keys and aggregate results). */
+class AggregateRewriter
+{
+public:
+    AggregateRewriter(const std::vector<plan::BoundTable>& tables, const bool multi_table) : tables_(tables), multi_table_(multi_table) {}
+
+    void addKey(const ExpressionPtr& expression)
+    {
+        if (containsAggregate(expression))
+            throw plan::PlannerException(plan::BindError{.message = "GROUP BY cannot contain an aggregate function"});
+        auto bound = cloneExpression(expression);
+        const auto type = bindExpression(bound, tables_, multi_table_);
+        if (type == ColumnType::NATIVE_VALUE)
+            throw plan::PlannerException(plan::BindError{.message = "GROUP BY requires a scalar expression; native sample values cannot be grouped"});
+        const auto canonical = canonicalExpression(bound);
+        if (key_index_.contains(canonical)) return;
+        const auto name = "__key_" + std::to_string(spec_.keys.size());
+        key_index_.emplace(canonical, spec_.keys.size());
+        spec_.keys.push_back(plan::GroupKey{.expression = bound, .name = name});
+        output_schema_.push_back(ColumnSchema{.name = name, .type = type, .required = false, .is_output = true, .pushable_ops = {}, .filterable_ops = {}, .notes = {}});
+    }
+
+    /** Returns an equivalent expression over the aggregate output. */
+    ExpressionPtr rewrite(const ExpressionPtr& expression)
+    {
+        if (!expression) return nullptr;
+        if (isAggregateCall(expression)) return column(aggregate(std::get<FunctionCall>(expression->value)));
+        if (std::holds_alternative<LiteralValue>(expression->value)) return expression;
+        if (!containsAggregate(expression))
+        {
+            auto bound = cloneExpression(expression);
+            (void)bindExpression(bound, tables_, multi_table_);
+            if (const auto found = key_index_.find(canonicalExpression(bound)); found != key_index_.end())
+                return column(spec_.keys[found->second].name);
+            if (const auto* reference = std::get_if<QualifiedColumn>(&bound->value))
+                throw plan::PlannerException(plan::BindError{
+                    .message = "Column '" + reference->name + "' must appear in GROUP BY or be used in an aggregate function"});
+        }
+        return std::visit([this, &expression](const auto& value) -> ExpressionPtr
+        {
+            using T = std::decay_t<decltype(value)>;
+            if constexpr (std::is_same_v<T, FunctionCall>)
+            {
+                FunctionCall copy = value;
+                for (auto& argument : copy.arguments) argument = rewrite(argument);
+                return std::make_shared<Expression>(Expression{.value = std::move(copy)});
+            }
+            else if constexpr (std::is_same_v<T, UnaryExpression>)
+                return std::make_shared<Expression>(Expression{.value = UnaryExpression{value.operator_name, rewrite(value.operand)}});
+            else if constexpr (std::is_same_v<T, BinaryExpression>)
+                return std::make_shared<Expression>(Expression{.value = BinaryExpression{value.operator_name, rewrite(value.left), rewrite(value.right)}});
+            else
+                return expression;
+        }, expression->value);
+    }
+
+    /** Type-checks a rewritten expression against the aggregate output. */
+    ColumnType check(const ExpressionPtr& rewritten) const
+    {
+        const std::vector<plan::BoundTable> output{plan::BoundTable{.table_name = "aggregate", .table_alias = "", .schema = output_schema_}};
+        return bindExpression(rewritten, output, false);
+    }
+
+    plan::AggregateSpec& spec() { return spec_; }
+
+private:
+    static ExpressionPtr column(const std::string& name)
+    {
+        return std::make_shared<Expression>(Expression{.value = QualifiedColumn{.qualifier = std::nullopt, .name = name, .path = {}}});
+    }
+
+    std::string aggregate(const FunctionCall& call)
+    {
+        const auto* function = aggregateFunction(call.name);
+        if (!call.star && call.arguments.size() != 1)
+            throw plan::PlannerException(plan::BindError{.message = "Aggregate function '" + call.name + "' takes exactly one argument"});
+        ExpressionPtr             argument;
+        std::optional<ColumnType> argument_type;
+        if (!call.star)
+        {
+            if (containsAggregate(call.arguments.front()))
+                throw plan::PlannerException(plan::BindError{.message = "Aggregate functions cannot be nested"});
+            argument = cloneExpression(call.arguments.front());
+            argument_type = bindExpression(argument, tables_, multi_table_);
+        }
+        const auto type = function->bind(argument_type, call.distinct);
+        FunctionCall normalized = call;
+        normalized.arguments = argument ? std::vector<ExpressionPtr>{argument} : std::vector<ExpressionPtr>{};
+        const auto canonical = canonicalExpression(std::make_shared<Expression>(Expression{.value = normalized}));
+        if (const auto found = aggregate_index_.find(canonical); found != aggregate_index_.end())
+            return spec_.aggregates[found->second].name;
+        const auto name = "__agg_" + std::to_string(spec_.aggregates.size());
+        aggregate_index_.emplace(canonical, spec_.aggregates.size());
+        spec_.aggregates.push_back(plan::AggregateCall{.function = function->descriptor().name, .argument = argument, .distinct = call.distinct, .name = name});
+        output_schema_.push_back(ColumnSchema{.name = name, .type = type, .required = false, .is_output = true, .pushable_ops = {}, .filterable_ops = {}, .notes = {}});
+        return name;
+    }
+
+    const std::vector<plan::BoundTable>&     tables_;
+    bool                                     multi_table_;
+    plan::AggregateSpec                      spec_;
+    std::vector<ColumnSchema>                output_schema_;
+    std::map<std::string, std::size_t>       key_index_;
+    std::map<std::string, std::size_t>       aggregate_index_;
+};
+
+bool isAggregateQuery(const SelectStatement& statement)
+{
+    if (!statement.group_by.empty() || statement.having) return true;
+    if (std::any_of(statement.select_items.begin(), statement.select_items.end(), [](const auto& item) { return containsAggregate(item.expression); }))
+        return true;
+    return std::any_of(statement.order_by.begin(), statement.order_by.end(), [](const auto& item) { return containsAggregate(item.expression); });
+}
+
+void bindAggregateQuery(const SelectStatement& statement, const std::vector<plan::BoundTable>& tables, const bool multi_table, plan::BoundSelect& bound)
+{
+    if (statement.select_all)
+        throw plan::PlannerException(plan::BindError{.message = "SELECT * cannot be used with GROUP BY or aggregate functions; list the grouped columns and aggregates"});
+    if (!statement.distinct_on.empty())
+        throw plan::PlannerException(plan::BindError{.message = "DISTINCT ON cannot be combined with GROUP BY or aggregate functions"});
+
+    AggregateRewriter rewriter(tables, multi_table);
+    for (const auto& key : statement.group_by) rewriter.addKey(key);
+
+    std::map<std::string, ExpressionPtr> aliases;
+    for (const auto& item : statement.select_items)
+    {
+        auto rewritten = rewriter.rewrite(item.expression);
+        const auto name = selectItemName(item, multi_table, tables);
+        bound.select_columns.push_back(name);
+        bound.select_expressions.push_back(rewritten);
+        bound.select_names.push_back(name);
+        aliases.emplace(name, rewritten);
+    }
+
+    if (statement.having)
+    {
+        auto having = rewriter.rewrite(statement.having);
+        if (rewriter.check(having) != ColumnType::BOOL)
+            throw plan::PlannerException(plan::BindError{.message = "HAVING requires a boolean condition"});
+        rewriter.spec().having = having;
+    }
+
+    for (const auto& item : statement.order_by)
+    {
+        const auto expression = item.expression ? item.expression : std::make_shared<Expression>(Expression{.value = item.column});
+        ExpressionPtr rewritten;
+        // ORDER BY may name a select output by position (1-based)...
+        if (const auto* literal = std::get_if<LiteralValue>(&expression->value))
+        {
+            const auto* position = std::get_if<int64_t>(literal);
+            if (position == nullptr || *position < 1 || *position > static_cast<int64_t>(bound.select_expressions.size()))
+                throw plan::PlannerException(plan::BindError{.message = "ORDER BY position is out of range"});
+            rewritten = bound.select_expressions[static_cast<std::size_t>(*position - 1)];
+        }
+        // ...or by alias / display name.
+        else if (const auto* column = std::get_if<QualifiedColumn>(&expression->value); column && !column->qualifier)
+            if (const auto alias = aliases.find(column->name); alias != aliases.end()) rewritten = alias->second;
+        if (!rewritten) rewritten = rewriter.rewrite(expression);
+        const auto* reference = std::get_if<QualifiedColumn>(&rewritten->value);
+        if (reference == nullptr)
+            throw plan::PlannerException(plan::BindError{
+                .message = "ORDER BY in an aggregate query must name a grouped column, an aggregate, or a select alias"});
+        bound.order_by.push_back(plan::SortKey{
+            .column = reference->name,
+            .expression = rewritten,
+            .descending = item.direction == SortDirection::DESCENDING});
+    }
+
+    for (const auto& expression : bound.select_expressions) (void)rewriter.check(expression);
+    bound.aggregate = std::make_shared<const plan::AggregateSpec>(std::move(rewriter.spec()));
 }
 
 plan::PlannerPredicate buildPredicate(const WherePredicate& where,
@@ -761,6 +1042,7 @@ plan::BoundSelect mldp_pvxs_driver::query::planner::bindSelect(const SelectState
         .from = std::move(from),
         .joins = std::move(joins),
         .distinct = statement.distinct,
+        .distinct_on = {},
         .select_all = statement.select_all,
         .select_columns = {},
         .select_expressions = {},
@@ -770,6 +1052,19 @@ plan::BoundSelect mldp_pvxs_driver::query::planner::bindSelect(const SelectState
         .page_token = statement.page_token};
 
     const bool multi_table = !bound.joins.empty();
+    if (isAggregateQuery(statement))
+    {
+        bindAggregateQuery(statement, all_tables, multi_table, bound);
+        return bound;
+    }
+    for (const auto& key : statement.distinct_on)
+    {
+        if (bindExpression(key, all_tables, multi_table) == ColumnType::NATIVE_VALUE)
+        {
+            throw plan::PlannerException(plan::BindError{.message = "DISTINCT ON requires a scalar expression"});
+        }
+        bound.distinct_on.push_back(key);
+    }
     bound.order_by.reserve(statement.order_by.size());
     for (const auto& item : statement.order_by)
     {

@@ -107,6 +107,8 @@ std::unique_ptr<IExecutionState> makeProjectExecutionState(const plan::PhysicalP
 /** @brief Creates an execution state for the given physical node. @return Execution state. */
 std::unique_ptr<IExecutionState> makeSortExecutionState(const plan::PhysicalSort&, const plan::PhysicalNodePtr&, const ExecutionContext&, QueryStats&);
 /** @brief Creates an execution state for the given physical node. @return Execution state. */
+std::unique_ptr<IExecutionState> makeAggregateExecutionState(const plan::PhysicalAggregate&, const plan::PhysicalNodePtr&, const ExecutionContext&, QueryStats&);
+/** @brief Creates an execution state for the given physical node. @return Execution state. */
 std::unique_ptr<IExecutionState> makeLimitExecutionState(const plan::PhysicalLimit&, const plan::PhysicalNodePtr&, const ExecutionContext&, QueryStats&);
 /** @brief Creates an execution state for the given physical node. @return Execution state. */
 std::unique_ptr<IExecutionState> makeHashJoinExecutionState(const plan::PhysicalHashJoin&, const plan::PhysicalNodePtr&, const ExecutionContext&, QueryStats&);

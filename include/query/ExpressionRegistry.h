@@ -26,7 +26,8 @@ namespace mldp_pvxs_driver::query {
 enum class ExpressionCallableKind {
     FUNCTION,         ///< Named scalar function (e.g. DATE_TRUNC).
     BINARY_OPERATOR,  ///< Infix binary operator (e.g. +, -, LIKE).
-    UNARY_OPERATOR    ///< Prefix unary operator (e.g. NOT, -).
+    UNARY_OPERATOR,   ///< Prefix unary operator (e.g. NOT, -).
+    AGGREGATE         ///< Aggregate function evaluated per group (e.g. COUNT, AVG).
 };
 
 /** @brief Immutable metadata for an executable scalar function or operator. */
@@ -37,6 +38,8 @@ struct ExpressionCallableDescriptor {
     ColumnType                 returns{ColumnType::STRING};             ///< Return type.
     std::string                description;                             ///< Human-readable description for SHOW FUNCTIONS.
     std::string                example;                                 ///< Example usage string for SHOW FUNCTIONS.
+    std::string                arguments_text;                          ///< Display override for arguments (e.g. "(*|any)"); empty uses @c arguments.
+    std::string                returns_text;                            ///< Display override for the return type (e.g. "same as input"); empty uses @c returns.
 };
 
 /** @brief Typed SQL scalar callable; immutable once registered. */

@@ -46,6 +46,8 @@ using ExpressionPtr = std::shared_ptr<Expression>;
 struct FunctionCall {
     std::string                name;      ///< Function name (case-insensitive).
     std::vector<ExpressionPtr> arguments; ///< Ordered argument expressions.
+    bool                       star{false};     ///< True for an aggregate called with '*' (COUNT(*)).
+    bool                       distinct{false}; ///< True for an aggregate called with DISTINCT (COUNT(DISTINCT x)).
 };
 
 /** @brief Unary operator expression. */
@@ -161,15 +163,24 @@ struct OrderByItem {
     SortDirection   direction{SortDirection::ASCENDING}; ///< ASCENDING or DESCENDING.
 };
 
+/** @brief Parsed DISTINCT / DISTINCT ON clause. */
+struct DistinctClause {
+    bool                       distinct{false}; ///< True for SELECT DISTINCT or DISTINCT ON.
+    std::vector<ExpressionPtr> on;              ///< DISTINCT ON key expressions; empty for plain DISTINCT.
+};
+
 /** @brief Parsed SELECT statement and its relational clauses. */
 struct SelectStatement {
-    bool                         distinct{false};   ///< True for SELECT DISTINCT.
+    bool                         distinct{false};   ///< True for SELECT DISTINCT or DISTINCT ON.
+    std::vector<ExpressionPtr>   distinct_on;       ///< DISTINCT ON key expressions; empty for whole-row DISTINCT.
     bool                         select_all{false}; ///< True for SELECT *.
     std::vector<QualifiedColumn> columns;           ///< Explicit selected columns (qualified form).
     std::vector<SelectItem>      select_items;      ///< Computed selected items with optional aliases.
     TableRef                     from;              ///< Primary FROM source.
     std::vector<JoinClause>      joins;             ///< JOIN clauses.
     std::vector<WherePredicate>  predicates;        ///< WHERE predicate list.
+    std::vector<ExpressionPtr>   group_by;          ///< GROUP BY key expressions.
+    ExpressionPtr                having;            ///< HAVING condition; null when absent.
     std::vector<OrderByItem>     order_by;          ///< ORDER BY items.
     std::optional<uint64_t>      limit;             ///< LIMIT value if present.
     std::optional<std::string>   page_token;        ///< PAGE TOKEN value for REPL paging if present.

@@ -67,6 +67,13 @@ struct PhysicalProject {
     std::vector<ExpressionPtr> expressions;         ///< Computed output expressions.
     std::vector<std::string> names;                 ///< Output names for computed columns.
     bool                     distinct{false};        ///< True to drop duplicate output rows (SELECT DISTINCT).
+    std::vector<ExpressionPtr> distinct_on;         ///< DISTINCT ON keys evaluated on the input; empty compares whole output rows.
+};
+
+/** @brief Groups input rows and computes aggregates (GROUP BY). */
+struct PhysicalAggregate {
+    PhysicalNodePtr     input; ///< Input physical node.
+    plan::AggregateSpec spec;  ///< Keys, aggregates and HAVING condition.
 };
 
 /** @brief Limits rows emitted by a physical input. */
@@ -171,6 +178,7 @@ using PhysicalNodeVariant = std::variant<PhysicalTableScan,
                                          PhysicalProject,
                                          PhysicalSort,
                                          PhysicalLimit,
+                                         PhysicalAggregate,
                                          PhysicalPivot,
                                          PhysicalHashJoin,
                                          PhysicalNestedLoopJoin,

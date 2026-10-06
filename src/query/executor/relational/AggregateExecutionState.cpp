@@ -8,7 +8,7 @@
 // the terms contained in the LICENSE.txt file.
 //////////////////////////////////////////////////////////////////////////////
 
-#include <query/executor/ExecutorUtils.h>
+#include <query/executor/GroupedAggregator.h>
 #include <query/executor/StateInternal.h>
 #include <query/QueryProgress.h>
 
@@ -18,32 +18,36 @@ namespace {
     class State final : public ExecutionStateBase
     {
     public:
-        State(plan::PhysicalProject node, const ExecutionContext& context, QueryStats& stats) : ExecutionStateBase(context, stats), node_(std::move(node))
+        State(plan::PhysicalAggregate node, const ExecutionContext& context, QueryStats& stats) : ExecutionStateBase(context, stats), node_(std::move(node))
         {
             addChild(node_.input);
         }
 
         std::string_view typeName() const noexcept override
         {
-            return "ProjectExecutionState";
+            return "AggregateExecutionState";
         }
 
         RecordBatches execute() override
         {
-            if (context().progress) context().progress->setActivity({}, "projection");
             throwIfCancelled();
             auto input = childAt(0).execute();
-            if (!node_.distinct_on.empty()) input = applyDistinctOn(input, node_.distinct_on);
-            auto output = node_.expressions.empty() ? applyProjection(input, node_.columns) : applyProjection(input, node_.expressions, node_.names);
-            return node_.distinct && node_.distinct_on.empty() ? applyDistinct(output) : output;
+            if (context().progress) context().progress->setActivity({}, "aggregating");
+            GroupedAggregator aggregator(node_.spec, context());
+            for (auto& batch : input)
+            {
+                aggregator.consume(batch);
+                batch.reset(); // release input as it is folded
+            }
+            return aggregator.finish();
         }
 
     private:
-        plan::PhysicalProject node_;
+        plan::PhysicalAggregate node_;
     };
 } // namespace
 
-std::unique_ptr<IExecutionState> mldp_pvxs_driver::query::executor::makeProjectExecutionState(const plan::PhysicalProject& node, const plan::PhysicalNodePtr&, const ExecutionContext& context, QueryStats& stats)
+std::unique_ptr<IExecutionState> mldp_pvxs_driver::query::executor::makeAggregateExecutionState(const plan::PhysicalAggregate& node, const plan::PhysicalNodePtr&, const ExecutionContext& context, QueryStats& stats)
 {
     return std::make_unique<State>(node, context, stats);
 }

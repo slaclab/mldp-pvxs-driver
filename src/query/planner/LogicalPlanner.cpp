@@ -73,6 +73,14 @@ plan::LogicalNodePtr mldp_pvxs_driver::query::planner::buildLogicalPlan(const pl
             .warnings = {}});
     }
 
+    // GROUP BY: ORDER BY and the projection below run over the aggregate output.
+    if (bound.aggregate)
+    {
+        root = plan::makeNode(plan::LogicalAggregate{
+            .input = root,
+            .spec = *bound.aggregate});
+    }
+
     if (!bound.order_by.empty())
     {
         root = plan::makeNode(plan::LogicalSort{
@@ -88,7 +96,8 @@ plan::LogicalNodePtr mldp_pvxs_driver::query::planner::buildLogicalPlan(const pl
             .columns = bound.select_columns,
             .expressions = bound.select_expressions,
             .names = bound.select_names,
-            .distinct = bound.distinct});
+            .distinct = bound.distinct,
+            .distinct_on = bound.distinct_on});
     }
     else if (qualify_output)
     {
@@ -117,7 +126,8 @@ plan::LogicalNodePtr mldp_pvxs_driver::query::planner::buildLogicalPlan(const pl
             .columns = std::move(columns),
             .expressions = {},
             .names = {},
-            .distinct = bound.distinct});
+            .distinct = bound.distinct,
+            .distinct_on = bound.distinct_on});
     }
     else if (bound.distinct)
     {
@@ -129,7 +139,8 @@ plan::LogicalNodePtr mldp_pvxs_driver::query::planner::buildLogicalPlan(const pl
             .columns = {},
             .expressions = {},
             .names = {},
-            .distinct = true});
+            .distinct = true,
+            .distinct_on = bound.distinct_on});
     }
 
     if (bound.limit.has_value())

@@ -115,6 +115,28 @@ TEST(QueryParserTest, ParsesSelectDistinct)
     EXPECT_TRUE(distinct_all.select_all);
 
     EXPECT_FALSE(std::get<SelectStatement>(parseQuery("SELECT pv FROM fake.samples")).distinct);
+
+    const auto& distinct_on = std::get<SelectStatement>(parseQuery("SELECT DISTINCT ON (pv, value) pv, time FROM fake.samples"));
+    EXPECT_TRUE(distinct_on.distinct);
+    EXPECT_EQ(distinct_on.distinct_on.size(), 2U);
+    EXPECT_EQ(distinct_on.columns.size(), 2U);
+    EXPECT_TRUE(distinct.distinct_on.empty());
+}
+
+TEST(QueryParserTest, ParsesGroupByHavingAndAggregateCalls)
+{
+    const auto parsed = parseQuery("SELECT pv, COUNT(*), COUNT(DISTINCT value) FROM fake.samples GROUP BY pv HAVING COUNT(*) > 1 ORDER BY 2 DESC");
+    const auto& statement = std::get<SelectStatement>(parsed);
+    ASSERT_EQ(statement.group_by.size(), 1U);
+    ASSERT_NE(statement.having, nullptr);
+    ASSERT_EQ(statement.select_items.size(), 3U);
+    const auto& star = std::get<FunctionCall>(statement.select_items[1].expression->value);
+    EXPECT_TRUE(star.star);
+    EXPECT_TRUE(star.arguments.empty());
+    const auto& distinct = std::get<FunctionCall>(statement.select_items[2].expression->value);
+    EXPECT_TRUE(distinct.distinct);
+    EXPECT_EQ(distinct.arguments.size(), 1U);
+    EXPECT_TRUE(std::get<SelectStatement>(parseQuery("SELECT pv FROM fake.samples")).group_by.empty());
 }
 
 TEST(QueryParserTest, ParsesCallableDiscoveryStatements)

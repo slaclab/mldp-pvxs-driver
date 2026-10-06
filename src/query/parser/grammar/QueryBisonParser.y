@@ -209,6 +209,8 @@
         case TokenType::CONTAINS: return QueryBisonParser::make_CONTAINS(location);
         case TokenType::ORDER: return QueryBisonParser::make_ORDER(location);
         case TokenType::DISTINCT: return QueryBisonParser::make_DISTINCT(location);
+        case TokenType::GROUP: return QueryBisonParser::make_GROUP(location);
+        case TokenType::HAVING: return QueryBisonParser::make_HAVING(location);
         case TokenType::BY: return QueryBisonParser::make_BY(location);
         case TokenType::ASC: return QueryBisonParser::make_ASC(location);
         case TokenType::DESC: return QueryBisonParser::make_DESC(location);
@@ -249,7 +251,7 @@
 %token END_OF_INPUT 0
 %token <std::string> IDENTIFIER STRING_LITERAL DURATION_LITERAL
 %token <int64_t> NUMBER_LITERAL
-%token SELECT FROM WHERE IS AND OR NOT NULL_LITERAL IN LIKE BETWEEN LIMIT PAGE TOKEN SHOW TABLES FUNCTIONS OPERATORS DESCRIBE EXPLAIN AS INNER LEFT OUTER JOIN ON NOW PREFIX CONTAINS ORDER DISTINCT BY ASC DESC TRUE FALSE TIMESTAMP_NS DURATION_NS
+%token SELECT FROM WHERE IS AND OR NOT NULL_LITERAL IN LIKE BETWEEN LIMIT PAGE TOKEN SHOW TABLES FUNCTIONS OPERATORS DESCRIBE EXPLAIN AS INNER LEFT OUTER JOIN ON NOW PREFIX CONTAINS ORDER DISTINCT GROUP HAVING BY ASC DESC TRUE FALSE TIMESTAMP_NS DURATION_NS
 %token STAR SLASH COMMA SEMICOLON DOT LPAREN RPAREN PLUS MINUS EQ NEQ LT LTE GT GTE
 
 // Preserve NOW +/- duration convenience syntax while allowing ordinary
@@ -279,7 +281,9 @@
 %type <mldp_pvxs_driver::query::ExpressionPtr> expression primary_expression unary_expression multiplicative_expression additive_expression comparison_expression and_expression or_expression legacy_expression
 %type <int64_t> signed_duration
 %type <std::optional<uint64_t>> limit_opt
-%type <bool> distinct_opt
+%type <std::vector<mldp_pvxs_driver::query::ExpressionPtr>> group_by_opt
+%type <mldp_pvxs_driver::query::ExpressionPtr> having_opt
+%type <mldp_pvxs_driver::query::DistinctClause> distinct_opt
 %type <std::optional<std::string>> page_opt
 %type <std::vector<mldp_pvxs_driver::query::OrderByItem>> order_by_opt order_by_list
 %type <mldp_pvxs_driver::query::OrderByItem> order_by_item
@@ -313,10 +317,11 @@ statement
     ;
 
 select_stmt
-    : SELECT distinct_opt select_list FROM table_ref join_clauses where_opt order_by_opt limit_opt page_opt
+    : SELECT distinct_opt select_list FROM table_ref join_clauses where_opt group_by_opt having_opt order_by_opt limit_opt page_opt
       {
           mldp_pvxs_driver::query::SelectStatement statement;
-          statement.distinct = $2;
+          statement.distinct = $2.distinct;
+          statement.distinct_on = std::move($2.on);
           statement.select_all = $3.select_all;
           statement.select_items = std::move($3.items);
           for (const auto& item : statement.select_items)
@@ -327,18 +332,36 @@ select_stmt
           statement.from = std::move($5);
           statement.joins = std::move($6);
           statement.predicates = std::move($7);
-          statement.order_by = std::move($8);
-          statement.limit = std::move($9);
-          statement.page_token = std::move($10);
+          statement.group_by = std::move($8);
+          statement.having = std::move($9);
+          statement.order_by = std::move($10);
+          statement.limit = std::move($11);
+          statement.page_token = std::move($12);
           $$ = std::move(statement);
       }
     ;
 
 distinct_opt
     : /* empty */
-      { $$ = false; }
+      { $$ = mldp_pvxs_driver::query::DistinctClause{}; }
     | DISTINCT
-      { $$ = true; }
+      { $$ = mldp_pvxs_driver::query::DistinctClause{.distinct = true, .on = {}}; }
+    | DISTINCT ON LPAREN expression_list RPAREN
+      { $$ = mldp_pvxs_driver::query::DistinctClause{.distinct = true, .on = std::move($4)}; }
+    ;
+
+group_by_opt
+    : /* empty */
+      { $$ = {}; }
+    | GROUP BY expression_list
+      { $$ = std::move($3); }
+    ;
+
+having_opt
+    : /* empty */
+      { $$ = nullptr; }
+    | HAVING expression
+      { $$ = std::move($2); }
     ;
 
 order_by_opt
@@ -733,6 +756,10 @@ primary_expression
       { $$ = makeExpression(ExpressionValue{std::move($1)}); }
     | IDENTIFIER LPAREN expression_list RPAREN
       { $$ = makeExpression(ExpressionValue{FunctionCall{.name = std::move($1), .arguments = std::move($3)}}); }
+    | IDENTIFIER LPAREN STAR RPAREN
+      { $$ = makeExpression(ExpressionValue{FunctionCall{.name = std::move($1), .arguments = {}, .star = true}}); }
+    | IDENTIFIER LPAREN DISTINCT expression RPAREN
+      { $$ = makeExpression(ExpressionValue{FunctionCall{.name = std::move($1), .arguments = {std::move($4)}, .distinct = true}}); }
     | LPAREN expression RPAREN
       { $$ = std::move($2); }
     ;

@@ -647,7 +647,11 @@ int runRepl(QueryCliOptions                           options,
                    << "  col LIKE 'a%b_c'     case-insensitive; % or * = any run, _ = one char, \\ escapes\n"
                    << "  On mldp.time_series, mldp.time_series_table and mldp.pv_stats, pv PREFIX/CONTAINS/LIKE\n"
                    << "  is sent to MLDP as a PV-name regex (no pv = / IN needed), then verified locally.\n"
-                   << "  e.g. SELECT * FROM mldp.pv_stats WHERE pv LIKE 'ltu:%:bpm%';\n";
+                   << "  e.g. SELECT * FROM mldp.pv_stats WHERE pv LIKE 'ltu:%:bpm%';\n"
+                   << "Grouping (runs locally on the fetched rows):\n"
+                   << "  SELECT DISTINCT ON (k) k, other ...   first row per k (use ORDER BY to pick it)\n"
+                   << "  SELECT k, COUNT(*), AVG(x) ... GROUP BY k [HAVING COUNT(*) > 1] [ORDER BY 2 DESC]\n"
+                   << "  Aggregates: COUNT(*|x|DISTINCT x), SUM, AVG, MIN, MAX, FIRST, LAST\n";
             continue;
         }
         if (buffer.empty() && (command == ".pager" || startsWithIgnoreCase(command, ".pager ") || startsWithIgnoreCase(command, ".pager\t")))
@@ -1235,7 +1239,8 @@ std::vector<std::string> mldp_pvxs_driver::cli::detail::replCompletions(
     }
     else
     {
-        candidates = {"SELECT", "DISTINCT", "FROM", "WHERE", "AND", "OR", "IN", "LIKE", "BETWEEN", "ORDER", "BY", "ASC", "DESC", "LIMIT", "PAGE", "TOKEN",
+        candidates = {"SELECT", "DISTINCT", "FROM", "WHERE", "GROUP", "HAVING", "COUNT", "SUM", "AVG", "MIN", "MAX", "FIRST", "LAST",
+                      "AND", "OR", "IN", "LIKE", "BETWEEN", "ORDER", "BY", "ASC", "DESC", "LIMIT", "PAGE", "TOKEN",
                       "SHOW", "TABLES", "FUNCTIONS", "OPERATORS", "DESCRIBE", "DESC", "EXPLAIN", "CREATE", "DROP", "TEMP", "TABLE", "AS", "INNER", "LEFT", "OUTER", "JOIN", "ON", "NOW", "PREFIX", "CONTAINS"};
         const auto aliases = tableAliases(input);
         if (aliases.size() == 1)

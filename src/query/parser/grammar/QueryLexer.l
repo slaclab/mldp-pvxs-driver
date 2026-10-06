@@ -128,6 +128,8 @@ static const std::unordered_map<std::string, TokenType> kKeywords = {
     {"CONTAINS", TokenType::CONTAINS},
     {"ORDER", TokenType::ORDER},
     {"DISTINCT", TokenType::DISTINCT},
+    {"GROUP", TokenType::GROUP},
+    {"HAVING", TokenType::HAVING},
     {"BY", TokenType::BY},
     {"ASC", TokenType::ASC},
     {"DESC", TokenType::DESC},
