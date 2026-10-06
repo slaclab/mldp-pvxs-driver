@@ -97,8 +97,8 @@ std::vector<ColumnSchema> MLDPQueryClient::tableSchema(std::string_view table_na
             {"config_tag", ColumnType::STRING, false, false, {PredicateOp::EQ, PredicateOp::IN}, {}, "Restrict samples to activations of configurations carrying the tag(s)"},
             {"timeout", ColumnType::DURATION_SECONDS, false, false, {PredicateOp::EQ}, {}, "Query timeout"},
             {"rpc_deadline", ColumnType::DURATION_SECONDS, false, false, {PredicateOp::EQ}, {}, "RPC deadline"}};
-        if (wide_table)
         {
+            // Sample-status filtering runs on the sample-oriented backend query.
             schema.push_back({"status_domain", ColumnType::STRING, false, false, {PredicateOp::EQ}, {}, "Sample status domain; enables sample status filtering"});
             schema.push_back({"status_layer", ColumnType::STRING, false, false, {PredicateOp::EQ, PredicateOp::IN}, {}, "Sample status layer(s); omit for all layers in the domain"});
             schema.push_back({"status_code", ColumnType::INT, false, false, {PredicateOp::EQ, PredicateOp::IN}, {}, "Sample status code(s); omit for any code"});
@@ -308,7 +308,7 @@ void applyConfigurationSelector(dp::service::query::QuerySpec& spec, const std::
         *selector->add_criteria() = std::move(criterion);
 }
 
-void applySampleStatusSelector(dp::service::query::QuerySpec& spec, const std::vector<Predicate>& predicates, const bool sample_oriented)
+void applySampleStatusSelector(dp::service::query::QuerySpec& spec, const std::vector<Predicate>& predicates)
 {
     using Selector = dp::service::query::SampleStatusSelector;
     std::optional<std::string> domain;
@@ -350,13 +350,69 @@ void applySampleStatusSelector(dp::service::query::QuerySpec& spec, const std::v
     }
     if (!has_status_predicate)
         return;
-    if (!sample_oriented)
-        throw std::invalid_argument("MLDP sample status filtering requires mldp.time_series_table");
     if (!domain)
         throw std::invalid_argument("MLDP sample status filtering requires status_domain =");
     selector.set_domain(*domain);
     *spec.mutable_samplestatusselector() = std::move(selector);
 }
+
+// configurationSelector and sampleStatusSelector are exact only on the
+// sample-oriented query: bucket queries return every bucket overlapping a
+// matching activation whole.
+bool needsSampleQuery(const std::vector<Predicate>& predicates)
+{
+    return std::any_of(predicates.begin(), predicates.end(), [](const Predicate& predicate)
+                       { return predicate.column.rfind("config_", 0) == 0 || predicate.column.rfind("status_", 0) == 0; });
+}
+
+/** Long-form mldp.time_series rows from querySamples pages.
+ *
+ *  Each page's columns become one DataBucket per PV holding only that PV's
+ *  present samples, so the shared bucket decoder yields the usual columns. */
+class SamplesLongRecordBatchStream final : public IRecordBatchStream
+{
+public:
+    SamplesLongRecordBatchStream(MldpQuerySamplesPagedStream pages, std::vector<Predicate> predicates, std::set<std::string> projection_hint, arrow::MemoryPool* pool)
+        : pages_(std::move(pages)), predicates_(std::move(predicates)), projection_hint_(std::move(projection_hint)), pool_(pool)
+    {
+    }
+
+    std::shared_ptr<arrow::RecordBatch> next() override
+    {
+        while (auto page = pages_.next())
+        {
+            ::google::protobuf::RepeatedPtrField<dp::service::common::DataBucket> buckets;
+            const auto& timestamps = page->timestamplist().timestamps();
+            for (const auto& column : page->datacolumns())
+            {
+                dp::service::common::DataBucket bucket;
+                bucket.set_pvname(column.name());
+                auto* bucket_times = bucket.mutable_datatimestamps()->mutable_timestamplist();
+                auto* bucket_values = bucket.mutable_datavalues()->mutable_datacolumn();
+                bucket_values->set_name(column.name());
+                *bucket_values->mutable_metadata() = column.metadata();
+                for (int index = 0; index < column.datavalues_size() && index < timestamps.size(); ++index)
+                {
+                    // Unset values are samples filtered out or absent at this timestamp.
+                    if (column.datavalues(index).value_case() == dp::service::common::DataValue::VALUE_NOT_SET) continue;
+                    *bucket_times->add_timestamps() = timestamps[index];
+                    *bucket_values->add_datavalues() = column.datavalues(index);
+                }
+                if (bucket_values->datavalues_size() > 0) *buckets.Add() = std::move(bucket);
+            }
+            if (buckets.empty()) continue;
+            auto batch = decodeDataBucketsToBatch(buckets, predicates_, projection_hint_, pool_);
+            if (batch && batch->num_rows() > 0) return batch;
+        }
+        return nullptr;
+    }
+
+private:
+    MldpQuerySamplesPagedStream pages_;
+    std::vector<Predicate>      predicates_;
+    std::set<std::string>       projection_hint_;
+    arrow::MemoryPool*          pool_;
+};
 
 dp::service::query::QuerySpec buildQuerySpec(const std::vector<Predicate>& predicates,
                                              const std::pair<int64_t, int64_t>& time_range,
@@ -367,7 +423,9 @@ dp::service::query::QuerySpec buildQuerySpec(const std::vector<Predicate>& predi
     setTimestamp(spec.mutable_timerange()->mutable_endtime(), time_range.second);
     applyPvSelector(*spec.mutable_pvselector(), predicates);
     applyConfigurationSelector(spec, predicates);
-    applySampleStatusSelector(spec, predicates, sample_oriented);
+    // Bucket queries reject a status selector; callers route those scans to
+    // querySamples (needsSampleQuery), so it is only set there.
+    if (sample_oriented) applySampleStatusSelector(spec, predicates);
     return spec;
 }
 
@@ -617,7 +675,12 @@ IRecordBatchStreamUPtr MLDPQueryClient::executeStream(const std::string_view    
         }
         else
         {
-            auto spec = buildQuerySpec(pushable_predicates, requestedTimeRange(pushable_predicates), false);
+            const bool sample_query = needsSampleQuery(pushable_predicates);
+            auto       spec = buildQuerySpec(pushable_predicates, requestedTimeRange(pushable_predicates), sample_query);
+            if (sample_query)
+                return std::make_unique<SamplesLongRecordBatchStream>(MldpQuerySamplesPagedStream(pool_->acquire(), std::move(spec), context),
+                                                                      pushable_predicates, projection_hint,
+                                                                      context.pool != nullptr ? context.pool : arrow::default_memory_pool());
             raw_stream = std::make_unique<MldpQueryBucketsPagedStream>(pool_->acquire(), std::move(spec), pushable_predicates, projection_hint, context);
         }
         return raw_stream;

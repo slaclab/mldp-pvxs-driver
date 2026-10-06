@@ -737,7 +737,7 @@ TEST(MLDPQueryClientTest, ScansEveryPvWithoutPvPredicateAndOmitsEmptySelectors)
     server->Shutdown();
 }
 
-TEST(MLDPQueryClientTest, PushesPvMetadataSelectorAndRejectsStatusFilterOnBuckets)
+TEST(MLDPQueryClientTest, PushesPvMetadataSelectorAndRoutesSampleSelectorsToQuerySamples)
 {
     QueryService        service;
     grpc::ServerBuilder builder;
@@ -766,11 +766,22 @@ TEST(MLDPQueryClientTest, PushesPvMetadataSelectorAndRejectsStatusFilterOnBucket
         EXPECT_EQ(selector.metadataquery().criteria(2).pvnamecriterion().prefix(0), "MAG:");
     }
 
-    const std::vector<Predicate> status_predicates = {
+    // Configuration and status selectors are exact only per sample: the long
+    // table switches to querySamples and still yields long-form rows.
+    const std::vector<Predicate> sample_predicates = {
         {.column = "pv", .op = PredicateOp::EQ, .values = {std::string("MAG:ONE")}},
+        {.column = "config_name", .op = PredicateOp::EQ, .values = {std::string("RUN_A")}},
         {.column = "status_domain", .op = PredicateOp::EQ, .values = {std::string("quality")}},
     };
-    EXPECT_THROW((void)executeAll(client, "mldp.time_series", status_predicates, {}, context), std::invalid_argument);
+    const auto long_rows = executeAll(client, "mldp.time_series", sample_predicates, {"pv", "time", "value"}, context);
+    ASSERT_NE(long_rows, nullptr);
+    EXPECT_GE(long_rows->schema()->GetFieldIndex("value"), 0);
+    EXPECT_GT(long_rows->num_rows(), 0);
+    {
+        const std::lock_guard lock(service.mutex);
+        EXPECT_EQ(service.last_request.queryspec().configurationselector().criteria_size(), 1);
+        EXPECT_EQ(service.last_request.queryspec().samplestatusselector().domain(), "quality");
+    }
     server->Shutdown();
 }
 
