@@ -180,7 +180,7 @@ The binder (`src/query/planner/Binder.cpp`) performs name resolution:
 3. Column references in `SELECT`, `WHERE`, and `ON` clauses are resolved to `(table_alias, column_name)` pairs.
 4. Each `WHERE` predicate is bound to a `PlannerPredicate` carrying the resolved column type and operator-support sets.
 5. `attr.<key>` column references resolve to dynamic attribute access; they default to string type and support all text operators.
-6. A required-column check ensures that any column with `required = true` (e.g., `mldp.time_series.pv`) is covered by a pushable predicate or an equi-join key.
+6. A required-column check ensures that any column with `required = true` (e.g., `mldp.active_configurations.at`) is covered by a pushable predicate or an equi-join key.
 
 ### Join optimization passes
 

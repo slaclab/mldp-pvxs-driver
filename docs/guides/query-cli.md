@@ -476,9 +476,54 @@ SELECT * FROM mldp.pv_metadata \G
 
 The `\G` query terminator expands that one result without changing the current display mode. JSON, CSV, and Arrow output retain their complete machine-readable collections.
 
-### Pattern matching with `LIKE`
+### String matching: `PREFIX`, `CONTAINS`, `LIKE`
 
-`LIKE` matches string values case-insensitively. It supports standard SQL patterns plus `*` as a convenient alternative to `%`:
+Three operators match part of a string:
+
+| Operator | Case | Wildcards | Matches when | Example |
+|---|---|---|---|---|
+| `PREFIX 'x'` | sensitive | none | value starts with `x` | `pv PREFIX 'LTU:'` |
+| `CONTAINS 'x'` | sensitive | none | value contains `x` anywhere | `pv CONTAINS ':BPM'` |
+| `LIKE 'p'` | **insensitive** | `%`/`*`, `_` | whole value matches pattern `p` | `pv LIKE 'ltu:%:bpm_'` |
+
+Choose `PREFIX` or `CONTAINS` for plain literal text (characters such as `%`
+and `_` are taken literally), and `LIKE` when you need wildcards, anchoring at
+both ends, or case-insensitive matching. `LIKE` must match the *whole* value:
+`pv LIKE 'BPM'` matches only `BPM`; use `'%BPM%'` for "contains".
+
+Where each operator runs:
+
+- **`pv` on `mldp.time_series`, `mldp.time_series_table`, `mldp.pv_stats`** —
+  pushed to MLDP as a PV-name regex (`PvSelector.pvNamePattern`), so no
+  `pv =`/`pv IN` list is needed. Results are re-verified locally with the SQL
+  semantics above. Only the first pattern is pushed; others are applied locally.
+  With `pv_tag`/`pv_attributes.<key>`, `PREFIX`/`CONTAINS` join the backend
+  metadata query instead, while `LIKE` is applied locally only.
+- **`pv`, `name`, `attributes.<key>`, … on annotation tables
+  (`mldp.pv_metadata`, `mldp.configuration`, …)** — see each table: `PREFIX`/
+  `CONTAINS` may be backend-pushed, `LIKE` is evaluated locally.
+- **Other string columns** — evaluated locally after fetching, so combine with a
+  pushable predicate to limit data transferred.
+
+```sql
+-- Every BPM in the LTU, any case, without listing PVs
+SELECT pv, first_timestamp, last_timestamp
+FROM mldp.pv_stats
+WHERE pv LIKE 'ltu:%:bpm%';
+
+-- Last hour of all PVs starting with 'RF:'
+SELECT pv, time, value
+FROM mldp.time_series
+WHERE pv PREFIX 'RF:' AND time >= NOW - 1h;
+
+-- Literal underscore: PREFIX needs no escaping, LIKE needs \_
+SELECT pv FROM mldp.pv_stats WHERE pv PREFIX 'PV_';
+SELECT pv FROM mldp.pv_stats WHERE pv LIKE 'pv\_%';
+```
+
+#### `LIKE` pattern syntax
+
+`LIKE` supports standard SQL patterns plus `*` as a convenient alternative to `%`:
 
 | Pattern | Meaning | Example |
 |---|---|---|
@@ -643,7 +688,7 @@ applies when a requested PV is not returned for the selected time range.
 
 | Column | Type | Required predicate | Pushable operators | Notes |
 |---|---|---|---|---|
-| `pv` | string | **yes** | `=`, `IN` | PV name. Must be constrained. |
+| `pv` | string | no | `=`, `IN`, `PREFIX`, `CONTAINS`, `LIKE` | PV name. `=`/`IN` select explicit PVs; `PREFIX`/`CONTAINS`/`LIKE` are sent as a backend PV-name regex and verified locally. Omitted = every PV. |
 | `time` | timestamp | no | `>=`, `<=` | UTC epoch seconds. |
 | `window` | timestamp | no | `IN (start, end)`, `IN (SELECT start, end ...)` | Closed interval input; each normalized range becomes a time-series request. |
 | `value` | union | no | — | Typed sample value (see below). |
@@ -651,6 +696,12 @@ applies when a requested PV is not returned for the selected time range.
 | `tags` | list&lt;string&gt; | no | — | Complete bucket column-metadata tag collection. Filter with `tag =` or `tag IN` locally. |
 | `attributes` | map&lt;string,string&gt; | no | — | Complete bucket column-metadata attributes. Select/filter `attributes.&lt;key&gt;` locally. |
 | `provenance` | map&lt;string,string&gt; | no | — | Complete bucket column-metadata provenance. Select/filter `provenance.&lt;key&gt;` locally. |
+| `pv_tag` | string | no | `=`, `IN` | Predicate-only. Selects PVs by PV-metadata tag (backend `PvSelector.metadataQuery`). |
+| `pv_attributes.<key>` | string | no | `=`, `IN` | Predicate-only. Selects PVs by PV-metadata attribute. |
+| `config_name` | string | no | `=`, `IN` | Predicate-only. Restricts samples to activation intervals of the named configuration(s) (backend `configurationSelector`). |
+| `config_activation_id` | string | no | `=`, `IN` | Predicate-only. Restricts samples to the given client activation id(s). |
+| `config_category` | string | no | `=`, `IN` | Predicate-only. Restricts samples to activations of configurations in the category(ies). |
+| `config_tag` | string | no | `=`, `IN` | Predicate-only. Restricts samples to activations of configurations carrying the tag(s). |
 | `timeout` | duration | no | `=` | Query timeout in seconds. |
 | `rpc_deadline` | duration | no | `=` | RPC deadline in seconds. |
 
@@ -658,7 +709,10 @@ applies when a requested PV is not returned for the selected time range.
 
 Table and expanded output display the active union member directly (for example, a double sample renders as `10`, not Arrow's `union{double: ...}` diagnostic). JSON, CSV, and Arrow output retain the underlying union representation for machine-readable consumers.
 
-**Required:** `pv` must be constrained with `=` or `IN`.
+No predicate is required. Without `pv =`/`pv IN`, PVs are chosen by the
+backend: by `pv_tag`/`pv_attributes.<key>` when present, else by the PV-name
+pattern, else every PV (`.*`). Different `config_*` columns are ANDed; values
+within one are ORed. Series sharding applies only to explicit PV lists.
 
 ```sql
 SELECT pv, time, value
@@ -672,6 +726,13 @@ FROM mldp.time_series
 WHERE pv IN ('PV:A', 'PV:B', 'PV:C')
   AND time >= 1700000000
   AND time <= 1700003600
+
+-- Backend-selected PVs restricted to a configuration's activation intervals
+SELECT pv, time, value
+FROM mldp.time_series
+WHERE pv_tag = 'magnet'
+  AND pv PREFIX 'LTU:'
+  AND config_name = 'BSY SAT Shift 1'
 ```
 
 Use `window` when the requested range is a literal interval or is produced by
@@ -768,9 +829,24 @@ WHERE pv = 'MY:PV:CURRENT'
 ### `mldp.time_series_table`
 
 Native wide time-series tables from one MLDP `TABLE_FORMAT_COLUMN` response.
-`pv =` or `pv IN (...)` is required and determines the requested PV columns.
-The result contains one shared `time` column followed by returned PV columns in
-the requested-PV order. Each PV column keeps its native Arrow type; shorter
+`pv =` or `pv IN (...)` determines the requested PV columns; the PV-name
+pattern, `pv_tag`, `pv_attributes.<key>`, and `config_*` predicates of
+`mldp.time_series` work here too. The result contains one shared `time` column
+followed by returned PV columns in the requested-PV order (sorted by name when
+the backend selects the PVs).
+
+Sample-status filtering (`status_*`, predicate-only) uses the sample-oriented
+MLDP query, which this table runs natively instead of pivoting bucket cursors:
+
+| Column | Pushable operators | Notes |
+|---|---|---|
+| `status_domain` | `=` | Required to enable status filtering. |
+| `status_layer` | `=`, `IN` | Omitted = every layer in the domain. |
+| `status_code` | `=`, `IN` | Omitted = any code. |
+| `status_mode` | `=` | `'include'` (default) keeps only samples with a matching status; `'exclude'` drops them. |
+
+Filtered-out samples become nulls; timestamps where every PV is filtered out
+are omitted. `status_*` on `mldp.time_series` is rejected. Each PV column keeps its native Arrow type; shorter
 returned vectors are padded with trailing nulls. Each generated PV Arrow field
 carries its archived column metadata as key/value entries (`tags`,
 `attributes.<key>`, `provenance.source`, and `provenance.process`). This is a special runtime-shaped
@@ -848,7 +924,7 @@ Per-PV bucket statistics (first/last timestamp, bucket count).
 
 | Column | Type | Required predicate | Pushable operators | Notes |
 |---|---|---|---|---|
-| `pv` | string | **yes** | `=`, `IN` | PV name. Must be constrained. |
+| `pv` | string | no | `=`, `IN`, `PREFIX`, `CONTAINS`, `LIKE` | PV name. Patterns are sent as a backend regex; omitted = every PV. |
 | `first_timestamp` | timestamp | no | — | Earliest recorded sample. |
 | `last_timestamp` | timestamp | no | — | Most recent recorded sample. |
 | `num_buckets` | int | no | — | Number of storage buckets. |
@@ -882,7 +958,7 @@ PV metadata and annotation records from the MLDP annotation service.
 
 An unfiltered query lists all PV metadata records. Predicates narrow the list on the annotation service.
 
-`LIKE` is available on every string column and runs as a local filter; see [Pattern matching with `LIKE`](#pattern-matching-with-like) for its wildcard and escaping rules.
+`LIKE` is available on every string column and runs as a local filter; see [String matching](#string-matching-prefix-contains-like) for its wildcard and escaping rules.
 
 Dynamic attributes are accessible as `attributes.<key>` and support `=` and `IN`. Missing keys project as `NULL` and do not match filters.
 
@@ -954,7 +1030,7 @@ Time-windowed activation records for configurations.
 | `created_time` | timestamp | — | Record creation time. |
 | `updated_time` | timestamp | — | Last modification time. |
 
-At least one predicate is required. Timestamp predicates are evaluated locally after fetching the annotation-service candidate set.
+No predicate is required; an unfiltered query returns every activation. Timestamp predicates are evaluated locally after fetching the annotation-service candidate set.
 
 ```sql
 -- Activations for a specific configuration

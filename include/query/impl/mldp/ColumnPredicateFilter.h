@@ -28,6 +28,12 @@ namespace mldp_pvxs_driver::query::impl::mldp {
 /** @brief True if a single string value matches a metadata-style predicate (=, IN, PREFIX, CONTAINS, LIKE). */
 bool matchesStringPredicate(const mldp_pvxs_driver::query::Predicate& predicate, std::string_view value);
 
+/** @brief True if a PV name satisfies every pv PREFIX / CONTAINS / LIKE predicate.
+ *
+ * The backend PV-name regex is only a candidate selection, so names are
+ * re-verified locally with SQL semantics. */
+bool matchesPvNamePredicates(std::string_view pv_name, const std::vector<mldp_pvxs_driver::query::Predicate>& predicates);
+
 /** @brief Value-kind across a set of DataValues; nullopt if all unset, throws on mixed kinds within the same column. */
 template <typename DataValueRange>
 std::optional<std::string_view> dataValuesKind(const DataValueRange& values)

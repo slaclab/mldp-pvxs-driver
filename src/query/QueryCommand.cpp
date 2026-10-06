@@ -640,7 +640,14 @@ int runRepl(QueryCliOptions                           options,
             output << "Enter one SQL statement terminated by ';'.\n"
                    << "Commands: .help, .clear, .format [table|json|csv|arrow], .pager [on|off], .table-fit [on|off], .history, .quit, .exit\n"
                    << "Display: \\expanded [on|off], \\x (toggle), or terminate a query with \\G for one expanded result.\n"
-                   << "Editing: arrows, Ctrl-A/Ctrl-E, Ctrl-W, Ctrl-U/Ctrl-K, Ctrl-L (clear screen), Ctrl-Q (exit), history, and tab completion.\n";
+                   << "Editing: arrows, Ctrl-A/Ctrl-E, Ctrl-W, Ctrl-U/Ctrl-K, Ctrl-L (clear screen), Ctrl-Q (exit), history, and tab completion.\n"
+                   << "String matching:\n"
+                   << "  col PREFIX 'abc'     starts with 'abc' (case-sensitive, no wildcards)\n"
+                   << "  col CONTAINS 'abc'   contains 'abc' (case-sensitive, no wildcards)\n"
+                   << "  col LIKE 'a%b_c'     case-insensitive; % or * = any run, _ = one char, \\ escapes\n"
+                   << "  On mldp.time_series, mldp.time_series_table and mldp.pv_stats, pv PREFIX/CONTAINS/LIKE\n"
+                   << "  is sent to MLDP as a PV-name regex (no pv = / IN needed), then verified locally.\n"
+                   << "  e.g. SELECT * FROM mldp.pv_stats WHERE pv LIKE 'ltu:%:bpm%';\n";
             continue;
         }
         if (buffer.empty() && (command == ".pager" || startsWithIgnoreCase(command, ".pager ") || startsWithIgnoreCase(command, ".pager\t")))

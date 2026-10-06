@@ -171,7 +171,8 @@ std::shared_ptr<arrow::RecordBatch> mldp_pvxs_driver::query::impl::mldp::decodeD
         }
         if (timestamps.size() != decoded.size())
             throw std::runtime_error("MLDP bucket query timestamp/value cardinality mismatch for '" + bucket.pvname() + "'");
-        if (!matchesColumnMetadataPredicates(metadata, dataValuesKind(decoded), column_predicates))
+        if (!matchesPvNamePredicates(bucket.pvname(), column_predicates) ||
+            !matchesColumnMetadataPredicates(metadata, dataValuesKind(decoded), column_predicates))
             continue;
         for (std::size_t index = 0; index < decoded.size(); ++index)
             rows.push_back({bucket.pvname(), timestamps[index], std::move(decoded[index]), metadata});

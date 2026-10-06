@@ -110,6 +110,12 @@ plan::PhysicalNodePtr buildNode(const plan::LogicalNodePtr& node)
             .window_shards = scan->window_shards,
             .projection_explicit = scan->projection_explicit});
         if (scan->table_name != "mldp.time_series_table") return physical_scan;
+        // Sample-status filtering exists only on the sample-oriented backend
+        // query, so such scans keep the native wide path instead of pivoting
+        // a bucket scan.
+        const bool sample_status_filter = std::any_of(scan->pushable_predicates.begin(), scan->pushable_predicates.end(),
+                                                      [](const auto& predicate) { return predicate.column.rfind("status_", 0) == 0; });
+        if (sample_status_filter) return physical_scan;
 
         std::vector<std::string> output_column_labels;
         for (const auto& predicate : scan->pushable_predicates)

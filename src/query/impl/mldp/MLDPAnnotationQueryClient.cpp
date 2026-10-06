@@ -132,10 +132,13 @@ int64_t timestampValue(const Predicate& predicate)
 
 bool addActivationTimeRangeCriterion(
     dp::service::annotation::QueryConfigurationActivationsRequest& request,
-    const std::vector<Predicate>& predicates)
+    const std::vector<Predicate>& predicates,
+    const bool                    always)
 {
     constexpr int64_t kMaximumTimestampSeconds = 253'402'300'799LL;
-    int64_t lower = 0;
+    // The backend treats a zero start time as unset and matches nothing, so
+    // the open lower bound starts one second after the epoch.
+    int64_t lower = 1;
     int64_t upper = kMaximumTimestampSeconds;
     bool    has_time_range = false;
     for (const auto& predicate : predicates)
@@ -151,7 +154,9 @@ bool addActivationTimeRangeCriterion(
         else if (value > 0)
             upper = std::min(upper, predicate.op == PredicateOp::LTE ? value + 1 : value);
     }
-    if (!has_time_range)
+    // Without a time predicate the full range is an always-true overlap
+    // criterion, used when nothing else was pushed (browse-all).
+    if (!has_time_range && !always)
     {
         return false;
     }
@@ -578,10 +583,8 @@ IRecordBatchStreamUPtr MLDPAnnotationQueryClient::executeStream(std::string_view
     if (table_name == "mldp.configuration_activation")
     {
         dp::service::annotation::QueryConfigurationActivationsRequest request;
-        bool has_predicate = false;
         for (const auto& predicate : predicates)
         {
-            has_predicate = true;
             if (predicate.column == "time" || predicate.column == "end_time")
             {
                 if (predicate.op != PredicateOp::IS_NULL && predicate.op != PredicateOp::IS_NOT_NULL)
@@ -608,11 +611,11 @@ IRecordBatchStreamUPtr MLDPAnnotationQueryClient::executeStream(std::string_view
             else
                 throw std::invalid_argument("Unsupported mldp.configuration_activation predicate column or operator: " + predicate.column);
         }
-        if (!has_predicate)
-            throw std::invalid_argument("mldp.configuration_activation requires at least one predicate");
         // The annotation API range has overlap semantics, so it is only a
         // candidate-set optimization. Exact endpoint semantics remain local.
-        addActivationTimeRangeCriterion(request, predicates);
+        // With no other criterion the full range is sent so an unfiltered
+        // scan returns every activation.
+        addActivationTimeRangeCriterion(request, predicates, request.criteria_size() == 0);
         return runAnnotationScan<dp::service::common::ConfigurationActivation>(
             std::move(request),
             [this, cancellation = context.cancellation](const auto& page_request)

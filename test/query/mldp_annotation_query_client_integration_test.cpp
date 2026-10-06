@@ -112,6 +112,21 @@ public:
         }
         return grpc::Status::OK;
     }
+
+    dp::service::annotation::QueryConfigurationActivationsRequest last_activation_request;
+
+    grpc::Status queryConfigurationActivations(
+        grpc::ServerContext*,
+        const dp::service::annotation::QueryConfigurationActivationsRequest* request,
+        dp::service::annotation::QueryConfigurationActivationsResponse*      response) override
+    {
+        last_activation_request = *request;
+        auto* activation = response->mutable_queryconfigurationactivationsresult()->add_configurationactivations();
+        activation->set_clientactivationid("activation-1");
+        activation->set_configurationname("RUN_A");
+        activation->mutable_starttime()->set_epochseconds(10);
+        return grpc::Status::OK;
+    }
 };
 
 } // namespace
@@ -260,5 +275,26 @@ TEST_F(MLDPAnnotationQueryClientTest, EmptySelectionProducesAnEmptyBatch)
     EXPECT_EQ(result->schema()->field_names(),
               std::vector<std::string>({"pv", "alias", "description", "modified_by", "created_time", "updated_time", "tags"}));
 
+    server->Shutdown();
+}
+
+TEST_F(MLDPAnnotationQueryClientTest, ScansEveryConfigurationActivationWithoutPredicates)
+{
+    PagedAnnotationService service;
+    grpc::ServerBuilder    builder;
+    int                    port = 0;
+    builder.AddListeningPort("127.0.0.1:0", grpc::InsecureServerCredentials(), &port);
+    builder.RegisterService(&service);
+    auto server = builder.BuildAndStart();
+    ASSERT_NE(server, nullptr);
+
+    MLDPAnnotationQueryClient client(make_annotation_config("127.0.0.1:" + std::to_string(port)));
+    const auto                result = executeAll(client, "mldp.configuration_activation", {}, {}, {.pool = arrow::default_memory_pool()});
+
+    ASSERT_NE(result, nullptr);
+    EXPECT_EQ(result->num_rows(), 1);
+    // An always-true time range is sent so the backend returns every activation.
+    ASSERT_EQ(service.last_activation_request.criteria_size(), 1);
+    EXPECT_TRUE(service.last_activation_request.criteria(0).has_timerangecriterion());
     server->Shutdown();
 }

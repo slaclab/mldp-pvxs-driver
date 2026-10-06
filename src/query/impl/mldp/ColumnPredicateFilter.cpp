@@ -42,6 +42,19 @@ bool mldp_pvxs_driver::query::impl::mldp::matchesStringPredicate(const Predicate
     return false;
 }
 
+bool mldp_pvxs_driver::query::impl::mldp::matchesPvNamePredicates(const std::string_view pv_name, const std::vector<Predicate>& predicates)
+{
+    for (const auto& predicate : predicates)
+    {
+        if (predicate.column != "pv" ||
+            (predicate.op != PredicateOp::PREFIX && predicate.op != PredicateOp::CONTAINS && predicate.op != PredicateOp::LIKE))
+            continue;
+        if (!matchesStringPredicate(predicate, pv_name))
+            return false;
+    }
+    return true;
+}
+
 bool mldp_pvxs_driver::query::impl::mldp::matchesColumnMetadataPredicates(
     const dp::service::common::ColumnMetadata& metadata,
     const std::optional<std::string_view>      column_type_kind,

@@ -664,6 +664,116 @@ TEST(MLDPQueryClientTest, SendsLiteralWindowBoundsToLongTableRequest)
     server->Shutdown();
 }
 
+TEST(MLDPQueryClientTest, PushesPvPatternAndSelectorsToWideTableRequest)
+{
+    QueryService        service;
+    grpc::ServerBuilder builder;
+    int                 port = 0;
+    builder.AddListeningPort("127.0.0.1:0", grpc::InsecureServerCredentials(), &port);
+    builder.RegisterService(&service);
+    auto server = builder.BuildAndStart();
+    ASSERT_NE(server, nullptr);
+
+    MLDPQueryClient        client(makeQueryConfig("127.0.0.1:" + std::to_string(port)));
+    const ExecutionContext context{.pool = arrow::default_memory_pool(), .join_batch_size = 1};
+    const std::vector<Predicate> predicates = {
+        {.column = "pv", .op = PredicateOp::LIKE, .values = {std::string("mag:%")}},
+        {.column = "config_name", .op = PredicateOp::IN, .values = {std::string("RUN_A"), std::string("RUN_B")}},
+        {.column = "config_tag", .op = PredicateOp::EQ, .values = {std::string("physics")}},
+        {.column = "status_domain", .op = PredicateOp::EQ, .values = {std::string("quality")}},
+        {.column = "status_layer", .op = PredicateOp::EQ, .values = {std::string("auto")}},
+        {.column = "status_code", .op = PredicateOp::IN, .values = {int64_t{2}, int64_t{3}}},
+        {.column = "status_mode", .op = PredicateOp::EQ, .values = {std::string("exclude")}},
+    };
+
+    // The fake backend ignores the selector, so the LIKE is enforced locally.
+    const auto batch = executeAll(client, "mldp.time_series_table", predicates, {}, context);
+    ASSERT_NE(batch, nullptr);
+    ASSERT_EQ(batch->num_columns(), 2);
+    EXPECT_EQ(batch->schema()->field(1)->name(), "MAG:ONE");
+    {
+        const std::lock_guard lock(service.mutex);
+        const auto&           spec = service.last_request.queryspec();
+        ASSERT_TRUE(spec.pvselector().has_pvnamepattern());
+        EXPECT_EQ(spec.pvselector().pvnamepattern().pattern(), "(?i)^mag:.*$");
+        ASSERT_EQ(spec.configurationselector().criteria_size(), 2);
+        EXPECT_EQ(spec.configurationselector().criteria(0).configurationnamecriterion().values_size(), 2);
+        EXPECT_EQ(spec.configurationselector().criteria(1).tagscriterion().values(0), "physics");
+        ASSERT_TRUE(spec.has_samplestatusselector());
+        EXPECT_EQ(spec.samplestatusselector().domain(), "quality");
+        EXPECT_EQ(spec.samplestatusselector().layers(0), "auto");
+        EXPECT_EQ(spec.samplestatusselector().statuscodes_size(), 2);
+        EXPECT_EQ(spec.samplestatusselector().mode(), dp::service::query::SampleStatusSelector::MODE_EXCLUDE_MATCHING);
+    }
+    server->Shutdown();
+}
+
+TEST(MLDPQueryClientTest, ScansEveryPvWithoutPvPredicateAndOmitsEmptySelectors)
+{
+    QueryService        service;
+    grpc::ServerBuilder builder;
+    int                 port = 0;
+    builder.AddListeningPort("127.0.0.1:0", grpc::InsecureServerCredentials(), &port);
+    builder.RegisterService(&service);
+    auto server = builder.BuildAndStart();
+    ASSERT_NE(server, nullptr);
+
+    MLDPQueryClient        client(makeQueryConfig("127.0.0.1:" + std::to_string(port)));
+    const ExecutionContext context{.pool = arrow::default_memory_pool(), .join_batch_size = 1};
+
+    const auto batch = executeAll(client, "mldp.time_series_table", {}, {}, context);
+    ASSERT_NE(batch, nullptr);
+    // Selector-chosen PVs come back sorted by name.
+    ASSERT_EQ(batch->num_columns(), 3);
+    EXPECT_EQ(batch->schema()->field(1)->name(), "MAG:ONE");
+    EXPECT_EQ(batch->schema()->field(2)->name(), "RF:ONE");
+    {
+        const std::lock_guard lock(service.mutex);
+        const auto&           spec = service.last_request.queryspec();
+        EXPECT_EQ(spec.pvselector().pvnamepattern().pattern(), ".*");
+        EXPECT_FALSE(spec.has_configurationselector());
+        EXPECT_FALSE(spec.has_samplestatusselector());
+    }
+    server->Shutdown();
+}
+
+TEST(MLDPQueryClientTest, PushesPvMetadataSelectorAndRejectsStatusFilterOnBuckets)
+{
+    QueryService        service;
+    grpc::ServerBuilder builder;
+    int                 port = 0;
+    builder.AddListeningPort("127.0.0.1:0", grpc::InsecureServerCredentials(), &port);
+    builder.RegisterService(&service);
+    auto server = builder.BuildAndStart();
+    ASSERT_NE(server, nullptr);
+
+    MLDPQueryClient        client(makeQueryConfig("127.0.0.1:" + std::to_string(port)));
+    const ExecutionContext context{.pool = arrow::default_memory_pool(), .join_batch_size = 1};
+    const std::vector<Predicate> predicates = {
+        {.column = "pv", .op = PredicateOp::PREFIX, .values = {std::string("MAG:")}},
+        {.column = "pv_tag", .op = PredicateOp::EQ, .values = {std::string("magnet")}},
+        {.column = "pv_attributes.area", .op = PredicateOp::IN, .values = {std::string("LTU")}},
+    };
+
+    (void)executeAll(client, "mldp.time_series", predicates, {}, context);
+    {
+        const std::lock_guard lock(service.mutex);
+        const auto&           selector = service.last_bidi_request.queryspec().pvselector();
+        ASSERT_TRUE(selector.has_metadataquery());
+        ASSERT_EQ(selector.metadataquery().criteria_size(), 3);
+        EXPECT_EQ(selector.metadataquery().criteria(0).tagscriterion().values(0), "magnet");
+        EXPECT_EQ(selector.metadataquery().criteria(1).attributescriterion().key(), "area");
+        EXPECT_EQ(selector.metadataquery().criteria(2).pvnamecriterion().prefix(0), "MAG:");
+    }
+
+    const std::vector<Predicate> status_predicates = {
+        {.column = "pv", .op = PredicateOp::EQ, .values = {std::string("MAG:ONE")}},
+        {.column = "status_domain", .op = PredicateOp::EQ, .values = {std::string("quality")}},
+    };
+    EXPECT_THROW((void)executeAll(client, "mldp.time_series", status_predicates, {}, context), std::invalid_argument);
+    server->Shutdown();
+}
+
 TEST(MLDPQueryClientTest, CancelsInFlightQueryTableRpc)
 {
     QueryService service;

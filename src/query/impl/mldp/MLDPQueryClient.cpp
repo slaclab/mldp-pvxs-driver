@@ -45,6 +45,7 @@
 #include <future>
 #include <limits>
 #include <map>
+#include <optional>
 #include <memory>
 #include <set>
 #include <stdexcept>
@@ -76,11 +77,12 @@ std::size_t MLDPQueryClient::maxConcurrentStreams() const noexcept
 
 std::vector<ColumnSchema> MLDPQueryClient::tableSchema(std::string_view table_name) const
 {
+    const std::set<PredicateOp> kPvOps = {PredicateOp::EQ, PredicateOp::IN, PredicateOp::PREFIX, PredicateOp::CONTAINS, PredicateOp::LIKE};
     if (table_name == "mldp.time_series" || table_name == "mldp.time_series_table")
     {
         const bool                wide_table = table_name == "mldp.time_series_table";
         std::vector<ColumnSchema> schema = {
-            {"pv", ColumnType::STRING, true, !wide_table, {PredicateOp::EQ, PredicateOp::IN}, {}, "Source name"},
+            {"pv", ColumnType::STRING, false, !wide_table, kPvOps, kPvOps, "Source name; = / IN select explicit PVs, PREFIX / CONTAINS / LIKE push a PV-name regex; omit to scan every PV"},
             {"time", ColumnType::TIMESTAMP, false, true, {PredicateOp::GTE, PredicateOp::LTE}, {}, "Sample timestamp"},
             {"value", ColumnType::NATIVE_VALUE, false, !wide_table, {}, {PredicateOp::EQ, PredicateOp::NEQ, PredicateOp::LT, PredicateOp::LTE, PredicateOp::GT, PredicateOp::GTE, PredicateOp::IN, PredicateOp::BETWEEN}, "Native sample value"},
             {"column_type", ColumnType::STRING, false, !wide_table, {PredicateOp::EQ, PredicateOp::IN}, {PredicateOp::EQ, PredicateOp::IN}, "Native MLDP data-value type"},
@@ -88,15 +90,27 @@ std::vector<ColumnSchema> MLDPQueryClient::tableSchema(std::string_view table_na
             {"attributes", ColumnType::STRING, false, !wide_table, {}, {}, "Bucket column-metadata dynamic attribute map; select/filter attributes.<key> locally"},
             {"provenance", ColumnType::STRING, false, !wide_table, {}, {}, "Bucket column-metadata dynamic provenance map; select/filter provenance.<key> locally"},
             {"tag", ColumnType::STRING, false, false, {PredicateOp::EQ, PredicateOp::IN}, {PredicateOp::EQ, PredicateOp::IN}, "Tag membership predicate shorthand for tags"},
+            {"pv_tag", ColumnType::STRING, false, false, {PredicateOp::EQ, PredicateOp::IN}, {}, "PV metadata tag selector (backend PvSelector.metadataQuery); pv_attributes.<key> selects by PV metadata attribute"},
+            {"config_name", ColumnType::STRING, false, false, {PredicateOp::EQ, PredicateOp::IN}, {}, "Restrict samples to activation intervals of the named configuration(s)"},
+            {"config_activation_id", ColumnType::STRING, false, false, {PredicateOp::EQ, PredicateOp::IN}, {}, "Restrict samples to the given client activation id(s)"},
+            {"config_category", ColumnType::STRING, false, false, {PredicateOp::EQ, PredicateOp::IN}, {}, "Restrict samples to activations of configurations in the category(ies)"},
+            {"config_tag", ColumnType::STRING, false, false, {PredicateOp::EQ, PredicateOp::IN}, {}, "Restrict samples to activations of configurations carrying the tag(s)"},
             {"timeout", ColumnType::DURATION_SECONDS, false, false, {PredicateOp::EQ}, {}, "Query timeout"},
             {"rpc_deadline", ColumnType::DURATION_SECONDS, false, false, {PredicateOp::EQ}, {}, "RPC deadline"}};
+        if (wide_table)
+        {
+            schema.push_back({"status_domain", ColumnType::STRING, false, false, {PredicateOp::EQ}, {}, "Sample status domain; enables sample status filtering"});
+            schema.push_back({"status_layer", ColumnType::STRING, false, false, {PredicateOp::EQ, PredicateOp::IN}, {}, "Sample status layer(s); omit for all layers in the domain"});
+            schema.push_back({"status_code", ColumnType::INT, false, false, {PredicateOp::EQ, PredicateOp::IN}, {}, "Sample status code(s); omit for any code"});
+            schema.push_back({"status_mode", ColumnType::STRING, false, false, {PredicateOp::EQ}, {}, "'include' (default) keeps only matching samples, 'exclude' drops them"});
+        }
         schema.emplace_back("window", ColumnType::TIMESTAMP, false, false, std::set<PredicateOp>{PredicateOp::IN}, std::set<PredicateOp>{},
                             "Time-series interval input; accepts window IN (start, end) or window IN (SELECT time, end_time ...)");
         return schema;
     }
     if (table_name == "mldp.pv_stats")
     {
-        return {{"pv", ColumnType::STRING, true, true, {PredicateOp::EQ, PredicateOp::IN}, {}, "Source name"},
+        return {{"pv", ColumnType::STRING, false, true, kPvOps, kPvOps, "Source name; = / IN select explicit PVs, PREFIX / CONTAINS / LIKE push a PV-name regex; omit to scan every PV"},
                 {"first_timestamp", ColumnType::TIMESTAMP, false, true, {}, {}, "First observed timestamp"},
                 {"last_timestamp", ColumnType::TIMESTAMP, false, true, {}, {}, "Last observed timestamp"},
                 {"num_buckets", ColumnType::INT, false, true, {}, {}, "Number of buckets"}};
@@ -110,32 +124,258 @@ constexpr std::string_view kTimeSeriesTable = "mldp.time_series";
 constexpr std::string_view kTimeSeriesWideTable = "mldp.time_series_table";
 constexpr std::string_view kPvStatsTable = "mldp.pv_stats";
 
+bool isPvListPredicate(const Predicate& predicate)
+{
+    return predicate.column == "pv" && (predicate.op == PredicateOp::EQ || predicate.op == PredicateOp::IN);
+}
+
+bool isPvPatternPredicate(const Predicate& predicate)
+{
+    return predicate.column == "pv" &&
+           (predicate.op == PredicateOp::PREFIX || predicate.op == PredicateOp::CONTAINS || predicate.op == PredicateOp::LIKE);
+}
+
+std::vector<std::string> predicateStrings(const Predicate& predicate)
+{
+    std::vector<std::string> values;
+    for (const auto& value : predicate.values)
+    {
+        if (!std::holds_alternative<std::string>(value))
+            throw std::invalid_argument("MLDP query predicate " + predicate.column + " requires string values");
+        values.push_back(std::get<std::string>(value));
+    }
+    return values;
+}
+
+std::string escapeRegex(std::string_view text)
+{
+    std::string escaped;
+    for (const auto character : text)
+    {
+        if (std::string_view("\\^$.|?*+()[]{}").find(character) != std::string_view::npos)
+            escaped.push_back('\\');
+        escaped.push_back(character);
+    }
+    return escaped;
+}
+
+// Backend regex for a PV-name pattern predicate. LIKE is case-insensitive
+// locally, so the backend pattern is too; rows are re-verified locally.
+std::string pvNameRegex(const Predicate& predicate)
+{
+    const auto values = predicateStrings(predicate);
+    if (values.size() != 1)
+        throw std::invalid_argument("MLDP pv pattern predicate requires one string value");
+    const auto& pattern = values.front();
+    if (predicate.op == PredicateOp::PREFIX)
+        return "^" + escapeRegex(pattern) + ".*$";
+    if (predicate.op == PredicateOp::CONTAINS)
+        return "^.*" + escapeRegex(pattern) + ".*$";
+    std::string regex = "(?i)^";
+    for (std::size_t index = 0; index < pattern.size(); ++index)
+    {
+        const auto character = pattern[index];
+        if (character == '\\' && index + 1 < pattern.size())
+            regex += escapeRegex(std::string_view(&pattern[++index], 1));
+        else if (character == '%' || character == '*')
+            regex += ".*";
+        else if (character == '_')
+            regex += ".";
+        else
+            regex += escapeRegex(std::string_view(&character, 1));
+    }
+    return regex + "$";
+}
+
+// Explicit PV names from pv = / pv IN; empty when the query selects PVs by
+// pattern, metadata, or not at all.
 std::vector<std::string> requestedPvs(const std::vector<Predicate>& predicates)
 {
     std::vector<std::string> names;
     std::set<std::string>    seen;
     for (const auto& predicate : predicates)
     {
-        if (predicate.column != "pv" || (predicate.op != PredicateOp::EQ && predicate.op != PredicateOp::IN))
+        if (!isPvListPredicate(predicate))
             continue;
-        for (const auto& value : predicate.values)
-        {
-            if (!std::holds_alternative<std::string>(value))
-                throw std::invalid_argument("MLDP query predicate pv requires string values");
-            const auto& name = std::get<std::string>(value);
+        for (auto& name : predicateStrings(predicate))
             if (seen.insert(name).second)
-                names.push_back(name);
+                names.push_back(std::move(name));
+    }
+    return names;
+}
+
+// Removes the explicit PV-list predicates so a shard can substitute its own.
+std::vector<Predicate> withoutPvListPredicates(std::vector<Predicate> predicates)
+{
+    predicates.erase(std::remove_if(predicates.begin(), predicates.end(), isPvListPredicate), predicates.end());
+    return predicates;
+}
+
+std::string pvNamePatternFor(const std::vector<Predicate>& predicates)
+{
+    // Only one regex can be pushed; further pattern predicates stay local.
+    for (const auto& predicate : predicates)
+        if (isPvPatternPredicate(predicate))
+            return pvNameRegex(predicate);
+    // The protocol's explicit all-PV form.
+    return ".*";
+}
+
+void applyPvSelector(dp::service::query::PvSelector& selector, const std::vector<Predicate>& predicates)
+{
+    using MetadataCriterion = dp::service::query::PvSelector::MetadataQuery::Criterion;
+    const auto pvs = requestedPvs(predicates);
+    std::vector<MetadataCriterion> metadata_criteria;
+    for (const auto& predicate : predicates)
+    {
+        const bool attribute = predicate.column.rfind("pv_attributes.", 0) == 0;
+        if (predicate.column != "pv_tag" && !attribute)
+            continue;
+        if (predicate.op != PredicateOp::EQ && predicate.op != PredicateOp::IN)
+            throw std::invalid_argument("MLDP " + predicate.column + " supports only = or IN");
+        auto& criterion = metadata_criteria.emplace_back();
+        if (attribute)
+        {
+            auto* target = criterion.mutable_attributescriterion();
+            target->set_key(predicate.column.substr(std::string("pv_attributes.").size()));
+            for (const auto& value : predicateStrings(predicate))
+                target->add_values(value);
+        }
+        else
+            for (const auto& value : predicateStrings(predicate))
+                criterion.mutable_tagscriterion()->add_values(value);
+    }
+    if (!metadata_criteria.empty())
+    {
+        // PV-name restrictions join the metadata query as a name criterion;
+        // LIKE has no backend form there and is verified locally only.
+        MetadataCriterion name_criterion;
+        auto*             names = name_criterion.mutable_pvnamecriterion();
+        for (const auto& pv : pvs)
+            names->add_exact(pv);
+        for (const auto& predicate : predicates)
+        {
+            if (predicate.column != "pv" || (predicate.op != PredicateOp::PREFIX && predicate.op != PredicateOp::CONTAINS))
+                continue;
+            for (const auto& value : predicateStrings(predicate))
+                predicate.op == PredicateOp::PREFIX ? names->add_prefix(value) : names->add_contains(value);
+        }
+        auto* query = selector.mutable_metadataquery();
+        for (auto& criterion : metadata_criteria)
+            *query->add_criteria() = std::move(criterion);
+        if (names->exact_size() + names->prefix_size() + names->contains_size() > 0)
+            *query->add_criteria() = std::move(name_criterion);
+        return;
+    }
+    if (!pvs.empty())
+    {
+        for (const auto& pv : pvs)
+            selector.mutable_pvnamelist()->add_pvnames(pv);
+        return;
+    }
+    selector.mutable_pvnamepattern()->set_pattern(pvNamePatternFor(predicates));
+}
+
+void applyConfigurationSelector(dp::service::query::QuerySpec& spec, const std::vector<Predicate>& predicates)
+{
+    using Criterion = dp::service::query::ConfigurationSelector::Criterion;
+    std::vector<Criterion> criteria;
+    for (const auto& predicate : predicates)
+    {
+        if (predicate.column.rfind("config_", 0) != 0)
+            continue;
+        auto& criterion = criteria.emplace_back();
+        const auto values = predicateStrings(predicate);
+        for (const auto& value : values)
+        {
+            if (predicate.column == "config_name")
+                criterion.mutable_configurationnamecriterion()->add_values(value);
+            else if (predicate.column == "config_activation_id")
+                criterion.mutable_clientactivationidcriterion()->add_values(value);
+            else if (predicate.column == "config_category")
+                criterion.mutable_categorycriterion()->add_values(value);
+            else if (predicate.column == "config_tag")
+                criterion.mutable_tagscriterion()->add_values(value);
+            else
+                throw std::invalid_argument("Unsupported MLDP configuration selector column: " + predicate.column);
         }
     }
-    if (names.empty())
-        throw std::invalid_argument("MLDP query requires an explicit pv = or pv IN predicate");
-    return names;
+    // The backend rejects an empty selector; omit it when nothing was pushed.
+    if (criteria.empty())
+        return;
+    auto* selector = spec.mutable_configurationselector();
+    for (auto& criterion : criteria)
+        *selector->add_criteria() = std::move(criterion);
+}
+
+void applySampleStatusSelector(dp::service::query::QuerySpec& spec, const std::vector<Predicate>& predicates, const bool sample_oriented)
+{
+    using Selector = dp::service::query::SampleStatusSelector;
+    std::optional<std::string> domain;
+    Selector                   selector;
+    selector.set_mode(Selector::MODE_INCLUDE_MATCHING);
+    bool has_status_predicate = false;
+    for (const auto& predicate : predicates)
+    {
+        if (predicate.column.rfind("status_", 0) != 0)
+            continue;
+        has_status_predicate = true;
+        if (predicate.column == "status_code")
+        {
+            for (const auto& value : predicate.values)
+            {
+                if (!std::holds_alternative<int64_t>(value))
+                    throw std::invalid_argument("MLDP status_code requires integer values");
+                selector.add_statuscodes(static_cast<int32_t>(std::get<int64_t>(value)));
+            }
+            continue;
+        }
+        const auto values = predicateStrings(predicate);
+        if (predicate.column == "status_domain")
+            domain = values.at(0);
+        else if (predicate.column == "status_layer")
+            for (const auto& value : values)
+                selector.add_layers(value);
+        else if (predicate.column == "status_mode")
+        {
+            if (values.at(0) == "include")
+                selector.set_mode(Selector::MODE_INCLUDE_MATCHING);
+            else if (values.at(0) == "exclude")
+                selector.set_mode(Selector::MODE_EXCLUDE_MATCHING);
+            else
+                throw std::invalid_argument("MLDP status_mode must be 'include' or 'exclude'");
+        }
+        else
+            throw std::invalid_argument("Unsupported MLDP sample status column: " + predicate.column);
+    }
+    if (!has_status_predicate)
+        return;
+    if (!sample_oriented)
+        throw std::invalid_argument("MLDP sample status filtering requires mldp.time_series_table");
+    if (!domain)
+        throw std::invalid_argument("MLDP sample status filtering requires status_domain =");
+    selector.set_domain(*domain);
+    *spec.mutable_samplestatusselector() = std::move(selector);
+}
+
+dp::service::query::QuerySpec buildQuerySpec(const std::vector<Predicate>& predicates,
+                                             const std::pair<int64_t, int64_t>& time_range,
+                                             const bool                     sample_oriented)
+{
+    dp::service::query::QuerySpec spec;
+    setTimestamp(spec.mutable_timerange()->mutable_begintime(), time_range.first);
+    setTimestamp(spec.mutable_timerange()->mutable_endtime(), time_range.second);
+    applyPvSelector(*spec.mutable_pvselector(), predicates);
+    applyConfigurationSelector(spec, predicates);
+    applySampleStatusSelector(spec, predicates, sample_oriented);
+    return spec;
 }
 
 bool matchesColumnPredicates(const dp::service::common::DataColumn& column,
                              const std::vector<Predicate>&          predicates)
 {
-    return matchesColumnMetadataPredicates(column.metadata(), dataValuesKind(column.datavalues()), predicates);
+    return matchesPvNamePredicates(column.name(), predicates) &&
+           matchesColumnMetadataPredicates(column.metadata(), dataValuesKind(column.datavalues()), predicates);
 }
 
 std::shared_ptr<arrow::DataType> dataValueArrowType(const dp::service::common::DataValue& value)
@@ -377,12 +617,7 @@ IRecordBatchStreamUPtr MLDPQueryClient::executeStream(const std::string_view    
         }
         else
         {
-            const auto [begin, end] = requestedTimeRange(pushable_predicates);
-            dp::service::query::QuerySpec spec;
-            setTimestamp(spec.mutable_timerange()->mutable_begintime(), begin);
-            setTimestamp(spec.mutable_timerange()->mutable_endtime(), end);
-            for (const auto& pv : pvs)
-                spec.mutable_pvselector()->mutable_pvnamelist()->add_pvnames(pv);
+            auto spec = buildQuerySpec(pushable_predicates, requestedTimeRange(pushable_predicates), false);
             raw_stream = std::make_unique<MldpQueryBucketsPagedStream>(pool_->acquire(), std::move(spec), pushable_predicates, projection_hint, context);
         }
         return raw_stream;
@@ -420,9 +655,11 @@ IRecordBatchStreamUPtr MLDPQueryClient::executeStream(const std::string_view    
             context.progress->setParallelShards(static_cast<uint64_t>(std::min(parallel_limit, shard_count)),
                                                 static_cast<uint64_t>(std::min(parallel_limit, shard_count)));
         }
-        auto run_shard = [this, &context, &pvs](const std::size_t shard_begin, const std::size_t shard_end)
+        auto run_shard = [this, &context, &pvs, &pushable_predicates](const std::size_t shard_begin, const std::size_t shard_end)
         {
             dp::service::query::QueryPvStatsRequest request;
+            if (pvs.empty())
+                request.mutable_pvnamepattern()->set_pattern(pvNamePatternFor(pushable_predicates));
             for (std::size_t index = shard_begin; index < shard_end; ++index)
                 request.mutable_pvnamelist()->add_pvnames(pvs[index]);
             auto handle = pool_->acquire();
@@ -442,6 +679,8 @@ IRecordBatchStreamUPtr MLDPQueryClient::executeStream(const std::string_view    
             return StatsShard{.stats = {response.statsresult().pvstats().begin(), response.statsresult().pvstats().end()}};
         };
         std::vector<PvStats> ordered_stats;
+        if (pvs.empty())
+            ordered_stats = run_shard(0, 0).stats;
         for (std::size_t shard_begin = 0; shard_begin < request_count; shard_begin += shard_size)
         {
             const auto shard_end = std::min(request_count, shard_begin + shard_size);
@@ -516,12 +755,7 @@ IRecordBatchStreamUPtr MLDPQueryClient::executeStream(const std::string_view    
         }
         auto run_shard = [this, &context, &pushable_predicates, &projection_hint, &pvs](const std::size_t begin, const std::size_t end)
         {
-            auto predicates = pushable_predicates;
-            predicates.erase(std::remove_if(predicates.begin(), predicates.end(), [](const Predicate& predicate)
-                                            {
-                                                return predicate.column == "pv";
-                                            }),
-                             predicates.end());
+            auto predicates = withoutPvListPredicates(pushable_predicates);
             std::vector<ExecutableLiteralValue> shard_pvs;
             for (std::size_t index = begin; index < end; ++index)
                 shard_pvs.emplace_back(pvs[index]);
@@ -641,12 +875,7 @@ IRecordBatchStreamUPtr MLDPQueryClient::executeStream(const std::string_view    
     }
 
     // Single-shard wide table: backend-paged querySamples RPCs (dp-grpc V2), merged into one wide batch.
-    const auto [begin, end] = requestedTimeRange(pushable_predicates);
-    dp::service::query::QuerySpec spec;
-    setTimestamp(spec.mutable_timerange()->mutable_begintime(), begin);
-    setTimestamp(spec.mutable_timerange()->mutable_endtime(), end);
-    for (const auto& pv_name : pvs)
-        spec.mutable_pvselector()->mutable_pvnamelist()->add_pvnames(pv_name);
+    auto spec = buildQuerySpec(pushable_predicates, requestedTimeRange(pushable_predicates), true);
 
     MldpQuerySamplesPagedStream paged_stream(pool_->acquire(), std::move(spec), context);
 
@@ -669,9 +898,17 @@ IRecordBatchStreamUPtr MLDPQueryClient::executeStream(const std::string_view    
         }
     }
 
+    // Explicit PVs keep request order; selector-chosen PVs are sorted by name.
+    auto ordered_pvs = pvs;
+    if (ordered_pvs.empty())
+    {
+        for (const auto& [name, column] : merged_columns)
+            ordered_pvs.push_back(name);
+        std::sort(ordered_pvs.begin(), ordered_pvs.end());
+    }
     std::vector<const dp::service::common::DataColumn*> columns;
-    columns.reserve(pvs.size());
-    for (const auto& requested_pv : pvs)
+    columns.reserve(ordered_pvs.size());
+    for (const auto& requested_pv : ordered_pvs)
     {
         const auto found = merged_columns.find(requested_pv);
         if (found == merged_columns.end())
