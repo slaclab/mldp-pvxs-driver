@@ -98,6 +98,64 @@ plan::AggregateSpec perPvSpec()
         .having = nullptr};
 }
 
+void benchmarkAggregation(const int group_count, const bool count_only, const bool spill, const int batch_count = 16, const bool repeat_input = false)
+{
+    constexpr int rows_per_batch = 65536;
+    const int64_t total_rows = static_cast<int64_t>(batch_count) * rows_per_batch;
+    RecordBatches input;
+    for (int batch_index = 0; batch_index < (repeat_input ? 1 : batch_count); ++batch_index)
+    {
+        std::vector<std::string> pvs;
+        std::vector<std::optional<int64_t>> values;
+        pvs.reserve(rows_per_batch);
+        values.reserve(rows_per_batch);
+        for (int row = 0; row < rows_per_batch; ++row)
+        {
+            const int64_t offset = static_cast<int64_t>(batch_index) * rows_per_batch + row;
+            pvs.push_back("PV:" + std::to_string(offset % group_count));
+            values.push_back(offset);
+        }
+        input.push_back(samples(pvs, values));
+    }
+
+    auto spec = perPvSpec();
+    if (count_only) spec.aggregates.resize(1);
+    arrow::ProxyMemoryPool pool(arrow::default_memory_pool());
+    ExecutionContext context{.pool = &pool};
+    std::shared_ptr<arrow::fs::internal::MockFileSystem> file_system;
+    if (spill)
+    {
+        file_system = std::make_shared<arrow::fs::internal::MockFileSystem>(std::chrono::system_clock::now());
+        context.spill = std::make_shared<SpillManager>(file_system, "benchmark-spill");
+        context.memory_limit_bytes = 1024 * 1024;
+        context.spill_partitions = 16;
+    }
+
+    const auto start = std::chrono::steady_clock::now();
+    GroupedAggregator aggregator(spec, context);
+    for (int batch_index = 0; batch_index < batch_count; ++batch_index)
+        aggregator.consume(input[repeat_input ? 0 : batch_index]);
+    const auto output = aggregator.finish();
+    const auto seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+
+    int64_t output_groups = 0;
+    int64_t counted_rows = 0;
+    for (const auto& batch : output)
+    {
+        ASSERT_TRUE(batch->ValidateFull().ok());
+        output_groups += batch->num_rows();
+        const auto counts = std::static_pointer_cast<arrow::Int64Array>(batch->column(1));
+        for (int64_t row = 0; row < batch->num_rows(); ++row) counted_rows += counts->Value(row);
+    }
+    EXPECT_EQ(output_groups, group_count);
+    EXPECT_EQ(counted_rows, total_rows);
+    std::cout << "rows=" << total_rows << " groups=" << output_groups << " aggregates=" << spec.aggregates.size()
+              << " input=" << (repeat_input ? "repeated-batch" : "varying-batches")
+              << " spill=" << (spill ? "mock-fs" : "none") << " seconds=" << seconds
+              << " Mrows/s=" << total_rows / seconds / 1e6 << " aggregate_arrow_peak_MB=" << pool.max_memory() / 1e6 << "\n";
+    if (context.spill) EXPECT_TRUE(context.spill->cleanup().ok());
+}
+
 } // namespace
 
 TEST(AggregateRegistryTest, ListsBuiltInsAndBindsTypes)
@@ -237,26 +295,26 @@ TEST(GroupedAggregatorTest, StreamingOperatorMatchesMaterializedPathAndHonoursCa
 // Throughput / memory probe; run explicitly with --gtest_also_run_disabled_tests.
 TEST(GroupedAggregatorTest, DISABLED_Benchmark10MRows100Groups)
 {
-    constexpr int kBatches = 160;
-    constexpr int kRows = 65536;
-    std::vector<std::string>            pvs;
-    std::vector<std::optional<int64_t>> values;
-    for (int row = 0; row < kRows; ++row)
-    {
-        pvs.push_back("PV:" + std::to_string(row % 100));
-        values.push_back(row);
-    }
-    const auto batch = samples(pvs, values);
     const auto spec_name = std::getenv("AGG_BENCH_SPEC");
-    auto spec = perPvSpec();
-    if (spec_name != nullptr && std::string(spec_name) == "count") spec.aggregates.resize(1);
-    const plan::PhysicalAggregate node{.input = nullptr, .spec = spec};
-    auto* pool = arrow::default_memory_pool();
-    const auto start = std::chrono::steady_clock::now();
-    GroupedAggregator aggregator(node.spec, ExecutionContext{.pool = pool});
-    for (int index = 0; index < kBatches; ++index) aggregator.consume(batch);
-    const auto output = aggregator.finish();
-    const auto seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
-    std::cout << "rows=" << static_cast<int64_t>(kBatches) * kRows << " groups=" << output.front()->num_rows() << " seconds=" << seconds
-              << " Mrows/s=" << static_cast<double>(kBatches) * kRows / seconds / 1e6 << " pool_peak_MB=" << pool->max_memory() / 1e6 << "\n";
+    benchmarkAggregation(100, spec_name != nullptr && std::string(spec_name) == "count", false, 160, true);
+}
+
+TEST(GroupedAggregatorTest, DISABLED_Benchmark1MRows10KGroups)
+{
+    benchmarkAggregation(10000, false, false);
+}
+
+TEST(GroupedAggregatorTest, DISABLED_Benchmark1MRows100KGroups)
+{
+    benchmarkAggregation(100000, false, false);
+}
+
+TEST(GroupedAggregatorTest, DISABLED_Benchmark1MRows100KGroupsCountOnly)
+{
+    benchmarkAggregation(100000, true, false);
+}
+
+TEST(GroupedAggregatorTest, DISABLED_Benchmark1MRows100KGroupsMockSpill)
+{
+    benchmarkAggregation(100000, false, true);
 }
