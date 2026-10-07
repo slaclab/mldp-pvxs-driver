@@ -50,6 +50,7 @@ void forEachChild(LogicalNode& node, Fn&& fn)
                    [&](LogicalSort& value) { fn(value.input); },
                    [&](LogicalLimit& value) { fn(value.input); },
                    [&](LogicalAggregate& value) { fn(value.input); },
+                   [&](LogicalWindow& value) { fn(value.input); },
                    [&](LogicalJoin& value) { fn(value.left); fn(value.right); },
                },
                node.value);
@@ -71,6 +72,7 @@ void forEachChild(PhysicalNode& node, Fn&& fn)
                    [&](PhysicalSort& value) { fn(value.input); },
                    [&](PhysicalLimit& value) { fn(value.input); },
                    [&](PhysicalAggregate& value) { fn(value.input); },
+                   [&](PhysicalWindow& value) { fn(value.input); },
                    [&](PhysicalPivot& value) { fn(value.input); },
                    [&](PhysicalHashJoin& value) { fn(value.left); fn(value.right); },
                    [&](PhysicalNestedLoopJoin& value) { fn(value.outer); fn(value.inner); },

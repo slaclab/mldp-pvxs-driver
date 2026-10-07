@@ -242,7 +242,7 @@ void printCommands(std::ostream& out, const bool color)
     row(out, color, ".clear", "discard the buffered statement and clear the screen");
     row(out, color, ".format [table|json|csv|arrow]", "show or set the output format");
     row(out, color, ".pager [on|off]", "show or toggle paging of long results");
-    row(out, color, ".table-fit [on|off]", "show or toggle fitting tables to terminal width");
+    row(out, color, ".table-fit [on|off]", "show or toggle wrapping table cells to terminal width");
     row(out, color, ".color [on|off]", "show or toggle ANSI color");
     row(out, color, ".history", "list previous commands");
     row(out, color, "\\expanded [on|off], \\x", "show/set or toggle expanded (one field per line) display");
@@ -273,7 +273,7 @@ void printDisplay(std::ostream& out, const bool color)
     row(out, color, ".format csv", "comma-separated values with header", 20);
     row(out, color, ".format arrow", "Arrow IPC stream", 20);
     row(out, color, ".pager on|off", "page results longer than the terminal", 20);
-    row(out, color, ".table-fit on|off", "shrink wide tables to the terminal width", 20);
+    row(out, color, ".table-fit on|off", "wrap table cells to the terminal width", 20);
     row(out, color, ".color on|off", "ANSI colors (also disabled by NO_COLOR)", 20);
     row(out, color, "\\x  /  ... \\G", "expanded display: always / for a single query", 20);
 }
@@ -318,6 +318,22 @@ void printGrouping(std::ostream& out, const bool color)
     example(out, color, "SELECT pv, COUNT(*), AVG(value) FROM mldp.time_series WHERE pv PREFIX 'ltu:' AND time >= NOW - 1h GROUP BY pv ORDER BY 2 DESC;");
 }
 
+void printTimeseries(std::ostream& out, const bool color)
+{
+    heading(out, color, "Window functions (runs locally, per row over its partition)");
+    row(out, color, "f(...) OVER (PARTITION BY k ORDER BY time)", "one value per row, computed over rows with the same k", 44);
+    row(out, color, "WINDOW w AS (...) ... OVER w", "name a window once, reuse it (OVER (w ROWS 2 PRECEDING) extends it)", 44);
+    row(out, color, "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW", "frame by row count", 44);
+    row(out, color, "RANGE BETWEEN 5m PRECEDING AND CURRENT ROW", "frame by ORDER BY value (durations for time)", 44);
+    out << "  Functions: ROW_NUMBER, RANK, DENSE_RANK, LAG/LEAD(x [, n [, default]]), FIRST_VALUE, LAST_VALUE,\n"
+           "             SUM, AVG, MIN, MAX, COUNT over the frame\n"
+           "  Default frame: start of partition to the current row and its ties (whole partition without ORDER BY).\n"
+           "  Filter on a window result through a derived table: SELECT * FROM (SELECT ..., ROW_NUMBER() OVER (...) rn ...) x WHERE rn = 1\n";
+    example(out, color, "SELECT pv, time, value, LAG(value) OVER w AS previous, time - LAG(time) OVER w AS gap FROM mldp.time_series WHERE pv PREFIX 'ltu:' AND time >= NOW - 1h WINDOW w AS (PARTITION BY pv ORDER BY time);");
+    example(out, color, "SELECT pv, time, AVG(value) OVER (PARTITION BY pv ORDER BY time RANGE BETWEEN 5m PRECEDING AND CURRENT ROW) AS avg_5m FROM mldp.time_series WHERE pv = 'A' AND time >= NOW - 1h;");
+    example(out, color, "SELECT pv, time, value FROM (SELECT pv, time, value, ROW_NUMBER() OVER (PARTITION BY pv ORDER BY time DESC) rn FROM mldp.time_series WHERE pv PREFIX 'ltu:' AND time >= NOW - 1h) x WHERE rn = 1;");
+}
+
 void printExamples(std::ostream& out, const bool color)
 {
     heading(out, color, "Examples");
@@ -337,13 +353,14 @@ struct Topic
     void (*print)(std::ostream&, bool);
 };
 
-constexpr std::array<Topic, 7> kTopics{{
+constexpr std::array<Topic, 8> kTopics{{
     {"commands", "all REPL dot/backslash commands", printCommands},
     {"editing", "keyboard shortcuts and completion", printEditing},
     {"display", "output formats, pager, expanded view", printDisplay},
     {"tables", "MLDP tables, SHOW/DESCRIBE/EXPLAIN, temp tables", printTables},
     {"matching", "PREFIX, CONTAINS, LIKE and PV-name pushdown", printMatching},
     {"grouping", "DISTINCT ON, GROUP BY, HAVING, aggregates", printGrouping},
+    {"timeseries", "window functions: LAG, running and moving aggregates, ranks", printTimeseries},
     {"examples", "copy-paste queries", printExamples},
 }};
 
@@ -1185,7 +1202,7 @@ Query options:
     -h, --help                    Show this help message and exit
     --file PATH                   Read SQL text from PATH
     --format FORMAT               Output format: table, json, csv, arrow
-    --table-fit                   Fit table output to the terminal width
+    --table-fit                   Wrap table cells to the terminal width
     --no-stats                    Suppress the query statistics footer
     --trace-shards                Write window-shard diagnostics to stderr
     --trace-shards-file PATH      Write window-shard diagnostics to PATH
@@ -1505,6 +1522,8 @@ std::vector<std::string> mldp_pvxs_driver::cli::detail::replCompletions(
     else
     {
         candidates = {"SELECT", "DISTINCT", "FROM", "WHERE", "GROUP", "HAVING", "COUNT", "SUM", "AVG", "MIN", "MAX", "FIRST", "LAST",
+                      "OVER", "PARTITION", "WINDOW", "ROWS", "RANGE", "UNBOUNDED", "PRECEDING", "FOLLOWING", "CURRENT", "ROW",
+                      "ROW_NUMBER", "RANK", "DENSE_RANK", "LAG", "LEAD", "FIRST_VALUE", "LAST_VALUE",
                       "AND", "OR", "IN", "LIKE", "BETWEEN", "ORDER", "BY", "ASC", "DESC", "LIMIT", "PAGE", "TOKEN",
                       "SHOW", "TABLES", "FUNCTIONS", "OPERATORS", "DESCRIBE", "DESC", "EXPLAIN", "CREATE", "DROP", "TEMP", "TABLE", "AS", "INNER", "LEFT", "OUTER", "JOIN", "ON", "NOW", "PREFIX", "CONTAINS"};
         const auto aliases = tableAliases(input);
@@ -1539,8 +1558,9 @@ std::vector<mldp_pvxs_driver::cli::detail::ReplHighlight> mldp_pvxs_driver::cli:
         "SELECT", "DISTINCT", "FROM", "WHERE", "GROUP", "HAVING", "AND", "OR", "NOT", "IN", "IS", "NULL", "LIKE", "BETWEEN",
         "ORDER", "BY", "ASC", "DESC", "LIMIT", "PAGE", "TOKEN", "SHOW", "TABLES", "FUNCTIONS", "OPERATORS", "DESCRIBE",
         "EXPLAIN", "CREATE", "DROP", "TEMP", "TABLE", "AS", "INNER", "LEFT", "OUTER", "JOIN", "ON", "PREFIX", "CONTAINS",
-        "TRUE", "FALSE"};
-    static const std::vector<std::string_view> functions = {"COUNT", "SUM", "AVG", "MIN", "MAX", "FIRST", "LAST", "NOW"};
+        "TRUE", "FALSE", "OVER", "PARTITION", "WINDOW", "ROWS", "RANGE", "UNBOUNDED", "PRECEDING", "FOLLOWING", "CURRENT", "ROW"};
+    static const std::vector<std::string_view> functions = {"COUNT", "SUM", "AVG", "MIN", "MAX", "FIRST", "LAST", "NOW", "ROW_NUMBER", "RANK",
+                                                            "DENSE_RANK", "LAG", "LEAD", "FIRST_VALUE", "LAST_VALUE"};
     const auto is_word = [](const char c) { return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_'; };
 
     std::vector<ReplHighlight> kinds(input.size(), ReplHighlight::Default);

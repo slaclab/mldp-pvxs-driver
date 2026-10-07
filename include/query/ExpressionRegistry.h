@@ -27,7 +27,8 @@ enum class ExpressionCallableKind {
     FUNCTION,         ///< Named scalar function (e.g. DATE_TRUNC).
     BINARY_OPERATOR,  ///< Infix binary operator (e.g. +, -, LIKE).
     UNARY_OPERATOR,   ///< Prefix unary operator (e.g. NOT, -).
-    AGGREGATE         ///< Aggregate function evaluated per group (e.g. COUNT, AVG).
+    AGGREGATE,        ///< Aggregate function evaluated per group (e.g. COUNT, AVG).
+    WINDOW            ///< Window function evaluated per row over its partition (e.g. LAG, ROW_NUMBER).
 };
 
 /** @brief Immutable metadata for an executable scalar function or operator. */

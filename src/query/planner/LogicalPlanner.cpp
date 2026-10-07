@@ -73,12 +73,30 @@ plan::LogicalNodePtr mldp_pvxs_driver::query::planner::buildLogicalPlan(const pl
             .warnings = {}});
     }
 
+    // WHERE column-to-column comparisons may span joined tables, so they run on the join output.
+    if (!bound.conditions.empty())
+    {
+        root = plan::makeNode(plan::LogicalFilter{
+            .input = root,
+            .predicates = {},
+            .conditions = bound.conditions});
+    }
+
     // GROUP BY: ORDER BY and the projection below run over the aggregate output.
     if (bound.aggregate)
     {
         root = plan::makeNode(plan::LogicalAggregate{
             .input = root,
             .spec = *bound.aggregate});
+    }
+
+    // Window functions see the filtered / grouped rows; ORDER BY and the
+    // projection may reference their __win_N output columns.
+    if (!bound.windows.empty())
+    {
+        root = plan::makeNode(plan::LogicalWindow{
+            .input = root,
+            .groups = bound.windows});
     }
 
     if (!bound.order_by.empty())

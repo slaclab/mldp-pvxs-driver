@@ -67,6 +67,9 @@ int64_t autoSliceNs(int64_t window_ns);
  * @param[in] predicates Predicates to evaluate.
  * @return Arrow Result with the filtered batch. */
 arrow::Result<std::shared_ptr<arrow::RecordBatch>> applyFilter(const std::shared_ptr<arrow::RecordBatch>& batch, const std::vector<Predicate>& predicates);
+
+/** @brief Keeps the rows where every boolean @p conditions expression is true (null counts as false). */
+std::shared_ptr<arrow::RecordBatch> applyConditions(const std::shared_ptr<arrow::RecordBatch>& batch, const std::vector<ExpressionPtr>& conditions);
 /** @brief Projects named columns from a batch vector.
  * @param[in] input Input batches.
  * @param[in] columns Column names to retain in order.

@@ -58,6 +58,7 @@ struct PhysicalTableScan {
 struct PhysicalFilter {
     PhysicalNodePtr        input;                    ///< Physical input node.
     std::vector<Predicate> predicates;               ///< Residual predicates applied to each batch.
+    std::vector<ExpressionPtr> conditions;           ///< Boolean expressions every passing row must satisfy.
 };
 
 /** @brief Evaluates selected physical output columns and expressions. */
@@ -74,6 +75,13 @@ struct PhysicalProject {
 struct PhysicalAggregate {
     PhysicalNodePtr     input; ///< Input physical node.
     plan::AggregateSpec spec;  ///< Keys, aggregates and HAVING condition.
+};
+
+/** @brief Computes window functions and appends their columns to every input row. */
+struct PhysicalWindow {
+    PhysicalNodePtr                input;              ///< Input physical node.
+    std::vector<plan::WindowGroup> groups;             ///< Window groups, evaluated in order.
+    bool                           sorted_input{false}; ///< True when the input is expected ordered by the first group's ORDER BY within each partition.
 };
 
 /** @brief Limits rows emitted by a physical input. */
@@ -179,6 +187,7 @@ using PhysicalNodeVariant = std::variant<PhysicalTableScan,
                                          PhysicalSort,
                                          PhysicalLimit,
                                          PhysicalAggregate,
+                                         PhysicalWindow,
                                          PhysicalPivot,
                                          PhysicalHashJoin,
                                          PhysicalNestedLoopJoin,

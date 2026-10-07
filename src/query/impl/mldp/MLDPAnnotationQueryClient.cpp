@@ -86,7 +86,7 @@ std::vector<ColumnSchema> MLDPAnnotationQueryClient::tableSchema(std::string_vie
     {
         const auto timestampOps = std::set<PredicateOp>{PredicateOp::EQ, PredicateOp::NEQ, PredicateOp::LT, PredicateOp::LTE, PredicateOp::GT, PredicateOp::GTE};
         const auto nullableTimestampOps = std::set<PredicateOp>{PredicateOp::EQ, PredicateOp::NEQ, PredicateOp::LT, PredicateOp::LTE, PredicateOp::GT, PredicateOp::GTE, PredicateOp::IS_NULL, PredicateOp::IS_NOT_NULL};
-        return {{"time", ColumnType::TIMESTAMP, false, true, timestampOps, timestampOps, "Activation start time; backend candidate set is locally verified, and that local verification suppresses LIMIT pushdown, so a filtered activation query still fetches every matching page"},
+        return {{"start_time", ColumnType::TIMESTAMP, false, true, timestampOps, timestampOps, "Activation start time; backend candidate set is locally verified, and that local verification suppresses LIMIT pushdown, so a filtered activation query still fetches every matching page"},
                 {"end_time", ColumnType::TIMESTAMP, false, true, nullableTimestampOps, nullableTimestampOps, "Activation end time; null while open; backend candidate set is locally verified"},
                 {"config_name", ColumnType::STRING, false, true, {PredicateOp::EQ, PredicateOp::IN}, stringFilter, "Configuration name"},
                 {"activation_id", ColumnType::STRING, false, true, {PredicateOp::EQ, PredicateOp::IN}, stringFilter, "Activation identifier"},
@@ -102,7 +102,7 @@ std::vector<ColumnSchema> MLDPAnnotationQueryClient::tableSchema(std::string_vie
         return {{"at", ColumnType::TIMESTAMP, true, false, {PredicateOp::EQ}, {}, "Requested point in time; the backend RPC is unpaginated, so LIMIT is always applied locally"},
                 {"name", ColumnType::STRING, false, true, {}, stringFilter, "Active configuration name"},
                 {"activation_id", ColumnType::STRING, false, true, {}, stringFilter, "Activation identifier"},
-                {"time", ColumnType::TIMESTAMP, false, true, {}, {}, "Activation start time"}};
+                {"start_time", ColumnType::TIMESTAMP, false, true, {}, {}, "Activation start time"}};
     }
     throw std::invalid_argument("MLDPAnnotationQueryClient: unknown virtual table: " + std::string(table_name));
 }
@@ -143,7 +143,7 @@ bool addActivationTimeRangeCriterion(
     bool    has_time_range = false;
     for (const auto& predicate : predicates)
     {
-        if (predicate.column != "time" ||
+        if (predicate.column != "start_time" ||
             (predicate.op != PredicateOp::GTE && predicate.op != PredicateOp::GT &&
              predicate.op != PredicateOp::LTE && predicate.op != PredicateOp::LT))
             continue;
@@ -307,7 +307,7 @@ std::shared_ptr<arrow::RecordBatch> buildConfigurationActivationBatch(
     std::shared_ptr<arrow::Array> a, b, c, d, e;
     if (!time.Finish(&a).ok() || !end_time.Finish(&b).ok() || !config.Finish(&c).ok() || !id.Finish(&d).ok() || !description.Finish(&e).ok())
         throw std::runtime_error("Failed to finish Arrow configuration_activation batch");
-    std::vector<std::shared_ptr<arrow::Field>> fields = {arrow::field("time", a->type()), arrow::field("end_time", b->type(), true), arrow::field("config_name", c->type()), arrow::field("activation_id", d->type()), arrow::field("description", e->type())};
+    std::vector<std::shared_ptr<arrow::Field>> fields = {arrow::field("start_time", a->type()), arrow::field("end_time", b->type(), true), arrow::field("config_name", c->type()), arrow::field("activation_id", d->type()), arrow::field("description", e->type())};
     std::vector<std::shared_ptr<arrow::Array>> arrays = {a, b, c, d, e};
     metadata.finish(fields, arrays, include_attributes);
     return arrow::RecordBatch::Make(arrow::schema(std::move(fields)), a->length(), std::move(arrays));
@@ -585,7 +585,7 @@ IRecordBatchStreamUPtr MLDPAnnotationQueryClient::executeStream(std::string_view
         dp::service::annotation::QueryConfigurationActivationsRequest request;
         for (const auto& predicate : predicates)
         {
-            if (predicate.column == "time" || predicate.column == "end_time")
+            if (predicate.column == "start_time" || predicate.column == "end_time")
             {
                 if (predicate.op != PredicateOp::IS_NULL && predicate.op != PredicateOp::IS_NOT_NULL)
                     (void)timestampValue(predicate);
@@ -660,7 +660,7 @@ IRecordBatchStreamUPtr MLDPAnnotationQueryClient::executeStream(std::string_view
         std::shared_ptr<arrow::Array> a, b, c;
         if (!name.Finish(&a).ok() || !id.Finish(&b).ok() || !time.Finish(&c).ok())
             throw std::runtime_error("Failed to finish Arrow active_configurations batch");
-        auto batch = arrow::RecordBatch::Make(arrow::schema({arrow::field("name", a->type()), arrow::field("activation_id", b->type()), arrow::field("time", c->type())}), a->length(), {a, b, c});
+        auto batch = arrow::RecordBatch::Make(arrow::schema({arrow::field("name", a->type()), arrow::field("activation_id", b->type()), arrow::field("start_time", c->type())}), a->length(), {a, b, c});
         return materializedStream({std::move(batch)});
     }
     throw std::invalid_argument("MLDPAnnotationQueryClient: unknown virtual table '" + std::string(table_name) + "'; supported tables: mldp.pv_metadata, mldp.configuration, mldp.configuration_activation, mldp.active_configurations");

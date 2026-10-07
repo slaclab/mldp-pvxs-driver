@@ -105,14 +105,14 @@ std::vector<ColumnSchema> MLDPQueryClient::tableSchema(std::string_view table_na
             schema.push_back({"status_mode", ColumnType::STRING, false, false, {PredicateOp::EQ}, {}, "'include' (default) keeps only matching samples, 'exclude' drops them"});
         }
         schema.emplace_back("window", ColumnType::TIMESTAMP, false, false, std::set<PredicateOp>{PredicateOp::IN}, std::set<PredicateOp>{},
-                            "Time-series interval input; accepts window IN (start, end) or window IN (SELECT time, end_time ...)");
+                            "Time-series interval input; accepts window IN (start, end) or window IN (SELECT start_time, end_time ...)");
         return schema;
     }
     if (table_name == "mldp.pv_stats")
     {
         return {{"pv", ColumnType::STRING, false, true, kPvOps, kPvOps, "Source name; = / IN select explicit PVs, PREFIX / CONTAINS / LIKE push a PV-name regex; omit to scan every PV"},
-                {"first_timestamp", ColumnType::TIMESTAMP, false, true, {}, {}, "First observed timestamp"},
-                {"last_timestamp", ColumnType::TIMESTAMP, false, true, {}, {}, "Last observed timestamp"},
+                {"start_time", ColumnType::TIMESTAMP, false, true, {}, {}, "First observed sample time"},
+                {"end_time", ColumnType::TIMESTAMP, false, true, {}, {}, "Last observed sample time"},
                 {"num_buckets", ColumnType::INT, false, true, {}, {}, "Number of buckets"}};
     }
     throw std::invalid_argument("MLDPQueryClient: unknown virtual table: " + std::string(table_name));
@@ -781,8 +781,8 @@ IRecordBatchStreamUPtr MLDPQueryClient::executeStream(const std::string_view    
             !last_builder.Finish(&last).ok() || !buckets_builder.Finish(&buckets).ok())
             throw std::runtime_error("Failed to finish Arrow pv_stats batch");
         auto batch = arrow::RecordBatch::Make(arrow::schema({arrow::field("pv", arrow::utf8()),
-                                                             arrow::field("first_timestamp", first->type()),
-                                                             arrow::field("last_timestamp", last->type()),
+                                                             arrow::field("start_time", first->type()),
+                                                             arrow::field("end_time", last->type()),
                                                              arrow::field("num_buckets", arrow::int64())}),
                                               pv->length(), {pv, first, last, buckets});
         return materializedStream({std::move(batch)});

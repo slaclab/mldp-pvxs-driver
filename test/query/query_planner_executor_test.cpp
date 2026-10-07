@@ -323,7 +323,7 @@ public:
         if (table_name == "mldp.configuration_activation")
         {
             return {
-                {"time", query::ColumnType::TIMESTAMP, false, true, {}, {}, "time"},
+                {"start_time", query::ColumnType::TIMESTAMP, false, true, {}, {}, "start"},
                 {"end_time", query::ColumnType::TIMESTAMP, false, true, {}, {}, "end time"},
                 {"activation_id", query::ColumnType::STRING, false, true, {query::PredicateOp::EQ}, {}, "activation id"},
             };
@@ -449,7 +449,7 @@ public:
     std::vector<query::ColumnSchema> tableSchema(const std::string_view table_name) const override
     {
         if (table_name == "mldp.configuration_activation")
-            return {{"time", query::ColumnType::TIMESTAMP, false, true, {}, {}, "start"},
+            return {{"start_time", query::ColumnType::TIMESTAMP, false, true, {}, {}, "start"},
                     {"end_time", query::ColumnType::TIMESTAMP, false, true, {}, {}, "end"}};
         return {{"pv", query::ColumnType::STRING, true, true, {query::PredicateOp::EQ, query::PredicateOp::IN}, {}, "PV"},
                 {"time", query::ColumnType::TIMESTAMP, false, true, {query::PredicateOp::GTE, query::PredicateOp::LTE}, {}, "time"},
@@ -468,7 +468,7 @@ public:
             std::shared_ptr<arrow::Array> ends;
             if (!start.Finish(&starts).ok() || !end.Finish(&ends).ok())
                 throw std::runtime_error("Failed to finish window subquery");
-            auto batch = arrow::RecordBatch::Make(arrow::schema({arrow::field("time", starts->type()), arrow::field("end_time", ends->type())}), 2, {starts, ends});
+            auto batch = arrow::RecordBatch::Make(arrow::schema({arrow::field("start_time", starts->type()), arrow::field("end_time", ends->type())}), 2, {starts, ends});
             return std::make_unique<query::executor::MaterializedRecordBatchStream>(query::executor::RecordBatches{std::move(batch)});
         }
         {
@@ -708,7 +708,7 @@ public:
                     {"attributes.dname", query::ColumnType::STRING, false, true, {}, {query::PredicateOp::PREFIX}, "display name"},
                     {"value", query::ColumnType::INT, false, true, {}, {}, "metadata value"}};
         if (table_name == "mldp.configuration_activation")
-            return {{"time", query::ColumnType::TIMESTAMP, false, true, {}, {}, "activation time"},
+            return {{"start_time", query::ColumnType::TIMESTAMP, false, true, {}, {}, "activation time"},
                     {"config_name", query::ColumnType::STRING, false, true, {query::PredicateOp::EQ}, {}, "configuration name"}};
         return {{"pv", query::ColumnType::STRING, true, true, {query::PredicateOp::EQ, query::PredicateOp::IN}, {}, "PV"},
                 {"time", query::ColumnType::TIMESTAMP, false, true, {query::PredicateOp::GTE, query::PredicateOp::LTE}, {}, "time"},
@@ -747,7 +747,7 @@ public:
             std::shared_ptr<arrow::Array> config_name_array;
             if (!time.Finish(&time_array).ok() || !config_name.Finish(&config_name_array).ok())
                 throw std::runtime_error("Failed to finish scaled activation batch");
-            auto batch = arrow::RecordBatch::Make(arrow::schema({arrow::field("time", time_array->type()), arrow::field("config_name", config_name_array->type())}),
+            auto batch = arrow::RecordBatch::Make(arrow::schema({arrow::field("start_time", time_array->type()), arrow::field("config_name", config_name_array->type())}),
                                                   1, {time_array, config_name_array});
             return std::make_unique<query::executor::MaterializedRecordBatchStream>(query::executor::RecordBatches{std::move(batch)});
         }
@@ -903,7 +903,7 @@ public:
     {
         const auto timestamp_ops = std::set<query::PredicateOp>{query::PredicateOp::EQ, query::PredicateOp::NEQ, query::PredicateOp::LT, query::PredicateOp::LTE, query::PredicateOp::GT, query::PredicateOp::GTE};
         const auto end_time_ops = std::set<query::PredicateOp>{query::PredicateOp::EQ, query::PredicateOp::NEQ, query::PredicateOp::LT, query::PredicateOp::LTE, query::PredicateOp::GT, query::PredicateOp::GTE, query::PredicateOp::IS_NULL, query::PredicateOp::IS_NOT_NULL};
-        return {{"time", query::ColumnType::TIMESTAMP, false, true, timestamp_ops, timestamp_ops, "Activation start"},
+        return {{"start_time", query::ColumnType::TIMESTAMP, false, true, timestamp_ops, timestamp_ops, "Activation start"},
                 {"end_time", query::ColumnType::TIMESTAMP, false, true, end_time_ops, end_time_ops, "Activation end"}};
     }
 
@@ -924,7 +924,7 @@ public:
         EXPECT_TRUE(time.Finish(&starts).ok());
         EXPECT_TRUE(end_time.Finish(&ends).ok());
         auto batch = arrow::RecordBatch::Make(
-            arrow::schema({arrow::field("time", starts->type()), arrow::field("end_time", ends->type())}),
+            arrow::schema({arrow::field("start_time", starts->type()), arrow::field("end_time", ends->type())}),
             starts->length(), {starts, ends});
         return std::make_unique<query::executor::MaterializedRecordBatchStream>(query::executor::RecordBatches{std::move(batch)});
     }
@@ -967,7 +967,7 @@ TEST(EmptyWideInputTest, EmptyValidSubqueriesProduceNoWideTableRequest)
     EmptyWideInputQueryable::execute_calls = 0;
     const auto window_empty = executor.execute(
         planner.plan(query::parseQuery(
-            "SELECT * FROM mldp.time_series_table WHERE pv = 'PV:ONE' " "AND window IN (SELECT time, end_time FROM mldp.configuration_activation WHERE activation_id = 'none')")),
+            "SELECT * FROM mldp.time_series_table WHERE pv = 'PV:ONE' " "AND window IN (SELECT start_time, end_time FROM mldp.configuration_activation WHERE activation_id = 'none')")),
         {.pool = arrow::default_memory_pool()});
     EXPECT_TRUE(window_empty.batches.empty());
     EXPECT_EQ(window_empty.stats.rpc_calls, 1U);
@@ -976,11 +976,66 @@ TEST(EmptyWideInputTest, EmptyValidSubqueriesProduceNoWideTableRequest)
     EmptyWideInputQueryable::execute_calls = 0;
     const auto long_window_empty = executor.execute(
         planner.plan(query::parseQuery(
-            "SELECT pv, time FROM mldp.time_series WHERE pv = 'PV:ONE' " "AND window IN (SELECT time, end_time FROM mldp.configuration_activation WHERE activation_id = 'none')")),
+            "SELECT pv, time FROM mldp.time_series WHERE pv = 'PV:ONE' " "AND window IN (SELECT start_time, end_time FROM mldp.configuration_activation WHERE activation_id = 'none')")),
         {.pool = arrow::default_memory_pool()});
     EXPECT_TRUE(long_window_empty.batches.empty());
     EXPECT_EQ(long_window_empty.stats.rpc_calls, 1U);
     EXPECT_EQ(EmptyWideInputQueryable::execute_calls, 1U);
+    query::QueryableFactory::instance().reset();
+}
+
+TEST(TimeSeriesWindowTest, PerPvTimeWindowUsesSortedInputAndComputesFrames)
+{
+    query::QueryableFactory::instance().reset();
+    query::QueryableFactory::instance().prepare<EmptyWideInputQueryable>(config::Config::configFromYamlString("{}"));
+
+    query::QueryPlanner  planner;
+    query::QueryExecutor executor;
+    const std::string    sql =
+        "SELECT pv, time, ROW_NUMBER() OVER w AS rn, COUNT(*) OVER (w RANGE BETWEEN 5s PRECEDING AND CURRENT ROW) AS recent, "
+        "LAG(time) OVER w AS previous, time - LAG(time) OVER w AS gap FROM mldp.time_series WHERE pv = 'PV:ONE' "
+        "WINDOW w AS (PARTITION BY pv ORDER BY time)";
+    const auto explained = query::plan::physicalPlanToString(planner.plan(query::parseQuery(sql)));
+    EXPECT_NE(explained.find("PhysicalWindow(groups=1, calls=4, partition=1, order=1, sorted_input=true)"), std::string::npos) << explained;
+    // Another ORDER BY needs a full sort.
+    const auto descending = query::plan::physicalPlanToString(planner.plan(query::parseQuery(
+        "SELECT pv, ROW_NUMBER() OVER (PARTITION BY pv ORDER BY time DESC) FROM mldp.time_series WHERE pv = 'PV:ONE'")));
+    EXPECT_NE(descending.find("sorted_input=false"), std::string::npos) << descending;
+
+    const auto result = executor.execute(planner.plan(query::parseQuery(sql)), {.pool = arrow::default_memory_pool()});
+    ASSERT_EQ(result.batches.size(), 1U);
+    const auto& batch = result.batches.front();
+    ASSERT_EQ(batch->num_rows(), 3);
+    const auto cell = [&batch](const int column, const int64_t row)
+    {
+        const auto scalar = *batch->column(column)->GetScalar(row);
+        return scalar->is_valid ? scalar->ToString() : std::string{"null"};
+    };
+    // Samples at 0s, 5s and 10s: the 5s frame holds the sample and the one before it.
+    EXPECT_EQ(cell(2, 0), "1");
+    EXPECT_EQ(cell(2, 2), "3");
+    EXPECT_EQ(cell(3, 0), "1");
+    EXPECT_EQ(cell(3, 1), "2");
+    EXPECT_EQ(cell(3, 2), "2");
+    EXPECT_EQ(cell(4, 0), "null");
+    EXPECT_TRUE(batch->column(4)->type()->Equals(*batch->column(1)->type()));
+    EXPECT_EQ(cell(5, 0), "null");
+    EXPECT_EQ(batch->column(5)->type()->id(), arrow::Type::DURATION);
+    EXPECT_EQ(cell(5, 2), (*arrow::MakeScalar(arrow::duration(arrow::TimeUnit::NANO), 5'000'000'000LL))->ToString());
+
+    // The streaming path (used by the REPL) gives the same rows.
+    auto    streamed = executor.executeStream(planner.plan(query::parseQuery(sql + " ORDER BY time")), {.pool = arrow::default_memory_pool()});
+    int64_t rows = 0;
+    while (auto next = streamed.stream->next())
+    {
+        for (int64_t row = 0; row < next->num_rows(); ++row, ++rows)
+            for (int column = 0; column < next->num_columns(); ++column)
+            {
+                const auto scalar = *next->column(column)->GetScalar(row);
+                EXPECT_EQ(scalar->is_valid ? scalar->ToString() : std::string{"null"}, cell(column, rows));
+            }
+    }
+    EXPECT_EQ(rows, 3);
     query::QueryableFactory::instance().reset();
 }
 
@@ -1311,7 +1366,7 @@ TEST(QueryPlannerExecutorTest, StreamsSubqueryWindowsAcrossNormalizedRanges)
     query::QueryPlanner  planner;
     query::QueryExecutor executor;
     auto                 streamed = executor.executeStream(planner.plan(query::parseQuery(
-                                                               "SELECT pv, time, value FROM mldp.time_series WHERE pv IN ('SUB:ONE', 'SUB:TWO') " "AND window IN (SELECT time, end_time FROM mldp.configuration_activation; slice 5s, series_per_shard 1) LIMIT 4")),
+                                                               "SELECT pv, time, value FROM mldp.time_series WHERE pv IN ('SUB:ONE', 'SUB:TWO') " "AND window IN (SELECT start_time, end_time FROM mldp.configuration_activation; slice 5s, series_per_shard 1) LIMIT 4")),
                                                            {.pool = arrow::default_memory_pool()});
     int64_t              rows = 0;
     while (auto batch = streamed.stream->next())
@@ -1397,7 +1452,7 @@ TEST(QueryPlannerExecutorTest, ScalesProductionShapedWideWindowQueryToFourConcur
     const auto           spill = std::make_shared<query::SpillManager>(file_system, "spill");
 
     auto                                             streamed = executor.executeStream(planner.plan(query::parseQuery(
-                                                                                           "SELECT * FROM mldp.time_series_table " "WHERE pv IN (SELECT pv FROM mldp.pv_metadata WHERE attributes.dname PREFIX 'USEG:UNDH') " "AND window IN (SELECT time, time + 30s FROM mldp.configuration_activation " "WHERE config_name = 'SPEAR User' LIMIT 1; slice 5s, series_per_shard 2)")),
+                                                                                           "SELECT * FROM mldp.time_series_table " "WHERE pv IN (SELECT pv FROM mldp.pv_metadata WHERE attributes.dname PREFIX 'USEG:UNDH') " "AND window IN (SELECT start_time, start_time + 30s FROM mldp.configuration_activation " "WHERE config_name = 'SPEAR User' LIMIT 1; slice 5s, series_per_shard 2)")),
                                                                                        {.pool = arrow::default_memory_pool(), .spill = spill});
     std::vector<std::shared_ptr<arrow::RecordBatch>> batches;
     while (const auto batch = streamed.stream->next())
@@ -1483,7 +1538,7 @@ TEST(QueryPlannerExecutorTest, KeepsAllMetadataSelectedWideColumnsWhenSomeHaveNo
     auto streamed = executor.executeStream(planner.plan(query::parseQuery(
                                              "SELECT * FROM mldp.time_series_table "
                                              "WHERE pv IN (SELECT pv FROM mldp.pv_metadata WHERE attributes.dname PREFIX 'USEG:UNDH' LIMIT 4) "
-                                             "AND window IN (SELECT time, time + 5s FROM mldp.configuration_activation "
+                                             "AND window IN (SELECT start_time, start_time + 5s FROM mldp.configuration_activation "
                                              "WHERE config_name = 'SPEAR User' LIMIT 1; slice 5s, series_per_shard 2)")),
                                          {.pool = arrow::default_memory_pool(), .spill = spill});
     const auto batch = streamed.stream->next();
@@ -1634,7 +1689,7 @@ TEST(QueryPlannerExecutorTest, AcceptsWindowShardOptionsForWideSubqueryWindows)
     query::QueryableFactory::instance().prepare<SubqueryWindowQueryable>(config::Config::configFromYamlString("{}"));
     query::QueryPlanner planner;
     EXPECT_NO_THROW((void)planner.plan(query::parseQuery(
-        "SELECT * FROM mldp.time_series_table WHERE pv IN ('SUB:ONE', 'SUB:TWO') " "AND window IN (SELECT time, end_time FROM mldp.configuration_activation; slice 5s, series_per_shard 2)")));
+        "SELECT * FROM mldp.time_series_table WHERE pv IN ('SUB:ONE', 'SUB:TWO') " "AND window IN (SELECT start_time, end_time FROM mldp.configuration_activation; slice 5s, series_per_shard 2)")));
     query::QueryableFactory::instance().reset();
 }
 
@@ -1761,6 +1816,89 @@ TEST_F(PlannerExecutorTest, SelectDistinctDropsDuplicateRowsOnCatalogAndVirtualT
     ASSERT_EQ(key_hidden.batches.front()->num_columns(), 1);
     EXPECT_EQ(rowCount(executor.execute(planner.plan(query::parseQuery("SELECT DISTINCT ON (pv) * FROM dup_samples")), context)), 2);
     EXPECT_EQ(rowCount(executor.execute(planner.plan(query::parseQuery("SELECT DISTINCT ON (value) pv FROM dup_samples")), context)), 3);
+}
+
+TEST_F(PlannerExecutorTest, ColumnComparisonsAndAntiJoinFindNonOverlappingIntervals)
+{
+    auto file_system = std::make_shared<arrow::fs::internal::MockFileSystem>(std::chrono::system_clock::now());
+    auto catalog = std::make_shared<query::QueryTableCatalog>(file_system, "catalog");
+
+    // a overlaps b; c touches b's end only (not an overlap); d stands alone; e has no end.
+    arrow::StringBuilder id_builder;
+    arrow::Int64Builder  start_builder;
+    arrow::Int64Builder  end_builder;
+    arrow::Int64Builder  k_builder;
+    ASSERT_TRUE(id_builder.AppendValues({"a", "b", "c", "d", "e"}).ok());
+    ASSERT_TRUE(start_builder.AppendValues({0, 5, 20, 40, 50}).ok());
+    ASSERT_TRUE(end_builder.AppendValues({10, 20, 30, 45}).ok());
+    ASSERT_TRUE(end_builder.AppendNull().ok());
+    ASSERT_TRUE(k_builder.AppendValues({1, 1, 1, 1, 1}).ok());
+    std::shared_ptr<arrow::Array> id, start, end, k;
+    ASSERT_TRUE(id_builder.Finish(&id).ok());
+    ASSERT_TRUE(start_builder.Finish(&start).ok());
+    ASSERT_TRUE(end_builder.Finish(&end).ok());
+    ASSERT_TRUE(k_builder.Finish(&k).ok());
+    const auto schema = arrow::schema({arrow::field("id", arrow::utf8()), arrow::field("start", arrow::int64()),
+                                       arrow::field("stop", arrow::int64()), arrow::field("k", arrow::int64())});
+    ASSERT_TRUE(catalog->create("intervals", query::TableLifetime::Session, {arrow::RecordBatch::Make(schema, 5, {id, start, end, k})}).ok());
+
+    query::ExecutionContext context{.pool = arrow::default_memory_pool(), .table_catalog = catalog};
+    query::QueryPlanner     planner(catalog);
+    query::QueryExecutor    executor;
+    const auto ids = [&](const std::string& sql)
+    {
+        const auto result = executor.execute(planner.plan(query::parseQuery(sql)), context);
+        std::vector<std::string> out;
+        for (const auto& batch : result.batches)
+            for (int64_t row = 0; batch && row < batch->num_rows(); ++row)
+                out.push_back((*batch->column(0)->GetScalar(row))->ToString());
+        std::sort(out.begin(), out.end());
+        return out;
+    };
+
+    // Column-to-column comparisons on one table, including a string comparison.
+    EXPECT_EQ(ids("SELECT id FROM intervals WHERE stop > start"), (std::vector<std::string>{"a", "b", "c", "d"}));
+    EXPECT_EQ(ids("SELECT id FROM intervals WHERE id >= id AND start < stop"), (std::vector<std::string>{"a", "b", "c", "d"}));
+
+    // Self-join with comparisons spanning both sides (the overlap test).
+    EXPECT_EQ(ids("SELECT DISTINCT x.id FROM intervals x JOIN intervals y ON x.k = y.k "
+                  "WHERE x.id != y.id AND x.start < y.stop AND y.start < x.stop"),
+              (std::vector<std::string>{"a", "b"}));
+
+    // Anti-join: right-side IS NULL is evaluated on the join output.
+    ASSERT_NO_THROW(ids("CREATE TEMP TABLE overlapping AS SELECT DISTINCT x.id AS id FROM intervals x JOIN intervals y ON x.k = y.k "
+                        "WHERE x.id != y.id AND x.start < y.stop AND y.start < x.stop"));
+    EXPECT_EQ(ids("SELECT i.id FROM intervals i LEFT JOIN overlapping o ON i.id = o.id WHERE o.id IS NULL"),
+              (std::vector<std::string>{"c", "d", "e"}));
+    EXPECT_EQ(ids("SELECT i.id FROM intervals i LEFT JOIN overlapping o ON i.id = o.id WHERE o.id IS NOT NULL"),
+              (std::vector<std::string>{"a", "b"}));
+
+    const auto explained = query::plan::physicalPlanToString(planner.plan(query::parseQuery(
+        "SELECT x.id FROM intervals x JOIN intervals y ON x.k = y.k WHERE x.start < y.stop")));
+    EXPECT_NE(explained.find("conditions=1"), std::string::npos) << explained;
+}
+
+TEST_F(PlannerExecutorTest, ConstantProjectionKeepsTypeOnEmptyBatches)
+{
+    auto file_system = std::make_shared<arrow::fs::internal::MockFileSystem>(std::chrono::system_clock::now());
+    auto catalog = std::make_shared<query::QueryTableCatalog>(file_system, "catalog");
+    arrow::StringBuilder builder;
+    ASSERT_TRUE(builder.AppendValues({"a", "b", "c", "d"}).ok());
+    std::shared_ptr<arrow::Array> values;
+    ASSERT_TRUE(builder.Finish(&values).ok());
+    const auto schema = arrow::schema({arrow::field("v", arrow::utf8())});
+    // The filter empties the first batch; `1 AS k` must still be int64 there.
+    ASSERT_TRUE(catalog->create("nums", query::TableLifetime::Session,
+                                {arrow::RecordBatch::Make(schema, 2, {values->Slice(0, 2)}),
+                                 arrow::RecordBatch::Make(schema, 2, {values->Slice(2, 2)})}).ok());
+
+    query::ExecutionContext context{.pool = arrow::default_memory_pool(), .table_catalog = catalog};
+    query::QueryPlanner     planner(catalog);
+    query::QueryExecutor    executor;
+    ASSERT_NO_THROW((void)executor.execute(planner.plan(query::parseQuery("CREATE TEMP TABLE big AS SELECT v, 1 AS k FROM nums WHERE v IN ('c', 'd')")), context));
+    const auto result = executor.execute(planner.plan(query::parseQuery("SELECT COUNT(*) FROM big")), context);
+    ASSERT_FALSE(result.batches.empty());
+    EXPECT_EQ((*result.batches.front()->column(0)->GetScalar(0))->ToString(), "2");
 }
 
 TEST_F(PlannerExecutorTest, GroupByComputesAggregatesOnCatalogAndVirtualTables)
@@ -2124,11 +2262,11 @@ TEST(ActivationTimestampPredicateTest, RetainsTimestampPredicatesForExactLocalFi
     query::QueryExecutor executor;
     const auto           result = executor.execute(
         planner.plan(query::parseQuery(
-            "SELECT time, end_time FROM mldp.configuration_activation " "WHERE time >= 7 AND end_time <= 20")),
+            "SELECT start_time, end_time FROM mldp.configuration_activation " "WHERE start_time >= 7 AND end_time <= 20")),
         {.pool = arrow::default_memory_pool()});
 
     ASSERT_EQ(ActivationTimestampQueryable::received_predicates.size(), 2U);
-    EXPECT_EQ(ActivationTimestampQueryable::received_predicates[0].column, "time");
+    EXPECT_EQ(ActivationTimestampQueryable::received_predicates[0].column, "start_time");
     EXPECT_EQ(ActivationTimestampQueryable::received_predicates[1].column, "end_time");
     ASSERT_EQ(result.batches.size(), 1U);
     EXPECT_EQ(result.batches.front()->num_rows(), 1);
@@ -2144,7 +2282,7 @@ TEST(ActivationTimestampPredicateTest, FiltersOpenActivationsWithIsNull)
     query::QueryExecutor executor;
     const auto           result = executor.execute(
         planner.plan(query::parseQuery(
-            "SELECT time FROM mldp.configuration_activation WHERE end_time IS NULL")),
+            "SELECT start_time FROM mldp.configuration_activation WHERE end_time IS NULL")),
         {.pool = arrow::default_memory_pool()});
 
     ASSERT_EQ(result.batches.size(), 1U);
@@ -2443,7 +2581,7 @@ TEST_F(PlannerExecutorTest, ShowFunctionsAndOperatorsExposeSortedCallableCatalog
     EXPECT_EQ(function_batch->schema()->field(0)->name(), "name");
     EXPECT_EQ(function_batch->schema()->field(1)->name(), "arguments");
     EXPECT_EQ(function_batch->schema()->field(2)->name(), "returns");
-    // Scalar functions and the aggregate registry, sorted by name.
+    // Scalar functions, the aggregate registry and window functions, sorted by name.
     std::vector<std::string> names;
     std::map<std::string, std::string> kinds;
     const auto kind_index = function_batch->schema()->GetFieldIndex("kind");
@@ -2454,8 +2592,10 @@ TEST_F(PlannerExecutorTest, ShowFunctionsAndOperatorsExposeSortedCallableCatalog
         kinds[names.back()] = function_batch->column(kind_index)->GetScalar(row).ValueOrDie()->ToString();
     }
     EXPECT_TRUE(std::is_sorted(names.begin(), names.end()));
-    EXPECT_EQ(names, (std::vector<std::string>{"avg", "count", "first", "from_utc", "last", "max", "min", "sum", "to_utc", "to_utc"}));
+    EXPECT_EQ(names, (std::vector<std::string>{"avg", "count", "dense_rank", "first", "first_value", "from_utc", "lag", "last", "last_value", "lead", "max",
+                                                "min", "rank", "row_number", "sum", "to_utc", "to_utc"}));
     EXPECT_EQ(kinds["count"], "aggregate");
+    EXPECT_EQ(kinds["lag"], "window");
     EXPECT_EQ(kinds["from_utc"], "scalar");
     const auto from_utc = std::find(names.begin(), names.end(), "from_utc") - names.begin();
     EXPECT_EQ(function_batch->column(1)->GetScalar(from_utc).ValueOrDie()->ToString(), "(timestamp, string)");

@@ -108,6 +108,10 @@ void collectReferencedColumns(const plan::LogicalNodePtr&                   node
                        {
                            columns[predicate.table_alias].insert(predicate.column == "tag" ? "tags" : predicate.column);
                        }
+                       for (const auto& condition : filter.conditions)
+                       {
+                           collectExpressionColumns(condition, columns, table_aliases);
+                       }
                    },
                    [&](const plan::LogicalAggregate& aggregate)
                    {
@@ -121,6 +125,27 @@ void collectReferencedColumns(const plan::LogicalNodePtr&                   node
                        for (const auto& call : aggregate.spec.aggregates)
                        {
                            collectExpressionColumns(call.argument, columns, table_aliases);
+                       }
+                   },
+                   [&](const plan::LogicalWindow& window)
+                   {
+                       // Window outputs are computed here, not read from a scan.
+                       for (const auto& group : window.groups)
+                       {
+                           for (const auto& call : group.calls)
+                           {
+                               columns[""].erase(call.name);
+                               collectExpressionColumns(call.argument, columns, table_aliases);
+                               collectExpressionColumns(call.default_value, columns, table_aliases);
+                           }
+                           for (const auto& expression : group.partition_by)
+                           {
+                               collectExpressionColumns(expression, columns, table_aliases);
+                           }
+                           for (const auto& key : group.order_by)
+                           {
+                               collectExpressionColumns(key.expression, columns, table_aliases);
+                           }
                        }
                    },
                    [&](const plan::LogicalProject& project)

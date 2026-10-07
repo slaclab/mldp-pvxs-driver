@@ -26,6 +26,7 @@
 #include <query/executor/ExecutorUtils.h>
 #include <query/executor/ScanExecutionHelpers.h>
 #include <query/executor/WindowBackendScanRecordBatchStream.h>
+#include <query/executor/WindowRecordBatchStream.h>
 #include <query/QueryProgress.h>
 #include <query/plan/PlanVisit.h>
 
@@ -47,6 +48,7 @@ using mldp_pvxs_driver::query::executor::MaterializedRecordBatchStream;
 using mldp_pvxs_driver::query::executor::FilterRecordBatchStream;
 using mldp_pvxs_driver::query::executor::ProjectRecordBatchStream;
 using mldp_pvxs_driver::query::executor::PivotRecordBatchStream;
+using mldp_pvxs_driver::query::executor::WindowRecordBatchStream;
 
 namespace {
 
@@ -155,7 +157,7 @@ IRecordBatchStreamUPtr makeStreamingPlan(const plan::PhysicalNodePtr& root,
     if (const auto* filter = std::get_if<plan::PhysicalFilter>(&root->value))
     {
         auto input = makeStreamingPlan(filter->input, std::move(context), stats);
-        return input ? std::make_unique<FilterRecordBatchStream>(std::move(input), filter->predicates) : nullptr;
+        return input ? std::make_unique<FilterRecordBatchStream>(std::move(input), filter->predicates, filter->conditions) : nullptr;
     }
     if (const auto* project = std::get_if<plan::PhysicalProject>(&root->value))
     {
@@ -168,10 +170,16 @@ IRecordBatchStreamUPtr makeStreamingPlan(const plan::PhysicalNodePtr& root,
         auto input = makeStreamingPlan(aggregate->input, context, stats);
         return input ? std::make_unique<AggregateRecordBatchStream>(std::move(input), *aggregate, std::move(context)) : nullptr;
     }
+    if (const auto* window = std::get_if<plan::PhysicalWindow>(&root->value))
+    {
+        auto input = makeStreamingPlan(window->input, context, stats);
+        return input ? std::make_unique<WindowRecordBatchStream>(std::move(input), *window, std::move(context)) : nullptr;
+    }
     if (const auto* sort = std::get_if<plan::PhysicalSort>(&root->value))
     {
-        // A sort over an aggregate sorts only the (small) group output.
-        if (!std::holds_alternative<plan::PhysicalAggregate>(sort->input->value)) return nullptr;
+        // A sort over an aggregate sorts only the (small) group output; a sort over
+        // a window sorts its output, which the window step already buffered.
+        if (!std::holds_alternative<plan::PhysicalAggregate>(sort->input->value) && !std::holds_alternative<plan::PhysicalWindow>(sort->input->value)) return nullptr;
         auto input = makeStreamingPlan(sort->input, std::move(context), stats);
         if (!input) return nullptr;
         RecordBatches groups;

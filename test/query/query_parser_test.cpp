@@ -147,7 +147,7 @@ TEST(QueryParserTest, ParsesCallableDiscoveryStatements)
 
 TEST(QueryParserTest, ParsesNullPredicates)
 {
-    const auto statement = parseQuery("SELECT * FROM mldp.configuration_activation WHERE end_time IS NULL AND time >= NOW - 7m AND end_time IS NOT NULL");
+    const auto statement = parseQuery("SELECT * FROM mldp.configuration_activation WHERE end_time IS NULL AND start_time >= NOW - 7m AND end_time IS NOT NULL");
     const auto& select = std::get<SelectStatement>(statement);
     ASSERT_EQ(select.predicates.size(), 3U);
     EXPECT_TRUE(std::holds_alternative<IsNullPredicate>(select.predicates[0]));
@@ -157,7 +157,7 @@ TEST(QueryParserTest, ParsesNullPredicates)
 
 TEST(QueryParserTest, ParsesExpressionPrecedenceAndDurationLiterals)
 {
-    const auto statement = parseQuery("SELECT value + 2 * 3, activation.time + 2D FROM samples");
+    const auto statement = parseQuery("SELECT value + 2 * 3, activation.start_time + 2D FROM samples");
     const auto& select = std::get<SelectStatement>(statement);
     ASSERT_EQ(select.select_items.size(), 2U);
     const auto& first = std::get<BinaryExpression>(select.select_items[0].expression->value);
@@ -394,7 +394,7 @@ TEST(QueryParserTest, ParsesWideTablePvAndWindowSubqueries)
     const auto statement = parseQuery(
         "SELECT * FROM mldp.time_series_table "
         "WHERE pv IN (SELECT pv FROM mldp.pv_metadata WHERE tag = 'magnet') "
-        "AND window IN (SELECT time, end_time FROM mldp.configuration_activation WHERE attributes.namespace = 'mldp_sample' "
+        "AND window IN (SELECT start_time, end_time FROM mldp.configuration_activation WHERE attributes.namespace = 'mldp_sample' "
         "AND end_time IS NOT NULL)");
     const auto& select = std::get<SelectStatement>(statement);
     ASSERT_EQ(select.predicates.size(), 2);
@@ -411,7 +411,7 @@ TEST(QueryParserTest, ParsesWindowSubqueryShardOptions)
 {
     const auto statement = parseQuery(
         "SELECT * FROM mldp.time_series WHERE pv = 'PV:A' "
-        "AND window IN (SELECT time, end_time FROM mldp.configuration_activation; slice 5s, series_per_shard 2)");
+        "AND window IN (SELECT start_time, end_time FROM mldp.configuration_activation; slice 5s, series_per_shard 2)");
     const auto& select = std::get<SelectStatement>(statement);
     ASSERT_EQ(select.predicates.size(), 2U);
     const auto& window = std::get<InPredicate>(select.predicates[1]);

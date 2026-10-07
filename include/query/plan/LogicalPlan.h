@@ -84,6 +84,7 @@ struct LogicalScan {
 struct LogicalFilter {
     LogicalNodePtr         input;                    ///< Input plan node to filter.
     std::vector<PlannerPredicate> predicates;        ///< Residual predicates applied after scan pushdown.
+    std::vector<ExpressionPtr> conditions;           ///< Boolean expressions (e.g. column-to-column comparisons); a row passes when all are true.
 };
 
 /** @brief Selects output columns and computed expressions. */
@@ -141,6 +142,38 @@ struct LogicalAggregate {
     AggregateSpec  spec;  ///< Keys, aggregates and HAVING condition.
 };
 
+/** @brief Resolved window frame; offsets are in rows (ROWS) or ORDER BY key units (RANGE; nanoseconds for timestamps). */
+struct WindowFrameSpec {
+    bool            rows{false};                                       ///< True for ROWS, false for RANGE.
+    WindowBoundKind start{WindowBoundKind::UNBOUNDED_PRECEDING};       ///< Frame start kind.
+    int64_t         start_offset{0};                                   ///< Start offset for PRECEDING / FOLLOWING.
+    WindowBoundKind end{WindowBoundKind::CURRENT_ROW};                 ///< Frame end kind.
+    int64_t         end_offset{0};                                     ///< End offset for PRECEDING / FOLLOWING.
+};
+
+/** @brief One window function call computed per input row. */
+struct WindowCall {
+    std::string     function;        ///< Lower-case function name (row_number, lag, sum, ...).
+    ExpressionPtr   argument;        ///< Value argument; null for ROW_NUMBER/RANK/DENSE_RANK and COUNT(*).
+    int64_t         offset{1};       ///< Row offset for LAG / LEAD.
+    ExpressionPtr   default_value;   ///< LAG / LEAD default when the offset row is outside the partition; may be null.
+    WindowFrameSpec frame;           ///< Frame used by value and aggregate functions.
+    std::string     name;            ///< Internal output column name (__win_N).
+};
+
+/** @brief Window calls sharing one PARTITION BY / ORDER BY, evaluated over a single sort. */
+struct WindowGroup {
+    std::vector<ExpressionPtr> partition_by; ///< Partition key expressions.
+    std::vector<SortKey>       order_by;     ///< Order keys inside each partition (SortKey::expression is evaluated).
+    std::vector<WindowCall>    calls;        ///< Calls computed by this group.
+};
+
+/** @brief Appends window function results (one column per call) to every input row. */
+struct LogicalWindow {
+    LogicalNodePtr           input;  ///< Input plan node.
+    std::vector<WindowGroup> groups; ///< Window groups, evaluated in order; later groups see earlier outputs.
+};
+
 /** @brief Orders rows from a logical input by one or more sort keys. */
 struct LogicalSort {
     LogicalNodePtr       input; ///< Input plan node.
@@ -159,7 +192,7 @@ struct LogicalJoin {
     std::vector<std::string>    warnings;                     ///< Planner-generated warnings about this join.
 };
 
-using LogicalNodeVariant = std::variant<LogicalScan, LogicalFilter, LogicalProject, LogicalSort, LogicalLimit, LogicalJoin, LogicalAggregate>;
+using LogicalNodeVariant = std::variant<LogicalScan, LogicalFilter, LogicalProject, LogicalSort, LogicalLimit, LogicalJoin, LogicalAggregate, LogicalWindow>;
 
 /** @brief Variant wrapper that forms a logical-plan tree. */
 struct LogicalNode {
@@ -203,13 +236,16 @@ struct BoundSelect {
     bool                        distinct{false};             ///< True for SELECT DISTINCT.
     std::vector<ExpressionPtr>  distinct_on;                 ///< DISTINCT ON key expressions.
     std::shared_ptr<const AggregateSpec> aggregate;          ///< Grouping step for aggregate queries; null otherwise.
+    std::vector<WindowGroup>    windows;                     ///< Window groups evaluated after grouping; empty without OVER.
     bool                        select_all{false};           ///< True for SELECT *.
     std::vector<std::string>    select_columns;              ///< Explicit output column names.
     std::vector<ExpressionPtr>  select_expressions;         ///< Computed expressions for derived columns.
     std::vector<std::string>    select_names;               ///< Output names corresponding to select_expressions.
+    std::vector<ColumnType>     select_types;               ///< Types of select_expressions when known (same size), else empty.
     std::vector<SortKey>        order_by;                   ///< ORDER BY sort keys.
     std::optional<uint64_t>     limit;                      ///< LIMIT value if present.
     std::optional<std::string>  page_token;                 ///< PAGE TOKEN value for REPL paging if present.
+    std::vector<ExpressionPtr>  conditions;                 ///< WHERE column-to-column comparisons applied after joins.
 };
 
 } // namespace mldp_pvxs_driver::query::plan

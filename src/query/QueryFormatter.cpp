@@ -446,15 +446,47 @@ void writeArrowIpc(const query::QueryExecutionResult& result,
     }
 }
 
-std::string truncateMiddle(const std::string_view value, const std::size_t width)
+/// Cuts @p value to @p max_chars, marking the cut with a trailing "...".
+std::string capCell(std::string value, const std::size_t max_chars)
 {
-    if (value.size() <= width) return std::string(value);
-    if (width == 0) return {};
-    if (width <= 3) return std::string(width, '.');
+    if (value.size() <= max_chars) return value;
+    if (max_chars <= 3) return std::string(max_chars, '.');
+    value.resize(max_chars - 3);
+    return value + "...";
+}
 
-    const auto prefix_width = (width - 3 + 1) / 2;
-    const auto suffix_width = width - 3 - prefix_width;
-    return std::string(value.substr(0, prefix_width)) + "..." + std::string(value.substr(value.size() - suffix_width));
+/// Splits @p value into lines no wider than @p width, preferring breaks at
+/// spaces and after punctuation; embedded newlines always break.
+std::vector<std::string> wrapText(const std::string_view value, const std::size_t width)
+{
+    std::vector<std::string> lines;
+    std::size_t              line_start = 0;
+    do
+    {
+        const auto line_end = std::min(value.find('\n', line_start), value.size());
+        auto       rest = value.substr(line_start, line_end - line_start);
+        line_start = line_end + 1;
+        if (width == 0 || rest.size() <= width)
+        {
+            lines.emplace_back(rest);
+            continue;
+        }
+        while (rest.size() > width)
+        {
+            if (const auto space = rest.substr(0, width + 1).rfind(' '); space != std::string_view::npos && space > 0)
+            {
+                lines.emplace_back(rest.substr(0, space));
+                rest.remove_prefix(space + 1);
+                continue;
+            }
+            auto cut = rest.substr(0, width).find_last_of(",;/|:=-");
+            cut = cut == std::string_view::npos ? width : cut + 1;
+            lines.emplace_back(rest.substr(0, cut));
+            rest.remove_prefix(cut);
+        }
+        if (!rest.empty()) lines.emplace_back(rest);
+    } while (line_start <= value.size());
+    return lines;
 }
 
 std::vector<std::size_t> fittedWidths(const std::vector<std::size_t>& natural_widths, const std::size_t viewport_width)
@@ -503,12 +535,12 @@ void writeStackedTable(const std::vector<std::string>&              headers,
         if (row_index != 0) output << "\n";
         for (std::size_t column = 0; column < headers.size(); ++column)
         {
-            const auto value_end = rows[row_index][column].find('\n');
-            const auto value = rows[row_index][column].substr(0, value_end);
-            const auto line = truncateMiddle(headers[column] + ": " + value, viewport_width);
-            const auto label_end = std::min(line.size(), headers[column].size() + 1);
-            output << style::paint(color, style::cyan, std::string_view(line).substr(0, label_end))
-                   << std::string_view(line).substr(label_end) << "\n";
+            const auto lines = wrapText(headers[column] + ": " + rows[row_index][column], viewport_width);
+            const auto label_end = std::min(lines.front().size(), headers[column].size() + 1);
+            output << style::paint(color, style::cyan, std::string_view(lines.front()).substr(0, label_end))
+                   << std::string_view(lines.front()).substr(label_end) << "\n";
+            for (std::size_t line = 1; line < lines.size(); ++line)
+                output << lines[line] << "\n";
         }
     }
 }
@@ -562,6 +594,7 @@ void writeTable(const query::QueryExecutionResult& result,
                 }
                 const auto scalar = *scalar_result;
                 std::string cell = tableValue(scalar);
+                if (options.viewport_width) cell = capCell(std::move(cell), options.max_cell_chars);
                 const auto first_line_end = cell.find('\n');
                 widths[c] = std::max(widths[c], (first_line_end == std::string::npos ? cell : cell.substr(0, first_line_end)).size());
                 for (std::size_t line_start = first_line_end == std::string::npos ? cell.size() : first_line_end + 1;
@@ -604,43 +637,40 @@ void writeTable(const query::QueryExecutionResult& result,
         return value;
     };
 
-    if (print_header)
-    {
-        // Header
+    // Writes one logical row whose cells are wrapped to their column width.
+    auto write_row = [&](const std::vector<std::string>& cells, const bool header) {
+        std::vector<std::vector<std::string>> wrapped;
+        wrapped.reserve(cells.size());
+        std::size_t lines = 1;
         for (int c = 0; c < num_cols; ++c)
         {
-            if (c > 0)
-            {
-                output << column_divider;
-            }
-            output << style::paint(options.color, style::cyan, padded(truncateMiddle(headers[c], fitted_widths[c]), fitted_widths[c]));
+            wrapped.push_back(wrapText(cells[c], fitted_widths[c]));
+            lines = std::max(lines, wrapped.back().size());
         }
-        output << "\n";
-        separator();
-    }
-
-    // Data rows
-    for (const auto& row : rows)
-    {
-        throwIfCancelled(cancellation);
-        std::size_t lines = 1;
-        for (const auto& cell : row)
-            lines = std::max(lines, static_cast<std::size_t>(1 + std::count(cell.begin(), cell.end(), '\n')));
         for (std::size_t line = 0; line < lines; ++line)
         {
             throwIfCancelled(cancellation);
             for (int c = 0; c < num_cols; ++c)
             {
                 if (c > 0) output << column_divider;
-                const auto start = [&] { std::size_t offset = 0; for (std::size_t part = 0; part < line; ++part) { const auto pos = row[c].find('\n', offset); if (pos == std::string::npos) return row[c].size(); offset = pos + 1; } return offset; }();
-                const auto end = row[c].find('\n', start);
-                output << std::left << std::setw(static_cast<int>(fitted_widths[c]))
-                       << truncateMiddle(row[c].substr(start, end - start), fitted_widths[c]);
+                auto text = padded(line < wrapped[c].size() ? wrapped[c][line] : std::string{}, fitted_widths[c]);
+                output << (header ? style::paint(options.color, style::cyan, text) : text);
             }
             output << "\n";
         }
+    };
+
+    if (print_header)
+    {
+        write_row(headers, true);
+        separator();
     }
 
+    for (const auto& row : rows)
+    {
+        throwIfCancelled(cancellation);
+        write_row(row, false);
+    }
 }
 
 } // namespace

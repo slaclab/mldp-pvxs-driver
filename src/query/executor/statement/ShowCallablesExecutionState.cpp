@@ -12,6 +12,7 @@
 #include <query/executor/StateInternal.h>
 
 #include <query/AggregateRegistry.h>
+#include <query/WindowFunctionRegistry.h>
 #include <query/ExpressionRegistry.h>
 
 #include <algorithm>
@@ -23,6 +24,13 @@
 using namespace mldp_pvxs_driver::query;
 using namespace mldp_pvxs_driver::query::executor;
 namespace {
+
+std::string_view kindName(const ExpressionCallableKind kind)
+{
+    if (kind == ExpressionCallableKind::AGGREGATE) return "aggregate";
+    if (kind == ExpressionCallableKind::WINDOW) return "window";
+    return "scalar";
+}
 
 class State final : public ExecutionStateBase
 {
@@ -41,9 +49,11 @@ public:
         auto descriptors = operators_ ? registry.operators() : registry.functions();
         if (!operators_)
         {
-            // Aggregates are listed with scalar functions; the kind column tells them apart.
+            // Aggregates and window functions are listed with scalar functions; the kind column tells them apart.
             const auto aggregates = AggregateRegistry::instance().functions();
             descriptors.insert(descriptors.end(), aggregates.begin(), aggregates.end());
+            const auto windows = WindowFunctionRegistry::instance().functions();
+            descriptors.insert(descriptors.end(), windows.begin(), windows.end());
             std::stable_sort(descriptors.begin(), descriptors.end(), [](const auto& lhs, const auto& rhs) { return lhs.name < rhs.name; });
         }
         arrow::StringBuilder names;
@@ -58,7 +68,7 @@ public:
             const auto arity = descriptor.kind == ExpressionCallableKind::UNARY_OPERATOR ? "unary" : "binary";
             if (!names.Append(descriptor.name).ok() ||
                 (operators_ && !arities.Append(arity).ok()) ||
-                (!operators_ && !kinds.Append(descriptor.kind == ExpressionCallableKind::AGGREGATE ? "aggregate" : "scalar").ok()) ||
+                (!operators_ && !kinds.Append(kindName(descriptor.kind)).ok()) ||
                 !arguments.Append(descriptor.arguments_text.empty() ? expressionArgumentsText(descriptor.arguments) : descriptor.arguments_text).ok() ||
                 !returns.Append(descriptor.returns_text.empty() ? columnTypeName(descriptor.returns) : descriptor.returns_text).ok() ||
                 !descriptions.Append(descriptor.description).ok() ||

@@ -67,6 +67,16 @@ enum class TokenType {
     BY,           ///< BY keyword.
     ASC,          ///< ASC keyword.
     DESC,         ///< DESC keyword.
+    OVER,         ///< OVER keyword.
+    PARTITION,    ///< PARTITION keyword.
+    WINDOW,       ///< WINDOW keyword (also accepted as a column name).
+    ROWS,         ///< ROWS keyword.
+    RANGE,        ///< RANGE keyword.
+    UNBOUNDED,    ///< UNBOUNDED keyword.
+    PRECEDING,    ///< PRECEDING keyword.
+    FOLLOWING,    ///< FOLLOWING keyword.
+    CURRENT,      ///< CURRENT keyword.
+    ROW,          ///< ROW keyword.
 
     STAR,      ///< Asterisk (*).
     SLASH,     ///< Forward slash (/).

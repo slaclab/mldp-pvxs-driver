@@ -49,7 +49,7 @@ plan::LogicalNodePtr rewrite(const plan::LogicalNodePtr& node)
                     (predicate.column == "tag" || predicate.column.rfind("attributes.", 0) == 0 ||
                      predicate.column.rfind("provenance.", 0) == 0 ||
                      (scan->table_name == "mldp.configuration_activation" &&
-                      (predicate.column == "time" || predicate.column == "end_time"))))
+                      (predicate.column == "start_time" || predicate.column == "end_time"))))
                 {
                     post_filter.push_back(predicate);
                 }
@@ -61,7 +61,7 @@ plan::LogicalNodePtr rewrite(const plan::LogicalNodePtr& node)
         }
 
         filter->predicates = std::move(post_filter);
-        if (filter->predicates.empty())
+        if (filter->predicates.empty() && filter->conditions.empty())
         {
             return filter->input;
         }

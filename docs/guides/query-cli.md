@@ -55,7 +55,7 @@ mldp_pvxs_driver -c config.yaml query "<SQL>"
 |---|---:|---|
 | `--file <path>` | — | Read SQL text from a file instead of the positional argument. |
 | `--format <fmt>` | `table` | Output format: `table`, `json`, `csv`, `arrow`. |
-| `--table-fit` | off | Fit table output to an interactive terminal viewport by truncating long headers and values with `...`; ignored when output is redirected or piped. |
+| `--table-fit` | off | Wrap table headers and cells to an interactive terminal viewport (fixed column widths, rows grow taller); ignored when output is redirected or piped. |
 | `--no-stats` | off | Suppress the final textual query-statistics line. |
 | `--trace-shards` | off | Emit window-shard diagnostics to stderr. |
 | `--trace-shards-file <path>` | — | Enable window-shard diagnostics and write them to a newly truncated file. |
@@ -166,7 +166,7 @@ the pushed value as `row_limit=` on the scan node.
 Two cases deliberately keep the full fetch:
 
 - Predicates on `tag`, `attributes.<key>` and on `mldp.configuration_activation`
-  `time` / `end_time` are re-verified locally (the backend criteria are a
+  `start_time` / `end_time` are re-verified locally (the backend criteria are a
   candidate-set optimization only), so they leave a residual filter above the
   scan and suppress the pushdown.
 - `SELECT *`, or any query that selects the whole `attributes` map, derives its
@@ -184,7 +184,7 @@ applied locally.
 | `.history`, `history` | Print the command history. In an interactive terminal this includes saved history from earlier sessions. |
 | `.format` | Print the current output style. |
 | `.format <table\|json\|csv\|arrow>` | Set the output style for subsequent statements in this REPL session. |
-| `.table-fit [on\|off]` | Show or change whether table output is fitted to the interactive terminal width for this REPL session. |
+| `.table-fit [on\|off]` | Show or change whether table output is wrapped to the interactive terminal width for this REPL session. |
 | `.quit`, `.exit` | Exit the session. |
 
 ### Line editing and completion
@@ -229,10 +229,10 @@ The one-argument form requires `Z` or an explicit `+/-HH:MM` offset. The two-arg
 
 ```sql
 SELECT config_name,
-       from_utc(time, 'America/Los_Angeles') AS pacific_time,
+       from_utc(start_time, 'America/Los_Angeles') AS pacific_time,
        from_utc(end_time, '-07:00') AS fixed_offset_end_time
 FROM mldp.configuration_activation
-WHERE time >= NOW-120d;
+WHERE start_time >= NOW-120d;
 ```
 
 Numeric offsets must be quoted and use `+/-HH:MM` form, for example `'-07:00'` or `'+05:30'`. A bare `-7:00` is not a timezone argument. Null timestamps return null strings; unknown IANA zones and malformed offsets fail the query.
@@ -263,13 +263,13 @@ seconds, `m`/`M` for minutes, `h`/`H` for hours, and `d`/`D` for fixed
 24-hour (86,400-second) days. They retain nanosecond precision in expressions
 after conversion. Weeks, milliseconds, and compound forms such as `1h30m` are
 not duration literals; write their equivalent in one supported unit (for
-example, `36h`, `2d`, `90m`, or `5s`). For example, `activation.time + 2s` produces a timestamp two seconds after
-`activation.time`. Existing `NOW`, `NOW + 2s`, and `NOW - 10m` predicate
+example, `36h`, `2d`, `90m`, or `5s`). For example, `activation.start_time + 2s` produces a timestamp two seconds after
+`activation.start_time`. Existing `NOW`, `NOW + 2s`, and `NOW - 10m` predicate
 syntax remains available.
 
 ```sql
 SELECT value + 1 AS next_value,
-       activation.time + 2s AS interval_end
+       activation.start_time + 2s AS interval_end
 FROM mldp.configuration_activation activation;
 
 SELECT value * 2, value + 1
@@ -279,7 +279,7 @@ ORDER BY value + 1 DESC;
 
 An unaliased computed projection receives a normalized name: lowercase the
 rendered expression, replace punctuation and whitespace runs with `_`, then
-trim outer `_`. For example, `activation.time + 2s` becomes
+trim outer `_`. For example, `activation.start_time + 2s` becomes
 `activation_time_2s`; `AS name` always takes precedence. Plain column output
 names are unchanged.
 
@@ -429,6 +429,7 @@ FROM   <table> [AS <alias>]
 [WHERE <predicate> [AND <predicate>] ...]
 [GROUP BY expr [, expr ...]]
 [HAVING <condition>]
+[WINDOW <name> AS (<window spec>) [, ...]]
 [ORDER BY expr [ASC|DESC] [, expr [ASC|DESC] ...]]
 [LIMIT <n>]
 [PAGE TOKEN '<token>']
@@ -477,9 +478,9 @@ SELECT DISTINCT ON (config_name) config_name, description
 FROM mldp.configuration_activation;
 
 -- Most recent activation per configuration
-SELECT DISTINCT ON (config_name) config_name, time, activation_id
+SELECT DISTINCT ON (config_name) config_name, start_time, activation_id
 FROM mldp.configuration_activation
-ORDER BY time DESC;
+ORDER BY start_time DESC;
 ```
 
 ### Grouping and aggregates: `GROUP BY` / `HAVING`
@@ -527,7 +528,7 @@ order changes.
 
 ```sql
 -- Activation count and span per configuration, busiest first
-SELECT config_name, COUNT(*) AS n, MIN(time), MAX(time)
+SELECT config_name, COUNT(*) AS n, MIN(start_time), MAX(start_time)
 FROM mldp.configuration_activation
 GROUP BY config_name
 HAVING COUNT(*) > 1
@@ -544,11 +545,261 @@ GROUP BY pv;
 SELECT COUNT(*), COUNT(DISTINCT config_name) FROM mldp.configuration_activation;
 ```
 
+### Window functions: `OVER`
+
+A window function computes one value **per row** from neighbouring rows — the
+previous sample, a running total, a moving average, a rank — without
+collapsing rows the way `GROUP BY` does.
+
+```
+func(args) OVER ( [<window name>] [PARTITION BY expr, ...] [ORDER BY expr [ASC|DESC], ...] [<frame>] )
+func(args) OVER <window name>
+
+<frame> := { ROWS | RANGE } BETWEEN <bound> AND <bound>
+         | { ROWS | RANGE } <bound>                 -- shorthand for BETWEEN <bound> AND CURRENT ROW
+<bound> := UNBOUNDED PRECEDING | <n> PRECEDING | CURRENT ROW | <n> FOLLOWING | UNBOUNDED FOLLOWING
+```
+
+`PARTITION BY` splits the rows into independent groups (typically `pv`);
+`ORDER BY` orders rows inside each partition (typically `time`). A
+`WINDOW w AS (...)` clause names a definition so several calls can share it;
+`OVER (w ROWS 2 PRECEDING)` reuses `w` and adds an `ORDER BY` or frame (a
+named window's `PARTITION BY` cannot be replaced).
+
+| Function | Result | Frame |
+|---|---|---|
+| `ROW_NUMBER()` | 1, 2, 3, … within the partition | ignored |
+| `RANK()` / `DENSE_RANK()` | rank by `ORDER BY`; ties share a rank (`RANK` leaves gaps) | ignored |
+| `LAG(x [, n [, default]])` / `LEAD(x [, n [, default]])` | `x` from `n` rows before / after (default 1); `default` (else `NULL`) outside the partition | ignored |
+| `FIRST_VALUE(x)` / `LAST_VALUE(x)` | `x` at the first / last row of the frame | used |
+| `SUM`, `AVG`, `MIN`, `MAX`, `COUNT(*\|x)` | aggregate over the frame, nulls skipped | used |
+
+Frames:
+
+- `ROWS` counts physical rows: `ROWS BETWEEN 2 PRECEDING AND CURRENT ROW` is
+  the current row and the two before it.
+- `RANGE` compares `ORDER BY` values and needs exactly one `ORDER BY` key when
+  an offset is given: an integer offset for integer keys, a duration for
+  timestamps (`RANGE BETWEEN 5m PRECEDING AND CURRENT ROW` is the last five
+  minutes up to each sample). Rows with an equal key (peers) share a frame.
+- Default frame: with `ORDER BY`, from the start of the partition to the
+  current row and its peers (a running aggregate); without `ORDER BY`, the
+  whole partition.
+- `NULL` order keys sort last in both directions and are peers of each other.
+
+Rules:
+
+- Window functions are allowed in the select list and `ORDER BY` only (by the
+  call itself or its select alias). To filter on one, use a derived table:
+
+  ```sql
+  -- Latest sample per PV
+  SELECT pv, time, value FROM (
+      SELECT pv, time, value, ROW_NUMBER() OVER (PARTITION BY pv ORDER BY time DESC) AS rn
+      FROM mldp.time_series WHERE pv PREFIX 'ltu:' AND time >= NOW - 1h) x
+  WHERE rn = 1;
+  ```
+
+- They run after `WHERE`, `GROUP BY` and `HAVING`, so in a grouped query they
+  see one row per group and may use aggregates:
+  `SELECT pv, SUM(value), RANK() OVER (ORDER BY SUM(value) DESC) FROM ... GROUP BY pv`.
+- Not supported: `COUNT(DISTINCT x) OVER`, `FIRST`/`LAST` with `OVER`, `GROUPS`
+  frames, `EXCLUDE`, `NTILE`, `PERCENT_RANK`, `CUME_DIST`, `NTH_VALUE`,
+  `IGNORE NULLS`.
+- `SUM` returns an integer for integer arguments and a double otherwise (the
+  native `value` column always gives a double); `AVG` returns a double.
+- Arithmetic on the native `value` column is not supported, so
+  `value - LAG(value) OVER w` fails to plan; select `LAG(value)` next to
+  `value` instead. Integer and timestamp columns work (`time - LAG(time) OVER w`).
+- `window`, `range`, `rows`, `row`, `current`, `partition`, `preceding` and
+  `following` stay usable as column names, so `window IN (...)` is unchanged.
+
+Window functions run **locally**: every sample of the selection is fetched,
+then sorted by partition and order keys (calls with the same `PARTITION BY` and
+`ORDER BY` share one sort). Without an outer `ORDER BY`, rows come back grouped
+by partition in window order. When the buffered rows exceed `--memory-mb`, they
+are sorted in runs spilled to `--spill-dir` and merged, and each partition is
+computed as it is completed; a single partition must still fit in memory. A
+`LIMIT` above a window is not pushed to the backend. On `mldp.time_series`, a
+window that is exactly `PARTITION BY pv ORDER BY time` reuses the per-PV time
+order of the samples (shown as `sorted_input=true`) and falls back to a full
+sort if the samples arrive out of order. Frames at the start of the time range
+see only the rows inside it (no look-back fetch).
+`EXPLAIN` shows the step as `PhysicalWindow(groups=…, calls=…, partition=…, order=…, sorted_input=…)`
+and `SHOW FUNCTIONS` lists the window-only functions with `kind = window`.
+`.help timeseries` in the REPL summarizes the syntax.
+
+```sql
+-- Previous sample and the gap since it, per PV
+SELECT pv, time, value, LAG(value) OVER w AS previous, time - LAG(time) OVER w AS gap
+FROM mldp.time_series
+WHERE pv PREFIX 'ltu:' AND time >= NOW - 1h
+WINDOW w AS (PARTITION BY pv ORDER BY time);
+
+-- Five-minute moving average and running sample count
+SELECT pv, time, value,
+       AVG(value) OVER (PARTITION BY pv ORDER BY time RANGE BETWEEN 5m PRECEDING AND CURRENT ROW) AS avg_5m,
+       COUNT(*) OVER (PARTITION BY pv ORDER BY time) AS n
+FROM mldp.time_series
+WHERE pv = 'RF:AMP' AND time >= NOW - 1h;
+```
+
+#### How the pieces fit: a worked example
+
+Take one PV with five samples (`t` in seconds, `v` the value; two samples share `t = 3`):
+
+| t | v |
+|---|---|
+| 1 | 10 |
+| 2 | 20 |
+| 3 | 30 |
+| 3 | 40 |
+| 5 | 50 |
+
+```sql
+SELECT t, v,
+       ROW_NUMBER() OVER w                                         AS rn,
+       RANK()       OVER w                                         AS rk,
+       DENSE_RANK() OVER w                                         AS drk,
+       LAG(v)       OVER w                                         AS prev,
+       LEAD(v)      OVER w                                         AS next,
+       SUM(v)       OVER w                                         AS running,
+       SUM(v)       OVER (w ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS last_two,
+       COUNT(*)     OVER (w RANGE BETWEEN 1 PRECEDING AND CURRENT ROW) AS within_1
+FROM samples
+WINDOW w AS (ORDER BY t);
+```
+
+| t | v | rn | rk | drk | prev | next | running | last_two | within_1 |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | 10 | 1 | 1 | 1 | NULL | 20 | 10 | 10 | 1 |
+| 2 | 20 | 2 | 2 | 2 | 10 | 30 | 30 | 30 | 2 |
+| 3 | 30 | 3 | 3 | 3 | 20 | 40 | 100 | 50 | 3 |
+| 3 | 40 | 4 | 3 | 3 | 30 | 50 | 100 | 70 | 3 |
+| 5 | 50 | 5 | 5 | 4 | 40 | NULL | 150 | 90 | 1 |
+
+What to notice:
+
+- `ROW_NUMBER` is always unique; `RANK` gives ties the same number and skips
+  the next one (3, 3, 5); `DENSE_RANK` does not skip (3, 3, 4).
+- `LAG`/`LEAD` return `NULL` at the partition edges. Use a third argument for
+  a default: `LAG(v, 1, 0)`.
+- `running` uses the **default frame**, which includes *ties* of the current
+  row: both `t = 3` rows show 100, not 60 then 100. Use
+  `ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW` for a strict row-by-row total.
+- `ROWS` counts rows (`last_two` = this row plus the one before it).
+  `RANGE` compares values of the `ORDER BY` key (`within_1` = rows with
+  `t` between `t - 1` and `t`).
+
+#### Common recipes
+
+**Latest N samples per PV** (top-N per group, filter through a derived table):
+
+```sql
+SELECT pv, time, value FROM (
+    SELECT pv, time, value,
+           ROW_NUMBER() OVER (PARTITION BY pv ORDER BY time DESC) AS rn
+    FROM mldp.time_series
+    WHERE pv PREFIX 'ltu:' AND time >= NOW - 1h) x
+WHERE rn <= 3;
+```
+
+**Sampling gaps**: time elapsed since the previous sample of the same PV:
+
+```sql
+SELECT pv, time, time - LAG(time) OVER (PARTITION BY pv ORDER BY time) AS gap
+FROM mldp.time_series
+WHERE pv = 'RF:AMP' AND time >= NOW - 10m;
+```
+
+**Previous and next value side by side** (to compare a sample with its neighbours):
+
+```sql
+SELECT pv, time,
+       LAG(value)  OVER w AS before,
+       value,
+       LEAD(value) OVER w AS after
+FROM mldp.time_series
+WHERE pv IN ('BPM:X', 'BPM:Y') AND time >= NOW - 5m
+WINDOW w AS (PARTITION BY pv ORDER BY time);
+```
+
+**Moving statistics**: by row count and by time span:
+
+```sql
+SELECT pv, time, value,
+       AVG(value) OVER (w ROWS BETWEEN 9 PRECEDING AND CURRENT ROW)   AS avg_last_10,
+       MIN(value) OVER (w RANGE BETWEEN 1m PRECEDING AND CURRENT ROW) AS min_1m,
+       MAX(value) OVER (w RANGE BETWEEN 1m PRECEDING AND CURRENT ROW) AS max_1m
+FROM mldp.time_series
+WHERE pv = 'RF:AMP' AND time >= NOW - 1h
+WINDOW w AS (PARTITION BY pv ORDER BY time);
+```
+
+**Centered window**: frames can look ahead too:
+
+```sql
+SELECT pv, time, value,
+       AVG(value) OVER (PARTITION BY pv ORDER BY time
+                        RANGE BETWEEN 30s PRECEDING AND 30s FOLLOWING) AS avg_centered_1m
+FROM mldp.time_series
+WHERE pv = 'RF:AMP' AND time >= NOW - 1h;
+```
+
+**First and last value of each PV on every row** (whole-partition frame):
+
+```sql
+SELECT pv, time, value,
+       FIRST_VALUE(value) OVER w AS first_in_range,
+       LAST_VALUE(value)  OVER w AS last_in_range,
+       COUNT(*)           OVER w AS samples_in_range
+FROM mldp.time_series
+WHERE pv PREFIX 'ltu:' AND time >= NOW - 1h
+WINDOW w AS (PARTITION BY pv ORDER BY time
+             ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING);
+```
+
+`LAST_VALUE` with only `ORDER BY` (default frame) returns the *current* row's
+value (the frame ends at the current row), so give it an explicit frame as above.
+
+**Rank PVs after grouping** (window over `GROUP BY` output):
+
+```sql
+SELECT pv, COUNT(*) AS n,
+       RANK() OVER (ORDER BY COUNT(*) DESC) AS busiest,
+       SUM(COUNT(*)) OVER ()                AS total_samples
+FROM mldp.time_series
+WHERE pv PREFIX 'ltu:' AND time >= NOW - 1h
+GROUP BY pv
+ORDER BY busiest;
+```
+
+**Number and order configuration activations**:
+
+```sql
+SELECT config_name, start_time,
+       ROW_NUMBER() OVER (PARTITION BY config_name ORDER BY start_time) AS nth_activation,
+       start_time - LAG(start_time) OVER (PARTITION BY config_name ORDER BY start_time) AS since_previous
+FROM mldp.configuration_activation
+ORDER BY config_name, start_time;
+```
+
+#### Common mistakes
+
+| Query | Problem | Use instead |
+|---|---|---|
+| `... WHERE ROW_NUMBER() OVER (...) = 1` | Window functions are not allowed in `WHERE` | Wrap in a derived table and filter `rn` outside |
+| `value - LAG(value) OVER w` | No arithmetic on the native `value` column | Select `value` and `LAG(value) OVER w` side by side |
+| `LAG(value) OVER (ORDER BY time)` on many PVs | Rows of different PVs mix | Add `PARTITION BY pv` |
+| `RANGE BETWEEN 5m PRECEDING ...` with `ORDER BY pv, time` | `RANGE` offsets need exactly one `ORDER BY` key | Partition by `pv`, order by `time` only |
+| `RANGE BETWEEN 5 PRECEDING ...` on `time` | Timestamp keys need a duration | `5s`, `5m`, `1h` |
+| `OVER (w PARTITION BY ...)` | A named window's partition cannot be replaced | Define a second `WINDOW` entry |
+
 ### Compact and expanded table output
 
 Table output keeps each result on one physical line. Lists and maps show their first two values followed by `+N` when values remain; map keys are sorted for a predictable display. Use the REPL controls below to inspect every value in a record:
 
-When enabled with `--table-fit` or `.table-fit on`, table output fits to the current interactive terminal width. Long headers and cell lines preserve their beginning and end with `...` between them. This display-only setting never truncates JSON, CSV, Arrow, expanded output, or redirected/piped output.
+When enabled with `--table-fit` or `.table-fit on`, table output fits to the current interactive terminal width. Short columns keep their natural width; the remaining width is shared by the wider columns, and their headers and cells wrap onto extra lines (at spaces or punctuation when possible) so the full content stays visible. A cell longer than 1024 characters is cut and ends with `...`. When even 4 characters per column cannot fit, each row is printed as stacked `column: value` lines instead. This display-only setting never wraps or truncates JSON, CSV, Arrow, expanded output, or redirected/piped output.
 
 ```text
 \expanded on     # persistently enable expanded records
@@ -590,7 +841,7 @@ Where each operator runs:
 
 ```sql
 -- Every BPM in the LTU, any case, without listing PVs
-SELECT pv, first_timestamp, last_timestamp
+SELECT pv, start_time, end_time
 FROM mldp.pv_stats
 WHERE pv LIKE 'ltu:%:bpm%';
 
@@ -875,7 +1126,7 @@ SELECT pv, time, value
 FROM mldp.time_series
 WHERE pv IN ('SYS:MAGNET:CURRENT', 'SYS:VACUUM:PRESSURE')
   AND window IN (
-    SELECT activation.time, activation.end_time
+    SELECT activation.start_time, activation.end_time
     FROM mldp.configuration_activation activation
     WHERE activation.end_time IS NOT NULL;
     series_per_shard 2, slice 5s
@@ -898,7 +1149,7 @@ WHERE pv IN (
   WHERE tag = 'magnet'
 )
 AND window IN (
-  SELECT activation.time, activation.end_time
+  SELECT activation.start_time, activation.end_time
   FROM mldp.configuration_activation activation
   WHERE activation.end_time IS NOT NULL
 )
@@ -995,7 +1246,7 @@ WHERE pv IN (
     AND tag = 'magnet'
 )
 AND window IN (
-  SELECT activation.time, activation.time + 2s
+  SELECT activation.start_time, activation.start_time + 2s
   FROM mldp.configuration_activation activation
   JOIN mldp.configuration configuration
     ON activation.config_name = configuration.name
@@ -1015,12 +1266,12 @@ Per-PV bucket statistics (first/last timestamp, bucket count).
 | Column | Type | Required predicate | Pushable operators | Notes |
 |---|---|---|---|---|
 | `pv` | string | no | `=`, `IN`, `PREFIX`, `CONTAINS`, `LIKE` | PV name. Patterns are sent as a backend regex; omitted = every PV. |
-| `first_timestamp` | timestamp | no | — | Earliest recorded sample. |
-| `last_timestamp` | timestamp | no | — | Most recent recorded sample. |
+| `start_time` | timestamp | no | — | Earliest recorded sample. |
+| `end_time` | timestamp | no | — | Most recent recorded sample. |
 | `num_buckets` | int | no | — | Number of storage buckets. |
 
 ```sql
-SELECT pv, first_timestamp, last_timestamp, num_buckets
+SELECT pv, start_time, end_time, num_buckets
 FROM mldp.pv_stats
 WHERE pv IN ('PV:A', 'PV:B')
 ```
@@ -1109,7 +1360,7 @@ Time-windowed activation records for configurations.
 
 | Column | Type | Pushable operators | Notes |
 |---|---|---|---|
-| `time` | timestamp | `=`, `!=`, `<`, `<=`, `>`, `>=` | Activation start time. The annotation-service candidate set is locally verified. |
+| `start_time` | timestamp | `=`, `!=`, `<`, `<=`, `>`, `>=` | Activation start time. The annotation-service candidate set is locally verified. |
 | `end_time` | timestamp | `=`, `!=`, `<`, `<=`, `>`, `>=`, `IS NULL`, `IS NOT NULL` (local) | Activation end time; null means the activation is open. |
 | `config_name` | string | `=`, `IN`, `LIKE` (local) | Configuration name. |
 | `activation_id` | string | `=`, `IN`, `LIKE` (local) | Client-assigned activation identifier. |
@@ -1124,14 +1375,14 @@ No predicate is required; an unfiltered query returns every activation. Timestam
 
 ```sql
 -- Activations for a specific configuration
-SELECT time, config_name, activation_id, description
+SELECT start_time, config_name, activation_id, description
 FROM mldp.configuration_activation
 WHERE config_name = 'injector_tuning'
 
 -- Activations in a time window
-SELECT time, config_name, activation_id
+SELECT start_time, config_name, activation_id
 FROM mldp.configuration_activation
-WHERE time >= NOW -2h AND end_time <= NOW
+WHERE start_time >= NOW -2h AND end_time <= NOW
 ```
 
 ---
@@ -1145,10 +1396,10 @@ Configurations that were active at a given point in time. **Requires exactly one
 | `at` | timestamp | **yes** (`=` only) | Point in time to query. Must be constrained. |
 | `name` | string | — | Active configuration name. |
 | `activation_id` | string | — | Activation identifier. |
-| `time` | timestamp | — | Activation start time. |
+| `start_time` | timestamp | — | Activation start time. |
 
 ```sql
-SELECT name, activation_id, time
+SELECT name, activation_id, start_time
 FROM mldp.active_configurations
 WHERE at = 1700000000
 
@@ -1344,7 +1595,7 @@ output, use one-shot mode with `--format` and shell redirection.
 
 ```sql
 -- A fresh generator run creates 10 buckets for each requested PV.
-SELECT pv, first_timestamp, last_timestamp, num_buckets
+SELECT pv, start_time, end_time, num_buckets
 FROM mldp.pv_stats
 WHERE pv IN ('mldp_sample:MAGNET:01:VALUE',
              'mldp_sample:RF:02:VALUE',
@@ -1386,13 +1637,13 @@ FROM mldp.configuration
 WHERE category = 'beam_mode';
 
 # Closed activation windows for beam-mode configurations
-SELECT time, end_time, config_name, activation_id
+SELECT start_time, end_time, config_name, activation_id
 FROM mldp.configuration_activation
 WHERE config_name IN ('mldp_sample_injector_tuning', 'mldp_sample_user_delivery')
   AND end_time IS NOT NULL;
 
 # Active configurations 30 minutes ago (RF and vacuum should be active)
-SELECT name, activation_id, time
+SELECT name, activation_id, start_time
 FROM mldp.active_configurations
 WHERE at = NOW -30m;
 ```
@@ -1465,7 +1716,7 @@ WHERE pv IN (
     AND tag = 'magnet'
 )
 AND window IN (
-  SELECT activation.time, activation.end_time
+  SELECT activation.start_time, activation.end_time
   FROM mldp.configuration_activation activation
   JOIN mldp.configuration configuration
     ON activation.config_name = configuration.name
@@ -1479,7 +1730,7 @@ AND window IN (
 The PV subquery output must be a single non-null string field named `pv`. The
 window subquery must return exactly two non-null timestamp fields: its first
 output is the interval start and its second output is the interval end. Field
-names and aliases are ignored, so expressions such as `activation.time + 2s`
+names and aliases are ignored, so expressions such as `activation.start_time + 2s`
 are valid endpoints. Open or inverted activation ranges are rejected. Each
 returned batch is `time` followed by the requested native PV columns in
 metadata-query order.

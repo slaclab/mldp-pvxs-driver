@@ -450,8 +450,8 @@ a time-series request is made.
 | Column | Pushable ops | Notes |
 |---|---|---|
 | `pv` | `=`, `IN` | **Required.** Sent as `QueryPvStatsRequest.pvNameList`. |
-| `first_timestamp` | — | First recorded sample. |
-| `last_timestamp` | — | Last recorded sample. |
+| `start_time` | — | First recorded sample. |
+| `end_time` | — | Last recorded sample. |
 | `num_buckets` | — | Total bucket count. |
 
 ### `mldp.pv_metadata` — `MLDPAnnotationQueryClient`
@@ -484,7 +484,7 @@ An unfiltered query lists all configurations. Predicates narrow that list on the
 
 | Column | Pushable ops | Notes |
 |---|---|---|
-| `time` | `=`, `!=`, `<`, `<=`, `>`, `>=` | Activation start time; annotation-service candidates are locally verified. |
+| `start_time` | `=`, `!=`, `<`, `<=`, `>`, `>=` | Activation start time; annotation-service candidates are locally verified. |
 | `end_time` | `=`, `!=`, `<`, `<=`, `>`, `>=`, `IS NULL`, `IS NOT NULL` (local) | Activation end time; null means open. |
 | `config_name` | `=`, `IN` | Configuration name criterion. |
 | `activation_id` | `=`, `IN` | Client activation ID criterion. |
@@ -498,7 +498,7 @@ At least one predicate is required. Timestamp predicates are evaluated locally a
 | `at` | `=` | **Required.** Maps to `GetActiveConfigurationsRequest.timestamp`. |
 | `name` | — | Active configuration name. |
 | `activation_id` | — | Activation identifier. |
-| `time` | — | Activation start time. |
+| `start_time` | — | Activation start time. |
 
 Exactly one `at = <epoch>` predicate required. Pagination not supported.
 

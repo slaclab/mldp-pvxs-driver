@@ -26,6 +26,7 @@
 
 #include <arrow/array.h>
 #include <arrow/scalar.h>
+#include <arrow/table.h>
 #include <arrow/type.h>
 #include <grpcpp/grpcpp.h>
 #include <gtest/gtest.h>
@@ -490,7 +491,7 @@ TEST_F(QueryableMldpIntegrationTest, PvStatsReturnsEveryDriverOwnedPage)
     }
 
     const auto result = pollSql(
-        "SELECT pv, first_timestamp, last_timestamp, num_buckets FROM mldp.pv_stats WHERE pv IN (" + commaSeparatedQuoted(pvs) + ")",
+        "SELECT pv, start_time, end_time, num_buckets FROM mldp.pv_stats WHERE pv IN (" + commaSeparatedQuoted(pvs) + ")",
         "PV statistics",
         [&](const QueryExecutionResult& candidate)
         {
@@ -534,7 +535,7 @@ TEST_F(QueryableMldpIntegrationTest, WideTableUsesPvAndClosedWindowSubqueries)
                       BusTimestamp{.epoch_seconds = now_seconds + 4, .nanoseconds = 0});
 
     const auto seeded_activation = pollSql(
-        "SELECT time, end_time FROM mldp.configuration_activation WHERE activation_id = " + quote(activation_id) +
+        "SELECT start_time, end_time FROM mldp.configuration_activation WHERE activation_id = " + quote(activation_id) +
             " AND end_time IS NOT NULL",
         "closed seeded configuration activation",
         [](const QueryExecutionResult& candidate)
@@ -544,7 +545,7 @@ TEST_F(QueryableMldpIntegrationTest, WideTableUsesPvAndClosedWindowSubqueries)
     ASSERT_EQ(rowCount(seeded_activation), 1);
 
     const auto window_sql =
-        "SELECT activation.time, activation.end_time " "FROM mldp.configuration_activation activation " "INNER JOIN mldp.configuration configuration ON activation.config_name = configuration.name " "WHERE activation.activation_id = " + quote(activation_id) +
+        "SELECT activation.start_time, activation.end_time " "FROM mldp.configuration_activation activation " "INNER JOIN mldp.configuration configuration ON activation.config_name = configuration.name " "WHERE activation.activation_id = " + quote(activation_id) +
         " AND configuration.name = " + quote(configuration_name) +
         " AND configuration.category = " + quote(configuration_category) + " AND activation.end_time IS NOT NULL";
     const auto windows = pollSql(
@@ -711,7 +712,7 @@ TEST_F(QueryableMldpIntegrationTest, ControllerGeneratedProductionShapedWideWind
     ASSERT_EQ(rowCount(time_series_visible), kPvCount * kSampleCount);
 
     const auto sql =
-        "SELECT * FROM mldp.time_series_table " "WHERE pv IN (SELECT pv FROM mldp.pv_metadata WHERE attributes.dname PREFIX " + quote(metadata_prefix) + ") " "AND window IN (SELECT time, time + 5s FROM mldp.configuration_activation WHERE activation_id = " +
+        "SELECT * FROM mldp.time_series_table " "WHERE pv IN (SELECT pv FROM mldp.pv_metadata WHERE attributes.dname PREFIX " + quote(metadata_prefix) + ") " "AND window IN (SELECT start_time, start_time + 5s FROM mldp.configuration_activation WHERE activation_id = " +
         quote(activation_id) + "; slice 5s, series_per_shard 2);";
     char                           arg0[] = "query";
     char                           arg1[] = "--no-stats";
@@ -1154,7 +1155,7 @@ TEST_F(QueryableMldpIntegrationTest, DistinctOnKeepsOneRowPerKeyChosenByOrderBy)
     const auto filter = " FROM mldp.configuration_activation WHERE config_name IN (" + quote(config) + ", " + quote(configName("distinct_on_other")) + ")";
     pollSql("SELECT activation_id" + filter, "distinct-on activations", [](const QueryExecutionResult& candidate) { return rowCount(candidate) == 3; });
 
-    const auto latest = executeSql("SELECT DISTINCT ON (config_name) config_name, activation_id" + filter + " ORDER BY time DESC");
+    const auto latest = executeSql("SELECT DISTINCT ON (config_name) config_name, activation_id" + filter + " ORDER BY start_time DESC");
     ASSERT_EQ(rowCount(latest), 2);
     std::map<std::string, std::string> by_config;
     for (const auto& batch : latest.batches)
@@ -1162,7 +1163,7 @@ TEST_F(QueryableMldpIntegrationTest, DistinctOnKeepsOneRowPerKeyChosenByOrderBy)
             by_config[(*batch->column(0)->GetScalar(row))->ToString()] = (*batch->column(1)->GetScalar(row))->ToString();
     EXPECT_EQ(by_config[config], configName("distinct_on_new"));
 
-    const auto earliest = executeSql("SELECT DISTINCT ON (config_name) config_name, activation_id" + filter + " ORDER BY time ASC");
+    const auto earliest = executeSql("SELECT DISTINCT ON (config_name) config_name, activation_id" + filter + " ORDER BY start_time ASC");
     std::set<std::string> earliest_ids;
     for (const auto& id : strings(earliest, 1)) earliest_ids.insert(id);
     EXPECT_TRUE(earliest_ids.contains(configName("distinct_on_old")));
@@ -1222,6 +1223,40 @@ TEST_F(QueryableMldpIntegrationTest, GroupByAggregatesSeededSeriesExactly)
                                          return rowCount(candidate) == 1 && (*candidate.batches.front()->column(1)->GetScalar(0))->ToString() == "2";
                                      });
     EXPECT_EQ(rowCount(activations), 1);
+}
+
+TEST_F(QueryableMldpIntegrationTest, WindowFunctionsComputePerPvValuesOverSeededSeries)
+{
+    const auto first = pv("window_a");
+    const auto second = pv("window_b");
+    seedTimeSeries(first, 4, 10);   // 10, 11, 12, 13 one second apart
+    seedTimeSeries(second, 2, 100); // 100, 101
+
+    const auto filter = " FROM mldp.time_series WHERE pv IN (" + quote(first) + ", " + quote(second) + ") AND time >= NOW-300s";
+    pollSql("SELECT pv" + filter, "window series", [](const QueryExecutionResult& candidate) { return rowCount(candidate) == 6; });
+
+    const auto sql = "SELECT pv, ROW_NUMBER() OVER w AS rn, LAG(value) OVER w AS prev, SUM(value) OVER w AS running, "
+                     "AVG(value) OVER (w RANGE BETWEEN 2s PRECEDING AND CURRENT ROW) AS avg_2s" +
+                     filter + " WINDOW w AS (PARTITION BY pv ORDER BY time) ORDER BY pv, time";
+    EXPECT_NE(plan::physicalPlanToString(QueryPlanner{}.plan(parseQuery(sql))).find("sorted_input=true"), std::string::npos);
+    const auto result = executeSql(sql);
+    ASSERT_EQ(rowCount(result), 6);
+    const auto combined = arrow::Table::FromRecordBatches(result.batches).ValueOrDie()->CombineChunksToBatch().ValueOrDie();
+    const auto cell = [&combined](const int column, const int64_t row) { return (*combined->column(column)->GetScalar(row))->ToString(); };
+    EXPECT_EQ(cell(0, 0), first);
+    EXPECT_EQ(cell(1, 0), "1");
+    EXPECT_EQ(cell(1, 3), "4");
+    EXPECT_FALSE(combined->column(2)->IsValid(0));
+    EXPECT_TRUE(combined->column(2)->IsValid(1));
+    EXPECT_EQ(cell(3, 3), "46");
+    // Samples are one second (plus a nanosecond) apart, so a 2s frame holds the previous sample.
+    EXPECT_EQ(cell(4, 0), "10");
+    EXPECT_EQ(cell(4, 1), "10.5");
+    EXPECT_EQ(cell(4, 3), "12.5");
+    EXPECT_EQ(cell(0, 4), second);
+    EXPECT_EQ(cell(1, 4), "1");
+    EXPECT_FALSE(combined->column(2)->IsValid(4));
+    EXPECT_EQ(cell(3, 5), "201");
 }
 
 TEST_F(QueryableMldpIntegrationTest, SampleStatusSelectorIncludesOrExcludesLabeledSamples)

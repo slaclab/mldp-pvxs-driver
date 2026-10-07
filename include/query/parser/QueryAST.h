@@ -42,12 +42,15 @@ struct QualifiedColumn {
 struct Expression;
 using ExpressionPtr = std::shared_ptr<Expression>;
 
-/** @brief Scalar function call in a parsed expression. */
+struct WindowSpec;
+
+/** @brief Scalar, aggregate or window function call in a parsed expression. */
 struct FunctionCall {
-    std::string                name;      ///< Function name (case-insensitive).
-    std::vector<ExpressionPtr> arguments; ///< Ordered argument expressions.
-    bool                       star{false};     ///< True for an aggregate called with '*' (COUNT(*)).
-    bool                       distinct{false}; ///< True for an aggregate called with DISTINCT (COUNT(DISTINCT x)).
+    std::string                 name;      ///< Function name (case-insensitive).
+    std::vector<ExpressionPtr>  arguments; ///< Ordered argument expressions.
+    bool                        star{false};     ///< True for an aggregate called with '*' (COUNT(*)).
+    bool                        distinct{false}; ///< True for an aggregate called with DISTINCT (COUNT(DISTINCT x)).
+    std::shared_ptr<WindowSpec> over;            ///< Window specification for `f(...) OVER ...`; null for plain calls.
 };
 
 /** @brief Unary operator expression. */
@@ -163,6 +166,39 @@ struct OrderByItem {
     SortDirection   direction{SortDirection::ASCENDING}; ///< ASCENDING or DESCENDING.
 };
 
+/** @brief Unit of a window frame: physical rows or a value range of the ORDER BY key. */
+enum class WindowFrameUnit { ROWS, RANGE };
+
+/** @brief Kind of one window frame bound. */
+enum class WindowBoundKind { UNBOUNDED_PRECEDING, PRECEDING, CURRENT_ROW, FOLLOWING, UNBOUNDED_FOLLOWING };
+
+/** @brief Parsed window frame bound (`5 PRECEDING`, `CURRENT ROW`, ...). */
+struct WindowFrameBound {
+    WindowBoundKind kind{WindowBoundKind::CURRENT_ROW}; ///< Bound kind.
+    ExpressionPtr   offset;                             ///< Offset for PRECEDING / FOLLOWING; null otherwise.
+};
+
+/** @brief Parsed `ROWS | RANGE BETWEEN start AND end` frame clause. */
+struct WindowFrame {
+    WindowFrameUnit  unit{WindowFrameUnit::RANGE}; ///< Frame unit.
+    WindowFrameBound start;                        ///< Frame start bound.
+    WindowFrameBound end;                          ///< Frame end bound.
+};
+
+/** @brief Parsed window specification: `[base] [PARTITION BY ...] [ORDER BY ...] [frame]`. */
+struct WindowSpec {
+    std::optional<std::string> base_name;    ///< Named window from the WINDOW clause this spec extends.
+    std::vector<ExpressionPtr> partition_by; ///< PARTITION BY expressions.
+    std::vector<OrderByItem>   order_by;     ///< ORDER BY items inside the window.
+    std::optional<WindowFrame> frame;        ///< Explicit frame; default frame when absent.
+};
+
+/** @brief One `name AS (spec)` entry of the WINDOW clause. */
+struct NamedWindow {
+    std::string name; ///< Window name.
+    WindowSpec  spec; ///< Window definition.
+};
+
 /** @brief Parsed DISTINCT / DISTINCT ON clause. */
 struct DistinctClause {
     bool                       distinct{false}; ///< True for SELECT DISTINCT or DISTINCT ON.
@@ -182,6 +218,7 @@ struct SelectStatement {
     std::vector<ExpressionPtr>   group_by;          ///< GROUP BY key expressions.
     ExpressionPtr                having;            ///< HAVING condition; null when absent.
     std::vector<OrderByItem>     order_by;          ///< ORDER BY items.
+    std::vector<NamedWindow>     named_windows;     ///< WINDOW clause definitions.
     std::optional<uint64_t>      limit;             ///< LIMIT value if present.
     std::optional<std::string>   page_token;        ///< PAGE TOKEN value for REPL paging if present.
 };

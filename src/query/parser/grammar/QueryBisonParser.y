@@ -214,6 +214,16 @@
         case TokenType::BY: return QueryBisonParser::make_BY(location);
         case TokenType::ASC: return QueryBisonParser::make_ASC(location);
         case TokenType::DESC: return QueryBisonParser::make_DESC(location);
+        case TokenType::OVER: return QueryBisonParser::make_OVER(location);
+        case TokenType::PARTITION: return QueryBisonParser::make_PARTITION(location);
+        case TokenType::WINDOW: return QueryBisonParser::make_WINDOW(location);
+        case TokenType::ROWS: return QueryBisonParser::make_ROWS(location);
+        case TokenType::RANGE: return QueryBisonParser::make_RANGE(location);
+        case TokenType::UNBOUNDED: return QueryBisonParser::make_UNBOUNDED(location);
+        case TokenType::PRECEDING: return QueryBisonParser::make_PRECEDING(location);
+        case TokenType::FOLLOWING: return QueryBisonParser::make_FOLLOWING(location);
+        case TokenType::CURRENT: return QueryBisonParser::make_CURRENT(location);
+        case TokenType::ROW: return QueryBisonParser::make_ROW(location);
         case TokenType::STAR: return QueryBisonParser::make_STAR(location);
         case TokenType::SLASH: return QueryBisonParser::make_SLASH(location);
         case TokenType::COMMA: return QueryBisonParser::make_COMMA(location);
@@ -251,7 +261,7 @@
 %token END_OF_INPUT 0
 %token <std::string> IDENTIFIER STRING_LITERAL DURATION_LITERAL
 %token <int64_t> NUMBER_LITERAL
-%token SELECT FROM WHERE IS AND OR NOT NULL_LITERAL IN LIKE BETWEEN LIMIT PAGE TOKEN SHOW TABLES FUNCTIONS OPERATORS DESCRIBE EXPLAIN AS INNER LEFT OUTER JOIN ON NOW PREFIX CONTAINS ORDER DISTINCT GROUP HAVING BY ASC DESC TRUE FALSE TIMESTAMP_NS DURATION_NS
+%token SELECT FROM WHERE IS AND OR NOT NULL_LITERAL IN LIKE BETWEEN LIMIT PAGE TOKEN SHOW TABLES FUNCTIONS OPERATORS DESCRIBE EXPLAIN AS INNER LEFT OUTER JOIN ON NOW PREFIX CONTAINS ORDER DISTINCT GROUP HAVING BY ASC DESC OVER PARTITION WINDOW ROWS RANGE UNBOUNDED PRECEDING FOLLOWING CURRENT ROW TRUE FALSE TIMESTAMP_NS DURATION_NS
 %token STAR SLASH COMMA SEMICOLON DOT LPAREN RPAREN PLUS MINUS EQ NEQ LT LTE GT GTE
 
 // Preserve NOW +/- duration convenience syntax while allowing ordinary
@@ -287,6 +297,17 @@
 %type <std::optional<std::string>> page_opt
 %type <std::vector<mldp_pvxs_driver::query::OrderByItem>> order_by_opt order_by_list
 %type <mldp_pvxs_driver::query::OrderByItem> order_by_item
+%type <std::string> name
+%type <mldp_pvxs_driver::query::FunctionCall> function_call
+%type <mldp_pvxs_driver::query::WindowSpec> window_ref window_spec
+%type <std::optional<std::string>> window_base_opt
+%type <std::vector<mldp_pvxs_driver::query::ExpressionPtr>> window_partition_opt
+%type <std::vector<mldp_pvxs_driver::query::OrderByItem>> window_order_opt
+%type <std::optional<mldp_pvxs_driver::query::WindowFrame>> window_frame_opt
+%type <mldp_pvxs_driver::query::WindowFrameUnit> window_frame_unit
+%type <mldp_pvxs_driver::query::WindowFrameBound> window_frame_bound
+%type <std::vector<mldp_pvxs_driver::query::NamedWindow>> window_clause_opt named_window_list
+%type <mldp_pvxs_driver::query::NamedWindow> named_window
 
 %%
 
@@ -317,7 +338,7 @@ statement
     ;
 
 select_stmt
-    : SELECT distinct_opt select_list FROM table_ref join_clauses where_opt group_by_opt having_opt order_by_opt limit_opt page_opt
+    : SELECT distinct_opt select_list FROM table_ref join_clauses where_opt group_by_opt having_opt window_clause_opt order_by_opt limit_opt page_opt
       {
           mldp_pvxs_driver::query::SelectStatement statement;
           statement.distinct = $2.distinct;
@@ -334,9 +355,10 @@ select_stmt
           statement.predicates = std::move($7);
           statement.group_by = std::move($8);
           statement.having = std::move($9);
-          statement.order_by = std::move($10);
-          statement.limit = std::move($11);
-          statement.page_token = std::move($12);
+          statement.named_windows = std::move($10);
+          statement.order_by = std::move($11);
+          statement.limit = std::move($12);
+          statement.page_token = std::move($13);
           $$ = std::move(statement);
       }
     ;
@@ -362,6 +384,93 @@ having_opt
       { $$ = nullptr; }
     | HAVING expression
       { $$ = std::move($2); }
+    ;
+
+window_clause_opt
+    : /* empty */
+      { $$ = {}; }
+    | WINDOW named_window_list
+      { $$ = std::move($2); }
+    ;
+
+named_window_list
+    : named_window
+      { $$ = std::vector<mldp_pvxs_driver::query::NamedWindow>{std::move($1)}; }
+    | named_window_list COMMA named_window
+      { $1.push_back(std::move($3)); $$ = std::move($1); }
+    ;
+
+named_window
+    : IDENTIFIER AS LPAREN window_spec RPAREN
+      { $$ = mldp_pvxs_driver::query::NamedWindow{.name = std::move($1), .spec = std::move($4)}; }
+    ;
+
+window_ref
+    : IDENTIFIER
+      { $$ = mldp_pvxs_driver::query::WindowSpec{.base_name = std::move($1), .partition_by = {}, .order_by = {}, .frame = std::nullopt}; }
+    | LPAREN window_spec RPAREN
+      { $$ = std::move($2); }
+    ;
+
+window_spec
+    : window_base_opt window_partition_opt window_order_opt window_frame_opt
+      {
+          $$ = mldp_pvxs_driver::query::WindowSpec{
+              .base_name = std::move($1), .partition_by = std::move($2), .order_by = std::move($3), .frame = std::move($4)};
+      }
+    ;
+
+window_base_opt
+    : /* empty */
+      { $$ = std::nullopt; }
+    | IDENTIFIER
+      { $$ = std::optional<std::string>{std::move($1)}; }
+    ;
+
+window_partition_opt
+    : /* empty */
+      { $$ = {}; }
+    | PARTITION BY expression_list
+      { $$ = std::move($3); }
+    ;
+
+window_order_opt
+    : /* empty */
+      { $$ = {}; }
+    | ORDER BY order_by_list
+      { $$ = std::move($3); }
+    ;
+
+window_frame_opt
+    : /* empty */
+      { $$ = std::nullopt; }
+    | window_frame_unit window_frame_bound
+      {
+          // Shorthand `ROWS <start>` means `BETWEEN <start> AND CURRENT ROW`.
+          $$ = mldp_pvxs_driver::query::WindowFrame{.unit = $1, .start = std::move($2), .end = {}};
+      }
+    | window_frame_unit BETWEEN window_frame_bound AND window_frame_bound
+      { $$ = mldp_pvxs_driver::query::WindowFrame{.unit = $1, .start = std::move($3), .end = std::move($5)}; }
+    ;
+
+window_frame_unit
+    : ROWS
+      { $$ = mldp_pvxs_driver::query::WindowFrameUnit::ROWS; }
+    | RANGE
+      { $$ = mldp_pvxs_driver::query::WindowFrameUnit::RANGE; }
+    ;
+
+window_frame_bound
+    : UNBOUNDED PRECEDING
+      { $$ = mldp_pvxs_driver::query::WindowFrameBound{.kind = mldp_pvxs_driver::query::WindowBoundKind::UNBOUNDED_PRECEDING, .offset = nullptr}; }
+    | UNBOUNDED FOLLOWING
+      { $$ = mldp_pvxs_driver::query::WindowFrameBound{.kind = mldp_pvxs_driver::query::WindowBoundKind::UNBOUNDED_FOLLOWING, .offset = nullptr}; }
+    | CURRENT ROW
+      { $$ = mldp_pvxs_driver::query::WindowFrameBound{.kind = mldp_pvxs_driver::query::WindowBoundKind::CURRENT_ROW, .offset = nullptr}; }
+    | additive_expression PRECEDING
+      { $$ = mldp_pvxs_driver::query::WindowFrameBound{.kind = mldp_pvxs_driver::query::WindowBoundKind::PRECEDING, .offset = std::move($1)}; }
+    | additive_expression FOLLOWING
+      { $$ = mldp_pvxs_driver::query::WindowFrameBound{.kind = mldp_pvxs_driver::query::WindowBoundKind::FOLLOWING, .offset = std::move($1)}; }
     ;
 
 order_by_opt
@@ -421,7 +530,7 @@ select_item_list
 select_item
     : expression
       { $$ = mldp_pvxs_driver::query::SelectItem{.expression = std::move($1)}; }
-    | expression AS IDENTIFIER
+    | expression AS name
       { $$ = mldp_pvxs_driver::query::SelectItem{.expression = std::move($1), .alias = $3}; }
     | expression IDENTIFIER
       { $$ = mldp_pvxs_driver::query::SelectItem{.expression = std::move($1), .alias = $2}; }
@@ -756,14 +865,26 @@ primary_expression
       { $$ = makeExpression(ExpressionValue{std::move($1)}); }
     | column_ref
       { $$ = makeExpression(ExpressionValue{std::move($1)}); }
-    | IDENTIFIER LPAREN expression_list RPAREN
-      { $$ = makeExpression(ExpressionValue{FunctionCall{.name = std::move($1), .arguments = std::move($3)}}); }
-    | IDENTIFIER LPAREN STAR RPAREN
-      { $$ = makeExpression(ExpressionValue{FunctionCall{.name = std::move($1), .arguments = {}, .star = true}}); }
-    | IDENTIFIER LPAREN DISTINCT expression RPAREN
-      { $$ = makeExpression(ExpressionValue{FunctionCall{.name = std::move($1), .arguments = {std::move($4)}, .distinct = true}}); }
+    | function_call
+      { $$ = makeExpression(ExpressionValue{std::move($1)}); }
+    | function_call OVER window_ref
+      {
+          $1.over = std::make_shared<mldp_pvxs_driver::query::WindowSpec>(std::move($3));
+          $$ = makeExpression(ExpressionValue{std::move($1)});
+      }
     | LPAREN expression RPAREN
       { $$ = std::move($2); }
+    ;
+
+function_call
+    : IDENTIFIER LPAREN RPAREN
+      { $$ = FunctionCall{.name = std::move($1), .arguments = {}}; }
+    | IDENTIFIER LPAREN expression_list RPAREN
+      { $$ = FunctionCall{.name = std::move($1), .arguments = std::move($3)}; }
+    | IDENTIFIER LPAREN STAR RPAREN
+      { $$ = FunctionCall{.name = std::move($1), .arguments = {}, .star = true}; }
+    | IDENTIFIER LPAREN DISTINCT expression RPAREN
+      { $$ = FunctionCall{.name = std::move($1), .arguments = {std::move($4)}, .distinct = true}; }
     ;
 
 literal
@@ -814,13 +935,28 @@ column_ref
     ;
 
 identifier_path
-    : IDENTIFIER
+    : name
       { $$ = std::vector<std::string>{$1}; }
-    | identifier_path DOT IDENTIFIER
+    | identifier_path DOT name
       {
           $1.push_back($3);
           $$ = std::move($1);
       }
+    ;
+
+// Window keywords stay usable as column names (e.g. the time-series `window`
+// input column).  UNBOUNDED and OVER are excluded: they would be ambiguous
+// inside frame bounds and after a function call.
+name
+    : IDENTIFIER { $$ = std::move($1); }
+    | WINDOW     { $$ = "window"; }
+    | ROWS       { $$ = "rows"; }
+    | RANGE      { $$ = "range"; }
+    | ROW        { $$ = "row"; }
+    | CURRENT    { $$ = "current"; }
+    | PARTITION  { $$ = "partition"; }
+    | PRECEDING  { $$ = "preceding"; }
+    | FOLLOWING  { $$ = "following"; }
     ;
 
 limit_opt

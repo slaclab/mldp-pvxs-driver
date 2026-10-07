@@ -130,6 +130,31 @@ plan::PhysicalNodePtr buildScan(const plan::LogicalScan& scan)
                                               .output_column_labels = std::move(output_column_labels)});
 }
 
+bool isColumn(const ExpressionPtr& expression, const std::string_view name)
+{
+    const auto* column = expression ? std::get_if<QualifiedColumn>(&expression->value) : nullptr;
+    return column != nullptr && column->name == name;
+}
+
+/** True when @p window's first group is `PARTITION BY pv ORDER BY time [ASC]` directly over an
+ *  mldp.time_series scan, whose samples arrive in time order within each PV.  The executor still
+ *  verifies the order and falls back to a full sort when it does not hold. */
+bool timeSeriesSortedInput(const plan::LogicalWindow& window)
+{
+    if (window.groups.empty()) return false;
+    const auto& group = window.groups.front();
+    if (group.partition_by.size() != 1 || !isColumn(group.partition_by.front(), "pv")) return false;
+    if (group.order_by.size() != 1 || group.order_by.front().descending || !isColumn(group.order_by.front().expression, "time")) return false;
+    auto node = window.input;
+    while (node)
+    {
+        if (const auto* scan = std::get_if<plan::LogicalScan>(&node->value)) return scan->table_name == "mldp.time_series";
+        if (const auto* filter = std::get_if<plan::LogicalFilter>(&node->value)) node = filter->input;
+        else return false;
+    }
+    return false;
+}
+
 plan::PhysicalNodePtr buildNode(const plan::LogicalNodePtr& node)
 {
     if (!node)
@@ -147,7 +172,7 @@ plan::PhysicalNodePtr buildNode(const plan::LogicalNodePtr& node)
                               {
                                   predicates.push_back(toExecutablePredicate(predicate));
                               }
-                              return plan::makeNode(plan::PhysicalFilter{.input = buildNode(filter.input), .predicates = std::move(predicates)});
+                              return plan::makeNode(plan::PhysicalFilter{.input = buildNode(filter.input), .predicates = std::move(predicates), .conditions = filter.conditions});
                           },
                           [](const plan::LogicalProject& project)
                           {
@@ -162,6 +187,12 @@ plan::PhysicalNodePtr buildNode(const plan::LogicalNodePtr& node)
                           [](const plan::LogicalAggregate& aggregate)
                           {
                               return plan::makeNode(plan::PhysicalAggregate{.input = buildNode(aggregate.input), .spec = aggregate.spec});
+                          },
+                          [](const plan::LogicalWindow& window)
+                          {
+                              return plan::makeNode(plan::PhysicalWindow{.input = buildNode(window.input),
+                                                                         .groups = window.groups,
+                                                                         .sorted_input = timeSeriesSortedInput(window)});
                           },
                           [](const plan::LogicalSort& sort)
                           {
@@ -249,6 +280,8 @@ void propagateScanRowLimitImpl(const plan::PhysicalNodePtr& node, const std::opt
                    [&node](plan::PhysicalFilter&) { resetBudgetBelow(*node); },
                    [&node](plan::PhysicalSort&) { resetBudgetBelow(*node); },
                    [&node](plan::PhysicalAggregate&) { resetBudgetBelow(*node); },
+                   // A window reads whole partitions, so a LIMIT above it cannot stop the scan early.
+                   [&node](plan::PhysicalWindow&) { resetBudgetBelow(*node); },
                    [&node](plan::PhysicalPivot&) { resetBudgetBelow(*node); },
                    [&node](plan::PhysicalHashJoin&) { resetBudgetBelow(*node); },
                    [&node](plan::PhysicalNestedLoopJoin&) { resetBudgetBelow(*node); },
@@ -311,7 +344,9 @@ void appendPlan(std::ostringstream& out, const mldp_pvxs_driver::query::plan::Ph
                        if (scan.row_limit != 0) out << ", row_limit=" << scan.row_limit;
                        out << ")";
                    },
-                   [&](const PhysicalFilter& filter) { out << "PhysicalFilter(predicates=" << filter.predicates.size() << ")"; },
+                   [&](const PhysicalFilter& filter) { out << "PhysicalFilter(predicates=" << filter.predicates.size();
+                       if (!filter.conditions.empty()) out << ", conditions=" << filter.conditions.size();
+                       out << ")"; },
                    [&](const PhysicalProject& project)
                    {
                        out << "PhysicalProject(columns=" << project.columns.size() << (project.distinct ? ", distinct=true" : "");
@@ -322,6 +357,18 @@ void appendPlan(std::ostringstream& out, const mldp_pvxs_driver::query::plan::Ph
                    {
                        out << "PhysicalAggregate(keys=" << aggregate.spec.keys.size() << ", aggregates=" << aggregate.spec.aggregates.size()
                            << (aggregate.spec.having ? ", having=true" : "") << ")";
+                   },
+                   [&](const PhysicalWindow& window)
+                   {
+                       std::size_t calls = 0;
+                       for (const auto& group : window.groups) calls += group.calls.size();
+                       out << "PhysicalWindow(groups=" << window.groups.size() << ", calls=" << calls;
+                       if (!window.groups.empty())
+                       {
+                           out << ", partition=" << window.groups.front().partition_by.size()
+                               << ", order=" << window.groups.front().order_by.size();
+                       }
+                       out << ", sorted_input=" << (window.sorted_input ? "true" : "false") << ")";
                    },
                    [&](const PhysicalSort& sort) { out << "PhysicalSort(keys=" << sort.keys.size() << ")"; },
                    [&](const PhysicalLimit& limit) { out << "PhysicalLimit(limit=" << limit.limit << ")"; },
