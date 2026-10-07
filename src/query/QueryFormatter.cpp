@@ -442,17 +442,94 @@ void writeArrowIpc(const query::QueryExecutionResult& result,
     }
 }
 
-/// Cuts @p value to @p max_chars, marking the cut with a trailing "...".
+/// Decodes the UTF-8 code point at @p pos; @p length receives its byte count.
+/// Malformed bytes decode as themselves with length 1.
+char32_t decodeUtf8(const std::string_view text, const std::size_t pos, std::size_t& length)
+{
+    const auto lead = static_cast<unsigned char>(text[pos]);
+    const std::size_t expected = lead < 0x80 ? 1 : (lead >> 5) == 0x6 ? 2 : (lead >> 4) == 0xE ? 3 : (lead >> 3) == 0x1E ? 4 : 1;
+    if (expected == 1 || pos + expected > text.size())
+    {
+        length = 1;
+        return lead;
+    }
+    char32_t code_point = lead & (0xFF >> (expected + 1));
+    for (std::size_t i = 1; i < expected; ++i)
+    {
+        const auto next = static_cast<unsigned char>(text[pos + i]);
+        if ((next & 0xC0) != 0x80)
+        {
+            length = 1;
+            return lead;
+        }
+        code_point = (code_point << 6) | (next & 0x3F);
+    }
+    length = expected;
+    return code_point;
+}
+
+/// Terminal columns used by one code point: 0 for combining marks and
+/// joiners, 2 for East Asian wide characters and emoji, 1 otherwise.
+std::size_t codePointWidth(const char32_t c)
+{
+    if (c == 0x200D || (c >= 0xFE00 && c <= 0xFE0F) || (c >= 0x0300 && c <= 0x036F) || (c >= 0x200B && c <= 0x200F) ||
+        (c >= 0x1F3FB && c <= 0x1F3FF) || (c >= 0xE0100 && c <= 0xE01EF))
+        return 0;
+    static constexpr std::pair<char32_t, char32_t> kWide[] = {
+        {0x1100, 0x115F},   {0x231A, 0x231B},   {0x2329, 0x232A},   {0x23E9, 0x23EC},   {0x23F0, 0x23F0},
+        {0x23F3, 0x23F3},   {0x25FD, 0x25FE},   {0x2614, 0x2615},   {0x2648, 0x2653},   {0x267F, 0x267F},
+        {0x2693, 0x2693},   {0x26A1, 0x26A1},   {0x26AA, 0x26AB},   {0x26BD, 0x26BE},   {0x26C4, 0x26C5},
+        {0x26CE, 0x26CE},   {0x26D4, 0x26D4},   {0x26EA, 0x26EA},   {0x26F2, 0x26F3},   {0x26F5, 0x26F5},
+        {0x26FA, 0x26FA},   {0x26FD, 0x26FD},   {0x2705, 0x2705},   {0x270A, 0x270B},   {0x2728, 0x2728},
+        {0x274C, 0x274C},   {0x274E, 0x274E},   {0x2753, 0x2755},   {0x2757, 0x2757},   {0x2795, 0x2797},
+        {0x27B0, 0x27B0},   {0x27BF, 0x27BF},   {0x2B1B, 0x2B1C},   {0x2B50, 0x2B50},   {0x2B55, 0x2B55},
+        {0x2E80, 0x303E},   {0x3041, 0x33FF},   {0x3400, 0x4DBF},   {0x4E00, 0x9FFF},   {0xA000, 0xA4CF},
+        {0xAC00, 0xD7A3},   {0xF900, 0xFAFF},   {0xFE30, 0xFE4F},   {0xFF00, 0xFF60},   {0xFFE0, 0xFFE6},
+        {0x1F004, 0x1F004}, {0x1F0CF, 0x1F0CF}, {0x1F18E, 0x1F18E}, {0x1F191, 0x1F19A}, {0x1F200, 0x1F251},
+        {0x1F300, 0x1F64F}, {0x1F680, 0x1F6FF}, {0x1F7E0, 0x1F7EB}, {0x1F900, 0x1F9FF}, {0x1FA70, 0x1FAFF},
+        {0x20000, 0x3FFFD}};
+    for (const auto& [first, last] : kWide)
+        if (c >= first && c <= last) return 2;
+    return 1;
+}
+
+/// Terminal columns needed to print @p text (UTF-8).
+std::size_t displayWidth(const std::string_view text)
+{
+    std::size_t width = 0;
+    for (std::size_t pos = 0, length = 0; pos < text.size(); pos += length)
+        width += codePointWidth(decodeUtf8(text, pos, length));
+    return width;
+}
+
+/// Byte length of the longest prefix of @p text that fits in @p width columns,
+/// ending on a code point boundary (trailing zero-width marks included).
+std::size_t prefixBytesForWidth(const std::string_view text, const std::size_t width)
+{
+    std::size_t used = 0;
+    std::size_t pos = 0;
+    while (pos < text.size())
+    {
+        std::size_t length = 0;
+        const auto  columns = codePointWidth(decodeUtf8(text, pos, length));
+        if (used + columns > width) break;
+        used += columns;
+        pos += length;
+    }
+    return pos;
+}
+
+/// Cuts @p value to @p max_chars columns, marking the cut with a trailing "...".
 std::string capCell(std::string value, const std::size_t max_chars)
 {
-    if (value.size() <= max_chars) return value;
+    if (displayWidth(value) <= max_chars) return value;
     if (max_chars <= 3) return std::string(max_chars, '.');
-    value.resize(max_chars - 3);
+    value.resize(prefixBytesForWidth(value, max_chars - 3));
     return value + "...";
 }
 
-/// Splits @p value into lines no wider than @p width, preferring breaks at
-/// spaces and after punctuation; embedded newlines always break.
+/// Splits @p value into lines no wider than @p width columns, preferring breaks
+/// at spaces and after punctuation; embedded newlines always break.
 std::vector<std::string> wrapText(const std::string_view value, const std::size_t width)
 {
     std::vector<std::string> lines;
@@ -462,21 +539,28 @@ std::vector<std::string> wrapText(const std::string_view value, const std::size_
         const auto line_end = std::min(value.find('\n', line_start), value.size());
         auto       rest = value.substr(line_start, line_end - line_start);
         line_start = line_end + 1;
-        if (width == 0 || rest.size() <= width)
+        if (width == 0 || displayWidth(rest) <= width)
         {
             lines.emplace_back(rest);
             continue;
         }
-        while (rest.size() > width)
+        while (displayWidth(rest) > width)
         {
-            if (const auto space = rest.substr(0, width + 1).rfind(' '); space != std::string_view::npos && space > 0)
+            const auto fit = prefixBytesForWidth(rest, width);
+            const auto window = rest.substr(0, std::min(fit + 1, rest.size()));
+            if (const auto space = window.rfind(' '); space != std::string_view::npos && space > 0)
             {
                 lines.emplace_back(rest.substr(0, space));
                 rest.remove_prefix(space + 1);
                 continue;
             }
-            auto cut = rest.substr(0, width).find_last_of(",;/|:=-");
-            cut = cut == std::string_view::npos ? width : cut + 1;
+            auto cut = rest.substr(0, fit).find_last_of(",;/|:=-");
+            cut = cut == std::string_view::npos ? fit : cut + 1;
+            if (cut == 0)
+            {
+                // A single character wider than the column still has to advance.
+                decodeUtf8(rest, 0, cut);
+            }
             lines.emplace_back(rest.substr(0, cut));
             rest.remove_prefix(cut);
         }
@@ -581,7 +665,7 @@ void writeTable(const query::QueryExecutionResult& result,
     {
         const auto& name = schema->field(c)->name();
         headers.push_back(name);
-        widths.push_back(name.size());
+        widths.push_back(displayWidth(name));
     }
 
     // Collect all cell values and track max column widths
@@ -609,12 +693,12 @@ void writeTable(const query::QueryExecutionResult& result,
                 std::string cell = tableValue(scalar);
                 if (options.viewport_width) cell = capCell(std::move(cell), options.max_cell_chars);
                 const auto first_line_end = cell.find('\n');
-                widths[c] = std::max(widths[c], (first_line_end == std::string::npos ? cell : cell.substr(0, first_line_end)).size());
+                widths[c] = std::max(widths[c], displayWidth(first_line_end == std::string::npos ? cell : cell.substr(0, first_line_end)));
                 for (std::size_t line_start = first_line_end == std::string::npos ? cell.size() : first_line_end + 1;
                      line_start < cell.size();)
                 {
                     const auto line_end = cell.find('\n', line_start);
-                    widths[c] = std::max(widths[c], cell.substr(line_start, line_end - line_start).size());
+                    widths[c] = std::max(widths[c], displayWidth(cell.substr(line_start, line_end - line_start)));
                     line_start = line_end == std::string::npos ? cell.size() : line_end + 1;
                 }
                 cells.push_back(std::move(cell));
@@ -651,7 +735,7 @@ void writeTable(const query::QueryExecutionResult& result,
     const auto column_divider = style::paint(options.color, style::dim, " | ");
     // Pad before styling so escape sequences do not count toward column width.
     auto padded = [](std::string value, const std::size_t width) {
-        if (value.size() < width) value.append(width - value.size(), ' ');
+        if (const auto used = displayWidth(value); used < width) value.append(width - used, ' ');
         return value;
     };
 

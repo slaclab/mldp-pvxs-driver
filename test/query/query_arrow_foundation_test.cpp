@@ -1405,6 +1405,52 @@ TEST(QueryFormatterTest, WrapsAtWordBoundariesAndCapsLongCells)
         EXPECT_LE(line.size(), 40U);
 }
 
+TEST(QueryFormatterTest, AlignsColumnsByDisplayWidthForWideCharacters)
+{
+    // Each value has the same on-screen width (10 columns) but different byte lengths.
+    arrow::StringBuilder name_builder;
+    arrow::StringBuilder other_builder;
+    for (const auto* value : {"plain text", "\xe2\x9d\x8c\xe2\x9d\x8c gun x", "\xe6\xbc\xa2\xe5\xad\x97 abcde"})
+    {
+        ASSERT_TRUE(name_builder.Append(value).ok());
+        ASSERT_TRUE(other_builder.Append("z").ok());
+    }
+    std::shared_ptr<arrow::Array> names;
+    std::shared_ptr<arrow::Array> others;
+    ASSERT_TRUE(name_builder.Finish(&names).ok());
+    ASSERT_TRUE(other_builder.Finish(&others).ok());
+    const auto batch = arrow::RecordBatch::Make(arrow::schema({arrow::field("name", arrow::utf8()), arrow::field("other", arrow::utf8())}), 3, {names, others});
+    const query::QueryExecutionResult result{.batches = {batch}};
+
+    for (const std::optional<std::size_t> viewport : {std::optional<std::size_t>{}, std::optional<std::size_t>{40}})
+    {
+        std::ostringstream output;
+        cli::formatQueryResult(result, cli::QueryOutputFormat::Table, output, false, cli::TableRenderOptions{.viewport_width = viewport});
+        std::istringstream lines(output.str());
+        std::string        line;
+        std::getline(lines, line); // header
+        std::getline(lines, line); // separator
+        std::optional<std::size_t> expected;
+        while (std::getline(lines, line))
+        {
+            // The divider sits after the 10-column value plus padding, whatever the byte count.
+            const auto divider = line.find(" | ");
+            ASSERT_NE(divider, std::string::npos) << line;
+            const auto prefix = line.substr(0, divider);
+            std::size_t columns = 0;
+            for (std::size_t i = 0; i < prefix.size(); ++i)
+            {
+                const auto byte = static_cast<unsigned char>(prefix[i]);
+                if ((byte & 0xC0) == 0x80) continue;
+                columns += byte >= 0xE2 ? 2 : 1;
+            }
+            if (!viewport) EXPECT_EQ(columns, 10U) << line;
+            if (!expected) expected = columns;
+            EXPECT_EQ(columns, *expected) << line;
+        }
+    }
+}
+
 TEST(QueryFormatterTest, StreamedTableKeepsOneFullWidthLayoutAcrossBatches)
 {
     const auto make_batch = [](const std::vector<std::string>& values) {

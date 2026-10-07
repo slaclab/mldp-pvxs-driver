@@ -19,8 +19,7 @@ set(ARROW_VERSION "apache-arrow-18.1.0")
 set(DATE_VERSION "v3.0.1")
 set(NLOHMANN_JSON_VERSION "v3.11.3")
 set(FTXUI_VERSION "v5.0.0")
-set(LIBEDIT_VERSION "20240808-3.1") # used only when no system libedit-devel is found
-set(NCURSES_VERSION "6.5")           # built only together with the bundled libedit
+set(ISOCLINE_VERSION "v1.0.9")
 set(GOOGLETEST_VERSION "main")      # tests only
 
 # C++ Standard
@@ -125,75 +124,25 @@ FetchContent_Declare(argparse
 )
 FetchContent_MakeAvailable(argparse)
 
-# Query REPL line editing, history, and completion use libedit (the BSD
-# readline implementation psql uses). The system copy is preferred; when its
-# development files are missing (e.g. shared clusters without root), libedit is
-# downloaded and built as a static library together with a static ncurses.
-option(MLDP_BUNDLED_LIBEDIT "Always build libedit from source instead of using the system copy" OFF)
-if(NOT MLDP_BUNDLED_LIBEDIT)
-    find_path(EDITLINE_INCLUDE_DIR editline/readline.h)
-    find_library(EDITLINE_LIBRARY NAMES edit)
-endif()
-add_library(editline::editline UNKNOWN IMPORTED GLOBAL)
-if(EDITLINE_INCLUDE_DIR AND EDITLINE_LIBRARY)
-    message(STATUS "Using system libedit: ${EDITLINE_LIBRARY}")
-    set_target_properties(editline::editline PROPERTIES
-        IMPORTED_LOCATION "${EDITLINE_LIBRARY}"
-        INTERFACE_INCLUDE_DIRECTORIES "${EDITLINE_INCLUDE_DIR}")
-else()
-    message(STATUS "Building libedit ${LIBEDIT_VERSION} (with ncurses ${NCURSES_VERSION}) from source")
-    include(ExternalProject)
-    # Both builds get a private TMPDIR: an inherited one may point at a missing
-    # scratch directory, which breaks autoconf's config.guess.
-    set(LIBEDIT_TMPDIR "${CMAKE_BINARY_DIR}/_deps/libedit-tmp")
-    set(NCURSES_PREFIX "${CMAKE_BINARY_DIR}/_deps/ncurses-install")
-    set(LIBEDIT_PREFIX "${CMAKE_BINARY_DIR}/_deps/libedit-install")
-    set(LIBEDIT_ENV ${CMAKE_COMMAND} -E env TMPDIR=${LIBEDIT_TMPDIR})
-
-    # libedit needs a terminfo library; hosts often ship only its runtime
-    # (libtinfo.so.N, no headers), so build a static libncurses. libedit's
-    # configure probes -lncurses first and finds this copy via LDFLAGS. The terminal
-    # database itself is still read from the system terminfo directories.
-    ExternalProject_Add(ncurses_external
-        URL https://ftp.gnu.org/gnu/ncurses/ncurses-${NCURSES_VERSION}.tar.gz
-        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-        PREFIX "${CMAKE_BINARY_DIR}/_deps/ncurses"
-        CONFIGURE_COMMAND ${CMAKE_COMMAND} -E make_directory ${LIBEDIT_TMPDIR}
-            COMMAND ${LIBEDIT_ENV} <SOURCE_DIR>/configure --prefix=${NCURSES_PREFIX}
-            --without-shared --disable-widec --without-cxx --without-cxx-binding
-            --without-ada --without-progs --without-tests --without-manpages
-            --disable-db-install --enable-overwrite
-            --with-default-terminfo-dir=/usr/share/terminfo
-            --with-terminfo-dirs=/etc/terminfo:/lib/terminfo:/usr/share/terminfo:/usr/lib/terminfo
-            "CFLAGS=-O2 -fPIC"
-        BUILD_COMMAND ${LIBEDIT_ENV} make -j4
-        INSTALL_COMMAND ${LIBEDIT_ENV} make install
-        BUILD_BYPRODUCTS "${NCURSES_PREFIX}/lib/libncurses.a"
-    )
-
-    ExternalProject_Add(libedit_external
-        URL https://thrysoee.dk/editline/libedit-${LIBEDIT_VERSION}.tar.gz
-        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-        PREFIX "${CMAKE_BINARY_DIR}/_deps/libedit"
-        DEPENDS ncurses_external
-        CONFIGURE_COMMAND ${CMAKE_COMMAND} -E make_directory ${LIBEDIT_TMPDIR}
-            COMMAND ${LIBEDIT_ENV} <SOURCE_DIR>/configure --prefix=${LIBEDIT_PREFIX}
-            --disable-shared --enable-static --with-pic
-            "CFLAGS=-O2 -fPIC"
-            "CPPFLAGS=-I${NCURSES_PREFIX}/include"
-            "LDFLAGS=-L${NCURSES_PREFIX}/lib"
-        BUILD_COMMAND ${LIBEDIT_ENV} make -j4
-        INSTALL_COMMAND ${LIBEDIT_ENV} make install
-        BUILD_BYPRODUCTS "${LIBEDIT_PREFIX}/lib/libedit.a"
-    )
-    # Imported targets require the include directory to exist at configure time.
-    file(MAKE_DIRECTORY "${LIBEDIT_PREFIX}/include")
-    set_target_properties(editline::editline PROPERTIES
-        IMPORTED_LOCATION "${LIBEDIT_PREFIX}/lib/libedit.a"
-        INTERFACE_INCLUDE_DIRECTORIES "${LIBEDIT_PREFIX}/include"
-        INTERFACE_LINK_LIBRARIES "${NCURSES_PREFIX}/lib/libncurses.a")
-    add_dependencies(editline::editline libedit_external)
-endif()
+# Query REPL line editing, history, completion and live syntax colouring use
+# isocline (MIT, single C file, no terminal-library dependency).
+message(STATUS "Acquiring isocline version ${ISOCLINE_VERSION}...")
+FetchContent_Declare(isocline
+    GIT_REPOSITORY https://github.com/daanx/isocline.git
+    GIT_TAG        ${ISOCLINE_VERSION}
+    GIT_SHALLOW    TRUE
+    # Only fetch: the library is built below from its amalgamated source, since
+    # upstream's CMake project also builds samples and tests.
+    SOURCE_SUBDIR  do-not-add
+    # psql/readline keys: Ctrl-A/Ctrl-E span the whole multi-line input, Ctrl-Q
+    # exits, and the REPL can tell Ctrl-C on an empty line from one on typed text.
+    # Skips re-applying when the patch is already in the source tree.
+    PATCH_COMMAND sh -c "git apply --reverse --check '${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/isocline-psql-keys.patch' 2>/dev/null || git apply '${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/isocline-psql-keys.patch'")
+FetchContent_MakeAvailable(isocline)
+enable_language(C)
+add_library(isocline STATIC "${isocline_SOURCE_DIR}/src/isocline.c")
+target_include_directories(isocline PUBLIC "${isocline_SOURCE_DIR}/include")
+set_target_properties(isocline PROPERTIES POSITION_INDEPENDENT_CODE ON C_STANDARD 99)
 
 # FTXUI is used only by the optional configuration wizard.
 option(MLDP_WIZARD "Build interactive config wizard (requires FTXUI)" ON)
@@ -1163,7 +1112,7 @@ if(MLDP_PVXS_DRIVER_TESTS)
         "${arrow_SOURCE_DIR}/cpp/src"
         "${arrow_SOURCE_DIR}/cpp/src/generated"
     )
-    target_link_libraries(${PROJECT_NAME}_test PRIVATE editline::editline)
+    target_link_libraries(${PROJECT_NAME}_test PRIVATE isocline)
 
     if(MLDP_WIZARD AND MLDP_PVXS_DRIVER_MAIN)
         target_sources(${PROJECT_NAME}_test PRIVATE
@@ -1269,13 +1218,13 @@ if(MLDP_PVXS_DRIVER_MAIN)
         target_link_libraries(${PROJECT_NAME} PRIVATE
             -Wl,-force_load $<TARGET_FILE:lib${PROJECT_NAME}>
             argparse::argparse
-            editline::editline
+            isocline
         )
     else()
         target_link_libraries(${PROJECT_NAME} PRIVATE
             -Wl,--whole-archive lib${PROJECT_NAME} -Wl,--no-whole-archive
             argparse::argparse
-            editline::editline
+            isocline
             spdlog::spdlog
         )
     endif()

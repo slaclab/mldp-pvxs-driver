@@ -36,12 +36,8 @@
 
 #include <arrow/filesystem/localfs.h>
 #include <arrow/memory_pool.h>
-#include <editline/readline.h>
+#include <isocline.h>
 
-#include <termios.h>
-
-#include <csetjmp>
-#include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -606,9 +602,9 @@ std::filesystem::path replHistoryPath()
     return {};
 }
 
-/// Line editor for the interactive REPL, backed by libedit (the readline
-/// implementation psql uses), so keys, history and terminal handling behave
-/// like psql. Falls back to plain std::getline for non-terminal input.
+/// Line editor for the interactive REPL, backed by isocline: psql/readline keys,
+/// live SQL colouring, Tab completion and history. Falls back to plain
+/// std::getline for non-terminal input.
 class ReplLineEditor
 {
 public:
@@ -616,44 +612,36 @@ public:
         : input_(input)
         , table_catalog_(std::move(table_catalog))
     {
-        if (&input != &std::cin || ::isatty(STDIN_FILENO) == 0 || active_ != nullptr)
+        if (&input != &std::cin || ::isatty(STDIN_FILENO) == 0 || ::isatty(STDOUT_FILENO) == 0 || active_ != nullptr)
         {
             return;
         }
 
         active_ = this;
         interactive_ = true;
-        // Ctrl-Q is XON under terminal flow control and never reaches the editor;
-        // turn flow control off before libedit snapshots the terminal so the exit key works.
-        if (::tcgetattr(STDIN_FILENO, &saved_termios_) == 0)
-        {
-            auto termios_state = saved_termios_;
-            termios_state.c_iflag &= ~static_cast<tcflag_t>(IXON);
-            restore_termios_ = ::tcsetattr(STDIN_FILENO, TCSANOW, &termios_state) == 0;
-        }
-        // Ctrl-Q exits; libedit cannot bind it (it is the tty START char), so it
-        // is intercepted at the character-read level
-        // (must be set before rl_initialize, which installs it).
-        rl_getc_function = &ReplLineEditor::readKey;
-        rl_readline_name = "mldp";
-        rl_initialize();
-        using_history();
-        stifle_history(1000);
-        rl_basic_word_break_characters = " \t\n,();=<>*\"'";
-        rl_completer_word_break_characters = const_cast<char*>(rl_basic_word_break_characters);
-        rl_attempted_completion_function = &ReplLineEditor::complete;
+        // The REPL builds its own "mldp> " / "...> " prompts; isocline keeps
+        // continuation rows of one edit aligned under the prompt.
+        ic_set_prompt_marker("", "");
+        ic_enable_multiline_indent(true);
+        ic_enable_hint(false);
+        ic_enable_inline_help(false);
+        ic_enable_completion_preview(false);
+        ic_enable_auto_tab(false);
+        ic_enable_brace_insertion(false);
+        ic_enable_history_duplicates(true);
+        ic_set_history(nullptr, kMaxHistory); // persisted by this class, see saveHistory()
+        ic_set_default_completer(&ReplLineEditor::complete, this);
+        ic_set_default_highlighter(&ReplLineEditor::highlight, this);
+        ic_style_def("mldp-keyword", "ansi-blue");
+        ic_style_def("mldp-function", "ansi-aqua");
+        ic_style_def("mldp-string", "ansi-green");
+        ic_style_def("mldp-number", "ansi-magenta");
+        ic_style_def("mldp-comment", "ansi-gray");
+        ic_style_def("mldp-command", "ansi-olive");
 
         history_path_ = replHistoryPath();
-        if (!history_path_.empty())
-        {
-            std::error_code error;
-            std::filesystem::create_directories(history_path_.parent_path(), error);
-            if (!error)
-            {
-                (void)read_history(history_path_.string().c_str());
-                sanitizeHistory();
-            }
-        }
+        loadHistory();
+        syncEditorHistory();
     }
 
     ReplLineEditor(const ReplLineEditor&) = delete;
@@ -662,6 +650,12 @@ public:
     void setColor(const bool color)
     {
         color_ = color;
+        if (interactive_)
+        {
+            ic_enable_color(color);
+            ic_enable_highlight(color);
+            ic_enable_brace_matching(color);
+        }
     }
 
     ~ReplLineEditor()
@@ -670,16 +664,9 @@ public:
         {
             return;
         }
-        if (!history_path_.empty())
-        {
-            (void)write_history(history_path_.string().c_str());
-        }
-        if (restore_termios_)
-        {
-            (void)::tcsetattr(STDIN_FILENO, TCSANOW, &saved_termios_);
-        }
-        rl_attempted_completion_function = nullptr;
-        rl_getc_function = nullptr;
+        saveHistory();
+        ic_set_default_completer(nullptr, nullptr);
+        ic_set_default_highlighter(nullptr, nullptr);
         active_ = nullptr;
     }
 
@@ -698,36 +685,28 @@ public:
         }
 
         output << std::flush;
-        // Like psql: Ctrl-C while editing abandons the line. libedit restores the
-        // terminal before re-raising SIGINT to this handler, which jumps back here.
-        struct sigaction previous{};
-        struct sigaction handler{};
-        handler.sa_handler = &ReplLineEditor::onInterrupt;
-        sigemptyset(&handler.sa_mask);
-        ::sigaction(SIGINT, &handler, &previous);
-        if (sigsetjmp(interrupt_jump_, 1) != 0)
-        {
-            ::sigaction(SIGINT, &previous, nullptr);
-            interrupted_on_empty_line_ = rl_line_buffer == nullptr || *rl_line_buffer == '\0';
-            std::fputs("\n", stdout);
-            std::fflush(stdout);
-            interrupted = true;
-            return std::nullopt;
-        }
-        jump_armed_ = true;
-        char* line = readline(markPromptEscapes(prompt).c_str());
-        jump_armed_ = false;
-        ::sigaction(SIGINT, &previous, nullptr);
+        char* line = ic_readline(promptMarkup(prompt).c_str());
+        // isocline records every edited line; the REPL keeps whole statements
+        // instead, so restore the editor history from ours.
+        syncEditorHistory();
         if (line == nullptr)
         {
+            switch (ic_last_exit_key())
+            {
+            case 0x11: // Ctrl-Q
+                quit_requested_ = true;
+                break;
+            case 0x03: // Ctrl-C
+                interrupted = true;
+                interrupted_on_empty_line_ = ic_last_exit_input_empty();
+                break;
+            default: // Ctrl-D on an empty line or end of input
+                break;
+            }
             return std::nullopt;
         }
         std::string result(line);
-        std::free(line);
-        if (quit_requested_)
-        {
-            return std::nullopt;
-        }
+        ic_free(line);
         return result;
     }
 
@@ -737,29 +716,21 @@ public:
         {
             return;
         }
-        session_history_.emplace_back(entry);
+        history_.emplace_back(entry);
+        if (history_.size() > static_cast<std::size_t>(kMaxHistory))
+        {
+            history_.erase(history_.begin(), history_.end() - kMaxHistory);
+        }
         if (interactive_)
         {
-            add_history(std::string(entry).c_str());
+            ic_history_add(history_.back().c_str());
+            saveHistory();
         }
     }
 
     std::vector<std::string> history() const
     {
-        if (!interactive_)
-        {
-            return session_history_;
-        }
-
-        std::vector<std::string> entries;
-        for (int index = history_base; index < history_base + history_length; ++index)
-        {
-            if (const auto* entry = history_get(index); entry != nullptr && entry->line != nullptr)
-            {
-                entries.emplace_back(entry->line);
-            }
-        }
-        return entries;
+        return history_;
     }
 
     bool clearScreen()
@@ -789,128 +760,161 @@ public:
     }
 
 private:
-    /// Wraps ANSI escape sequences in the prompt with readline's ignore markers
-    /// so they do not count toward the cursor column.
-    static std::string markPromptEscapes(std::string_view prompt)
+    static constexpr long kMaxHistory = 1000;
+
+    /// isocline renders the prompt as bbcode: drop the REPL's ANSI colouring
+    /// and restyle the known prompts.
+    std::string promptMarkup(std::string_view prompt) const
     {
-        std::string marked;
-        marked.reserve(prompt.size() + 8);
+        std::string plain;
         for (std::size_t index = 0; index < prompt.size(); ++index)
         {
-            if (prompt[index] != '\x1b')
+            if (prompt[index] == '\x1b')
             {
-                marked.push_back(prompt[index]);
+                const auto end = prompt.find('m', index);
+                if (end == std::string_view::npos)
+                    break;
+                index = end;
                 continue;
             }
-            const auto end = prompt.find('m', index);
-            if (end == std::string_view::npos)
-            {
-                marked.append(prompt.substr(index));
-                break;
-            }
-            marked.push_back(RL_PROMPT_START_IGNORE);
-            marked.append(prompt.substr(index, end - index + 1));
-            marked.push_back(RL_PROMPT_END_IGNORE);
-            index = end;
+            if (prompt[index] == '[' || prompt[index] == '\\')
+                plain.push_back('\\');
+            plain.push_back(prompt[index]);
         }
-        return marked;
+        if (!color_)
+            return plain;
+        if (plain.starts_with("mldp"))
+            return "[b ansi-green]mldp[/]" + plain.substr(4);
+        return "[ansi-gray]" + plain + "[/]";
     }
 
-    static void onInterrupt(int)
+    static void highlight(ic_highlight_env_t* henv, const char* input, void* arg)
     {
-        if (active_ != nullptr && active_->jump_armed_)
-        {
-            active_->jump_armed_ = false;
-            siglongjmp(active_->interrupt_jump_, 1);
-        }
-    }
-
-    static int readKey(FILE*)
-    {
-        unsigned char key = 0;
-        while (true)
-        {
-            const auto count = ::read(STDIN_FILENO, &key, 1);
-            if (count == 1)
-                break;
-            if (count < 0 && errno == EINTR)
-                continue;
-            return EOF;
-        }
-        if (key == 0x11 /* Ctrl-Q */ && active_ != nullptr)
-        {
-            // Submit the line; read() sees the flag and reports quit.
-            active_->quit_requested_ = true;
-            return '\n';
-        }
-        return key;
-    }
-
-    static char* nextCompletion(const char*, const int state)
-    {
-        if (active_ == nullptr || state < 0 || static_cast<std::size_t>(state) >= active_->completions_.size())
-        {
-            return nullptr;
-        }
-        return strdup(active_->completions_[static_cast<std::size_t>(state)].c_str());
-    }
-
-    static char** complete(const char*, const int start, const int end)
-    {
-        rl_attempted_completion_over = 1;
-        if (active_ == nullptr || rl_line_buffer == nullptr)
-        {
-            return nullptr;
-        }
-        const std::string context(rl_line_buffer, static_cast<std::size_t>(std::max(end, 0)));
-        const auto        replaced = mldp_pvxs_driver::cli::detail::replCompletionContextLength(context);
-        active_->completions_.clear();
-        for (const auto& candidate : mldp_pvxs_driver::cli::detail::replCompletions(context, active_->table_catalog_))
-        {
-            // readline replaces only the current word [start, end); keep the
-            // part of the candidate that lies past the engine's context start.
-            const auto word = end - start;
-            if (replaced >= word)
-            {
-                const auto skip = static_cast<std::size_t>(replaced - word);
-                if (candidate.size() >= skip)
-                    active_->completions_.push_back(candidate.substr(skip));
-            }
-            else
-            {
-                active_->completions_.push_back(context.substr(static_cast<std::size_t>(start), static_cast<std::size_t>(word - replaced)) + candidate);
-            }
-        }
-        if (active_->completions_.empty())
-        {
-            return nullptr;
-        }
-        rl_completion_append_character = '\0';
-        return rl_completion_matches("", &ReplLineEditor::nextCompletion);
-    }
-
-    void sanitizeHistory()
-    {
-        std::vector<std::string> entries;
-        for (const auto& entry : history())
-        {
-            if (isUserHistoryEntry(entry))
-            {
-                entries.push_back(entry);
-            }
-        }
-        if (entries.size() == static_cast<std::size_t>(history_length))
-        {
+        const auto* self = static_cast<const ReplLineEditor*>(arg);
+        if (self == nullptr || !self->color_ || input == nullptr)
             return;
-        }
-
-        clear_history();
-        for (const auto& entry : entries)
+        using Kind = mldp_pvxs_driver::cli::detail::ReplHighlight;
+        const auto kinds = mldp_pvxs_driver::cli::detail::replHighlight(input);
+        std::size_t start = 0;
+        while (start < kinds.size())
         {
-            add_history(entry.c_str());
+            std::size_t end = start + 1;
+            while (end < kinds.size() && kinds[end] == kinds[start])
+                ++end;
+            const char* style = nullptr;
+            switch (kinds[start])
+            {
+            case Kind::Keyword: style = "mldp-keyword"; break;
+            case Kind::Function: style = "mldp-function"; break;
+            case Kind::String: style = "mldp-string"; break;
+            case Kind::Number: style = "mldp-number"; break;
+            case Kind::Comment: style = "mldp-comment"; break;
+            case Kind::Command: style = "mldp-command"; break;
+            case Kind::Default: break;
+            }
+            if (style != nullptr)
+                ic_highlight(henv, static_cast<long>(start), static_cast<long>(end - start), style);
+            start = end;
         }
-        std::ofstream(history_path_, std::ios::trunc).close();
-        (void)write_history(history_path_.string().c_str());
+    }
+
+    static void complete(ic_completion_env_t* cenv, const char* prefix)
+    {
+        auto* self = static_cast<ReplLineEditor*>(ic_completion_arg(cenv));
+        if (self == nullptr || prefix == nullptr)
+            return;
+        const std::string context(prefix);
+        const auto        replaced = mldp_pvxs_driver::cli::detail::replCompletionContextLength(context);
+        for (const auto& candidate : mldp_pvxs_driver::cli::detail::replCompletions(context, self->table_catalog_))
+        {
+            if (!ic_add_completion_prim(cenv, candidate.c_str(), nullptr, nullptr, replaced, 0))
+                break;
+        }
+    }
+
+    void syncEditorHistory() const
+    {
+        ic_history_clear();
+        for (const auto& entry : history_)
+            ic_history_add(entry.c_str());
+    }
+
+    /// Reads the history file: isocline's escaped one-entry-per-line format, or
+    /// the libedit file ("_HiStOrY_V2_", octal escapes) written by older builds.
+    void loadHistory()
+    {
+        if (history_path_.empty())
+            return;
+        std::ifstream file(history_path_);
+        std::string   line;
+        bool          libedit = false;
+        bool          first = true;
+        while (std::getline(file, line))
+        {
+            if (first && line == "_HiStOrY_V2_")
+            {
+                libedit = true;
+                first = false;
+                continue;
+            }
+            first = false;
+            std::string entry;
+            for (std::size_t index = 0; index < line.size(); ++index)
+            {
+                if (line[index] != '\\' || index + 1 >= line.size())
+                {
+                    entry.push_back(line[index]);
+                    continue;
+                }
+                const char next = line[++index];
+                if (libedit && index + 2 < line.size() + 0 && next >= '0' && next <= '7')
+                {
+                    entry.push_back(static_cast<char>(std::stoi(line.substr(index, 3), nullptr, 8)));
+                    index += 2;
+                }
+                else if (next == 'n') entry.push_back('\n');
+                else if (next == 't') entry.push_back('\t');
+                else if (next == 'x' && index + 2 < line.size())
+                {
+                    entry.push_back(static_cast<char>(std::stoi(line.substr(index + 1, 2), nullptr, 16)));
+                    index += 2;
+                }
+                else entry.push_back(next);
+            }
+            if (!entry.empty() && entry.front() != '#' && isUserHistoryEntry(entry))
+                history_.push_back(std::move(entry));
+        }
+        if (history_.size() > static_cast<std::size_t>(kMaxHistory))
+            history_.erase(history_.begin(), history_.end() - kMaxHistory);
+        if (libedit)
+            saveHistory();
+    }
+
+    /// Writes the history in isocline's file format.
+    void saveHistory() const
+    {
+        if (history_path_.empty())
+            return;
+        std::error_code error;
+        std::filesystem::create_directories(history_path_.parent_path(), error);
+        std::ofstream file(history_path_, std::ios::trunc);
+        for (const auto& entry : history_)
+        {
+            for (const char c : entry)
+            {
+                if (c == '\\') file << "\\\\";
+                else if (c == '\n') file << "\\n";
+                else if (c == '\t') file << "\\t";
+                else if (c == '\r') continue;
+                else if (static_cast<unsigned char>(c) < ' ' || c == '#')
+                {
+                    static constexpr char kHex[] = "0123456789abcdef";
+                    file << "\\x" << kHex[static_cast<unsigned char>(c) / 16] << kHex[static_cast<unsigned char>(c) % 16];
+                }
+                else file << c;
+            }
+            file << '\n';
+        }
     }
 
     static inline ReplLineEditor*                               active_ = nullptr;
@@ -918,15 +922,10 @@ private:
     std::shared_ptr<mldp_pvxs_driver::query::QueryTableCatalog> table_catalog_;
     bool                                                        interactive_ = false;
     std::filesystem::path                                       history_path_;
-    std::vector<std::string>                                    session_history_;
-    std::vector<std::string>                                    completions_;
-    sigjmp_buf                                                  interrupt_jump_{};
-    volatile sig_atomic_t                                       jump_armed_ = 0;
+    std::vector<std::string>                                    history_;
     bool                                                        interrupted_on_empty_line_ = false;
     bool                                                        quit_requested_ = false;
     bool                                                        color_ = false;
-    termios                                                     saved_termios_{};
-    bool                                                        restore_termios_ = false;
 };
 
 QueryOutputFormat parseFormat(std::string_view value);
