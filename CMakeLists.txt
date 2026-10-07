@@ -126,6 +126,9 @@ FetchContent_Declare(replxx
     GIT_REPOSITORY https://github.com/AmokHuginnsson/replxx.git
     GIT_TAG ${REPLXX_VERSION}
     GIT_SHALLOW TRUE
+    # Emit each line refresh as one synchronized write (no per-keystroke flicker).
+    # Skips re-applying when the patch is already in the source tree.
+    PATCH_COMMAND sh -c "git apply --reverse --check '${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/replxx-batched-refresh.patch' 2>/dev/null || git apply '${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/replxx-batched-refresh.patch'"
 )
 FetchContent_MakeAvailable(replxx)
 

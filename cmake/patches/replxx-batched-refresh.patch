@@ -1,0 +1,126 @@
+diff --git a/src/replxx_impl.cxx b/src/replxx_impl.cxx
+index 22ee748..7f861ce 100644
+--- a/src/replxx_impl.cxx
++++ b/src/replxx_impl.cxx
+@@ -958,6 +958,7 @@ void Replxx::ReplxxImpl::refresh_line( HINT_ACTION hintAction_ ) {
+ 		return;
+ 	}
+ 	_refreshSkipped = false;
++	_terminal.begin_frame();
+ 	render( hintAction_ );
+ 	handle_hints( hintAction_ );
+ 	// calculate the desired position of the cursor
+@@ -999,6 +1000,7 @@ void Replxx::ReplxxImpl::refresh_line( HINT_ACTION hintAction_ ) {
+ 	_terminal.jump_cursor( xCursorPos, -( yEndOfInput - yCursorPos ) );
+ 	_terminal.set_cursor_visible( true );
+ 	_prompt._cursorRowOffset = _prompt._extraLines + yCursorPos; // remember row for next pass
++	_terminal.end_frame();
+ 	_lastRefreshTime = now_us();
+ 	_oldPos = _pos;
+ 	_moveCursor = false;
+diff --git a/src/terminal.cxx b/src/terminal.cxx
+index 75b0e59..db30bb6 100644
+--- a/src/terminal.cxx
++++ b/src/terminal.cxx
+@@ -99,7 +99,9 @@ Terminal::Terminal( void )
+ 	, _interrupt()
+ #endif
+ 	, _rawMode( false )
+-	, _utf8() {
++	, _utf8()
++	, _frame()
++	, _frameDepth( 0 ) {
+ #ifdef _WIN32
+ 	_interrupt = CreateEvent( nullptr, true, false, TEXT( "replxx_interrupt_event" ) );
+ #else
+@@ -107,6 +109,36 @@ Terminal::Terminal( void )
+ #endif
+ }
+ 
++void Terminal::begin_frame( void ) {
++#ifndef _WIN32
++	if ( _frameDepth ++ == 0 ) {
++		_frame.assign( "\033[?2026h" );
++	}
++#endif
++}
++
++void Terminal::end_frame( void ) {
++#ifndef _WIN32
++	if ( ( _frameDepth > 0 ) && ( -- _frameDepth == 0 ) ) {
++		_frame.append( "\033[?2026l" );
++		char const* p( _frame.data() );
++		size_t left( _frame.size() );
++		while ( left > 0 ) {
++			ssize_t n( ::write( 1, p, left ) );
++			if ( n < 0 ) {
++				if ( errno == EINTR ) {
++					continue;
++				}
++				break;
++			}
++			p += n;
++			left -= static_cast<size_t>( n );
++		}
++		_frame.clear();
++	}
++#endif
++}
++
+ Terminal::~Terminal( void ) {
+ 	if ( _rawMode ) {
+ 		disable_raw_mode();
+@@ -137,6 +169,10 @@ void Terminal::write8( char const* data_, int size_ ) {
+ 		disable_out();
+ 	}
+ #else
++	if ( _frameDepth > 0 ) {
++		_frame.append( data_, static_cast<size_t>( size_ ) );
++		return;
++	}
+ 	int nWritten( write( 1, data_, size_ ) );
+ #endif
+ 	if ( nWritten != size_ ) {
+@@ -744,7 +780,9 @@ void Terminal::set_cursor_visible( bool visible_ ) {
+ 	return;
+ }
+ #else
+-void Terminal::set_cursor_visible( bool ) {}
++void Terminal::set_cursor_visible( bool visible_ ) {
++	write8( visible_ ? "\033[?25h" : "\033[?25l", 6 );
++}
+ #endif
+ 
+ #ifndef _WIN32
+diff --git a/src/terminal.hxx b/src/terminal.hxx
+index 90c3640..dd8e13d 100644
+--- a/src/terminal.hxx
++++ b/src/terminal.hxx
+@@ -1,6 +1,7 @@
+ #ifndef REPLXX_IO_HXX_INCLUDED
+ #define REPLXX_IO_HXX_INCLUDED 1
+ 
++#include <string>
+ #include <deque>
+ 
+ #ifdef _WIN32
+@@ -43,6 +44,8 @@ private:
+ #endif
+ 	bool _rawMode; /* for destructor to check if restore is needed */
+ 	Utf8String _utf8;
++	std::string _frame; /* output collected between begin_frame()/end_frame() */
++	int _frameDepth;
+ public:
+ 	enum class CLEAR_SCREEN {
+ 		WHOLE,
+@@ -66,6 +69,10 @@ public:
+ 	void notify_event( EVENT_TYPE );
+ 	void jump_cursor( int, int );
+ 	void set_cursor_visible( bool );
++	/* Collect all output until end_frame() and emit it as one write, wrapped in
++	 * synchronized-output markers, so a refresh never shows a partial frame. */
++	void begin_frame( void );
++	void end_frame( void );
+ #ifndef _WIN32
+ 	int read_verbatim( char32_t*, int );
+ 	int install_window_change_handler( void );
