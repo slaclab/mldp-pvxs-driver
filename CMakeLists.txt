@@ -136,8 +136,8 @@ FetchContent_Declare(isocline
     SOURCE_SUBDIR  do-not-add
     # psql/readline keys: Ctrl-A/Ctrl-E span the whole multi-line input, Ctrl-Q
     # exits, and the REPL can tell Ctrl-C on an empty line from one on typed text.
-    # Skips re-applying when the patch is already in the source tree.
-    PATCH_COMMAND sh -c "git apply --reverse --check '${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/isocline-psql-keys.patch' 2>/dev/null || git apply '${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/isocline-psql-keys.patch'")
+    # Resets the checkout first so a changed patch re-applies cleanly.
+    PATCH_COMMAND sh -c "git checkout -- . && git apply --whitespace=nowarn '${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/isocline-psql-keys.patch'")
 FetchContent_MakeAvailable(isocline)
 enable_language(C)
 add_library(isocline STATIC "${isocline_SOURCE_DIR}/src/isocline.c")
