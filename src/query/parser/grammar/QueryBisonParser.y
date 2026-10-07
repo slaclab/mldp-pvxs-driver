@@ -423,6 +423,8 @@ select_item
       { $$ = mldp_pvxs_driver::query::SelectItem{.expression = std::move($1)}; }
     | expression AS IDENTIFIER
       { $$ = mldp_pvxs_driver::query::SelectItem{.expression = std::move($1), .alias = $3}; }
+    | expression IDENTIFIER
+      { $$ = mldp_pvxs_driver::query::SelectItem{.expression = std::move($1), .alias = $2}; }
     ;
 
 table_ref

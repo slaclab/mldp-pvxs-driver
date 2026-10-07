@@ -1824,6 +1824,12 @@ TEST_F(PlannerExecutorTest, GroupByComputesAggregatesOnCatalogAndVirtualTables)
     ASSERT_EQ(having->num_rows(), 2);
     EXPECT_EQ(cell(having, 0, 0), "A");
     EXPECT_EQ(cell(having, 0, 1), "B");
+    const auto implicit_alias = run("SELECT pv, COUNT(*) n, MIN(value) lo FROM grp_samples GROUP BY pv HAVING COUNT(*) > 1 ORDER BY 2 DESC");
+    ASSERT_NE(implicit_alias, nullptr);
+    ASSERT_EQ(implicit_alias->num_rows(), 2);
+    EXPECT_EQ(implicit_alias->schema()->field(1)->name(), "n");
+    EXPECT_EQ(implicit_alias->schema()->field(2)->name(), "lo");
+    EXPECT_EQ(cell(implicit_alias, 0, 0), "A");
     const auto positional = run("SELECT pv, MAX(value) FROM grp_samples GROUP BY pv ORDER BY 2 DESC LIMIT 1");
     ASSERT_NE(positional, nullptr);
     ASSERT_EQ(positional->num_rows(), 1);

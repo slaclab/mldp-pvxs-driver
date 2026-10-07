@@ -333,6 +333,23 @@ TEST(QueryParserTest, ParsesMultiKeyOrderBy)
     EXPECT_EQ(*select.limit, 10);
 }
 
+TEST(QueryParserTest, ParsesSelectAliasesWithAndWithoutAs)
+{
+    const auto statement = parseQuery(
+        "SELECT pv x, MIN(time) min_time, MAX(time) AS max_time, ts.value v, value FROM mldp.time_series ts");
+    const auto& select = std::get<SelectStatement>(statement);
+
+    ASSERT_EQ(select.select_items.size(), 5U);
+    EXPECT_EQ(select.select_items[0].alias.value_or(""), "x");
+    EXPECT_EQ(select.select_items[1].alias.value_or(""), "min_time");
+    EXPECT_EQ(select.select_items[2].alias.value_or(""), "max_time");
+    EXPECT_EQ(select.select_items[3].alias.value_or(""), "v");
+    EXPECT_FALSE(select.select_items[4].alias.has_value());
+    EXPECT_EQ(select.from.alias.value_or(""), "ts");
+
+    EXPECT_THROW((void)parseQuery("SELECT pv a b FROM mldp.time_series"), ParseError);
+}
+
 TEST(QueryParserTest, ParsesNestedFunctionExpressionsInPredicateSelectAndOrderBy)
 {
     const auto statement = parseQuery(

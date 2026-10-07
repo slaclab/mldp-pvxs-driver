@@ -259,7 +259,7 @@ void printEditing(std::ostream& out, const bool color)
     row(out, color, "Ctrl-W", "delete previous word", 28);
     row(out, color, "Ctrl-U/Ctrl-K", "delete to start/end of line", 28);
     row(out, color, "Ctrl-L", "clear screen", 28);
-    row(out, color, "Ctrl-C", "cancel running query or discard current input", 28);
+    row(out, color, "Ctrl-C", "cancel query; clear input; on empty prompt exit", 28);
     row(out, color, "Ctrl-Q", "exit", 28);
     row(out, color, "Tab", "complete keywords, tables, columns and command arguments", 28);
     out << "  A statement may span several lines; it runs when terminated by ';'.\n";
@@ -605,6 +605,14 @@ public:
                             quit_requested_ = true;
                             return replxx::Replxx::ACTION_RESULT::BAIL;
                         });
+        // Ctrl-C clears a non-empty input line; on an empty line it requests exit
+        // (the REPL loop still discards a buffered multi-line statement first).
+        repl_->bind_key(replxx::Replxx::KEY::control('C'), [this](char32_t code)
+                        {
+                            const char* text = repl_->get_state().text();
+                            interrupted_on_empty_line_ = text == nullptr || *text == '\0';
+                            return repl_->invoke(replxx::Replxx::ACTION::ABORT_LINE, code);
+                        });
         repl_->set_completion_callback(
             [this](const std::string& context, int& context_length) -> replxx::Replxx::completions_t
             {
@@ -686,7 +694,7 @@ public:
         const auto* line = repl_->input(std::string(prompt).c_str());
         if (line == nullptr)
         {
-            interrupted = errno == EINTR;
+            interrupted = errno == EINTR || errno == EAGAIN;
             return std::nullopt;
         }
         return std::string(line);
@@ -731,6 +739,14 @@ public:
         return true;
     }
 
+    /** True when the last Ctrl-C was pressed on an empty input line. */
+    bool consumeInterruptedOnEmptyLine() noexcept
+    {
+        const auto empty = interrupted_on_empty_line_;
+        interrupted_on_empty_line_ = false;
+        return empty;
+    }
+
     bool consumeQuitRequested() noexcept
     {
         const auto requested = quit_requested_;
@@ -771,6 +787,7 @@ private:
     std::vector<std::string>                                    session_history_;
     std::shared_ptr<mldp_pvxs_driver::query::QueryTableCatalog> table_catalog_;
     bool                                                        quit_requested_{false};
+    bool                                                        interrupted_on_empty_line_{false};
     bool                                                        color_{false};
 };
 
@@ -821,6 +838,14 @@ int runRepl(QueryCliOptions                           options,
             }
             if (interrupted)
             {
+                // First Ctrl-C clears typed input (and any buffered statement);
+                // Ctrl-C on an empty prompt with nothing buffered exits.
+                const bool empty_line = editor.consumeInterruptedOnEmptyLine();
+                if (empty_line && buffer.empty())
+                {
+                    output << "\n";
+                    return 0;
+                }
                 buffer.clear();
                 output << "\n";
                 continue;
