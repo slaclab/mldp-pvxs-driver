@@ -298,3 +298,17 @@ TEST_F(MLDPAnnotationQueryClientTest, ScansEveryConfigurationActivationWithoutPr
     EXPECT_TRUE(service.last_activation_request.criteria(0).has_timerangecriterion());
     server->Shutdown();
 }
+
+TEST(MLDPAnnotationQueryClientSchemaTest, StringColumnsAcceptLocalTextOperators)
+{
+    MLDPAnnotationQueryClient client(make_annotation_config("127.0.0.1:1"));
+    for (const auto* table : {"mldp.pv_metadata", "mldp.configuration", "mldp.configuration_activation", "mldp.active_configurations"})
+    {
+        for (const auto& column : client.tableSchema(table))
+        {
+            if (column.type != ColumnType::STRING || column.filterable_ops.empty()) continue;
+            for (const auto op : {PredicateOp::EQ, PredicateOp::NEQ, PredicateOp::IN, PredicateOp::PREFIX, PredicateOp::CONTAINS, PredicateOp::LIKE})
+                EXPECT_TRUE(column.filterable_ops.contains(op)) << table << "." << column.name;
+        }
+    }
+}

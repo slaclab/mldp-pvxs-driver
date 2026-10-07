@@ -519,6 +519,22 @@ std::vector<std::size_t> fittedWidths(const std::vector<std::size_t>& natural_wi
         }
         if (!grew) break;
     }
+    // Spend the remaining width so the table always spans the viewport,
+    // favouring wide columns since they are the likeliest to grow later.
+    if (allocated < viewport_width && column_count > 0)
+    {
+        const auto extra = viewport_width - allocated;
+        std::size_t total = 0;
+        for (const auto width : widths) total += width;
+        std::size_t given = 0;
+        for (auto& width : widths)
+        {
+            const auto share = total > 0 ? extra * width / total : extra / column_count;
+            width += share;
+            given += share;
+        }
+        *std::max_element(widths.begin(), widths.end()) += extra - given;
+    }
     return widths;
 }
 
@@ -549,7 +565,8 @@ void writeTable(const query::QueryExecutionResult& result,
                 std::ostream&                      output,
                 const TableRenderOptions&          options,
                 const std::shared_ptr<query::QueryCancellation>& cancellation,
-                const bool print_header = true)
+                const bool print_header = true,
+                std::vector<std::size_t>* layout = nullptr)
 {
     if (result.batches.empty())
     {
@@ -610,7 +627,12 @@ void writeTable(const query::QueryExecutionResult& result,
         }
     }
 
-    const auto fitted_widths = options.viewport_width ? fittedWidths(widths, *options.viewport_width) : widths;
+    // A streamed result reuses the widths chosen for its first rows so every
+    // batch lines up under the same header.
+    const auto fitted_widths = layout && !layout->empty() ? *layout
+                             : options.viewport_width   ? fittedWidths(widths, *options.viewport_width)
+                                                        : widths;
+    if (layout && options.viewport_width) *layout = fitted_widths;
     if (options.viewport_width && fitted_widths.empty())
     {
         writeStackedTable(headers, rows, *options.viewport_width, output, cancellation, options.color);
@@ -710,6 +732,8 @@ void mldp_pvxs_driver::cli::formatQueryStream(query::IRecordBatchStream& stream,
                                                std::shared_ptr<std::mutex> output_mutex)
 {
     bool header_written = false;
+    std::vector<std::size_t>            table_layout;
+    std::shared_ptr<arrow::RecordBatch> pending_empty;
     std::unique_ptr<query::OstreamOutputStream> arrow_stream;
     std::shared_ptr<arrow::ipc::RecordBatchWriter> arrow_writer;
     while (auto batch = stream.next())
@@ -721,7 +745,13 @@ void mldp_pvxs_driver::cli::formatQueryStream(query::IRecordBatchStream& stream,
         {
             case QueryOutputFormat::Table:
                 if (expanded) writeExpanded(result, output, cancellation, table_options.color);
-                else writeTable(result, output, table_options, cancellation, !header_written);
+                else if (batch->num_rows() == 0 && !header_written)
+                {
+                    // Size the header from real rows, not an empty leading batch.
+                    pending_empty = batch;
+                    continue;
+                }
+                else writeTable(result, output, table_options, cancellation, !header_written, &table_layout);
                 break;
             case QueryOutputFormat::Json:
                 writeJsonLines(result, output, cancellation);
@@ -765,6 +795,11 @@ void mldp_pvxs_driver::cli::formatQueryStream(query::IRecordBatchStream& stream,
         output.flush();
         if (!output) throw std::runtime_error("Failed to write query output");
         if (progress) progress->outputBatch(static_cast<uint64_t>(batch->num_rows()));
+    }
+    if (pending_empty && !header_written)
+    {
+        std::unique_lock lock(output_mutex ? *output_mutex : g_format_output_mutex);
+        writeTable(query::QueryExecutionResult{.batches = {pending_empty}}, output, table_options, cancellation);
     }
     if (arrow_writer)
     {

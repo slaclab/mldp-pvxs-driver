@@ -1405,6 +1405,44 @@ TEST(QueryFormatterTest, WrapsAtWordBoundariesAndCapsLongCells)
         EXPECT_LE(line.size(), 40U);
 }
 
+TEST(QueryFormatterTest, StreamedTableKeepsOneFullWidthLayoutAcrossBatches)
+{
+    const auto make_batch = [](const std::vector<std::string>& values) {
+        arrow::StringBuilder name_builder;
+        arrow::StringBuilder time_builder;
+        for (const auto& value : values)
+        {
+            EXPECT_TRUE(name_builder.Append(value).ok());
+            EXPECT_TRUE(time_builder.Append("2025-02-28 16:30:00Z").ok());
+        }
+        std::shared_ptr<arrow::Array> names;
+        std::shared_ptr<arrow::Array> times;
+        EXPECT_TRUE(name_builder.Finish(&names).ok());
+        EXPECT_TRUE(time_builder.Finish(&times).ok());
+        return arrow::RecordBatch::Make(arrow::schema({arrow::field("config_name", arrow::utf8()), arrow::field("start_time", arrow::utf8())}),
+                                        static_cast<int64_t>(values.size()), {names, times});
+    };
+    query::executor::MaterializedRecordBatchStream stream(query::executor::RecordBatches{
+        make_batch({}), make_batch({"XLEAP"}), make_batch({"FEL recovery from XLEAP, Badger tuning/training"}), make_batch({"HXR XLEAP"})});
+
+    std::ostringstream output;
+    cli::formatQueryStream(stream, cli::QueryOutputFormat::Table, output, false, cli::TableRenderOptions{.viewport_width = 60});
+
+    const auto rendered = output.str();
+    EXPECT_EQ(rendered.find("config_name"), rendered.rfind("config_name"));
+    std::istringstream lines(rendered);
+    std::string        line;
+    std::size_t        divider = std::string::npos;
+    while (std::getline(lines, line))
+    {
+        // Every line spans the viewport and every row shares the header's divider column.
+        EXPECT_EQ(line.size(), 60U) << line;
+        const auto position = line.find(line.find("-+-") != std::string::npos ? "-+-" : " | ");
+        if (divider == std::string::npos) divider = position;
+        EXPECT_EQ(position, divider) << line;
+    }
+}
+
 TEST(QueryFormatterTest, ColorTableKeepsPlainLayoutWhenEscapesStripped)
 {
     arrow::StringBuilder builder;

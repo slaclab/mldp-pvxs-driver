@@ -56,7 +56,7 @@ std::set<std::string_view> MLDPAnnotationQueryClient::virtualTables() const
 std::vector<ColumnSchema> MLDPAnnotationQueryClient::tableSchema(std::string_view table_name) const
 {
     const auto stringSearch = std::set<PredicateOp>{PredicateOp::EQ, PredicateOp::IN, PredicateOp::PREFIX, PredicateOp::CONTAINS};
-    const auto stringFilter = std::set<PredicateOp>{PredicateOp::LIKE};
+    const auto stringFilter = std::set<PredicateOp>{PredicateOp::EQ, PredicateOp::NEQ, PredicateOp::IN, PredicateOp::PREFIX, PredicateOp::CONTAINS, PredicateOp::LIKE};
     if (table_name == "mldp.pv_metadata")
     {
         return {{"pv", ColumnType::STRING, false, true, stringSearch, stringFilter, "PV name; LIMIT is pushed to the annotation service when the query has no residual filter, join, sort or aggregate"},

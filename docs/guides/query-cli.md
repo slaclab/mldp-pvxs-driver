@@ -799,7 +799,7 @@ ORDER BY config_name, start_time;
 
 Table output keeps each result on one physical line. Lists and maps show their first two values followed by `+N` when values remain; map keys are sorted for a predictable display. Use the REPL controls below to inspect every value in a record:
 
-When enabled with `--table-fit` or `.table-fit on`, table output fits to the current interactive terminal width. Short columns keep their natural width; the remaining width is shared by the wider columns, and their headers and cells wrap onto extra lines (at spaces or punctuation when possible) so the full content stays visible. A cell longer than 1024 characters is cut and ends with `...`. When even 4 characters per column cannot fit, each row is printed as stacked `column: value` lines instead. This display-only setting never wraps or truncates JSON, CSV, Arrow, expanded output, or redirected/piped output.
+When enabled with `--table-fit` or `.table-fit on`, table output fits to the current interactive terminal width. The table always spans the full terminal width, and a streamed result keeps the column widths chosen from its first rows so every batch lines up under one header. Short columns keep their natural width; the remaining width goes mostly to the wider columns, and their headers and cells wrap onto extra lines (at spaces or punctuation when possible) so the full content stays visible. A cell longer than 1024 characters is cut and ends with `...`. When even 4 characters per column cannot fit, each row is printed as stacked `column: value` lines instead. This display-only setting never wraps or truncates JSON, CSV, Arrow, expanded output, or redirected/piped output.
 
 ```text
 \expanded on     # persistently enable expanded records
