@@ -55,7 +55,7 @@ mldp_pvxs_driver -c config.yaml query "<SQL>"
 |---|---:|---|
 | `--file <path>` | — | Read SQL text from a file instead of the positional argument. |
 | `--format <fmt>` | `table` | Output format: `table`, `json`, `csv`, `arrow`. |
-| `--table-fit` | off | Wrap table headers and cells to an interactive terminal viewport (fixed column widths, rows grow taller); ignored when output is redirected or piped. |
+| `--table-fit` / `--no-table-fit` | on | Wrap table headers and cells to an interactive terminal viewport (fixed column widths, rows grow taller); ignored when output is redirected or piped. |
 | `--no-stats` | off | Suppress the final textual query-statistics line. |
 | `--trace-shards` | off | Emit window-shard diagnostics to stderr. |
 | `--trace-shards-file <path>` | — | Enable window-shard diagnostics and write them to a newly truncated file. |
@@ -82,7 +82,7 @@ Table and expanded results use normal terminal scrollback, so SSH and container-
 
 ### Pager and terminal controls
 
-The REPL uses `replxx` for all interactive terminal sessions. It clears the terminal immediately before each submitted SQL statement, exactly as `.clear` does. For direct table or expanded output, it temporarily reserves the final row for a reverse-video progress footer while the query runs, then restores the full terminal before printing the final statistics and returning to `mldp> `. Idle prompt editing is wholly owned by `replxx`; there is no pinned footer after completion, cancellation, or error. `Ctrl-C` cancels an active query or abandons the current editor line; `Ctrl-Q`, `.quit`, and `.exit` leave the REPL. Pager output does not activate the footer.
+The REPL uses `libedit` (the BSD readline implementation psql uses) for all interactive terminal sessions, so keys, history search and terminal handling match psql; the input line is not syntax-coloured. It clears the terminal immediately before each submitted SQL statement, exactly as `.clear` does. For direct table or expanded output, it temporarily reserves the final row for a reverse-video progress footer while the query runs, then restores the full terminal before printing the final statistics and returning to `mldp> `. Idle prompt editing is wholly owned by `replxx`; there is no pinned footer after completion, cancellation, or error. `Ctrl-C` cancels an active query or abandons the current editor line; `Ctrl-Q`, `.quit`, and `.exit` leave the REPL. Pager output does not activate the footer.
 
 Use `.pager on` to send table or expanded output from a real terminal to a pager. Paging is off by default. The pager command comes from `$PAGER`, or defaults to `less -FRSX` when `$PAGER` is unset. `.pager` reports the current setting and `.pager off` restores direct scrollback output. JSON, CSV, Arrow, one-shot SQL, and redirected sessions always use direct formatter output.
 
@@ -200,6 +200,7 @@ When both standard input and output are interactive terminals, the REPL provides
 | Ctrl-W / Alt-D | Delete the preceding / following word. |
 | Ctrl-U / Ctrl-K | Erase text before / after the cursor. |
 | Ctrl-L | Clear and redraw the terminal. |
+| Ctrl-R | Search history backward (psql/readline style). |
 | Ctrl-C | Cancel the editable line, discard any buffered multi-line statement, and return to `mldp> `. |
 
 The REPL saves completed SQL statements and dot commands (but never result output or errors) across interactive sessions. Use `.history` (or `history`) to print it. It uses `$XDG_STATE_HOME/mldp-pvxs-driver/query-history`; if `XDG_STATE_HOME` is unset, it uses `$HOME/.local/state/mldp-pvxs-driver/query-history`. On startup it removes prompt and result-output entries left by older versions. Delete that file to clear saved history.
@@ -797,9 +798,9 @@ ORDER BY config_name, start_time;
 
 ### Compact and expanded table output
 
-Table output keeps each result on one physical line. Lists and maps show their first two values followed by `+N` when values remain; map keys are sorted for a predictable display. Use the REPL controls below to inspect every value in a record:
+Table output shows every value of list and map cells (tags, attributes, provenance); map keys are sorted for a predictable display. With table fit on (the default) long cells wrap inside their column. Use the REPL controls below to inspect every value in a record:
 
-When enabled with `--table-fit` or `.table-fit on`, table output fits to the current interactive terminal width. The table always spans the full terminal width, and a streamed result keeps the column widths chosen from its first rows so every batch lines up under one header. Short columns keep their natural width; the remaining width goes mostly to the wider columns, and their headers and cells wrap onto extra lines (at spaces or punctuation when possible) so the full content stays visible. A cell longer than 1024 characters is cut and ends with `...`. When even 4 characters per column cannot fit, each row is printed as stacked `column: value` lines instead. This display-only setting never wraps or truncates JSON, CSV, Arrow, expanded output, or redirected/piped output.
+Table fit is on by default (disable with `--no-table-fit` or `.table-fit off`). When enabled, table output fits to the current interactive terminal width. The table always spans the full terminal width, and a streamed result keeps the column widths chosen from its first rows so every batch lines up under one header. Short columns keep their natural width; the remaining width goes mostly to the wider columns, and their headers and cells wrap onto extra lines (at spaces or punctuation when possible) so the full content stays visible. A cell longer than 1024 characters is cut and ends with `...`. When even 4 characters per column cannot fit, each row is printed as stacked `column: value` lines instead. This display-only setting never wraps or truncates JSON, CSV, Arrow, expanded output, or redirected/piped output.
 
 ```text
 \expanded on     # persistently enable expanded records

@@ -47,7 +47,7 @@ struct QueryCliOptions
     std::string       sql_file{};                     ///< Path to a SQL file; empty = not used.
     QueryOutputFormat format{QueryOutputFormat::Table}; ///< Output encoding.
     bool              expanded{false};                ///< True to use expanded (vertical) table layout.
-    bool              table_fit{false};               ///< True to constrain table width to the terminal width.
+    bool              table_fit{true};                ///< True to wrap table cells to the terminal width.
     bool              pager{false};                   ///< True to pipe table output through the system pager.
     bool              no_stats{false};                ///< True to suppress the statistics footer.
     bool              color{false};                   ///< True to style table output with ANSI colors.

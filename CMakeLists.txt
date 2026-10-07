@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.15)
 
 # Silence cmake_minimum_required() deprecation warnings from FetchContent
-# dependencies (e.g. replxx, date) that still declare old CMake minimums.
+# dependencies (e.g. date) that still declare old CMake minimums.
 if(NOT DEFINED CMAKE_POLICY_VERSION_MINIMUM)
     set(CMAKE_POLICY_VERSION_MINIMUM 3.15)
 endif()
@@ -85,7 +85,6 @@ set(EPICSARCHIVERAP_VERSION "2.2.1")
 set(CPP_HTTPLIB_VERSION "v0.16.3")
 set(DP_GRPC_VERSION "rel-1.16.0")
 set(ARROW_VERSION "apache-arrow-18.1.0")
-set(REPLXX_VERSION "release-0.0.4")
 set(DATE_VERSION "v3.0.1")
 
 # Output directories
@@ -121,16 +120,16 @@ FetchContent_Declare(argparse
 FetchContent_MakeAvailable(argparse)
 
 # Query REPL line editing, history, and completion.
-message(STATUS "Acquiring replxx version ${REPLXX_VERSION}...")
-FetchContent_Declare(replxx
-    GIT_REPOSITORY https://github.com/AmokHuginnsson/replxx.git
-    GIT_TAG ${REPLXX_VERSION}
-    GIT_SHALLOW TRUE
-    # Emit each line refresh as one synchronized write (no per-keystroke flicker).
-    # Skips re-applying when the patch is already in the source tree.
-    PATCH_COMMAND sh -c "git apply --reverse --check '${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/replxx-batched-refresh.patch' 2>/dev/null || git apply '${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/replxx-batched-refresh.patch'"
-)
-FetchContent_MakeAvailable(replxx)
+# Interactive REPL line editing uses libedit (BSD readline implementation, as psql).
+find_path(EDITLINE_INCLUDE_DIR editline/readline.h)
+find_library(EDITLINE_LIBRARY NAMES edit)
+if(NOT EDITLINE_INCLUDE_DIR OR NOT EDITLINE_LIBRARY)
+    message(FATAL_ERROR "libedit not found; install libedit-devel (Rocky/RHEL) or libedit-dev (Debian/Ubuntu)")
+endif()
+add_library(editline::editline UNKNOWN IMPORTED)
+set_target_properties(editline::editline PROPERTIES
+    IMPORTED_LOCATION "${EDITLINE_LIBRARY}"
+    INTERFACE_INCLUDE_DIRECTORIES "${EDITLINE_INCLUDE_DIR}")
 
 # FTXUI is used only by the optional configuration wizard.
 option(MLDP_WIZARD "Build interactive config wizard (requires FTXUI)" ON)
@@ -1100,7 +1099,7 @@ if(MLDP_PVXS_DRIVER_TESTS)
         "${arrow_SOURCE_DIR}/cpp/src"
         "${arrow_SOURCE_DIR}/cpp/src/generated"
     )
-    target_link_libraries(${PROJECT_NAME}_test PRIVATE replxx)
+    target_link_libraries(${PROJECT_NAME}_test PRIVATE editline::editline)
 
     if(MLDP_WIZARD AND MLDP_PVXS_DRIVER_MAIN)
         target_sources(${PROJECT_NAME}_test PRIVATE
@@ -1206,13 +1205,13 @@ if(MLDP_PVXS_DRIVER_MAIN)
         target_link_libraries(${PROJECT_NAME} PRIVATE
             -Wl,-force_load $<TARGET_FILE:lib${PROJECT_NAME}>
             argparse::argparse
-            replxx
+            editline::editline
         )
     else()
         target_link_libraries(${PROJECT_NAME} PRIVATE
             -Wl,--whole-archive lib${PROJECT_NAME} -Wl,--no-whole-archive
             argparse::argparse
-            replxx
+            editline::editline
             spdlog::spdlog
         )
     endif()

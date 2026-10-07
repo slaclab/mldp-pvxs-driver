@@ -161,13 +161,11 @@ std::string tableValue(const std::shared_ptr<arrow::Scalar>& scalar)
             values.push_back((*value)->ToString());
         }
         std::ostringstream out;
-        const auto shown = std::min<std::size_t>(2, values.size());
-        for (std::size_t i = 0; i < shown; ++i)
+        for (std::size_t i = 0; i < values.size(); ++i)
         {
             if (i != 0) out << ", ";
             out << values[i];
         }
-        if (values.size() > shown) out << ", +" << (values.size() - shown);
         return out.str();
     }
     if (display_scalar->type->id() == arrow::Type::MAP)
@@ -183,9 +181,7 @@ std::string tableValue(const std::shared_ptr<arrow::Scalar>& scalar)
         }
         std::sort(values.begin(), values.end());
         std::ostringstream out;
-        const auto shown = std::min<std::size_t>(2, values.size());
-        for (std::size_t i = 0; i < shown; ++i) { if (i != 0) out << ", "; out << values[i]; }
-        if (values.size() > shown) out << ", +" << (values.size() - shown);
+        for (std::size_t i = 0; i < values.size(); ++i) { if (i != 0) out << ", "; out << values[i]; }
         return out.str();
     }
     return display_scalar->ToString();

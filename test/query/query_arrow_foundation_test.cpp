@@ -1956,7 +1956,7 @@ TEST(QueryCommandTest, ReplTableFitCanBeChangedAndReported)
     char                           arg0[] = "query";
     char*                          argv[] = {arg0};
     cli::QueryCommand           querySubcommand(g_query_command_listener);
-    std::istringstream             input(".table-fit\n.table-fit on\n.table-fit\n.table-fit invalid\n.quit\n");
+    std::istringstream             input(".table-fit\n.table-fit off\n.table-fit\n.table-fit invalid\n.quit\n");
     std::ostringstream             output;
     std::ostringstream             error;
     const std::vector<std::string> config_sources{
