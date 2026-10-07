@@ -147,14 +147,18 @@ else()
     endif()
     include(ExternalProject)
     set(LIBEDIT_PREFIX "${CMAKE_BINARY_DIR}/_deps/libedit-install")
+    set(LIBEDIT_TMPDIR "${CMAKE_BINARY_DIR}/_deps/libedit-tmp")
     ExternalProject_Add(libedit_external
         URL https://thrysoee.dk/editline/libedit-${LIBEDIT_VERSION}.tar.gz
         DOWNLOAD_EXTRACT_TIMESTAMP TRUE
         PREFIX "${CMAKE_BINARY_DIR}/_deps/libedit"
-        CONFIGURE_COMMAND <SOURCE_DIR>/configure --prefix=${LIBEDIT_PREFIX}
+        # Use a private TMPDIR: an inherited one may point at a missing scratch dir.
+        CONFIGURE_COMMAND ${CMAKE_COMMAND} -E make_directory ${LIBEDIT_TMPDIR}
+            COMMAND ${CMAKE_COMMAND} -E env TMPDIR=${LIBEDIT_TMPDIR}
+            <SOURCE_DIR>/configure --prefix=${LIBEDIT_PREFIX}
             --disable-shared --enable-static --with-pic "CFLAGS=-O2 -fPIC"
-        BUILD_COMMAND make -j4
-        INSTALL_COMMAND make install
+        BUILD_COMMAND ${CMAKE_COMMAND} -E env TMPDIR=${LIBEDIT_TMPDIR} make -j4
+        INSTALL_COMMAND ${CMAKE_COMMAND} -E env TMPDIR=${LIBEDIT_TMPDIR} make install
         BUILD_BYPRODUCTS "${LIBEDIT_PREFIX}/lib/libedit.a"
     )
     # Imported targets require the include directory to exist at configure time.
