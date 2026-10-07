@@ -8,6 +8,20 @@ endif()
 
 project(mldp_pvxs_driver VERSION 0.2.5 LANGUAGES CXX)
 
+# Third-party dependency versions (downloaded and built with the project).
+set(PROMETHEUS_CPP_VERSION "v1.3.0")
+set(SPDLOG_VERSION "v1.16.0")
+set(ARGPARSE_VERSION "v3.2")
+set(EPICSARCHIVERAP_VERSION "2.2.1")
+set(CPP_HTTPLIB_VERSION "v0.16.3")
+set(DP_GRPC_VERSION "rel-1.16.0")
+set(ARROW_VERSION "apache-arrow-18.1.0")
+set(DATE_VERSION "v3.0.1")
+set(NLOHMANN_JSON_VERSION "v3.11.3")
+set(FTXUI_VERSION "v5.0.0")
+set(LIBEDIT_VERSION "20240808-3.1") # used only when no system libedit-devel is found
+set(GOOGLETEST_VERSION "main")      # tests only
+
 # C++ Standard
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -78,15 +92,6 @@ message(STATUS "Query parser generated (Bison + Flex) into ${CMAKE_CURRENT_BINAR
 
 include(FetchContent)
 
-set(PROMETHEUS_CPP_VERSION "v1.3.0")
-set(SPDLOG_VERSION "v1.16.0")
-set(ARGPARSE_VERSION "v3.2")
-set(EPICSARCHIVERAP_VERSION "2.2.1")
-set(CPP_HTTPLIB_VERSION "v0.16.3")
-set(DP_GRPC_VERSION "rel-1.16.0")
-set(ARROW_VERSION "apache-arrow-18.1.0")
-set(DATE_VERSION "v3.0.1")
-
 # Output directories
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
@@ -119,17 +124,47 @@ FetchContent_Declare(argparse
 )
 FetchContent_MakeAvailable(argparse)
 
-# Query REPL line editing, history, and completion.
-# Interactive REPL line editing uses libedit (BSD readline implementation, as psql).
-find_path(EDITLINE_INCLUDE_DIR editline/readline.h)
-find_library(EDITLINE_LIBRARY NAMES edit)
-if(NOT EDITLINE_INCLUDE_DIR OR NOT EDITLINE_LIBRARY)
-    message(FATAL_ERROR "libedit not found; install libedit-devel (Rocky/RHEL) or libedit-dev (Debian/Ubuntu)")
+# Query REPL line editing, history, and completion use libedit (the BSD
+# readline implementation psql uses). The system copy is preferred; when its
+# development files are missing (e.g. shared clusters without root), libedit is
+# downloaded and built as a static library. Only ncurses/tinfo is required then.
+option(MLDP_BUNDLED_LIBEDIT "Always build libedit from source instead of using the system copy" OFF)
+if(NOT MLDP_BUNDLED_LIBEDIT)
+    find_path(EDITLINE_INCLUDE_DIR editline/readline.h)
+    find_library(EDITLINE_LIBRARY NAMES edit)
 endif()
-add_library(editline::editline UNKNOWN IMPORTED)
-set_target_properties(editline::editline PROPERTIES
-    IMPORTED_LOCATION "${EDITLINE_LIBRARY}"
-    INTERFACE_INCLUDE_DIRECTORIES "${EDITLINE_INCLUDE_DIR}")
+add_library(editline::editline UNKNOWN IMPORTED GLOBAL)
+if(EDITLINE_INCLUDE_DIR AND EDITLINE_LIBRARY)
+    message(STATUS "Using system libedit: ${EDITLINE_LIBRARY}")
+    set_target_properties(editline::editline PROPERTIES
+        IMPORTED_LOCATION "${EDITLINE_LIBRARY}"
+        INTERFACE_INCLUDE_DIRECTORIES "${EDITLINE_INCLUDE_DIR}")
+else()
+    message(STATUS "Building libedit ${LIBEDIT_VERSION} from source")
+    find_library(LIBEDIT_TERMINFO_LIBRARY NAMES tinfo ncursesw ncurses curses)
+    if(NOT LIBEDIT_TERMINFO_LIBRARY)
+        message(FATAL_ERROR "Building libedit needs ncurses/tinfo; install ncurses-devel or set MLDP_BUNDLED_LIBEDIT=OFF with libedit-devel present")
+    endif()
+    include(ExternalProject)
+    set(LIBEDIT_PREFIX "${CMAKE_BINARY_DIR}/_deps/libedit-install")
+    ExternalProject_Add(libedit_external
+        URL https://thrysoee.dk/editline/libedit-${LIBEDIT_VERSION}.tar.gz
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+        PREFIX "${CMAKE_BINARY_DIR}/_deps/libedit"
+        CONFIGURE_COMMAND <SOURCE_DIR>/configure --prefix=${LIBEDIT_PREFIX}
+            --disable-shared --enable-static --with-pic "CFLAGS=-O2 -fPIC"
+        BUILD_COMMAND make -j4
+        INSTALL_COMMAND make install
+        BUILD_BYPRODUCTS "${LIBEDIT_PREFIX}/lib/libedit.a"
+    )
+    # Imported targets require the include directory to exist at configure time.
+    file(MAKE_DIRECTORY "${LIBEDIT_PREFIX}/include")
+    set_target_properties(editline::editline PROPERTIES
+        IMPORTED_LOCATION "${LIBEDIT_PREFIX}/lib/libedit.a"
+        INTERFACE_INCLUDE_DIRECTORIES "${LIBEDIT_PREFIX}/include"
+        INTERFACE_LINK_LIBRARIES "${LIBEDIT_TERMINFO_LIBRARY}")
+    add_dependencies(editline::editline libedit_external)
+endif()
 
 # FTXUI is used only by the optional configuration wizard.
 option(MLDP_WIZARD "Build interactive config wizard (requires FTXUI)" ON)
@@ -138,7 +173,7 @@ if(MLDP_WIZARD)
     message(STATUS "Acquiring FTXUI for the configuration wizard...")
     FetchContent_Declare(ftxui
         GIT_REPOSITORY https://github.com/ArthurSonzogni/FTXUI
-        GIT_TAG        v5.0.0
+        GIT_TAG        ${FTXUI_VERSION}
     )
     FetchContent_MakeAvailable(ftxui)
 endif()
@@ -185,7 +220,7 @@ FetchContent_MakeAvailable(dp_grpc)
 # Acquire nlohmann/json for JSON parsing in SlacCalendarReader
 FetchContent_Declare(nlohmann_json
     GIT_REPOSITORY https://github.com/nlohmann/json.git
-    GIT_TAG        v3.11.3
+    GIT_TAG        ${NLOHMANN_JSON_VERSION}
     GIT_SHALLOW    TRUE)
 set(JSON_BuildTests OFF CACHE BOOL "" FORCE)
 set(JSON_Install OFF CACHE BOOL "" FORCE)
@@ -939,7 +974,7 @@ if(MLDP_PVXS_DRIVER_TESTS)
 
     FetchContent_Declare(googletest
         GIT_REPOSITORY "https://github.com/google/googletest.git"
-        GIT_TAG "main")
+        GIT_TAG "${GOOGLETEST_VERSION}")
     FetchContent_MakeAvailable(googletest)
     FetchContent_Declare(cpp_httplib
         GIT_REPOSITORY "https://github.com/yhirose/cpp-httplib.git"
