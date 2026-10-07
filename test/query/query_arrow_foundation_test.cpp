@@ -1724,6 +1724,29 @@ TEST(QueryCommandTest, ReplShowsHelpAndExitsOnQuit)
     EXPECT_TRUE(error.str().empty());
 }
 
+TEST(QueryCommandTest, ReplHelpTopicsPrintDetailsAndRejectUnknownTopics)
+{
+    char                 arg0[] = "query";
+    char*                argv[] = {arg0};
+    cli::QueryCommand querySubcommand(g_query_command_listener);
+    std::istringstream   input(".help\n.help matching\n.help GROUPING\n.help tables\n.help bogus\n.quit\n");
+    std::ostringstream   output;
+    std::ostringstream   error;
+
+    const std::vector<std::string> config_sources{
+        "queryable.mldp.query-url=localhost:2",
+        "queryable.mldp.min-conn=1",
+        "queryable.mldp.max-conn=1"};
+    EXPECT_EQ(querySubcommand.run(1, argv, config_sources, input, output, error), 0);
+    EXPECT_NE(output.str().find("Help topics: .help <topic>"), std::string::npos);
+    EXPECT_NE(output.str().find("col PREFIX 'abc'"), std::string::npos);
+    EXPECT_NE(output.str().find("HAVING"), std::string::npos);
+    EXPECT_NE(output.str().find("DESCRIBE <table>;"), std::string::npos);
+    EXPECT_EQ(output.str().find("\x1b["), std::string::npos);
+    EXPECT_NE(error.str().find("unknown help topic 'bogus'"), std::string::npos);
+    EXPECT_NE(error.str().find("matching"), std::string::npos);
+}
+
 TEST(QueryCommandTest, ReplPagerCanBeConfiguredWithoutChangingNonTtyOutput)
 {
     char                 arg0[] = "query";
@@ -1885,6 +1908,7 @@ TEST(QueryCompletionTest, CompletesCommandsKeywordsTablesAndColumns)
     EXPECT_EQ(cli::detail::replCompletions("sel"), std::vector<std::string>({"SELECT"}));
     EXPECT_EQ(cli::detail::replCompletions(".for"), std::vector<std::string>({".format"}));
     EXPECT_EQ(cli::detail::replCompletions(".format j"), std::vector<std::string>({"json"}));
+    EXPECT_EQ(cli::detail::replCompletions(".help ma"), std::vector<std::string>({"matching"}));
     EXPECT_EQ(cli::detail::replCompletions(".pager o"), std::vector<std::string>({"off", "on"}));
     const auto tables = cli::detail::replCompletions("SELECT * FROM mldp.t");
     EXPECT_NE(std::find(tables.begin(), tables.end(), "mldp.time_series"), tables.end());

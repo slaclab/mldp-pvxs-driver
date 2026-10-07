@@ -39,6 +39,7 @@
 #include <replxx.hxx>
 #include <mldp_pvxs_driver_version.h>
 
+#include <array>
 #include <algorithm>
 #include <cctype>
 #include <cerrno>
@@ -204,12 +205,187 @@ std::optional<std::size_t> statementTerminator(std::string_view line)
 
 bool isReplCommand(std::string_view command)
 {
-    return command == ".help" || command == ".clear" || command == ".format" || command.starts_with(".format ") ||
+    return command == ".help" || command.starts_with(".help ") || command.starts_with(".help\t") || command == ".clear" || command == ".format" || command.starts_with(".format ") ||
            command.starts_with(".format\t") || command == ".pager" || command.starts_with(".pager ") || command.starts_with(".pager\t") ||
            command == ".history" || command == "history" || command == "\\x" ||
            command == "\\expanded" || command.starts_with("\\expanded ") || command == ".table-fit" ||
            command.starts_with(".table-fit ") || command == ".color" || command.starts_with(".color ") || command == ".quit" || command == ".exit";
 }
+
+bool startsWithIgnoreCase(std::string_view value, std::string_view prefix);
+
+namespace help {
+
+namespace style = mldp_pvxs_driver::cli::style;
+
+void heading(std::ostream& out, const bool color, const std::string_view text)
+{
+    out << style::paint(color, style::cyan, text) << "\n";
+}
+
+/// Prints one "  <term>  <description>" row with the term padded to @p width.
+void row(std::ostream& out, const bool color, const std::string_view term, const std::string_view text, const std::size_t width = 34)
+{
+    out << "  " << style::paint(color, style::bold, term);
+    out << std::string(term.size() < width ? width - term.size() : 1, ' ') << text << "\n";
+}
+
+void example(std::ostream& out, const bool color, const std::string_view sql)
+{
+    out << "  " << style::paint(color, style::green, sql) << "\n";
+}
+
+void printCommands(std::ostream& out, const bool color)
+{
+    heading(out, color, "REPL commands (only when no SQL is buffered)");
+    row(out, color, ".help [topic]", "overview, or detailed help on a topic");
+    row(out, color, ".clear", "discard the buffered statement and clear the screen");
+    row(out, color, ".format [table|json|csv|arrow]", "show or set the output format");
+    row(out, color, ".pager [on|off]", "show or toggle paging of long results");
+    row(out, color, ".table-fit [on|off]", "show or toggle fitting tables to terminal width");
+    row(out, color, ".color [on|off]", "show or toggle ANSI color");
+    row(out, color, ".history", "list previous commands");
+    row(out, color, "\\expanded [on|off], \\x", "show/set or toggle expanded (one field per line) display");
+    row(out, color, "<query> \\G", "run one query with expanded display");
+    row(out, color, ".quit, .exit, Ctrl-Q", "leave the REPL");
+    out << "  Without an argument, .format/.pager/.table-fit/.color/\\expanded print the current value.\n";
+}
+
+void printEditing(std::ostream& out, const bool color)
+{
+    heading(out, color, "Line editing");
+    row(out, color, "Left/Right, Ctrl-A/Ctrl-E", "move cursor; jump to start/end of line", 28);
+    row(out, color, "Up/Down", "browse history (.history lists it)", 28);
+    row(out, color, "Ctrl-W", "delete previous word", 28);
+    row(out, color, "Ctrl-U/Ctrl-K", "delete to start/end of line", 28);
+    row(out, color, "Ctrl-L", "clear screen", 28);
+    row(out, color, "Ctrl-C", "cancel running query or discard current input", 28);
+    row(out, color, "Ctrl-Q", "exit", 28);
+    row(out, color, "Tab", "complete keywords, tables, columns and command arguments", 28);
+    out << "  A statement may span several lines; it runs when terminated by ';'.\n";
+}
+
+void printDisplay(std::ostream& out, const bool color)
+{
+    heading(out, color, "Output and display");
+    row(out, color, ".format table", "aligned text table (default)", 20);
+    row(out, color, ".format json", "JSON Lines: one object per row", 20);
+    row(out, color, ".format csv", "comma-separated values with header", 20);
+    row(out, color, ".format arrow", "Arrow IPC stream", 20);
+    row(out, color, ".pager on|off", "page results longer than the terminal", 20);
+    row(out, color, ".table-fit on|off", "shrink wide tables to the terminal width", 20);
+    row(out, color, ".color on|off", "ANSI colors (also disabled by NO_COLOR)", 20);
+    row(out, color, "\\x  /  ... \\G", "expanded display: always / for a single query", 20);
+}
+
+void printTables(std::ostream& out, const bool color)
+{
+    heading(out, color, "Tables and introspection");
+    row(out, color, "SHOW TABLES;", "list queryable and temporary tables", 26);
+    row(out, color, "DESCRIBE <table>;", "list columns of a table", 26);
+    row(out, color, "SHOW FUNCTIONS;", "list scalar and aggregate functions", 26);
+    row(out, color, "SHOW OPERATORS;", "list supported operators", 26);
+    row(out, color, "EXPLAIN <query>;", "show the plan without running it", 26);
+    heading(out, color, "MLDP tables");
+    row(out, color, "mldp.time_series", "one row per sample (pv, time, value)", 26);
+    row(out, color, "mldp.time_series_table", "samples pivoted: one column per PV", 26);
+    row(out, color, "mldp.pv_stats", "per-PV statistics", 26);
+    row(out, color, "mldp.pv_metadata", "PV metadata", 26);
+    out << "  Filters on pv and time are pushed down to MLDP; time accepts epoch seconds or NOW - <n>[s|m|h|d].\n";
+    heading(out, color, "Temporary tables");
+    example(out, color, "CREATE TEMP TABLE recent AS SELECT pv, value FROM mldp.time_series WHERE pv = 'A';");
+    example(out, color, "DROP TABLE recent;");
+}
+
+void printMatching(std::ostream& out, const bool color)
+{
+    heading(out, color, "String matching");
+    row(out, color, "col PREFIX 'abc'", "starts with 'abc' (case-sensitive, no wildcards)", 22);
+    row(out, color, "col CONTAINS 'abc'", "contains 'abc' (case-sensitive, no wildcards)", 22);
+    row(out, color, "col LIKE 'a%b_c'", "case-insensitive; % or * = any run, _ = one char, \\ escapes", 22);
+    out << "  On mldp.time_series, mldp.time_series_table and mldp.pv_stats, pv PREFIX/CONTAINS/LIKE\n"
+        << "  is sent to MLDP as a PV-name regex (no pv = / IN needed), then verified locally.\n";
+    example(out, color, "SELECT * FROM mldp.pv_stats WHERE pv LIKE 'ltu:%:bpm%';");
+}
+
+void printGrouping(std::ostream& out, const bool color)
+{
+    heading(out, color, "Grouping (runs locally on the fetched rows)");
+    row(out, color, "SELECT DISTINCT ON (k) k, other ...", "first row per k (use ORDER BY to pick it)", 38);
+    row(out, color, "... GROUP BY k [HAVING COUNT(*) > 1]", "one row per k; HAVING filters groups", 38);
+    row(out, color, "ORDER BY 2 DESC", "order by output column position", 38);
+    out << "  Aggregates: COUNT(*|x|DISTINCT x), SUM, AVG, MIN, MAX, FIRST, LAST\n";
+    example(out, color, "SELECT pv, COUNT(*), AVG(value) FROM mldp.time_series WHERE pv PREFIX 'ltu:' AND time >= NOW - 1h GROUP BY pv ORDER BY 2 DESC;");
+}
+
+void printExamples(std::ostream& out, const bool color)
+{
+    heading(out, color, "Examples");
+    example(out, color, "SHOW TABLES;");
+    example(out, color, "DESCRIBE mldp.time_series;");
+    example(out, color, "SELECT pv, time, value FROM mldp.time_series WHERE pv = 'A' AND time >= NOW - 10m LIMIT 20;");
+    example(out, color, "SELECT * FROM mldp.time_series_table WHERE pv IN ('A', 'B') AND time >= NOW - 1h;");
+    example(out, color, "SELECT * FROM mldp.pv_stats WHERE pv LIKE 'ltu:%:bpm%';");
+    example(out, color, "SELECT pv, MAX(value) FROM mldp.time_series WHERE pv PREFIX 'ltu:' AND time >= NOW - 1h GROUP BY pv;");
+    example(out, color, "SELECT pv, time, value FROM mldp.time_series WHERE pv = 'A' LIMIT 1 \\G");
+}
+
+struct Topic
+{
+    std::string_view name;
+    std::string_view summary;
+    void (*print)(std::ostream&, bool);
+};
+
+constexpr std::array<Topic, 7> kTopics{{
+    {"commands", "all REPL dot/backslash commands", printCommands},
+    {"editing", "keyboard shortcuts and completion", printEditing},
+    {"display", "output formats, pager, expanded view", printDisplay},
+    {"tables", "MLDP tables, SHOW/DESCRIBE/EXPLAIN, temp tables", printTables},
+    {"matching", "PREFIX, CONTAINS, LIKE and PV-name pushdown", printMatching},
+    {"grouping", "DISTINCT ON, GROUP BY, HAVING, aggregates", printGrouping},
+    {"examples", "copy-paste queries", printExamples},
+}};
+
+std::string topicNames()
+{
+    std::string names;
+    for (const auto& topic : kTopics)
+        names.append(names.empty() ? "" : ", ").append(topic.name);
+    return names;
+}
+
+void printOverview(std::ostream& out, const bool color)
+{
+    out << "Enter one SQL statement terminated by ';'.\n\n";
+    printCommands(out, color);
+    out << "\n";
+    heading(out, color, "Help topics: .help <topic>");
+    for (const auto& topic : kTopics)
+        row(out, color, topic.name, topic.summary, 12);
+    out << "\n" << style::paint(color, style::dim, "Editing: arrows, Ctrl-A/Ctrl-E, Ctrl-W, Ctrl-U/Ctrl-K, Ctrl-L (clear screen), Ctrl-Q (exit), Tab completion.") << "\n";
+}
+
+/// Prints help for @p topic (empty = overview). Returns false for an unknown topic.
+bool print(std::ostream& out, const bool color, const std::string_view topic)
+{
+    if (topic.empty())
+    {
+        printOverview(out, color);
+        return true;
+    }
+    for (const auto& candidate : kTopics)
+    {
+        if (topic.size() == candidate.name.size() && startsWithIgnoreCase(candidate.name, topic))
+        {
+            candidate.print(out, color);
+            return true;
+        }
+    }
+    return false;
+}
+
+} // namespace help
 
 std::optional<std::size_t> terminalWidth(const std::ostream& output)
 {
@@ -677,24 +853,14 @@ int runRepl(QueryCliOptions                           options,
             editor.addHistory(command);
             return 0;
         }
-        if (buffer.empty() && command == ".help")
+        if (buffer.empty() && (command == ".help" || startsWithIgnoreCase(command, ".help ") || startsWithIgnoreCase(command, ".help\t")))
         {
             editor.addHistory(command);
-            output << "Enter one SQL statement terminated by ';'.\n"
-                   << "Commands: .help, .clear, .format [table|json|csv|arrow], .pager [on|off], .table-fit [on|off], .color [on|off], .history, .quit, .exit\n"
-                   << "Display: \\expanded [on|off], \\x (toggle), or terminate a query with \\G for one expanded result.\n"
-                   << "Editing: arrows, Ctrl-A/Ctrl-E, Ctrl-W, Ctrl-U/Ctrl-K, Ctrl-L (clear screen), Ctrl-Q (exit), history, and tab completion.\n"
-                   << "String matching:\n"
-                   << "  col PREFIX 'abc'     starts with 'abc' (case-sensitive, no wildcards)\n"
-                   << "  col CONTAINS 'abc'   contains 'abc' (case-sensitive, no wildcards)\n"
-                   << "  col LIKE 'a%b_c'     case-insensitive; % or * = any run, _ = one char, \\ escapes\n"
-                   << "  On mldp.time_series, mldp.time_series_table and mldp.pv_stats, pv PREFIX/CONTAINS/LIKE\n"
-                   << "  is sent to MLDP as a PV-name regex (no pv = / IN needed), then verified locally.\n"
-                   << "  e.g. SELECT * FROM mldp.pv_stats WHERE pv LIKE 'ltu:%:bpm%';\n"
-                   << "Grouping (runs locally on the fetched rows):\n"
-                   << "  SELECT DISTINCT ON (k) k, other ...   first row per k (use ORDER BY to pick it)\n"
-                   << "  SELECT k, COUNT(*), AVG(x) ... GROUP BY k [HAVING COUNT(*) > 1] [ORDER BY 2 DESC]\n"
-                   << "  Aggregates: COUNT(*|x|DISTINCT x), SUM, AVG, MIN, MAX, FIRST, LAST\n";
+            const auto topic = trim(std::string_view(command).substr(std::string_view(".help").size()));
+            if (!help::print(output, options.color, topic))
+            {
+                error << errorLabel() << " unknown help topic '" << topic << "'; topics: " << help::topicNames() << "\n";
+            }
             continue;
         }
         if (buffer.empty() && (command == ".pager" || startsWithIgnoreCase(command, ".pager ") || startsWithIgnoreCase(command, ".pager\t")))
@@ -1274,6 +1440,14 @@ std::vector<std::string> mldp_pvxs_driver::cli::detail::replCompletions(
         candidates = token.empty() || token.front() == '.'
                          ? std::vector<std::string>{".pager"}
                          : std::vector<std::string>{"on", "off"};
+    }
+    else if (startsWithIgnoreCase(trimmed, ".help"))
+    {
+        if (token.empty() || token.front() == '.')
+            candidates = {".help"};
+        else
+            for (const auto& topic : help::kTopics)
+                candidates.emplace_back(topic.name);
     }
     else if (startsWithIgnoreCase(trimmed, ".color"))
     {
