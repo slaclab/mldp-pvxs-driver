@@ -20,6 +20,7 @@ set(DATE_VERSION "v3.0.1")
 set(NLOHMANN_JSON_VERSION "v3.11.3")
 set(FTXUI_VERSION "v5.0.0")
 set(LIBEDIT_VERSION "20240808-3.1") # used only when no system libedit-devel is found
+set(NCURSES_VERSION "6.5")           # built only together with the bundled libedit
 set(GOOGLETEST_VERSION "main")      # tests only
 
 # C++ Standard
@@ -127,7 +128,7 @@ FetchContent_MakeAvailable(argparse)
 # Query REPL line editing, history, and completion use libedit (the BSD
 # readline implementation psql uses). The system copy is preferred; when its
 # development files are missing (e.g. shared clusters without root), libedit is
-# downloaded and built as a static library. Only ncurses/tinfo is required then.
+# downloaded and built as a static library together with a static ncurses.
 option(MLDP_BUNDLED_LIBEDIT "Always build libedit from source instead of using the system copy" OFF)
 if(NOT MLDP_BUNDLED_LIBEDIT)
     find_path(EDITLINE_INCLUDE_DIR editline/readline.h)
@@ -140,25 +141,49 @@ if(EDITLINE_INCLUDE_DIR AND EDITLINE_LIBRARY)
         IMPORTED_LOCATION "${EDITLINE_LIBRARY}"
         INTERFACE_INCLUDE_DIRECTORIES "${EDITLINE_INCLUDE_DIR}")
 else()
-    message(STATUS "Building libedit ${LIBEDIT_VERSION} from source")
-    find_library(LIBEDIT_TERMINFO_LIBRARY NAMES tinfo ncursesw ncurses curses)
-    if(NOT LIBEDIT_TERMINFO_LIBRARY)
-        message(FATAL_ERROR "Building libedit needs ncurses/tinfo; install ncurses-devel or set MLDP_BUNDLED_LIBEDIT=OFF with libedit-devel present")
-    endif()
+    message(STATUS "Building libedit ${LIBEDIT_VERSION} (with ncurses ${NCURSES_VERSION}) from source")
     include(ExternalProject)
-    set(LIBEDIT_PREFIX "${CMAKE_BINARY_DIR}/_deps/libedit-install")
+    # Both builds get a private TMPDIR: an inherited one may point at a missing
+    # scratch directory, which breaks autoconf's config.guess.
     set(LIBEDIT_TMPDIR "${CMAKE_BINARY_DIR}/_deps/libedit-tmp")
+    set(NCURSES_PREFIX "${CMAKE_BINARY_DIR}/_deps/ncurses-install")
+    set(LIBEDIT_PREFIX "${CMAKE_BINARY_DIR}/_deps/libedit-install")
+    set(LIBEDIT_ENV ${CMAKE_COMMAND} -E env TMPDIR=${LIBEDIT_TMPDIR})
+
+    # libedit needs a terminfo library; hosts often ship only its runtime
+    # (libtinfo.so.N, no headers), so build a static libncurses. libedit's
+    # configure probes -lncurses first and finds this copy via LDFLAGS. The terminal
+    # database itself is still read from the system terminfo directories.
+    ExternalProject_Add(ncurses_external
+        URL https://ftp.gnu.org/gnu/ncurses/ncurses-${NCURSES_VERSION}.tar.gz
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+        PREFIX "${CMAKE_BINARY_DIR}/_deps/ncurses"
+        CONFIGURE_COMMAND ${CMAKE_COMMAND} -E make_directory ${LIBEDIT_TMPDIR}
+            COMMAND ${LIBEDIT_ENV} <SOURCE_DIR>/configure --prefix=${NCURSES_PREFIX}
+            --without-shared --disable-widec --without-cxx --without-cxx-binding
+            --without-ada --without-progs --without-tests --without-manpages
+            --disable-db-install --enable-overwrite
+            --with-default-terminfo-dir=/usr/share/terminfo
+            --with-terminfo-dirs=/etc/terminfo:/lib/terminfo:/usr/share/terminfo:/usr/lib/terminfo
+            "CFLAGS=-O2 -fPIC"
+        BUILD_COMMAND ${LIBEDIT_ENV} make -j4
+        INSTALL_COMMAND ${LIBEDIT_ENV} make install
+        BUILD_BYPRODUCTS "${NCURSES_PREFIX}/lib/libncurses.a"
+    )
+
     ExternalProject_Add(libedit_external
         URL https://thrysoee.dk/editline/libedit-${LIBEDIT_VERSION}.tar.gz
         DOWNLOAD_EXTRACT_TIMESTAMP TRUE
         PREFIX "${CMAKE_BINARY_DIR}/_deps/libedit"
-        # Use a private TMPDIR: an inherited one may point at a missing scratch dir.
+        DEPENDS ncurses_external
         CONFIGURE_COMMAND ${CMAKE_COMMAND} -E make_directory ${LIBEDIT_TMPDIR}
-            COMMAND ${CMAKE_COMMAND} -E env TMPDIR=${LIBEDIT_TMPDIR}
-            <SOURCE_DIR>/configure --prefix=${LIBEDIT_PREFIX}
-            --disable-shared --enable-static --with-pic "CFLAGS=-O2 -fPIC"
-        BUILD_COMMAND ${CMAKE_COMMAND} -E env TMPDIR=${LIBEDIT_TMPDIR} make -j4
-        INSTALL_COMMAND ${CMAKE_COMMAND} -E env TMPDIR=${LIBEDIT_TMPDIR} make install
+            COMMAND ${LIBEDIT_ENV} <SOURCE_DIR>/configure --prefix=${LIBEDIT_PREFIX}
+            --disable-shared --enable-static --with-pic
+            "CFLAGS=-O2 -fPIC"
+            "CPPFLAGS=-I${NCURSES_PREFIX}/include"
+            "LDFLAGS=-L${NCURSES_PREFIX}/lib"
+        BUILD_COMMAND ${LIBEDIT_ENV} make -j4
+        INSTALL_COMMAND ${LIBEDIT_ENV} make install
         BUILD_BYPRODUCTS "${LIBEDIT_PREFIX}/lib/libedit.a"
     )
     # Imported targets require the include directory to exist at configure time.
@@ -166,7 +191,7 @@ else()
     set_target_properties(editline::editline PROPERTIES
         IMPORTED_LOCATION "${LIBEDIT_PREFIX}/lib/libedit.a"
         INTERFACE_INCLUDE_DIRECTORIES "${LIBEDIT_PREFIX}/include"
-        INTERFACE_LINK_LIBRARIES "${LIBEDIT_TERMINFO_LIBRARY}")
+        INTERFACE_LINK_LIBRARIES "${NCURSES_PREFIX}/lib/libncurses.a")
     add_dependencies(editline::editline libedit_external)
 endif()
 
