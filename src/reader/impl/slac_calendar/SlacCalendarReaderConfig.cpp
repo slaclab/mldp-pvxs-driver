@@ -10,13 +10,14 @@
 
 #include <reader/impl/slac_calendar/SlacCalendarReaderConfig.h>
 
+#include <algorithm>
 #include <regex>
 
 namespace mldp_pvxs_driver::reader::impl::slac_calendar {
 
 static constexpr auto kNameKey               = "name";
 static constexpr auto kBaseUrlKey            = "base-url";
-static constexpr auto kExperimentsKey        = "experiments";
+static constexpr auto kAccelKey               = "accel";
 static constexpr auto kLookaheadDaysKey      = "lookahead-days";
 static constexpr auto kLookbackDaysKey       = "lookback-days";
 static constexpr auto kStartDateKey          = "start-date";
@@ -27,7 +28,42 @@ static constexpr auto kConnectTimeoutSecKey  = "connect-timeout-sec";
 static constexpr auto kTotalTimeoutSecKey    = "total-timeout-sec";
 static constexpr auto kTlsVerifyPeerKey      = "tls-verify-peer";
 static constexpr auto kTlsVerifyHostKey      = "tls-verify-host";
-static constexpr auto kEventLimitKey         = "event-limit";
+static constexpr auto kFetchWindowDaysKey    = "fetch-window-days";
+static constexpr auto kFetchWindowDelayMsKey = "fetch-window-delay-ms";
+static constexpr auto kAttributesKey         = "attributes";
+static constexpr auto kAttrFieldKey          = "field";
+static constexpr auto kAttrNameKey           = "name";
+static constexpr auto kAttrTargetKey         = "target";
+
+using Target = SlacCalendarReaderConfig::AttributeTarget;
+
+// Default association of calendar JSON fields to attributes. Per-shift values
+// (note, config, poc, details) go on the activation; stable descriptors on the
+// configuration; location (hutch name/line) on both.
+static std::vector<SlacCalendarReaderConfig::AttributeMapping> defaultAttributeMappings()
+{
+    return {
+        {"calendar", "calendar", Target::Both},
+        {"machine", "machine", Target::Configuration},
+        {"hutch.name", "hutch_name", Target::Both},
+        {"hutch.line", "hutch_line", Target::Both},
+        {"hutch.color", "hutch_color", Target::Configuration},
+        {"note", "note", Target::Activation},
+        {"config", "config", Target::Activation},
+        {"poc", "poc", Target::Activation},
+        {"details", "details", Target::Activation},
+    };
+}
+
+static Target parseTarget(const std::string& s)
+{
+    if (s == "configuration") return Target::Configuration;
+    if (s == "activation")    return Target::Activation;
+    if (s == "both")          return Target::Both;
+    if (s == "none")          return Target::None;
+    throw SlacCalendarReaderConfig::Error(
+        "slac-calendar reader: attribute 'target' must be one of configuration|activation|both|none, got: " + s);
+}
 
 SlacCalendarReaderConfig::SlacCalendarReaderConfig(const config::Config& cfg)
 {
@@ -48,20 +84,20 @@ void SlacCalendarReaderConfig::parse(const config::Config& cfg)
     if (base_url_.empty())
         throw Error("slac-calendar reader: 'base-url' must not be empty");
 
-    if (!cfg.hasChild(kExperimentsKey))
-        throw Error("slac-calendar reader: 'experiments' is required");
-    const auto exp_nodes = cfg.subConfig(kExperimentsKey);
-    if (exp_nodes.empty())
-        throw Error("slac-calendar reader: 'experiments' must not be empty");
-    for (const auto& node : exp_nodes)
+    if (!cfg.hasChild(kAccelKey))
+        throw Error("slac-calendar reader: 'accel' is required");
+    const auto accel_nodes = cfg.subConfig(kAccelKey);
+    if (accel_nodes.empty())
+        throw Error("slac-calendar reader: 'accel' must not be empty");
+    for (const auto& node : accel_nodes)
     {
         std::string val;
         node >> val;
         if (!val.empty())
-            experiments_.push_back(val);
+            accels_.push_back(val);
     }
-    if (experiments_.empty())
-        throw Error("slac-calendar reader: 'experiments' must contain at least one entry");
+    if (accels_.empty())
+        throw Error("slac-calendar reader: 'accel' must contain at least one entry");
 
     static const std::regex kDateRe(R"(\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}(Z|[+-]\d{2}:\d{2})?)?)");
 
@@ -120,7 +156,51 @@ void SlacCalendarReaderConfig::parse(const config::Config& cfg)
 
     tls_verify_peer_ = cfg.getBool(kTlsVerifyPeerKey, true);
     tls_verify_host_ = cfg.getBool(kTlsVerifyHostKey, true);
-    event_limit_     = cfg.getInt(kEventLimitKey, 1000);
+    fetch_window_days_ = cfg.getInt(kFetchWindowDaysKey, 7);
+    if (fetch_window_days_ <= 0)
+        throw Error("slac-calendar reader: 'fetch-window-days' must be > 0");
+
+    // Back-to-back windowed GETs against the real SLAC calendar server can be served
+    // from an upstream/proxy cache when fired too fast (observed: sub-15ms spacing in
+    // prod produced repeated bodies for later windows, silently swallowed by the
+    // per-event `seen` dedup as "already recorded", causing whole months to go
+    // missing even though every HTTP call returned 200). Pacing requests avoids it.
+    fetch_window_delay_ms_ = cfg.getInt(kFetchWindowDelayMsKey, 200);
+    if (fetch_window_delay_ms_ < 0)
+        throw Error("slac-calendar reader: 'fetch-window-delay-ms' must be >= 0");
+
+    // Optional per-field overrides. An entry for a field already in the default
+    // mapping replaces it (rename and/or retarget); a new field is appended.
+    attribute_mappings_ = defaultAttributeMappings();
+    if (cfg.hasChild(kAttributesKey))
+    {
+        for (const auto& node : cfg.subConfig(kAttributesKey))
+        {
+            const std::string field = node.get(kAttrFieldKey);
+            if (field.empty())
+                throw Error("slac-calendar reader: each 'attributes' entry requires a non-empty 'field'");
+            if (field == "accel")
+                throw Error("slac-calendar reader: 'accel' attribute is not remappable");
+
+            const auto it = std::find_if(attribute_mappings_.begin(), attribute_mappings_.end(),
+                                         [&](const AttributeMapping& m) { return m.field == field; });
+
+            AttributeMapping m = it != attribute_mappings_.end() ? *it : AttributeMapping{field, field, Target::Both};
+            if (node.hasChild(kAttrNameKey))
+            {
+                m.name = node.get(kAttrNameKey);
+                if (m.name.empty())
+                    throw Error("slac-calendar reader: attribute 'name' must not be empty for field '" + field + "'");
+            }
+            if (node.hasChild(kAttrTargetKey))
+                m.target = parseTarget(node.get(kAttrTargetKey));
+
+            if (it != attribute_mappings_.end())
+                *it = m;
+            else
+                attribute_mappings_.push_back(m);
+        }
+    }
 
     valid_ = true;
 }

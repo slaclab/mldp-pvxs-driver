@@ -152,10 +152,38 @@ reader:
         rescan-interval-sec: 60.0
         pvs:                      # required — at least one entry
           - name: BPMS:LI20:2445:X
+            alias: BPMS_LI20_2445_X       # extra MLDP alias
+            original-name: BPM-LI20-2445-X   # stored in MLDP under this name
             metadata:
               system: bpm
           - name: QUAD:LI21:221:BACT
 ```
+
+### PV Aliases and Original Names
+
+Each `pvs[]` entry may carry two optional naming keys:
+
+- `alias` — an additional name registered for the PV in MLDP, so the record can be looked
+  up by either name.
+- `original-name` — the identity the record is published and stored under in MLDP,
+  replacing the real EPICS PV name. The real PV name is automatically added to the alias
+  list, so lookups by the real name continue to resolve.
+
+The Directory Service RPC is **always** issued with the real `name`; neither key changes
+what is queried upstream — they only affect how the resulting record is named in MLDP.
+
+```yaml
+pvs:
+  - name: ACCL_IN20_300_L0A_ACUHBR     # real PV name, used for the DS query
+    alias: ACCL:IN20:300:L0A_ACUHBR    # optional extra alias
+    original-name: L0A_ACUHBR         # optional MLDP record name
+```
+
+With the configuration above, the record is stored in MLDP as `L0A_ACUHBR` with aliases
+`ACCL_IN20_300_L0A_ACUHBR` and `ACCL:IN20:300:L0A_ACUHBR`.
+
+When neither key is present the reader publishes no alias list at all, which leaves any
+aliases already registered server-side untouched.
 
 ## Configuration
 
@@ -171,6 +199,8 @@ Parameter          | Type   | Description
 
 Parameter              | Type   | Default                                  | Description
 ---------------------- | ------ | ---------------------------------------- | ---------------------------------------------------
+`pvs[].alias`          | string | `""`                                     | Extra alias registered for this PV in MLDP. Single scalar value. Must be non-empty when the key is present.
+`pvs[].original-name` | string | `""`                                     | Name the record is stored under in MLDP instead of the real PV name. The real PV name is automatically added to the alias list. Must be non-empty when the key is present.
 `pvs[].metadata`       | map    | `{}`                                     | Static key/value attributes merged into the DS response for this PV.
 `service`              | string | `"ds"`                                   | PVA service name to call via RPC.
 `query`                | string | `"%"`                                    | Query pattern sent in the NTURI `query.name` field.
@@ -189,6 +219,7 @@ Parameter              | Type   | Default                                  | Des
 - `name` is required and must be non-empty.
 - `pvs` is required and must contain at least one entry.
 - `pvs[].name` is required per entry and must be non-empty.
+- `pvs[].alias` and `pvs[].original-name` are optional, but when present must not be blank.
 - `timeout-sec` must be strictly positive.
 - `rescan-interval-sec` must be `>= 0`; negative values, including `-1`, are rejected.
 - `worker-thread-count` must be in range `1..64`.

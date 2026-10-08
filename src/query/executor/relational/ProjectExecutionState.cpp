@@ -32,7 +32,10 @@ namespace {
         {
             if (context().progress) context().progress->setActivity({}, "projection");
             throwIfCancelled();
-            return node_.expressions.empty() ? applyProjection(childAt(0).execute(), node_.columns) : applyProjection(childAt(0).execute(), node_.expressions, node_.names);
+            auto input = childAt(0).execute();
+            if (!node_.distinct_on.empty()) input = applyDistinctOn(input, node_.distinct_on);
+            auto output = node_.expressions.empty() ? applyProjection(input, node_.columns) : applyProjection(input, node_.expressions, node_.names);
+            return node_.distinct && node_.distinct_on.empty() ? applyDistinct(output) : output;
         }
 
     private:

@@ -1,12 +1,26 @@
 cmake_minimum_required(VERSION 3.15)
 
 # Silence cmake_minimum_required() deprecation warnings from FetchContent
-# dependencies (e.g. replxx, date) that still declare old CMake minimums.
+# dependencies (e.g. date) that still declare old CMake minimums.
 if(NOT DEFINED CMAKE_POLICY_VERSION_MINIMUM)
     set(CMAKE_POLICY_VERSION_MINIMUM 3.15)
 endif()
 
 project(mldp_pvxs_driver VERSION 0.2.5 LANGUAGES CXX)
+
+# Third-party dependency versions (downloaded and built with the project).
+set(PROMETHEUS_CPP_VERSION "v1.3.0")
+set(SPDLOG_VERSION "v1.16.0")
+set(ARGPARSE_VERSION "v3.2")
+set(EPICSARCHIVERAP_VERSION "2.2.1")
+set(CPP_HTTPLIB_VERSION "v0.16.3")
+set(DP_GRPC_VERSION "rel-1.16.0")
+set(ARROW_VERSION "apache-arrow-18.1.0")
+set(DATE_VERSION "v3.0.1")
+set(NLOHMANN_JSON_VERSION "v3.11.3")
+set(FTXUI_VERSION "v5.0.0")
+set(ISOCLINE_VERSION "v1.0.9")
+set(GOOGLETEST_VERSION "main")      # tests only
 
 # C++ Standard
 set(CMAKE_CXX_STANDARD 20)
@@ -78,16 +92,6 @@ message(STATUS "Query parser generated (Bison + Flex) into ${CMAKE_CURRENT_BINAR
 
 include(FetchContent)
 
-set(PROMETHEUS_CPP_VERSION "v1.3.0")
-set(SPDLOG_VERSION "v1.16.0")
-set(ARGPARSE_VERSION "v3.2")
-set(EPICSARCHIVERAP_VERSION "2.2.1")
-set(CPP_HTTPLIB_VERSION "v0.16.3")
-set(DP_GRPC_VERSION "rel-1.16.0")
-set(ARROW_VERSION "apache-arrow-18.1.0")
-set(REPLXX_VERSION "release-0.0.4")
-set(DATE_VERSION "v3.0.1")
-
 # Output directories
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
@@ -120,14 +124,25 @@ FetchContent_Declare(argparse
 )
 FetchContent_MakeAvailable(argparse)
 
-# Query REPL line editing, history, and completion.
-message(STATUS "Acquiring replxx version ${REPLXX_VERSION}...")
-FetchContent_Declare(replxx
-    GIT_REPOSITORY https://github.com/AmokHuginnsson/replxx.git
-    GIT_TAG ${REPLXX_VERSION}
-    GIT_SHALLOW TRUE
-)
-FetchContent_MakeAvailable(replxx)
+# Query REPL line editing, history, completion and live syntax colouring use
+# isocline (MIT, single C file, no terminal-library dependency).
+message(STATUS "Acquiring isocline version ${ISOCLINE_VERSION}...")
+FetchContent_Declare(isocline
+    GIT_REPOSITORY https://github.com/daanx/isocline.git
+    GIT_TAG        ${ISOCLINE_VERSION}
+    GIT_SHALLOW    TRUE
+    # Only fetch: the library is built below from its amalgamated source, since
+    # upstream's CMake project also builds samples and tests.
+    SOURCE_SUBDIR  do-not-add
+    # psql/readline keys: Ctrl-A/Ctrl-E span the whole multi-line input, Ctrl-Q
+    # exits, and the REPL can tell Ctrl-C on an empty line from one on typed text.
+    # Resets the checkout first so a changed patch re-applies cleanly.
+    PATCH_COMMAND sh -c "git checkout -- . && git apply --whitespace=nowarn '${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/isocline-psql-keys.patch'")
+FetchContent_MakeAvailable(isocline)
+enable_language(C)
+add_library(isocline STATIC "${isocline_SOURCE_DIR}/src/isocline.c")
+target_include_directories(isocline PUBLIC "${isocline_SOURCE_DIR}/include")
+set_target_properties(isocline PROPERTIES POSITION_INDEPENDENT_CODE ON C_STANDARD 99)
 
 # FTXUI is used only by the optional configuration wizard.
 option(MLDP_WIZARD "Build interactive config wizard (requires FTXUI)" ON)
@@ -136,7 +151,7 @@ if(MLDP_WIZARD)
     message(STATUS "Acquiring FTXUI for the configuration wizard...")
     FetchContent_Declare(ftxui
         GIT_REPOSITORY https://github.com/ArthurSonzogni/FTXUI
-        GIT_TAG        v5.0.0
+        GIT_TAG        ${FTXUI_VERSION}
     )
     FetchContent_MakeAvailable(ftxui)
 endif()
@@ -183,7 +198,7 @@ FetchContent_MakeAvailable(dp_grpc)
 # Acquire nlohmann/json for JSON parsing in SlacCalendarReader
 FetchContent_Declare(nlohmann_json
     GIT_REPOSITORY https://github.com/nlohmann/json.git
-    GIT_TAG        v3.11.3
+    GIT_TAG        ${NLOHMANN_JSON_VERSION}
     GIT_SHALLOW    TRUE)
 set(JSON_BuildTests OFF CACHE BOOL "" FORCE)
 set(JSON_Install OFF CACHE BOOL "" FORCE)
@@ -725,6 +740,8 @@ add_library(lib${PROJECT_NAME}
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/impl/mldp/TimeSeriesMetadataBuilders.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/impl/mldp/DataValueBuilder.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/impl/mldp/MldpBidiRecordBatchStream.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/impl/mldp/MldpQueryBucketsPagedStream.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/impl/mldp/MldpQuerySamplesPagedStream.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/impl/mldp/ColumnPredicateFilter.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/impl/mldp/AnnotationMetadataBuilders.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/impl/mldp/MetadataArrayBuilders.cpp"
@@ -761,6 +778,15 @@ add_library(lib${PROJECT_NAME}
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/CreateTableRecordBatchStream.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/OstreamOutputStream.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/ExecutionState.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/AggregateValue.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/GroupedAggregator.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/AggregateRecordBatchStream.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/relational/AggregateExecutionState.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/AggregateRegistry.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/WindowFunctionRegistry.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/WindowEvaluator.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/WindowRecordBatchStream.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/relational/WindowExecutionState.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/ExecutorUtils.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/scan/TableScanExecutionState.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/scan/CatalogTableScan.cpp"
@@ -772,6 +798,7 @@ add_library(lib${PROJECT_NAME}
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/relational/ProjectExecutionState.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/relational/SortExecutionState.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/relational/LimitExecutionState.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/relational/UnionExecutionState.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/relational/HashJoinExecutionState.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/relational/NestedLoopJoinExecutionState.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/relational/BlockNestedLoopJoinExecutionState.cpp"
@@ -926,7 +953,7 @@ if(MLDP_PVXS_DRIVER_TESTS)
 
     FetchContent_Declare(googletest
         GIT_REPOSITORY "https://github.com/google/googletest.git"
-        GIT_TAG "main")
+        GIT_TAG "${GOOGLETEST_VERSION}")
     FetchContent_MakeAvailable(googletest)
     FetchContent_Declare(cpp_httplib
         GIT_REPOSITORY "https://github.com/yhirose/cpp-httplib.git"
@@ -1065,6 +1092,8 @@ if(MLDP_PVXS_DRIVER_TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/test/query/query_arrow_foundation_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/query/query_parser_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/query/query_planner_executor_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/query/query_aggregate_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/query/query_window_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/query/mldp_annotation_query_client_integration_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/query/queryable_mldp_integration_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/query/QueryCommand.cpp"
@@ -1084,7 +1113,7 @@ if(MLDP_PVXS_DRIVER_TESTS)
         "${arrow_SOURCE_DIR}/cpp/src"
         "${arrow_SOURCE_DIR}/cpp/src/generated"
     )
-    target_link_libraries(${PROJECT_NAME}_test PRIVATE replxx)
+    target_link_libraries(${PROJECT_NAME}_test PRIVATE isocline)
 
     if(MLDP_WIZARD AND MLDP_PVXS_DRIVER_MAIN)
         target_sources(${PROJECT_NAME}_test PRIVATE
@@ -1190,13 +1219,13 @@ if(MLDP_PVXS_DRIVER_MAIN)
         target_link_libraries(${PROJECT_NAME} PRIVATE
             -Wl,-force_load $<TARGET_FILE:lib${PROJECT_NAME}>
             argparse::argparse
-            replxx
+            isocline
         )
     else()
         target_link_libraries(${PROJECT_NAME} PRIVATE
             -Wl,--whole-archive lib${PROJECT_NAME} -Wl,--no-whole-archive
             argparse::argparse
-            replxx
+            isocline
             spdlog::spdlog
         )
     endif()

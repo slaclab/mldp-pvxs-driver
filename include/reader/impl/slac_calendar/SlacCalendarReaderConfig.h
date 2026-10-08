@@ -27,13 +27,35 @@ public:
         using std::runtime_error::runtime_error;
     };
 
+    /** Which payload(s) a calendar JSON field is copied to as an attribute. */
+    enum class AttributeTarget
+    {
+        None,
+        Configuration,
+        Activation,
+        Both
+    };
+
+    /**
+     * @brief Maps one calendar event JSON field to an MLDP attribute.
+     *
+     * `field` is the JSON key; a dotted path (e.g. "hutch.name") reads a key of a
+     * nested object. `name` is the attribute key written on the payload(s).
+     */
+    struct AttributeMapping
+    {
+        std::string     field;
+        std::string     name;
+        AttributeTarget target{AttributeTarget::None};
+    };
+
     explicit SlacCalendarReaderConfig(const config::Config& cfg);
 
     bool valid() const noexcept { return valid_; }
 
     const std::string& name() const noexcept { return name_; }
     const std::string& baseUrl() const noexcept { return base_url_; }
-    const std::vector<std::string>& experiments() const noexcept { return experiments_; }
+    const std::vector<std::string>& accels() const noexcept { return accels_; }
     int lookaheadDays() const noexcept { return lookahead_days_; }
     int lookbackDays() const noexcept { return lookback_days_; }
     const std::optional<std::string>& startDate() const noexcept { return start_date_; }
@@ -44,7 +66,10 @@ public:
     long totalTimeoutSec() const noexcept { return total_timeout_sec_; }
     bool tlsVerifyPeer() const noexcept { return tls_verify_peer_; }
     bool tlsVerifyHost() const noexcept { return tls_verify_host_; }
-    int eventLimit() const noexcept { return event_limit_; }
+    int fetchWindowDays() const noexcept { return fetch_window_days_; }
+    int fetchWindowDelayMs() const noexcept { return fetch_window_delay_ms_; }
+    /** Default mapping merged with the `attributes` overrides, in a stable order. */
+    const std::vector<AttributeMapping>& attributeMappings() const noexcept { return attribute_mappings_; }
 
 private:
     void parse(const config::Config& cfg);
@@ -52,7 +77,7 @@ private:
     bool                     valid_{false};
     std::string              name_;
     std::string              base_url_;
-    std::vector<std::string> experiments_;
+    std::vector<std::string> accels_;
     int                      lookahead_days_{30};
     int                      lookback_days_{1};
     std::optional<std::string> start_date_;
@@ -63,7 +88,9 @@ private:
     long                     total_timeout_sec_{60};
     bool                     tls_verify_peer_{true};
     bool                     tls_verify_host_{true};
-    int                      event_limit_{1000};
+    int                      fetch_window_days_{7};
+    int                      fetch_window_delay_ms_{200};
+    std::vector<AttributeMapping> attribute_mappings_;
 };
 
 } // namespace mldp_pvxs_driver::reader::impl::slac_calendar

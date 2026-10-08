@@ -38,7 +38,7 @@ ParallelSeriesRecordBatchStream::ParallelSeriesRecordBatchStream(MLDPQueryClient
     {
         auto shard_predicates = predicates_;
         shard_predicates.erase(std::remove_if(shard_predicates.begin(), shard_predicates.end(), [](const Predicate& predicate) {
-            return predicate.column == "pv";
+            return predicate.column == "pv" && (predicate.op == PredicateOp::EQ || predicate.op == PredicateOp::IN);
         }), shard_predicates.end());
         std::vector<ExecutableLiteralValue> shard_pvs;
         const auto end = std::min(pvs.size(), offset + shard_size);

@@ -311,6 +311,54 @@ pv-show-columns: "dname, ename, ioc"
     EXPECT_EQ(config.pvShowColumns()[2], "ioc");
 }
 
+TEST_F(EpicsDSMetadataReaderConfigTest, ParsesPVAliasAndOriginalName)
+{
+    auto cfg = makeConfigFromYaml(R"yaml(
+name: pv-alias-reader
+pvs:
+  - name: ACCL_IN20_300_L0A_ACUHBR
+    alias: "  ACCL:IN20:300:L0A_ACUHBR  "
+    original-name: "  L0A_ACUHBR  "
+  - name: QUAD:LI21:221:BACT
+pv-show-columns: "dname"
+)yaml");
+
+    EpicsDSMetadataReaderConfig config(cfg);
+
+    ASSERT_EQ(config.pvs().size(), 2u);
+    EXPECT_EQ(config.pvs()[0].alias, "ACCL:IN20:300:L0A_ACUHBR");
+    EXPECT_EQ(config.pvs()[0].original_name, "L0A_ACUHBR");
+    // Omitting both keys must stay valid and leave them empty.
+    EXPECT_TRUE(config.pvs()[1].alias.empty());
+    EXPECT_TRUE(config.pvs()[1].original_name.empty());
+}
+
+TEST_F(EpicsDSMetadataReaderConfigTest, EmptyPVAliasThrows)
+{
+    auto cfg = makeConfigFromYaml(R"yaml(
+name: test-reader
+pvs:
+  - name: BPMS:LI20:2445:X
+    alias: ""
+pv-show-columns: "dname"
+)yaml");
+
+    EXPECT_THROW(EpicsDSMetadataReaderConfig config(cfg), EpicsDSMetadataReaderConfig::Error);
+}
+
+TEST_F(EpicsDSMetadataReaderConfigTest, BlankPVOriginalNameThrows)
+{
+    auto cfg = makeConfigFromYaml(R"yaml(
+name: test-reader
+pvs:
+  - name: BPMS:LI20:2445:X
+    original-name: "   "
+pv-show-columns: "dname"
+)yaml");
+
+    EXPECT_THROW(EpicsDSMetadataReaderConfig config(cfg), EpicsDSMetadataReaderConfig::Error);
+}
+
 TEST_F(EpicsDSMetadataReaderConfigTest, EmptyPVNameThrows)
 {
     auto cfg = makeConfigFromYaml(R"yaml(

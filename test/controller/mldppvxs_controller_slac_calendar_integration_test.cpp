@@ -18,6 +18,7 @@
  * gRPC calls.
  */
 
+#include <map>
 #include <gtest/gtest.h>
 
 #include <annotation.grpc.pb.h>
@@ -115,7 +116,7 @@ bool waitForCount(std::atomic<int>& counter, int target, std::chrono::millisecon
 
 std::string makeControllerYaml(const std::string& annotation_url,
                                 const std::string& base_url,
-                                const std::string& experiments_yaml)
+                                const std::string& accel_yaml)
 {
     std::ostringstream ss;
     ss << "writer:\n"
@@ -131,10 +132,11 @@ std::string makeControllerYaml(const std::string& annotation_url,
        << "  - slac-calendar:\n"
        << "      - name: cal-reader-test\n"
        << "        base-url: " << base_url << "\n"
-       << "        experiments:\n"
-       << experiments_yaml
+       << "        accel:\n"
+       << accel_yaml
        << "        lookahead-days: 30\n"
        << "        lookback-days: 1\n"
+       << "        fetch-window-days: 32\n"
        << "        rescan-interval-sec: 0.0\n"
        << "        connect-timeout-sec: 5\n"
        << "        total-timeout-sec: 15\n"
@@ -229,11 +231,11 @@ protected:
         return "127.0.0.1:" + std::to_string(grpc_port_);
     }
 
-    void startController(const std::string& experiments_yaml)
+    void startController(const std::string& accel_yaml)
     {
         controller_ = MLDPPVXSController::create(
             makeConfigFromYaml(makeControllerYaml(
-                annotationUrl(), calendar_server_.baseUrl(), experiments_yaml)));
+                annotationUrl(), calendar_server_.baseUrl(), accel_yaml)));
         controller_->start();
     }
 };
@@ -255,7 +257,7 @@ TEST_F(SlacCalendarIntegrationTest, ThreeEventsProduceSixGrpcCalls)
 }
 
 // ---------------------------------------------------------------------------
-// TEST 2 — Attributes forwarded correctly (experiment, hutch, tags)
+// TEST 2 — Attributes forwarded correctly (accel, hutch, tags)
 // ---------------------------------------------------------------------------
 
 TEST_F(SlacCalendarIntegrationTest, AttributesForwardedCorrectly)
@@ -281,23 +283,97 @@ TEST_F(SlacCalendarIntegrationTest, AttributesForwardedCorrectly)
     }
     ASSERT_NE(tmo_req, nullptr) << "TMO Run 3 config request not found";
 
-    EXPECT_EQ(tmo_req->category(), "NC-TMO");
+    EXPECT_EQ(tmo_req->category(), "TMO Run 3");
     EXPECT_EQ(tmo_req->description(), "Third run");
     ASSERT_EQ(tmo_req->tags_size(), 2);
 
-    bool found_experiment = false, found_poc = false, found_details = false;
+    bool found_accel = false, cfg_has_poc = false, cfg_has_details = false;
     for (const auto& attr : tmo_req->attributes())
     {
-        if (attr.name() == "experiment" && attr.value() == "lcls")
-            found_experiment = true;
+        if (attr.name() == "accel" && attr.value() == "lcls")
+            found_accel = true;
+        if (attr.name() == "poc")
+            cfg_has_poc = true;
+        if (attr.name() == "details")
+            cfg_has_details = true;
+    }
+    EXPECT_TRUE(found_accel) << "attribute accel=lcls not found";
+    // Per-shift fields live on the activation, not the configuration
+    EXPECT_FALSE(cfg_has_poc)     << "poc must not be on configuration";
+    EXPECT_FALSE(cfg_has_details) << "details must not be on configuration";
+
+    ASSERT_TRUE(waitForCount(svc_.save_activation_count, 3, std::chrono::milliseconds(8000)));
+    const auto acts = svc_.actRequests();
+    const dp::service::annotation::SaveConfigurationActivationRequest* tmo_act = nullptr;
+    for (const auto& a : acts)
+    {
+        if (a.configurationname() == "TMO Run 3")
+        {
+            tmo_act = &a;
+            break;
+        }
+    }
+    ASSERT_NE(tmo_act, nullptr) << "TMO Run 3 activation request not found";
+
+    bool found_poc = false, found_details = false;
+    for (const auto& attr : tmo_act->attributes())
+    {
         if (attr.name() == "poc" && attr.value() == "Doe")
             found_poc = true;
         if (attr.name() == "details" && attr.value() == "https://example.com")
             found_details = true;
     }
-    EXPECT_TRUE(found_experiment) << "attribute experiment=lcls not found";
-    EXPECT_TRUE(found_poc)        << "attribute poc=Doe not found";
-    EXPECT_TRUE(found_details)    << "attribute details=https://example.com not found";
+    EXPECT_TRUE(found_poc)     << "activation attribute poc=Doe not found";
+    EXPECT_TRUE(found_details) << "activation attribute details=https://example.com not found";
+}
+
+TEST_F(SlacCalendarIntegrationTest, CustomAttributeMappingReachesAnnotationService)
+{
+    calendar_server_.setResponse("lcls", kThreeLclsEvents);
+
+    // attributes is a sibling key of accel in the reader map
+    ASSERT_NO_THROW(startController("          - lcls\n"
+                                    "        attributes:\n"
+                                    "          - field: poc\n"
+                                    "            name: person_on_shift\n"
+                                    "            target: both\n"
+                                    "          - field: details\n"
+                                    "            target: none\n"
+                                    "          - field: hutch.text_color\n"
+                                    "            name: hutch_text_color\n"
+                                    "            target: activation\n"));
+
+    ASSERT_TRUE(waitForCount(svc_.save_configuration_count, 3, std::chrono::milliseconds(8000)));
+    ASSERT_TRUE(waitForCount(svc_.save_activation_count, 3, std::chrono::milliseconds(8000)));
+
+    const auto toMap = [](const auto& attrs) {
+        std::map<std::string, std::string> m;
+        for (const auto& a : attrs)
+            m[a.name()] = a.value();
+        return m;
+    };
+
+    std::map<std::string, std::string> cfg_attrs, act_attrs;
+    for (const auto& r : svc_.cfgRequests())
+        if (r.configurationname() == "TMO Run 3")
+            cfg_attrs = toMap(r.attributes());
+    for (const auto& a : svc_.actRequests())
+        if (a.configurationname() == "TMO Run 3")
+            act_attrs = toMap(a.attributes());
+    ASSERT_FALSE(cfg_attrs.empty()) << "TMO Run 3 config request not found";
+    ASSERT_FALSE(act_attrs.empty()) << "TMO Run 3 activation request not found";
+
+    EXPECT_EQ(cfg_attrs["person_on_shift"], "Doe");
+    EXPECT_EQ(act_attrs["person_on_shift"], "Doe");
+    EXPECT_FALSE(cfg_attrs.count("poc"));
+    EXPECT_FALSE(act_attrs.count("poc"));
+    EXPECT_FALSE(cfg_attrs.count("details"));
+    EXPECT_FALSE(act_attrs.count("details"));
+    EXPECT_EQ(act_attrs["hutch_text_color"], "white");
+    EXPECT_FALSE(cfg_attrs.count("hutch_text_color"));
+    // untouched defaults
+    EXPECT_EQ(act_attrs["config"], "800 eV");
+    EXPECT_EQ(cfg_attrs["hutch_color"], "#0000a0");
 }
 
 // ---------------------------------------------------------------------------
@@ -318,7 +394,9 @@ TEST_F(SlacCalendarIntegrationTest, ActivationClientIdMatchesEventUrl)
     bool found_ev1 = false;
     for (const auto& a : acts)
     {
-        if (a.clientactivationid() == "https://www.google.com/calendar/event?eid=ev1")
+        if (a.clientactivationid() ==
+            "https://www.google.com/calendar/event?eid=ev1"
+            "|2026-05-28T06:00:00-07:00|2026-05-28T18:00:00-07:00")
         {
             found_ev1 = true;
             break;

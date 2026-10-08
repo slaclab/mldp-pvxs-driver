@@ -14,6 +14,7 @@
 #include <query/QueryableFactory.h>
 #include <query/QueryTableCatalog.h>
 #include <query/executor/ExecutionState.h>
+#include <query/executor/AggregateRecordBatchStream.h>
 #include <query/executor/BackendScanRecordBatchStream.h>
 #include <query/executor/CreateTableRecordBatchStream.h>
 #include <query/executor/FinalizingRecordBatchStream.h>
@@ -25,7 +26,9 @@
 #include <query/executor/ExecutorUtils.h>
 #include <query/executor/ScanExecutionHelpers.h>
 #include <query/executor/WindowBackendScanRecordBatchStream.h>
+#include <query/executor/WindowRecordBatchStream.h>
 #include <query/QueryProgress.h>
+#include <query/plan/PlanVisit.h>
 
 #include <arrow/memory_pool.h>
 
@@ -36,6 +39,7 @@
 
 using namespace mldp_pvxs_driver::query;
 using mldp_pvxs_driver::query::executor::RecordBatches;
+using mldp_pvxs_driver::query::executor::AggregateRecordBatchStream;
 using mldp_pvxs_driver::query::executor::BackendScanRecordBatchStream;
 using mldp_pvxs_driver::query::executor::CreateTableRecordBatchStream;
 using mldp_pvxs_driver::query::executor::FinalizingRecordBatchStream;
@@ -44,19 +48,18 @@ using mldp_pvxs_driver::query::executor::MaterializedRecordBatchStream;
 using mldp_pvxs_driver::query::executor::FilterRecordBatchStream;
 using mldp_pvxs_driver::query::executor::ProjectRecordBatchStream;
 using mldp_pvxs_driver::query::executor::PivotRecordBatchStream;
+using mldp_pvxs_driver::query::executor::WindowRecordBatchStream;
 
 namespace {
 
 void collectPlanWarnings(const plan::PhysicalNodePtr& node, std::vector<std::string>& warnings)
 {
     if (!node) return;
-    if (const auto* hash = std::get_if<plan::PhysicalHashJoin>(&node->value)) { warnings.insert(warnings.end(), hash->warnings.begin(), hash->warnings.end()); collectPlanWarnings(hash->left, warnings); collectPlanWarnings(hash->right, warnings); return; }
-    if (const auto* nested = std::get_if<plan::PhysicalNestedLoopJoin>(&node->value)) { collectPlanWarnings(nested->outer, warnings); collectPlanWarnings(nested->inner, warnings); return; }
-    if (const auto* block = std::get_if<plan::PhysicalBlockNestedLoopJoin>(&node->value)) { warnings.insert(warnings.end(), block->warnings.begin(), block->warnings.end()); collectPlanWarnings(block->outer, warnings); collectPlanWarnings(block->inner, warnings); return; }
-    if (const auto* filter = std::get_if<plan::PhysicalFilter>(&node->value)) { collectPlanWarnings(filter->input, warnings); return; }
-    if (const auto* project = std::get_if<plan::PhysicalProject>(&node->value)) { collectPlanWarnings(project->input, warnings); return; }
-    if (const auto* limit = std::get_if<plan::PhysicalLimit>(&node->value)) collectPlanWarnings(limit->input, warnings);
-    if (const auto* pivot = std::get_if<plan::PhysicalPivot>(&node->value)) collectPlanWarnings(pivot->input, warnings);
+    if (const auto* hash = std::get_if<plan::PhysicalHashJoin>(&node->value)) warnings.insert(warnings.end(), hash->warnings.begin(), hash->warnings.end());
+    if (const auto* block = std::get_if<plan::PhysicalBlockNestedLoopJoin>(&node->value)) warnings.insert(warnings.end(), block->warnings.begin(), block->warnings.end());
+    // CREATE TABLE sources report their own warnings when executed.
+    if (std::holds_alternative<plan::PhysicalCreateTable>(node->value)) return;
+    plan::forEachChild(*node, [&warnings](plan::PhysicalNodePtr& child) { collectPlanWarnings(child, warnings); });
 }
 
 std::optional<plan::PhysicalTableScan> resolvePushableInSubqueries(const plan::PhysicalTableScan& scan,
@@ -107,9 +110,11 @@ IRecordBatchStreamUPtr makeStreamingPlan(const plan::PhysicalNodePtr& root,
         const bool has_only_pushable_in_subqueries = std::all_of(scan->in_subqueries.begin(), scan->in_subqueries.end(), [](const auto& subquery) {
             return subquery.pushable;
         });
-        const bool direct_long_scan = scan->table_name == "mldp.time_series" &&
-                                      !scan->arrow_ipc && !scan->derived_query && has_only_pushable_in_subqueries;
-        if (!direct_long_scan)
+        // Any plain backend scan streams. Catalog (Arrow IPC) tables, derived tables and
+        // scans whose IN subqueries must be verified locally still need the materialized
+        // path, which can hold the child results.
+        const bool direct_backend_scan = !scan->arrow_ipc && !scan->derived_query && has_only_pushable_in_subqueries;
+        if (!direct_backend_scan)
         {
             if (scan->window_shards.series_per_shard > 1 && (scan->window_literal || scan->window_subquery))
                 stats->plan_warnings.push_back(
@@ -152,12 +157,34 @@ IRecordBatchStreamUPtr makeStreamingPlan(const plan::PhysicalNodePtr& root,
     if (const auto* filter = std::get_if<plan::PhysicalFilter>(&root->value))
     {
         auto input = makeStreamingPlan(filter->input, std::move(context), stats);
-        return input ? std::make_unique<FilterRecordBatchStream>(std::move(input), filter->predicates) : nullptr;
+        return input ? std::make_unique<FilterRecordBatchStream>(std::move(input), filter->predicates, filter->conditions, filter->predicate_groups) : nullptr;
     }
     if (const auto* project = std::get_if<plan::PhysicalProject>(&root->value))
     {
         auto input = makeStreamingPlan(project->input, std::move(context), stats);
         return input ? std::make_unique<ProjectRecordBatchStream>(std::move(input), *project) : nullptr;
+    }
+    if (const auto* aggregate = std::get_if<plan::PhysicalAggregate>(&root->value))
+    {
+        // Folds batches as they arrive; memory follows the group count.
+        auto input = makeStreamingPlan(aggregate->input, context, stats);
+        return input ? std::make_unique<AggregateRecordBatchStream>(std::move(input), *aggregate, std::move(context)) : nullptr;
+    }
+    if (const auto* window = std::get_if<plan::PhysicalWindow>(&root->value))
+    {
+        auto input = makeStreamingPlan(window->input, context, stats);
+        return input ? std::make_unique<WindowRecordBatchStream>(std::move(input), *window, std::move(context)) : nullptr;
+    }
+    if (const auto* sort = std::get_if<plan::PhysicalSort>(&root->value))
+    {
+        // A sort over an aggregate sorts only the (small) group output; a sort over
+        // a window sorts its output, which the window step already buffered.
+        if (!std::holds_alternative<plan::PhysicalAggregate>(sort->input->value) && !std::holds_alternative<plan::PhysicalWindow>(sort->input->value)) return nullptr;
+        auto input = makeStreamingPlan(sort->input, std::move(context), stats);
+        if (!input) return nullptr;
+        RecordBatches groups;
+        while (auto batch = input->next()) groups.push_back(std::move(batch));
+        return std::make_unique<MaterializedRecordBatchStream>(mldp_pvxs_driver::query::executor::applySort(groups, sort->keys));
     }
     if (const auto* limit = std::get_if<plan::PhysicalLimit>(&root->value))
     {

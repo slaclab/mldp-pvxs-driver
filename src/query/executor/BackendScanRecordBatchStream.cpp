@@ -32,7 +32,10 @@ BackendScanRecordBatchStream::BackendScanRecordBatchStream(const plan::PhysicalT
         context_.progress->setActivity(scan_.table_name, "backend scan", "opening server cursor");
         context_.progress->beginBackendRpc(scan_.table_name, "server cursor");
     }
-    stream_ = queryable_->executeStream(scan_.table_name, scan_.pushable_predicates, scan_.projection_hint, context_);
+    auto scan_context = context_;
+    scan_context.scan_row_limit = scan_.row_limit;
+    scan_context.scan_projection_explicit = scan_.projection_explicit;
+    stream_ = queryable_->executeStream(scan_.table_name, scan_.pushable_predicates, scan_.projection_hint, scan_context);
 }
 
 std::shared_ptr<arrow::RecordBatch> BackendScanRecordBatchStream::next()

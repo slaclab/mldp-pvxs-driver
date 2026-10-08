@@ -10,6 +10,8 @@
 
 #include <query/planner/RequiredColumnCheck.h>
 
+#include <query/plan/PlanVisit.h>
+
 #include <query/plan/PlannerError.h>
 
 #include <algorithm>
@@ -50,41 +52,21 @@ void collectState(const plan::LogicalNodePtr& node, RequiredState& state)
         state.scans.push_back(scan);
         return;
     }
-    if (const auto* filter = std::get_if<plan::LogicalFilter>(&node->value))
-    {
-        collectState(filter->input, state);
-        return;
-    }
-    if (const auto* project = std::get_if<plan::LogicalProject>(&node->value))
-    {
-        collectState(project->input, state);
-        return;
-    }
-    if (const auto* limit = std::get_if<plan::LogicalLimit>(&node->value))
-    {
-        collectState(limit->input, state);
-        return;
-    }
     if (const auto* join = std::get_if<plan::LogicalJoin>(&node->value))
     {
-        std::string left_alias;
-        std::string left_column;
-        splitQualified(join->condition.left_column, left_alias, left_column);
-        if (!left_alias.empty())
+        // Equi-join keys satisfy required-column checks on either side.
+        for (const auto* qualified : {&join->condition.left_column, &join->condition.right_column})
         {
-            state.join_columns[left_alias].insert(left_column);
+            std::string alias;
+            std::string column;
+            splitQualified(*qualified, alias, column);
+            if (!alias.empty())
+            {
+                state.join_columns[alias].insert(column);
+            }
         }
-
-        std::string right_alias;
-        std::string right_column;
-        splitQualified(join->condition.right_column, right_alias, right_column);
-        if (!right_alias.empty())
-        {
-            state.join_columns[right_alias].insert(right_column);
-        }
-        collectState(join->left, state);
-        collectState(join->right, state);
     }
+    plan::forEachChild(*node, [&state](plan::LogicalNodePtr& child) { collectState(child, state); });
 }
 
 } // namespace

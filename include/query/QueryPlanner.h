@@ -40,6 +40,11 @@ public:
     plan::PhysicalNodePtr plan(const QueryStatement& statement) const;
 
 private:
+    /** @brief Plans a SELECT carrying UNION [ALL] branches, then its union-level ORDER BY / LIMIT.
+     * @param[in] select SELECT whose set_operations is non-empty.
+     * @return Physical plan root. */
+    plan::PhysicalNodePtr planUnion(const SelectStatement& select) const;
+
     std::shared_ptr<QueryTableCatalog> catalog_;
 };
 

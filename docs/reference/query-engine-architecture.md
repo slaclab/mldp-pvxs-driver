@@ -140,9 +140,9 @@ encoding either temporal value as a plain integer.
 
 ### Scalar functions and callable discovery
 
-The parser represents scalar calls as recursive `FunctionCall` expressions, so function syntax is generic and new built-ins do not require lexer changes. `ScalarFunctionRegistry` owns built-in signatures and constant evaluation. Predicate values must be constant so they can be type-checked and folded before existing backend predicate pushdown.
+The parser represents scalar calls as recursive `FunctionCall` expressions, so function syntax is generic and new built-ins do not require lexer changes. `ScalarFunctionRegistry` owns built-in signatures and constant evaluation. Predicate values must be constant so they can be type-checked and folded before existing backend predicate pushdown. The WHERE grammar parses `AND`/`OR`/`NOT`/parentheses over leaf predicates; the parser flattens top-level `AND` leaves into `SelectStatement::predicates` (pushdown candidates, unchanged path) and keeps every other subtree as a `WherePredicateTree` in `predicate_groups`. The binder binds group leaves with the same `buildPredicate` rules, rejects subquery/window/column-to-column leaves and backend-only operators inside groups, rewrites a same-column `=`/`IN` disjunction into one `IN` predicate, and stores the rest as `PlannerPredicateGroup`s on the table's `LogicalFilter`. Pushdown never moves groups into the scan and required-column coverage only counts top-level leaves; `applyFilter` evaluates groups per row with SQL three-valued logic.
 
-`ExpressionRegistry` is the immutable catalog of typed scalar callables. It supplies `to_utc(STRING)` and `to_utc(STRING, STRING)`, whose calls return a UTC epoch-second timestamp. The first form accepts an ISO-8601 `Z` or explicit-offset instant; the second form accepts a local timestamp and explicit `+/-HH:MM` offset. `from_utc(TIMESTAMP, STRING)` evaluates in projection execution and renders the same instant as an ISO-8601 string in an IANA timezone or fixed `+/-HH:MM` offset. IANA resolution uses `date/tz` and the host timezone database, so its output applies daylight saving time at the source instant. The same catalog exposes arithmetic, comparison, boolean, and unary-sign operator descriptors through `SHOW OPERATORS`; only executable callables are listed.
+`ExpressionRegistry` is the immutable catalog of typed scalar callables. It supplies `to_utc(STRING)` and `to_utc(STRING, STRING)`, whose calls return a UTC epoch-second timestamp. The first form accepts an ISO-8601 `Z` or explicit-offset instant; the second form accepts a local timestamp and explicit `+/-HH:MM` offset. `from_utc(TIMESTAMP)` and `from_utc(TIMESTAMP, STRING)` evaluate in projection execution; the one-argument form resolves the client's local zone (`TZ`, else `date::current_zone()`, else libc `localtime_r` per instant when `/etc/localtime` is a copied file with no zone name) at execution time; both render the same instant as an ISO-8601 string in an IANA timezone or fixed `+/-HH:MM` offset. IANA resolution uses `date/tz` and the host timezone database, so its output applies daylight saving time at the source instant. Descriptors marked `variadic` accept two or more arguments of their single declared type; `coalesce` uses this with one overload per scalar type and returns the first non-NULL argument in projection execution. The same catalog exposes arithmetic, comparison, boolean, and unary-sign operator descriptors through `SHOW OPERATORS`; only executable callables are listed.
 
 ---
 
@@ -180,7 +180,7 @@ The binder (`src/query/planner/Binder.cpp`) performs name resolution:
 3. Column references in `SELECT`, `WHERE`, and `ON` clauses are resolved to `(table_alias, column_name)` pairs.
 4. Each `WHERE` predicate is bound to a `PlannerPredicate` carrying the resolved column type and operator-support sets.
 5. `attr.<key>` column references resolve to dynamic attribute access; they default to string type and support all text operators.
-6. A required-column check ensures that any column with `required = true` (e.g., `mldp.time_series.pv`) is covered by a pushable predicate or an equi-join key.
+6. A required-column check ensures that any column with `required = true` (e.g., `mldp.active_configurations.at`) is covered by a pushable predicate or an equi-join key.
 
 ### Join optimization passes
 
@@ -450,8 +450,8 @@ a time-series request is made.
 | Column | Pushable ops | Notes |
 |---|---|---|
 | `pv` | `=`, `IN` | **Required.** Sent as `QueryPvStatsRequest.pvNameList`. |
-| `first_timestamp` | — | First recorded sample. |
-| `last_timestamp` | — | Last recorded sample. |
+| `start_time` | — | First recorded sample. |
+| `end_time` | — | Last recorded sample. |
 | `num_buckets` | — | Total bucket count. |
 
 ### `mldp.pv_metadata` — `MLDPAnnotationQueryClient`
@@ -484,7 +484,7 @@ An unfiltered query lists all configurations. Predicates narrow that list on the
 
 | Column | Pushable ops | Notes |
 |---|---|---|
-| `time` | `=`, `!=`, `<`, `<=`, `>`, `>=` | Activation start time; annotation-service candidates are locally verified. |
+| `start_time` | `=`, `!=`, `<`, `<=`, `>`, `>=` | Activation start time; annotation-service candidates are locally verified. |
 | `end_time` | `=`, `!=`, `<`, `<=`, `>`, `>=`, `IS NULL`, `IS NOT NULL` (local) | Activation end time; null means open. |
 | `config_name` | `=`, `IN` | Configuration name criterion. |
 | `activation_id` | `=`, `IN` | Client activation ID criterion. |
@@ -498,7 +498,7 @@ At least one predicate is required. Timestamp predicates are evaluated locally a
 | `at` | `=` | **Required.** Maps to `GetActiveConfigurationsRequest.timestamp`. |
 | `name` | — | Active configuration name. |
 | `activation_id` | — | Activation identifier. |
-| `time` | — | Activation start time. |
+| `start_time` | — | Activation start time. |
 
 Exactly one `at = <epoch>` predicate required. Pagination not supported.
 

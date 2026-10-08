@@ -42,6 +42,7 @@
 #include <mutex>
 #include <random>
 #include <set>
+#include <regex>
 #include <sstream>
 #include <thread>
 #include <unordered_set>
@@ -134,6 +135,7 @@ public:
     inline static uint64_t                          stream_creations{0};
     inline static uint64_t                          next_calls{0};
     inline static std::vector<std::vector<int64_t>> batches{{1, 2, 3}, {4, 5}};
+    inline static std::vector<uint64_t>             scan_row_limits{};
 
     explicit ContinuationPageQueryable(const config::Config&, std::shared_ptr<metrics::Metrics> = nullptr)
     {
@@ -154,9 +156,10 @@ public:
     query::IRecordBatchStreamUPtr executeStream(std::string_view,
                                                const std::vector<query::Predicate>&,
                                                const std::set<std::string>&,
-                                               const query::ExecutionContext&) override
+                                               const query::ExecutionContext& context) override
     {
         ++stream_creations;
+        scan_row_limits.push_back(context.scan_row_limit);
 
         class Stream final : public query::IRecordBatchStream
         {
@@ -313,7 +316,7 @@ public:
             return {{"pv", query::ColumnType::STRING, false, true, {}, {}, "PV"},
                     {"attributes.dname", query::ColumnType::STRING, false, true, {}, {query::PredicateOp::PREFIX}, "display name"}};
         if (table_name == "mldp.configuration_activation")
-            return {{"time", query::ColumnType::TIMESTAMP, false, true, {}, {}, "activation time"},
+            return {{"start_time", query::ColumnType::TIMESTAMP, false, true, {}, {}, "activation time"},
                     {"activation_id", query::ColumnType::STRING, false, true, {query::PredicateOp::EQ}, {}, "activation ID"}};
         return {{"pv", query::ColumnType::STRING, true, true, {query::PredicateOp::EQ, query::PredicateOp::IN}, {}, "PV"},
                 {"time", query::ColumnType::TIMESTAMP, false, true, {query::PredicateOp::GTE, query::PredicateOp::LTE}, {}, "time"},
@@ -354,7 +357,7 @@ public:
             if (!time.Finish(&time_array).ok() || !activation_id.Finish(&activation_id_array).ok())
                 throw std::runtime_error("Failed to finish delayed activation batch");
             auto batch = arrow::RecordBatch::Make(
-                arrow::schema({arrow::field("time", time_array->type()), arrow::field("activation_id", activation_id_array->type())}),
+                arrow::schema({arrow::field("start_time", time_array->type()), arrow::field("activation_id", activation_id_array->type())}),
                 1, {time_array, activation_id_array});
             return std::make_unique<query::executor::MaterializedRecordBatchStream>(query::executor::RecordBatches{std::move(batch)});
         }
@@ -451,7 +454,69 @@ public:
     }
 };
 
+/** @brief Annotation-style table whose stream counts how many pages the executor pulls. */
+class LazyMetadataQueryable final : public query::IQueryable
+{
+public:
+    static const std::set<std::string_view> kVirtualTables;
+    inline static uint64_t                  next_calls{0};
+    inline static std::size_t               page_count{8};
+
+    explicit LazyMetadataQueryable(const config::Config&, std::shared_ptr<metrics::Metrics> = nullptr)
+    {
+    }
+
+    std::set<std::string_view> virtualTables() const override
+    {
+        return kVirtualTables;
+    }
+
+    std::vector<query::ColumnSchema> tableSchema(std::string_view) const override
+    {
+        return {{"pv", query::ColumnType::STRING, false, true, {query::PredicateOp::EQ}, {}, "PV"},
+                {"alias", query::ColumnType::STRING, false, true, {}, {}, "Alias"}};
+    }
+
+    query::IRecordBatchStreamUPtr executeStream(std::string_view,
+                                               const std::vector<query::Predicate>&,
+                                               const std::set<std::string>&,
+                                               const query::ExecutionContext&) override
+    {
+        class Stream final : public query::IRecordBatchStream
+        {
+        public:
+            std::shared_ptr<arrow::RecordBatch> next() override
+            {
+                ++LazyMetadataQueryable::next_calls;
+                if (page_++ >= LazyMetadataQueryable::page_count)
+                    return nullptr;
+                arrow::StringBuilder pv_builder;
+                arrow::StringBuilder alias_builder;
+                for (int index = 0; index < 2; ++index)
+                {
+                    const auto suffix = std::to_string(page_ * 10 + index);
+                    if (!pv_builder.Append("PV:" + suffix).ok() || !alias_builder.Append("ALIAS:" + suffix).ok())
+                        throw std::runtime_error("Failed to build metadata test batch");
+                }
+                std::shared_ptr<arrow::Array> pv;
+                std::shared_ptr<arrow::Array> alias;
+                if (!pv_builder.Finish(&pv).ok() || !alias_builder.Finish(&alias).ok())
+                    throw std::runtime_error("Failed to finish metadata test batch");
+                return arrow::RecordBatch::Make(arrow::schema({arrow::field("pv", pv->type()), arrow::field("alias", alias->type())}),
+                                                pv->length(),
+                                                {pv, alias});
+            }
+
+        private:
+            std::size_t page_{0};
+        };
+
+        return std::make_unique<Stream>();
+    }
+};
+
 const std::set<std::string_view> ReplFakeQueryable::kVirtualTables = {"fake.samples"};
+const std::set<std::string_view> LazyMetadataQueryable::kVirtualTables = {"mldp.pv_metadata"};
 const std::set<std::string_view> ContinuationPageQueryable::kVirtualTables = {"mldp.time_series"};
 const std::set<std::string_view> SustainedWindowQueryable::kVirtualTables = {"mldp.time_series"};
 const std::set<std::string_view> DelayedWideWindowQueryable::kVirtualTables = {
@@ -696,6 +761,72 @@ TEST(QueryRunnerTest, HandlesExactBackendPageBoundariesAndEmptyBatches)
     EXPECT_NE(empty_batch_output.str().find("\"value\":22"), std::string::npos);
     EXPECT_EQ(ContinuationPageQueryable::next_calls, 2U);
     EXPECT_NE(empty_batch_output.str().find("p9:"), std::string::npos);
+    query::QueryableFactory::instance().reset();
+}
+
+TEST(QueryRunnerTest, KeepsBackendStreamUnboundedWhileInteractivePagingAndBoundsItOtherwise)
+{
+    query::QueryableFactory::instance().reset();
+    ContinuationPageQueryable::scan_row_limits.clear();
+    ContinuationPageQueryable::batches = {{1, 2}, {3, 4}};
+    query::QueryableFactory::instance().prepare<ContinuationPageQueryable>(config::Config::configFromYamlString("{}"));
+    cli::QueryRunner           runner;
+    const cli::QueryCliOptions options{.format = cli::QueryOutputFormat::Json, .no_stats = true};
+    const std::string          sql = "SELECT pv, time, value FROM mldp.time_series WHERE pv = 'CONT:PV' LIMIT 2";
+
+    // In the REPL, LIMIT is a page size: the backend stream must stay unbounded so the
+    // continuation token can resume it, and page two must still deliver rows.
+    cli::QueryContinuationRegistry continuations;
+    std::ostringstream             first_output;
+    ASSERT_EQ(runner.run(options, sql, first_output, nullptr, std::nullopt, false, nullptr, nullptr, nullptr, &continuations), 0);
+    ASSERT_EQ(ContinuationPageQueryable::scan_row_limits.size(), 1U);
+    EXPECT_EQ(ContinuationPageQueryable::scan_row_limits.front(), 0U);
+    const auto marker = first_output.str().find("p9:");
+    ASSERT_NE(marker, std::string::npos);
+    const auto token = first_output.str().substr(marker, first_output.str().find('\n', marker) - marker);
+
+    std::ostringstream second_output;
+    ASSERT_EQ(runner.run(options, sql + " PAGE TOKEN '" + token + "'", second_output, nullptr, std::nullopt, false, nullptr, nullptr, nullptr, &continuations), 0);
+    EXPECT_NE(second_output.str().find("\"value\":3"), std::string::npos);
+    EXPECT_NE(second_output.str().find("\"value\":4"), std::string::npos);
+    EXPECT_EQ(ContinuationPageQueryable::scan_row_limits.size(), 1U);
+
+    // Without a continuation registry, LIMIT is a row cap and reaches the backend.
+    ContinuationPageQueryable::scan_row_limits.clear();
+    std::ostringstream one_shot_output;
+    ASSERT_EQ(runner.run(options, sql, one_shot_output, nullptr, std::nullopt, false, nullptr, nullptr, nullptr, nullptr), 0);
+    ASSERT_EQ(ContinuationPageQueryable::scan_row_limits.size(), 1U);
+    EXPECT_EQ(ContinuationPageQueryable::scan_row_limits.front(), 2U);
+    query::QueryableFactory::instance().reset();
+}
+
+TEST(QueryRunnerTest, StreamsPlainBackendScansOnNonTimeSeriesTablesInsteadOfDrainingEveryPage)
+{
+    query::QueryableFactory::instance().reset();
+    LazyMetadataQueryable::next_calls = 0;
+    LazyMetadataQueryable::page_count = 8;
+    query::QueryableFactory::instance().prepare<LazyMetadataQueryable>(config::Config::configFromYamlString("{}"));
+    cli::QueryRunner               runner;
+    cli::QueryContinuationRegistry continuations;
+    const cli::QueryCliOptions     options{.format = cli::QueryOutputFormat::Json, .no_stats = true};
+    const std::string              sql = "SELECT pv, alias FROM mldp.pv_metadata LIMIT 2";
+
+    std::ostringstream first_output;
+    ASSERT_EQ(runner.run(options, sql, first_output, nullptr, std::nullopt, false, nullptr, nullptr, nullptr, &continuations), 0);
+    // One page satisfies the two requested rows, so the remaining seven are never fetched.
+    EXPECT_EQ(LazyMetadataQueryable::next_calls, 1U);
+    EXPECT_NE(first_output.str().find("PV:10"), std::string::npos);
+    EXPECT_NE(first_output.str().find("PV:11"), std::string::npos);
+    EXPECT_EQ(first_output.str().find("PV:20"), std::string::npos);
+
+    const auto marker = first_output.str().find("p9:");
+    ASSERT_NE(marker, std::string::npos);
+    const auto token = first_output.str().substr(marker, first_output.str().find('\n', marker) - marker);
+
+    std::ostringstream second_output;
+    ASSERT_EQ(runner.run(options, sql + " PAGE TOKEN '" + token + "'", second_output, nullptr, std::nullopt, false, nullptr, nullptr, nullptr, &continuations), 0);
+    EXPECT_EQ(LazyMetadataQueryable::next_calls, 2U);
+    EXPECT_NE(second_output.str().find("PV:20"), std::string::npos);
     query::QueryableFactory::instance().reset();
 }
 
@@ -1198,7 +1329,7 @@ TEST(QueryFormatterTest, DisplaysActiveDenseUnionMembersWithoutArrowDiagnostics)
     EXPECT_EQ(expanded.str().find("union{"), std::string::npos);
 }
 
-TEST(QueryFormatterTest, FitsTableValuesAndHeadersToExplicitViewport)
+TEST(QueryFormatterTest, WrapsTableValuesAndHeadersToExplicitViewport)
 {
     arrow::StringBuilder first_builder;
     arrow::StringBuilder second_builder;
@@ -1222,14 +1353,187 @@ TEST(QueryFormatterTest, FitsTableValuesAndHeadersToExplicitViewport)
                            cli::TableRenderOptions{.viewport_width = 25});
 
     const auto rendered = output.str();
-    EXPECT_NE(rendered.find("firs...lumn"), std::string::npos);
-    EXPECT_NE(rendered.find("pref...ffix"), std::string::npos);
+    EXPECT_EQ(rendered.find("..."), std::string::npos);
+    EXPECT_NE(rendered.find("first_very_"), std::string::npos);
+    EXPECT_NE(rendered.find("prefix-"), std::string::npos);
+    EXPECT_NE(rendered.find("suffix"), std::string::npos);
     std::istringstream lines(rendered);
     std::string        line;
+    std::size_t        line_count = 0;
     while (std::getline(lines, line))
     {
         EXPECT_LE(line.size(), 25U);
+        ++line_count;
     }
+    // Header and value each wrap onto several lines.
+    EXPECT_GT(line_count, 4U);
+}
+
+TEST(QueryFormatterTest, WrapsAtWordBoundariesAndCapsLongCells)
+{
+    arrow::StringBuilder name_builder;
+    arrow::StringBuilder notes_builder;
+    ASSERT_TRUE(name_builder.Append("start_time").ok());
+    ASSERT_TRUE(notes_builder.Append("Activation start time; backend candidate set is locally verified").ok());
+    ASSERT_TRUE(name_builder.Append("huge").ok());
+    ASSERT_TRUE(notes_builder.Append(std::string(200, 'x')).ok());
+    std::shared_ptr<arrow::Array> names;
+    std::shared_ptr<arrow::Array> notes;
+    ASSERT_TRUE(name_builder.Finish(&names).ok());
+    ASSERT_TRUE(notes_builder.Finish(&notes).ok());
+    const auto batch = arrow::RecordBatch::Make(
+        arrow::schema({arrow::field("name", arrow::utf8()), arrow::field("notes", arrow::utf8())}), 2, {names, notes});
+    const query::QueryExecutionResult result{.batches = {batch}};
+
+    std::ostringstream output;
+    cli::formatQueryResult(result,
+                           cli::QueryOutputFormat::Table,
+                           output,
+                           false,
+                           cli::TableRenderOptions{.viewport_width = 40, .max_cell_chars = 100});
+
+    const auto rendered = output.str();
+    // Short column keeps its natural width; words are not split.
+    EXPECT_NE(rendered.find("start_time | Activation start time;"), std::string::npos);
+    EXPECT_NE(rendered.find("           | backend candidate set is"), std::string::npos);
+    EXPECT_NE(rendered.find("           | locally verified"), std::string::npos);
+    EXPECT_NE(rendered.find("xxx..."), std::string::npos);
+    EXPECT_EQ(std::count(rendered.begin(), rendered.end(), 'x'), 97);
+    std::istringstream lines(rendered);
+    std::string        line;
+    while (std::getline(lines, line))
+        EXPECT_LE(line.size(), 40U);
+}
+
+TEST(QueryFormatterTest, AlignsColumnsByDisplayWidthForWideCharacters)
+{
+    // Each value has the same on-screen width (10 columns) but different byte lengths.
+    arrow::StringBuilder name_builder;
+    arrow::StringBuilder other_builder;
+    for (const auto* value : {"plain text", "\xe2\x9d\x8c\xe2\x9d\x8c gun x", "\xe6\xbc\xa2\xe5\xad\x97 abcde"})
+    {
+        ASSERT_TRUE(name_builder.Append(value).ok());
+        ASSERT_TRUE(other_builder.Append("z").ok());
+    }
+    std::shared_ptr<arrow::Array> names;
+    std::shared_ptr<arrow::Array> others;
+    ASSERT_TRUE(name_builder.Finish(&names).ok());
+    ASSERT_TRUE(other_builder.Finish(&others).ok());
+    const auto batch = arrow::RecordBatch::Make(arrow::schema({arrow::field("name", arrow::utf8()), arrow::field("other", arrow::utf8())}), 3, {names, others});
+    const query::QueryExecutionResult result{.batches = {batch}};
+
+    for (const std::optional<std::size_t> viewport : {std::optional<std::size_t>{}, std::optional<std::size_t>{40}})
+    {
+        std::ostringstream output;
+        cli::formatQueryResult(result, cli::QueryOutputFormat::Table, output, false, cli::TableRenderOptions{.viewport_width = viewport});
+        std::istringstream lines(output.str());
+        std::string        line;
+        std::getline(lines, line); // header
+        std::getline(lines, line); // separator
+        std::optional<std::size_t> expected;
+        while (std::getline(lines, line))
+        {
+            // The divider sits after the 10-column value plus padding, whatever the byte count.
+            const auto divider = line.find(" | ");
+            ASSERT_NE(divider, std::string::npos) << line;
+            const auto prefix = line.substr(0, divider);
+            std::size_t columns = 0;
+            for (std::size_t i = 0; i < prefix.size(); ++i)
+            {
+                const auto byte = static_cast<unsigned char>(prefix[i]);
+                if ((byte & 0xC0) == 0x80) continue;
+                columns += byte >= 0xE2 ? 2 : 1;
+            }
+            if (!viewport) EXPECT_EQ(columns, 10U) << line;
+            if (!expected) expected = columns;
+            EXPECT_EQ(columns, *expected) << line;
+        }
+    }
+}
+
+TEST(QueryFormatterTest, StreamedTableKeepsOneFullWidthLayoutAcrossBatches)
+{
+    const auto make_batch = [](const std::vector<std::string>& values) {
+        arrow::StringBuilder name_builder;
+        arrow::StringBuilder time_builder;
+        for (const auto& value : values)
+        {
+            EXPECT_TRUE(name_builder.Append(value).ok());
+            EXPECT_TRUE(time_builder.Append("2025-02-28 16:30:00Z").ok());
+        }
+        std::shared_ptr<arrow::Array> names;
+        std::shared_ptr<arrow::Array> times;
+        EXPECT_TRUE(name_builder.Finish(&names).ok());
+        EXPECT_TRUE(time_builder.Finish(&times).ok());
+        return arrow::RecordBatch::Make(arrow::schema({arrow::field("config_name", arrow::utf8()), arrow::field("start_time", arrow::utf8())}),
+                                        static_cast<int64_t>(values.size()), {names, times});
+    };
+    query::executor::MaterializedRecordBatchStream stream(query::executor::RecordBatches{
+        make_batch({}), make_batch({"XLEAP"}), make_batch({"FEL recovery from XLEAP, Badger tuning/training"}), make_batch({"HXR XLEAP"})});
+
+    std::ostringstream output;
+    cli::formatQueryStream(stream, cli::QueryOutputFormat::Table, output, false, cli::TableRenderOptions{.viewport_width = 60});
+
+    const auto rendered = output.str();
+    EXPECT_EQ(rendered.find("config_name"), rendered.rfind("config_name"));
+    std::istringstream lines(rendered);
+    std::string        line;
+    std::size_t        divider = std::string::npos;
+    while (std::getline(lines, line))
+    {
+        // Every line spans the viewport and every row shares the header's divider column.
+        EXPECT_EQ(line.size(), 60U) << line;
+        const auto position = line.find(line.find("-+-") != std::string::npos ? "-+-" : " | ");
+        if (divider == std::string::npos) divider = position;
+        EXPECT_EQ(position, divider) << line;
+    }
+}
+
+TEST(QueryFormatterTest, ColorTableKeepsPlainLayoutWhenEscapesStripped)
+{
+    arrow::StringBuilder builder;
+    ASSERT_TRUE(builder.Append("value").ok());
+    ASSERT_TRUE(builder.AppendNull().ok());
+    std::shared_ptr<arrow::Array> column;
+    ASSERT_TRUE(builder.Finish(&column).ok());
+    const auto batch = arrow::RecordBatch::Make(
+        arrow::schema({arrow::field("name", arrow::utf8()), arrow::field("other", arrow::utf8())}), 2, {column, column});
+    const query::QueryExecutionResult result{.batches = {batch}};
+
+    std::ostringstream plain;
+    cli::formatQueryResult(result, cli::QueryOutputFormat::Table, plain, false, cli::TableRenderOptions{});
+    std::ostringstream colored;
+    cli::formatQueryResult(result, cli::QueryOutputFormat::Table, colored, false, cli::TableRenderOptions{.color = true});
+
+    EXPECT_EQ(plain.str().find('\x1b'), std::string::npos);
+    EXPECT_NE(colored.str().find("\x1b[1;36mname "), std::string::npos);
+    const auto stripped = std::regex_replace(colored.str(), std::regex("\x1b\\[[0-9;]*m"), "");
+    EXPECT_EQ(stripped, plain.str());
+}
+
+TEST(ReplHighlightTest, ClassifiesSqlTokens)
+{
+    using Kind = cli::detail::ReplHighlight;
+    const std::string sql = "select count(*) from t where x = 'a b' and y > 42 -- note";
+    const auto        kinds = cli::detail::replHighlight(sql);
+    ASSERT_EQ(kinds.size(), sql.size());
+    EXPECT_EQ(kinds[sql.find("select")], Kind::Keyword);
+    EXPECT_EQ(kinds[sql.find("count")], Kind::Function);
+    EXPECT_EQ(kinds[sql.find("from")], Kind::Keyword);
+    EXPECT_EQ(kinds[sql.find(" t ") + 1], Kind::Default);
+    EXPECT_EQ(kinds[sql.find("'a b'") + 2], Kind::String);
+    EXPECT_EQ(kinds[sql.find("42")], Kind::Number);
+    EXPECT_EQ(kinds[sql.find("note")], Kind::Comment);
+    const auto command = cli::detail::replHighlight(".color on");
+    EXPECT_EQ(command.back(), Kind::Command);
+    const auto unterminated = cli::detail::replHighlight("x = 'abc");
+    EXPECT_EQ(unterminated.back(), Kind::String);
+    const std::string window = "lag(v) over (partition by pv order by t rows 1 preceding)";
+    const auto        window_kinds = cli::detail::replHighlight(window);
+    EXPECT_EQ(window_kinds[window.find("lag")], Kind::Function);
+    EXPECT_EQ(window_kinds[window.find("over")], Kind::Keyword);
+    EXPECT_EQ(window_kinds[window.find("partition")], Kind::Keyword);
+    EXPECT_EQ(window_kinds[window.find("preceding")], Kind::Keyword);
 }
 
 TEST(QueryFormatterTest, UsesStackedLayoutWhenViewportCannotFitAllColumns)
@@ -1253,8 +1557,11 @@ TEST(QueryFormatterTest, UsesStackedLayoutWhenViewportCannotFitAllColumns)
                            false,
                            cli::TableRenderOptions{.viewport_width = 3});
 
-    EXPECT_NE(output.str().find("..."), std::string::npos);
     EXPECT_EQ(output.str().find(" | "), std::string::npos);
+    std::istringstream lines(output.str());
+    std::string        line;
+    while (std::getline(lines, line))
+        EXPECT_LE(line.size(), 3U);
 }
 
 TEST(QueryCommandTest, PreparesBothSupportedQueryableShapes)
@@ -1323,7 +1630,7 @@ TEST(QueryCommandTest, EnforcesTheSpecialTimeSeriesTableSelectStarContract)
     for (const std::string_view sql : {
              "SELECT time FROM mldp.time_series_table WHERE pv = 'SYS:MAGNET:CURRENT'",
              "SELECT * FROM mldp.time_series_table WHERE pv = 'SYS:MAGNET:CURRENT' ORDER BY time",
-             "SELECT * FROM mldp.time_series_table ts INNER JOIN mldp.pv_stats stats ON ts.time = stats.first_timestamp " "WHERE ts.pv = 'SYS:MAGNET:CURRENT' AND stats.pv = 'SYS:MAGNET:CURRENT'"})
+             "SELECT * FROM mldp.time_series_table ts INNER JOIN mldp.pv_stats stats ON ts.time = stats.start_time " "WHERE ts.pv = 'SYS:MAGNET:CURRENT' AND stats.pv = 'SYS:MAGNET:CURRENT'"})
     {
         try
         {
@@ -1348,7 +1655,7 @@ TEST(QueryCommandTest, PlansTimeSeriesPvAndWindowSubqueries)
     preparer.prepare(config);
 
     const auto plan = query::QueryPlanner{}.plan(query::parseQuery(
-        "SELECT * FROM mldp.time_series_table " "WHERE pv IN (SELECT pv FROM mldp.pv_metadata WHERE tag = 'magnet') " "AND window IN (SELECT activation.time, activation.end_time " "FROM mldp.configuration_activation activation " "INNER JOIN mldp.configuration configuration ON activation.config_name = configuration.name " "WHERE configuration.category = 'beam_mode' AND activation.end_time IS NOT NULL)"));
+        "SELECT * FROM mldp.time_series_table " "WHERE pv IN (SELECT pv FROM mldp.pv_metadata WHERE tag = 'magnet') " "AND window IN (SELECT activation.start_time, activation.end_time " "FROM mldp.configuration_activation activation " "INNER JOIN mldp.configuration configuration ON activation.config_name = configuration.name " "WHERE configuration.category = 'beam_mode' AND activation.end_time IS NOT NULL)"));
     const auto plan_text = query::plan::physicalPlanToString(plan);
     EXPECT_NE(plan_text.find("PhysicalPivot(columns=0, batch_size=4096)"), std::string::npos);
     EXPECT_NE(plan_text.find("PhysicalTableScan(table=mldp.time_series"), std::string::npos);
@@ -1356,7 +1663,7 @@ TEST(QueryCommandTest, PlansTimeSeriesPvAndWindowSubqueries)
     EXPECT_NE(plan_text.find("window_subquery=true"), std::string::npos);
 
     const auto long_plan = query::QueryPlanner{}.plan(query::parseQuery(
-        "SELECT pv, time, value FROM mldp.time_series " "WHERE pv IN (SELECT pv FROM mldp.pv_metadata WHERE tag = 'magnet') " "AND window IN (SELECT activation.time, activation.end_time " "FROM mldp.configuration_activation activation " "INNER JOIN mldp.configuration configuration ON activation.config_name = configuration.name " "WHERE configuration.category = 'beam_mode' AND activation.end_time IS NOT NULL)"));
+        "SELECT pv, time, value FROM mldp.time_series " "WHERE pv IN (SELECT pv FROM mldp.pv_metadata WHERE tag = 'magnet') " "AND window IN (SELECT activation.start_time, activation.end_time " "FROM mldp.configuration_activation activation " "INNER JOIN mldp.configuration configuration ON activation.config_name = configuration.name " "WHERE configuration.category = 'beam_mode' AND activation.end_time IS NOT NULL)"));
     const auto long_plan_text = query::plan::physicalPlanToString(long_plan);
     EXPECT_NE(long_plan_text.find("PhysicalTableScan(table=mldp.time_series"), std::string::npos);
     EXPECT_NE(long_plan_text.find("in_subqueries=1"), std::string::npos);
@@ -1457,7 +1764,7 @@ TEST(QueryCommandTest, DescribesAndPlansLiteralTimeSeriesWindows)
              "SELECT * FROM mldp.time_series_table WHERE pv = 'P' AND window IN ('start', 'end')",
              "SELECT * FROM mldp.time_series_table WHERE pv = 'P' AND window IN (10, 'end')",
              "SELECT pv FROM mldp.pv_stats WHERE pv = 'P' AND window IN (10, 20)",
-             "SELECT * FROM mldp.time_series_table WHERE pv = 'P' AND window IN (10, 20) AND window IN (SELECT time, end_time FROM mldp.configuration_activation)"})
+             "SELECT * FROM mldp.time_series_table WHERE pv = 'P' AND window IN (10, 20) AND window IN (SELECT start_time, end_time FROM mldp.configuration_activation)"})
     {
         EXPECT_THROW((void)planner.plan(query::parseQuery(std::string(sql))), query::plan::PlannerException) << sql;
     }
@@ -1550,6 +1857,30 @@ TEST(QueryCommandTest, ReplShowsHelpAndExitsOnQuit)
     EXPECT_NE(output.str().find("Ctrl-L (clear screen)"), std::string::npos);
     EXPECT_NE(output.str().find(".pager [on|off]"), std::string::npos);
     EXPECT_TRUE(error.str().empty());
+}
+
+TEST(QueryCommandTest, ReplHelpTopicsPrintDetailsAndRejectUnknownTopics)
+{
+    char                 arg0[] = "query";
+    char*                argv[] = {arg0};
+    cli::QueryCommand querySubcommand(g_query_command_listener);
+    std::istringstream   input(".help\n.help matching\n.help GROUPING\n.help tables\n.help timeseries\n.help bogus\n.quit\n");
+    std::ostringstream   output;
+    std::ostringstream   error;
+
+    const std::vector<std::string> config_sources{
+        "queryable.mldp.query-url=localhost:2",
+        "queryable.mldp.min-conn=1",
+        "queryable.mldp.max-conn=1"};
+    EXPECT_EQ(querySubcommand.run(1, argv, config_sources, input, output, error), 0);
+    EXPECT_NE(output.str().find("Help topics: .help <topic>"), std::string::npos);
+    EXPECT_NE(output.str().find("col PREFIX 'abc'"), std::string::npos);
+    EXPECT_NE(output.str().find("HAVING"), std::string::npos);
+    EXPECT_NE(output.str().find("DESCRIBE <table>;"), std::string::npos);
+    EXPECT_NE(output.str().find("RANGE BETWEEN 5m PRECEDING AND CURRENT ROW"), std::string::npos);
+    EXPECT_EQ(output.str().find("\x1b["), std::string::npos);
+    EXPECT_NE(error.str().find("unknown help topic 'bogus'"), std::string::npos);
+    EXPECT_NE(error.str().find("matching"), std::string::npos);
 }
 
 TEST(QueryCommandTest, ReplPagerCanBeConfiguredWithoutChangingNonTtyOutput)
@@ -1671,7 +2002,7 @@ TEST(QueryCommandTest, ReplTableFitCanBeChangedAndReported)
     char                           arg0[] = "query";
     char*                          argv[] = {arg0};
     cli::QueryCommand           querySubcommand(g_query_command_listener);
-    std::istringstream             input(".table-fit\n.table-fit on\n.table-fit\n.table-fit invalid\n.quit\n");
+    std::istringstream             input(".table-fit\n.table-fit off\n.table-fit\n.table-fit invalid\n.quit\n");
     std::ostringstream             output;
     std::ostringstream             error;
     const std::vector<std::string> config_sources{
@@ -1713,6 +2044,9 @@ TEST(QueryCompletionTest, CompletesCommandsKeywordsTablesAndColumns)
     EXPECT_EQ(cli::detail::replCompletions("sel"), std::vector<std::string>({"SELECT"}));
     EXPECT_EQ(cli::detail::replCompletions(".for"), std::vector<std::string>({".format"}));
     EXPECT_EQ(cli::detail::replCompletions(".format j"), std::vector<std::string>({"json"}));
+    EXPECT_EQ(cli::detail::replCompletions(".help ma"), std::vector<std::string>({"matching"}));
+    EXPECT_EQ(cli::detail::replCompletions(".help ti"), std::vector<std::string>({"timeseries"}));
+    EXPECT_EQ(cli::detail::replCompletions("SELECT LAG(v) OV"), std::vector<std::string>({"OVER"}));
     EXPECT_EQ(cli::detail::replCompletions(".pager o"), std::vector<std::string>({"off", "on"}));
     const auto tables = cli::detail::replCompletions("SELECT * FROM mldp.t");
     EXPECT_NE(std::find(tables.begin(), tables.end(), "mldp.time_series"), tables.end());
@@ -1720,6 +2054,7 @@ TEST(QueryCompletionTest, CompletesCommandsKeywordsTablesAndColumns)
     EXPECT_NE(std::find(columns.begin(), columns.end(), "ts.pv"), columns.end());
     EXPECT_TRUE(cli::detail::replCompletions("SELECT 'sel").empty());
     EXPECT_EQ(cli::detail::replCompletionContextLength("SELECT ts.p"), 4);
+    EXPECT_EQ(cli::detail::replCompletions(".color o"), std::vector<std::string>({"off", "on"}));
 
     query::QueryableFactory::instance().reset();
 }
@@ -1821,7 +2156,7 @@ TEST(QueryCommandTest, ReplRecognisesWindowShardSeparatorInsideNestedParentheses
     char*                argv[] = {arg0};
     cli::QueryCommand querySubcommand(g_query_command_listener);
     std::istringstream   input(
-        "SELECT *\n" "FROM mldp.time_series_table\n" "WHERE pv IN (SELECT pv FROM mldp.pv_metadata WHERE attributes.dname PREFIX 'USEG:UNDH' LIMIT 2)\n" "AND window IN (SELECT time, time + 30s FROM mldp.configuration_activation " "WHERE time >= NOW - 120d AND config_name = 'SPEAR User' LIMIT 1; slice 15s, series_per_shard 2);\n" ".quit\n");
+        "SELECT *\n" "FROM mldp.time_series_table\n" "WHERE pv IN (SELECT pv FROM mldp.pv_metadata WHERE attributes.dname PREFIX 'USEG:UNDH' LIMIT 2)\n" "AND window IN (SELECT start_time, start_time + 30s FROM mldp.configuration_activation " "WHERE start_time >= NOW - 120d AND config_name = 'SPEAR User' LIMIT 1; slice 15s, series_per_shard 2);\n" ".quit\n");
     std::ostringstream             output;
     std::ostringstream             error;
     const std::vector<std::string> config_sources{
@@ -1877,7 +2212,7 @@ TEST(QueryCommandTest, ReplStreamsProductionWideWindowAcrossStaggeredMockRespons
     arg7.push_back('\0');
     char*              argv[] = {arg0, arg1, arg2, arg3.data(), arg4, arg5.data(), arg6, arg7.data()};
     std::istringstream input(
-        ".format json\n" "SELECT * FROM mldp.time_series_table " "WHERE pv IN (SELECT pv FROM mldp.pv_metadata WHERE attributes.dname PREFIX 'USEG:UNDH') " "AND window IN (SELECT time, time + 5s FROM mldp.configuration_activation " "WHERE activation_id = 'delayed-wide-window'; slice 5s, series_per_shard 2);\n" ".quit\n");
+        ".format json\n" "SELECT * FROM mldp.time_series_table " "WHERE pv IN (SELECT pv FROM mldp.pv_metadata WHERE attributes.dname PREFIX 'USEG:UNDH') " "AND window IN (SELECT start_time, start_time + 5s FROM mldp.configuration_activation " "WHERE activation_id = 'delayed-wide-window'; slice 5s, series_per_shard 2);\n" ".quit\n");
     std::ostringstream output;
     std::ostringstream error;
 

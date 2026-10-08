@@ -27,6 +27,12 @@
         std::vector<SelectItem>             items;
     };
 
+    /// WHERE split into top-level AND leaf conjuncts and OR/NOT subtrees.
+    struct WhereClauseValue {
+        std::vector<WherePredicate>     predicates;
+        std::vector<WherePredicateTree> groups;
+    };
+
     } // namespace mldp_pvxs_driver::query::generated
 }
 
@@ -136,6 +142,15 @@
         return values;
     }
 
+    static SelectStatement wrapAsDerived(SelectStatement inner)
+    {
+        SelectStatement outer;
+        outer.select_all = true;
+        outer.from = TableRef{.table_name = "<derived>", .alias = std::nullopt,
+                              .derived_query = std::make_shared<SelectStatement>(std::move(inner))};
+        return outer;
+    }
+
     static QueryBisonParser::symbol_type yylex(ParseContext& ctx)
     {
         Token token{
@@ -208,9 +223,24 @@
         case TokenType::PREFIX: return QueryBisonParser::make_PREFIX(location);
         case TokenType::CONTAINS: return QueryBisonParser::make_CONTAINS(location);
         case TokenType::ORDER: return QueryBisonParser::make_ORDER(location);
+        case TokenType::DISTINCT: return QueryBisonParser::make_DISTINCT(location);
+        case TokenType::GROUP: return QueryBisonParser::make_GROUP(location);
+        case TokenType::HAVING: return QueryBisonParser::make_HAVING(location);
         case TokenType::BY: return QueryBisonParser::make_BY(location);
         case TokenType::ASC: return QueryBisonParser::make_ASC(location);
         case TokenType::DESC: return QueryBisonParser::make_DESC(location);
+        case TokenType::OVER: return QueryBisonParser::make_OVER(location);
+        case TokenType::PARTITION: return QueryBisonParser::make_PARTITION(location);
+        case TokenType::WINDOW: return QueryBisonParser::make_WINDOW(location);
+        case TokenType::ROWS: return QueryBisonParser::make_ROWS(location);
+        case TokenType::RANGE: return QueryBisonParser::make_RANGE(location);
+        case TokenType::UNBOUNDED: return QueryBisonParser::make_UNBOUNDED(location);
+        case TokenType::PRECEDING: return QueryBisonParser::make_PRECEDING(location);
+        case TokenType::FOLLOWING: return QueryBisonParser::make_FOLLOWING(location);
+        case TokenType::CURRENT: return QueryBisonParser::make_CURRENT(location);
+        case TokenType::ROW: return QueryBisonParser::make_ROW(location);
+        case TokenType::UNION: return QueryBisonParser::make_UNION(location);
+        case TokenType::ALL: return QueryBisonParser::make_ALL(location);
         case TokenType::STAR: return QueryBisonParser::make_STAR(location);
         case TokenType::SLASH: return QueryBisonParser::make_SLASH(location);
         case TokenType::COMMA: return QueryBisonParser::make_COMMA(location);
@@ -248,7 +278,7 @@
 %token END_OF_INPUT 0
 %token <std::string> IDENTIFIER STRING_LITERAL DURATION_LITERAL
 %token <int64_t> NUMBER_LITERAL
-%token SELECT FROM WHERE IS AND OR NOT NULL_LITERAL IN LIKE BETWEEN LIMIT PAGE TOKEN SHOW TABLES FUNCTIONS OPERATORS DESCRIBE EXPLAIN AS INNER LEFT OUTER JOIN ON NOW PREFIX CONTAINS ORDER BY ASC DESC TRUE FALSE TIMESTAMP_NS DURATION_NS
+%token SELECT FROM WHERE IS AND OR NOT NULL_LITERAL IN LIKE BETWEEN LIMIT PAGE TOKEN SHOW TABLES FUNCTIONS OPERATORS DESCRIBE EXPLAIN AS INNER LEFT OUTER JOIN ON NOW PREFIX CONTAINS ORDER DISTINCT GROUP HAVING BY ASC DESC OVER PARTITION WINDOW ROWS RANGE UNBOUNDED PRECEDING FOLLOWING CURRENT ROW UNION ALL TRUE FALSE TIMESTAMP_NS DURATION_NS
 %token STAR SLASH COMMA SEMICOLON DOT LPAREN RPAREN PLUS MINUS EQ NEQ LT LTE GT GTE
 
 // Preserve NOW +/- duration convenience syntax while allowing ordinary
@@ -258,7 +288,9 @@
 %left PLUS MINUS
 
 %type <mldp_pvxs_driver::query::QueryStatement> statement
-%type <mldp_pvxs_driver::query::SelectStatement> select_stmt
+%type <mldp_pvxs_driver::query::SelectStatement> select_stmt select_core select_term
+%type <std::vector<mldp_pvxs_driver::query::SetOperand>> set_op_list
+%type <bool> union_all_opt
 %type <mldp_pvxs_driver::query::generated::SelectListValue> select_list
 %type <std::vector<mldp_pvxs_driver::query::SelectItem>> select_item_list
 %type <mldp_pvxs_driver::query::SelectItem> select_item
@@ -268,7 +300,8 @@
 %type <std::optional<std::string>> alias_opt
 %type <std::vector<mldp_pvxs_driver::query::JoinClause>> join_clauses
 %type <mldp_pvxs_driver::query::JoinClause> join_clause
-%type <std::vector<mldp_pvxs_driver::query::WherePredicate>> where_opt predicate_list
+%type <mldp_pvxs_driver::query::generated::WhereClauseValue> where_opt
+%type <mldp_pvxs_driver::query::WherePredicateTree> where_or where_and where_not
 %type <mldp_pvxs_driver::query::WherePredicate> predicate
 %type <std::vector<mldp_pvxs_driver::query::InPredicate::WindowShardOption>> window_option_list
 %type <mldp_pvxs_driver::query::InPredicate::WindowShardOption> window_option
@@ -278,9 +311,23 @@
 %type <mldp_pvxs_driver::query::ExpressionPtr> expression primary_expression unary_expression multiplicative_expression additive_expression comparison_expression and_expression or_expression legacy_expression
 %type <int64_t> signed_duration
 %type <std::optional<uint64_t>> limit_opt
+%type <std::vector<mldp_pvxs_driver::query::ExpressionPtr>> group_by_opt
+%type <mldp_pvxs_driver::query::ExpressionPtr> having_opt
+%type <mldp_pvxs_driver::query::DistinctClause> distinct_opt
 %type <std::optional<std::string>> page_opt
 %type <std::vector<mldp_pvxs_driver::query::OrderByItem>> order_by_opt order_by_list
 %type <mldp_pvxs_driver::query::OrderByItem> order_by_item
+%type <std::string> name
+%type <mldp_pvxs_driver::query::FunctionCall> function_call
+%type <mldp_pvxs_driver::query::WindowSpec> window_ref window_spec
+%type <std::optional<std::string>> window_base_opt
+%type <std::vector<mldp_pvxs_driver::query::ExpressionPtr>> window_partition_opt
+%type <std::vector<mldp_pvxs_driver::query::OrderByItem>> window_order_opt
+%type <std::optional<mldp_pvxs_driver::query::WindowFrame>> window_frame_opt
+%type <mldp_pvxs_driver::query::WindowFrameUnit> window_frame_unit
+%type <mldp_pvxs_driver::query::WindowFrameBound> window_frame_bound
+%type <std::vector<mldp_pvxs_driver::query::NamedWindow>> window_clause_opt named_window_list
+%type <mldp_pvxs_driver::query::NamedWindow> named_window
 
 %%
 
@@ -311,24 +358,175 @@ statement
     ;
 
 select_stmt
-    : SELECT select_list FROM table_ref join_clauses where_opt order_by_opt limit_opt page_opt
+    : select_term set_op_list order_by_opt limit_opt page_opt
+      {
+          auto statement = std::move($1);
+          const bool has_tail = !$3.empty() || $4.has_value() || $5.has_value();
+          const bool closed = !statement.order_by.empty() || statement.limit.has_value() || statement.page_token.has_value() || !statement.set_operations.empty();
+          // A parenthesised head that already owns ORDER BY / LIMIT / UNION keeps them by becoming a derived table.
+          if (closed && (!$2.empty() || has_tail)) statement = wrapAsDerived(std::move(statement));
+          statement.set_operations = std::move($2);
+          if (!$3.empty()) statement.order_by = std::move($3);
+          if ($4) statement.limit = std::move($4);
+          if ($5) statement.page_token = std::move($5);
+          $$ = std::move(statement);
+      }
+    ;
+
+select_term
+    : select_core
+      { $$ = std::move($1); }
+    | LPAREN select_stmt RPAREN
+      { $$ = std::move($2); }
+    ;
+
+set_op_list
+    : /* empty */
+      { $$ = {}; }
+    | set_op_list UNION union_all_opt select_term
+      {
+          $1.push_back(mldp_pvxs_driver::query::SetOperand{.all = $3, .query = std::make_shared<mldp_pvxs_driver::query::SelectStatement>(std::move($4))});
+          $$ = std::move($1);
+      }
+    ;
+
+union_all_opt
+    : /* empty */ { $$ = false; }
+    | ALL         { $$ = true; }
+    ;
+
+select_core
+    : SELECT distinct_opt select_list FROM table_ref join_clauses where_opt group_by_opt having_opt window_clause_opt
       {
           mldp_pvxs_driver::query::SelectStatement statement;
-          statement.select_all = $2.select_all;
-          statement.select_items = std::move($2.items);
+          statement.distinct = $2.distinct;
+          statement.distinct_on = std::move($2.on);
+          statement.select_all = $3.select_all;
+          statement.select_items = std::move($3.items);
           for (const auto& item : statement.select_items)
           {
               if (item.expression && std::holds_alternative<QualifiedColumn>(item.expression->value))
                   statement.columns.push_back(std::get<QualifiedColumn>(item.expression->value));
           }
-          statement.from = std::move($4);
-          statement.joins = std::move($5);
-          statement.predicates = std::move($6);
-          statement.order_by = std::move($7);
-          statement.limit = std::move($8);
-          statement.page_token = std::move($9);
+          statement.from = std::move($5);
+          statement.joins = std::move($6);
+          statement.predicates = std::move($7.predicates);
+          statement.predicate_groups = std::move($7.groups);
+          statement.group_by = std::move($8);
+          statement.having = std::move($9);
+          statement.named_windows = std::move($10);
           $$ = std::move(statement);
       }
+    ;
+
+distinct_opt
+    : /* empty */
+      { $$ = mldp_pvxs_driver::query::DistinctClause{}; }
+    | DISTINCT
+      { $$ = mldp_pvxs_driver::query::DistinctClause{.distinct = true, .on = {}}; }
+    | DISTINCT ON LPAREN expression_list RPAREN
+      { $$ = mldp_pvxs_driver::query::DistinctClause{.distinct = true, .on = std::move($4)}; }
+    ;
+
+group_by_opt
+    : /* empty */
+      { $$ = {}; }
+    | GROUP BY expression_list
+      { $$ = std::move($3); }
+    ;
+
+having_opt
+    : /* empty */
+      { $$ = nullptr; }
+    | HAVING expression
+      { $$ = std::move($2); }
+    ;
+
+window_clause_opt
+    : /* empty */
+      { $$ = {}; }
+    | WINDOW named_window_list
+      { $$ = std::move($2); }
+    ;
+
+named_window_list
+    : named_window
+      { $$ = std::vector<mldp_pvxs_driver::query::NamedWindow>{std::move($1)}; }
+    | named_window_list COMMA named_window
+      { $1.push_back(std::move($3)); $$ = std::move($1); }
+    ;
+
+named_window
+    : IDENTIFIER AS LPAREN window_spec RPAREN
+      { $$ = mldp_pvxs_driver::query::NamedWindow{.name = std::move($1), .spec = std::move($4)}; }
+    ;
+
+window_ref
+    : IDENTIFIER
+      { $$ = mldp_pvxs_driver::query::WindowSpec{.base_name = std::move($1), .partition_by = {}, .order_by = {}, .frame = std::nullopt}; }
+    | LPAREN window_spec RPAREN
+      { $$ = std::move($2); }
+    ;
+
+window_spec
+    : window_base_opt window_partition_opt window_order_opt window_frame_opt
+      {
+          $$ = mldp_pvxs_driver::query::WindowSpec{
+              .base_name = std::move($1), .partition_by = std::move($2), .order_by = std::move($3), .frame = std::move($4)};
+      }
+    ;
+
+window_base_opt
+    : /* empty */
+      { $$ = std::nullopt; }
+    | IDENTIFIER
+      { $$ = std::optional<std::string>{std::move($1)}; }
+    ;
+
+window_partition_opt
+    : /* empty */
+      { $$ = {}; }
+    | PARTITION BY expression_list
+      { $$ = std::move($3); }
+    ;
+
+window_order_opt
+    : /* empty */
+      { $$ = {}; }
+    | ORDER BY order_by_list
+      { $$ = std::move($3); }
+    ;
+
+window_frame_opt
+    : /* empty */
+      { $$ = std::nullopt; }
+    | window_frame_unit window_frame_bound
+      {
+          // Shorthand `ROWS <start>` means `BETWEEN <start> AND CURRENT ROW`.
+          $$ = mldp_pvxs_driver::query::WindowFrame{.unit = $1, .start = std::move($2), .end = {}};
+      }
+    | window_frame_unit BETWEEN window_frame_bound AND window_frame_bound
+      { $$ = mldp_pvxs_driver::query::WindowFrame{.unit = $1, .start = std::move($3), .end = std::move($5)}; }
+    ;
+
+window_frame_unit
+    : ROWS
+      { $$ = mldp_pvxs_driver::query::WindowFrameUnit::ROWS; }
+    | RANGE
+      { $$ = mldp_pvxs_driver::query::WindowFrameUnit::RANGE; }
+    ;
+
+window_frame_bound
+    : UNBOUNDED PRECEDING
+      { $$ = mldp_pvxs_driver::query::WindowFrameBound{.kind = mldp_pvxs_driver::query::WindowBoundKind::UNBOUNDED_PRECEDING, .offset = nullptr}; }
+    | UNBOUNDED FOLLOWING
+      { $$ = mldp_pvxs_driver::query::WindowFrameBound{.kind = mldp_pvxs_driver::query::WindowBoundKind::UNBOUNDED_FOLLOWING, .offset = nullptr}; }
+    | CURRENT ROW
+      { $$ = mldp_pvxs_driver::query::WindowFrameBound{.kind = mldp_pvxs_driver::query::WindowBoundKind::CURRENT_ROW, .offset = nullptr}; }
+    | additive_expression PRECEDING
+      { $$ = mldp_pvxs_driver::query::WindowFrameBound{.kind = mldp_pvxs_driver::query::WindowBoundKind::PRECEDING, .offset = std::move($1)}; }
+    | additive_expression FOLLOWING
+      { $$ = mldp_pvxs_driver::query::WindowFrameBound{.kind = mldp_pvxs_driver::query::WindowBoundKind::FOLLOWING, .offset = std::move($1)}; }
     ;
 
 order_by_opt
@@ -388,8 +586,10 @@ select_item_list
 select_item
     : expression
       { $$ = mldp_pvxs_driver::query::SelectItem{.expression = std::move($1)}; }
-    | expression AS IDENTIFIER
+    | expression AS name
       { $$ = mldp_pvxs_driver::query::SelectItem{.expression = std::move($1), .alias = $3}; }
+    | expression IDENTIFIER
+      { $$ = mldp_pvxs_driver::query::SelectItem{.expression = std::move($1), .alias = $2}; }
     ;
 
 table_ref
@@ -478,18 +678,68 @@ join_clause
 where_opt
     : /* empty */
       { $$ = {}; }
-    | WHERE predicate_list
-      { $$ = std::move($2); }
+    | WHERE where_or
+      {
+          // Top-level AND leaves stay pushdown candidates; OR/NOT subtrees filter locally.
+          const auto flatten = [&](const auto& self, mldp_pvxs_driver::query::WherePredicateTree& node) -> void
+          {
+              using Kind = mldp_pvxs_driver::query::WherePredicateTree::Kind;
+              if (node.kind == Kind::AND)
+                  for (auto& child : node.children) self(self, child);
+              else if (node.kind == Kind::LEAF)
+                  $$.predicates.push_back(std::move(node.leaf));
+              else
+                  $$.groups.push_back(std::move(node));
+          };
+          flatten(flatten, $2);
+      }
     ;
 
-predicate_list
-    : predicate
-      { $$ = std::vector<mldp_pvxs_driver::query::WherePredicate>{std::move($1)}; }
-    | predicate_list AND predicate
+where_or
+    : where_and
+      { $$ = std::move($1); }
+    | where_or OR where_and
       {
-          $1.push_back(std::move($3));
+          using Kind = mldp_pvxs_driver::query::WherePredicateTree::Kind;
+          if ($1.kind != Kind::OR)
+          {
+              mldp_pvxs_driver::query::WherePredicateTree node{.kind = Kind::OR, .leaf = {}, .children = {}};
+              node.children.push_back(std::move($1));
+              $1 = std::move(node);
+          }
+          $1.children.push_back(std::move($3));
           $$ = std::move($1);
       }
+    ;
+
+where_and
+    : where_not
+      { $$ = std::move($1); }
+    | where_and AND where_not
+      {
+          using Kind = mldp_pvxs_driver::query::WherePredicateTree::Kind;
+          if ($1.kind != Kind::AND)
+          {
+              mldp_pvxs_driver::query::WherePredicateTree node{.kind = Kind::AND, .leaf = {}, .children = {}};
+              node.children.push_back(std::move($1));
+              $1 = std::move(node);
+          }
+          $1.children.push_back(std::move($3));
+          $$ = std::move($1);
+      }
+    ;
+
+where_not
+    : predicate
+      { $$ = mldp_pvxs_driver::query::WherePredicateTree{.kind = mldp_pvxs_driver::query::WherePredicateTree::Kind::LEAF, .leaf = std::move($1), .children = {}}; }
+    | NOT where_not
+      {
+          mldp_pvxs_driver::query::WherePredicateTree node{.kind = mldp_pvxs_driver::query::WherePredicateTree::Kind::NOT, .leaf = {}, .children = {}};
+          node.children.push_back(std::move($2));
+          $$ = std::move(node);
+      }
+    | LPAREN where_or RPAREN
+      { $$ = std::move($2); }
     ;
 
 predicate
@@ -721,10 +971,26 @@ primary_expression
       { $$ = makeExpression(ExpressionValue{std::move($1)}); }
     | column_ref
       { $$ = makeExpression(ExpressionValue{std::move($1)}); }
-    | IDENTIFIER LPAREN expression_list RPAREN
-      { $$ = makeExpression(ExpressionValue{FunctionCall{.name = std::move($1), .arguments = std::move($3)}}); }
+    | function_call
+      { $$ = makeExpression(ExpressionValue{std::move($1)}); }
+    | function_call OVER window_ref
+      {
+          $1.over = std::make_shared<mldp_pvxs_driver::query::WindowSpec>(std::move($3));
+          $$ = makeExpression(ExpressionValue{std::move($1)});
+      }
     | LPAREN expression RPAREN
       { $$ = std::move($2); }
+    ;
+
+function_call
+    : IDENTIFIER LPAREN RPAREN
+      { $$ = FunctionCall{.name = std::move($1), .arguments = {}}; }
+    | IDENTIFIER LPAREN expression_list RPAREN
+      { $$ = FunctionCall{.name = std::move($1), .arguments = std::move($3)}; }
+    | IDENTIFIER LPAREN STAR RPAREN
+      { $$ = FunctionCall{.name = std::move($1), .arguments = {}, .star = true}; }
+    | IDENTIFIER LPAREN DISTINCT expression RPAREN
+      { $$ = FunctionCall{.name = std::move($1), .arguments = {std::move($4)}, .distinct = true}; }
     ;
 
 literal
@@ -775,13 +1041,28 @@ column_ref
     ;
 
 identifier_path
-    : IDENTIFIER
+    : name
       { $$ = std::vector<std::string>{$1}; }
-    | identifier_path DOT IDENTIFIER
+    | identifier_path DOT name
       {
           $1.push_back($3);
           $$ = std::move($1);
       }
+    ;
+
+// Window keywords stay usable as column names (e.g. the time-series `window`
+// input column).  UNBOUNDED and OVER are excluded: they would be ambiguous
+// inside frame bounds and after a function call.
+name
+    : IDENTIFIER { $$ = std::move($1); }
+    | WINDOW     { $$ = "window"; }
+    | ROWS       { $$ = "rows"; }
+    | RANGE      { $$ = "range"; }
+    | ROW        { $$ = "row"; }
+    | CURRENT    { $$ = "current"; }
+    | PARTITION  { $$ = "partition"; }
+    | PRECEDING  { $$ = "preceding"; }
+    | FOLLOWING  { $$ = "following"; }
     ;
 
 limit_opt

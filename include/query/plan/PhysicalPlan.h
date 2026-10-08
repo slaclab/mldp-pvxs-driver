@@ -50,12 +50,16 @@ struct PhysicalTableScan {
     std::shared_ptr<SelectStatement> window_subquery;        ///< Window range SELECT resolved at execution time.
     std::optional<std::array<int64_t, 2>> window_literal;    ///< Literal [begin_ns, end_ns] window bounds.
     WindowShardSpec           window_shards{};               ///< Slice and shard settings for windowed scans.
+    bool                   projection_explicit{false};       ///< True when projection_hint came from an explicit select list.
+    uint64_t               row_limit{0};                     ///< Maximum rows the backend may return; 0 = unlimited.
 };
 
 /** @brief Executes residual predicates over a physical input. */
 struct PhysicalFilter {
     PhysicalNodePtr        input;                    ///< Physical input node.
     std::vector<Predicate> predicates;               ///< Residual predicates applied to each batch.
+    std::vector<PredicateGroup> predicate_groups;    ///< OR/NOT predicate trees every passing row must satisfy.
+    std::vector<ExpressionPtr> conditions;           ///< Boolean expressions every passing row must satisfy.
 };
 
 /** @brief Evaluates selected physical output columns and expressions. */
@@ -64,6 +68,21 @@ struct PhysicalProject {
     std::vector<std::string> columns;               ///< Pass-through output column names.
     std::vector<ExpressionPtr> expressions;         ///< Computed output expressions.
     std::vector<std::string> names;                 ///< Output names for computed columns.
+    bool                     distinct{false};        ///< True to drop duplicate output rows (SELECT DISTINCT).
+    std::vector<ExpressionPtr> distinct_on;         ///< DISTINCT ON keys evaluated on the input; empty compares whole output rows.
+};
+
+/** @brief Groups input rows and computes aggregates (GROUP BY). */
+struct PhysicalAggregate {
+    PhysicalNodePtr     input; ///< Input physical node.
+    plan::AggregateSpec spec;  ///< Keys, aggregates and HAVING condition.
+};
+
+/** @brief Computes window functions and appends their columns to every input row. */
+struct PhysicalWindow {
+    PhysicalNodePtr                input;              ///< Input physical node.
+    std::vector<plan::WindowGroup> groups;             ///< Window groups, evaluated in order.
+    bool                           sorted_input{false}; ///< True when the input is expected ordered by the first group's ORDER BY within each partition.
 };
 
 /** @brief Limits rows emitted by a physical input. */
@@ -130,6 +149,15 @@ struct PhysicalBlockNestedLoopJoin {
 };
 
 /** @brief Physical command that lists registered and catalog tables. */
+/** @brief Concatenates the rows of several inputs (UNION ALL), optionally dropping duplicates (UNION).
+ *
+ *  Columns are matched by position and named after the first input; per-column types are
+ *  unified at execution time (int/double widen to double, null columns take the other type). */
+struct PhysicalUnion {
+    std::vector<PhysicalNodePtr> inputs;          ///< Branch inputs, emitted in order.
+    bool                         distinct{false}; ///< True for UNION (drop duplicate rows), false for UNION ALL.
+};
+
 struct PhysicalShowTables {
 };
 
@@ -168,10 +196,13 @@ using PhysicalNodeVariant = std::variant<PhysicalTableScan,
                                          PhysicalProject,
                                          PhysicalSort,
                                          PhysicalLimit,
+                                         PhysicalAggregate,
+                                         PhysicalWindow,
                                          PhysicalPivot,
                                          PhysicalHashJoin,
                                          PhysicalNestedLoopJoin,
                                          PhysicalBlockNestedLoopJoin,
+                                         PhysicalUnion,
                                          PhysicalShowTables,
                                          PhysicalShowFunctions,
                                          PhysicalShowOperators,

@@ -19,6 +19,7 @@
 
 #include <query.grpc.pb.h>
 #include <grpcpp/grpcpp.h>
+#include <google/protobuf/repeated_field.h>
 
 #include <memory>
 #include <set>
@@ -26,6 +27,13 @@
 #include <vector>
 
 namespace mldp_pvxs_driver::query::impl::mldp {
+
+/** @brief Decodes a set of DataBuckets (shared by the V1 bidi cursor and V2 queryBuckets paths) into one Arrow RecordBatch. */
+std::shared_ptr<arrow::RecordBatch> decodeDataBucketsToBatch(
+    const ::google::protobuf::RepeatedPtrField<dp::service::common::DataBucket>& buckets,
+    const std::vector<mldp_pvxs_driver::query::Predicate>&                            column_predicates,
+    const std::set<std::string>&                                                      projection_hint,
+    arrow::MemoryPool*                                                                pool);
 
 /** @brief Drives a queryDataBidiStream RPC cursor and converts each response to an Arrow RecordBatch. */
 class MldpBidiRecordBatchStream final : public mldp_pvxs_driver::query::IRecordBatchStream

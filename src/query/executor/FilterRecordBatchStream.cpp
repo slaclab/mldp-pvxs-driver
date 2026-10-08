@@ -19,8 +19,9 @@
 using namespace mldp_pvxs_driver::query;
 using namespace mldp_pvxs_driver::query::executor;
 
-FilterRecordBatchStream::FilterRecordBatchStream(IRecordBatchStreamUPtr input, std::vector<Predicate> predicates)
-    : input_(std::move(input)), predicates_(std::move(predicates))
+FilterRecordBatchStream::FilterRecordBatchStream(IRecordBatchStreamUPtr input, std::vector<Predicate> predicates, std::vector<ExpressionPtr> conditions,
+                                                 std::vector<PredicateGroup> groups)
+    : input_(std::move(input)), predicates_(std::move(predicates)), groups_(std::move(groups)), conditions_(std::move(conditions))
 {
 }
 
@@ -28,9 +29,9 @@ std::shared_ptr<arrow::RecordBatch> FilterRecordBatchStream::next()
 {
     while (auto batch = input_->next())
     {
-        auto filtered = applyFilter(batch, predicates_);
+        auto filtered = applyFilter(batch, predicates_, groups_);
         if (!filtered.ok()) throw std::runtime_error(filtered.status().ToString());
-        return *filtered;
+        return applyConditions(*filtered, conditions_);
     }
     return nullptr;
 }

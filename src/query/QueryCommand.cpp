@@ -10,6 +10,8 @@
 
 #include <query/QueryCommand.h>
 
+#include <query/planner/PhysicalPlanner.h>
+
 #include <query/ConsoleFooter.h>
 #include <query/NullQueryCommandListener.h>
 #include <query/ScopedQueryInterruptHandler.h>
@@ -23,6 +25,7 @@
 #include <query/QueryPlanner.h>
 #include <query/QueryProgress.h>
 #include <query/QueryTableCatalog.h>
+#include <query/TerminalStyle.h>
 #include <query/QueryableFactory.h>
 #include <query/ShardTrace.h>
 #include <query/SpillManager.h>
@@ -33,9 +36,14 @@
 
 #include <arrow/filesystem/localfs.h>
 #include <arrow/memory_pool.h>
-#include <replxx.hxx>
+#include <isocline.h>
+
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <mldp_pvxs_driver_version.h>
 
+#include <array>
 #include <algorithm>
 #include <cctype>
 #include <cerrno>
@@ -126,21 +134,22 @@ std::string loadSql(const QueryCliOptions& options)
     return std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
 }
 
-void printQueryError(const std::exception& ex, std::ostream& error)
+void printQueryError(const std::exception& ex, std::ostream& error, const bool color = false)
 {
+    namespace style = mldp_pvxs_driver::cli::style;
     if (const auto* parse_error = dynamic_cast<const mldp_pvxs_driver::query::ParseError*>(&ex))
     {
-        error << "Parse error at " << parse_error->line()
+        error << style::paint(color, style::red, "Parse error") << " at " << parse_error->line()
               << ":" << parse_error->column()
               << " - " << parse_error->what() << "\n";
         return;
     }
     if (const auto* planner_error = dynamic_cast<const mldp_pvxs_driver::query::plan::PlannerException*>(&ex))
     {
-        error << mldp_pvxs_driver::query::plan::plannerErrorWhat(planner_error->error()) << "\n";
+        error << style::paint(color, style::red, mldp_pvxs_driver::query::plan::plannerErrorWhat(planner_error->error())) << "\n";
         return;
     }
-    error << "Query error: " << ex.what() << "\n";
+    error << style::paint(color, style::red, "Query error:") << " " << ex.what() << "\n";
 }
 
 std::string trim(std::string_view value)
@@ -200,12 +209,207 @@ std::optional<std::size_t> statementTerminator(std::string_view line)
 
 bool isReplCommand(std::string_view command)
 {
-    return command == ".help" || command == ".clear" || command == ".format" || command.starts_with(".format ") ||
+    return command == ".help" || command.starts_with(".help ") || command.starts_with(".help\t") || command == ".clear" || command == ".format" || command.starts_with(".format ") ||
            command.starts_with(".format\t") || command == ".pager" || command.starts_with(".pager ") || command.starts_with(".pager\t") ||
            command == ".history" || command == "history" || command == "\\x" ||
            command == "\\expanded" || command.starts_with("\\expanded ") || command == ".table-fit" ||
-           command.starts_with(".table-fit ") || command == ".quit" || command == ".exit";
+           command.starts_with(".table-fit ") || command == ".color" || command.starts_with(".color ") || command == ".quit" || command == ".exit";
 }
+
+bool startsWithIgnoreCase(std::string_view value, std::string_view prefix);
+
+namespace help {
+
+namespace style = mldp_pvxs_driver::cli::style;
+
+void heading(std::ostream& out, const bool color, const std::string_view text)
+{
+    out << style::paint(color, style::cyan, text) << "\n";
+}
+
+/// Prints one "  <term>  <description>" row with the term padded to @p width.
+void row(std::ostream& out, const bool color, const std::string_view term, const std::string_view text, const std::size_t width = 34)
+{
+    out << "  " << style::paint(color, style::bold, term);
+    out << std::string(term.size() < width ? width - term.size() : 1, ' ') << text << "\n";
+}
+
+void example(std::ostream& out, const bool color, const std::string_view sql)
+{
+    out << "  " << style::paint(color, style::green, sql) << "\n";
+}
+
+void printCommands(std::ostream& out, const bool color)
+{
+    heading(out, color, "REPL commands (only when no SQL is buffered)");
+    row(out, color, ".help [topic]", "overview, or detailed help on a topic");
+    row(out, color, ".clear", "discard the buffered statement and clear the screen");
+    row(out, color, ".format [table|json|csv|arrow]", "show or set the output format");
+    row(out, color, ".pager [on|off]", "show or toggle paging of long results");
+    row(out, color, ".table-fit [on|off]", "show or toggle wrapping table cells to terminal width");
+    row(out, color, ".color [on|off]", "show or toggle ANSI color");
+    row(out, color, ".history", "list previous commands");
+    row(out, color, "\\expanded [on|off], \\x", "show/set or toggle expanded (one field per line) display");
+    row(out, color, "<query> \\G", "run one query with expanded display");
+    row(out, color, ".quit, .exit, Ctrl-Q", "leave the REPL");
+    out << "  Without an argument, .format/.pager/.table-fit/.color/\\expanded print the current value.\n";
+}
+
+void printEditing(std::ostream& out, const bool color)
+{
+    heading(out, color, "Line editing");
+    row(out, color, "Arrows", "move cursor, also up/down across lines of the statement", 28);
+    row(out, color, "Ctrl-A/Ctrl-E", "jump to start/end of the whole input", 28);
+    row(out, color, "Ctrl-R", "search history", 28);
+    row(out, color, "Ctrl-P/Ctrl-N", "previous/next statement in history (.history lists it)", 28);
+    row(out, color, "Ctrl-W", "delete previous word", 28);
+    row(out, color, "Ctrl-U/Ctrl-K", "delete to start/end of line", 28);
+    row(out, color, "Ctrl-L", "clear screen", 28);
+    row(out, color, "Ctrl-C", "cancel query; clear input; on empty prompt exit", 28);
+    row(out, color, "Ctrl-Q", "exit", 28);
+    row(out, color, "Tab", "complete keywords, tables, columns and command arguments", 28);
+    out << "  Enter adds a line until the statement ends with ';'; the whole statement stays editable.\n";
+}
+
+void printDisplay(std::ostream& out, const bool color)
+{
+    heading(out, color, "Output and display");
+    row(out, color, ".format table", "aligned text table (default)", 20);
+    row(out, color, ".format json", "JSON Lines: one object per row", 20);
+    row(out, color, ".format csv", "comma-separated values with header", 20);
+    row(out, color, ".format arrow", "Arrow IPC stream", 20);
+    row(out, color, ".pager on|off", "page results longer than the terminal", 20);
+    row(out, color, ".table-fit on|off", "wrap table cells to the terminal width", 20);
+    row(out, color, ".color on|off", "ANSI colors (also disabled by NO_COLOR)", 20);
+    row(out, color, "\\x  /  ... \\G", "expanded display: always / for a single query", 20);
+}
+
+void printTables(std::ostream& out, const bool color)
+{
+    heading(out, color, "Tables and introspection");
+    row(out, color, "SHOW TABLES;", "list queryable and temporary tables", 26);
+    row(out, color, "DESCRIBE <table>;", "list columns of a table", 26);
+    row(out, color, "SHOW FUNCTIONS;", "list scalar and aggregate functions", 26);
+    row(out, color, "SHOW OPERATORS;", "list supported operators", 26);
+    row(out, color, "EXPLAIN <query>;", "show the plan without running it", 26);
+    heading(out, color, "MLDP tables");
+    row(out, color, "mldp.time_series", "one row per sample (pv, time, value)", 26);
+    row(out, color, "mldp.time_series_table", "samples pivoted: one column per PV", 26);
+    row(out, color, "mldp.pv_stats", "per-PV statistics", 26);
+    row(out, color, "mldp.pv_metadata", "PV metadata", 26);
+    out << "  Filters on pv and time are pushed down to MLDP; time accepts epoch seconds or NOW - <n>[s|m|h|d].\n";
+    heading(out, color, "Temporary tables");
+    example(out, color, "CREATE TEMP TABLE recent AS SELECT pv, value FROM mldp.time_series WHERE pv = 'A';");
+    example(out, color, "DROP TABLE recent;");
+}
+
+void printMatching(std::ostream& out, const bool color)
+{
+    heading(out, color, "String matching");
+    row(out, color, "col PREFIX 'abc'", "starts with 'abc' (case-sensitive, no wildcards)", 22);
+    row(out, color, "col CONTAINS 'abc'", "contains 'abc' (case-sensitive, no wildcards)", 22);
+    row(out, color, "col LIKE 'a%b_c'", "case-insensitive; % or * = any run, _ = one char, \\ escapes", 22);
+    out << "  On mldp.time_series, mldp.time_series_table and mldp.pv_stats, pv PREFIX/CONTAINS/LIKE\n"
+        << "  is sent to MLDP as a PV-name regex (no pv = / IN needed), then verified locally.\n";
+    example(out, color, "SELECT * FROM mldp.pv_stats WHERE pv LIKE 'ltu:%:bpm%';");
+}
+
+void printGrouping(std::ostream& out, const bool color)
+{
+    heading(out, color, "Grouping (runs locally on the fetched rows)");
+    row(out, color, "SELECT DISTINCT ON (k) k, other ...", "first row per k (use ORDER BY to pick it)", 38);
+    row(out, color, "... GROUP BY k [HAVING COUNT(*) > 1]", "one row per k; HAVING filters groups", 38);
+    row(out, color, "ORDER BY 2 DESC", "order by output column position", 38);
+    row(out, color, "q1 UNION [ALL] q2 [ORDER BY c] [LIMIT n]", "stack rows by position; UNION drops duplicates", 38);
+    out << "  Aggregates: COUNT(*|x|DISTINCT x), SUM, AVG, MIN, MAX, FIRST, LAST\n";
+    example(out, color, "SELECT pv, COUNT(*), AVG(value) FROM mldp.time_series WHERE pv PREFIX 'ltu:' AND time >= NOW - 1h GROUP BY pv ORDER BY 2 DESC;");
+}
+
+void printTimeseries(std::ostream& out, const bool color)
+{
+    heading(out, color, "Window functions (runs locally, per row over its partition)");
+    row(out, color, "f(...) OVER (PARTITION BY k ORDER BY time)", "one value per row, computed over rows with the same k", 44);
+    row(out, color, "WINDOW w AS (...) ... OVER w", "name a window once, reuse it (OVER (w ROWS 2 PRECEDING) extends it)", 44);
+    row(out, color, "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW", "frame by row count", 44);
+    row(out, color, "RANGE BETWEEN 5m PRECEDING AND CURRENT ROW", "frame by ORDER BY value (durations for time)", 44);
+    out << "  Functions: ROW_NUMBER, RANK, DENSE_RANK, LAG/LEAD(x [, n [, default]]), FIRST_VALUE, LAST_VALUE,\n"
+           "             SUM, AVG, MIN, MAX, COUNT over the frame\n"
+           "  Default frame: start of partition to the current row and its ties (whole partition without ORDER BY).\n"
+           "  Filter on a window result through a derived table: SELECT * FROM (SELECT ..., ROW_NUMBER() OVER (...) rn ...) x WHERE rn = 1\n";
+    example(out, color, "SELECT pv, time, value, LAG(value) OVER w AS previous, time - LAG(time) OVER w AS gap FROM mldp.time_series WHERE pv PREFIX 'ltu:' AND time >= NOW - 1h WINDOW w AS (PARTITION BY pv ORDER BY time);");
+    example(out, color, "SELECT pv, time, AVG(value) OVER (PARTITION BY pv ORDER BY time RANGE BETWEEN 5m PRECEDING AND CURRENT ROW) AS avg_5m FROM mldp.time_series WHERE pv = 'A' AND time >= NOW - 1h;");
+    example(out, color, "SELECT pv, time, value FROM (SELECT pv, time, value, ROW_NUMBER() OVER (PARTITION BY pv ORDER BY time DESC) rn FROM mldp.time_series WHERE pv PREFIX 'ltu:' AND time >= NOW - 1h) x WHERE rn = 1;");
+}
+
+void printExamples(std::ostream& out, const bool color)
+{
+    heading(out, color, "Examples");
+    example(out, color, "SHOW TABLES;");
+    example(out, color, "DESCRIBE mldp.time_series;");
+    example(out, color, "SELECT pv, time, value FROM mldp.time_series WHERE pv = 'A' AND time >= NOW - 10m LIMIT 20;");
+    example(out, color, "SELECT * FROM mldp.time_series_table WHERE pv IN ('A', 'B') AND time >= NOW - 1h;");
+    example(out, color, "SELECT * FROM mldp.pv_stats WHERE pv LIKE 'ltu:%:bpm%';");
+    example(out, color, "SELECT pv, MAX(value) FROM mldp.time_series WHERE pv PREFIX 'ltu:' AND time >= NOW - 1h GROUP BY pv;");
+    example(out, color, "SELECT pv, time, value FROM mldp.time_series WHERE pv = 'A' LIMIT 1 \\G");
+}
+
+struct Topic
+{
+    std::string_view name;
+    std::string_view summary;
+    void (*print)(std::ostream&, bool);
+};
+
+constexpr std::array<Topic, 8> kTopics{{
+    {"commands", "all REPL dot/backslash commands", printCommands},
+    {"editing", "keyboard shortcuts and completion", printEditing},
+    {"display", "output formats, pager, expanded view", printDisplay},
+    {"tables", "MLDP tables, SHOW/DESCRIBE/EXPLAIN, temp tables", printTables},
+    {"matching", "PREFIX, CONTAINS, LIKE and PV-name pushdown", printMatching},
+    {"grouping", "DISTINCT ON, GROUP BY, HAVING, aggregates", printGrouping},
+    {"timeseries", "window functions: LAG, running and moving aggregates, ranks", printTimeseries},
+    {"examples", "copy-paste queries", printExamples},
+}};
+
+std::string topicNames()
+{
+    std::string names;
+    for (const auto& topic : kTopics)
+        names.append(names.empty() ? "" : ", ").append(topic.name);
+    return names;
+}
+
+void printOverview(std::ostream& out, const bool color)
+{
+    out << "Enter one SQL statement terminated by ';'.\n\n";
+    printCommands(out, color);
+    out << "\n";
+    heading(out, color, "Help topics: .help <topic>");
+    for (const auto& topic : kTopics)
+        row(out, color, topic.name, topic.summary, 12);
+    out << "\n" << style::paint(color, style::dim, "Editing: arrows, Ctrl-A/Ctrl-E, Ctrl-W, Ctrl-U/Ctrl-K, Ctrl-L (clear screen), Ctrl-Q (exit), Tab completion.") << "\n";
+}
+
+/// Prints help for @p topic (empty = overview). Returns false for an unknown topic.
+bool print(std::ostream& out, const bool color, const std::string_view topic)
+{
+    if (topic.empty())
+    {
+        printOverview(out, color);
+        return true;
+    }
+    for (const auto& candidate : kTopics)
+    {
+        if (topic.size() == candidate.name.size() && startsWithIgnoreCase(candidate.name, topic))
+        {
+            candidate.print(out, color);
+            return true;
+        }
+    }
+    return false;
+}
+
+} // namespace help
 
 std::optional<std::size_t> terminalWidth(const std::ostream& output)
 {
@@ -400,6 +604,9 @@ std::filesystem::path replHistoryPath()
     return {};
 }
 
+/// Line editor for the interactive REPL, backed by isocline: psql/readline keys,
+/// live SQL colouring, Tab completion and history. Falls back to plain
+/// std::getline for non-terminal input.
 class ReplLineEditor
 {
 public:
@@ -407,59 +614,72 @@ public:
         : input_(input)
         , table_catalog_(std::move(table_catalog))
     {
-        if (&input != &std::cin || ::isatty(STDIN_FILENO) == 0)
+        if (&input != &std::cin || ::isatty(STDIN_FILENO) == 0 || ::isatty(STDOUT_FILENO) == 0 || active_ != nullptr)
         {
             return;
         }
 
-        repl_ = std::make_unique<replxx::Replxx>();
-        (void)repl_->install_window_change_handler();
-        repl_->set_max_history_size(1000);
-        repl_->set_word_break_characters(" \t\n,();=<>*\"'");
-        repl_->set_double_tab_completion(false);
-        repl_->set_complete_on_empty(true);
-        repl_->set_beep_on_ambiguous_completion(false);
-        repl_->bind_key_internal(replxx::Replxx::KEY::TAB, "complete_line");
-        repl_->bind_key(replxx::Replxx::KEY::control('Q'), [this](char32_t)
-                        {
-                            quit_requested_ = true;
-                            return replxx::Replxx::ACTION_RESULT::BAIL;
-                        });
-        repl_->set_completion_callback(
-            [this](const std::string& context, int& context_length) -> replxx::Replxx::completions_t
-            {
-                replxx::Replxx::completions_t completions;
-                context_length = mldp_pvxs_driver::cli::detail::replCompletionContextLength(context);
-                for (const auto& candidate : mldp_pvxs_driver::cli::detail::replCompletions(context, table_catalog_))
-                    completions.emplace_back(candidate);
-                return completions;
-            });
+        active_ = this;
+        interactive_ = true;
+        // The REPL builds its own "mldp> " / "...> " prompts; isocline keeps
+        // continuation rows of one edit aligned under the prompt.
+        ic_set_prompt_marker("", "");
+        ic_enable_multiline_indent(true);
+        ic_enable_hint(false);
+        ic_enable_inline_help(false);
+        ic_enable_completion_preview(false);
+        ic_enable_auto_tab(false);
+        ic_enable_brace_insertion(false);
+        ic_enable_history_duplicates(true);
+        ic_set_history(nullptr, kMaxHistory); // persisted by this class, see saveHistory()
+        ic_set_default_completer(&ReplLineEditor::complete, this);
+        ic_set_default_highlighter(&ReplLineEditor::highlight, this);
+        // Enter adds a line until the statement is complete, so the whole
+        // statement is one edit buffer the arrows can move through.
+        ic_set_input_complete(&ReplLineEditor::inputComplete, nullptr);
+        ic_style_def("mldp-keyword", "ansi-blue");
+        ic_style_def("mldp-function", "ansi-aqua");
+        ic_style_def("mldp-string", "ansi-green");
+        ic_style_def("mldp-number", "ansi-magenta");
+        ic_style_def("mldp-comment", "ansi-gray");
+        ic_style_def("mldp-command", "ansi-olive");
 
         history_path_ = replHistoryPath();
-        if (!history_path_.empty())
+        loadHistory();
+        syncEditorHistory();
+    }
+
+    ReplLineEditor(const ReplLineEditor&) = delete;
+    ReplLineEditor& operator=(const ReplLineEditor&) = delete;
+
+    void setColor(const bool color)
+    {
+        color_ = color;
+        if (interactive_)
         {
-            std::error_code error;
-            std::filesystem::create_directories(history_path_.parent_path(), error);
-            if (!error)
-            {
-                (void)repl_->history_load(history_path_.string());
-                sanitizeHistory();
-            }
+            ic_enable_color(color);
+            ic_enable_highlight(color);
+            ic_enable_brace_matching(color);
         }
     }
 
     ~ReplLineEditor()
     {
-        if (repl_ && !history_path_.empty())
+        if (!interactive_)
         {
-            (void)repl_->history_save(history_path_.string());
+            return;
         }
+        saveHistory();
+        ic_set_default_completer(nullptr, nullptr);
+        ic_set_default_highlighter(nullptr, nullptr);
+        ic_set_input_complete(nullptr, nullptr);
+        active_ = nullptr;
     }
 
     std::optional<std::string> read(std::string_view prompt, std::ostream& output, bool& interrupted)
     {
         interrupted = false;
-        if (!repl_)
+        if (!interactive_)
         {
             output << prompt << std::flush;
             std::string line;
@@ -470,14 +690,30 @@ public:
             return line;
         }
 
-        errno = 0;
-        const auto* line = repl_->input(std::string(prompt).c_str());
+        output << std::flush;
+        char* line = ic_readline(promptMarkup(prompt).c_str());
+        // isocline records every edited line; the REPL keeps whole statements
+        // instead, so restore the editor history from ours.
+        syncEditorHistory();
         if (line == nullptr)
         {
-            interrupted = errno == EINTR;
+            switch (ic_last_exit_key())
+            {
+            case 0x11: // Ctrl-Q
+                quit_requested_ = true;
+                break;
+            case 0x03: // Ctrl-C
+                interrupted = true;
+                interrupted_on_empty_line_ = ic_last_exit_input_empty();
+                break;
+            default: // Ctrl-D on an empty line or end of input
+                break;
+            }
             return std::nullopt;
         }
-        return std::string(line);
+        std::string result(line);
+        ic_free(line);
+        return result;
     }
 
     void addHistory(std::string_view entry)
@@ -486,37 +722,40 @@ public:
         {
             return;
         }
-        session_history_.emplace_back(entry);
-        if (repl_)
+        history_.emplace_back(entry);
+        if (history_.size() > static_cast<std::size_t>(kMaxHistory))
         {
-            repl_->history_add(std::string(entry));
+            history_.erase(history_.begin(), history_.end() - kMaxHistory);
+        }
+        if (interactive_)
+        {
+            ic_history_add(history_.back().c_str());
+            saveHistory();
         }
     }
 
     std::vector<std::string> history() const
     {
-        if (!repl_)
-        {
-            return session_history_;
-        }
-
-        std::vector<std::string> entries;
-        auto                     scan = repl_->history_scan();
-        while (scan.next())
-        {
-            entries.push_back(scan.get().text());
-        }
-        return entries;
+        return history_;
     }
 
     bool clearScreen()
     {
-        if (!repl_)
+        if (!interactive_)
         {
             return false;
         }
-        repl_->clear_screen();
+        std::fputs("\x1b[2J\x1b[H", stdout);
+        std::fflush(stdout);
         return true;
+    }
+
+    /** True when the last Ctrl-C was pressed on an empty input line. */
+    bool consumeInterruptedOnEmptyLine() noexcept
+    {
+        const auto empty = interrupted_on_empty_line_;
+        interrupted_on_empty_line_ = false;
+        return empty;
     }
 
     bool consumeQuitRequested() noexcept
@@ -527,38 +766,179 @@ public:
     }
 
 private:
-    void sanitizeHistory()
-    {
-        std::vector<std::string> entries;
-        auto                     scan = repl_->history_scan();
-        while (scan.next())
-        {
-            const auto& entry = scan.get().text();
-            if (isUserHistoryEntry(entry))
-            {
-                entries.push_back(entry);
-            }
-        }
-        if (entries.size() == static_cast<std::size_t>(repl_->history_size()))
-        {
-            return;
-        }
+    static constexpr long kMaxHistory = 1000;
 
-        repl_->history_clear();
-        for (const auto& entry : entries)
+    /// isocline renders the prompt as bbcode: drop the REPL's ANSI colouring
+    /// and restyle the known prompts.
+    std::string promptMarkup(std::string_view prompt) const
+    {
+        std::string plain;
+        for (std::size_t index = 0; index < prompt.size(); ++index)
         {
-            repl_->history_add(entry);
+            if (prompt[index] == '\x1b')
+            {
+                const auto end = prompt.find('m', index);
+                if (end == std::string_view::npos)
+                    break;
+                index = end;
+                continue;
+            }
+            if (prompt[index] == '[' || prompt[index] == '\\')
+                plain.push_back('\\');
+            plain.push_back(prompt[index]);
         }
-        std::ofstream(history_path_, std::ios::trunc).close();
-        (void)repl_->history_save(history_path_.string());
+        if (!color_)
+            return plain;
+        if (plain.starts_with("mldp"))
+            return "[b ansi-green]mldp[/]" + plain.substr(4);
+        return "[ansi-gray]" + plain + "[/]";
     }
 
+    static bool inputComplete(const char* input, void* /*arg*/)
+    {
+        const auto text = trim(input);
+        return text.empty() || text.front() == '.' || text.front() == '\\' || isReplCommand(text) || text.ends_with("\\G") ||
+               statementTerminator(text).has_value();
+    }
+
+    static void highlight(ic_highlight_env_t* henv, const char* input, void* arg)
+    {
+        const auto* self = static_cast<const ReplLineEditor*>(arg);
+        if (self == nullptr || !self->color_ || input == nullptr)
+            return;
+        using Kind = mldp_pvxs_driver::cli::detail::ReplHighlight;
+        const auto kinds = mldp_pvxs_driver::cli::detail::replHighlight(input);
+        std::size_t start = 0;
+        while (start < kinds.size())
+        {
+            std::size_t end = start + 1;
+            while (end < kinds.size() && kinds[end] == kinds[start])
+                ++end;
+            const char* style = nullptr;
+            switch (kinds[start])
+            {
+            case Kind::Keyword: style = "mldp-keyword"; break;
+            case Kind::Function: style = "mldp-function"; break;
+            case Kind::String: style = "mldp-string"; break;
+            case Kind::Number: style = "mldp-number"; break;
+            case Kind::Comment: style = "mldp-comment"; break;
+            case Kind::Command: style = "mldp-command"; break;
+            case Kind::Default: break;
+            }
+            if (style != nullptr)
+                ic_highlight(henv, static_cast<long>(start), static_cast<long>(end - start), style);
+            start = end;
+        }
+    }
+
+    static void complete(ic_completion_env_t* cenv, const char* prefix)
+    {
+        auto* self = static_cast<ReplLineEditor*>(ic_completion_arg(cenv));
+        if (self == nullptr || prefix == nullptr)
+            return;
+        const std::string context(prefix);
+        const auto        replaced = mldp_pvxs_driver::cli::detail::replCompletionContextLength(context);
+        for (const auto& candidate : mldp_pvxs_driver::cli::detail::replCompletions(context, self->table_catalog_))
+        {
+            if (!ic_add_completion_prim(cenv, candidate.c_str(), nullptr, nullptr, replaced, 0))
+                break;
+        }
+    }
+
+    void syncEditorHistory() const
+    {
+        ic_history_clear();
+        for (const auto& entry : history_)
+            ic_history_add(entry.c_str());
+    }
+
+    /// Reads the history file: isocline's escaped one-entry-per-line format, or
+    /// the libedit file ("_HiStOrY_V2_", octal escapes) written by older builds.
+    void loadHistory()
+    {
+        if (history_path_.empty())
+            return;
+        std::ifstream file(history_path_);
+        std::string   line;
+        bool          libedit = false;
+        bool          first = true;
+        while (std::getline(file, line))
+        {
+            if (first && line == "_HiStOrY_V2_")
+            {
+                libedit = true;
+                first = false;
+                continue;
+            }
+            first = false;
+            std::string entry;
+            for (std::size_t index = 0; index < line.size(); ++index)
+            {
+                if (line[index] != '\\' || index + 1 >= line.size())
+                {
+                    entry.push_back(line[index]);
+                    continue;
+                }
+                const char next = line[++index];
+                if (libedit && index + 2 < line.size() + 0 && next >= '0' && next <= '7')
+                {
+                    entry.push_back(static_cast<char>(std::stoi(line.substr(index, 3), nullptr, 8)));
+                    index += 2;
+                }
+                else if (next == 'n') entry.push_back('\n');
+                else if (next == 't') entry.push_back('\t');
+                else if (next == 'x' && index + 2 < line.size())
+                {
+                    entry.push_back(static_cast<char>(std::stoi(line.substr(index + 1, 2), nullptr, 16)));
+                    index += 2;
+                }
+                else entry.push_back(next);
+            }
+            if (!entry.empty() && entry.front() != '#' && isUserHistoryEntry(entry))
+                history_.push_back(std::move(entry));
+        }
+        if (history_.size() > static_cast<std::size_t>(kMaxHistory))
+            history_.erase(history_.begin(), history_.end() - kMaxHistory);
+        if (libedit)
+            saveHistory();
+    }
+
+    /// Writes the history in isocline's file format.
+    void saveHistory() const
+    {
+        if (history_path_.empty())
+            return;
+        std::error_code error;
+        std::filesystem::create_directories(history_path_.parent_path(), error);
+        std::ofstream file(history_path_, std::ios::trunc);
+        for (const auto& entry : history_)
+        {
+            for (const char c : entry)
+            {
+                if (c == '\\') file << "\\\\";
+                else if (c == '\n') file << "\\n";
+                else if (c == '\t') file << "\\t";
+                else if (c == '\r') continue;
+                else if (static_cast<unsigned char>(c) < ' ' || c == '#')
+                {
+                    static constexpr char kHex[] = "0123456789abcdef";
+                    file << "\\x" << kHex[static_cast<unsigned char>(c) / 16] << kHex[static_cast<unsigned char>(c) % 16];
+                }
+                else file << c;
+            }
+            file << '\n';
+        }
+    }
+
+    static inline ReplLineEditor*                               active_ = nullptr;
     std::istream&                                               input_;
-    std::unique_ptr<replxx::Replxx>                             repl_;
-    std::filesystem::path                                       history_path_;
-    std::vector<std::string>                                    session_history_;
     std::shared_ptr<mldp_pvxs_driver::query::QueryTableCatalog> table_catalog_;
-    bool                                                        quit_requested_{false};
+    bool                                                        interactive_ = false;
+    std::filesystem::path                                       history_path_;
+    std::vector<std::string>                                    history_;
+    bool                                                        interrupted_on_empty_line_ = false;
+    bool                                                        quit_requested_ = false;
+    bool                                                        color_ = false;
 };
 
 QueryOutputFormat parseFormat(std::string_view value);
@@ -577,21 +957,29 @@ int runRepl(QueryCliOptions                           options,
     auto                          output_mutex = std::make_shared<std::mutex>();
     const auto                     real_terminal = &input == &std::cin && &output == &std::cout &&
                                           ::isatty(STDIN_FILENO) != 0 && ::isatty(STDOUT_FILENO) != 0;
+    namespace style = mldp_pvxs_driver::cli::style;
+    options.color = real_terminal && style::colorEnabledByDefault(output);
+    editor.setColor(options.color);
+    const auto error_color = [&] { return options.color && style::colorEnabledByDefault(error); };
+    const auto errorLabel = [&] { return style::paint(error_color(), style::red, "Query error:"); };
     if (real_terminal)
     {
+        const auto version = std::to_string(MLDP_PVXS_DRIVER_VERSION_MAJOR) + "." +
+                             std::to_string(MLDP_PVXS_DRIVER_VERSION_MINOR) + "." +
+                             std::to_string(MLDP_PVXS_DRIVER_VERSION_PATCH);
         output << "\x1b[2J\x1b[H"
-               << "mldp query REPL  v"
-               << MLDP_PVXS_DRIVER_VERSION_MAJOR << "."
-               << MLDP_PVXS_DRIVER_VERSION_MINOR << "."
-               << MLDP_PVXS_DRIVER_VERSION_PATCH
-               << "  \xe2\x80\x94  type .help for help, .quit to exit\n\n";
+               << style::paint(options.color, style::cyan, "mldp query REPL")
+               << style::paint(options.color, style::dim, "  v" + version + "  \xe2\x80\x94  type .help for help, .quit to exit")
+               << "\n\n";
         output.flush();
     }
     InlineStatus                  inline_status(output, output_mutex);
     while (true)
     {
         bool       interrupted = false;
-        const auto line = editor.read(buffer.empty() ? "mldp> " : "...> ", output, interrupted);
+        const auto prompt = buffer.empty() ? style::paint(options.color, style::green, "mldp") + "> "
+                                           : style::paint(options.color, style::dim, "...> ");
+        const auto line = editor.read(prompt, output, interrupted);
         if (!line)
         {
             if (editor.consumeQuitRequested())
@@ -600,13 +988,21 @@ int runRepl(QueryCliOptions                           options,
             }
             if (interrupted)
             {
+                // First Ctrl-C clears typed input (and any buffered statement);
+                // Ctrl-C on an empty prompt with nothing buffered exits.
+                const bool empty_line = editor.consumeInterruptedOnEmptyLine();
+                if (empty_line && buffer.empty())
+                {
+                    output << "\n";
+                    return 0;
+                }
                 buffer.clear();
                 output << "\n";
                 continue;
             }
             if (!buffer.empty())
             {
-                error << "Query error: incomplete SQL statement discarded at end of input\n";
+                error << errorLabel() << " incomplete SQL statement discarded at end of input\n";
             }
             return 0;
         }
@@ -624,7 +1020,7 @@ int runRepl(QueryCliOptions                           options,
         }
         if (!buffer.empty() && isReplCommand(command))
         {
-            error << "Query error: REPL commands are only available when no SQL is buffered\n";
+            error << errorLabel() << " REPL commands are only available when no SQL is buffered\n";
             continue;
         }
         if (buffer.empty() && (command == ".quit" || command == ".exit"))
@@ -632,13 +1028,14 @@ int runRepl(QueryCliOptions                           options,
             editor.addHistory(command);
             return 0;
         }
-        if (buffer.empty() && command == ".help")
+        if (buffer.empty() && (command == ".help" || startsWithIgnoreCase(command, ".help ") || startsWithIgnoreCase(command, ".help\t")))
         {
             editor.addHistory(command);
-            output << "Enter one SQL statement terminated by ';'.\n"
-                   << "Commands: .help, .clear, .format [table|json|csv|arrow], .pager [on|off], .table-fit [on|off], .history, .quit, .exit\n"
-                   << "Display: \\expanded [on|off], \\x (toggle), or terminate a query with \\G for one expanded result.\n"
-                   << "Editing: arrows, Ctrl-A/Ctrl-E, Ctrl-W, Ctrl-U/Ctrl-K, Ctrl-L (clear screen), Ctrl-Q (exit), history, and tab completion.\n";
+            const auto topic = trim(std::string_view(command).substr(std::string_view(".help").size()));
+            if (!help::print(output, options.color, topic))
+            {
+                error << errorLabel() << " unknown help topic '" << topic << "'; topics: " << help::topicNames() << "\n";
+            }
             continue;
         }
         if (buffer.empty() && (command == ".pager" || startsWithIgnoreCase(command, ".pager ") || startsWithIgnoreCase(command, ".pager\t")))
@@ -661,7 +1058,7 @@ int runRepl(QueryCliOptions                           options,
             }
             else
             {
-                error << "Query error: .pager accepts on or off\n";
+                error << errorLabel() << " .pager accepts on or off\n";
             }
             continue;
         }
@@ -690,7 +1087,7 @@ int runRepl(QueryCliOptions                           options,
                 options.expanded = false;
             else
             {
-                error << "Query error: \\expanded accepts on or off\n";
+                error << errorLabel() << " \\expanded accepts on or off\n";
                 continue;
             }
             output << "Expanded display: " << (options.expanded ? "on" : "off") << "\n";
@@ -711,10 +1108,27 @@ int runRepl(QueryCliOptions                           options,
                 options.table_fit = false;
             else
             {
-                error << "Query error: .table-fit accepts on or off\n";
+                error << errorLabel() << " .table-fit accepts on or off\n";
                 continue;
             }
             output << "Table fit: " << (options.table_fit ? "on" : "off") << "\n";
+            continue;
+        }
+        if (buffer.empty() && (command == ".color" || startsWithIgnoreCase(command, ".color ") || startsWithIgnoreCase(command, ".color\t")))
+        {
+            editor.addHistory(command);
+            const auto argument = trim(std::string_view(command).substr(std::string_view(".color").size()));
+            if (argument == "on")
+                options.color = true;
+            else if (argument == "off")
+                options.color = false;
+            else if (!argument.empty())
+            {
+                error << errorLabel() << " .color accepts on or off\n";
+                continue;
+            }
+            editor.setColor(options.color);
+            output << "Color: " << (options.color ? "on" : "off") << "\n";
             continue;
         }
         if (buffer.empty() && (command == ".format" || startsWithIgnoreCase(command, ".format ") || startsWithIgnoreCase(command, ".format\t")))
@@ -728,7 +1142,7 @@ int runRepl(QueryCliOptions                           options,
             }
             if (argument.find_first_of(" \t\r\n") != std::string::npos)
             {
-                error << "Query error: .format accepts exactly one style: table,json,csv,arrow\n";
+                error << errorLabel() << " .format accepts exactly one style: table,json,csv,arrow\n";
                 continue;
             }
             try
@@ -738,14 +1152,14 @@ int runRepl(QueryCliOptions                           options,
             }
             catch (const std::exception& ex)
             {
-                error << "Query error: " << ex.what() << "\n";
+                error << errorLabel() << " " << ex.what() << "\n";
             }
             continue;
         }
         if (buffer.empty() && !command.empty() && command.front() == '.')
         {
             editor.addHistory(command);
-            error << "Query error: unknown REPL command '" << command << "'\n";
+            error << errorLabel() << " unknown REPL command '" << command << "'\n";
             continue;
         }
 
@@ -784,7 +1198,7 @@ int runRepl(QueryCliOptions                           options,
             buffer.append(line_for_sql, 0, *terminator);
             if (!expanded_once && !trim(std::string_view(line_for_sql).substr(*terminator + 1)).empty())
             {
-                error << "Query error: only one SQL statement may be submitted at a time\n";
+                error << errorLabel() << " only one SQL statement may be submitted at a time\n";
                 buffer.clear();
                 continue;
             }
@@ -792,7 +1206,7 @@ int runRepl(QueryCliOptions                           options,
             buffer.clear();
             if (sql.empty())
             {
-                error << "Query error: empty SQL statement\n";
+                error << errorLabel() << " empty SQL statement\n";
                 continue;
             }
             editor.addHistory(sql);
@@ -806,7 +1220,8 @@ int runRepl(QueryCliOptions                           options,
             ScopedQueryInterruptHandler         interrupt_handler;
             const auto                           page_result = query_options.pager && pager.canPage(input, output, query_options.format);
             std::ostringstream                   paged_output;
-            auto&                                 result_output = page_result ? static_cast<std::ostream&>(paged_output) : output;
+            const bool                            buffer_result = page_result || real_terminal;
+            auto&                                 result_output = buffer_result ? static_cast<std::ostream&>(paged_output) : output;
             ConsoleStatus                         status{.query_running = true, .progress = progress->snapshot()};
             const auto tw = [&]() -> int {
                 if (!real_terminal) return 0;
@@ -826,7 +1241,7 @@ int runRepl(QueryCliOptions                           options,
                                                           sql,
                                                           result_output,
                                                           progress,
-                                                          std::nullopt,
+                                                          real_terminal ? std::optional<std::size_t>{static_cast<std::size_t>(tw)} : terminalWidth(output),
                                                           !real_terminal || page_result,
                                                           &completed_stats,
                                                           cancellation,
@@ -853,9 +1268,10 @@ int runRepl(QueryCliOptions                           options,
                 {
                     inline_status.clear();
                     output << "\n";
+                    output << paged_output.str();
                     if (!query_options.no_stats)
                     {
-                        printQueryStats(completed_stats, output);
+                        output << style::paint(options.color, style::dim, queryStatsLine(completed_stats)) << "\n";
                     }
                 }
                 if (page_result)
@@ -863,7 +1279,7 @@ int runRepl(QueryCliOptions                           options,
                     std::string pager_error;
                     if (!pager.write(paged_output.str(), pager_error))
                     {
-                        error << "Query warning: " << pager_error << "; writing result directly\n";
+                        error << style::paint(error_color(), style::yellow, "Query warning:") << " " << pager_error << "; writing result directly\n";
                         output << paged_output.str();
                     }
                 }
@@ -875,12 +1291,12 @@ int runRepl(QueryCliOptions                           options,
                 inline_status.clear();
                 listener.queryCancelled();
                 listener.queryIdle();
-                error << "Query cancelled\n";
+                error << style::paint(error_color(), style::yellow, "Query cancelled") << "\n";
             }
             catch (const std::exception& ex)
             {
                 inline_status.clear();
-                printQueryError(ex, error);
+                printQueryError(ex, error, error_color());
                 listener.queryFailed(ex.what());
                 listener.queryIdle();
             }
@@ -919,7 +1335,8 @@ Query options:
     -h, --help                    Show this help message and exit
     --file PATH                   Read SQL text from PATH
     --format FORMAT               Output format: table, json, csv, arrow
-    --table-fit                   Fit table output to the terminal width
+    --table-fit                   Wrap table cells to the terminal width (default)
+    --no-table-fit                Keep each table row on one physical line
     --no-stats                    Suppress the query statistics footer
     --trace-shards                Write window-shard diagnostics to stderr
     --trace-shards-file PATH      Write window-shard diagnostics to PATH
@@ -982,6 +1399,11 @@ void parseQueryArguments(int argc, char** argv, QueryCliOptions& options)
         if (arg == "--table-fit")
         {
             options.table_fit = true;
+            continue;
+        }
+        if (arg == "--no-table-fit")
+        {
+            options.table_fit = false;
             continue;
         }
         if (arg == "--memory-mb")
@@ -1200,9 +1622,23 @@ std::vector<std::string> mldp_pvxs_driver::cli::detail::replCompletions(
                          ? std::vector<std::string>{".pager"}
                          : std::vector<std::string>{"on", "off"};
     }
+    else if (startsWithIgnoreCase(trimmed, ".help"))
+    {
+        if (token.empty() || token.front() == '.')
+            candidates = {".help"};
+        else
+            for (const auto& topic : help::kTopics)
+                candidates.emplace_back(topic.name);
+    }
+    else if (startsWithIgnoreCase(trimmed, ".color"))
+    {
+        candidates = token.empty() || token.front() == '.'
+                         ? std::vector<std::string>{".color"}
+                         : std::vector<std::string>{"on", "off"};
+    }
     else if (!token.empty() && token.front() == '.')
     {
-        candidates = {".help", ".clear", ".format", ".pager", ".table-fit", ".history", "\\expanded", "\\x", ".quit", ".exit"};
+        candidates = {".help", ".clear", ".format", ".pager", ".table-fit", ".color", ".history", "\\expanded", "\\x", ".quit", ".exit"};
     }
     else if (expectsTable(words))
     {
@@ -1224,7 +1660,10 @@ std::vector<std::string> mldp_pvxs_driver::cli::detail::replCompletions(
     }
     else
     {
-        candidates = {"SELECT", "FROM", "WHERE", "AND", "OR", "IN", "LIKE", "BETWEEN", "ORDER", "BY", "ASC", "DESC", "LIMIT", "PAGE", "TOKEN",
+        candidates = {"SELECT", "DISTINCT", "FROM", "WHERE", "GROUP", "HAVING", "COUNT", "SUM", "AVG", "MIN", "MAX", "FIRST", "LAST", "UNION", "ALL",
+                      "OVER", "PARTITION", "WINDOW", "ROWS", "RANGE", "UNBOUNDED", "PRECEDING", "FOLLOWING", "CURRENT", "ROW",
+                      "ROW_NUMBER", "RANK", "DENSE_RANK", "LAG", "LEAD", "FIRST_VALUE", "LAST_VALUE",
+                      "AND", "OR", "IN", "LIKE", "BETWEEN", "ORDER", "BY", "ASC", "DESC", "LIMIT", "PAGE", "TOKEN",
                       "SHOW", "TABLES", "FUNCTIONS", "OPERATORS", "DESCRIBE", "DESC", "EXPLAIN", "CREATE", "DROP", "TEMP", "TABLE", "AS", "INNER", "LEFT", "OUTER", "JOIN", "ON", "NOW", "PREFIX", "CONTAINS"};
         const auto aliases = tableAliases(input);
         if (aliases.size() == 1)
@@ -1250,6 +1689,73 @@ std::vector<std::string> mldp_pvxs_driver::cli::detail::replCompletions(const st
 int mldp_pvxs_driver::cli::detail::replCompletionContextLength(const std::string_view input)
 {
     return static_cast<int>(completionToken(input).size());
+}
+
+std::vector<mldp_pvxs_driver::cli::detail::ReplHighlight> mldp_pvxs_driver::cli::detail::replHighlight(const std::string_view input)
+{
+    static const std::vector<std::string_view> keywords = {
+        "SELECT", "DISTINCT", "FROM", "WHERE", "GROUP", "HAVING", "AND", "OR", "NOT", "IN", "IS", "NULL", "LIKE", "BETWEEN",
+        "ORDER", "BY", "ASC", "DESC", "LIMIT", "PAGE", "TOKEN", "SHOW", "TABLES", "FUNCTIONS", "OPERATORS", "DESCRIBE",
+        "EXPLAIN", "CREATE", "DROP", "TEMP", "TABLE", "AS", "INNER", "LEFT", "OUTER", "JOIN", "ON", "PREFIX", "CONTAINS",
+        "TRUE", "FALSE", "OVER", "PARTITION", "WINDOW", "ROWS", "RANGE", "UNBOUNDED", "PRECEDING", "FOLLOWING", "CURRENT", "ROW", "UNION", "ALL"};
+    static const std::vector<std::string_view> functions = {"COUNT", "SUM", "AVG", "MIN", "MAX", "FIRST", "LAST", "NOW", "ROW_NUMBER", "RANK",
+                                                            "DENSE_RANK", "LAG", "LEAD", "FIRST_VALUE", "LAST_VALUE"};
+    const auto is_word = [](const char c) { return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_'; };
+
+    std::vector<ReplHighlight> kinds(input.size(), ReplHighlight::Default);
+    const auto first = input.find_first_not_of(" \t");
+    if (first != std::string_view::npos && (input[first] == '.' || input[first] == '\\'))
+    {
+        std::fill(kinds.begin() + static_cast<std::ptrdiff_t>(first), kinds.end(), ReplHighlight::Command);
+        return kinds;
+    }
+    const auto mark = [&](const std::size_t from, const std::size_t to, const ReplHighlight kind)
+    { std::fill(kinds.begin() + static_cast<std::ptrdiff_t>(from), kinds.begin() + static_cast<std::ptrdiff_t>(to), kind); };
+
+    for (std::size_t i = 0; i < input.size();)
+    {
+        const char c = input[i];
+        if (c == '\'')
+        {
+            auto end = i + 1;
+            while (end < input.size())
+            {
+                if (input[end] == '\'' && end + 1 < input.size() && input[end + 1] == '\'') { end += 2; continue; }
+                if (input[end++] == '\'') break;
+            }
+            mark(i, end, ReplHighlight::String);
+            i = end;
+        }
+        else if (c == '-' && i + 1 < input.size() && input[i + 1] == '-')
+        {
+            const auto end = std::min(input.find('\n', i), input.size());
+            mark(i, end, ReplHighlight::Comment);
+            i = end;
+        }
+        else if (std::isdigit(static_cast<unsigned char>(c)) != 0 && (i == 0 || !is_word(input[i - 1])))
+        {
+            auto end = i;
+            while (end < input.size() && (is_word(input[end]) || input[end] == '.')) ++end;
+            mark(i, end, ReplHighlight::Number);
+            i = end;
+        }
+        else if (is_word(c))
+        {
+            auto end = i;
+            while (end < input.size() && is_word(input[end])) ++end;
+            const auto word = uppercase(input.substr(i, end - i));
+            if (std::find(keywords.begin(), keywords.end(), word) != keywords.end())
+                mark(i, end, ReplHighlight::Keyword);
+            else if (std::find(functions.begin(), functions.end(), word) != functions.end())
+                mark(i, end, ReplHighlight::Function);
+            i = end;
+        }
+        else
+        {
+            ++i;
+        }
+    }
+    return kinds;
 }
 
 void mldp_pvxs_driver::cli::QueryCommandPreparer::prepare(const mldp_pvxs_driver::config::Config& config) const
@@ -1396,8 +1902,12 @@ int mldp_pvxs_driver::cli::QueryRunner::run(const QueryCliOptions&              
         }
         if (interactive_page)
         {
+            // In the REPL, LIMIT is a page size rather than a row cap: the stream stays
+            // live across continuation tokens. Drop the limit node and clear any row
+            // limit the planner pushed into the scans, which would end the stream early.
             if (const auto* limit = std::get_if<query::plan::PhysicalLimit>(&physical->value))
                 physical = limit->input;
+            query::planner::propagateScanRowLimit(physical, std::nullopt);
         }
         if (progress)
         {
@@ -1452,7 +1962,7 @@ int mldp_pvxs_driver::cli::QueryRunner::run(const QueryCliOptions&              
                                   options.format,
                                   output,
                                   options.expanded,
-                                  TableRenderOptions{.viewport_width = options.table_fit ? table_width : std::nullopt},
+                                  TableRenderOptions{.viewport_width = options.table_fit ? table_width : std::nullopt, .color = options.color},
                                   context.cancellation,
                                   progress,
                                   output_mutex);
