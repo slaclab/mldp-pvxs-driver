@@ -17,6 +17,7 @@
 #include <chrono>
 #include <charconv>
 #include <cstdlib>
+#include <ctime>
 #include <optional>
 #include <stdexcept>
 #include <string_view>
@@ -98,20 +99,26 @@ std::string mldp_pvxs_driver::query::fromUtc(const arrow::TimestampScalar& times
     }
 }
 
-std::string mldp_pvxs_driver::query::localTimezone()
+std::string mldp_pvxs_driver::query::fromUtcLocal(const arrow::TimestampScalar& timestamp)
 {
     if (const char* tz = std::getenv("TZ"); tz != nullptr && *tz != '\0')
     {
         std::string_view zone{tz};
         if (zone.front() == ':') zone.remove_prefix(1);
-        if (!zone.empty()) return std::string(zone);
+        if (!zone.empty()) return fromUtc(timestamp, std::string(zone));
     }
+
+    const auto utc = timestampSeconds(timestamp);
     try
     {
-        return std::string(date::current_zone()->name());
+        return date::format("%FT%T%Ez", date::make_zoned(date::current_zone(), utc));
     }
     catch (const std::exception&)
     {
-        return "+00:00";
+        // No zone name (copied /etc/localtime): ask libc, which reads the zone file contents.
+        const std::time_t seconds = static_cast<std::time_t>(utc.time_since_epoch().count());
+        std::tm           local{};
+        const int         offset = ::localtime_r(&seconds, &local) != nullptr ? static_cast<int>(local.tm_gmtoff) : 0;
+        return date::format("%FT%T", date::local_seconds{utc.time_since_epoch() + std::chrono::seconds{offset}}) + offsetText(offset);
     }
 }

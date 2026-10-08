@@ -226,7 +226,7 @@ WHERE time >= to_utc('2026-07-23 09:00:00', '-07:00');
 
 The one-argument form requires `Z` or an explicit `+/-HH:MM` offset. The two-argument form currently accepts an explicit offset. Results are truncated to epoch-second precision.
 
-`from_utc(timestamp, zone_or_offset)` is a `SELECT` projection function that renders a UTC timestamp as an ISO-8601 string in an IANA timezone or a fixed numeric offset. IANA zones apply the offset in effect for each instant, including daylight saving time; fixed offsets do not change. `from_utc(timestamp)` omits the zone and uses the client's local timezone: the `TZ` environment variable when set (IANA name or `+/-HH:MM`), otherwise the host's configured zone.
+`from_utc(timestamp, zone_or_offset)` is a `SELECT` projection function that renders a UTC timestamp as an ISO-8601 string in an IANA timezone or a fixed numeric offset. IANA zones apply the offset in effect for each instant, including daylight saving time; fixed offsets do not change. `from_utc(timestamp)` omits the zone and uses the client's local timezone: the `TZ` environment variable when set (IANA name or `+/-HH:MM`), otherwise the host's configured zone (also when `/etc/localtime` is a plain file, as in many containers).
 
 ```sql
 SELECT config_name,
