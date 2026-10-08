@@ -58,6 +58,7 @@ struct PhysicalTableScan {
 struct PhysicalFilter {
     PhysicalNodePtr        input;                    ///< Physical input node.
     std::vector<Predicate> predicates;               ///< Residual predicates applied to each batch.
+    std::vector<PredicateGroup> predicate_groups;    ///< OR/NOT predicate trees every passing row must satisfy.
     std::vector<ExpressionPtr> conditions;           ///< Boolean expressions every passing row must satisfy.
 };
 

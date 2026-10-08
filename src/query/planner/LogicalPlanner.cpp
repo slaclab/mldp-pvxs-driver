@@ -50,11 +50,12 @@ plan::LogicalNodePtr mldp_pvxs_driver::query::planner::buildLogicalPlan(const pl
             .window_subquery = table.window_subquery,
             .window_literal = table.window_literal,
             .window_shards = table.window_shards});
-        if (!table.predicates.empty())
+        if (!table.predicates.empty() || !table.predicate_groups.empty())
         {
             node = plan::makeNode(plan::LogicalFilter{
                 .input = node,
-                .predicates = table.predicates});
+                .predicates = table.predicates,
+                .predicate_groups = table.predicate_groups});
         }
         return node;
     };

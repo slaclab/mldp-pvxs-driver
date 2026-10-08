@@ -155,6 +155,43 @@ TEST(QueryParserTest, ParsesNullPredicates)
     EXPECT_TRUE(std::holds_alternative<IsNotNullPredicate>(select.predicates[2]));
 }
 
+TEST(QueryParserTest, SplitsWhereIntoTopLevelConjunctsAndOrNotGroups)
+{
+    using Kind = WherePredicateTree::Kind;
+    const auto statement = parseQuery(
+        "SELECT * FROM mldp.configuration_activation WHERE start_time >= NOW - 7d "
+        "AND (attributes.note LIKE '%XLEAP%' OR attributes.description LIKE '%XLEAP%') "
+        "AND NOT end_time IS NULL AND config_name BETWEEN 'a' AND 'z'");
+    const auto& select = std::get<SelectStatement>(statement);
+    ASSERT_EQ(select.predicates.size(), 2U);
+    EXPECT_TRUE(std::holds_alternative<OpPredicate>(select.predicates[0]));
+    EXPECT_TRUE(std::holds_alternative<RangePredicate>(select.predicates[1]));
+    ASSERT_EQ(select.predicate_groups.size(), 2U);
+    EXPECT_EQ(select.predicate_groups[0].kind, Kind::OR);
+    ASSERT_EQ(select.predicate_groups[0].children.size(), 2U);
+    EXPECT_EQ(std::get<OpPredicate>(select.predicate_groups[0].children[1].leaf).column.name, "attributes.description");
+    EXPECT_EQ(select.predicate_groups[1].kind, Kind::NOT);
+    ASSERT_EQ(select.predicate_groups[1].children.size(), 1U);
+    // IS NULL markers are restored inside groups too.
+    EXPECT_TRUE(std::holds_alternative<IsNullPredicate>(select.predicate_groups[1].children[0].leaf));
+}
+
+TEST(QueryParserTest, AndBindsTighterThanOrInWhere)
+{
+    using Kind = WherePredicateTree::Kind;
+    const auto  statement = parseQuery("SELECT * FROM t WHERE a = 1 OR b = 2 AND c = 3 OR (d BETWEEN 1 AND 2 OR e = 5)");
+    const auto& select = std::get<SelectStatement>(statement);
+    EXPECT_TRUE(select.predicates.empty());
+    ASSERT_EQ(select.predicate_groups.size(), 1U);
+    const auto& top = select.predicate_groups[0];
+    ASSERT_EQ(top.kind, Kind::OR);
+    ASSERT_EQ(top.children.size(), 3U);
+    EXPECT_EQ(top.children[0].kind, Kind::LEAF);
+    EXPECT_EQ(top.children[1].kind, Kind::AND);
+    EXPECT_EQ(top.children[2].kind, Kind::OR);
+    EXPECT_TRUE(std::holds_alternative<RangePredicate>(top.children[2].children[0].leaf));
+}
+
 TEST(QueryParserTest, ParsesExpressionPrecedenceAndDurationLiterals)
 {
     const auto statement = parseQuery("SELECT value + 2 * 3, activation.start_time + 2D FROM samples");

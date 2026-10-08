@@ -27,6 +27,12 @@
         std::vector<SelectItem>             items;
     };
 
+    /// WHERE split into top-level AND leaf conjuncts and OR/NOT subtrees.
+    struct WhereClauseValue {
+        std::vector<WherePredicate>     predicates;
+        std::vector<WherePredicateTree> groups;
+    };
+
     } // namespace mldp_pvxs_driver::query::generated
 }
 
@@ -281,7 +287,8 @@
 %type <std::optional<std::string>> alias_opt
 %type <std::vector<mldp_pvxs_driver::query::JoinClause>> join_clauses
 %type <mldp_pvxs_driver::query::JoinClause> join_clause
-%type <std::vector<mldp_pvxs_driver::query::WherePredicate>> where_opt predicate_list
+%type <mldp_pvxs_driver::query::generated::WhereClauseValue> where_opt
+%type <mldp_pvxs_driver::query::WherePredicateTree> where_or where_and where_not
 %type <mldp_pvxs_driver::query::WherePredicate> predicate
 %type <std::vector<mldp_pvxs_driver::query::InPredicate::WindowShardOption>> window_option_list
 %type <mldp_pvxs_driver::query::InPredicate::WindowShardOption> window_option
@@ -352,7 +359,8 @@ select_stmt
           }
           statement.from = std::move($5);
           statement.joins = std::move($6);
-          statement.predicates = std::move($7);
+          statement.predicates = std::move($7.predicates);
+          statement.predicate_groups = std::move($7.groups);
           statement.group_by = std::move($8);
           statement.having = std::move($9);
           statement.named_windows = std::move($10);
@@ -622,18 +630,68 @@ join_clause
 where_opt
     : /* empty */
       { $$ = {}; }
-    | WHERE predicate_list
-      { $$ = std::move($2); }
+    | WHERE where_or
+      {
+          // Top-level AND leaves stay pushdown candidates; OR/NOT subtrees filter locally.
+          const auto flatten = [&](const auto& self, mldp_pvxs_driver::query::WherePredicateTree& node) -> void
+          {
+              using Kind = mldp_pvxs_driver::query::WherePredicateTree::Kind;
+              if (node.kind == Kind::AND)
+                  for (auto& child : node.children) self(self, child);
+              else if (node.kind == Kind::LEAF)
+                  $$.predicates.push_back(std::move(node.leaf));
+              else
+                  $$.groups.push_back(std::move(node));
+          };
+          flatten(flatten, $2);
+      }
     ;
 
-predicate_list
-    : predicate
-      { $$ = std::vector<mldp_pvxs_driver::query::WherePredicate>{std::move($1)}; }
-    | predicate_list AND predicate
+where_or
+    : where_and
+      { $$ = std::move($1); }
+    | where_or OR where_and
       {
-          $1.push_back(std::move($3));
+          using Kind = mldp_pvxs_driver::query::WherePredicateTree::Kind;
+          if ($1.kind != Kind::OR)
+          {
+              mldp_pvxs_driver::query::WherePredicateTree node{.kind = Kind::OR, .leaf = {}, .children = {}};
+              node.children.push_back(std::move($1));
+              $1 = std::move(node);
+          }
+          $1.children.push_back(std::move($3));
           $$ = std::move($1);
       }
+    ;
+
+where_and
+    : where_not
+      { $$ = std::move($1); }
+    | where_and AND where_not
+      {
+          using Kind = mldp_pvxs_driver::query::WherePredicateTree::Kind;
+          if ($1.kind != Kind::AND)
+          {
+              mldp_pvxs_driver::query::WherePredicateTree node{.kind = Kind::AND, .leaf = {}, .children = {}};
+              node.children.push_back(std::move($1));
+              $1 = std::move(node);
+          }
+          $1.children.push_back(std::move($3));
+          $$ = std::move($1);
+      }
+    ;
+
+where_not
+    : predicate
+      { $$ = mldp_pvxs_driver::query::WherePredicateTree{.kind = mldp_pvxs_driver::query::WherePredicateTree::Kind::LEAF, .leaf = std::move($1), .children = {}}; }
+    | NOT where_not
+      {
+          mldp_pvxs_driver::query::WherePredicateTree node{.kind = mldp_pvxs_driver::query::WherePredicateTree::Kind::NOT, .leaf = {}, .children = {}};
+          node.children.push_back(std::move($2));
+          $$ = std::move(node);
+      }
+    | LPAREN where_or RPAREN
+      { $$ = std::move($2); }
     ;
 
 predicate

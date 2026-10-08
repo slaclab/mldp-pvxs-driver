@@ -45,6 +45,14 @@ struct PlannerPredicate {
     std::set<PredicateOp>    filterable_ops;                 ///< Operators supported by the local Arrow filter layer.
 };
 
+/** @brief Boolean tree of bound predicates (WHERE OR/NOT) on one table; never pushed down. */
+struct PlannerPredicateGroup {
+    using Kind = PredicateGroup::Kind;
+    Kind                               kind{Kind::LEAF}; ///< Node kind.
+    PlannerPredicate                   leaf;             ///< Leaf predicate when @c kind is LEAF.
+    std::vector<PlannerPredicateGroup> children;         ///< Operands for AND/OR and NOT.
+};
+
 /** @brief Membership predicate whose values are produced by a child SELECT at execution time. */
 struct BoundInSubquery {
     PlannerPredicate                 predicate; ///< Predicate template filled with subquery results at execution time.
@@ -84,6 +92,7 @@ struct LogicalScan {
 struct LogicalFilter {
     LogicalNodePtr         input;                    ///< Input plan node to filter.
     std::vector<PlannerPredicate> predicates;        ///< Residual predicates applied after scan pushdown.
+    std::vector<PlannerPredicateGroup> predicate_groups; ///< OR/NOT predicate trees; a row passes when every tree is true.
     std::vector<ExpressionPtr> conditions;           ///< Boolean expressions (e.g. column-to-column comparisons); a row passes when all are true.
 };
 
@@ -213,6 +222,7 @@ struct BoundTable {
     std::string                 table_alias;                 ///< SQL alias for this table reference.
     std::vector<ColumnSchema>   schema;                      ///< Resolved column schema.
     std::vector<PlannerPredicate> predicates;                ///< Bound predicates against this table.
+    std::vector<PlannerPredicateGroup> predicate_groups;     ///< Bound OR/NOT predicate trees, filtered locally.
     std::string                 ipc_path;                    ///< Path to an Arrow IPC file for arrow_ipc scans.
     bool                        arrow_ipc{false};            ///< True when this table is an Arrow IPC file scan.
     std::shared_ptr<SelectStatement> derived_query;          ///< Non-null for derived-table scans.

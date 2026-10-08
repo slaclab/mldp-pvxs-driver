@@ -38,7 +38,7 @@ namespace {
             for (const auto& batch : input)
             {
                 throwIfCancelled();
-                auto filtered = applyFilter(batch, node_.predicates);
+                auto filtered = applyFilter(batch, node_.predicates, node_.predicate_groups);
                 if (!filtered.ok())
                     throw std::runtime_error(filtered.status().ToString());
                 output.push_back(applyConditions(*filtered, node_.conditions));

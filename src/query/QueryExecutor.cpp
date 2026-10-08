@@ -157,7 +157,7 @@ IRecordBatchStreamUPtr makeStreamingPlan(const plan::PhysicalNodePtr& root,
     if (const auto* filter = std::get_if<plan::PhysicalFilter>(&root->value))
     {
         auto input = makeStreamingPlan(filter->input, std::move(context), stats);
-        return input ? std::make_unique<FilterRecordBatchStream>(std::move(input), filter->predicates, filter->conditions) : nullptr;
+        return input ? std::make_unique<FilterRecordBatchStream>(std::move(input), filter->predicates, filter->conditions, filter->predicate_groups) : nullptr;
     }
     if (const auto* project = std::get_if<plan::PhysicalProject>(&root->value))
     {

@@ -203,6 +203,9 @@ std::vector<std::pair<int64_t, int64_t>> extractNormalizedWindowsImpl(const std:
     std::vector<std::pair<int64_t, int64_t>> windows;
     for (const auto& batch : batches)
     {
+        // A batch the local filter emptied has no row to type a computed column
+        // (e.g. `start_time + 30s` comes out as Arrow null); it holds no window.
+        if (batch->num_rows() == 0) continue;
         if (batch->num_columns() != 2 || batch->column(0)->type_id() != arrow::Type::TIMESTAMP || batch->column(1)->type_id() != arrow::Type::TIMESTAMP)
             throw std::runtime_error("MLDP time-series window subquery must return exactly two timestamp columns");
         for (int64_t row = 0; row < batch->num_rows(); ++row)
@@ -603,69 +606,92 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> selectUnionSafeRows(
     return arrow::RecordBatch::Make(batch->schema(), static_cast<int64_t>(selected_rows.size()), std::move(columns));
 }
 
+/// SQL three-valued truth: a NULL or missing operand makes a comparison UNKNOWN.
+enum class Truth { FALSE_VALUE, TRUE_VALUE, UNKNOWN };
+
+int predicateFieldIndex(const std::shared_ptr<arrow::RecordBatch>& batch, const std::string& column)
+{
+    int field_index = batch->schema()->GetFieldIndex(column);
+    if (field_index >= 0) return field_index;
+    const auto suffix = "." + column;
+    for (int fi = 0; fi < batch->schema()->num_fields(); ++fi)
+    {
+        const auto& name = batch->schema()->field(fi)->name();
+        if (name.size() > suffix.size() && name.compare(name.size() - suffix.size(), suffix.size(), suffix) == 0) return fi;
+    }
+    return -1;
+}
+
+arrow::Result<Truth> predicateTruth(const std::shared_ptr<arrow::RecordBatch>& batch, const int64_t row, const Predicate& predicate)
+{
+    if (predicate.column == "tag")
+    {
+        const int tags_index = predicateFieldIndex(batch, "tags");
+        if (tags_index < 0) return Truth::UNKNOWN;
+        ARROW_ASSIGN_OR_RAISE(auto tags, batch->column(tags_index)->GetScalar(row));
+        return listContainsPredicateValue(tags, predicate) ? Truth::TRUE_VALUE : Truth::FALSE_VALUE;
+    }
+    const int field_index = predicateFieldIndex(batch, predicate.column);
+    const bool null_test = predicate.op == PredicateOp::IS_NULL || predicate.op == PredicateOp::IS_NOT_NULL;
+    if (field_index < 0) return Truth::UNKNOWN;
+    ARROW_ASSIGN_OR_RAISE(auto scalar, batch->column(field_index)->GetScalar(row));
+    if (!null_test && (!scalar || !scalar->is_valid)) return Truth::UNKNOWN;
+    return scalarMatchesPredicate(scalar, predicate) ? Truth::TRUE_VALUE : Truth::FALSE_VALUE;
+}
+
+arrow::Result<Truth> groupTruth(const std::shared_ptr<arrow::RecordBatch>& batch, const int64_t row, const PredicateGroup& group)
+{
+    switch (group.kind)
+    {
+        case PredicateGroup::Kind::LEAF: return predicateTruth(batch, row, group.leaf);
+        case PredicateGroup::Kind::NOT:
+        {
+            ARROW_ASSIGN_OR_RAISE(const auto value, groupTruth(batch, row, group.children.front()));
+            if (value == Truth::UNKNOWN) return Truth::UNKNOWN;
+            return value == Truth::TRUE_VALUE ? Truth::FALSE_VALUE : Truth::TRUE_VALUE;
+        }
+        case PredicateGroup::Kind::AND:
+        case PredicateGroup::Kind::OR:
+        {
+            // AND short-circuits on FALSE, OR on TRUE; otherwise any UNKNOWN wins over the identity.
+            const auto decisive = group.kind == PredicateGroup::Kind::AND ? Truth::FALSE_VALUE : Truth::TRUE_VALUE;
+            bool unknown = false;
+            for (const auto& child : group.children)
+            {
+                ARROW_ASSIGN_OR_RAISE(const auto value, groupTruth(batch, row, child));
+                if (value == decisive) return decisive;
+                unknown = unknown || value == Truth::UNKNOWN;
+            }
+            if (unknown) return Truth::UNKNOWN;
+            return decisive == Truth::FALSE_VALUE ? Truth::TRUE_VALUE : Truth::FALSE_VALUE;
+        }
+    }
+    return Truth::UNKNOWN;
+}
+
 arrow::Result<std::shared_ptr<arrow::RecordBatch>> applyFilterImpl(const std::shared_ptr<arrow::RecordBatch>& batch,
-                                                                   const std::vector<Predicate>&              predicates)
+                                                                   const std::vector<Predicate>&              predicates,
+                                                                   const std::vector<PredicateGroup>&         groups)
 {
     arrow::BooleanBuilder mask_builder;
     std::vector<int64_t>  selected_rows;
     for (int64_t row = 0; row < batch->num_rows(); ++row)
     {
+        // A row passes only when every conjunct and every OR/NOT group is TRUE.
         bool include = true;
         for (const auto& predicate : predicates)
         {
-            if (predicate.column == "tag")
-            {
-                int tags_index = batch->schema()->GetFieldIndex("tags");
-                if (tags_index < 0)
-                {
-                    for (int fi = 0; fi < batch->schema()->num_fields(); ++fi)
-                    {
-                        const auto& name = batch->schema()->field(fi)->name();
-                        if (name.size() > 5 && name.compare(name.size() - 5, 5, ".tags") == 0)
-                        {
-                            tags_index = fi;
-                            break;
-                        }
-                    }
-                }
-                if (tags_index < 0)
-                {
-                    include = false;
-                    break;
-                }
-                ARROW_ASSIGN_OR_RAISE(auto tags, batch->column(tags_index)->GetScalar(row));
-                if (!listContainsPredicateValue(tags, predicate))
-                {
-                    include = false;
-                    break;
-                }
-                continue;
-            }
-            int field_index = batch->schema()->GetFieldIndex(predicate.column);
-            if (field_index < 0)
-            {
-                const auto suffix = "." + predicate.column;
-                for (int fi = 0; fi < batch->schema()->num_fields(); ++fi)
-                {
-                    const auto& name = batch->schema()->field(fi)->name();
-                    if (name.size() > suffix.size() && name.compare(name.size() - suffix.size(), suffix.size(), suffix) == 0)
-                    {
-                        field_index = fi;
-                        break;
-                    }
-                }
-            }
-            if (field_index < 0)
+            ARROW_ASSIGN_OR_RAISE(const auto value, predicateTruth(batch, row, predicate));
+            if (value != Truth::TRUE_VALUE)
             {
                 include = false;
                 break;
             }
-            ARROW_ASSIGN_OR_RAISE(auto scalar, batch->column(field_index)->GetScalar(row));
-            if (!scalarMatchesPredicate(scalar, predicate))
-            {
-                include = false;
-                break;
-            }
+        }
+        for (std::size_t index = 0; include && index < groups.size(); ++index)
+        {
+            ARROW_ASSIGN_OR_RAISE(const auto value, groupTruth(batch, row, groups[index]));
+            include = value == Truth::TRUE_VALUE;
         }
         RETURN_NOT_OK(mask_builder.Append(include));
         if (include)
@@ -1414,11 +1440,12 @@ int64_t mldp_pvxs_driver::query::executor::autoSliceNs(const int64_t window_ns)
     return kSteps[std::size(kSteps) - 1];
 }
 
-arrow::Result<std::shared_ptr<arrow::RecordBatch>> mldp_pvxs_driver::query::executor::applyFilter(const std::shared_ptr<arrow::RecordBatch>& batch, const std::vector<Predicate>& predicates)
+arrow::Result<std::shared_ptr<arrow::RecordBatch>> mldp_pvxs_driver::query::executor::applyFilter(const std::shared_ptr<arrow::RecordBatch>& batch, const std::vector<Predicate>& predicates,
+                                                                                                    const std::vector<PredicateGroup>& groups)
 {
-    if (predicates.empty())
+    if (predicates.empty() && groups.empty())
         return batch;
-    return ::applyFilterImpl(batch, predicates);
+    return ::applyFilterImpl(batch, predicates, groups);
 }
 
 RecordBatches mldp_pvxs_driver::query::executor::applyProjection(const RecordBatches& input, const std::vector<std::string>& columns)

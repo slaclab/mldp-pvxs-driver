@@ -24,8 +24,11 @@ class FilterRecordBatchStream final : public IRecordBatchStream
 public:
     /** @brief Constructs a filter stream that applies predicates to each pulled batch.
      * @param[in] input Upstream pull stream.
-     * @param[in] predicates Arrow-local predicates to apply. */
-    FilterRecordBatchStream(IRecordBatchStreamUPtr input, std::vector<Predicate> predicates, std::vector<ExpressionPtr> conditions = {});
+     * @param[in] predicates Arrow-local predicates to apply.
+     * @param[in] conditions Boolean expressions applied after the predicates.
+     * @param[in] groups OR/NOT predicate trees applied with the predicates. */
+    FilterRecordBatchStream(IRecordBatchStreamUPtr input, std::vector<Predicate> predicates, std::vector<ExpressionPtr> conditions = {},
+                            std::vector<PredicateGroup> groups = {});
 
     /** @brief Returns the next batch that passes all predicates, or nullptr at EOF.
      * @return Filtered batch or nullptr. */
@@ -34,6 +37,7 @@ public:
 private:
     IRecordBatchStreamUPtr input_;      ///< Upstream pull stream.
     std::vector<Predicate> predicates_; ///< Predicates applied to each input batch.
+    std::vector<PredicateGroup> groups_; ///< OR/NOT predicate trees applied with the predicates.
     std::vector<ExpressionPtr> conditions_; ///< Boolean expressions applied after the predicates.
 };
 

@@ -64,9 +64,11 @@ std::vector<std::pair<int64_t, int64_t>> extractNormalizedWindows(const RecordBa
 int64_t autoSliceNs(int64_t window_ns);
 /** @brief Applies a list of predicates to a single batch.
  * @param[in] batch Input batch.
- * @param[in] predicates Predicates to evaluate.
+ * @param[in] predicates Predicates to evaluate; a row must satisfy all of them.
+ * @param[in] groups     OR/NOT predicate trees, evaluated with SQL three-valued logic; a row must make each one TRUE.
  * @return Arrow Result with the filtered batch. */
-arrow::Result<std::shared_ptr<arrow::RecordBatch>> applyFilter(const std::shared_ptr<arrow::RecordBatch>& batch, const std::vector<Predicate>& predicates);
+arrow::Result<std::shared_ptr<arrow::RecordBatch>> applyFilter(const std::shared_ptr<arrow::RecordBatch>& batch, const std::vector<Predicate>& predicates,
+                                                               const std::vector<PredicateGroup>& groups = {});
 
 /** @brief Keeps the rows where every boolean @p conditions expression is true (null counts as false). */
 std::shared_ptr<arrow::RecordBatch> applyConditions(const std::shared_ptr<arrow::RecordBatch>& batch, const std::vector<ExpressionPtr>& conditions);

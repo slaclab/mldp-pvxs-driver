@@ -1123,6 +1123,68 @@ plan::PlannerPredicate buildPredicate(const WherePredicate& where,
         where);
 }
 
+/// Binds a WHERE OR/NOT tree. Leaves use the regular predicate binding; subquery,
+/// window and column-to-column leaves are rejected because they cannot run as a
+/// per-row local filter.
+plan::PlannerPredicateGroup bindPredicateGroup(const WherePredicateTree& node, const std::vector<plan::BoundTable>& tables)
+{
+    const auto kind = [&node]
+    {
+        switch (node.kind)
+        {
+            case WherePredicateTree::Kind::AND: return plan::PlannerPredicateGroup::Kind::AND;
+            case WherePredicateTree::Kind::OR: return plan::PlannerPredicateGroup::Kind::OR;
+            case WherePredicateTree::Kind::NOT: return plan::PlannerPredicateGroup::Kind::NOT;
+            case WherePredicateTree::Kind::LEAF: break;
+        }
+        return plan::PlannerPredicateGroup::Kind::LEAF;
+    }();
+    plan::PlannerPredicateGroup group{.kind = kind, .leaf = {}, .children = {}};
+    if (node.kind != WherePredicateTree::Kind::LEAF)
+    {
+        for (const auto& child : node.children) group.children.push_back(bindPredicateGroup(child, tables));
+        return group;
+    }
+    if (const auto* in = std::get_if<InPredicate>(&node.leaf); in != nullptr && (in->subquery || in->column.name == "window" || !in->window_options.empty()))
+        throw plan::PlannerException(plan::BindError{.message = "IN (SELECT ...) and window IN (...) are not supported inside OR/NOT; use them as top-level AND conditions"});
+    if (columnComparisonCondition(node.leaf))
+        throw plan::PlannerException(plan::BindError{.message = "Column-to-column comparisons are not supported inside OR/NOT"});
+    group.leaf = buildPredicate(node.leaf, tables);
+    return group;
+}
+
+/// Calls @p fn on every leaf predicate of @p group.
+template <typename Fn>
+void forEachGroupLeaf(const plan::PlannerPredicateGroup& group, const Fn& fn)
+{
+    if (group.kind == plan::PlannerPredicateGroup::Kind::LEAF) fn(group.leaf);
+    for (const auto& child : group.children) forEachGroupLeaf(child, fn);
+}
+
+/// Rewrites `c = a OR c = b OR c IN (...)` on one column into a single IN predicate,
+/// which can then be pushed down like any other top-level conjunct.
+std::optional<plan::PlannerPredicate> sameColumnMembership(const plan::PlannerPredicateGroup& group)
+{
+    if (group.kind != plan::PlannerPredicateGroup::Kind::OR) return std::nullopt;
+    std::optional<plan::PlannerPredicate> merged;
+    for (const auto& child : group.children)
+    {
+        if (child.kind != plan::PlannerPredicateGroup::Kind::LEAF) return std::nullopt;
+        const auto& leaf = child.leaf;
+        if (leaf.op != PredicateOp::EQ && leaf.op != PredicateOp::IN) return std::nullopt;
+        if (!merged)
+        {
+            merged = leaf;
+            merged->op = PredicateOp::IN;
+            continue;
+        }
+        if (leaf.column != merged->column || leaf.table_alias != merged->table_alias) return std::nullopt;
+        merged->values.insert(merged->values.end(), leaf.values.begin(), leaf.values.end());
+    }
+    if (!merged || (!merged->pushable_ops.contains(PredicateOp::IN) && !merged->filterable_ops.contains(PredicateOp::IN))) return std::nullopt;
+    return merged;
+}
+
 plan::BoundTable makeBoundTable(const TableRef& table_ref, const QueryTableCatalog* catalog)
 {
     if (table_ref.derived_query)
@@ -1461,6 +1523,32 @@ plan::BoundSelect mldp_pvxs_driver::query::planner::bindSelect(const SelectState
             table.in_subqueries.push_back(plan::BoundInSubquery{.predicate = predicate, .child = in->subquery});
         else
             table.predicates.push_back(predicate);
+    }
+
+    // OR/NOT trees never reach the backend (except a same-column equality OR, which
+    // becomes a pushable IN). Each tree runs as a local filter on its one table.
+    for (const auto& tree : statement.predicate_groups)
+    {
+        auto group = bindPredicateGroup(tree, all_tables);
+        if (auto membership = sameColumnMembership(group))
+        {
+            all_tables[table_index.at(membership->table_alias)].predicates.push_back(std::move(*membership));
+            continue;
+        }
+        std::set<std::string> aliases;
+        forEachGroupLeaf(group, [&](const plan::PlannerPredicate& leaf)
+        {
+            aliases.insert(leaf.table_alias);
+            if (!leaf.filterable_ops.contains(leaf.op))
+                throw plan::PlannerException(plan::BindError{
+                    .message = "Operator on column '" + qualify(leaf.table_alias, leaf.column) +
+                               "' is evaluated only by the backend and cannot be used inside OR/NOT"});
+        });
+        if (aliases.size() != 1)
+            throw plan::PlannerException(plan::BindError{.message = "OR/NOT conditions must reference columns of a single table"});
+        if (nullable_aliases.contains(*aliases.begin()))
+            throw plan::PlannerException(plan::BindError{.message = "OR/NOT conditions on the right side of a LEFT JOIN are not supported"});
+        all_tables[table_index.at(*aliases.begin())].predicate_groups.push_back(std::move(group));
     }
 
     enforceTimeSeriesTableContract(statement, all_tables);

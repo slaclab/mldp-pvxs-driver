@@ -61,7 +61,7 @@ plan::LogicalNodePtr rewrite(const plan::LogicalNodePtr& node)
         }
 
         filter->predicates = std::move(post_filter);
-        if (filter->predicates.empty() && filter->conditions.empty())
+        if (filter->predicates.empty() && filter->predicate_groups.empty() && filter->conditions.empty())
         {
             return filter->input;
         }

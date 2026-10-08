@@ -258,16 +258,17 @@ void printCommands(std::ostream& out, const bool color)
 void printEditing(std::ostream& out, const bool color)
 {
     heading(out, color, "Line editing");
-    row(out, color, "Left/Right, Ctrl-A/Ctrl-E", "move cursor; jump to start/end of line", 28);
+    row(out, color, "Arrows", "move cursor, also up/down across lines of the statement", 28);
+    row(out, color, "Ctrl-A/Ctrl-E", "jump to start/end of the whole input", 28);
     row(out, color, "Ctrl-R", "search history", 28);
-    row(out, color, "Up/Down", "browse history (.history lists it)", 28);
+    row(out, color, "Ctrl-P/Ctrl-N", "previous/next statement in history (.history lists it)", 28);
     row(out, color, "Ctrl-W", "delete previous word", 28);
     row(out, color, "Ctrl-U/Ctrl-K", "delete to start/end of line", 28);
     row(out, color, "Ctrl-L", "clear screen", 28);
     row(out, color, "Ctrl-C", "cancel query; clear input; on empty prompt exit", 28);
     row(out, color, "Ctrl-Q", "exit", 28);
     row(out, color, "Tab", "complete keywords, tables, columns and command arguments", 28);
-    out << "  A statement may span several lines; it runs when terminated by ';'.\n";
+    out << "  Enter adds a line until the statement ends with ';'; the whole statement stays editable.\n";
 }
 
 void printDisplay(std::ostream& out, const bool color)

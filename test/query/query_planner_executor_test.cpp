@@ -2119,6 +2119,86 @@ TEST_F(PlannerExecutorTest, FiltersMaterializedNativeUnionValuesByActiveTypeWith
     EXPECT_EQ(equal->num_rows(), 1);
 }
 
+TEST_F(PlannerExecutorTest, EvaluatesWhereOrNotGroupsLocallyWithThreeValuedLogic)
+{
+    auto                 file_system = std::make_shared<arrow::fs::internal::MockFileSystem>(std::chrono::system_clock::now());
+    auto                 catalog = std::make_shared<query::QueryTableCatalog>(file_system, "catalog");
+    arrow::StringBuilder name;
+    arrow::StringBuilder note;
+    arrow::StringBuilder description;
+    arrow::Int64Builder  shift;
+    for (const char* value : {"a", "b", "c", "d"}) ASSERT_TRUE(name.Append(value).ok());
+    ASSERT_TRUE(note.Append("XLEAP run").ok());
+    ASSERT_TRUE(note.AppendNull().ok());
+    ASSERT_TRUE(note.Append("other").ok());
+    ASSERT_TRUE(note.AppendNull().ok());
+    ASSERT_TRUE(description.AppendNull().ok());
+    ASSERT_TRUE(description.Append("XLEAP study").ok());
+    ASSERT_TRUE(description.Append("other").ok());
+    ASSERT_TRUE(description.AppendNull().ok());
+    for (const int64_t value : {1, 2, 3, 4}) ASSERT_TRUE(shift.Append(value).ok());
+    std::shared_ptr<arrow::Array> name_array, note_array, description_array, shift_array;
+    ASSERT_TRUE(name.Finish(&name_array).ok());
+    ASSERT_TRUE(note.Finish(&note_array).ok());
+    ASSERT_TRUE(description.Finish(&description_array).ok());
+    ASSERT_TRUE(shift.Finish(&shift_array).ok());
+    const auto batch = arrow::RecordBatch::Make(arrow::schema({arrow::field("name", arrow::utf8()), arrow::field("note", arrow::utf8()),
+                                                               arrow::field("description", arrow::utf8()), arrow::field("shift", arrow::int64())}),
+                                                4, {name_array, note_array, description_array, shift_array});
+    ASSERT_TRUE(catalog->create("runs", query::TableLifetime::Session, {batch}).ok());
+
+    query::ExecutionContext context{.pool = arrow::default_memory_pool(), .table_catalog = catalog};
+    query::QueryPlanner     planner(catalog);
+    query::QueryExecutor    executor;
+    const auto names = [&](const std::string& sql)
+    {
+        std::vector<std::string> result;
+        for (const auto& output : executor.execute(planner.plan(query::parseQuery(sql)), context).batches)
+            for (int64_t row = 0; row < output->num_rows(); ++row)
+                result.push_back(output->column(0)->GetScalar(row).ValueOrDie()->ToString());
+        return result;
+    };
+
+    EXPECT_EQ(names("SELECT name FROM runs WHERE note LIKE '%XLEAP%' OR description LIKE '%XLEAP%'"), (std::vector<std::string>{"a", "b"}));
+    EXPECT_EQ(names("SELECT name FROM runs WHERE name != 'd' AND (note LIKE '%XLEAP%' OR description LIKE '%XLEAP%' OR shift = 3)"),
+              (std::vector<std::string>{"a", "b", "c"}));
+    // NOT over UNKNOWN (NULL note) stays UNKNOWN, so rows b and d are dropped.
+    EXPECT_EQ(names("SELECT name FROM runs WHERE NOT note LIKE '%XLEAP%'"), (std::vector<std::string>{"c"}));
+    EXPECT_EQ(names("SELECT name FROM runs WHERE NOT (note IS NULL OR shift = 1)"), (std::vector<std::string>{"c"}));
+    EXPECT_EQ(names("SELECT name FROM runs WHERE name = 'a' OR name = 'd'"), (std::vector<std::string>{"a", "d"}));
+
+    const auto explain = query::plan::physicalPlanToString(planner.plan(query::parseQuery("SELECT name FROM runs WHERE name != 'd' AND (note = 'x' OR shift = 1)")));
+    EXPECT_NE(explain.find("local_or_groups=1"), std::string::npos) << explain;
+}
+
+TEST_F(PlannerExecutorTest, PushesTopLevelConjunctsAndKeepsOrGroupsLocal)
+{
+    query::QueryPlanner planner;
+    // Same-column equality OR becomes a pushed IN.
+    const auto  merged = planner.plan(query::parseQuery("SELECT pv FROM fake.samples WHERE pv = 'A' OR pv = 'B'"));
+    const auto* merged_scan = findScan(merged);
+    ASSERT_NE(merged_scan, nullptr);
+    ASSERT_EQ(merged_scan->pushable_predicates.size(), 1U);
+    EXPECT_EQ(merged_scan->pushable_predicates[0].op, query::PredicateOp::IN);
+    EXPECT_EQ(merged_scan->pushable_predicates[0].values.size(), 2U);
+
+    // Top-level pv stays pushed; the OR on locally-filterable `value` runs after the fetch.
+    const auto  mixed = planner.plan(query::parseQuery("SELECT pv FROM fake.samples WHERE pv = 'A' AND (value = 1 OR NOT value IN (2, 3))"));
+    const auto* mixed_scan = findScan(mixed);
+    ASSERT_NE(mixed_scan, nullptr);
+    ASSERT_EQ(mixed_scan->pushable_predicates.size(), 1U);
+    EXPECT_EQ(mixed_scan->pushable_predicates[0].column, "pv");
+    EXPECT_NE(query::plan::physicalPlanToString(mixed).find("local_or_groups=1"), std::string::npos);
+
+    // A required pv only inside an OR does not satisfy the required-column check.
+    EXPECT_THROW((void)planner.plan(query::parseQuery("SELECT pv FROM fake.samples WHERE pv = 'A' OR value = 1")), query::plan::PlannerException);
+    // Backend-only operators (time >= on fake.samples) cannot run locally inside OR.
+    EXPECT_THROW((void)planner.plan(query::parseQuery("SELECT pv FROM fake.samples WHERE pv = 'A' AND (time >= 1 OR value = 1)")), query::plan::PlannerException);
+    // Subqueries are only accepted as top-level conjuncts.
+    EXPECT_THROW((void)planner.plan(query::parseQuery("SELECT pv FROM fake.samples WHERE pv = 'A' AND (pv IN (SELECT pv FROM fake.meta WHERE pv = 'A') OR value = 1)")),
+                 query::plan::PlannerException);
+}
+
 TEST_F(PlannerExecutorTest, CoalesceReturnsFirstNonNullArgumentInProjections)
 {
     auto                file_system = std::make_shared<arrow::fs::internal::MockFileSystem>(std::chrono::system_clock::now());

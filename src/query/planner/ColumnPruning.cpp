@@ -108,6 +108,13 @@ void collectReferencedColumns(const plan::LogicalNodePtr&                   node
                        {
                            columns[predicate.table_alias].insert(predicate.column == "tag" ? "tags" : predicate.column);
                        }
+                       const auto group_columns = [&columns](const auto& self, const plan::PlannerPredicateGroup& group) -> void
+                       {
+                           if (group.kind == plan::PlannerPredicateGroup::Kind::LEAF)
+                               columns[group.leaf.table_alias].insert(group.leaf.column == "tag" ? "tags" : group.leaf.column);
+                           for (const auto& child : group.children) self(self, child);
+                       };
+                       for (const auto& group : filter.predicate_groups) group_columns(group_columns, group);
                        for (const auto& condition : filter.conditions)
                        {
                            collectExpressionColumns(condition, columns, table_aliases);

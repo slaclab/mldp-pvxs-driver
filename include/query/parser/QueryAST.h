@@ -132,6 +132,15 @@ struct OpPredicate {
 
 using WherePredicate = std::variant<EqPredicate, InPredicate, RangePredicate, OpPredicate, IsNullPredicate, IsNotNullPredicate>;
 
+/** @brief Boolean WHERE tree (OR, NOT, or a parenthesised AND) over leaf predicates; evaluated locally. */
+struct WherePredicateTree {
+    /** @brief Node kind: a leaf predicate or a boolean connective over @c children. */
+    enum class Kind { LEAF, AND, OR, NOT };
+    Kind                            kind{Kind::LEAF}; ///< Node kind.
+    WherePredicate                  leaf;             ///< Leaf predicate when @c kind is LEAF.
+    std::vector<WherePredicateTree> children;         ///< Operands for AND/OR (two or more) and NOT (one).
+};
+
 /** @brief FROM source, optionally named or represented by a derived SELECT. */
 struct TableRef {
     std::string                      table_name;    ///< Physical or virtual table name.
@@ -214,7 +223,8 @@ struct SelectStatement {
     std::vector<SelectItem>      select_items;      ///< Computed selected items with optional aliases.
     TableRef                     from;              ///< Primary FROM source.
     std::vector<JoinClause>      joins;             ///< JOIN clauses.
-    std::vector<WherePredicate>  predicates;        ///< WHERE predicate list.
+    std::vector<WherePredicate>  predicates;        ///< Top-level WHERE AND conjuncts (pushdown candidates).
+    std::vector<WherePredicateTree> predicate_groups; ///< Top-level WHERE conjuncts that are OR/NOT trees; filtered locally.
     std::vector<ExpressionPtr>   group_by;          ///< GROUP BY key expressions.
     ExpressionPtr                having;            ///< HAVING condition; null when absent.
     std::vector<OrderByItem>     order_by;          ///< ORDER BY items.

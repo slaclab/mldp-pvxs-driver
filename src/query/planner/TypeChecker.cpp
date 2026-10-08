@@ -89,7 +89,23 @@ plan::BoundSelect mldp_pvxs_driver::query::planner::typeCheckSelect(plan::BoundS
         }
     };
 
+    const auto type_check_groups = [&](std::vector<plan::PlannerPredicateGroup>& groups)
+    {
+        const auto visit = [&](const auto& self, plan::PlannerPredicateGroup& group) -> void
+        {
+            if (group.kind == plan::PlannerPredicateGroup::Kind::LEAF)
+            {
+                std::vector<plan::PlannerPredicate> leaf{group.leaf};
+                type_check_predicates(leaf);
+                group.leaf = std::move(leaf.front());
+            }
+            for (auto& child : group.children) self(self, child);
+        };
+        for (auto& group : groups) visit(visit, group);
+    };
+
     type_check_predicates(bound.from.predicates);
+    type_check_groups(bound.from.predicate_groups);
     if (bound.from.window_literal)
     {
         auto window_predicate = plan::PlannerPredicate{
@@ -112,6 +128,7 @@ plan::BoundSelect mldp_pvxs_driver::query::planner::typeCheckSelect(plan::BoundS
     for (auto& join : bound.joins)
     {
         type_check_predicates(join.table.predicates);
+        type_check_groups(join.table.predicate_groups);
     }
 
     return bound;

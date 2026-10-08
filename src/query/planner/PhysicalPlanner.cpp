@@ -172,7 +172,16 @@ plan::PhysicalNodePtr buildNode(const plan::LogicalNodePtr& node)
                               {
                                   predicates.push_back(toExecutablePredicate(predicate));
                               }
-                              return plan::makeNode(plan::PhysicalFilter{.input = buildNode(filter.input), .predicates = std::move(predicates), .conditions = filter.conditions});
+                              const auto to_group = [](const auto& self, const plan::PlannerPredicateGroup& group) -> PredicateGroup
+                              {
+                                  PredicateGroup result{.kind = group.kind, .leaf = {}, .children = {}};
+                                  if (group.kind == PredicateGroup::Kind::LEAF) result.leaf = toExecutablePredicate(group.leaf);
+                                  for (const auto& child : group.children) result.children.push_back(self(self, child));
+                                  return result;
+                              };
+                              std::vector<PredicateGroup> groups;
+                              for (const auto& group : filter.predicate_groups) groups.push_back(to_group(to_group, group));
+                              return plan::makeNode(plan::PhysicalFilter{.input = buildNode(filter.input), .predicates = std::move(predicates), .predicate_groups = std::move(groups), .conditions = filter.conditions});
                           },
                           [](const plan::LogicalProject& project)
                           {
@@ -345,6 +354,7 @@ void appendPlan(std::ostringstream& out, const mldp_pvxs_driver::query::plan::Ph
                        out << ")";
                    },
                    [&](const PhysicalFilter& filter) { out << "PhysicalFilter(predicates=" << filter.predicates.size();
+                       if (!filter.predicate_groups.empty()) out << ", local_or_groups=" << filter.predicate_groups.size();
                        if (!filter.conditions.empty()) out << ", conditions=" << filter.conditions.size();
                        out << ")"; },
                    [&](const PhysicalProject& project)

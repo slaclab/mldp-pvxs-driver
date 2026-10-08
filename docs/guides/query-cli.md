@@ -76,13 +76,13 @@ mldp> SHOW FUNCTIONS;
 mldp> SHOW OPERATORS;
 ```
 
-Terminate each statement with a semicolon. Statements can span lines; the prompt changes from `mldp> ` to `...> ` while a statement is buffered. A semicolon inside a quoted string does not terminate the statement. The session executes one statement at a time and remains open after parse, planning, or execution errors.
+Terminate each statement with a semicolon. Statements can span lines: `Enter` adds a new line until the input ends with a `;` outside quotes and parentheses (or `\G`, or is a `.`/`\` REPL command), so the whole statement stays in one editable buffer, continuation lines are indented under `mldp> `, and a pasted multi-line query lands intact. The session executes one statement at a time and remains open after parse, planning, or execution errors.
 
 Table and expanded results use normal terminal scrollback, so SSH and container-attached terminals retain their native resize, copy/paste, and scroll behavior. A direct-output query in a real terminal temporarily shows a progress footer with `Ctrl-C cancel`; it is removed before the next prompt. Completed results then end with the normal textual `-- ...` statistics line unless `--no-stats` is set. Redirected/plain-stream REPL output and one-shot commands retain the same textual statistics line, and machine-readable formats remain free of terminal control sequences.
 
 ### Pager and terminal controls
 
-The REPL uses `libedit` (the BSD readline implementation psql uses) for all interactive terminal sessions, so keys, history search and terminal handling match psql; the input line is not syntax-coloured. It clears the terminal immediately before each submitted SQL statement, exactly as `.clear` does. For direct table or expanded output, it temporarily reserves the final row for a reverse-video progress footer while the query runs, then restores the full terminal before printing the final statistics and returning to `mldp> `. Idle prompt editing is wholly owned by `replxx`; there is no pinned footer after completion, cancellation, or error. `Ctrl-C` cancels an active query or abandons the current editor line; `Ctrl-Q`, `.quit`, and `.exit` leave the REPL. Pager output does not activate the footer.
+The REPL uses [isocline](https://github.com/daanx/isocline) (built from source with a small patch) for interactive terminal sessions. SQL keywords, functions, strings, numbers and comments are coloured as you type, and `Tab` completes keywords, functions and table names. Arrow keys move within the statement being edited, including up and down across its lines; history is reached with `Ctrl-R` (search) or `Ctrl-P`/`Ctrl-N` (previous/next statement), and multi-line statements are recalled whole. `Ctrl-A`/`Ctrl-E` jump to the start/end of the whole input. History is saved to `$XDG_STATE_HOME/mldp-pvxs-driver/query-history` (default `~/.local/state/...`). The REPL clears the terminal immediately before each submitted SQL statement, exactly as `.clear` does. For direct table or expanded output, it temporarily reserves the final row for a reverse-video progress footer while the query runs, then restores the full terminal before printing the final statistics and returning to `mldp> `. Idle prompt editing is wholly owned by the line editor; there is no pinned footer after completion, cancellation, or error. `Ctrl-C` cancels an active query or abandons the current editor line; `Ctrl-Q`, `.quit`, and `.exit` leave the REPL. Pager output does not activate the footer.
 
 Use `.pager on` to send table or expanded output from a real terminal to a pager. Paging is off by default. The pager command comes from `$PAGER`, or defaults to `less -FRSX` when `$PAGER` is unset. `.pager` reports the current setting and `.pager off` restores direct scrollback output. JSON, CSV, Arrow, one-shot SQL, and redirected sessions always use direct formatter output.
 
@@ -433,7 +433,7 @@ where the response contract does not guarantee identical filtering semantics.
 SELECT [DISTINCT | DISTINCT ON (expr [, expr ...])] { * | expr [AS alias] [, ...] }
 FROM   <table> [AS <alias>]
        [JOIN <table> [AS <alias>] ON <col> = <col>] ...
-[WHERE <predicate> [AND <predicate>] ...]
+[WHERE <condition>]   -- predicates combined with AND, OR, NOT and parentheses
 [GROUP BY expr [, expr ...]]
 [HAVING <condition>]
 [WINDOW <name> AS (<window spec>) [, ...]]
@@ -455,7 +455,24 @@ FROM   <table> [AS <alias>]
 | Contains | `pv CONTAINS 'MAGNET'` |
 | SQL LIKE | `description LIKE '%vacuum%'` or `name LIKE 'beam*'` |
 
-Multiple predicates are combined with `AND`.
+Predicates combine with `AND`, `OR`, `NOT` and parentheses. `NOT` binds tightest, then `AND`, then `OR`; `BETWEEN a AND b` keeps its own `AND`.
+
+**What goes to the backend.** Each top-level `AND` condition is pushed down to the backend when the column supports that operator, exactly as before. Conditions inside an `OR` or `NOT` group are never pushed: the group is evaluated locally on the rows the backend returns, with SQL three-valued logic (a comparison on a `NULL` or missing value is unknown, so `NOT` over it does not match). One exception: an `OR` of `=`/`IN` tests on the same column, such as `pv = 'A' OR pv = 'B'`, becomes `pv IN ('A', 'B')` and is pushed like any top-level condition.
+
+```sql
+SELECT config_name, from_utc(start_time)
+FROM mldp.configuration_activation
+WHERE start_time >= to_utc('2026-03-01T00:00:00Z')        -- pushed to the backend
+  AND (attributes.note LIKE '%XLEAP%'
+       OR attributes.description LIKE '%XLEAP%');         -- evaluated locally
+```
+
+Rules for `OR`/`NOT` groups:
+
+- A required filter (for example `pv` on `mldp.time_series`) must still appear as a top-level `AND` condition; a `pv` test that appears only inside an `OR` does not satisfy it.
+- `IN (SELECT ...)`, `window IN (...)` and column-to-column comparisons are accepted only as top-level `AND` conditions.
+- Each group must reference columns of a single table, and only operators the engine can evaluate locally on that column (see `DESCRIBE <table>`); backend-only operators fail at planning.
+- `EXPLAIN` shows locally evaluated groups as `local_or_groups=<n>` on `PhysicalFilter`.
 
 `ORDER BY` sorts scalar fields before projection and `LIMIT`. `ASC` is the default and `NULL` values sort last. Collection columns (`tags`, `attributes`, and `provenance`) cannot be order keys, but dynamic scalar metadata keys can:
 
