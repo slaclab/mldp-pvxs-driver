@@ -214,6 +214,12 @@ struct DistinctClause {
     std::vector<ExpressionPtr> on;              ///< DISTINCT ON key expressions; empty for plain DISTINCT.
 };
 
+/** @brief One UNION [ALL] branch appended to a SELECT. */
+struct SetOperand {
+    bool                             all{false}; ///< True for UNION ALL (keep duplicates), false for UNION.
+    std::shared_ptr<SelectStatement> query;      ///< Branch query; may itself carry ORDER BY / LIMIT when parenthesised.
+};
+
 /** @brief Parsed SELECT statement and its relational clauses. */
 struct SelectStatement {
     bool                         distinct{false};   ///< True for SELECT DISTINCT or DISTINCT ON.
@@ -231,7 +237,20 @@ struct SelectStatement {
     std::vector<NamedWindow>     named_windows;     ///< WINDOW clause definitions.
     std::optional<uint64_t>      limit;             ///< LIMIT value if present.
     std::optional<std::string>   page_token;        ///< PAGE TOKEN value for REPL paging if present.
+    std::vector<SetOperand>      set_operations;    ///< UNION [ALL] branches after this SELECT; order_by/limit/page_token then apply to the whole union.
 };
+
+/** @brief Returns the first branch of a UNION: @p statement without its set operations and union-level ORDER BY / LIMIT / PAGE TOKEN.
+ * @param[in] statement SELECT carrying set operations.
+ * @return Head SELECT of the union. */
+inline SelectStatement setOperationHead(SelectStatement statement)
+{
+    statement.set_operations.clear();
+    statement.order_by.clear();
+    statement.limit.reset();
+    statement.page_token.reset();
+    return statement;
+}
 
 /** @brief Parsed SHOW TABLES command. */
 struct ShowTablesStatement {

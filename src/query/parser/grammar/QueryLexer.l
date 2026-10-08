@@ -143,6 +143,8 @@ static const std::unordered_map<std::string, TokenType> kKeywords = {
     {"FOLLOWING", TokenType::FOLLOWING},
     {"CURRENT", TokenType::CURRENT},
     {"ROW", TokenType::ROW},
+    {"UNION", TokenType::UNION},
+    {"ALL", TokenType::ALL},
     {"TRUE", TokenType::TRUE},
     {"FALSE", TokenType::FALSE},
     {"TIMESTAMP_NS", TokenType::TIMESTAMP_NS},

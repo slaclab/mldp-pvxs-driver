@@ -113,6 +113,8 @@ std::unique_ptr<IExecutionState> makeWindowExecutionState(const plan::PhysicalWi
 /** @brief Creates an execution state for the given physical node. @return Execution state. */
 std::unique_ptr<IExecutionState> makeLimitExecutionState(const plan::PhysicalLimit&, const plan::PhysicalNodePtr&, const ExecutionContext&, QueryStats&);
 /** @brief Creates an execution state for the given physical node. @return Execution state. */
+std::unique_ptr<IExecutionState> makeUnionExecutionState(const plan::PhysicalUnion&, const plan::PhysicalNodePtr&, const ExecutionContext&, QueryStats&);
+/** @brief Creates an execution state for the given physical node. @return Execution state. */
 std::unique_ptr<IExecutionState> makeHashJoinExecutionState(const plan::PhysicalHashJoin&, const plan::PhysicalNodePtr&, const ExecutionContext&, QueryStats&);
 /** @brief Creates an execution state for the given physical node. @return Execution state. */
 std::unique_ptr<IExecutionState> makeNestedLoopJoinExecutionState(const plan::PhysicalNestedLoopJoin&, const plan::PhysicalNodePtr&, const ExecutionContext&, QueryStats&);

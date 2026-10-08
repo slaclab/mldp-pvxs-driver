@@ -320,6 +320,7 @@ void printGrouping(std::ostream& out, const bool color)
     row(out, color, "SELECT DISTINCT ON (k) k, other ...", "first row per k (use ORDER BY to pick it)", 38);
     row(out, color, "... GROUP BY k [HAVING COUNT(*) > 1]", "one row per k; HAVING filters groups", 38);
     row(out, color, "ORDER BY 2 DESC", "order by output column position", 38);
+    row(out, color, "q1 UNION [ALL] q2 [ORDER BY c] [LIMIT n]", "stack rows by position; UNION drops duplicates", 38);
     out << "  Aggregates: COUNT(*|x|DISTINCT x), SUM, AVG, MIN, MAX, FIRST, LAST\n";
     example(out, color, "SELECT pv, COUNT(*), AVG(value) FROM mldp.time_series WHERE pv PREFIX 'ltu:' AND time >= NOW - 1h GROUP BY pv ORDER BY 2 DESC;");
 }
@@ -1659,7 +1660,7 @@ std::vector<std::string> mldp_pvxs_driver::cli::detail::replCompletions(
     }
     else
     {
-        candidates = {"SELECT", "DISTINCT", "FROM", "WHERE", "GROUP", "HAVING", "COUNT", "SUM", "AVG", "MIN", "MAX", "FIRST", "LAST",
+        candidates = {"SELECT", "DISTINCT", "FROM", "WHERE", "GROUP", "HAVING", "COUNT", "SUM", "AVG", "MIN", "MAX", "FIRST", "LAST", "UNION", "ALL",
                       "OVER", "PARTITION", "WINDOW", "ROWS", "RANGE", "UNBOUNDED", "PRECEDING", "FOLLOWING", "CURRENT", "ROW",
                       "ROW_NUMBER", "RANK", "DENSE_RANK", "LAG", "LEAD", "FIRST_VALUE", "LAST_VALUE",
                       "AND", "OR", "IN", "LIKE", "BETWEEN", "ORDER", "BY", "ASC", "DESC", "LIMIT", "PAGE", "TOKEN",
@@ -1696,7 +1697,7 @@ std::vector<mldp_pvxs_driver::cli::detail::ReplHighlight> mldp_pvxs_driver::cli:
         "SELECT", "DISTINCT", "FROM", "WHERE", "GROUP", "HAVING", "AND", "OR", "NOT", "IN", "IS", "NULL", "LIKE", "BETWEEN",
         "ORDER", "BY", "ASC", "DESC", "LIMIT", "PAGE", "TOKEN", "SHOW", "TABLES", "FUNCTIONS", "OPERATORS", "DESCRIBE",
         "EXPLAIN", "CREATE", "DROP", "TEMP", "TABLE", "AS", "INNER", "LEFT", "OUTER", "JOIN", "ON", "PREFIX", "CONTAINS",
-        "TRUE", "FALSE", "OVER", "PARTITION", "WINDOW", "ROWS", "RANGE", "UNBOUNDED", "PRECEDING", "FOLLOWING", "CURRENT", "ROW"};
+        "TRUE", "FALSE", "OVER", "PARTITION", "WINDOW", "ROWS", "RANGE", "UNBOUNDED", "PRECEDING", "FOLLOWING", "CURRENT", "ROW", "UNION", "ALL"};
     static const std::vector<std::string_view> functions = {"COUNT", "SUM", "AVG", "MIN", "MAX", "FIRST", "LAST", "NOW", "ROW_NUMBER", "RANK",
                                                             "DENSE_RANK", "LAG", "LEAD", "FIRST_VALUE", "LAST_VALUE"};
     const auto is_word = [](const char c) { return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_'; };

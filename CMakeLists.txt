@@ -798,6 +798,7 @@ add_library(lib${PROJECT_NAME}
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/relational/ProjectExecutionState.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/relational/SortExecutionState.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/relational/LimitExecutionState.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/relational/UnionExecutionState.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/relational/HashJoinExecutionState.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/relational/NestedLoopJoinExecutionState.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/query/executor/relational/BlockNestedLoopJoinExecutionState.cpp"

@@ -149,6 +149,15 @@ struct PhysicalBlockNestedLoopJoin {
 };
 
 /** @brief Physical command that lists registered and catalog tables. */
+/** @brief Concatenates the rows of several inputs (UNION ALL), optionally dropping duplicates (UNION).
+ *
+ *  Columns are matched by position and named after the first input; per-column types are
+ *  unified at execution time (int/double widen to double, null columns take the other type). */
+struct PhysicalUnion {
+    std::vector<PhysicalNodePtr> inputs;          ///< Branch inputs, emitted in order.
+    bool                         distinct{false}; ///< True for UNION (drop duplicate rows), false for UNION ALL.
+};
+
 struct PhysicalShowTables {
 };
 
@@ -193,6 +202,7 @@ using PhysicalNodeVariant = std::variant<PhysicalTableScan,
                                          PhysicalHashJoin,
                                          PhysicalNestedLoopJoin,
                                          PhysicalBlockNestedLoopJoin,
+                                         PhysicalUnion,
                                          PhysicalShowTables,
                                          PhysicalShowFunctions,
                                          PhysicalShowOperators,

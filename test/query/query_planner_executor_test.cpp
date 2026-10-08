@@ -1265,6 +1265,7 @@ TEST_F(PlannerExecutorTest, ExecutionStateFactoryMapsAllPhysicalNodeTypes)
         {plan::makeNode(plan::PhysicalHashJoin{.left = scan, .right = scan}), "HashJoinExecutionState"},
         {plan::makeNode(plan::PhysicalNestedLoopJoin{.outer = scan, .inner = scan}), "NestedLoopJoinExecutionState"},
         {plan::makeNode(plan::PhysicalBlockNestedLoopJoin{.outer = scan, .inner = scan}), "BlockNestedLoopJoinExecutionState"},
+        {plan::makeNode(plan::PhysicalUnion{.inputs = {scan, scan}}), "UnionExecutionState"},
         {plan::makeNode(plan::PhysicalShowTables{}), "ShowTablesExecutionState"},
         {plan::makeNode(plan::PhysicalDescribe{}), "DescribeExecutionState"},
         {plan::makeNode(plan::PhysicalExplain{}), "ExplainExecutionState"},
@@ -1818,6 +1819,73 @@ TEST_F(PlannerExecutorTest, SelectDistinctDropsDuplicateRowsOnCatalogAndVirtualT
     ASSERT_EQ(key_hidden.batches.front()->num_columns(), 1);
     EXPECT_EQ(rowCount(executor.execute(planner.plan(query::parseQuery("SELECT DISTINCT ON (pv) * FROM dup_samples")), context)), 2);
     EXPECT_EQ(rowCount(executor.execute(planner.plan(query::parseQuery("SELECT DISTINCT ON (value) pv FROM dup_samples")), context)), 3);
+}
+
+TEST_F(PlannerExecutorTest, UnionAndUnionAllCombineBranchesByPosition)
+{
+    auto file_system = std::make_shared<arrow::fs::internal::MockFileSystem>(std::chrono::system_clock::now());
+    auto catalog = std::make_shared<query::QueryTableCatalog>(file_system, "catalog");
+
+    const auto makeTable = [&](const std::string& name, const std::vector<std::string>& pvs, const std::shared_ptr<arrow::Array>& values)
+    {
+        arrow::StringBuilder pv_builder;
+        ASSERT_TRUE(pv_builder.AppendValues(pvs).ok());
+        std::shared_ptr<arrow::Array> pv;
+        ASSERT_TRUE(pv_builder.Finish(&pv).ok());
+        const auto schema = arrow::schema({arrow::field("pv", arrow::utf8()), arrow::field("value", values->type())});
+        ASSERT_TRUE(catalog->create(name, query::TableLifetime::Session, {arrow::RecordBatch::Make(schema, values->length(), {pv, values})}).ok());
+    };
+    arrow::Int64Builder  int_builder;
+    arrow::DoubleBuilder double_builder;
+    ASSERT_TRUE(int_builder.AppendValues({1, 2, 2}).ok());
+    ASSERT_TRUE(double_builder.AppendValues({2.0, 3.5}).ok());
+    std::shared_ptr<arrow::Array> ints;
+    std::shared_ptr<arrow::Array> doubles;
+    ASSERT_TRUE(int_builder.Finish(&ints).ok());
+    ASSERT_TRUE(double_builder.Finish(&doubles).ok());
+    makeTable("left_samples", {"A", "B", "B"}, ints);
+    makeTable("right_samples", {"B", "C"}, doubles);
+
+    query::ExecutionContext context{.pool = arrow::default_memory_pool(), .table_catalog = catalog};
+    query::QueryPlanner     planner(catalog);
+    query::QueryExecutor    executor;
+    const auto              run = [&](const std::string& sql) { return executor.execute(planner.plan(query::parseQuery(sql)), context); };
+    const auto              rowCount = [](const query::QueryExecutionResult& result)
+    {
+        int64_t rows = 0;
+        for (const auto& batch : result.batches) rows += batch ? batch->num_rows() : 0;
+        return rows;
+    };
+
+    EXPECT_EQ(rowCount(run("SELECT pv, value FROM left_samples UNION ALL SELECT pv, value FROM right_samples")), 5);
+    // UNION drops duplicates within and across branches; int64 2 and double 2.0 compare equal after widening.
+    const auto distinct = run("SELECT pv, value FROM left_samples UNION SELECT pv, value FROM right_samples");
+    EXPECT_EQ(rowCount(distinct), 3);
+    ASSERT_FALSE(distinct.batches.empty());
+    EXPECT_TRUE(distinct.batches.front()->schema()->field(1)->type()->Equals(*arrow::float64()));
+
+    // Output names come from the first branch; trailing ORDER BY / LIMIT apply to the whole union.
+    const auto ordered = run("SELECT pv AS name FROM left_samples UNION ALL SELECT pv FROM right_samples ORDER BY name DESC LIMIT 2");
+    ASSERT_EQ(rowCount(ordered), 2);
+    EXPECT_EQ(ordered.batches.front()->schema()->field(0)->name(), "name");
+    EXPECT_EQ((*ordered.batches.front()->column(0)->GetScalar(0))->ToString(), "C");
+
+    // Mixed chain is left-associative: (left UNION ALL left) UNION right.
+    EXPECT_EQ(rowCount(run("SELECT pv FROM left_samples UNION ALL SELECT pv FROM left_samples UNION SELECT pv FROM right_samples")), 3);
+    EXPECT_EQ(rowCount(run("SELECT pv FROM left_samples UNION SELECT pv FROM left_samples UNION ALL SELECT pv FROM right_samples")), 4);
+
+    // Parenthesised branches keep their own LIMIT.
+    EXPECT_EQ(rowCount(run("(SELECT pv FROM left_samples LIMIT 1) UNION ALL (SELECT pv FROM right_samples LIMIT 1)")), 2);
+
+    // A union works as a derived table and as an IN subquery.
+    EXPECT_EQ(rowCount(run("SELECT pv FROM (SELECT pv FROM left_samples UNION SELECT pv FROM right_samples) u WHERE pv != 'A'")), 2);
+    EXPECT_EQ(rowCount(run("SELECT pv FROM left_samples WHERE pv IN (SELECT pv FROM right_samples UNION SELECT pv FROM right_samples)")), 2);
+
+    const auto explained = query::plan::physicalPlanToString(planner.plan(query::parseQuery("SELECT pv FROM left_samples UNION ALL SELECT pv FROM right_samples UNION ALL SELECT pv FROM left_samples")));
+    EXPECT_NE(explained.find("PhysicalUnion(all, inputs=3)"), std::string::npos);
+
+    EXPECT_THROW(run("SELECT pv FROM left_samples UNION SELECT pv, value FROM right_samples"), std::exception);
+    EXPECT_THROW(run("SELECT value FROM left_samples UNION SELECT pv FROM right_samples"), std::exception);
 }
 
 TEST_F(PlannerExecutorTest, ColumnComparisonsAndAntiJoinFindNonOverlappingIntervals)

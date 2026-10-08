@@ -77,6 +77,7 @@ void forEachChild(PhysicalNode& node, Fn&& fn)
                    [&](PhysicalHashJoin& value) { fn(value.left); fn(value.right); },
                    [&](PhysicalNestedLoopJoin& value) { fn(value.outer); fn(value.inner); },
                    [&](PhysicalBlockNestedLoopJoin& value) { fn(value.outer); fn(value.inner); },
+                   [&](PhysicalUnion& value) { for (auto& input : value.inputs) fn(input); },
                    [&](PhysicalCreateTable& value) { fn(value.query); },
                    [](PhysicalShowTables&) {},
                    [](PhysicalShowFunctions&) {},

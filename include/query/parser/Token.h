@@ -77,6 +77,8 @@ enum class TokenType {
     FOLLOWING,    ///< FOLLOWING keyword.
     CURRENT,      ///< CURRENT keyword.
     ROW,          ///< ROW keyword.
+    UNION,        ///< UNION keyword.
+    ALL,          ///< ALL keyword (UNION ALL).
 
     STAR,      ///< Asterisk (*).
     SLASH,     ///< Forward slash (/).

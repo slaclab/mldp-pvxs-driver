@@ -1189,7 +1189,9 @@ plan::BoundTable makeBoundTable(const TableRef& table_ref, const QueryTableCatal
 {
     if (table_ref.derived_query)
     {
-        const auto child = bindSelect(*table_ref.derived_query, catalog);
+        // A UNION exposes the output schema of its first branch.
+        const auto& derived = *table_ref.derived_query;
+        const auto  child = derived.set_operations.empty() ? bindSelect(derived, catalog) : bindSelect(setOperationHead(derived), catalog);
         std::vector<ColumnSchema> schema;
         const auto appendOutput = [&schema](const plan::BoundTable& table)
         {

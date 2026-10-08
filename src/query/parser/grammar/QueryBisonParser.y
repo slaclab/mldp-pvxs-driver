@@ -142,6 +142,15 @@
         return values;
     }
 
+    static SelectStatement wrapAsDerived(SelectStatement inner)
+    {
+        SelectStatement outer;
+        outer.select_all = true;
+        outer.from = TableRef{.table_name = "<derived>", .alias = std::nullopt,
+                              .derived_query = std::make_shared<SelectStatement>(std::move(inner))};
+        return outer;
+    }
+
     static QueryBisonParser::symbol_type yylex(ParseContext& ctx)
     {
         Token token{
@@ -230,6 +239,8 @@
         case TokenType::FOLLOWING: return QueryBisonParser::make_FOLLOWING(location);
         case TokenType::CURRENT: return QueryBisonParser::make_CURRENT(location);
         case TokenType::ROW: return QueryBisonParser::make_ROW(location);
+        case TokenType::UNION: return QueryBisonParser::make_UNION(location);
+        case TokenType::ALL: return QueryBisonParser::make_ALL(location);
         case TokenType::STAR: return QueryBisonParser::make_STAR(location);
         case TokenType::SLASH: return QueryBisonParser::make_SLASH(location);
         case TokenType::COMMA: return QueryBisonParser::make_COMMA(location);
@@ -267,7 +278,7 @@
 %token END_OF_INPUT 0
 %token <std::string> IDENTIFIER STRING_LITERAL DURATION_LITERAL
 %token <int64_t> NUMBER_LITERAL
-%token SELECT FROM WHERE IS AND OR NOT NULL_LITERAL IN LIKE BETWEEN LIMIT PAGE TOKEN SHOW TABLES FUNCTIONS OPERATORS DESCRIBE EXPLAIN AS INNER LEFT OUTER JOIN ON NOW PREFIX CONTAINS ORDER DISTINCT GROUP HAVING BY ASC DESC OVER PARTITION WINDOW ROWS RANGE UNBOUNDED PRECEDING FOLLOWING CURRENT ROW TRUE FALSE TIMESTAMP_NS DURATION_NS
+%token SELECT FROM WHERE IS AND OR NOT NULL_LITERAL IN LIKE BETWEEN LIMIT PAGE TOKEN SHOW TABLES FUNCTIONS OPERATORS DESCRIBE EXPLAIN AS INNER LEFT OUTER JOIN ON NOW PREFIX CONTAINS ORDER DISTINCT GROUP HAVING BY ASC DESC OVER PARTITION WINDOW ROWS RANGE UNBOUNDED PRECEDING FOLLOWING CURRENT ROW UNION ALL TRUE FALSE TIMESTAMP_NS DURATION_NS
 %token STAR SLASH COMMA SEMICOLON DOT LPAREN RPAREN PLUS MINUS EQ NEQ LT LTE GT GTE
 
 // Preserve NOW +/- duration convenience syntax while allowing ordinary
@@ -277,7 +288,9 @@
 %left PLUS MINUS
 
 %type <mldp_pvxs_driver::query::QueryStatement> statement
-%type <mldp_pvxs_driver::query::SelectStatement> select_stmt
+%type <mldp_pvxs_driver::query::SelectStatement> select_stmt select_core select_term
+%type <std::vector<mldp_pvxs_driver::query::SetOperand>> set_op_list
+%type <bool> union_all_opt
 %type <mldp_pvxs_driver::query::generated::SelectListValue> select_list
 %type <std::vector<mldp_pvxs_driver::query::SelectItem>> select_item_list
 %type <mldp_pvxs_driver::query::SelectItem> select_item
@@ -345,7 +358,45 @@ statement
     ;
 
 select_stmt
-    : SELECT distinct_opt select_list FROM table_ref join_clauses where_opt group_by_opt having_opt window_clause_opt order_by_opt limit_opt page_opt
+    : select_term set_op_list order_by_opt limit_opt page_opt
+      {
+          auto statement = std::move($1);
+          const bool has_tail = !$3.empty() || $4.has_value() || $5.has_value();
+          const bool closed = !statement.order_by.empty() || statement.limit.has_value() || statement.page_token.has_value() || !statement.set_operations.empty();
+          // A parenthesised head that already owns ORDER BY / LIMIT / UNION keeps them by becoming a derived table.
+          if (closed && (!$2.empty() || has_tail)) statement = wrapAsDerived(std::move(statement));
+          statement.set_operations = std::move($2);
+          if (!$3.empty()) statement.order_by = std::move($3);
+          if ($4) statement.limit = std::move($4);
+          if ($5) statement.page_token = std::move($5);
+          $$ = std::move(statement);
+      }
+    ;
+
+select_term
+    : select_core
+      { $$ = std::move($1); }
+    | LPAREN select_stmt RPAREN
+      { $$ = std::move($2); }
+    ;
+
+set_op_list
+    : /* empty */
+      { $$ = {}; }
+    | set_op_list UNION union_all_opt select_term
+      {
+          $1.push_back(mldp_pvxs_driver::query::SetOperand{.all = $3, .query = std::make_shared<mldp_pvxs_driver::query::SelectStatement>(std::move($4))});
+          $$ = std::move($1);
+      }
+    ;
+
+union_all_opt
+    : /* empty */ { $$ = false; }
+    | ALL         { $$ = true; }
+    ;
+
+select_core
+    : SELECT distinct_opt select_list FROM table_ref join_clauses where_opt group_by_opt having_opt window_clause_opt
       {
           mldp_pvxs_driver::query::SelectStatement statement;
           statement.distinct = $2.distinct;
@@ -364,9 +415,6 @@ select_stmt
           statement.group_by = std::move($8);
           statement.having = std::move($9);
           statement.named_windows = std::move($10);
-          statement.order_by = std::move($11);
-          statement.limit = std::move($12);
-          statement.page_token = std::move($13);
           $$ = std::move(statement);
       }
     ;

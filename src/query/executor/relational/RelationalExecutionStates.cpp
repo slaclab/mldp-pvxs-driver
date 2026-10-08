@@ -22,6 +22,7 @@ std::unique_ptr<IExecutionState> mldp_pvxs_driver::query::executor::makeRelation
     if (const auto* node = std::get_if<plan::PhysicalAggregate>(&value)) return makeAggregateExecutionState(*node, physical, context, stats);
     if (const auto* node = std::get_if<plan::PhysicalWindow>(&value)) return makeWindowExecutionState(*node, physical, context, stats);
     if (const auto* node = std::get_if<plan::PhysicalLimit>(&value)) return makeLimitExecutionState(*node, physical, context, stats);
+    if (const auto* node = std::get_if<plan::PhysicalUnion>(&value)) return makeUnionExecutionState(*node, physical, context, stats);
     if (const auto* node = std::get_if<plan::PhysicalHashJoin>(&value)) return makeHashJoinExecutionState(*node, physical, context, stats);
     if (const auto* node = std::get_if<plan::PhysicalNestedLoopJoin>(&value)) return makeNestedLoopJoinExecutionState(*node, physical, context, stats);
     if (const auto* node = std::get_if<plan::PhysicalBlockNestedLoopJoin>(&value)) return makeBlockNestedLoopJoinExecutionState(*node, physical, context, stats);

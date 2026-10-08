@@ -579,6 +579,45 @@ TEST(QueryParserTest, ParsesDerivedTableSourcesWithOptionalAliases)
     EXPECT_EQ(in.subquery->from.table_name, "mldp.time_series");
 }
 
+TEST(QueryParserTest, ParsesUnionChainsWithUnionLevelOrderAndLimit)
+{
+    const auto  statement = parseQuery("SELECT pv FROM a UNION ALL SELECT pv FROM b UNION SELECT pv FROM c ORDER BY pv LIMIT 5");
+    const auto& select = std::get<SelectStatement>(statement);
+    EXPECT_EQ(select.from.table_name, "a");
+    ASSERT_EQ(select.set_operations.size(), 2U);
+    EXPECT_TRUE(select.set_operations[0].all);
+    EXPECT_FALSE(select.set_operations[1].all);
+    EXPECT_EQ(select.set_operations[1].query->from.table_name, "c");
+    // Trailing ORDER BY / LIMIT bind to the union, not to the last branch.
+    EXPECT_EQ(select.order_by.size(), 1U);
+    EXPECT_EQ(select.limit.value_or(0), 5U);
+    EXPECT_TRUE(select.set_operations[1].query->order_by.empty());
+    EXPECT_FALSE(select.set_operations[1].query->limit.has_value());
+
+    // Parenthesised branches keep their own LIMIT; a limited head becomes a derived table.
+    const auto  parenthesised = parseQuery("(SELECT pv FROM a LIMIT 1) UNION (SELECT pv FROM b LIMIT 2)");
+    const auto& paren_select = std::get<SelectStatement>(parenthesised);
+    ASSERT_NE(paren_select.from.derived_query, nullptr);
+    EXPECT_EQ(paren_select.from.derived_query->limit.value_or(0), 1U);
+    ASSERT_EQ(paren_select.set_operations.size(), 1U);
+    EXPECT_EQ(paren_select.set_operations[0].query->limit.value_or(0), 2U);
+
+    const auto  derived = parseQuery("SELECT pv FROM (SELECT pv FROM a UNION SELECT pv FROM b) u");
+    const auto& derived_select = std::get<SelectStatement>(derived);
+    ASSERT_NE(derived_select.from.derived_query, nullptr);
+    EXPECT_EQ(derived_select.from.derived_query->set_operations.size(), 1U);
+
+    const auto  plain = parseQuery("SELECT pv FROM a ORDER BY pv LIMIT 3");
+    const auto& plain_select = std::get<SelectStatement>(plain);
+    EXPECT_TRUE(plain_select.set_operations.empty());
+    EXPECT_EQ(plain_select.from.table_name, "a");
+    EXPECT_EQ(plain_select.limit.value_or(0), 3U);
+
+    EXPECT_NO_THROW(parseQuery("EXPLAIN SELECT pv FROM a UNION ALL SELECT pv FROM b"));
+    EXPECT_NO_THROW(parseQuery("CREATE TABLE t AS SELECT pv FROM a UNION SELECT pv FROM b"));
+    EXPECT_THROW(parseQuery("SELECT pv FROM a UNION"), std::exception);
+}
+
 TEST(QueryParserTest, ParsesInnerLeftAndMultiJoinChains)
 {
     const auto statement = parseQuery(

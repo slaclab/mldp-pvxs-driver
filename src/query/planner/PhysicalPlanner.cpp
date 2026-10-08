@@ -295,6 +295,12 @@ void propagateScanRowLimitImpl(const plan::PhysicalNodePtr& node, const std::opt
                    [&node](plan::PhysicalHashJoin&) { resetBudgetBelow(*node); },
                    [&node](plan::PhysicalNestedLoopJoin&) { resetBudgetBelow(*node); },
                    [&node](plan::PhysicalBlockNestedLoopJoin&) { resetBudgetBelow(*node); },
+                   [budget](plan::PhysicalUnion& union_node)
+                   {
+                       // UNION ALL needs at most `budget` rows from each branch; UNION may drop
+                       // duplicates, so its branches must be read in full.
+                       for (const auto& input : union_node.inputs) propagateScanRowLimitImpl(input, union_node.distinct ? std::nullopt : budget);
+                   },
                    [&node](plan::PhysicalCreateTable&) { resetBudgetBelow(*node); },
                    [](plan::PhysicalShowTables&) {},
                    [](plan::PhysicalShowFunctions&) {},
@@ -400,6 +406,10 @@ void appendPlan(std::ostringstream& out, const mldp_pvxs_driver::query::plan::Ph
                    {
                        out << "PhysicalBlockNestedLoopJoin(type=" << joinTypeName(join.type) << ", on=" << join.condition.left_column << "="
                            << join.condition.right_column << ")";
+                   },
+                   [&](const PhysicalUnion& union_node)
+                   {
+                       out << "PhysicalUnion(" << (union_node.distinct ? "distinct" : "all") << ", inputs=" << union_node.inputs.size() << ")";
                    },
                    [&](const PhysicalShowTables&) { out << "PhysicalShowTables"; },
                    [&](const PhysicalShowFunctions&) { out << "PhysicalShowFunctions"; },

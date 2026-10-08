@@ -22,6 +22,7 @@ The `query` subcommand runs SQL statements — parse → plan → execute → re
   - [SELECT grammar](#select-grammar)
   - [One row per key: `DISTINCT ON`](#one-row-per-key-distinct-on)
   - [Grouping and aggregates: `GROUP BY` / `HAVING`](#grouping-and-aggregates-group-by--having)
+  - [Combining queries: `UNION` / `UNION ALL`](#combining-queries-union--union-all)
   - [Predicates](#predicates)
   - [Time literals](#time-literals)
   - [Native value predicates](#native-value-predicates)
@@ -440,6 +441,10 @@ FROM   <table> [AS <alias>]
 [ORDER BY expr [ASC|DESC] [, expr [ASC|DESC] ...]]
 [LIMIT <n>]
 [PAGE TOKEN '<token>']
+
+<select> UNION [ALL] <select> [UNION [ALL] <select> ...]
+[ORDER BY <output column> [ASC|DESC] [, ...]]
+[LIMIT <n>]
 ```
 
 ### Predicates
@@ -505,6 +510,36 @@ FROM mldp.configuration_activation;
 SELECT DISTINCT ON (config_name) config_name, start_time, activation_id
 FROM mldp.configuration_activation
 ORDER BY start_time DESC;
+```
+
+### Combining queries: `UNION` / `UNION ALL`
+
+`UNION ALL` stacks the rows of several SELECTs; `UNION` also drops duplicate
+rows (within and across branches). Both run locally; each branch keeps its own
+backend pushdown, so filter every branch on `pv` and `time` as usual.
+
+- Columns are matched **by position**; every branch must select the same number
+  of columns. Output names come from the first branch.
+- Column types are unified per position: integer + double becomes double,
+  timestamps become nanosecond timestamps, a NULL column takes the other type.
+  Any other mismatch is an error.
+- Chains are left-associative: `a UNION ALL b UNION c` is `(a UNION ALL b) UNION c`.
+- A trailing `ORDER BY` / `LIMIT` applies to the whole union. `ORDER BY` accepts
+  output column names only (no expressions or positions). Wrap a branch in
+  parentheses to give it its own `ORDER BY` / `LIMIT`.
+- A union can be used anywhere a SELECT can: top level, `EXPLAIN`,
+  `CREATE TABLE ... AS`, `FROM (...)` and `IN (...)`.
+
+```sql
+SELECT pv, time, value FROM mldp.time_series WHERE pv = 'A' AND time >= NOW - 1h
+UNION ALL
+SELECT pv, time, value FROM mldp.time_series WHERE pv = 'B' AND time >= NOW - 1h
+ORDER BY time LIMIT 20;
+
+-- Top sample of each PV, combined
+(SELECT pv, value FROM mldp.time_series WHERE pv = 'A' AND time >= NOW - 1h ORDER BY value DESC LIMIT 1)
+UNION ALL
+(SELECT pv, value FROM mldp.time_series WHERE pv = 'B' AND time >= NOW - 1h ORDER BY value DESC LIMIT 1);
 ```
 
 ### Grouping and aggregates: `GROUP BY` / `HAVING`
