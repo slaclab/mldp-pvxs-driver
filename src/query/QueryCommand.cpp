@@ -632,6 +632,9 @@ public:
         ic_set_history(nullptr, kMaxHistory); // persisted by this class, see saveHistory()
         ic_set_default_completer(&ReplLineEditor::complete, this);
         ic_set_default_highlighter(&ReplLineEditor::highlight, this);
+        // Enter adds a line until the statement is complete, so the whole
+        // statement is one edit buffer the arrows can move through.
+        ic_set_input_complete(&ReplLineEditor::inputComplete, nullptr);
         ic_style_def("mldp-keyword", "ansi-blue");
         ic_style_def("mldp-function", "ansi-aqua");
         ic_style_def("mldp-string", "ansi-green");
@@ -667,6 +670,7 @@ public:
         saveHistory();
         ic_set_default_completer(nullptr, nullptr);
         ic_set_default_highlighter(nullptr, nullptr);
+        ic_set_input_complete(nullptr, nullptr);
         active_ = nullptr;
     }
 
@@ -786,6 +790,13 @@ private:
         if (plain.starts_with("mldp"))
             return "[b ansi-green]mldp[/]" + plain.substr(4);
         return "[ansi-gray]" + plain + "[/]";
+    }
+
+    static bool inputComplete(const char* input, void* /*arg*/)
+    {
+        const auto text = trim(input);
+        return text.empty() || text.front() == '.' || text.front() == '\\' || isReplCommand(text) || text.ends_with("\\G") ||
+               statementTerminator(text).has_value();
     }
 
     static void highlight(ic_highlight_env_t* henv, const char* input, void* arg)

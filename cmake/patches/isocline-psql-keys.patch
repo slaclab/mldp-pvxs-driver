@@ -1,8 +1,8 @@
 diff --git a/include/isocline.h b/include/isocline.h
-index 0d46cf3..694f5a3 100644
+index 0d46cf3..7f5869b 100644
 --- a/include/isocline.h
 +++ b/include/isocline.h
-@@ -63,6 +63,11 @@ Contents:
+@@ -63,6 +63,16 @@ Contents:
  /// @see ic_set_prompt_marker(), ic_style_def()
  char* ic_readline(const char* prompt_text);   
  
@@ -11,14 +11,19 @@ index 0d46cf3..694f5a3 100644
 +int  ic_last_exit_key(void);
 +bool ic_last_exit_input_empty(void);
 +
++/// Called on Enter with the whole input; returning false inserts a newline
++/// instead of accepting, so a multi-line statement stays in one edit buffer.
++typedef bool (ic_input_complete_fun_t)(const char* input, void* arg);
++void ic_set_input_complete(ic_input_complete_fun_t* fun, void* arg);
++
  /// \}
  
  
 diff --git a/src/editline.c b/src/editline.c
-index 270c42d..a43f038 100644
+index 270c42d..a521627 100644
 --- a/src/editline.c
 +++ b/src/editline.c
-@@ -53,6 +53,18 @@ typedef struct editor_s {
+@@ -53,6 +53,26 @@ typedef struct editor_s {
  // Main edit line 
  //-------------------------------------------------------------
  static char* edit_line( ic_env_t* env, const char* prompt_text );  // defined at bottom
@@ -34,10 +39,54 @@ index 270c42d..a43f038 100644
 +ic_public bool ic_last_exit_input_empty(void) {
 +  return ic_exit_input_empty;
 +}
++
++static ic_input_complete_fun_t* ic_input_complete = NULL;
++static void* ic_input_complete_arg = NULL;
++
++ic_public void ic_set_input_complete(ic_input_complete_fun_t* fun, void* arg) {
++  ic_input_complete = fun;
++  ic_input_complete_arg = arg;
++}
  static void edit_refresh(ic_env_t* env, editor_t* eb);
  
  ic_private char* ic_editline(ic_env_t* env, const char* prompt_text) {
-@@ -938,8 +950,8 @@ static char* edit_line( ic_env_t* env, const char* prompt_text )
+@@ -592,10 +612,8 @@ static void edit_cursor_to_end(ic_env_t* env, editor_t* eb) {
+ static void edit_cursor_row_up(ic_env_t* env, editor_t* eb) {
+   rowcol_t rc;
+   edit_get_rowcol( env, eb, &rc);
+-  if (rc.row == 0) {
+-    edit_history_prev(env,eb);
+-  }
+-  else {
++  // Arrows only move within the input; history is Ctrl-R (or Ctrl-P/Ctrl-N).
++  if (rc.row > 0) {
+     edit_set_pos_at_rowcol( env, eb, rc.row - 1, rc.col );
+   }
+ }
+@@ -603,10 +621,7 @@ static void edit_cursor_row_up(ic_env_t* env, editor_t* eb) {
+ static void edit_cursor_row_down(ic_env_t* env, editor_t* eb) {
+   rowcol_t rc;
+   ssize_t rows = edit_get_rowcol( env, eb, &rc);
+-  if (rc.row + 1 >= rows) {
+-    edit_history_next(env,eb);
+-  }
+-  else {
++  if (rc.row + 1 < rows) {
+     edit_set_pos_at_rowcol( env, eb, rc.row + 1, rc.col );
+   }
+ }
+@@ -929,6 +944,10 @@ static char* edit_line( ic_env_t* env, const char* prompt_text )
+         // replace line-continuation with newline
+         edit_multiline_eol(env,&eb);        
+       }
++      else if (!env->singleline_only && ic_input_complete != NULL &&
++               !ic_input_complete(sbuf_string(eb.input), ic_input_complete_arg)) {
++        edit_insert_char(env,&eb,'\n');  // statement not finished yet
++      }
+       else {
+         // otherwise done
+         break;
+@@ -938,8 +957,8 @@ static char* edit_line( ic_env_t* env, const char* prompt_text )
        if (eb.pos == 0 && editor_pos_is_at_end(&eb)) break; // ctrl+D on empty quits with NULL
        edit_delete_char(env,&eb);     // otherwise it is like delete
      } 
@@ -48,7 +97,7 @@ index 270c42d..a43f038 100644
      }
      else if (c == KEY_ESC) {
        if (eb.pos == 0 && editor_pos_is_at_end(&eb)) break;  // ESC on empty input returns with empty input
-@@ -1011,13 +1023,17 @@ static char* edit_line( ic_env_t* env, const char* prompt_text )
+@@ -1011,13 +1030,17 @@ static char* edit_line( ic_env_t* env, const char* prompt_text )
          edit_cursor_row_down(env,&eb);
          break;                 
        case KEY_HOME:
@@ -68,7 +117,7 @@ index 270c42d..a43f038 100644
        case KEY_CTRL_LEFT:
        case WITH_SHIFT(KEY_LEFT):    
        case WITH_ALT('b'):
-@@ -1112,7 +1128,9 @@ static char* edit_line( ic_env_t* env, const char* prompt_text )
+@@ -1112,7 +1135,9 @@ static char* edit_line( ic_env_t* env, const char* prompt_text )
    
    // save result
    char* res; 
@@ -101,32 +150,3 @@ index 09f7aed..64faf16 100644
    tty->raw_enabled = false;
  }
  
-diff --git a/src/editline.c b/src/editline.c
-index 270c42d..955561d 100644
---- a/src/editline.c
-+++ b/src/editline.c
-@@ -592,10 +592,8 @@ static void edit_cursor_to_end(ic_env_t* env, editor_t* eb) {
- static void edit_cursor_row_up(ic_env_t* env, editor_t* eb) {
-   rowcol_t rc;
-   edit_get_rowcol( env, eb, &rc);
--  if (rc.row == 0) {
--    edit_history_prev(env,eb);
--  }
--  else {
-+  // Arrows only move within the input; history is Ctrl-R (or Ctrl-P/Ctrl-N).
-+  if (rc.row > 0) {
-     edit_set_pos_at_rowcol( env, eb, rc.row - 1, rc.col );
-   }
- }
-@@ -603,10 +601,7 @@ static void edit_cursor_row_up(ic_env_t* env, editor_t* eb) {
- static void edit_cursor_row_down(ic_env_t* env, editor_t* eb) {
-   rowcol_t rc;
-   ssize_t rows = edit_get_rowcol( env, eb, &rc);
--  if (rc.row + 1 >= rows) {
--    edit_history_next(env,eb);
--  }
--  else {
-+  if (rc.row + 1 < rows) {
-     edit_set_pos_at_rowcol( env, eb, rc.row + 1, rc.col );
-   }
- }
