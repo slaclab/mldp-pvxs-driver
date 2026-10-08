@@ -16,6 +16,7 @@
 
 #include <chrono>
 #include <charconv>
+#include <cstdlib>
 #include <optional>
 #include <stdexcept>
 #include <string_view>
@@ -94,5 +95,23 @@ std::string mldp_pvxs_driver::query::fromUtc(const arrow::TimestampScalar& times
     catch (const std::exception& error)
     {
         throw std::invalid_argument("unknown IANA timezone '" + zone_or_offset + "': " + error.what());
+    }
+}
+
+std::string mldp_pvxs_driver::query::localTimezone()
+{
+    if (const char* tz = std::getenv("TZ"); tz != nullptr && *tz != '\0')
+    {
+        std::string_view zone{tz};
+        if (zone.front() == ':') zone.remove_prefix(1);
+        if (!zone.empty()) return std::string(zone);
+    }
+    try
+    {
+        return std::string(date::current_zone()->name());
+    }
+    catch (const std::exception&)
+    {
+        return "+00:00";
     }
 }

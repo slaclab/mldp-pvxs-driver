@@ -848,10 +848,12 @@ std::shared_ptr<arrow::Scalar> evaluateExpression(const ExpressionPtr& expressio
                                              });
                               if (name == "from_utc")
                               {
-                                  if (value.arguments.size() != 2)
+                                  if (value.arguments.size() != 1 && value.arguments.size() != 2)
                                       throw std::runtime_error("from_utc has no matching overload");
                                   const auto timestamp = evaluateExpression(value.arguments[0], batch, row);
-                                  const auto zone = evaluateExpression(value.arguments[1], batch, row);
+                                  // One-argument form: the client fills in its local timezone.
+                                  const auto zone = value.arguments.size() == 2 ? evaluateExpression(value.arguments[1], batch, row)
+                                                                                : std::make_shared<arrow::StringScalar>(localTimezone());
                                   if (!timestamp->is_valid || !zone->is_valid)
                                       return std::make_shared<arrow::StringScalar>();
                                   if (timestamp->type->id() != arrow::Type::TIMESTAMP || zone->type->id() != arrow::Type::STRING)

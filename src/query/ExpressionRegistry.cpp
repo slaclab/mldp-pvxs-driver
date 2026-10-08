@@ -43,6 +43,7 @@ ExpressionRegistry::ExpressionRegistry()
     const auto add = [this](ExpressionCallableDescriptor descriptor) { registerCallable(std::make_unique<Callable>(std::move(descriptor))); };
     add({"to_utc", ExpressionCallableKind::FUNCTION, {ColumnType::STRING}, ColumnType::TIMESTAMP, "Convert an ISO-8601 timestamp to UTC epoch seconds.", "to_utc('2026-07-23T09:00:00Z')"});
     add({"to_utc", ExpressionCallableKind::FUNCTION, {ColumnType::STRING, ColumnType::STRING}, ColumnType::TIMESTAMP, "Convert an ISO-8601 timestamp to UTC epoch seconds.", "to_utc('2026-07-23 09:00:00', '-07:00')"});
+    add({"from_utc", ExpressionCallableKind::FUNCTION, {ColumnType::TIMESTAMP}, ColumnType::STRING, "Format a UTC timestamp in the client's local timezone.", "from_utc(time)"});
     add({"from_utc", ExpressionCallableKind::FUNCTION, {ColumnType::TIMESTAMP, ColumnType::STRING}, ColumnType::STRING, "Format a UTC timestamp in an IANA timezone or fixed UTC offset.", "from_utc(time, 'America/Los_Angeles')"});
     add({"+", ExpressionCallableKind::BINARY_OPERATOR, {ColumnType::INT, ColumnType::INT}, ColumnType::INT, "Add numeric values or a duration to a timestamp.", "1 + 2"});
     add({"+", ExpressionCallableKind::BINARY_OPERATOR, {ColumnType::TIMESTAMP, ColumnType::DURATION_SECONDS}, ColumnType::TIMESTAMP, "Add numeric values or a duration to a timestamp.", "time + duration_ns(2)"});

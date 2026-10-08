@@ -27,4 +27,9 @@ namespace mldp_pvxs_driver::query {
  * @throws std::runtime_error  If the timezone is unknown or the conversion fails. */
 [[nodiscard]] std::string fromUtc(const arrow::TimestampScalar& timestamp, const std::string& zone_or_offset);
 
+/** @brief Returns the client's local timezone, used by the one-argument `from_utc(timestamp)`.
+ * @return The `TZ` environment variable when set (IANA name or +/-HH:MM, leading ':' stripped),
+ *         otherwise the host's IANA timezone, or "+00:00" when it cannot be determined. */
+[[nodiscard]] std::string localTimezone();
+
 } // namespace mldp_pvxs_driver::query

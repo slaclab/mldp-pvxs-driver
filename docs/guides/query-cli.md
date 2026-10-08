@@ -226,7 +226,7 @@ WHERE time >= to_utc('2026-07-23 09:00:00', '-07:00');
 
 The one-argument form requires `Z` or an explicit `+/-HH:MM` offset. The two-argument form currently accepts an explicit offset. Results are truncated to epoch-second precision.
 
-`from_utc(timestamp, zone_or_offset)` is a `SELECT` projection function that renders a UTC timestamp as an ISO-8601 string in an IANA timezone or a fixed numeric offset. IANA zones apply the offset in effect for each instant, including daylight saving time; fixed offsets do not change.
+`from_utc(timestamp, zone_or_offset)` is a `SELECT` projection function that renders a UTC timestamp as an ISO-8601 string in an IANA timezone or a fixed numeric offset. IANA zones apply the offset in effect for each instant, including daylight saving time; fixed offsets do not change. `from_utc(timestamp)` omits the zone and uses the client's local timezone: the `TZ` environment variable when set (IANA name or `+/-HH:MM`), otherwise the host's configured zone.
 
 ```sql
 SELECT config_name,
@@ -242,7 +242,7 @@ Numeric offsets must be quoted and use `+/-HH:MM` form, for example `'-07:00'` o
 
 `SHOW FUNCTIONS` and `SHOW OPERATORS` list the executable scalar-language catalog used by the planner. They are useful for feature discovery and return normal Arrow query results, so all output formats work consistently. Function rows contain `name`, `arguments`, `returns`, `description`, and `example`; operator rows contain `symbol`, `arity`, `arguments`, `returns`, `description`, and `example`.
 
-The catalog is sorted deterministically by function name or operator symbol and signature. Scalar call names are case-insensitive. Operator/function overloads exclude `native_value`; mismatched argument types fail during planning. `SHOW FUNCTIONS` currently lists `from_utc(timestamp, string)`, `to_utc(string)`, and `to_utc(string, string)`; use `SHOW OPERATORS` for the exact supported operator signatures.
+The catalog is sorted deterministically by function name or operator symbol and signature. Scalar call names are case-insensitive. Operator/function overloads exclude `native_value`; mismatched argument types fail during planning. `SHOW FUNCTIONS` currently lists `from_utc(timestamp)`, `from_utc(timestamp, string)`, `to_utc(string)`, and `to_utc(string, string)`; use `SHOW OPERATORS` for the exact supported operator signatures.
 
 ### Expressions and operators
 

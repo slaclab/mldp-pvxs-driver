@@ -35,7 +35,9 @@
 #include <condition_variable>
 #include <future>
 #include <limits>
+#include <cstdlib>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <string_view>
@@ -2146,6 +2148,16 @@ TEST_F(PlannerExecutorTest, FormatsUtcTimestampsInIanaZonesAndFixedOffsets)
     EXPECT_EQ(output->column(1)->GetScalar(0).ValueOrDie()->ToString(), "2026-01-27T11:33:20-07:00");
     EXPECT_FALSE(output->column(0)->GetScalar(2).ValueOrDie()->is_valid);
 
+    // One-argument form uses the client's local timezone (TZ wins over the host zone).
+    const char*                previous_tz = std::getenv("TZ");
+    const std::optional<std::string> saved_tz = previous_tz ? std::optional<std::string>{previous_tz} : std::nullopt;
+    ::setenv("TZ", "-07:00", 1);
+    const auto local = executor.execute(planner.plan(query::parseQuery("SELECT from_utc(time) AS local FROM utc_samples")), context);
+    if (saved_tz) ::setenv("TZ", saved_tz->c_str(), 1); else ::unsetenv("TZ");
+    ASSERT_EQ(local.batches.size(), 1U);
+    EXPECT_EQ(local.batches.front()->column(0)->GetScalar(0).ValueOrDie()->ToString(), "2026-01-27T11:33:20-07:00");
+    EXPECT_FALSE(local.batches.front()->column(0)->GetScalar(2).ValueOrDie()->is_valid);
+
     EXPECT_THROW(executor.execute(planner.plan(query::parseQuery(
                                       "SELECT from_utc(time, '-7:00') FROM utc_samples")),
                                   context),
@@ -2592,13 +2604,16 @@ TEST_F(PlannerExecutorTest, ShowFunctionsAndOperatorsExposeSortedCallableCatalog
         kinds[names.back()] = function_batch->column(kind_index)->GetScalar(row).ValueOrDie()->ToString();
     }
     EXPECT_TRUE(std::is_sorted(names.begin(), names.end()));
-    EXPECT_EQ(names, (std::vector<std::string>{"avg", "count", "dense_rank", "first", "first_value", "from_utc", "lag", "last", "last_value", "lead", "max",
+    EXPECT_EQ(names, (std::vector<std::string>{"avg", "count", "dense_rank", "first", "first_value", "from_utc", "from_utc", "lag", "last", "last_value", "lead", "max",
                                                 "min", "rank", "row_number", "sum", "to_utc", "to_utc"}));
     EXPECT_EQ(kinds["count"], "aggregate");
     EXPECT_EQ(kinds["lag"], "window");
     EXPECT_EQ(kinds["from_utc"], "scalar");
-    const auto from_utc = std::find(names.begin(), names.end(), "from_utc") - names.begin();
-    EXPECT_EQ(function_batch->column(1)->GetScalar(from_utc).ValueOrDie()->ToString(), "(timestamp, string)");
+    std::set<std::string> from_utc_signatures;
+    for (int64_t row = 0; row < function_batch->num_rows(); ++row)
+        if (names[static_cast<std::size_t>(row)] == "from_utc")
+            from_utc_signatures.insert(function_batch->column(1)->GetScalar(row).ValueOrDie()->ToString());
+    EXPECT_EQ(from_utc_signatures, (std::set<std::string>{"(timestamp)", "(timestamp, string)"}));
 
     const auto operators = executor.execute(planner.plan(query::parseQuery("SHOW OPERATORS")), context);
     ASSERT_EQ(operators.batches.size(), 1U);
