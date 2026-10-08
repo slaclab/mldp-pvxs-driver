@@ -242,7 +242,13 @@ Numeric offsets must be quoted and use `+/-HH:MM` form, for example `'-07:00'` o
 
 `SHOW FUNCTIONS` and `SHOW OPERATORS` list the executable scalar-language catalog used by the planner. They are useful for feature discovery and return normal Arrow query results, so all output formats work consistently. Function rows contain `name`, `arguments`, `returns`, `description`, and `example`; operator rows contain `symbol`, `arity`, `arguments`, `returns`, `description`, and `example`.
 
-The catalog is sorted deterministically by function name or operator symbol and signature. Scalar call names are case-insensitive. Operator/function overloads exclude `native_value`; mismatched argument types fail during planning. `SHOW FUNCTIONS` currently lists `from_utc(timestamp)`, `from_utc(timestamp, string)`, `to_utc(string)`, and `to_utc(string, string)`; use `SHOW OPERATORS` for the exact supported operator signatures.
+The catalog is sorted deterministically by function name or operator symbol and signature. Scalar call names are case-insensitive. Operator/function overloads exclude `native_value`; mismatched argument types fail during planning. `SHOW FUNCTIONS` currently lists `coalesce(T, T, ...)` (one row per scalar type), `from_utc(timestamp)`, `from_utc(timestamp, string)`, `to_utc(string)`, and `to_utc(string, string)`; use `SHOW OPERATORS` for the exact supported operator signatures.
+
+`coalesce(a, b, ...)` takes two or more arguments of the same scalar type and returns the first non-NULL one, or NULL when all are NULL:
+
+```sql
+SELECT coalesce(pv, alias, 'unknown') AS name FROM ...;
+```
 
 ### Expressions and operators
 

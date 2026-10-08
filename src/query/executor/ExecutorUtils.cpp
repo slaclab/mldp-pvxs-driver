@@ -846,6 +846,23 @@ std::shared_ptr<arrow::Scalar> evaluateExpression(const ExpressionPtr& expressio
                                              {
                                                  return static_cast<char>(std::tolower(character));
                                              });
+                              if (name == "coalesce")
+                              {
+                                  // First non-NULL argument, evaluated lazily; cast to the first
+                                  // argument's Arrow type so every row shares one column type.
+                                  std::shared_ptr<arrow::Scalar> first;
+                                  for (const auto& argument : value.arguments)
+                                  {
+                                      auto scalar = evaluateExpression(argument, batch, row);
+                                      if (!first) first = scalar;
+                                      if (!scalar->is_valid) continue;
+                                      if (first->type->id() == arrow::Type::NA || scalar->type->Equals(*first->type)) return scalar;
+                                      auto cast = scalar->CastTo(first->type);
+                                      if (!cast.ok()) throw std::runtime_error("coalesce: " + cast.status().ToString());
+                                      return cast.MoveValueUnsafe();
+                                  }
+                                  return first ? first : std::make_shared<arrow::NullScalar>();
+                              }
                               if (name == "from_utc")
                               {
                                   if (value.arguments.size() != 1 && value.arguments.size() != 2)

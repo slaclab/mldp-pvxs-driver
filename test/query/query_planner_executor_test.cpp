@@ -2119,6 +2119,51 @@ TEST_F(PlannerExecutorTest, FiltersMaterializedNativeUnionValuesByActiveTypeWith
     EXPECT_EQ(equal->num_rows(), 1);
 }
 
+TEST_F(PlannerExecutorTest, CoalesceReturnsFirstNonNullArgumentInProjections)
+{
+    auto                file_system = std::make_shared<arrow::fs::internal::MockFileSystem>(std::chrono::system_clock::now());
+    auto                catalog = std::make_shared<query::QueryTableCatalog>(file_system, "catalog");
+    arrow::StringBuilder pv;
+    arrow::StringBuilder alias;
+    arrow::Int64Builder  count;
+    ASSERT_TRUE(pv.Append("PV:A").ok());
+    ASSERT_TRUE(pv.AppendNull().ok());
+    ASSERT_TRUE(pv.AppendNull().ok());
+    ASSERT_TRUE(alias.Append("alias-a").ok());
+    ASSERT_TRUE(alias.Append("alias-b").ok());
+    ASSERT_TRUE(alias.AppendNull().ok());
+    ASSERT_TRUE(count.AppendNull().ok());
+    ASSERT_TRUE(count.Append(7).ok());
+    ASSERT_TRUE(count.AppendNull().ok());
+    std::shared_ptr<arrow::Array> pv_array, alias_array, count_array;
+    ASSERT_TRUE(pv.Finish(&pv_array).ok());
+    ASSERT_TRUE(alias.Finish(&alias_array).ok());
+    ASSERT_TRUE(count.Finish(&count_array).ok());
+    const auto batch = arrow::RecordBatch::Make(arrow::schema({arrow::field("pv", arrow::utf8()), arrow::field("alias", arrow::utf8()), arrow::field("n", arrow::int64())}),
+                                                3, {pv_array, alias_array, count_array});
+    ASSERT_TRUE(catalog->create("named", query::TableLifetime::Session, {batch}).ok());
+
+    query::ExecutionContext context{.pool = arrow::default_memory_pool(), .table_catalog = catalog};
+    query::QueryPlanner     planner(catalog);
+    query::QueryExecutor    executor;
+    const auto              result = executor.execute(planner.plan(query::parseQuery(
+                                                          "SELECT coalesce(pv, alias) AS name, COALESCE(pv, alias, 'none') AS named, coalesce(n, 0) AS n0 FROM named")),
+                                                      context);
+
+    ASSERT_EQ(result.batches.size(), 1U);
+    const auto& output = result.batches.front();
+    ASSERT_EQ(output->num_rows(), 3);
+    EXPECT_EQ(output->column(0)->GetScalar(0).ValueOrDie()->ToString(), "PV:A");
+    EXPECT_EQ(output->column(0)->GetScalar(1).ValueOrDie()->ToString(), "alias-b");
+    EXPECT_FALSE(output->column(0)->GetScalar(2).ValueOrDie()->is_valid);
+    EXPECT_EQ(output->column(1)->GetScalar(2).ValueOrDie()->ToString(), "none");
+    EXPECT_EQ(output->column(2)->GetScalar(0).ValueOrDie()->ToString(), "0");
+    EXPECT_EQ(output->column(2)->GetScalar(1).ValueOrDie()->ToString(), "7");
+
+    EXPECT_THROW((void)planner.plan(query::parseQuery("SELECT coalesce(pv, 1) FROM named")), query::plan::PlannerException);
+    EXPECT_THROW((void)planner.plan(query::parseQuery("SELECT coalesce(pv) FROM named")), query::plan::PlannerException);
+}
+
 TEST_F(PlannerExecutorTest, FormatsUtcTimestampsInIanaZonesAndFixedOffsets)
 {
     auto                    file_system = std::make_shared<arrow::fs::internal::MockFileSystem>(std::chrono::system_clock::now());
@@ -2604,7 +2649,7 @@ TEST_F(PlannerExecutorTest, ShowFunctionsAndOperatorsExposeSortedCallableCatalog
         kinds[names.back()] = function_batch->column(kind_index)->GetScalar(row).ValueOrDie()->ToString();
     }
     EXPECT_TRUE(std::is_sorted(names.begin(), names.end()));
-    EXPECT_EQ(names, (std::vector<std::string>{"avg", "count", "dense_rank", "first", "first_value", "from_utc", "from_utc", "lag", "last", "last_value", "lead", "max",
+    EXPECT_EQ(names, (std::vector<std::string>{"avg", "coalesce", "coalesce", "coalesce", "coalesce", "coalesce", "count", "dense_rank", "first", "first_value", "from_utc", "from_utc", "lag", "last", "last_value", "lead", "max",
                                                 "min", "rank", "row_number", "sum", "to_utc", "to_utc"}));
     EXPECT_EQ(kinds["count"], "aggregate");
     EXPECT_EQ(kinds["lag"], "window");

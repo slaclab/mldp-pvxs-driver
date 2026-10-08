@@ -41,6 +41,7 @@ struct ExpressionCallableDescriptor {
     std::string                example;                                 ///< Example usage string for SHOW FUNCTIONS.
     std::string                arguments_text;                          ///< Display override for arguments (e.g. "(*|any)"); empty uses @c arguments.
     std::string                returns_text;                            ///< Display override for the return type (e.g. "same as input"); empty uses @c returns.
+    bool                       variadic{false};                         ///< Accepts two or more arguments, all of type @c arguments[0].
 };
 
 /** @brief Typed SQL scalar callable; immutable once registered. */
