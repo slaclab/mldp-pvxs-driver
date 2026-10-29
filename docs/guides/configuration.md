@@ -363,7 +363,8 @@ Two fetch modes:
       connect-timeout-sec: 30          # optional; default: 30
       total-timeout-sec: 300           # optional; default: 300 (0 = infinite)
       pv-samples-per-batch: 0          # optional; default: 0 (disabled)
-      batch-flush-interval-ms: 0       # optional; default: 0 (disabled)
+      batch-flush-interval-ms: 0       # deprecated, no effect (partial batches flushed at PV fetch end)
+      max-batch-span-sec: 86400        # optional; default: 86400 (MLDP bucket limit)
       tls-verify-peer: true            # optional; default: true
       tls-verify-host: true            # optional; default: true
       static-metadata:                 # optional — reader-level key/value metadata
@@ -393,7 +394,8 @@ Two fetch modes:
 | `total-timeout-sec` | long | `300` | Total HTTP operation timeout (seconds). `0` = infinite. |
 | `fetch-threads` | long | `1` | Number of parallel worker threads fetching PVs. Each gets its own HTTP client. |
 | `pv-samples-per-batch` | long | `0` | Accumulate this many samples per PV before submitting. `0` = disabled. |
-| `batch-flush-interval-ms` | long | `0` | Flush incomplete PV batches after this many ms. `0` = disabled; when disabled, incomplete batches are discarded at shutdown. |
+| `batch-flush-interval-ms` | long | `0` | **Deprecated, no effect.** Partial PV batches are always submitted when the PV fetch completes. |
+| `max-batch-span-sec` | long | `86400` | Max timestamp span of one PV batch. Flushes early so MLDP does not reject the request (bucket limit 24h). |
 | `poll-interval-sec` | long | — | **Required for `periodic_tail`.** Tail poll interval (seconds). |
 | `lookback-sec` | long | poll-interval-sec | Tail lookback window (seconds). Must be ≤ `poll-interval-sec`. |
 | `tls-verify-peer` | bool | `true` | Verify the server TLS certificate chain. |

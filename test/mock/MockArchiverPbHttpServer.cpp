@@ -664,6 +664,16 @@ namespace {
             return body;
         }
 
+        // Test hook: PV names ending in "_CORRUPT" stream a valid header
+        // followed by one undecodable sample line.
+        if (endsWith(pv, "_CORRUPT"))
+        {
+            appendChunk(body, pv, toPbTime(samples.front().epoch_ns).year, samples, 0, 0, cfg, payload_spec);
+            body.pop_back(); // drop chunk terminator, keep header line
+            body += "\xFF\xFF\xFF\xFF\xFF\xFF\n\n";
+            return body;
+        }
+
         size_t chunk_begin = 0;
         while (chunk_begin < samples.size())
         {

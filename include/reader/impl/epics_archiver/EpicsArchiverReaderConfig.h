@@ -47,6 +47,7 @@ inline constexpr char PvsKey[] = "pvs";
 inline constexpr char PvNameKey[] = "name";
 inline constexpr char PvSamplesPerBatchKey[] = "pv-samples-per-batch";
 inline constexpr char BatchFlushIntervalMsKey[] = "batch-flush-interval-ms";
+inline constexpr char MaxBatchSpanSecKey[] = "max-batch-span-sec";
 inline constexpr char FetchThreadsKey[] = "fetch-threads";
 
 static constexpr auto kMetadataKey = "metadata";
@@ -229,6 +230,17 @@ public:
     long batchFlushIntervalMs() const;
 
     /**
+     * @brief Get the maximum time span covered by one pending PV batch.
+     *
+     * MLDP rejects ingestion frames whose timestamps span more than its bucket
+     * limit (Buckets.maxBucketSpanSeconds, 24h by default). A pending batch is
+     * flushed before appending a sample that would reach this span.
+     *
+     * @return Maximum span in seconds (default 86400).
+     */
+    long maxBatchSpanSec() const;
+
+    /**
      * @brief Get the number of parallel fetch threads.
      *
      * @return Number of worker threads (default: 1 for sequential behavior).
@@ -282,6 +294,7 @@ private:
     long                                         lookback_sec_ = 0L;             ///< Periodic tail lookback window (seconds).
     long                                         pv_samples_per_batch_ = 0L;     ///< Max samples per PV batch (0 = disabled).
     long                                         batch_flush_interval_ms_ = 0L;  ///< Max pending batch age in ms (0 = disabled).
+    long                                         max_batch_span_sec_ = 86400L;   ///< Max timestamp span per PV batch (seconds).
     long                                         fetch_threads_ = 1L;            ///< Number of parallel fetch worker threads.
     bool                                         tls_verify_peer_ = true;        ///< Verify TLS certificate chain.
     bool                                         tls_verify_host_ = true;        ///< Verify TLS host name.
