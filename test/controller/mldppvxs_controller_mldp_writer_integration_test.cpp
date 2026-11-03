@@ -123,6 +123,43 @@ public:
     }
 };
 
+/// In-process mock ingestion server so tests never depend on a real dp-ingestion host.
+struct LocalIngestionServer
+{
+    TestIngestionService          service;
+    std::unique_ptr<grpc::Server> server;
+    int                           port = 0;
+
+    LocalIngestionServer()
+    {
+        grpc::ServerBuilder builder;
+        builder.AddListeningPort("127.0.0.1:0", grpc::InsecureServerCredentials(), &port);
+        builder.RegisterService(&service);
+        server = builder.BuildAndStart();
+    }
+
+    ~LocalIngestionServer()
+    {
+        if (server)
+        {
+            server->Shutdown();
+        }
+    }
+
+    /// Replace the placeholder dp-ingestion URL in @p yaml with this server's address.
+    std::string patch(std::string_view yaml) const
+    {
+        std::string       out(yaml);
+        const std::string from = "dp-ingestion:50051";
+        const std::string to = "127.0.0.1:" + std::to_string(port);
+        for (auto pos = out.find(from); pos != std::string::npos; pos = out.find(from, pos + to.size()))
+        {
+            out.replace(pos, from.size(), to);
+        }
+        return out;
+    }
+};
+
 bool waitForCount(std::atomic<int>& counter, int target, std::chrono::milliseconds timeout)
 {
     const auto deadline = std::chrono::steady_clock::now() + timeout;
@@ -147,7 +184,9 @@ TEST(MLDPPVXSControllerTest, ImplementsEventBusPushContract)
 
 TEST(MLDPPVXSControllerTest, StartAndStopDoNotThrowWithValidConfig)
 {
-    const auto config = makeConfigFromYaml(std::string(kMinimalControllerConfig));
+    LocalIngestionServer ingestion;
+    ASSERT_TRUE(ingestion.server);
+    const auto config = makeConfigFromYaml(ingestion.patch(kMinimalControllerConfig));
 
     ASSERT_TRUE(config.valid());
     auto controller = MLDPPVXSController::create(config);
@@ -159,7 +198,9 @@ TEST(MLDPPVXSControllerTest, StartAndStopDoNotThrowWithValidConfig)
 
 TEST(MLDPPVXSControllerTest, StartAndStopDoNotThrowWithEpicsConfig)
 {
-    const auto config = makeConfigFromYaml(std::string(kEpicsControllerConfig));
+    LocalIngestionServer ingestion;
+    ASSERT_TRUE(ingestion.server);
+    const auto config = makeConfigFromYaml(ingestion.patch(kEpicsControllerConfig));
 
     ASSERT_TRUE(config.valid());
 
@@ -341,7 +382,9 @@ TEST(MLDPPVXSControllerTest, BsasNtTableColumnsHaveProvenanceSourceSetToRootSour
 
 TEST(MLDPPVXSControllerTest, EpicsCounterEmitsSingleReaderMetric)
 {
-    const auto config = makeConfigFromYaml(std::string(kEpicsControllerConfig));
+    LocalIngestionServer ingestion;
+    ASSERT_TRUE(ingestion.server);
+    const auto config = makeConfigFromYaml(ingestion.patch(kEpicsControllerConfig));
     ASSERT_TRUE(config.valid());
 
     PVServer pvServer;
