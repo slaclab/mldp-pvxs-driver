@@ -58,7 +58,6 @@ reader:
   - epics-pvxs:
       - name: my_pvxs_reader
         thread-pool: 2                # Event conversion thread pool size
-        column-batch-size: 50         # NTTable column batch size
         environment:                  # optional, affects only this reader's PVXS context
           EPICS_PVA_ADDR_LIST: "134.79.0.255:5076"
           EPICS_PVA_AUTO_ADDR_LIST: "NO"
@@ -68,11 +67,6 @@ reader:
           EPICS_PVA_CONN_TMO: "42.5"
         pvs:
           - name: MY:PV:NAME
-          - name: BSA:TABLE:PV
-            option:                   # For SLAC BSAS NTTable with row timestamps
-              type: slac-bsas-table
-              tsSeconds: secondsPastEpoch
-              tsNanos: nanoseconds
 ```
 
 ### Per-reader PVXS network settings
@@ -94,7 +88,6 @@ logging and handling behavior.
 
 - **Event-Driven**: Immediate response to PV changes (no polling overhead)
 - **Smart Threading**: Conditional thread pool usage based on thread count
-- **NTTable Support**: Special handling for tabular data with row timestamps
 - **PVXS Options**: Support for custom channel options
 
 ## Conditional Parallelization
@@ -109,30 +102,31 @@ reader_pool_->get_thread_count() > 1 ? reader_pool_.get() : nullptr
 - **Single thread (= 1)**: Bypass thread pool, execute directly
 - **Multiple threads (> 1)**: Use thread pool for parallel conversion
 
-## SLAC BSAS NTTable Handling
+## SLAC BSAS NTTables
 
-For PVs that deliver NTTable structures with per-row timestamps (SLAC BSAS
-format), enable the mode with:
+`epics-pvxs` handles scalar and scalar-array PVs only. SLAC BSAS NTTables are read by
+two dedicated readers that derive from `EpicsPVXSReader` and share its PVXS
+client settings (`environment`, `thread-pool`, `metadata`):
+
+Reader type            | Table            | Documentation
+---------------------- | ---------------- | ---------------------------------------------
+`epics-pvxs-bsas-gen1` | BSAS Gen1        | [SLAC BSAS NTTable Gen 1](slac-bsas-table-gen1.md)
+`epics-pvxs-bsas-gen2` | BSAS Gen2        | [SLAC BSAS NTTable Gen 2](slac-bsas-table-gen2.md)
+
+Configuring `option.type: slac-bsas-table` on an `epics-pvxs` PV is a configuration
+error whose message points to `epics-pvxs-bsas-gen1`. Migration:
 
 ```yaml
-pvs:
-  - name: BSA:TABLE:PV
-    option:
-      type: slac-bsas-table
-      tsSeconds: secondsPastEpoch    # column holding per-row epoch seconds
-      tsNanos: nanoseconds           # column holding per-row nanoseconds
-      column-batch-size: 1           # columns per batch push (0 = all at once)
+# before                                  # after
+reader:                                   reader:
+  - epics-pvxs:                             - epics-pvxs-bsas-gen1:
+      - name: r                                 - name: r
+        pvs:                                      pvs-per-data-batch: 1  # was option.column-batch-size
+          - name: BSA:TABLE:PV                    pvs:
+            option:                                 - name: BSA:TABLE:PV
+              type: slac-bsas-table
+              column-batch-size: 1
 ```
-
-- Each NTTable column (PV name) becomes a separate source in the event batch.
-- The two timestamp columns are consumed for row indexing and are not forwarded.
-- Source name equals the PV-name column field name.
-- `column-batch-size` limits how many columns are pushed per `EventBatch`; 0 means all at once.
-- Conversion is handled by `BSASEpicsDataBatchConversion::tryBuildNtTableRowTsBatch()`.
-
-For a full description of the BSAS NTTable structure, field layout, and a
-concrete annotated example see
-[SLAC BSAS NTTable Gen 1](slac-bsas-table-gen1.md) and [Gen 2](slac-bsas-table-gen2.md).
 
 ## Use Cases
 

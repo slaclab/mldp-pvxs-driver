@@ -68,9 +68,9 @@ public:
     void   setReaderDataBytesPerSecond(double value, prometheus::Labels tags = {});
     double readerDataBytesTotal(prometheus::Labels tags = {}) const;
     double readerDataBytesPerSecond(prometheus::Labels tags = {}) const;
-    double readerEventsTotal() const;
-    double readerEventsReceivedTotal() const;
-    double readerErrorsTotal() const;
+    double readerEventsTotal(prometheus::Labels tags = {}) const;
+    double readerEventsReceivedTotal(prometheus::Labels tags = {}) const;
+    double readerErrorsTotal(prometheus::Labels tags = {}) const;
 
     // Pool metrics --------------------------------------------------------
     /**

@@ -12,6 +12,8 @@
 
 #include <reader/impl/epics/shared/EpicsReaderConfig.h>
 
+#include <string>
+
 namespace mldp_pvxs_driver::reader::impl::epics {
 
 class EpicsPVXSReaderConfig : public EpicsReaderConfig
@@ -19,6 +21,11 @@ class EpicsPVXSReaderConfig : public EpicsReaderConfig
 public:
     EpicsPVXSReaderConfig() = default;
     explicit EpicsPVXSReaderConfig(const ::mldp_pvxs_driver::config::Config& readerEntry);
+
+    /**
+     * @brief Parse @p readerEntry, reporting PVXS client errors for @p readerType.
+     */
+    EpicsPVXSReaderConfig(const ::mldp_pvxs_driver::config::Config& readerEntry, const std::string& readerType);
 };
 
 } // namespace mldp_pvxs_driver::reader::impl::epics

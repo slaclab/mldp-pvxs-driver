@@ -1,12 +1,7 @@
 services:
   devcontainer:
-    build:
-      context: .
-      dockerfile: .devcontainer/Dockerfile
-      args:
-        BASE_OS_IMAGE: rockylinux/rockylinux:9.3
-        COMPILER: gcc
-        PVXS_VERSION: 1.4.1
+    # Built by initializeCommand (see docker-compose.devcontainer.build.yml).
+    image: mldp-pvxs-driver-devcontainer:local
     volumes:
       - .:/workspace:cached
     command: sleep infinity

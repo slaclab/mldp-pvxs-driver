@@ -271,6 +271,204 @@ ColumnResult convertColumn(const pvxs::Value& columns,
     return result;
 }
 
+
+/// One NTTable data column selected for conversion.
+struct ColInfo
+{
+    pvxs::Value col;  ///< Column array value.
+    std::string name; ///< Output (source) name for the column.
+};
+
+/// Validated NTTable ready for per-column conversion.
+struct PreparedTable
+{
+    pvxs::Value           columns; ///< The `value` struct.
+    size_t                rowCount{0};
+    std::vector<uint64_t> tsSeconds;
+    std::vector<uint64_t> tsNanos;
+    std::vector<ColInfo>  colInfos;
+};
+
+/// Return the `labels` entries when they map 1:1 onto the `value.*` children.
+std::optional<pvxs::shared_array<const std::string>> matchingLabels(const pvxs::Value& epicsValue,
+                                                                    const pvxs::Value& columns)
+{
+    const auto labelsValue = epicsValue["labels"];
+    if (!labelsValue.valid() || labelsValue.type().code != pvxs::TypeCode::StringA)
+    {
+        return std::nullopt;
+    }
+    auto labels = labelsValue.as<pvxs::shared_array<const std::string>>();
+    size_t childCount = 0;
+    for (const auto& child : columns.ichildren())
+    {
+        (void)child;
+        ++childCount;
+    }
+    if (labels.size() != childCount)
+    {
+        return std::nullopt;
+    }
+    return labels;
+}
+
+/// Validate the NTTable, resolve row timestamps and select the data columns.
+///
+/// Timestamp columns are always skipped (by field name).  When @p filter is set,
+/// it receives the column label (from `labels`, when it maps 1:1 onto the
+/// `value.*` fields) or else the field name; returning nullopt skips the column,
+/// otherwise the returned string becomes the output column name.  Without a
+/// filter the output name is the field name.
+std::optional<PreparedTable> prepareTable(ILogger&                                          log,
+                                          const std::string&                                tablePvName,
+                                          const pvxs::Value&                                epicsValue,
+                                          const std::string&                                tsSecondsField,
+                                          const std::string&                                tsNanosField,
+                                          const BSASEpicsDataBatchConversion::ColumnFilter& filter)
+{
+    // Phase 1: Validate and locate NTTable payload.
+    if (!epicsValue || epicsValue.type().kind() != pvxs::Kind::Compound)
+    {
+        warnf(log, "NTTable row-ts PV {} update is not a compound value", tablePvName);
+        return std::nullopt;
+    }
+
+    PreparedTable table;
+    table.columns = epicsValue["value"];
+    if (!table.columns || table.columns.type().kind() != pvxs::Kind::Compound)
+    {
+        warnf(log, "NTTable row-ts PV {} has no usable value struct", tablePvName);
+        return std::nullopt;
+    }
+
+    // Phase 2: Resolve row timestamp arrays (top-level first, then value.* fallback).
+    pvxs::Value secondsValue = epicsValue[tsSecondsField];
+    pvxs::Value nanosValue = epicsValue[tsNanosField];
+    if (!secondsValue.valid() || !nanosValue.valid())
+    {
+        secondsValue = table.columns[tsSecondsField];
+        nanosValue = table.columns[tsNanosField];
+    }
+
+    if (!secondsValue.valid() || !nanosValue.valid())
+    {
+        warnf(log,
+              "NTTable row-ts PV {} missing timestamp arrays '{}'/'{}' (expected either as top-level fields or under value.*)",
+              tablePvName,
+              tsSecondsField,
+              tsNanosField);
+        return std::nullopt;
+    }
+
+    // Phase 3: Normalize timestamp arrays to uint64 and clamp row count to the
+    // shortest timestamp array to avoid out-of-bounds row access.
+    const auto secondsArr = asUIntArrayView(secondsValue);
+    const auto nanosArr = asUIntArrayView(nanosValue);
+    if (!secondsArr.has_value() || !nanosArr.has_value())
+    {
+        warnf(log, "NTTable row-ts PV {} timestamp arrays have unsupported types", tablePvName);
+        return std::nullopt;
+    }
+
+    table.rowCount = std::min(secondsArr->size(), nanosArr->size());
+    if (table.rowCount == 0)
+    {
+        tracef(log, "NTTable row-ts PV {} has 0 timestamped rows", tablePvName);
+        return std::nullopt;
+    }
+
+    table.tsSeconds.resize(table.rowCount);
+    table.tsNanos.resize(table.rowCount);
+    for (size_t i = 0; i < table.rowCount; ++i)
+    {
+        table.tsSeconds[i] = secondsArr->at(i);
+        table.tsNanos[i] = nanosArr->at(i);
+    }
+
+    // Phase 4: Select the data columns (filter before any typed conversion).
+    const auto labels = filter ? matchingLabels(epicsValue, table.columns) : std::nullopt;
+    size_t     index = 0;
+    for (const auto& col : table.columns.ichildren())
+    {
+        const size_t colIndex = index++;
+        if (!col.valid())
+        {
+            continue;
+        }
+        auto colName = table.columns.nameOf(col);
+        if (colName == tsSecondsField || colName == tsNanosField)
+        {
+            continue;
+        }
+        if (filter)
+        {
+            const std::string& label = labels ? (*labels)[colIndex] : colName;
+            auto               outName = filter(label);
+            if (!outName.has_value())
+            {
+                tracef(log, "NTTable row-ts PV {} column '{}' skipped by column filter", tablePvName, label);
+                continue;
+            }
+            colName = std::move(*outName);
+        }
+        table.colInfos.push_back({col, std::move(colName)});
+    }
+
+    return table;
+}
+
+bool isSupportedColumnType(pvxs::TypeCode code)
+{
+    static const pvxs::TypeCode kSupported[] = {
+        pvxs::TypeCode::BoolA,
+        pvxs::TypeCode::Int8A,
+        pvxs::TypeCode::Int16A,
+        pvxs::TypeCode::Int32A,
+        pvxs::TypeCode::Int64A,
+        pvxs::TypeCode::UInt8A,
+        pvxs::TypeCode::UInt16A,
+        pvxs::TypeCode::UInt32A,
+        pvxs::TypeCode::UInt64A,
+        pvxs::TypeCode::Float32A,
+        pvxs::TypeCode::Float64A,
+        pvxs::TypeCode::StringA,
+        pvxs::TypeCode::StructA,
+        pvxs::TypeCode::UnionA,
+        pvxs::TypeCode::AnyA,
+    };
+    return std::find(std::begin(kSupported), std::end(kSupported), code) != std::end(kSupported);
+}
+
+/// Attach timestamps to a converted column and hand it to the emit callback.
+void emitResult(ILogger&                                          log,
+                const std::string&                                tablePvName,
+                const PreparedTable&                              table,
+                const pvxs::Value&                                col,
+                ColumnResult&&                                    result,
+                const BSASEpicsDataBatchConversion::ColumnEmitFn& emitColumn,
+                size_t&                                           outEmitted)
+{
+    if (result.emitted == 0)
+    {
+        if (!isSupportedColumnType(col.type().code))
+        {
+            tracef(log,
+                   "NTTable row-ts PV {} column '{}' has unsupported type code {}",
+                   tablePvName,
+                   result.name,
+                   static_cast<int>(col.type().code));
+        }
+        return;
+    }
+
+    DataBatch batch;
+    fillTimestamps(batch, result.emitted, table.tsSeconds, table.tsNanos);
+    batch.columns = std::move(result.columns);
+    batch.array_dims = std::move(result.array_dims);
+    emitColumn(std::move(result.name), std::vector<DataBatch>{std::move(batch)});
+    outEmitted += result.emitted;
+}
+
 } // namespace
 
 bool BSASEpicsDataBatchConversion::tryBuildNtTableRowTsBatch(mldp_pvxs_driver::util::log::ILogger& log,
@@ -301,113 +499,26 @@ bool BSASEpicsDataBatchConversion::tryBuildNtTableRowTsBatch(mldp_pvxs_driver::u
                                                         const std::string&                    tsSecondsField,
                                                         const std::string&                    tsNanosField,
                                                         ColumnEmitFn                          emitColumn,
-                                                        size_t&                               outEmitted)
+                                                        size_t&                               outEmitted,
+                                                        const ColumnFilter&                   filter)
 {
     outEmitted = 0;
 
-    // Phase 1: Validate and locate NTTable payload.
-    if (!epicsValue || epicsValue.type().kind() != pvxs::Kind::Compound)
+    auto table = prepareTable(log, tablePvName, epicsValue, tsSecondsField, tsNanosField, filter);
+    if (!table)
     {
-        warnf(log, "NTTable row-ts PV {} update is not a compound value", tablePvName);
         return false;
     }
 
-    const auto columns = epicsValue["value"];
-    if (!columns || columns.type().kind() != pvxs::Kind::Compound)
-    {
-        warnf(log, "NTTable row-ts PV {} has no usable value struct", tablePvName);
-        return false;
-    }
-
-    // Phase 2: Resolve row timestamp arrays (top-level first, then value.* fallback).
-    pvxs::Value secondsValue = epicsValue[tsSecondsField];
-    pvxs::Value nanosValue = epicsValue[tsNanosField];
-    if (!secondsValue.valid() || !nanosValue.valid())
-    {
-        secondsValue = columns[tsSecondsField];
-        nanosValue = columns[tsNanosField];
-    }
-
-    if (!secondsValue.valid() || !nanosValue.valid())
-    {
-        warnf(log,
-              "NTTable row-ts PV {} missing timestamp arrays '{}'/'{}' (expected either as top-level fields or under value.*)",
-              tablePvName,
-              tsSecondsField,
-              tsNanosField);
-        return false;
-    }
-
-    // Phase 3: Normalize timestamp arrays to uint64 and clamp row count to the
-    // shortest timestamp array to avoid out-of-bounds row access.
-    const auto secondsArr = asUIntArrayView(secondsValue);
-    const auto nanosArr = asUIntArrayView(nanosValue);
-    if (!secondsArr.has_value() || !nanosArr.has_value())
-    {
-        warnf(log, "NTTable row-ts PV {} timestamp arrays have unsupported types", tablePvName);
-        return false;
-    }
-
-    const auto rowCount = std::min(secondsArr->size(), nanosArr->size());
-    if (rowCount == 0)
-    {
-        tracef(log, "NTTable row-ts PV {} has 0 timestamped rows", tablePvName);
-        return false;
-    }
-
-    std::vector<uint64_t> tsSeconds(rowCount), tsNanos(rowCount);
-    for (size_t i = 0; i < rowCount; ++i)
-    {
-        tsSeconds[i] = secondsArr->at(i);
-        tsNanos[i] = nanosArr->at(i);
-    }
-
-    // Phase 4: Convert each non-timestamp column and emit it independently.
+    // Convert each selected column and emit it independently.
     // One emitted entry contains one DataBatch with all rows of that column.
-    for (const auto& col : columns.ichildren())
+    for (const auto& ci : table->colInfos)
     {
-        if (!col.valid())
-        {
-            continue;
-        }
-        const auto colName = columns.nameOf(col);
-        if (colName == tsSecondsField || colName == tsNanosField)
-        {
-            continue;
-        }
-
-        auto result = convertColumn(columns, col, colName, rowCount);
-        if (result.emitted > 0)
-        {
-            DataBatch batch;
-            fillTimestamps(batch, result.emitted, tsSeconds, tsNanos);
-            batch.columns = std::move(result.columns);
-            batch.array_dims = std::move(result.array_dims);
-            emitColumn(std::move(result.name), std::vector<DataBatch>{std::move(batch)});
-            outEmitted += result.emitted;
-        }
-        else
-        {
-            const auto colCode = col.type().code;
-            if (colCode != pvxs::TypeCode::BoolA &&
-                colCode != pvxs::TypeCode::Int8A && colCode != pvxs::TypeCode::Int16A && colCode != pvxs::TypeCode::Int32A &&
-                colCode != pvxs::TypeCode::Int64A &&
-                colCode != pvxs::TypeCode::UInt8A && colCode != pvxs::TypeCode::UInt16A && colCode != pvxs::TypeCode::UInt32A &&
-                colCode != pvxs::TypeCode::UInt64A &&
-                colCode != pvxs::TypeCode::Float32A && colCode != pvxs::TypeCode::Float64A &&
-                colCode != pvxs::TypeCode::StringA &&
-                colCode != pvxs::TypeCode::StructA && colCode != pvxs::TypeCode::UnionA && colCode != pvxs::TypeCode::AnyA)
-            {
-                tracef(log,
-                       "NTTable row-ts PV {} column '{}' has unsupported type code {}",
-                       tablePvName,
-                       colName,
-                       static_cast<int>(colCode));
-            }
-        }
+        emitResult(log, tablePvName, *table, ci.col,
+                   convertColumn(table->columns, ci.col, ci.name, table->rowCount),
+                   emitColumn, outEmitted);
     }
 
-    // Phase 5: report whether any rows were emitted.
     return outEmitted > 0;
 }
 
@@ -418,114 +529,38 @@ bool BSASEpicsDataBatchConversion::tryBuildNtTableRowTsBatch(mldp_pvxs_driver::u
                                                         const std::string&                    tsNanosField,
                                                         ColumnEmitFn                          emitColumn,
                                                         size_t&                               outEmitted,
-                                                        BS::light_thread_pool*                pool)
+                                                        BS::light_thread_pool*                pool,
+                                                        const ColumnFilter&                   filter)
 {
     if (!pool)
     {
-        return tryBuildNtTableRowTsBatch(log, tablePvName, epicsValue, tsSecondsField, tsNanosField, emitColumn, outEmitted);
+        return tryBuildNtTableRowTsBatch(log, tablePvName, epicsValue, tsSecondsField, tsNanosField, emitColumn, outEmitted, filter);
     }
 
     outEmitted = 0;
 
-    // Same validation/resolution flow as the sequential overload.
-    if (!epicsValue || epicsValue.type().kind() != pvxs::Kind::Compound)
+    auto table = prepareTable(log, tablePvName, epicsValue, tsSecondsField, tsNanosField, filter);
+    if (!table)
     {
-        warnf(log, "NTTable row-ts PV {} update is not a compound value", tablePvName);
         return false;
     }
 
-    const auto columns = epicsValue["value"];
-    if (!columns || columns.type().kind() != pvxs::Kind::Compound)
-    {
-        warnf(log, "NTTable row-ts PV {} has no usable value struct", tablePvName);
-        return false;
-    }
-
-    pvxs::Value secondsValue = epicsValue[tsSecondsField];
-    pvxs::Value nanosValue = epicsValue[tsNanosField];
-    if (!secondsValue.valid() || !nanosValue.valid())
-    {
-        secondsValue = columns[tsSecondsField];
-        nanosValue = columns[tsNanosField];
-    }
-
-    if (!secondsValue.valid() || !nanosValue.valid())
-    {
-        warnf(log,
-              "NTTable row-ts PV {} missing timestamp arrays '{}'/'{}' (expected either as top-level fields or under value.*)",
-              tablePvName,
-              tsSecondsField,
-              tsNanosField);
-        return false;
-    }
-
-    const auto secondsArr = asUIntArrayView(secondsValue);
-    const auto nanosArr = asUIntArrayView(nanosValue);
-    if (!secondsArr.has_value() || !nanosArr.has_value())
-    {
-        warnf(log, "NTTable row-ts PV {} timestamp arrays have unsupported types", tablePvName);
-        return false;
-    }
-
-    const auto rowCount = std::min(secondsArr->size(), nanosArr->size());
-    if (rowCount == 0)
-    {
-        tracef(log, "NTTable row-ts PV {} has 0 timestamped rows", tablePvName);
-        return false;
-    }
-
-    std::vector<uint64_t> tsSeconds(rowCount), tsNanos(rowCount);
-    for (size_t i = 0; i < rowCount; ++i)
-    {
-        tsSeconds[i] = secondsArr->at(i);
-        tsNanos[i] = nanosArr->at(i);
-    }
-
-    // Collect columns to dispatch in parallel.
-    struct ColInfo
-    {
-        pvxs::Value col;
-        std::string name;
-    };
-
-    std::vector<ColInfo> colInfos;
-    for (const auto& col : columns.ichildren())
-    {
-        if (!col.valid())
-        {
-            continue;
-        }
-        const auto colName = columns.nameOf(col);
-        if (colName == tsSecondsField || colName == tsNanosField)
-        {
-            continue;
-        }
-        colInfos.push_back({col, colName});
-    }
-
+    // Convert columns in parallel; timestamps are attached and columns emitted
+    // in table order on the calling thread.
     std::vector<std::future<ColumnResult>> futures;
-    futures.reserve(colInfos.size());
-    for (auto& ci : colInfos)
+    futures.reserve(table->colInfos.size());
+    for (const auto& ci : table->colInfos)
     {
         futures.push_back(pool->submit_task(
-            [&columns, col = ci.col, name = ci.name, rowCount]() -> ColumnResult
+            [&columns = table->columns, col = ci.col, name = ci.name, rowCount = table->rowCount]() -> ColumnResult
             {
                 return convertColumn(columns, col, name, rowCount);
             }));
     }
 
-    for (auto& fut : futures)
+    for (size_t i = 0; i < futures.size(); ++i)
     {
-        auto result = fut.get();
-        if (result.emitted > 0)
-        {
-            DataBatch batch;
-            fillTimestamps(batch, result.emitted, tsSeconds, tsNanos);
-            batch.columns = std::move(result.columns);
-            batch.array_dims = std::move(result.array_dims);
-            emitColumn(std::move(result.name), std::vector<DataBatch>{std::move(batch)});
-            outEmitted += result.emitted;
-        }
+        emitResult(log, tablePvName, *table, table->colInfos[i].col, futures[i].get(), emitColumn, outEmitted);
     }
 
     return outEmitted > 0;

@@ -313,7 +313,7 @@ Both EPICS readers share the same base config (`EpicsReaderConfig`):
         - name: MY:PV:1
           metadata:                # optional — per-PV overrides (merged over static-metadata)
             signal_type: scalar
-        - name: MY:NTTABLE:PV
+        - name: MY:NTTABLE:PV      # epics-base only; epics-pvxs rejects table types
           option:
             type: slac-bsas-table
             tsSeconds: secondsPastEpoch  # optional; default: secondsPastEpoch
@@ -330,7 +330,7 @@ Both EPICS readers share the same base config (`EpicsReaderConfig`):
 | `static-metadata` | map | `{}` | Reader-level key/value metadata stamped on every `EventBatch.metadata`. |
 | `pvs[].name` | string | — | **Required.** Fully qualified PV name. |
 | `pvs[].metadata` | map | `{}` | Per-PV metadata key/value pairs. Merged over `static-metadata`; PV-level keys win on conflict. |
-| `pvs[].option.type` | string | — | `slac-bsas-table` activates SLAC BSAS NTTable row-timestamp handling. |
+| `pvs[].option.type` | string | — | `slac-bsas-table` activates SLAC BSAS NTTable row-timestamp handling *(epics-base only; under `epics-pvxs` it is a configuration error — use `epics-pvxs-bsas-gen1`)*. |
 | `pvs[].option.tsSeconds` | string | `secondsPastEpoch` | NTTable column name carrying seconds timestamp. |
 | `pvs[].option.tsNanos` | string | `nanoseconds` | NTTable column name carrying nanoseconds timestamp. |
 
@@ -338,6 +338,45 @@ Both EPICS readers share the same base config (`EpicsReaderConfig`):
 
 → [EpicsPVXSReader Implementation](../readers/epics-pvxs-reader-implementation.md)
 → [EpicsBaseReader Implementation](../readers/epics-base-reader-implementation.md)
+
+### BSAS Table Readers (`epics-pvxs-bsas-gen1`, `epics-pvxs-bsas-gen2`)
+
+PVXS readers dedicated to SLAC BSAS NTTables. They accept the `epics-pvxs` keys
+(`name`, `thread-pool`, `metadata`, `environment`, `pvs`) except `column-batch-size`, plus
+table keys that can be set at reader level and overridden per PV under `option`:
+
+```yaml
+reader:
+  - epics-pvxs-bsas-gen1:
+      - name: bsas_gen1
+        rows-per-data-batch: 120     # rows per DataBatch; 0 = all rows
+        pvs-per-data-batch: 1        # PV columns per DataBatch; 0 = all
+        data-batches-per-push: 50    # DataBatches per bus EventBatch; 0 = all
+        tsSeconds: secondsPastEpoch  # default
+        tsNanos: nanoseconds         # default
+        pvs:
+          - name: "BSAS:GEN1:TABLE"
+  - epics-pvxs-bsas-gen2:
+      - name: bsas_gen2
+        pidField: pid                # default; column always skipped
+        valueSuffix: Val             # default; case-insensitive
+        pvs:
+          - name: "BSAS:GEN2:TABLE"
+            option:
+              pvs-per-data-batch: 0
+```
+
+| Key | Readers | Default | Description |
+|-----|---------|---------|-------------|
+| `rows-per-data-batch` | both | `120` | Rows per `DataBatch` (values per column). `0` = all rows. |
+| `pvs-per-data-batch` | both | `1` | PV columns per `DataBatch` (they share the row timestamps). `0` = all. |
+| `data-batches-per-push` | both | `50` | `DataBatch`es per bus `EventBatch` push. `0` = all. Replaces `column-batch-size` (rejected). |
+| `tsSeconds` / `tsNanos` | both | `secondsPastEpoch` / `nanoseconds` | Per-row timestamp column names. |
+| `pidField` | gen2 | `pid` | Pulse ID column (skipped). |
+| `valueSuffix` | gen2 | `Val` | Value column suffix (case-insensitive); `<PV>.Val` is ingested as `<PV>`. |
+
+`option.type` is rejected by both readers; `pidField` / `valueSuffix` are rejected by
+`epics-pvxs-bsas-gen1`. → [Gen 1](../readers/slac-bsas-table-gen1.md), [Gen 2](../readers/slac-bsas-table-gen2.md)
 
 ---
 
