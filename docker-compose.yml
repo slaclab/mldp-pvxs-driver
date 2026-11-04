@@ -2,6 +2,11 @@ services:
   mongodb:
     image: mongo:8
     restart: on-failure
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
     environment:
       - MONGO_INITDB_ROOT_USERNAME=admin
       - MONGO_INITDB_ROOT_PASSWORD=admin
@@ -11,8 +16,10 @@ services:
   dp-ingestion:
     image: ghcr.io/slaclab/dp-service:rel-1.16.0
     container_name: dp-ingestion
+    restart: on-failure
     depends_on:
-      - mongodb
+      mongodb:
+        condition: service_healthy
     entrypoint:
       - "java"
     environment:
@@ -27,8 +34,10 @@ services:
   dp-query:
     image: ghcr.io/slaclab/dp-service:rel-1.16.0
     container_name: dp-query
+    restart: on-failure
     depends_on:
-      - mongodb
+      mongodb:
+        condition: service_healthy
     entrypoint:
       - "java"
     environment:
@@ -49,8 +58,10 @@ services:
   dp-annotation:
     image: ghcr.io/slaclab/dp-service:rel-1.16.0
     container_name: dp-annotation
+    restart: on-failure
     depends_on:
-      - mongodb
+      mongodb:
+        condition: service_healthy
     entrypoint:
       - "java"
     environment:

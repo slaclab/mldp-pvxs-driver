@@ -129,6 +129,16 @@ jobs:
         run: |
           docker compose -f docker-compose.yml -f docker-compose-test.yml --profile prebuilt up --abort-on-container-exit --exit-code-from ci-prebuilt ci-prebuilt
 
+      - name: Dump MLDP service logs
+        if: failure()
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose-test.yml ps -a || true
+          for svc in mongodb dp-ingestion dp-query dp-annotation; do
+            echo "::group::$svc logs"
+            docker compose -f docker-compose.yml -f docker-compose-test.yml logs --no-color --tail=300 "$svc" || true
+            echo "::endgroup::"
+          done
+
       - name: Publish test report
         if: always()
         uses: dorny/test-reporter@df6247429542221bc30d46a036ee47af1102c451 # v2
