@@ -1,7 +1,8 @@
 services:
   mongodb:
-    # mongo >= 8.0.34 refuses to start on host kernel >= 6.19 (GH runners: 7.0.x), SERVER-121912
-    image: mongo:8.0.32
+    # Pinned: mongo 8.0.30+/8.3.x/9.x exit on Ubuntu 7.0.x runner kernels (uname reports 7.0.0),
+    # see SERVER-121912 / SERVER-136848. 8.2.7 has no such check. Unpin once SERVER-136848 ships.
+    image: mongo:8.2.7
     restart: on-failure
     healthcheck:
       test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]

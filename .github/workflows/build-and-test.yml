@@ -129,15 +129,30 @@ jobs:
         run: |
           docker compose -f docker-compose.yml -f docker-compose-test.yml --profile prebuilt up --abort-on-container-exit --exit-code-from ci-prebuilt ci-prebuilt
 
-      - name: Dump MLDP service logs
+      - name: Collect docker compose logs
         if: failure()
         run: |
-          docker compose -f docker-compose.yml -f docker-compose-test.yml ps -a || true
-          for svc in mongodb dp-ingestion dp-query dp-annotation; do
-            echo "::group::$svc logs"
-            docker compose -f docker-compose.yml -f docker-compose-test.yml logs --no-color --tail=300 "$svc" || true
+          compose="docker compose -f docker-compose.yml -f docker-compose-test.yml --profile prebuilt"
+          mkdir -p compose-logs
+          $compose ps -a > compose-logs/ps.txt 2>&1 || true
+          $compose logs --no-color --timestamps > compose-logs/all.log 2>&1 || true
+          for svc in $($compose config --services); do
+            $compose logs --no-color --timestamps "$svc" > "compose-logs/$svc.log" 2>&1 || true
+          done
+          cat compose-logs/ps.txt
+          for f in compose-logs/*.log; do
+            echo "::group::$f"
+            tail -n 300 "$f"
             echo "::endgroup::"
           done
+
+      - name: Upload docker compose logs
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: compose-logs-${{ steps.matrix_info.outputs.variant }}
+          path: compose-logs/
+          if-no-files-found: ignore
 
       - name: Publish test report
         if: always()
