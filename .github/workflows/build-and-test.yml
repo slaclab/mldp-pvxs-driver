@@ -28,7 +28,7 @@ concurrency:
 jobs:
   build_test_container:
     name: Build and test
-    runs-on: ubuntu-24.04  # mongo:8 refuses to start on kernel >= 6.19 (ubuntu-26.04), see SERVER-121912
+    runs-on: ubuntu-latest
     if: github.actor != 'github-actions[bot]'
     env:
       BUILD_TYPE: Debug

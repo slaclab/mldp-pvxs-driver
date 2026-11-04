@@ -1,6 +1,7 @@
 services:
   mongodb:
-    image: mongo:8
+    # mongo >= 8.0.34 refuses to start on host kernel >= 6.19 (GH runners: 7.0.x), SERVER-121912
+    image: mongo:8.0.32
     restart: on-failure
     healthcheck:
       test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
