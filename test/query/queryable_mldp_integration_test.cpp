@@ -20,10 +20,13 @@
 #include <query/impl/mldp/MLDPAnnotationQueryClient.h>
 #include <query/impl/mldp/MLDPQueryClient.h>
 #include <query/parser/QueryParser.h>
+#include <query/plan/PhysicalPlan.h>
 #include <util/bus/IDataBus.h>
 #include <writer/WriterFactory.h>
 
 #include <arrow/array.h>
+#include <arrow/scalar.h>
+#include <arrow/table.h>
 #include <arrow/type.h>
 #include <grpcpp/grpcpp.h>
 #include <gtest/gtest.h>
@@ -32,13 +35,17 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <set>
+#include <map>
 #include <sstream>
 #include <string>
 #include <thread>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -207,11 +214,14 @@ protected:
         const auto now_seconds = std::chrono::duration_cast<std::chrono::seconds>(
                                      std::chrono::system_clock::now().time_since_epoch())
                                      .count();
+        auto& seeded = seededTimestamps_[source_pv];
+        seeded.clear();
         for (int index = 0; index < count; ++index)
         {
             frame.timestamps.push_back(TimestampEntry{
                 .epoch_seconds = static_cast<uint64_t>(now_seconds + index),
                 .nanoseconds = static_cast<uint64_t>(index)});
+            seeded.push_back(frame.timestamps.back());
         }
         frame.columns.push_back(DataColumn{
             .name = source_pv,
@@ -236,7 +246,42 @@ protected:
         writer->stop();
     }
 
-    void seedMetadata(const std::vector<std::string>& pvs)
+    /** Saves one status per seeded sample of @p source_pv (codes[i] for sample i) in (domain, layer). */
+    void seedSampleStatuses(const std::string& source_pv, const std::string& domain, const std::string& layer, const std::vector<int32_t>& codes)
+    {
+        const auto& timestamps = seededTimestamps_.at(source_pv);
+        ASSERT_EQ(timestamps.size(), codes.size());
+        {
+            dp::service::annotation::SaveSampleStatusDomainRequest request;
+            request.set_domainname(domain);
+            dp::service::annotation::SaveSampleStatusDomainResponse response;
+            grpc::ClientContext                                     context;
+            ASSERT_TRUE(annotation_stub_->saveSampleStatusDomain(&context, request, &response).ok());
+        }
+        dp::service::annotation::SaveSampleStatusesRequest request;
+        request.set_modifiedby("queryable_mldp_integration_test");
+        auto* frame = request.add_frames();
+        frame->set_domain(domain);
+        frame->set_layer(layer);
+        auto* timestamp_list = frame->mutable_datatimestamps()->mutable_timestamplist();
+        for (const auto& timestamp : timestamps)
+        {
+            auto* entry = timestamp_list->add_timestamps();
+            entry->set_epochseconds(timestamp.epoch_seconds);
+            entry->set_nanoseconds(timestamp.nanoseconds);
+        }
+        auto* column = frame->add_statuscolumns();
+        column->set_pvname(source_pv);
+        for (const auto code : codes) column->add_statuscodes(code);
+        dp::service::annotation::SaveSampleStatusesResponse response;
+        grpc::ClientContext                                 context;
+        const auto                                          status = annotation_stub_->saveSampleStatuses(&context, request, &response);
+        ASSERT_TRUE(status.ok()) << status.error_message();
+        ASSERT_TRUE(response.has_savesamplestatusesresult()) << response.exceptionalresult().message();
+        sampleStatuses_.push_back({source_pv, domain, layer});
+    }
+
+    void seedMetadata(const std::vector<std::string>& pvs, const std::vector<std::string>& extra_tags = {})
     {
         auto writer = WriterFactory::create(
             "mldp-pv-metadata",
@@ -251,7 +296,12 @@ protected:
         {
             payload.sources.emplace(source_pv, SourceMetadataEntry{
                                                    .aliases = std::vector<std::string>{source_pv + ":alias"},
-                                                   .tags = std::vector<std::string>{nameSpace_, "magnet"},
+                                                   .tags = [&]()
+                                                   {
+                                                       std::vector<std::string> tags{nameSpace_, "magnet"};
+                                                       tags.insert(tags.end(), extra_tags.begin(), extra_tags.end());
+                                                       return tags;
+                                                   }(),
                                                    .attributes = {{"namespace", nameSpace_}},
                                                    .description = "query integration metadata",
                                                    .modified_by = "queryable_mldp_integration_test",
@@ -342,6 +392,18 @@ protected:
         {
             return;
         }
+        for (const auto& [source_pv, domain, layer] : sampleStatuses_)
+        {
+            dp::service::annotation::DeleteSampleStatusesRequest request;
+            request.mutable_timerange()->mutable_begintime()->set_epochseconds(1);
+            request.mutable_timerange()->mutable_endtime()->set_epochseconds(253'402'300'799LL);
+            request.add_pvnames(source_pv);
+            request.set_domain(domain);
+            request.set_layer(layer);
+            dp::service::annotation::DeleteSampleStatusesResponse response;
+            grpc::ClientContext                                   context;
+            annotation_stub_->deleteSampleStatuses(&context, request, &response);
+        }
         for (const auto& activation_id : activationIds_)
         {
             dp::service::annotation::DeleteConfigurationActivationRequest request;
@@ -373,6 +435,8 @@ protected:
     std::vector<std::string>                                            metadataPvs_;
     std::vector<std::string>                                            configurationNames_;
     std::vector<std::string>                                            activationIds_;
+    std::unordered_map<std::string, std::vector<TimestampEntry>>        seededTimestamps_;
+    std::vector<std::tuple<std::string, std::string, std::string>>      sampleStatuses_;
     std::shared_ptr<MLDPPVXSController>                                 controller_;
 };
 
@@ -427,7 +491,7 @@ TEST_F(QueryableMldpIntegrationTest, PvStatsReturnsEveryDriverOwnedPage)
     }
 
     const auto result = pollSql(
-        "SELECT pv, first_timestamp, last_timestamp, num_buckets FROM mldp.pv_stats WHERE pv IN (" + commaSeparatedQuoted(pvs) + ")",
+        "SELECT pv, start_time, end_time, num_buckets FROM mldp.pv_stats WHERE pv IN (" + commaSeparatedQuoted(pvs) + ")",
         "PV statistics",
         [&](const QueryExecutionResult& candidate)
         {
@@ -471,7 +535,7 @@ TEST_F(QueryableMldpIntegrationTest, WideTableUsesPvAndClosedWindowSubqueries)
                       BusTimestamp{.epoch_seconds = now_seconds + 4, .nanoseconds = 0});
 
     const auto seeded_activation = pollSql(
-        "SELECT time, end_time FROM mldp.configuration_activation WHERE activation_id = " + quote(activation_id) +
+        "SELECT start_time, end_time FROM mldp.configuration_activation WHERE activation_id = " + quote(activation_id) +
             " AND end_time IS NOT NULL",
         "closed seeded configuration activation",
         [](const QueryExecutionResult& candidate)
@@ -481,7 +545,7 @@ TEST_F(QueryableMldpIntegrationTest, WideTableUsesPvAndClosedWindowSubqueries)
     ASSERT_EQ(rowCount(seeded_activation), 1);
 
     const auto window_sql =
-        "SELECT activation.time, activation.end_time " "FROM mldp.configuration_activation activation " "INNER JOIN mldp.configuration configuration ON activation.config_name = configuration.name " "WHERE activation.activation_id = " + quote(activation_id) +
+        "SELECT activation.start_time, activation.end_time " "FROM mldp.configuration_activation activation " "INNER JOIN mldp.configuration configuration ON activation.config_name = configuration.name " "WHERE activation.activation_id = " + quote(activation_id) +
         " AND configuration.name = " + quote(configuration_name) +
         " AND configuration.category = " + quote(configuration_category) + " AND activation.end_time IS NOT NULL";
     const auto windows = pollSql(
@@ -648,7 +712,7 @@ TEST_F(QueryableMldpIntegrationTest, ControllerGeneratedProductionShapedWideWind
     ASSERT_EQ(rowCount(time_series_visible), kPvCount * kSampleCount);
 
     const auto sql =
-        "SELECT * FROM mldp.time_series_table " "WHERE pv IN (SELECT pv FROM mldp.pv_metadata WHERE attributes.dname PREFIX " + quote(metadata_prefix) + ") " "AND window IN (SELECT time, time + 5s FROM mldp.configuration_activation WHERE activation_id = " +
+        "SELECT * FROM mldp.time_series_table " "WHERE pv IN (SELECT pv FROM mldp.pv_metadata WHERE attributes.dname PREFIX " + quote(metadata_prefix) + ") " "AND window IN (SELECT start_time, start_time + 5s FROM mldp.configuration_activation WHERE activation_id = " +
         quote(activation_id) + "; slice 5s, series_per_shard 2);";
     char                           arg0[] = "query";
     char                           arg1[] = "--no-stats";
@@ -791,9 +855,9 @@ TEST_F(QueryableMldpIntegrationTest, AnnotationTablesAndJoinsReturnOnlySeededRec
             return rowCount(candidate) == static_cast<int64_t>(metadata_pvs.size());
         });
     ASSERT_EQ(rowCount(metadata), static_cast<int64_t>(metadata_pvs.size()));
-    // Annotation query clients consume backend continuation pages internally,
-    // so the executor performs one queryable call for this table scan.
-    EXPECT_EQ(metadata.stats.rpc_calls, 1u);
+    // An explicit select list that does not project the attributes map streams one
+    // batch per backend continuation page, so the executor sees one call per page.
+    EXPECT_EQ(metadata.stats.rpc_calls, static_cast<uint64_t>(metadata_pvs.size()));
     const auto metadata_rows = strings(metadata, 0);
     EXPECT_EQ(std::unordered_set<std::string>(metadata_rows.begin(), metadata_rows.end()),
               std::unordered_set<std::string>(metadata_pvs.begin(), metadata_pvs.end()));
@@ -821,7 +885,7 @@ TEST_F(QueryableMldpIntegrationTest, AnnotationTablesAndJoinsReturnOnlySeededRec
             return rowCount(candidate) == static_cast<int64_t>(configuration_names.size());
         });
     ASSERT_EQ(rowCount(configuration), static_cast<int64_t>(configuration_names.size()));
-    EXPECT_EQ(configuration.stats.rpc_calls, 1u);
+    EXPECT_EQ(configuration.stats.rpc_calls, static_cast<uint64_t>(configuration_names.size()));
 
     const auto all_configurations = pollSql(
         "SELECT name FROM mldp.configuration",
@@ -848,7 +912,7 @@ TEST_F(QueryableMldpIntegrationTest, AnnotationTablesAndJoinsReturnOnlySeededRec
             return rowCount(candidate) == static_cast<int64_t>(activation_ids.size());
         });
     ASSERT_EQ(rowCount(activation), static_cast<int64_t>(activation_ids.size()));
-    EXPECT_EQ(activation.stats.rpc_calls, 1u);
+    EXPECT_EQ(activation.stats.rpc_calls, static_cast<uint64_t>(activation_ids.size()));
 
     const auto active = pollSql(
         "SELECT name, activation_id FROM mldp.active_configurations WHERE at = NOW",
@@ -886,4 +950,343 @@ TEST_F(QueryableMldpIntegrationTest, AnnotationTablesAndJoinsReturnOnlySeededRec
     EXPECT_EQ(strings(configuration_join, 1), std::vector<std::string>{"query-integration-category"});
 }
 
+TEST_F(QueryableMldpIntegrationTest, SelectDistinctDeduplicatesTimeSeriesAndAnnotationRows)
+{
+    const auto                     source_pv = pv("distinct_series");
+    const std::vector<std::string> metadata_pvs = {pv("distinct_meta_0"), pv("distinct_meta_1"), pv("distinct_meta_2")};
+    const std::vector<std::string> configuration_names = {configName("distinct_cfg_0"), configName("distinct_cfg_1")};
+    const auto                     now_seconds = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+    seedTimeSeries(source_pv, 5, 300);
+    // Every seeded metadata record shares the same description.
+    seedMetadata(metadata_pvs);
+    for (std::size_t index = 0; index < configuration_names.size(); ++index)
+    {
+        seedConfiguration(configuration_names[index],
+                          "query-integration-distinct-category",
+                          configName("distinct_activation_" + std::to_string(index)),
+                          BusTimestamp{.epoch_seconds = now_seconds - 3 + index, .nanoseconds = 0},
+                          BusTimestamp{.epoch_seconds = now_seconds - 2 + index, .nanoseconds = 0});
+    }
+
+    // Time series: five samples of one PV collapse to one distinct pv, but stay five distinct (pv, value) rows.
+    const auto series_filter = " FROM mldp.time_series WHERE pv = " + quote(source_pv) + " AND time >= NOW-300s";
+    pollSql("SELECT pv, value" + series_filter, "time-series rows", [](const QueryExecutionResult& candidate)
+            { return rowCount(candidate) == 5; });
+    const auto distinct_pv = executeSql("SELECT DISTINCT pv" + series_filter);
+    ASSERT_EQ(rowCount(distinct_pv), 1);
+    EXPECT_EQ(strings(distinct_pv, 0), std::vector<std::string>{source_pv});
+    EXPECT_EQ(rowCount(executeSql("SELECT DISTINCT pv, value" + series_filter)), 5);
+
+    // Annotation tables: shared description and category collapse to a single row.
+    const auto metadata_filter = " FROM mldp.pv_metadata WHERE pv IN (" + commaSeparatedQuoted(metadata_pvs) + ")";
+    pollSql("SELECT pv" + metadata_filter, "PV metadata", [&](const QueryExecutionResult& candidate)
+            { return rowCount(candidate) == static_cast<int64_t>(metadata_pvs.size()); });
+    const auto distinct_description = executeSql("SELECT DISTINCT description" + metadata_filter);
+    ASSERT_EQ(rowCount(distinct_description), 1);
+    EXPECT_EQ(strings(distinct_description, 0), std::vector<std::string>{"query integration metadata"});
+    EXPECT_EQ(rowCount(executeSql("SELECT DISTINCT pv" + metadata_filter)), static_cast<int64_t>(metadata_pvs.size()));
+
+    const auto configuration_filter = " FROM mldp.configuration WHERE name IN (" + commaSeparatedQuoted(configuration_names) + ")";
+    pollSql("SELECT name" + configuration_filter, "configuration", [&](const QueryExecutionResult& candidate)
+            { return rowCount(candidate) == static_cast<int64_t>(configuration_names.size()); });
+    const auto distinct_category = executeSql("SELECT DISTINCT category" + configuration_filter);
+    ASSERT_EQ(rowCount(distinct_category), 1);
+    EXPECT_EQ(strings(distinct_category, 0), std::vector<std::string>{"query-integration-distinct-category"});
+
+    // LIMIT counts distinct rows and is not pushed to the backend page size.
+    const auto limited_sql = "SELECT DISTINCT description" + metadata_filter + " LIMIT 1";
+    EXPECT_EQ(plan::physicalPlanToString(QueryPlanner{}.plan(parseQuery(limited_sql))).find("row_limit="), std::string::npos);
+    const auto limited = executeSql(limited_sql);
+    EXPECT_EQ(rowCount(limited), 1);
+}
+
+TEST_F(QueryableMldpIntegrationTest, SelectDistinctDeduplicatesActivationsAndWideTableRows)
+{
+    const auto now_seconds = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+
+    // Activations: two activations of the same configuration collapse to one distinct config_name.
+    const auto                     configuration_name = configName("distinct_activation_cfg");
+    const std::vector<std::string> activation_ids = {configName("distinct_act_0"), configName("distinct_act_1")};
+    for (std::size_t index = 0; index < activation_ids.size(); ++index)
+    {
+        seedConfiguration(configuration_name,
+                          "query-integration-distinct-category",
+                          activation_ids[index],
+                          BusTimestamp{.epoch_seconds = now_seconds - 4 + 2 * index, .nanoseconds = 0},
+                          BusTimestamp{.epoch_seconds = now_seconds - 3 + 2 * index, .nanoseconds = 0});
+    }
+    const auto activation_filter = " FROM mldp.configuration_activation WHERE activation_id IN (" + commaSeparatedQuoted(activation_ids) + ")";
+    pollSql("SELECT activation_id" + activation_filter, "configuration activations", [&](const QueryExecutionResult& candidate)
+            { return rowCount(candidate) == static_cast<int64_t>(activation_ids.size()); });
+    const auto distinct_config = executeSql("SELECT DISTINCT config_name" + activation_filter);
+    ASSERT_EQ(rowCount(distinct_config), 1);
+    EXPECT_EQ(strings(distinct_config, 0), std::vector<std::string>{configuration_name});
+    EXPECT_EQ(rowCount(executeSql("SELECT DISTINCT activation_id" + activation_filter)), static_cast<int64_t>(activation_ids.size()));
+
+    // Wide table: only SELECT * is allowed, so DISTINCT * runs over the pivoted rows. Each row has
+    // its own time, so de-duplication must keep every row and the PV column layout.
+    const auto source_pv = pv("distinct_wide");
+    seedTimeSeries(source_pv, 3, 700);
+    const auto wide_filter = " FROM mldp.time_series_table WHERE pv = " + quote(source_pv) +
+                             " AND window IN (" + std::to_string(now_seconds - 1) + ", " + std::to_string(now_seconds + 4) + ")";
+    const auto wide_all = pollSql("SELECT *" + wide_filter, "wide table rows", [](const QueryExecutionResult& candidate)
+                                  { return rowCount(candidate) == 3; });
+    ASSERT_EQ(rowCount(wide_all), 3);
+    const auto wide_distinct = executeSql("SELECT DISTINCT *" + wide_filter);
+    ASSERT_EQ(rowCount(wide_distinct), 3);
+    ASSERT_FALSE(wide_distinct.batches.empty());
+    EXPECT_EQ(wide_distinct.batches.front()->schema()->field_names(), (std::vector<std::string>{"time", source_pv}));
+    const auto wide_plan = plan::physicalPlanToString(QueryPlanner{}.plan(parseQuery("SELECT DISTINCT *" + wide_filter)));
+    EXPECT_NE(wide_plan.find("distinct=true"), std::string::npos);
+    EXPECT_NE(wide_plan.find("PhysicalPivot"), std::string::npos);
+}
+
 } // namespace
+
+TEST_F(QueryableMldpIntegrationTest, PvNamePatternSelectsMatchingSeriesWithoutPvList)
+{
+    seedTimeSeries(pv("pattern_a"), 2, 10);
+    seedTimeSeries(pv("pattern_b"), 2, 20);
+    seedTimeSeries(pv("other"), 2, 30);
+
+    // The namespace is unique, so these patterns match only this test's PVs.
+    const auto window = " AND time >= NOW-300s";
+    const auto prefix = pollSql("SELECT DISTINCT pv FROM mldp.time_series WHERE pv PREFIX " + quote(pv("pattern_")) + window, "prefix-matched series",
+                                [](const QueryExecutionResult& candidate) { return rowCount(candidate) == 2; });
+    auto names = strings(prefix, 0);
+    std::sort(names.begin(), names.end());
+    EXPECT_EQ(names, (std::vector<std::string>{pv("pattern_a"), pv("pattern_b")}));
+
+    // LIKE is case-insensitive and anchored at both ends.
+    std::string upper = nameSpace_ + ":PATTERN_%";
+    std::transform(upper.begin(), upper.end(), upper.begin(), [](const unsigned char ch) { return static_cast<char>(std::toupper(ch)); });
+    EXPECT_EQ(rowCount(executeSql("SELECT DISTINCT pv FROM mldp.time_series WHERE pv LIKE " + quote(upper) + window)), 2);
+    EXPECT_EQ(rowCount(executeSql("SELECT DISTINCT pv FROM mldp.time_series WHERE pv CONTAINS " + quote(nameSpace_ + ":oth") + window)), 1);
+
+    // pv_stats accepts the same pattern pushdown.
+    EXPECT_EQ(rowCount(executeSql("SELECT pv FROM mldp.pv_stats WHERE pv PREFIX " + quote(pv("pattern_")))), 2);
+
+    // The pattern is sent to MLDP: no explicit PV list is required any more.
+    const auto plan_text = plan::physicalPlanToString(QueryPlanner{}.plan(parseQuery("SELECT pv FROM mldp.time_series WHERE pv PREFIX 'x'")));
+    EXPECT_NE(plan_text.find("PhysicalTableScan(table=mldp.time_series)"), std::string::npos);
+}
+
+TEST_F(QueryableMldpIntegrationTest, PvMetadataTagSelectsSeriesOnTheBackend)
+{
+    const auto tagged = pv("meta_tagged");
+    const auto untagged = pv("meta_untagged");
+    const auto tag = nameSpace_ + "_selected";
+    seedTimeSeries(tagged, 3, 40);
+    seedTimeSeries(untagged, 3, 50);
+    seedMetadata({tagged}, {tag});
+    seedMetadata({untagged});
+
+    const auto sql = "SELECT pv, value FROM mldp.time_series WHERE pv_tag = " + quote(tag) + " AND time >= NOW-300s";
+    const auto result = pollSql(sql, "tag-selected series", [](const QueryExecutionResult& candidate) { return rowCount(candidate) == 3; });
+    for (const auto& name : strings(result, 0)) EXPECT_EQ(name, tagged);
+
+    // The PV-name pattern narrows the metadata selection further.
+    EXPECT_EQ(rowCount(executeSql("SELECT pv FROM mldp.time_series WHERE pv_tag = " + quote(tag) + " AND pv PREFIX " + quote(pv("nothing")) +
+                                  " AND time >= NOW-300s")),
+              0);
+}
+
+TEST_F(QueryableMldpIntegrationTest, ConfigurationSelectorRestrictsSamplesToActivationIntervals)
+{
+    const auto source_pv = pv("config_series");
+    seedTimeSeries(source_pv, 6, 600);
+    const auto& timestamps = seededTimestamps_.at(source_pv);
+    // Activation covers samples 1..3 (inclusive start, exclusive end at sample 4).
+    const auto config = configName("selector_cfg");
+    seedConfiguration(config, configName("selector_category"), configName("selector_activation"),
+                      BusTimestamp{.epoch_seconds = timestamps[1].epoch_seconds, .nanoseconds = 0},
+                      BusTimestamp{.epoch_seconds = timestamps[4].epoch_seconds, .nanoseconds = 0});
+
+    pollSql("SELECT activation_id FROM mldp.configuration_activation WHERE config_name = " + quote(config), "selector activation",
+            [](const QueryExecutionResult& candidate) { return rowCount(candidate) == 1; });
+    const auto base = "SELECT pv, value FROM mldp.time_series WHERE pv = " + quote(source_pv) + " AND time >= NOW-300s";
+    pollSql(base, "selector series", [](const QueryExecutionResult& candidate) { return rowCount(candidate) == 6; });
+
+    const auto restricted = executeSql(base + " AND config_name = " + quote(config));
+    // Exactly the samples inside the activation (1, 2, 3), on both tables.
+    EXPECT_EQ(rowCount(restricted), 3);
+    EXPECT_EQ(rowCount(executeSql("SELECT * FROM mldp.time_series_table WHERE pv = " + quote(source_pv) + " AND time >= NOW-300s AND config_name = " + quote(config))), 3);
+    EXPECT_EQ(rowCount(executeSql(base + " AND config_name = " + quote(configName("no_such_cfg")))), 0);
+}
+
+TEST_F(QueryableMldpIntegrationTest, UnfilteredActivationScanReturnsEveryActivation)
+{
+    const auto now_seconds = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+    const auto first = configName("browse_activation_0");
+    const auto second = configName("browse_activation_1");
+    // The service rejects activations overlapping one of the same configuration
+    // or category, so the seeds use closed, disjoint windows.
+    seedConfiguration(configName("browse_cfg_0"), configName("browse_category_0"), first, BusTimestamp{.epoch_seconds = now_seconds - 10, .nanoseconds = 0},
+                      BusTimestamp{.epoch_seconds = now_seconds - 8, .nanoseconds = 0});
+    seedConfiguration(configName("browse_cfg_1"), configName("browse_category_1"), second, BusTimestamp{.epoch_seconds = now_seconds - 6, .nanoseconds = 0},
+                      BusTimestamp{.epoch_seconds = now_seconds - 4, .nanoseconds = 0});
+
+    // No predicate at all used to be rejected by the driver.
+    const auto result = pollSql("SELECT activation_id FROM mldp.configuration_activation", "unfiltered activations",
+                                [&](const QueryExecutionResult& candidate)
+                                {
+                                    const auto ids = strings(candidate, 0);
+                                    return std::count(ids.begin(), ids.end(), first) == 1 && std::count(ids.begin(), ids.end(), second) == 1;
+                                });
+    EXPECT_GE(rowCount(result), 2);
+}
+
+TEST_F(QueryableMldpIntegrationTest, DistinctOnKeepsOneRowPerKeyChosenByOrderBy)
+{
+    const auto now_seconds = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+    const auto config = configName("distinct_on_cfg");
+    // Two activations of one configuration, plus one of another.
+    seedConfiguration(config, configName("distinct_on_category"), configName("distinct_on_old"), BusTimestamp{.epoch_seconds = now_seconds - 20, .nanoseconds = 0},
+                      BusTimestamp{.epoch_seconds = now_seconds - 15, .nanoseconds = 0});
+    seedConfiguration(config, configName("distinct_on_category"), configName("distinct_on_new"), BusTimestamp{.epoch_seconds = now_seconds - 10, .nanoseconds = 0},
+                      BusTimestamp{.epoch_seconds = now_seconds - 5, .nanoseconds = 0});
+    seedConfiguration(configName("distinct_on_other"), configName("distinct_on_other_category"), configName("distinct_on_single"),
+                      BusTimestamp{.epoch_seconds = now_seconds - 8, .nanoseconds = 0}, BusTimestamp{.epoch_seconds = now_seconds - 7, .nanoseconds = 0});
+
+    const auto filter = " FROM mldp.configuration_activation WHERE config_name IN (" + quote(config) + ", " + quote(configName("distinct_on_other")) + ")";
+    pollSql("SELECT activation_id" + filter, "distinct-on activations", [](const QueryExecutionResult& candidate) { return rowCount(candidate) == 3; });
+
+    const auto latest = executeSql("SELECT DISTINCT ON (config_name) config_name, activation_id" + filter + " ORDER BY start_time DESC");
+    ASSERT_EQ(rowCount(latest), 2);
+    std::map<std::string, std::string> by_config;
+    for (const auto& batch : latest.batches)
+        for (int64_t row = 0; row < batch->num_rows(); ++row)
+            by_config[(*batch->column(0)->GetScalar(row))->ToString()] = (*batch->column(1)->GetScalar(row))->ToString();
+    EXPECT_EQ(by_config[config], configName("distinct_on_new"));
+
+    const auto earliest = executeSql("SELECT DISTINCT ON (config_name) config_name, activation_id" + filter + " ORDER BY start_time ASC");
+    std::set<std::string> earliest_ids;
+    for (const auto& id : strings(earliest, 1)) earliest_ids.insert(id);
+    EXPECT_TRUE(earliest_ids.contains(configName("distinct_on_old")));
+    // Plain DISTINCT on the same columns keeps both activations of the repeated configuration.
+    EXPECT_EQ(rowCount(executeSql("SELECT DISTINCT config_name, activation_id" + filter)), 3);
+}
+
+TEST_F(QueryableMldpIntegrationTest, GroupByAggregatesSeededSeriesExactly)
+{
+    const auto first = pv("group_a");
+    const auto second = pv("group_b");
+    seedTimeSeries(first, 4, 10);  // 10, 11, 12, 13
+    seedTimeSeries(second, 2, 100); // 100, 101
+
+    const auto filter = " FROM mldp.time_series WHERE pv IN (" + quote(first) + ", " + quote(second) + ") AND time >= NOW-300s";
+    pollSql("SELECT pv" + filter, "grouped series", [](const QueryExecutionResult& candidate) { return rowCount(candidate) == 6; });
+
+    const auto grouped = executeSql("SELECT pv, COUNT(*) AS n, SUM(value), AVG(value), MIN(value), MAX(value), FIRST(value), LAST(value)" + filter +
+                                    " GROUP BY pv ORDER BY pv");
+    ASSERT_EQ(rowCount(grouped), 2);
+    const auto& batch = grouped.batches.front();
+    const auto cell = [&batch](const int column, const int64_t row) { return (*batch->column(column)->GetScalar(row))->ToString(); };
+    EXPECT_EQ(batch->schema()->field(1)->name(), "n");
+    EXPECT_EQ(cell(0, 0), first);
+    EXPECT_EQ(cell(1, 0), "4");
+    EXPECT_EQ(cell(2, 0), "46");
+    EXPECT_EQ(cell(3, 0), "11.5");
+    EXPECT_EQ(cell(4, 0), "10");
+    EXPECT_EQ(cell(5, 0), "13");
+    EXPECT_EQ(cell(6, 0), "10");
+    EXPECT_EQ(cell(7, 0), "13");
+    EXPECT_EQ(cell(0, 1), second);
+    EXPECT_EQ(cell(1, 1), "2");
+
+    const auto having = executeSql("SELECT pv, COUNT(*)" + filter + " GROUP BY pv HAVING COUNT(*) > 2");
+    ASSERT_EQ(rowCount(having), 1);
+    EXPECT_EQ(strings(having, 0).front(), first);
+
+    const auto global = executeSql("SELECT COUNT(*), COUNT(DISTINCT pv), MAX(value)" + filter);
+    ASSERT_EQ(rowCount(global), 1);
+    EXPECT_EQ((*global.batches.front()->column(0)->GetScalar(0))->ToString(), "6");
+    EXPECT_EQ((*global.batches.front()->column(1)->GetScalar(0))->ToString(), "2");
+    EXPECT_EQ((*global.batches.front()->column(2)->GetScalar(0))->ToString(), "101");
+
+    // Grouping annotation records works the same way.
+    const auto now_seconds = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+    const auto config = configName("group_cfg");
+    seedConfiguration(config, configName("group_category"), configName("group_activation_0"), BusTimestamp{.epoch_seconds = now_seconds - 9, .nanoseconds = 0},
+                      BusTimestamp{.epoch_seconds = now_seconds - 8, .nanoseconds = 0});
+    seedConfiguration(config, configName("group_category"), configName("group_activation_1"), BusTimestamp{.epoch_seconds = now_seconds - 6, .nanoseconds = 0},
+                      BusTimestamp{.epoch_seconds = now_seconds - 5, .nanoseconds = 0});
+    const auto activations = pollSql("SELECT config_name, COUNT(*) FROM mldp.configuration_activation WHERE config_name = " + quote(config) + " GROUP BY config_name",
+                                     "grouped activations",
+                                     [](const QueryExecutionResult& candidate)
+                                     {
+                                         return rowCount(candidate) == 1 && (*candidate.batches.front()->column(1)->GetScalar(0))->ToString() == "2";
+                                     });
+    EXPECT_EQ(rowCount(activations), 1);
+}
+
+TEST_F(QueryableMldpIntegrationTest, WindowFunctionsComputePerPvValuesOverSeededSeries)
+{
+    const auto first = pv("window_a");
+    const auto second = pv("window_b");
+    seedTimeSeries(first, 4, 10);   // 10, 11, 12, 13 one second apart
+    seedTimeSeries(second, 2, 100); // 100, 101
+
+    const auto filter = " FROM mldp.time_series WHERE pv IN (" + quote(first) + ", " + quote(second) + ") AND time >= NOW-300s";
+    pollSql("SELECT pv" + filter, "window series", [](const QueryExecutionResult& candidate) { return rowCount(candidate) == 6; });
+
+    const auto sql = "SELECT pv, ROW_NUMBER() OVER w AS rn, LAG(value) OVER w AS prev, SUM(value) OVER w AS running, "
+                     "AVG(value) OVER (w RANGE BETWEEN 2s PRECEDING AND CURRENT ROW) AS avg_2s" +
+                     filter + " WINDOW w AS (PARTITION BY pv ORDER BY time) ORDER BY pv, time";
+    EXPECT_NE(plan::physicalPlanToString(QueryPlanner{}.plan(parseQuery(sql))).find("sorted_input=true"), std::string::npos);
+    const auto result = executeSql(sql);
+    ASSERT_EQ(rowCount(result), 6);
+    const auto combined = arrow::Table::FromRecordBatches(result.batches).ValueOrDie()->CombineChunksToBatch().ValueOrDie();
+    const auto cell = [&combined](const int column, const int64_t row) { return (*combined->column(column)->GetScalar(row))->ToString(); };
+    EXPECT_EQ(cell(0, 0), first);
+    EXPECT_EQ(cell(1, 0), "1");
+    EXPECT_EQ(cell(1, 3), "4");
+    EXPECT_FALSE(combined->column(2)->IsValid(0));
+    EXPECT_TRUE(combined->column(2)->IsValid(1));
+    EXPECT_EQ(cell(3, 3), "46");
+    // Samples are one second (plus a nanosecond) apart, so a 2s frame holds the previous sample.
+    EXPECT_EQ(cell(4, 0), "10");
+    EXPECT_EQ(cell(4, 1), "10.5");
+    EXPECT_EQ(cell(4, 3), "12.5");
+    EXPECT_EQ(cell(0, 4), second);
+    EXPECT_EQ(cell(1, 4), "1");
+    EXPECT_FALSE(combined->column(2)->IsValid(4));
+    EXPECT_EQ(cell(3, 5), "201");
+}
+
+TEST_F(QueryableMldpIntegrationTest, SampleStatusSelectorIncludesOrExcludesLabeledSamples)
+{
+    const auto source_pv = pv("status_series");
+    seedTimeSeries(source_pv, 4, 800); // 800, 801, 802, 803
+    const auto domain = nameSpace_ + "_quality";
+    // Codes per sample: 0 good, 2 bad, 0 good, 3 suspect.
+    seedSampleStatuses(source_pv, domain, "auto", {0, 2, 0, 3});
+
+    const auto base = "SELECT * FROM mldp.time_series_table WHERE pv = " + quote(source_pv) + " AND time >= NOW-300s AND status_domain = " + quote(domain);
+    const auto values = [](const QueryExecutionResult& result)
+    {
+        std::vector<std::string> output;
+        for (const auto& batch : result.batches)
+            for (int64_t row = 0; row < batch->num_rows(); ++row)
+                if (batch->column(1)->IsValid(row)) output.push_back((*batch->column(1)->GetScalar(row))->ToString());
+        std::sort(output.begin(), output.end());
+        return output;
+    };
+
+    const auto bad = pollSql(base + " AND status_code IN (2, 3)", "status-included samples",
+                             [&](const QueryExecutionResult& candidate) { return values(candidate).size() == 2; });
+    EXPECT_EQ(values(bad), (std::vector<std::string>{"801", "803"}));
+
+    const auto good = executeSql(base + " AND status_code IN (2, 3) AND status_mode = 'exclude'");
+    EXPECT_EQ(values(good), (std::vector<std::string>{"800", "802"}));
+
+    // The long table runs status filters on the same per-sample query.
+    EXPECT_EQ(rowCount(executeSql("SELECT pv, value FROM mldp.time_series WHERE pv = " + quote(source_pv) +
+                                  " AND time >= NOW-300s AND status_domain = " + quote(domain) + " AND status_code = 2")),
+              1);
+}

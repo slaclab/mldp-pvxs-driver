@@ -67,6 +67,16 @@ struct Predicate
     std::vector<ExecutableLiteralValue> values; ///< Bound literal operands (one for unary ops, two for BETWEEN, many for IN).
 };
 
+/** @brief Boolean tree of executable predicates (WHERE OR/NOT), evaluated locally per row. */
+struct PredicateGroup
+{
+    /** @brief Node kind: a leaf predicate or a boolean connective over @c children. */
+    enum class Kind { LEAF, AND, OR, NOT };
+    Kind                        kind{Kind::LEAF}; ///< Node kind.
+    Predicate                   leaf;             ///< Leaf predicate when @c kind is LEAF.
+    std::vector<PredicateGroup> children;         ///< Operands for AND/OR and NOT.
+};
+
 /** @brief Describes one queryable table column and its predicate capabilities. */
 struct ColumnSchema
 {

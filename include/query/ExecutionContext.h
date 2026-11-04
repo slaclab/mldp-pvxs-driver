@@ -40,6 +40,8 @@ struct ExecutionContext
     uint32_t                      spill_partitions{16};      ///< Number of partitions used during spill-based operations.
     uint32_t                      join_batch_size{0};        ///< Maximum rows per join probe batch; 0 = use default.
     uint64_t                      series_per_shard{0};       ///< PVs per backend shard; 0 disables shard splitting.
+    uint64_t                      scan_row_limit{0};         ///< Maximum rows the backend scan may return; 0 = unlimited.
+    bool                          scan_projection_explicit{false}; ///< True when the projection hint came from an explicit select list.
     uint64_t                      max_parallel_requests{0};  ///< Max concurrent shard requests; 0 defers to IQueryable::maxConcurrentStreams().
     std::shared_ptr<arrow::fs::FileSystem> spill_fs;         ///< File system used to create and remove spill artifacts.
     std::string                            spill_dir;        ///< Root directory for spill artifacts.

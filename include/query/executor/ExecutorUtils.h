@@ -22,7 +22,9 @@
 #include <arrow/record_batch.h>
 
 #include <set>
+#include <string>
 #include <string_view>
+#include <unordered_set>
 
 namespace mldp_pvxs_driver::query::executor {
 
@@ -62,9 +64,14 @@ std::vector<std::pair<int64_t, int64_t>> extractNormalizedWindows(const RecordBa
 int64_t autoSliceNs(int64_t window_ns);
 /** @brief Applies a list of predicates to a single batch.
  * @param[in] batch Input batch.
- * @param[in] predicates Predicates to evaluate.
+ * @param[in] predicates Predicates to evaluate; a row must satisfy all of them.
+ * @param[in] groups     OR/NOT predicate trees, evaluated with SQL three-valued logic; a row must make each one TRUE.
  * @return Arrow Result with the filtered batch. */
-arrow::Result<std::shared_ptr<arrow::RecordBatch>> applyFilter(const std::shared_ptr<arrow::RecordBatch>& batch, const std::vector<Predicate>& predicates);
+arrow::Result<std::shared_ptr<arrow::RecordBatch>> applyFilter(const std::shared_ptr<arrow::RecordBatch>& batch, const std::vector<Predicate>& predicates,
+                                                               const std::vector<PredicateGroup>& groups = {});
+
+/** @brief Keeps the rows where every boolean @p conditions expression is true (null counts as false). */
+std::shared_ptr<arrow::RecordBatch> applyConditions(const std::shared_ptr<arrow::RecordBatch>& batch, const std::vector<ExpressionPtr>& conditions);
 /** @brief Projects named columns from a batch vector.
  * @param[in] input Input batches.
  * @param[in] columns Column names to retain in order.
@@ -105,5 +112,49 @@ std::shared_ptr<arrow::RecordBatch> qualifyBatchColumns(const std::shared_ptr<ar
  * @param[in,out] stats Statistics accumulator.
  * @return Joined record batch. */
 std::shared_ptr<arrow::RecordBatch> joinBatches(const std::shared_ptr<arrow::RecordBatch>& left, const std::shared_ptr<arrow::RecordBatch>& right, const std::string& left_key, const std::string& right_key, plan::JoinType type, const ExecutionContext& context, QueryStats& stats);
+
+/** @brief Removes duplicate rows across a sequence of batches (SELECT DISTINCT).
+ *
+ *  Remembers every row seen so far, so rows repeated in later batches are dropped too.
+ *  The first occurrence of each row is kept, which preserves any upstream ordering. */
+class RowDeduplicator
+{
+public:
+    /** @brief Returns the rows of a batch that were not seen before.
+     * @param[in] batch Input batch; may be null.
+     * @return Batch with only first-seen rows (possibly zero rows), or null for null input. */
+    std::shared_ptr<arrow::RecordBatch> filter(const std::shared_ptr<arrow::RecordBatch>& batch);
+
+    /** @brief Returns the indexes of batch rows that were not seen before, recording them as seen.
+     * @param[in] batch Input batch; must not be null. Every column is part of the row key.
+     * @return Ascending row indexes of first-seen rows. */
+    std::vector<int64_t> selectNewRows(const std::shared_ptr<arrow::RecordBatch>& batch);
+
+    /** @brief Keeps rows of @p batch whose DISTINCT ON key (evaluated on that batch) was not seen before.
+     * @param[in] batch Input batch; may be null.
+     * @param[in] keys  DISTINCT ON key expressions evaluated against @p batch.
+     * @return Batch with first-seen key rows (possibly zero rows), or null for null input. */
+    std::shared_ptr<arrow::RecordBatch> filterOn(const std::shared_ptr<arrow::RecordBatch>& batch, const std::vector<ExpressionPtr>& keys);
+
+private:
+    std::unordered_set<std::string> seen_; ///< Encoded keys of every row already emitted.
+};
+
+/** @brief Removes duplicate rows across a batch vector, keeping first occurrences.
+ * @param[in] input Input batches.
+ * @return Batches without duplicate rows; empty batches are dropped. */
+RecordBatches applyDistinct(const RecordBatches& input);
+
+/** @brief Returns the given rows of a batch, in order; safe for dense-union columns.
+ * @param[in] batch Input batch.
+ * @param[in] rows  Ascending row indexes to keep.
+ * @return Batch with only the selected rows. */
+std::shared_ptr<arrow::RecordBatch> selectRows(const std::shared_ptr<arrow::RecordBatch>& batch, const std::vector<int64_t>& rows);
+
+/** @brief Keeps the first row for each DISTINCT ON key across a batch vector.
+ * @param[in] input Input batches (before projection).
+ * @param[in] keys  Key expressions evaluated on the input batches.
+ * @return Batches with one row per key; empty batches are dropped. */
+RecordBatches applyDistinctOn(const RecordBatches& input, const std::vector<ExpressionPtr>& keys);
 
 } // namespace mldp_pvxs_driver::query::executor

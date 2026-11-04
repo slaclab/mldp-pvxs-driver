@@ -26,6 +26,8 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_map>
+#include <vector>
 
 namespace mldp_pvxs_driver::metrics {
 class Metrics;
@@ -47,22 +49,45 @@ public:
     std::string name() const override { return config_.name(); }
 
 private:
+    // Tracks (category|program_name|start|end) -> source calendar already seen in this
+    // fetch cycle, so cross-calendar duplicate events can be disambiguated instead of
+    // colliding on the server's overlap check.
+    using SeenActivationMap = std::unordered_map<std::string, std::string>;
+
+    // An activation built from one calendar event, held back so back-to-back
+    // (touching/overlapping) occurrences of the same configuration can be merged into one
+    // span before being pushed — the server rejects a new activation whose range merely
+    // touches an existing one under the same configurationName+category. Flushed after
+    // every fetch window (not just once at the end) so activations aren't all delayed
+    // until the whole date range has been fetched; only a merge run that is still
+    // extendable by a later window is carried forward instead of being pushed.
+    struct PendingActivation
+    {
+        std::string                                category;
+        util::bus::ConfigurationActivationPayload  payload;
+    };
+
     void runWorker();
     void runStats();
     void fetchAndPublish(const std::string& startIso, const std::string& endIso);
-    std::string fetchExperiment(const std::string& experiment,
-                                const std::string& startIso,
-                                const std::string& endIso);
-    void        parseAndPush(const std::string& jsonBody, const std::string& experiment);
-    void        pushEvent(const nlohmann::json& event, const std::string& experiment);
+    std::string fetchAccel(const std::string& accel,
+                           const std::string& startIso,
+                           const std::string& endIso);
+    void        parseAndPush(const std::string& jsonBody, const std::string& accel,
+                             SeenActivationMap& seen, std::vector<PendingActivation>& pending);
+    void        pushEvent(const nlohmann::json& event, const std::string& accel,
+                          SeenActivationMap& seen, std::vector<PendingActivation>& pending);
+    std::vector<PendingActivation> mergeAndPushActivations(std::vector<PendingActivation>& pending,
+                                                            bool flush_all);
 
     util::bus::BusTimestamp parseBusTimestamp(const std::string& iso8601);
-    std::string buildUrl(const std::string& experiment,
+    std::string buildUrl(const std::string& accel,
                          const std::string& startIso,
                          const std::string& endIso);
     std::string nowOffsetIso(int offsetDays);
     std::string nowIso();
     std::string dateToIso(const std::string& s);
+    std::string epochToIso(int64_t epoch);
     std::string extractHtmlInnerText(const std::string& html);
 
     SlacCalendarReaderConfig              config_;

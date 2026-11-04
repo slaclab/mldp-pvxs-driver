@@ -47,9 +47,10 @@ struct QueryCliOptions
     std::string       sql_file{};                     ///< Path to a SQL file; empty = not used.
     QueryOutputFormat format{QueryOutputFormat::Table}; ///< Output encoding.
     bool              expanded{false};                ///< True to use expanded (vertical) table layout.
-    bool              table_fit{false};               ///< True to constrain table width to the terminal width.
+    bool              table_fit{true};                ///< True to wrap table cells to the terminal width.
     bool              pager{false};                   ///< True to pipe table output through the system pager.
     bool              no_stats{false};                ///< True to suppress the statistics footer.
+    bool              color{false};                   ///< True to style table output with ANSI colors.
     bool              trace_shards{false};            ///< True to collect per-shard timing diagnostics.
     std::string       shard_trace_file{};             ///< Path for shard trace output; empty = write to stderr.
     std::ostream*     shard_trace_output{nullptr};    ///< Override output stream for shard trace; null uses shard_trace_file or stderr.
@@ -204,6 +205,23 @@ namespace detail {
      * @param[in] input  Text entered so far.
      * @return Character count of the token to replace. */
     int replCompletionContextLength(std::string_view input);
+
+    /** @brief Lexical classes used to syntax-highlight REPL input. */
+    enum class ReplHighlight
+    {
+        Default,  ///< Identifiers, operators, whitespace.
+        Keyword,  ///< SQL keywords.
+        Function, ///< Aggregate and scalar function names.
+        String,   ///< Single-quoted string literals.
+        Number,   ///< Numeric literals.
+        Comment,  ///< `--` line comments.
+        Command,  ///< REPL dot/backslash commands.
+    };
+
+    /** @brief Classifies each byte of REPL input for syntax highlighting.
+     * @param[in] input  Text entered so far.
+     * @return One class per input byte. */
+    std::vector<ReplHighlight> replHighlight(std::string_view input);
 
 } // namespace detail
 

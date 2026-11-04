@@ -27,4 +27,14 @@ namespace mldp_pvxs_driver::query {
  * @throws std::runtime_error  If the timezone is unknown or the conversion fails. */
 [[nodiscard]] std::string fromUtc(const arrow::TimestampScalar& timestamp, const std::string& zone_or_offset);
 
+/** @brief Formats a UTC Arrow timestamp in the client's local timezone (one-argument `from_utc`).
+ *
+ * Uses the `TZ` environment variable when set (IANA name or +/-HH:MM, leading ':' stripped), else the
+ * host's IANA zone. When the host zone has no resolvable name (e.g. `/etc/localtime` is a copied file
+ * rather than a symlink, common in containers) the C library's local time is used per instant, so
+ * daylight saving time is still applied.
+ * @param[in] timestamp UTC Arrow timestamp scalar.
+ * @return Formatted local time string with its UTC offset. */
+[[nodiscard]] std::string fromUtcLocal(const arrow::TimestampScalar& timestamp);
+
 } // namespace mldp_pvxs_driver::query

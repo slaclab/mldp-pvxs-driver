@@ -145,6 +145,11 @@ long EpicsArchiverReaderConfig::batchFlushIntervalMs() const
     return batch_flush_interval_ms_;
 }
 
+long EpicsArchiverReaderConfig::maxBatchSpanSec() const
+{
+    return max_batch_span_sec_;
+}
+
 long EpicsArchiverReaderConfig::fetchThreads() const
 {
     return fetch_threads_;
@@ -303,6 +308,13 @@ void EpicsArchiverReaderConfig::parse(const Config& readerEntry)
 
     // Parse optional pending batch flush interval (default: 0 = disabled)
     batch_flush_interval_ms_ = readerEntry.getInt(BatchFlushIntervalMsKey, 0L);
+
+    // Parse optional max timestamp span per PV batch (default: 86400 = MLDP bucket limit)
+    max_batch_span_sec_ = readerEntry.getInt(MaxBatchSpanSecKey, 86400L);
+    if (max_batch_span_sec_ <= 0)
+    {
+        throw Error("max-batch-span-sec must be positive (>0) when specified");
+    }
     if (readerEntry.hasChild(BatchFlushIntervalMsKey) && batch_flush_interval_ms_ <= 0)
     {
         throw Error("batch-flush-interval-ms must be positive (>0) when specified");

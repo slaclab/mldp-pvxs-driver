@@ -146,6 +146,14 @@ bool sampleTimeLessThan(uint64_t lhs_epoch, uint32_t lhs_nano, uint64_t rhs_epoc
     return (lhs_epoch < rhs_epoch) || (lhs_epoch == rhs_epoch && lhs_nano < rhs_nano);
 }
 
+// Absolute distance in nanoseconds between a batch timestamp and a sample time.
+uint64_t spanNanos(const TimestampEntry& first, uint64_t epoch, uint32_t nano)
+{
+    const auto a = first.epoch_seconds * 1'000'000'000ULL + first.nanoseconds;
+    const auto b = epoch * 1'000'000'000ULL + nano;
+    return a > b ? a - b : b - a;
+}
+
 } // namespace
 
 // --- PVWorkQueue ---
@@ -325,7 +333,7 @@ void EpicsArchiverReader::runWorker(std::size_t index)
                     }
                     infof(*logger_, "Worker {} starting PV '{}' (queue remaining: {})",
                            index, *pv, pv_queue_.size());
-                    fetchSinglePV(ctx, *pv, config_.startDate(), config_.endDate());
+                    fetchPvSafely(ctx, index, *pv, config_.startDate(), config_.endDate());
                 }
 
                 if (running_.load() && config_.batchFlushIntervalMs() > 0)
@@ -402,7 +410,7 @@ void EpicsArchiverReader::runWorker(std::size_t index)
                         }
                         infof(*logger_, "Worker {} starting PV '{}' (queue remaining: {})",
                                index, *pv, pv_queue_.size());
-                        fetchSinglePV(ctx, *pv, from, to);
+                        fetchPvSafely(ctx, index, *pv, from, to);
                     }
 
                     if (running_.load() && config_.batchFlushIntervalMs() > 0)
@@ -556,30 +564,6 @@ void EpicsArchiverReader::flushAllPendingBatches(WorkerContext& ctx)
     }
 }
 
-void EpicsArchiverReader::flushExpiredPendingBatches(WorkerContext& ctx)
-{
-    if (config_.batchFlushIntervalMs() <= 0)
-    {
-        return;
-    }
-
-    const auto now = std::chrono::steady_clock::now();
-    const auto threshold = std::chrono::milliseconds(config_.batchFlushIntervalMs());
-
-    std::vector<std::string> to_flush;
-    for (const auto& [pv, pending] : ctx.pending_pv_batches)
-    {
-        if (!pending.accumulated.timestamps.empty() && (now - pending.created_at) >= threshold)
-        {
-            to_flush.push_back(pv);
-        }
-    }
-    for (const auto& pv : to_flush)
-    {
-        submitPendingBatch(ctx, pv);
-    }
-}
-
 void EpicsArchiverReader::flushChunk(WorkerContext& ctx, PbChunkState& state)
 {
     if (!state.have_header)
@@ -696,6 +680,17 @@ void EpicsArchiverReader::parsePbHttpLineIntoState(WorkerContext& ctx, const std
 
     if (config_.pvSamplesPerBatch() > 0)
     {
+        // Flush before this sample would make the batch span reach the MLDP
+        // bucket limit; otherwise the whole ingestion request is rejected.
+        {
+            auto it = ctx.pending_pv_batches.find(pv);
+            const auto max_span_ns = static_cast<uint64_t>(config_.maxBatchSpanSec()) * 1'000'000'000ULL;
+            if (it != ctx.pending_pv_batches.end() && !it->second.accumulated.timestamps.empty() &&
+                spanNanos(it->second.accumulated.timestamps.front(), parsed.epoch_seconds, parsed.nanoseconds) >= max_span_ns)
+            {
+                submitPendingBatch(ctx, pv);
+            }
+        }
         auto& pending = ctx.pending_pv_batches[pv];
         if (pending.accumulated.timestamps.empty())
         {
@@ -723,6 +718,34 @@ void EpicsArchiverReader::parsePbHttpLineIntoState(WorkerContext& ctx, const std
     else
     {
         state.events.emplace_back(std::move(parsed.batch));
+    }
+}
+
+void EpicsArchiverReader::fetchPvSafely(WorkerContext&                    ctx,
+                                        std::size_t                       index,
+                                        const std::string&                pv,
+                                        const std::string&                from,
+                                        const std::optional<std::string>& to)
+{
+    try
+    {
+        fetchSinglePV(ctx, pv, from, to);
+    }
+    catch (const std::exception& e)
+    {
+        if (!running_.load())
+        {
+            throw;
+        }
+        // One bad PV stream must not take the worker down: keep what was
+        // already parsed (pending keys come from the payload header, so flush
+        // all of them), count the failure and move on.
+        flushAllPendingBatches(ctx);
+        errorf(*logger_, "Archiver reader worker '{}' [{}] failed PV '{}': {}", name_, index, pv, e.what());
+        metric_call(metrics_, [&](auto& m)
+                    {
+                        m.incrementReaderErrors(1.0, {{"source", pv}});
+                    });
     }
 }
 
@@ -769,12 +792,7 @@ void EpicsArchiverReader::fetchSinglePV(WorkerContext& ctx,
                         }
                         catch (const std::exception& e)
                         {
-                            const prometheus::Labels source_tag{{"source", pv}};
-                            metric_call(metrics_, [&](auto& m)
-                                        {
-                                            m.incrementReaderErrors(1.0, source_tag);
-                                        });
-                            throw;
+                            throw std::runtime_error(std::string(e.what()) + " (pv='" + pv + "', line_bytes=" + std::to_string(line_buf.size()) + ")");
                         }
                         line_buf.clear();
                     }
@@ -792,12 +810,7 @@ void EpicsArchiverReader::fetchSinglePV(WorkerContext& ctx,
         }
         catch (const std::exception& e)
         {
-            const prometheus::Labels source_tag{{"source", pv}};
-            metric_call(metrics_, [&](auto& m)
-                        {
-                            m.incrementReaderErrors(1.0, source_tag);
-                        });
-            throw;
+            throw std::runtime_error(std::string(e.what()) + " (pv='" + pv + "', line_bytes=" + std::to_string(line_buf.size()) + ")");
         }
         line_buf.clear();
     }
@@ -832,5 +845,8 @@ void EpicsArchiverReader::fetchSinglePV(WorkerContext& ctx,
     }
     infof(*logger_, "Completed fetch of archiver PB/HTTP stream for PV '{}'", pv);
 
-    flushExpiredPendingBatches(ctx);
+    // The PV stream is complete, so no further samples can join its pending
+    // batch: submit it now instead of holding (or dropping) a partial batch.
+    // Pending keys come from the payload header PV name, so flush them all.
+    flushAllPendingBatches(ctx);
 }

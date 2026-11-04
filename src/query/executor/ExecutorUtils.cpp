@@ -203,6 +203,9 @@ std::vector<std::pair<int64_t, int64_t>> extractNormalizedWindowsImpl(const std:
     std::vector<std::pair<int64_t, int64_t>> windows;
     for (const auto& batch : batches)
     {
+        // A batch the local filter emptied has no row to type a computed column
+        // (e.g. `start_time + 30s` comes out as Arrow null); it holds no window.
+        if (batch->num_rows() == 0) continue;
         if (batch->num_columns() != 2 || batch->column(0)->type_id() != arrow::Type::TIMESTAMP || batch->column(1)->type_id() != arrow::Type::TIMESTAMP)
             throw std::runtime_error("MLDP time-series window subquery must return exactly two timestamp columns");
         for (int64_t row = 0; row < batch->num_rows(); ++row)
@@ -603,69 +606,92 @@ arrow::Result<std::shared_ptr<arrow::RecordBatch>> selectUnionSafeRows(
     return arrow::RecordBatch::Make(batch->schema(), static_cast<int64_t>(selected_rows.size()), std::move(columns));
 }
 
+/// SQL three-valued truth: a NULL or missing operand makes a comparison UNKNOWN.
+enum class Truth { FALSE_VALUE, TRUE_VALUE, UNKNOWN };
+
+int predicateFieldIndex(const std::shared_ptr<arrow::RecordBatch>& batch, const std::string& column)
+{
+    int field_index = batch->schema()->GetFieldIndex(column);
+    if (field_index >= 0) return field_index;
+    const auto suffix = "." + column;
+    for (int fi = 0; fi < batch->schema()->num_fields(); ++fi)
+    {
+        const auto& name = batch->schema()->field(fi)->name();
+        if (name.size() > suffix.size() && name.compare(name.size() - suffix.size(), suffix.size(), suffix) == 0) return fi;
+    }
+    return -1;
+}
+
+arrow::Result<Truth> predicateTruth(const std::shared_ptr<arrow::RecordBatch>& batch, const int64_t row, const Predicate& predicate)
+{
+    if (predicate.column == "tag")
+    {
+        const int tags_index = predicateFieldIndex(batch, "tags");
+        if (tags_index < 0) return Truth::UNKNOWN;
+        ARROW_ASSIGN_OR_RAISE(auto tags, batch->column(tags_index)->GetScalar(row));
+        return listContainsPredicateValue(tags, predicate) ? Truth::TRUE_VALUE : Truth::FALSE_VALUE;
+    }
+    const int field_index = predicateFieldIndex(batch, predicate.column);
+    const bool null_test = predicate.op == PredicateOp::IS_NULL || predicate.op == PredicateOp::IS_NOT_NULL;
+    if (field_index < 0) return Truth::UNKNOWN;
+    ARROW_ASSIGN_OR_RAISE(auto scalar, batch->column(field_index)->GetScalar(row));
+    if (!null_test && (!scalar || !scalar->is_valid)) return Truth::UNKNOWN;
+    return scalarMatchesPredicate(scalar, predicate) ? Truth::TRUE_VALUE : Truth::FALSE_VALUE;
+}
+
+arrow::Result<Truth> groupTruth(const std::shared_ptr<arrow::RecordBatch>& batch, const int64_t row, const PredicateGroup& group)
+{
+    switch (group.kind)
+    {
+        case PredicateGroup::Kind::LEAF: return predicateTruth(batch, row, group.leaf);
+        case PredicateGroup::Kind::NOT:
+        {
+            ARROW_ASSIGN_OR_RAISE(const auto value, groupTruth(batch, row, group.children.front()));
+            if (value == Truth::UNKNOWN) return Truth::UNKNOWN;
+            return value == Truth::TRUE_VALUE ? Truth::FALSE_VALUE : Truth::TRUE_VALUE;
+        }
+        case PredicateGroup::Kind::AND:
+        case PredicateGroup::Kind::OR:
+        {
+            // AND short-circuits on FALSE, OR on TRUE; otherwise any UNKNOWN wins over the identity.
+            const auto decisive = group.kind == PredicateGroup::Kind::AND ? Truth::FALSE_VALUE : Truth::TRUE_VALUE;
+            bool unknown = false;
+            for (const auto& child : group.children)
+            {
+                ARROW_ASSIGN_OR_RAISE(const auto value, groupTruth(batch, row, child));
+                if (value == decisive) return decisive;
+                unknown = unknown || value == Truth::UNKNOWN;
+            }
+            if (unknown) return Truth::UNKNOWN;
+            return decisive == Truth::FALSE_VALUE ? Truth::TRUE_VALUE : Truth::FALSE_VALUE;
+        }
+    }
+    return Truth::UNKNOWN;
+}
+
 arrow::Result<std::shared_ptr<arrow::RecordBatch>> applyFilterImpl(const std::shared_ptr<arrow::RecordBatch>& batch,
-                                                                   const std::vector<Predicate>&              predicates)
+                                                                   const std::vector<Predicate>&              predicates,
+                                                                   const std::vector<PredicateGroup>&         groups)
 {
     arrow::BooleanBuilder mask_builder;
     std::vector<int64_t>  selected_rows;
     for (int64_t row = 0; row < batch->num_rows(); ++row)
     {
+        // A row passes only when every conjunct and every OR/NOT group is TRUE.
         bool include = true;
         for (const auto& predicate : predicates)
         {
-            if (predicate.column == "tag")
-            {
-                int tags_index = batch->schema()->GetFieldIndex("tags");
-                if (tags_index < 0)
-                {
-                    for (int fi = 0; fi < batch->schema()->num_fields(); ++fi)
-                    {
-                        const auto& name = batch->schema()->field(fi)->name();
-                        if (name.size() > 5 && name.compare(name.size() - 5, 5, ".tags") == 0)
-                        {
-                            tags_index = fi;
-                            break;
-                        }
-                    }
-                }
-                if (tags_index < 0)
-                {
-                    include = false;
-                    break;
-                }
-                ARROW_ASSIGN_OR_RAISE(auto tags, batch->column(tags_index)->GetScalar(row));
-                if (!listContainsPredicateValue(tags, predicate))
-                {
-                    include = false;
-                    break;
-                }
-                continue;
-            }
-            int field_index = batch->schema()->GetFieldIndex(predicate.column);
-            if (field_index < 0)
-            {
-                const auto suffix = "." + predicate.column;
-                for (int fi = 0; fi < batch->schema()->num_fields(); ++fi)
-                {
-                    const auto& name = batch->schema()->field(fi)->name();
-                    if (name.size() > suffix.size() && name.compare(name.size() - suffix.size(), suffix.size(), suffix) == 0)
-                    {
-                        field_index = fi;
-                        break;
-                    }
-                }
-            }
-            if (field_index < 0)
+            ARROW_ASSIGN_OR_RAISE(const auto value, predicateTruth(batch, row, predicate));
+            if (value != Truth::TRUE_VALUE)
             {
                 include = false;
                 break;
             }
-            ARROW_ASSIGN_OR_RAISE(auto scalar, batch->column(field_index)->GetScalar(row));
-            if (!scalarMatchesPredicate(scalar, predicate))
-            {
-                include = false;
-                break;
-            }
+        }
+        for (std::size_t index = 0; include && index < groups.size(); ++index)
+        {
+            ARROW_ASSIGN_OR_RAISE(const auto value, groupTruth(batch, row, groups[index]));
+            include = value == Truth::TRUE_VALUE;
         }
         RETURN_NOT_OK(mask_builder.Append(include));
         if (include)
@@ -754,6 +780,10 @@ std::shared_ptr<arrow::Scalar> evaluateExpression(const ExpressionPtr& expressio
                           else if constexpr (std::is_same_v<T, UnaryExpression>)
                           {
                               const auto operand = evaluateExpression(value.operand, batch, row);
+                              if (value.operator_name == "IS NULL")
+                                  return std::make_shared<arrow::BooleanScalar>(!operand->is_valid);
+                              if (value.operator_name == "IS NOT NULL")
+                                  return std::make_shared<arrow::BooleanScalar>(operand->is_valid);
                               if (!operand->is_valid)
                                   return std::make_shared<arrow::NullScalar>();
                               if (value.operator_name == "NOT")
@@ -775,6 +805,19 @@ std::shared_ptr<arrow::Scalar> evaluateExpression(const ExpressionPtr& expressio
                                       return std::make_shared<arrow::BooleanScalar>(lhs && rhs);
                                   if (value.operator_name == "OR")
                                       return std::make_shared<arrow::BooleanScalar>(lhs || rhs);
+                              }
+                              const auto is_text = [](const std::shared_ptr<arrow::Scalar>& scalar)
+                              { return scalar->type->id() == arrow::Type::STRING || scalar->type->id() == arrow::Type::LARGE_STRING; };
+                              if (is_text(left) && is_text(right))
+                              {
+                                  const auto lhs = left->ToString();
+                                  const auto rhs = right->ToString();
+                                  if (value.operator_name == "=") return std::make_shared<arrow::BooleanScalar>(lhs == rhs);
+                                  if (value.operator_name == "!=") return std::make_shared<arrow::BooleanScalar>(lhs != rhs);
+                                  if (value.operator_name == "<") return std::make_shared<arrow::BooleanScalar>(lhs < rhs);
+                                  if (value.operator_name == "<=") return std::make_shared<arrow::BooleanScalar>(lhs <= rhs);
+                                  if (value.operator_name == ">") return std::make_shared<arrow::BooleanScalar>(lhs > rhs);
+                                  if (value.operator_name == ">=") return std::make_shared<arrow::BooleanScalar>(lhs >= rhs);
                               }
                               const auto integerValue = [&](const std::shared_ptr<arrow::Scalar>& scalar) -> int64_t
                               {
@@ -829,11 +872,37 @@ std::shared_ptr<arrow::Scalar> evaluateExpression(const ExpressionPtr& expressio
                                              {
                                                  return static_cast<char>(std::tolower(character));
                                              });
+                              if (name == "coalesce")
+                              {
+                                  // First non-NULL argument, evaluated lazily; cast to the first
+                                  // argument's Arrow type so every row shares one column type.
+                                  std::shared_ptr<arrow::Scalar> first;
+                                  for (const auto& argument : value.arguments)
+                                  {
+                                      auto scalar = evaluateExpression(argument, batch, row);
+                                      if (!first) first = scalar;
+                                      if (!scalar->is_valid) continue;
+                                      if (first->type->id() == arrow::Type::NA || scalar->type->Equals(*first->type)) return scalar;
+                                      auto cast = scalar->CastTo(first->type);
+                                      if (!cast.ok()) throw std::runtime_error("coalesce: " + cast.status().ToString());
+                                      return cast.MoveValueUnsafe();
+                                  }
+                                  return first ? first : std::make_shared<arrow::NullScalar>();
+                              }
                               if (name == "from_utc")
                               {
-                                  if (value.arguments.size() != 2)
+                                  if (value.arguments.size() != 1 && value.arguments.size() != 2)
                                       throw std::runtime_error("from_utc has no matching overload");
                                   const auto timestamp = evaluateExpression(value.arguments[0], batch, row);
+                                  // One-argument form: format in the client's local timezone.
+                                  if (value.arguments.size() == 1)
+                                  {
+                                      if (!timestamp->is_valid)
+                                          return std::make_shared<arrow::StringScalar>();
+                                      if (timestamp->type->id() != arrow::Type::TIMESTAMP)
+                                          throw std::runtime_error("from_utc has no matching overload");
+                                      return std::make_shared<arrow::StringScalar>(fromUtcLocal(*std::static_pointer_cast<arrow::TimestampScalar>(timestamp)));
+                                  }
                                   const auto zone = evaluateExpression(value.arguments[1], batch, row);
                                   if (!timestamp->is_valid || !zone->is_valid)
                                       return std::make_shared<arrow::StringScalar>();
@@ -845,6 +914,21 @@ std::shared_ptr<arrow::Scalar> evaluateExpression(const ExpressionPtr& expressio
                           }
                       },
                       expression->value);
+}
+
+bool referencesColumn(const ExpressionPtr& expression)
+{
+    if (!expression) return false;
+    return std::visit([](const auto& value) -> bool
+    {
+        using T = std::decay_t<decltype(value)>;
+        if constexpr (std::is_same_v<T, QualifiedColumn>) return true;
+        else if constexpr (std::is_same_v<T, FunctionCall>)
+            return std::any_of(value.arguments.begin(), value.arguments.end(), [](const auto& argument) { return referencesColumn(argument); });
+        else if constexpr (std::is_same_v<T, UnaryExpression>) return referencesColumn(value.operand);
+        else if constexpr (std::is_same_v<T, BinaryExpression>) return referencesColumn(value.left) || referencesColumn(value.right);
+        else return false;
+    }, expression->value);
 }
 
 std::vector<std::shared_ptr<arrow::RecordBatch>> applyExpressionProjectionImpl(const std::vector<std::shared_ptr<arrow::RecordBatch>>& input,
@@ -877,6 +961,14 @@ std::vector<std::shared_ptr<arrow::RecordBatch>> applyExpressionProjectionImpl(c
                 if (scalar->is_valid)
                     type = scalar->type;
             }
+            // An empty batch has no row to infer from; a column-free expression (e.g. `1 AS k`)
+            // still has a fixed type, and must keep it so all batches share one schema.
+            if (!type && batch->num_rows() == 0 && !referencesColumn(expressions[index]))
+            {
+                const auto scalar = evaluateExpression(expressions[index], batch, 0);
+                if (scalar->is_valid)
+                    type = scalar->type;
+            }
             if (!type)
                 type = arrow::null();
             std::unique_ptr<arrow::ArrayBuilder> builder;
@@ -886,7 +978,8 @@ std::vector<std::shared_ptr<arrow::RecordBatch>> applyExpressionProjectionImpl(c
             for (int64_t row = 0; row < batch->num_rows(); ++row)
             {
                 const auto scalar = evaluateExpression(expressions[index], batch, row);
-                const auto append_status = builder->AppendScalar(*scalar);
+                // A null result (e.g. an operator over a NULL operand) is untyped; append it as a null of the column type.
+                const auto append_status = scalar->is_valid ? builder->AppendScalar(*scalar) : builder->AppendNull();
                 if (!append_status.ok())
                     throw std::runtime_error(append_status.ToString());
             }
@@ -1065,39 +1158,21 @@ std::string scalarKey(const std::shared_ptr<arrow::Scalar>& scalar)
 std::shared_ptr<arrow::Array> buildArrayFromIndices(const std::shared_ptr<arrow::Array>& source,
                                                     const std::vector<int64_t>&          indices)
 {
-    std::unique_ptr<arrow::ArrayBuilder> builder;
-    auto                                 status = arrow::MakeBuilder(arrow::default_memory_pool(), source->type(), &builder);
-    if (!status.ok())
-    {
-        throw std::runtime_error(status.ToString());
-    }
+    // Vectorized gather; a negative index (unmatched outer-join row) becomes NULL.
+    arrow::Int64Builder index_builder;
+    auto status = index_builder.Reserve(static_cast<int64_t>(indices.size()));
     for (const auto index : indices)
     {
-        if (index < 0)
-        {
-            status = builder->AppendNull();
-        }
-        else
-        {
-            auto scalar_result = source->GetScalar(index);
-            if (!scalar_result.ok())
-            {
-                throw std::runtime_error(scalar_result.status().ToString());
-            }
-            status = builder->AppendScalar(*(*scalar_result));
-        }
-        if (!status.ok())
-        {
-            throw std::runtime_error(status.ToString());
-        }
+        if (!status.ok()) break;
+        if (index < 0) status = index_builder.AppendNull();
+        else index_builder.UnsafeAppend(index);
     }
-    std::shared_ptr<arrow::Array> out;
-    status = builder->Finish(&out);
-    if (!status.ok())
-    {
-        throw std::runtime_error(status.ToString());
-    }
-    return out;
+    std::shared_ptr<arrow::Array> index_array;
+    if (status.ok()) status = index_builder.Finish(&index_array);
+    if (!status.ok()) throw std::runtime_error(status.ToString());
+    const auto taken = arrow::compute::Take(source, index_array);
+    if (!taken.ok()) throw std::runtime_error(taken.status().ToString());
+    return taken->make_array();
 }
 
 std::shared_ptr<arrow::RecordBatch> qualifyBatchColumnsImpl(const std::shared_ptr<arrow::RecordBatch>& batch,
@@ -1365,11 +1440,12 @@ int64_t mldp_pvxs_driver::query::executor::autoSliceNs(const int64_t window_ns)
     return kSteps[std::size(kSteps) - 1];
 }
 
-arrow::Result<std::shared_ptr<arrow::RecordBatch>> mldp_pvxs_driver::query::executor::applyFilter(const std::shared_ptr<arrow::RecordBatch>& batch, const std::vector<Predicate>& predicates)
+arrow::Result<std::shared_ptr<arrow::RecordBatch>> mldp_pvxs_driver::query::executor::applyFilter(const std::shared_ptr<arrow::RecordBatch>& batch, const std::vector<Predicate>& predicates,
+                                                                                                    const std::vector<PredicateGroup>& groups)
 {
-    if (predicates.empty())
+    if (predicates.empty() && groups.empty())
         return batch;
-    return ::applyFilterImpl(batch, predicates);
+    return ::applyFilterImpl(batch, predicates, groups);
 }
 
 RecordBatches mldp_pvxs_driver::query::executor::applyProjection(const RecordBatches& input, const std::vector<std::string>& columns)
@@ -1411,4 +1487,181 @@ std::shared_ptr<arrow::RecordBatch> mldp_pvxs_driver::query::executor::joinBatch
                                                                                    QueryStats&                                stats)
 {
     return ::joinBatchesImpl(left, right, left_key, right_key, type, context, stats);
+}
+
+namespace {
+std::shared_ptr<arrow::RecordBatch> takeSelectedRows(const std::shared_ptr<arrow::RecordBatch>& batch, const std::vector<int64_t>& selected_rows);
+}
+
+std::shared_ptr<arrow::RecordBatch> RowDeduplicator::filter(const std::shared_ptr<arrow::RecordBatch>& batch)
+{
+    if (!batch) return nullptr;
+    return takeSelectedRows(batch, selectNewRows(batch));
+}
+
+std::shared_ptr<arrow::RecordBatch> RowDeduplicator::filterOn(const std::shared_ptr<arrow::RecordBatch>& batch, const std::vector<ExpressionPtr>& keys)
+{
+    if (!batch) return nullptr;
+    std::vector<std::string> names;
+    names.reserve(keys.size());
+    for (std::size_t index = 0; index < keys.size(); ++index) names.push_back("__distinct_on_" + std::to_string(index));
+    const auto key_batches = applyProjection(RecordBatches{batch}, keys, names);
+    if (key_batches.empty() || !key_batches.front()) return takeSelectedRows(batch, {});
+    return takeSelectedRows(batch, selectNewRows(key_batches.front()));
+}
+
+std::vector<int64_t> RowDeduplicator::selectNewRows(const std::shared_ptr<arrow::RecordBatch>& batch)
+{
+    std::vector<int64_t> selected_rows;
+    selected_rows.reserve(static_cast<std::size_t>(batch->num_rows()));
+    std::string key;
+    for (int64_t row = 0; row < batch->num_rows(); ++row)
+    {
+        key.clear();
+        for (const auto& column : batch->columns())
+        {
+            if (column->IsNull(row))
+            {
+                key += 'N';
+                continue;
+            }
+            auto scalar = column->GetScalar(row);
+            if (!scalar.ok()) throw std::runtime_error("DISTINCT failed to read row value: " + scalar.status().ToString());
+            // Length-prefix every value so adjacent columns cannot alias each other.
+            const auto text = (*scalar)->ToString();
+            key += 'V';
+            key += std::to_string(text.size());
+            key += ':';
+            key += text;
+        }
+        if (seen_.insert(key).second) selected_rows.push_back(row);
+    }
+    return selected_rows;
+}
+
+namespace {
+std::shared_ptr<arrow::RecordBatch> takeSelectedRows(const std::shared_ptr<arrow::RecordBatch>& batch, const std::vector<int64_t>& selected_rows)
+{
+    if (selected_rows.size() == static_cast<std::size_t>(batch->num_rows())) return batch;
+
+    arrow::Result<std::shared_ptr<arrow::RecordBatch>> result;
+    if (hasUnionColumn(batch))
+    {
+        result = selectUnionSafeRows(batch, selected_rows);
+    }
+    else
+    {
+        arrow::BooleanBuilder mask_builder;
+        auto status = mask_builder.Reserve(batch->num_rows());
+        std::size_t next = 0;
+        for (int64_t row = 0; status.ok() && row < batch->num_rows(); ++row)
+        {
+            const bool keep = next < selected_rows.size() && selected_rows[next] == row;
+            if (keep) ++next;
+            mask_builder.UnsafeAppend(keep);
+        }
+        std::shared_ptr<arrow::Array> mask;
+        if (status.ok()) status = mask_builder.Finish(&mask);
+        if (!status.ok()) throw std::runtime_error("DISTINCT failed to build row mask: " + status.ToString());
+        auto filtered = arrow::compute::Filter(batch, mask);
+        if (!filtered.ok()) throw std::runtime_error("DISTINCT failed to filter rows: " + filtered.status().ToString());
+        result = filtered->record_batch();
+    }
+    if (!result.ok()) throw std::runtime_error("DISTINCT failed to select rows: " + result.status().ToString());
+    return *result;
+}
+} // namespace
+
+RecordBatches mldp_pvxs_driver::query::executor::applyDistinct(const RecordBatches& input)
+{
+    RowDeduplicator deduplicator;
+    RecordBatches   output;
+    output.reserve(input.size());
+    for (const auto& batch : input)
+    {
+        auto unique = deduplicator.filter(batch);
+        if (unique && unique->num_rows() > 0) output.push_back(std::move(unique));
+    }
+    return output;
+}
+
+RecordBatches mldp_pvxs_driver::query::executor::applyDistinctOn(const RecordBatches& input, const std::vector<ExpressionPtr>& keys)
+{
+    RowDeduplicator deduplicator;
+    RecordBatches   output;
+    output.reserve(input.size());
+    for (const auto& batch : input)
+    {
+        auto unique = deduplicator.filterOn(batch, keys);
+        if (unique && unique->num_rows() > 0) output.push_back(std::move(unique));
+    }
+    return output;
+}
+
+std::shared_ptr<arrow::RecordBatch> mldp_pvxs_driver::query::executor::selectRows(const std::shared_ptr<arrow::RecordBatch>& batch, const std::vector<int64_t>& rows)
+{
+    return takeSelectedRows(batch, rows);
+}
+
+std::shared_ptr<arrow::RecordBatch> mldp_pvxs_driver::query::executor::applyConditions(const std::shared_ptr<arrow::RecordBatch>& batch,
+                                                                                    const std::vector<ExpressionPtr>&          conditions)
+{
+    // Vectorized mask for `col <op> col` and `col IS [NOT] NULL`; null when the
+    // condition needs the general per-row evaluator.
+    const auto vectorMask = [](const ExpressionPtr& condition, const std::shared_ptr<arrow::RecordBatch>& input) -> std::shared_ptr<arrow::Array>
+    {
+        const auto column = [&](const ExpressionPtr& operand) -> std::shared_ptr<arrow::Array>
+        {
+            const auto* ref = operand ? std::get_if<QualifiedColumn>(&operand->value) : nullptr;
+            const int   index = ref ? input->schema()->GetFieldIndex(ref->name) : -1;
+            return index < 0 ? nullptr : input->column(index);
+        };
+        arrow::Result<arrow::Datum> result;
+        if (const auto* unary = std::get_if<UnaryExpression>(&condition->value))
+        {
+            const auto operand = column(unary->operand);
+            if (!operand || (unary->operator_name != "IS NULL" && unary->operator_name != "IS NOT NULL")) return nullptr;
+            result = arrow::compute::CallFunction(unary->operator_name == "IS NULL" ? "is_null" : "is_valid", {operand});
+        }
+        else if (const auto* binary = std::get_if<BinaryExpression>(&condition->value))
+        {
+            static const std::unordered_map<std::string, std::string> kCompare{
+                {"=", "equal"}, {"!=", "not_equal"}, {"<", "less"}, {"<=", "less_equal"}, {">", "greater"}, {">=", "greater_equal"}};
+            const auto function = kCompare.find(binary->operator_name);
+            const auto left = column(binary->left);
+            const auto right = column(binary->right);
+            if (function == kCompare.end() || !left || !right || !left->type()->Equals(*right->type())) return nullptr;
+            result = arrow::compute::CallFunction(function->second, {left, right});
+        }
+        else
+        {
+            return nullptr;
+        }
+        return result.ok() ? result->make_array() : nullptr;
+    };
+
+    // Each condition runs only on the rows that passed the previous ones.
+    auto current = batch;
+    for (const auto& condition : conditions)
+    {
+        if (!current || current->num_rows() == 0) break;
+        if (const auto mask = vectorMask(condition, current))
+        {
+            const auto filtered = arrow::compute::Filter(current, mask); // null mask entries drop the row
+            if (!filtered.ok()) throw std::runtime_error(filtered.status().ToString());
+            current = filtered->record_batch();
+            continue;
+        }
+        std::vector<int64_t> rows;
+        rows.reserve(static_cast<std::size_t>(current->num_rows()));
+        for (int64_t row = 0; row < current->num_rows(); ++row)
+        {
+            const auto scalar = evaluateExpression(condition, current, row);
+            if (scalar->is_valid && scalar->type->id() == arrow::Type::BOOL &&
+                std::static_pointer_cast<arrow::BooleanScalar>(scalar)->value)
+                rows.push_back(row);
+        }
+        if (rows.size() != static_cast<std::size_t>(current->num_rows())) current = selectRows(current, rows);
+    }
+    return current;
 }

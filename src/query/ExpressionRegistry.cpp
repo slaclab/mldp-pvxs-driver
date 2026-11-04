@@ -31,7 +31,12 @@ std::string normalized(std::string_view value)
 
 } // namespace
 
-bool IExpressionCallable::accepts(const std::vector<ColumnType>& arguments) const noexcept { return descriptor().arguments == arguments; }
+bool IExpressionCallable::accepts(const std::vector<ColumnType>& arguments) const noexcept
+{
+    const auto& expected = descriptor();
+    if (!expected.variadic) return expected.arguments == arguments;
+    return arguments.size() >= 2 && std::all_of(arguments.begin(), arguments.end(), [&expected](const ColumnType type) { return type == expected.arguments.front(); });
+}
 ColumnType IExpressionCallable::inferReturnType(const std::vector<ColumnType>& arguments) const
 {
     if (!accepts(arguments)) throw plan::PlannerException(plan::TypeError{.message = descriptor().name + " has no matching overload"});
@@ -43,7 +48,13 @@ ExpressionRegistry::ExpressionRegistry()
     const auto add = [this](ExpressionCallableDescriptor descriptor) { registerCallable(std::make_unique<Callable>(std::move(descriptor))); };
     add({"to_utc", ExpressionCallableKind::FUNCTION, {ColumnType::STRING}, ColumnType::TIMESTAMP, "Convert an ISO-8601 timestamp to UTC epoch seconds.", "to_utc('2026-07-23T09:00:00Z')"});
     add({"to_utc", ExpressionCallableKind::FUNCTION, {ColumnType::STRING, ColumnType::STRING}, ColumnType::TIMESTAMP, "Convert an ISO-8601 timestamp to UTC epoch seconds.", "to_utc('2026-07-23 09:00:00', '-07:00')"});
+    add({"from_utc", ExpressionCallableKind::FUNCTION, {ColumnType::TIMESTAMP}, ColumnType::STRING, "Format a UTC timestamp in the client's local timezone.", "from_utc(time)"});
     add({"from_utc", ExpressionCallableKind::FUNCTION, {ColumnType::TIMESTAMP, ColumnType::STRING}, ColumnType::STRING, "Format a UTC timestamp in an IANA timezone or fixed UTC offset.", "from_utc(time, 'America/Los_Angeles')"});
+    for (const auto type : {ColumnType::STRING, ColumnType::INT, ColumnType::TIMESTAMP, ColumnType::DURATION_SECONDS, ColumnType::BOOL})
+    {
+        const auto name = columnTypeName(type);
+        add({.name = "coalesce", .kind = ExpressionCallableKind::FUNCTION, .arguments = {type}, .returns = type, .description = "Return the first non-NULL argument.", .example = "coalesce(pv, 'unknown')", .arguments_text = "(" + name + ", " + name + ", ...)", .variadic = true});
+    }
     add({"+", ExpressionCallableKind::BINARY_OPERATOR, {ColumnType::INT, ColumnType::INT}, ColumnType::INT, "Add numeric values or a duration to a timestamp.", "1 + 2"});
     add({"+", ExpressionCallableKind::BINARY_OPERATOR, {ColumnType::TIMESTAMP, ColumnType::DURATION_SECONDS}, ColumnType::TIMESTAMP, "Add numeric values or a duration to a timestamp.", "time + duration_ns(2)"});
     add({"-", ExpressionCallableKind::BINARY_OPERATOR, {ColumnType::INT, ColumnType::INT}, ColumnType::INT, "Subtract numeric values, timestamps, or durations.", "3 - 1"});
@@ -52,7 +63,7 @@ ExpressionRegistry::ExpressionRegistry()
     add({"*", ExpressionCallableKind::BINARY_OPERATOR, {ColumnType::INT, ColumnType::INT}, ColumnType::INT, "Multiply numeric values.", "2 * 3"});
     add({"/", ExpressionCallableKind::BINARY_OPERATOR, {ColumnType::INT, ColumnType::INT}, ColumnType::INT, "Divide numeric values.", "6 / 2"});
     for (const auto type : {ColumnType::STRING, ColumnType::INT, ColumnType::TIMESTAMP, ColumnType::DURATION_SECONDS, ColumnType::BOOL})
-    { add({"=", ExpressionCallableKind::BINARY_OPERATOR, {type, type}, ColumnType::BOOL, "Test values for equality.", "value = 1"}); add({"!=", ExpressionCallableKind::BINARY_OPERATOR, {type, type}, ColumnType::BOOL, "Test values for inequality.", "value != 1"}); add({"<", ExpressionCallableKind::BINARY_OPERATOR, {type, type}, ColumnType::BOOL, "Test whether the left value is smaller.", "time < timestamp_ns(1)"}); add({"<=", ExpressionCallableKind::BINARY_OPERATOR, {type, type}, ColumnType::BOOL, "Test whether the left value is not greater.", "value <= 1"}); add({">", ExpressionCallableKind::BINARY_OPERATOR, {type, type}, ColumnType::BOOL, "Test whether the left value is greater.", "value > 1"}); add({">=", ExpressionCallableKind::BINARY_OPERATOR, {type, type}, ColumnType::BOOL, "Test whether the left value is not smaller.", "value >= 1"}); }
+    { add({"IS NULL", ExpressionCallableKind::UNARY_OPERATOR, {type}, ColumnType::BOOL, "Test whether a value is NULL.", "end_time IS NULL"}); add({"IS NOT NULL", ExpressionCallableKind::UNARY_OPERATOR, {type}, ColumnType::BOOL, "Test whether a value is not NULL.", "end_time IS NOT NULL"}); add({"=", ExpressionCallableKind::BINARY_OPERATOR, {type, type}, ColumnType::BOOL, "Test values for equality.", "value = 1"}); add({"!=", ExpressionCallableKind::BINARY_OPERATOR, {type, type}, ColumnType::BOOL, "Test values for inequality.", "value != 1"}); add({"<", ExpressionCallableKind::BINARY_OPERATOR, {type, type}, ColumnType::BOOL, "Test whether the left value is smaller.", "time < timestamp_ns(1)"}); add({"<=", ExpressionCallableKind::BINARY_OPERATOR, {type, type}, ColumnType::BOOL, "Test whether the left value is not greater.", "value <= 1"}); add({">", ExpressionCallableKind::BINARY_OPERATOR, {type, type}, ColumnType::BOOL, "Test whether the left value is greater.", "value > 1"}); add({">=", ExpressionCallableKind::BINARY_OPERATOR, {type, type}, ColumnType::BOOL, "Test whether the left value is not smaller.", "value >= 1"}); }
     add({"AND", ExpressionCallableKind::BINARY_OPERATOR, {ColumnType::BOOL, ColumnType::BOOL}, ColumnType::BOOL, "Combine boolean values with logical AND.", "true AND false"}); add({"OR", ExpressionCallableKind::BINARY_OPERATOR, {ColumnType::BOOL, ColumnType::BOOL}, ColumnType::BOOL, "Combine boolean values with logical OR.", "true OR false"}); add({"NOT", ExpressionCallableKind::UNARY_OPERATOR, {ColumnType::BOOL}, ColumnType::BOOL, "Negate a boolean value.", "NOT true"}); add({"+", ExpressionCallableKind::UNARY_OPERATOR, {ColumnType::INT}, ColumnType::INT, "Return a numeric value unchanged.", "+1"}); add({"-", ExpressionCallableKind::UNARY_OPERATOR, {ColumnType::INT}, ColumnType::INT, "Negate a numeric value.", "-1"});
 }
 

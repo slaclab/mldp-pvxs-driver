@@ -97,7 +97,7 @@ WHERE pv IN ('{namespace}:MAGNET:01:VALUE', '{namespace}:RF:02:VALUE',
   AND time >= NOW -1h
   AND time <= NOW;
 
-SELECT pv, first_timestamp, last_timestamp, num_buckets
+SELECT pv, start_time, end_time, num_buckets
 FROM mldp.pv_stats
 WHERE pv IN ('{namespace}:MAGNET:01:VALUE', '{namespace}:RF:02:VALUE',
              '{namespace}:VACUUM:03:VALUE', '{namespace}:DIAGNOSTIC:04:VALUE');
@@ -123,12 +123,12 @@ SELECT name, category, description
 FROM mldp.configuration
 WHERE category = 'beam_mode';
 
-SELECT time, end_time, config_name, activation_id
+SELECT start_time, end_time, config_name, activation_id
 FROM mldp.configuration_activation
 WHERE config_name IN ('{namespace}_injector_tuning', '{namespace}_user_delivery')
   AND end_time IS NOT NULL;
 
-SELECT name, activation_id, time
+SELECT name, activation_id, start_time
 FROM mldp.active_configurations
 WHERE at = NOW -30m;
 
@@ -160,7 +160,7 @@ WHERE pv IN (
   WHERE attributes.namespace = '{namespace}' AND tag = 'magnet'
 )
 AND window IN (
-  SELECT activation.time, activation.end_time
+  SELECT activation.start_time, activation.end_time
   FROM mldp.configuration_activation activation
   JOIN mldp.configuration configuration ON activation.config_name = configuration.name
   WHERE activation.attributes.namespace = '{namespace}'

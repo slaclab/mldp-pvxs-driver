@@ -173,6 +173,8 @@ void MLDPPVMetadataWriter::saveSourceMetadata(const std::string&         sourceN
                 merged[k] = v;
             for (const auto& [k, v] : merged)
             {
+                if (v.empty())
+                    continue;
                 auto* attr = req.add_attributes();
                 attr->set_name(k);
                 attr->set_value(v);
@@ -200,6 +202,8 @@ void MLDPPVMetadataWriter::saveSourceMetadata(const std::string&         sourceN
             }
             for (const auto& [k, v] : entry.attributes)
             {
+                if (v.empty())
+                    continue;
                 auto* attr = req.add_attributes();
                 attr->set_name(k);
                 attr->set_value(v);

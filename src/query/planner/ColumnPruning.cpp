@@ -10,6 +10,8 @@
 
 #include <query/planner/ColumnPruning.h>
 
+#include <query/plan/PlanVisit.h>
+
 #include <map>
 #include <set>
 #include <type_traits>
@@ -77,72 +79,113 @@ void collectReferencedColumns(const plan::LogicalNodePtr&                   node
     {
         return;
     }
-
-    if (const auto* scan = std::get_if<plan::LogicalScan>(&node->value))
+    const auto insert = [&columns, &table_aliases](const std::string& qualified)
     {
-        for (const auto& predicate : scan->pushable_predicates)
-        {
-            columns[scan->table_alias].insert(predicate.column == "tag" ? "tags" : predicate.column);
-        }
-        for (const auto& subquery : scan->in_subqueries)
-        {
-            // A local-only IN subquery needs the target field present in the
-            // backend result so the executor can apply the resolved predicate.
-            if (!subquery.predicate.pushable_ops.contains(PredicateOp::IN))
-            {
-                columns[scan->table_alias].insert(subquery.predicate.column == "tag" ? "tags" : subquery.predicate.column);
-            }
-        }
-        return;
-    }
-    if (const auto* filter = std::get_if<plan::LogicalFilter>(&node->value))
-    {
-        for (const auto& predicate : filter->predicates)
-        {
-            const auto alias = predicate.table_alias.empty() ? "" : predicate.table_alias;
-            columns[alias].insert(predicate.column == "tag" ? "tags" : predicate.column);
-        }
-        collectReferencedColumns(filter->input, columns, table_aliases);
-        return;
-    }
-    if (const auto* project = std::get_if<plan::LogicalProject>(&node->value))
-    {
-        for (const auto& column : project->columns)
-        {
-            const auto [alias, name] = splitQualifiedColumn(column, table_aliases);
-            columns[alias].insert(name);
-        }
-        for (const auto& expression : project->expressions)
-        {
-            collectExpressionColumns(expression, columns, table_aliases);
-        }
-        collectReferencedColumns(project->input, columns, table_aliases);
-        return;
-    }
-    if (const auto* sort = std::get_if<plan::LogicalSort>(&node->value))
-    {
-        for (const auto& key : sort->keys)
-        {
-            const auto [alias, name] = splitQualifiedColumn(key.column, table_aliases);
-            columns[alias].insert(name);
-        }
-        collectReferencedColumns(sort->input, columns, table_aliases);
-        return;
-    }
-    if (const auto* limit = std::get_if<plan::LogicalLimit>(&node->value))
-    {
-        collectReferencedColumns(limit->input, columns, table_aliases);
-        return;
-    }
-    if (const auto* join = std::get_if<plan::LogicalJoin>(&node->value))
-    {
-        const auto [left_alias, left_name] = splitQualifiedColumn(join->condition.left_column, table_aliases);
-        const auto [right_alias, right_name] = splitQualifiedColumn(join->condition.right_column, table_aliases);
-        columns[left_alias].insert(left_name);
-        columns[right_alias].insert(right_name);
-        collectReferencedColumns(join->left, columns, table_aliases);
-        collectReferencedColumns(join->right, columns, table_aliases);
-    }
+        const auto [alias, name] = splitQualifiedColumn(qualified, table_aliases);
+        columns[alias].insert(name);
+    };
+    // Every node type is listed: a new one must declare the columns it reads.
+    std::visit(plan::overloaded{
+                   [&](const plan::LogicalScan& scan)
+                   {
+                       for (const auto& predicate : scan.pushable_predicates)
+                       {
+                           columns[scan.table_alias].insert(predicate.column == "tag" ? "tags" : predicate.column);
+                       }
+                       for (const auto& subquery : scan.in_subqueries)
+                       {
+                           // A local-only IN subquery needs the target field present in the
+                           // backend result so the executor can apply the resolved predicate.
+                           if (!subquery.predicate.pushable_ops.contains(PredicateOp::IN))
+                           {
+                               columns[scan.table_alias].insert(subquery.predicate.column == "tag" ? "tags" : subquery.predicate.column);
+                           }
+                       }
+                   },
+                   [&](const plan::LogicalFilter& filter)
+                   {
+                       for (const auto& predicate : filter.predicates)
+                       {
+                           columns[predicate.table_alias].insert(predicate.column == "tag" ? "tags" : predicate.column);
+                       }
+                       const auto group_columns = [&columns](const auto& self, const plan::PlannerPredicateGroup& group) -> void
+                       {
+                           if (group.kind == plan::PlannerPredicateGroup::Kind::LEAF)
+                               columns[group.leaf.table_alias].insert(group.leaf.column == "tag" ? "tags" : group.leaf.column);
+                           for (const auto& child : group.children) self(self, child);
+                       };
+                       for (const auto& group : filter.predicate_groups) group_columns(group_columns, group);
+                       for (const auto& condition : filter.conditions)
+                       {
+                           collectExpressionColumns(condition, columns, table_aliases);
+                       }
+                   },
+                   [&](const plan::LogicalAggregate& aggregate)
+                   {
+                       // Nodes above an aggregate reference its internal output columns; the
+                       // input only needs the key and aggregate argument columns.
+                       columns.clear();
+                       for (const auto& key : aggregate.spec.keys)
+                       {
+                           collectExpressionColumns(key.expression, columns, table_aliases);
+                       }
+                       for (const auto& call : aggregate.spec.aggregates)
+                       {
+                           collectExpressionColumns(call.argument, columns, table_aliases);
+                       }
+                   },
+                   [&](const plan::LogicalWindow& window)
+                   {
+                       // Window outputs are computed here, not read from a scan.
+                       for (const auto& group : window.groups)
+                       {
+                           for (const auto& call : group.calls)
+                           {
+                               columns[""].erase(call.name);
+                               collectExpressionColumns(call.argument, columns, table_aliases);
+                               collectExpressionColumns(call.default_value, columns, table_aliases);
+                           }
+                           for (const auto& expression : group.partition_by)
+                           {
+                               collectExpressionColumns(expression, columns, table_aliases);
+                           }
+                           for (const auto& key : group.order_by)
+                           {
+                               collectExpressionColumns(key.expression, columns, table_aliases);
+                           }
+                       }
+                   },
+                   [&](const plan::LogicalProject& project)
+                   {
+                       for (const auto& column : project.columns)
+                       {
+                           insert(column);
+                       }
+                       for (const auto& expression : project.expressions)
+                       {
+                           collectExpressionColumns(expression, columns, table_aliases);
+                       }
+                       for (const auto& expression : project.distinct_on)
+                       {
+                           collectExpressionColumns(expression, columns, table_aliases);
+                       }
+                   },
+                   [&](const plan::LogicalSort& sort)
+                   {
+                       for (const auto& key : sort.keys)
+                       {
+                           insert(key.column);
+                       }
+                   },
+                   [](const plan::LogicalLimit&) {},
+                   [&](const plan::LogicalJoin& join)
+                   {
+                       insert(join.condition.left_column);
+                       insert(join.condition.right_column);
+                   },
+               },
+               node->value);
+    plan::forEachChild(*node, [&columns, &table_aliases](plan::LogicalNodePtr& child) { collectReferencedColumns(child, columns, table_aliases); });
 }
 
 void collectTableAliases(const plan::LogicalNodePtr& node, std::set<std::string>& table_aliases)
@@ -156,35 +199,12 @@ void collectTableAliases(const plan::LogicalNodePtr& node, std::set<std::string>
         table_aliases.insert(scan->table_alias);
         return;
     }
-    if (const auto* filter = std::get_if<plan::LogicalFilter>(&node->value))
-    {
-        collectTableAliases(filter->input, table_aliases);
-        return;
-    }
-    if (const auto* project = std::get_if<plan::LogicalProject>(&node->value))
-    {
-        collectTableAliases(project->input, table_aliases);
-        return;
-    }
-    if (const auto* sort = std::get_if<plan::LogicalSort>(&node->value))
-    {
-        collectTableAliases(sort->input, table_aliases);
-        return;
-    }
-    if (const auto* limit = std::get_if<plan::LogicalLimit>(&node->value))
-    {
-        collectTableAliases(limit->input, table_aliases);
-        return;
-    }
-    if (const auto* join = std::get_if<plan::LogicalJoin>(&node->value))
-    {
-        collectTableAliases(join->left, table_aliases);
-        collectTableAliases(join->right, table_aliases);
-    }
+    plan::forEachChild(*node, [&table_aliases](plan::LogicalNodePtr& child) { collectTableAliases(child, table_aliases); });
 }
 
 void applyProjectionHint(const plan::LogicalNodePtr&                         node,
-                         const std::map<std::string, std::set<std::string>>& columns)
+                         const std::map<std::string, std::set<std::string>>& columns,
+                         const bool                                          select_all)
 {
     if (!node)
     {
@@ -203,6 +223,7 @@ void applyProjectionHint(const plan::LogicalNodePtr&                         nod
         {
             scan->projection_hint.insert(default_match->second.begin(), default_match->second.end());
         }
+        scan->projection_explicit = !select_all && !scan->projection_hint.empty();
         if (scan->projection_hint.empty())
         {
             for (const auto& column : scan->schema)
@@ -215,31 +236,15 @@ void applyProjectionHint(const plan::LogicalNodePtr&                         nod
         }
         return;
     }
-    if (const auto* filter = std::get_if<plan::LogicalFilter>(&node->value))
-    {
-        applyProjectionHint(filter->input, columns);
-        return;
-    }
-    if (const auto* project = std::get_if<plan::LogicalProject>(&node->value))
-    {
-        applyProjectionHint(project->input, columns);
-        return;
-    }
-    if (const auto* sort = std::get_if<plan::LogicalSort>(&node->value))
-    {
-        applyProjectionHint(sort->input, columns);
-        return;
-    }
-    if (const auto* limit = std::get_if<plan::LogicalLimit>(&node->value))
-    {
-        applyProjectionHint(limit->input, columns);
-        return;
-    }
-    if (const auto* join = std::get_if<plan::LogicalJoin>(&node->value))
-    {
-        applyProjectionHint(join->left, columns);
-        applyProjectionHint(join->right, columns);
-    }
+    // A projection sets whether its scans are explicit; below an aggregate only
+    // the referenced key and argument columns are needed.
+    const bool child_select_all = std::visit(plan::overloaded{
+                                                 [](const plan::LogicalProject& project) { return project.select_all; },
+                                                 [](const plan::LogicalAggregate&) { return false; },
+                                                 [select_all](const auto&) { return select_all; },
+                                             },
+                                             node->value);
+    plan::forEachChild(*node, [&columns, child_select_all](plan::LogicalNodePtr& child) { applyProjectionHint(child, columns, child_select_all); });
 }
 
 } // namespace
@@ -250,6 +255,6 @@ plan::LogicalNodePtr mldp_pvxs_driver::query::planner::applyColumnPruning(plan::
     std::set<std::string>                        table_aliases;
     collectTableAliases(root, table_aliases);
     collectReferencedColumns(root, columns, table_aliases);
-    applyProjectionHint(root, columns);
+    applyProjectionHint(root, columns, true);
     return root;
 }

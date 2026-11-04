@@ -102,6 +102,43 @@ TEST(QueryLexerTest, TokenizesEveryKeywordCaseInsensitively)
     }
 }
 
+TEST(QueryParserTest, ParsesSelectDistinct)
+{
+    const auto& distinct = std::get<SelectStatement>(parseQuery("select distinct pv, value FROM fake.samples"));
+    EXPECT_TRUE(distinct.distinct);
+    EXPECT_FALSE(distinct.select_all);
+    ASSERT_EQ(distinct.columns.size(), 2U);
+    EXPECT_EQ(distinct.columns[0].name, "pv");
+
+    const auto& distinct_all = std::get<SelectStatement>(parseQuery("SELECT DISTINCT * FROM fake.samples"));
+    EXPECT_TRUE(distinct_all.distinct);
+    EXPECT_TRUE(distinct_all.select_all);
+
+    EXPECT_FALSE(std::get<SelectStatement>(parseQuery("SELECT pv FROM fake.samples")).distinct);
+
+    const auto& distinct_on = std::get<SelectStatement>(parseQuery("SELECT DISTINCT ON (pv, value) pv, time FROM fake.samples"));
+    EXPECT_TRUE(distinct_on.distinct);
+    EXPECT_EQ(distinct_on.distinct_on.size(), 2U);
+    EXPECT_EQ(distinct_on.columns.size(), 2U);
+    EXPECT_TRUE(distinct.distinct_on.empty());
+}
+
+TEST(QueryParserTest, ParsesGroupByHavingAndAggregateCalls)
+{
+    const auto parsed = parseQuery("SELECT pv, COUNT(*), COUNT(DISTINCT value) FROM fake.samples GROUP BY pv HAVING COUNT(*) > 1 ORDER BY 2 DESC");
+    const auto& statement = std::get<SelectStatement>(parsed);
+    ASSERT_EQ(statement.group_by.size(), 1U);
+    ASSERT_NE(statement.having, nullptr);
+    ASSERT_EQ(statement.select_items.size(), 3U);
+    const auto& star = std::get<FunctionCall>(statement.select_items[1].expression->value);
+    EXPECT_TRUE(star.star);
+    EXPECT_TRUE(star.arguments.empty());
+    const auto& distinct = std::get<FunctionCall>(statement.select_items[2].expression->value);
+    EXPECT_TRUE(distinct.distinct);
+    EXPECT_EQ(distinct.arguments.size(), 1U);
+    EXPECT_TRUE(std::get<SelectStatement>(parseQuery("SELECT pv FROM fake.samples")).group_by.empty());
+}
+
 TEST(QueryParserTest, ParsesCallableDiscoveryStatements)
 {
     EXPECT_TRUE(std::holds_alternative<ShowFunctionsStatement>(parseQuery("SHOW FUNCTIONS")));
@@ -110,7 +147,7 @@ TEST(QueryParserTest, ParsesCallableDiscoveryStatements)
 
 TEST(QueryParserTest, ParsesNullPredicates)
 {
-    const auto statement = parseQuery("SELECT * FROM mldp.configuration_activation WHERE end_time IS NULL AND time >= NOW - 7m AND end_time IS NOT NULL");
+    const auto statement = parseQuery("SELECT * FROM mldp.configuration_activation WHERE end_time IS NULL AND start_time >= NOW - 7m AND end_time IS NOT NULL");
     const auto& select = std::get<SelectStatement>(statement);
     ASSERT_EQ(select.predicates.size(), 3U);
     EXPECT_TRUE(std::holds_alternative<IsNullPredicate>(select.predicates[0]));
@@ -118,9 +155,46 @@ TEST(QueryParserTest, ParsesNullPredicates)
     EXPECT_TRUE(std::holds_alternative<IsNotNullPredicate>(select.predicates[2]));
 }
 
+TEST(QueryParserTest, SplitsWhereIntoTopLevelConjunctsAndOrNotGroups)
+{
+    using Kind = WherePredicateTree::Kind;
+    const auto statement = parseQuery(
+        "SELECT * FROM mldp.configuration_activation WHERE start_time >= NOW - 7d "
+        "AND (attributes.note LIKE '%XLEAP%' OR attributes.description LIKE '%XLEAP%') "
+        "AND NOT end_time IS NULL AND config_name BETWEEN 'a' AND 'z'");
+    const auto& select = std::get<SelectStatement>(statement);
+    ASSERT_EQ(select.predicates.size(), 2U);
+    EXPECT_TRUE(std::holds_alternative<OpPredicate>(select.predicates[0]));
+    EXPECT_TRUE(std::holds_alternative<RangePredicate>(select.predicates[1]));
+    ASSERT_EQ(select.predicate_groups.size(), 2U);
+    EXPECT_EQ(select.predicate_groups[0].kind, Kind::OR);
+    ASSERT_EQ(select.predicate_groups[0].children.size(), 2U);
+    EXPECT_EQ(std::get<OpPredicate>(select.predicate_groups[0].children[1].leaf).column.name, "attributes.description");
+    EXPECT_EQ(select.predicate_groups[1].kind, Kind::NOT);
+    ASSERT_EQ(select.predicate_groups[1].children.size(), 1U);
+    // IS NULL markers are restored inside groups too.
+    EXPECT_TRUE(std::holds_alternative<IsNullPredicate>(select.predicate_groups[1].children[0].leaf));
+}
+
+TEST(QueryParserTest, AndBindsTighterThanOrInWhere)
+{
+    using Kind = WherePredicateTree::Kind;
+    const auto  statement = parseQuery("SELECT * FROM t WHERE a = 1 OR b = 2 AND c = 3 OR (d BETWEEN 1 AND 2 OR e = 5)");
+    const auto& select = std::get<SelectStatement>(statement);
+    EXPECT_TRUE(select.predicates.empty());
+    ASSERT_EQ(select.predicate_groups.size(), 1U);
+    const auto& top = select.predicate_groups[0];
+    ASSERT_EQ(top.kind, Kind::OR);
+    ASSERT_EQ(top.children.size(), 3U);
+    EXPECT_EQ(top.children[0].kind, Kind::LEAF);
+    EXPECT_EQ(top.children[1].kind, Kind::AND);
+    EXPECT_EQ(top.children[2].kind, Kind::OR);
+    EXPECT_TRUE(std::holds_alternative<RangePredicate>(top.children[2].children[0].leaf));
+}
+
 TEST(QueryParserTest, ParsesExpressionPrecedenceAndDurationLiterals)
 {
-    const auto statement = parseQuery("SELECT value + 2 * 3, activation.time + 2D FROM samples");
+    const auto statement = parseQuery("SELECT value + 2 * 3, activation.start_time + 2D FROM samples");
     const auto& select = std::get<SelectStatement>(statement);
     ASSERT_EQ(select.select_items.size(), 2U);
     const auto& first = std::get<BinaryExpression>(select.select_items[0].expression->value);
@@ -296,6 +370,23 @@ TEST(QueryParserTest, ParsesMultiKeyOrderBy)
     EXPECT_EQ(*select.limit, 10);
 }
 
+TEST(QueryParserTest, ParsesSelectAliasesWithAndWithoutAs)
+{
+    const auto statement = parseQuery(
+        "SELECT pv x, MIN(time) min_time, MAX(time) AS max_time, ts.value v, value FROM mldp.time_series ts");
+    const auto& select = std::get<SelectStatement>(statement);
+
+    ASSERT_EQ(select.select_items.size(), 5U);
+    EXPECT_EQ(select.select_items[0].alias.value_or(""), "x");
+    EXPECT_EQ(select.select_items[1].alias.value_or(""), "min_time");
+    EXPECT_EQ(select.select_items[2].alias.value_or(""), "max_time");
+    EXPECT_EQ(select.select_items[3].alias.value_or(""), "v");
+    EXPECT_FALSE(select.select_items[4].alias.has_value());
+    EXPECT_EQ(select.from.alias.value_or(""), "ts");
+
+    EXPECT_THROW((void)parseQuery("SELECT pv a b FROM mldp.time_series"), ParseError);
+}
+
 TEST(QueryParserTest, ParsesNestedFunctionExpressionsInPredicateSelectAndOrderBy)
 {
     const auto statement = parseQuery(
@@ -340,7 +431,7 @@ TEST(QueryParserTest, ParsesWideTablePvAndWindowSubqueries)
     const auto statement = parseQuery(
         "SELECT * FROM mldp.time_series_table "
         "WHERE pv IN (SELECT pv FROM mldp.pv_metadata WHERE tag = 'magnet') "
-        "AND window IN (SELECT time, end_time FROM mldp.configuration_activation WHERE attributes.namespace = 'mldp_sample' "
+        "AND window IN (SELECT start_time, end_time FROM mldp.configuration_activation WHERE attributes.namespace = 'mldp_sample' "
         "AND end_time IS NOT NULL)");
     const auto& select = std::get<SelectStatement>(statement);
     ASSERT_EQ(select.predicates.size(), 2);
@@ -357,7 +448,7 @@ TEST(QueryParserTest, ParsesWindowSubqueryShardOptions)
 {
     const auto statement = parseQuery(
         "SELECT * FROM mldp.time_series WHERE pv = 'PV:A' "
-        "AND window IN (SELECT time, end_time FROM mldp.configuration_activation; slice 5s, series_per_shard 2)");
+        "AND window IN (SELECT start_time, end_time FROM mldp.configuration_activation; slice 5s, series_per_shard 2)");
     const auto& select = std::get<SelectStatement>(statement);
     ASSERT_EQ(select.predicates.size(), 2U);
     const auto& window = std::get<InPredicate>(select.predicates[1]);
@@ -486,6 +577,45 @@ TEST(QueryParserTest, ParsesDerivedTableSourcesWithOptionalAliases)
     const auto& in = std::get<InPredicate>(in_select.predicates.front());
     EXPECT_NE(in.subquery, nullptr);
     EXPECT_EQ(in.subquery->from.table_name, "mldp.time_series");
+}
+
+TEST(QueryParserTest, ParsesUnionChainsWithUnionLevelOrderAndLimit)
+{
+    const auto  statement = parseQuery("SELECT pv FROM a UNION ALL SELECT pv FROM b UNION SELECT pv FROM c ORDER BY pv LIMIT 5");
+    const auto& select = std::get<SelectStatement>(statement);
+    EXPECT_EQ(select.from.table_name, "a");
+    ASSERT_EQ(select.set_operations.size(), 2U);
+    EXPECT_TRUE(select.set_operations[0].all);
+    EXPECT_FALSE(select.set_operations[1].all);
+    EXPECT_EQ(select.set_operations[1].query->from.table_name, "c");
+    // Trailing ORDER BY / LIMIT bind to the union, not to the last branch.
+    EXPECT_EQ(select.order_by.size(), 1U);
+    EXPECT_EQ(select.limit.value_or(0), 5U);
+    EXPECT_TRUE(select.set_operations[1].query->order_by.empty());
+    EXPECT_FALSE(select.set_operations[1].query->limit.has_value());
+
+    // Parenthesised branches keep their own LIMIT; a limited head becomes a derived table.
+    const auto  parenthesised = parseQuery("(SELECT pv FROM a LIMIT 1) UNION (SELECT pv FROM b LIMIT 2)");
+    const auto& paren_select = std::get<SelectStatement>(parenthesised);
+    ASSERT_NE(paren_select.from.derived_query, nullptr);
+    EXPECT_EQ(paren_select.from.derived_query->limit.value_or(0), 1U);
+    ASSERT_EQ(paren_select.set_operations.size(), 1U);
+    EXPECT_EQ(paren_select.set_operations[0].query->limit.value_or(0), 2U);
+
+    const auto  derived = parseQuery("SELECT pv FROM (SELECT pv FROM a UNION SELECT pv FROM b) u");
+    const auto& derived_select = std::get<SelectStatement>(derived);
+    ASSERT_NE(derived_select.from.derived_query, nullptr);
+    EXPECT_EQ(derived_select.from.derived_query->set_operations.size(), 1U);
+
+    const auto  plain = parseQuery("SELECT pv FROM a ORDER BY pv LIMIT 3");
+    const auto& plain_select = std::get<SelectStatement>(plain);
+    EXPECT_TRUE(plain_select.set_operations.empty());
+    EXPECT_EQ(plain_select.from.table_name, "a");
+    EXPECT_EQ(plain_select.limit.value_or(0), 3U);
+
+    EXPECT_NO_THROW(parseQuery("EXPLAIN SELECT pv FROM a UNION ALL SELECT pv FROM b"));
+    EXPECT_NO_THROW(parseQuery("CREATE TABLE t AS SELECT pv FROM a UNION SELECT pv FROM b"));
+    EXPECT_THROW(parseQuery("SELECT pv FROM a UNION"), std::exception);
 }
 
 TEST(QueryParserTest, ParsesInnerLeftAndMultiJoinChains)

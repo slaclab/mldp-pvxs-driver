@@ -241,6 +241,75 @@ pv-show-columns: "hostName,iocName"
     (void)mockServer;
 }
 
+TEST(EpicsDSMetadataReaderPVListTest, AppliesAliasAndOriginalName)
+{
+    auto mockServer = std::make_unique<MockDSServer>("test:ds:pv-alias");
+    auto bus        = std::make_shared<MockDataBus>();
+
+    auto cfg = makeConfigFromYaml(R"yaml(
+name: pv-alias-reader
+service: test:ds:pv-alias
+query: "%"
+timeout-sec: 5.0
+source-name-column: channelName
+tags-column: tags
+rescan-interval-sec: 0.0
+pvs:
+  - name: BPMS:IN20:221:X
+    alias: BPMS_IN20_221_X
+    original-name: BPM-IN20-221-X
+  - name: VPIO:IN20:111:PRES
+    alias: VPIO_IN20_111_PRES
+  - name: BPMS:IN20:221:Y
+pv-show-columns: "hostName,iocName"
+)yaml");
+
+    auto reader = std::make_unique<EpicsDSMetadataReader>(bus, nullptr, cfg);
+    ASSERT_TRUE(waitForSnapshot(bus, 4, std::chrono::milliseconds(5000)));
+
+    const auto snapshot = bus->snapshot();
+    ASSERT_EQ(snapshot.size(), 4u);
+
+    // Entry 1: original-name renames the record; the real PV name and the
+    // explicit alias are both published as aliases. The DS lookup still used the
+    // real PV name, proven by the attributes coming back populated.
+    ASSERT_TRUE(isSourceMetadata(snapshot[1]));
+    const auto& renamedPayload = asSourceMetadata(snapshot[1]);
+    EXPECT_EQ(renamedPayload.root_source_name, "BPM-IN20-221-X");
+    ASSERT_EQ(renamedPayload.sources.size(), 1u);
+    ASSERT_TRUE(renamedPayload.sources.count("BPM-IN20-221-X") > 0);
+    const auto& renamed = renamedPayload.sources.at("BPM-IN20-221-X");
+    EXPECT_EQ(renamed.attributes.at("hostName"), "cpu-in20-bpm1");
+    ASSERT_TRUE(renamed.aliases.has_value());
+    const auto& renamedAliases = renamed.aliases.value();
+    ASSERT_EQ(renamedAliases.size(), 2u);
+    EXPECT_NE(std::find(renamedAliases.begin(), renamedAliases.end(), "BPMS:IN20:221:X"),
+              renamedAliases.end());
+    EXPECT_NE(std::find(renamedAliases.begin(), renamedAliases.end(), "BPMS_IN20_221_X"),
+              renamedAliases.end());
+
+    // Entry 2: alias only - the record keeps the real PV name as its identity.
+    ASSERT_TRUE(isSourceMetadata(snapshot[2]));
+    const auto& aliasOnlyPayload = asSourceMetadata(snapshot[2]);
+    EXPECT_EQ(aliasOnlyPayload.root_source_name, "VPIO:IN20:111:PRES");
+    ASSERT_TRUE(aliasOnlyPayload.sources.count("VPIO:IN20:111:PRES") > 0);
+    const auto& aliasOnly = aliasOnlyPayload.sources.at("VPIO:IN20:111:PRES");
+    ASSERT_TRUE(aliasOnly.aliases.has_value());
+    ASSERT_EQ(aliasOnly.aliases.value().size(), 1u);
+    EXPECT_EQ(aliasOnly.aliases.value()[0], "VPIO_IN20_111_PRES");
+
+    // Entry 3: neither key - aliases stays unset so the MLDP writer preserves
+    // whatever aliases are already registered server-side.
+    ASSERT_TRUE(isSourceMetadata(snapshot[3]));
+    const auto& plainPayload = asSourceMetadata(snapshot[3]);
+    EXPECT_EQ(plainPayload.root_source_name, "BPMS:IN20:221:Y");
+    ASSERT_TRUE(plainPayload.sources.count("BPMS:IN20:221:Y") > 0);
+    EXPECT_FALSE(plainPayload.sources.at("BPMS:IN20:221:Y").aliases.has_value());
+
+    (void)reader;
+    (void)mockServer;
+}
+
 TEST(EpicsDSMetadataReaderPVListTest, UsesDefaultPVShowColumnsWhenOmitted)
 {
     auto mockServer = std::make_unique<MockDSServer>("test:ds:pv-default-show");

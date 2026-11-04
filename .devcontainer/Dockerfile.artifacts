@@ -75,6 +75,7 @@ RUN dnf update -y && \
       libgcc \
       libstdc++ \
       readline \
+      libedit \
       ncurses-libs && \
     dnf clean all && \
     rm -rf /var/cache/dnf

@@ -37,7 +37,7 @@ static std::string minimalYaml()
     return R"yaml(
 name: test-reader
 base-url: http://localhost:8080
-experiments:
+accel:
   - lcls
   - facet
 lookahead-days: 30
@@ -52,9 +52,9 @@ TEST(SlacCalendarReaderConfigTest, ParsesMinimalConfig)
     EXPECT_TRUE(c.valid());
     EXPECT_EQ(c.name(), "test-reader");
     EXPECT_EQ(c.baseUrl(), "http://localhost:8080");
-    ASSERT_EQ(c.experiments().size(), 2u);
-    EXPECT_EQ(c.experiments()[0], "lcls");
-    EXPECT_EQ(c.experiments()[1], "facet");
+    ASSERT_EQ(c.accels().size(), 2u);
+    EXPECT_EQ(c.accels()[0], "lcls");
+    EXPECT_EQ(c.accels()[1], "facet");
     EXPECT_EQ(c.lookaheadDays(), 30);
     EXPECT_EQ(c.lookbackDays(), 1);
     EXPECT_FALSE(c.startDate().has_value());
@@ -63,7 +63,7 @@ TEST(SlacCalendarReaderConfigTest, ParsesMinimalConfig)
     EXPECT_EQ(c.totalTimeoutSec(), 60L);
     EXPECT_TRUE(c.tlsVerifyPeer());
     EXPECT_TRUE(c.tlsVerifyHost());
-    EXPECT_EQ(c.eventLimit(), 1000);
+    EXPECT_EQ(c.fetchWindowDays(), 7);
 }
 
 TEST(SlacCalendarReaderConfigTest, ParsesFullConfig)
@@ -71,7 +71,7 @@ TEST(SlacCalendarReaderConfigTest, ParsesFullConfig)
     const auto cfg = makeConfigFromYaml(R"yaml(
 name: full-reader
 base-url: https://api.slac.stanford.edu/calendar
-experiments:
+accel:
   - lcls
 lookahead-days: 14
 lookback-days: 2
@@ -81,7 +81,7 @@ connect-timeout-sec: 10
 total-timeout-sec: 120
 tls-verify-peer: false
 tls-verify-host: false
-event-limit: 500
+fetch-window-days: 3
 )yaml");
 
     SlacCalendarReaderConfig c(cfg);
@@ -95,14 +95,14 @@ event-limit: 500
     EXPECT_EQ(c.totalTimeoutSec(), 120L);
     EXPECT_FALSE(c.tlsVerifyPeer());
     EXPECT_FALSE(c.tlsVerifyHost());
-    EXPECT_EQ(c.eventLimit(), 500);
+    EXPECT_EQ(c.fetchWindowDays(), 3);
 }
 
 TEST(SlacCalendarReaderConfigTest, ThrowsWhenNameMissing)
 {
     assertThrows(makeConfigFromYaml(R"yaml(
 base-url: http://localhost
-experiments:
+accel:
   - lcls
 lookahead-days: 7
 )yaml"));
@@ -112,13 +112,13 @@ TEST(SlacCalendarReaderConfigTest, ThrowsWhenBaseUrlMissing)
 {
     assertThrows(makeConfigFromYaml(R"yaml(
 name: r
-experiments:
+accel:
   - lcls
 lookahead-days: 7
 )yaml"));
 }
 
-TEST(SlacCalendarReaderConfigTest, ThrowsWhenExperimentsMissing)
+TEST(SlacCalendarReaderConfigTest, ThrowsWhenAccelMissing)
 {
     assertThrows(makeConfigFromYaml(R"yaml(
 name: r
@@ -132,7 +132,7 @@ TEST(SlacCalendarReaderConfigTest, ThrowsWhenLookaheadDaysMissing)
     assertThrows(makeConfigFromYaml(R"yaml(
 name: r
 base-url: http://localhost
-experiments:
+accel:
   - lcls
 )yaml"));
 }
@@ -142,7 +142,7 @@ TEST(SlacCalendarReaderConfigTest, ThrowsWhenLookaheadDaysZero)
     assertThrows(makeConfigFromYaml(R"yaml(
 name: r
 base-url: http://localhost
-experiments:
+accel:
   - lcls
 lookahead-days: 0
 )yaml"));
@@ -153,7 +153,7 @@ TEST(SlacCalendarReaderConfigTest, ThrowsWhenLookbackDaysNegative)
     assertThrows(makeConfigFromYaml(R"yaml(
 name: r
 base-url: http://localhost
-experiments:
+accel:
   - lcls
 lookahead-days: 7
 lookback-days: -1
@@ -165,7 +165,7 @@ TEST(SlacCalendarReaderConfigTest, ThrowsWhenTotalTimeoutLessThanConnect)
     assertThrows(makeConfigFromYaml(R"yaml(
 name: r
 base-url: http://localhost
-experiments:
+accel:
   - lcls
 lookahead-days: 7
 connect-timeout-sec: 60
@@ -178,7 +178,7 @@ TEST(SlacCalendarReaderConfigTest, ThrowsWhenStartDateBadFormat)
     assertThrows(makeConfigFromYaml(R"yaml(
 name: r
 base-url: http://localhost
-experiments:
+accel:
   - lcls
 lookahead-days: 7
 start-date: "01/01/2026"
@@ -190,7 +190,7 @@ TEST(SlacCalendarReaderConfigTest, ParsesStartDateWithTime)
     const auto cfg = makeConfigFromYaml(R"yaml(
 name: r
 base-url: http://localhost
-experiments:
+accel:
   - lcls
 lookahead-days: 7
 start-date: "2026-01-01T08:30:00"
@@ -206,7 +206,7 @@ TEST(SlacCalendarReaderConfigTest, ParsesEndDateDateOnly)
     const auto cfg = makeConfigFromYaml(R"yaml(
 name: r
 base-url: http://localhost
-experiments:
+accel:
   - lcls
 start-date: "2026-01-01"
 end-date: "2026-02-01"
@@ -222,7 +222,7 @@ TEST(SlacCalendarReaderConfigTest, ParsesEndDateWithTime)
     const auto cfg = makeConfigFromYaml(R"yaml(
 name: r
 base-url: http://localhost
-experiments:
+accel:
   - lcls
 start-date: "2026-01-01T00:00:00"
 end-date: "2026-02-01T23:59:59"
@@ -238,7 +238,7 @@ TEST(SlacCalendarReaderConfigTest, ThrowsWhenEndDateWithoutStartDate)
     assertThrows(makeConfigFromYaml(R"yaml(
 name: r
 base-url: http://localhost
-experiments:
+accel:
   - lcls
 end-date: "2026-02-01"
 )yaml"));
@@ -249,7 +249,7 @@ TEST(SlacCalendarReaderConfigTest, ThrowsWhenEndDateBeforeStartDate)
     assertThrows(makeConfigFromYaml(R"yaml(
 name: r
 base-url: http://localhost
-experiments:
+accel:
   - lcls
 start-date: "2026-03-01"
 end-date: "2026-01-01"
@@ -261,7 +261,7 @@ TEST(SlacCalendarReaderConfigTest, ThrowsWhenEndDateWithLookaheadDays)
     assertThrows(makeConfigFromYaml(R"yaml(
 name: r
 base-url: http://localhost
-experiments:
+accel:
   - lcls
 start-date: "2026-01-01"
 end-date: "2026-02-01"
@@ -274,7 +274,7 @@ TEST(SlacCalendarReaderConfigTest, ThrowsWhenEndDateWithRescanInterval)
     assertThrows(makeConfigFromYaml(R"yaml(
 name: r
 base-url: http://localhost
-experiments:
+accel:
   - lcls
 start-date: "2026-01-01"
 end-date: "2026-02-01"
@@ -287,7 +287,7 @@ TEST(SlacCalendarReaderConfigTest, ParsesEndDateWithTimezone)
     const auto cfg = makeConfigFromYaml(R"yaml(
 name: r
 base-url: http://localhost
-experiments:
+accel:
   - lcls
 start-date: "2025-01-01T00:00:00Z"
 end-date: "2025-12-31T23:59:59Z"
@@ -305,7 +305,7 @@ TEST(SlacCalendarReaderConfigTest, ParsesEndDateWithPosixTimezone)
     const auto cfg = makeConfigFromYaml(R"yaml(
 name: r
 base-url: http://localhost
-experiments:
+accel:
   - lcls
 start-date: "2025-01-01T00:00:00-08:00"
 end-date: "2025-12-31T23:59:59-08:00"
@@ -321,7 +321,7 @@ TEST(SlacCalendarReaderConfigTest, ParsesCategoryField)
     const auto cfg = makeConfigFromYaml(R"yaml(
 name: r
 base-url: http://localhost
-experiments:
+accel:
   - lcls
 lookahead-days: 7
 category: "MY-CAT"
@@ -343,7 +343,7 @@ TEST(SlacCalendarReaderConfigTest, ThrowsWhenCategoryEmpty)
     assertThrows(makeConfigFromYaml(R"yaml(
 name: r
 base-url: http://localhost
-experiments:
+accel:
   - lcls
 lookahead-days: 7
 category: ""
@@ -355,7 +355,7 @@ TEST(SlacCalendarReaderConfigTest, LookaheadDaysNotRequiredWhenEndDateSet)
     const auto cfg = makeConfigFromYaml(R"yaml(
 name: r
 base-url: http://localhost
-experiments:
+accel:
   - lcls
 start-date: "2026-01-01"
 end-date: "2026-02-01"

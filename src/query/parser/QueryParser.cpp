@@ -454,7 +454,7 @@ QueryStatement QueryParser::parse(const std::string_view sql)
     };
     for (auto& item : select.select_items) restore_expression(restore_expression, item.expression);
     for (auto& order_by : select.order_by) restore_expression(restore_expression, order_by.expression);
-    for (auto& predicate : select.predicates)
+    const auto restore_predicate = [&restore, &restore_expression](WherePredicate& predicate)
     {
         if (auto* equal = std::get_if<EqPredicate>(&predicate))
         {
@@ -478,7 +478,19 @@ QueryStatement QueryParser::parse(const std::string_view sql)
             restore(op->value);
             restore_expression(restore_expression, op->expression);
         }
-    }
+    };
+    // Applies a leaf fix-up to the top-level conjuncts and every leaf inside OR/NOT groups.
+    const auto for_each_predicate = [&select](const auto& apply)
+    {
+        for (auto& predicate : select.predicates) apply(predicate);
+        const auto visit = [&apply](const auto& self, WherePredicateTree& node) -> void
+        {
+            if (node.kind == WherePredicateTree::Kind::LEAF) apply(node.leaf);
+            for (auto& child : node.children) self(self, child);
+        };
+        for (auto& group : select.predicate_groups) visit(visit, group);
+    };
+    for_each_predicate(restore_predicate);
     if (!derived.empty() || !in_subqueries.empty() || !is_not_null.empty())
     {
         if (!std::holds_alternative<SelectStatement>(result)) return result;
@@ -488,7 +500,7 @@ QueryStatement QueryParser::parse(const std::string_view sql)
         };
         attach(select.from);
         for (auto& join : select.joins) attach(join.table);
-        for (auto& predicate : select.predicates)
+        for_each_predicate([&](WherePredicate& predicate)
         {
             if (auto* in = std::get_if<InPredicate>(&predicate); in != nullptr && in->values.size() == 1 && std::holds_alternative<std::string>(in->values.front()))
             {
@@ -507,7 +519,7 @@ QueryStatement QueryParser::parse(const std::string_view sql)
                     ? WherePredicate{IsNotNullPredicate{.column = op->column}}
                     : WherePredicate{IsNullPredicate{.column = op->column}};
             }
-        }
+        });
         return result;
     }
     return result;

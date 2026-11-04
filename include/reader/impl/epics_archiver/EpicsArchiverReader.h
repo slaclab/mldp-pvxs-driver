@@ -153,13 +153,17 @@ private:
                        const std::string& pv,
                        const std::string& from,
                        const std::optional<std::string>& to);
+    void fetchPvSafely(WorkerContext& ctx,
+                       std::size_t index,
+                       const std::string& pv,
+                       const std::string& from,
+                       const std::optional<std::string>& to);
 
     void flushChunk(WorkerContext& ctx, PbChunkState& state);
     void finalizeChunk(WorkerContext& ctx, PbChunkState& state);
     void parsePbHttpLineIntoState(WorkerContext& ctx, const std::string& line, PbChunkState& state);
     void submitPendingBatch(WorkerContext& ctx, const std::string& pv);
     void flushAllPendingBatches(WorkerContext& ctx);
-    void flushExpiredPendingBatches(WorkerContext& ctx);
 
     bool pushBatch(util::bus::IDataBus::EventBatch batch);
 

@@ -26,6 +26,49 @@
 
 using namespace mldp_pvxs_driver::query;
 
+plan::PhysicalNodePtr QueryPlanner::planUnion(const SelectStatement& select) const
+{
+    // Left-associative fold: consecutive UNION ALL branches share one node, and each
+    // UNION (distinct) closes the rows accumulated so far into a deduplicating node.
+    auto current = plan(QueryStatement{setOperationHead(select)});
+    for (const auto& operand : select.set_operations)
+    {
+        if (!operand.query) throw plan::PlannerException(plan::PlanError{.message = "UNION branch is empty"});
+        auto branch = plan(QueryStatement{*operand.query});
+        auto* open_all = std::get_if<plan::PhysicalUnion>(&current->value);
+        if (operand.all && open_all != nullptr && !open_all->distinct)
+        {
+            open_all->inputs.push_back(std::move(branch));
+            continue;
+        }
+        current = plan::makeNode(plan::PhysicalUnion{.inputs = {std::move(current), std::move(branch)}, .distinct = !operand.all});
+    }
+
+    if (!select.order_by.empty())
+    {
+        std::vector<plan::SortKey> keys;
+        for (const auto& item : select.order_by)
+        {
+            const QualifiedColumn* column = &item.column;
+            if (item.expression)
+            {
+                column = std::get_if<QualifiedColumn>(&item.expression->value);
+                if (column == nullptr)
+                    throw plan::PlannerException(plan::PlanError{.message = "ORDER BY over a UNION accepts only output column names"});
+            }
+            if (column->name.empty()) throw plan::PlannerException(plan::PlanError{.message = "ORDER BY over a UNION accepts only output column names"});
+            keys.push_back(plan::SortKey{.column = column->name, .expression = nullptr, .descending = item.direction == SortDirection::DESCENDING});
+        }
+        current = plan::makeNode(plan::PhysicalSort{.input = std::move(current), .keys = std::move(keys)});
+    }
+    if (select.limit)
+    {
+        current = plan::makeNode(plan::PhysicalLimit{.input = std::move(current), .limit = *select.limit});
+    }
+    planner::propagateScanRowLimit(current, std::nullopt);
+    return current;
+}
+
 QueryPlanner::QueryPlanner(std::shared_ptr<QueryTableCatalog> catalog)
     : catalog_(std::move(catalog))
 {
@@ -82,6 +125,10 @@ plan::PhysicalNodePtr QueryPlanner::plan(const QueryStatement& statement) const
     }
 
     const auto& select = std::get<SelectStatement>(statement);
+    if (!select.set_operations.empty())
+    {
+        return planUnion(select);
+    }
     auto bound = planner::bindSelect(select, catalog_.get());
     bound = planner::typeCheckSelect(std::move(bound));
     auto logical = planner::buildLogicalPlan(bound);

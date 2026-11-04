@@ -333,6 +333,96 @@ TEST(EpicsArchiverReaderHttpIntegrationTest, SplitsPublishedBatchesByConfiguredS
     }
 }
 
+// Verifies a pending PV batch is flushed before its timestamps reach max-batch-span-sec,
+// even when the sample-count limit has not been reached (MLDP rejects frames spanning
+// more than its bucket limit).
+TEST(EpicsArchiverReaderHttpIntegrationTest, SplitsPendingBatchWhenSpanExceedsLimit)
+{
+    MockArchiverPbHttpServer::GenerationConfig gen_cfg;
+    gen_cfg.min_events_per_second = 4;
+    gen_cfg.max_events_per_second = 4;
+    gen_cfg.random_seed = 321;
+
+    MockArchiverPbHttpServer server(gen_cfg);
+    server.start();
+    ASSERT_GT(server.port(), 0);
+
+    auto bus = std::make_shared<MockEventBusPush>();
+
+    const std::string yaml = std::string(R"(
+        name: archiver-http-span-split
+        hostname: ")") + server.baseUrl() +
+                             R"("
+        start-date: "2026-02-25T08:00:00.000Z"
+        end-date: "2026-02-25T08:00:05.000Z"
+        pv-samples-per-batch: 1000
+        max-batch-span-sec: 1
+        pvs:
+          - name: "TEST:PV:DOUBLE"
+    )";
+
+    auto reader_cfg = makeConfigFromYaml(yaml);
+    auto reader = std::make_unique<EpicsArchiverReader>(bus, nullptr, reader_cfg);
+    ASSERT_TRUE(waitForMockRequestStartAndCompletion(server, std::chrono::seconds(2)));
+    // 20 samples over 5s with a 1s span limit -> span-triggered batches plus the final
+    // partial batch flushed at fetch completion; none reaches the count limit.
+    ASSERT_TRUE(waitForAtLeastPublishedBatches(*bus, 4u, std::chrono::seconds(2)));
+
+    const auto batches = bus->snapshot();
+    std::size_t total_samples = 0;
+    for (const auto& batch : batches)
+    {
+        ASSERT_EQ(asTimeSeries(batch).frames.size(), 1u);
+        const auto& ts = asTimeSeries(batch).frames[0].timestamps;
+        ASSERT_FALSE(ts.empty());
+        total_samples += ts.size();
+        const auto first_ns = ts.front().epoch_seconds * 1'000'000'000ULL + ts.front().nanoseconds;
+        const auto last_ns = ts.back().epoch_seconds * 1'000'000'000ULL + ts.back().nanoseconds;
+        EXPECT_LT(last_ns - first_ns, 1'000'000'000ULL);
+    }
+    EXPECT_EQ(total_samples, 20u);
+}
+
+// Verifies one undecodable PV stream does not stop the worker: remaining PVs are
+// still fetched and published.
+TEST(EpicsArchiverReaderHttpIntegrationTest, WorkerContinuesAfterMalformedPvStream)
+{
+    MockArchiverPbHttpServer::GenerationConfig gen_cfg;
+    gen_cfg.min_events_per_second = 4;
+    gen_cfg.max_events_per_second = 4;
+
+    MockArchiverPbHttpServer server(gen_cfg);
+    server.start();
+    ASSERT_GT(server.port(), 0);
+
+    auto bus = std::make_shared<MockEventBusPush>();
+
+    const std::string yaml = std::string(R"(
+        name: archiver-http-bad-pv
+        hostname: ")") + server.baseUrl() +
+                             R"("
+        start-date: "2026-02-25T08:00:00.000Z"
+        end-date: "2026-02-25T08:00:02.000Z"
+        fetch-threads: 1
+        pvs:
+          - name: "TEST:PV:BAD_CORRUPT"
+          - name: "TEST:PV:GOOD"
+    )";
+
+    auto reader_cfg = makeConfigFromYaml(yaml);
+    auto reader = std::make_unique<EpicsArchiverReader>(bus, nullptr, reader_cfg);
+    ASSERT_TRUE(server.waitForRequestCount(2u, std::chrono::seconds(2)));
+    ASSERT_TRUE(waitForAtLeastPublishedBatches(*bus, 1u, std::chrono::seconds(2)));
+
+    std::set<std::string> sources;
+    for (const auto& batch : bus->snapshot())
+    {
+        sources.insert(getRootSourceName(batch));
+    }
+    EXPECT_TRUE(sources.contains("TEST:PV:GOOD"));
+    EXPECT_FALSE(sources.contains("TEST:PV:BAD_CORRUPT"));
+}
+
 // Verifies destroying the reader during a long PB/HTTP download cancels the in-flight HTTP stream.
 TEST(EpicsArchiverReaderHttpIntegrationTest, DestructorAbortsOngoingLongDownload)
 {
@@ -644,9 +734,10 @@ TEST(EpicsArchiverReaderHttpIntegrationTest, ShutdownFlushesRemainingPendingSamp
 }
 
 // Verifies that incomplete batches are NOT flushed at shutdown when batch-flush-interval-ms is disabled.
-TEST(EpicsArchiverReaderHttpIntegrationTest, ShutdownDoesNotFlushWhenFlushIntervalDisabled)
+TEST(EpicsArchiverReaderHttpIntegrationTest, CompletedFetchFlushesPartialBatchWithoutFlushInterval)
 {
-    // 4 samples; batch size 8 (never full); no flush interval → samples dropped at shutdown.
+    // 4 samples; batch size 8 (never full); no flush interval → the partial batch is
+    // still submitted once the PV stream completes.
     MockArchiverPbHttpServer::GenerationConfig gen_cfg;
     gen_cfg.min_events_per_second = 4;
     gen_cfg.max_events_per_second = 4;
@@ -660,7 +751,7 @@ TEST(EpicsArchiverReaderHttpIntegrationTest, ShutdownDoesNotFlushWhenFlushInterv
     auto bus = std::make_shared<MockEventBusPush>();
 
     const std::string yaml = std::string(R"(
-        name: no-flush-on-shutdown-test
+        name: flush-on-fetch-complete-test
         hostname: ")") + server.baseUrl() +
                              R"("
         start-date: "2026-02-25T08:00:00.000Z"
@@ -672,10 +763,11 @@ TEST(EpicsArchiverReaderHttpIntegrationTest, ShutdownDoesNotFlushWhenFlushInterv
     auto reader_cfg = makeConfigFromYaml(yaml);
     auto reader     = std::make_unique<EpicsArchiverReader>(bus, nullptr, reader_cfg);
     ASSERT_TRUE(waitForMockRequestStartAndCompletion(server, std::chrono::seconds(3)));
-    reader.reset();
+    ASSERT_TRUE(waitForAtLeastPublishedBatches(*bus, 1u, std::chrono::seconds(2)));
 
-    // No batch-flush-interval-ms → incomplete batch not pushed.
-    EXPECT_EQ(bus->snapshot().size(), 0u);
+    const auto batches = bus->snapshot();
+    ASSERT_EQ(batches.size(), 1u);
+    EXPECT_EQ(asTimeSeries(batches[0]).frames[0].timestamps.size(), 4u);
 }
 
 // Verifies that batch-flush-interval-ms flushes an incomplete pending batch after the interval.

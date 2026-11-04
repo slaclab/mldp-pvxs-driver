@@ -10,6 +10,8 @@
 
 #include <query/planner/JoinOrderOptimizer.h>
 
+#include <query/plan/PlanVisit.h>
+
 using namespace mldp_pvxs_driver::query;
 using namespace mldp_pvxs_driver::query::planner;
 
@@ -54,31 +56,17 @@ bool isBounded(const plan::LogicalNodePtr& node)
     {
         return false;
     }
-    if (const auto* scan = std::get_if<plan::LogicalScan>(&node->value))
-    {
-        return isBoundedScan(*scan);
-    }
-    if (const auto* filter = std::get_if<plan::LogicalFilter>(&node->value))
-    {
-        if (!filter->predicates.empty())
-        {
-            return true;
-        }
-        return isBounded(filter->input);
-    }
-    if (const auto* project = std::get_if<plan::LogicalProject>(&node->value))
-    {
-        return isBounded(project->input);
-    }
-    if (const auto* limit = std::get_if<plan::LogicalLimit>(&node->value))
-    {
-        return true;
-    }
-    if (const auto* join = std::get_if<plan::LogicalJoin>(&node->value))
-    {
-        return isBounded(join->left) || isBounded(join->right);
-    }
-    return false;
+    return std::visit(plan::overloaded{
+                          [](const plan::LogicalScan& scan) { return isBoundedScan(scan); },
+                          [](const plan::LogicalFilter& filter) { return !filter.predicates.empty() || isBounded(filter.input); },
+                          [](const plan::LogicalProject& project) { return isBounded(project.input); },
+                          [](const plan::LogicalSort& sort) { return isBounded(sort.input); },
+                          [](const plan::LogicalAggregate& aggregate) { return isBounded(aggregate.input); },
+                          [](const plan::LogicalWindow& window) { return isBounded(window.input); },
+                          [](const plan::LogicalLimit&) { return true; },
+                          [](const plan::LogicalJoin& join) { return isBounded(join.left) || isBounded(join.right); },
+                      },
+                      node->value);
 }
 
 int64_t boundedScore(const plan::LogicalNodePtr& node)
@@ -87,27 +75,17 @@ int64_t boundedScore(const plan::LogicalNodePtr& node)
     {
         return 1000;
     }
-    if (const auto* scan = std::get_if<plan::LogicalScan>(&node->value))
-    {
-        return static_cast<int64_t>(scan->pushable_predicates.size());
-    }
-    if (const auto* filter = std::get_if<plan::LogicalFilter>(&node->value))
-    {
-        return static_cast<int64_t>(filter->predicates.size()) + boundedScore(filter->input);
-    }
-    if (const auto* project = std::get_if<plan::LogicalProject>(&node->value))
-    {
-        return boundedScore(project->input);
-    }
-    if (const auto* limit = std::get_if<plan::LogicalLimit>(&node->value))
-    {
-        return 100000 + static_cast<int64_t>(limit->limit);
-    }
-    if (const auto* join = std::get_if<plan::LogicalJoin>(&node->value))
-    {
-        return boundedScore(join->left) + boundedScore(join->right);
-    }
-    return 0;
+    return std::visit(plan::overloaded{
+                          [](const plan::LogicalScan& scan) { return static_cast<int64_t>(scan.pushable_predicates.size()); },
+                          [](const plan::LogicalFilter& filter) { return static_cast<int64_t>(filter.predicates.size()) + boundedScore(filter.input); },
+                          [](const plan::LogicalProject& project) { return boundedScore(project.input); },
+                          [](const plan::LogicalSort& sort) { return boundedScore(sort.input); },
+                          [](const plan::LogicalAggregate& aggregate) { return boundedScore(aggregate.input); },
+                          [](const plan::LogicalWindow& window) { return boundedScore(window.input); },
+                          [](const plan::LogicalLimit& limit) { return int64_t{100000} + static_cast<int64_t>(limit.limit); },
+                          [](const plan::LogicalJoin& join) { return boundedScore(join.left) + boundedScore(join.right); },
+                      },
+                      node->value);
 }
 
 plan::LogicalNodePtr rewrite(const plan::LogicalNodePtr& node)
@@ -116,25 +94,9 @@ plan::LogicalNodePtr rewrite(const plan::LogicalNodePtr& node)
     {
         return node;
     }
-    if (auto* filter = std::get_if<plan::LogicalFilter>(&node->value))
-    {
-        filter->input = rewrite(filter->input);
-        return node;
-    }
-    if (auto* project = std::get_if<plan::LogicalProject>(&node->value))
-    {
-        project->input = rewrite(project->input);
-        return node;
-    }
-    if (auto* limit = std::get_if<plan::LogicalLimit>(&node->value))
-    {
-        limit->input = rewrite(limit->input);
-        return node;
-    }
+    plan::forEachChild(*node, [](plan::LogicalNodePtr& child) { child = rewrite(child); });
     if (auto* join = std::get_if<plan::LogicalJoin>(&node->value))
     {
-        join->left = rewrite(join->left);
-        join->right = rewrite(join->right);
         join->left_bounded = isBounded(join->left);
         join->right_bounded = isBounded(join->right);
 

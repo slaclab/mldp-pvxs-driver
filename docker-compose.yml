@@ -1,7 +1,14 @@
 services:
   mongodb:
-    image: mongo:8
+    # Pinned: mongo 8.0.30+/8.3.x/9.x exit on Ubuntu 7.0.x runner kernels (uname reports 7.0.0),
+    # see SERVER-121912 / SERVER-136848. 8.2.7 has no such check. Unpin once SERVER-136848 ships.
+    image: mongo:8.2.7
     restart: on-failure
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
     environment:
       - MONGO_INITDB_ROOT_USERNAME=admin
       - MONGO_INITDB_ROOT_PASSWORD=admin
@@ -9,10 +16,12 @@ services:
     #   - "27017:27017"
 
   dp-ingestion:
-    image: ghcr.io/slaclab/dp-service:rel-1.15.1
+    image: ghcr.io/slaclab/dp-service:rel-1.16.0
     container_name: dp-ingestion
+    restart: on-failure
     depends_on:
-      - mongodb
+      mongodb:
+        condition: service_healthy
     entrypoint:
       - "java"
     environment:
@@ -25,10 +34,12 @@ services:
     #   - "50051:50051"
   
   dp-query:
-    image: ghcr.io/slaclab/dp-service:rel-1.15.1
+    image: ghcr.io/slaclab/dp-service:rel-1.16.0
     container_name: dp-query
+    restart: on-failure
     depends_on:
-      - mongodb
+      mongodb:
+        condition: service_healthy
     entrypoint:
       - "java"
     environment:
@@ -47,10 +58,12 @@ services:
     #   - "50052:50052"
 
   dp-annotation:
-    image: ghcr.io/slaclab/dp-service:rel-1.15.1
+    image: ghcr.io/slaclab/dp-service:rel-1.16.0
     container_name: dp-annotation
+    restart: on-failure
     depends_on:
-      - mongodb
+      mongodb:
+        condition: service_healthy
     entrypoint:
       - "java"
     environment:

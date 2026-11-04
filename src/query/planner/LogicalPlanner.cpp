@@ -50,11 +50,12 @@ plan::LogicalNodePtr mldp_pvxs_driver::query::planner::buildLogicalPlan(const pl
             .window_subquery = table.window_subquery,
             .window_literal = table.window_literal,
             .window_shards = table.window_shards});
-        if (!table.predicates.empty())
+        if (!table.predicates.empty() || !table.predicate_groups.empty())
         {
             node = plan::makeNode(plan::LogicalFilter{
                 .input = node,
-                .predicates = table.predicates});
+                .predicates = table.predicates,
+                .predicate_groups = table.predicate_groups});
         }
         return node;
     };
@@ -73,6 +74,32 @@ plan::LogicalNodePtr mldp_pvxs_driver::query::planner::buildLogicalPlan(const pl
             .warnings = {}});
     }
 
+    // WHERE column-to-column comparisons may span joined tables, so they run on the join output.
+    if (!bound.conditions.empty())
+    {
+        root = plan::makeNode(plan::LogicalFilter{
+            .input = root,
+            .predicates = {},
+            .conditions = bound.conditions});
+    }
+
+    // GROUP BY: ORDER BY and the projection below run over the aggregate output.
+    if (bound.aggregate)
+    {
+        root = plan::makeNode(plan::LogicalAggregate{
+            .input = root,
+            .spec = *bound.aggregate});
+    }
+
+    // Window functions see the filtered / grouped rows; ORDER BY and the
+    // projection may reference their __win_N output columns.
+    if (!bound.windows.empty())
+    {
+        root = plan::makeNode(plan::LogicalWindow{
+            .input = root,
+            .groups = bound.windows});
+    }
+
     if (!bound.order_by.empty())
     {
         root = plan::makeNode(plan::LogicalSort{
@@ -87,7 +114,9 @@ plan::LogicalNodePtr mldp_pvxs_driver::query::planner::buildLogicalPlan(const pl
             .select_all = false,
             .columns = bound.select_columns,
             .expressions = bound.select_expressions,
-            .names = bound.select_names});
+            .names = bound.select_names,
+            .distinct = bound.distinct,
+            .distinct_on = bound.distinct_on});
     }
     else if (qualify_output)
     {
@@ -113,7 +142,24 @@ plan::LogicalNodePtr mldp_pvxs_driver::query::planner::buildLogicalPlan(const pl
         root = plan::makeNode(plan::LogicalProject{
             .input = root,
             .select_all = true,
-            .columns = std::move(columns)});
+            .columns = std::move(columns),
+            .expressions = {},
+            .names = {},
+            .distinct = bound.distinct,
+            .distinct_on = bound.distinct_on});
+    }
+    else if (bound.distinct)
+    {
+        // SELECT DISTINCT * on a single table: an empty column list passes every
+        // column through, the project node only carries the duplicate removal.
+        root = plan::makeNode(plan::LogicalProject{
+            .input = root,
+            .select_all = true,
+            .columns = {},
+            .expressions = {},
+            .names = {},
+            .distinct = true,
+            .distinct_on = bound.distinct_on});
     }
 
     if (bound.limit.has_value())

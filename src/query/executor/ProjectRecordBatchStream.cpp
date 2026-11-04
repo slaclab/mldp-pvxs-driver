@@ -25,11 +25,24 @@ ProjectRecordBatchStream::ProjectRecordBatchStream(IRecordBatchStreamUPtr input,
 
 std::shared_ptr<arrow::RecordBatch> ProjectRecordBatchStream::next()
 {
-    auto batch = input_->next();
-    if (!batch) return nullptr;
-    RecordBatches input{std::move(batch)};
-    auto output = project_.expressions.empty()
-        ? applyProjection(input, project_.columns)
-        : applyProjection(input, project_.expressions, project_.names);
-    return output.empty() ? nullptr : output.front();
+    while (auto batch = input_->next())
+    {
+        // DISTINCT ON keys may reference columns that are not projected, so
+        // rows are de-duplicated on the input before projecting.
+        if (!project_.distinct_on.empty())
+        {
+            batch = deduplicator_.filterOn(batch, project_.distinct_on);
+            if (batch->num_rows() == 0) continue;
+        }
+        RecordBatches input{std::move(batch)};
+        auto output = project_.expressions.empty()
+            ? applyProjection(input, project_.columns)
+            : applyProjection(input, project_.expressions, project_.names);
+        if (output.empty()) return nullptr;
+        if (!project_.distinct || !project_.distinct_on.empty()) return output.front();
+        // Skip batches whose rows were all emitted before, so a non-null batch always
+        // carries at least one row while the stream is live.
+        if (auto unique = deduplicator_.filter(output.front()); unique && unique->num_rows() > 0) return unique;
+    }
+    return nullptr;
 }

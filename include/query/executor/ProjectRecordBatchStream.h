@@ -14,11 +14,12 @@
 #pragma once
 
 #include <query/IQueryable.h>
+#include <query/executor/ExecutorUtils.h>
 #include <query/plan/PhysicalPlan.h>
 
 namespace mldp_pvxs_driver::query::executor {
 
-/** @brief Evaluates a physical projection for each pulled input batch. */
+/** @brief Evaluates a physical projection for each pulled input batch, dropping duplicate rows under DISTINCT. */
 class ProjectRecordBatchStream final : public IRecordBatchStream
 {
 public:
@@ -34,6 +35,7 @@ public:
 private:
     IRecordBatchStreamUPtr input_; ///< Upstream pull stream.
     plan::PhysicalProject project_; ///< Projection descriptor to apply.
+    RowDeduplicator       deduplicator_; ///< Rows already emitted, used when project_.distinct is set.
 };
 
 } // namespace mldp_pvxs_driver::query::executor

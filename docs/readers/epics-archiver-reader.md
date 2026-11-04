@@ -152,13 +152,13 @@ These parameters apply to both `historical_once` and `periodic_tail` modes.
 Parameter                 | Type | Default | Description
 ------------------------- | ---- | ------- | -------------------------------------------------------------------
 `pv-samples-per-batch`    | int  | 0       | Flush a pending PV batch after accumulating this many samples. `0` = disabled (submit immediately via timestamp splitting only).
-`batch-flush-interval-ms` | int  | 0       | Flush any incomplete pending batch after this many milliseconds. `0` = disabled; incomplete batches are dropped unless this is set. Also enables shutdown-time flush of remaining pending samples.
+`batch-flush-interval-ms` | int  | 0       | **Deprecated, no effect.** Accepted for compatibility. Partial batches are always submitted when a PV fetch completes.
+`max-batch-span-sec`      | int  | 86400   | Flush a pending PV batch before the next sample would make its timestamps span this many seconds. Keeps batches under the MLDP bucket limit (`Buckets.maxBucketSpanSeconds`, 24h); larger spans are rejected by MLDP.
 
 **Interaction rules:**
 
-- When `pv-samples-per-batch > 0`, samples are accumulated per PV in memory. A batch is submitted only when the count reaches `pv-samples-per-batch`.
-- When `batch-flush-interval-ms > 0`, an additional time-based flush fires after each `fetchConfiguredPVs` call for batches whose age exceeds the interval. On reader shutdown, all remaining pending batches are also flushed.
-- When `pv-samples-per-batch > 0` and `batch-flush-interval-ms = 0`, incomplete batches that have not yet reached the sample limit are **discarded** at shutdown.
+- When `pv-samples-per-batch > 0`, samples are accumulated per PV in memory. A batch is submitted when the count reaches `pv-samples-per-batch`, or earlier when the next sample would make the batch span `max-batch-span-sec` (relevant for slow-changing PVs).
+- When a PV fetch completes (or fails), any remaining partial batch for that PV is submitted. No samples are held across PV fetches, and none are discarded.
 
 ```yaml
 reader:
@@ -167,7 +167,6 @@ reader:
       hostname: "archiver.example.com:11200"
       start-date: "2024-01-01T00:00:00Z"
       pv-samples-per-batch: 10        # submit after 10 samples per PV
-      batch-flush-interval-ms: 5000   # also flush after 5 seconds if batch not full
       pvs:
         - name: MY:PV
 ```
@@ -203,14 +202,15 @@ reader:
 - At least one PV required
 - Start date required for one-shot mode
 - `pv-samples-per-batch` must be `> 0` when specified (enforced)
-- `batch-flush-interval-ms` must be `> 0` when specified (enforced)
+- `batch-flush-interval-ms` must be `> 0` when specified (enforced; deprecated, no effect)
+- `max-batch-span-sec` must be `> 0` when specified (enforced)
 - `fetch-threads` must be `>= 1` when specified (enforced)
 
 ## Key Features
 
 - **Time-Windowed Queries**: Query archiver data by start/end timestamps with efficient PB/HTTP streaming
 - **Sample-Count Batching**: Accumulate up to `pv-samples-per-batch` samples per PV before submitting; each PV maintains independent pending state
-- **Timed Flush**: `batch-flush-interval-ms` ensures incomplete batches are not held indefinitely; also drains all pending batches on shutdown when set
+- **Flush on Fetch Completion**: the partial batch left at the end of each PV stream is always submitted
 - **Automated Tail Polling**: Continuously fetch new archiver data at configurable intervals with a configurable lookback window to handle clock skew and backfill
 - **Parallel PV Fetching**: Configurable `fetch-threads` distributes PVs across multiple worker threads via a shared work queue for significantly faster ingestion of many PVs
 - **Background Worker Threads**: One-shot fetch or periodic polling runs off main reader construction
@@ -295,14 +295,18 @@ Metric                                            | Description
 
 ### Sample-Count Batching
 
-When `pv-samples-per-batch > 0`, samples are accumulated in `PendingPvBatch` entries keyed by PV name. Each PV tracks its own pending frames and the wall-clock time when the first sample arrived (`created_at`). Submission fires when:
+When `pv-samples-per-batch > 0`, samples are accumulated in `PendingPvBatch` entries keyed by PV name. Each PV tracks its own pending frames. Submission fires when:
 
 1. The frame count reaches `pv-samples-per-batch` (size trigger), or
-2. `batch-flush-interval-ms > 0` and `now - created_at >= interval` after each `fetchConfiguredPVs` call (time trigger).
+2. The next sample would make the batch timestamps span `>= max-batch-span-sec` (span trigger; the pending batch is submitted first and the sample starts a new one), or
+3. The PV fetch completes or fails (end-of-stream trigger) — the remaining partial batch is submitted.
 
-When `batch-flush-interval-ms = 0`, incomplete batches that have not reached the sample limit are discarded on reader shutdown. Set `batch-flush-interval-ms` to enable shutdown-time drain of remaining pending samples.
 
-Samples accumulate in the pending buffer until the size or time trigger fires.
+Samples accumulate in the pending buffer until the size, span or end-of-stream trigger fires.
+
+### Per-PV Failure Isolation
+
+Each worker fetches one PV at a time. If a PV stream fails (HTTP error, truncated stream, undecodable sample), the worker logs `Archiver reader worker '<name>' [<n>] failed PV '<pv>': <error>`, increments the reader error metric for that PV, submits samples already parsed, and continues with the next PV. A failed PV does not stop the worker or prevent `historical_once` completion; re-fetch that PV's time range to recover the missing samples.
 
 ### HTTP Transport
 

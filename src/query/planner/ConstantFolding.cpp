@@ -10,6 +10,8 @@
 
 #include <query/planner/ConstantFolding.h>
 
+#include <query/plan/PlanVisit.h>
+
 #include <sstream>
 #include <type_traits>
 #include <unordered_set>
@@ -93,30 +95,16 @@ void rewrite(const plan::LogicalNodePtr& node)
     if (auto* scan = std::get_if<plan::LogicalScan>(&node->value))
     {
         dedupe(scan->pushable_predicates);
-        return;
     }
-    if (auto* filter = std::get_if<plan::LogicalFilter>(&node->value))
+    else if (auto* filter = std::get_if<plan::LogicalFilter>(&node->value))
     {
         dedupe(filter->predicates);
-        rewrite(filter->input);
-        return;
     }
-    if (auto* project = std::get_if<plan::LogicalProject>(&node->value))
-    {
-        rewrite(project->input);
-        return;
-    }
-    if (auto* limit = std::get_if<plan::LogicalLimit>(&node->value))
-    {
-        rewrite(limit->input);
-        return;
-    }
-    if (auto* join = std::get_if<plan::LogicalJoin>(&node->value))
+    else if (auto* join = std::get_if<plan::LogicalJoin>(&node->value))
     {
         dedupe(join->predicates);
-        rewrite(join->left);
-        rewrite(join->right);
     }
+    plan::forEachChild(*node, [](plan::LogicalNodePtr& child) { rewrite(child); });
 }
 
 } // namespace

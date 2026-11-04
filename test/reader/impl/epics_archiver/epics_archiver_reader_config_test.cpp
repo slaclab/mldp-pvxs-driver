@@ -404,6 +404,60 @@ TEST_F(EpicsArchiverReaderConfigTest, PvSamplesPerBatchDefaultsToZero)
     EXPECT_EQ(config.pvSamplesPerBatch(), 0L);
 }
 
+// Verifies max-batch-span-sec defaults to the MLDP bucket limit (24h).
+TEST_F(EpicsArchiverReaderConfigTest, MaxBatchSpanSecDefaultsTo86400)
+{
+    const std::string yaml = R"(
+        name: test-archiver
+        hostname: "archiver.slac.stanford.edu:11200"
+        start-date: "2026-01-01T00:00:00Z"
+        pvs:
+          - name: "PV1"
+    )";
+
+    auto                      cfg = makeConfigFromYaml(yaml);
+    EpicsArchiverReaderConfig config(cfg);
+
+    EXPECT_EQ(config.maxBatchSpanSec(), 86400L);
+}
+
+// Verifies max-batch-span-sec is parsed when explicitly configured.
+TEST_F(EpicsArchiverReaderConfigTest, AcceptsMaxBatchSpanSec)
+{
+    const std::string yaml = R"(
+        name: test-archiver
+        hostname: "archiver.slac.stanford.edu:11200"
+        start-date: "2026-01-01T00:00:00Z"
+        max-batch-span-sec: 3600
+        pvs:
+          - name: "PV1"
+    )";
+
+    auto                      cfg = makeConfigFromYaml(yaml);
+    EpicsArchiverReaderConfig config(cfg);
+
+    EXPECT_EQ(config.maxBatchSpanSec(), 3600L);
+}
+
+// Verifies max-batch-span-sec rejects zero and negative values.
+TEST_F(EpicsArchiverReaderConfigTest, RejectsNonPositiveMaxBatchSpanSec)
+{
+    for (const char* value : {"0", "-1"})
+    {
+        const std::string yaml = std::string(R"(
+        name: test-archiver
+        hostname: "archiver.slac.stanford.edu:11200"
+        start-date: "2026-01-01T00:00:00Z"
+        max-batch-span-sec: )") + value + R"(
+        pvs:
+          - name: "PV1"
+    )";
+
+        auto cfg = makeConfigFromYaml(yaml);
+        EXPECT_THROW(EpicsArchiverReaderConfig config(cfg), EpicsArchiverReaderConfig::Error) << value;
+    }
+}
+
 // Verifies batch-flush-interval-ms is parsed when explicitly configured.
 TEST_F(EpicsArchiverReaderConfigTest, AcceptsBatchFlushIntervalMs)
 {

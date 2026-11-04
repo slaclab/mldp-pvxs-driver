@@ -53,6 +53,8 @@ namespace mldp_pvxs_driver::reader::impl::epics_ds {
  *   | max-queue-depth       | int    | `16`           | Bounded queue depth (producer/consumer mode only) |
  *   | pvs                   | list   | (required)     | Per-PV enrichment entries |
  *   | pvs[].name            | string | (required)     | Exact PV name |
+ *   | pvs[].alias           | string | `""`           | Optional extra alias registered for the PV in MLDP |
+ *   | pvs[].original-name   | string | `""`           | Optional MLDP record name override; the real PV name is auto-added as an alias |
  *   | pvs[].metadata        | map    | `{}`           | Static key/value attributes merged into the entry |
  *   | pv-show-columns       | string | see default    | DS `show=` columns for PV-list mode (default: `dname,ename,etype,lname,ioc,scheme,z`) |
  *
@@ -72,6 +74,8 @@ namespace mldp_pvxs_driver::reader::impl::epics_ds {
  *     max-queue-depth: 16
  *     pvs:                                            # targeted per-PV enrichment
  *       - name: BPMS:LI20:2445:X
+ *         alias: BPMS_LI20_2445_X                      # extra MLDP alias
+ *         original-name: BPM-LI20-2445-X              # stored in MLDP under this name
  *         metadata:
  *           system: bpm
  *           area: li20
@@ -83,7 +87,9 @@ class EpicsDSMetadataReaderConfig
 {
 public:
     struct PVEntry {
-        std::string                                     name;
+        std::string                                     name;            ///< Real EPICS PV name; always used for the DS RPC.
+        std::string                                     alias;           ///< Optional extra MLDP alias (empty = none).
+        std::string                                     original_name;  ///< Optional MLDP record name override (empty = use name).
         std::unordered_map<std::string, std::string>    metadata;
     };
 
