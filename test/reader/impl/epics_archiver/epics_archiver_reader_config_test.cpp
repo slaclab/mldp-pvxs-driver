@@ -602,6 +602,25 @@ TEST_F(EpicsArchiverReaderConfigTest, RetryAndStatusLogDefaults)
 
     EXPECT_EQ(config.fetchMaxRetries(), 3L);
     EXPECT_EQ(config.fetchRetryBackoffMs(), 1000L);
+    ASSERT_TRUE(config.statusLogPath().has_value());
+    EXPECT_EQ(*config.statusLogPath(), "archiver-status-test-archiver.jsonl");
+}
+
+// Verifies an empty status-log-path disables the status log.
+TEST_F(EpicsArchiverReaderConfigTest, EmptyStatusLogPathDisablesLog)
+{
+    const std::string yaml = R"(
+        name: test-archiver
+        hostname: "archiver.slac.stanford.edu:11200"
+        start-date: "2026-01-01T00:00:00Z"
+        status-log-path: ""
+        pvs:
+          - name: "PV1"
+    )";
+
+    auto                      cfg = makeConfigFromYaml(yaml);
+    EpicsArchiverReaderConfig config(cfg);
+
     EXPECT_FALSE(config.statusLogPath().has_value());
 }
 

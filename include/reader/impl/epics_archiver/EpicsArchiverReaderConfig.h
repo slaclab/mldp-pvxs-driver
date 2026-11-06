@@ -273,6 +273,9 @@ public:
     /**
      * @brief Get the path of the per-PV fetch status log (JSON lines).
      *
+     * Defaults to `archiver-status-<reader-name>.jsonl` in the current
+     * directory; an empty `status-log-path` disables the log.
+     *
      * @return File path, or std::nullopt when the status log is disabled.
      */
     const std::optional<std::string>& statusLogPath() const;

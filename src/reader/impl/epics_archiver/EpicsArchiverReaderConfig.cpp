@@ -354,15 +354,13 @@ void EpicsArchiverReaderConfig::parse(const Config& readerEntry)
         throw Error("fetch-retry-backoff-ms must be >= 0");
     }
 
-    // Parse optional per-PV fetch status log path
-    if (readerEntry.hasChild(StatusLogPathKey))
+    // Per-PV fetch status log: on by default in the current directory;
+    // an empty value disables it.
+    const std::string status_log_path =
+        readerEntry.get(StatusLogPathKey, "archiver-status-" + name_ + ".jsonl");
+    if (!status_log_path.empty())
     {
-        const auto path = readerEntry.get(StatusLogPathKey);
-        if (path.empty())
-        {
-            throw Error("status-log-path must not be empty when specified");
-        }
-        status_log_path_ = path;
+        status_log_path_ = status_log_path;
     }
 
     // Parse optional reader-level static metadata
