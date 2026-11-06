@@ -279,6 +279,9 @@ TEST(EpicsArchiverReaderRetryTest, ExhaustedRetriesReportPartial)
     EXPECT_TRUE(lines[0]["error"].is_string());
     EXPECT_EQ(lines[1]["partial"], 1);
     EXPECT_EQ(lines[1]["partial_pvs"], nlohmann::json::array({"TEST:PV:DOUBLE"}));
+    ASSERT_EQ(lines[1]["partial_windows"].size(), 1u);
+    EXPECT_EQ(lines[1]["partial_windows"][0]["from"], "2026-02-25T08:00:00.000Z");
+    EXPECT_EQ(lines[1]["partial_windows"][0]["to"], "2026-02-25T08:00:10.000Z");
     // Only complete batches are published; the incomplete tail is dropped.
     const auto published = publishedTimes(*bus, "TEST:PV:DOUBLE").size();
     EXPECT_GT(published, 0u);
@@ -308,6 +311,62 @@ TEST(EpicsArchiverReaderRetryTest, ExhaustedRetriesReportFailed)
     EXPECT_EQ(lines[3]["failed_pvs"], nlohmann::json::array({"TEST:PV:DOUBLE"}));
     EXPECT_EQ(server.requestHistory().size(), 3u);
     EXPECT_TRUE(bus->snapshot().empty());
+    std::filesystem::remove(log_path);
+}
+
+// The range is split into epoch-aligned windows; a failure re-fetches only
+// the failed window, never the windows already done.
+TEST(EpicsArchiverReaderRetryTest, WindowedFetchRetriesOnlyFailedWindow)
+{
+    MockArchiverPbHttpServer::GenerationConfig gen_cfg;
+    gen_cfg.fail_first_requests = 1;
+    MockArchiverPbHttpServer server(gen_cfg);
+    server.start();
+
+    const auto log_path = tempLogPath("windows");
+    auto       bus = std::make_shared<MockDataBus>();
+    // Start is not aligned: first window ends at the next 4 s boundary (08:00:04).
+    std::string yaml = readerYaml(server, log_path, "        fetch-window-sec: 4", {"TEST:PV:DOUBLE"});
+    yaml.replace(yaml.find("08:00:00.000Z"), 13, "08:00:01.000Z");
+    auto reader = std::make_unique<EpicsArchiverReader>(bus, nullptr, makeConfigFromYaml(yaml));
+
+    const auto lines = waitForSummary(log_path, std::chrono::seconds(5));
+    ASSERT_EQ(lines.size(), 5u);
+
+    const auto requests = server.requestHistory();
+    ASSERT_EQ(requests.size(), 4u);
+    // Window 1 fails once and is retried with the same bounds.
+    EXPECT_EQ(requests[0].from, "2026-02-25T08:00:01.000Z");
+    EXPECT_EQ(requests[0].to, "2026-02-25T08:00:04.000Z");
+    EXPECT_EQ(requests[1].from, requests[0].from);
+    EXPECT_EQ(requests[1].to, requests[0].to);
+    // Remaining windows are fetched once each.
+    EXPECT_EQ(requests[2].from, "2026-02-25T08:00:04.000Z");
+    EXPECT_EQ(requests[2].to, "2026-02-25T08:00:08.000Z");
+    EXPECT_EQ(requests[3].from, "2026-02-25T08:00:08.000Z");
+    EXPECT_EQ(requests[3].to, "2026-02-25T08:00:10.000Z");
+
+    EXPECT_EQ(lines[0]["result"], "retrying");
+    EXPECT_EQ(lines[1]["result"], "ok");
+    EXPECT_EQ(lines[2]["result"], "ok");
+    EXPECT_EQ(lines[3]["result"], "ok");
+    EXPECT_EQ(lines[4]["ok"], 3);
+
+    // No batch spans a window boundary.
+    for (const auto& batch : bus->snapshot())
+    {
+        std::vector<SampleTime> times;
+        for (const auto& frame : asTimeSeries(batch).frames)
+        {
+            for (const auto& ts : frame.timestamps)
+            {
+                times.emplace_back(ts.epoch_seconds, ts.nanoseconds);
+            }
+        }
+        ASSERT_FALSE(times.empty());
+        const auto window_of = [](const SampleTime& t) { return t.first / 4; };
+        EXPECT_EQ(window_of(times.front()), window_of(times.back()));
+    }
     std::filesystem::remove(log_path);
 }
 
@@ -341,6 +400,8 @@ TEST(ArchiverFetchStatusLogTest, WritesJsonLinesAndSummary)
     EXPECT_EQ(lines[3]["ok"], 1);
     EXPECT_EQ(lines[3]["failed"], 1);
     EXPECT_EQ(lines[3]["failed_pvs"], nlohmann::json::array({"B"}));
+    EXPECT_EQ(lines[3]["failed_windows"][0]["pv"], "B");
+    EXPECT_TRUE(lines[3]["failed_windows"][0]["to"].is_null());
     std::filesystem::remove(path);
 }
 

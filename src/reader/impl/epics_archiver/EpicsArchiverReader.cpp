@@ -368,7 +368,7 @@ void EpicsArchiverReader::runWorker(std::size_t index)
                     }
                     infof(*logger_, "Worker {} starting PV '{}' (queue remaining: {})",
                            index, *pv, pv_queue_.size());
-                    fetchPvSafely(ctx, index, *pv, config_.startDate(), config_.endDate());
+                    fetchPvWindowed(ctx, index, *pv, config_.startDate(), config_.endDate());
                 }
 
                 if (running_.load() && config_.batchFlushIntervalMs() > 0)
@@ -771,6 +771,45 @@ void EpicsArchiverReader::parsePbHttpLineIntoState(WorkerContext& ctx, const std
     else
     {
         state.events.emplace_back(std::move(parsed.batch));
+    }
+}
+
+void EpicsArchiverReader::fetchPvWindowed(WorkerContext&                    ctx,
+                                          std::size_t                       index,
+                                          const std::string&                pv,
+                                          const std::string&                from,
+                                          const std::optional<std::string>& to)
+{
+    const long window_sec = config_.fetchWindowSec();
+    if (window_sec <= 0 || !to)
+    {
+        fetchPvSafely(ctx, index, pv, from, to);
+        return;
+    }
+
+    const auto start = DateTimeUtils::parseIso8601Utc(from);
+    const auto end = DateTimeUtils::parseIso8601Utc(*to);
+    if (!start || !end)
+    {
+        warnf(*logger_, "Archiver reader '{}' cannot parse range [{} -> {}] for windowing; fetching PV '{}' in one request",
+              name_, from, *to, pv);
+        fetchPvSafely(ctx, index, pv, from, to);
+        return;
+    }
+
+    // Windows are aligned to multiples of window_sec since the epoch so the
+    // same range always splits the same way: batch boundaries, and so MLDP
+    // bucket ids, stay stable across runs and retries.
+    const auto window = std::chrono::seconds(window_sec);
+    auto       cur = *start;
+    while (cur < *end && running_.load())
+    {
+        const auto since_epoch = std::chrono::duration_cast<std::chrono::seconds>(cur.time_since_epoch());
+        const auto aligned = std::chrono::system_clock::time_point(
+            std::chrono::duration_cast<std::chrono::system_clock::duration>((since_epoch / window) * window + window));
+        const auto next = std::min(aligned, *end);
+        fetchPvSafely(ctx, index, pv, DateTimeUtils::formatIso8601UtcMillis(cur), DateTimeUtils::formatIso8601UtcMillis(next));
+        cur = next;
     }
 }
 

@@ -404,7 +404,8 @@ Two fetch modes:
       pv-samples-per-batch: 0          # optional; default: 0 (disabled)
       batch-flush-interval-ms: 0       # deprecated, no effect (partial batches flushed at PV fetch end)
       max-batch-span-sec: 86400        # optional; default: 86400 (MLDP bucket limit)
-      fetch-max-retries: 3             # optional; default: 3 (re-fetch failed PV from window start)
+      fetch-window-sec: 86400          # optional; default: 86400 (split range into aligned windows; 0 = one request)
+      fetch-max-retries: 3             # optional; default: 3 (re-fetch the failed window from its start)
       fetch-retry-backoff-ms: 1000     # optional; default: 1000 (doubles per retry, max 30s)
       status-log-path: /var/log/mldp/archiver-status.jsonl  # optional; default: ./archiver-status-<name>.jsonl ("" = off)
       tls-verify-peer: true            # optional; default: true
@@ -438,9 +439,10 @@ Two fetch modes:
 | `pv-samples-per-batch` | long | `0` | Accumulate this many samples per PV before submitting. `0` = disabled. |
 | `batch-flush-interval-ms` | long | `0` | **Deprecated, no effect.** Partial PV batches are always submitted when the PV fetch completes. |
 | `max-batch-span-sec` | long | `86400` | Max timestamp span of one PV batch. Flushes early so MLDP does not reject the request (bucket limit 24h). |
-| `fetch-max-retries` | long | `3` | Retries after a failed PV fetch (connection error, HTTP 5xx, truncated stream). Each retry re-fetches the whole PV window. Incomplete batches of a failed attempt are dropped; complete ones are re-sent with the same MLDP bucket id (`pvName-firstSeconds-firstNanos`) and discarded as duplicates. HTTP 404 is not retried. `0` disables retries. |
+| `fetch-window-sec` | long | `86400` | `historical_once` with `end-date`: split each PV range into windows aligned to multiples of this size since the Unix epoch. Each window is one archiver request with its own retries, so a failure re-fetches only that window. No batch spans a window. `0` = one request for the whole range. Without `end-date` the PV is fetched in one request. |
+| `fetch-max-retries` | long | `3` | Retries after a failed fetch window (connection error, HTTP 5xx, truncated stream). Each retry re-fetches that window from its start. Incomplete batches of a failed attempt are dropped; complete ones are re-sent with the same MLDP bucket id (`pvName-firstSeconds-firstNanos`) and discarded as duplicates. HTTP 404 is not retried. `0` disables retries. |
 | `fetch-retry-backoff-ms` | long | `1000` | Base delay before a retry; doubles each attempt, capped at 30 s. |
-| `status-log-path` | string | `./archiver-status-<name>.jsonl` | Empty string disables. Append one JSON line per PV fetch attempt (`pv`, `attempt`, `from`, `to`, `result` = `ok`/`retrying`/`partial`/`failed`/`skipped_not_found`, `samples`, `bytes`, `first_sample_ts`, `last_sample_ts`, `http_status`, `error`, `duration_ms`). `historical_once` ends with a `summary` line listing partial/failed/not-found PVs. In `periodic_tail`, a PV that exhausts retries is re-fetched from the failed window start in the next cycle. |
+| `status-log-path` | string | `./archiver-status-<name>.jsonl` | Empty string disables. Append one JSON line per PV fetch attempt (`pv`, `attempt`, `from`, `to`, `result` = `ok`/`retrying`/`partial`/`failed`/`skipped_not_found`, `samples`, `bytes`, `first_sample_ts`, `last_sample_ts`, `http_status`, `error`, `duration_ms`). `historical_once` ends with a `summary` line: per-window counts, `partial_pvs`/`failed_pvs`/`not_found_pvs` (unique names) and `*_windows` (`{pv, from, to}` to re-fetch). In `periodic_tail`, a PV that exhausts retries is re-fetched from the failed window start in the next cycle. |
 | `poll-interval-sec` | long | — | **Required for `periodic_tail`.** Tail poll interval (seconds). |
 | `lookback-sec` | long | poll-interval-sec | Tail lookback window (seconds). Must be ≤ `poll-interval-sec`. |
 | `tls-verify-peer` | bool | `true` | Verify the server TLS certificate chain. |

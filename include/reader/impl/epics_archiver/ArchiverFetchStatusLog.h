@@ -83,7 +83,10 @@ public:
     void record(const FetchAttemptRecord& rec);
 
     /**
-     * @brief Append a summary line with final per-PV results seen so far.
+     * @brief Append a summary line with final results seen so far.
+     *
+     * Counts are per fetch window. `*_pvs` list unique PV names; `*_windows`
+     * list each `{pv, from, to}` window to re-fetch.
      *
      * @param reader Reader instance name.
      */
@@ -93,12 +96,15 @@ private:
     std::mutex               mutex_;
     std::ofstream            out_;
     std::size_t              ok_ = 0;
-    std::size_t              partial_ = 0;
-    std::size_t              failed_ = 0;
-    std::size_t              not_found_ = 0;
-    std::vector<std::string> failed_pvs_;
-    std::vector<std::string> partial_pvs_;
-    std::vector<std::string> not_found_pvs_;
+    struct WindowRef
+    {
+        std::string                pv;
+        std::string                from;
+        std::optional<std::string> to;
+    };
+    std::vector<WindowRef> failed_;
+    std::vector<WindowRef> partial_;
+    std::vector<WindowRef> not_found_;
 };
 
 } // namespace mldp_pvxs_driver::reader::impl::epics_archiver

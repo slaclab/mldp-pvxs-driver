@@ -9,6 +9,7 @@
 //////////////////////////////////////////////////////////////////////////////
 
 #include <gtest/gtest.h>
+#include <util/time/DateTimeUtils.h>
 
 #include <string>
 
@@ -664,4 +665,41 @@ TEST_F(EpicsArchiverReaderConfigTest, RejectsNegativeRetryOptions)
         auto cfg = makeConfigFromYaml(yaml);
         EXPECT_THROW(EpicsArchiverReaderConfig config(cfg), EpicsArchiverReaderConfig::Error) << key;
     }
+}
+
+// Verifies fetch-window-sec defaults to one day, accepts 0, rejects negatives.
+TEST_F(EpicsArchiverReaderConfigTest, FetchWindowSecParsing)
+{
+    const auto make = [](const std::string& extra)
+    {
+        return makeConfigFromYaml(std::string(R"(
+        name: test-archiver
+        hostname: "archiver.slac.stanford.edu:11200"
+        start-date: "2026-01-01T00:00:00Z"
+        )") + extra + R"(
+        pvs:
+          - name: "PV1"
+    )");
+    };
+    EXPECT_EQ(EpicsArchiverReaderConfig(make("")).fetchWindowSec(), 86400L);
+    EXPECT_EQ(EpicsArchiverReaderConfig(make("fetch-window-sec: 0")).fetchWindowSec(), 0L);
+    EXPECT_EQ(EpicsArchiverReaderConfig(make("fetch-window-sec: 3600")).fetchWindowSec(), 3600L);
+    EXPECT_THROW(EpicsArchiverReaderConfig(make("fetch-window-sec: -1")), EpicsArchiverReaderConfig::Error);
+}
+
+// Verifies ISO 8601 parsing used to split the fetch range into windows.
+TEST(DateTimeUtilsParseTest, ParsesIso8601Variants)
+{
+    using mldp_pvxs_driver::util::time::DateTimeUtils;
+    const auto z = DateTimeUtils::parseIso8601Utc("2026-01-01T00:00:00Z");
+    ASSERT_TRUE(z.has_value());
+    EXPECT_EQ(DateTimeUtils::formatIso8601UtcMillis(*z), "2026-01-01T00:00:00.000Z");
+    const auto ms = DateTimeUtils::parseIso8601Utc("2026-01-01T00:00:00.250Z");
+    ASSERT_TRUE(ms.has_value());
+    EXPECT_EQ(DateTimeUtils::formatIso8601UtcMillis(*ms), "2026-01-01T00:00:00.250Z");
+    const auto off = DateTimeUtils::parseIso8601Utc("2026-01-01T02:00:00+02:00");
+    ASSERT_TRUE(off.has_value());
+    EXPECT_EQ(*off, *z);
+    EXPECT_FALSE(DateTimeUtils::parseIso8601Utc("not a date").has_value());
+    EXPECT_FALSE(DateTimeUtils::parseIso8601Utc("2026-01-01").has_value());
 }

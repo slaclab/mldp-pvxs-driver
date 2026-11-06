@@ -175,6 +175,11 @@ private:
                                const std::optional<std::string>& to,
                                std::size_t& bytes_received);
     bool waitRetryBackoff(long attempt);
+    void fetchPvWindowed(WorkerContext& ctx,
+                         std::size_t index,
+                         const std::string& pv,
+                         const std::string& from,
+                         const std::optional<std::string>& to);
     void fetchPvSafely(WorkerContext& ctx,
                        std::size_t index,
                        const std::string& pv,

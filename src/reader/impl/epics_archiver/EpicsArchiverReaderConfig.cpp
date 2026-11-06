@@ -160,6 +160,11 @@ long EpicsArchiverReaderConfig::fetchMaxRetries() const
     return fetch_max_retries_;
 }
 
+long EpicsArchiverReaderConfig::fetchWindowSec() const
+{
+    return fetch_window_sec_;
+}
+
 long EpicsArchiverReaderConfig::fetchRetryBackoffMs() const
 {
     return fetch_retry_backoff_ms_;
@@ -347,6 +352,11 @@ void EpicsArchiverReaderConfig::parse(const Config& readerEntry)
     if (fetch_max_retries_ < 0)
     {
         throw Error("fetch-max-retries must be >= 0");
+    }
+    fetch_window_sec_ = readerEntry.getInt(FetchWindowSecKey, 86400L);
+    if (fetch_window_sec_ < 0)
+    {
+        throw Error("fetch-window-sec must be >= 0");
     }
     fetch_retry_backoff_ms_ = readerEntry.getInt(FetchRetryBackoffMsKey, 1000L);
     if (fetch_retry_backoff_ms_ < 0)

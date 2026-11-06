@@ -14,6 +14,7 @@
 #include <nlohmann/json.hpp>
 
 #include <chrono>
+#include <set>
 #include <stdexcept>
 
 namespace mldp_pvxs_driver::reader::impl::epics_archiver {
@@ -72,18 +73,9 @@ void ArchiverFetchStatusLog::record(const FetchAttemptRecord& rec)
     switch (rec.result)
     {
     case FetchAttemptResult::Ok: ++ok_; break;
-    case FetchAttemptResult::Partial:
-        ++partial_;
-        partial_pvs_.push_back(rec.pv);
-        break;
-    case FetchAttemptResult::Failed:
-        ++failed_;
-        failed_pvs_.push_back(rec.pv);
-        break;
-    case FetchAttemptResult::SkippedNotFound:
-        ++not_found_;
-        not_found_pvs_.push_back(rec.pv);
-        break;
+    case FetchAttemptResult::Partial: partial_.push_back({rec.pv, rec.from, rec.to}); break;
+    case FetchAttemptResult::Failed: failed_.push_back({rec.pv, rec.from, rec.to}); break;
+    case FetchAttemptResult::SkippedNotFound: not_found_.push_back({rec.pv, rec.from, rec.to}); break;
     case FetchAttemptResult::Retrying: break;
     }
     // Invalid UTF-8 in archiver error text must not throw here.
@@ -98,13 +90,27 @@ void ArchiverFetchStatusLog::writeSummary(const std::string& reader)
     j["ts"] = nowIso();
     j["type"] = "summary";
     j["reader"] = reader;
+    const auto add = [&j](const char* name, const std::vector<WindowRef>& refs)
+    {
+        nlohmann::json pvs = nlohmann::json::array();
+        nlohmann::json windows = nlohmann::json::array();
+        std::set<std::string> seen;
+        for (const auto& w : refs)
+        {
+            if (seen.insert(w.pv).second)
+            {
+                pvs.push_back(w.pv);
+            }
+            windows.push_back({{"pv", w.pv}, {"from", w.from}, {"to", w.to ? nlohmann::json(*w.to) : nlohmann::json(nullptr)}});
+        }
+        j[name] = refs.size();
+        j[std::string(name) + "_pvs"] = std::move(pvs);
+        j[std::string(name) + "_windows"] = std::move(windows);
+    };
     j["ok"] = ok_;
-    j["partial"] = partial_;
-    j["failed"] = failed_;
-    j["not_found"] = not_found_;
-    j["partial_pvs"] = partial_pvs_;
-    j["failed_pvs"] = failed_pvs_;
-    j["not_found_pvs"] = not_found_pvs_;
+    add("partial", partial_);
+    add("failed", failed_);
+    add("not_found", not_found_);
     out_ << j.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace) << '\n';
     out_.flush();
 }
