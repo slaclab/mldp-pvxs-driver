@@ -748,9 +748,41 @@ MockArchiverPbHttpServer::MockArchiverPbHttpServer(const GenerationConfig& confi
                         return;
                     }
 
+                    int  injected_status = 0;
+                    bool truncate = false;
+                    {
+                        std::lock_guard<std::mutex> lock(mu_);
+                        if (std::find(config_.not_found_pvs.begin(), config_.not_found_pvs.end(), *log.pv) != config_.not_found_pvs.end())
+                        {
+                            injected_status = 404;
+                        }
+                        else if (failed_so_far_ < config_.fail_first_requests)
+                        {
+                            ++failed_so_far_;
+                            injected_status = config_.fail_status;
+                        }
+                        else if (truncated_so_far_ < config_.truncate_first_requests)
+                        {
+                            ++truncated_so_far_;
+                            truncate = true;
+                        }
+                    }
+                    if (injected_status != 0)
+                    {
+                        res.status = injected_status;
+                        res.set_content("injected failure", "text/plain");
+                        {
+                            std::lock_guard<std::mutex> lock(mu_);
+                            last_completed_request_id_ = last_request_id_;
+                        }
+                        cv_.notify_all();
+                        return;
+                    }
+
                     try
                     {
                         auto           body = std::make_shared<std::string>(buildMockPbHttpBody(config_, *log.pv, *log.from, log.to));
+                        const size_t   truncate_at = truncate ? std::min(config_.truncate_after_bytes, body->size()) : body->size();
                         auto           body_for_stream = body;
                         auto           body_for_releaser = body;
                         const uint32_t stream_chunk_delay_ms = config_.stream_chunk_delay_ms;
@@ -765,14 +797,19 @@ MockArchiverPbHttpServer::MockArchiverPbHttpServer(const GenerationConfig& confi
                         res.set_content_provider(
                             body->size(),
                             "application/octet-stream",
-                            [body_for_stream, stream_chunk_delay_ms](size_t offset, size_t /*length*/, httplib::DataSink& sink)
+                            [body_for_stream, stream_chunk_delay_ms, truncate, truncate_at](size_t offset, size_t /*length*/, httplib::DataSink& sink)
                             {
                                 if (offset >= body_for_stream->size())
                                 {
                                     return true;
                                 }
+                                if (truncate && offset >= truncate_at)
+                                {
+                                    return false; // drop connection before the declared length is sent
+                                }
 
-                                const size_t remaining = body_for_stream->size() - offset;
+                                const size_t limit = truncate ? truncate_at : body_for_stream->size();
+                                const size_t remaining = limit - offset;
                                 const size_t chunk_size = std::min(kMockStreamChunkBytes, remaining);
                                 if (!sink.write(body_for_stream->data() + offset, chunk_size))
                                 {

@@ -404,6 +404,9 @@ Two fetch modes:
       pv-samples-per-batch: 0          # optional; default: 0 (disabled)
       batch-flush-interval-ms: 0       # deprecated, no effect (partial batches flushed at PV fetch end)
       max-batch-span-sec: 86400        # optional; default: 86400 (MLDP bucket limit)
+      fetch-max-retries: 3             # optional; default: 3 (re-fetch failed PV from window start)
+      fetch-retry-backoff-ms: 1000     # optional; default: 1000 (doubles per retry, max 30s)
+      status-log-path: /var/log/mldp/archiver-status.jsonl  # optional; per-PV fetch status (JSON lines)
       tls-verify-peer: true            # optional; default: true
       tls-verify-host: true            # optional; default: true
       static-metadata:                 # optional — reader-level key/value metadata
@@ -435,6 +438,9 @@ Two fetch modes:
 | `pv-samples-per-batch` | long | `0` | Accumulate this many samples per PV before submitting. `0` = disabled. |
 | `batch-flush-interval-ms` | long | `0` | **Deprecated, no effect.** Partial PV batches are always submitted when the PV fetch completes. |
 | `max-batch-span-sec` | long | `86400` | Max timestamp span of one PV batch. Flushes early so MLDP does not reject the request (bucket limit 24h). |
+| `fetch-max-retries` | long | `3` | Retries after a failed PV fetch (connection error, HTTP 5xx, truncated stream). Each retry re-fetches the whole PV window. Incomplete batches of a failed attempt are dropped; complete ones are re-sent with the same MLDP bucket id (`pvName-firstSeconds-firstNanos`) and discarded as duplicates. HTTP 404 is not retried. `0` disables retries. |
+| `fetch-retry-backoff-ms` | long | `1000` | Base delay before a retry; doubles each attempt, capped at 30 s. |
+| `status-log-path` | string | — | Append one JSON line per PV fetch attempt (`pv`, `attempt`, `from`, `to`, `result` = `ok`/`retrying`/`partial`/`failed`/`skipped_not_found`, `samples`, `bytes`, `first_sample_ts`, `last_sample_ts`, `http_status`, `error`, `duration_ms`). `historical_once` ends with a `summary` line listing partial/failed/not-found PVs. In `periodic_tail`, a PV that exhausts retries is re-fetched from the failed window start in the next cycle. |
 | `poll-interval-sec` | long | — | **Required for `periodic_tail`.** Tail poll interval (seconds). |
 | `lookback-sec` | long | poll-interval-sec | Tail lookback window (seconds). Must be ≤ `poll-interval-sec`. |
 | `tls-verify-peer` | bool | `true` | Verify the server TLS certificate chain. |

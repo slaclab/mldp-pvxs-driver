@@ -155,6 +155,21 @@ long EpicsArchiverReaderConfig::fetchThreads() const
     return fetch_threads_;
 }
 
+long EpicsArchiverReaderConfig::fetchMaxRetries() const
+{
+    return fetch_max_retries_;
+}
+
+long EpicsArchiverReaderConfig::fetchRetryBackoffMs() const
+{
+    return fetch_retry_backoff_ms_;
+}
+
+const std::optional<std::string>& EpicsArchiverReaderConfig::statusLogPath() const
+{
+    return status_log_path_;
+}
+
 bool EpicsArchiverReaderConfig::tlsVerifyPeer() const
 {
     return tls_verify_peer_;
@@ -325,6 +340,29 @@ void EpicsArchiverReaderConfig::parse(const Config& readerEntry)
     if (readerEntry.hasChild(FetchThreadsKey) && fetch_threads_ < 1)
     {
         throw Error("fetch-threads must be >= 1 when specified");
+    }
+
+    // Parse optional retry policy for failed PV fetches
+    fetch_max_retries_ = readerEntry.getInt(FetchMaxRetriesKey, 3L);
+    if (fetch_max_retries_ < 0)
+    {
+        throw Error("fetch-max-retries must be >= 0");
+    }
+    fetch_retry_backoff_ms_ = readerEntry.getInt(FetchRetryBackoffMsKey, 1000L);
+    if (fetch_retry_backoff_ms_ < 0)
+    {
+        throw Error("fetch-retry-backoff-ms must be >= 0");
+    }
+
+    // Parse optional per-PV fetch status log path
+    if (readerEntry.hasChild(StatusLogPathKey))
+    {
+        const auto path = readerEntry.get(StatusLogPathKey);
+        if (path.empty())
+        {
+            throw Error("status-log-path must not be empty when specified");
+        }
+        status_log_path_ = path;
     }
 
     // Parse optional reader-level static metadata

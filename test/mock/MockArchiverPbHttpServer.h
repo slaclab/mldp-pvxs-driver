@@ -53,6 +53,11 @@ public:
         std::string egu = "kG";                  ///< Unit metadata emitted in PayloadInfo headers.
         uint32_t    precision = 3;               ///< PREC metadata emitted in PayloadInfo headers.
         uint32_t    stream_chunk_delay_ms = 0;   ///< Optional delay between streamed body chunks (for cancellation tests).
+        uint32_t    fail_first_requests = 0;     ///< Fault injection: answer the first N valid requests with `fail_status`.
+        int         fail_status = 500;           ///< HTTP status used by `fail_first_requests`.
+        uint32_t    truncate_first_requests = 0; ///< Fault injection: drop the connection mid-body on the first N streamed requests.
+        size_t      truncate_after_bytes = 0;    ///< Bytes sent before a truncated response is dropped.
+        std::vector<std::string> not_found_pvs;  ///< PVs answered with HTTP 404.
     };
 
     struct RequestLog
@@ -147,6 +152,8 @@ private:
     std::thread                     thread_;
     std::atomic<bool>               running_{false};
     int                             port_ = -1;
+    uint32_t                        failed_so_far_ = 0;    ///< Guarded by mu_.
+    uint32_t                        truncated_so_far_ = 0; ///< Guarded by mu_.
 };
 
 } // namespace mldp_pvxs_driver::reader::impl::epics_archiver

@@ -21,6 +21,7 @@
 #include <util/log/ILog.h>
 #include <util/time/DateTimeUtils.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <exception>
@@ -154,6 +155,24 @@ uint64_t spanNanos(const TimestampEntry& first, uint64_t epoch, uint32_t nano)
     return a > b ? a - b : b - a;
 }
 
+// Status-log timestamp of a sample, floored to the millisecond.
+std::string sampleTimeToIso(const std::pair<uint64_t, uint32_t>& t)
+{
+    const auto tp = std::chrono::system_clock::time_point(
+        std::chrono::duration_cast<std::chrono::system_clock::duration>(
+            std::chrono::seconds(t.first) + std::chrono::milliseconds(t.second / 1'000'000U)));
+    return DateTimeUtils::formatIso8601UtcMillis(tp);
+}
+
+std::optional<std::string> optionalSampleTimeToIso(const std::optional<std::pair<uint64_t, uint32_t>>& t)
+{
+    if (!t)
+    {
+        return std::nullopt;
+    }
+    return sampleTimeToIso(*t);
+}
+
 } // namespace
 
 // --- PVWorkQueue ---
@@ -212,6 +231,19 @@ EpicsArchiverReader::EpicsArchiverReader(
         throw EpicsArchiverReaderConfig::Error(std::string("Failed to initialize HTTP clients: ") + e.what());
     }
 
+    if (config_.statusLogPath())
+    {
+        try
+        {
+            status_log_ = std::make_unique<ArchiverFetchStatusLog>(*config_.statusLogPath());
+        }
+        catch (const std::exception& e)
+        {
+            throw EpicsArchiverReaderConfig::Error(std::string("Failed to open status log: ") + e.what());
+        }
+        infof(*logger_, "Archiver reader '{}' writing per-PV fetch status to '{}'", name_, *config_.statusLogPath());
+    }
+
     startWorkers();
 }
 
@@ -240,6 +272,9 @@ void EpicsArchiverReader::initializeHttpClients()
         options.total_timeout_sec = 0;
         options.low_speed_limit_bytes_per_sec = 0;
         options.low_speed_time_sec = 0;
+        // Error bodies are not PB/HTTP: fail before parsing so the status
+        // reaches the retry logic instead of a misleading parse error.
+        options.fail_on_http_error = true;
         options.tls.verify_peer = config_.tlsVerifyPeer();
         options.tls.verify_host = config_.tlsVerifyHost();
         options.user_agent = "MLDP Archiver Reader 1.0 (mldp-pvxs-driver)";
@@ -481,6 +516,10 @@ void EpicsArchiverReader::runWorker(std::size_t index)
         if (completed == static_cast<std::size_t>(config_.fetchThreads()))
         {
             worker_done_ = true;
+            if (status_log_ && config_.fetchMode() == EpicsArchiverReaderConfig::FetchMode::HistoricalOnce)
+            {
+                status_log_->writeSummary(name_);
+            }
             if (config_.fetchMode() == EpicsArchiverReaderConfig::FetchMode::HistoricalOnce
                 && running_.load() && !worker_error_)
             {
@@ -678,6 +717,20 @@ void EpicsArchiverReader::parsePbHttpLineIntoState(WorkerContext& ctx, const std
         ctx.last_published_ns_per_pv[pv] = {parsed.epoch_seconds, parsed.nanoseconds};
     }
 
+    {
+        const std::pair<uint64_t, uint32_t> sample_time{parsed.epoch_seconds, parsed.nanoseconds};
+        ++ctx.attempt.samples;
+        if (!ctx.attempt.first_sample)
+        {
+            ctx.attempt.first_sample = sample_time;
+        }
+        if (!ctx.attempt.last_sample || sampleTimeLessThan(ctx.attempt.last_sample->first, ctx.attempt.last_sample->second,
+                                                           sample_time.first, sample_time.second))
+        {
+            ctx.attempt.last_sample = sample_time;
+        }
+    }
+
     if (config_.pvSamplesPerBatch() > 0)
     {
         // Flush before this sample would make the batch span reach the MLDP
@@ -721,38 +774,206 @@ void EpicsArchiverReader::parsePbHttpLineIntoState(WorkerContext& ctx, const std
     }
 }
 
+bool EpicsArchiverReader::waitRetryBackoff(long attempt)
+{
+    constexpr long kMaxBackoffMs = 30'000;
+    const long     base = config_.fetchRetryBackoffMs();
+    long           delay = base;
+    for (long i = 1; i < attempt && delay < kMaxBackoffMs; ++i)
+    {
+        delay *= 2;
+    }
+    delay = std::min(delay, kMaxBackoffMs);
+    if (delay > 0)
+    {
+        std::unique_lock<std::mutex> lock(worker_mutex_);
+        worker_cv_.wait_for(lock, std::chrono::milliseconds(delay), [this]()
+                            {
+                                return !running_.load();
+                            });
+    }
+    return running_.load();
+}
+
 void EpicsArchiverReader::fetchPvSafely(WorkerContext&                    ctx,
                                         std::size_t                       index,
                                         const std::string&                pv,
-                                        const std::string&                from,
+                                        const std::string&                window_from,
                                         const std::optional<std::string>& to)
 {
-    try
+    const bool  tail_mode = config_.fetchMode() == EpicsArchiverReaderConfig::FetchMode::PeriodicTail;
+    std::string from = window_from;
+    std::string resume_source = "config";
+
+    if (tail_mode)
     {
-        fetchSinglePV(ctx, pv, from, to);
-    }
-    catch (const std::exception& e)
-    {
-        if (!running_.load())
+        // A previous window for this PV ran out of retries: start from where
+        // it stopped so the gap is filled.
+        std::lock_guard<std::mutex> lock(tail_resume_mutex_);
+        auto it = tail_resume_from_.find(pv);
+        if (it != tail_resume_from_.end())
         {
-            throw;
+            if (it->second < from)
+            {
+                from = it->second;
+                resume_source = "failed_window";
+            }
+            tail_resume_from_.erase(it);
         }
-        // One bad PV stream must not take the worker down: keep what was
-        // already parsed (pending keys come from the payload header, so flush
-        // all of them), count the failure and move on.
-        flushAllPendingBatches(ctx);
-        errorf(*logger_, "Archiver reader worker '{}' [{}] failed PV '{}': {}", name_, index, pv, e.what());
+    }
+
+    const long  max_attempts = config_.fetchMaxRetries() + 1;
+    std::size_t max_samples = 0;
+
+    // Periodic tail dedupes by watermark; a retry re-sends the same window, so
+    // restore the watermark the PV had before the failed attempt.
+    std::optional<std::pair<uint64_t, uint32_t>> tail_watermark_before;
+    if (tail_mode)
+    {
+        if (auto it = ctx.last_published_ns_per_pv.find(pv); it != ctx.last_published_ns_per_pv.end())
+        {
+            tail_watermark_before = it->second;
+        }
+    }
+
+    for (long attempt = 1; attempt <= max_attempts; ++attempt)
+    {
+        ctx.attempt = {};
+        std::size_t bytes = 0;
+        const auto  attempt_start = std::chrono::steady_clock::now();
+
+        FetchAttemptRecord rec;
+        rec.reader = name_;
+        rec.pv = pv;
+        rec.attempt = attempt;
+        rec.max_attempts = max_attempts;
+        rec.from = from;
+        rec.to = to;
+        rec.resume_source = resume_source;
+
+        std::optional<std::string> error_text;
+        long                       http_status = 0;
+        try
+        {
+            const auto outcome = fetchSinglePV(ctx, pv, from, to, bytes);
+            http_status = outcome.http_status;
+        }
+        catch (const std::exception& e)
+        {
+            if (!running_.load())
+            {
+                throw;
+            }
+            // Drop incomplete pending batches instead of flushing them: a short
+            // batch would take the bucket id of the full batch the retry sends,
+            // and MLDP would then reject the full one as a duplicate.
+            ctx.pending_pv_batches.clear();
+            if (tail_mode)
+            {
+                if (tail_watermark_before)
+                {
+                    ctx.last_published_ns_per_pv[pv] = *tail_watermark_before;
+                }
+                else
+                {
+                    ctx.last_published_ns_per_pv.erase(pv);
+                }
+            }
+            error_text = e.what();
+            if (const auto* http_err = dynamic_cast<const HttpError*>(&e))
+            {
+                http_status = http_err->httpStatus();
+            }
+        }
+
+        max_samples = std::max(max_samples, ctx.attempt.samples);
+
+        rec.samples = ctx.attempt.samples;
+        rec.bytes = bytes;
+        rec.first_sample_ts = optionalSampleTimeToIso(ctx.attempt.first_sample);
+        rec.last_sample_ts = optionalSampleTimeToIso(ctx.attempt.last_sample);
+        if (http_status != 0)
+        {
+            rec.http_status = http_status;
+        }
+        rec.error = error_text;
+        rec.duration_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - attempt_start).count();
+
+        if (!error_text)
+        {
+            rec.result = FetchAttemptResult::Ok;
+            if (status_log_)
+            {
+                status_log_->record(rec);
+            }
+            if (attempt > 1)
+            {
+                infof(*logger_, "Archiver reader '{}' recovered PV '{}' on attempt {}/{} ({} samples)",
+                      name_, pv, attempt, max_attempts, ctx.attempt.samples);
+            }
+            return;
+        }
+
         metric_call(metrics_, [&](auto& m)
                     {
                         m.incrementReaderErrors(1.0, {{"source", pv}});
                     });
+
+        const bool not_found = http_status == 404;
+        const bool exhausted = not_found || attempt >= max_attempts;
+        if (not_found)
+        {
+            rec.result = FetchAttemptResult::SkippedNotFound;
+        }
+        else if (!exhausted)
+        {
+            rec.result = FetchAttemptResult::Retrying;
+        }
+        else
+        {
+            rec.result = max_samples > 0 ? FetchAttemptResult::Partial : FetchAttemptResult::Failed;
+        }
+        if (status_log_)
+        {
+            status_log_->record(rec);
+        }
+
+        if (exhausted)
+        {
+            if (not_found)
+            {
+                warnf(*logger_, "Archiver reader '{}' worker [{}] PV '{}' not found on archiver (HTTP 404), skipped",
+                      name_, index, pv);
+            }
+            else
+            {
+                errorf(*logger_,
+                       "Archiver reader '{}' worker [{}] giving up PV '{}' after {} attempts (best attempt reached {} samples): {}",
+                       name_, index, pv, attempt, max_samples, *error_text);
+                if (tail_mode)
+                {
+                    std::lock_guard<std::mutex> lock(tail_resume_mutex_);
+                    tail_resume_from_[pv] = from;
+                }
+            }
+            return;
+        }
+
+        warnf(*logger_, "Archiver reader '{}' worker [{}] PV '{}' attempt {}/{} failed after {} samples, restarting from {}: {}",
+              name_, index, pv, attempt, max_attempts, ctx.attempt.samples, from, *error_text);
+
+        if (!waitRetryBackoff(attempt))
+        {
+            return;
+        }
     }
 }
 
-void EpicsArchiverReader::fetchSinglePV(WorkerContext& ctx,
-                                         const std::string& pv,
-                                         const std::string& from,
-                                         const std::optional<std::string>& to)
+EpicsArchiverReader::FetchOutcome EpicsArchiverReader::fetchSinglePV(WorkerContext&                    ctx,
+                                                                     const std::string&                pv,
+                                                                     const std::string&                from,
+                                                                     const std::optional<std::string>& to,
+                                                                     std::size_t&                      total_bytes)
 {
     if (!ctx.http_client)
     {
@@ -768,53 +989,70 @@ void EpicsArchiverReader::fetchSinglePV(WorkerContext& ctx,
 
     PbChunkState     chunk_state;
     std::string      line_buf;
-    std::size_t      total_bytes = 0;
     const auto       fetch_start = std::chrono::steady_clock::now();
-    HttpResponseInfo response = ctx.http_client->streamGet(
-        HttpRequest{.url = url},
-        [&](const char* data, std::size_t size)
-        {
-            total_bytes += size;
-            for (std::size_t i = 0; i < size; ++i)
-            {
-                const char ch = data[i];
-                if (ch == '\n')
-                {
-                    if (line_buf.empty())
-                    {
-                        finalizeChunk(ctx, chunk_state);
-                    }
-                    else
-                    {
-                        try
-                        {
-                            parsePbHttpLineIntoState(ctx, line_buf, chunk_state);
-                        }
-                        catch (const std::exception& e)
-                        {
-                            throw std::runtime_error(std::string(e.what()) + " (pv='" + pv + "', line_bytes=" + std::to_string(line_buf.size()) + ")");
-                        }
-                        line_buf.clear();
-                    }
-                    continue;
-                }
-                line_buf.push_back(ch);
-            }
-        });
-
-    if (!line_buf.empty())
+    HttpResponseInfo response;
+    try
     {
-        try
+        response = ctx.http_client->streamGet(
+            HttpRequest{.url = url},
+            [&](const char* data, std::size_t size)
+            {
+                total_bytes += size;
+                for (std::size_t i = 0; i < size; ++i)
+                {
+                    const char ch = data[i];
+                    if (ch == '\n')
+                    {
+                        if (line_buf.empty())
+                        {
+                            finalizeChunk(ctx, chunk_state);
+                        }
+                        else
+                        {
+                            try
+                            {
+                                parsePbHttpLineIntoState(ctx, line_buf, chunk_state);
+                            }
+                            catch (const std::exception& e)
+                            {
+                                throw std::runtime_error(std::string(e.what()) + " (pv='" + pv + "', line_bytes=" + std::to_string(line_buf.size()) + ")");
+                            }
+                            line_buf.clear();
+                        }
+                        continue;
+                    }
+                    line_buf.push_back(ch);
+                }
+            });
+
+        if (response.http_status != 200)
         {
-            parsePbHttpLineIntoState(ctx, line_buf, chunk_state);
+            throw HttpError("archiver HTTP GET returned status " + std::to_string(response.http_status) + " for PV " + pv,
+                            response.http_status);
         }
-        catch (const std::exception& e)
+
+        if (!line_buf.empty())
         {
-            throw std::runtime_error(std::string(e.what()) + " (pv='" + pv + "', line_bytes=" + std::to_string(line_buf.size()) + ")");
+            try
+            {
+                parsePbHttpLineIntoState(ctx, line_buf, chunk_state);
+            }
+            catch (const std::exception& e)
+            {
+                throw std::runtime_error(std::string(e.what()) + " (pv='" + pv + "', line_bytes=" + std::to_string(line_buf.size()) + ")");
+            }
+            line_buf.clear();
         }
-        line_buf.clear();
+        finalizeChunk(ctx, chunk_state);
     }
-    finalizeChunk(ctx, chunk_state);
+    catch (...)
+    {
+        // The open chunk is incomplete: drop it. The retry re-fetches the whole
+        // range and re-publishes it as a complete batch with the same MLDP
+        // bucket id (pvName-firstSeconds-firstNanos).
+        chunk_state = PbChunkState{};
+        throw;
+    }
 
     if (total_bytes > 0)
     {
@@ -833,20 +1071,11 @@ void EpicsArchiverReader::fetchSinglePV(WorkerContext& ctx,
         }
     }
 
-    if (response.http_status != 200)
-    {
-        const prometheus::Labels source_tag{{"source", pv}};
-        metric_call(metrics_, [&](auto& m)
-                    {
-                        m.incrementReaderErrors(1.0, source_tag);
-                    });
-        throw std::runtime_error(
-            "archiver HTTP GET returned status " + std::to_string(response.http_status) + " for PV " + pv);
-    }
     infof(*logger_, "Completed fetch of archiver PB/HTTP stream for PV '{}'", pv);
 
     // The PV stream is complete, so no further samples can join its pending
     // batch: submit it now instead of holding (or dropping) a partial batch.
     // Pending keys come from the payload header PV name, so flush them all.
     flushAllPendingBatches(ctx);
+    return FetchOutcome{.bytes = total_bytes, .http_status = response.http_status};
 }

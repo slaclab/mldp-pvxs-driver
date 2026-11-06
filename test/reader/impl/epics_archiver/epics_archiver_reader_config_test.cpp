@@ -585,3 +585,64 @@ TEST_F(EpicsArchiverReaderConfigTest, RejectsInvalidFetchThreads)
     auto cfg_negative = makeConfigFromYaml(yaml_negative);
     EXPECT_THROW(EpicsArchiverReaderConfig config(cfg_negative), EpicsArchiverReaderConfig::Error);
 }
+
+// Verifies retry and status-log options default to retry 3x with no status log.
+TEST_F(EpicsArchiverReaderConfigTest, RetryAndStatusLogDefaults)
+{
+    const std::string yaml = R"(
+        name: test-archiver
+        hostname: "archiver.slac.stanford.edu:11200"
+        start-date: "2026-01-01T00:00:00Z"
+        pvs:
+          - name: "PV1"
+    )";
+
+    auto                      cfg = makeConfigFromYaml(yaml);
+    EpicsArchiverReaderConfig config(cfg);
+
+    EXPECT_EQ(config.fetchMaxRetries(), 3L);
+    EXPECT_EQ(config.fetchRetryBackoffMs(), 1000L);
+    EXPECT_FALSE(config.statusLogPath().has_value());
+}
+
+// Verifies retry and status-log options are parsed when configured.
+TEST_F(EpicsArchiverReaderConfigTest, AcceptsRetryAndStatusLogOptions)
+{
+    const std::string yaml = R"(
+        name: test-archiver
+        hostname: "archiver.slac.stanford.edu:11200"
+        start-date: "2026-01-01T00:00:00Z"
+        fetch-max-retries: 0
+        fetch-retry-backoff-ms: 250
+        status-log-path: "/tmp/archiver-status.jsonl"
+        pvs:
+          - name: "PV1"
+    )";
+
+    auto                      cfg = makeConfigFromYaml(yaml);
+    EpicsArchiverReaderConfig config(cfg);
+
+    EXPECT_EQ(config.fetchMaxRetries(), 0L);
+    EXPECT_EQ(config.fetchRetryBackoffMs(), 250L);
+    ASSERT_TRUE(config.statusLogPath().has_value());
+    EXPECT_EQ(*config.statusLogPath(), "/tmp/archiver-status.jsonl");
+}
+
+// Verifies negative retry values are rejected.
+TEST_F(EpicsArchiverReaderConfigTest, RejectsNegativeRetryOptions)
+{
+    for (const char* key : {"fetch-max-retries", "fetch-retry-backoff-ms"})
+    {
+        const std::string yaml = std::string(R"(
+        name: test-archiver
+        hostname: "archiver.slac.stanford.edu:11200"
+        start-date: "2026-01-01T00:00:00Z"
+        )") + key + R"(: -1
+        pvs:
+          - name: "PV1"
+    )";
+
+        auto cfg = makeConfigFromYaml(yaml);
+        EXPECT_THROW(EpicsArchiverReaderConfig config(cfg), EpicsArchiverReaderConfig::Error) << key;
+    }
+}

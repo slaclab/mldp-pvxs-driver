@@ -20,6 +20,7 @@
 
 #include <EPICSEvent.pb.h>
 #include <reader/ReaderFactory.h>
+#include <reader/impl/epics_archiver/ArchiverFetchStatusLog.h>
 #include <reader/impl/epics_archiver/EpicsArchiverReaderConfig.h>
 #include <util/bus/IDataBus.h>
 #include <util/log/ILog.h>
@@ -110,6 +111,21 @@ private:
         std::unique_ptr<::mldp_pvxs_driver::util::http::IHttpClient> http_client;
         std::unordered_map<std::string, PendingPvBatch>              pending_pv_batches;
         std::map<std::string, std::pair<uint64_t, uint32_t>>         last_published_ns_per_pv;
+
+        /// Samples accepted (after watermark dedupe) by the fetch attempt in progress.
+        struct AttemptStats
+        {
+            std::size_t                                  samples = 0;
+            std::optional<std::pair<uint64_t, uint32_t>> first_sample;
+            std::optional<std::pair<uint64_t, uint32_t>> last_sample;
+        } attempt;
+    };
+
+    /// Result of a single fetchSinglePV() call that did not throw.
+    struct FetchOutcome
+    {
+        std::size_t bytes = 0;
+        long        http_status = 0;
     };
 
     class PVWorkQueue
@@ -143,16 +159,22 @@ private:
     std::string                         cycle_from_;
     std::optional<std::string>          cycle_to_;
 
+    std::unique_ptr<ArchiverFetchStatusLog> status_log_;          ///< Per-PV attempt log (optional).
+    std::mutex                              tail_resume_mutex_;
+    std::unordered_map<std::string, std::string> tail_resume_from_; ///< Periodic tail: start of the window a PV failed in, re-fetched next cycle.
+
     void initializeHttpClients();
     void destroyHttpClients();
     void startWorkers();
     void stopWorkers();
     void runWorker(std::size_t index);
 
-    void fetchSinglePV(WorkerContext& ctx,
-                       const std::string& pv,
-                       const std::string& from,
-                       const std::optional<std::string>& to);
+    FetchOutcome fetchSinglePV(WorkerContext& ctx,
+                               const std::string& pv,
+                               const std::string& from,
+                               const std::optional<std::string>& to,
+                               std::size_t& bytes_received);
+    bool waitRetryBackoff(long attempt);
     void fetchPvSafely(WorkerContext& ctx,
                        std::size_t index,
                        const std::string& pv,

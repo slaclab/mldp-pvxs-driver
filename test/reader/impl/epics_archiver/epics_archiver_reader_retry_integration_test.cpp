@@ -1,0 +1,347 @@
+//////////////////////////////////////////////////////////////////////////////
+// This file is part of 'mldp-pvxs-driver'.
+// It is subject to the license terms in the LICENSE.txt file found in the
+// top-level directory of this distribution and at:
+//    https://confluence.slac.stanford.edu/display/ppareg/LICENSE.html.
+// No part of 'mldp-pvxs-driver', including this file,
+// may be copied, modified, propagated, or distributed except according to
+// the terms contained in the LICENSE.txt file.
+//////////////////////////////////////////////////////////////////////////////
+
+// Retry/resume behaviour of the archiver reader and its per-PV status log.
+
+#include <gtest/gtest.h>
+
+#include "../../../config/test_config_helpers.h"
+#include "../../../mock/MockArchiverPbHttpServer.h"
+#include "../../../mock/MockDataBus.h"
+
+#include <reader/impl/epics_archiver/ArchiverFetchStatusLog.h>
+#include <reader/impl/epics_archiver/EpicsArchiverReader.h>
+#include <util/bus/IDataBus.h>
+
+#include <nlohmann/json.hpp>
+
+#include <chrono>
+#include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <map>
+#include <memory>
+#include <string>
+#include <thread>
+#include <utility>
+#include <vector>
+
+namespace {
+
+using mldp_pvxs_driver::config::makeConfigFromYaml;
+using mldp_pvxs_driver::reader::impl::epics_archiver::ArchiverFetchStatusLog;
+using mldp_pvxs_driver::reader::impl::epics_archiver::EpicsArchiverReader;
+using mldp_pvxs_driver::reader::impl::epics_archiver::FetchAttemptRecord;
+using mldp_pvxs_driver::reader::impl::epics_archiver::FetchAttemptResult;
+using mldp_pvxs_driver::reader::impl::epics_archiver::MockArchiverPbHttpServer;
+using mldp_pvxs_driver::test::mock::MockDataBus;
+using mldp_pvxs_driver::util::bus::asTimeSeries;
+using mldp_pvxs_driver::util::bus::getRootSourceName;
+
+using SampleTime = std::pair<uint64_t, uint32_t>;
+
+std::string tempLogPath(const std::string& tag)
+{
+    const auto path = std::filesystem::temp_directory_path() /
+                      ("archiver_status_" + tag + "_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".jsonl");
+    std::filesystem::remove(path);
+    return path.string();
+}
+
+std::vector<nlohmann::json> readJsonLines(const std::string& path)
+{
+    std::vector<nlohmann::json> out;
+    std::ifstream               in(path);
+    std::string                 line;
+    while (std::getline(in, line))
+    {
+        if (!line.empty())
+        {
+            out.push_back(nlohmann::json::parse(line)); // throws on invalid JSON
+        }
+    }
+    return out;
+}
+
+// Polls the status log until a summary line is written (historical run finished).
+std::vector<nlohmann::json> waitForSummary(const std::string& path, std::chrono::milliseconds timeout)
+{
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (std::chrono::steady_clock::now() < deadline)
+    {
+        if (std::filesystem::exists(path))
+        {
+            auto lines = readJsonLines(path);
+            if (!lines.empty() && lines.back().value("type", "") == "summary")
+            {
+                return lines;
+            }
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    return {};
+}
+
+std::vector<SampleTime> publishedTimes(const MockDataBus& bus, const std::string& pv)
+{
+    std::vector<SampleTime> out;
+    for (const auto& batch : bus.snapshot())
+    {
+        if (getRootSourceName(batch) != pv)
+        {
+            continue;
+        }
+        for (const auto& frame : asTimeSeries(batch).frames)
+        {
+            for (const auto& ts : frame.timestamps)
+            {
+                out.emplace_back(ts.epoch_seconds, ts.nanoseconds);
+            }
+        }
+    }
+    return out;
+}
+
+std::string readerYaml(const MockArchiverPbHttpServer& server, const std::string& log_path, const std::string& extra,
+                       const std::vector<std::string>& pvs)
+{
+    std::string yaml = std::string(R"(
+        name: archiver-retry-test
+        hostname: ")") + server.baseUrl() + R"("
+        start-date: "2026-02-25T08:00:00.000Z"
+        end-date: "2026-02-25T08:00:10.000Z"
+        fetch-threads: 1
+        fetch-retry-backoff-ms: 10
+        status-log-path: ")" + log_path + "\"\n" + extra + "\n        pvs:\n";
+    for (const auto& pv : pvs)
+    {
+        yaml += "          - name: \"" + pv + "\"\n";
+    }
+    return yaml;
+}
+
+// A transient HTTP 500 is retried and the PV is fully ingested; the status log
+// records the retrying attempt followed by ok.
+TEST(EpicsArchiverReaderRetryTest, TransientHttpErrorIsRetried)
+{
+    MockArchiverPbHttpServer::GenerationConfig gen_cfg;
+    gen_cfg.fail_first_requests = 2;
+    gen_cfg.fail_status = 500;
+    MockArchiverPbHttpServer server(gen_cfg);
+    server.start();
+
+    const auto log_path = tempLogPath("transient");
+    auto       bus = std::make_shared<MockDataBus>();
+    auto       reader = std::make_unique<EpicsArchiverReader>(
+        bus, nullptr, makeConfigFromYaml(readerYaml(server, log_path, "", {"TEST:PV:DOUBLE"})));
+
+    const auto lines = waitForSummary(log_path, std::chrono::seconds(5));
+    ASSERT_EQ(lines.size(), 4u);
+    EXPECT_EQ(lines[0]["result"], "retrying");
+    EXPECT_EQ(lines[0]["http_status"], 500);
+    EXPECT_EQ(lines[1]["result"], "retrying");
+    EXPECT_EQ(lines[2]["result"], "ok");
+    EXPECT_EQ(lines[2]["attempt"], 3);
+    EXPECT_EQ(lines[2]["max_attempts"], 4);
+    EXPECT_GT(lines[2]["samples"].get<std::size_t>(), 0u);
+    EXPECT_EQ(lines[3]["ok"], 1);
+    EXPECT_EQ(lines[3]["failed"], 0);
+
+    // No samples before success, and all retries reuse the configured start.
+    for (const auto& req : server.requestHistory())
+    {
+        EXPECT_EQ(req.from, "2026-02-25T08:00:00.000Z");
+    }
+    EXPECT_EQ(publishedTimes(*bus, "TEST:PV:DOUBLE").size(), lines[2]["samples"].get<std::size_t>());
+    std::filesystem::remove(log_path);
+}
+
+// A connection drop mid-stream restarts the PV from the configured start.
+// Only complete batches of the failed attempt are published, and each one is
+// identical to the batch the retry sends with the same first sample, so it
+// maps to the same MLDP bucket id (pvName-firstSeconds-firstNanos).
+TEST(EpicsArchiverReaderRetryTest, MidStreamDropRestartsFromStartWithSameBatches)
+{
+    MockArchiverPbHttpServer::GenerationConfig gen_cfg;
+    gen_cfg.min_events_per_second = 8;
+    gen_cfg.max_events_per_second = 8;
+    gen_cfg.truncate_first_requests = 1;
+    gen_cfg.truncate_after_bytes = 600;
+    MockArchiverPbHttpServer server(gen_cfg);
+    server.start();
+
+    const auto log_path = tempLogPath("drop");
+    auto       bus = std::make_shared<MockDataBus>();
+    auto       reader = std::make_unique<EpicsArchiverReader>(
+        bus, nullptr, makeConfigFromYaml(readerYaml(server, log_path, "        pv-samples-per-batch: 10", {"TEST:PV:DOUBLE"})));
+
+    const auto lines = waitForSummary(log_path, std::chrono::seconds(5));
+    ASSERT_EQ(lines.size(), 3u);
+    ASSERT_EQ(lines[0]["result"], "retrying");
+    const auto first_attempt_samples = lines[0]["samples"].get<std::size_t>();
+    ASSERT_GT(first_attempt_samples, 10u); // at least one complete batch before the drop
+    EXPECT_EQ(lines[1]["result"], "ok");
+    EXPECT_EQ(lines[1]["resume_source"], "config");
+    EXPECT_EQ(lines[1]["from"], "2026-02-25T08:00:00.000Z");
+
+    const auto requests = server.requestHistory();
+    ASSERT_EQ(requests.size(), 2u);
+    EXPECT_EQ(requests[0].from, requests[1].from);
+
+    // Group published batches by bucket key (first sample time).
+    std::map<SampleTime, std::vector<std::vector<SampleTime>>> by_key;
+    for (const auto& batch : bus->snapshot())
+    {
+        std::vector<SampleTime> times;
+        for (const auto& frame : asTimeSeries(batch).frames)
+        {
+            for (const auto& ts : frame.timestamps)
+            {
+                times.emplace_back(ts.epoch_seconds, ts.nanoseconds);
+            }
+        }
+        ASSERT_FALSE(times.empty());
+        by_key[times.front()].push_back(std::move(times));
+    }
+
+    std::size_t unique_samples = 0;
+    std::size_t duplicated_keys = 0;
+    for (const auto& [key, batches] : by_key)
+    {
+        // A key sent twice must carry identical content: never a short batch.
+        for (const auto& b : batches)
+        {
+            EXPECT_EQ(b, batches.front());
+        }
+        duplicated_keys += batches.size() > 1 ? 1 : 0;
+        unique_samples += batches.front().size();
+    }
+    EXPECT_EQ(duplicated_keys, first_attempt_samples / 10);
+    EXPECT_EQ(unique_samples, lines[1]["samples"].get<std::size_t>());
+    std::filesystem::remove(log_path);
+}
+
+// HTTP 404 is not retried and is reported as skipped_not_found; other PVs continue.
+TEST(EpicsArchiverReaderRetryTest, NotFoundIsNotRetried)
+{
+    MockArchiverPbHttpServer::GenerationConfig gen_cfg;
+    gen_cfg.not_found_pvs = {"TEST:PV:MISSING"};
+    MockArchiverPbHttpServer server(gen_cfg);
+    server.start();
+
+    const auto log_path = tempLogPath("notfound");
+    auto       bus = std::make_shared<MockDataBus>();
+    auto       reader = std::make_unique<EpicsArchiverReader>(
+        bus, nullptr, makeConfigFromYaml(readerYaml(server, log_path, "", {"TEST:PV:MISSING", "TEST:PV:DOUBLE"})));
+
+    const auto lines = waitForSummary(log_path, std::chrono::seconds(5));
+    ASSERT_EQ(lines.size(), 3u);
+    EXPECT_EQ(lines[0]["pv"], "TEST:PV:MISSING");
+    EXPECT_EQ(lines[0]["result"], "skipped_not_found");
+    EXPECT_EQ(lines[0]["http_status"], 404);
+    EXPECT_EQ(lines[1]["pv"], "TEST:PV:DOUBLE");
+    EXPECT_EQ(lines[1]["result"], "ok");
+    EXPECT_EQ(lines[2]["not_found_pvs"], nlohmann::json::array({"TEST:PV:MISSING"}));
+    EXPECT_EQ(server.requestHistory().size(), 2u);
+    std::filesystem::remove(log_path);
+}
+
+// Retries exhausted after a partial stream: result is partial, only complete
+// batches are published, and the summary lists the PV.
+TEST(EpicsArchiverReaderRetryTest, ExhaustedRetriesReportPartial)
+{
+    MockArchiverPbHttpServer::GenerationConfig gen_cfg;
+    gen_cfg.min_events_per_second = 8;
+    gen_cfg.max_events_per_second = 8;
+    gen_cfg.truncate_first_requests = 1;
+    gen_cfg.truncate_after_bytes = 600;
+    gen_cfg.fail_first_requests = 0;
+    MockArchiverPbHttpServer server(gen_cfg);
+    server.start();
+
+    const auto log_path = tempLogPath("partial");
+    auto       bus = std::make_shared<MockDataBus>();
+    auto       reader = std::make_unique<EpicsArchiverReader>(
+        bus, nullptr,
+        makeConfigFromYaml(readerYaml(server, log_path, "        fetch-max-retries: 0\n        pv-samples-per-batch: 10", {"TEST:PV:DOUBLE"})));
+
+    const auto lines = waitForSummary(log_path, std::chrono::seconds(5));
+    ASSERT_EQ(lines.size(), 2u);
+    EXPECT_EQ(lines[0]["result"], "partial");
+    EXPECT_TRUE(lines[0]["last_sample_ts"].is_string());
+    EXPECT_TRUE(lines[0]["error"].is_string());
+    EXPECT_EQ(lines[1]["partial"], 1);
+    EXPECT_EQ(lines[1]["partial_pvs"], nlohmann::json::array({"TEST:PV:DOUBLE"}));
+    // Only complete batches are published; the incomplete tail is dropped.
+    const auto published = publishedTimes(*bus, "TEST:PV:DOUBLE").size();
+    EXPECT_GT(published, 0u);
+    EXPECT_EQ(published % 10, 0u);
+    EXPECT_LT(published, lines[0]["samples"].get<std::size_t>());
+    std::filesystem::remove(log_path);
+}
+
+// Retries exhausted with nothing received: result is failed.
+TEST(EpicsArchiverReaderRetryTest, ExhaustedRetriesReportFailed)
+{
+    MockArchiverPbHttpServer::GenerationConfig gen_cfg;
+    gen_cfg.fail_first_requests = 100;
+    gen_cfg.fail_status = 503;
+    MockArchiverPbHttpServer server(gen_cfg);
+    server.start();
+
+    const auto log_path = tempLogPath("failed");
+    auto       bus = std::make_shared<MockDataBus>();
+    auto       reader = std::make_unique<EpicsArchiverReader>(
+        bus, nullptr, makeConfigFromYaml(readerYaml(server, log_path, "        fetch-max-retries: 2", {"TEST:PV:DOUBLE"})));
+
+    const auto lines = waitForSummary(log_path, std::chrono::seconds(5));
+    ASSERT_EQ(lines.size(), 4u);
+    EXPECT_EQ(lines[2]["result"], "failed");
+    EXPECT_EQ(lines[2]["attempt"], 3);
+    EXPECT_EQ(lines[3]["failed_pvs"], nlohmann::json::array({"TEST:PV:DOUBLE"}));
+    EXPECT_EQ(server.requestHistory().size(), 3u);
+    EXPECT_TRUE(bus->snapshot().empty());
+    std::filesystem::remove(log_path);
+}
+
+// Status log lines are valid JSON and the summary counts final results only.
+TEST(ArchiverFetchStatusLogTest, WritesJsonLinesAndSummary)
+{
+    const auto path = tempLogPath("unit");
+    {
+        ArchiverFetchStatusLog log(path);
+        FetchAttemptRecord     rec;
+        rec.reader = "r";
+        rec.pv = "A";
+        rec.from = "2026-01-01T00:00:00.000Z";
+        rec.resume_source = "config";
+        rec.result = FetchAttemptResult::Retrying;
+        rec.error = std::string("bad \xff utf8");
+        log.record(rec);
+        rec.result = FetchAttemptResult::Ok;
+        rec.error.reset();
+        log.record(rec);
+        rec.pv = "B";
+        rec.result = FetchAttemptResult::Failed;
+        log.record(rec);
+        log.writeSummary("r");
+    }
+    const auto lines = readJsonLines(path);
+    ASSERT_EQ(lines.size(), 4u);
+    EXPECT_EQ(lines[0]["result"], "retrying");
+    EXPECT_TRUE(lines[0]["to"].is_null());
+    EXPECT_EQ(lines[3]["type"], "summary");
+    EXPECT_EQ(lines[3]["ok"], 1);
+    EXPECT_EQ(lines[3]["failed"], 1);
+    EXPECT_EQ(lines[3]["failed_pvs"], nlohmann::json::array({"B"}));
+    std::filesystem::remove(path);
+}
+
+} // namespace
