@@ -313,7 +313,7 @@ Both EPICS readers share the same base config (`EpicsReaderConfig`):
         - name: MY:PV:1
           metadata:                # optional — per-PV overrides (merged over static-metadata)
             signal_type: scalar
-        - name: MY:NTTABLE:PV
+        - name: MY:NTTABLE:PV      # epics-base only; epics-pvxs rejects table types
           option:
             type: slac-bsas-table
             tsSeconds: secondsPastEpoch  # optional; default: secondsPastEpoch
@@ -330,7 +330,7 @@ Both EPICS readers share the same base config (`EpicsReaderConfig`):
 | `static-metadata` | map | `{}` | Reader-level key/value metadata stamped on every `EventBatch.metadata`. |
 | `pvs[].name` | string | — | **Required.** Fully qualified PV name. |
 | `pvs[].metadata` | map | `{}` | Per-PV metadata key/value pairs. Merged over `static-metadata`; PV-level keys win on conflict. |
-| `pvs[].option.type` | string | — | `slac-bsas-table` activates SLAC BSAS NTTable row-timestamp handling. |
+| `pvs[].option.type` | string | — | `slac-bsas-table` activates SLAC BSAS NTTable row-timestamp handling *(epics-base only; under `epics-pvxs` it is a configuration error — use `epics-pvxs-bsas-gen1`)*. |
 | `pvs[].option.tsSeconds` | string | `secondsPastEpoch` | NTTable column name carrying seconds timestamp. |
 | `pvs[].option.tsNanos` | string | `nanoseconds` | NTTable column name carrying nanoseconds timestamp. |
 
@@ -338,6 +338,45 @@ Both EPICS readers share the same base config (`EpicsReaderConfig`):
 
 → [EpicsPVXSReader Implementation](../readers/epics-pvxs-reader-implementation.md)
 → [EpicsBaseReader Implementation](../readers/epics-base-reader-implementation.md)
+
+### BSAS Table Readers (`epics-pvxs-bsas-gen1`, `epics-pvxs-bsas-gen2`)
+
+PVXS readers dedicated to SLAC BSAS NTTables. They accept the `epics-pvxs` keys
+(`name`, `thread-pool`, `metadata`, `environment`, `pvs`) except `column-batch-size`, plus
+table keys that can be set at reader level and overridden per PV under `option`:
+
+```yaml
+reader:
+  - epics-pvxs-bsas-gen1:
+      - name: bsas_gen1
+        rows-per-data-batch: 120     # rows per DataBatch; 0 = all rows
+        pvs-per-data-batch: 1        # PV columns per DataBatch; 0 = all
+        data-batches-per-push: 50    # DataBatches per bus EventBatch; 0 = all
+        tsSeconds: secondsPastEpoch  # default
+        tsNanos: nanoseconds         # default
+        pvs:
+          - name: "BSAS:GEN1:TABLE"
+  - epics-pvxs-bsas-gen2:
+      - name: bsas_gen2
+        pidField: pid                # default; column always skipped
+        valueSuffix: Val             # default; case-insensitive
+        pvs:
+          - name: "BSAS:GEN2:TABLE"
+            option:
+              pvs-per-data-batch: 0
+```
+
+| Key | Readers | Default | Description |
+|-----|---------|---------|-------------|
+| `rows-per-data-batch` | both | `120` | Rows per `DataBatch` (values per column). `0` = all rows. |
+| `pvs-per-data-batch` | both | `1` | PV columns per `DataBatch` (they share the row timestamps). `0` = all. |
+| `data-batches-per-push` | both | `50` | `DataBatch`es per bus `EventBatch` push. `0` = all. Replaces `column-batch-size` (rejected). |
+| `tsSeconds` / `tsNanos` | both | `secondsPastEpoch` / `nanoseconds` | Per-row timestamp column names. |
+| `pidField` | gen2 | `pid` | Pulse ID column (skipped). |
+| `valueSuffix` | gen2 | `Val` | Value column suffix (case-insensitive); `<PV>.Val` is ingested as `<PV>`. |
+
+`option.type` is rejected by both readers; `pidField` / `valueSuffix` are rejected by
+`epics-pvxs-bsas-gen1`. → [Gen 1](../readers/slac-bsas-table-gen1.md), [Gen 2](../readers/slac-bsas-table-gen2.md)
 
 ---
 
@@ -365,6 +404,10 @@ Two fetch modes:
       pv-samples-per-batch: 0          # optional; default: 0 (disabled)
       batch-flush-interval-ms: 0       # deprecated, no effect (partial batches flushed at PV fetch end)
       max-batch-span-sec: 86400        # optional; default: 86400 (MLDP bucket limit)
+      fetch-window-sec: 86400          # optional; default: 86400 (split range into aligned windows; 0 = one request)
+      fetch-max-retries: 3             # optional; default: 3 (re-fetch the failed window from its start)
+      fetch-retry-backoff-ms: 1000     # optional; default: 1000 (doubles per retry, max 30s)
+      status-log-path: /var/log/mldp/archiver-status.jsonl  # optional; default: ./archiver-status-<name>.jsonl ("" = off)
       tls-verify-peer: true            # optional; default: true
       tls-verify-host: true            # optional; default: true
       static-metadata:                 # optional — reader-level key/value metadata
@@ -396,6 +439,10 @@ Two fetch modes:
 | `pv-samples-per-batch` | long | `0` | Accumulate this many samples per PV before submitting. `0` = disabled. |
 | `batch-flush-interval-ms` | long | `0` | **Deprecated, no effect.** Partial PV batches are always submitted when the PV fetch completes. |
 | `max-batch-span-sec` | long | `86400` | Max timestamp span of one PV batch. Flushes early so MLDP does not reject the request (bucket limit 24h). |
+| `fetch-window-sec` | long | `86400` | `historical_once` with `end-date`: split each PV range into windows aligned to multiples of this size since the Unix epoch. Each window is one archiver request with its own retries, so a failure re-fetches only that window. No batch spans a window. `0` = one request for the whole range. Without `end-date` the PV is fetched in one request. |
+| `fetch-max-retries` | long | `3` | Retries after a failed fetch window (connection error, HTTP 5xx, truncated stream). Each retry re-fetches that window from its start. Incomplete batches of a failed attempt are dropped; complete ones are re-sent with the same MLDP bucket id (`pvName-firstSeconds-firstNanos`) and discarded as duplicates. HTTP 404 is not retried. `0` disables retries. |
+| `fetch-retry-backoff-ms` | long | `1000` | Base delay before a retry; doubles each attempt, capped at 30 s. |
+| `status-log-path` | string | `./archiver-status-<name>.jsonl` | Empty string disables. Append one JSON line per PV fetch attempt (`pv`, `attempt`, `from`, `to`, `result` = `ok`/`retrying`/`partial`/`failed`/`skipped_not_found`, `samples`, `bytes`, `first_sample_ts`, `last_sample_ts`, `http_status`, `error`, `duration_ms`). `historical_once` ends with a `summary` line: per-window counts, `partial_pvs`/`failed_pvs`/`not_found_pvs` (unique names) and `*_windows` (`{pv, from, to}` to re-fetch). In `periodic_tail`, a PV that exhausts retries is re-fetched from the failed window start in the next cycle. |
 | `poll-interval-sec` | long | — | **Required for `periodic_tail`.** Tail poll interval (seconds). |
 | `lookback-sec` | long | poll-interval-sec | Tail lookback window (seconds). Must be ≤ `poll-interval-sec`. |
 | `tls-verify-peer` | bool | `true` | Verify the server TLS certificate chain. |

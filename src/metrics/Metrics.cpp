@@ -377,9 +377,19 @@ double Metrics::readerDataBytesPerSecond(prometheus::Labels tags) const
     return reader_data_bytes_per_second_family_->Add(std::move(tags)).Value();
 }
 
-double Metrics::readerEventsReceivedTotal() const
+double Metrics::readerEventsTotal(prometheus::Labels tags) const
 {
-    return reader_events_received_family_->Add({}).Value();
+    return reader_events_family_->Add(std::move(tags)).Value();
+}
+
+double Metrics::readerEventsReceivedTotal(prometheus::Labels tags) const
+{
+    return reader_events_received_family_->Add(std::move(tags)).Value();
+}
+
+double Metrics::readerErrorsTotal(prometheus::Labels tags) const
+{
+    return reader_errors_family_->Add(std::move(tags)).Value();
 }
 
 void Metrics::setPoolConnectionsInUse(double value, prometheus::Labels tags)

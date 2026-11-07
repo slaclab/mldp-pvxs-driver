@@ -75,12 +75,10 @@ writer:
         min-conn: 1
         max-conn: 1
 reader:
-  epics-pvxs:
+  epics-pvxs-bsas-gen1:
     - name: epics_reader_1
       pvs:
         - name: test:bsas_table
-          option:
-            type: slac-bsas-table
 )";
 
 class TestIngestionService final : public dp::service::ingestion::DpIngestionService::Service
@@ -301,12 +299,10 @@ TEST(MLDPPVXSControllerTest, BsasNtTableColumnsHaveProvenanceSourceSetToRootSour
          << "        min-conn: 1\n"
          << "        max-conn: 1\n"
          << "reader:\n"
-         << "  - epics-pvxs:\n"
+         << "  - epics-pvxs-bsas-gen1:\n"
          << "      - name: epics_reader_1\n"
          << "        pvs:\n"
-         << "          - name: test:bsas_table\n"
-         << "            option:\n"
-         << "              type: slac-bsas-table\n";
+         << "          - name: test:bsas_table\n";
 
     const auto config = makeConfigFromYaml(yaml.str());
     ASSERT_TRUE(config.valid());

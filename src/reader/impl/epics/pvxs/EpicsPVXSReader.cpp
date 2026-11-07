@@ -14,7 +14,6 @@
 
 #include <config/Config.h>
 #include <metrics/Metrics.h>
-#include <reader/impl/epics/pvxs/BSASEpicsDataBatchConversion.h>
 #include <reader/impl/epics/pvxs/EpicsMLDPConversion.h>
 #include <util/StringFormat.h>
 #include <util/log/Logger.h>
@@ -42,13 +41,66 @@ std::shared_ptr<ILogger> makeLogger(const std::string& readerName)
     return mldp_pvxs_driver::util::log::newLogger(loggerName);
 }
 
-/// Return true when the first timestamp entry of a DataBatch is non-zero.
-bool hasTimestamp(const DataBatch& batch)
+} // namespace
+
+/// Build the scalar-reader config view, rejecting BSAS table options that now
+/// belong to the dedicated table readers.
+EpicsPVXSReaderConfig EpicsPVXSReader::makeScalarConfig(const config::Config& cfg)
 {
-    return !batch.timestamps.empty();
+    EpicsPVXSReaderConfig readerCfg(cfg);
+    for (const auto& pv : readerCfg.pvs())
+    {
+        if (pv.nttableRowTs.has_value())
+        {
+            throw EpicsReaderConfig::Error(util::format_string(
+                "pvs[].option.type 'slac-bsas-table' (pv '{}') is not supported by reader type 'epics-pvxs'; "
+                "use reader type 'epics-pvxs-bsas-gen1' (or 'epics-pvxs-bsas-gen2' for Gen2 tables)",
+                pv.name));
+        }
+    }
+    return readerCfg;
 }
 
-std::size_t estimatePvxsValueBytes(const pvxs::Value& v)
+/// Construct the scalar reader: initialise the PVA context from the process
+/// environment (EPICS_PVA_* variables) and immediately begin monitoring all PV
+/// names declared in @p cfg.
+EpicsPVXSReader::EpicsPVXSReader(std::shared_ptr<util::bus::IDataBus> bus,
+                                 std::shared_ptr<metrics::Metrics>    metrics,
+                                 const config::Config&                cfg)
+    : EpicsPVXSReader(std::move(bus), std::move(metrics), makeScalarConfig(cfg), cfg,
+                      makeLogger(cfg.get("name")), "epics-pvxs", kPVXSDefaultMonitorRequest)
+{
+    addPV(pvNames());
+}
+
+EpicsPVXSReader::EpicsPVXSReader(std::shared_ptr<util::bus::IDataBus> bus,
+                                 std::shared_ptr<metrics::Metrics>    metrics,
+                                 const EpicsReaderConfig&             readerCfg,
+                                 const config::Config&                rawCfg,
+                                 std::shared_ptr<util::log::ILogger>  logger,
+                                 std::string_view                     clientTag,
+                                 std::string_view                     monitorRequest)
+    : EpicsReaderBase(std::move(bus), std::move(metrics), readerCfg, std::move(logger))
+    , monitor_request_(monitorRequest)
+{
+    pva_context_ = PvxsClientConfig::buildContext(rawCfg, std::string(clientTag));
+}
+
+EpicsPVXSReader::~EpicsPVXSReader()
+{
+    stopProcessing();
+}
+
+void EpicsPVXSReader::stopProcessing()
+{
+    running_ = false;
+    if (reader_pool_)
+    {
+        reader_pool_->wait();
+    }
+}
+
+std::size_t EpicsPVXSReader::estimatePvxsValueBytes(const pvxs::Value& v)
 {
     if (!v.valid()) return 0;
     switch (v.type().code)
@@ -96,7 +148,7 @@ std::size_t estimatePvxsValueBytes(const pvxs::Value& v)
     }
 }
 
-bool hasValidData(const DataBatch& batch)
+bool EpicsPVXSReader::hasValidData(const DataBatch& batch)
 {
     if (batch.timestamps.empty())
         return false;
@@ -124,38 +176,6 @@ bool hasValidData(const DataBatch& batch)
     return !hasNumeric;
 }
 
-IDataBus::EventBatch makeTableEventBatch(
-    const std::unordered_map<std::string, std::string>& metadata,
-    const std::string& pvName)
-{
-    IDataBus::EventBatch batch;
-    batch.metadata = metadata;
-    batch.payload = TimeSeriesPayload{.root_source_name = pvName, .is_tabular = true};
-    return batch;
-}
-} // namespace
-
-/// Construct the reader: initialise the PVA context from the process environment
-/// (EPICS_PVA_* variables) and immediately begin monitoring all PV names declared
-/// in @p cfg.
-EpicsPVXSReader::EpicsPVXSReader(std::shared_ptr<util::bus::IDataBus> bus,
-                                 std::shared_ptr<metrics::Metrics>    metrics,
-                                 const config::Config&                cfg)
-    : EpicsReaderBase(std::move(bus), std::move(metrics), EpicsPVXSReaderConfig(cfg), makeLogger(cfg.get("name")))
-{
-    pva_context_ = PvxsClientConfig::buildContext(cfg, "epics-pvxs");
-    addPV(pvNames());
-}
-
-EpicsPVXSReader::~EpicsPVXSReader()
-{
-    running_ = false;
-    if (reader_pool_)
-    {
-        reader_pool_->wait();
-    }
-}
-
 /// Subscribe to PVXS channel-access monitors for each PV in @p pvNames.
 /// Each incoming value is drained from the subscription queue in the PVXS
 /// network thread, a receive-event metric is recorded, and the value is then
@@ -168,7 +188,7 @@ void EpicsPVXSReader::addPV(const PVSet& pvNames)
     {
         auto monitor = pva_context_.monitor(pv);
         auto pv_mon = monitor
-                          .pvRequest(std::string(kPVXSDefaultMonitorRequest))
+                          .pvRequest(monitor_request_)
                           .event([this](pvxs::client::Subscription& s)
                                  {
                                      for (pvxs::Value value = s.pop(); value; value = s.pop())
@@ -285,128 +305,75 @@ void EpicsPVXSReader::processDefaultMode(const std::string& pvName, const pvxs::
     bus_->push(std::move(eventBatch));
 }
 
-/// Process a PV update in SlacBsasTable mode (NTTable with per-row timestamps).
-///
-/// Delegates conversion to BSASEpicsDataBatchConversion::tryBuildNtTableRowTsBatch.
-/// Columns are grouped into shared DataBatch frames according to the per-PV
-/// columnBatchSize setting (default 1 = each column gets its own frame).
-/// Grouped columns share a single timestamps vector within their DataBatch.
-/// Full EventBatch messages are pushed to the bus when global columnBatchSize
-/// columns have been accumulated, keeping memory bounded for wide tables.
-void EpicsPVXSReader::processSlacBsasTableMode(const std::string&     pvName,
-                                               const pvxs::Value&     epicsValue,
-                                               const PVRuntimeConfig* runtimeCfg,
-                                               const prometheus::Labels& sourceTag,
-                                               std::size_t&           emitted)
+/// Record the reader pool queue depth gauge.
+void EpicsPVXSReader::recordPoolDepth()
 {
-    const std::size_t busBatchSize   = config_.columnBatchSize();
-    const std::size_t perPvBatchSize = runtimeCfg ? runtimeCfg->columnBatchSize : 1;
-    const auto&       merged_meta    = mergedMetadataFor(pvName);
+    metric_call(metrics_, [&](auto& m)
+                {
+                    m.setReaderPoolQueueDepth(
+                        static_cast<double>(reader_pool_->get_tasks_queued()),
+                        {{"reader", name_}});
+                });
+}
 
-    IDataBus::EventBatch tableBatch = makeTableEventBatch(merged_meta, pvName);
-    std::size_t colsInBatch = 0;
+/// Record processing time and, for updates that emitted data, the event count,
+/// total bytes and bytes/s for @p pvName.
+void EpicsPVXSReader::recordEventMetrics(const std::string&                    pvName,
+                                         const prometheus::Labels&             sourceTag,
+                                         std::size_t                           dataBytes,
+                                         std::size_t                           emitted,
+                                         std::chrono::steady_clock::time_point processingStart)
+{
+    const auto   processing_end = std::chrono::steady_clock::now();
+    const double processing_ms = std::chrono::duration<double, std::milli>(processing_end - processingStart).count();
+    metric_call(metrics_, [&](auto& m)
+                {
+                    m.observeReaderProcessingTimeMs(processing_ms, sourceTag);
+                });
 
-    DataBatch   currentFrame;
-    std::size_t colsInCurrentFrame = 0;
-    bool        frameTimestampsSet = false;
-
-    auto flushCurrentFrame = [&](bool forceFlush = false)
+    if (emitted == 0)
     {
-        if (colsInCurrentFrame == 0 && !forceFlush)
-            return;
-        if (colsInCurrentFrame > 0)
+        return;
+    }
+
+    metric_call(metrics_, [&](auto& m)
+                {
+                    m.incrementReaderEvents(1.0, sourceTag);
+                });
+    if (dataBytes > 0)
+    {
+        metric_call(metrics_, [&](auto& m)
+                    {
+                        m.incrementReaderDataBytesTotal(static_cast<double>(dataBytes), sourceTag);
+                    });
+        const auto now = std::chrono::steady_clock::now();
         {
-            std::get<TimeSeriesPayload>(tableBatch.payload).frames.push_back(std::move(currentFrame));
-            currentFrame = DataBatch{};
-            colsInCurrentFrame = 0;
-            frameTimestampsSet = false;
-            ++colsInBatch;
-        }
-        if (forceFlush || (busBatchSize > 0 && colsInBatch >= busBatchSize))
-        {
-            if (!std::get<TimeSeriesPayload>(tableBatch.payload).frames.empty())
+            std::lock_guard<std::mutex> lk(last_event_time_mutex_);
+            auto&                       last_time = last_event_time_[pvName];
+            if (last_time != std::chrono::steady_clock::time_point{})
             {
-                tableBatch.reader_name = name();
-                bus_->push(std::move(tableBatch));
-                tableBatch = makeTableEventBatch(merged_meta, pvName);
-                colsInBatch = 0;
+                const double interval_ms = std::chrono::duration<double, std::milli>(now - last_time).count();
+                if (interval_ms > 0.0)
+                {
+                    const double bps = (static_cast<double>(dataBytes) * 1000.0) / interval_ms;
+                    metric_call(metrics_, [&](auto& m)
+                                {
+                                    m.setReaderDataBytesPerSecond(bps, sourceTag);
+                                });
+                }
             }
+            last_time = now;
         }
-    };
-
-    if (!BSASEpicsDataBatchConversion::tryBuildNtTableRowTsBatch(
-            *logger_, pvName, epicsValue,
-            runtimeCfg ? runtimeCfg->tsSecondsField : "secondsPastEpoch",
-            runtimeCfg ? runtimeCfg->tsNanosField : "nanoseconds",
-            [&](std::string colName, std::vector<DataBatch> batches)
-            {
-                bool columnContributed = false;
-                for (auto& b : batches)
-                {
-                    if (!hasTimestamp(b))
-                    {
-                        logAndRecordError(
-                            util::format_string("Dropping BSAS frame without timestamps for column {} on reader {}", colName, name_),
-                            sourceTag);
-                        continue;
-                    }
-                    if (!hasValidData(b))
-                    {
-                        tracef(*logger_, "[{}/{}] column {} all-NaN — discarding", name_, pvName, colName);
-                        continue;
-                    }
-
-                    columnContributed = true;
-                    if (!frameTimestampsSet)
-                    {
-                        currentFrame.timestamps = std::move(b.timestamps);
-                        frameTimestampsSet = true;
-                    }
-                    for (auto& col : b.columns)
-                        currentFrame.columns.push_back(std::move(col));
-                    for (auto& [k, v] : b.array_dims)
-                        currentFrame.array_dims[k] = v;
-                }
-
-                if (columnContributed)
-                {
-                    ++colsInCurrentFrame;
-                    if (perPvBatchSize > 0 && colsInCurrentFrame >= perPvBatchSize)
-                    {
-                        flushCurrentFrame();
-                    }
-                }
-            },
-            emitted,
-            reader_pool_->get_thread_count() > 1 ? reader_pool_.get() : nullptr))
-    {
-        logAndRecordError(
-            util::format_string("Error converting PV {} to MLDP SLAC BSAS table batch on reader {}.", pvName, name_),
-            sourceTag);
     }
-    else
-    {
-        flushCurrentFrame(true);
-    }
-
-    IDataBus::EventBatch markerBatch;
-    markerBatch.metadata = merged_meta;
-    markerBatch.reader_name = name();
-    markerBatch.payload = TimeSeriesPayload{
-        .root_source_name   = pvName,
-        .end_of_batch_group = true,
-        .is_tabular         = true,
-    };
-    bus_->push(std::move(markerBatch));
+    tracef(*logger_, "[{}/{}] event published", name_, pvName);
 }
 
 /// Entry point for every PVXS update, called from the reader thread pool.
 ///
-/// Looks up the runtime configuration for @p pvName to determine the processing
-/// mode, dispatches to processDefaultMode() or processSlacBsasTableMode(), and
-/// records per-event processing-time and event-count metrics.  PVXS remote
-/// errors and unexpected exceptions are caught, logged, and counted so that a
-/// single bad update cannot disrupt the monitoring loop.
+/// Converts the scalar / scalar-array update (Default mode) and records
+/// per-event metrics.  PVXS remote errors and unexpected exceptions are
+/// caught, logged, and counted so that a single bad update cannot disrupt the
+/// monitoring loop.
 void EpicsPVXSReader::processEvent(std::string pvName, pvxs::Value epics_value)
 {
     if (!running_.load())
@@ -414,76 +381,19 @@ void EpicsPVXSReader::processEvent(std::string pvName, pvxs::Value epics_value)
         return;
     }
 
-    metric_call(metrics_, [&](auto& m)
-                {
-                    m.setReaderPoolQueueDepth(
-                        static_cast<double>(reader_pool_->get_tasks_queued()),
-                        {{"reader", name_}});
-                });
+    recordPoolDepth();
 
     const prometheus::Labels sourceTag{{"source", pvName}};
 
     try
     {
-        const auto processing_start = std::chrono::steady_clock::now();
-
-        const auto* runtimeCfg = runtimeConfigFor(pvName);
-        const auto  mode = runtimeCfg ? runtimeCfg->mode : PVRuntimeConfig::Mode::Default;
-
+        const auto        processing_start = std::chrono::steady_clock::now();
         const std::size_t dataBytes = estimatePvxsValueBytes(epics_value);
-        std::size_t       emitted   = 0;
+        std::size_t       emitted = 0;
 
-        switch (mode)
-        {
-        case PVRuntimeConfig::Mode::SlacBsasTable:
-            processSlacBsasTableMode(pvName, epics_value, runtimeCfg, sourceTag, emitted);
-            break;
+        processDefaultMode(pvName, epics_value, sourceTag, emitted);
 
-        case PVRuntimeConfig::Mode::Default:
-        default:
-            processDefaultMode(pvName, epics_value, sourceTag, emitted);
-            break;
-        }
-
-        const auto   processing_end = std::chrono::steady_clock::now();
-        const double processing_ms = std::chrono::duration<double, std::milli>(processing_end - processing_start).count();
-        metric_call(metrics_, [&](auto& m)
-                    {
-                        m.observeReaderProcessingTimeMs(processing_ms, sourceTag);
-                    });
-
-        if (emitted > 0)
-        {
-            metric_call(metrics_, [&](auto& m)
-                        {
-                            m.incrementReaderEvents(1.0, sourceTag);
-                        });
-            if (dataBytes > 0)
-            {
-                metric_call(metrics_, [&](auto& m) {
-                    m.incrementReaderDataBytesTotal(static_cast<double>(dataBytes), sourceTag);
-                });
-                const auto now = std::chrono::steady_clock::now();
-                {
-                    std::lock_guard<std::mutex> lk(last_event_time_mutex_);
-                    auto& last_time = last_event_time_[pvName];
-                    if (last_time != std::chrono::steady_clock::time_point{})
-                    {
-                        const double interval_ms = std::chrono::duration<double, std::milli>(
-                            now - last_time).count();
-                        if (interval_ms > 0.0)
-                        {
-                            const double bps = (static_cast<double>(dataBytes) * 1000.0) / interval_ms;
-                            metric_call(metrics_, [&](auto& m) {
-                                m.setReaderDataBytesPerSecond(bps, sourceTag);
-                            });
-                        }
-                    }
-                    last_time = now;
-                }
-            }
-            tracef(*logger_, "[{}/{}] event published", name_, pvName);
-        }
+        recordEventMetrics(pvName, sourceTag, dataBytes, emitted, processing_start);
     }
     catch (const pvxs::client::RemoteError& e)
     {
@@ -498,3 +408,4 @@ void EpicsPVXSReader::processEvent(std::string pvName, pvxs::Value epics_value)
             sourceTag);
     }
 }
+

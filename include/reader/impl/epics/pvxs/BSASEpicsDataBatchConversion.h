@@ -25,9 +25,11 @@
 
 #include <BS_thread_pool.hpp>
 #include <functional>
+#include <optional>
 #include <pvxs/client.h>
 #include <reader/impl/epics/pvxs/EpicsMLDPConversion.h>
 #include <string>
+#include <string_view>
 #include <util/bus/IDataBus.h>
 
 #include <util/log/Logger.h>
@@ -68,6 +70,18 @@ public:
      */
     using ColumnEmitFn = std::function<void(std::string                       colName,
                                             std::vector<util::bus::DataBatch> batches)>;
+
+    /**
+     * @brief Optional per-column selector applied before typed conversion.
+     *
+     * Receives the column label (from the NTTable `labels` array when it maps
+     * 1:1 onto the `value.*` fields, otherwise the field name).  Returning
+     * @c std::nullopt skips the column without converting it; returning a
+     * string selects the column and uses that string as the output column
+     * name.  An empty (null) filter keeps every non-timestamp column under
+     * its field name.
+     */
+    using ColumnFilter = std::function<std::optional<std::string>(std::string_view label)>;
 
     /**
      * @brief Convert an NTTable with row timestamps to an EventBatch.
@@ -112,6 +126,7 @@ public:
      * @param[in] tsNanosField Name of the column containing nanoseconds.
      * @param[in] emitColumn Callback invoked for each converted data column.
      * @param[out] outEmitted Number of events successfully emitted.
+     * @param[in] filter Optional column selector (see ColumnFilter).
      *
      * @return true if conversion succeeded, false on error.
      */
@@ -121,7 +136,8 @@ public:
                                           const std::string&                    tsSecondsField,
                                           const std::string&                    tsNanosField,
                                           ColumnEmitFn                          emitColumn,
-                                          size_t&                               outEmitted);
+                                          size_t&                               outEmitted,
+                                          const ColumnFilter&                   filter = {});
 
     /**
      * @brief Convert an NTTable with row timestamps using parallel processing.
@@ -140,6 +156,7 @@ public:
      * @param[out] outEmitted Number of events successfully emitted.
      * @param[in] pool Optional thread pool for parallel column processing.
      *                 Pass nullptr for sequential processing.
+     * @param[in] filter Optional column selector (see ColumnFilter).
      *
      * @return true if conversion succeeded, false on error.
      *
@@ -153,7 +170,8 @@ public:
                                           const std::string&                    tsNanosField,
                                           ColumnEmitFn                          emitColumn,
                                           size_t&                               outEmitted,
-                                          BS::light_thread_pool*                pool);
+                                          BS::light_thread_pool*                pool,
+                                          const ColumnFilter&                   filter = {});
 };
 
 } // namespace mldp_pvxs_driver::reader::impl::epics

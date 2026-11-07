@@ -714,6 +714,10 @@ add_library(lib${PROJECT_NAME}
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/shared/PvxsClientConfig.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/pvxs/EpicsPVXSReader.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/pvxs/EpicsPVXSReaderConfig.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/pvxs/EpicsPVXSBsasTableReaderConfig.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/pvxs/EpicsPVXSBsasTableReaderBase.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/pvxs/EpicsPVXSBsasGen1Reader.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/pvxs/EpicsPVXSBsasGen2Reader.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/base/EpicsBaseReader.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/base/EpicsBaseReaderConfig.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/shared/EpicsReaderConfig.cpp"
@@ -721,6 +725,7 @@ add_library(lib${PROJECT_NAME}
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/pvxs/BSASEpicsDataBatchConversion.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/base/EpicsPVDataBatchConversion.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/base/EpicsBaseMonitorPoller.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics_archiver/ArchiverFetchStatusLog.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics_archiver/ArchiverPbHttpConversion.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics_archiver/EpicsArchiverReader.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics_archiver/EpicsArchiverReaderConfig.cpp"
@@ -963,6 +968,7 @@ if(MLDP_PVXS_DRIVER_TESTS)
     add_executable(${PROJECT_NAME}_test
         "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/sioc.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/Gen1NTablePV.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/BsasTablePV.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/config/epics_reader_config_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/config/mldppvxs_controller_config_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/config/config_source_test.cpp"
@@ -982,6 +988,9 @@ if(MLDP_PVXS_DRIVER_TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/test/writer/mldp_pv_metadata/mldp_pv_metadata_writer_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/writer/mldp_configuration/mldp_configuration_writer_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics/pvxs/epics_pvxs_reader_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics/pvxs/epics_pvxs_bsas_gen1_reader_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics/pvxs/epics_pvxs_bsas_gen2_reader_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics/pvxs/epics_pvxs_bsas_table_reader_config_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics/base/epics_base_reader_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/reader_lifecycle_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_archiver/archiver_pbhttp_conversion_test.cpp"
@@ -990,6 +999,7 @@ if(MLDP_PVXS_DRIVER_TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_archiver/epics_archiver_pbhttp_integration_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_archiver/epics_archiver_reader_http_integration_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_archiver/epics_archiver_reader_periodic_tail_integration_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_archiver/epics_archiver_reader_retry_integration_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/MockDSServer.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_ds/epics_ds_metadata_reader_config_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_ds/epics_ds_metadata_reader_test.cpp"
@@ -1150,6 +1160,7 @@ if(MLDP_PVXS_DRIVER_MAIN)
     add_executable(mock_sioc_server
         "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/sioc.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/Gen1NTablePV.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/BsasTablePV.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/sioc_main.cpp"
     )
     target_link_libraries(mock_sioc_server PRIVATE

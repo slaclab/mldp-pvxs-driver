@@ -14,11 +14,17 @@
 using namespace mldp_pvxs_driver::reader::impl::epics;
 
 EpicsPVXSReaderConfig::EpicsPVXSReaderConfig(const ::mldp_pvxs_driver::config::Config& readerEntry)
+    : EpicsPVXSReaderConfig(readerEntry, "epics-pvxs")
+{
+}
+
+EpicsPVXSReaderConfig::EpicsPVXSReaderConfig(const ::mldp_pvxs_driver::config::Config& readerEntry,
+                                             const std::string&                        readerType)
     : EpicsReaderConfig(readerEntry)
 {
     try
     {
-        PvxsClientConfig::validate(readerEntry, "epics-pvxs");
+        PvxsClientConfig::validate(readerEntry, readerType);
     }
     catch (const PvxsClientConfig::Error& error)
     {

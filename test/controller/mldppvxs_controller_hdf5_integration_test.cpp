@@ -54,12 +54,11 @@ static std::string buildBsasTableYaml(const std::string& pvName, const std::stri
         "      base-path: \"") + basePath + "\"\n"
         "      flush-interval-ms: 100\n"
         "reader:\n"
-        "  - epics-pvxs:\n"
+        "  - epics-pvxs-bsas-gen1:\n"
         "      - name: test-reader\n"
         "        pvs:\n"
         "          - name: " + pvName + "\n"
         "            option:\n"
-        "              type: slac-bsas-table\n"
         "              tsSeconds: secondsPastEpoch\n"
         "              tsNanos: nanoseconds\n";
 }
@@ -317,12 +316,11 @@ static std::string buildGen1TableYaml(const std::string& basePath)
            "\"\n"
            "      flush-interval-ms: 50\n"
            "reader:\n"
-           "  - epics-pvxs:\n"
+           "  - epics-pvxs-bsas-gen1:\n"
            "      - name: gen1-reader\n"
            "        pvs:\n"
            "          - name: CU-HXR\n"
            "            option:\n"
-           "              type: slac-bsas-table\n"
            "              tsSeconds: secondsPastEpoch\n"
            "              tsNanos: nanoseconds\n";
 }
@@ -431,14 +429,13 @@ static std::string buildBsasTableDetailYaml(const std::string& pvName,
            "\"\n"
            "      flush-interval-ms: 50\n"
            "reader:\n"
-           "  - epics-pvxs:\n"
+           "  - epics-pvxs-bsas-gen1:\n"
            "      - name: bsas-detail-reader\n"
            "        pvs:\n"
            "          - name: " +
            pvName +
            "\n"
            "            option:\n"
-           "              type: slac-bsas-table\n"
            "              tsSeconds: secondsPastEpoch\n"
            "              tsNanos: nanoseconds\n";
 }

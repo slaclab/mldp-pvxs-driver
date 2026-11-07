@@ -8,6 +8,9 @@
 		"docker-compose.devcontainer.yml"
 	],
 	"service": "devcontainer",
+	// Build the image on the host first so the Dev Containers CLI does not run its own
+	// compose build (blocked by buildx bake fs entitlements in Compose 5.x).
+	"initializeCommand": "docker compose -f .devcontainer/docker-compose.devcontainer.build.yml build devcontainer",
 	"workspaceFolder": "/workspace",
 
 	// Features to add to the dev container. More info: https://containers.dev/features.

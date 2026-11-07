@@ -100,22 +100,58 @@ must carry `datatimestamps.timestamplist`; untimestamped frames are dropped.
 
 ## Configuration
 
+Live Gen1 tables are read over PVAccess by the dedicated **`epics-pvxs-bsas-gen1`**
+reader (the plain `epics-pvxs` reader is scalar-only and rejects
+`option.type: slac-bsas-table`):
+
 ```yaml
-pvs:
-  - name: "BSAS:TABLE:PV"
-    option:
-      type: slac-bsas-table
-      tsSeconds: secondsPastEpoch   # omit to use this default
-      tsNanos:   nanoseconds        # omit to use this default
-      column-batch-size: 1          # columns per batch push (0 = all at once)
+reader:
+  - epics-pvxs-bsas-gen1:
+      - name: bsas_gen1
+        rows-per-data-batch: 120      # rows per DataBatch; 0 = all rows
+        pvs-per-data-batch: 1         # PV columns per DataBatch; 0 = all
+        data-batches-per-push: 50     # DataBatches per bus EventBatch; 0 = all
+        tsSeconds: secondsPastEpoch   # omit to use this default
+        tsNanos: nanoseconds          # omit to use this default
+        pvs:
+          - name: "BSAS:GEN1:TABLE"
+            option:                   # optional per-PV overrides
+              pvs-per-data-batch: 0
 ```
 
-Key                 | Default            | Description
-------------------- | ------------------ | ----------------------------------------------
-`type`              | *(required)*       | Must be `slac-bsas-table` to activate this mode
-`tsSeconds`         | `secondsPastEpoch` | Name of the per-row epoch-seconds column
-`tsNanos`           | `nanoseconds`      | Name of the per-row nanoseconds column
-`column-batch-size` | `1`                | Max columns per bus push; 0 means push all at once
+Key                     | Level            | Default            | Description
+----------------------- | ---------------- | ------------------ | ---------------------------------------------------------
+`rows-per-data-batch`   | reader, `option` | `120`              | Rows per `DataBatch` (values per column); `0` = all rows
+`pvs-per-data-batch`    | reader, `option` | `1`                | PV columns per `DataBatch` (they share the row timestamps); `0` = all
+`data-batches-per-push` | reader, `option` | `50`               | `DataBatch`es per bus `EventBatch` push; `0` = all in one push
+`tsSeconds`             | reader, `option` | `secondsPastEpoch` | Name of the per-row epoch-seconds column
+`tsNanos`               | reader, `option` | `nanoseconds`      | Name of the per-row nanoseconds column
+
+`option.type` is rejected: the table generation is implied by the reader type.
+`column-batch-size` is rejected: use `data-batches-per-push`.
+The other `epics-pvxs` reader keys (`thread-pool`, `metadata`, `environment`, ...) are
+also accepted.
+
+Example — 1000 PVs × 250 rows with the defaults: each PV is cut into 3 DataBatches
+(120 + 120 + 10 rows), giving 3000 DataBatches. They are pushed in time order (rows
+0-119 of every PV first) in 60 pushes of 50, then the marker.
+
+### Bus output
+
+Each NTTable update produces the same shape as the HDF5 `hdf5-bsas-gen1` reader:
+
+- one or more tabular `EventBatch`es — `TimeSeriesPayload{root_source_name = <table PV>, is_tabular = true}`,
+  metadata = reader/PV `metadata` + `source: <table PV>`; each holds up to
+  `data-batches-per-push` `DataBatch`es of up to `rows-per-data-batch` rows ×
+  `pvs-per-data-batch` PV columns, ordered by row chunk then column;
+- then one `end_of_batch_group` marker (also pushed when the update produced no data).
+
+All-NaN columns are discarded. Updates without timestamp columns produce only the
+marker and count as a reader error. A bus push that is rejected is logged and
+counted as a reader error; the update is dropped (a PVXS stream cannot be paused).
+
+The `epics-base` reader keeps supporting `option.type: slac-bsas-table`
+(with the per-PV `column-batch-size` key), see [EPICS Base Reader](epics-base-reader.md).
 
 ## Implementation References
 
@@ -124,6 +160,9 @@ Component                   | File
 PVXS conversion class       | `include/reader/impl/epics/pvxs/BSASEpicsDataBatchConversion.h`
 PVXS conversion impl        | `src/reader/impl/epics/pvxs/BSASEpicsDataBatchConversion.cpp`
 EPICS Base conversion       | `include/reader/impl/epics/base/EpicsPVDataBatchConversion.h`
-PVXS reader dispatch        | `src/reader/impl/epics/pvxs/EpicsPVXSReader.cpp`
+PVXS table reader base      | `src/reader/impl/epics/pvxs/EpicsPVXSBsasTableReaderBase.cpp`
+PVXS Gen1 reader            | `src/reader/impl/epics/pvxs/EpicsPVXSBsasGen1Reader.cpp`
+PVXS table reader config    | `src/reader/impl/epics/pvxs/EpicsPVXSBsasTableReaderConfig.cpp`
 EPICS Base reader dispatch  | `src/reader/impl/epics/base/EpicsBaseReader.cpp`
-Mock IOC (concrete example) | `test/mock/sioc.cpp`
+Mock IOC (concrete example) | `test/mock/sioc.cpp`, `test/mock/BsasTablePV.cpp`
+Tests                       | `test/reader/impl/epics/pvxs/epics_pvxs_bsas_gen1_reader_test.cpp`

@@ -1,9 +1,11 @@
 #pragma once
 
+#include "BsasTablePV.h"
 #include "Gen1NTablePV.h"
 
 #include <atomic>
 #include <functional>
+#include <memory>
 #include <string>
 #include <thread>
 #include <vector>
@@ -23,6 +25,9 @@ public:
     const std::vector<std::string>& gen1CuHxrColumnNames() const { return m_cuHxr.fieldNames(); }
 
 private:
+    /// Create and register the deterministic BSAS table PVs (m_bsasTables).
+    void addBsasTablePVs();
+
     struct TypedPV
     {
         std::string                                    name;
@@ -47,4 +52,7 @@ private:
         MLDP_TEST_DATA_DIR "/signals.cu-hxr.prod"
     };
     std::vector<TypedPV>   m_typedPvs;
+    /// Deterministic BSAS Gen1 / Gen2 tables used by the table reader tests
+    /// (test:bsas_gen1_*, test:bsas_gen2_*); see BsasTablePV.
+    std::vector<std::unique_ptr<BsasTablePV>> m_bsasTables;
 };

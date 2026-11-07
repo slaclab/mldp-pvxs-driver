@@ -42,11 +42,33 @@ reader:
         - name: "PV:NAME:1"
         - name: "PV:NAME:2"
           option: "VALUE"                   # optional; scalar monitor option
-        - name: "TABLE:PV"
-          option:                           # optional; map-based option for NT Table
-            type: "slac-bsas-table"         # special handling for BSAS table rows
-            tsSeconds: "secondsFieldName"   # field containing seconds timestamp
-            tsNanos: "nanosFieldName"       # field containing nanos timestamp
+      # epics-pvxs is scalar-only: SLAC BSAS NTTables use the readers below.
+
+  # ========== SLAC BSAS Gen1 NTTable Reader (PVXS) ==========
+  # Type: epics-pvxs-bsas-gen1
+  # Purpose: every non-timestamp NTTable column is a PV value column
+  epics-pvxs-bsas-gen1:
+    - name: bsas_gen1_reader
+      thread-pool: 1                        # optional; default: 1
+      rows-per-data-batch: 120              # optional; default: 120 (rows per DataBatch; 0 = all)
+      pvs-per-data-batch: 1                 # optional; default: 1 (PV columns per DataBatch; 0 = all)
+      data-batches-per-push: 50             # optional; default: 50 (DataBatches per bus push; 0 = all)
+      tsSeconds: secondsPastEpoch           # optional; default shown
+      tsNanos: nanoseconds                  # optional; default shown
+      pvs:
+        - name: "BSAS:GEN1:TABLE"
+          option:                           # optional; per-PV overrides of the keys above
+            pvs-per-data-batch: 0
+
+  # ========== SLAC BSAS Gen2 NTTable Reader (PVXS) ==========
+  # Type: epics-pvxs-bsas-gen2
+  # Purpose: ingests timestamps + <PV>.Val only (pid and CNT/RMS/AVG/MIN/MAX dropped)
+  epics-pvxs-bsas-gen2:
+    - name: bsas_gen2_reader
+      pidField: pid                         # optional; default: pid (always skipped)
+      valueSuffix: Val                      # optional; default: Val (case-insensitive)
+      pvs:
+        - name: "BSAS:GEN2:TABLE"
 
   # ========== EPICS Base Reader (Real-time Monitoring via Channel Access) ==========
   # Type: epics-base

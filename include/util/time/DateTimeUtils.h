@@ -12,6 +12,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <optional>
 #include <string>
 
 namespace mldp_pvxs_driver::util::time {
@@ -33,6 +34,14 @@ public:
      * Example: 2026-02-26T20:03:50.123Z
      */
     static std::string formatIso8601UtcMillis(std::chrono::system_clock::time_point tp);
+
+    /**
+     * @brief Parse an ISO 8601 timestamp (`YYYY-MM-DDTHH:MM:SS[.fff](Z|+HH:MM)`).
+     *
+     * @return UTC time point at millisecond precision, or std::nullopt when
+     *         the text is not a supported ISO 8601 timestamp.
+     */
+    static std::optional<std::chrono::system_clock::time_point> parseIso8601Utc(const std::string& text);
 
     /**
      * @brief Return true if @p year is a Gregorian leap year.
