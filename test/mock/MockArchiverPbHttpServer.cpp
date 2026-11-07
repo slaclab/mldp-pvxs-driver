@@ -656,7 +656,11 @@ namespace {
         const int64_t to_ns = to.has_value()
                                   ? parseIso8601Utc(*to).epoch_ns
                                   : (from_ns + static_cast<int64_t>(cfg.open_ended_duration_sec) * kNanosPerSecond);
-        const auto    samples = generateSamples(cfg, pv, from_ns, to_ns);
+        auto          samples = generateSamples(cfg, pv, from_ns, to_ns);
+        if (cfg.emit_prior_sample && !samples.empty())
+        {
+            samples.insert(samples.begin(), SamplePoint{.epoch_ns = from_ns - 1000000, .value = samples.front().value});
+        }
 
         std::string body;
         if (samples.empty())

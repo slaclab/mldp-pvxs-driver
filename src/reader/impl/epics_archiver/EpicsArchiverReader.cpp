@@ -700,6 +700,14 @@ void EpicsArchiverReader::parsePbHttpLineIntoState(WorkerContext& ctx, const std
                     m.incrementReaderEventsReceived(1.0, source_tag);
                 });
 
+    if (ctx.min_sample_time &&
+        sampleTimeLessThan(parsed.epoch_seconds, parsed.nanoseconds, ctx.min_sample_time->first, ctx.min_sample_time->second))
+    {
+        debugf(*logger_, "Skipping sample for PV '{}' at ({}, {}): before requested start", pv, parsed.epoch_seconds,
+               parsed.nanoseconds);
+        return;
+    }
+
     if (config_.fetchMode() == EpicsArchiverReaderConfig::FetchMode::PeriodicTail)
     {
         auto it = ctx.last_published_ns_per_pv.find(pv);
@@ -863,6 +871,19 @@ void EpicsArchiverReader::fetchPvSafely(WorkerContext&                    ctx,
 
     const long  max_attempts = config_.fetchMaxRetries() + 1;
     std::size_t max_samples = 0;
+
+    // Historical: keep only samples at or after the requested start so a
+    // window never re-sends the previous window's last sample.
+    ctx.min_sample_time.reset();
+    if (!tail_mode)
+    {
+        if (const auto start = DateTimeUtils::parseIso8601Utc(from))
+        {
+            const auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(start->time_since_epoch()).count();
+            ctx.min_sample_time = std::make_pair(static_cast<uint64_t>(ns / 1000000000),
+                                                 static_cast<uint32_t>(ns % 1000000000));
+        }
+    }
 
     // Periodic tail dedupes by watermark; a retry re-sends the same window, so
     // restore the watermark the PV had before the failed attempt.

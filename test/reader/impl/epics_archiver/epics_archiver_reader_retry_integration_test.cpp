@@ -22,6 +22,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
@@ -591,6 +592,58 @@ TEST(EpicsArchiverReaderRetryTest, WindowedNotFoundReportsWindows)
     }
     EXPECT_FALSE(publishedTimes(*bus, "TEST:PV:DOUBLE").empty());
     EXPECT_TRUE(publishedTimes(*bus, "TEST:PV:MISSING").empty());
+    std::filesystem::remove(log_path);
+}
+
+// The archiver prepends the last sample before the requested start. In
+// windowed historical fetches that sample belongs to the previous window, so
+// it must be dropped: no duplicates, and no batch reaches before its window.
+TEST(EpicsArchiverReaderRetryTest, WindowedFetchDropsSampleBeforeWindowStart)
+{
+    MockArchiverPbHttpServer::GenerationConfig gen_cfg;
+    gen_cfg.emit_prior_sample = true;
+    MockArchiverPbHttpServer server(gen_cfg);
+    server.start();
+
+    const auto log_path = tempLogPath("prior");
+    auto       bus = std::make_shared<MockDataBus>();
+    auto       reader = std::make_unique<EpicsArchiverReader>(
+        bus, nullptr, makeConfigFromYaml(readerYaml(server, log_path, "        fetch-window-sec: 5", {"TEST:PV:DOUBLE"})));
+
+    const auto lines = waitForSummary(log_path, std::chrono::seconds(5));
+    ASSERT_EQ(lines.size(), 3u);
+    ASSERT_EQ(server.requestHistory().size(), 2u);
+
+    // first_sample_ts is never before the window start.
+    for (std::size_t i = 0; i < 2; ++i)
+    {
+        ASSERT_TRUE(lines[i]["first_sample_ts"].is_string());
+        EXPECT_GE(lines[i]["first_sample_ts"].get<std::string>(), lines[i]["from"].get<std::string>());
+    }
+
+    // 1772006400 = 2026-02-25T08:00:00Z (range start).
+    const uint64_t kStart = 1772006400;
+    auto           times = publishedTimes(*bus, "TEST:PV:DOUBLE");
+    ASSERT_FALSE(times.empty());
+    EXPECT_EQ(times.size(), lines[0]["samples"].get<std::size_t>() + lines[1]["samples"].get<std::size_t>());
+    std::sort(times.begin(), times.end());
+    EXPECT_GE(times.front().first, kStart);
+    EXPECT_EQ(std::adjacent_find(times.begin(), times.end()), times.end()) << "duplicate sample published";
+
+    // Every batch stays inside one 5 s window.
+    for (const auto& batch : bus->snapshot())
+    {
+        std::vector<SampleTime> bt;
+        for (const auto& frame : asTimeSeries(batch).frames)
+        {
+            for (const auto& ts : frame.timestamps)
+            {
+                bt.emplace_back(ts.epoch_seconds, ts.nanoseconds);
+            }
+        }
+        ASSERT_FALSE(bt.empty());
+        EXPECT_EQ(bt.front().first / 5, bt.back().first / 5);
+    }
     std::filesystem::remove(log_path);
 }
 

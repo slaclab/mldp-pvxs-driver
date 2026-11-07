@@ -112,6 +112,12 @@ private:
         std::unordered_map<std::string, PendingPvBatch>              pending_pv_batches;
         std::map<std::string, std::pair<uint64_t, uint32_t>>         last_published_ns_per_pv;
 
+        /// Historical mode: samples before this time are dropped. The archiver
+        /// prepends the last sample before the requested start; in windowed
+        /// fetches that sample belongs to (and was already sent by) the
+        /// previous window.
+        std::optional<std::pair<uint64_t, uint32_t>> min_sample_time;
+
         /// Samples accepted (after watermark dedupe) by the fetch attempt in progress.
         struct AttemptStats
         {

@@ -58,6 +58,7 @@ public:
         uint32_t    truncate_first_requests = 0; ///< Fault injection: drop the connection mid-body on the first N streamed requests.
         size_t      truncate_after_bytes = 0;    ///< Bytes sent before a truncated response is dropped.
         std::vector<std::string> not_found_pvs;  ///< PVs answered with HTTP 404.
+        bool        emit_prior_sample = false;   ///< Like the real archiver: prepend one sample 1 ms before `from`.
     };
 
     struct RequestLog
