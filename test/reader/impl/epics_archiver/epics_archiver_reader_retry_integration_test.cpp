@@ -370,6 +370,284 @@ TEST(EpicsArchiverReaderRetryTest, WindowedFetchRetriesOnlyFailedWindow)
     std::filesystem::remove(log_path);
 }
 
+// Builds reader YAML with a custom start and optional end (empty = omitted).
+std::string rangedYaml(const MockArchiverPbHttpServer& server, const std::string& log_path, const std::string& extra,
+                       const std::vector<std::string>& pvs, const std::string& start, const std::string& end)
+{
+    std::string yaml = readerYaml(server, log_path, extra, pvs);
+    yaml.replace(yaml.find("2026-02-25T08:00:00.000Z"), 24, start);
+    const auto end_pos = yaml.find("        end-date: \"2026-02-25T08:00:10.000Z\"\n");
+    const auto end_len = std::string("        end-date: \"2026-02-25T08:00:10.000Z\"\n").size();
+    if (end.empty())
+    {
+        yaml.erase(end_pos, end_len);
+    }
+    else
+    {
+        yaml.replace(end_pos, end_len, "        end-date: \"" + end + "\"\n");
+    }
+    return yaml;
+}
+
+// Aligned start: windows tile the range exactly, no empty leading window.
+TEST(EpicsArchiverReaderRetryTest, WindowedFetchAlignedStartSplitsExactly)
+{
+    MockArchiverPbHttpServer server;
+    server.start();
+
+    const auto log_path = tempLogPath("aligned");
+    auto       bus = std::make_shared<MockDataBus>();
+    auto       reader = std::make_unique<EpicsArchiverReader>(
+        bus, nullptr, makeConfigFromYaml(readerYaml(server, log_path, "        fetch-window-sec: 5", {"TEST:PV:DOUBLE"})));
+
+    const auto lines = waitForSummary(log_path, std::chrono::seconds(5));
+    ASSERT_EQ(lines.size(), 3u);
+    const auto requests = server.requestHistory();
+    ASSERT_EQ(requests.size(), 2u);
+    EXPECT_EQ(requests[0].from, "2026-02-25T08:00:00.000Z");
+    EXPECT_EQ(requests[0].to, "2026-02-25T08:00:05.000Z");
+    EXPECT_EQ(requests[1].from, "2026-02-25T08:00:05.000Z");
+    EXPECT_EQ(requests[1].to, "2026-02-25T08:00:10.000Z");
+    // Each status line carries its own window bounds.
+    EXPECT_EQ(lines[0]["from"], "2026-02-25T08:00:00.000Z");
+    EXPECT_EQ(lines[0]["to"], "2026-02-25T08:00:05.000Z");
+    EXPECT_EQ(lines[1]["from"], "2026-02-25T08:00:05.000Z");
+    EXPECT_EQ(lines[1]["to"], "2026-02-25T08:00:10.000Z");
+    EXPECT_EQ(lines[2]["ok"], 2);
+    EXPECT_EQ(publishedTimes(*bus, "TEST:PV:DOUBLE").size(),
+              lines[0]["samples"].get<std::size_t>() + lines[1]["samples"].get<std::size_t>());
+    std::filesystem::remove(log_path);
+}
+
+// Range shorter than one window, not crossing a boundary: one request.
+TEST(EpicsArchiverReaderRetryTest, WindowedFetchRangeInsideOneWindow)
+{
+    MockArchiverPbHttpServer server;
+    server.start();
+
+    const auto log_path = tempLogPath("inside");
+    auto       bus = std::make_shared<MockDataBus>();
+    auto       reader = std::make_unique<EpicsArchiverReader>(
+        bus, nullptr,
+        makeConfigFromYaml(rangedYaml(server, log_path, "        fetch-window-sec: 3600", {"TEST:PV:DOUBLE"},
+                                      "2026-02-25T08:00:01.000Z", "2026-02-25T08:00:09.000Z")));
+
+    const auto lines = waitForSummary(log_path, std::chrono::seconds(5));
+    ASSERT_EQ(lines.size(), 2u);
+    const auto requests = server.requestHistory();
+    ASSERT_EQ(requests.size(), 1u);
+    EXPECT_EQ(requests[0].from, "2026-02-25T08:00:01.000Z");
+    EXPECT_EQ(requests[0].to, "2026-02-25T08:00:09.000Z");
+    EXPECT_EQ(lines[1]["ok"], 1);
+    std::filesystem::remove(log_path);
+}
+
+// fetch-window-sec: 0 disables windowing: whole range in one request.
+TEST(EpicsArchiverReaderRetryTest, WindowZeroFetchesWholeRangeInOneRequest)
+{
+    MockArchiverPbHttpServer server;
+    server.start();
+
+    const auto log_path = tempLogPath("zero");
+    auto       bus = std::make_shared<MockDataBus>();
+    auto       reader = std::make_unique<EpicsArchiverReader>(
+        bus, nullptr, makeConfigFromYaml(readerYaml(server, log_path, "        fetch-window-sec: 0", {"TEST:PV:DOUBLE"})));
+
+    const auto lines = waitForSummary(log_path, std::chrono::seconds(5));
+    ASSERT_EQ(lines.size(), 2u);
+    const auto requests = server.requestHistory();
+    ASSERT_EQ(requests.size(), 1u);
+    EXPECT_EQ(requests[0].from, "2026-02-25T08:00:00.000Z");
+    EXPECT_EQ(requests[0].to, "2026-02-25T08:00:10.000Z");
+    EXPECT_EQ(lines[0]["to"], "2026-02-25T08:00:10.000Z");
+    EXPECT_EQ(lines[1]["ok"], 1);
+    std::filesystem::remove(log_path);
+}
+
+// No end-date: windowing is skipped, one open-ended request.
+TEST(EpicsArchiverReaderRetryTest, NoEndDateSkipsWindowing)
+{
+    MockArchiverPbHttpServer server;
+    server.start();
+
+    const auto log_path = tempLogPath("noend");
+    auto       bus = std::make_shared<MockDataBus>();
+    auto       reader = std::make_unique<EpicsArchiverReader>(
+        bus, nullptr,
+        makeConfigFromYaml(
+            rangedYaml(server, log_path, "        fetch-window-sec: 1", {"TEST:PV:DOUBLE"}, "2026-02-25T08:00:00.000Z", "")));
+
+    const auto lines = waitForSummary(log_path, std::chrono::seconds(5));
+    ASSERT_EQ(lines.size(), 2u);
+    const auto requests = server.requestHistory();
+    ASSERT_EQ(requests.size(), 1u);
+    EXPECT_EQ(requests[0].from, "2026-02-25T08:00:00.000Z");
+    EXPECT_FALSE(requests[0].to.has_value());
+    EXPECT_TRUE(lines[0]["to"].is_null());
+    std::filesystem::remove(log_path);
+}
+
+// Partial in first window only: summary lists that window; later windows ok.
+TEST(EpicsArchiverReaderRetryTest, WindowedPartialReportsOnlyAffectedWindow)
+{
+    MockArchiverPbHttpServer::GenerationConfig gen_cfg;
+    gen_cfg.min_events_per_second = 8;
+    gen_cfg.max_events_per_second = 8;
+    gen_cfg.truncate_first_requests = 1;
+    gen_cfg.truncate_after_bytes = 600;
+    MockArchiverPbHttpServer server(gen_cfg);
+    server.start();
+
+    const auto log_path = tempLogPath("wpartial");
+    auto       bus = std::make_shared<MockDataBus>();
+    auto       reader = std::make_unique<EpicsArchiverReader>(
+        bus, nullptr,
+        makeConfigFromYaml(readerYaml(server, log_path, "        fetch-window-sec: 5\n        fetch-max-retries: 0",
+                                      {"TEST:PV:DOUBLE"})));
+
+    const auto lines = waitForSummary(log_path, std::chrono::seconds(5));
+    ASSERT_EQ(lines.size(), 3u);
+    EXPECT_EQ(lines[0]["result"], "partial");
+    EXPECT_EQ(lines[1]["result"], "ok");
+    const auto& summary = lines[2];
+    EXPECT_EQ(summary["ok"], 1);
+    EXPECT_EQ(summary["partial"], 1);
+    EXPECT_EQ(summary["partial_pvs"], nlohmann::json::array({"TEST:PV:DOUBLE"}));
+    ASSERT_EQ(summary["partial_windows"].size(), 1u);
+    EXPECT_EQ(summary["partial_windows"][0]["pv"], "TEST:PV:DOUBLE");
+    EXPECT_EQ(summary["partial_windows"][0]["from"], "2026-02-25T08:00:00.000Z");
+    EXPECT_EQ(summary["partial_windows"][0]["to"], "2026-02-25T08:00:05.000Z");
+    std::filesystem::remove(log_path);
+}
+
+// Every window fails: each listed in failed_windows, PV listed once.
+TEST(EpicsArchiverReaderRetryTest, WindowedFailuresListEachWindowOncePerPv)
+{
+    MockArchiverPbHttpServer::GenerationConfig gen_cfg;
+    gen_cfg.fail_first_requests = 100;
+    gen_cfg.fail_status = 503;
+    MockArchiverPbHttpServer server(gen_cfg);
+    server.start();
+
+    const auto log_path = tempLogPath("wfailed");
+    auto       bus = std::make_shared<MockDataBus>();
+    auto       reader = std::make_unique<EpicsArchiverReader>(
+        bus, nullptr,
+        makeConfigFromYaml(readerYaml(server, log_path, "        fetch-window-sec: 4\n        fetch-max-retries: 1",
+                                      {"TEST:PV:DOUBLE"})));
+
+    const auto lines = waitForSummary(log_path, std::chrono::seconds(5));
+    // 3 windows x (retrying + failed) + summary.
+    ASSERT_EQ(lines.size(), 7u);
+    EXPECT_EQ(server.requestHistory().size(), 6u);
+    const auto& summary = lines.back();
+    EXPECT_EQ(summary["failed"], 3);
+    EXPECT_EQ(summary["ok"], 0);
+    EXPECT_EQ(summary["failed_pvs"], nlohmann::json::array({"TEST:PV:DOUBLE"}));
+    ASSERT_EQ(summary["failed_windows"].size(), 3u);
+    EXPECT_EQ(summary["failed_windows"][0]["from"], "2026-02-25T08:00:00.000Z");
+    EXPECT_EQ(summary["failed_windows"][0]["to"], "2026-02-25T08:00:04.000Z");
+    EXPECT_EQ(summary["failed_windows"][1]["from"], "2026-02-25T08:00:04.000Z");
+    EXPECT_EQ(summary["failed_windows"][1]["to"], "2026-02-25T08:00:08.000Z");
+    EXPECT_EQ(summary["failed_windows"][2]["from"], "2026-02-25T08:00:08.000Z");
+    EXPECT_EQ(summary["failed_windows"][2]["to"], "2026-02-25T08:00:10.000Z");
+    EXPECT_TRUE(bus->snapshot().empty());
+    std::filesystem::remove(log_path);
+}
+
+// 404 in windowed mode: reported as not_found, other PVs ok.
+TEST(EpicsArchiverReaderRetryTest, WindowedNotFoundReportsWindows)
+{
+    MockArchiverPbHttpServer::GenerationConfig gen_cfg;
+    gen_cfg.not_found_pvs = {"TEST:PV:MISSING"};
+    MockArchiverPbHttpServer server(gen_cfg);
+    server.start();
+
+    const auto log_path = tempLogPath("wnotfound");
+    auto       bus = std::make_shared<MockDataBus>();
+    auto       reader = std::make_unique<EpicsArchiverReader>(
+        bus, nullptr,
+        makeConfigFromYaml(
+            readerYaml(server, log_path, "        fetch-window-sec: 5", {"TEST:PV:MISSING", "TEST:PV:DOUBLE"})));
+
+    const auto lines = waitForSummary(log_path, std::chrono::seconds(5));
+    ASSERT_FALSE(lines.empty());
+    const auto& summary = lines.back();
+    EXPECT_EQ(summary["not_found_pvs"], nlohmann::json::array({"TEST:PV:MISSING"}));
+    ASSERT_FALSE(summary["not_found_windows"].empty());
+    for (const auto& w : summary["not_found_windows"])
+    {
+        EXPECT_EQ(w["pv"], "TEST:PV:MISSING");
+        EXPECT_TRUE(w["to"].is_string());
+    }
+    EXPECT_EQ(summary["ok"], 2);
+    for (std::size_t i = 0; i + 1 < lines.size(); ++i)
+    {
+        if (lines[i]["pv"] == "TEST:PV:MISSING")
+        {
+            EXPECT_EQ(lines[i]["result"], "skipped_not_found");
+            EXPECT_EQ(lines[i]["http_status"], 404);
+        }
+    }
+    EXPECT_FALSE(publishedTimes(*bus, "TEST:PV:DOUBLE").empty());
+    EXPECT_TRUE(publishedTimes(*bus, "TEST:PV:MISSING").empty());
+    std::filesystem::remove(log_path);
+}
+
+// Summary: PV names deduped across windows, windows kept in record order,
+// retrying/ok lines not listed as problem windows.
+TEST(ArchiverFetchStatusLogTest, SummaryDedupesPvsAndListsAllWindows)
+{
+    const auto path = tempLogPath("unit_windows");
+    {
+        ArchiverFetchStatusLog log(path);
+        FetchAttemptRecord     rec;
+        rec.reader = "r";
+        rec.resume_source = "config";
+        const auto add = [&](const std::string& pv, const std::string& from, const std::string& to, FetchAttemptResult r)
+        {
+            rec.pv = pv;
+            rec.from = from;
+            rec.to = to;
+            rec.result = r;
+            log.record(rec);
+        };
+        add("A", "2026-01-01T00:00:00.000Z", "2026-01-02T00:00:00.000Z", FetchAttemptResult::Failed);
+        add("A", "2026-01-02T00:00:00.000Z", "2026-01-03T00:00:00.000Z", FetchAttemptResult::Retrying);
+        add("A", "2026-01-02T00:00:00.000Z", "2026-01-03T00:00:00.000Z", FetchAttemptResult::Ok);
+        add("A", "2026-01-03T00:00:00.000Z", "2026-01-04T00:00:00.000Z", FetchAttemptResult::Failed);
+        add("B", "2026-01-01T00:00:00.000Z", "2026-01-02T00:00:00.000Z", FetchAttemptResult::Partial);
+        add("B", "2026-01-02T00:00:00.000Z", "2026-01-03T00:00:00.000Z", FetchAttemptResult::Partial);
+        add("C", "2026-01-01T00:00:00.000Z", "2026-01-02T00:00:00.000Z", FetchAttemptResult::SkippedNotFound);
+        log.writeSummary("r");
+    }
+    const auto lines = readJsonLines(path);
+    ASSERT_EQ(lines.size(), 8u);
+    for (std::size_t i = 0; i < 7; ++i)
+    {
+        EXPECT_TRUE(lines[i]["from"].is_string());
+        EXPECT_TRUE(lines[i]["to"].is_string());
+    }
+    const auto& s = lines[7];
+    EXPECT_EQ(s["type"], "summary");
+    EXPECT_EQ(s["ok"], 1);
+    EXPECT_EQ(s["failed"], 2);
+    EXPECT_EQ(s["partial"], 2);
+    EXPECT_EQ(s["not_found"], 1);
+    EXPECT_EQ(s["failed_pvs"], nlohmann::json::array({"A"}));
+    EXPECT_EQ(s["partial_pvs"], nlohmann::json::array({"B"}));
+    EXPECT_EQ(s["not_found_pvs"], nlohmann::json::array({"C"}));
+    ASSERT_EQ(s["failed_windows"].size(), 2u);
+    EXPECT_EQ(s["failed_windows"][0]["from"], "2026-01-01T00:00:00.000Z");
+    EXPECT_EQ(s["failed_windows"][1]["from"], "2026-01-03T00:00:00.000Z");
+    EXPECT_EQ(s["failed_windows"][1]["to"], "2026-01-04T00:00:00.000Z");
+    ASSERT_EQ(s["partial_windows"].size(), 2u);
+    EXPECT_EQ(s["partial_windows"][1]["to"], "2026-01-03T00:00:00.000Z");
+    ASSERT_EQ(s["not_found_windows"].size(), 1u);
+    EXPECT_EQ(s["not_found_windows"][0]["pv"], "C");
+    std::filesystem::remove(path);
+}
+
 // Status log lines are valid JSON and the summary counts final results only.
 TEST(ArchiverFetchStatusLogTest, WritesJsonLinesAndSummary)
 {
