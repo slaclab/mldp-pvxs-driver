@@ -677,10 +677,9 @@ void EpicsArchiverReader::finalizeChunk(WorkerContext& ctx, PbChunkState& state)
 
 void EpicsArchiverReader::parsePbHttpLineIntoState(WorkerContext& ctx, const std::string& line, PbChunkState& state)
 {
-    const std::string msg_bytes = unescapePbHttpLine(line);
-
     if (!state.have_header)
     {
+        const std::string msg_bytes = unescapePbHttpLine(line);
         EPICS::PayloadInfo header;
         if (!header.ParseFromString(msg_bytes))
         {
@@ -691,10 +690,28 @@ void EpicsArchiverReader::parsePbHttpLineIntoState(WorkerContext& ctx, const std
         return;
     }
 
-    const auto parsed = ArchiverPbHttpConversion::parseSample(state.header, msg_bytes);
-
     const std::string        pv = state.header.pvname();
     const prometheus::Labels source_tag{{"source", pv}};
+
+    // A sample line that cannot be decoded is dropped on its own; the rest of
+    // the window is still ingested. The PayloadInfo header stays fatal since
+    // without it no sample in the chunk can be decoded.
+    ParsedSample parsed{};
+    try
+    {
+        parsed = ArchiverPbHttpConversion::parseSample(state.header, unescapePbHttpLine(line));
+    }
+    catch (const std::exception& e)
+    {
+        ++ctx.attempt.skipped_samples;
+        warnf(*logger_, "Skipping undecodable sample for PV '{}' (line_bytes={}, after {} good samples): {}", pv,
+              line.size(), ctx.attempt.samples, e.what());
+        metric_call(metrics_, [&](auto& m)
+                    {
+                        m.incrementReaderErrors(1.0, source_tag);
+                    });
+        return;
+    }
     metric_call(metrics_, [&](auto& m)
                 {
                     m.incrementReaderEventsReceived(1.0, source_tag);
@@ -949,6 +966,7 @@ void EpicsArchiverReader::fetchPvSafely(WorkerContext&                    ctx,
         max_samples = std::max(max_samples, ctx.attempt.samples);
 
         rec.samples = ctx.attempt.samples;
+        rec.skipped_samples = ctx.attempt.skipped_samples;
         rec.bytes = bytes;
         rec.first_sample_ts = optionalSampleTimeToIso(ctx.attempt.first_sample);
         rec.last_sample_ts = optionalSampleTimeToIso(ctx.attempt.last_sample);

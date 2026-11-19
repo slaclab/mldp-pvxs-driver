@@ -122,6 +122,7 @@ private:
         struct AttemptStats
         {
             std::size_t                                  samples = 0;
+            std::size_t                                  skipped_samples = 0; ///< Undecodable sample lines dropped.
             std::optional<std::pair<uint64_t, uint32_t>> first_sample;
             std::optional<std::pair<uint64_t, uint32_t>> last_sample;
         } attempt;

@@ -49,6 +49,8 @@
 
 #include "PeriodicMetricsDumper.h"
 #include "SpdlogLogger.h"
+#include <cli/FileLogging.h>
+#include <cli/LoggingConfig.h>
 
 using namespace argparse;
 using namespace mldp_pvxs_driver::config;
@@ -109,6 +111,11 @@ void configure_parameter(ArgumentParser& program,
         .help("Logging level (trace, debug, info, warn, error, critical, off)")
         .default_value(std::string("info"))
         .metavar("LEVEL");
+
+    program.add_argument("--log-file")
+        .help("Also write every log line to this file (enables file logging; overrides logging.log-file)")
+        .default_value(std::string(""))
+        .metavar("PATH");
 
     program.add_argument("-m", "--metrics-output")
         .help("Path to output file for periodic metrics dumps (JSON Lines format)")
@@ -370,7 +377,8 @@ int main(int argc, char** argv)
             // Ensure pattern %n is meaningful for the process-wide default logger.
             spdlog::set_default_logger(spdlog::stdout_color_mt("mldp_pvxs_driver"));
         }
-        spdlog::set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%-32!n] [%^%-8l%$] %v");
+        const std::string logPattern = "[%Y-%m-%d %H:%M:%S.%e] [%-32!n] [%^%-8l%$] %v";
+        spdlog::set_pattern(logPattern);
 
         // Install the executable's spdlog logger as the driver library logger.
         // Also provide a factory for named loggers so library components can request
@@ -423,6 +431,10 @@ int main(int argc, char** argv)
         const bool dryRun = program.get<bool>("--dry-run");
         const bool printConfig = program.get<bool>("--print-config-startup");
         auto       config = loadMergedConfigSources(configSources);
+
+        // Parse logging config early so dry-run reports invalid values too.
+        const auto loggingConfig = mldp_pvxs_driver::cli::LoggingConfig::parse(
+            config, program.get<std::string>("--log-file"));
         if (printConfig)
         {
             if (dryRun)
@@ -475,6 +487,22 @@ int main(int argc, char** argv)
             setLoggerFactory({});
             spdlog::shutdown();
             return EXIT_SUCCESS;
+        }
+
+        // Switch to file logging (console + combined + per-component files) if configured.
+        std::shared_ptr<mldp_pvxs_driver::cli::LogCompressor> logCompressor;
+        if (loggingConfig.fileLoggingEnabled())
+        {
+            logCompressor = mldp_pvxs_driver::cli::installFileLogging(loggingConfig, logPattern);
+            spdlog::info("File logging enabled: log-file='{}' per-component(readers={} "
+                         "writers={} controller={}) per-run={} max-size={}MB max-age={}h compress={} "
+                         "max-files={}",
+                         loggingConfig.logFile,
+                         loggingConfig.perReaders, loggingConfig.perWriters,
+                         loggingConfig.perController, loggingConfig.perRun,
+                         loggingConfig.rotation.maxBytes / (1024 * 1024),
+                         std::chrono::duration_cast<std::chrono::hours>(loggingConfig.rotation.maxAge).count(),
+                         loggingConfig.rotation.compress, loggingConfig.rotation.maxFiles);
         }
 
         // Start the driver
@@ -551,6 +579,8 @@ int main(int argc, char** argv)
         setLogger(nullptr);
         setLoggerFactory({});
         spdlog::shutdown();
+        if (logCompressor)
+            logCompressor->stop(); // finish pending gzip jobs
         return EXIT_SUCCESS;
     }
     catch (const std::exception& err)

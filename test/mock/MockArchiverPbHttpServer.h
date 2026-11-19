@@ -59,6 +59,7 @@ public:
         size_t      truncate_after_bytes = 0;    ///< Bytes sent before a truncated response is dropped.
         std::vector<std::string> not_found_pvs;  ///< PVs answered with HTTP 404.
         bool        emit_prior_sample = false;   ///< Like the real archiver: prepend one sample 1 ms before `from`.
+        uint32_t    corrupt_sample_every = 0;    ///< Fault injection: replace every Nth sample line with undecodable bytes (0 = off).
     };
 
     struct RequestLog

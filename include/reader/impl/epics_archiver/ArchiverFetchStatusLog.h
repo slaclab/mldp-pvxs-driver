@@ -51,6 +51,7 @@ struct FetchAttemptRecord
     std::string                resume_source;   ///< "config" or "failed_window" (periodic tail re-fetch).
     FetchAttemptResult         result = FetchAttemptResult::Ok;
     std::size_t                samples = 0;     ///< Samples received by this attempt.
+    std::size_t                skipped_samples = 0; ///< Undecodable sample lines dropped by this attempt.
     std::size_t                bytes = 0;       ///< Bytes received by this attempt.
     std::optional<std::string> first_sample_ts; ///< First received sample time (ISO 8601).
     std::optional<std::string> last_sample_ts;  ///< Last received sample time (ISO 8601).

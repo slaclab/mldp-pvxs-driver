@@ -18,7 +18,13 @@
 #include <writer/WriterFactory.h>
 #include <writer/mldp_configuration/MLDPConfigurationWriterConfig.h>
 
+#include <annotation.pb.h>
+
+#include <chrono>
+#include <cstdint>
+#include <functional>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <variant>
@@ -88,16 +94,65 @@ protected:
     }
 
 private:
+    /// Outcome class of a single save attempt.
+    enum class SaveOutcome
+    {
+        Ok,        ///< Saved.
+        Transient, ///< Transport/server-load failure; worth retrying.
+        Rejected   ///< Server refused the request; retrying will not help.
+    };
+
+    struct SaveResult
+    {
+        SaveOutcome outcome{SaveOutcome::Ok};
+        std::string message;
+    };
+
+    /// Result of looking up an existing configuration before a save.
+    struct LookupResult
+    {
+        enum class Kind
+        {
+            Found,
+            NotFound,
+            Error
+        };
+        Kind                                              kind{Kind::NotFound};
+        std::optional<dp::service::common::Configuration> configuration;
+        std::string                                       message;
+    };
+
     void doSaveConfiguration(const util::bus::ConfigurationPayload& cfg);
     void doSaveConfigurationActivation(const util::bus::ConfigurationActivationPayload& act);
 
-    std::optional<dp::service::common::Configuration>
-    fetchExistingConfiguration(const std::string&                          configurationName,
-                               util::pool::MLDPGrpcAnnotationObject&       conn);
+    SaveResult attemptSaveConfiguration(const util::bus::ConfigurationPayload& cfg);
+    SaveResult attemptSaveConfigurationActivation(
+        const dp::service::annotation::SaveConfigurationActivationRequest& req);
+
+    /**
+     * @brief Run @p attempt, retrying Transient outcomes with exponential backoff.
+     *
+     * @param attempts  Set to the number of attempts made.
+     */
+    SaveResult runWithRetry(const char* op, const std::string& name,
+                            const std::function<SaveResult()>& attempt, int& attempts);
+
+    /// Update metrics and the 10 s summary counters; emits the summary log when due.
+    void recordOutcome(bool isConfiguration, bool ok);
+
+    LookupResult fetchExistingConfiguration(const std::string&                    configurationName,
+                                            util::pool::MLDPGrpcAnnotationObject& conn);
 
     MLDPConfigurationWriterConfig                       config_;
     std::shared_ptr<metrics::Metrics>                   metrics_;
     std::shared_ptr<util::pool::MLDPGrpcAnnotationPool> pool_;
+
+    std::mutex                            statsMutex_;
+    std::chrono::steady_clock::time_point lastStatsLogTime_{std::chrono::steady_clock::now()};
+    std::uint64_t                         statConfigsSaved_{0};
+    std::uint64_t                         statActivationsSaved_{0};
+    std::uint64_t                         statFailed_{0};
+    std::uint64_t                         statRetried_{0};
 };
 
 } // namespace mldp_pvxs_driver::writer

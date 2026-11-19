@@ -453,6 +453,14 @@ namespace {
             const auto& sample = samples[i];
             const auto  pbt = toPbTime(sample.epoch_ns);
 
+            if (cfg.corrupt_sample_every > 0 && (i + 1) % cfg.corrupt_sample_every == 0)
+            {
+                // Field 1 declared as length-delimited with a length past the end.
+                body += escapePbHttpLine(std::string("\x0a\x7f\x01", 3));
+                body.push_back('\n');
+                continue;
+            }
+
             switch (payload_spec.kind)
             {
             case MockPayloadKind::ScalarString:

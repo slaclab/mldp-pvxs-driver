@@ -164,6 +164,47 @@ TEST(EpicsArchiverReaderRetryTest, TransientHttpErrorIsRetried)
     std::filesystem::remove(log_path);
 }
 
+// An undecodable sample line is dropped on its own: the window is ingested in
+// one attempt, the good samples are published, and the status log reports the
+// skipped count instead of retrying or failing the window.
+TEST(EpicsArchiverReaderRetryTest, UndecodableSampleIsSkippedNotRetried)
+{
+    MockArchiverPbHttpServer::GenerationConfig clean_cfg;
+    MockArchiverPbHttpServer                   clean_server(clean_cfg);
+    clean_server.start();
+    const auto clean_log = tempLogPath("corrupt-baseline");
+    auto       clean_bus = std::make_shared<MockDataBus>();
+    auto       clean_reader = std::make_unique<EpicsArchiverReader>(
+        clean_bus, nullptr, makeConfigFromYaml(readerYaml(clean_server, clean_log, "", {"TEST:PV:DOUBLE"})));
+    const auto clean_lines = waitForSummary(clean_log, std::chrono::seconds(5));
+    ASSERT_EQ(clean_lines.size(), 2u);
+    const auto total = clean_lines[0]["samples"].get<std::size_t>();
+    ASSERT_GE(total, 10u);
+
+    MockArchiverPbHttpServer::GenerationConfig gen_cfg;
+    gen_cfg.corrupt_sample_every = 5;
+    MockArchiverPbHttpServer server(gen_cfg);
+    server.start();
+
+    const auto log_path = tempLogPath("corrupt");
+    auto       bus = std::make_shared<MockDataBus>();
+    auto       reader = std::make_unique<EpicsArchiverReader>(
+        bus, nullptr, makeConfigFromYaml(readerYaml(server, log_path, "", {"TEST:PV:DOUBLE"})));
+
+    const auto lines = waitForSummary(log_path, std::chrono::seconds(5));
+    ASSERT_EQ(lines.size(), 2u);
+    EXPECT_EQ(lines[0]["result"], "ok");
+    EXPECT_EQ(lines[0]["attempt"], 1);
+    EXPECT_TRUE(lines[0]["error"].is_null());
+    const auto skipped = lines[0]["skipped_samples"].get<std::size_t>();
+    EXPECT_EQ(skipped, total / 5);
+    EXPECT_EQ(lines[0]["samples"].get<std::size_t>(), total - skipped);
+    EXPECT_EQ(server.requestHistory().size(), 1u);
+    EXPECT_EQ(publishedTimes(*bus, "TEST:PV:DOUBLE").size(), total - skipped);
+    std::filesystem::remove(clean_log);
+    std::filesystem::remove(log_path);
+}
+
 // A connection drop mid-stream restarts the PV from the configured start.
 // Only complete batches of the failed attempt are published, and each one is
 // identical to the batch the retry sends with the same first sample, so it

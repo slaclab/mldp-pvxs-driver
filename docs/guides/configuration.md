@@ -808,6 +808,43 @@ When `metrics:` is absent the Prometheus exposer is not started.
 
 ---
 
+## `logging:` Block
+
+Optional. Without it the driver logs to the **console only**. The log level stays controlled by `--log-level`.
+
+```yaml
+logging:
+  log-file: logs/driver.log    # main log file (every line); CLI --log-file overrides
+  console: true                # keep console output; default true
+  per-component:               # own file per component, next to log-file; default all false
+    readers: false
+    writers: false
+    controller: false
+  per-run: true                # run start time in file names; default true
+  rotation:
+    max-size-mb: 100           # 0 = off; default 100
+    max-age-hours: 0           # 0 = off; default 0
+    compress: true             # gzip old files; default true
+    max-files: 10              # old files kept per log; 0 = unlimited; default 10
+```
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `log-file` | path | — | Main log file; receives every line. `--log-file PATH` overrides it. |
+| `console` | bool | `true` | Also log to the console. |
+| `per-component.readers` / `.writers` / `.controller` | bool | `false` | Give each reader / writer / controller instance its own file, in the same folder as `log-file` (its lines also still go to `log-file`). Requires `log-file`. |
+| `per-run` | bool | `true` | Add the run start time to file names (`driver.20261118-131542.log`). When false, a run appends to `driver.log`. |
+| `rotation.max-size-mb` | int | `100` | Rotate before a file exceeds this size. `0` disables. |
+| `rotation.max-age-hours` | int | `0` | Rotate once a file has been open this long. `0` disables. |
+| `rotation.compress` | bool | `true` | gzip rotated files and earlier runs' files (`.log.gz`). |
+| `rotation.max-files` | int | `10` | Old files kept per log (across runs); the oldest are deleted. `0` keeps all. |
+
+The old `combined-file` key was replaced by `log-file`; it and `directory` are rejected with an error.
+
+→ [Logging Guide](logging.md)
+
+---
+
 ## Example Configurations
 
 | File | Description |

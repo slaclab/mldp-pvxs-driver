@@ -62,6 +62,7 @@ void ArchiverFetchStatusLog::record(const FetchAttemptRecord& rec)
     j["resume_source"] = rec.resume_source;
     j["result"] = toString(rec.result);
     j["samples"] = rec.samples;
+    j["skipped_samples"] = rec.skipped_samples;
     j["bytes"] = rec.bytes;
     j["first_sample_ts"] = rec.first_sample_ts ? nlohmann::json(*rec.first_sample_ts) : nlohmann::json(nullptr);
     j["last_sample_ts"] = rec.last_sample_ts ? nlohmann::json(*rec.last_sample_ts) : nlohmann::json(nullptr);

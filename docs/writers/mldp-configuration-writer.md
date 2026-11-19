@@ -43,6 +43,8 @@ writer:
     - name: cfg_writer              # required — unique instance name
       thread-pool: 2                # optional; default: 2
       deadline-seconds: 10          # optional; default: 10
+      max-retries: 3                # optional; default: 3
+      retry-backoff-ms: 500         # optional; default: 500
       mldp-annotation-pool:         # required
         annotation-url: grpc://annotation-host:50053  # required
         min-conn: 1                 # optional; default: 1
@@ -54,9 +56,27 @@ writer:
 | `name` | string | — | **Required.** Unique writer instance name. |
 | `thread-pool` | int | `2` | Worker threads draining the internal work queue. |
 | `deadline-seconds` | int | `10` | Per-RPC deadline in seconds. |
+| `max-retries` | int | `3` | Retries after the first attempt for transient failures (`>= 0`). |
+| `retry-backoff-ms` | int | `500` | Initial retry delay in ms, doubled per retry (500, 1000, 2000). |
 | `mldp-annotation-pool.annotation-url` | string | — | **Required.** gRPC endpoint for the annotation service. |
 | `mldp-annotation-pool.min-conn` | int | `1` | Minimum open connections in the pool. |
 | `mldp-annotation-pool.max-conn` | int | `4` | Maximum open connections in the pool. |
+
+## Error Handling
+
+Each save is classified per attempt:
+
+| Outcome | Cause | Behavior |
+|---------|-------|----------|
+| Transient | gRPC `UNAVAILABLE`, `DEADLINE_EXCEEDED`, `RESOURCE_EXHAUSTED`, `ABORTED`, `INTERNAL`, `UNKNOWN`; C++ exception (e.g. pool acquire) | `warn` per attempt, retried with exponential backoff up to `max-retries`. |
+| Rejected | Other gRPC codes; server `exceptionalResult` (e.g. MLDP `overlapping activation exists ...`) | Not retried. |
+
+When an item finally fails, the writer logs one `error` line and adds 1 to the writer-failures metric (one per item, not per attempt). An activation rejection includes the client id and the start/end times in UTC. An overlap rejection usually means the same event was already stored, from an earlier ingest, with different boundaries or a different id.
+
+Before saving a configuration, the writer looks up the existing record so it can merge it. A transient lookup failure counts as a transient save failure: it is retried, and the configuration is **never** saved blind, which would overwrite existing description/tags/attributes. A non-transient lookup failure (e.g. `UNIMPLEMENTED`) is logged at `warn` and the configuration is saved as new.
+
+Every 10 s (while items are processed) the writer logs a summary:
+`MLDPConfigurationWriter '<name>': last 10s saved configurations=X activations=Y failed=Z retried=R`.
 
 ## Lifecycle
 

@@ -115,6 +115,8 @@ FetchContent_Declare(spdlog
     GIT_TAG ${SPDLOG_VERSION}
 )
 FetchContent_MakeAvailable(spdlog)
+# zlib: gzip compression of rotated log files (CLI file logging).
+find_package(ZLIB REQUIRED)
 
 # Acquire argparse for command-line argument parsing
 message(STATUS "Acquire argparse version ${ARGPARSE_VERSION}...")
@@ -1010,6 +1012,7 @@ if(MLDP_PVXS_DRIVER_TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/slac_calendar/slac_calendar_reader_config_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/slac_calendar/slac_calendar_reader_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/controller/mldppvxs_controller_slac_calendar_integration_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/controller/mldppvxs_controller_file_logging_integration_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/util/http/curl_http_client_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/util/fs/fs_util_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/util/factory/factory_test.cpp"
@@ -1024,7 +1027,13 @@ if(MLDP_PVXS_DRIVER_TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/config/validate.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/ConfigPrinter.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/PeriodicMetricsDumper.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/SpdlogLogger.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/LoggingConfig.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/RotatingGzipFileSink.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/FileLogging.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/cli/file_logging_test.cpp"
     )
+    target_link_libraries(${PROJECT_NAME}_test PRIVATE ZLIB::ZLIB spdlog::spdlog)
     # The writer/reader implementations self-register via static initialization (REGISTER_WRITER,
     # REGISTER_READER).  Without --whole-archive the linker drops those object files and the
     # factory registrations never fire.
@@ -1209,6 +1218,9 @@ if(MLDP_PVXS_DRIVER_MAIN)
         "${CMAKE_CURRENT_SOURCE_DIR}/ext/rapidyaml/include/rapidyaml-0.10.0.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/SpdlogLogger.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/ConfigPrinter.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/LoggingConfig.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/RotatingGzipFileSink.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/FileLogging.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/query/QueryCommand.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/query/ConsoleFooter.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/query/QueryPager.cpp"
@@ -1231,6 +1243,7 @@ if(MLDP_PVXS_DRIVER_MAIN)
             -Wl,-force_load $<TARGET_FILE:lib${PROJECT_NAME}>
             argparse::argparse
             isocline
+            ZLIB::ZLIB
         )
     else()
         target_link_libraries(${PROJECT_NAME} PRIVATE
@@ -1238,6 +1251,7 @@ if(MLDP_PVXS_DRIVER_MAIN)
             argparse::argparse
             isocline
             spdlog::spdlog
+            ZLIB::ZLIB
         )
     endif()
     target_include_directories(${PROJECT_NAME} PRIVATE

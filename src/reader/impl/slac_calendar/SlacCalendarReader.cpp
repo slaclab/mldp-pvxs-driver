@@ -271,10 +271,14 @@ void SlacCalendarReader::pushEvent(const nlohmann::json& ev, const std::string& 
     const std::string program_name = normalizeWhitespace(jsonStr(ev, "program_name"));
     if (program_name.empty())
     {
+        std::string desc = normalizeWhitespace(jsonStr(ev, "description"));
+        if (desc.size() > 120)
+            desc = desc.substr(0, 117) + "...";
         warnf(*logger_,
               "SlacCalendarReader '{}' accel '{}': skipping event with empty program_name"
-              " (start='{}', url='{}')",
-              config_.name(), accel, jsonStr(ev, "start"), jsonStr(ev, "url"));
+              " (start='{}', end='{}', calendar='{}', description='{}', url='{}')",
+              config_.name(), accel, jsonStr(ev, "start"), jsonStr(ev, "end"),
+              normalizeWhitespace(jsonStr(ev, "calendar")), desc, jsonStr(ev, "url"));
         return;
     }
 
@@ -372,8 +376,9 @@ void SlacCalendarReader::pushEvent(const nlohmann::json& ev, const std::string& 
     if (start_str.empty() || end_str.empty())
     {
         warnf(*logger_,
-              "SlacCalendarReader '{}' accel '{}': skipping activation for '{}' (missing start/end)",
-              config_.name(), accel, program_name);
+              "SlacCalendarReader '{}' accel '{}': skipping activation for '{}' (missing start/end:"
+              " start='{}', end='{}', calendar='{}', url='{}')",
+              config_.name(), accel, program_name, start_str, end_str, calendar, url);
         return;
     }
 
