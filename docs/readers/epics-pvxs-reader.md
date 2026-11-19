@@ -69,6 +69,42 @@ reader:
           - name: MY:PV:NAME
 ```
 
+### Loading PVs from files
+
+PV names can also be loaded from plain text files (one PV per line, blank lines and
+`#` comment lines ignored) with `pvs-files`. Each entry's `option` and `metadata`
+apply to every PV in that file and have the same semantics as on an inline `pvs[]`
+entry. Relative paths resolve against the directory of the main config file.
+The same key works on the BSAS table readers (`epics-pvxs-bsas-gen1/gen2`), where the
+file `option` carries the table keys (`option.type` / `column-batch-size` are rejected there).
+See [Configuration Reference](../guides/configuration.md#common-reader-keys-epics-pvxs-and-epics-base).
+
+```yaml
+reader:
+  - epics-pvxs:
+      - name: scalar_reader
+        pvs-files:
+          - path: /etc/mldp-pvxs/scalars.txt
+  - epics-pvxs-bsas-gen1:
+      - name: bsas_gen1
+        pvs-files:
+          - path: /etc/mldp-pvxs/gen1-tables.txt
+            option:
+              data-batches-per-push: 4
+  - epics-pvxs-bsas-gen2:
+      - name: bsas_gen2
+        pvs-files:
+          - path: gen2-tables.txt                # relative → config file directory
+            option:
+              pvs-per-data-batch: 0
+```
+
+```text
+# gen1-tables.txt
+BSAS:TABLE:ONE
+BSAS:TABLE:TWO
+```
+
 ### Per-reader PVXS network settings
 
 `environment:` is an optional map of PVXS client settings. The reader begins with the

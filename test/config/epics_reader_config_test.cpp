@@ -1,6 +1,9 @@
 #include <gtest/gtest.h>
 
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <random>
 
 #include <reader/impl/epics/base/EpicsBaseReaderConfig.h>
 #include <reader/impl/epics/pvxs/EpicsPVXSReaderConfig.h>
@@ -360,6 +363,173 @@ pvs:
     const auto& pv = epicsCfg.pvs().front();
     ASSERT_TRUE(pv.nttableRowTs.has_value());
     EXPECT_EQ(1u, pv.nttableRowTs->columnBatchSize);
+}
+
+class EpicsReaderConfigPvsFilesTest : public ::testing::Test
+{
+protected:
+    void SetUp() override
+    {
+        std::random_device rd;
+        dir_ = std::filesystem::temp_directory_path() /
+               ("mldp_pvs_files_" + std::to_string(rd()) + "_" + std::to_string(rd()));
+        std::filesystem::create_directories(dir_);
+    }
+
+    void TearDown() override
+    {
+        std::error_code ec;
+        std::filesystem::remove_all(dir_, ec);
+    }
+
+    std::filesystem::path writeFile(const std::string& name, const std::string& content)
+    {
+        const auto    path = dir_ / name;
+        std::ofstream out(path);
+        out << content;
+        return path;
+    }
+
+    std::filesystem::path dir_;
+};
+
+TEST_F(EpicsReaderConfigPvsFilesTest, LoadsPvsFromFile)
+{
+    const auto file = writeFile("pvs.txt", "PV:A\n\n  # comment\n  PV:B  \nPV:C\n");
+    const auto cfg = makeConfigFromYaml("name: r\npvs-files:\n  - path: " + file.string() + "\n");
+
+    EpicsReaderConfig epicsCfg(cfg);
+    ASSERT_EQ(3u, epicsCfg.pvs().size());
+    EXPECT_EQ((std::vector<std::string>{"PV:A", "PV:B", "PV:C"}), epicsCfg.pvNames());
+    for (const auto& pv : epicsCfg.pvs())
+    {
+        EXPECT_TRUE(pv.option.empty());
+        EXPECT_FALSE(pv.optionConfig.has_value());
+    }
+    ASSERT_EQ(1u, epicsCfg.pvFiles().size());
+}
+
+TEST_F(EpicsReaderConfigPvsFilesTest, FileOptionAppliesToEveryPv)
+{
+    const auto file = writeFile("pvs.txt", "T:1\nT:2\n");
+    const auto cfg = makeConfigFromYaml("name: r\npvs-files:\n  - path: " + file.string() +
+                                        "\n    option:\n      type: slac-bsas-table\n      column-batch-size: 4\n");
+
+    EpicsReaderConfig epicsCfg(cfg);
+    ASSERT_EQ(2u, epicsCfg.pvs().size());
+    for (const auto& pv : epicsCfg.pvs())
+    {
+        ASSERT_TRUE(pv.nttableRowTs.has_value());
+        EXPECT_EQ(4u, pv.nttableRowTs->columnBatchSize);
+    }
+}
+
+TEST_F(EpicsReaderConfigPvsFilesTest, Gen2OptionPreservedForEveryPv)
+{
+    const auto file = writeFile("pvs.txt", "T:1\nT:2\n");
+    const auto cfg = makeConfigFromYaml("name: r\npvs-files:\n  - path: " + file.string() +
+                                        "\n    option:\n      type: slac-bsas-table-gen2\n");
+
+    EpicsReaderConfig epicsCfg(cfg);
+    ASSERT_EQ(2u, epicsCfg.pvs().size());
+    for (const auto& pv : epicsCfg.pvs())
+    {
+        ASSERT_TRUE(pv.optionConfig.has_value());
+        EXPECT_EQ("slac-bsas-table-gen2", pv.optionConfig->get("type"));
+    }
+}
+
+TEST_F(EpicsReaderConfigPvsFilesTest, FileMetadataAppliesToEveryPv)
+{
+    const auto file = writeFile("pvs.txt", "M:1\nM:2\n");
+    const auto cfg = makeConfigFromYaml("name: r\npvs-files:\n  - path: " + file.string() +
+                                        "\n    metadata:\n      table-gen: \"1\"\n");
+
+    EpicsReaderConfig epicsCfg(cfg);
+    ASSERT_EQ(2u, epicsCfg.pvs().size());
+    for (const auto& pv : epicsCfg.pvs())
+    {
+        ASSERT_EQ(1u, pv.metadata.count("table-gen"));
+        EXPECT_EQ("1", pv.metadata.at("table-gen"));
+    }
+}
+
+TEST_F(EpicsReaderConfigPvsFilesTest, MergesInlineAndFilePvs)
+{
+    const auto file = writeFile("pvs.txt", "F:1\nF:2\n");
+    const auto cfg = makeConfigFromYaml("name: r\npvs:\n  - name: I:1\npvs-files:\n  - path: " + file.string() + "\n");
+
+    EpicsReaderConfig epicsCfg(cfg);
+    EXPECT_EQ((std::vector<std::string>{"I:1", "F:1", "F:2"}), epicsCfg.pvNames());
+}
+
+TEST_F(EpicsReaderConfigPvsFilesTest, RejectsDuplicatePvAcrossSources)
+{
+    const auto file = writeFile("pvs.txt", "DUP:1\n");
+    const auto cfg = makeConfigFromYaml("name: r\npvs:\n  - name: DUP:1\npvs-files:\n  - path: " + file.string() + "\n");
+    EXPECT_THROW(static_cast<void>(EpicsReaderConfig(cfg)), EpicsReaderConfig::Error);
+}
+
+TEST_F(EpicsReaderConfigPvsFilesTest, RejectsDuplicatePvWithinFile)
+{
+    const auto file = writeFile("pvs.txt", "DUP:1\nDUP:1\n");
+    const auto cfg = makeConfigFromYaml("name: r\npvs-files:\n  - path: " + file.string() + "\n");
+    EXPECT_THROW(static_cast<void>(EpicsReaderConfig(cfg)), EpicsReaderConfig::Error);
+}
+
+TEST_F(EpicsReaderConfigPvsFilesTest, RejectsMissingFile)
+{
+    const auto missing = (dir_ / "nope.txt").string();
+    const auto cfg = makeConfigFromYaml("name: r\npvs-files:\n  - path: " + missing + "\n");
+    try
+    {
+        EpicsReaderConfig epicsCfg(cfg);
+        FAIL() << "expected Error";
+    }
+    catch (const EpicsReaderConfig::Error& e)
+    {
+        EXPECT_NE(std::string(e.what()).find(missing), std::string::npos);
+    }
+}
+
+TEST_F(EpicsReaderConfigPvsFilesTest, RejectsNonSequencePvsFiles)
+{
+    const auto cfg = makeConfigFromYaml("name: r\npvs-files:\n  path: x.txt\n");
+    EXPECT_THROW(static_cast<void>(EpicsReaderConfig(cfg)), EpicsReaderConfig::Error);
+}
+
+TEST_F(EpicsReaderConfigPvsFilesTest, RejectsEntryWithoutPath)
+{
+    const auto cfg = makeConfigFromYaml("name: r\npvs-files:\n  - option: x\n");
+    EXPECT_THROW(static_cast<void>(EpicsReaderConfig(cfg)), EpicsReaderConfig::Error);
+}
+
+TEST_F(EpicsReaderConfigPvsFilesTest, ResolvesRelativePathAgainstBaseDir)
+{
+    writeFile("rel.txt", "R:1\n");
+    const auto cfg = makeConfigFromYaml("name: r\npvs-files:\n  - path: rel.txt\n");
+
+    EpicsReaderConfig epicsCfg(cfg, dir_);
+    EXPECT_EQ((std::vector<std::string>{"R:1"}), epicsCfg.pvNames());
+}
+
+TEST_F(EpicsReaderConfigPvsFilesTest, ValidWithOnlyPvsFiles)
+{
+    const auto file = writeFile("pvs.txt", "V:1\n");
+    const auto cfg = makeConfigFromYaml("name: r\npvs-files:\n  - path: " + file.string() + "\n");
+
+    EpicsReaderConfig epicsCfg(cfg);
+    EXPECT_TRUE(epicsCfg.valid());
+}
+
+TEST_F(EpicsReaderConfigPvsFilesTest, EmptyFileAllowed)
+{
+    const auto file = writeFile("empty.txt", "# nothing yet\n\n");
+    const auto cfg = makeConfigFromYaml("name: r\npvs-files:\n  - path: " + file.string() + "\n");
+
+    EpicsReaderConfig epicsCfg(cfg);
+    EXPECT_TRUE(epicsCfg.valid());
+    EXPECT_TRUE(epicsCfg.pvs().empty());
 }
 
 } // namespace mldp_pvxs_driver::reader::impl::epics

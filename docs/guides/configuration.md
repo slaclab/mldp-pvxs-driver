@@ -318,6 +318,11 @@ Both EPICS readers share the same base config (`EpicsReaderConfig`):
             type: slac-bsas-table
             tsSeconds: secondsPastEpoch  # optional; default: secondsPastEpoch
             tsNanos: nanoseconds         # optional; default: nanoseconds
+      pvs-files:                   # optional — load PV names from text files
+        - path: /etc/mldp-pvxs/scalars.txt   # required
+          metadata:                # optional; applied to every PV in the file
+            signal_type: scalar
+        - path: more-scalars.txt   # relative → resolved against the config file directory
 ```
 
 | Key | Type | Default | Description |
@@ -333,6 +338,11 @@ Both EPICS readers share the same base config (`EpicsReaderConfig`):
 | `pvs[].option.type` | string | — | `slac-bsas-table` activates SLAC BSAS NTTable row-timestamp handling *(epics-base only; under `epics-pvxs` it is a configuration error — use `epics-pvxs-bsas-gen1`)*. |
 | `pvs[].option.tsSeconds` | string | `secondsPastEpoch` | NTTable column name carrying seconds timestamp. |
 | `pvs[].option.tsNanos` | string | `nanoseconds` | NTTable column name carrying nanoseconds timestamp. |
+| `pvs-files[].path` | string | — | **Required per entry.** PV list file. Relative paths resolve against the directory of the last `-c` config file (CWD if none). |
+| `pvs-files[].option` | scalar/map | — | Same semantics as `pvs[].option`, applied to every PV in the file. |
+| `pvs-files[].metadata` | map | `{}` | Same semantics as `pvs[].metadata`, applied to every PV in the file. |
+
+**PV list files (`pvs-files`)**: UTF-8 text, one PV name per line, whitespace trimmed. Blank lines and lines whose first non-blank character is `#` are ignored; inline trailing comments are *not* supported. Inline `pvs` are loaded first, then files in order, lines in order. Duplicate PV names (inline vs file, within or across files) are rejected, as are missing/unreadable files. An empty file is allowed (a warning is logged). A reader with only `pvs-files` and no `pvs` is valid.
 
 **Metadata merge semantics**: `EventBatch.metadata` = `static-metadata` merged with the matching PV's `metadata` block. Per-PV keys override reader-level keys on conflict. The merged map is forwarded to writers and stamped as `ColumnProvenance.source` labels in gRPC ingestion requests.
 
@@ -376,7 +386,27 @@ reader:
 | `valueSuffix` | gen2 | `Val` | Value column suffix (case-insensitive); `<PV>.Val` is ingested as `<PV>`. |
 
 `option.type` is rejected by both readers; `pidField` / `valueSuffix` are rejected by
-`epics-pvxs-bsas-gen1`. → [Gen 1](../readers/slac-bsas-table-gen1.md), [Gen 2](../readers/slac-bsas-table-gen2.md)
+`epics-pvxs-bsas-gen1`.
+
+Both table readers also accept `pvs-files`; each file entry's `option` holds the table
+keys above and overrides the reader-level values for every PV in the file:
+
+```yaml
+reader:
+  - epics-pvxs-bsas-gen1:
+      - name: bsas_gen1
+        data-batches-per-push: 50
+        pvs-files:
+          - path: /etc/mldp-pvxs/gen1-tables.txt
+            option:
+              data-batches-per-push: 4
+  - epics-pvxs-bsas-gen2:
+      - name: bsas_gen2
+        pvs-files:
+          - path: gen2-tables.txt
+            option:
+              pvs-per-data-batch: 0
+``` → [Gen 1](../readers/slac-bsas-table-gen1.md), [Gen 2](../readers/slac-bsas-table-gen2.md)
 
 ---
 

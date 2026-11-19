@@ -68,6 +68,34 @@ reader:
           - name: ANOTHER:PV
 ```
 
+### Loading PVs from files
+
+PV names can also be loaded from plain text files (one PV per line, blank lines and
+`#` comment lines ignored) with `pvs-files`. Each entry's `option` and `metadata`
+apply to every PV in that file and have the same semantics as on an inline `pvs[]`
+entry. Relative paths resolve against the directory of the main config file.
+See [Configuration Reference](../guides/configuration.md#common-reader-keys-epics-pvxs-and-epics-base).
+
+```yaml
+reader:
+  - epics-base:
+      - name: bsas_reader
+        pvs-files:
+          - path: /etc/mldp-pvxs/gen1-tables.txt   # SLAC BSAS NTTable gen1
+            option:
+              type: slac-bsas-table
+              tsSeconds: secondsPastEpoch
+              tsNanos: nanoseconds
+              column-batch-size: 4
+          - path: scalars.txt                      # relative → config file directory
+```
+
+```text
+# gen1-tables.txt
+BSAS:TABLE:ONE
+BSAS:TABLE:TWO
+```
+
 ## Key Features
 
 - **Polling Interval Control**: Configurable polling frequency
