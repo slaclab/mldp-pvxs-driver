@@ -14,6 +14,9 @@
 
 #include <reader/impl/epics/pvxs/EpicsPVXSBsasTableReaderConfig.h>
 
+#include <filesystem>
+#include <fstream>
+#include <random>
 #include <string>
 
 using mldp_pvxs_driver::config::makeConfigFromYaml;
@@ -209,4 +212,58 @@ TEST(EpicsPVXSBsasTableReaderConfigTest, BaseValidationStillApplies)
 {
     EXPECT_FALSE(errorOf("pvs:\n  - name: T\n").empty()); // missing name
     EXPECT_FALSE(errorOf("name: r\npvs:\n  - option: {}\n").empty()); // pv without name
+}
+
+namespace {
+
+std::filesystem::path writePvListFile(const std::string& content)
+{
+    std::random_device rd;
+    const auto         path = std::filesystem::temp_directory_path() /
+                      ("mldp_bsas_pvs_" + std::to_string(rd()) + "_" + std::to_string(rd()) + ".txt");
+    std::ofstream out(path);
+    out << content;
+    return path;
+}
+
+} // namespace
+
+TEST(EpicsPVXSBsasTableReaderConfigTest, PvsFilesOptionAppliesToEveryPvGen1)
+{
+    const auto file = writePvListFile("G1:A\nG1:B\n");
+    const auto cfg = parse("name: r\ndata-batches-per-push: 50\npvs:\n  - name: INLINE\npvs-files:\n  - path: " +
+                               file.string() + "\n    option:\n      data-batches-per-push: 4\n      rows-per-data-batch: 10\n",
+                           Generation::Gen1);
+    std::filesystem::remove(file);
+
+    EXPECT_EQ(cfg.optionsFor("INLINE").dataBatchesPerPush, 50u);
+    for (const char* pv : {"G1:A", "G1:B"})
+    {
+        EXPECT_EQ(cfg.optionsFor(pv).dataBatchesPerPush, 4u) << pv;
+        EXPECT_EQ(cfg.optionsFor(pv).rowsPerDataBatch, 10u) << pv;
+    }
+}
+
+TEST(EpicsPVXSBsasTableReaderConfigTest, PvsFilesOptionAppliesToEveryPvGen2)
+{
+    const auto file = writePvListFile("G2:A\nG2:B\n");
+    const auto cfg = parse("name: r\npvs-files:\n  - path: " + file.string() +
+                           "\n    option:\n      pvs-per-data-batch: 0\n      valueSuffix: VAL\n");
+    std::filesystem::remove(file);
+
+    ASSERT_EQ(cfg.pvNames().size(), 2u);
+    for (const char* pv : {"G2:A", "G2:B"})
+    {
+        EXPECT_EQ(cfg.optionsFor(pv).pvsPerDataBatch, 0u) << pv;
+        EXPECT_EQ(cfg.optionsFor(pv).valueSuffix, "VAL") << pv;
+    }
+}
+
+TEST(EpicsPVXSBsasTableReaderConfigTest, PvsFilesOptionRejectsTypeAndColumnBatchSize)
+{
+    const auto file = writePvListFile("T:1\n");
+    const auto base = "name: r\npvs-files:\n  - path: " + file.string() + "\n    option:\n";
+    EXPECT_NE(errorOf(base + "      type: slac-bsas-table\n", Generation::Gen1).find("type"), std::string::npos);
+    EXPECT_NE(errorOf(base + "      column-batch-size: 4\n", Generation::Gen1).find("data-batches-per-push"), std::string::npos);
+    std::filesystem::remove(file);
 }
