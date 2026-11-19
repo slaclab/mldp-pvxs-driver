@@ -22,7 +22,7 @@ The effective configuration has five top-level sections:
 |-----|----------|---------|
 | `name` | no | Controller instance label (metrics scope) |
 | `writer` | **yes (≥1)** | Output sinks (`mldp`, `hdf5`, `hdf5-merge`) |
-| `reader` | **yes (≥1)** | Input sources (`epics-pvxs`, `epics-base`, `epics-archiver`) |
+| `reader` | **yes (≥1)** | Input sources (`epics-pvxs`, `epics-base`, `epics-archiver`); EPICS readers take PVs inline (`pvs`) and/or from text files (`pvs-files`) |
 | `routing` | no | Reader-to-writer routing and optional source filters |
 | `metrics` | no | Prometheus exporter settings |
 
