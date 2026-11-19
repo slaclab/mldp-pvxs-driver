@@ -141,30 +141,26 @@ void SlacCalendarReader::fetchAndPublish(const std::string& startIso, const std:
             const int64_t range_end   = static_cast<int64_t>(parseBusTimestamp(endIso).epoch_seconds);
             const int64_t window_sec  = static_cast<int64_t>(config_.fetchWindowDays()) * 86400;
 
-            bool first_window = true;
+            bool        first_window = true;
+            std::string previous_body;
             for (int64_t win_start = range_start; win_start < range_end; win_start += window_sec)
             {
                 if (!running_.load())
                     break;
 
-                if (!first_window && config_.fetchWindowDelayMs() > 0)
-                {
-                    std::unique_lock<std::mutex> lk(worker_mutex_);
-                    worker_cv_.wait_for(lk,
-                                        std::chrono::milliseconds(config_.fetchWindowDelayMs()),
-                                        [this] { return !running_.load(); });
-                }
-                first_window = false;
-
-                if (!running_.load())
+                if (!first_window && !interruptibleWait(config_.fetchWindowDelayMs()))
                     break;
+                first_window = false;
 
                 const int64_t win_end = std::min(win_start + window_sec, range_end);
                 const std::string win_start_iso = epochToIso(win_start);
                 const std::string win_end_iso   = epochToIso(win_end);
 
-                const auto body = fetchAccel(accel, win_start_iso, win_end_iso);
-                parseAndPush(body, accel, seen, pending);
+                std::string body;
+                const auto  events =
+                    fetchWindow(accel, win_start_iso, win_end_iso, previous_body, body);
+                previous_body = std::move(body);
+                pushEvents(events, accel, seen, pending);
 
                 const bool is_last_window = (win_end >= range_end);
                 pending = mergeAndPushActivations(pending, is_last_window);
@@ -199,12 +195,87 @@ std::string SlacCalendarReader::fetchAccel(const std::string& accel,
     return std::string(result.body.begin(), result.body.end());
 }
 
-void SlacCalendarReader::parseAndPush(const std::string& jsonBody, const std::string& accel,
-                                       SeenActivationMap& seen, std::vector<PendingActivation>& pending)
+bool SlacCalendarReader::interruptibleWait(int ms)
 {
-    const auto events = nlohmann::json::parse(jsonBody);
+    if (ms > 0)
+    {
+        std::unique_lock<std::mutex> lk(worker_mutex_);
+        worker_cv_.wait_for(lk, std::chrono::milliseconds(ms), [this] { return !running_.load(); });
+    }
+    return running_.load();
+}
+
+nlohmann::json SlacCalendarReader::parseEvents(const std::string& jsonBody)
+{
+    auto events = nlohmann::json::parse(jsonBody);
     if (!events.is_array())
         throw std::runtime_error("expected JSON array from SLAC calendar API");
+    return events;
+}
+
+nlohmann::json SlacCalendarReader::fetchWindow(const std::string& accel, const std::string& startIso,
+                                               const std::string& endIso,
+                                               const std::string& previousBody, std::string& bodyOut)
+{
+    // Why a window is suspicious; empty string = looks fine.
+    const auto suspicion = [&previousBody](const std::string& body, const nlohmann::json& ev)
+    {
+        if (ev.empty())
+            return std::string("no events");
+        if (!previousBody.empty() && body == previousBody)
+            return std::string("same body as previous window");
+        return std::string();
+    };
+
+    const int maxRefetch = config_.suspiciousWindowRetries();
+    bodyOut              = fetchAccel(accel, startIso, endIso);
+    auto events          = parseEvents(bodyOut);
+    auto reason          = suspicion(bodyOut, events);
+    int  refetches       = 0;
+
+    while (!reason.empty() && refetches < maxRefetch)
+    {
+        warnf(*logger_,
+              "SlacCalendarReader '{}' accel '{}' window {} -> {}: {} ({} bytes); refetching in "
+              "{} ms (attempt {}/{})",
+              config_.name(), accel, startIso, endIso, reason, bodyOut.size(),
+              config_.suspiciousWindowRetryDelayMs(), refetches + 1, maxRefetch);
+        if (!interruptibleWait(config_.suspiciousWindowRetryDelayMs()))
+            break;
+        ++refetches;
+        bodyOut = fetchAccel(accel, startIso, endIso);
+        events  = parseEvents(bodyOut);
+        reason  = suspicion(bodyOut, events);
+    }
+
+    if (!reason.empty() && maxRefetch > 0)
+        warnf(*logger_,
+              "SlacCalendarReader '{}' accel '{}' window {} -> {}: still {} after {} refetch(es); "
+              "accepting it",
+              config_.name(), accel, startIso, endIso, reason, refetches);
+
+    std::string first, last;
+    for (const auto& ev : events)
+    {
+        if (!ev.is_object() || !ev.contains("start") || !ev["start"].is_string())
+            continue;
+        const auto st = ev["start"].get<std::string>();
+        if (first.empty() || st < first)
+            first = st;
+        if (last.empty() || st > last)
+            last = st;
+    }
+    infof(*logger_,
+          "SlacCalendarReader '{}' accel '{}' window {} -> {}: {} events, {} bytes, first start='{}', "
+          "last start='{}', refetches={}",
+          config_.name(), accel, startIso, endIso, events.size(), bodyOut.size(), first, last,
+          refetches);
+    return events;
+}
+
+void SlacCalendarReader::pushEvents(const nlohmann::json& events, const std::string& accel,
+                                    SeenActivationMap& seen, std::vector<PendingActivation>& pending)
+{
 
     for (const auto& ev : events)
         pushEvent(ev, accel, seen, pending);
@@ -528,10 +599,19 @@ std::string SlacCalendarReader::buildUrl(const std::string& accel,
         return out;
     };
 
-    return config_.baseUrl() + "/" + accel + "/events.json" +
-           "?non_program_events=false" +
-           "&start_time=" + encode(startIso) +
-           "&end_time="   + encode(endIso);
+    std::string url = config_.baseUrl() + "/" + accel + "/events.json" +
+                      "?non_program_events=false" +
+                      "&start_time=" + encode(startIso) +
+                      "&end_time="   + encode(endIso);
+    if (config_.cacheBuster())
+    {
+        // Unique per request (ms + counter) so no cache can answer from a stored copy.
+        const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::system_clock::now().time_since_epoch())
+                            .count();
+        url += "&_=" + std::to_string(ms) + "-" + std::to_string(++request_seq_);
+    }
+    return url;
 }
 
 std::string SlacCalendarReader::nowOffsetIso(int offsetDays)

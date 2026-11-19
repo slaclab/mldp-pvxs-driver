@@ -68,6 +68,12 @@ public:
     bool tlsVerifyHost() const noexcept { return tls_verify_host_; }
     int fetchWindowDays() const noexcept { return fetch_window_days_; }
     int fetchWindowDelayMs() const noexcept { return fetch_window_delay_ms_; }
+    /** Add a unique `_=<epoch-ms>` query parameter to every request (defeats caches). */
+    bool cacheBuster() const noexcept { return cache_buster_; }
+    /** Refetch attempts for a window that is empty or identical to the previous window. */
+    int suspiciousWindowRetries() const noexcept { return suspicious_window_retries_; }
+    /** Delay before each refetch of a suspicious window. */
+    int suspiciousWindowRetryDelayMs() const noexcept { return suspicious_window_retry_delay_ms_; }
     /** Default mapping merged with the `attributes` overrides, in a stable order. */
     const std::vector<AttributeMapping>& attributeMappings() const noexcept { return attribute_mappings_; }
 
@@ -90,6 +96,9 @@ private:
     bool                     tls_verify_host_{true};
     int                      fetch_window_days_{7};
     int                      fetch_window_delay_ms_{200};
+    bool                     cache_buster_{true};
+    int                      suspicious_window_retries_{2};
+    int                      suspicious_window_retry_delay_ms_{2000};
     std::vector<AttributeMapping> attribute_mappings_;
 };
 

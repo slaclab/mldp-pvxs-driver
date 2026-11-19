@@ -10,6 +10,7 @@
 
 #pragma once
 
+#include <deque>
 #include <httplib.h>
 
 #include <atomic>
@@ -29,6 +30,7 @@ struct CalendarRequestLog
     std::string start_time;
     std::string end_time;
     std::string limit;
+    std::string cache_buster; ///< Value of the `_` query parameter.
     std::string path;
 };
 
@@ -46,6 +48,8 @@ public:
 
     void setResponse(const std::string& accel, const std::string& json_body);
     void setStatusCode(const std::string& accel, int code);
+    /// Bodies returned (in order) by the next requests for @p accel, before setResponse's body.
+    void queueResponses(const std::string& accel, std::vector<std::string> bodies);
 
     [[nodiscard]] std::vector<CalendarRequestLog> requestHistory() const;
     bool waitForRequestCount(size_t min_requests, std::chrono::milliseconds timeout) const;
@@ -57,6 +61,7 @@ private:
     std::vector<CalendarRequestLog>      history_;
     std::unordered_map<std::string, std::string> responses_;
     std::unordered_map<std::string, int>         status_codes_;
+    std::unordered_map<std::string, std::deque<std::string>> queued_;
     std::thread                          thread_;
     std::atomic<bool>                    running_{false};
     int                                  port_{-1};

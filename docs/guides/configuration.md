@@ -536,6 +536,9 @@ Fetches beamline accel/experiment schedule events from the SLAC calendar HTTP AP
       tls-verify-host: true             # optional; default: true
       fetch-window-days: 7              # optional; default: 7
       fetch-window-delay-ms: 200        # optional; default: 200
+      cache-buster: true                # optional; default: true
+      suspicious-window-retries: 2      # optional; default: 2
+      suspicious-window-retry-delay-ms: 2000  # optional; default: 2000
 ```
 
 | Key | Type | Default | Description |
@@ -555,6 +558,9 @@ Fetches beamline accel/experiment schedule events from the SLAC calendar HTTP AP
 | `tls-verify-host` | bool | `true` | Verify TLS hostname against certificate. |
 | `fetch-window-days` | int | `7` | Days of calendar requested per HTTP call; the span is walked in windows of this size (no pagination cursor exists). |
 | `fetch-window-delay-ms` | int | `200` | Delay between window HTTP requests. Avoids upstream/proxy response caching from serving a stale body when windows are requested too fast. Must be >= 0. |
+| `cache-buster` | bool | `true` | Add a unique `_=<epoch-ms>-<n>` query parameter to every request so no cache can answer it. |
+| `suspicious-window-retries` | int | `2` | Refetches of a window that returned no events or the same body as the previous window. `0` disables. Must be >= 0. |
+| `suspicious-window-retry-delay-ms` | int | `2000` | Delay before each such refetch. Must be >= 0. |
 | `attributes` | list | defaults | Overrides of the JSON field → attribute association: entries `{field, name?, target?}`, target `configuration\|activation\|both\|none`. See reader doc. |
 
 → [SlacCalendarReader Documentation](../readers/slac-calendar-reader.md)
