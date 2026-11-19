@@ -95,9 +95,14 @@ jobs:
           elif [[ "$raw" =~ ^v?([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
             version="${BASH_REMATCH[1]}"
           else
-            echo "Unsupported publish_version: '$raw'" >&2
-            echo "Expected release-X.Y.Z, release-vX.Y.Z, develop-X.Y.Z, develop-vX.Y.Z, X.Y.Z, or vX.Y.Z" >&2
-            exit 1
+            # Any other ref (e.g. a feature branch): test build tagged <branch>-<run>.
+            safe_ref=$(printf '%s' "$raw" | tr '/:' '--' | tr -cd 'A-Za-z0-9_.-')
+            if [[ -z "$safe_ref" ]]; then
+              echo "Unsupported publish_version: '$raw'" >&2
+              exit 1
+            fi
+            version="${safe_ref}-${GITHUB_RUN_NUMBER}"
+            echo "Branch build: publishing test image version '${version}'"
           fi
           version="${version#v}"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
