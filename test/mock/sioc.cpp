@@ -429,6 +429,45 @@ void PVServer::addBsasTablePVs()
         },
         Options{.tsSecondsField = "secs", .tsNanosField = "nsecs"});
 
+    // Real IOC layout: ':'-mangled field names, real PV names in `labels`.
+    add("test:bsas_gen1_labels",
+        {
+            {"ACCL_IN20_300_L0A_ACUSBR", "ACCL:IN20:300:L0A_ACUSBR", TypeCode::Float64,
+             [](int c, size_t r) { return c + static_cast<double>(r); }},
+            {"BPMS_LI21_131_XCUSBR", "BPMS:LI21:131:XCUSBR", TypeCode::Float64,
+             [](int c, size_t r) { return c * 2.0 + static_cast<double>(r); }},
+        });
+
+    // Gen1 `_TBL` / `_SIG` pairs: real PV names come from the signal PV.
+    const auto addSignal = [this](const std::string& name, std::vector<std::string> names)
+    {
+        auto value = nt::NTScalar{TypeCode::StringA}.create();
+        shared_array<std::string> arr(names.begin(), names.end());
+        value["value"] = arr.freeze();
+        auto pv = server::SharedPV::buildReadonly();
+        pv.open(value);
+        m_server.addPV(name, pv);
+        m_signalPvs.push_back(std::move(pv));
+    };
+    const std::vector<Column> sigColumns{
+        {"ACCL_IN20_300_L0A_ACUSBR", "", TypeCode::Float64, [](int c, size_t r) { return c + static_cast<double>(r); }},
+        {"BPMS_LI21_131_XCUSBR", "", TypeCode::Float64, [](int c, size_t r) { return c * 2.0 + static_cast<double>(r); }},
+    };
+    // Matching pair (derived `_SIG` name).
+    add("test:bsas_gen1_ok_TBL", sigColumns);
+    addSignal("test:bsas_gen1_ok_SIG", {"ACCL:IN20:300:L0A_ACUSBR", "BPMS:LI21:131:XCUSBR"});
+    // Name mismatch at position 1.
+    add("test:bsas_gen1_badname_TBL", sigColumns);
+    addSignal("test:bsas_gen1_badname_SIG", {"ACCL:IN20:300:L0A_ACUSBR", "BPMS:LI21:999:XCUSBR"});
+    // Column count mismatch.
+    add("test:bsas_gen1_badcount_TBL", sigColumns);
+    addSignal("test:bsas_gen1_badcount_SIG", {"ACCL:IN20:300:L0A_ACUSBR"});
+    // Table without a signal PV on the server (resolution must time out).
+    add("test:bsas_gen1_nosig_TBL", sigColumns);
+    // Signal PV under a non-derived name (option.signal-pv).
+    add("test:bsas_gen1_custom_table", sigColumns);
+    addSignal("test:bsas_gen1_custom_names", {"ACCL:IN20:300:L0A_ACUSBR", "BPMS:LI21:131:XCUSBR"});
+
     // ---- Gen2 ---------------------------------------------------------------
     // Two PVs x Val/CNT/RMS/AVG/MIN/MAX plus pid.  Labels carry the real names
     // (TST:GEN2:A.Val ...), fields the sanitized ones (TST_GEN2_A_Val ...).

@@ -38,6 +38,41 @@ epics:nt/NTTable:1.0
 - The **PV-name columns** (`<PV:NAME:A>`, …) carry the sampled values — one
   element per beam pulse.  Any number of PVs may appear; the column name is
   exactly the EPICS PV name.
+- PVA field names cannot contain `:`, so real IOCs publish mangled field names
+  (`ACCL_IN20_300_L0A_ACUSBR`) and list the real PV names
+  (`ACCL:IN20:300:L0A_ACUSBR`) in a companion **signal PV** (`<prefix>_SIG`,
+  string array, one entry per data column, in column order).
+
+### Real column names from the signal PV (`epics-pvxs-bsas-gen1`)
+
+For each table PV the reader looks up a signal PV: the table name with a
+trailing `_TBL` replaced by `_SIG`, or `option.signal-pv` when set.  At startup
+it gets the signal PV and the table once and checks, position by position, that
+the data columns (timestamp columns excluded) match the signal names:
+
+- the column count equals the number of signal names;
+- each field name equals its signal name once `:` and `_` are removed from both.
+
+The result is cached as field name → real name and used for every update, so
+data is ingested under the real PV name.  **Any failure (signal PV unreachable
+within `signal-timeout-ms`, count or name mismatch) throws and the reader does
+not start.**  The cache is fixed for the reader lifetime: restart the driver
+after the IOC changes its column set; a column missing from the cache is dropped.
+
+Tables without a signal PV (name not ending in `_TBL`, no `signal-pv`) name
+their columns from the NTTable `labels`, falling back to the field name.
+
+```yaml
+reader:
+  epics-pvxs-bsas-gen1:
+    - name: bsas_gen1
+      signal-timeout-ms: 5000          # optional; per startup get
+      pvs:
+        - name: BSAS:SYS0:1:CUSXR_TBL  # signal PV: BSAS:SYS0:1:CUSXR_SIG
+        - name: SOME:TABLE
+          option:
+            signal-pv: SOME:TABLE:NAMES
+```
 - The **two timestamp columns** (`secondsPastEpoch`, `nanoseconds`) index each
   row in time.  Supported integer types: `UInt32`, `UInt64`, `Int32`, `Int64`.
 - All arrays share the same length (one element per row / beam pulse).

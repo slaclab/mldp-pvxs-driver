@@ -55,4 +55,6 @@ private:
     /// Deterministic BSAS Gen1 / Gen2 tables used by the table reader tests
     /// (test:bsas_gen1_*, test:bsas_gen2_*); see BsasTablePV.
     std::vector<std::unique_ptr<BsasTablePV>> m_bsasTables;
+    /// Gen1 signal PVs (`*_SIG`, string array of real column names).
+    std::vector<pvxs::server::SharedPV>       m_signalPvs;
 };

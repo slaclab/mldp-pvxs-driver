@@ -157,6 +157,92 @@ pvs:
     EXPECT_FLOAT_EQ(static_cast<float>(asDoubles(*c)[3]), static_cast<float>(counter + 1.5));
 }
 
+TEST_F(EpicsPVXSBsasGen1ReaderTest, ColumnsAreNamedFromLabelsNotMangledFieldNames)
+{
+    start(R"(
+name: bsas_gen1
+pvs:
+  - name: test:bsas_gen1_labels
+)");
+    const auto groups = waitForDataGroups("test:bsas_gen1_labels", 1);
+    ASSERT_GE(groups.size(), 1u);
+    EXPECT_EQ(groups.front().columnNames(),
+              (std::vector<std::string>{"ACCL:IN20:300:L0A_ACUSBR", "BPMS:LI21:131:XCUSBR"}));
+}
+
+TEST_F(EpicsPVXSBsasGen1ReaderTest, ResolvesRealNamesFromDerivedSignalPv)
+{
+    start(R"(
+name: bsas_gen1
+pvs:
+  - name: test:bsas_gen1_ok_TBL
+)");
+    const auto groups = waitForDataGroups("test:bsas_gen1_ok_TBL", 1);
+    ASSERT_GE(groups.size(), 1u);
+    EXPECT_EQ(groups.front().columnNames(),
+              (std::vector<std::string>{"ACCL:IN20:300:L0A_ACUSBR", "BPMS:LI21:131:XCUSBR"}));
+}
+
+TEST_F(EpicsPVXSBsasGen1ReaderTest, ResolvesRealNamesFromExplicitSignalPv)
+{
+    start(R"(
+name: bsas_gen1
+pvs:
+  - name: test:bsas_gen1_custom_table
+    option:
+      signal-pv: test:bsas_gen1_custom_names
+)");
+    const auto groups = waitForDataGroups("test:bsas_gen1_custom_table", 1);
+    ASSERT_GE(groups.size(), 1u);
+    EXPECT_EQ(groups.front().columnNames(),
+              (std::vector<std::string>{"ACCL:IN20:300:L0A_ACUSBR", "BPMS:LI21:131:XCUSBR"}));
+}
+
+TEST_F(EpicsPVXSBsasGen1ReaderTest, SignalNameMismatchFailsAtStartup)
+{
+    EXPECT_THROW(start(R"(
+name: bsas_gen1
+pvs:
+  - name: test:bsas_gen1_badname_TBL
+)"),
+                 std::runtime_error);
+}
+
+TEST_F(EpicsPVXSBsasGen1ReaderTest, SignalCountMismatchFailsAtStartup)
+{
+    EXPECT_THROW(start(R"(
+name: bsas_gen1
+pvs:
+  - name: test:bsas_gen1_badcount_TBL
+)"),
+                 std::runtime_error);
+}
+
+TEST_F(EpicsPVXSBsasGen1ReaderTest, MissingSignalPvFailsAtStartup)
+{
+    EXPECT_THROW(start(R"(
+name: bsas_gen1
+signal-timeout-ms: 500
+pvs:
+  - name: test:bsas_gen1_nosig_TBL
+)"),
+                 std::runtime_error);
+}
+
+TEST(EpicsPVXSBsasGen1ColumnNameMapTest, MapsFieldAndRealNameToRealName)
+{
+    const auto names = EpicsPVXSBsasGen1Reader::buildColumnNameMap(
+        "T_TBL", "T_SIG", {"A_B_1_X_Y", "C_D"}, {"A:B:1:X_Y", "C:D"});
+    EXPECT_EQ(names.at("A_B_1_X_Y"), "A:B:1:X_Y");
+    EXPECT_EQ(names.at("A:B:1:X_Y"), "A:B:1:X_Y");
+    EXPECT_EQ(names.at("C_D"), "C:D");
+    // ':' and '_' are both ignored when comparing.
+    EXPECT_EQ(EpicsPVXSBsasGen1Reader::buildColumnNameMap("T_TBL", "T_SIG", {"A_B_XY"}, {"A:B:X_Y"}).at("A_B_XY"),
+              "A:B:X_Y");
+    EXPECT_THROW(EpicsPVXSBsasGen1Reader::buildColumnNameMap("T_TBL", "T_SIG", {"A_B"}, {"A:C"}), std::runtime_error);
+    EXPECT_THROW(EpicsPVXSBsasGen1Reader::buildColumnNameMap("T_TBL", "T_SIG", {"A_B"}, {}), std::runtime_error);
+}
+
 TEST_F(EpicsPVXSBsasGen1ReaderTest, TimestampColumnsAreNotEmittedAsData)
 {
     start(R"(

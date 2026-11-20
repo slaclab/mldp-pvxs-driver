@@ -56,8 +56,20 @@ void readCount(const Config& cfg, const char* key, const std::string& context, s
 }
 
 /// Apply the table keys found in @p cfg on top of @p opts.
+/// Default signal PV of a Gen1 table: trailing `_TBL` replaced by `_SIG`.
+std::string deriveSignalPv(const std::string& tablePv)
+{
+    constexpr std::string_view kTableSuffix = "_TBL";
+    if (tablePv.size() > kTableSuffix.size() &&
+        tablePv.compare(tablePv.size() - kTableSuffix.size(), kTableSuffix.size(), kTableSuffix) == 0)
+    {
+        return tablePv.substr(0, tablePv.size() - kTableSuffix.size()) + "_SIG";
+    }
+    return {};
+}
+
 void readTableOptions(const Config& cfg, Generation generation, const std::string& context,
-                      std::string_view readerType, TableOptions& opts)
+                      std::string_view readerType, bool pvLevel, TableOptions& opts)
 {
     if (cfg.hasChild(ColumnBatchSizeKey))
     {
@@ -74,9 +86,27 @@ void readTableOptions(const Config& cfg, Generation generation, const std::strin
     {
         readName(cfg, PidFieldKey, context, opts.pidField);
         readName(cfg, ValueSuffixKey, context, opts.valueSuffix);
+        for (const char* key : {SignalPvKey, SignalTimeoutMsKey})
+        {
+            if (cfg.hasChild(key))
+            {
+                throw EpicsReaderConfig::Error(context + "." + key + " is not supported by reader type '" +
+                                               std::string(readerType) + "'; it applies to 'epics-pvxs-bsas-gen1' only");
+            }
+        }
     }
     else
     {
+        if (cfg.hasChild(SignalPvKey) && !pvLevel)
+        {
+            throw EpicsReaderConfig::Error(context + "." + SignalPvKey + " must be set per PV under option");
+        }
+        readName(cfg, SignalPvKey, context, opts.signalPv);
+        readCount(cfg, SignalTimeoutMsKey, context, opts.signalTimeoutMs);
+        if (opts.signalTimeoutMs == 0)
+        {
+            throw EpicsReaderConfig::Error(context + "." + SignalTimeoutMsKey + " must be greater than 0");
+        }
         for (const char* key : {PidFieldKey, ValueSuffixKey})
         {
             if (cfg.hasChild(key))
@@ -96,7 +126,7 @@ EpicsPVXSBsasTableReaderConfig::EpicsPVXSBsasTableReaderConfig(const Config&    
     : EpicsPVXSReaderConfig(readerEntry, std::string(readerType))
     , generation_(generation)
 {
-    readTableOptions(readerEntry, generation_, std::string(readerType), readerType, defaults_);
+    readTableOptions(readerEntry, generation_, std::string(readerType), readerType, false, defaults_);
 
     for (const auto& pv : pvs())
     {
@@ -105,23 +135,27 @@ EpicsPVXSBsasTableReaderConfig::EpicsPVXSBsasTableReaderConfig(const Config&    
         {
             throw Error(context + " must be a map for reader type '" + std::string(readerType) + "'");
         }
-        if (!pv.optionConfig.has_value())
-        {
-            continue;
-        }
-        const auto& optionCfg = *pv.optionConfig;
-        if (!optionCfg.raw().is_map())
-        {
-            throw Error(context + " must be a map for reader type '" + std::string(readerType) + "'");
-        }
-        if (optionCfg.hasChild(OptionTypeKey))
-        {
-            throw Error(context + "." + std::string(OptionTypeKey) + " is not supported by reader type '" +
-                        std::string(readerType) + "'; the table type is implied by the reader type");
-        }
 
         TableOptions opts = defaults_;
-        readTableOptions(optionCfg, generation_, context, readerType, opts);
+        if (pv.optionConfig.has_value())
+        {
+            const auto& optionCfg = *pv.optionConfig;
+            if (!optionCfg.raw().is_map())
+            {
+                throw Error(context + " must be a map for reader type '" + std::string(readerType) + "'");
+            }
+            if (optionCfg.hasChild(OptionTypeKey))
+            {
+                throw Error(context + "." + std::string(OptionTypeKey) + " is not supported by reader type '" +
+                            std::string(readerType) + "'; the table type is implied by the reader type");
+            }
+            readTableOptions(optionCfg, generation_, context, readerType, true, opts);
+        }
+
+        if (generation_ == Generation::Gen1 && opts.signalPv.empty())
+        {
+            opts.signalPv = deriveSignalPv(pv.name);
+        }
         per_pv_.emplace(pv.name, std::move(opts));
     }
 }

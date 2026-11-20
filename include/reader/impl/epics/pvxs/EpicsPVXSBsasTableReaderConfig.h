@@ -29,6 +29,8 @@ inline constexpr char PvsPerDataBatchKey[] = "pvs-per-data-batch";
 inline constexpr char DataBatchesPerPushKey[] = "data-batches-per-push";
 inline constexpr char PidFieldKey[] = "pidField";
 inline constexpr char ValueSuffixKey[] = "valueSuffix";
+inline constexpr char SignalPvKey[] = "signal-pv";
+inline constexpr char SignalTimeoutMsKey[] = "signal-timeout-ms";
 
 /**
  * @brief Typed view over a BSAS table reader entry.
@@ -54,6 +56,12 @@ inline constexpr char ValueSuffixKey[] = "valueSuffix";
  *               pvs-per-data-batch: 0
  * @endcode
  *
+ * Gen1 only: each table PV is paired with a signal PV (string array of real PV
+ * names, one per data column, in column order).  It defaults to the table name
+ * with a trailing `_TBL` replaced by `_SIG` and can be set per PV with
+ * `option.signal-pv`.  `signal-timeout-ms` (reader level or per PV) bounds the
+ * startup gets used to resolve the real column names.
+ *
  * `option.type` is rejected: the table generation is implied by the reader type.
  * `column-batch-size` is rejected: use `data-batches-per-push`.
  */
@@ -77,6 +85,8 @@ public:
         std::string tsNanosField = "nanoseconds";        ///< Per-row nanoseconds column.
         std::string pidField = "pid";                    ///< Gen2 pulse ID column (skipped).
         std::string valueSuffix = "Val";                 ///< Gen2 value column suffix (case-insensitive).
+        std::string signalPv;                            ///< Gen1 signal PV with the real column names (empty = none).
+        std::size_t signalTimeoutMs = 5000;              ///< Gen1 timeout of each startup name-resolution get.
     };
 
     EpicsPVXSBsasTableReaderConfig() = default;

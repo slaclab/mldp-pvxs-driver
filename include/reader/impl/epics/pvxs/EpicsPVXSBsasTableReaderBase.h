@@ -84,6 +84,16 @@ protected:
     /** @brief Convert one NTTable update and push it to the bus. */
     void processEvent(std::string pvName, pvxs::Value epics_value) override;
 
+    /**
+     * @brief Replace the column filter of @p pvName.
+     *
+     * Only valid in the derived constructor, before addPV() starts monitoring.
+     */
+    void setColumnFilter(const std::string& pvName, ColumnFilter filter)
+    {
+        filters_[pvName] = std::move(filter);
+    }
+
 private:
     EpicsPVXSBsasTableReaderBase(std::shared_ptr<util::bus::IDataBus> bus,
                                  std::shared_ptr<metrics::Metrics>    metrics,

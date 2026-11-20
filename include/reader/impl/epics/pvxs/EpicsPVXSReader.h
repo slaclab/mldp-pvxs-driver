@@ -109,6 +109,12 @@ public:
     void addPV(const PVSet& pvNames);
 
 protected:
+    /** @brief PVXS client context of this reader (for one-shot gets by derived readers). */
+    pvxs::client::Context& pvaContext()
+    {
+        return pva_context_;
+    }
+
     /** @brief Default PVXS monitor request string requesting value, alarm, and timestamp. */
     static constexpr std::string_view kPVXSDefaultMonitorRequest = "field(value,alarm,timeStamp)";
 

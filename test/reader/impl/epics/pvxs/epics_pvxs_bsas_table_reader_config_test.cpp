@@ -267,3 +267,29 @@ TEST(EpicsPVXSBsasTableReaderConfigTest, PvsFilesOptionRejectsTypeAndColumnBatch
     EXPECT_NE(errorOf(base + "      column-batch-size: 4\n", Generation::Gen1).find("data-batches-per-push"), std::string::npos);
     std::filesystem::remove(file);
 }
+
+TEST(EpicsPVXSBsasTableReaderConfigTest, Gen1SignalPvDerivedFromTblSuffixOrOverridden)
+{
+    const auto cfg = parse(R"(
+name: r
+signal-timeout-ms: 2000
+pvs:
+  - name: BSAS:SYS0:1:CUSXR_TBL
+  - name: OTHER:TABLE
+  - name: X_TBL
+    option:
+      signal-pv: CUSTOM:NAMES
+)", Generation::Gen1);
+    EXPECT_EQ(cfg.optionsFor("BSAS:SYS0:1:CUSXR_TBL").signalPv, "BSAS:SYS0:1:CUSXR_SIG");
+    EXPECT_EQ(cfg.optionsFor("BSAS:SYS0:1:CUSXR_TBL").signalTimeoutMs, 2000u);
+    EXPECT_EQ(cfg.optionsFor("OTHER:TABLE").signalPv, "");
+    EXPECT_EQ(cfg.optionsFor("X_TBL").signalPv, "CUSTOM:NAMES");
+}
+
+TEST(EpicsPVXSBsasTableReaderConfigTest, SignalKeysValidation)
+{
+    EXPECT_NE(errorOf("name: r\nsignal-pv: X\npvs:\n  - name: T_TBL\n", Generation::Gen1).find("per PV"), std::string::npos);
+    EXPECT_NE(errorOf("name: r\nsignal-timeout-ms: 0\npvs:\n  - name: T_TBL\n", Generation::Gen1).find("greater than 0"),
+              std::string::npos);
+    EXPECT_NE(errorOf("name: r\npvs:\n  - name: T\n    option:\n      signal-pv: X\n").find("gen1"), std::string::npos);
+}

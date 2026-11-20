@@ -16,6 +16,10 @@
 #pragma once
 
 #include <reader/ReaderFactory.h>
+
+#include <string>
+#include <unordered_map>
+#include <vector>
 #include <reader/impl/epics/pvxs/EpicsPVXSBsasTableReaderBase.h>
 
 namespace mldp_pvxs_driver::reader::impl::epics {
@@ -23,8 +27,22 @@ namespace mldp_pvxs_driver::reader::impl::epics {
 /**
  * @brief Reader for SLAC BSAS Gen1 NTTables.
  *
- * Every non-timestamp column of the table is a PV value column and is
- * forwarded under its field name.  See docs/readers/slac-bsas-table-gen1.md.
+ * Every non-timestamp column of the table is a PV value column.  PVA field
+ * names cannot contain ':', so the IOC publishes mangled field names
+ * (`ACCL_IN20_300_L0A_ACUSBR`) and lists the real PV names
+ * (`ACCL:IN20:300:L0A_ACUSBR`) in a companion signal PV (`<prefix>_SIG`).
+ *
+ * At construction, for every table PV with a signal PV (derived from a
+ * trailing `_TBL` or set with `option.signal-pv`) the reader gets the signal
+ * PV and the table once, checks that the data columns and the signal names
+ * match one-to-one by position (column count equal, and each field equal to
+ * the signal name once ':' and '_' are removed from both), and caches
+ * field name -> real name.
+ * Any failure throws, so the reader (and the driver) does not start.  The
+ * cache is fixed for the reader lifetime; a column not in it is dropped.
+ *
+ * Tables without a signal PV name their columns from the NTTable `labels`,
+ * falling back to the field name.  See docs/readers/slac-bsas-table-gen1.md.
  *
  * @code{.yaml}
  * readers:
@@ -45,6 +63,31 @@ public:
     EpicsPVXSBsasGen1Reader(std::shared_ptr<util::bus::IDataBus> bus,
                             std::shared_ptr<metrics::Metrics>    metrics,
                             const config::Config&                cfg);
+
+    /** @brief Column filter keeping every column under its label (field name as fallback). */
+    static ColumnFilter makeColumnFilter(const TableOptions& opts);
+
+    /** @brief Real column names of one table: field name (and real name) -> real name. */
+    using ColumnNameMap = std::unordered_map<std::string, std::string>;
+
+    /**
+     * @brief Verify a table's data fields against its signal names.
+     *
+     * @param tablePv Table PV name (error messages).
+     * @param signalPv Signal PV name (error messages).
+     * @param fields Data field names of the table, in column order (timestamps excluded).
+     * @param signals Real PV names from the signal PV, in column order.
+     * @return Map from field name (and from real name) to real name.
+     * @throws std::runtime_error on count or per-position name mismatch.
+     */
+    static ColumnNameMap buildColumnNameMap(const std::string&              tablePv,
+                                            const std::string&              signalPv,
+                                            const std::vector<std::string>& fields,
+                                            const std::vector<std::string>& signals);
+
+private:
+    /** @brief Resolve and verify the real column names of every table with a signal PV. */
+    void resolveSignalNames();
 
 private:
     REGISTER_READER("epics-pvxs-bsas-gen1", EpicsPVXSBsasGen1Reader)

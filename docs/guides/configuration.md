@@ -383,6 +383,8 @@ reader:
 | `data-batches-per-push` | both | `50` | `DataBatch`es per bus `EventBatch` push. `0` = all. Replaces `column-batch-size` (rejected). |
 | `tsSeconds` / `tsNanos` | both | `secondsPastEpoch` / `nanoseconds` | Per-row timestamp column names. |
 | `pidField` | gen2 | `pid` | Pulse ID column (skipped). |
+| `signal-pv` | gen1 (per PV) | `<table>` with `_TBL`→`_SIG` | Signal PV with the real column names; verified against the table at startup (mismatch = startup error). |
+| `signal-timeout-ms` | gen1 | `5000` | Timeout of each startup get of the signal / table PV. |
 | `valueSuffix` | gen2 | `Val` | Value column suffix (case-insensitive); `<PV>.Val` is ingested as `<PV>`. |
 
 `option.type` is rejected by both readers; `pidField` / `valueSuffix` are rejected by
