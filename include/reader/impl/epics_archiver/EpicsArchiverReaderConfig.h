@@ -49,6 +49,10 @@ inline constexpr char PvSamplesPerBatchKey[] = "pv-samples-per-batch";
 inline constexpr char BatchFlushIntervalMsKey[] = "batch-flush-interval-ms";
 inline constexpr char MaxBatchSpanSecKey[] = "max-batch-span-sec";
 inline constexpr char FetchThreadsKey[] = "fetch-threads";
+inline constexpr char FetchMaxRetriesKey[] = "fetch-max-retries";
+inline constexpr char FetchWindowSecKey[] = "fetch-window-sec";
+inline constexpr char FetchRetryBackoffMsKey[] = "fetch-retry-backoff-ms";
+inline constexpr char StatusLogPathKey[] = "status-log-path";
 
 static constexpr auto kMetadataKey = "metadata";
 
@@ -248,6 +252,47 @@ public:
     long fetchThreads() const;
 
     /**
+     * @brief Get the number of retries after a failed PV fetch.
+     *
+     * A retry re-fetches the whole PV range. Complete batches already sent
+     * get the same MLDP bucket id and are discarded as duplicates; incomplete
+     * batches of the failed attempt are dropped, never sent.
+     *
+     * @return Retry count (default 3; 0 disables retries).
+     */
+    long fetchMaxRetries() const;
+
+    /**
+     * @brief Get the time window used to split a historical PV fetch.
+     *
+     * The `[start-date, end-date)` range is split into windows aligned to
+     * multiples of this size since the Unix epoch; each window is one archiver
+     * request retried on its own. Applies only when end-date is set.
+     *
+     * @return Window size in seconds (default 86400; 0 = one request per PV).
+     */
+    long fetchWindowSec() const;
+
+    /**
+     * @brief Get the base delay between PV fetch retries.
+     *
+     * The delay doubles after each attempt, capped at 30 seconds.
+     *
+     * @return Base backoff in milliseconds (default 1000).
+     */
+    long fetchRetryBackoffMs() const;
+
+    /**
+     * @brief Get the path of the per-PV fetch status log (JSON lines).
+     *
+     * Defaults to `archiver-status-<reader-name>.jsonl` in the current
+     * directory; an empty `status-log-path` disables the log.
+     *
+     * @return File path, or std::nullopt when the status log is disabled.
+     */
+    const std::optional<std::string>& statusLogPath() const;
+
+    /**
      * @brief Whether to verify the server TLS certificate chain.
      *
      * @return true to enable TLS peer verification (default); false to disable.
@@ -296,6 +341,10 @@ private:
     long                                         batch_flush_interval_ms_ = 0L;  ///< Max pending batch age in ms (0 = disabled).
     long                                         max_batch_span_sec_ = 86400L;   ///< Max timestamp span per PV batch (seconds).
     long                                         fetch_threads_ = 1L;            ///< Number of parallel fetch worker threads.
+    long                                         fetch_max_retries_ = 3L;        ///< Retries after a failed PV fetch.
+    long                                         fetch_window_sec_ = 86400L;     ///< Historical fetch window (0 = whole range).
+    long                                         fetch_retry_backoff_ms_ = 1000L; ///< Base retry backoff (ms).
+    std::optional<std::string>                   status_log_path_;               ///< Per-PV status log path (JSONL).
     bool                                         tls_verify_peer_ = true;        ///< Verify TLS certificate chain.
     bool                                         tls_verify_host_ = true;        ///< Verify TLS host name.
     std::unordered_map<std::string, std::string> static_metadata_;           ///< Reader-level static metadata.

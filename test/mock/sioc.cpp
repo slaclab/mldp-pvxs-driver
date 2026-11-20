@@ -1,8 +1,10 @@
 #include "sioc.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <limits>
 
 #include <pvxs/nt.h>
@@ -65,6 +67,8 @@ PVServer::PVServer()
     m_server.addPV("test:bsas_table_nan", m_pvBsasTableNan);
 
     m_cuHxr.registerPV(m_server);
+
+    addBsasTablePVs();
 
     const auto makeScalar = []<typename T>(auto valueFn)
     {
@@ -339,7 +343,16 @@ PVServer::PVServer()
                                              entry.pv.post(pv);
                                          }
 
-                                         m_cuHxr.post(seconds, nanos, counter, time);
+                                         // Real BSAS Gen1 tables update at 1 Hz (server tick = 0.5 s).
+                                         if (counter % 2 == 1)
+                                         {
+                                             m_cuHxr.post(seconds, nanos, counter, time);
+                                         }
+
+                                         for (auto& table : m_bsasTables)
+                                         {
+                                             table->post(counter);
+                                         }
 
                                          time += 0.5;
                                          std::this_thread::sleep_for(std::chrono::milliseconds(500));
@@ -347,6 +360,199 @@ PVServer::PVServer()
                                  });
 
     m_server.start();
+}
+
+void PVServer::addBsasTablePVs()
+{
+    using Column = BsasTablePV::Column;
+    using Options = BsasTablePV::Options;
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+
+    const auto add = [this](std::string name, std::vector<Column> columns, Options options = {})
+    {
+        m_bsasTables.push_back(std::make_unique<BsasTablePV>(std::move(name), std::move(columns), std::move(options)));
+        m_bsasTables.back()->registerPV(m_server);
+    };
+
+    // ---- Gen1 ---------------------------------------------------------------
+    // Real IOC layout for every Gen1 table: `<base>_TBL` NTTable posted at 1 Hz
+    // with sanitized field names (':' -> '_', `labels` repeating them) and a
+    // static `<base>_SIG` string array with the real PV names in column order.
+    // Columns are given by real name; the field name is derived.
+    struct Gen1Col
+    {
+        const char*                        real;
+        TypeCode                           type;
+        std::function<double(int, size_t)> value;
+    };
+    const auto gen1Columns = [](std::vector<Gen1Col> cols)
+    {
+        std::vector<Column> out;
+        for (auto& c : cols)
+        {
+            std::string field = c.real;
+            std::replace(field.begin(), field.end(), ':', '_');
+            out.push_back({field, c.real, c.type, std::move(c.value)});
+        }
+        return out;
+    };
+    const auto addGen1 = [&](const std::string& base, std::vector<Gen1Col> cols, Options options = {})
+    {
+        if (options.signalPv.empty())
+        {
+            options.signalPv = base + "_SIG";
+        }
+        options.postEveryTicks = 2;
+        add(base + "_TBL", gen1Columns(std::move(cols)), std::move(options));
+    };
+
+    // Typed columns; value = counter * 100 + row (+ column offset).
+    addGen1("test:bsas_gen1_table",
+            {
+                {"PV:A", TypeCode::Float64, [](int c, size_t r) { return c * 100.0 + static_cast<double>(r); }},
+                {"PV:B", TypeCode::Int32, [](int c, size_t r) { return c * 100.0 + static_cast<double>(r) + 1000.0; }},
+                {"PV:C", TypeCode::Float32, [](int c, size_t r) { return c + static_cast<double>(r) * 0.5; }},
+            });
+
+    // Ten Float64 columns W:00..W:09; value = column * 1000 + row.
+    {
+        std::vector<Gen1Col> wide;
+        for (int i = 0; i < 10; ++i)
+        {
+            static const char* kNames[] = {"W:00", "W:01", "W:02", "W:03", "W:04",
+                                           "W:05", "W:06", "W:07", "W:08", "W:09"};
+            wide.push_back({kNames[i], TypeCode::Float64,
+                            [i](int, size_t r) { return i * 1000.0 + static_cast<double>(r); }});
+        }
+        addGen1("test:bsas_gen1_wide", std::move(wide));
+    }
+
+    // 250 rows per update: exercises rows-per-data-batch (default 120 -> 120 + 120 + 10).
+    addGen1("test:bsas_gen1_long",
+            {
+                {"L:A", TypeCode::Float64, [](int, size_t r) { return static_cast<double>(r); }},
+                {"L:B", TypeCode::Int32, [](int, size_t r) { return 10000.0 + static_cast<double>(r); }},
+            },
+            Options{.rows = 250});
+
+    // Mix of valid and all-NaN columns.
+    addGen1("test:bsas_gen1_nan",
+            {
+                {"OK:A", TypeCode::Float64, [](int c, size_t r) { return c + static_cast<double>(r); }},
+                {"NAN:B", TypeCode::Float64, [nan](int, size_t) { return nan; }},
+                {"OK:C", TypeCode::Int32, [](int c, size_t r) { return c * 10.0 + static_cast<double>(r); }},
+            });
+
+    // Every column all-NaN.
+    addGen1("test:bsas_gen1_all_nan",
+            {
+                {"NAN:A", TypeCode::Float64, [nan](int, size_t) { return nan; }},
+                {"NAN:B", TypeCode::Float32, [nan](int, size_t) { return nan; }},
+            });
+
+    // No timestamp columns at all.
+    addGen1("test:bsas_gen1_no_ts",
+            {
+                {"PV:A", TypeCode::Float64, [](int c, size_t r) { return c + static_cast<double>(r); }},
+            },
+            Options{.tsSecondsField = "", .tsNanosField = ""});
+
+    // Custom timestamp column names.
+    addGen1("test:bsas_gen1_custom_ts",
+            {
+                {"PV:A", TypeCode::Float64, [](int c, size_t r) { return c + static_cast<double>(r); }},
+                {"PV:B", TypeCode::UInt64, [](int c, size_t r) { return c * 2.0 + static_cast<double>(r); }},
+            },
+            Options{.tsSecondsField = "secs", .tsNanosField = "nsecs"});
+
+    // Real BSAS names whose '_' must survive (L0A_ACUSBR).
+    const std::vector<Gen1Col> realCols{
+        {"ACCL:IN20:300:L0A_ACUSBR", TypeCode::Float64, [](int c, size_t r) { return c + static_cast<double>(r); }},
+        {"BPMS:LI21:131:XCUSBR", TypeCode::Float64, [](int c, size_t r) { return c * 2.0 + static_cast<double>(r); }},
+    };
+    addGen1("test:bsas_gen1_ok", realCols);
+    // Signal PV whose entry 1 does not match column 1.
+    addGen1("test:bsas_gen1_badname", realCols,
+            Options{.signalNames = {"ACCL:IN20:300:L0A_ACUSBR", "BPMS:LI21:999:XCUSBR"}});
+    // Signal PV with fewer names than data columns.
+    addGen1("test:bsas_gen1_badcount", realCols, Options{.signalNames = {"ACCL:IN20:300:L0A_ACUSBR"}});
+    // Signal PV under a non-derived name (option.signal-pv).
+    addGen1("test:bsas_gen1_custom", realCols, Options{.signalPv = "test:bsas_gen1_custom_names"});
+    // Table whose signal PV is not served (startup must time out).
+    add("test:bsas_gen1_nosig_TBL", gen1Columns(realCols), Options{.postEveryTicks = 2});
+
+    // Legacy layout without a signal PV: real names only in `labels`
+    // (fallback path for tables not named *_TBL).
+    add("test:bsas_gen1_labels",
+        {
+            {"ACCL_IN20_300_L0A_ACUSBR", "ACCL:IN20:300:L0A_ACUSBR", TypeCode::Float64,
+             [](int c, size_t r) { return c + static_cast<double>(r); }},
+            {"BPMS_LI21_131_XCUSBR", "BPMS:LI21:131:XCUSBR", TypeCode::Float64,
+             [](int c, size_t r) { return c * 2.0 + static_cast<double>(r); }},
+        });
+
+    // ---- Gen2 ---------------------------------------------------------------
+    // Two PVs x Val/CNT/RMS/AVG/MIN/MAX plus pid.  Labels carry the real names
+    // (TST:GEN2:A.Val ...), fields the sanitized ones (TST_GEN2_A_Val ...).
+    // Val = counter * 100 + row (+ 50 for B); statistics are negative so they
+    // can never be mistaken for Val.
+    const auto gen2Columns = [](const std::string& pidField, const std::string& pidLabel,
+                                const std::vector<std::string>& suffixes, char labelSep, bool nanValA)
+    {
+        const double        nanValue = std::numeric_limits<double>::quiet_NaN();
+        std::vector<Column> cols;
+        cols.push_back({pidField, pidLabel, TypeCode::UInt64,
+                        [](int c, size_t r) { return c * 1000.0 + static_cast<double>(r); }});
+        const struct
+        {
+            const char* field;
+            const char* label;
+            double      valOffset;
+            TypeCode    valType;
+        } pvs[] = {{"TST_GEN2_A", "TST:GEN2:A", 0.0, TypeCode::Float64},
+                   {"TST_GEN2_B", "TST:GEN2:B", 50.0, TypeCode::Float32}};
+        for (const auto& pv : pvs)
+        {
+            for (size_t s = 0; s < suffixes.size(); ++s)
+            {
+                const auto& suffix = suffixes[s];
+                Column      col;
+                col.field = std::string(pv.field) + "_" + suffix;
+                col.label = std::string(pv.label) + labelSep + suffix;
+                if (s == 0) // value column
+                {
+                    col.type = pv.valType;
+                    const bool   isNan = nanValA && pv.valOffset == 0.0;
+                    const double offset = pv.valOffset;
+                    col.value = [isNan, offset, nanValue](int c, size_t r)
+                    {
+                        return isNan ? nanValue : c * 100.0 + static_cast<double>(r) + offset;
+                    };
+                }
+                else if (s == 1) // count
+                {
+                    col.type = TypeCode::UInt32;
+                    col.value = [](int, size_t) { return 7.0; };
+                }
+                else // statistics
+                {
+                    col.type = TypeCode::Float64;
+                    col.value = [s](int, size_t r) { return -static_cast<double>(s) - static_cast<double>(r) * 0.25; };
+                }
+                cols.push_back(std::move(col));
+            }
+        }
+        return cols;
+    };
+    const std::vector<std::string> kStdSuffixes{"Val", "CNT", "RMS", "AVG", "MIN", "MAX"};
+
+    add("test:bsas_gen2_table", gen2Columns("pid", "pid", kStdSuffixes, '.', false));
+    add("test:bsas_gen2_no_labels", gen2Columns("pid", "pid", kStdSuffixes, '.', false),
+        Options{.withLabels = false});
+    add("test:bsas_gen2_nan", gen2Columns("pid", "pid", kStdSuffixes, '.', true));
+    // Custom pid column, lowercase "value" suffix, '_' separator in labels.
+    add("test:bsas_gen2_custom",
+        gen2Columns("pulseId", "pulseId", {"value", "cnt", "rms", "avg", "min", "max"}, '_', false));
 }
 
 PVServer::~PVServer()

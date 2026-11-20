@@ -364,3 +364,28 @@ end-date: "2026-02-01"
     SlacCalendarReaderConfig c(cfg);
     EXPECT_TRUE(c.valid());
 }
+
+TEST(SlacCalendarReaderConfigTest, FetchRobustnessDefaults)
+{
+    SlacCalendarReaderConfig c(makeConfigFromYaml(minimalYaml()));
+    EXPECT_TRUE(c.cacheBuster());
+    EXPECT_EQ(c.suspiciousWindowRetries(), 2);
+    EXPECT_EQ(c.suspiciousWindowRetryDelayMs(), 2000);
+}
+
+TEST(SlacCalendarReaderConfigTest, FetchRobustnessOverrides)
+{
+    SlacCalendarReaderConfig c(makeConfigFromYaml(minimalYaml() +
+                                                  "cache-buster: false\n"
+                                                  "suspicious-window-retries: 0\n"
+                                                  "suspicious-window-retry-delay-ms: 50\n"));
+    EXPECT_FALSE(c.cacheBuster());
+    EXPECT_EQ(c.suspiciousWindowRetries(), 0);
+    EXPECT_EQ(c.suspiciousWindowRetryDelayMs(), 50);
+}
+
+TEST(SlacCalendarReaderConfigTest, FetchRobustnessRejectsNegative)
+{
+    assertThrows(makeConfigFromYaml(minimalYaml() + "suspicious-window-retries: -1\n"));
+    assertThrows(makeConfigFromYaml(minimalYaml() + "suspicious-window-retry-delay-ms: -1\n"));
+}

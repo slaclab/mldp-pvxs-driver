@@ -133,7 +133,7 @@ protected:
     void startControllerWithBsasTableReader()
     {
         const std::string reader_section =
-            "reader:\n" "  - epics-pvxs:\n" "      - name: epics_reader_1\n" "        pvs:\n" "          - name: test:bsas_table\n" "            option:\n" "              type: slac-bsas-table\n" "              tsSeconds: secondsPastEpoch\n" "              tsNanos: nanoseconds\n";
+            "reader:\n" "  - epics-pvxs-bsas-gen1:\n" "      - name: epics_reader_1\n" "        pvs:\n" "          - name: test:bsas_table\n" "            option:\n" "              tsSeconds: secondsPastEpoch\n" "              tsNanos: nanoseconds\n";
         startControllerWithReaderSection(reader_section);
     }
 

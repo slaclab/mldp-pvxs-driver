@@ -42,11 +42,10 @@ reader:
         - name: "PV:NAME:1"
         - name: "PV:NAME:2"
           option: "VALUE"                   # optional; scalar monitor option
-        - name: "TABLE:PV"
-          option:                           # optional; map-based option for NT Table
-            type: "slac-bsas-table"         # special handling for BSAS table rows
-            tsSeconds: "secondsFieldName"   # field containing seconds timestamp
-            tsNanos: "nanosFieldName"       # field containing nanos timestamp
+      # epics-pvxs is scalar-only: SLAC BSAS NTTables use the readers below.
+
+  # ========== SLAC BSAS Gen1 NTTable Reader (PVXS) ===      # pvs-files:                          # optional; same contract as above
+      #   - path: gen2-tables.txt
 
   # ========== EPICS Base Reader (Real-time Monitoring via Channel Access) ==========
   # Type: epics-base

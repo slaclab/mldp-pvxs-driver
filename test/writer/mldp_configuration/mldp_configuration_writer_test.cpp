@@ -56,6 +56,20 @@ public:
     std::atomic<int> save_configuration_activation_count{0};
     bool             reject_configuration{false};
     bool             reject_activation{false};
+    std::atomic<int> get_configuration_count{0};
+    std::atomic<int> fail_next_save_n{0};   ///< saveConfiguration returns UNAVAILABLE this many times
+    std::atomic<int> fail_next_get_n{0};    ///< getConfiguration returns UNAVAILABLE this many times
+
+    static bool consumeFailure(std::atomic<int>& counter)
+    {
+        int n = counter.load();
+        while (n > 0)
+        {
+            if (counter.compare_exchange_weak(n, n - 1))
+                return true;
+        }
+        return false;
+    }
 
     std::vector<dp::service::annotation::SaveConfigurationRequest>           captured_config_requests;
     std::vector<dp::service::annotation::SaveConfigurationActivationRequest> captured_activation_requests;
@@ -75,6 +89,9 @@ public:
         const dp::service::annotation::GetConfigurationRequest* req,
         dp::service::annotation::GetConfigurationResponse*      response) override
     {
+        get_configuration_count.fetch_add(1, std::memory_order_relaxed);
+        if (consumeFailure(fail_next_get_n))
+            return grpc::Status(grpc::StatusCode::UNAVAILABLE, "get unavailable for test");
         std::lock_guard<std::mutex> lock(seed_mutex);
         auto it = seeded_configs.find(req->configurationname());
         if (it == seeded_configs.end())
@@ -92,6 +109,8 @@ public:
         dp::service::annotation::SaveConfigurationResponse* response) override
     {
         save_configuration_count.fetch_add(1, std::memory_order_relaxed);
+        if (consumeFailure(fail_next_save_n))
+            return grpc::Status(grpc::StatusCode::UNAVAILABLE, "save unavailable for test");
         std::lock_guard<std::mutex> lock(captured_mutex);
         captured_config_requests.push_back(*req);
         if (reject_configuration)
@@ -152,10 +171,12 @@ bool waitForCount(std::atomic<int>& counter, int target,
 //                    parser: query-url != ingestion-url).
 // ---------------------------------------------------------------------------
 
-static std::string makeWriterYaml(int annotation_port, int query_port)
+static std::string makeWriterYaml(int annotation_port, int query_port,
+                                  const std::string& extra = "")
 {
     std::ostringstream yaml;
     yaml << "name: cfg_writer_test\n"
+         << extra
          << "thread-pool: 1\n"
          << "deadline-seconds: 5\n"
          << "mldp-annotation-pool:\n"
@@ -703,3 +724,141 @@ TEST(MLDPConfigurationWriterTest, NewConfigWithoutExistingRecordUsesPayloadAsIs)
 }
 
 } // namespace
+
+// ---------------------------------------------------------------------------
+// Retry / lookup-failure behaviour
+// ---------------------------------------------------------------------------
+
+namespace {
+
+struct RetryFixture
+{
+    TestAnnotationService                              service;
+    std::unique_ptr<grpc::Server>                      server;
+    int                                                port{0};
+    std::shared_ptr<mldp_pvxs_driver::metrics::Metrics> metrics;
+    mldp_pvxs_driver::writer::IWriterUPtr               writer;
+
+    void start(const std::string& extra)
+    {
+        grpc::ServerBuilder builder;
+        builder.AddListeningPort("127.0.0.1:0", grpc::InsecureServerCredentials(), &port);
+        builder.RegisterService(&service);
+        server = builder.BuildAndStart();
+        ASSERT_TRUE(server);
+        metrics = std::make_shared<mldp_pvxs_driver::metrics::Metrics>(
+            mldp_pvxs_driver::metrics::MetricsConfig());
+        writer = WriterFactory::create("mldp-configuration",
+                                       makeConfigFromYaml(makeWriterYaml(port, port + 1, extra)),
+                                       metrics);
+        ASSERT_NE(writer, nullptr);
+        writer->start();
+    }
+
+    void pushConfig(const std::string& name)
+    {
+        ConfigurationPayload payload;
+        payload.root_source_name   = "test-root";
+        payload.configuration_name = name;
+        payload.category           = "test";
+        IDataBus::EventBatch batch;
+        batch.payload = std::move(payload);
+        ASSERT_TRUE(writer->push(std::move(batch)));
+    }
+
+    double pushes() { return metrics->writerPushTotal({{"writer", "cfg_writer_test"}}); }
+    double failures() { return metrics->writerFailuresTotal({{"writer", "cfg_writer_test"}}); }
+
+    ~RetryFixture()
+    {
+        if (writer)
+            writer->stop();
+        if (server)
+            server->Shutdown();
+    }
+};
+
+} // namespace
+
+TEST(MLDPConfigurationWriterTest, TransientSaveFailureIsRetried)
+{
+    RetryFixture f;
+    f.service.fail_next_save_n = 2;
+    f.start("retry-backoff-ms: 10\n");
+    f.pushConfig("RETRY_CONFIG");
+    ASSERT_TRUE(waitForCount(f.service.save_configuration_count, 3, std::chrono::milliseconds(3000)));
+    f.writer->stop();
+
+    EXPECT_EQ(f.service.save_configuration_count.load(), 3);
+    EXPECT_DOUBLE_EQ(f.pushes(), 1.0);
+    EXPECT_DOUBLE_EQ(f.failures(), 0.0);
+}
+
+TEST(MLDPConfigurationWriterTest, TransientSaveFailureGivesUpAfterMaxRetries)
+{
+    RetryFixture f;
+    f.service.fail_next_save_n = 100;
+    f.start("max-retries: 2\nretry-backoff-ms: 10\n");
+    f.pushConfig("ALWAYS_FAIL");
+    ASSERT_TRUE(waitForCount(f.service.save_configuration_count, 3, std::chrono::milliseconds(3000)));
+    f.writer->stop();
+
+    EXPECT_EQ(f.service.save_configuration_count.load(), 3);
+    EXPECT_DOUBLE_EQ(f.pushes(), 0.0);
+    EXPECT_DOUBLE_EQ(f.failures(), 1.0);
+}
+
+TEST(MLDPConfigurationWriterTest, RejectedSaveIsNotRetried)
+{
+    RetryFixture f;
+    f.service.reject_configuration = true;
+    f.start("retry-backoff-ms: 10\n");
+    f.pushConfig("REJECTED");
+    ASSERT_TRUE(waitForCount(f.service.save_configuration_count, 1, std::chrono::milliseconds(2000)));
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    f.writer->stop();
+
+    EXPECT_EQ(f.service.save_configuration_count.load(), 1);
+    EXPECT_DOUBLE_EQ(f.failures(), 1.0);
+}
+
+TEST(MLDPConfigurationWriterTest, LookupFailureRetriesAndPreservesExisting)
+{
+    RetryFixture f;
+    dp::service::common::Configuration existing;
+    existing.set_configurationname("MERGE_AFTER_RETRY");
+    existing.set_category("test");
+    existing.set_description("keep me");
+    f.service.seedConfiguration("MERGE_AFTER_RETRY", existing);
+    f.service.fail_next_get_n = 1;
+    f.start("retry-backoff-ms: 10\n");
+    f.pushConfig("MERGE_AFTER_RETRY");
+    ASSERT_TRUE(waitForCount(f.service.save_configuration_count, 1, std::chrono::milliseconds(3000)));
+    f.writer->stop();
+
+    EXPECT_EQ(f.service.get_configuration_count.load(), 2);
+    std::lock_guard<std::mutex> lock(f.service.captured_mutex);
+    ASSERT_EQ(f.service.captured_config_requests.size(), 1u);
+    EXPECT_EQ(f.service.captured_config_requests[0].description(), "keep me");
+}
+
+TEST(MLDPConfigurationWriterTest, PersistentLookupFailureDoesNotSaveBlind)
+{
+    RetryFixture f;
+    f.service.fail_next_get_n = 100;
+    f.start("max-retries: 1\nretry-backoff-ms: 10\n");
+    f.pushConfig("LOOKUP_DOWN");
+    ASSERT_TRUE(waitForCount(f.service.get_configuration_count, 2, std::chrono::milliseconds(3000)));
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    f.writer->stop();
+
+    EXPECT_EQ(f.service.save_configuration_count.load(), 0);
+    EXPECT_DOUBLE_EQ(f.failures(), 1.0);
+}
+
+TEST(MLDPConfigurationWriterTest, NegativeMaxRetriesRejectedByParser)
+{
+    EXPECT_THROW(mldp_pvxs_driver::writer::MLDPConfigurationWriterConfig::parse(
+                     makeConfigFromYaml(makeWriterYaml(1, 2, "max-retries: -1\n"))),
+                 std::runtime_error);
+}

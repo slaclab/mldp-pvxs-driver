@@ -54,12 +54,11 @@ static std::string buildBsasTableYaml(const std::string& pvName, const std::stri
         "      base-path: \"") + basePath + "\"\n"
         "      flush-interval-ms: 100\n"
         "reader:\n"
-        "  - epics-pvxs:\n"
+        "  - epics-pvxs-bsas-gen1:\n"
         "      - name: test-reader\n"
         "        pvs:\n"
         "          - name: " + pvName + "\n"
         "            option:\n"
-        "              type: slac-bsas-table\n"
         "              tsSeconds: secondsPastEpoch\n"
         "              tsNanos: nanoseconds\n";
 }
@@ -75,6 +74,9 @@ protected:
     {
         const auto* info = testing::UnitTest::GetInstance()->current_test_info();
         outputDir_ = fs::path(MLDP_TEST_DATA_DIR) / "hdf5" / info->test_suite_name() / info->name();
+        // Start empty: waitForH5File() returns the first .hdf5 it finds, so a
+        // file left by a previous run would be checked instead of this run's.
+        fs::remove_all(outputDir_);
         fs::create_directories(outputDir_);
         pvServer_ = std::make_unique<PVServer>();
     }
@@ -301,9 +303,10 @@ TEST_F(ControllerHDF5Test, CounterPVDataStoredInHDF5)
 //  5. No separate /timestamps dataset (timestamps are embedded per-row).
 //  6. Float64 signal values in the expected sinusoidal range (0.0, 2.1).
 //
-// Signal names come from data/signals.cu-hxr.prod.
-// EPICS colons are sanitized to underscores: "ACCL:IN20:300:L0A_ACUHBR" →
-// "ACCL_IN20_300_L0A_ACUHBR".
+// Real IOC layout: the mock serves CU-HXR_TBL (sanitized field names,
+// "ACCL_IN20_300_L0A_ACUHBR", 1 Hz) and the static CU-HXR_SIG with the real
+// names from data/signals.cu-hxr.prod.  The gen1 reader resolves the real
+// names from CU-HXR_SIG at startup, so datasets use "ACCL:IN20:300:L0A_ACUHBR".
 // ---------------------------------------------------------------------------
 
 static std::string buildGen1TableYaml(const std::string& basePath)
@@ -317,12 +320,11 @@ static std::string buildGen1TableYaml(const std::string& basePath)
            "\"\n"
            "      flush-interval-ms: 50\n"
            "reader:\n"
-           "  - epics-pvxs:\n"
+           "  - epics-pvxs-bsas-gen1:\n"
            "      - name: gen1-reader\n"
            "        pvs:\n"
-           "          - name: CU-HXR\n"
+           "          - name: CU-HXR_TBL\n"
            "            option:\n"
-           "              type: slac-bsas-table\n"
            "              tsSeconds: secondsPastEpoch\n"
            "              tsNanos: nanoseconds\n";
 }
@@ -358,18 +360,18 @@ TEST_F(ControllerHDF5Test, Gen1NTTableWritesCompoundDataset)
         << "Cannot open HDF5 file: " << h5path;
 
     // ---- 1. Group "CU-HXR" exists -------------------------------------------
-    ASSERT_TRUE(file.nameExists("CU-HXR"))
-        << "Group 'CU-HXR' not found in " << h5path;
+    ASSERT_TRUE(file.nameExists("CU-HXR_TBL"))
+        << "Group 'CU-HXR_TBL' not found in " << h5path;
 
-    auto grp = file.openGroup("CU-HXR");
+    auto grp = file.openGroup("CU-HXR_TBL");
 
     // ---- 2. Timestamp datasets exist inside the group -----------------------
     ASSERT_TRUE(grp.nameExists("secondsPastEpoch"))
-        << "Dataset 'CU-HXR/secondsPastEpoch' missing";
+        << "Dataset 'CU-HXR_TBL/secondsPastEpoch' missing";
     ASSERT_TRUE(grp.nameExists("nanoseconds"))
-        << "Dataset 'CU-HXR/nanoseconds' missing";
+        << "Dataset 'CU-HXR_TBL/nanoseconds' missing";
 
-    // ---- 3. All sanitized signal column datasets present --------------------
+    // ---- 3. All signal column datasets present under their real PV names --------------------
     for (const auto& col : pvServer_->gen1CuHxrColumnNames())
     {
         EXPECT_TRUE(grp.nameExists(col)) << "Column '" << col << "' missing";
@@ -380,7 +382,7 @@ TEST_F(ControllerHDF5Test, Gen1NTTableWritesCompoundDataset)
     hsize_t dims[1]{0};
     tsDs.getSpace().getSimpleExtentDims(dims);
     const hsize_t nRows = dims[0];
-    ASSERT_GT(nRows, 0u) << "'CU-HXR/secondsPastEpoch' dataset is empty";
+    ASSERT_GT(nRows, 0u) << "'CU-HXR_TBL/secondsPastEpoch' dataset is empty";
     EXPECT_EQ(nRows % 3u, 0u)
         << "Row count " << nRows << " not a multiple of 3 (kRows per update)";
 
@@ -431,14 +433,13 @@ static std::string buildBsasTableDetailYaml(const std::string& pvName,
            "\"\n"
            "      flush-interval-ms: 50\n"
            "reader:\n"
-           "  - epics-pvxs:\n"
+           "  - epics-pvxs-bsas-gen1:\n"
            "      - name: bsas-detail-reader\n"
            "        pvs:\n"
            "          - name: " +
            pvName +
            "\n"
            "            option:\n"
-           "              type: slac-bsas-table\n"
            "              tsSeconds: secondsPastEpoch\n"
            "              tsNanos: nanoseconds\n";
 }

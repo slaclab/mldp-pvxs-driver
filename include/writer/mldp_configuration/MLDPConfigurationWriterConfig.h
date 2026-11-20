@@ -31,6 +31,8 @@ namespace mldp_pvxs_driver::writer {
  *     - name: cfg_writer
  *       thread-pool: 2              # optional; default: 2
  *       deadline-seconds: 10        # optional; default: 10
+ *       max-retries: 3              # optional; default: 3 (retries after the first attempt)
+ *       retry-backoff-ms: 500       # optional; default: 500 (doubled each retry)
  *       mldp-annotation-pool:
  *         annotation-url: …
  *         min-conn: 1
@@ -47,6 +49,12 @@ struct MLDPConfigurationWriterConfig
 
     /// Per-RPC deadline in seconds.  Default: 10.
     int deadlineSeconds{10};
+
+    /// Retries after the first attempt for transient failures.  Default: 3.
+    int maxRetries{3};
+
+    /// Initial retry delay in milliseconds, doubled per retry.  Default: 500.
+    int retryBackoffMs{500};
 
     /// Number of worker threads draining the internal work queue.  Default: 2.
     int threadPool{2};

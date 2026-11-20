@@ -70,6 +70,7 @@ jobs:
       pvxs_version: ${{ steps.matrix_info.outputs.pvxs_version }}
       base_os_image: ${{ steps.matrix_info.outputs.base_os_image }}
       need_last: ${{ steps.need_last.outputs.value }}
+      is_release_ref: ${{ steps.manual_tag.outputs.is_release_ref }}
     env:
       EPICS_VERSION: ${{ matrix.epics_version }}
       PVXS_VERSION: ${{ matrix.pvxs_version }}
@@ -131,6 +132,13 @@ jobs:
 
           echo "value=${safe_ref}-${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
           echo "ref=${safe_ref}" >> "$GITHUB_OUTPUT"
+
+          # Only version-like refs produce a GitHub Release; other branches are test builds.
+          if [[ "$safe_ref" =~ ^((release|develop)-)?v?[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "is_release_ref=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_release_ref=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Capture matrix settings
         id: matrix_info
@@ -252,7 +260,7 @@ jobs:
       push_image: true
 
   create-github-release:
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))
+    if: (github.event_name == 'workflow_dispatch' && needs.build-docker-image.outputs.is_release_ref == 'true') || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))
     name: Create GitHub Release
     runs-on: ubuntu-latest
     needs:

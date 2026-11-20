@@ -9,7 +9,9 @@ The MLDP PVXS Driver uses an **abstract Reader pattern** to support multiple dat
 Reader Type           | Status      | Data Source                     | Documentation
 --------------------- | ----------- | ------------------------------- | ---------------------------------------------------------
 `epics-base`          | Implemented | EPICS Control System            | [EpicsBaseReader](epics-base-reader.md)
-`epics-pvxs`          | Implemented | EPICS Control System            | [EpicsPVXSReader](epics-pvxs-reader.md)
+`epics-pvxs`          | Implemented | EPICS Control System (scalar PVs) | [EpicsPVXSReader](epics-pvxs-reader.md)
+`epics-pvxs-bsas-gen1` | Implemented | EPICS SLAC BSAS Gen1 NTTables   | [SLAC BSAS NTTable Gen 1](slac-bsas-table-gen1.md)
+`epics-pvxs-bsas-gen2` | Implemented | EPICS SLAC BSAS Gen2 NTTables (`.Val` only) | [SLAC BSAS NTTable Gen 2](slac-bsas-table-gen2.md)
 `epics-archiver`      | Implemented | EPICS Archiver                  | [EpicsArchiverReader](epics-archiver-reader.md)
 `epics-ds-metadata`   | Implemented | EPICS Directory Service (PVA RPC) | [EpicsDSMetadataReader](epics-ds-metadata-reader.md)
 `slac-calendar`       | Implemented | SLAC Calendar HTTP API          | [SlacCalendarReader](slac-calendar-reader.md)
@@ -21,6 +23,7 @@ Reader Type           | Build Option        | Required Libraries / Components | 
 --------------------- | ------------------- | ------------------------------- | -----
 `epics-base`          | none (always built) | EPICS Base (`libCom`, `libca`, `libpvData`, `libpvAccess`, `libpvaClient`, `libpvAccessCA`) | Uses Channel Access polling path.
 `epics-pvxs`          | none (always built) | PVXS (`libpvxs`) + EPICS Base core libs | Uses PVAccess subscriptions.
+`epics-pvxs-bsas-gen1` / `-gen2` | none (always built) | same as `epics-pvxs` | Subclasses of `EpicsPVXSReader`.
 `epics-archiver`      | none (always built) | libcurl + Protobuf/epicsarchiverap payload types | Uses Archiver PB/HTTP transport.
 `epics-ds-metadata`   | none (always built) | PVXS (`libpvxs`) + EPICS Base core libs | RPC-based PV metadata fetch; `pvs` list required (at least one entry).
 `slac-calendar`       | none (always built) | libcurl + nlohmann/json | Fetches beamline schedule events; publishes configuration + activation payloads.
@@ -65,6 +68,18 @@ classDiagram
         epics-pvxs
     }
 
+    class EpicsPVXSBsasTableReaderBase {
+        BSAS NTTable tabular batches
+    }
+
+    class EpicsPVXSBsasGen1Reader {
+        epics-pvxs-bsas-gen1
+    }
+
+    class EpicsPVXSBsasGen2Reader {
+        epics-pvxs-bsas-gen2
+    }
+
     class EpicsArchiverReader {
         Historical + Periodic
         epics-archiver
@@ -87,6 +102,9 @@ classDiagram
     Reader <|-- SlacCalendarReader
     EpicsReaderBase <|-- EpicsBaseReader
     EpicsReaderBase <|-- EpicsPVXSReader
+    EpicsPVXSReader <|-- EpicsPVXSBsasTableReaderBase
+    EpicsPVXSBsasTableReaderBase <|-- EpicsPVXSBsasGen1Reader
+    EpicsPVXSBsasTableReaderBase <|-- EpicsPVXSBsasGen2Reader
 ```
 
 ## Implemented Readers
@@ -98,18 +116,21 @@ Polling-based EPICS Channel Access monitoring for legacy systems.
 - **Mode**: Polling with configurable interval
 - **Best For**: Legacy EPICS installations without PVAccess
 - **Key Feature**: Multiple polling threads with mutex-protected queue draining
-- **BSAS Support**: SLAC BSAS NTTable mode with per-row timestamps — see [SLAC BSAS NTTable Gen 1](slac-bsas-table-gen1.md), [Gen 2](slac-bsas-table-gen2.md)
+- **BSAS Support**: `option.type: slac-bsas-table` (Gen1 layout) with per-row timestamps — see [SLAC BSAS NTTable Gen 1](slac-bsas-table-gen1.md)
 
 → [Full Documentation: EpicsBaseReader](epics-base-reader.md)
 → [Implementation Guide](epics-base-reader-implementation.md)
 
 ### EpicsPVXSReader
 
-Modern event-driven EPICS PVAccess monitoring with advanced table support.
+Modern event-driven EPICS PVAccess monitoring of scalar / scalar-array PVs.
 
 - **Mode**: Event-driven subscriptions
 - **Best For**: High-frequency updates with minimal latency
-- **Key Feature**: Smart thread pool decisions + SLAC BSAS NTTable support — see [SLAC BSAS NTTable Gen 1](slac-bsas-table-gen1.md), [Gen 2](slac-bsas-table-gen2.md)
+- **Key Feature**: Smart thread pool decisions
+- **BSAS Tables**: use the `epics-pvxs-bsas-gen1` / `epics-pvxs-bsas-gen2` readers
+  (subclasses of `EpicsPVXSReader`), which push tabular batches plus an
+  `end_of_batch_group` marker per update — see [SLAC BSAS NTTable Gen 1](slac-bsas-table-gen1.md), [Gen 2](slac-bsas-table-gen2.md)
 
 → [Full Documentation: EpicsPVXSReader](epics-pvxs-reader.md)
 → [Implementation Guide](epics-pvxs-reader-implementation.md)
@@ -435,4 +456,4 @@ src/reader/
 - [Implementing Custom Readers](readers-implementation.md) - Complete guide with examples
 - [Configuration Reference](../guides/configuration.md) - Full configuration schema
 - [SLAC BSAS NTTable Gen 1](slac-bsas-table-gen1.md) - BSAS Gen 1: raw per-pulse sample arrays
-- [SLAC BSAS NTTable Gen 2](slac-bsas-table-gen2.md) - BSAS Gen 2: PID-indexed statistical summaries (planned)
+- [SLAC BSAS NTTable Gen 2](slac-bsas-table-gen2.md) - BSAS Gen 2: PID-indexed statistical summaries (`.Val` ingested; pid/statistics planned)

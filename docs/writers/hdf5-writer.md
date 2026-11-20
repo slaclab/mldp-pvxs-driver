@@ -94,7 +94,7 @@ Two layouts exist depending on PV type:
 └── …
 ```
 
-**NTTable (`slac-bsas-table` mode)** — one HDF5 group per source:
+**NTTable (`epics-pvxs-bsas-gen1` / `-gen2` readers)** — one HDF5 group per source:
 ```
 / (root)
 └── <source>/
@@ -161,7 +161,7 @@ Example for a waveform PV with 256 elements, 10 updates:
 └── <pv_name>     double  [10, 256]
 ```
 
-### BSAS NTTable (`slac-bsas-table` mode)
+### BSAS NTTable (`epics-pvxs-bsas-gen1` / `epics-pvxs-bsas-gen2` readers)
 
 Each NTTable update carries `rowCount` rows. All datasets live inside an HDF5 group named after the PV source. Timestamp columns (`tsSeconds` / `tsNanos` fields) are stored as `secondsPastEpoch` and `nanoseconds` datasets; all other columns are stored by their field name.
 
@@ -178,9 +178,13 @@ Example for a BSAS table with columns `secondsPastEpoch`, `nanoseconds`, `PV_A` 
     └── PV_C               float   [rowCount × updates]
 ```
 
-### Gen1 NTTable (`slac-bsas-table` mode, Gen1 BSAS)
+Gen2 tables (`epics-pvxs-bsas-gen2`) produce the same layout with one dataset per acquired PV
+(its `.Val` column, named after the PV); the pulse ID and the `CNT`/`RMS`/`AVG`/`MIN`/`MAX`
+statistics are not written.
 
-Gen1 BSAS NTTable PVs use the same `slac-bsas-table` type and produce the same per-source group layout. Column names from the NTTable schema are used directly as dataset names (sanitized to valid HDF5 identifiers: non-`[A-Za-z0-9_]` characters replaced with `_`).
+### Gen1 NTTable (`epics-pvxs-bsas-gen1` reader)
+
+Gen1 BSAS NTTable PVs are read by `epics-pvxs-bsas-gen1` and produce the same per-source group layout. Column names from the NTTable schema are used directly as dataset names (sanitized to valid HDF5 identifiers: non-`[A-Za-z0-9_]` characters replaced with `_`).
 
 Example for a Gen1 CU-HXR table with source `CU-HXR`:
 ```
@@ -195,11 +199,14 @@ Example for a Gen1 CU-HXR table with source `CU-HXR`:
 
 Configuration:
 ```yaml
-- name: CU-HXR
-  option:
-    type: slac-bsas-table
-    tsSeconds: secondsPastEpoch
-    tsNanos: nanoseconds
+reader:
+  - epics-pvxs-bsas-gen1:
+      - name: gen1-reader
+        pvs:
+          - name: CU-HXR
+            option:
+              tsSeconds: secondsPastEpoch
+              tsNanos: nanoseconds
 ```
 
 ### Written vs. not-written summary

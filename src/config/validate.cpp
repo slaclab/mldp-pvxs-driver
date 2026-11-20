@@ -335,6 +335,25 @@ std::vector<ConfigDiagnostic> validateConfig(const Config& cfg)
                                 {
                                     err(pvPfx + ".name", "missing or empty");
                                 }
+                                if (rtype != "epics-base" && pv.hasChild("option"))
+                                {
+                                    const auto opt = pv.subConfig("option");
+                                    if (!opt.empty() && opt.front().raw().is_map() && opt.front().hasChild("type"))
+                                    {
+                                        if (rtype == "epics-pvxs")
+                                        {
+                                            err(pvPfx + ".option.type",
+                                                "'" + opt.front().get("type") +
+                                                    "' is not supported by epics-pvxs; use reader type "
+                                                    "epics-pvxs-bsas-gen1 (or epics-pvxs-bsas-gen2) for BSAS tables");
+                                        }
+                                        else
+                                        {
+                                            err(pvPfx + ".option.type",
+                                                "not supported by " + rtype + "; the table type is implied by the reader type");
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -348,6 +367,13 @@ std::vector<ConfigDiagnostic> validateConfig(const Config& cfg)
             if (readerEntry.hasChild("epics-base"))
             {
                 validateEpicsMonitor(readerEntry.subConfig("epics-base"), "epics-base");
+            }
+            for (const char* tableType : {"epics-pvxs-bsas-gen1", "epics-pvxs-bsas-gen2"})
+            {
+                if (readerEntry.hasChild(tableType))
+                {
+                    validateEpicsMonitor(readerEntry.subConfig(tableType), tableType);
+                }
             }
 
             // epics-archiver

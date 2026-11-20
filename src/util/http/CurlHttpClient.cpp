@@ -223,6 +223,7 @@ HttpResponseInfo CurlHttpClient::streamGet(const HttpRequest& request, DataCallb
     setoptChecked(curl.get(), CURLOPT_SSL_VERIFYHOST, options_.tls.verify_host ? 2L : 0L);
 
     setoptChecked(curl.get(), CURLOPT_FOLLOWLOCATION, options_.follow_redirects ? 1L : 0L);
+    setoptChecked(curl.get(), CURLOPT_FAILONERROR, options_.fail_on_http_error ? 1L : 0L);
     setoptChecked(curl.get(), CURLOPT_MAXREDIRS, options_.max_redirects);
 
     if (options_.tcp_keepalive)
@@ -277,6 +278,12 @@ HttpResponseInfo CurlHttpClient::streamGet(const HttpRequest& request, DataCallb
         {
             debugf(*logger_, "HTTP GET stream cancelled: {}", request.url);
             throw HttpError("HTTP request cancelled");
+        }
+        if (rc == CURLE_HTTP_RETURNED_ERROR)
+        {
+            long status = 0;
+            curl_easy_getinfo(curl.get(), CURLINFO_RESPONSE_CODE, &status);
+            throw HttpError("HTTP GET returned status " + std::to_string(status), status);
         }
         errorf(
             *logger_, "HTTP GET stream failed for {}: {}", request.url, curl_easy_strerror(rc));

@@ -404,6 +404,7 @@ TEST(EpicsArchiverReaderHttpIntegrationTest, WorkerContinuesAfterMalformedPvStre
         start-date: "2026-02-25T08:00:00.000Z"
         end-date: "2026-02-25T08:00:02.000Z"
         fetch-threads: 1
+        fetch-max-retries: 0
         pvs:
           - name: "TEST:PV:BAD_CORRUPT"
           - name: "TEST:PV:GOOD"

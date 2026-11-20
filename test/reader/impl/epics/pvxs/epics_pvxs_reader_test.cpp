@@ -389,115 +389,6 @@ TEST_F(EpicsPVXSReaderTest, SimulatedPVsProduceEventsAndExpectedTypes)
         });
 }
 
-TEST_F(EpicsPVXSReaderTest, NTTableRowTimestampSplitsToPerColumnSources)
-{
-    const std::string yaml = R"(
-name: epics_1
-pvs:
-  - name: test:bsas_table
-    option:
-      type: slac-bsas-table
-)";
-
-    const auto cfg = makeConfigFromYaml(yaml);
-    auto       reader_ptr = mldp_pvxs_driver::reader::ReaderFactory::create("epics-pvxs", mock_bus, cfg);
-    ASSERT_NE(reader_ptr, nullptr);
-
-    // With streaming push, each column arrives as a separate push() call.
-    const int max_wait_ms = 5000;
-    int       waited_ms = 0;
-    while (waited_ms < max_wait_ms)
-    {
-        if (countEventsForSource(*mock_bus, "PV_A") >= 3 &&
-            countEventsForSource(*mock_bus, "PV_B") >= 3)
-            break;
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        waited_ms += 100;
-    }
-
-    EXPECT_GE(countEventsForSource(*mock_bus, "PV_A"), 3u);
-    EXPECT_GE(countEventsForSource(*mock_bus, "PV_B"), 3u);
-
-    // Verify no timestamp columns leaked as sources
-    EXPECT_EQ(countEventsForSource(*mock_bus, "secondsPastEpoch"), 0u);
-    EXPECT_EQ(countEventsForSource(*mock_bus, "nanoseconds"), 0u);
-
-    // Root source remains the root PV for metrics/correlation even when
-    // ingestion sources are split by BSAS column.
-    bool saw_root_for_column_batch = false;
-    {
-        std::lock_guard<std::mutex> lock(mock_bus->mutex);
-        for (const auto& batch : mock_bus->received_events)
-        {
-            bool has_column = false;
-            for (const auto& frame : asTimeSeries(batch).frames)
-            {
-                const auto src = frameSource(frame);
-                if (src == "PV_A" || src == "PV_B")
-                {
-                    has_column = true;
-                    break;
-                }
-            }
-            if (has_column && getRootSourceName(batch) == "test:bsas_table")
-            {
-                saw_root_for_column_batch = true;
-                break;
-            }
-        }
-    }
-    EXPECT_TRUE(saw_root_for_column_batch);
-
-    // Collect events for each column across all batches
-    std::vector<DataBatch> ampl, stat;
-    {
-        std::lock_guard<std::mutex> lock(mock_bus->mutex);
-        for (const auto& batch : mock_bus->received_events)
-        {
-            for (const auto& frame : asTimeSeries(batch).frames)
-            {
-                const auto src = frameSource(frame);
-                if (src == "PV_A")
-                {
-                    ampl.push_back(frame);
-                }
-                if (src == "PV_B")
-                {
-                    stat.push_back(frame);
-                }
-            }
-        }
-    }
-
-    ASSERT_GE(ampl.size(), 3u);
-    ASSERT_GE(stat.size(), 3u);
-
-    // Per-row timestamps are shared across columns.
-    for (size_t i = 0; i < 3; ++i)
-    {
-        ASSERT_FALSE(ampl[i].timestamps.empty());
-        ASSERT_FALSE(stat[i].timestamps.empty());
-        EXPECT_EQ(ampl[i].timestamps[0].epoch_seconds, stat[i].timestamps[0].epoch_seconds);
-        EXPECT_EQ(ampl[i].timestamps[0].nanoseconds,   stat[i].timestamps[0].nanoseconds);
-    }
-
-    // PV_A: Float64 column — values are 1.0+sin(time) based, just check type and non-empty
-    {
-        const auto* col = epics_typed_pv_test_utils::findDataColumn(ampl[0], "PV_A");
-        ASSERT_NE(col, nullptr);
-        ASSERT_TRUE(std::holds_alternative<std::vector<double>>(col->values));
-        EXPECT_GT(std::get<std::vector<double>>(col->values).size(), 0u);
-    }
-
-    // PV_B: Int32 column (was String in old mock)
-    {
-        const auto* col = epics_typed_pv_test_utils::findDataColumn(stat[0], "PV_B");
-        ASSERT_NE(col, nullptr);
-        ASSERT_TRUE(std::holds_alternative<std::vector<int32_t>>(col->values));
-        EXPECT_GT(std::get<std::vector<int32_t>>(col->values).size(), 0u);
-    }
-}
-
 TEST_F(EpicsPVXSReaderTest, ReaderDataBytesMetricsIncrementedAfterEvent)
 {
     const std::string yaml = R"(
@@ -581,170 +472,25 @@ pvs:
     EXPECT_TRUE(found) << "No batch with root_source=test:counter received";
 }
 
-// Verify column-batch-size: 2 groups PV_A and PV_B into same DataBatch frame sharing timestamps.
-TEST_F(EpicsPVXSReaderTest, ColumnBatchSizeGroupsColumnsIntoSharedFrame)
+// BSAS NTTables moved to the epics-pvxs-bsas-gen1 / -gen2 readers
+// (see epics_pvxs_bsas_gen1_reader_test.cpp / epics_pvxs_bsas_gen2_reader_test.cpp);
+// the scalar reader now rejects them at configuration time.
+TEST_F(EpicsPVXSReaderTest, SlacBsasTableOptionIsRejected)
 {
-    const std::string yaml = R"(
-name: epics_batch2
+    const auto cfg = makeConfigFromYaml(R"(
+name: epics_1
 pvs:
   - name: test:bsas_table
     option:
       type: slac-bsas-table
-      column-batch-size: 2
-)";
-
-    const auto cfg = makeConfigFromYaml(yaml);
-    auto       reader_ptr = mldp_pvxs_driver::reader::ReaderFactory::create("epics-pvxs", mock_bus, cfg);
-    ASSERT_NE(reader_ptr, nullptr);
-
-    const int max_wait_ms = 5000;
-    int       waited_ms = 0;
-    while (waited_ms < max_wait_ms)
+)");
+    try
     {
-        if (mock_bus->event_count() >= 2)
-            break;
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        waited_ms += 100;
+        mldp_pvxs_driver::reader::ReaderFactory::create("epics-pvxs", mock_bus, cfg);
+        FAIL() << "slac-bsas-table under epics-pvxs must be rejected";
     }
-
-    ASSERT_GE(mock_bus->event_count(), 2u) << "Expected at least 2 bus pushes (data + marker)";
-
-    // With column-batch-size: 2, PV_A and PV_B should be grouped into the same
-    // DataBatch frame (sharing timestamps) rather than each getting their own frame.
-    bool found_grouped_frame = false;
+    catch (const EpicsReaderConfig::Error& e)
     {
-        std::lock_guard<std::mutex> lock(mock_bus->mutex);
-        for (const auto& batch : mock_bus->received_events)
-        {
-            const auto& ts_payload = asTimeSeries(batch);
-            if (ts_payload.end_of_batch_group)
-                continue;
-            for (const auto& frame : ts_payload.frames)
-            {
-                if (frame.columns.size() >= 2)
-                {
-                    found_grouped_frame = true;
-                    EXPECT_FALSE(frame.timestamps.empty())
-                        << "Grouped frame must have shared timestamps";
-                    break;
-                }
-            }
-            if (found_grouped_frame)
-                break;
-        }
-    }
-    EXPECT_TRUE(found_grouped_frame)
-        << "With column-batch-size: 2, at least one DataBatch frame should contain 2+ columns sharing timestamps";
-}
-
-// Verify that all-NaN columns do not count toward column-batch-size and no empty frames are pushed.
-TEST_F(EpicsPVXSReaderTest, ColumnBatchSizeMixedValidAndNaNColumns)
-{
-    const std::string yaml = R"(
-name: epics_nan_mix
-pvs:
-  - name: test:bsas_table_nan
-    option:
-      type: slac-bsas-table
-      column-batch-size: 2
-)";
-
-    const auto cfg = makeConfigFromYaml(yaml);
-    auto       reader_ptr = mldp_pvxs_driver::reader::ReaderFactory::create("epics-pvxs", mock_bus, cfg);
-    ASSERT_NE(reader_ptr, nullptr);
-
-    const int max_wait_ms = 5000;
-    int       waited_ms = 0;
-    while (waited_ms < max_wait_ms)
-    {
-        if (mock_bus->event_count() >= 2)
-            break;
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        waited_ms += 100;
-    }
-
-    ASSERT_GE(mock_bus->event_count(), 2u) << "Expected at least 2 bus pushes";
-
-    // With 3 valid columns (COL_A, COL_D, COL_F) and column-batch-size: 2,
-    // we expect frames grouped as [COL_A, COL_D] and [COL_F].
-    // No frame should be empty (0 columns).
-    bool found_grouped_frame = false;
-    bool found_empty_frame = false;
-    {
-        std::lock_guard<std::mutex> lock(mock_bus->mutex);
-        for (const auto& batch : mock_bus->received_events)
-        {
-            const auto& ts_payload = asTimeSeries(batch);
-            if (ts_payload.end_of_batch_group)
-                continue;
-            for (const auto& frame : ts_payload.frames)
-            {
-                if (frame.columns.empty())
-                {
-                    found_empty_frame = true;
-                }
-                if (frame.columns.size() >= 2)
-                {
-                    found_grouped_frame = true;
-                    EXPECT_FALSE(frame.timestamps.empty())
-                        << "Grouped frame must have shared timestamps";
-                }
-            }
-        }
-    }
-    EXPECT_FALSE(found_empty_frame)
-        << "NaN-only columns should not produce empty frames";
-    EXPECT_TRUE(found_grouped_frame)
-        << "With column-batch-size: 2 and 3 valid columns (skipping NaN), at least one frame should have 2 columns";
-}
-
-// Verify that when ALL columns are NaN, no data frames are pushed (only end-of-batch-group marker).
-TEST_F(EpicsPVXSReaderTest, ColumnBatchSizeAllNaNColumnsProduceNoFrames)
-{
-    const std::string yaml = R"(
-name: epics_all_nan
-pvs:
-  - name: test:bsas_table_nan
-    option:
-      type: slac-bsas-table
-      column-batch-size: 2
-)";
-
-    const auto cfg = makeConfigFromYaml(yaml);
-    auto       reader_ptr = mldp_pvxs_driver::reader::ReaderFactory::create("epics-pvxs", mock_bus, cfg);
-    ASSERT_NE(reader_ptr, nullptr);
-
-    const int max_wait_ms = 3000;
-    int       waited_ms = 0;
-    while (waited_ms < max_wait_ms)
-    {
-        if (mock_bus->event_count() >= 2)
-            break;
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        waited_ms += 100;
-    }
-
-    // Since test:bsas_table_nan has some valid columns (COL_A, COL_D, COL_F),
-    // verify that no frame has more columns than valid ones (max 2 per frame with batch-size: 2).
-    // Also verify no frame contains NaN-only column names (COL_B, COL_C, COL_E).
-    {
-        std::lock_guard<std::mutex> lock(mock_bus->mutex);
-        for (const auto& batch : mock_bus->received_events)
-        {
-            const auto& ts_payload = asTimeSeries(batch);
-            if (ts_payload.end_of_batch_group)
-                continue;
-            for (const auto& frame : ts_payload.frames)
-            {
-                EXPECT_LE(frame.columns.size(), 2u)
-                    << "No frame should exceed column-batch-size";
-                for (const auto& col : frame.columns)
-                {
-                    EXPECT_NE(col.name, "COL_B") << "NaN-only column COL_B should not appear in frames";
-                    EXPECT_NE(col.name, "COL_C") << "NaN-only column COL_C should not appear in frames";
-                    EXPECT_NE(col.name, "COL_E") << "NaN-only column COL_E should not appear in frames";
-                }
-            }
-        }
+        EXPECT_NE(std::string(e.what()).find("epics-pvxs-bsas-gen1"), std::string::npos) << e.what();
     }
 }

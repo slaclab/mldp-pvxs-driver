@@ -115,6 +115,8 @@ FetchContent_Declare(spdlog
     GIT_TAG ${SPDLOG_VERSION}
 )
 FetchContent_MakeAvailable(spdlog)
+# zlib: gzip compression of rotated log files (CLI file logging).
+find_package(ZLIB REQUIRED)
 
 # Acquire argparse for command-line argument parsing
 message(STATUS "Acquire argparse version ${ARGPARSE_VERSION}...")
@@ -714,6 +716,10 @@ add_library(lib${PROJECT_NAME}
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/shared/PvxsClientConfig.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/pvxs/EpicsPVXSReader.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/pvxs/EpicsPVXSReaderConfig.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/pvxs/EpicsPVXSBsasTableReaderConfig.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/pvxs/EpicsPVXSBsasTableReaderBase.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/pvxs/EpicsPVXSBsasGen1Reader.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/pvxs/EpicsPVXSBsasGen2Reader.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/base/EpicsBaseReader.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/base/EpicsBaseReaderConfig.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/shared/EpicsReaderConfig.cpp"
@@ -721,6 +727,7 @@ add_library(lib${PROJECT_NAME}
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/pvxs/BSASEpicsDataBatchConversion.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/base/EpicsPVDataBatchConversion.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics/base/EpicsBaseMonitorPoller.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics_archiver/ArchiverFetchStatusLog.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics_archiver/ArchiverPbHttpConversion.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics_archiver/EpicsArchiverReader.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/reader/impl/epics_archiver/EpicsArchiverReaderConfig.cpp"
@@ -963,6 +970,7 @@ if(MLDP_PVXS_DRIVER_TESTS)
     add_executable(${PROJECT_NAME}_test
         "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/sioc.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/Gen1NTablePV.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/BsasTablePV.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/config/epics_reader_config_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/config/mldppvxs_controller_config_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/config/config_source_test.cpp"
@@ -982,6 +990,9 @@ if(MLDP_PVXS_DRIVER_TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/test/writer/mldp_pv_metadata/mldp_pv_metadata_writer_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/writer/mldp_configuration/mldp_configuration_writer_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics/pvxs/epics_pvxs_reader_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics/pvxs/epics_pvxs_bsas_gen1_reader_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics/pvxs/epics_pvxs_bsas_gen2_reader_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics/pvxs/epics_pvxs_bsas_table_reader_config_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics/base/epics_base_reader_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/reader_lifecycle_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_archiver/archiver_pbhttp_conversion_test.cpp"
@@ -990,6 +1001,7 @@ if(MLDP_PVXS_DRIVER_TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_archiver/epics_archiver_pbhttp_integration_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_archiver/epics_archiver_reader_http_integration_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_archiver/epics_archiver_reader_periodic_tail_integration_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_archiver/epics_archiver_reader_retry_integration_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/MockDSServer.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_ds/epics_ds_metadata_reader_config_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/epics_ds/epics_ds_metadata_reader_test.cpp"
@@ -1000,6 +1012,7 @@ if(MLDP_PVXS_DRIVER_TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/slac_calendar/slac_calendar_reader_config_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/reader/impl/slac_calendar/slac_calendar_reader_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/controller/mldppvxs_controller_slac_calendar_integration_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/controller/mldppvxs_controller_file_logging_integration_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/util/http/curl_http_client_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/util/fs/fs_util_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/util/factory/factory_test.cpp"
@@ -1014,7 +1027,13 @@ if(MLDP_PVXS_DRIVER_TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/config/validate.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/ConfigPrinter.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/PeriodicMetricsDumper.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/SpdlogLogger.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/LoggingConfig.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/RotatingGzipFileSink.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/FileLogging.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/cli/file_logging_test.cpp"
     )
+    target_link_libraries(${PROJECT_NAME}_test PRIVATE ZLIB::ZLIB spdlog::spdlog)
     # The writer/reader implementations self-register via static initialization (REGISTER_WRITER,
     # REGISTER_READER).  Without --whole-archive the linker drops those object files and the
     # factory registrations never fire.
@@ -1150,6 +1169,7 @@ if(MLDP_PVXS_DRIVER_MAIN)
     add_executable(mock_sioc_server
         "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/sioc.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/Gen1NTablePV.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/BsasTablePV.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/test/mock/sioc_main.cpp"
     )
     target_link_libraries(mock_sioc_server PRIVATE
@@ -1198,6 +1218,9 @@ if(MLDP_PVXS_DRIVER_MAIN)
         "${CMAKE_CURRENT_SOURCE_DIR}/ext/rapidyaml/include/rapidyaml-0.10.0.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/SpdlogLogger.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/ConfigPrinter.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/LoggingConfig.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/RotatingGzipFileSink.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/cli/FileLogging.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/query/QueryCommand.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/query/ConsoleFooter.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/query/QueryPager.cpp"
@@ -1220,6 +1243,7 @@ if(MLDP_PVXS_DRIVER_MAIN)
             -Wl,-force_load $<TARGET_FILE:lib${PROJECT_NAME}>
             argparse::argparse
             isocline
+            ZLIB::ZLIB
         )
     else()
         target_link_libraries(${PROJECT_NAME} PRIVATE
@@ -1227,6 +1251,7 @@ if(MLDP_PVXS_DRIVER_MAIN)
             argparse::argparse
             isocline
             spdlog::spdlog
+            ZLIB::ZLIB
         )
     endif()
     target_include_directories(${PROJECT_NAME} PRIVATE

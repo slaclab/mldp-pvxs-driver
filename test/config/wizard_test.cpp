@@ -147,6 +147,7 @@ TEST(WizardGenerateYaml, SlacBsasTablePvOption)
     pv.option_type = "slac-bsas-table";
     pv.ts_seconds  = "secondsPastEpoch";
     pv.ts_nanos    = "nanoseconds";
+    st.readers[0].reader_type = "epics-base"; // slac-bsas-table is an epics-base option only
     st.readers[0].pvs.push_back(pv);
 
     auto yaml = generateYaml(st);
@@ -672,6 +673,7 @@ TEST(WizardLoadFromConfig, RoundTripMultiplePvsWithOptions)
     pv3.option_type = "slac-bsas-table";
     pv3.ts_seconds  = "secondsPastEpoch";
     pv3.ts_nanos    = "nanoseconds";
+    st.readers[0].reader_type = "epics-base"; // slac-bsas-table is an epics-base option only
     st.readers[0].pvs = {pv1, pv2, pv3};
 
     std::string yaml = generateYaml(st);
@@ -1106,6 +1108,57 @@ TEST(WizardLoadFromConfig, RoundTripDsMetadataReaderTagsOmittedWhenEmpty)
 
     ASSERT_EQ(2u, loaded.readers.size());
     EXPECT_EQ("", loaded.readers[1].ds_tags_col);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BSAS table readers (epics-pvxs-bsas-gen1 / -gen2)
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST(WizardLoadFromConfig, RoundTripBsasTableReaders)
+{
+    auto st = makeMinimalState();
+    EpicsReaderConfig g1; g1.name = "bsas_g1"; g1.reader_type = "epics-pvxs-bsas-gen1";
+    EpicsReaderConfig g2; g2.name = "bsas_g2"; g2.reader_type = "epics-pvxs-bsas-gen2";
+    PvEntry t; t.name = "SITE:TABLE"; t.option_type = "none";
+    g1.pvs = {t};
+    g2.pvs = {t};
+    st.readers.push_back(g1);
+    st.readers.push_back(g2);
+
+    std::string yaml = generateYaml(st);
+    EXPECT_NE(std::string::npos, yaml.find("epics-pvxs-bsas-gen1:"));
+    EXPECT_NE(std::string::npos, yaml.find("epics-pvxs-bsas-gen2:"));
+    EXPECT_EQ(0, countErrors(validateYamlString(yaml)));
+
+    WizardState loaded;
+    loadFromConfig(writeTmpYaml(yaml), loaded);
+    ASSERT_EQ(3u, loaded.readers.size());
+    EXPECT_EQ("epics-pvxs-bsas-gen1", loaded.readers[1].reader_type);
+    EXPECT_EQ("epics-pvxs-bsas-gen2", loaded.readers[2].reader_type);
+    ASSERT_EQ(1u, loaded.readers[2].pvs.size());
+    EXPECT_EQ("SITE:TABLE", loaded.readers[2].pvs[0].name);
+}
+
+TEST(WizardValidate, SlacBsasTableUnderEpicsPvxsIsAnError)
+{
+    auto st = makeMinimalState();
+    PvEntry pv;
+    pv.name        = "SITE:SYS:TABLE";
+    pv.option_type = "slac-bsas-table";
+    pv.ts_seconds  = "secondsPastEpoch";
+    pv.ts_nanos    = "nanoseconds";
+    st.readers[0].pvs.push_back(pv); // reader_type epics-pvxs
+
+    const auto diags = validateYamlString(generateYaml(st));
+    ASSERT_EQ(1, countErrors(diags));
+    bool mentionsNewReader = false;
+    for (const auto& d : diags)
+        if (d.message.find("epics-pvxs-bsas-gen1") != std::string::npos)
+            mentionsNewReader = true;
+    EXPECT_TRUE(mentionsNewReader);
+
+    st.readers[0].reader_type = "epics-base";
+    EXPECT_EQ(0, countErrors(validateYamlString(generateYaml(st))));
 }
 
 } // namespace mldp_pvxs_driver::config

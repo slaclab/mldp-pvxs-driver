@@ -2,6 +2,8 @@
 
 #include <config/ConfigSource.h>
 
+#include "test_config_helpers.h"
+
 #include <filesystem>
 #include <fstream>
 
@@ -85,3 +87,22 @@ TEST(ConfigSourceTest, RejectsExistingDirectoryAsConfigSource)
 }
 
 } // namespace mldp_pvxs_driver::config
+
+TEST(ConfigNonMapNodeTest, LookupsOnNullOrScalarNodeReturnDefaults)
+{
+    const auto root = mldp_pvxs_driver::config::makeConfigFromYaml(
+        "empty:\nscalar: 5\nlist:\n  - a\n");
+    for (const char* key : {"empty", "scalar", "list"})
+    {
+        const auto subs = root.subConfig(key);
+        ASSERT_FALSE(subs.empty()) << key;
+        const auto& node = subs.front();
+        EXPECT_FALSE(node.hasChild("x")) << key;
+        EXPECT_EQ(node.get("x", "def"), "def") << key;
+        EXPECT_EQ(node.getInt("x", 7), 7) << key;
+        EXPECT_TRUE(node.getBool("x", true)) << key;
+        EXPECT_DOUBLE_EQ(node.getDouble("x", 1.5), 1.5) << key;
+        EXPECT_TRUE(node.subConfig("x").empty()) << key;
+        EXPECT_FALSE(node.isSequence("x")) << key;
+    }
+}

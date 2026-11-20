@@ -19,6 +19,7 @@
 #include <atomic>
 #include <chrono>
 #include <mutex>
+#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -170,7 +171,8 @@ std::string makeReaderYaml(const std::string& baseUrl,
        << "connect-timeout-sec: 5\n"
        << "total-timeout-sec: 15\n"
        << "tls-verify-peer: false\n"
-       << "tls-verify-host: false\n";
+       << "tls-verify-host: false\n"
+       << "suspicious-window-retry-delay-ms: 10\n";
     return ss.str();
 }
 
@@ -732,4 +734,131 @@ TEST_F(SlacCalendarReaderTest, MissingStartStillPushesConfig)
     const auto batches = bus_->snapshot();
     ASSERT_EQ(batches.size(), 1u);
     EXPECT_TRUE(std::holds_alternative<ConfigurationPayload>(batches[0].payload));
+}
+
+// ---------------------------------------------------------------------------
+// Fetch robustness: cache-buster, refetch of suspicious windows
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// Run one reader pass to completion with @p yaml; returns the server request log.
+std::vector<mldp_pvxs_driver::test::mock::CalendarRequestLog>
+runToCompletion(MockCalendarHttpServer& server, const std::shared_ptr<CapturingBus>& bus,
+                const std::string& yaml)
+{
+    auto observer = std::make_shared<LifecycleObserver>();
+    auto reader   = std::make_unique<SlacCalendarReader>(bus, nullptr, makeConfigFromYaml(yaml));
+    reader->setLifecycleObserver(observer);
+    EXPECT_TRUE(observer->waitForCompletion(std::chrono::milliseconds(10000)));
+    reader.reset();
+    return server.requestHistory();
+}
+
+/// Reader YAML whose [lookback, lookahead] range (31 days) is split into 2 windows of 16 days.
+std::string twoWindowYaml(const std::string& baseUrl, const std::string& extra = "")
+{
+    std::string y = makeReaderYaml(baseUrl, "  - lcls\n", 30);
+    const std::string from = "fetch-window-days: 32\n";
+    y.replace(y.find(from), from.size(), "fetch-window-days: 16\nfetch-window-delay-ms: 0\n");
+    return y + extra;
+}
+
+} // namespace
+
+TEST_F(SlacCalendarReaderTest, CacheBusterIsUniquePerRequest)
+{
+    server_.setResponse("lcls", "[]"); // empty -> 1 request + 2 refetches
+    const auto history = runToCompletion(server_, bus_, makeReaderYaml(server_.baseUrl(), "  - lcls\n"));
+    ASSERT_EQ(history.size(), 3u);
+    std::set<std::string> values;
+    for (const auto& h : history)
+    {
+        EXPECT_FALSE(h.cache_buster.empty());
+        values.insert(h.cache_buster);
+    }
+    EXPECT_EQ(values.size(), history.size());
+}
+
+TEST_F(SlacCalendarReaderTest, CacheBusterCanBeDisabled)
+{
+    server_.setResponse("lcls", kLclsEvent);
+    const auto history = runToCompletion(
+        server_, bus_, makeReaderYaml(server_.baseUrl(), "  - lcls\n") + "cache-buster: false\n");
+    ASSERT_EQ(history.size(), 1u);
+    EXPECT_TRUE(history[0].cache_buster.empty());
+}
+
+TEST_F(SlacCalendarReaderTest, EmptyWindowIsRefetchedAndRecovered)
+{
+    server_.queueResponses("lcls", {"[]"}); // first answer empty, then the real events
+    server_.setResponse("lcls", kLclsEvent);
+    const auto history = runToCompletion(server_, bus_, makeReaderYaml(server_.baseUrl(), "  - lcls\n"));
+    EXPECT_EQ(history.size(), 2u);
+    EXPECT_EQ(bus_->count_.load(), 2); // configuration + activation from the refetched body
+}
+
+TEST_F(SlacCalendarReaderTest, EmptyWindowAcceptedAfterRetriesExhausted)
+{
+    server_.setResponse("lcls", "[]");
+    const auto history = runToCompletion(
+        server_, bus_,
+        makeReaderYaml(server_.baseUrl(), "  - lcls\n") + "suspicious-window-retries: 1\n");
+    EXPECT_EQ(history.size(), 2u);
+    EXPECT_EQ(bus_->count_.load(), 0);
+}
+
+TEST_F(SlacCalendarReaderTest, NoRefetchWhenRetriesZero)
+{
+    server_.setResponse("lcls", "[]");
+    const auto history = runToCompletion(
+        server_, bus_,
+        makeReaderYaml(server_.baseUrl(), "  - lcls\n") + "suspicious-window-retries: 0\n");
+    EXPECT_EQ(history.size(), 1u);
+}
+
+TEST_F(SlacCalendarReaderTest, WindowIdenticalToPreviousIsRefetched)
+{
+    // The mock ignores dates: both windows get the same body, so window 2 is suspicious.
+    server_.setResponse("lcls", kLclsEvent);
+    const auto history = runToCompletion(server_, bus_, twoWindowYaml(server_.baseUrl()));
+    ASSERT_EQ(history.size(), 4u); // window 1 + window 2 + 2 refetches
+    EXPECT_EQ(history[1].start_time, history[2].start_time);
+    EXPECT_EQ(history[2].start_time, history[3].start_time);
+    EXPECT_NE(history[0].start_time, history[1].start_time);
+}
+
+TEST_F(SlacCalendarReaderTest, IdenticalWindowRecoveredWhenRefetchDiffers)
+{
+    // Window 1: real events. Window 2: same body (stale) then a different, valid body.
+    const std::string other = R"json([{
+        "url": "https://www.google.com/calendar/event?eid=other",
+        "program_name": "Other Program",
+        "calendar": "NC-TEST",
+        "start": "2026-05-29T06:00:00-07:00",
+        "end":   "2026-05-29T18:00:00-07:00"
+    }])json";
+    server_.queueResponses("lcls", {kLclsEvent, kLclsEvent, other});
+    server_.setResponse("lcls", "[]");
+    const auto history = runToCompletion(server_, bus_, twoWindowYaml(server_.baseUrl()));
+    EXPECT_EQ(history.size(), 3u);
+    bool sawOther = false;
+    for (const auto& b : bus_->snapshot())
+        if (const auto* cp = std::get_if<ConfigurationPayload>(&b.payload))
+            sawOther = sawOther || cp->configuration_name == "Other Program";
+    EXPECT_TRUE(sawOther);
+}
+
+TEST_F(SlacCalendarReaderTest, StopInterruptsRefetchDelay)
+{
+    server_.setResponse("lcls", "[]");
+    const auto start = std::chrono::steady_clock::now();
+    {
+        std::string y = makeReaderYaml(server_.baseUrl(), "  - lcls\n");
+        const std::string from = "suspicious-window-retry-delay-ms: 10\n";
+        y.replace(y.find(from), from.size(), "suspicious-window-retry-delay-ms: 60000\n");
+        SlacCalendarReader reader(bus_, nullptr, makeConfigFromYaml(y));
+        ASSERT_TRUE(server_.waitForRequestCount(1, std::chrono::milliseconds(3000)));
+    } // destructor must not wait the 60 s delay
+    EXPECT_LT(std::chrono::steady_clock::now() - start, std::chrono::seconds(10));
 }

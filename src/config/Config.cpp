@@ -110,18 +110,25 @@ bool Config::valid() const
 
 bool Config::isSequence(const std::string& key) const
 {
-    return valid() && node_.has_child(key.c_str()) && node_[key.c_str()].is_seq();
+    return valid() && hasKey(key) && node_[key.c_str()].is_seq();
+}
+
+bool Config::hasKey(const std::string& key) const
+{
+    // A node that is not a map (e.g. an empty "logging:" key, a scalar or a
+    // sequence) has no named children; ryml asserts if has_child() is called on it.
+    return node_.is_map() && node_.has_child(key.c_str());
 }
 
 bool Config::hasChild(const std::string& key) const
 {
-    return valid() && node_.has_child(key.c_str());
+    return valid() && hasKey(key);
 }
 
 std::string Config::get(const std::string& key,
                         const std::string& def) const
 {
-    if (!valid() || !node_.has_child(key.c_str()))
+    if (!valid() || !hasKey(key))
         return def;
 
     ryml::ConstNodeRef child = node_[key.c_str()];
@@ -136,7 +143,7 @@ std::string Config::get(const std::string& key,
 std::vector<Config> Config::subConfig(const std::string& key) const
 {
     std::vector<Config> children;
-    if (!valid() || !node_.has_child(key.c_str()))
+    if (!valid() || !hasKey(key))
     {
         return children;
     }
@@ -176,7 +183,7 @@ std::vector<std::pair<std::string, Config>> Config::namedSubConfig() const
 
 int Config::getInt(const std::string& key, int def) const
 {
-    if (!valid() || !node_.has_child(key.c_str()))
+    if (!valid() || !hasKey(key))
         return def;
 
     ryml::ConstNodeRef child = node_[key.c_str()];
@@ -190,7 +197,7 @@ int Config::getInt(const std::string& key, int def) const
 
 double Config::getDouble(const std::string& key, double def) const
 {
-    if (!valid() || !node_.has_child(key.c_str()))
+    if (!valid() || !hasKey(key))
         return def;
 
     ryml::ConstNodeRef child = node_[key.c_str()];
@@ -204,7 +211,7 @@ double Config::getDouble(const std::string& key, double def) const
 
 bool Config::getBool(const std::string& key, bool def) const
 {
-    if (!valid() || !node_.has_child(key.c_str()))
+    if (!valid() || !hasKey(key))
         return def;
 
     ryml::ConstNodeRef child = node_[key.c_str()];
