@@ -33,10 +33,20 @@ public:
     static constexpr int kRows = 3; ///< rows (beam pulses) per update
 
     /**
-     * @param pvName      EPICS PV name to register (e.g. "SLAC:NSTABLE:GEN1")
+     * Real IOC layout: the table is published as `<baseName>_TBL` (sanitized
+     * field names, `labels` repeating them) and the real PV names as a static
+     * string-array PV `<baseName>_SIG`, in column order.
+     *
+     * @param baseName    PV name prefix (e.g. "CU-HXR" -> CU-HXR_TBL / CU-HXR_SIG)
      * @param signalsFile Path to a plain-text file with one signal name per line
      */
-    Gen1NTablePV(std::string pvName, std::string signalsFile);
+    Gen1NTablePV(std::string baseName, std::string signalsFile);
+
+    /// Table PV name (`<baseName>_TBL`).
+    const std::string& tablePvName() const { return m_pvName; }
+
+    /// Signal PV name (`<baseName>_SIG`).
+    const std::string& signalPvName() const { return m_signalPvName; }
 
     /// Register the PV with @p server.  Must be called before server.start().
     void registerPV(pvxs::server::Server& server);
@@ -56,7 +66,9 @@ public:
 
 private:
     std::string              m_pvName;
+    std::string              m_signalPvName;
     std::vector<std::string> m_columnNames;      ///< original PV names (used for labels)
     std::vector<std::string> m_fieldNames;       ///< sanitized field names (used in NTTable schema)
     pvxs::server::SharedPV   m_pv;
+    pvxs::server::SharedPV   m_signalPv;
 };

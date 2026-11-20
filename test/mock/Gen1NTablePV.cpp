@@ -39,8 +39,9 @@ std::string Gen1NTablePV::sanitizeFieldName(const std::string& pvName)
     return out;
 }
 
-Gen1NTablePV::Gen1NTablePV(std::string pvName, std::string signalsFile)
-    : m_pvName(std::move(pvName))
+Gen1NTablePV::Gen1NTablePV(std::string baseName, std::string signalsFile)
+    : m_pvName(baseName + "_TBL")
+    , m_signalPvName(baseName + "_SIG")
 {
     // Load column names from file (one per line, blank lines ignored)
     std::ifstream ifs(signalsFile);
@@ -70,11 +71,19 @@ Gen1NTablePV::Gen1NTablePV(std::string pvName, std::string signalsFile)
 
     m_pv = server::SharedPV::buildReadonly();
     m_pv.open(builder.build().create());
+
+    // Static signal PV: real PV names in column order.
+    auto                             sig = nt::NTScalar{TypeCode::StringA}.create();
+    pvxs::shared_array<std::string> names(m_columnNames.begin(), m_columnNames.end());
+    sig["value"] = names.freeze();
+    m_signalPv = server::SharedPV::buildReadonly();
+    m_signalPv.open(sig);
 }
 
 void Gen1NTablePV::registerPV(pvxs::server::Server& server)
 {
     server.addPV(m_pvName, m_pv);
+    server.addPV(m_signalPvName, m_signalPv);
 }
 
 void Gen1NTablePV::post(long long seconds, long long nanos, int /*counter*/, double time)
@@ -86,7 +95,7 @@ void Gen1NTablePV::post(long long seconds, long long nanos, int /*counter*/, dou
     const size_t nTotal = nData + 2;
     pvxs::shared_array<std::string> labels(nTotal);
     for (size_t i = 0; i < nData; ++i)
-        labels[i] = m_columnNames[i];
+        labels[i] = m_fieldNames[i]; // real IOC: labels repeat the sanitized field names
     labels[nData]     = "secondsPastEpoch";
     labels[nData + 1] = "nanoseconds";
     pv["labels"] = labels.freeze();

@@ -51,6 +51,15 @@ public:
         std::string tsSecondsField = "secondsPastEpoch"; ///< Empty = no timestamp columns.
         std::string tsNanosField = "nanoseconds";
         bool        withLabels = true;              ///< Publish the `labels` array.
+        /// Real-IOC Gen1 layout: name of the companion static signal PV
+        /// (string array of real PV names, one per data column).  When set,
+        /// `labels` carries the sanitized field names, like the real IOC, so
+        /// the real names are only available from the signal PV.
+        std::string signalPv;
+        /// Signal PV content override (default: Column::label of each column).
+        std::vector<std::string> signalNames;
+        /// Post only every N server ticks (server tick = 0.5 s; 2 = 1 Hz).
+        int postEveryTicks = 1;
     };
 
     BsasTablePV(std::string pvName, std::vector<Column> columns, Options options);
@@ -68,4 +77,5 @@ private:
     std::vector<Column>    m_columns;
     Options                m_options;
     pvxs::server::SharedPV m_pv;
+    pvxs::server::SharedPV m_signalPv; ///< Static signal PV (when Options::signalPv is set).
 };

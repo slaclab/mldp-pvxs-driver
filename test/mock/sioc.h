@@ -22,7 +22,11 @@ public:
     ~PVServer();
 
     /// Sanitized field names for the CU-HXR Gen1 NTTable columns.
-    const std::vector<std::string>& gen1CuHxrColumnNames() const { return m_cuHxr.fieldNames(); }
+    /// Real PV names of the CU-HXR table columns (published in `labels`; the
+    /// gen1 reader names columns from them, not from the sanitized field names).
+    const std::vector<std::string>& gen1CuHxrColumnNames() const { return m_cuHxr.columnNames(); }
+    /// CU-HXR table PV name (`CU-HXR_TBL`; its signal PV is `CU-HXR_SIG`).
+    const std::string& gen1CuHxrTablePv() const { return m_cuHxr.tablePvName(); }
 
 private:
     /// Create and register the deterministic BSAS table PVs (m_bsasTables).
@@ -55,6 +59,4 @@ private:
     /// Deterministic BSAS Gen1 / Gen2 tables used by the table reader tests
     /// (test:bsas_gen1_*, test:bsas_gen2_*); see BsasTablePV.
     std::vector<std::unique_ptr<BsasTablePV>> m_bsasTables;
-    /// Gen1 signal PVs (`*_SIG`, string array of real column names).
-    std::vector<pvxs::server::SharedPV>       m_signalPvs;
 };

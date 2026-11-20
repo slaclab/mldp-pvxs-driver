@@ -48,15 +48,42 @@ BsasTablePV::BsasTablePV(std::string pvName, std::vector<Column> columns, Option
     }
     m_pv = server::SharedPV::buildReadonly();
     m_pv.open(builder.build().create());
+
+    if (!m_options.signalPv.empty())
+    {
+        std::vector<std::string> names = m_options.signalNames;
+        if (names.empty())
+        {
+            for (const auto& col : m_columns)
+            {
+                names.push_back(col.label.empty() ? col.field : col.label);
+            }
+        }
+        auto                      value = nt::NTScalar{TypeCode::StringA}.create();
+        shared_array<std::string> arr(names.begin(), names.end());
+        value["value"] = arr.freeze();
+        m_signalPv = server::SharedPV::buildReadonly();
+        m_signalPv.open(value);
+    }
 }
 
 void BsasTablePV::registerPV(server::Server& server)
 {
     server.addPV(m_pvName, m_pv);
+    if (!m_options.signalPv.empty())
+    {
+        server.addPV(m_options.signalPv, m_signalPv);
+    }
 }
 
 void BsasTablePV::post(int counter)
 {
+    // Post on the first tick (counter 1) and every N ticks after, so a client
+    // never sees the never-posted (empty) table.
+    if (m_options.postEveryTicks > 1 && (counter - 1) % m_options.postEveryTicks != 0)
+    {
+        return;
+    }
     auto         pv = m_pv.fetch();
     const size_t rows = m_options.rows;
     const bool   withTs = !m_options.tsSecondsField.empty();
@@ -67,7 +94,9 @@ void BsasTablePV::post(int counter)
         size_t                    i = 0;
         for (const auto& col : m_columns)
         {
-            labels[i++] = col.label.empty() ? col.field : col.label;
+            // Real Gen1 IOC: labels repeat the sanitized field names; the real
+            // names live in the signal PV.
+            labels[i++] = (!m_options.signalPv.empty() || col.label.empty()) ? col.field : col.label;
         }
         if (withTs)
         {

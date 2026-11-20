@@ -115,14 +115,14 @@ TEST_F(EpicsPVXSBsasGen1ReaderTest, EmitsTabularBatchesWithAllColumnsAndExactVal
     start(R"(
 name: bsas_gen1
 pvs:
-  - name: test:bsas_gen1_table
+  - name: test:bsas_gen1_table_TBL
 )");
-    const auto groups = waitForDataGroups("test:bsas_gen1_table", 1);
+    const auto groups = waitForDataGroups("test:bsas_gen1_table_TBL", 1);
     ASSERT_GE(groups.size(), 1u);
     const auto& g = groups.front();
 
     // Default pvs-per-data-batch = 1 -> one DataBatch per column, PV columns only.
-    EXPECT_EQ(g.columnNames(), (std::vector<std::string>{"PV_A", "PV_B", "PV_C"}));
+    EXPECT_EQ(g.columnNames(), (std::vector<std::string>{"PV:A", "PV:B", "PV:C"}));
     EXPECT_EQ(g.frames().size(), 3u);
 
     for (const auto& b : g.data)
@@ -130,13 +130,13 @@ pvs:
         const auto& ts = std::get<TimeSeriesPayload>(b.payload);
         EXPECT_TRUE(ts.is_tabular);
         EXPECT_FALSE(ts.end_of_batch_group);
-        EXPECT_EQ(ts.root_source_name, "test:bsas_gen1_table");
+        EXPECT_EQ(ts.root_source_name, "test:bsas_gen1_table_TBL");
         EXPECT_EQ(b.reader_name, "bsas_gen1");
-        EXPECT_EQ(b.metadata.at("source"), "test:bsas_gen1_table");
+        EXPECT_EQ(b.metadata.at("source"), "test:bsas_gen1_table_TBL");
     }
 
     const DataBatch* frameA = nullptr;
-    const auto*      a = g.column("PV_A", &frameA);
+    const auto*      a = g.column("PV:A", &frameA);
     ASSERT_NE(a, nullptr);
     expectMockRowTimestamps(*frameA, 4);
     const int counter = counterOf(*frameA);
@@ -145,13 +145,13 @@ pvs:
     EXPECT_EQ(asDoubles(*a), (std::vector<double>{counter * 100.0, counter * 100.0 + 1, counter * 100.0 + 2, counter * 100.0 + 3}));
 
     const DataBatch* frameB = nullptr;
-    const auto*      b = g.column("PV_B", &frameB);
+    const auto*      b = g.column("PV:B", &frameB);
     ASSERT_NE(b, nullptr);
     ASSERT_TRUE(std::holds_alternative<std::vector<int32_t>>(b->values));
     EXPECT_EQ(asDoubles(*b)[0], counter * 100.0 + 1000.0);
     EXPECT_TRUE(sameTimestamps(*frameB, *frameA));
 
-    const auto* c = g.column("PV_C");
+    const auto* c = g.column("PV:C");
     ASSERT_NE(c, nullptr);
     ASSERT_TRUE(std::holds_alternative<std::vector<float>>(c->values));
     EXPECT_FLOAT_EQ(static_cast<float>(asDoubles(*c)[3]), static_cast<float>(counter + 1.5));
@@ -188,11 +188,11 @@ TEST_F(EpicsPVXSBsasGen1ReaderTest, ResolvesRealNamesFromExplicitSignalPv)
     start(R"(
 name: bsas_gen1
 pvs:
-  - name: test:bsas_gen1_custom_table
+  - name: test:bsas_gen1_custom_TBL
     option:
       signal-pv: test:bsas_gen1_custom_names
 )");
-    const auto groups = waitForDataGroups("test:bsas_gen1_custom_table", 1);
+    const auto groups = waitForDataGroups("test:bsas_gen1_custom_TBL", 1);
     ASSERT_GE(groups.size(), 1u);
     EXPECT_EQ(groups.front().columnNames(),
               (std::vector<std::string>{"ACCL:IN20:300:L0A_ACUSBR", "BPMS:LI21:131:XCUSBR"}));
@@ -248,9 +248,9 @@ TEST_F(EpicsPVXSBsasGen1ReaderTest, TimestampColumnsAreNotEmittedAsData)
     start(R"(
 name: bsas_gen1
 pvs:
-  - name: test:bsas_gen1_table
+  - name: test:bsas_gen1_table_TBL
 )");
-    const auto groups = waitForDataGroups("test:bsas_gen1_table", 1);
+    const auto groups = waitForDataGroups("test:bsas_gen1_table_TBL", 1);
     ASSERT_GE(groups.size(), 1u);
     for (const auto& name : groups.front().columnNames())
     {
@@ -264,11 +264,11 @@ TEST_F(EpicsPVXSBsasGen1ReaderTest, MarkerClosesEveryGroup)
     start(R"(
 name: bsas_gen1
 pvs:
-  - name: test:bsas_gen1_table
+  - name: test:bsas_gen1_table_TBL
 )");
-    ASSERT_TRUE(bus->waitForMarkers("test:bsas_gen1_table", 3));
+    ASSERT_TRUE(bus->waitForMarkers("test:bsas_gen1_table_TBL", 3));
 
-    const auto groups = groupsFor(bus->snapshot(), "test:bsas_gen1_table");
+    const auto groups = groupsFor(bus->snapshot(), "test:bsas_gen1_table_TBL");
     ASSERT_GE(groups.size(), 3u);
     for (const auto& g : groups)
     {
@@ -276,13 +276,13 @@ pvs:
         EXPECT_TRUE(ts.end_of_batch_group);
         EXPECT_TRUE(ts.is_tabular);
         EXPECT_TRUE(ts.frames.empty());
-        EXPECT_EQ(ts.root_source_name, "test:bsas_gen1_table");
+        EXPECT_EQ(ts.root_source_name, "test:bsas_gen1_table_TBL");
         EXPECT_EQ(g.marker.reader_name, "bsas_gen1");
-        EXPECT_EQ(g.marker.metadata.at("source"), "test:bsas_gen1_table");
+        EXPECT_EQ(g.marker.metadata.at("source"), "test:bsas_gen1_table_TBL");
     }
 
     // Successive updates carry increasing counters.
-    const auto data = dataGroupsFor(bus->snapshot(), "test:bsas_gen1_table");
+    const auto data = dataGroupsFor(bus->snapshot(), "test:bsas_gen1_table_TBL");
     ASSERT_GE(data.size(), 2u);
     EXPECT_LT(counterOf(*data[0].frames().front()), counterOf(*data[1].frames().front()));
 }
@@ -293,9 +293,9 @@ TEST_F(EpicsPVXSBsasGen1ReaderTest, PvsPerDataBatchGroupsColumnsSharingTimestamp
 name: bsas_gen1
 pvs-per-data-batch: 4
 pvs:
-  - name: test:bsas_gen1_wide
+  - name: test:bsas_gen1_wide_TBL
 )");
-    const auto groups = waitForDataGroups("test:bsas_gen1_wide", 1);
+    const auto groups = waitForDataGroups("test:bsas_gen1_wide_TBL", 1);
     ASSERT_GE(groups.size(), 1u);
     const auto frames = groups.front().frames();
 
@@ -308,8 +308,8 @@ pvs:
     {
         expectMockRowTimestamps(*f, 4);
     }
-    EXPECT_EQ(frames[0]->columns[0].name, "W00");
-    EXPECT_EQ(frames[2]->columns[1].name, "W09");
+    EXPECT_EQ(frames[0]->columns[0].name, "W:00");
+    EXPECT_EQ(frames[2]->columns[1].name, "W:09");
     EXPECT_EQ(asDoubles(frames[2]->columns[1]), (std::vector<double>{9000, 9001, 9002, 9003}));
 }
 
@@ -319,9 +319,9 @@ TEST_F(EpicsPVXSBsasGen1ReaderTest, PvsPerDataBatchZeroPutsAllColumnsInOneDataBa
 name: bsas_gen1
 pvs-per-data-batch: 0
 pvs:
-  - name: test:bsas_gen1_wide
+  - name: test:bsas_gen1_wide_TBL
 )");
-    const auto groups = waitForDataGroups("test:bsas_gen1_wide", 1);
+    const auto groups = waitForDataGroups("test:bsas_gen1_wide_TBL", 1);
     ASSERT_GE(groups.size(), 1u);
     const auto frames = groups.front().frames();
     ASSERT_EQ(frames.size(), 1u);
@@ -334,13 +334,13 @@ TEST_F(EpicsPVXSBsasGen1ReaderTest, PerPvOptionsOverrideReaderLevel)
 name: bsas_gen1
 pvs-per-data-batch: 1
 pvs:
-  - name: test:bsas_gen1_wide
+  - name: test:bsas_gen1_wide_TBL
     option:
       pvs-per-data-batch: 5
-  - name: test:bsas_gen1_table
+  - name: test:bsas_gen1_table_TBL
 )");
-    const auto wide = waitForDataGroups("test:bsas_gen1_wide", 1);
-    const auto table = waitForDataGroups("test:bsas_gen1_table", 1);
+    const auto wide = waitForDataGroups("test:bsas_gen1_wide_TBL", 1);
+    const auto table = waitForDataGroups("test:bsas_gen1_table_TBL", 1);
     ASSERT_GE(wide.size(), 1u);
     ASSERT_GE(table.size(), 1u);
     EXPECT_EQ(wide.front().frames().size(), 2u);
@@ -353,9 +353,9 @@ TEST_F(EpicsPVXSBsasGen1ReaderTest, DataBatchesPerPushSplitsGroupIntoSeveralBusB
 name: bsas_gen1
 data-batches-per-push: 3
 pvs:
-  - name: test:bsas_gen1_wide
+  - name: test:bsas_gen1_wide_TBL
 )");
-    const auto groups = waitForDataGroups("test:bsas_gen1_wide", 1);
+    const auto groups = waitForDataGroups("test:bsas_gen1_wide_TBL", 1);
     ASSERT_GE(groups.size(), 1u);
     const auto& g = groups.front();
 
@@ -372,9 +372,9 @@ TEST_F(EpicsPVXSBsasGen1ReaderTest, DataBatchesPerPushZeroPushesOneBusBatch)
 name: bsas_gen1
 data-batches-per-push: 0
 pvs:
-  - name: test:bsas_gen1_wide
+  - name: test:bsas_gen1_wide_TBL
 )");
-    const auto groups = waitForDataGroups("test:bsas_gen1_wide", 1);
+    const auto groups = waitForDataGroups("test:bsas_gen1_wide_TBL", 1);
     ASSERT_GE(groups.size(), 1u);
     ASSERT_EQ(groups.front().data.size(), 1u);
     EXPECT_EQ(groups.front().frames().size(), 10u);
@@ -385,15 +385,15 @@ TEST_F(EpicsPVXSBsasGen1ReaderTest, DefaultRowsPerDataBatchIs120)
     start(R"(
 name: bsas_gen1
 pvs:
-  - name: test:bsas_gen1_long
+  - name: test:bsas_gen1_long_TBL
 )");
-    const auto groups = waitForDataGroups("test:bsas_gen1_long", 1);
+    const auto groups = waitForDataGroups("test:bsas_gen1_long_TBL", 1);
     ASSERT_GE(groups.size(), 1u);
     const auto& g = groups.front();
 
     // 250 rows -> chunks of 120 + 120 + 10, row chunks in time order, columns in table order.
-    EXPECT_EQ(g.columnNames(), (std::vector<std::string>{"L_A", "L_B", "L_A", "L_B", "L_A", "L_B"}));
-    for (const char* name : {"L_A", "L_B"})
+    EXPECT_EQ(g.columnNames(), (std::vector<std::string>{"L:A", "L:B", "L:A", "L:B", "L:A", "L:B"}));
+    for (const char* name : {"L:A", "L:B"})
     {
         const auto chunks = g.chunks(name);
         ASSERT_EQ(chunks.size(), 3u) << name;
@@ -408,7 +408,7 @@ pvs:
             for (std::size_t r = 0; r < sizes[i]; ++r, ++row)
             {
                 EXPECT_EQ(batch->timestamps[r].nanoseconds, row * BsasTablePV::kRowNanosStep);
-                EXPECT_EQ(values[r], (std::string(name) == "L_A" ? 0.0 : 10000.0) + static_cast<double>(row));
+                EXPECT_EQ(values[r], (std::string(name) == "L:A" ? 0.0 : 10000.0) + static_cast<double>(row));
             }
         }
     }
@@ -421,9 +421,9 @@ name: bsas_gen1
 rows-per-data-batch: 3
 pvs-per-data-batch: 0
 pvs:
-  - name: test:bsas_gen1_table
+  - name: test:bsas_gen1_table_TBL
 )");
-    const auto groups = waitForDataGroups("test:bsas_gen1_table", 1);
+    const auto groups = waitForDataGroups("test:bsas_gen1_table_TBL", 1);
     ASSERT_GE(groups.size(), 1u);
     const auto frames = groups.front().frames();
 
@@ -452,9 +452,9 @@ TEST_F(EpicsPVXSBsasGen1ReaderTest, RowsPerDataBatchZeroKeepsAllRows)
 name: bsas_gen1
 rows-per-data-batch: 0
 pvs:
-  - name: test:bsas_gen1_long
+  - name: test:bsas_gen1_long_TBL
 )");
-    const auto groups = waitForDataGroups("test:bsas_gen1_long", 1);
+    const auto groups = waitForDataGroups("test:bsas_gen1_long_TBL", 1);
     ASSERT_GE(groups.size(), 1u);
     const auto frames = groups.front().frames();
     ASSERT_EQ(frames.size(), 2u);
@@ -473,9 +473,9 @@ rows-per-data-batch: 100
 pvs-per-data-batch: 2
 data-batches-per-push: 2
 pvs:
-  - name: test:bsas_gen1_long
+  - name: test:bsas_gen1_long_TBL
 )");
-    const auto groups = waitForDataGroups("test:bsas_gen1_long", 1);
+    const auto groups = waitForDataGroups("test:bsas_gen1_long_TBL", 1);
     ASSERT_GE(groups.size(), 1u);
     const auto& g = groups.front();
     // 250 rows / 100 -> 3 DataBatches of [L_A, L_B]; 2 per push -> pushes of 2 + 1.
@@ -502,15 +502,15 @@ TEST_F(EpicsPVXSBsasGen1ReaderTest, AllNaNColumnsAreDropped)
 name: bsas_gen1
 pvs-per-data-batch: 2
 pvs:
-  - name: test:bsas_gen1_nan
+  - name: test:bsas_gen1_nan_TBL
 )");
-    const auto groups = waitForDataGroups("test:bsas_gen1_nan", 1);
+    const auto groups = waitForDataGroups("test:bsas_gen1_nan_TBL", 1);
     ASSERT_GE(groups.size(), 1u);
     const auto frames = groups.front().frames();
 
     // NaN column does not count towards pvs-per-data-batch: one frame [OK_A, OK_C].
     ASSERT_EQ(frames.size(), 1u);
-    EXPECT_EQ(groups.front().columnNames(), (std::vector<std::string>{"OK_A", "OK_C"}));
+    EXPECT_EQ(groups.front().columnNames(), (std::vector<std::string>{"OK:A", "OK:C"}));
 }
 
 TEST_F(EpicsPVXSBsasGen1ReaderTest, AllNaNTableProducesMarkerOnly)
@@ -518,10 +518,10 @@ TEST_F(EpicsPVXSBsasGen1ReaderTest, AllNaNTableProducesMarkerOnly)
     start(R"(
 name: bsas_gen1
 pvs:
-  - name: test:bsas_gen1_all_nan
+  - name: test:bsas_gen1_all_nan_TBL
 )");
-    ASSERT_TRUE(bus->waitForMarkers("test:bsas_gen1_all_nan", 2));
-    for (const auto& g : groupsFor(bus->snapshot(), "test:bsas_gen1_all_nan"))
+    ASSERT_TRUE(bus->waitForMarkers("test:bsas_gen1_all_nan_TBL", 2));
+    for (const auto& g : groupsFor(bus->snapshot(), "test:bsas_gen1_all_nan_TBL"))
     {
         EXPECT_TRUE(g.data.empty());
     }
@@ -533,15 +533,15 @@ TEST_F(EpicsPVXSBsasGen1ReaderTest, TableWithoutTimestampsRecordsErrorAndPushesM
     start(R"(
 name: bsas_gen1
 pvs:
-  - name: test:bsas_gen1_no_ts
+  - name: test:bsas_gen1_no_ts_TBL
 )",
           metrics);
-    ASSERT_TRUE(bus->waitForMarkers("test:bsas_gen1_no_ts", 2));
-    for (const auto& g : groupsFor(bus->snapshot(), "test:bsas_gen1_no_ts"))
+    ASSERT_TRUE(bus->waitForMarkers("test:bsas_gen1_no_ts_TBL", 2));
+    for (const auto& g : groupsFor(bus->snapshot(), "test:bsas_gen1_no_ts_TBL"))
     {
         EXPECT_TRUE(g.data.empty());
     }
-    EXPECT_GE(metrics->readerErrorsTotal(prometheus::Labels{{"source", "test:bsas_gen1_no_ts"}}), 2.0);
+    EXPECT_GE(metrics->readerErrorsTotal(prometheus::Labels{{"source", "test:bsas_gen1_no_ts_TBL"}}), 2.0);
 }
 
 TEST_F(EpicsPVXSBsasGen1ReaderTest, CustomTimestampFieldNames)
@@ -549,36 +549,34 @@ TEST_F(EpicsPVXSBsasGen1ReaderTest, CustomTimestampFieldNames)
     start(R"(
 name: bsas_gen1
 pvs:
-  - name: test:bsas_gen1_custom_ts
+  - name: test:bsas_gen1_custom_ts_TBL
     option:
       tsSeconds: secs
       tsNanos: nsecs
 )");
-    const auto groups = waitForDataGroups("test:bsas_gen1_custom_ts", 1);
+    const auto groups = waitForDataGroups("test:bsas_gen1_custom_ts_TBL", 1);
     ASSERT_GE(groups.size(), 1u);
     const auto& g = groups.front();
-    EXPECT_EQ(g.columnNames(), (std::vector<std::string>{"PV_A", "PV_B"}));
+    EXPECT_EQ(g.columnNames(), (std::vector<std::string>{"PV:A", "PV:B"}));
 
     const DataBatch* frame = nullptr;
-    const auto*      b = g.column("PV_B", &frame);
+    const auto*      b = g.column("PV:B", &frame);
     ASSERT_NE(b, nullptr);
     expectMockRowTimestamps(*frame, 4);
     ASSERT_TRUE(std::holds_alternative<std::vector<int64_t>>(b->values));
     EXPECT_EQ(asDoubles(*b)[1], counterOf(*frame) * 2.0 + 1.0);
 }
 
-TEST_F(EpicsPVXSBsasGen1ReaderTest, DefaultTimestampNamesMissFromCustomTable)
+TEST_F(EpicsPVXSBsasGen1ReaderTest, DefaultTimestampNamesOnCustomTableFailAtStartup)
 {
-    auto metrics = std::make_shared<mldp_pvxs_driver::metrics::Metrics>(mldp_pvxs_driver::metrics::MetricsConfig());
-    start(R"(
+    // The table uses secs/nsecs; with the default timestamp names those two
+    // columns count as data, so the column count no longer matches _SIG.
+    EXPECT_THROW(start(R"(
 name: bsas_gen1
 pvs:
-  - name: test:bsas_gen1_custom_ts
-)",
-          metrics);
-    ASSERT_TRUE(bus->waitForMarkers("test:bsas_gen1_custom_ts", 2));
-    EXPECT_TRUE(dataGroupsFor(bus->snapshot(), "test:bsas_gen1_custom_ts").empty());
-    EXPECT_GE(metrics->readerErrorsTotal(prometheus::Labels{{"source", "test:bsas_gen1_custom_ts"}}), 2.0);
+  - name: test:bsas_gen1_custom_ts_TBL
+)"),
+                 std::runtime_error);
 }
 
 TEST_F(EpicsPVXSBsasGen1ReaderTest, StaticAndPerPvMetadataMerged)
@@ -589,12 +587,12 @@ metadata:
   facility: lcls
   subsystem: bsas
 pvs:
-  - name: test:bsas_gen1_table
+  - name: test:bsas_gen1_table_TBL
     metadata:
       subsystem: override
       line: hxr
 )");
-    const auto groups = waitForDataGroups("test:bsas_gen1_table", 1);
+    const auto groups = waitForDataGroups("test:bsas_gen1_table_TBL", 1);
     ASSERT_GE(groups.size(), 1u);
     std::vector<EventBatch> batches = groups.front().data;
     batches.push_back(groups.front().marker);
@@ -603,7 +601,7 @@ pvs:
         EXPECT_EQ(b.metadata.at("facility"), "lcls");
         EXPECT_EQ(b.metadata.at("subsystem"), "override");
         EXPECT_EQ(b.metadata.at("line"), "hxr");
-        EXPECT_EQ(b.metadata.at("source"), "test:bsas_gen1_table");
+        EXPECT_EQ(b.metadata.at("source"), "test:bsas_gen1_table_TBL");
     }
 }
 
@@ -612,11 +610,11 @@ TEST_F(EpicsPVXSBsasGen1ReaderTest, MultiplePvsAreKeptApart)
     start(R"(
 name: bsas_gen1
 pvs:
-  - name: test:bsas_gen1_table
-  - name: test:bsas_gen1_wide
+  - name: test:bsas_gen1_table_TBL
+  - name: test:bsas_gen1_wide_TBL
 )");
-    const auto table = waitForDataGroups("test:bsas_gen1_table", 1);
-    const auto wide = waitForDataGroups("test:bsas_gen1_wide", 1);
+    const auto table = waitForDataGroups("test:bsas_gen1_table_TBL", 1);
+    const auto wide = waitForDataGroups("test:bsas_gen1_wide_TBL", 1);
     ASSERT_GE(table.size(), 1u);
     ASSERT_GE(wide.size(), 1u);
     EXPECT_EQ(table.front().columnNames().size(), 3u);
@@ -629,9 +627,9 @@ TEST_F(EpicsPVXSBsasGen1ReaderTest, ParallelConversionKeepsColumnOrder)
 name: bsas_gen1
 thread-pool: 4
 pvs:
-  - name: test:bsas_gen1_wide
+  - name: test:bsas_gen1_wide_TBL
 )");
-    const auto groups = waitForDataGroups("test:bsas_gen1_wide", 2);
+    const auto groups = waitForDataGroups("test:bsas_gen1_wide_TBL", 2);
     ASSERT_GE(groups.size(), 2u);
     for (const auto& g : groups)
     {
@@ -647,16 +645,16 @@ TEST_F(EpicsPVXSBsasGen1ReaderTest, ReaderMetricsRecorded)
     start(R"(
 name: bsas_gen1
 pvs:
-  - name: test:bsas_gen1_table
+  - name: test:bsas_gen1_table_TBL
 )",
           metrics);
-    ASSERT_TRUE(bus->waitForMarkers("test:bsas_gen1_table", 2));
+    ASSERT_TRUE(bus->waitForMarkers("test:bsas_gen1_table_TBL", 2));
 
-    const prometheus::Labels tag{{"source", "test:bsas_gen1_table"}};
-    EXPECT_GE(metrics->readerEventsTotal(prometheus::Labels{{"source", "test:bsas_gen1_table"}}), 1.0);
-    EXPECT_GE(metrics->readerEventsReceivedTotal(prometheus::Labels{{"source", "test:bsas_gen1_table"}}), 1.0);
+    const prometheus::Labels tag{{"source", "test:bsas_gen1_table_TBL"}};
+    EXPECT_GE(metrics->readerEventsTotal(prometheus::Labels{{"source", "test:bsas_gen1_table_TBL"}}), 1.0);
+    EXPECT_GE(metrics->readerEventsReceivedTotal(prometheus::Labels{{"source", "test:bsas_gen1_table_TBL"}}), 1.0);
     EXPECT_GT(metrics->readerDataBytesTotal(tag), 0.0);
-    EXPECT_EQ(metrics->readerErrorsTotal(prometheus::Labels{{"source", "test:bsas_gen1_table"}}), 0.0);
+    EXPECT_EQ(metrics->readerErrorsTotal(prometheus::Labels{{"source", "test:bsas_gen1_table_TBL"}}), 0.0);
 }
 
 TEST_F(EpicsPVXSBsasGen1ReaderTest, RejectedPushIsCountedAndNotRetried)
@@ -667,7 +665,7 @@ TEST_F(EpicsPVXSBsasGen1ReaderTest, RejectedPushIsCountedAndNotRetried)
 name: bsas_gen1
 pvs-per-data-batch: 0
 pvs:
-  - name: test:bsas_gen1_table
+  - name: test:bsas_gen1_table_TBL
 )",
           metrics);
 
@@ -676,7 +674,7 @@ pvs:
     reader.reset(); // drain the pool so counters are stable
     EXPECT_EQ(bus->pushCalls(), bus->rejected());
     EXPECT_EQ(bus->pushCalls() % 2, 0u) << "every rejected push is attempted exactly once";
-    EXPECT_GE(metrics->readerErrorsTotal(prometheus::Labels{{"source", "test:bsas_gen1_table"}}), static_cast<double>(bus->rejected()));
+    EXPECT_GE(metrics->readerErrorsTotal(prometheus::Labels{{"source", "test:bsas_gen1_table_TBL"}}), static_cast<double>(bus->rejected()));
     EXPECT_TRUE(bus->snapshot().empty());
 }
 
@@ -686,11 +684,11 @@ TEST_F(EpicsPVXSBsasGen1ReaderTest, ReaderAcceptsDataAgainAfterBusRecovers)
     start(R"(
 name: bsas_gen1
 pvs:
-  - name: test:bsas_gen1_table
+  - name: test:bsas_gen1_table_TBL
 )");
     ASSERT_TRUE(bus->waitForRejected(2));
     bus->setReject(false);
-    const auto groups = waitForDataGroups("test:bsas_gen1_table", 1);
+    const auto groups = waitForDataGroups("test:bsas_gen1_table_TBL", 1);
     EXPECT_GE(groups.size(), 1u);
 }
 
@@ -699,7 +697,7 @@ TEST_F(EpicsPVXSBsasGen1ReaderTest, OptionTypeIsRejected)
     EXPECT_ANY_THROW(ReaderFactory::create(kReaderType, bus, makeConfigFromYaml(R"(
 name: bsas_gen1
 pvs:
-  - name: test:bsas_gen1_table
+  - name: test:bsas_gen1_table_TBL
     option:
       type: slac-bsas-table
 )")));
@@ -714,7 +712,7 @@ pidField: pid
     EXPECT_ANY_THROW(ReaderFactory::create(kReaderType, bus, makeConfigFromYaml(R"(
 name: bsas_gen1
 pvs:
-  - name: test:bsas_gen1_table
+  - name: test:bsas_gen1_table_TBL
     option:
       valueSuffix: Val
 )")));
