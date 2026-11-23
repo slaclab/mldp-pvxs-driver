@@ -259,7 +259,7 @@ void MLDPPVXSController::start()
     prepareQueryables(config_, metrics_);
 
     // Global enrichers are constructed once and shared by every referenced writer.
-    enricher_registry_ = std::make_unique<enricher::EnricherRegistry>(raw_config_);
+    enricher_registry_ = std::make_unique<enricher::EnricherRegistry>(raw_config_, metrics_);
 
     // Resize the fan-out thread pool to match the number of writer instances.
     const std::size_t numWriters = config_.writerEntries().size();

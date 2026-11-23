@@ -96,6 +96,14 @@ public:
     void incrementProcessorComputeErrors(double value = 1.0, prometheus::Labels tags = {});
     void incrementProcessorSnapshotMisses(double value = 1.0, prometheus::Labels tags = {});
 
+    // Enricher metrics -------------------------------------------------------
+    /** @brief Count one enricher invocation (labels: enricher, type). */
+    void incrementEnricherRuns(double value = 1.0, prometheus::Labels tags = {});
+    /** @brief Count one batch dropped by an enricher (enrich() returned false). */
+    void incrementEnricherDropped(double value = 1.0, prometheus::Labels tags = {});
+    /** @brief Observe the duration of one enricher invocation (microseconds). */
+    void observeEnricherLatencyUs(double value, prometheus::Labels tags = {});
+
     // Writer metrics ---------------------------------------------------------
     void   setWriterQueueDepth(double value, prometheus::Labels tags = {});
     void   incrementWriterPushes(double value = 1.0, prometheus::Labels tags = {});
@@ -144,6 +152,11 @@ private:
     prometheus::Family<prometheus::Gauge>*     processor_buffer_depth_family_{nullptr};
     prometheus::Family<prometheus::Counter>*   processor_compute_errors_family_{nullptr};
     prometheus::Family<prometheus::Counter>*   processor_snapshot_misses_family_{nullptr};
+
+    prometheus::Histogram::BucketBoundaries    enricher_latency_us_buckets_;
+    prometheus::Family<prometheus::Counter>*   enricher_runs_family_{nullptr};
+    prometheus::Family<prometheus::Counter>*   enricher_dropped_family_{nullptr};
+    prometheus::Family<prometheus::Histogram>* enricher_latency_us_family_{nullptr};
 
     prometheus::Family<prometheus::Gauge>*   writer_queue_depth_family_{nullptr};
     prometheus::Family<prometheus::Counter>* writer_push_family_{nullptr};

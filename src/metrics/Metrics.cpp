@@ -91,6 +91,11 @@ Metrics::Metrics(const MetricsConfig& config, std::string controller_name)
     processor_buffer_depth_family_ = &makeGaugeFamily(*registry_, "mldp_pvxs_driver_processor_buffer_depth", "Buffered sample depth retained per processor source snapshot input.", clabels);
     processor_compute_errors_family_ = &makeCounterFamily(*registry_, "mldp_pvxs_driver_processor_compute_errors_total", "Number of processor compute() calls that threw an exception.", clabels);
     processor_snapshot_misses_family_ = &makeCounterFamily(*registry_, "mldp_pvxs_driver_processor_snapshot_misses_total", "Number of trySnapshot() calls that returned no snapshot (sources not yet aligned).", clabels);
+    // Enricher metrics
+    enricher_latency_us_buckets_ = {1.0, 5.0, 10.0, 25.0, 50.0, 100.0, 250.0, 500.0, 1000.0, 2500.0, 5000.0, 10000.0, 25000.0, 50000.0, 100000.0};
+    enricher_runs_family_ = &makeCounterFamily(*registry_, "mldp_pvxs_driver_enricher_runs_total", "Number of enricher invocations on writer batches.", clabels);
+    enricher_dropped_family_ = &makeCounterFamily(*registry_, "mldp_pvxs_driver_enricher_dropped_total", "Number of batches dropped by an enricher (enrich() returned false, including failures).", clabels);
+    enricher_latency_us_family_ = &makeHistogramFamily(*registry_, "mldp_pvxs_driver_enricher_latency_us", "Time spent in one enricher invocation (microseconds).", clabels);
     // Writer metrics
     writer_queue_depth_family_ = &makeGaugeFamily(*registry_, "mldp_pvxs_driver_writer_queue_depth", "Number of items queued across all worker channels in a writer instance.", clabels);
     writer_push_family_ = &makeCounterFamily(*registry_, "mldp_pvxs_driver_writer_push_total", "Number of events/requests pushed by MLDP writers.", clabels);
@@ -450,6 +455,21 @@ void Metrics::incrementProcessorComputeErrors(double value, prometheus::Labels t
 void Metrics::incrementProcessorSnapshotMisses(double value, prometheus::Labels tags)
 {
     processor_snapshot_misses_family_->Add(std::move(tags)).Increment(value);
+}
+
+void Metrics::incrementEnricherRuns(double value, prometheus::Labels tags)
+{
+    enricher_runs_family_->Add(std::move(tags)).Increment(value);
+}
+
+void Metrics::incrementEnricherDropped(double value, prometheus::Labels tags)
+{
+    enricher_dropped_family_->Add(std::move(tags)).Increment(value);
+}
+
+void Metrics::observeEnricherLatencyUs(double value, prometheus::Labels tags)
+{
+    enricher_latency_us_family_->Add(std::move(tags), enricher_latency_us_buckets_).Observe(value);
 }
 
 void Metrics::setWriterQueueDepth(double value, prometheus::Labels tags)
