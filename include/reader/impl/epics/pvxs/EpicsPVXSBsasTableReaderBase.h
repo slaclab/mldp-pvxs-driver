@@ -20,6 +20,7 @@
 #include <reader/impl/epics/pvxs/EpicsPVXSReader.h>
 
 #include <functional>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -115,6 +116,10 @@ private:
 
     EpicsPVXSBsasTableReaderConfig                table_config_;
     std::unordered_map<std::string, ColumnFilter> filters_; ///< Per-PV column filter (absent = keep all).
+    /// Column-conversion pool, separate from reader_pool_: processEvent() runs
+    /// on reader_pool_ and blocks on column futures, so submitting them to the
+    /// same pool deadlocks once every worker is waiting. Null = convert inline.
+    std::unique_ptr<BS::light_thread_pool>        column_pool_;
 };
 
 } // namespace mldp_pvxs_driver::reader::impl::epics

@@ -114,6 +114,10 @@ EpicsPVXSBsasTableReaderBase::EpicsPVXSBsasTableReaderBase(std::shared_ptr<util:
                       makeTableLogger(readerType, tableCfg.name()), readerType, kTableMonitorRequest)
     , table_config_(std::move(tableCfg))
 {
+    if (reader_pool_->get_thread_count() > 1)
+    {
+        column_pool_ = std::make_unique<BS::light_thread_pool>(reader_pool_->get_thread_count());
+    }
     if (filterFactory)
     {
         for (const auto& pv : table_config_.pvNames())
@@ -215,7 +219,7 @@ void EpicsPVXSBsasTableReaderBase::processTable(const std::string&        pvName
             }
         },
         emitted,
-        reader_pool_->get_thread_count() > 1 ? reader_pool_.get() : nullptr,
+        column_pool_.get(),
         filter);
 
     if (!converted)
