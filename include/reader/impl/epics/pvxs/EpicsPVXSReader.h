@@ -33,6 +33,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <vector>
 
 namespace mldp_pvxs_driver::reader::impl::epics {
 
@@ -239,7 +240,7 @@ private:
     std::string                                                 monitor_request_;     ///< PVXS pvRequest for subscriptions.
     mutable std::mutex                                          subscriptions_mutex_; ///< Protects subscription operations.
     pvxs::client::Context                                       pva_context_;         ///< PVXS client context.
-    pvxs::MPMCFIFO<std::shared_ptr<pvxs::client::Subscription>> m_pva_subscriptions;  ///< Active subscriptions.
+    std::vector<std::shared_ptr<pvxs::client::Subscription>>     m_pva_subscriptions;  ///< Active subscriptions (guarded by subscriptions_mutex_).
     std::mutex                                                   last_event_time_mutex_;
     std::unordered_map<std::string, std::chrono::steady_clock::time_point> last_event_time_;
 

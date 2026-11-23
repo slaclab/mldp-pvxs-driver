@@ -45,7 +45,9 @@ EpicsPVXSBsasGen1Reader::EpicsPVXSBsasGen1Reader(std::shared_ptr<util::bus::IDat
                                    EpicsPVXSBsasTableReaderConfig::Generation::Gen1, kReaderType,
                                    &EpicsPVXSBsasGen1Reader::makeColumnFilter)
 {
+    infof(*logger_, "[{}] Resolving BSAS gen1 column names from signal PVs", name_);
     resolveSignalNames();
+    infof(*logger_, "[{}] Column names resolved", name_);
     addPV(pvNames());
 }
 

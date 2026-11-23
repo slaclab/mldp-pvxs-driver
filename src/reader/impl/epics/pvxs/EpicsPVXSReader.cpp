@@ -83,7 +83,9 @@ EpicsPVXSReader::EpicsPVXSReader(std::shared_ptr<util::bus::IDataBus> bus,
     : EpicsReaderBase(std::move(bus), std::move(metrics), readerCfg, std::move(logger))
     , monitor_request_(monitorRequest)
 {
+    infof(*logger_, "[{}] Starting {} reader: building PVXS client context", name_, clientTag);
     pva_context_ = PvxsClientConfig::buildContext(rawCfg, std::string(clientTag));
+    infof(*logger_, "[{}] PVXS client context ready", name_);
 }
 
 EpicsPVXSReader::~EpicsPVXSReader()
@@ -93,11 +95,36 @@ EpicsPVXSReader::~EpicsPVXSReader()
 
 void EpicsPVXSReader::stopProcessing()
 {
-    running_ = false;
+    if (!running_.exchange(false))
+    {
+        return; // already stopped (derived + base destructor both call this)
+    }
+    infof(*logger_, "[{}] Stopping reader", name_);
+
+    // Cancel monitors first: a live BSAS subscription keeps queueing tasks
+    // into the pool, so waiting on the pool before cancelling never returns.
+    std::vector<std::shared_ptr<pvxs::client::Subscription>> subs;
+    {
+        std::lock_guard<std::mutex> lock(subscriptions_mutex_);
+        subs.swap(m_pva_subscriptions);
+    }
+    for (auto& sub : subs)
+    {
+        if (sub)
+        {
+            sub->cancel();
+        }
+    }
+    infof(*logger_, "[{}] Cancelling {} PVXS subscription(s)", name_, subs.size());
+    subs.clear();
+    infof(*logger_, "[{}] Subscriptions cancelled", name_);
+
     if (reader_pool_)
     {
+        infof(*logger_, "[{}] Waiting for reader pool to drain", name_);
         reader_pool_->wait();
     }
+    infof(*logger_, "[{}] Reader stopped", name_);
 }
 
 std::size_t EpicsPVXSReader::estimatePvxsValueBytes(const pvxs::Value& v)
@@ -183,6 +210,7 @@ bool EpicsPVXSReader::hasValidData(const DataBatch& batch)
 void EpicsPVXSReader::addPV(const PVSet& pvNames)
 {
     std::lock_guard<std::mutex> lock(subscriptions_mutex_);
+    infof(*logger_, "[{}] Subscribing to {} PV(s)", name_, pvNames.size());
 
     for (const auto& pv : pvNames)
     {
@@ -199,6 +227,10 @@ void EpicsPVXSReader::addPV(const PVSet& pvNames)
                                                      });
                                          std::string pvName = s.name();
 
+                                         if (!running_.load())
+                                         {
+                                             continue; // shutting down: drain and drop
+                                         }
                                          // pv event is processed into another thread to not block the PVXS network thread,
                                          // which could cause monitor disconnects if processing takes too long
                                          reader_pool_->detach_task(
@@ -209,9 +241,10 @@ void EpicsPVXSReader::addPV(const PVSet& pvNames)
                                      }
                                  })
                           .exec();
-        m_pva_subscriptions.push(pv_mon);
+        m_pva_subscriptions.push_back(std::move(pv_mon));
         infof(*logger_, "[{}/{}] Started monitoring", name_, pv);
     }
+    infof(*logger_, "[{}] Reader started: {} active subscription(s)", name_, m_pva_subscriptions.size());
 }
 
 /// Log @p message at error level and increment the reader-error metric counter

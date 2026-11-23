@@ -424,7 +424,16 @@ void MLDPPVXSController::stop()
         return;
     }
 
-    running_.store(false);
+    {
+        // Flip under queue_mutex_ so a pusher cannot miss the wakeup between
+        // its predicate check and wait().
+        std::lock_guard<std::mutex> lk(queue_mutex_);
+        running_.store(false);
+    }
+    // Wake reader threads blocked in push() on a full queue BEFORE destroying
+    // readers: reader destructors join their worker pools, and a worker stuck
+    // in push() would otherwise never return (deadlock on stop).
+    queue_not_full_.notify_all();
     infof(*logger_, "Controller is stopping");
 
     {
