@@ -103,6 +103,7 @@ void EpicsPVXSBsasGen1Reader::resolveSignalNames()
         const double timeoutSec = static_cast<double>(opts.signalTimeoutMs) / 1000.0;
         std::vector<std::string> signals;
         std::vector<std::string> fields;
+        infof(*logger_, "[{}/{}] reading signal PV {} (timeout {} ms)", name_, pv, opts.signalPv, opts.signalTimeoutMs);
         try
         {
             const auto sigValue = pvaContext().get(opts.signalPv).exec()->wait(timeoutSec);
@@ -115,13 +116,20 @@ void EpicsPVXSBsasGen1Reader::resolveSignalNames()
             {
                 signals.push_back(s);
             }
+            infof(*logger_, "[{}/{}] signal PV {} returned {} names", name_, pv, opts.signalPv, signals.size());
+            for (std::size_t i = 0; i < signals.size(); ++i)
+            {
+                debugf(*logger_, "[{}/{}]   sig[{}] = '{}'", name_, pv, i, signals[i]);
+            }
         }
         catch (const std::exception& e)
         {
+            errorf(*logger_, "[{}/{}] cannot read signal PV {}: {}", name_, pv, opts.signalPv, e.what());
             throw std::runtime_error(util::format_string("Reader {}: cannot read signal PV {} for table {}: {}",
                                                          name_, opts.signalPv, pv, e.what()));
         }
 
+        debugf(*logger_, "[{}/{}] reading table PV to discover columns", name_, pv);
         try
         {
             const auto tblValue = pvaContext().get(pv).exec()->wait(timeoutSec);
@@ -138,14 +146,21 @@ void EpicsPVXSBsasGen1Reader::resolveSignalNames()
                     fields.push_back(std::move(field));
                 }
             }
+            infof(*logger_, "[{}/{}] table has {} data columns (ts fields '{}','{}' skipped)", name_, pv, fields.size(),
+                  opts.tsSecondsField, opts.tsNanosField);
         }
         catch (const std::exception& e)
         {
+            errorf(*logger_, "[{}/{}] cannot read table PV: {}", name_, pv, e.what());
             throw std::runtime_error(util::format_string("Reader {}: cannot read table PV {}: {}", name_, pv, e.what()));
         }
 
         auto names = std::make_shared<const ColumnNameMap>(
             buildColumnNameMap(pv, opts.signalPv, fields, signals));
+        for (std::size_t i = 0; i < fields.size(); ++i)
+        {
+            debugf(*logger_, "[{}/{}]   column '{}' -> '{}'", name_, pv, fields[i], signals[i]);
+        }
         infof(*logger_, "[{}/{}] resolved {} column names from {}", name_, pv, fields.size(), opts.signalPv);
 
         auto logger = logger_;
