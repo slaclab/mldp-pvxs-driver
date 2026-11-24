@@ -555,7 +555,7 @@ Fetches beamline accel/experiment schedule events from the SLAC calendar HTTP AP
 ```yaml
 - slac-calendar:
     - name: cal_reader                  # required
-      base-url: https://calendar.slac.stanford.edu  # required
+      base-url: https://calendar.example.org  # required
       accel:                            # required
         - lcls
         - facet

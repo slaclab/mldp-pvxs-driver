@@ -247,12 +247,16 @@ protected:
 
 ### Common Base: EpicsReaderBase
 
-EPICS-specific readers (base, pvxs, archiver) share `EpicsReaderBase`:
+The EPICS live readers (`epics-base`, `epics-pvxs`, and the PVXS BSAS table readers
+`epics-pvxs-bsas-gen1`/`epics-pvxs-bsas-gen2`) share `EpicsReaderBase`. The
+`epics-archiver` reader derives directly from `Reader` and does not use it:
 
 #### Thread Pool Management
 
 - Creates and manages `BS::light_thread-pool` for data conversion
-- Configurable via `thread-pool` parameter
+- Configurable via `thread-pool` parameter (default `1`). Only `epics-base`, `epics-pvxs`
+  and the BSAS table readers parse `thread-pool`; other readers (e.g. `epics-archiver`,
+  which uses `fetch-threads`) ignore it
 - Metrics track queue depth
 
 #### Common Features
@@ -331,7 +335,7 @@ Feature        | EpicsBaseReader                | EpicsPVXSReader               
 Protocol       | Channel Access                 | PVAccess (PVXS)                | HTTP (PB/HTTP streaming)
 Event Model    | Polling                        | Event-driven                   | Fetch (one-shot or periodic)
 Latency        | Poll interval dependent        | Immediate                      | Variable (depends on window)
-Thread Model   | Poll threads + conversion pool | Callback + conditional pool    | Worker thread + conversion pool
+Thread Model   | Poll threads + conversion pool | Callback + conditional pool    | Worker threads (`fetch-threads`)
 Data Source    | Live PVs                       | Live PVs                       | Historical archiver data
 Configuration  | `epics-base`                   | `epics-pvxs`                   | `epics-archiver`
 Best For       | Legacy systems                 | Modern high-performance        | Backfill and data replay

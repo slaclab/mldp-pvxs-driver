@@ -75,13 +75,29 @@ flowchart TB
 reader:
   - epics-archiver:
       - name: my_archiver_reader
-        hostname: "archiver-appliance.example.com:11200"
-        start-date: "2024-01-01T00:00:00Z"  # Required
-        end-date: "2024-01-02T00:00:00Z"    # Optional
+        hostname: "archiver.example.org:11200"  # Required
+        mode: historical_once               # default; or periodic_tail
+        start-date: "2024-01-01T00:00:00Z"  # Required in historical_once (alias: startDate)
+        end-date: "2024-01-02T00:00:00Z"    # Optional (alias: endDate)
+        connect-timeout-sec: 30             # default 30; must be > 0
+        total-timeout-sec: 300              # default 300; 0 = infinite, else >= connect-timeout-sec
+        tls-verify-peer: true               # default true
+        tls-verify-host: true               # default true; requires tls-verify-peer
         fetch-threads: 4                    # Parallel PV fetch workers (default: 1)
-        pvs:
-          - name: MY:ARCHIVER:PV
-          - name: ANOTHER:HISTORICAL:PV
+        # pv-samples-per-batch: 1000        # optional; default 0 = disabled, > 0 when set
+        batch-flush-interval-ms: 0          # deprecated, no effect (> 0 when set)
+        max-batch-span-sec: 86400           # default 86400 (MLDP bucket limit)
+        fetch-max-retries: 3                # default 3; retries per failed PV fetch
+        fetch-window-sec: 86400             # default 86400; split range into aligned windows, 0 = one request
+        fetch-retry-backoff-ms: 1000        # default 1000; delay between retries
+        status-log-path: archiver-status-my_archiver_reader.jsonl  # default archiver-status-<name>.jsonl; "" disables
+        metadata:                           # optional static metadata for every PV
+          source: archiver
+        pvs:                                # Required
+          - name: EXAMPLE:PV:A
+            metadata:                       # optional per-PV metadata
+              unit: mm
+          - name: EXAMPLE:PV:B
 ```
 
 ### Periodic Tail Mode
@@ -100,11 +116,10 @@ reader:
 reader:
   - epics-archiver:
       - name: continuous_archiver
-        hostname: "archiver.example.com:11200"
+        hostname: "archiver.example.org:11200"
         mode: periodic_tail             # Enable continuous polling
-        poll-interval-sec: 5            # Poll every 5 seconds
-        lookback-sec: 60                # Fetch last 60 seconds each time
-        thread-pool: 2
+        poll-interval-sec: 5            # Required, > 0: poll every 5 seconds
+        lookback-sec: 5                 # Optional, default poll-interval-sec; 0 < lookback <= poll-interval
         pvs:
           - name: MY:PV:NAME
 ```
@@ -115,23 +130,33 @@ reader:
 
 Parameter | Type   | Description
 --------- | ------ | ------------------------------------------------------------------
-`hostname` | string | Archiver Appliance host:port (e.g., `archiver.example.com:11200`)
-`pvs`     | list   | Array of PV names or objects to fetch from archiver
+`name`     | string | Reader instance name (non-empty)
+`hostname` | string | Archiver Appliance host:port (e.g., `archiver.example.org:11200`)
+`pvs`     | list   | Sequence of `{name, metadata?}` maps; `name` required, `metadata` optional string map
+
+### Common Parameters
+
+Parameter         | Type   | Default                      | Description
+----------------- | ------ | ---------------------------- | -------------------------------------------------------------------
+`mode`            | string | `historical_once`            | `historical_once` or `periodic_tail`
+`metadata`        | map    | none                         | Static string map attached to every PV
+`pvs[].metadata`  | map    | none                         | Static string map for one PV
+`status-log-path` | string | `archiver-status-<name>.jsonl` | Per-PV fetch status log (JSONL); empty string disables it
 
 ### One-Shot Mode Parameters
 
 Parameter            | Type   | Default | Description
 -------------------- | ------ | ------- | -------------------------------------------------------------------
-`start-date`         | string | —       | **Required** ISO 8601 timestamp for query start
-`end-date`           | string | —       | ISO 8601 timestamp for query end (defaults to `start-date` + 1 day)
+`start-date`         | string | —       | **Required** ISO 8601 timestamp for query start (alias `startDate`)
+`end-date`           | string | —       | ISO 8601 timestamp for query end (alias `endDate`); when omitted no `to` is sent and the Archiver Appliance applies its own default
 
 ### Periodic Tail Mode Parameters
 
 Parameter            | Type   | Default         | Description
 -------------------- | ------ | --------------- | -----------------------------------------------------------------
-`mode`               | string | `one_shot`      | Set to `periodic_tail` to enable continuous polling
-`poll-interval-sec`  | float  | 5.0             | Polling interval in seconds
-`lookback-sec`       | float  | (poll_interval) | Seconds of history to fetch per poll (defaults to poll_interval)
+`mode`               | string | `historical_once` | Set to `periodic_tail` to enable continuous polling
+`poll-interval-sec`  | int    | none (required) | Polling interval in seconds; must be `> 0` in `periodic_tail`
+`lookback-sec`       | int    | `poll-interval-sec` | Seconds of history to fetch per poll; `> 0` and `<= poll-interval-sec`
 
 ### Parallelism Parameters
 
@@ -155,6 +180,14 @@ Parameter                 | Type | Default | Description
 `batch-flush-interval-ms` | int  | 0       | **Deprecated, no effect.** Accepted for compatibility. Partial batches are always submitted when a PV fetch completes.
 `max-batch-span-sec`      | int  | 86400   | Flush a pending PV batch before the next sample would make its timestamps span this many seconds. Keeps batches under the MLDP bucket limit (`Buckets.maxBucketSpanSeconds`, 24h); larger spans are rejected by MLDP.
 
+### Retry and Windowing Parameters
+
+Parameter                | Type | Default | Description
+------------------------ | ---- | ------- | -------------------------------------------------------------------
+`fetch-max-retries`      | int  | 3       | Retries of a failed PV fetch (attempts = retries + 1); `>= 0`
+`fetch-window-sec`       | int  | 86400   | Split a historical range with an `end-date` into epoch-aligned windows of this size; `0` = one request; `>= 0`
+`fetch-retry-backoff-ms` | int  | 1000    | Delay between retries (ms); `>= 0`
+
 **Interaction rules:**
 
 - When `pv-samples-per-batch > 0`, samples are accumulated per PV in memory. A batch is submitted when the count reaches `pv-samples-per-batch`, or earlier when the next sample would make the batch span `max-batch-span-sec` (relevant for slow-changing PVs).
@@ -164,7 +197,7 @@ Parameter                 | Type | Default | Description
 reader:
   epics-archiver:
     - name: batched_archiver
-      hostname: "archiver.example.com:11200"
+      hostname: "archiver.example.org:11200"
       start-date: "2024-01-01T00:00:00Z"
       pv-samples-per-batch: 10        # submit after 10 samples per PV
       pvs:
@@ -175,16 +208,16 @@ reader:
 
 Parameter             | Type  | Default | Description
 --------------------- | ----- | ------- | ----------------------------------
-`connect-timeout-sec` | float | 30.0    | Connection establishment timeout
-`total-timeout-sec`   | float | 300.0   | Total operation timeout
+`connect-timeout-sec` | int   | 30      | Connection establishment timeout (`> 0`)
+`total-timeout-sec`   | int   | 300     | Total operation timeout; `0` = infinite
 `tls-verify-peer`     | bool  | true    | Verify SSL peer certificate
-`tls-verify-host`     | bool  | true    | Verify hostname matches certificate
+`tls-verify-host`     | bool  | true    | Verify hostname matches certificate (requires `tls-verify-peer: true`)
 
 ```yaml
 reader:
   - epics-archiver:
       - name: secure_archiver
-        hostname: "archiver.example.com:11200"
+        hostname: "archiver.example.org:11200"
         start-date: "2024-01-01T00:00:00Z"
         connect-timeout-sec: 30         # Connection timeout (default: 30)
         total-timeout-sec: 300          # Total operation timeout (default: 300)
@@ -196,8 +229,12 @@ reader:
 
 **Validation rules:**
 
-- `total-timeout-sec >= connect-timeout-sec` (enforced)
-- All timeout values must be positive (enforced)
+- `total-timeout-sec >= connect-timeout-sec` unless `total-timeout-sec: 0` (infinite) (enforced)
+- `connect-timeout-sec > 0`, `total-timeout-sec >= 0` (enforced)
+- `tls-verify-host: true` requires `tls-verify-peer: true` (enforced)
+- `mode` must be `historical_once` or `periodic_tail` (enforced)
+- `fetch-max-retries`, `fetch-window-sec`, `fetch-retry-backoff-ms` must be `>= 0` (enforced)
+- `thread-pool` is not a key of this reader (ignored); use `fetch-threads`
 - Hostname must be valid and reachable
 - At least one PV required
 - Start date required for one-shot mode
@@ -260,23 +297,23 @@ EPICS Type         | DataFrame Column Type
 reader:
   - epics-archiver:
       - name: yesterday_backfill
-        hostname: "archiver.example.com:11200"
+        hostname: "archiver.example.org:11200"
         start-date: "2024-01-09T00:00:00Z"
         end-date: "2024-01-10T00:00:00Z"
         pvs:
           - name: MY:SCALAR:PV
 ```
 
-### Continuous Tail (Last Hour)
+### Continuous Tail
 
 ```yaml
 reader:
   - epics-archiver:
       - name: tail_reader
-        hostname: "archiver.example.com:11200"
+        hostname: "archiver.example.org:11200"
         mode: periodic_tail
         poll-interval-sec: 10
-        lookback-sec: 3600            # Keep 1 hour of history per poll
+        lookback-sec: 10              # must be <= poll-interval-sec
         pvs:
           - name: MY:PV
 ```

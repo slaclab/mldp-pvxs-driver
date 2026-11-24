@@ -10,7 +10,7 @@ timestamp, representing one beam-pulse acquisition.
 The driver represents this as a PVXS `NTTable` (Named-Type Table) with a fixed
 two-column layout for per-row timestamps plus one column **per PV name** being
 acquired.  The column name is exactly the EPICS PV name (e.g.
-`XCOR:LI28:202:BACT`), making the table's column set the live device list for
+`EXAMPLE:DEV:1:VALUE`), making the table's column set the live device list for
 that acquisition group.
 
 ## Structure Layout
@@ -39,8 +39,8 @@ epics:nt/NTTable:1.0
   element per beam pulse.  Any number of PVs may appear; the column name is
   exactly the EPICS PV name.
 - PVA field names cannot contain `:`, so real IOCs publish mangled field names
-  (`ACCL_IN20_300_L0A_ACUSBR`) and list the real PV names
-  (`ACCL:IN20:300:L0A_ACUSBR`) in a companion **signal PV** (`<prefix>_SIG`,
+  (`EXAMPLE_DEV_1_SIG_A`) and list the real PV names
+  (`EXAMPLE:DEV:1:SIG_A`) in a companion **signal PV** (`<prefix>_SIG`,
   string array, one entry per data column, in column order).
 
 ### Real column names from the signal PV (`epics-pvxs-bsas-gen1`)
@@ -66,12 +66,29 @@ their columns from the NTTable `labels`, falling back to the field name.
 reader:
   epics-pvxs-bsas-gen1:
     - name: bsas_gen1
-      signal-timeout-ms: 5000          # optional; per startup get
+      thread-pool: 2
+      environment:
+        EPICS_PVA_ADDR_LIST: "pva-gateway.example.org:5075"
+        EPICS_PVA_AUTO_ADDR_LIST: "NO"
+      rows-per-data-batch: 120        # rows per DataBatch; 0 = all rows
+      pvs-per-data-batch: 1           # PV columns per DataBatch; 0 = all
+      data-batches-per-push: 50       # DataBatches per bus EventBatch; 0 = all
+      tsSeconds: secondsPastEpoch     # per-row epoch seconds column
+      tsNanos: nanoseconds            # per-row nanoseconds column
+      signal-timeout-ms: 5000         # timeout of each startup signal/table get
+      skip-nan-columns: true          # drop all-NaN columns and row chunks
+      metadata:
+        table-gen: "1"
       pvs:
-        - name: BSAS:SYS0:1:CUSXR_TBL  # signal PV: BSAS:SYS0:1:CUSXR_SIG
+        # Order matters: a PV present in several tables is published only by
+        # the first table listing it (here TABLE_A owns the shared PVs).
+        - name: EXAMPLE:TABLE_A_TBL       # signal PV: EXAMPLE:TABLE_A_SIG
+        - name: EXAMPLE:TABLE_B_TBL       # signal PV: EXAMPLE:TABLE_B_SIG
         - name: SOME:TABLE
-          option:
-            signal-pv: SOME:TABLE:NAMES
+          option:                           # per-PV overrides
+            signal-pv: SOME:TABLE:NAMES     # explicit signal PV (no _TBL suffix)
+            pvs-per-data-batch: 0
+            skip-nan-columns: false
 ```
 - The **two timestamp columns** (`secondsPastEpoch`, `nanoseconds`) index each
   row in time.  Supported integer types: `UInt32`, `UInt64`, `Int32`, `Int64`.
@@ -79,8 +96,8 @@ reader:
 
 ### PVs shared by several tables
 
-Some PVs appear as a column in more than one table (e.g. beamline-wide stoppers,
-PPS and kicker rates exist unsuffixed in both `CUHXR_TBL` and `CUSXR_TBL`).
+Some PVs appear as a column in more than one table (e.g. beamline-wide signals such as stoppers,
+PPS and kicker rates exposed unsuffixed by two tables).
 Publishing both copies would write the same MLDP PV from two sources: overlapping
 buckets, and `E11000 duplicate key` rejections when two chunks start on the same row.
 
@@ -89,7 +106,20 @@ that declares the PV publishes it; the column is dropped from every later table,
 a warning at startup:
 
 ```
-[pvxs_gen1_reader/BSAS:SYS0:1:CUSXR_TBL] column 'STPR:BSYH:2:STD2_OUT_B' already published by table BSAS:SYS0:1:CUHXR_TBL; dropped from this table
+[pvxs_gen1_reader/EXAMPLE:TABLE_B_TBL] column 'EXAMPLE:SHARED:PV:1' already published by table EXAMPLE:TABLE_A_TBL; dropped from this table
+```
+
+Owner selection is the order of `pvs` (or of the lines in a `pvs-files` file):
+
+```yaml
+reader:
+  epics-pvxs-bsas-gen1:
+    - name: pvxs_gen1_reader
+      pvs:
+        - name: EXAMPLE:TABLE_A_TBL   # owns EXAMPLE:SHARED:PV:1, EXAMPLE:SHARED:PV:2, ...
+        - name: EXAMPLE:TABLE_B_TBL   # shared columns dropped here
+        - name: EXAMPLE:TABLE_C_TBL
+        - name: EXAMPLE:TABLE_D_TBL
 ```
 
 Tables with a signal PV claim their columns at startup. Tables named from `labels`
@@ -160,17 +190,31 @@ reader (the plain `epics-pvxs` reader is scalar-only and rejects
 
 ```yaml
 reader:
-  - epics-pvxs-bsas-gen1:
-      - name: bsas_gen1
-        rows-per-data-batch: 120      # rows per DataBatch; 0 = all rows
-        pvs-per-data-batch: 1         # PV columns per DataBatch; 0 = all
-        data-batches-per-push: 50     # DataBatches per bus EventBatch; 0 = all
-        tsSeconds: secondsPastEpoch   # omit to use this default
-        tsNanos: nanoseconds          # omit to use this default
-        pvs:
-          - name: "BSAS:GEN1:TABLE"
-            option:                   # optional per-PV overrides
-              pvs-per-data-batch: 0
+  epics-pvxs-bsas-gen1:
+    - name: bsas_gen1
+      thread-pool: 2
+      environment:
+        EPICS_PVA_ADDR_LIST: "pva-gateway.example.org:5075"
+        EPICS_PVA_AUTO_ADDR_LIST: "NO"
+      rows-per-data-batch: 120        # rows per DataBatch; 0 = all rows
+      pvs-per-data-batch: 1           # PV columns per DataBatch; 0 = all
+      data-batches-per-push: 50       # DataBatches per bus EventBatch; 0 = all
+      tsSeconds: secondsPastEpoch     # per-row epoch seconds column
+      tsNanos: nanoseconds            # per-row nanoseconds column
+      signal-timeout-ms: 5000         # timeout of each startup signal/table get
+      skip-nan-columns: true          # drop all-NaN columns and row chunks
+      metadata:
+        table-gen: "1"
+      pvs:
+        # Order matters: a PV present in several tables is published only by
+        # the first table listing it (here TABLE_A owns the shared PVs).
+        - name: EXAMPLE:TABLE_A_TBL       # signal PV: EXAMPLE:TABLE_A_SIG
+        - name: EXAMPLE:TABLE_B_TBL       # signal PV: EXAMPLE:TABLE_B_SIG
+        - name: SOME:TABLE
+          option:                           # per-PV overrides
+            signal-pv: SOME:TABLE:NAMES     # explicit signal PV (no _TBL suffix)
+            pvs-per-data-batch: 0
+            skip-nan-columns: false
 ```
 
 Key                     | Level            | Default            | Description
@@ -180,6 +224,9 @@ Key                     | Level            | Default            | Description
 `data-batches-per-push` | reader, `option` | `50`               | `DataBatch`es per bus `EventBatch` push; `0` = all in one push
 `tsSeconds`             | reader, `option` | `secondsPastEpoch` | Name of the per-row epoch-seconds column
 `tsNanos`               | reader, `option` | `nanoseconds`      | Name of the per-row nanoseconds column
+`signal-pv`             | `option`         | `<table>_TBL` → `<table>_SIG` | Signal PV with the real column names
+`signal-timeout-ms`     | reader, `option` | `5000`             | Timeout (ms) of each startup signal/table get
+`skip-nan-columns`      | reader, `option` | `true`             | Drop all-NaN columns and all-NaN row chunks; `false` ingests them
 
 `option.type` is rejected: the table generation is implied by the reader type.
 `column-batch-size` is rejected: use `data-batches-per-push`.
@@ -196,6 +243,19 @@ Example — 1000 PVs × 250 rows with the defaults: each PV is cut into 3 DataBa
 column whose values are all NaN in an update, and any row chunk
 (`rows-per-data-batch > 0`) whose kept columns are all NaN. Set `false` to ingest
 them anyway. Gen1 only; the Gen2 reader always drops them and rejects the key.
+
+```yaml
+reader:
+  epics-pvxs-bsas-gen1:
+    - name: bsas_gen1
+      rows-per-data-batch: 120
+      skip-nan-columns: true            # default: all-NaN data never reaches MLDP
+      pvs:
+        - name: EXAMPLE:TABLE_A_TBL
+        - name: EXAMPLE:TABLE_B_TBL
+          option:
+            skip-nan-columns: false     # ingest this table's all-NaN columns too
+```
 
 ### Bus output
 

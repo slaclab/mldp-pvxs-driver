@@ -116,17 +116,31 @@ All-NaN `.Val` columns are discarded.
 reader:
   - epics-pvxs-bsas-gen2:
       - name: bsas_gen2
+        thread-pool: 1                # default 1; event conversion threads
+        environment:                  # optional EPICS_PVA_* settings for this reader only
+          EPICS_PVA_ADDR_LIST: "pva-gateway.example.org:5075"
+          EPICS_PVA_AUTO_ADDR_LIST: "NO"
         pidField: pid                 # default; column always skipped
         valueSuffix: Val              # default; case-insensitive
         rows-per-data-batch: 120      # rows per DataBatch; 0 = all rows
         pvs-per-data-batch: 1         # PV columns per DataBatch; 0 = all
         data-batches-per-push: 50     # DataBatches per bus EventBatch; 0 = all
-        tsSeconds: secondsPastEpoch
-        tsNanos: nanoseconds
+        tsSeconds: secondsPastEpoch   # default
+        tsNanos: nanoseconds          # default
+        metadata:                     # optional, attached to every table
+          table-gen: "2"
         pvs:
           - name: "BSAS:GEN2:TABLE"
-            option:                   # optional per-PV overrides
+            option:                   # optional per-PV overrides (any table key above)
               valueSuffix: VAL
+            metadata:                 # optional per-PV metadata
+              area: example
+        pvs-files:                    # optional; one table PV per line
+          - path: gen2-tables.txt     # relative → config file directory
+            option:                   # optional, applied to every PV in the file
+              pvs-per-data-batch: 0
+            metadata:                 # optional, applied to every PV in the file
+              group: gen2
 ```
 
 Key                     | Level            | Default            | Description
@@ -138,9 +152,19 @@ Key                     | Level            | Default            | Description
 `tsNanos`               | reader, `option` | `nanoseconds`      | Name of the per-row nanoseconds column
 `pidField`              | reader, `option` | `pid`              | Pulse ID column name (always skipped)
 `valueSuffix`           | reader, `option` | `Val`              | Suffix of the value column, case-insensitive
+`name`                  | reader           | — (required)       | Reader instance name
+`thread-pool`           | reader           | `1`                | Event conversion thread pool size
+`environment`           | reader           | none               | Map of `EPICS_PVA_*` settings for this reader's PVXS context only
+`metadata`              | reader, `pvs[]`, `pvs-files[]` | none | Static string map attached to the table's batches
+`pvs[].name`            | `pvs[]`          | — (required)       | Table PV name
+`pvs[].option`          | `pvs[]`          | none               | Map of per-PV table-key overrides
+`pvs-files[].path`      | `pvs-files[]`    | — (required)       | Table PV list file; relative → config file directory
+`pvs-files[].option`    | `pvs-files[]`    | none               | Same as `pvs[].option`, for every PV in the file
 
 `option.type` is rejected: the table generation is implied by the reader type.
 `column-batch-size` is rejected: use `data-batches-per-push`.
+`signal-pv`, `signal-timeout-ms` and `skip-nan-columns` are Gen1-only and rejected
+(reader level and `option`): Gen2 always drops all-NaN columns.
 
 ## Implementation References
 

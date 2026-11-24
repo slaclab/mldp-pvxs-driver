@@ -78,14 +78,42 @@ When `rescan-interval-sec` is `0.0` (the default), the reader:
 reader:
   - slac-calendar:
       - name: cal_reader_once
-        base-url: https://calendar.slac.stanford.edu
-        accel:
+        base-url: https://calendar.example.org   # required, no trailing slash
+        accel:                                   # required, at least one entry
           - lcls
           - facet
-        lookahead-days: 30
-        lookback-days: 1
+        lookahead-days: 30                       # required unless end-date is set; > 0
+        lookback-days: 1                         # default 1; >= 0
+        # start-date: "2024-01-01"               # optional first-run start override
+        # end-date: "2024-01-31"                 # fixed range; needs start-date, incompatible
+        #                                        # with lookahead/lookback/rescan (see below)
+        # category: beam-schedule                # optional fixed category; default: event configuration_name
+        rescan-interval-sec: 0.0                 # default 0 = run once
+        connect-timeout-sec: 30                  # default 30
+        total-timeout-sec: 60                    # default 60; >= connect-timeout-sec
+        tls-verify-peer: true                    # default true
+        tls-verify-host: true                    # default true
+        fetch-window-days: 7                     # default 7; > 0
+        fetch-window-delay-ms: 200               # default 200; >= 0
+        cache-buster: true                       # default true
+        suspicious-window-retries: 2             # default 2; 0 disables
+        suspicious-window-retry-delay-ms: 2000   # default 2000
+        # attributes: [...]                      # optional field → attribute overrides (see Attribute Mapping)
+```
+
+Fixed-range mode (one run over `[start-date, end-date]`; `lookahead-days`,
+`lookback-days` and `rescan-interval-sec` must be absent):
+
+```yaml
+reader:
+  - slac-calendar:
+      - name: cal_reader_range
+        base-url: https://calendar.example.org
+        accel:
+          - lcls
+        start-date: "2024-01-01"                 # YYYY-MM-DD[THH:MM:SS[Z|±HH:MM]]
+        end-date: "2024-01-31"                   # must be >= start-date
         fetch-window-days: 7
-        fetch-window-delay-ms: 200
 ```
 
 ### Periodic Rescan
@@ -97,7 +125,7 @@ The sleep between iterations is interruptible so shutdown is prompt. Does **not*
 reader:
   - slac-calendar:
       - name: cal_reader_rescan
-        base-url: https://calendar.slac.stanford.edu
+        base-url: https://calendar.example.org
         accel:
           - lcls
         lookahead-days: 30
@@ -181,7 +209,7 @@ attributes:
 reader:
   - slac-calendar:
       - name: cal_reader_custom_attrs
-        base-url: https://aosd.slac.stanford.edu/program_calendar
+        base-url: https://calendar.example.org/program_calendar
         accel:
           - lcls
         lookahead-days: 30
@@ -312,7 +340,7 @@ writer:
 reader:
   - slac-calendar:
       - name: cal_reader
-        base-url: https://calendar.slac.stanford.edu
+        base-url: https://calendar.example.org
         accel:
           - lcls
           - facet

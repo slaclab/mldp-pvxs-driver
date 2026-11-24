@@ -67,27 +67,27 @@ static constexpr auto kMetadataKey = "metadata";
  * readers:
  *   - type: epics-archiver
  *     name: my-archiver-reader
- *     hostname: "archiver.slac.stanford.edu:11200"
+ *     hostname: "archiver.example.org:11200"
  *     mode: "historical_once" # optional, default
- *     start_date: "2026-01-01T00:00:00Z" # required in historical_once mode
- *     end_date: "2026-01-02T00:00:00Z"   # optional
- *     connect_timeout_sec: 30 # optional, default: 30 seconds
- *     total_timeout_sec: 300  # optional, default: 300 seconds (5 minutes)
- *     tls_verify_peer: true   # optional, default: true
- *     tls_verify_host: true   # optional, default: true
+ *     start-date: "2026-01-01T00:00:00Z" # required in historical_once mode
+ *     end-date:   "2026-01-02T00:00:00Z"   # optional
+ *     connect-timeout-sec: 30 # optional, default: 30 seconds
+ *     total-timeout-sec: 300  # optional, default: 300 seconds (5 minutes)
+ *     tls-verify-peer: true   # optional, default: true
+ *     tls-verify-host: true   # optional, default: true
  *     pvs:
- *       - name: "SLAC:GUNB:ELEC:LTU1:630:EPICS_PV"
- *       - name: "FACET:DL1:SBEN:1:BDES"
+ *       - name: "EXAMPLE:PV:A"
+ *       - name: "EXAMPLE:PV:B"
  *
  *   - type: epics-archiver
  *     name: my-archiver-tail-reader
- *     hostname: "archiver.slac.stanford.edu:11200"
+ *     hostname: "archiver.example.org:11200"
  *     mode: "periodic_tail"
- *     poll_interval_sec: 5  # required in periodic_tail mode
- *     lookback_sec: 5       # optional, defaults to poll_interval_sec, must be <= poll_interval_sec
+ *     poll-interval-sec: 5  # required in periodic_tail mode
+ *     lookback-sec: 5       # optional, defaults to poll-interval-sec, must be <= poll-interval-sec
  *     fetch-threads: 2      # optional, parallel PV fetch workers (default: 1)
  *     pvs:
- *       - name: "FACET:DL1:SBEN:1:BDES"
+ *       - name: "EXAMPLE:PV:B"
  * @endcode
  */
 class EpicsArchiverReaderConfig
@@ -153,7 +153,7 @@ public:
      * @brief Get the Archiver Appliance service hostname/URL.
      *
      * @return Hostname or URL where the archiver service is accessible
-     *         (e.g., "archiver.slac.stanford.edu:11200").
+     *         (e.g., "archiver.example.org:11200").
      */
     const std::string& hostname() const;
 

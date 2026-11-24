@@ -57,17 +57,45 @@ flowchart TB
 reader:
   - epics-pvxs:
       - name: my_pvxs_reader
-        thread-pool: 2                # Event conversion thread pool size
+        thread-pool: 1                # Event conversion thread pool size (default 1)
+        column-batch-size: 50         # parsed (default 50); not used by epics-pvxs
         environment:                  # optional, affects only this reader's PVXS context
-          EPICS_PVA_ADDR_LIST: "134.79.0.255:5076"
+          EPICS_PVA_ADDR_LIST: "pva-gateway.example.org:5076"
           EPICS_PVA_AUTO_ADDR_LIST: "NO"
           EPICS_PVA_INTF_ADDR_LIST: "10.0.0.10"
           EPICS_PVA_BROADCAST_PORT: "5076"
           EPICS_PVA_NAME_SERVERS: "nameserver.example.org:5076"
           EPICS_PVA_CONN_TMO: "42.5"
+        metadata:                     # optional static metadata attached to every PV
+          facility: example
         pvs:
-          - name: MY:PV:NAME
+          - name: EXAMPLE:PV:A
+            # option: <string>        # optional scalar channel option
+            metadata:                 # optional per-PV metadata
+              unit: mm
+        pvs-files:                    # optional; PV names loaded from text files
+          - path: scalars.txt         # relative → config file directory
+            # option: <string>        # optional, applied to every PV in the file
+            metadata:                 # optional, applied to every PV in the file
+              group: scalars
 ```
+
+Key                    | Level         | Default      | Description
+---------------------- | ------------- | ------------ | ---------------------------------------------------------
+`name`                 | reader        | — (required) | Reader instance name; must be non-empty
+`thread-pool`          | reader        | `1`          | Event conversion thread pool size (`> 1` uses the pool, else direct)
+`column-batch-size`    | reader        | `50`         | Parsed by the shared EPICS config; not used by `epics-pvxs`
+`environment`          | reader        | none         | Map of `EPICS_PVA_*` scalar settings for this reader's PVXS context only
+`metadata`             | reader        | none         | Static string map attached to every PV of this reader
+`pvs`                  | reader        | none         | Sequence of PV entries (PV names must be unique across `pvs`/`pvs-files`)
+`pvs[].name`           | `pvs[]`       | — (required) | EPICS PV name
+`pvs[].option`         | `pvs[]`       | none         | Channel option (scalar); `type: slac-bsas-table` is rejected
+`pvs[].metadata`       | `pvs[]`       | none         | Static string map for this PV
+`pvs-files[].path`     | `pvs-files[]` | — (required) | PV list file; relative → config file directory
+`pvs-files[].option`   | `pvs-files[]` | none         | Same as `pvs[].option`, applied to every PV in the file
+`pvs-files[].metadata` | `pvs-files[]` | none         | Same as `pvs[].metadata`, applied to every PV in the file
+
+`backend` is rejected.
 
 ### Loading PVs from files
 
@@ -87,17 +115,35 @@ reader:
           - path: /etc/mldp-pvxs/scalars.txt
   - epics-pvxs-bsas-gen1:
       - name: bsas_gen1
+        rows-per-data-batch: 120      # default; 0 = all rows
+        pvs-per-data-batch: 1         # default; 0 = all
+        data-batches-per-push: 50     # default; 0 = all
+        tsSeconds: secondsPastEpoch   # default
+        tsNanos: nanoseconds          # default
+        signal-timeout-ms: 5000       # default; Gen1 only
+        skip-nan-columns: true        # default; Gen1 only
         pvs-files:
           - path: /etc/mldp-pvxs/gen1-tables.txt
-            option:
+            option:                   # signal-pv is per-PV only (default <table>_TBL → <table>_SIG)
               data-batches-per-push: 4
   - epics-pvxs-bsas-gen2:
       - name: bsas_gen2
+        rows-per-data-batch: 120      # default; 0 = all rows
+        pvs-per-data-batch: 1         # default; 0 = all
+        data-batches-per-push: 50     # default; 0 = all
+        tsSeconds: secondsPastEpoch   # default
+        tsNanos: nanoseconds          # default
+        pidField: pid                 # default; Gen2 only
+        valueSuffix: Val              # default; Gen2 only, case-insensitive
         pvs-files:
           - path: gen2-tables.txt                # relative → config file directory
             option:
               pvs-per-data-batch: 0
 ```
+
+Both BSAS readers also accept `thread-pool`, `environment`, `metadata`, `pvs` and the
+`pvs[]`/`pvs-files[]` `option`/`metadata` keys above. Full key tables:
+[Gen 1](slac-bsas-table-gen1.md#configuration), [Gen 2](slac-bsas-table-gen2.md#configuration).
 
 ```text
 # gen1-tables.txt
