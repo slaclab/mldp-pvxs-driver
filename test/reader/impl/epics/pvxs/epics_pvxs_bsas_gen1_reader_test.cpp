@@ -513,6 +513,20 @@ pvs:
     EXPECT_EQ(groups.front().columnNames(), (std::vector<std::string>{"OK:A", "OK:C"}));
 }
 
+TEST_F(EpicsPVXSBsasGen1ReaderTest, AllNaNColumnsAreKeptWhenSkipNanColumnsDisabled)
+{
+    start(R"(
+name: bsas_gen1
+skip-nan-columns: false
+pvs-per-data-batch: 0
+pvs:
+  - name: test:bsas_gen1_nan_TBL
+)");
+    const auto groups = waitForDataGroups("test:bsas_gen1_nan_TBL", 1);
+    ASSERT_GE(groups.size(), 1u);
+    EXPECT_EQ(groups.front().columnNames(), (std::vector<std::string>{"OK:A", "NAN:B", "OK:C"}));
+}
+
 TEST_F(EpicsPVXSBsasGen1ReaderTest, AllNaNTableProducesMarkerOnly)
 {
     start(R"(
@@ -619,6 +633,67 @@ pvs:
     ASSERT_GE(wide.size(), 1u);
     EXPECT_EQ(table.front().columnNames().size(), 3u);
     EXPECT_EQ(wide.front().columnNames().size(), 10u);
+}
+
+TEST_F(EpicsPVXSBsasGen1ReaderTest, PvSharedByTwoTablesIsPublishedByFirstTableOnly)
+{
+    start(R"(
+name: bsas_gen1
+pvs:
+  - name: test:bsas_gen1_table_TBL
+  - name: test:bsas_gen1_overlap_TBL
+)");
+    const auto table = waitForDataGroups("test:bsas_gen1_table_TBL", 1);
+    const auto overlap = waitForDataGroups("test:bsas_gen1_overlap_TBL", 1);
+    ASSERT_GE(table.size(), 1u);
+    ASSERT_GE(overlap.size(), 1u);
+    EXPECT_EQ(table.front().columnNames(), (std::vector<std::string>{"PV:A", "PV:B", "PV:C"}));
+    EXPECT_EQ(overlap.front().columnNames(), (std::vector<std::string>{"PV:X"}));
+}
+
+TEST_F(EpicsPVXSBsasGen1ReaderTest, SharedPvOwnerFollowsConfigOrder)
+{
+    start(R"(
+name: bsas_gen1
+pvs:
+  - name: test:bsas_gen1_overlap_TBL
+  - name: test:bsas_gen1_table_TBL
+)");
+    const auto table = waitForDataGroups("test:bsas_gen1_table_TBL", 1);
+    const auto overlap = waitForDataGroups("test:bsas_gen1_overlap_TBL", 1);
+    ASSERT_GE(table.size(), 1u);
+    ASSERT_GE(overlap.size(), 1u);
+    EXPECT_EQ(overlap.front().columnNames(), (std::vector<std::string>{"PV:B", "PV:X"}));
+    EXPECT_EQ(table.front().columnNames(), (std::vector<std::string>{"PV:A", "PV:C"}));
+}
+
+TEST_F(EpicsPVXSBsasGen1ReaderTest, LabelTableDropsPvOwnedBySignalTable)
+{
+    start(R"(
+name: bsas_gen1
+pvs:
+  - name: test:bsas_gen1_ok_TBL
+  - name: test:bsas_gen1_labels
+)");
+    const auto ok = waitForDataGroups("test:bsas_gen1_ok_TBL", 1);
+    ASSERT_GE(ok.size(), 1u);
+    EXPECT_EQ(ok.front().columnNames(),
+              (std::vector<std::string>{"ACCL:IN20:300:L0A_ACUSBR", "BPMS:LI21:131:XCUSBR"}));
+    // Let the label table post a few updates: every column is owned elsewhere.
+    std::this_thread::sleep_for(std::chrono::seconds(3));
+    EXPECT_TRUE(dataGroupsFor(bus->snapshot(), "test:bsas_gen1_labels").empty());
+}
+
+TEST(EpicsPVXSBsasGen1ColumnOwnershipTest, FirstClaimWins)
+{
+    EpicsPVXSBsasGen1Reader::ColumnOwnership ownership;
+    EXPECT_TRUE(ownership.claim("PV:A", "T1"));
+    EXPECT_TRUE(ownership.claim("PV:A", "T1"));
+    EXPECT_FALSE(ownership.claim("PV:A", "T2"));
+    EXPECT_TRUE(ownership.claim("PV:B", "T2"));
+    EXPECT_EQ(ownership.ownerOf("PV:A"), "T1");
+    EXPECT_EQ(ownership.ownerOf("PV:B"), "T2");
+    EXPECT_EQ(ownership.ownerOf("PV:Z"), "");
 }
 
 TEST_F(EpicsPVXSBsasGen1ReaderTest, ParallelConversionKeepsColumnOrder)

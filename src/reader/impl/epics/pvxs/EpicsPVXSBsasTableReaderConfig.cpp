@@ -55,6 +55,21 @@ void readCount(const Config& cfg, const char* key, const std::string& context, s
     out = static_cast<std::size_t>(value);
 }
 
+/// Read a boolean key (true/false); throws on any other value.
+void readBool(const Config& cfg, const char* key, const std::string& context, bool& out)
+{
+    if (!cfg.hasChild(key))
+    {
+        return;
+    }
+    const auto raw = cfg.get(key);
+    if (!cfg.raw()[key].has_val() || (raw != "true" && raw != "false"))
+    {
+        throw EpicsReaderConfig::Error(context + "." + key + " must be true or false");
+    }
+    out = raw == "true";
+}
+
 /// Apply the table keys found in @p cfg on top of @p opts.
 /// Default signal PV of a Gen1 table: trailing `_TBL` replaced by `_SIG`.
 std::string deriveSignalPv(const std::string& tablePv)
@@ -86,7 +101,7 @@ void readTableOptions(const Config& cfg, Generation generation, const std::strin
     {
         readName(cfg, PidFieldKey, context, opts.pidField);
         readName(cfg, ValueSuffixKey, context, opts.valueSuffix);
-        for (const char* key : {SignalPvKey, SignalTimeoutMsKey})
+        for (const char* key : {SignalPvKey, SignalTimeoutMsKey, SkipNanColumnsKey})
         {
             if (cfg.hasChild(key))
             {
@@ -103,6 +118,7 @@ void readTableOptions(const Config& cfg, Generation generation, const std::strin
         }
         readName(cfg, SignalPvKey, context, opts.signalPv);
         readCount(cfg, SignalTimeoutMsKey, context, opts.signalTimeoutMs);
+        readBool(cfg, SkipNanColumnsKey, context, opts.skipNanColumns);
         if (opts.signalTimeoutMs == 0)
         {
             throw EpicsReaderConfig::Error(context + "." + SignalTimeoutMsKey + " must be greater than 0");

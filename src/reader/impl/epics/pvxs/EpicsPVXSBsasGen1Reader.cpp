@@ -17,7 +17,10 @@
 
 #include <algorithm>
 #include <memory>
+#include <iterator>
+#include <mutex>
 #include <stdexcept>
+#include <unordered_set>
 
 using namespace mldp_pvxs_driver::reader::impl::epics;
 using namespace mldp_pvxs_driver::util::log;
@@ -48,6 +51,7 @@ EpicsPVXSBsasGen1Reader::EpicsPVXSBsasGen1Reader(std::shared_ptr<util::bus::IDat
     infof(*logger_, "[{}] Resolving BSAS gen1 column names from signal PVs", name_);
     resolveSignalNames();
     infof(*logger_, "[{}] Column names resolved", name_);
+    installOwnershipForLabelTables();
     addPV(pvNames());
 }
 
@@ -89,9 +93,54 @@ EpicsPVXSBsasGen1Reader::ColumnNameMap EpicsPVXSBsasGen1Reader::buildColumnNameM
     return names;
 }
 
+bool EpicsPVXSBsasGen1Reader::ColumnOwnership::claim(const std::string& pvName, const std::string& tablePv)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto [it, inserted] = owner_.emplace(pvName, tablePv);
+    return inserted || it->second == tablePv;
+}
+
+std::string EpicsPVXSBsasGen1Reader::ColumnOwnership::ownerOf(const std::string& pvName) const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto it = owner_.find(pvName);
+    return it != owner_.end() ? it->second : std::string{};
+}
+
+void EpicsPVXSBsasGen1Reader::installOwnershipForLabelTables()
+{
+    for (const auto& pv : tableConfig().pvNames())
+    {
+        if (!tableConfig().optionsFor(pv).signalPv.empty())
+        {
+            continue; // claimed at startup by resolveSignalNames()
+        }
+        auto ownership = ownership_;
+        auto logger = logger_;
+        auto readerName = name_;
+        auto warned = std::make_shared<std::unordered_set<std::string>>();
+        auto warnedMutex = std::make_shared<std::mutex>();
+        setColumnFilter(pv, [ownership, logger, readerName, pv, warned, warnedMutex](std::string_view label) -> std::optional<std::string>
+                        {
+                            std::string name(label);
+                            if (ownership->claim(name, pv))
+                            {
+                                return name;
+                            }
+                            std::lock_guard<std::mutex> lock(*warnedMutex);
+                            if (warned->insert(name).second)
+                            {
+                                warnf(*logger, "[{}/{}] column '{}' already published by table {}; dropped from this table",
+                                      readerName, pv, name, ownership->ownerOf(name));
+                            }
+                            return std::nullopt;
+                        });
+    }
+}
+
 void EpicsPVXSBsasGen1Reader::resolveSignalNames()
 {
-    for (const auto& pv : pvNames())
+    for (const auto& pv : tableConfig().pvNames())
     {
         const auto& opts = tableConfig().optionsFor(pv);
         if (opts.signalPv.empty())
@@ -155,8 +204,28 @@ void EpicsPVXSBsasGen1Reader::resolveSignalNames()
             throw std::runtime_error(util::format_string("Reader {}: cannot read table PV {}: {}", name_, pv, e.what()));
         }
 
-        auto names = std::make_shared<const ColumnNameMap>(
-            buildColumnNameMap(pv, opts.signalPv, fields, signals));
+        auto names = buildColumnNameMap(pv, opts.signalPv, fields, signals);
+
+        // Drop columns whose PV is already published by an earlier table.
+        std::size_t dropped = 0;
+        for (const auto& real : signals)
+        {
+            if (!ownership_->claim(real, pv))
+            {
+                warnf(*logger_, "[{}/{}] column '{}' already published by table {}; dropped from this table",
+                      name_, pv, real, ownership_->ownerOf(real));
+                ++dropped;
+            }
+        }
+        if (dropped > 0)
+        {
+            for (auto it = names.begin(); it != names.end();)
+            {
+                it = ownership_->ownerOf(it->second) == pv ? std::next(it) : names.erase(it);
+            }
+            infof(*logger_, "[{}/{}] {} duplicate column(s) dropped", name_, pv, dropped);
+        }
+        auto namesPtr = std::make_shared<const ColumnNameMap>(std::move(names));
         for (std::size_t i = 0; i < fields.size(); ++i)
         {
             debugf(*logger_, "[{}/{}]   column '{}' -> '{}'", name_, pv, fields[i], signals[i]);
@@ -165,14 +234,14 @@ void EpicsPVXSBsasGen1Reader::resolveSignalNames()
 
         auto logger = logger_;
         auto readerName = name_;
-        setColumnFilter(pv, [names, logger, readerName, pv](std::string_view label) -> std::optional<std::string>
+        setColumnFilter(pv, [names = namesPtr, logger, readerName, pv](std::string_view label) -> std::optional<std::string>
                         {
                             const auto it = names->find(std::string(label));
                             if (it != names->end())
                             {
                                 return it->second;
                             }
-                            debugf(*logger, "[{}/{}] column '{}' not in startup name cache; dropped", readerName, pv, label);
+                            debugf(*logger, "[{}/{}] column '{}' not in startup name cache or owned by another table; dropped", readerName, pv, label);
                             return std::nullopt;
                         });
     }

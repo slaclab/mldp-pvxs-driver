@@ -17,6 +17,8 @@
 
 #include <reader/ReaderFactory.h>
 
+#include <memory>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -42,7 +44,14 @@ namespace mldp_pvxs_driver::reader::impl::epics {
  * cache is fixed for the reader lifetime; a column not in it is dropped.
  *
  * Tables without a signal PV name their columns from the NTTable `labels`,
- * falling back to the field name.  See docs/readers/slac-bsas-table-gen1.md.
+ * falling back to the field name.
+ *
+ * A PV name is published by one table only.  When several tables expose the
+ * same PV column (e.g. beamline-wide signals present in both CU HXR and CU
+ * SXR tables), the first table claiming it owns it and the column is dropped
+ * from every other table; otherwise both tables would write the same MLDP PV
+ * (duplicate/overlapping buckets).  Tables with a signal PV claim at startup
+ * in configuration order; label-named tables claim on first update.  See docs/readers/slac-bsas-table-gen1.md.
  *
  * @code{.yaml}
  * readers:
@@ -85,9 +94,36 @@ public:
                                             const std::vector<std::string>& fields,
                                             const std::vector<std::string>& signals);
 
+    /**
+     * @brief Thread-safe registry of which table publishes each PV name.
+     *
+     * The first table claiming a name owns it; later claims by other tables fail.
+     */
+    class ColumnOwnership
+    {
+    public:
+        /**
+         * @brief Claim @p pvName for @p tablePv.
+         * @return true if @p tablePv owns the name (new claim or already its own).
+         */
+        bool claim(const std::string& pvName, const std::string& tablePv);
+
+        /** @brief Owning table of @p pvName, empty if unclaimed. */
+        std::string ownerOf(const std::string& pvName) const;
+
+    private:
+        mutable std::mutex                           mutex_;
+        std::unordered_map<std::string, std::string> owner_;
+    };
+
 private:
     /** @brief Resolve and verify the real column names of every table with a signal PV. */
     void resolveSignalNames();
+
+    /** @brief Wrap the label-based filter of tables without a signal PV with ownership checks. */
+    void installOwnershipForLabelTables();
+
+    std::shared_ptr<ColumnOwnership> ownership_ = std::make_shared<ColumnOwnership>();
 
 private:
     REGISTER_READER("epics-pvxs-bsas-gen1", EpicsPVXSBsasGen1Reader)

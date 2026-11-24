@@ -63,6 +63,7 @@ pvs:
     EXPECT_EQ(o.tsNanosField, "nanoseconds");
     EXPECT_EQ(o.pidField, "pid");
     EXPECT_EQ(o.valueSuffix, "Val");
+    EXPECT_TRUE(o.skipNanColumns);
 }
 
 TEST(EpicsPVXSBsasTableReaderConfigTest, ReaderLevelKeysApplyToEveryPv)
@@ -148,6 +149,24 @@ pvs:
 )",
                          Generation::Gen1)
                      .empty());
+}
+
+TEST(EpicsPVXSBsasTableReaderConfigTest, SkipNanColumnsGen1ReaderLevelAndPerPv)
+{
+    const auto cfg = parse(R"(
+name: r
+skip-nan-columns: false
+pvs:
+  - name: T
+  - name: U
+    option:
+      skip-nan-columns: true
+)",
+                           Generation::Gen1);
+    EXPECT_FALSE(cfg.optionsFor("T").skipNanColumns);
+    EXPECT_TRUE(cfg.optionsFor("U").skipNanColumns);
+    EXPECT_NE(errorOf("name: r\nskip-nan-columns: maybe\n", Generation::Gen1).find("true or false"), std::string::npos);
+    EXPECT_NE(errorOf("name: r\nskip-nan-columns: false\n").find("epics-pvxs-bsas-gen1"), std::string::npos);
 }
 
 TEST(EpicsPVXSBsasTableReaderConfigTest, OptionTypeRejected)

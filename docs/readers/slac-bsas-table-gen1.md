@@ -77,6 +77,25 @@ reader:
   row in time.  Supported integer types: `UInt32`, `UInt64`, `Int32`, `Int64`.
 - All arrays share the same length (one element per row / beam pulse).
 
+### PVs shared by several tables
+
+Some PVs appear as a column in more than one table (e.g. beamline-wide stoppers,
+PPS and kicker rates exist unsuffixed in both `CUHXR_TBL` and `CUSXR_TBL`).
+Publishing both copies would write the same MLDP PV from two sources: overlapping
+buckets, and `E11000 duplicate key` rejections when two chunks start on the same row.
+
+The reader keeps one owner per PV name: the **first table in configuration order**
+that declares the PV publishes it; the column is dropped from every later table, with
+a warning at startup:
+
+```
+[pvxs_gen1_reader/BSAS:SYS0:1:CUSXR_TBL] column 'STPR:BSYH:2:STD2_OUT_B' already published by table BSAS:SYS0:1:CUHXR_TBL; dropped from this table
+```
+
+Tables with a signal PV claim their columns at startup. Tables named from `labels`
+(no signal PV) claim on their first update, so they never take a PV already owned by
+a signal-PV table. To choose which table owns shared PVs, order the table list.
+
 ## Concrete Example
 
 From [`test/mock/sioc.cpp`](../../test/mock/sioc.cpp), a three-row BSAS table
@@ -170,6 +189,13 @@ also accepted.
 Example — 1000 PVs × 250 rows with the defaults: each PV is cut into 3 DataBatches
 (120 + 120 + 10 rows), giving 3000 DataBatches. They are pushed in time order (rows
 0-119 of every PV first) in 60 pushes of 50, then the marker.
+
+### All-NaN columns (`skip-nan-columns`)
+
+`skip-nan-columns` (default `true`, reader level or per PV under `option`) drops a
+column whose values are all NaN in an update, and any row chunk
+(`rows-per-data-batch > 0`) whose kept columns are all NaN. Set `false` to ingest
+them anyway. Gen1 only; the Gen2 reader always drops them and rejects the key.
 
 ### Bus output
 

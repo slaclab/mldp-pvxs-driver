@@ -29,6 +29,7 @@ inline constexpr char PvsPerDataBatchKey[] = "pvs-per-data-batch";
 inline constexpr char DataBatchesPerPushKey[] = "data-batches-per-push";
 inline constexpr char PidFieldKey[] = "pidField";
 inline constexpr char ValueSuffixKey[] = "valueSuffix";
+inline constexpr char SkipNanColumnsKey[] = "skip-nan-columns";
 inline constexpr char SignalPvKey[] = "signal-pv";
 inline constexpr char SignalTimeoutMsKey[] = "signal-timeout-ms";
 
@@ -60,7 +61,9 @@ inline constexpr char SignalTimeoutMsKey[] = "signal-timeout-ms";
  * names, one per data column, in column order).  It defaults to the table name
  * with a trailing `_TBL` replaced by `_SIG` and can be set per PV with
  * `option.signal-pv`.  `signal-timeout-ms` (reader level or per PV) bounds the
- * startup gets used to resolve the real column names.
+ * startup gets used to resolve the real column names.  `skip-nan-columns`
+ * (default true, reader level or per PV) drops all-NaN columns and all-NaN
+ * row chunks; set false to ingest them.  Gen2 always drops them.
  *
  * `option.type` is rejected: the table generation is implied by the reader type.
  * `column-batch-size` is rejected: use `data-batches-per-push`.
@@ -85,6 +88,7 @@ public:
         std::string tsNanosField = "nanoseconds";        ///< Per-row nanoseconds column.
         std::string pidField = "pid";                    ///< Gen2 pulse ID column (skipped).
         std::string valueSuffix = "Val";                 ///< Gen2 value column suffix (case-insensitive).
+        bool        skipNanColumns = true;               ///< Drop all-NaN columns and row chunks (Gen1 key; Gen2 always true).
         std::string signalPv;                            ///< Gen1 signal PV with the real column names (empty = none).
         std::size_t signalTimeoutMs = 5000;              ///< Gen1 timeout of each startup name-resolution get.
     };

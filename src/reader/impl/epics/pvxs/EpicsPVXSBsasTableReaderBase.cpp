@@ -210,7 +210,7 @@ void EpicsPVXSBsasTableReaderBase::processTable(const std::string&        pvName
                         sourceTag);
                     continue;
                 }
-                if (!hasValidData(b))
+                if (opts.skipNanColumns && !hasValidData(b))
                 {
                     tracef(*logger_, "[{}/{}] column {} all-NaN — discarding", name_, pvName, colName);
                     continue;
@@ -262,6 +262,11 @@ void EpicsPVXSBsasTableReaderBase::processTable(const std::string&        pvName
                 }
                 if (dataBatch.columns.empty())
                 {
+                    continue;
+                }
+                if (opts.skipNanColumns && rowStep < rowCount && !hasValidData(dataBatch))
+                {
+                    tracef(*logger_, "[{}/{}] rows [{}, {}) all-NaN — discarding", name_, pvName, rowBegin, rowEnd);
                     continue;
                 }
                 std::get<TimeSeriesPayload>(tableBatch.payload).frames.push_back(std::move(dataBatch));

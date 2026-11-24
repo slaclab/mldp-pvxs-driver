@@ -414,6 +414,13 @@ void PVServer::addBsasTablePVs()
                 {"PV:C", TypeCode::Float32, [](int c, size_t r) { return c + static_cast<double>(r) * 0.5; }},
             });
 
+    // Shares PV:B with test:bsas_gen1_table (duplicate-PV ownership tests).
+    addGen1("test:bsas_gen1_overlap",
+            {
+                {"PV:B", TypeCode::Float64, [](int c, size_t r) { return c * 100.0 + static_cast<double>(r) + 5000.0; }},
+                {"PV:X", TypeCode::Float64, [](int c, size_t r) { return c + static_cast<double>(r); }},
+            });
+
     // Ten Float64 columns W:00..W:09; value = column * 1000 + row.
     {
         std::vector<Gen1Col> wide;
