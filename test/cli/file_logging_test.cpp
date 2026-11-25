@@ -23,6 +23,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <format>
 #include <iterator>
 #include <map>
 #include <thread>
@@ -513,7 +514,8 @@ TEST(FileLoggingTest, RotationNameCollisionAddsCounter)
     logger->flush();
     compressor->waitIdle();
 
-    const std::string ts = formatLogTimestamp(fixed);
+    const std::string ts =
+        std::format("{:%Y%m%d-%H%M%S}", std::chrono::floor<std::chrono::seconds>(fixed));
     EXPECT_TRUE(fs::exists(dir.path() / ("col." + ts + ".log")));
     EXPECT_TRUE(fs::exists(dir.path() / ("col." + ts + ".1.log")));
     EXPECT_TRUE(fs::exists(dir.path() / ("col." + ts + ".2.log")));
@@ -537,7 +539,10 @@ TEST(FileLoggingTest, RotatedNameKeepsRunTag)
     logger->flush();
     compressor->waitIdle();
     EXPECT_TRUE(fs::exists(dir.path() / "rt.RUN.log"));
-    EXPECT_TRUE(fs::exists(dir.path() / ("rt.RUN." + formatLogTimestamp(fixed) + ".log")));
+    EXPECT_TRUE(fs::exists(dir.path() /
+                           ("rt.RUN." + std::format("{:%Y%m%d-%H%M%S}",
+                                                    std::chrono::floor<std::chrono::seconds>(fixed)) +
+                            ".log")));
 }
 
 TEST(FileLoggingTest, AppendModeKeepsExistingContentAndCountsItsSize)
@@ -766,9 +771,11 @@ TEST(FileLoggingTest, CompressorDestructorDrains)
     EXPECT_EQ(gunzip(dir.path() / "d.1.log.gz"), "bye");
 }
 
-TEST(FileLoggingTest, FormatLogTimestampShape)
+TEST(FileLoggingTest, FormattedTimestampShape)
 {
-    const auto s = formatLogTimestamp(std::chrono::system_clock::now());
+    const auto s =
+        std::format("{:%Y%m%d-%H%M%S}",
+                    std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now()));
     ASSERT_EQ(s.size(), 15u);
     EXPECT_EQ(s[8], '-');
     for (std::size_t i = 0; i < s.size(); ++i)

@@ -1106,7 +1106,7 @@ EpicsArchiverReader::FetchOutcome EpicsArchiverReader::fetchSinglePV(WorkerConte
         if (response.http_status != 200)
         {
             throw HttpError("archiver HTTP GET returned status " + std::to_string(response.http_status) + " for PV " + pv,
-                            response.http_status);
+                            static_cast<int32_t>(response.http_status));
         }
 
         if (!line_buf.empty())

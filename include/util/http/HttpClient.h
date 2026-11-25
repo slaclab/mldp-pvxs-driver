@@ -11,6 +11,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <stdexcept>
@@ -105,8 +106,11 @@ public:
 
     /**
      * @brief Construct an error that carries the HTTP status code.
+     *
+     * @param what        Error message.
+     * @param http_status HTTP status code of the failed response.
      */
-    HttpError(const std::string& what, long http_status)
+    HttpError(const std::string& what, int32_t http_status)
         : std::runtime_error(what)
         , http_status_(http_status)
     {
@@ -115,13 +119,13 @@ public:
     /**
      * @brief HTTP status of the failed response (0 when not an HTTP status error).
      */
-    long httpStatus() const noexcept
+    int32_t httpStatus() const noexcept
     {
         return http_status_;
     }
 
 private:
-    long http_status_ = 0;
+    int32_t http_status_ = 0;
 };
 
 /**

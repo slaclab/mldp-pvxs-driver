@@ -14,8 +14,8 @@
 
 #include <algorithm>
 #include <array>
-#include <ctime>
 #include <fstream>
+#include <format>
 #include <system_error>
 #include <vector>
 
@@ -26,16 +26,6 @@ namespace mldp_pvxs_driver::cli {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-std::string formatLogTimestamp(std::chrono::system_clock::time_point tp)
-{
-    const std::time_t t = std::chrono::system_clock::to_time_t(tp);
-    std::tm           lt{};
-    localtime_r(&t, &lt);
-    char buf[32];
-    std::strftime(buf, sizeof(buf), "%Y%m%d-%H%M%S", &lt);
-    return buf;
-}
 
 namespace {
 
@@ -271,7 +261,8 @@ void RotatingGzipFileSink::rotate_()
     file_.close();
 
     const std::string base = activeName_.substr(0, activeName_.size() - 4); // drop ".log"
-    const std::string ts   = formatLogTimestamp(clock_());
+    const std::string ts = std::format("{:%Y%m%d-%H%M%S}",
+                                       std::chrono::floor<std::chrono::seconds>(clock_()));
     fs::path          rotated = dir_ / (base + "." + ts + ".log");
     std::error_code   ec;
     // A name is taken if the plain file, its archive, or an in-progress archive

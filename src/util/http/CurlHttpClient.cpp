@@ -283,7 +283,7 @@ HttpResponseInfo CurlHttpClient::streamGet(const HttpRequest& request, DataCallb
         {
             long status = 0;
             curl_easy_getinfo(curl.get(), CURLINFO_RESPONSE_CODE, &status);
-            throw HttpError("HTTP GET returned status " + std::to_string(status), status);
+            throw HttpError("HTTP GET returned status " + std::to_string(status), static_cast<int32_t>(status));
         }
         errorf(
             *logger_, "HTTP GET stream failed for {}: {}", request.url, curl_easy_strerror(rc));
