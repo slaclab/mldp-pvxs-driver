@@ -128,4 +128,7 @@ private:
     std::size_t                    currentSize_{0}; ///< Bytes in active file (incl. unflushed).
 };
 
+/// Format a time point as `YYYYmmdd-HHMMSS` (UTC).
+std::string formatLogTimestamp(std::chrono::system_clock::time_point tp);
+
 } // namespace mldp_pvxs_driver::cli

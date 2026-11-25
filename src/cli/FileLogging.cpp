@@ -16,7 +16,6 @@
 #include <spdlog/spdlog.h>
 
 #include <chrono>
-#include <format>
 #include <map>
 #include <mutex>
 #include <vector>
@@ -103,11 +102,7 @@ std::shared_ptr<LogCompressor> installFileLogging(const LoggingConfig& cfg, cons
     auto reg        = std::make_shared<SinkRegistry>();
     reg->cfg        = cfg;
     reg->pattern    = pattern;
-    reg->runTag     = cfg.perRun
-                          ? std::format("{:%Y%m%d-%H%M%S}",
-                                        std::chrono::floor<std::chrono::seconds>(
-                                            std::chrono::system_clock::now()))
-                          : "";
+    reg->runTag     = cfg.perRun ? formatLogTimestamp(std::chrono::system_clock::now()) : "";
     reg->compressor = std::make_shared<LogCompressor>();
 
     auto old = spdlog::default_logger();
