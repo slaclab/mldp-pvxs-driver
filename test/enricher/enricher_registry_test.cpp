@@ -1,11 +1,15 @@
 #include <gtest/gtest.h>
 
 #include <enricher/EnricherRegistry.h>
+#include <metrics/Metrics.h>
+#include <metrics/MetricsConfig.h>
+#include <prometheus/text_serializer.h>
 #include <util/bus/IDataBus.h>
 
 #include "config/test_config_helpers.h"
 
 #include <filesystem>
+#include <sstream>
 #include <fstream>
 #include <string>
 #include <system_error>
@@ -28,6 +32,39 @@ namespace {
         frame.timestamps.push_back({.epoch_seconds = 1, .nanoseconds = 1000000000});
         frame.columns.push_back(std::move(data_column));
         return EventBatchStruct{.payload = TimeSeriesPayload{.frames = {std::move(frame)}}};
+    }
+
+    TEST(EnricherRegistryTest, ExportsPerEnricherMetricsWhenMetricsProvided)
+    {
+        const auto config = makeConfigFromYaml(R"(
+enrichers:
+  metadata:
+    type: static-metadata
+    metadata: {run: forty-two}
+writer:
+  mldp:
+    - name: writer-a
+      enrichers: [metadata]
+)");
+
+        auto metrics = std::make_shared<metrics::Metrics>(metrics::MetricsConfig{}, "test_ctrl");
+        EnricherRegistry registry(config, metrics);
+        const auto       chain = registry.resolve(config.subConfig("writer").front().subConfig("mldp")[0]);
+        ASSERT_EQ(1U, chain.size());
+
+        auto batch = timeSeriesBatch();
+        EXPECT_TRUE(chain[0]->run(batch));
+        EXPECT_EQ("forty-two", batch.metadata.at("run"));
+
+        prometheus::TextSerializer serializer;
+        std::ostringstream         out;
+        serializer.Serialize(out, metrics->registry()->Collect());
+        const auto text = out.str();
+        EXPECT_NE(text.find("mldp_pvxs_driver_enricher_runs_total{controller=\"test_ctrl\",enricher=\"metadata\",type=\"" + chain[0]->enricherType() + "\"} 1"),
+                  std::string::npos)
+            << text;
+        EXPECT_NE(text.find("mldp_pvxs_driver_enricher_latency_us_count{controller=\"test_ctrl\",enricher=\"metadata\""), std::string::npos);
+        EXPECT_EQ(text.find("mldp_pvxs_driver_enricher_dropped_total{"), std::string::npos);
     }
 
     TEST(EnricherRegistryTest, ResolvesOrderedSharedInstancesAndAppliesBuiltins)

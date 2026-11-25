@@ -12,11 +12,31 @@
 
 #include <config/Config.h>
 
+#include <filesystem>
 #include <string>
 #include <vector>
 
 namespace mldp_pvxs_driver::config {
 
+/**
+ * @brief Merge configuration files and dotted-path overrides into one Config.
+ *
+ * Also records the directory of the last merged configuration file as the
+ * process-wide configuration base directory (see configBaseDir()).
+ */
 Config loadMergedConfigSources(const std::vector<std::string>& sources);
+
+/**
+ * @brief Set the directory used to resolve relative paths found in the configuration.
+ */
+void setConfigBaseDir(const std::filesystem::path& dir);
+
+/**
+ * @brief Directory used to resolve relative paths found in the configuration.
+ *
+ * Empty when no configuration file was loaded (relative paths then resolve
+ * against the current working directory).
+ */
+std::filesystem::path configBaseDir();
 
 } // namespace mldp_pvxs_driver::config

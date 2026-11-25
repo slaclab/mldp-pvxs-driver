@@ -196,6 +196,8 @@ public:
     const Config& operator>>(std::map<std::string, std::any>& out) const;
 
 private:
+    /// Map node with a child named @p key (false for non-map nodes). Requires valid().
+    bool hasKey(const std::string& key) const;
     /**
      * @brief Internal helper that reuses the shared tree for a specific node.
      */

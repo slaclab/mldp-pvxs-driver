@@ -18,7 +18,7 @@ namespace mldp_pvxs_driver::config {
 struct PvEntry
 {
     std::string name;
-    std::string option_type;  // "none", "scalar", "slac-bsas-table"
+    std::string option_type;  // "none", "scalar", "slac-bsas-table" (epics-base only)
     std::string option_value; // for scalar
     std::string ts_seconds;   // for slac-bsas-table
     std::string ts_nanos;     // for slac-bsas-table
@@ -58,9 +58,9 @@ struct Hdf5WriterConfig
 struct EpicsReaderConfig
 {
     std::string name;
-    std::string reader_type; // "epics-pvxs","epics-base","epics-archiver"
+    std::string reader_type; // "epics-pvxs","epics-base","epics-pvxs-bsas-gen1","epics-pvxs-bsas-gen2","epics-archiver"
     std::string thread_pool = "2";
-    std::string column_batch_size = "50";
+    std::string column_batch_size = "50"; // written as data-batches-per-push for the BSAS table readers
     // epics-base only
     std::string monitor_poll_threads = "2";
     std::string monitor_poll_interval_ms = "5";

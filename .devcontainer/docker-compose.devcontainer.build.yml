@@ -1,0 +1,14 @@
+# Image build for the dev container, run by `initializeCommand` in devcontainer.json.
+# Kept out of docker-compose.devcontainer.yml on purpose: if the service has a `build:`
+# section, the Dev Containers CLI generates a Dockerfile-with-features in $TMPDIR, and
+# Compose 5.x (buildx bake) refuses to read it without an fs.read entitlement.
+services:
+  devcontainer:
+    image: mldp-pvxs-driver-devcontainer:local
+    build:
+      context: ..
+      dockerfile: .devcontainer/Dockerfile
+      args:
+        BASE_OS_IMAGE: rockylinux/rockylinux:9.3
+        COMPILER: gcc
+        PVXS_VERSION: 1.4.1

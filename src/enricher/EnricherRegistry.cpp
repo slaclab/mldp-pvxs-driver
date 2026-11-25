@@ -11,6 +11,7 @@
 #include <enricher/EnricherRegistry.h>
 
 #include <algorithm>
+#include <chrono>
 #include <filesystem>
 #include <stdexcept>
 #include <unordered_set>
@@ -51,9 +52,62 @@ config::Config withScriptPath(const config::Config& definition, const std::files
     return merged;
 }
 
+/// Decorator exporting per-enricher Prometheus metrics around enrich().
+class InstrumentedEnricher final : public IPayloadEnricher
+{
+public:
+    InstrumentedEnricher(IPayloadEnricherPtr inner, const std::string& name, std::shared_ptr<metrics::Metrics> metrics)
+        : inner_(std::move(inner))
+        , metrics_(std::move(metrics))
+        , labels_{{"enricher", name}, {"type", inner_->enricherType()}}
+    {
+    }
+
+    void configure(const config::Config& config) override
+    {
+        inner_->configure(config);
+    }
+
+    bool enrich(util::bus::IDataBus::EventBatch& batch) noexcept override
+    {
+        const auto start = std::chrono::steady_clock::now();
+        const bool keep = inner_->run(batch);
+        const auto elapsed = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start).count();
+        try
+        {
+            metrics_->incrementEnricherRuns(1.0, labels_);
+            metrics_->observeEnricherLatencyUs(elapsed, labels_);
+            if (!keep)
+                metrics_->incrementEnricherDropped(1.0, labels_);
+        }
+        catch (...)
+        {
+            // Metrics must never affect the data path.
+        }
+        return keep;
+    }
+
+    std::string enricherType() const override
+    {
+        return inner_->enricherType();
+    }
+
+private:
+    IPayloadEnricherPtr               inner_;
+    std::shared_ptr<metrics::Metrics> metrics_;
+    prometheus::Labels                labels_;
+};
+
+IPayloadEnricherPtr instrument(IPayloadEnricherPtr enricher, const std::string& name, const std::shared_ptr<metrics::Metrics>& metrics)
+{
+    if (!metrics)
+        return enricher;
+    return std::make_shared<InstrumentedEnricher>(std::move(enricher), name, metrics);
+}
+
 } // namespace
 
-EnricherRegistry::EnricherRegistry(const config::Config& root)
+EnricherRegistry::EnricherRegistry(const config::Config& root, std::shared_ptr<metrics::Metrics> metrics)
 {
     if (root.hasChild("python-plugins-path"))
     {
@@ -86,7 +140,7 @@ EnricherRegistry::EnricherRegistry(const config::Config& root)
             throw std::runtime_error("enricher '" + name + "' is missing required field 'type'");
         if (isRegisteredEnricher(type))
         {
-            enrichers_.emplace(name, EnricherFactory::create(type, definition));
+            enrichers_.emplace(name, instrument(EnricherFactory::create(type, definition), name, metrics));
             continue;
         }
 
@@ -98,7 +152,7 @@ EnricherRegistry::EnricherRegistry(const config::Config& root)
         auto       enricher = EnricherFactory::create("python-enricher", python_definition);
         if (enricher->enricherType() != type)
             throw std::runtime_error("Python enricher type mismatch: requested '" + type + "', script declares '" + enricher->enricherType() + "'");
-        enrichers_.emplace(name, std::move(enricher));
+        enrichers_.emplace(name, instrument(std::move(enricher), name, metrics));
 #else
         throw std::runtime_error("Unknown enricher type: " + type);
 #endif

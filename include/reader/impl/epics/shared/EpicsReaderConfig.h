@@ -25,6 +25,7 @@
 
 #include <config/Config.h>
 
+#include <filesystem>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -42,6 +43,8 @@ inline constexpr char BackendKey[] = "backend";
 inline constexpr char PvsKey[] = "pvs";
 inline constexpr char PvNameKey[] = "name";
 inline constexpr char PvOptionKey[] = "option";
+inline constexpr char PvsFilesKey[] = "pvs-files";
+inline constexpr char PvsFilePathKey[] = "path";
 
 static constexpr auto kMetadataKey = "metadata";
 inline constexpr char OptionTypeKey[] = "type";
@@ -112,6 +115,17 @@ public:
      */
     explicit EpicsReaderConfig(const ::mldp_pvxs_driver::config::Config& readerEntry);
 
+    /**
+     * @brief Build a typed view resolving relative `pvs-files` paths against @p baseDir.
+     *
+     * @param readerEntry YAML node of the reader entry.
+     * @param baseDir     Directory used to resolve relative `pvs-files[].path`
+     *                    values. When empty, relative paths resolve against the CWD.
+     * @throws Error when the entry is malformed, a PV list file cannot be read,
+     *         or a PV name is duplicated.
+     */
+    EpicsReaderConfig(const ::mldp_pvxs_driver::config::Config& readerEntry, const std::filesystem::path& baseDir);
+
     /** @return Whether the wrapped YAML node passed validation. */
     bool valid() const;
 
@@ -142,6 +156,9 @@ public:
      */
     const std::vector<std::string>& pvNames() const;
 
+    /** @return Resolved paths of the PV list files loaded via `pvs-files`, in order. */
+    const std::vector<std::filesystem::path>& pvFiles() const;
+
     /**
      * @brief Get the reader-level static metadata key-value pairs.
      *
@@ -154,7 +171,7 @@ public:
 
 private:
     /** @brief Populate the typed fields from the raw YAML node. */
-    void parse(const ::mldp_pvxs_driver::config::Config& readerEntry);
+    void parse(const ::mldp_pvxs_driver::config::Config& readerEntry, const std::filesystem::path& baseDir);
 
     bool                                         valid_ = false;
     std::string                                  name_;
@@ -162,6 +179,7 @@ private:
     std::size_t                                  column_batch_size_{50};
     std::vector<PVConfig>                        pvs_;
     std::vector<std::string>                     pvNames_;
+    std::vector<std::filesystem::path>           pvFiles_;
     std::unordered_map<std::string, std::string> static_metadata_;
 };
 

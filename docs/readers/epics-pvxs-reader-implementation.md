@@ -22,7 +22,20 @@ This guide describes the `EpicsPVXSReader` implementation, which provides event-
 
 ## BSAS Support
 
-`EpicsPVXSReader` includes SLAC BSAS NTTable support.
+`EpicsPVXSReader` (`epics-pvxs`) is scalar-only. SLAC BSAS NTTables are handled by
+subclasses that reuse its PVXS context, subscription and metrics plumbing:
+
+- `EpicsPVXSBsasTableReaderBase` — overrides the protected virtual `processEvent()`,
+  converts the table through `BSASEpicsDataBatchConversion::tryBuildNtTableRowTsBatch()`
+  (optionally with a `ColumnFilter` applied before typed conversion), groups columns
+  into frames and pushes tabular batches plus the `end_of_batch_group` marker.
+- `EpicsPVXSBsasGen1Reader` (`epics-pvxs-bsas-gen1`) — no filter.
+- `EpicsPVXSBsasGen2Reader` (`epics-pvxs-bsas-gen2`) — keeps only `<PV>.Val` columns.
+
+Subclasses use the protected constructor, which does not start monitoring; the
+most-derived constructor calls `addPV(pvNames())` once the object is fully built,
+and the table base destructor drains the pool (`stopProcessing()`) before its
+members are destroyed.
 
 See:
 

@@ -6,8 +6,9 @@ build_test
 cmake-build-*/
 out/
 docs/html
+configs
 config*.yaml
-config-*.yml
+config*.yml
 metrics.jsonl
 Testing/
 .memory

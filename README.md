@@ -22,7 +22,7 @@ The effective configuration has five top-level sections:
 |-----|----------|---------|
 | `name` | no | Controller instance label (metrics scope) |
 | `writer` | **yes (≥1)** | Output sinks (`mldp`, `hdf5`, `hdf5-merge`) |
-| `reader` | **yes (≥1)** | Input sources (`epics-pvxs`, `epics-base`, `epics-archiver`) |
+| `reader` | **yes (≥1)** | Input sources (`epics-pvxs`, `epics-base`, `epics-archiver`); EPICS readers take PVs inline (`pvs`) and/or from text files (`pvs-files`) |
 | `routing` | no | Reader-to-writer routing and optional source filters |
 | `metrics` | no | Prometheus exporter settings |
 
@@ -189,6 +189,7 @@ Readers collect data from configurable sources, push normalized batches onto a s
 - [Writers Overview](docs/writers/writers-implementation.md) - Writer pattern, factory registration, new writer guide
 - [MLDP Writer](docs/writers/mldp-writer.md) - gRPC ingestion writer details and configuration
 - [HDF5 Writer](docs/writers/hdf5-writer.md) - HDF5 storage writer details and configuration
+- [Logging Guide](docs/guides/logging.md) - Main log file, optional per-reader/writer/controller files, size/age rotation, gzip compression and retention
 - [Query CLI Guide](docs/guides/query-cli.md) - SQL syntax reference, virtual table catalog, output formats, pagination, and step-by-step tutorial using the sample-data generator
 - [MLDP Query Client](docs/dev/query-client.md) - Standalone out-of-band query API
 - [Query Engine Architecture](docs/reference/query-engine-architecture.md) - IQueryable provider model, planner/executor internals, predicate-pushdown rules, and extension points

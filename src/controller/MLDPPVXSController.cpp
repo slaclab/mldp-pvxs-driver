@@ -259,7 +259,7 @@ void MLDPPVXSController::start()
     prepareQueryables(config_, metrics_);
 
     // Global enrichers are constructed once and shared by every referenced writer.
-    enricher_registry_ = std::make_unique<enricher::EnricherRegistry>(raw_config_);
+    enricher_registry_ = std::make_unique<enricher::EnricherRegistry>(raw_config_, metrics_);
 
     // Resize the fan-out thread pool to match the number of writer instances.
     const std::size_t numWriters = config_.writerEntries().size();
@@ -424,7 +424,16 @@ void MLDPPVXSController::stop()
         return;
     }
 
-    running_.store(false);
+    {
+        // Flip under queue_mutex_ so a pusher cannot miss the wakeup between
+        // its predicate check and wait().
+        std::lock_guard<std::mutex> lk(queue_mutex_);
+        running_.store(false);
+    }
+    // Wake reader threads blocked in push() on a full queue BEFORE destroying
+    // readers: reader destructors join their worker pools, and a worker stuck
+    // in push() would otherwise never return (deadlock on stop).
+    queue_not_full_.notify_all();
     infof(*logger_, "Controller is stopping");
 
     {

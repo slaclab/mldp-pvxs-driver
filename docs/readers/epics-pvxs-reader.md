@@ -57,22 +57,98 @@ flowchart TB
 reader:
   - epics-pvxs:
       - name: my_pvxs_reader
-        thread-pool: 2                # Event conversion thread pool size
-        column-batch-size: 50         # NTTable column batch size
+        thread-pool: 1                # Event conversion thread pool size (default 1)
+        column-batch-size: 50         # parsed (default 50); not used by epics-pvxs
         environment:                  # optional, affects only this reader's PVXS context
-          EPICS_PVA_ADDR_LIST: "134.79.0.255:5076"
+          EPICS_PVA_ADDR_LIST: "pva-gateway.example.org:5076"
           EPICS_PVA_AUTO_ADDR_LIST: "NO"
           EPICS_PVA_INTF_ADDR_LIST: "10.0.0.10"
           EPICS_PVA_BROADCAST_PORT: "5076"
           EPICS_PVA_NAME_SERVERS: "nameserver.example.org:5076"
           EPICS_PVA_CONN_TMO: "42.5"
+        metadata:                     # optional static metadata attached to every PV
+          facility: example
         pvs:
-          - name: MY:PV:NAME
-          - name: BSA:TABLE:PV
-            option:                   # For SLAC BSAS NTTable with row timestamps
-              type: slac-bsas-table
-              tsSeconds: secondsPastEpoch
-              tsNanos: nanoseconds
+          - name: EXAMPLE:PV:A
+            # option: <string>        # optional scalar channel option
+            metadata:                 # optional per-PV metadata
+              unit: mm
+        pvs-files:                    # optional; PV names loaded from text files
+          - path: scalars.txt         # relative → config file directory
+            # option: <string>        # optional, applied to every PV in the file
+            metadata:                 # optional, applied to every PV in the file
+              group: scalars
+```
+
+Key                    | Level         | Default      | Description
+---------------------- | ------------- | ------------ | ---------------------------------------------------------
+`name`                 | reader        | — (required) | Reader instance name; must be non-empty
+`thread-pool`          | reader        | `1`          | Event conversion thread pool size (`> 1` uses the pool, else direct)
+`column-batch-size`    | reader        | `50`         | Parsed by the shared EPICS config; not used by `epics-pvxs`
+`environment`          | reader        | none         | Map of `EPICS_PVA_*` scalar settings for this reader's PVXS context only
+`metadata`             | reader        | none         | Static string map attached to every PV of this reader
+`pvs`                  | reader        | none         | Sequence of PV entries (PV names must be unique across `pvs`/`pvs-files`)
+`pvs[].name`           | `pvs[]`       | — (required) | EPICS PV name
+`pvs[].option`         | `pvs[]`       | none         | Channel option (scalar); `type: slac-bsas-table` is rejected
+`pvs[].metadata`       | `pvs[]`       | none         | Static string map for this PV
+`pvs-files[].path`     | `pvs-files[]` | — (required) | PV list file; relative → config file directory
+`pvs-files[].option`   | `pvs-files[]` | none         | Same as `pvs[].option`, applied to every PV in the file
+`pvs-files[].metadata` | `pvs-files[]` | none         | Same as `pvs[].metadata`, applied to every PV in the file
+
+`backend` is rejected.
+
+### Loading PVs from files
+
+PV names can also be loaded from plain text files (one PV per line, blank lines and
+`#` comment lines ignored) with `pvs-files`. Each entry's `option` and `metadata`
+apply to every PV in that file and have the same semantics as on an inline `pvs[]`
+entry. Relative paths resolve against the directory of the main config file.
+The same key works on the BSAS table readers (`epics-pvxs-bsas-gen1/gen2`), where the
+file `option` carries the table keys (`option.type` / `column-batch-size` are rejected there).
+See [Configuration Reference](../guides/configuration.md#common-reader-keys-epics-pvxs-and-epics-base).
+
+```yaml
+reader:
+  - epics-pvxs:
+      - name: scalar_reader
+        pvs-files:
+          - path: /etc/mldp-pvxs/scalars.txt
+  - epics-pvxs-bsas-gen1:
+      - name: bsas_gen1
+        rows-per-data-batch: 120      # default; 0 = all rows
+        pvs-per-data-batch: 1         # default; 0 = all
+        data-batches-per-push: 50     # default; 0 = all
+        tsSeconds: secondsPastEpoch   # default
+        tsNanos: nanoseconds          # default
+        signal-timeout-ms: 5000       # default; Gen1 only
+        skip-nan-columns: true        # default; Gen1 only
+        pvs-files:
+          - path: /etc/mldp-pvxs/gen1-tables.txt
+            option:                   # signal-pv is per-PV only (default <table>_TBL → <table>_SIG)
+              data-batches-per-push: 4
+  - epics-pvxs-bsas-gen2:
+      - name: bsas_gen2
+        rows-per-data-batch: 120      # default; 0 = all rows
+        pvs-per-data-batch: 1         # default; 0 = all
+        data-batches-per-push: 50     # default; 0 = all
+        tsSeconds: secondsPastEpoch   # default
+        tsNanos: nanoseconds          # default
+        pidField: pid                 # default; Gen2 only
+        valueSuffix: Val              # default; Gen2 only, case-insensitive
+        pvs-files:
+          - path: gen2-tables.txt                # relative → config file directory
+            option:
+              pvs-per-data-batch: 0
+```
+
+Both BSAS readers also accept `thread-pool`, `environment`, `metadata`, `pvs` and the
+`pvs[]`/`pvs-files[]` `option`/`metadata` keys above. Full key tables:
+[Gen 1](slac-bsas-table-gen1.md#configuration), [Gen 2](slac-bsas-table-gen2.md#configuration).
+
+```text
+# gen1-tables.txt
+BSAS:TABLE:ONE
+BSAS:TABLE:TWO
 ```
 
 ### Per-reader PVXS network settings
@@ -94,7 +170,6 @@ logging and handling behavior.
 
 - **Event-Driven**: Immediate response to PV changes (no polling overhead)
 - **Smart Threading**: Conditional thread pool usage based on thread count
-- **NTTable Support**: Special handling for tabular data with row timestamps
 - **PVXS Options**: Support for custom channel options
 
 ## Conditional Parallelization
@@ -109,30 +184,31 @@ reader_pool_->get_thread_count() > 1 ? reader_pool_.get() : nullptr
 - **Single thread (= 1)**: Bypass thread pool, execute directly
 - **Multiple threads (> 1)**: Use thread pool for parallel conversion
 
-## SLAC BSAS NTTable Handling
+## SLAC BSAS NTTables
 
-For PVs that deliver NTTable structures with per-row timestamps (SLAC BSAS
-format), enable the mode with:
+`epics-pvxs` handles scalar and scalar-array PVs only. SLAC BSAS NTTables are read by
+two dedicated readers that derive from `EpicsPVXSReader` and share its PVXS
+client settings (`environment`, `thread-pool`, `metadata`):
+
+Reader type            | Table            | Documentation
+---------------------- | ---------------- | ---------------------------------------------
+`epics-pvxs-bsas-gen1` | BSAS Gen1        | [SLAC BSAS NTTable Gen 1](slac-bsas-table-gen1.md)
+`epics-pvxs-bsas-gen2` | BSAS Gen2        | [SLAC BSAS NTTable Gen 2](slac-bsas-table-gen2.md)
+
+Configuring `option.type: slac-bsas-table` on an `epics-pvxs` PV is a configuration
+error whose message points to `epics-pvxs-bsas-gen1`. Migration:
 
 ```yaml
-pvs:
-  - name: BSA:TABLE:PV
-    option:
-      type: slac-bsas-table
-      tsSeconds: secondsPastEpoch    # column holding per-row epoch seconds
-      tsNanos: nanoseconds           # column holding per-row nanoseconds
-      column-batch-size: 1           # columns per batch push (0 = all at once)
+# before                                  # after
+reader:                                   reader:
+  - epics-pvxs:                             - epics-pvxs-bsas-gen1:
+      - name: r                                 - name: r
+        pvs:                                      pvs-per-data-batch: 1  # was option.column-batch-size
+          - name: BSA:TABLE:PV                    pvs:
+            option:                                 - name: BSA:TABLE:PV
+              type: slac-bsas-table
+              column-batch-size: 1
 ```
-
-- Each NTTable column (PV name) becomes a separate source in the event batch.
-- The two timestamp columns are consumed for row indexing and are not forwarded.
-- Source name equals the PV-name column field name.
-- `column-batch-size` limits how many columns are pushed per `EventBatch`; 0 means all at once.
-- Conversion is handled by `BSASEpicsDataBatchConversion::tryBuildNtTableRowTsBatch()`.
-
-For a full description of the BSAS NTTable structure, field layout, and a
-concrete annotated example see
-[SLAC BSAS NTTable Gen 1](slac-bsas-table-gen1.md) and [Gen 2](slac-bsas-table-gen2.md).
 
 ## Use Cases
 

@@ -62,23 +62,58 @@ When `rescan-interval-sec` is `0.0` (the default), the reader:
    pacing requests `fetch-window-delay-ms` apart and sending `Cache-Control`/`Pragma: no-cache`
    headers — back-to-back requests were observed to hit an upstream/proxy cache that served
    a stale body for later windows, silently dropping their events even though every call
-   returned HTTP 200.
-3. Parses the JSON array for each window — each event becomes one `ConfigurationPayload` + one
+   returned HTTP 200. Each request also carries a unique `_=<epoch-ms>-<n>` query parameter
+   (`cache-buster`), so no cache can answer it from a stored copy.
+3. Checks each window's answer: if it has **no events**, or is **byte-identical to the
+   previous window's**, it is fetched again up to `suspicious-window-retries` times,
+   `suspicious-window-retry-delay-ms` apart (each attempt logs a warning). A suspicious answer
+   still there after the last retry is accepted with a final warning (an empty window can be
+   genuine, e.g. a holiday). One `info` line per window records the outcome:
+   `window <start> -> <end>: <N> events, <B> bytes, first start='…', last start='…', refetches=<R>`.
+4. Parses the JSON array for each window — each event becomes one `ConfigurationPayload` + one
    `ConfigurationActivationPayload` pushed to the bus.
-4. Worker thread exits and calls `signalCompleted()` to support [controller auto-close](readers.md#reader-lifecycle--auto-close); reader stays alive but idle.
+5. Worker thread exits and calls `signalCompleted()` to support [controller auto-close](readers.md#reader-lifecycle--auto-close); reader stays alive but idle.
 
 ```yaml
 reader:
   - slac-calendar:
       - name: cal_reader_once
-        base-url: https://calendar.slac.stanford.edu
-        accel:
+        base-url: https://calendar.example.org   # required, no trailing slash
+        accel:                                   # required, at least one entry
           - lcls
           - facet
-        lookahead-days: 30
-        lookback-days: 1
+        lookahead-days: 30                       # required unless end-date is set; > 0
+        lookback-days: 1                         # default 1; >= 0
+        # start-date: "2024-01-01"               # optional first-run start override
+        # end-date: "2024-01-31"                 # fixed range; needs start-date, incompatible
+        #                                        # with lookahead/lookback/rescan (see below)
+        # category: beam-schedule                # optional fixed category; default: event configuration_name
+        rescan-interval-sec: 0.0                 # default 0 = run once
+        connect-timeout-sec: 30                  # default 30
+        total-timeout-sec: 60                    # default 60; >= connect-timeout-sec
+        tls-verify-peer: true                    # default true
+        tls-verify-host: true                    # default true
+        fetch-window-days: 7                     # default 7; > 0
+        fetch-window-delay-ms: 200               # default 200; >= 0
+        cache-buster: true                       # default true
+        suspicious-window-retries: 2             # default 2; 0 disables
+        suspicious-window-retry-delay-ms: 2000   # default 2000
+        # attributes: [...]                      # optional field → attribute overrides (see Attribute Mapping)
+```
+
+Fixed-range mode (one run over `[start-date, end-date]`; `lookahead-days`,
+`lookback-days` and `rescan-interval-sec` must be absent):
+
+```yaml
+reader:
+  - slac-calendar:
+      - name: cal_reader_range
+        base-url: https://calendar.example.org
+        accel:
+          - lcls
+        start-date: "2024-01-01"                 # YYYY-MM-DD[THH:MM:SS[Z|±HH:MM]]
+        end-date: "2024-01-31"                   # must be >= start-date
         fetch-window-days: 7
-        fetch-window-delay-ms: 200
 ```
 
 ### Periodic Rescan
@@ -90,7 +125,7 @@ The sleep between iterations is interruptible so shutdown is prompt. Does **not*
 reader:
   - slac-calendar:
       - name: cal_reader_rescan
-        base-url: https://calendar.slac.stanford.edu
+        base-url: https://calendar.example.org
         accel:
           - lcls
         lookahead-days: 30
@@ -124,6 +159,9 @@ Parameter              | Type   | Default | Description
 `tls-verify-host`      | bool   | `true`  | Verify TLS hostname against certificate.
 `fetch-window-days`    | int    | `7`     | Days of calendar requested per HTTP call. The endpoint has no pagination/cursor, so the whole span is walked in windows of this size instead of one request for the full range.
 `fetch-window-delay-ms` | int   | `200`   | Delay between window HTTP requests. Guards against an upstream/proxy cache serving a stale body for a later window when requests fire too fast (observed at sub-15ms spacing). Must be >= 0.
+`cache-buster`         | bool   | `true`  | Add a unique `_=<epoch-ms>-<n>` query parameter to every request so proxies/CDNs cannot answer from a cached copy.
+`suspicious-window-retries` | int | `2`  | Extra fetches of a window that returned no events or the same body as the previous window. `0` disables. Must be >= 0.
+`suspicious-window-retry-delay-ms` | int | `2000` | Delay before each such refetch. Must be >= 0.
 `attributes`           | list   | see below | Overrides of the JSON field → attribute association (name and target payload).
 
 ### Attribute Mapping
@@ -171,7 +209,7 @@ attributes:
 reader:
   - slac-calendar:
       - name: cal_reader_custom_attrs
-        base-url: https://aosd.slac.stanford.edu/program_calendar
+        base-url: https://calendar.example.org/program_calendar
         accel:
           - lcls
         lookahead-days: 30
@@ -225,7 +263,7 @@ Attribute           | Configuration | Activation
 - `lookback-days` must be >= 0.
 - `total-timeout-sec` must be >= `connect-timeout-sec`.
 - `fetch-window-days` must be > 0.
-- `fetch-window-delay-ms` must be >= 0.
+- `fetch-window-delay-ms`, `suspicious-window-retries` and `suspicious-window-retry-delay-ms` must be >= 0.
 - each `attributes` entry needs a non-empty `field` (not `accel`); `name`, if set, must be non-empty; `target` must be `configuration|activation|both|none`.
 - `start-date`/`end-date` (if provided) must match `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM:SS[Z|±HH:MM]` format.
 
@@ -266,7 +304,14 @@ Both batches carry `root_source = reader_name` and `reader_name = reader_name`.
   instead of one large request, avoiding silent server-side truncation.
 - **Request pacing**: Paces window requests `fetch-window-delay-ms` apart and sends
   `Cache-Control`/`Pragma: no-cache` headers to avoid an upstream/proxy cache serving a
-  stale body for a later window when requests fire too fast.
+  stale body for a later window when requests fire too fast, and makes every URL unique
+  (`cache-buster`).
+- **Suspicious-window refetch**: a window that comes back empty, or identical to the previous
+  one, is fetched again (`suspicious-window-retries`). The calendar API was observed to answer
+  whole windows with an empty/partial HTTP 200 body, intermittently, so a single run silently
+  missed different windows each time.
+- **Per-window log line**: event count, bytes, first/last event start and refetch count for
+  every window, so dropped windows are visible in the log.
 - **Cross-calendar duplicate disambiguation**: When the same `program_name`+time
   window is cross-posted under two different source calendars, the second occurrence's
   `configuration_name` is suffixed with the source calendar so both are pushed instead of
@@ -295,7 +340,7 @@ writer:
 reader:
   - slac-calendar:
       - name: cal_reader
-        base-url: https://calendar.slac.stanford.edu
+        base-url: https://calendar.example.org
         accel:
           - lcls
           - facet

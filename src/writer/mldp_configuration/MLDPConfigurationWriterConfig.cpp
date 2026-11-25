@@ -25,6 +25,12 @@ MLDPConfigurationWriterConfig MLDPConfigurationWriterConfig::parse(const config:
 
     cfg.threadPool       = node.getInt("thread-pool", 2);
     cfg.deadlineSeconds  = node.getInt("deadline-seconds", 10);
+    cfg.maxRetries       = node.getInt("max-retries", 3);
+    cfg.retryBackoffMs   = node.getInt("retry-backoff-ms", 500);
+    if (cfg.maxRetries < 0)
+        throw std::runtime_error("MLDPConfigurationWriterConfig: 'max-retries' must be >= 0");
+    if (cfg.retryBackoffMs < 0)
+        throw std::runtime_error("MLDPConfigurationWriterConfig: 'retry-backoff-ms' must be >= 0");
 
     if (!node.hasChild("mldp-annotation-pool"))
         throw std::runtime_error(

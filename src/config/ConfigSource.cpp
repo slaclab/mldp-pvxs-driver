@@ -13,6 +13,7 @@
 #include <config/ConfigOverride.h>
 
 #include <filesystem>
+#include <mutex>
 #include <stdexcept>
 
 namespace mldp_pvxs_driver::config {
@@ -20,6 +21,18 @@ namespace mldp_pvxs_driver::config {
 namespace {
 
 namespace fs = std::filesystem;
+
+std::mutex& configBaseDirMutex()
+{
+    static std::mutex m;
+    return m;
+}
+
+fs::path& configBaseDirStorage()
+{
+    static fs::path dir;
+    return dir;
+}
 
 void replaceNode(ryml::NodeRef dst, ryml::ConstNodeRef src)
 {
@@ -100,6 +113,18 @@ void mergeNode(ryml::NodeRef dst, ryml::ConstNodeRef src)
 
 } // namespace
 
+void setConfigBaseDir(const std::filesystem::path& dir)
+{
+    std::lock_guard<std::mutex> lock(configBaseDirMutex());
+    configBaseDirStorage() = dir;
+}
+
+std::filesystem::path configBaseDir()
+{
+    std::lock_guard<std::mutex> lock(configBaseDirMutex());
+    return configBaseDirStorage();
+}
+
 Config loadMergedConfigSources(const std::vector<std::string>& sources)
 {
     std::vector<std::string> effectiveSources = sources;
@@ -118,6 +143,7 @@ Config loadMergedConfigSources(const std::vector<std::string>& sources)
         {
             const auto next = Config::configFromFile(candidate.string());
             mergeNode(merged.mutableRaw(), next.raw());
+            setConfigBaseDir(fs::absolute(candidate, ec).parent_path());
             continue;
         }
 

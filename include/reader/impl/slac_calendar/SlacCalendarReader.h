@@ -22,6 +22,7 @@
 
 #include <atomic>
 #include <condition_variable>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -73,8 +74,16 @@ private:
     std::string fetchAccel(const std::string& accel,
                            const std::string& startIso,
                            const std::string& endIso);
-    void        parseAndPush(const std::string& jsonBody, const std::string& accel,
-                             SeenActivationMap& seen, std::vector<PendingActivation>& pending);
+    /// Parse an API response body; throws unless it is a JSON array.
+    static nlohmann::json parseEvents(const std::string& jsonBody);
+    /// Fetch one window, refetching while it looks suspicious (empty / same as previous).
+    nlohmann::json fetchWindow(const std::string& accel, const std::string& startIso,
+                               const std::string& endIso, const std::string& previousBody,
+                               std::string& bodyOut);
+    void        pushEvents(const nlohmann::json& events, const std::string& accel,
+                           SeenActivationMap& seen, std::vector<PendingActivation>& pending);
+    /// Sleep for @p ms unless the reader is stopping. Returns false if stopping.
+    bool        interruptibleWait(int ms);
     void        pushEvent(const nlohmann::json& event, const std::string& accel,
                           SeenActivationMap& seen, std::vector<PendingActivation>& pending);
     std::vector<PendingActivation> mergeAndPushActivations(std::vector<PendingActivation>& pending,
@@ -90,6 +99,7 @@ private:
     std::string epochToIso(int64_t epoch);
     std::string extractHtmlInnerText(const std::string& html);
 
+    std::uint64_t                         request_seq_{0}; ///< Cache-buster counter (worker thread only).
     SlacCalendarReaderConfig              config_;
     std::shared_ptr<util::log::ILogger>   logger_;
     util::http::CurlHttpClient            http_client_;

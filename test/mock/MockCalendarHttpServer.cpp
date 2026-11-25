@@ -28,6 +28,7 @@ MockCalendarHttpServer::MockCalendarHttpServer()
                     log.start_time  = req.get_param_value("start_time");
                     log.end_time    = req.get_param_value("end_time");
                     log.limit       = req.get_param_value("limit");
+                    log.cache_buster = req.get_param_value("_");
 
                     int status_code = 200;
                     std::string body = "[]";
@@ -38,8 +39,13 @@ MockCalendarHttpServer::MockCalendarHttpServer()
                         const auto sc_it = status_codes_.find(acc);
                         if (sc_it != status_codes_.end())
                             status_code = sc_it->second;
-                        const auto body_it = responses_.find(acc);
-                        if (body_it != responses_.end())
+                        auto q_it = queued_.find(acc);
+                        if (q_it != queued_.end() && !q_it->second.empty())
+                        {
+                            body = q_it->second.front();
+                            q_it->second.pop_front();
+                        }
+                        else if (const auto body_it = responses_.find(acc); body_it != responses_.end())
                             body = body_it->second;
                     }
                     cv_.notify_all();
@@ -104,6 +110,14 @@ void MockCalendarHttpServer::setStatusCode(const std::string& accel, int code)
 {
     std::lock_guard<std::mutex> lk(mu_);
     status_codes_[accel] = code;
+}
+
+void MockCalendarHttpServer::queueResponses(const std::string& accel, std::vector<std::string> bodies)
+{
+    std::lock_guard<std::mutex> lk(mu_);
+    auto& q = queued_[accel];
+    for (auto& b : bodies)
+        q.push_back(std::move(b));
 }
 
 std::vector<CalendarRequestLog> MockCalendarHttpServer::requestHistory() const

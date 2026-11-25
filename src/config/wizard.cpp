@@ -177,10 +177,14 @@ std::string generateYaml(const WizardState& st)
                 lastType = r.reader_type;
             }
             o << ind(2) << "- name: " << r.name << "\n";
-            if (r.reader_type == "epics-pvxs" || r.reader_type == "epics-base")
+            if (r.reader_type == "epics-pvxs" || r.reader_type == "epics-base" ||
+                r.reader_type == "epics-pvxs-bsas-gen1" || r.reader_type == "epics-pvxs-bsas-gen2")
             {
                 o << ind(3) << "thread-pool: " << r.thread_pool << "\n";
-                o << ind(3) << "column-batch-size: " << r.column_batch_size << "\n";
+                if (r.reader_type == "epics-pvxs-bsas-gen1" || r.reader_type == "epics-pvxs-bsas-gen2")
+                    o << ind(3) << "data-batches-per-push: " << r.column_batch_size << "\n";
+                else
+                    o << ind(3) << "column-batch-size: " << r.column_batch_size << "\n";
                 if (r.reader_type == "epics-base")
                 {
                     o << ind(3) << "monitor-poll-threads: " << r.monitor_poll_threads << "\n";
@@ -470,7 +474,7 @@ void loadFromConfig(const std::string& path, WizardState& st)
     for (const auto& rentry : cfg.subConfig("reader"))
     {
         static const std::vector<std::string> rtypes =
-            {"epics-pvxs", "epics-base", "epics-archiver", "epics-ds-metadata"};
+            {"epics-pvxs", "epics-base", "epics-pvxs-bsas-gen1", "epics-pvxs-bsas-gen2", "epics-archiver", "epics-ds-metadata"};
         for (const auto& rtype : rtypes)
         {
             if (!rentry.hasChild(rtype))
@@ -481,7 +485,10 @@ void loadFromConfig(const std::string& path, WizardState& st)
                 r.reader_type = rtype;
                 r.name = inst.get("name", "");
                 r.thread_pool = std::to_string(inst.getInt("thread-pool", 2));
-                r.column_batch_size = std::to_string(inst.getInt("column-batch-size", 50));
+                r.column_batch_size = std::to_string(inst.getInt(
+                    rtype == "epics-pvxs-bsas-gen1" || rtype == "epics-pvxs-bsas-gen2" ? "data-batches-per-push"
+                                                                                       : "column-batch-size",
+                    50));
                 if (rtype == "epics-base")
                 {
                     r.monitor_poll_threads = std::to_string(inst.getInt("monitor-poll-threads", 2));

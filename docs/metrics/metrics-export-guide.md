@@ -58,6 +58,11 @@ When the Prometheus endpoint is configured, the driver collects:
 - `mldp_pvxs_driver_processor_fire_total` - Total successful processor compute firings
 - `mldp_pvxs_driver_processor_buffer_depth` - Current retained sample depth across buffered input sources
 
+**Enricher metrics** (labels: `enricher` = instance name, `type`):
+- `mldp_pvxs_driver_enricher_runs_total` - Enricher invocations on writer batches
+- `mldp_pvxs_driver_enricher_dropped_total` - Batches dropped by an enricher (`enrich()` returned false, including failures)
+- `mldp_pvxs_driver_enricher_latency_us` - Histogram of one enricher invocation (microseconds)
+
 **Writer metrics**:
 - `mldp_pvxs_driver_writer_push_total` - Events/requests pushed by MLDP writers `{controller, writer}`
 - `mldp_pvxs_driver_writer_failure_total` - Push/write failures `{controller, writer}`

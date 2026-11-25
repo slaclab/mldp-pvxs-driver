@@ -168,12 +168,10 @@ reader:
         pvs:
           - name: MY:SCALAR:PV
 
-  - epics-pvxs:
+  - epics-pvxs-bsas-gen1:
       - name: bsas_reader
         pvs:
           - name: MY:BSAS:TABLE
-            option:
-              type: slac-bsas-table
 
 routing:
   mldp_main:

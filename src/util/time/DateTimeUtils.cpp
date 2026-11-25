@@ -10,7 +10,10 @@
 
 #include <util/time/DateTimeUtils.h>
 
+#include <date/date.h>
+
 #include <cstdint>
+#include <sstream>
 #include <cstdio>
 #include <ctime>
 #include <stdexcept>
@@ -25,6 +28,22 @@ bool DateTimeUtils::isLeapYear(int year)
 std::chrono::system_clock::time_point DateTimeUtils::truncateToMilliseconds(std::chrono::system_clock::time_point tp)
 {
     return std::chrono::time_point_cast<std::chrono::milliseconds>(tp);
+}
+
+std::optional<std::chrono::system_clock::time_point> DateTimeUtils::parseIso8601Utc(const std::string& text)
+{
+    using namespace std::chrono;
+    for (const char* fmt : {"%FT%TZ", "%FT%T%Ez"})
+    {
+        std::istringstream                    in(text);
+        date::sys_time<milliseconds>          tp;
+        in >> date::parse(fmt, tp);
+        if (!in.fail() && in.peek() == std::char_traits<char>::eof())
+        {
+            return time_point_cast<system_clock::duration>(tp);
+        }
+    }
+    return std::nullopt;
 }
 
 std::string DateTimeUtils::formatIso8601UtcMillis(std::chrono::system_clock::time_point tp)

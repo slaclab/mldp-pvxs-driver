@@ -10,6 +10,7 @@
 #pragma once
 
 #include <enricher/IPayloadEnricher.h>
+#include <metrics/Metrics.h>
 
 #include <string>
 #include <unordered_map>
@@ -20,7 +21,13 @@ namespace mldp_pvxs_driver::enricher {
 class EnricherRegistry
 {
 public:
-    explicit EnricherRegistry(const config::Config& root);
+    /**
+     * @param root     Root configuration holding the `enrichers` mapping.
+     * @param metrics  Optional metrics collector; when set every enricher is
+     *                 wrapped to export runs/dropped/latency metrics labelled
+     *                 with `enricher` (instance name) and `type`.
+     */
+    explicit EnricherRegistry(const config::Config& root, std::shared_ptr<metrics::Metrics> metrics = nullptr);
     std::vector<IPayloadEnricherPtr> resolve(const config::Config& writer) const;
 
 private:

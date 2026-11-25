@@ -53,7 +53,7 @@ Data columns (int)   | `H5T_STD_I16LE`    | (N, 1)  | Optional
 Attribute        | Type   | Description
 ---------------- | ------ | -------------------------------------------------------
 `MATLAB_class`   | string | MATLAB type name (`"double"`, `"int16"`, `"uint32"`)
-`label`          | string | Human-readable column name (used as source name when `use-label-as-name: true`)
+`label`          | string | Human-readable column name (read and sanitized; the emitted source name is the dataset name)
 
 The `@MATLAB_class` attribute identifies the data type and is written for
 MATLAB `hdf5read()` / `h5read()` compatibility. The `@label` attribute
@@ -151,13 +151,13 @@ any unprocessed chunks without pushing them onto the bus.
 reader:
   - hdf5-bsas-gen1:
       - name: my_bsas_reader
-        file-path: /path/to/bsas-data*.h5
-        chunk-size: 1000
-        columns-per-frame: 1367
-        use-label-as-name: true
-        metadata:
-          facility: LCLS
-        provenance:
+        file-path: /path/to/bsas-data*.h5   # required; glob allowed
+        chunk-size: 1000                    # default 1000; rows per chunk, > 0
+        columns-per-frame: 1367             # default 1; > 0
+        log-interval-sec: 10                # default 10; progress log interval, > 0
+        metadata:                           # optional static metadata
+          facility: example
+        provenance:                         # optional; reader-level key, merged into batch metadata
           origin: matlab-daq
 ```
 
@@ -166,8 +166,8 @@ Key                  | Default    | Required | Description
 `name`               | *(none)*   | Yes      | Reader instance name
 `file-path`          | *(none)*   | Yes      | Path or glob pattern to HDF5 file(s)
 `chunk-size`         | `1000`     | No       | Number of rows per chunk
-`use-label-as-name`  | `true`     | No       | Use `@label` attribute as column name instead of dataset name
 `columns-per-frame`  | `1`        | No       | Number of columns grouped into each DataBatch frame. Higher values reduce gRPC Write() calls.
+`log-interval-sec`   | `10`       | No       | Interval (s) between progress log lines; must be `> 0`
 `metadata`           | *(empty)*  | No       | Static key-value metadata attached to each batch
 `provenance`         | *(empty)*  | No       | Key-value provenance metadata (prefixed with `provenance.`)
 
@@ -187,7 +187,6 @@ structurally identical MATLAB-compatible HDF5 files with deterministic data for 
 Test                                            | Description
 ----------------------------------------------- | ----------------------------------------------------------
 `ConfigParsesValidYaml`                         | Config parses all fields correctly
-`ConfigDefaultsUseLabelTrue`                    | `use-label-as-name` defaults to `true`
 `ConfigThrowsOnMissingFilePath`                 | Missing `file-path` throws `Error`
 `ConfigThrowsOnMissingName`                     | Missing `name` throws `Error`
 `ReaderEmitsBatches`                            | Single chunk emits data batch + marker
@@ -197,8 +196,7 @@ Test                                            | Description
 `Float64ColumnValuesAreCorrect`                 | Float64 column data matches `sin()` pattern
 `Int16ColumnValuesAreCorrectAsInt32`            | Int16 columns widened to int32 correctly
 `ColumnNamesMatchDatasetNames`                  | Frame column names match dataset names
-`UseLabelAsNameResolvesLabelAttr`               | `@label` attribute used as column name
-`UseLabelAsNameFallsBackWhenLabelContainsInvalidUtf8` | Invalid UTF-8 labels fall back to dataset name
+`InvalidUtf8LabelDoesNotAffectColumnName`       | Invalid UTF-8 `@label` does not change the column name
 `MatlabStyleLabelsArePreserved`                 | MATLAB-style labels (with colons) preserved correctly
 `ReaderNameMatches`                             | `name()` returns configured name
 `MockFileMatchesFlatStructure`                  | Mock HDF5 matches flat MATLAB format

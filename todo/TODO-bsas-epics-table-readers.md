@@ -1,4 +1,4 @@
-# TODO: BSAS Gen1 / Gen2 EPICS table readers (`epics-pvxs-bsas-gen1`, `epics-pvxs-bsas-gen2`)
+# TODO: BSAS Gen1 / Gen2 EPICS table readers — implemented (phase 1) (`epics-pvxs-bsas-gen1`, `epics-pvxs-bsas-gen2`)
 
 ## Context
 
@@ -43,49 +43,49 @@ MLDP can store them — is described in [TODO-bsas-gen2-reader.md](TODO-bsas-gen
 
 Files: `include/reader/impl/epics/pvxs/EpicsPVXSReader.h`, `src/reader/impl/epics/pvxs/EpicsPVXSReader.cpp`
 
-- [ ] Add a protected constructor `EpicsPVXSReader(bus, metrics, cfg, std::string_view clientTag, bool startMonitoring)`.
+- [x] Add a protected constructor `EpicsPVXSReader(bus, metrics, cfg, std::string_view clientTag, bool startMonitoring)`.
   - The public constructor delegates to it with `("epics-pvxs", true)`.
   - Subclasses pass `false` and call `addPV(pvNames())` at the end of their own constructor, so no
     event is dispatched into a partly built object.
-- [ ] Make `processEvent` `protected virtual`; move `logAndRecordError` to `protected`.
-- [ ] Extract `recordEventMetrics(pvName, sourceTag, dataBytes, emitted, processing_start)` from
+- [x] Make `processEvent` `protected virtual`; move `logAndRecordError` to `protected`.
+- [x] Extract `recordEventMetrics(pvName, sourceTag, dataBytes, emitted, processing_start)` from
   `processEvent` (processing time, events, bytes total, bytes/s with `last_event_time_`).
-- [ ] Move `estimatePvxsValueBytes` from the anonymous namespace to a protected static member.
-- [ ] Add a protected virtual `monitorRequest()` (default `field(value,alarm,timeStamp)`) so table
+- [x] Move `estimatePvxsValueBytes` from the anonymous namespace to a protected static member.
+- [x] Add a protected virtual `monitorRequest()` (default `field(value,alarm,timeStamp)`) so table
   readers can request what they need (e.g. `labels`). Check against the mock IOC what Gen1 needs today.
 
 ## 2. Remove table mode from `EpicsPVXSReader`
 
-- [ ] Move `processSlacBsasTableMode`, `hasTimestamp`, `makeTableEventBatch` and the frame-grouping
+- [x] Move `processSlacBsasTableMode`, `hasTimestamp`, `makeTableEventBatch` and the frame-grouping
   logic into the table base class (§3).
-- [ ] Drop the `SlacBsasTable` dispatch from `processEvent`; `epics-pvxs` handles Default mode only.
-- [ ] `option.type: slac-bsas-table` under `epics-pvxs` → configuration error whose message points to
+- [x] Drop the `SlacBsasTable` dispatch from `processEvent`; `epics-pvxs` handles Default mode only.
+- [x] `option.type: slac-bsas-table` under `epics-pvxs` → configuration error whose message points to
   `epics-pvxs-bsas-gen1`.
-- [ ] Check whether `EpicsBaseReader` shares `PVRuntimeConfig::Mode::SlacBsasTable` via
+- [x] Check whether `EpicsBaseReader` shares `PVRuntimeConfig::Mode::SlacBsasTable` via
   `EpicsReaderBase`; keep it working there or decide separately.
-- [ ] Migrate existing tests, sample configs and docs that use `slac-bsas-table` under `epics-pvxs`.
+- [x] Migrate existing tests, sample configs and docs that use `slac-bsas-table` under `epics-pvxs`.
 
 ## 3. Table base: `EpicsPVXSBsasTableReaderBase`
 
 New files: `include/reader/impl/epics/pvxs/EpicsPVXSBsasTableReaderBase.h`, `src/.../EpicsPVXSBsasTableReaderBase.cpp`
 
-- [ ] Abstract class deriving from `EpicsPVXSReader`.
-- [ ] Override `processEvent`:
+- [x] Abstract class deriving from `EpicsPVXSReader`.
+- [x] Override `processEvent`:
   1. `running_` check, start timer, `sourceTag`.
   2. Call the pure virtual `extractColumns(pvName, value, emitFn)`, which yields `(colName, DataBatch)`.
   3. Group columns into frames of `columnsPerFrame` sharing the first timestamps vector; drop frames
      without timestamps (error metric) and all-NaN columns (trace log).
   4. Push tabular `EventBatch`es (flush when `columnBatchSize` frames are reached), then the marker.
   5. `recordEventMetrics(...)`.
-- [ ] Reuse `BSASEpicsDataBatchConversion::tryBuildNtTableRowTsBatch` (timestamp lookup top-level →
+- [x] Reuse `BSASEpicsDataBatchConversion::tryBuildNtTableRowTsBatch` (timestamp lookup top-level →
   `value.*`, normalisation, parallel conversion through `reader_pool_`).
 
 ## 4. Config: `EpicsPVXSBsasTableReaderConfig`
 
 New files: `include/reader/impl/epics/pvxs/EpicsPVXSBsasTableReaderConfig.h`, `src/.../EpicsPVXSBsasTableReaderConfig.cpp`
 
-- [ ] Wrap `EpicsPVXSReaderConfig` (`pvs:`, pool size, `columnBatchSize`, metadata, client config).
-- [ ] Reader-level keys, overridable per PV under `option`:
+- [x] Wrap `EpicsPVXSReaderConfig` (`pvs:`, pool size, `columnBatchSize`, metadata, client config).
+- [x] Reader-level keys, overridable per PV under `option`:
 
 ```yaml
 readers:
@@ -105,32 +105,32 @@ readers:
           - name: "BSAS:GEN2:TABLE"
 ```
 
-- [ ] Validate: field names non-empty; `option.type` rejected (the mode is implied by the reader type).
+- [x] Validate: field names non-empty; `option.type` rejected (the mode is implied by the reader type).
 
 ## 5. Gen1 reader: `EpicsPVXSBsasGen1Reader`
 
-- [ ] `extractColumns` = direct pass-through of the `tryBuildNtTableRowTsBatch` callback.
-- [ ] `REGISTER_READER("epics-pvxs-bsas-gen1", EpicsPVXSBsasGen1Reader)`.
+- [x] `extractColumns` = direct pass-through of the `tryBuildNtTableRowTsBatch` callback.
+- [x] `REGISTER_READER("epics-pvxs-bsas-gen1", EpicsPVXSBsasGen1Reader)`.
 
 ## 6. Gen2 reader: `EpicsPVXSBsasGen2Reader`
 
-- [ ] Add an optional `columnFilter` parameter to `tryBuildNtTableRowTsBatch`
+- [x] Add an optional `columnFilter` parameter to `tryBuildNtTableRowTsBatch`
   (`std::function<std::optional<std::string>(std::string_view)>`: `nullopt` = skip, value = output
   name). Default null keeps today's behaviour.
-- [ ] Filter:
+- [x] Filter:
   - skip `pidField` and the timestamp columns;
   - split the name on its last `.` (fallback `_`); keep only suffix == `valueSuffix` (case-insensitive);
   - output name = PV base name (set `DataColumn::name` too).
-- [ ] Check whether field names are mangled for PV names containing `:`; if so, take names from
+- [x] Check whether field names are mangled for PV names containing `:`; if so, take names from
   `labels[i]`.
-- [ ] `REGISTER_READER("epics-pvxs-bsas-gen2", EpicsPVXSBsasGen2Reader)`.
+- [x] `REGISTER_READER("epics-pvxs-bsas-gen2", EpicsPVXSBsasGen2Reader)`.
 
 ## 7. Build, mock IOC, tests
 
-- [ ] Add new sources to `CMakeLists.txt`.
-- [ ] `test/mock/sioc.cpp`: add `test:bsas_gen2_table` with `labels`, `pid` (uint64),
+- [x] Add new sources to `CMakeLists.txt`.
+- [x] `test/mock/sioc.cpp`: add `test:bsas_gen2_table` with `labels`, `pid` (uint64),
   `secondsPastEpoch` / `nanoseconds`, 2 PVs × `Val/CNT/RMS/AVG/MIN/MAX`.
-- [ ] Tests in `test/reader/impl/epics/pvxs/` (mirror `epics_pvxs_reader_test`):
+- [x] Tests in `test/reader/impl/epics/pvxs/` (mirror `epics_pvxs_reader_test`):
   - Gen1: tabular batches with all PV columns, correct row timestamps, `columnsPerFrame` grouping, marker.
   - Gen2: only `<PV>` columns with `.Val` values; no `pid`, no statistics; marker.
   - Gen2 filter unit test without IOC (naming, separators, case).
@@ -139,10 +139,10 @@ readers:
 
 ## 8. Docs
 
-- [ ] `docs/readers/slac-bsas-table-gen1.md`: new reader type and config.
-- [ ] `docs/readers/slac-bsas-table-gen2.md`: new reader type, config; "currently ingests `Val` only;
+- [x] `docs/readers/slac-bsas-table-gen1.md`: new reader type and config.
+- [x] `docs/readers/slac-bsas-table-gen2.md`: new reader type, config; "currently ingests `Val` only;
   pulse ID and statistics are omitted"; update the implementation-references table.
-- [ ] `docs/readers/readers.md`: list both readers; `epics-pvxs` is scalar-only.
+- [x] `docs/readers/readers.md`: list both readers; `epics-pvxs` is scalar-only.
 
 ## Critical files
 
@@ -169,6 +169,29 @@ docker compose -f docker-compose.yml -f .devcontainer/docker-compose.devcontaine
    ./bin/mldp_pvxs_driver_test --gtest_filter='*Bsas*:*EpicsPVXS*'"
 ```
 
-- [ ] Then the full suite (`--gtest_filter='-Python*:EpicsBase*:MLDPPVXSControllerProcessorIntegrationTest.*'`).
+- [x] Then the full suite (`--gtest_filter='-Python*:EpicsBase*:MLDPPVXSControllerProcessorIntegrationTest.*'`).
 - [ ] Manual: run the driver with both readers on the mock PVs and the HDF5 writer in tabular mode;
   each group holds the timestamps plus PV columns only (no `pid`, no statistics for Gen2).
+
+## Implementation notes (deviations from the plan above)
+
+- §1 `monitorRequest()`: passed as a constructor argument of the protected
+  `EpicsPVXSReader` constructor instead of a virtual (a virtual cannot be used from the
+  base constructor). Table readers request `field()` (whole NTTable incl. `labels`).
+- §1 `stopProcessing()` added; the table base destructor drains the pool before its
+  members (`table_config_`, per-PV filters) are destroyed.
+- §3 `extractColumns` was not needed: the base passes a per-PV `ColumnFilter` (built
+  once from the table options) to `tryBuildNtTableRowTsBatch`. Gen1 has no filter.
+- §6 the filter reads `labels[i]` when `labels` maps 1:1 onto `value.*` (real PV names
+  such as `X:Y.Val`), else the sanitized field name (`X_Y_Val`).
+- §2 `EpicsBaseReader` keeps `option.type: slac-bsas-table` unchanged.
+- `config validate` knows both new reader types and flags `option.type` under
+  `epics-pvxs` / the table readers; the wizard round-trips both reader types.
+- `Metrics::readerEventsTotal/readerErrorsTotal` were declared but not defined; now
+  defined (with optional labels) and used by the tests.
+- Mock IOC: `test/mock/BsasTablePV` publishes deterministic tables
+  (`test:bsas_gen1_*`, `test:bsas_gen2_*`) so tests assert exact values/timestamps.
+- Table batching keys (2026-11-04): `rows-per-data-batch` (default 120), `pvs-per-data-batch`
+  (default 1), `data-batches-per-push` (default 50); all reader-level with per-PV override.
+  `column-batch-size` is rejected by the table readers. DataBatches are ordered by row
+  chunk, then PV column.

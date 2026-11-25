@@ -60,7 +60,7 @@ pid  | XCOR…BACT.Val | XCOR…BACT.CNT | XCOR…BACT.AVG | … | secondsPastEp
 
 ## Comparison with Gen 1
 
-Aspect            | Gen 1 (slac-bsas-table)           | Gen 2 (slac-bsas-table-gen2)
+Aspect            | Gen 1 (`epics-pvxs-bsas-gen1`)    | Gen 2 (`epics-pvxs-bsas-gen2`)
 ----------------- | --------------------------------- | ---------------------------------------------
 Row index         | Implicit (array position)         | Explicit `pid` column (Pulse ID)
 PV representation | One column per PV (raw value)     | Six columns per PV (Val/CNT/RMS/AVG/MIN/MAX)
@@ -68,6 +68,13 @@ Timestamp columns | `secondsPastEpoch`, `nanoseconds` | `secondsPastEpoch`, `nan
 Typical use case  | Raw sample forwarding             | Pre-aggregated statistical summaries
 
 ## How the Driver Processes a BSAS Gen 2 Update
+
+Live Gen2 tables are read over PVAccess by the **`epics-pvxs-bsas-gen2`** reader.
+
+> **Phase 1:** the reader currently ingests the same data as Gen1 — the row
+> timestamps and each PV's `.Val` column. The pulse ID column and the `CNT`, `RMS`,
+> `AVG`, `MIN`, `MAX` statistics are **omitted** until MLDP can store them
+> (see `todo/TODO-bsas-gen2-reader.md`).
 
 ```Text
 Incoming NTTable update
@@ -77,66 +84,96 @@ Incoming NTTable update
 │ 1. Validate: compound value + "value"       │
 │    struct must be present                   │
 └─────────────┬───────────────────────────────┘
-              │
               ▼
 ┌─────────────────────────────────────────────┐
-│ 2. Locate pid, timestamp arrays             │
+│ 2. Locate timestamp arrays                  │
 │    (top-level → value.* fallback)           │
-│    Normalise timestamp arrays to uint64     │
-│    Row count = pid array length             │
 └─────────────┬───────────────────────────────┘
-              │
               ▼
 ┌─────────────────────────────────────────────┐
-│ 3. Group columns by PV base name            │
-│    (strip .Val/.CNT/.RMS/.AVG/.MIN/.MAX)    │
+│ 3. Filter columns by label, BEFORE any      │
+│    conversion: skip pid + timestamps; keep  │
+│    only "<PV>.Val"; output name = "<PV>"    │
 └─────────────┬───────────────────────────────┘
-              │
               ▼
 ┌─────────────────────────────────────────────┐
-│ 4. For each PV group:                       │
-│    • Convert all six stat arrays to         │
-│      DataFrame columns                      │
-│    • Attach per-row TimestampList           │
-│    • Emit DataFrame keyed by PV base name   │
-│    • Flush batch when column limit hit      │
+│ 4. Convert kept columns, group into frames, │
+│    push tabular EventBatches + marker       │
+│    (same shape as Gen1)                     │
 └─────────────────────────────────────────────┘
 ```
 
-Each PV base name becomes its own `DataFrame` in `EventBatch.frames`, carrying all six
-statistic columns as a structured value. The `pid` and timestamp columns are consumed
-for row indexing and are not forwarded as sources. Every emitted frame must carry
-`datatimestamps.timestamplist`; untimestamped frames are dropped.
+Column naming: the filter reads the NTTable `labels` entry for each `value.*` field
+(real PV names such as `XCOR:LI28:202:BACT.Val`) when `labels` maps 1:1 onto the
+fields; otherwise it falls back to the field name (sanitized, e.g.
+`XCOR_LI28_202_BACT_Val`). The suffix is taken after the last `.` (or the last `_`
+when the name has no `.`) and compared case-insensitively with `valueSuffix`.
+All-NaN `.Val` columns are discarded.
 
 ## Configuration
 
 ```yaml
-pvs:
-  - name: "BSAS:GEN2:TABLE:PV"
-    option:
-      type: slac-bsas-table-gen2
-      pidField:  pid                  # omit to use this default
-      tsSeconds: secondsPastEpoch     # omit to use this default
-      tsNanos:   nanoseconds          # omit to use this default
+reader:
+  - epics-pvxs-bsas-gen2:
+      - name: bsas_gen2
+        thread-pool: 1                # default 1; event conversion threads
+        environment:                  # optional EPICS_PVA_* settings for this reader only
+          EPICS_PVA_ADDR_LIST: "pva-gateway.example.org:5075"
+          EPICS_PVA_AUTO_ADDR_LIST: "NO"
+        pidField: pid                 # default; column always skipped
+        valueSuffix: Val              # default; case-insensitive
+        rows-per-data-batch: 120      # rows per DataBatch; 0 = all rows
+        pvs-per-data-batch: 1         # PV columns per DataBatch; 0 = all
+        data-batches-per-push: 50     # DataBatches per bus EventBatch; 0 = all
+        tsSeconds: secondsPastEpoch   # default
+        tsNanos: nanoseconds          # default
+        metadata:                     # optional, attached to every table
+          table-gen: "2"
+        pvs:
+          - name: "BSAS:GEN2:TABLE"
+            option:                   # optional per-PV overrides (any table key above)
+              valueSuffix: VAL
+            metadata:                 # optional per-PV metadata
+              area: example
+        pvs-files:                    # optional; one table PV per line
+          - path: gen2-tables.txt     # relative → config file directory
+            option:                   # optional, applied to every PV in the file
+              pvs-per-data-batch: 0
+            metadata:                 # optional, applied to every PV in the file
+              group: gen2
 ```
 
-Key         | Default            | Description
------------ | ------------------ | ------------------------------------------------------
-`type`      | *(required)*       | Must be `slac-bsas-table-gen2` to activate this mode
-`pidField`  | `pid`              | Name of the Pulse ID column
-`tsSeconds` | `secondsPastEpoch` | Name of the per-row epoch-seconds column
-`tsNanos`   | `nanoseconds`      | Name of the per-row nanoseconds column
+Key                     | Level            | Default            | Description
+----------------------- | ---------------- | ------------------ | ---------------------------------------------------------
+`rows-per-data-batch`   | reader, `option` | `120`              | Rows per `DataBatch` (values per column); `0` = all rows
+`pvs-per-data-batch`    | reader, `option` | `1`                | PV columns per `DataBatch` (they share the row timestamps); `0` = all
+`data-batches-per-push` | reader, `option` | `50`               | `DataBatch`es per bus `EventBatch` push; `0` = all in one push
+`tsSeconds`             | reader, `option` | `secondsPastEpoch` | Name of the per-row epoch-seconds column
+`tsNanos`               | reader, `option` | `nanoseconds`      | Name of the per-row nanoseconds column
+`pidField`              | reader, `option` | `pid`              | Pulse ID column name (always skipped)
+`valueSuffix`           | reader, `option` | `Val`              | Suffix of the value column, case-insensitive
+`name`                  | reader           | — (required)       | Reader instance name
+`thread-pool`           | reader           | `1`                | Event conversion thread pool size
+`environment`           | reader           | none               | Map of `EPICS_PVA_*` settings for this reader's PVXS context only
+`metadata`              | reader, `pvs[]`, `pvs-files[]` | none | Static string map attached to the table's batches
+`pvs[].name`            | `pvs[]`          | — (required)       | Table PV name
+`pvs[].option`          | `pvs[]`          | none               | Map of per-PV table-key overrides
+`pvs-files[].path`      | `pvs-files[]`    | — (required)       | Table PV list file; relative → config file directory
+`pvs-files[].option`    | `pvs-files[]`    | none               | Same as `pvs[].option`, for every PV in the file
+
+`option.type` is rejected: the table generation is implied by the reader type.
+`column-batch-size` is rejected: use `data-batches-per-push`.
+`signal-pv`, `signal-timeout-ms` and `skip-nan-columns` are Gen1-only and rejected
+(reader level and `option`): Gen2 always drops all-NaN columns.
 
 ## Implementation References
 
-> **Note:** This feature is not yet implemented.  The table below lists the planned
-> file locations that mirror the Gen 1 layout.
-
-Component                   | File (planned)
+Component                   | File
 --------------------------- | -----------------------------------------------------------
-PVXS conversion class       | `include/reader/impl/epics/BSASGen2EpicsMLDPConversion.h`
-PVXS conversion impl        | `src/reader/impl/epics/BSASGen2EpicsMLDPConversion.cpp`
-EPICS Base conversion       | `include/reader/impl/epics/base/EpicsPVDataBatchConversion.h`
-PVXS reader dispatch        | `src/reader/impl/epics/pvxs/EpicsPVXSReader.cpp`
-EPICS Base reader dispatch  | `src/reader/impl/epics/base/EpicsBaseReader.cpp`
-Mock IOC (concrete example) | `test/mock/sioc.cpp`
+PVXS Gen2 reader + filter   | `src/reader/impl/epics/pvxs/EpicsPVXSBsasGen2Reader.cpp`
+PVXS table reader base      | `src/reader/impl/epics/pvxs/EpicsPVXSBsasTableReaderBase.cpp`
+PVXS table reader config    | `src/reader/impl/epics/pvxs/EpicsPVXSBsasTableReaderConfig.cpp`
+PVXS conversion (filter)    | `src/reader/impl/epics/pvxs/BSASEpicsDataBatchConversion.cpp`
+Mock IOC (concrete example) | `test/mock/sioc.cpp` (`test:bsas_gen2_*`), `test/mock/BsasTablePV.cpp`
+Tests                       | `test/reader/impl/epics/pvxs/epics_pvxs_bsas_gen2_reader_test.cpp`
+EPICS Base support          | not implemented

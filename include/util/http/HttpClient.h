@@ -11,6 +11,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <stdexcept>
@@ -58,6 +59,7 @@ struct HttpClientOptions
     long buffer_size = 65536L; ///< Preferred receive buffer size hint (bytes).
 
     bool follow_redirects = true; ///< Follow HTTP redirects automatically.
+    bool fail_on_http_error = false; ///< Abort before delivering the body when status >= 400 (throws HttpError with status).
     long max_redirects = 5L;      ///< Maximum redirects when following is enabled.
 
     bool        enable_compression = true;         ///< Enable response compression.
@@ -101,6 +103,29 @@ class HttpError : public std::runtime_error
 {
 public:
     using std::runtime_error::runtime_error;
+
+    /**
+     * @brief Construct an error that carries the HTTP status code.
+     *
+     * @param what        Error message.
+     * @param http_status HTTP status code of the failed response.
+     */
+    HttpError(const std::string& what, int32_t http_status)
+        : std::runtime_error(what)
+        , http_status_(http_status)
+    {
+    }
+
+    /**
+     * @brief HTTP status of the failed response (0 when not an HTTP status error).
+     */
+    int32_t httpStatus() const noexcept
+    {
+        return http_status_;
+    }
+
+private:
+    int32_t http_status_ = 0;
 };
 
 /**

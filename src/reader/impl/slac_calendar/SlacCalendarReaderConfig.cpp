@@ -30,6 +30,9 @@ static constexpr auto kTlsVerifyPeerKey      = "tls-verify-peer";
 static constexpr auto kTlsVerifyHostKey      = "tls-verify-host";
 static constexpr auto kFetchWindowDaysKey    = "fetch-window-days";
 static constexpr auto kFetchWindowDelayMsKey = "fetch-window-delay-ms";
+static constexpr auto kCacheBusterKey        = "cache-buster";
+static constexpr auto kSuspiciousRetriesKey  = "suspicious-window-retries";
+static constexpr auto kSuspiciousDelayMsKey  = "suspicious-window-retry-delay-ms";
 static constexpr auto kAttributesKey         = "attributes";
 static constexpr auto kAttrFieldKey          = "field";
 static constexpr auto kAttrNameKey           = "name";
@@ -168,6 +171,20 @@ void SlacCalendarReaderConfig::parse(const config::Config& cfg)
     fetch_window_delay_ms_ = cfg.getInt(kFetchWindowDelayMsKey, 200);
     if (fetch_window_delay_ms_ < 0)
         throw Error("slac-calendar reader: 'fetch-window-delay-ms' must be >= 0");
+
+    // Proxies may ignore Cache-Control on requests but never reuse a response for a
+    // different URL: a unique query parameter forces every request to the origin.
+    cache_buster_ = cfg.getBool(kCacheBusterKey, true);
+
+    // The API sometimes answers a whole window with an empty/partial body (HTTP 200).
+    // Windows that come back empty, or byte-identical to the previous window, are
+    // fetched again before being accepted.
+    suspicious_window_retries_ = cfg.getInt(kSuspiciousRetriesKey, 2);
+    if (suspicious_window_retries_ < 0)
+        throw Error("slac-calendar reader: 'suspicious-window-retries' must be >= 0");
+    suspicious_window_retry_delay_ms_ = cfg.getInt(kSuspiciousDelayMsKey, 2000);
+    if (suspicious_window_retry_delay_ms_ < 0)
+        throw Error("slac-calendar reader: 'suspicious-window-retry-delay-ms' must be >= 0");
 
     // Optional per-field overrides. An entry for a field already in the default
     // mapping replaces it (rename and/or retarget); a new field is appended.
